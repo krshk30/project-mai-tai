@@ -3,7 +3,12 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 from typing import Protocol
 
-from project_mai_tai.market_data.models import QuoteTickRecord, SnapshotRecord, TradeTickRecord
+from project_mai_tai.market_data.models import (
+    HistoricalBarRecord,
+    QuoteTickRecord,
+    SnapshotRecord,
+    TradeTickRecord,
+)
 
 
 class SnapshotProvider(Protocol):
@@ -20,6 +25,16 @@ class SnapshotProvider(Protocol):
         delay_between_batches: float = 0.2,
     ) -> dict[str, int]:
         """Fetch shares outstanding for a set of tickers."""
+
+    def fetch_historical_bars(
+        self,
+        symbol: str,
+        *,
+        interval_secs: int,
+        lookback_calendar_days: int,
+        limit: int,
+    ) -> list[HistoricalBarRecord]:
+        """Fetch historical OHLCV bars for a symbol and interval."""
 
 
 class TradeStreamProvider(Protocol):

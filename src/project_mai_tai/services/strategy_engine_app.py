@@ -14,6 +14,7 @@ from redis.asyncio import Redis
 from project_mai_tai.events import (
     HeartbeatEvent,
     HeartbeatPayload,
+    HistoricalBarsEvent,
     MarketDataSubscriptionEvent,
     MarketDataSubscriptionPayload,
     MarketSnapshotPayload,
@@ -479,6 +480,26 @@ class StrategyEngineState:
     ) -> None:
         self.bots[strategy_code].seed_bars(symbol, bars)
 
+    def hydrate_historical_bars(
+        self,
+        *,
+        symbol: str,
+        interval_secs: int,
+        bars: Sequence[dict[str, float | int]],
+    ) -> list[str]:
+        hydrated: list[str] = []
+        for code, bot in self.bots.items():
+            bot_interval = getattr(getattr(bot, "definition", None), "interval_secs", None)
+            if bot_interval == interval_secs:
+                bot.seed_bars(symbol, bars)
+                hydrated.append(code)
+                continue
+
+            if code == "runner" and interval_secs == 300:
+                bot.seed_bars(symbol, bars)
+                hydrated.append(code)
+        return hydrated
+
     def apply_execution_fill(
         self,
         *,
@@ -626,6 +647,35 @@ class StrategyEngineService:
                     "generated %s intents from %s trade tick",
                     len(intents),
                     event.payload.symbol,
+                )
+            return
+
+        if event_type == "historical_bars":
+            event = HistoricalBarsEvent.model_validate(payload)
+            bars = [
+                {
+                    "open": float(bar.open),
+                    "high": float(bar.high),
+                    "low": float(bar.low),
+                    "close": float(bar.close),
+                    "volume": int(bar.volume),
+                    "timestamp": float(bar.timestamp),
+                    "trade_count": int(bar.trade_count),
+                }
+                for bar in event.payload.bars
+            ]
+            hydrated = self.state.hydrate_historical_bars(
+                symbol=event.payload.symbol,
+                interval_secs=event.payload.interval_secs,
+                bars=bars,
+            )
+            if hydrated:
+                self.logger.info(
+                    "hydrated %s bars for %s @ %ss into %s",
+                    len(bars),
+                    event.payload.symbol,
+                    event.payload.interval_secs,
+                    ",".join(hydrated),
                 )
             return
 

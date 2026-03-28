@@ -6,7 +6,12 @@ import time
 from collections.abc import Callable, Iterable
 from datetime import date, timedelta
 
-from project_mai_tai.market_data.models import QuoteTickRecord, SnapshotRecord, TradeTickRecord
+from project_mai_tai.market_data.models import (
+    HistoricalBarRecord,
+    QuoteTickRecord,
+    SnapshotRecord,
+    TradeTickRecord,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +107,48 @@ class MassiveSnapshotProvider:
 
         return result
 
+    def fetch_historical_bars(
+        self,
+        symbol: str,
+        *,
+        interval_secs: int,
+        lookback_calendar_days: int,
+        limit: int,
+    ) -> list[HistoricalBarRecord]:
+        client = self._get_rest_client()
+        multiplier, timespan = self._resolve_agg_interval(interval_secs)
+        from_date = date.today() - timedelta(days=max(1, lookback_calendar_days))
+        to_date = date.today()
+        aggs = client.list_aggs(
+            symbol,
+            multiplier,
+            timespan,
+            from_=from_date.strftime("%Y-%m-%d"),
+            to=to_date.strftime("%Y-%m-%d"),
+            limit=limit,
+        )
+        bars: list[HistoricalBarRecord] = []
+        for agg in aggs:
+            close = _to_float(getattr(agg, "close", None))
+            timestamp_raw = _to_int(getattr(agg, "timestamp", None))
+            if close is None or timestamp_raw is None:
+                continue
+            timestamp = timestamp_raw / 1000 if timestamp_raw > 1_000_000_000_000 else float(timestamp_raw)
+            bars.append(
+                HistoricalBarRecord(
+                    open=_to_float(getattr(agg, "open", None)) or close,
+                    high=_to_float(getattr(agg, "high", None)) or close,
+                    low=_to_float(getattr(agg, "low", None)) or close,
+                    close=close,
+                    volume=_to_int(getattr(agg, "volume", None)) or 0,
+                    timestamp=timestamp,
+                    trade_count=_to_int(getattr(agg, "transactions", None))
+                    or _to_int(getattr(agg, "trade_count", None))
+                    or 1,
+                )
+            )
+        return bars
+
     def _get_rest_client(self):
         if self._client is None:
             try:
@@ -112,6 +159,13 @@ class MassiveSnapshotProvider:
                 ) from exc
             self._client = RESTClient(api_key=self.api_key)
         return self._client
+
+    def _resolve_agg_interval(self, interval_secs: int) -> tuple[int, str]:
+        if interval_secs < 60:
+            return interval_secs, "second"
+        if interval_secs % 60 != 0:
+            raise ValueError(f"Unsupported interval for historical bars: {interval_secs}s")
+        return interval_secs // 60, "minute"
 
     def _normalize_snapshot(self, snapshot) -> SnapshotRecord:
         day = getattr(snapshot, "day", None)

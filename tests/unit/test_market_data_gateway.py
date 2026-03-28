@@ -6,7 +6,7 @@ import pytest
 
 from project_mai_tai.events import MarketDataSubscriptionEvent, MarketDataSubscriptionPayload
 from project_mai_tai.market_data.gateway import MarketDataGatewayService
-from project_mai_tai.market_data.models import SnapshotRecord
+from project_mai_tai.market_data.models import HistoricalBarRecord, SnapshotRecord
 from project_mai_tai.settings import Settings
 
 
@@ -37,6 +37,28 @@ class FakeSnapshotProvider:
     def get_ticker_details_batch(self, tickers, batch_size: int = 10, delay_between_batches: float = 0.2):
         del tickers, batch_size, delay_between_batches
         return {}
+
+    def fetch_historical_bars(
+        self,
+        symbol: str,
+        *,
+        interval_secs: int,
+        lookback_calendar_days: int,
+        limit: int,
+    ):
+        del lookback_calendar_days, limit
+        return [
+            HistoricalBarRecord(
+                open=2.0,
+                high=2.1,
+                low=1.9,
+                close=2.05 + interval_secs / 10_000,
+                volume=10_000,
+                timestamp=1_700_000_000.0,
+            )
+            for _ in range(2)
+            if symbol
+        ]
 
 
 class FakeTradeStream:
@@ -128,3 +150,10 @@ async def test_apply_subscription_event_unions_static_and_consumer_symbols() -> 
 
     assert symbols == {"SPY", "UGRO", "ANNA"}
     assert trade_stream.synced[-1] == ["ANNA", "SPY", "UGRO"]
+    warmup_events = [
+        payload
+        for stream, payload in redis.entries
+        if stream == "test:market-data" and payload["event_type"] == "historical_bars"
+    ]
+    assert len(warmup_events) == 6
+    assert {event["payload"]["interval_secs"] for event in warmup_events} == {30, 60, 300}

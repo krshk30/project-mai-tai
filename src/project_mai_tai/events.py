@@ -52,6 +52,27 @@ class QuoteTickEvent(EventEnvelope):
     payload: QuoteTickPayload
 
 
+class HistoricalBarPayload(BaseModel):
+    open: Decimal
+    high: Decimal
+    low: Decimal
+    close: Decimal
+    volume: int
+    timestamp: float
+    trade_count: int = 1
+
+
+class HistoricalBarsPayload(BaseModel):
+    symbol: str
+    interval_secs: int
+    bars: list[HistoricalBarPayload] = Field(default_factory=list)
+
+
+class HistoricalBarsEvent(EventEnvelope):
+    event_type: Literal["historical_bars"] = "historical_bars"
+    payload: HistoricalBarsPayload
+
+
 class BarClosedPayload(BaseModel):
     symbol: str
     timeframe: Literal["30s", "1m", "5m", "1d"]

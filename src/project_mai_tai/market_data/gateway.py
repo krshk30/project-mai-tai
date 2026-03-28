@@ -10,7 +10,12 @@ from redis.asyncio import Redis
 
 from project_mai_tai.events import MarketDataSubscriptionEvent, stream_name
 from project_mai_tai.market_data.massive_provider import MassiveSnapshotProvider, MassiveTradeStream
-from project_mai_tai.market_data.models import QuoteTickRecord, SnapshotRecord, TradeTickRecord
+from project_mai_tai.market_data.models import (
+    HistoricalBarsRecord,
+    QuoteTickRecord,
+    SnapshotRecord,
+    TradeTickRecord,
+)
 from project_mai_tai.market_data.protocols import SnapshotProvider, TradeStreamProvider
 from project_mai_tai.market_data.publisher import MarketDataPublisher
 from project_mai_tai.market_data.reference_cache import ReferenceDataCache
@@ -20,6 +25,7 @@ from project_mai_tai.settings import Settings, get_settings
 logger = logging.getLogger(__name__)
 
 SERVICE_NAME = "market-data-gateway"
+WARMUP_INTERVALS = (30, 60, 300)
 
 
 class MarketDataGatewayService:
@@ -78,6 +84,7 @@ class MarketDataGatewayService:
             on_quote=lambda record: loop.call_soon_threadsafe(self._quote_queue.put_nowait, record),
         )
         await self.trade_stream.sync_subscriptions(self._active_symbols)
+        await self._publish_historical_warmup(self._active_symbols)
 
         tasks = [
             asyncio.create_task(self._snapshot_loop(stop_event)),
@@ -121,9 +128,11 @@ class MarketDataGatewayService:
 
         self._desired_symbols_by_consumer[consumer] = updated
         next_symbols = set().union(*self._desired_symbols_by_consumer.values())
+        added_symbols = next_symbols - self._active_symbols
         if next_symbols != self._active_symbols:
             self._active_symbols = next_symbols
             await self.trade_stream.sync_subscriptions(sorted(self._active_symbols))
+            await self._publish_historical_warmup(added_symbols)
         return set(self._active_symbols)
 
     def active_symbols(self) -> set[str]:
@@ -212,4 +221,38 @@ class MarketDataGatewayService:
                         "reference_tickers": str(self.reference_cache.ticker_count()),
                         "active_symbols": str(len(self._active_symbols)),
                     },
+                )
+
+    async def _publish_historical_warmup(self, symbols: Iterable[str]) -> None:
+        normalized = sorted({symbol.upper() for symbol in symbols if symbol})
+        if not normalized or not self.settings.market_data_warmup_enabled:
+            return
+
+        for symbol in normalized:
+            for interval_secs in WARMUP_INTERVALS:
+                try:
+                    bars = await asyncio.to_thread(
+                        self.snapshot_provider.fetch_historical_bars,
+                        symbol,
+                        interval_secs=interval_secs,
+                        lookback_calendar_days=self.settings.market_data_warmup_lookback_days,
+                        limit=self.settings.market_data_warmup_bar_limit,
+                    )
+                except Exception:
+                    self.logger.exception(
+                        "historical warmup fetch failed for %s @ %ss",
+                        symbol,
+                        interval_secs,
+                    )
+                    continue
+
+                if not bars:
+                    continue
+
+                await self.publisher.publish_historical_bars(
+                    HistoricalBarsRecord(
+                        symbol=symbol,
+                        interval_secs=interval_secs,
+                        bars=tuple(bars),
+                    )
                 )

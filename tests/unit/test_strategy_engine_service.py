@@ -5,7 +5,14 @@ from decimal import Decimal
 
 import pytest
 
-from project_mai_tai.events import MarketSnapshotPayload, OrderEventEvent, OrderEventPayload
+from project_mai_tai.events import (
+    HistoricalBarPayload,
+    HistoricalBarsEvent,
+    HistoricalBarsPayload,
+    MarketSnapshotPayload,
+    OrderEventEvent,
+    OrderEventPayload,
+)
 from project_mai_tai.services.strategy_engine_app import StrategyEngineService, StrategyEngineState, snapshot_from_payload
 from project_mai_tai.settings import Settings
 from project_mai_tai.strategy_core import ReferenceData
@@ -184,3 +191,71 @@ async def test_order_event_fill_opens_position_and_clears_pending_state() -> Non
     assert position.entry_price == 2.55
     assert "UGRO" not in bot.pending_open_symbols
     assert any(stream == "test:strategy-state" for stream, _payload in redis.entries)
+
+
+@pytest.mark.asyncio
+async def test_historical_bars_hydrate_matching_strategy_intervals() -> None:
+    redis = FakeRedis()
+    service = StrategyEngineService(
+        settings=Settings(redis_stream_prefix="test"),
+        redis_client=redis,
+    )
+
+    historical_30s = HistoricalBarsEvent(
+        source_service="market-data-gateway",
+        payload=HistoricalBarsPayload(
+            symbol="UGRO",
+            interval_secs=30,
+            bars=[
+                HistoricalBarPayload(
+                    open=Decimal("2.00"),
+                    high=Decimal("2.10"),
+                    low=Decimal("1.99"),
+                    close=Decimal("2.05"),
+                    volume=20_000,
+                    timestamp=1_700_000_000.0,
+                ),
+                HistoricalBarPayload(
+                    open=Decimal("2.05"),
+                    high=Decimal("2.15"),
+                    low=Decimal("2.04"),
+                    close=Decimal("2.12"),
+                    volume=22_000,
+                    timestamp=1_700_000_030.0,
+                ),
+            ],
+        ),
+    )
+    historical_5m = HistoricalBarsEvent(
+        source_service="market-data-gateway",
+        payload=HistoricalBarsPayload(
+            symbol="UGRO",
+            interval_secs=300,
+            bars=[
+                HistoricalBarPayload(
+                    open=Decimal("2.00"),
+                    high=Decimal("2.20"),
+                    low=Decimal("1.95"),
+                    close=Decimal("2.15"),
+                    volume=80_000,
+                    timestamp=1_700_000_000.0,
+                ),
+                HistoricalBarPayload(
+                    open=Decimal("2.15"),
+                    high=Decimal("2.25"),
+                    low=Decimal("2.10"),
+                    close=Decimal("2.22"),
+                    volume=85_000,
+                    timestamp=1_700_000_300.0,
+                ),
+            ],
+        ),
+    )
+
+    await service._handle_stream_message("test:market-data", {"data": historical_30s.model_dump_json()})
+    await service._handle_stream_message("test:market-data", {"data": historical_5m.model_dump_json()})
+
+    assert len(service.state.bots["macd_30s"].builder_manager.get_bars("UGRO")) == 1
+    assert len(service.state.bots["macd_1m"].builder_manager.get_bars("UGRO")) == 0
+    assert len(service.state.bots["tos"].builder_manager.get_bars("UGRO")) == 0
+    assert len(service.state.bots["runner"].builder_manager.get_bars("UGRO")) == 2

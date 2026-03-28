@@ -2,7 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from project_mai_tai.events import MarketSnapshotPayload, QuoteTickPayload, TradeTickPayload
+from project_mai_tai.events import (
+    HistoricalBarPayload,
+    HistoricalBarsPayload,
+    MarketSnapshotPayload,
+    QuoteTickPayload,
+    TradeTickPayload,
+)
 
 
 @dataclass(frozen=True)
@@ -84,4 +90,40 @@ class QuoteTickRecord:
             ask_price=self.ask_price,
             bid_size=self.bid_size,
             ask_size=self.ask_size,
+        )
+
+
+@dataclass(frozen=True)
+class HistoricalBarRecord:
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: int
+    timestamp: float
+    trade_count: int = 1
+
+    def to_payload(self) -> HistoricalBarPayload:
+        return HistoricalBarPayload(
+            open=self.open,
+            high=self.high,
+            low=self.low,
+            close=self.close,
+            volume=self.volume,
+            timestamp=self.timestamp,
+            trade_count=self.trade_count,
+        )
+
+
+@dataclass(frozen=True)
+class HistoricalBarsRecord:
+    symbol: str
+    interval_secs: int
+    bars: tuple[HistoricalBarRecord, ...]
+
+    def to_payload(self) -> HistoricalBarsPayload:
+        return HistoricalBarsPayload(
+            symbol=self.symbol,
+            interval_secs=self.interval_secs,
+            bars=[bar.to_payload() for bar in self.bars],
         )

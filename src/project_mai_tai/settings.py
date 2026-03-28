@@ -39,6 +39,9 @@ class Settings(BaseSettings):
     market_data_scan_min_price: float = 1.0
     market_data_scan_max_price: float = 10.0
     market_data_static_symbols: str = ""
+    market_data_warmup_enabled: bool = True
+    market_data_warmup_lookback_days: int = 14
+    market_data_warmup_bar_limit: int = 50_000
 
     broker_default_provider: str = "alpaca"
     oms_adapter: str = "simulated"
