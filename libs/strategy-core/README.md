@@ -11,8 +11,11 @@ Initial ported modules:
 - indicator math
 - momentum alerts
 - momentum confirmation and ranking
-
-Next port targets:
 - entry engine
 - exit engine
 - position tracker
+
+Next port targets:
+- TOS-specific decision flow
+- Runner-specific decision flow
+- replay fixtures from legacy sessions
