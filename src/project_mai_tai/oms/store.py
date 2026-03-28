@@ -7,7 +7,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from project_mai_tai.broker_adapters.protocols import ExecutionReport
+from project_mai_tai.broker_adapters.protocols import BrokerPositionSnapshot, ExecutionReport
 from project_mai_tai.db.models import (
     AccountPosition,
     BrokerAccount,
@@ -27,6 +27,22 @@ def utcnow() -> datetime:
 
 
 class OmsStore:
+    def list_active_broker_accounts(self, session: Session) -> list[BrokerAccount]:
+        return session.scalars(
+            select(BrokerAccount)
+            .where(BrokerAccount.is_active.is_(True))
+            .order_by(BrokerAccount.name)
+        ).all()
+
+    def list_named_broker_accounts(self, session: Session, names: list[str]) -> list[BrokerAccount]:
+        if not names:
+            return []
+        return session.scalars(
+            select(BrokerAccount)
+            .where(BrokerAccount.name.in_(names))
+            .order_by(BrokerAccount.name)
+        ).all()
+
     def ensure_strategy(self, session: Session, code: str, *, name: str | None = None) -> Strategy:
         strategy = session.scalar(select(Strategy).where(Strategy.code == code))
         if strategy is not None:
@@ -283,6 +299,52 @@ class OmsStore:
 
     def mark_intent_status(self, intent: TradeIntent, status: str) -> None:
         intent.status = status
+
+    def sync_account_positions(
+        self,
+        session: Session,
+        *,
+        broker_account_id: UUID,
+        snapshots: list[BrokerPositionSnapshot],
+    ) -> int:
+        existing_positions = {
+            position.symbol: position
+            for position in session.scalars(
+                select(AccountPosition).where(AccountPosition.broker_account_id == broker_account_id)
+            ).all()
+        }
+        seen_symbols: set[str] = set()
+
+        for snapshot in snapshots:
+            seen_symbols.add(snapshot.symbol)
+            position = existing_positions.get(snapshot.symbol)
+            if position is None:
+                position = AccountPosition(
+                    broker_account_id=broker_account_id,
+                    symbol=snapshot.symbol,
+                    quantity=Decimal("0"),
+                    average_price=Decimal("0"),
+                    market_value=None,
+                    source_updated_at=None,
+                )
+                session.add(position)
+                session.flush()
+
+            position.quantity = snapshot.quantity
+            position.average_price = snapshot.average_price
+            position.market_value = snapshot.market_value
+            position.source_updated_at = snapshot.as_of
+
+        for symbol, position in existing_positions.items():
+            if symbol in seen_symbols:
+                continue
+            position.quantity = Decimal("0")
+            position.average_price = Decimal("0")
+            position.market_value = Decimal("0")
+            position.source_updated_at = utcnow()
+
+        session.flush()
+        return len(snapshots)
 
     def _apply_position_fill(
         self,

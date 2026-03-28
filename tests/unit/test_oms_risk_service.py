@@ -126,3 +126,46 @@ async def test_oms_service_rejects_non_positive_quantity() -> None:
         stored_intent = session.scalar(select(TradeIntent))
         assert stored_intent is not None
         assert stored_intent.status == "rejected"
+
+
+@pytest.mark.asyncio
+async def test_oms_service_syncs_account_positions_from_broker_truth() -> None:
+    redis = FakeRedis()
+    session_factory = build_test_session_factory()
+    service = OmsRiskService(
+        settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
+        redis_client=redis,
+        session_factory=session_factory,
+    )
+
+    await service.process_trade_intent(
+        TradeIntentEvent(
+            source_service="strategy-engine",
+            payload=TradeIntentPayload(
+                strategy_code="macd_30s",
+                broker_account_name="paper:macd_30s",
+                symbol="UGRO",
+                side="buy",
+                quantity=Decimal("10"),
+                intent_type="open",
+                reason="ENTRY_P1_MACD_CROSS",
+                metadata={"reference_price": "2.55"},
+            ),
+        )
+    )
+
+    with session_factory() as session:
+        account_position = session.scalar(select(AccountPosition))
+        assert account_position is not None
+        account_position.quantity = Decimal("3")
+        account_position.average_price = Decimal("1.11")
+        session.commit()
+
+    sync_summary = await service.sync_broker_positions(account_names=["paper:macd_30s"])
+    assert sync_summary == {"accounts": 1, "positions": 1}
+
+    with session_factory() as session:
+        account_position = session.scalar(select(AccountPosition))
+        assert account_position is not None
+        assert account_position.quantity == Decimal("10")
+        assert account_position.average_price == Decimal("2.55")

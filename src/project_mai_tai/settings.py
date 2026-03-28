@@ -41,6 +41,7 @@ class Settings(BaseSettings):
     broker_default_provider: str = "alpaca"
     oms_adapter: str = "simulated"
     alpaca_paper_base_url: str = "https://paper-api.alpaca.markets"
+    oms_broker_sync_interval_seconds: int = 15
 
     dashboard_refresh_seconds: int = 5
     service_heartbeat_interval_seconds: int = 15

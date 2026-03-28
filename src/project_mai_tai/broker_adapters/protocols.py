@@ -42,6 +42,19 @@ class ExecutionReport:
     reported_at: datetime = field(default_factory=utcnow)
 
 
+@dataclass(frozen=True)
+class BrokerPositionSnapshot:
+    broker_account_name: str
+    symbol: str
+    quantity: Decimal
+    average_price: Decimal
+    market_value: Decimal | None = None
+    as_of: datetime = field(default_factory=utcnow)
+
+
 class BrokerAdapter(Protocol):
     async def submit_order(self, request: OrderRequest) -> list[ExecutionReport]:
         """Submit an order and return the resulting execution reports."""
+
+    async def list_account_positions(self, broker_account_name: str) -> list[BrokerPositionSnapshot]:
+        """Return the broker's current position snapshots for a specific account."""

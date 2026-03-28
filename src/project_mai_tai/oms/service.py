@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import socket
+from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import UUID
 
@@ -28,6 +29,10 @@ from project_mai_tai.settings import Settings, get_settings
 logger = logging.getLogger(__name__)
 
 SERVICE_NAME = "oms-risk"
+
+
+def utcnow() -> datetime:
+    return datetime.now(UTC)
 
 
 class OmsRiskService:
@@ -55,14 +60,21 @@ class OmsRiskService:
         stop_event = asyncio.Event()
         _install_signal_handlers(stop_event)
         heartbeat_interval_secs = max(1, self.settings.service_heartbeat_interval_seconds)
+        broker_sync_interval_secs = max(1, self.settings.oms_broker_sync_interval_seconds)
         last_heartbeat = asyncio.get_running_loop().time()
+        last_broker_sync = 0.0
 
-        await self._publish_heartbeat("starting")
+        await self._publish_heartbeat("starting", {"adapter": self.settings.oms_adapter})
         while not stop_event.is_set():
+            loop_now = asyncio.get_running_loop().time()
+            read_timeout_secs = min(
+                heartbeat_interval_secs,
+                max(1, broker_sync_interval_secs - int(loop_now - last_broker_sync)),
+            )
             try:
                 messages = await self.redis.xread(
                     self._stream_offsets,
-                    block=heartbeat_interval_secs * 1000,
+                    block=read_timeout_secs * 1000,
                     count=50,
                 )
             except Exception:
@@ -77,11 +89,20 @@ class OmsRiskService:
                         await self._handle_stream_message(fields)
 
             now = asyncio.get_running_loop().time()
+            if now - last_broker_sync >= broker_sync_interval_secs:
+                try:
+                    sync_summary = await self.sync_broker_positions()
+                except Exception:
+                    self.logger.exception("failed syncing broker positions")
+                else:
+                    self.logger.debug("broker sync complete: %s", sync_summary)
+                last_broker_sync = now
             if now - last_heartbeat >= heartbeat_interval_secs:
-                await self._publish_heartbeat("healthy")
+                heartbeat_details = {"adapter": self.settings.oms_adapter}
+                await self._publish_heartbeat("healthy", heartbeat_details)
                 last_heartbeat = now
 
-        await self._publish_heartbeat("stopping")
+        await self._publish_heartbeat("stopping", {"adapter": self.settings.oms_adapter})
         await self.redis.aclose()
 
     async def _handle_stream_message(self, fields: dict[str, str]) -> None:
@@ -207,7 +228,33 @@ class OmsRiskService:
         for order_event in published_events:
             await self._publish_order_event(order_event)
 
+        await self.sync_broker_positions(account_names=[event.payload.broker_account_name])
         return published_events
+
+    async def sync_broker_positions(self, *, account_names: list[str] | None = None) -> dict[str, int]:
+        with self.session_factory() as session:
+            if account_names is None:
+                broker_accounts = self.store.list_active_broker_accounts(session)
+            else:
+                broker_accounts = self.store.list_named_broker_accounts(session, account_names)
+
+            synced_accounts = 0
+            synced_positions = 0
+            for broker_account in broker_accounts:
+                snapshots = await self.broker_adapter.list_account_positions(broker_account.name)
+                synced_positions += self.store.sync_account_positions(
+                    session,
+                    broker_account_id=broker_account.id,
+                    snapshots=snapshots,
+                )
+                synced_accounts += 1
+
+            session.commit()
+
+        return {
+            "accounts": synced_accounts,
+            "positions": synced_positions,
+        }
 
     async def _publish_order_event(self, event: OrderEventEvent) -> None:
         await self.redis.xadd(
@@ -215,14 +262,14 @@ class OmsRiskService:
             {"data": event.model_dump_json()},
         )
 
-    async def _publish_heartbeat(self, status: str) -> None:
+    async def _publish_heartbeat(self, status: str, details: dict[str, str]) -> None:
         event = HeartbeatEvent(
             source_service=SERVICE_NAME,
             payload=HeartbeatPayload(
                 service_name=SERVICE_NAME,
                 instance_name=self.instance_name,
                 status=status,
-                details={"adapter": self.settings.oms_adapter},
+                details=details,
             ),
         )
         await self.redis.xadd(
