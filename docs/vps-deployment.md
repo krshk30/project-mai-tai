@@ -58,6 +58,8 @@ Planned approach:
 - basic auth enabled for the new dashboard
 - HTTPS via Certbot for `project-mai-tai.live` and `www.project-mai-tai.live`
 - control plane remains private behind localhost proxying
+- bootstrap starts with an HTTP-only Nginx site, then switches to the final
+  HTTPS config after certificate issuance
 
 DNS records:
 - `A` record for `project-mai-tai.live` -> `104.236.43.107`
@@ -85,3 +87,16 @@ Initial approach:
 - loaded by `systemd EnvironmentFile`
 
 This is the initial production posture for a single VPS.
+
+## Bootstrap Order
+
+Repository scripts live under `ops/bootstrap/`.
+
+Recommended sequence:
+1. install system packages
+2. prepare directories and permissions
+3. create the Nginx basic-auth file
+4. enable the HTTP bootstrap site
+5. issue the TLS certificate with Certbot using an operator email address
+6. switch to the HTTPS Nginx config
+7. initialize Postgres for `project-mai-tai` with the real application password
