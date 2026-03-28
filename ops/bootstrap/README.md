@@ -6,7 +6,7 @@ Recommended first-run order on the VPS:
 
 1. `01_install_packages.sh`
 2. `02_prepare_host.sh`
-3. `03_create_dashboard_auth.sh <username>`
+3. `03_create_dashboard_auth.sh <username> [password]`
 4. `04_enable_http_site.sh`
 5. `05_issue_certificate.sh <email>`
 6. `06_enable_https_site.sh`
@@ -21,7 +21,13 @@ Notes:
 - DNS for `project-mai-tai.live` and `www.project-mai-tai.live` should already
   resolve to the VPS before `05_issue_certificate.sh`.
 - Keep Cloudflare records as `DNS only` during initial certificate issuance.
+- If `ufw` is active, `04_enable_http_site.sh` now opens `80/443` via the
+  `Nginx Full` profile automatically.
 - After `07_bootstrap_database.sh`, store the same database password in the
   root-owned env file under `/etc/project-mai-tai/`.
 - Edit `/etc/project-mai-tai/project-mai-tai.env` before `08_install_runtime.sh`
   so the runtime installs and migrations use real credentials.
+- `08_install_runtime.sh` preserves `MAI_TAI_DATABASE_URL` into the Alembic run
+  so migrations work with the root-owned env file.
+- `10_enable_services.sh` enables the concrete service units, then starts the
+  `project-mai-tai.target` stack.

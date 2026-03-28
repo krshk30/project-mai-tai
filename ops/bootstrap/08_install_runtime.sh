@@ -22,4 +22,4 @@ set -a
 source "$APP_ENV_FILE"
 set +a
 
-sudo -u trader "$VENV_DIR/bin/alembic" upgrade head
+sudo --preserve-env=MAI_TAI_DATABASE_URL -u trader "$VENV_DIR/bin/alembic" upgrade head

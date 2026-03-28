@@ -120,6 +120,8 @@ Bootstrap/runtime scripts now cover:
 - package install
 - host directory preparation
 - initial env-file placement
+- optional non-interactive dashboard auth creation
+- automatic `ufw` web-port allowance when the HTTP site is enabled
 - Python 3.12 runtime install
 - Alembic migration
 - `systemd` unit installation

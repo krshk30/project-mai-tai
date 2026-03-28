@@ -18,5 +18,9 @@ if [[ -L /etc/nginx/sites-enabled/default || -e /etc/nginx/sites-enabled/default
   sudo rm -f /etc/nginx/sites-enabled/default
 fi
 
+if command -v ufw >/dev/null 2>&1; then
+  sudo ufw allow 'Nginx Full' >/dev/null 2>&1 || true
+fi
+
 sudo nginx -t
 sudo systemctl reload nginx
