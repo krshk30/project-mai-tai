@@ -5,6 +5,7 @@ import logging
 from datetime import datetime
 from pathlib import Path
 from statistics import mean
+from typing import Iterable
 
 from project_mai_tai.events import ReferenceDataPayload
 from project_mai_tai.market_data.protocols import SnapshotProvider
