@@ -27,6 +27,7 @@ Core decisions:
 
 See:
 - [Architecture](./docs/architecture.md)
+- [Active Market Verification Todo](./docs/active-market-verification-todo.md)
 - [Implementation Roadmap](./docs/implementation-roadmap.md)
 - [VPS Deployment](./docs/vps-deployment.md)
 - [Strategy Preservation](./docs/strategy-preservation.md)
