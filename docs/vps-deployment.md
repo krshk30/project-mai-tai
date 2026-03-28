@@ -85,6 +85,7 @@ Initial approach:
 - root-owned env files
 - `chmod 600`
 - loaded by `systemd EnvironmentFile`
+- template source lives at `ops/env/project-mai-tai.env.example`
 
 This is the initial production posture for a single VPS.
 
@@ -100,3 +101,40 @@ Recommended sequence:
 5. issue the TLS certificate with Certbot using an operator email address
 6. switch to the HTTPS Nginx config
 7. initialize Postgres for `project-mai-tai` with the real application password
+8. edit `/etc/project-mai-tai/project-mai-tai.env` with real runtime secrets
+9. create the Python 3.12 venv, install the app, and run Alembic migrations
+10. install the `systemd` units and reload `systemd`
+11. enable and start `project-mai-tai.target`
+
+## Concrete Service Install
+
+Systemd assets now live under `ops/systemd/`:
+- `project-mai-tai.target`
+- `project-mai-tai-control.service`
+- `project-mai-tai-market-data.service`
+- `project-mai-tai-strategy.service`
+- `project-mai-tai-oms.service`
+- `project-mai-tai-reconciler.service`
+
+Bootstrap/runtime scripts now cover:
+- package install
+- host directory preparation
+- initial env-file placement
+- Python 3.12 runtime install
+- Alembic migration
+- `systemd` unit installation
+- full-stack enable/start
+
+Useful operator commands:
+- `ops/systemd/status.sh`
+- `ops/systemd/restart_all.sh`
+
+## Runtime Assumptions
+
+The production units assume:
+- repo checkout at `/home/trader/project-mai-tai`
+- app user `trader`
+- venv at `/home/trader/project-mai-tai/.venv`
+- env file at `/etc/project-mai-tai/project-mai-tai.env`
+- database and Redis on localhost
+- FastAPI control plane bound to `127.0.0.1:8100`

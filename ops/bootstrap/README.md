@@ -11,6 +11,9 @@ Recommended first-run order on the VPS:
 5. `05_issue_certificate.sh <email>`
 6. `06_enable_https_site.sh`
 7. `07_bootstrap_database.sh <db_password>`
+8. `08_install_runtime.sh`
+9. `09_install_systemd_units.sh`
+10. `10_enable_services.sh`
 
 Notes:
 - Run these only on the new `project-mai-tai` VPS target, not inside the
@@ -20,3 +23,5 @@ Notes:
 - Keep Cloudflare records as `DNS only` during initial certificate issuance.
 - After `07_bootstrap_database.sh`, store the same database password in the
   root-owned env file under `/etc/project-mai-tai/`.
+- Edit `/etc/project-mai-tai/project-mai-tai.env` before `08_install_runtime.sh`
+  so the runtime installs and migrations use real credentials.

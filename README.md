@@ -59,3 +59,17 @@ Fresh setup:
 
 Test run:
 - `.venv/bin/python -m pytest`
+
+## VPS Runtime Assets
+
+The repo now includes concrete VPS deployment assets for the parallel stack:
+- production env template in `ops/env/`
+- first-run bootstrap scripts in `ops/bootstrap/`
+- `systemd` units and helpers in `ops/systemd/`
+
+The intended production path is:
+1. bootstrap packages, directories, auth, and database
+2. edit `/etc/project-mai-tai/project-mai-tai.env`
+3. run `ops/bootstrap/08_install_runtime.sh`
+4. run `ops/bootstrap/09_install_systemd_units.sh`
+5. run `ops/bootstrap/10_enable_services.sh`

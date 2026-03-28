@@ -1,0 +1,25 @@
+[Unit]
+Description=Project Mai Tai control plane
+After=network-online.target postgresql.service redis-server.service
+Wants=network-online.target
+PartOf=project-mai-tai.target
+
+[Service]
+Type=simple
+User=trader
+Group=trader
+WorkingDirectory=/home/trader/project-mai-tai
+EnvironmentFile=/etc/project-mai-tai/project-mai-tai.env
+ExecStart=/home/trader/project-mai-tai/.venv/bin/mai-tai-control
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+UMask=0027
+StandardOutput=append:/var/log/project-mai-tai/control.log
+StandardError=append:/var/log/project-mai-tai/control.log
+SyslogIdentifier=project-mai-tai-control
+
+[Install]
+WantedBy=project-mai-tai.target

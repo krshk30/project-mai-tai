@@ -12,8 +12,10 @@ sudo apt-get install -y \
   postgresql \
   postgresql-contrib \
   redis-server \
-  python3-venv \
-  python3-pip
+  python3.12 \
+  python3.12-venv \
+  python3-pip \
+  git
 
 sudo systemctl enable nginx
 sudo systemctl enable postgresql

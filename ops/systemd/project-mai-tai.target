@@ -1,0 +1,8 @@
+[Unit]
+Description=Project Mai Tai application stack
+Wants=project-mai-tai-market-data.service
+Wants=project-mai-tai-strategy.service
+Wants=project-mai-tai-oms.service
+Wants=project-mai-tai-reconciler.service
+Wants=project-mai-tai-control.service
+After=postgresql.service redis-server.service network-online.target
