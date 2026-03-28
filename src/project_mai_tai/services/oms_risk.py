@@ -2,18 +2,15 @@ from __future__ import annotations
 
 import asyncio
 
-from project_mai_tai.services.runtime import run_placeholder_worker
+from project_mai_tai.oms.service import OmsRiskService
 
 
 SERVICE_NAME = "oms-risk"
 
 
 async def main() -> None:
-    await run_placeholder_worker(
-        service_name=SERVICE_NAME,
-        description="Validates intents, owns order submission, and derives positions from broker events.",
-        topics=["strategy-intents", "order-events", "heartbeats"],
-    )
+    service = OmsRiskService()
+    await service.run()
 
 
 def run() -> None:

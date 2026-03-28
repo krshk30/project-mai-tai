@@ -39,6 +39,7 @@ class Settings(BaseSettings):
     market_data_static_symbols: str = ""
 
     broker_default_provider: str = "alpaca"
+    oms_adapter: str = "simulated"
     alpaca_paper_base_url: str = "https://paper-api.alpaca.markets"
 
     dashboard_refresh_seconds: int = 5

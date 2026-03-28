@@ -3,13 +3,24 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 
-from project_mai_tai.events import MarketSnapshotPayload
-from project_mai_tai.services.strategy_engine_app import StrategyEngineState, snapshot_from_payload
+import pytest
+
+from project_mai_tai.events import MarketSnapshotPayload, OrderEventEvent, OrderEventPayload
+from project_mai_tai.services.strategy_engine_app import StrategyEngineService, StrategyEngineState, snapshot_from_payload
 from project_mai_tai.strategy_core import ReferenceData
 
 
 def fixed_now() -> datetime:
     return datetime(2026, 3, 28, 10, 0)
+
+
+class FakeRedis:
+    def __init__(self) -> None:
+        self.entries: list[tuple[str, str]] = []
+
+    async def xadd(self, stream: str, fields: dict[str, str]) -> str:
+        self.entries.append((stream, fields["data"]))
+        return "1-0"
 
 
 def make_snapshot_payload(*, symbol: str, price: float, volume: int) -> MarketSnapshotPayload:
@@ -131,3 +142,40 @@ def test_trade_tick_generates_open_intent_for_confirmed_watchlist(monkeypatch) -
     assert open_intents[0].payload.symbol == "UGRO"
     assert open_intents[0].payload.strategy_code == "macd_30s"
     assert "UGRO" in bot.pending_open_symbols
+
+
+@pytest.mark.asyncio
+async def test_order_event_fill_opens_position_and_clears_pending_state() -> None:
+    redis = FakeRedis()
+    service = StrategyEngineService(redis_client=redis)
+    bot = service.state.bots["macd_30s"]
+    bot.pending_open_symbols.add("UGRO")
+
+    order_event = OrderEventEvent(
+        source_service="oms-risk",
+        payload=OrderEventPayload(
+            strategy_code="macd_30s",
+            broker_account_name="paper:macd_30s",
+            client_order_id="macd_30s-UGRO-open-abc123",
+            symbol="UGRO",
+            side="buy",
+            intent_type="open",
+            status="filled",
+            quantity=Decimal("10"),
+            filled_quantity=Decimal("10"),
+            fill_price=Decimal("2.55"),
+            reason="ENTRY_P1_MACD_CROSS",
+            metadata={"path": "P1_MACD_CROSS", "reference_price": "2.55"},
+        ),
+    )
+
+    await service._handle_stream_message(
+        "test:order-events",
+        {"data": order_event.model_dump_json()},
+    )
+
+    position = bot.positions.get_position("UGRO")
+    assert position is not None
+    assert position.quantity == 10
+    assert position.entry_price == 2.55
+    assert "UGRO" not in bot.pending_open_symbols

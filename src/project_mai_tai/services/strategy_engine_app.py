@@ -17,6 +17,7 @@ from project_mai_tai.events import (
     MarketDataSubscriptionEvent,
     MarketDataSubscriptionPayload,
     MarketSnapshotPayload,
+    OrderEventEvent,
     SnapshotBatchEvent,
     TradeIntentEvent,
     TradeIntentPayload,
@@ -193,6 +194,29 @@ class StrategyBotRuntime:
             self.pending_scale_levels.discard((symbol, level))
             position.apply_scale(level, qty, fill_price)
 
+    def apply_order_status(
+        self,
+        *,
+        symbol: str,
+        intent_type: str,
+        status: str,
+        level: str | None = None,
+    ) -> None:
+        if status not in {"rejected", "cancelled"}:
+            return
+
+        if intent_type == "open":
+            self.pending_open_symbols.discard(symbol)
+            self.entry_engine.cancel_pending(symbol)
+            return
+
+        if intent_type == "close":
+            self.pending_close_symbols.discard(symbol)
+            return
+
+        if intent_type == "scale" and level:
+            self.pending_scale_levels.discard((symbol, level))
+
     def summary(self) -> dict[str, object]:
         return {
             "strategy": self.definition.code,
@@ -261,6 +285,7 @@ class StrategyBotRuntime:
             "score": str(signal["score"]),
             "score_details": str(signal["score_details"]),
             "timeframe_secs": str(self.definition.interval_secs),
+            "reference_price": str(signal["price"]),
         }
         return TradeIntentEvent(
             source_service=SERVICE_NAME,
@@ -294,6 +319,7 @@ class StrategyBotRuntime:
                 metadata={
                     "tier": str(signal.get("tier", "")),
                     "profit_pct": str(signal.get("profit_pct", "")),
+                    "reference_price": str(signal.get("price", "")),
                 },
             ),
         )
@@ -316,6 +342,7 @@ class StrategyBotRuntime:
                     "level": level,
                     "sell_pct": str(signal["sell_pct"]),
                     "profit_pct": str(signal["profit_pct"]),
+                    "reference_price": str(signal.get("price", "")),
                 },
             ),
         )
@@ -453,6 +480,22 @@ class StrategyEngineState:
             path=path,
         )
 
+    def apply_order_status(
+        self,
+        *,
+        strategy_code: str,
+        symbol: str,
+        intent_type: str,
+        status: str,
+        level: str | None = None,
+    ) -> None:
+        self.bots[strategy_code].apply_order_status(
+            symbol=symbol,
+            intent_type=intent_type,
+            status=status,
+            level=level,
+        )
+
     def summary(self) -> dict[str, object]:
         return {
             "watchlist": [str(stock["ticker"]) for stock in self.current_confirmed],
@@ -476,6 +519,7 @@ class StrategyEngineService:
         self.instance_name = socket.gethostname()
         self._stream_offsets = {
             stream_name(self.settings.redis_stream_prefix, "market-data"): "$",
+            stream_name(self.settings.redis_stream_prefix, "order-events"): "$",
             stream_name(self.settings.redis_stream_prefix, "snapshot-batches"): "$",
         }
         self._last_market_data_symbols: set[str] = set()
@@ -560,6 +604,38 @@ class StrategyEngineService:
                     len(intents),
                     event.payload.symbol,
                 )
+            return
+
+        if event_type == "order_event":
+            event = OrderEventEvent.model_validate(payload)
+            order = event.payload
+            level = order.metadata.get("level")
+
+            self.state.apply_order_status(
+                strategy_code=order.strategy_code,
+                symbol=order.symbol,
+                intent_type=order.intent_type,
+                status=order.status,
+                level=level,
+            )
+
+            if (
+                order.status in {"filled", "partially_filled"}
+                and order.fill_price is not None
+                and order.filled_quantity > 0
+            ):
+                self.state.apply_execution_fill(
+                    strategy_code=order.strategy_code,
+                    symbol=order.symbol,
+                    intent_type=order.intent_type,
+                    side=order.side,
+                    quantity=order.filled_quantity,
+                    price=order.fill_price,
+                    level=level,
+                    path=order.metadata.get("path"),
+                )
+
+            await self._sync_market_data_subscriptions(self.state.market_data_symbols())
 
     async def _publish_intent(self, intent: TradeIntentEvent) -> None:
         stream = stream_name(self.settings.redis_stream_prefix, "strategy-intents")

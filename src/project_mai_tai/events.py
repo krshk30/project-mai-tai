@@ -144,6 +144,31 @@ class TradeIntentEvent(EventEnvelope):
     payload: TradeIntentPayload
 
 
+class OrderEventPayload(BaseModel):
+    intent_event_id: UUID | None = None
+    intent_db_id: UUID | None = None
+    order_db_id: UUID | None = None
+    strategy_code: str
+    broker_account_name: str
+    client_order_id: str
+    broker_order_id: str | None = None
+    broker_fill_id: str | None = None
+    symbol: str
+    side: Literal["buy", "sell"]
+    intent_type: Literal["open", "scale", "close", "cancel"]
+    status: Literal["accepted", "rejected", "filled", "partially_filled", "cancelled"]
+    quantity: Decimal
+    filled_quantity: Decimal = Decimal("0")
+    fill_price: Decimal | None = None
+    reason: str
+    metadata: dict[str, str] = Field(default_factory=dict)
+
+
+class OrderEventEvent(EventEnvelope):
+    event_type: Literal["order_event"] = "order_event"
+    payload: OrderEventPayload
+
+
 class HeartbeatPayload(BaseModel):
     service_name: str
     instance_name: str
