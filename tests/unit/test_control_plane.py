@@ -28,6 +28,9 @@ from project_mai_tai.events import (
     MarketDataSubscriptionPayload,
     SnapshotBatchEvent,
     SnapshotBatchPayload,
+    StrategyBotStatePayload,
+    StrategyStateSnapshotEvent,
+    StrategyStateSnapshotPayload,
 )
 from project_mai_tai.services.control_plane import build_app
 from project_mai_tai.settings import Settings
@@ -46,6 +49,50 @@ class FakeRedis:
 
     async def aclose(self) -> None:
         return None
+
+
+class FakeLegacyClient:
+    async def fetch_snapshot(self) -> dict[str, object]:
+        return {
+            "enabled": True,
+            "connected": True,
+            "fetched_at": "2026-03-28T14:00:00+00:00",
+            "scanner": {
+                "confirmed_symbols": ["UGRO", "SBET"],
+                "count": 2,
+            },
+            "bots": {
+                "macd_30s": {
+                    "status": "running (dry run)",
+                    "watched_tickers": ["UGRO", "SBET"],
+                    "positions": [{"symbol": "UGRO", "quantity": 10.0}],
+                    "recent_actions": [{"symbol": "UGRO", "action": "BUY"}],
+                    "daily_pnl": 0,
+                },
+                "macd_1m": {
+                    "status": "running (dry run)",
+                    "watched_tickers": [],
+                    "positions": [],
+                    "recent_actions": [],
+                    "daily_pnl": 0,
+                },
+                "tos": {
+                    "status": "running (dry run)",
+                    "watched_tickers": ["UGRO"],
+                    "positions": [],
+                    "recent_actions": [],
+                    "daily_pnl": 0,
+                },
+                "runner": {
+                    "status": "running (NO ALPACA)",
+                    "watched_tickers": ["SBET"],
+                    "positions": [],
+                    "recent_actions": [],
+                    "daily_pnl": 0,
+                },
+            },
+            "errors": [],
+        }
 
 
 def build_test_session_factory() -> sessionmaker[Session]:
@@ -195,10 +242,47 @@ def make_streams(prefix: str) -> dict[str, list[tuple[str, dict[str, str]]]]:
             symbols=["UGRO"],
         ),
     )
+    strategy_state = StrategyStateSnapshotEvent(
+        source_service="strategy-engine",
+        payload=StrategyStateSnapshotPayload(
+            watchlist=["UGRO"],
+            top_confirmed=[{"ticker": "UGRO", "rank_score": 72}],
+            bots=[
+                StrategyBotStatePayload(
+                    strategy_code="macd_30s",
+                    account_name="paper:macd_30s",
+                    watchlist=["UGRO"],
+                    positions=[{"ticker": "UGRO", "quantity": 10}],
+                    pending_open_symbols=[],
+                    pending_close_symbols=[],
+                    pending_scale_levels=[],
+                ),
+                StrategyBotStatePayload(
+                    strategy_code="macd_1m",
+                    account_name="paper:macd_1m",
+                    watchlist=["UGRO"],
+                    positions=[],
+                    pending_open_symbols=[],
+                    pending_close_symbols=[],
+                    pending_scale_levels=[],
+                ),
+                StrategyBotStatePayload(
+                    strategy_code="tos",
+                    account_name="paper:tos_runner_shared",
+                    watchlist=["UGRO"],
+                    positions=[],
+                    pending_open_symbols=[],
+                    pending_close_symbols=[],
+                    pending_scale_levels=[],
+                ),
+            ],
+        ),
+    )
     return {
         f"{prefix}:heartbeats": [("1-0", {"data": heartbeat.model_dump_json()})],
         f"{prefix}:snapshot-batches": [("1-0", {"data": snapshot.model_dump_json()})],
         f"{prefix}:market-data-subscriptions": [("1-0", {"data": subscription.model_dump_json()})],
+        f"{prefix}:strategy-state": [("1-0", {"data": strategy_state.model_dump_json()})],
     }
 
 
@@ -208,7 +292,12 @@ def test_control_plane_overview_and_dashboard_render() -> None:
     seed_database(session_factory)
     redis = FakeRedis(make_streams(settings.redis_stream_prefix))
 
-    app = build_app(settings=settings, session_factory=session_factory, redis_client=redis)
+    app = build_app(
+        settings=settings,
+        session_factory=session_factory,
+        redis_client=redis,
+        legacy_client=FakeLegacyClient(),
+    )
 
     with TestClient(app) as client:
         overview = client.get("/api/overview")
@@ -220,11 +309,19 @@ def test_control_plane_overview_and_dashboard_render() -> None:
         assert body["market_data"]["active_subscription_symbols"] == 1
         assert body["reconciliation"]["latest_run"]["summary"]["cutover_confidence"] == 90
         assert body["reconciliation"]["findings"][0]["finding_type"] == "stuck_order"
+        assert body["legacy_shadow"]["divergence"]["status"] == "drifted"
+        assert body["legacy_shadow"]["divergence"]["confirmed_only_in_legacy"] == ["SBET"]
+        assert body["strategy_runtime"]["watchlist"] == ["UGRO"]
 
         reconciliation = client.get("/api/reconciliation")
         assert reconciliation.status_code == 200
         reconciliation_body = reconciliation.json()
         assert reconciliation_body["reconciliation"]["findings"][0]["title"] == "Order stuck in accepted for UGRO"
+
+        shadow = client.get("/api/shadow")
+        assert shadow.status_code == 200
+        shadow_body = shadow.json()
+        assert shadow_body["legacy_shadow"]["divergence"]["strategies"]["runner"]["new_present"] is False
 
         dashboard = client.get("/")
         assert dashboard.status_code == 200
@@ -233,3 +330,5 @@ def test_control_plane_overview_and_dashboard_render() -> None:
         assert "Virtual Positions" in dashboard.text
         assert "Cutover Confidence" in dashboard.text
         assert "Order stuck in accepted for UGRO" in dashboard.text
+        assert "Legacy Shadow" in dashboard.text
+        assert "SBET" in dashboard.text

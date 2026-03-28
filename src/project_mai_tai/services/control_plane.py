@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -31,9 +32,11 @@ from project_mai_tai.events import (
     HeartbeatEvent,
     MarketDataSubscriptionEvent,
     SnapshotBatchEvent,
+    StrategyStateSnapshotEvent,
     stream_name,
 )
 from project_mai_tai.log import configure_logging
+from project_mai_tai.shadow import LegacyShadowClient
 from project_mai_tai.settings import Settings, get_settings
 
 
@@ -51,14 +54,28 @@ class ControlPlaneRepository:
         *,
         session_factory: sessionmaker[Session],
         redis: Redis,
+        legacy_client: LegacyShadowClient | None = None,
     ):
         self.settings = settings
         self.session_factory = session_factory
         self.redis = redis
+        self.legacy_client = legacy_client
+        if self.legacy_client is None and self.settings.legacy_api_base_url:
+            self.legacy_client = LegacyShadowClient(
+                self.settings.legacy_api_base_url,
+                timeout_seconds=self.settings.legacy_api_timeout_seconds,
+            )
+        self._legacy_cache: dict[str, Any] | None = None
+        self._legacy_cache_at: datetime | None = None
+        self._legacy_cache_lock = asyncio.Lock()
 
     async def load_dashboard_data(self) -> dict[str, Any]:
         db_state = self._load_database_state()
         stream_state = await self._load_stream_state()
+        legacy_shadow = await self._load_legacy_shadow_data(
+            strategy_runtime=stream_state["strategy_runtime"],
+            recent_intents=db_state["recent_intents"],
+        )
 
         overall_status = "healthy"
         if db_state["errors"] or stream_state["errors"]:
@@ -99,8 +116,10 @@ class ControlPlaneRepository:
             "virtual_positions": db_state["virtual_positions"],
             "account_positions": db_state["account_positions"],
             "reconciliation": db_state["reconciliation"],
+            "strategy_runtime": stream_state["strategy_runtime"],
+            "legacy_shadow": legacy_shadow,
             "incidents": db_state["incidents"],
-            "errors": db_state["errors"] + stream_state["errors"],
+            "errors": db_state["errors"] + stream_state["errors"] + legacy_shadow["errors"],
         }
 
     async def load_health(self) -> dict[str, Any]:
@@ -343,6 +362,11 @@ class ControlPlaneRepository:
             "active_subscription_symbols": 0,
             "subscription_symbols": [],
         }
+        strategy_runtime = {
+            "watchlist": [],
+            "top_confirmed": [],
+            "bots": {},
+        }
 
         try:
             heartbeats = await self._read_stream_events("heartbeats", limit=50)
@@ -383,9 +407,25 @@ class ControlPlaneRepository:
         except Exception as exc:
             errors.append(f"redis:market-data-subscriptions:{exc}")
 
+        try:
+            strategy_state_events = await self._read_stream_events("strategy-state", limit=1)
+            if strategy_state_events:
+                event = StrategyStateSnapshotEvent.model_validate(strategy_state_events[0])
+                strategy_runtime = {
+                    "watchlist": event.payload.watchlist,
+                    "top_confirmed": event.payload.top_confirmed,
+                    "bots": {
+                        bot.strategy_code: bot.model_dump()
+                        for bot in event.payload.bots
+                    },
+                }
+        except Exception as exc:
+            errors.append(f"redis:strategy-state:{exc}")
+
         return {
             "services": services,
             "market_data": market_data,
+            "strategy_runtime": strategy_runtime,
             "errors": errors,
         }
 
@@ -399,12 +439,178 @@ class ControlPlaneRepository:
                 payloads.append(json.loads(data))
         return payloads
 
+    async def _load_legacy_shadow_data(
+        self,
+        *,
+        strategy_runtime: dict[str, Any],
+        recent_intents: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        if self.legacy_client is None:
+            return {
+                "enabled": False,
+                "connected": False,
+                "fetched_at": None,
+                "scanner": {"confirmed_symbols": [], "count": 0},
+                "bots": {},
+                "divergence": self._empty_legacy_divergence(),
+                "errors": [],
+            }
+
+        cached = await self._get_cached_legacy_snapshot()
+        divergence = self._build_legacy_divergence(
+            legacy_snapshot=cached,
+            strategy_runtime=strategy_runtime,
+            recent_intents=recent_intents,
+        )
+        return {
+            **cached,
+            "divergence": divergence,
+        }
+
+    async def _get_cached_legacy_snapshot(self) -> dict[str, Any]:
+        async with self._legacy_cache_lock:
+            cache_age = None
+            if self._legacy_cache_at is not None:
+                cache_age = (utcnow() - self._legacy_cache_at).total_seconds()
+            if self._legacy_cache is not None and cache_age is not None:
+                if cache_age < self.settings.legacy_api_cache_ttl_seconds:
+                    return self._legacy_cache
+
+            snapshot = await self.legacy_client.fetch_snapshot()
+            self._legacy_cache = snapshot
+            self._legacy_cache_at = utcnow()
+            return snapshot
+
+    def _build_legacy_divergence(
+        self,
+        *,
+        legacy_snapshot: dict[str, Any],
+        strategy_runtime: dict[str, Any],
+        recent_intents: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        new_watchlist = {str(symbol).upper() for symbol in strategy_runtime.get("watchlist", [])}
+        legacy_confirmed = {
+            str(symbol).upper()
+            for symbol in legacy_snapshot.get("scanner", {}).get("confirmed_symbols", [])
+        }
+
+        by_strategy: dict[str, dict[str, Any]] = {}
+        total_issues = 0
+        new_bots = strategy_runtime.get("bots", {})
+        recent_intents_by_strategy: dict[str, set[str]] = {}
+        for item in recent_intents:
+            strategy_code = str(item.get("strategy_code", ""))
+            recent_intents_by_strategy.setdefault(strategy_code, set()).add(
+                f'{item.get("intent_type", "")}:{item.get("side", "")}:{item.get("symbol", "")}'
+            )
+
+        all_strategy_codes = sorted(
+            set(legacy_snapshot.get("bots", {}).keys()) | set(new_bots.keys())
+        )
+        for strategy_code in all_strategy_codes:
+            legacy_bot = legacy_snapshot.get("bots", {}).get(strategy_code, {})
+            new_bot = new_bots.get(strategy_code, {})
+            legacy_watched = {
+                str(symbol).upper() for symbol in legacy_bot.get("watched_tickers", [])
+            }
+            new_watched = {
+                str(symbol).upper() for symbol in new_bot.get("watchlist", [])
+            }
+
+            legacy_positions = {
+                str(item.get("symbol", "")).upper(): float(item.get("quantity", 0) or 0)
+                for item in legacy_bot.get("positions", [])
+                if item.get("symbol")
+            }
+            new_positions = {
+                str(item.get("ticker", "")).upper(): float(item.get("quantity", 0) or 0)
+                for item in new_bot.get("positions", [])
+                if item.get("ticker")
+            }
+            position_mismatches = []
+            for symbol in sorted(set(legacy_positions) | set(new_positions)):
+                legacy_qty = legacy_positions.get(symbol, 0.0)
+                new_qty = new_positions.get(symbol, 0.0)
+                if abs(legacy_qty - new_qty) > 0.0001:
+                    position_mismatches.append(
+                        {
+                            "symbol": symbol,
+                            "legacy_quantity": legacy_qty,
+                            "new_quantity": new_qty,
+                        }
+                    )
+
+            legacy_actions = {
+                self._normalize_legacy_action_key(item)
+                for item in legacy_bot.get("recent_actions", [])
+                if self._normalize_legacy_action_key(item)
+            }
+            new_actions = recent_intents_by_strategy.get(strategy_code, set())
+
+            issue_count = (
+                len(legacy_watched - new_watched)
+                + len(new_watched - legacy_watched)
+                + len(position_mismatches)
+                + len(legacy_actions - new_actions)
+                + len(new_actions - legacy_actions)
+            )
+            total_issues += issue_count
+
+            by_strategy[strategy_code] = {
+                "legacy_status": legacy_bot.get("status", "unknown"),
+                "new_present": bool(new_bot),
+                "legacy_present": bool(legacy_bot),
+                "watched_only_in_legacy": sorted(legacy_watched - new_watched),
+                "watched_only_in_new": sorted(new_watched - legacy_watched),
+                "position_mismatches": position_mismatches,
+                "actions_only_in_legacy": sorted(legacy_actions - new_actions),
+                "actions_only_in_new": sorted(new_actions - legacy_actions),
+                "issue_count": issue_count,
+            }
+
+        confirmed_only_in_legacy = sorted(legacy_confirmed - new_watchlist)
+        confirmed_only_in_new = sorted(new_watchlist - legacy_confirmed)
+        total_issues += len(confirmed_only_in_legacy) + len(confirmed_only_in_new)
+
+        return {
+            "status": "aligned" if total_issues == 0 else "drifted",
+            "issue_count": total_issues,
+            "confirmed_only_in_legacy": confirmed_only_in_legacy,
+            "confirmed_only_in_new": confirmed_only_in_new,
+            "strategies": by_strategy,
+        }
+
+    def _empty_legacy_divergence(self) -> dict[str, Any]:
+        return {
+            "status": "disabled",
+            "issue_count": 0,
+            "confirmed_only_in_legacy": [],
+            "confirmed_only_in_new": [],
+            "strategies": {},
+        }
+
+    def _normalize_legacy_action_key(self, item: dict[str, Any]) -> str:
+        symbol = str(item.get("symbol", "")).upper()
+        action = str(item.get("action", "")).upper()
+        if not symbol or not action:
+            return ""
+        action_map = {
+            "BUY": "open:buy",
+            "CLOSE": "close:sell",
+            "SCALE": "scale:sell",
+        }
+        normalized = action_map.get(action)
+        if normalized is None:
+            return ""
+        return f"{normalized}:{symbol}"
+
 
 def build_app(
     settings: Settings | None = None,
     *,
     session_factory: sessionmaker[Session] | None = None,
     redis_client: Redis | None = None,
+    legacy_client: LegacyShadowClient | None = None,
 ) -> FastAPI:
     active_settings = settings or get_settings()
     active_session_factory = session_factory or build_session_factory(active_settings)
@@ -416,6 +622,7 @@ def build_app(
             active_settings,
             session_factory=active_session_factory,
             redis=redis,
+            legacy_client=legacy_client,
         )
         yield
         if redis_client is None:
@@ -478,6 +685,14 @@ def build_app(
         return {
             "reconciliation": data["reconciliation"],
             "incidents": data["incidents"],
+        }
+
+    @app.get("/api/shadow")
+    async def shadow() -> dict[str, Any]:
+        data = await app.state.repository.load_dashboard_data()
+        return {
+            "legacy_shadow": data["legacy_shadow"],
+            "strategy_runtime": data["strategy_runtime"],
         }
 
     @app.get("/", response_class=HTMLResponse)
@@ -620,6 +835,21 @@ def _render_dashboard(data: dict[str, Any]) -> str:
         for item in data["reconciliation"]["findings"]
     ) or _empty_row(5, "No reconciliation findings in the latest run")
 
+    shadow_strategy_rows = "".join(
+        f"""
+        <tr>
+          <td>{escape(strategy_code)}</td>
+          <td>{_status_badge(details["legacy_status"]) if details["legacy_present"] else '<span style="color:#61758a;">missing</span>'}</td>
+          <td>{'YES' if details["new_present"] else 'NO'}</td>
+          <td>{escape(", ".join(details["watched_only_in_legacy"][:6]) or "-")}</td>
+          <td>{escape(", ".join(details["watched_only_in_new"][:6]) or "-")}</td>
+          <td>{len(details["position_mismatches"])}</td>
+          <td>{details["issue_count"]}</td>
+        </tr>
+        """
+        for strategy_code, details in data["legacy_shadow"]["divergence"]["strategies"].items()
+    ) or _empty_row(7, "No legacy shadow comparison available")
+
     latest_snapshot = data["market_data"]["latest_snapshot_batch"] or {}
     snapshot_summary = (
         f'{latest_snapshot.get("snapshot_count", 0)} snapshots / '
@@ -632,6 +862,10 @@ def _render_dashboard(data: dict[str, Any]) -> str:
     latest_reconciliation = data["reconciliation"]["latest_run"] or {}
     latest_reconciliation_summary = latest_reconciliation.get("summary", {})
     cutover_confidence = latest_reconciliation_summary.get("cutover_confidence", 0)
+    legacy_shadow = data["legacy_shadow"]
+    shadow_divergence = legacy_shadow["divergence"]
+    shadow_confirmed_legacy = ", ".join(shadow_divergence["confirmed_only_in_legacy"][:10]) or "None"
+    shadow_confirmed_new = ", ".join(shadow_divergence["confirmed_only_in_new"][:10]) or "None"
 
     return f"""
     <html>
@@ -892,6 +1126,56 @@ def _render_dashboard(data: dict[str, Any]) -> str:
               <div style="margin-top: 16px;">{errors_html}</div>
             </section>
           </div>
+
+          <div class="grid-2">
+            <section class="section">
+              <div class="section-header">
+                <div>
+                  <h2>Legacy Shadow</h2>
+                  <div class="sub">Side-by-side divergence against the legacy VPS app.</div>
+                </div>
+              </div>
+              <div class="muted-box">
+                <p><strong>Status:</strong> {escape(shadow_divergence["status"])}</p>
+                <p><strong>Connected:</strong> {"yes" if legacy_shadow["connected"] else "no"}</p>
+                <p><strong>Fetched:</strong> {escape(legacy_shadow.get("fetched_at") or "")}</p>
+                <p><strong>Total Shadow Issues:</strong> {shadow_divergence["issue_count"]}</p>
+                <p><strong>Confirmed Only In Legacy:</strong> {escape(shadow_confirmed_legacy)}</p>
+                <p><strong>Confirmed Only In New:</strong> {escape(shadow_confirmed_new)}</p>
+              </div>
+            </section>
+
+            <section class="section">
+              <div class="section-header">
+                <div>
+                  <h2>New Strategy State</h2>
+                  <div class="sub">Latest in-memory strategy snapshot published by the new engine.</div>
+                </div>
+              </div>
+              <div class="muted-box">
+                <p><strong>Watchlist:</strong> {escape(", ".join(data["strategy_runtime"]["watchlist"][:12]) or "None")}</p>
+                <p><strong>Top Confirmed Count:</strong> {len(data["strategy_runtime"]["top_confirmed"])}</p>
+                <p><strong>Strategy Snapshots:</strong> {len(data["strategy_runtime"]["bots"])}</p>
+              </div>
+            </section>
+          </div>
+
+          <section class="section">
+            <div class="section-header">
+              <div>
+                <h2>Shadow Divergence</h2>
+                <div class="sub">Confirmed-name drift, missing strategy wiring, watched symbol gaps, and position mismatches.</div>
+              </div>
+            </div>
+            <div class="table-card">
+              <table>
+                <thead>
+                  <tr><th>Strategy</th><th>Legacy Status</th><th>New Present</th><th>Watched Only Legacy</th><th>Watched Only New</th><th>Pos Mismatches</th><th>Issues</th></tr>
+                </thead>
+                <tbody>{shadow_strategy_rows}</tbody>
+              </table>
+            </div>
+          </section>
 
           <div class="grid-2">
             <section class="section">

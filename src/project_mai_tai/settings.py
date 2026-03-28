@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     redis_stream_prefix: str = "mai_tai"
 
     legacy_api_base_url: str | None = None
+    legacy_api_timeout_seconds: int = 3
+    legacy_api_cache_ttl_seconds: int = 5
 
     massive_api_key: str | None = None
     market_data_snapshot_interval_seconds: int = 30

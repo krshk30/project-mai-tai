@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from decimal import Decimal
+from typing import Any
 from typing import Literal
 from uuid import UUID, uuid4
 
@@ -126,6 +127,27 @@ class MarketDataSubscriptionPayload(BaseModel):
 class MarketDataSubscriptionEvent(EventEnvelope):
     event_type: Literal["market_data_subscription"] = "market_data_subscription"
     payload: MarketDataSubscriptionPayload
+
+
+class StrategyBotStatePayload(BaseModel):
+    strategy_code: str
+    account_name: str
+    watchlist: list[str] = Field(default_factory=list)
+    positions: list[dict[str, Any]] = Field(default_factory=list)
+    pending_open_symbols: list[str] = Field(default_factory=list)
+    pending_close_symbols: list[str] = Field(default_factory=list)
+    pending_scale_levels: list[str] = Field(default_factory=list)
+
+
+class StrategyStateSnapshotPayload(BaseModel):
+    watchlist: list[str] = Field(default_factory=list)
+    top_confirmed: list[dict[str, Any]] = Field(default_factory=list)
+    bots: list[StrategyBotStatePayload] = Field(default_factory=list)
+
+
+class StrategyStateSnapshotEvent(EventEnvelope):
+    event_type: Literal["strategy_state_snapshot"] = "strategy_state_snapshot"
+    payload: StrategyStateSnapshotPayload
 
 
 class TradeIntentPayload(BaseModel):

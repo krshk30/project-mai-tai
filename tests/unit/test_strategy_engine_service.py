@@ -7,6 +7,7 @@ import pytest
 
 from project_mai_tai.events import MarketSnapshotPayload, OrderEventEvent, OrderEventPayload
 from project_mai_tai.services.strategy_engine_app import StrategyEngineService, StrategyEngineState, snapshot_from_payload
+from project_mai_tai.settings import Settings
 from project_mai_tai.strategy_core import ReferenceData
 
 
@@ -147,7 +148,10 @@ def test_trade_tick_generates_open_intent_for_confirmed_watchlist(monkeypatch) -
 @pytest.mark.asyncio
 async def test_order_event_fill_opens_position_and_clears_pending_state() -> None:
     redis = FakeRedis()
-    service = StrategyEngineService(redis_client=redis)
+    service = StrategyEngineService(
+        settings=Settings(redis_stream_prefix="test"),
+        redis_client=redis,
+    )
     bot = service.state.bots["macd_30s"]
     bot.pending_open_symbols.add("UGRO")
 
@@ -179,3 +183,4 @@ async def test_order_event_fill_opens_position_and_clears_pending_state() -> Non
     assert position.quantity == 10
     assert position.entry_price == 2.55
     assert "UGRO" not in bot.pending_open_symbols
+    assert any(stream == "test:strategy-state" for stream, _payload in redis.entries)

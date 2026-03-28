@@ -19,6 +19,9 @@ from project_mai_tai.events import (
     MarketSnapshotPayload,
     OrderEventEvent,
     SnapshotBatchEvent,
+    StrategyBotStatePayload,
+    StrategyStateSnapshotEvent,
+    StrategyStateSnapshotPayload,
     TradeIntentEvent,
     TradeIntentPayload,
     TradeTickEvent,
@@ -220,6 +223,7 @@ class StrategyBotRuntime:
     def summary(self) -> dict[str, object]:
         return {
             "strategy": self.definition.code,
+            "account_name": self.definition.account_name,
             "watchlist": sorted(self.watchlist),
             "positions": self.positions.get_all_positions(),
             "pending_open_symbols": sorted(self.pending_open_symbols),
@@ -579,6 +583,7 @@ class StrategyEngineService:
             }
             summary = self.state.process_snapshot_batch(snapshots, reference)
             await self._sync_market_data_subscriptions(summary["market_data_symbols"])
+            await self._publish_strategy_state_snapshot()
             self.logger.info(
                 "snapshot batch processed | alerts=%s confirmed=%s",
                 len(summary["alerts"]),
@@ -598,6 +603,7 @@ class StrategyEngineService:
                 await self._publish_intent(intent)
             if intents:
                 await self._sync_market_data_subscriptions(self.state.market_data_symbols())
+                await self._publish_strategy_state_snapshot()
             if intents:
                 self.logger.info(
                     "generated %s intents from %s trade tick",
@@ -636,6 +642,7 @@ class StrategyEngineService:
                 )
 
             await self._sync_market_data_subscriptions(self.state.market_data_symbols())
+            await self._publish_strategy_state_snapshot()
 
     async def _publish_intent(self, intent: TradeIntentEvent) -> None:
         stream = stream_name(self.settings.redis_stream_prefix, "strategy-intents")
@@ -653,6 +660,31 @@ class StrategyEngineService:
                     "watchlist_size": str(len(self.state.current_confirmed)),
                     "bot_count": str(len(self.state.bots)),
                 },
+            ),
+        )
+        await self.redis.xadd(stream, {"data": event.model_dump_json()})
+
+    async def _publish_strategy_state_snapshot(self) -> None:
+        stream = stream_name(self.settings.redis_stream_prefix, "strategy-state")
+        summary = self.state.summary()
+        bots = [
+            StrategyBotStatePayload(
+                strategy_code=str(bot["strategy"]),
+                account_name=str(bot["account_name"]),
+                watchlist=[str(symbol) for symbol in bot["watchlist"]],
+                positions=list(bot["positions"]),
+                pending_open_symbols=[str(symbol) for symbol in bot["pending_open_symbols"]],
+                pending_close_symbols=[str(symbol) for symbol in bot["pending_close_symbols"]],
+                pending_scale_levels=[str(level) for level in bot["pending_scale_levels"]],
+            )
+            for bot in summary["bots"].values()
+        ]
+        event = StrategyStateSnapshotEvent(
+            source_service=SERVICE_NAME,
+            payload=StrategyStateSnapshotPayload(
+                watchlist=[str(symbol) for symbol in summary["watchlist"]],
+                top_confirmed=list(summary["top_confirmed"]),
+                bots=bots,
             ),
         )
         await self.redis.xadd(stream, {"data": event.model_dump_json()})
