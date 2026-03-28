@@ -130,6 +130,7 @@ Bootstrap/runtime scripts now cover:
 Useful operator commands:
 - `ops/systemd/status.sh`
 - `ops/systemd/restart_all.sh`
+- `mai-tai-seed-runtime`
 
 ## Runtime Assumptions
 
@@ -140,3 +141,29 @@ The production units assume:
 - env file at `/etc/project-mai-tai/project-mai-tai.env`
 - database and Redis on localhost
 - FastAPI control plane bound to `127.0.0.1:8100`
+
+## Alpaca Paper Phase
+
+The repo now supports the current paper-account layout directly:
+- `macd_30s` uses its own Alpaca paper account
+- `macd_1m` uses its own Alpaca paper account
+- `tos` and `runner` share one Alpaca paper account
+
+Environment file fields:
+- `MAI_TAI_OMS_ADAPTER=alpaca_paper`
+- `MAI_TAI_ALPACA_MACD_30S_API_KEY`
+- `MAI_TAI_ALPACA_MACD_30S_SECRET_KEY`
+- `MAI_TAI_ALPACA_MACD_1M_API_KEY`
+- `MAI_TAI_ALPACA_MACD_1M_SECRET_KEY`
+- `MAI_TAI_ALPACA_TOS_RUNNER_API_KEY`
+- `MAI_TAI_ALPACA_TOS_RUNNER_SECRET_KEY`
+
+Runtime mapping fields:
+- `MAI_TAI_STRATEGY_MACD_30S_ACCOUNT_NAME`
+- `MAI_TAI_STRATEGY_MACD_1M_ACCOUNT_NAME`
+- `MAI_TAI_STRATEGY_TOS_ACCOUNT_NAME`
+- `MAI_TAI_STRATEGY_RUNNER_ACCOUNT_NAME`
+
+When OMS starts, it now seeds the configured strategies and broker accounts into
+Postgres automatically. That means the dashboard shows the intended runtime
+layout even before the first strategy intent is emitted.

@@ -29,6 +29,7 @@ from project_mai_tai.events import (
     stream_name,
 )
 from project_mai_tai.log import configure_logging
+from project_mai_tai.runtime_registry import strategy_registration_map
 from project_mai_tai.services.runtime import _install_signal_handlers
 from project_mai_tai.settings import Settings, get_settings
 from project_mai_tai.strategy_core import (
@@ -376,6 +377,7 @@ class StrategyEngineState:
         self.confirmed_scanner = MomentumConfirmedScanner(confirmed_config or MomentumConfirmedConfig())
         self.reference_data: dict[str, ReferenceData] = {}
         self.current_confirmed: list[dict[str, object]] = []
+        registrations = strategy_registration_map(self.settings)
 
         base_trading = base_trading_config or TradingConfig()
         default_indicator_config = indicator_config or IndicatorConfig()
@@ -384,8 +386,8 @@ class StrategyEngineState:
             "macd_30s": StrategyBotRuntime(
                 StrategyDefinition(
                     code="macd_30s",
-                    display_name="MACD Bot",
-                    account_name="paper:macd_30s",
+                    display_name=registrations["macd_30s"].display_name,
+                    account_name=registrations["macd_30s"].account_name,
                     interval_secs=30,
                     trading_config=base_trading,
                     indicator_config=default_indicator_config,
@@ -395,8 +397,8 @@ class StrategyEngineState:
             "macd_1m": StrategyBotRuntime(
                 StrategyDefinition(
                     code="macd_1m",
-                    display_name="MACD Bot 1M",
-                    account_name="paper:macd_1m",
+                    display_name=registrations["macd_1m"].display_name,
+                    account_name=registrations["macd_1m"].account_name,
                     interval_secs=60,
                     trading_config=base_trading.make_1m_variant(),
                     indicator_config=default_indicator_config,
@@ -406,8 +408,8 @@ class StrategyEngineState:
             "tos": StrategyBotRuntime(
                 StrategyDefinition(
                     code="tos",
-                    display_name="TOS Bot",
-                    account_name="paper:tos_runner_shared",
+                    display_name=registrations["tos"].display_name,
+                    account_name=registrations["tos"].account_name,
                     interval_secs=60,
                     trading_config=base_trading.make_tos_variant(),
                     indicator_config=default_indicator_config,
@@ -416,7 +418,7 @@ class StrategyEngineState:
             ),
             "runner": RunnerStrategyRuntime(
                 definition_code="runner",
-                account_name="paper:tos_runner_shared",
+                account_name=registrations["runner"].account_name,
                 default_quantity=runner_trading.default_quantity,
                 now_provider=now_provider,
                 source_service=SERVICE_NAME,

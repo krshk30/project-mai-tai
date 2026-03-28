@@ -46,6 +46,20 @@ class Settings(BaseSettings):
     broker_default_provider: str = "alpaca"
     oms_adapter: str = "simulated"
     alpaca_paper_base_url: str = "https://paper-api.alpaca.markets"
+    alpaca_request_timeout_seconds: int = 10
+    alpaca_order_fill_timeout_seconds: int = 10
+    alpaca_order_poll_interval_seconds: float = 0.5
+    alpaca_cancel_unfilled_after_timeout: bool = True
+    strategy_macd_30s_account_name: str = "paper:macd_30s"
+    strategy_macd_1m_account_name: str = "paper:macd_1m"
+    strategy_tos_account_name: str = "paper:tos_runner_shared"
+    strategy_runner_account_name: str = "paper:tos_runner_shared"
+    alpaca_macd_30s_api_key: str | None = None
+    alpaca_macd_30s_secret_key: str | None = None
+    alpaca_macd_1m_api_key: str | None = None
+    alpaca_macd_1m_secret_key: str | None = None
+    alpaca_tos_runner_api_key: str | None = None
+    alpaca_tos_runner_secret_key: str | None = None
     oms_broker_sync_interval_seconds: int = 15
 
     dashboard_refresh_seconds: int = 5

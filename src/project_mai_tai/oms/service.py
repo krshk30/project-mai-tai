@@ -11,6 +11,7 @@ from uuid import UUID
 from redis.asyncio import Redis
 from sqlalchemy.orm import Session, sessionmaker
 
+from project_mai_tai.broker_adapters.alpaca import AlpacaPaperBrokerAdapter
 from project_mai_tai.broker_adapters.protocols import BrokerAdapter, ExecutionReport, OrderRequest
 from project_mai_tai.broker_adapters.simulated import SimulatedBrokerAdapter
 from project_mai_tai.db.session import build_session_factory
@@ -23,6 +24,8 @@ from project_mai_tai.events import (
     stream_name,
 )
 from project_mai_tai.oms.store import OmsStore
+from project_mai_tai.runtime_registry import strategy_registration_map
+from project_mai_tai.runtime_seed import seed_runtime_metadata
 from project_mai_tai.services.runtime import _install_signal_handlers
 from project_mai_tai.settings import Settings, get_settings
 
@@ -50,6 +53,7 @@ class OmsRiskService:
         self.session_factory = session_factory or build_session_factory(self.settings)
         self.broker_adapter = broker_adapter or self._build_broker_adapter()
         self.store = store or OmsStore()
+        self.strategy_registrations = strategy_registration_map(self.settings)
         self.instance_name = socket.gethostname()
         self.logger = logging.getLogger(SERVICE_NAME)
         self._stream_offsets = {
@@ -64,6 +68,12 @@ class OmsRiskService:
         last_heartbeat = asyncio.get_running_loop().time()
         last_broker_sync = 0.0
 
+        seed_summary = self.seed_runtime_metadata()
+        self.logger.info(
+            "seeded runtime metadata: %s strategies, %s broker accounts",
+            seed_summary["strategies"],
+            seed_summary["broker_accounts"],
+        )
         await self._publish_heartbeat("starting", {"adapter": self.settings.oms_adapter})
         while not stop_event.is_set():
             loop_now = asyncio.get_running_loop().time()
@@ -115,10 +125,17 @@ class OmsRiskService:
 
     async def process_trade_intent(self, event: TradeIntentEvent) -> list[OrderEventEvent]:
         with self.session_factory() as session:
+            registration = self.strategy_registrations.get(event.payload.strategy_code)
             strategy = self.store.ensure_strategy(
                 session,
                 event.payload.strategy_code,
-                name=event.payload.strategy_code.replace("_", " ").upper(),
+                name=(registration.display_name if registration else event.payload.strategy_code.replace("_", " ").upper()),
+                execution_mode=registration.execution_mode if registration else "paper",
+                metadata_json=(
+                    dict(registration.metadata)
+                    if registration
+                    else {"account_name": event.payload.broker_account_name}
+                ),
             )
             broker_account = self.store.ensure_broker_account(
                 session,
@@ -280,7 +297,20 @@ class OmsRiskService:
     def _build_broker_adapter(self) -> BrokerAdapter:
         if self.settings.oms_adapter == "simulated":
             return SimulatedBrokerAdapter()
+        if self.settings.oms_adapter == "alpaca_paper":
+            return AlpacaPaperBrokerAdapter(self.settings)
         raise RuntimeError(f"Unsupported OMS adapter: {self.settings.oms_adapter}")
+
+    def seed_runtime_metadata(self) -> dict[str, int]:
+        summary = seed_runtime_metadata(
+            self.settings,
+            session_factory=self.session_factory,
+            store=self.store,
+        )
+        return {
+            "strategies": summary.strategies,
+            "broker_accounts": summary.broker_accounts,
+        }
 
     def _evaluate_risk(self, event: TradeIntentEvent) -> tuple[bool, str]:
         if event.payload.quantity <= 0:

@@ -27,6 +27,8 @@ Notes:
   root-owned env file under `/etc/project-mai-tai/`.
 - Edit `/etc/project-mai-tai/project-mai-tai.env` before `08_install_runtime.sh`
   so the runtime installs and migrations use real credentials.
+- For Alpaca paper mode, set `MAI_TAI_OMS_ADAPTER=alpaca_paper` and fill the
+  three paper credential pairs for `30s`, `1m`, and shared `tos/runner`.
 - `08_install_runtime.sh` preserves `MAI_TAI_DATABASE_URL` into the Alembic run
   so migrations work with the root-owned env file.
 - `10_enable_services.sh` enables the concrete service units, then starts the

@@ -73,3 +73,19 @@ The intended production path is:
 3. run `ops/bootstrap/08_install_runtime.sh`
 4. run `ops/bootstrap/09_install_systemd_units.sh`
 5. run `ops/bootstrap/10_enable_services.sh`
+6. run `mai-tai-seed-runtime` if you want an explicit metadata seed outside OMS startup
+
+## Paper Trading Config
+
+The new runtime now supports the current Alpaca paper-account layout directly:
+- `macd_30s` -> `MAI_TAI_STRATEGY_MACD_30S_ACCOUNT_NAME`
+- `macd_1m` -> `MAI_TAI_STRATEGY_MACD_1M_ACCOUNT_NAME`
+- `tos` + `runner` share `MAI_TAI_STRATEGY_TOS_ACCOUNT_NAME` / `MAI_TAI_STRATEGY_RUNNER_ACCOUNT_NAME`
+
+To enable real paper execution instead of the simulated OMS adapter:
+- set `MAI_TAI_OMS_ADAPTER=alpaca_paper`
+- fill the three Alpaca paper credential pairs in `/etc/project-mai-tai/project-mai-tai.env`
+- restart `project-mai-tai-oms.service`
+
+The OMS seeds the configured strategies and broker accounts on startup, so the
+dashboard no longer has to wait for the first intent before it shows runtime metadata.

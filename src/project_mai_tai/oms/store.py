@@ -43,18 +43,35 @@ class OmsStore:
             .order_by(BrokerAccount.name)
         ).all()
 
-    def ensure_strategy(self, session: Session, code: str, *, name: str | None = None) -> Strategy:
+    def ensure_strategy(
+        self,
+        session: Session,
+        code: str,
+        *,
+        name: str | None = None,
+        execution_mode: str = "paper",
+        metadata_json: dict[str, object] | None = None,
+        is_enabled: bool = True,
+    ) -> Strategy:
         strategy = session.scalar(select(Strategy).where(Strategy.code == code))
-        if strategy is not None:
+        if strategy is None:
+            strategy = Strategy(
+                code=code,
+                name=name or code.replace("_", " ").upper(),
+                execution_mode=execution_mode,
+                metadata_json=metadata_json or {},
+                is_enabled=is_enabled,
+            )
+            session.add(strategy)
+            session.flush()
             return strategy
 
-        strategy = Strategy(
-            code=code,
-            name=name or code.replace("_", " ").upper(),
-            execution_mode="paper",
-            metadata_json={},
-        )
-        session.add(strategy)
+        if name:
+            strategy.name = name
+        strategy.execution_mode = execution_mode
+        strategy.is_enabled = is_enabled
+        if metadata_json is not None:
+            strategy.metadata_json = metadata_json
         session.flush()
         return strategy
 
@@ -65,18 +82,27 @@ class OmsStore:
         *,
         provider: str,
         environment: str,
+        external_account_id: str | None = None,
+        is_active: bool = True,
     ) -> BrokerAccount:
         account = session.scalar(select(BrokerAccount).where(BrokerAccount.name == name))
-        if account is not None:
+        if account is None:
+            account = BrokerAccount(
+                name=name,
+                provider=provider,
+                environment=environment,
+                external_account_id=external_account_id,
+                is_active=is_active,
+            )
+            session.add(account)
+            session.flush()
             return account
 
-        account = BrokerAccount(
-            name=name,
-            provider=provider,
-            environment=environment,
-            external_account_id=None,
-        )
-        session.add(account)
+        account.provider = provider
+        account.environment = environment
+        if external_account_id is not None:
+            account.external_account_id = external_account_id
+        account.is_active = is_active
         session.flush()
         return account
 
