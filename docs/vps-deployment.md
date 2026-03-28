@@ -49,13 +49,25 @@ Local infrastructure:
 
 ## Edge Access
 
-Public edge plan is `TBA` until domain purchase is complete.
+Public edge domain:
+- `https://project-mai-tai.live`
+- `https://www.project-mai-tai.live` redirects to the apex domain
 
 Planned approach:
 - Nginx listens on `80/443`
 - basic auth enabled for the new dashboard
-- HTTPS via Certbot once the domain/subdomain is available
+- HTTPS via Certbot for `project-mai-tai.live` and `www.project-mai-tai.live`
 - control plane remains private behind localhost proxying
+
+DNS records:
+- `A` record for `project-mai-tai.live` -> `104.236.43.107`
+- `CNAME` record for `www.project-mai-tai.live` -> `project-mai-tai.live`
+
+Certificate and proxy plan:
+- FastAPI control plane listens on `127.0.0.1:8100`
+- Nginx terminates TLS and proxies to `127.0.0.1:8100`
+- `auth_basic` protects the operator surface
+- broker, strategy, Redis, and Postgres remain private
 
 ## Coexistence Rules
 

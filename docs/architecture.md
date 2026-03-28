@@ -136,7 +136,8 @@ Initial production approach:
 - services bind to localhost where possible
 - Nginx reverse proxy at the edge
 - basic auth for the dashboard
-- HTTPS once the domain is available
+- HTTPS at `https://project-mai-tai.live`
+- `www.project-mai-tai.live` redirects to the apex domain
 - root-owned env files under `/etc/project-mai-tai/`
 
 ## Migration Principle

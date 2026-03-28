@@ -104,7 +104,9 @@ Deliverables:
 - systemd units
 - log locations
 - env file locations
-- Nginx plan marked `TBA` until domain is ready
+- Nginx site config for `project-mai-tai.live`
+- DNS checklist for `project-mai-tai.live` and `www.project-mai-tai.live`
+- Certbot issuance steps for the VPS edge
 
 Acceptance:
 - new platform can run beside legacy on the same VPS
