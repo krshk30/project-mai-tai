@@ -30,3 +30,18 @@ See:
 - [Implementation Roadmap](./docs/implementation-roadmap.md)
 - [VPS Deployment](./docs/vps-deployment.md)
 - [Strategy Preservation](./docs/strategy-preservation.md)
+
+Executable scaffold:
+- shared Python package under `src/project_mai_tai/`
+- FastAPI control plane entrypoint
+- worker entrypoints for market data, strategy, OMS, and reconciliation
+- initial Alembic migration and Postgres schema
+- typed event contracts for Redis stream payloads
+
+Local bootstrap commands once dependencies are installed:
+- `alembic upgrade head`
+- `python services/control-plane/main.py`
+- `python services/market-data-gateway/main.py`
+- `python services/strategy-engine/main.py`
+- `python services/oms-risk/main.py`
+- `python services/reconciler/main.py`

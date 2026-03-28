@@ -35,3 +35,16 @@ testpaths = ["tests"]
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[project.scripts]
+mai-tai-control = "project_mai_tai.services.control_plane:run"
+mai-tai-market-data = "project_mai_tai.services.market_data_gateway:run"
+mai-tai-strategy = "project_mai_tai.services.strategy_engine:run"
+mai-tai-oms = "project_mai_tai.services.oms_risk:run"
+mai-tai-reconciler = "project_mai_tai.services.reconciler:run"
