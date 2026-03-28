@@ -307,11 +307,27 @@ def test_control_plane_overview_and_dashboard_render() -> None:
         assert body["virtual_positions"][0]["symbol"] == "UGRO"
         assert body["services"][0]["service_name"] == "strategy-engine"
         assert body["market_data"]["active_subscription_symbols"] == 1
+        assert body["scanner"]["top_confirmed"][0]["ticker"] == "UGRO"
+        assert body["scanner"]["legacy_confirmed_symbols"] == ["UGRO", "SBET"]
+        assert body["bots"][0]["strategy_code"] == "macd_30s"
+        assert body["bots"][0]["watchlist"] == ["UGRO"]
         assert body["reconciliation"]["latest_run"]["summary"]["cutover_confidence"] == 90
         assert body["reconciliation"]["findings"][0]["finding_type"] == "stuck_order"
         assert body["legacy_shadow"]["divergence"]["status"] == "drifted"
         assert body["legacy_shadow"]["divergence"]["confirmed_only_in_legacy"] == ["SBET"]
         assert body["strategy_runtime"]["watchlist"] == ["UGRO"]
+
+        scanner = client.get("/api/scanner")
+        assert scanner.status_code == 200
+        scanner_body = scanner.json()
+        assert scanner_body["scanner"]["watchlist"] == ["UGRO"]
+        assert scanner_body["scanner"]["top_confirmed"][0]["rank_score"] == 72.0
+
+        bots = client.get("/api/bots")
+        assert bots.status_code == 200
+        bots_body = bots.json()
+        assert bots_body["bots"][0]["display_name"] == "MACD Bot"
+        assert bots_body["bots"][0]["recent_intents"][0]["symbol"] == "UGRO"
 
         reconciliation = client.get("/api/reconciliation")
         assert reconciliation.status_code == 200
@@ -326,7 +342,12 @@ def test_control_plane_overview_and_dashboard_render() -> None:
         dashboard = client.get("/")
         assert dashboard.status_code == 200
         assert "Project Mai Tai Operator View" in dashboard.text
+        assert "Scanner Pipeline" in dashboard.text
+        assert "Confirmed Candidates" in dashboard.text
+        assert "Bot Deck" in dashboard.text
+        assert "Legacy-style bot visibility for 30s, 1m, TOS, and Runner." in dashboard.text
         assert "UGRO" in dashboard.text
+        assert "MACD Bot" in dashboard.text
         assert "Virtual Positions" in dashboard.text
         assert "Cutover Confidence" in dashboard.text
         assert "Order stuck in accepted for UGRO" in dashboard.text

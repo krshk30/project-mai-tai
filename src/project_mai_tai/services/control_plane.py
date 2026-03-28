@@ -36,6 +36,7 @@ from project_mai_tai.events import (
     stream_name,
 )
 from project_mai_tai.log import configure_logging
+from project_mai_tai.runtime_registry import configured_strategy_registrations
 from project_mai_tai.shadow import LegacyShadowClient
 from project_mai_tai.settings import Settings, get_settings
 
@@ -76,6 +77,18 @@ class ControlPlaneRepository:
             strategy_runtime=stream_state["strategy_runtime"],
             recent_intents=db_state["recent_intents"],
         )
+        scanner = self._build_scanner_view(
+            market_data=stream_state["market_data"],
+            strategy_runtime=stream_state["strategy_runtime"],
+            legacy_shadow=legacy_shadow,
+        )
+        bots = self._build_bot_views(
+            strategy_runtime=stream_state["strategy_runtime"],
+            legacy_shadow=legacy_shadow,
+            recent_intents=db_state["recent_intents"],
+            recent_orders=db_state["recent_orders"],
+            recent_fills=db_state["recent_fills"],
+        )
 
         overall_status = "healthy"
         if db_state["errors"] or stream_state["errors"]:
@@ -110,6 +123,8 @@ class ControlPlaneRepository:
             "counts": db_state["counts"],
             "services": stream_state["services"],
             "market_data": stream_state["market_data"],
+            "scanner": scanner,
+            "bots": bots,
             "recent_intents": db_state["recent_intents"],
             "recent_orders": db_state["recent_orders"],
             "recent_fills": db_state["recent_fills"],
@@ -121,6 +136,118 @@ class ControlPlaneRepository:
             "incidents": db_state["incidents"],
             "errors": db_state["errors"] + stream_state["errors"] + legacy_shadow["errors"],
         }
+
+    def _build_scanner_view(
+        self,
+        *,
+        market_data: dict[str, Any],
+        strategy_runtime: dict[str, Any],
+        legacy_shadow: dict[str, Any],
+    ) -> dict[str, Any]:
+        bot_states = strategy_runtime.get("bots", {})
+        watchlist = [str(symbol) for symbol in strategy_runtime.get("watchlist", [])]
+        top_confirmed: list[dict[str, Any]] = []
+        for index, item in enumerate(strategy_runtime.get("top_confirmed", []), start=1):
+            ticker = str(item.get("ticker", "")).upper()
+            watched_by = [
+                strategy_code
+                for strategy_code, bot in bot_states.items()
+                if ticker and ticker in {str(symbol).upper() for symbol in bot.get("watchlist", [])}
+            ]
+            top_confirmed.append(
+                {
+                    "rank": index,
+                    "ticker": ticker,
+                    "rank_score": float(item.get("rank_score", 0) or 0),
+                    "confirmation_path": str(item.get("confirmation_path", "")),
+                    "price": float(item.get("price", 0) or 0),
+                    "change_pct": float(item.get("change_pct", 0) or 0),
+                    "volume": float(item.get("volume", 0) or 0),
+                    "rvol": float(item.get("rvol", 0) or 0),
+                    "spread_pct": float(item.get("spread_pct", 0) or 0),
+                    "squeeze_count": int(item.get("squeeze_count", 0) or 0),
+                    "first_spike_time": str(item.get("first_spike_time", "")),
+                    "watched_by": watched_by,
+                }
+            )
+
+        legacy_confirmed = [
+            str(symbol).upper()
+            for symbol in legacy_shadow.get("scanner", {}).get("confirmed_symbols", [])
+        ]
+        return {
+            "status": "active" if top_confirmed else "idle",
+            "watchlist": watchlist,
+            "watchlist_count": len(watchlist),
+            "top_confirmed_count": len(top_confirmed),
+            "top_confirmed": top_confirmed,
+            "active_subscription_symbols": int(market_data.get("active_subscription_symbols", 0) or 0),
+            "subscription_symbols": list(market_data.get("subscription_symbols", [])),
+            "latest_snapshot_batch": market_data.get("latest_snapshot_batch"),
+            "legacy_confirmed_symbols": legacy_confirmed,
+            "legacy_confirmed_count": len(legacy_confirmed),
+        }
+
+    def _build_bot_views(
+        self,
+        *,
+        strategy_runtime: dict[str, Any],
+        legacy_shadow: dict[str, Any],
+        recent_intents: list[dict[str, Any]],
+        recent_orders: list[dict[str, Any]],
+        recent_fills: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        registrations = configured_strategy_registrations(self.settings)
+        ordered_codes = [registration.code for registration in registrations]
+        registration_map = {registration.code: registration for registration in registrations}
+        runtime_bots = strategy_runtime.get("bots", {})
+        legacy_bots = legacy_shadow.get("bots", {})
+
+        extra_codes = sorted(
+            (set(runtime_bots.keys()) | set(legacy_bots.keys())) - set(ordered_codes)
+        )
+        all_codes = ordered_codes + extra_codes
+
+        bot_views: list[dict[str, Any]] = []
+        for code in all_codes:
+            runtime_bot = runtime_bots.get(code, {})
+            legacy_bot = legacy_bots.get(code, {})
+            registration = registration_map.get(code)
+
+            positions = list(runtime_bot.get("positions", []))
+            watchlist = [str(symbol) for symbol in runtime_bot.get("watchlist", [])]
+            pending_open = [str(symbol) for symbol in runtime_bot.get("pending_open_symbols", [])]
+            pending_close = [str(symbol) for symbol in runtime_bot.get("pending_close_symbols", [])]
+            pending_scale = [str(level) for level in runtime_bot.get("pending_scale_levels", [])]
+
+            bot_views.append(
+                {
+                    "strategy_code": code,
+                    "display_name": registration.display_name if registration else code.replace("_", " ").upper(),
+                    "account_name": runtime_bot.get("account_name")
+                    or (registration.account_name if registration else ""),
+                    "legacy_status": str(legacy_bot.get("status", "not_available")),
+                    "legacy_present": bool(legacy_bot),
+                    "watchlist": watchlist,
+                    "watchlist_count": len(watchlist),
+                    "positions": positions,
+                    "position_count": len(positions),
+                    "pending_open_symbols": pending_open,
+                    "pending_close_symbols": pending_close,
+                    "pending_scale_levels": pending_scale,
+                    "pending_count": len(pending_open) + len(pending_close) + len(pending_scale),
+                    "recent_intents": [
+                        item for item in recent_intents if item.get("strategy_code") == code
+                    ][:3],
+                    "recent_orders": [
+                        item for item in recent_orders if item.get("strategy_code") == code
+                    ][:3],
+                    "recent_fills": [
+                        item for item in recent_fills if item.get("strategy_code") == code
+                    ][:3],
+                }
+            )
+        return bot_views
 
     async def load_health(self) -> dict[str, Any]:
         overview = await self.load_dashboard_data()
@@ -662,6 +789,16 @@ def build_app(
     async def overview() -> dict[str, Any]:
         return await app.state.repository.load_dashboard_data()
 
+    @app.get("/api/scanner")
+    async def scanner() -> dict[str, Any]:
+        data = await app.state.repository.load_dashboard_data()
+        return {"scanner": data["scanner"]}
+
+    @app.get("/api/bots")
+    async def bots() -> dict[str, Any]:
+        data = await app.state.repository.load_dashboard_data()
+        return {"bots": data["bots"]}
+
     @app.get("/api/orders")
     async def orders() -> dict[str, Any]:
         data = await app.state.repository.load_dashboard_data()
@@ -719,9 +856,59 @@ def run() -> None:
 
 def _render_dashboard(data: dict[str, Any]) -> str:
     refresh_seconds = 5
+    scanner = data["scanner"]
+    bot_views = data["bots"]
     errors_html = "".join(
         f'<div class="alert">{escape(error)}</div>' for error in data["errors"]
     ) or '<div class="ok-banner">No current control-plane read errors.</div>'
+
+    scanner_rows = "".join(
+        f"""
+        <tr>
+          <td>{item["rank"]}</td>
+          <td><strong>{escape(item["ticker"])}</strong></td>
+          <td>{escape(item["confirmation_path"] or "-")}</td>
+          <td>{item["rank_score"]:.0f}</td>
+          <td>{item["price"]:.2f}</td>
+          <td>{item["change_pct"]:+.1f}%</td>
+          <td>{_short_volume(item["volume"])}</td>
+          <td>{item["rvol"]:.1f}x</td>
+          <td>{item["spread_pct"]:.2f}%</td>
+          <td>{item["squeeze_count"]}</td>
+          <td>{escape(item["first_spike_time"] or "-")}</td>
+          <td>{escape(", ".join(item["watched_by"]) or "-")}</td>
+        </tr>
+        """
+        for item in scanner["top_confirmed"]
+    ) or _empty_row(12, "No confirmed candidates yet")
+
+    bot_cards = "".join(
+        f"""
+        <article class="bot-card">
+          <div class="bot-head">
+            <div>
+              <h3>{escape(bot["display_name"])}</h3>
+              <div class="sub">{escape(bot["strategy_code"])} / {escape(bot["account_name"] or "-")}</div>
+            </div>
+            {_status_badge(bot["legacy_status"] if bot["legacy_present"] else "not-wired")}
+          </div>
+          <div class="bot-metrics">
+            <div><span class="mini-label">Watching</span><strong>{bot["watchlist_count"]}</strong></div>
+            <div><span class="mini-label">Positions</span><strong>{bot["position_count"]}</strong></div>
+            <div><span class="mini-label">Pending</span><strong>{bot["pending_count"]}</strong></div>
+          </div>
+          <div class="bot-lines">
+            <p><strong>Watchlist:</strong> {escape(", ".join(bot["watchlist"][:8]) or "None")}</p>
+            <p><strong>Pending Opens:</strong> {escape(", ".join(bot["pending_open_symbols"][:6]) or "None")}</p>
+            <p><strong>Pending Closes:</strong> {escape(", ".join(bot["pending_close_symbols"][:6]) or "None")}</p>
+            <p><strong>Pending Scales:</strong> {escape(", ".join(bot["pending_scale_levels"][:6]) or "None")}</p>
+            <p><strong>Positions:</strong> {escape(_position_preview(bot["positions"]))}</p>
+            <p><strong>Recent Intents:</strong> {escape(_intent_preview(bot["recent_intents"]))}</p>
+          </div>
+        </article>
+        """
+        for bot in bot_views
+    ) or '<div class="muted-box">No bot runtime snapshots available yet.</div>'
 
     services_rows = "".join(
         f"""
@@ -898,6 +1085,21 @@ def _render_dashboard(data: dict[str, Any]) -> str:
             margin: 0 auto;
             padding: 24px;
           }}
+          .nav {{
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin: 0 0 20px 0;
+          }}
+          .nav a {{
+            text-decoration: none;
+            color: var(--ink);
+            border: 1px solid var(--line);
+            background: rgba(255,255,255,0.72);
+            padding: 10px 14px;
+            border-radius: 999px;
+            font-size: 13px;
+          }}
           .hero, .section, .table-card {{
             background: var(--panel);
             border: 1px solid var(--line);
@@ -951,6 +1153,50 @@ def _render_dashboard(data: dict[str, Any]) -> str:
             grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
             gap: 16px;
             margin-top: 16px;
+          }}
+          .bot-grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+            gap: 14px;
+          }}
+          .bot-card {{
+            background: rgba(255,255,255,0.78);
+            border: 1px solid var(--line);
+            border-radius: 18px;
+            padding: 16px;
+          }}
+          .bot-head {{
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 10px;
+            margin-bottom: 12px;
+          }}
+          .bot-head h3 {{
+            margin: 0 0 4px 0;
+          }}
+          .bot-metrics {{
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px;
+            margin-bottom: 12px;
+          }}
+          .bot-metrics > div {{
+            background: rgba(18, 36, 51, 0.04);
+            border-radius: 12px;
+            padding: 10px;
+          }}
+          .mini-label {{
+            display: block;
+            color: var(--muted);
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 4px;
+          }}
+          .bot-lines p {{
+            margin: 0 0 8px 0;
+            font-size: 14px;
           }}
           .section {{
             padding: 20px;
@@ -1088,6 +1334,75 @@ def _render_dashboard(data: dict[str, Any]) -> str:
             </div>
           </section>
 
+          <nav class="nav">
+            <a href="#scanner">Scanner</a>
+            <a href="#bots">Bots</a>
+            <a href="#shadow">Shadow</a>
+            <a href="#reconciliation">Reconciliation</a>
+            <a href="#orders">Orders</a>
+            <a href="#positions">Positions</a>
+          </nav>
+
+          <div class="grid-2" id="scanner">
+            <section class="section">
+              <div class="section-header">
+                <div>
+                  <h2>Scanner Pipeline</h2>
+                  <div class="sub">Closest equivalent to the legacy scanner dashboard: confirmed names, watchlist flow, and subscription state.</div>
+                </div>
+              </div>
+              <div class="muted-box">
+                <p><strong>Scanner Status:</strong> {escape(scanner["status"])}</p>
+                <p><strong>Watchlist Count:</strong> {scanner["watchlist_count"]}</p>
+                <p><strong>Top Confirmed Count:</strong> {scanner["top_confirmed_count"]}</p>
+                <p><strong>Active Subscriptions:</strong> {scanner["active_subscription_symbols"]}</p>
+                <p><strong>Watchlist:</strong> {escape(", ".join(scanner["watchlist"][:12]) or "None")}</p>
+                <p><strong>Legacy Confirmed:</strong> {escape(", ".join(scanner["legacy_confirmed_symbols"][:12]) or "None")}</p>
+              </div>
+            </section>
+
+            <section class="section">
+              <div class="section-header">
+                <div>
+                  <h2>Subscriptions</h2>
+                  <div class="sub">Symbols currently pushed into the live tick pipeline.</div>
+                </div>
+              </div>
+              <div class="muted-box">
+                <p><strong>Latest Snapshot Batch:</strong> {escape(snapshot_summary)}</p>
+                <p><strong>Snapshot Completed:</strong> {escape(latest_snapshot.get("completed_at", "No snapshot timestamp yet"))}</p>
+                <p><strong>Subscribed Symbols:</strong> {escape(", ".join(scanner["subscription_symbols"][:20]) or "None")}</p>
+              </div>
+            </section>
+          </div>
+
+          <section class="section">
+            <div class="section-header">
+              <div>
+                <h2>Confirmed Candidates</h2>
+                <div class="sub">New scanner output promoted to bot-ready candidates, including score, path, and which bots are watching.</div>
+              </div>
+            </div>
+            <div class="table-card">
+              <table>
+                <thead>
+                  <tr><th>Rank</th><th>Ticker</th><th>Path</th><th>Score</th><th>Price</th><th>Change</th><th>Volume</th><th>RVOL</th><th>Spread</th><th>Squeezes</th><th>First Spike</th><th>Watched By</th></tr>
+                </thead>
+                <tbody>{scanner_rows}</tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="section" id="bots">
+            <div class="section-header">
+              <div>
+                <h2>Bot Deck</h2>
+                <div class="sub">Legacy-style bot visibility for 30s, 1m, TOS, and Runner.</div>
+              </div>
+            </div>
+            <div class="bot-grid">{bot_cards}</div>
+          </section>
+
           <div class="grid-2">
             <section class="section">
               <div class="section-header">
@@ -1160,10 +1475,10 @@ def _render_dashboard(data: dict[str, Any]) -> str:
             </section>
           </div>
 
-          <section class="section">
+          <section class="section" id="shadow">
             <div class="section-header">
               <div>
-                <h2>Shadow Divergence</h2>
+                  <h2>Shadow Divergence</h2>
                 <div class="sub">Confirmed-name drift, missing strategy wiring, watched symbol gaps, and position mismatches.</div>
               </div>
             </div>
@@ -1177,7 +1492,7 @@ def _render_dashboard(data: dict[str, Any]) -> str:
             </div>
           </section>
 
-          <div class="grid-2">
+          <div class="grid-2" id="reconciliation">
             <section class="section">
               <div class="section-header">
                 <div>
@@ -1213,7 +1528,7 @@ def _render_dashboard(data: dict[str, Any]) -> str:
             </section>
           </div>
 
-          <div class="grid-2">
+          <div class="grid-2" id="orders">
             <section class="section">
               <div class="section-header">
                 <div>
@@ -1249,7 +1564,7 @@ def _render_dashboard(data: dict[str, Any]) -> str:
             </section>
           </div>
 
-          <div class="grid-2">
+          <div class="grid-2" id="positions">
             <section class="section">
               <div class="section-header">
                 <div>
@@ -1333,6 +1648,47 @@ def _status_badge(status: str) -> str:
 
 def _empty_row(columns: int, message: str) -> str:
     return f'<tr><td colspan="{columns}" style="color:#61758a;">{escape(message)}</td></tr>'
+
+
+def _short_volume(value: float | int | None) -> str:
+    if value is None:
+        return "-"
+    numeric = float(value)
+    abs_numeric = abs(numeric)
+    if abs_numeric >= 1_000_000_000:
+        return f"{numeric / 1_000_000_000:.1f}B"
+    if abs_numeric >= 1_000_000:
+        return f"{numeric / 1_000_000:.1f}M"
+    if abs_numeric >= 1_000:
+        return f"{numeric / 1_000:.1f}K"
+    return f"{numeric:.0f}"
+
+
+def _position_preview(positions: list[dict[str, Any]]) -> str:
+    if not positions:
+        return "None"
+    previews: list[str] = []
+    for item in positions[:3]:
+        symbol = str(item.get("ticker") or item.get("symbol") or "").upper()
+        quantity = item.get("quantity", 0)
+        if not symbol:
+            continue
+        previews.append(f"{symbol} x {quantity}")
+    return ", ".join(previews) if previews else "None"
+
+
+def _intent_preview(intents: list[dict[str, Any]]) -> str:
+    if not intents:
+        return "None"
+    previews: list[str] = []
+    for item in intents[:3]:
+        symbol = str(item.get("symbol", "")).upper()
+        intent_type = str(item.get("intent_type", "")).lower()
+        side = str(item.get("side", "")).lower()
+        if not symbol:
+            continue
+        previews.append(f"{intent_type}/{side} {symbol}")
+    return ", ".join(previews) if previews else "None"
 
 
 def _decimal_str(value: Decimal | None) -> str:
