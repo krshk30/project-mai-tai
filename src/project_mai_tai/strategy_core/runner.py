@@ -38,12 +38,20 @@ class RunnerConfig:
 
 
 class RunnerPosition:
-    def __init__(self, ticker: str, entry_price: float, quantity: int, entry_change_pct: float = 0.0):
+    def __init__(
+        self,
+        ticker: str,
+        entry_price: float,
+        quantity: int,
+        entry_change_pct: float = 0.0,
+        entry_time: str = "",
+    ):
         self.ticker = ticker
         self.entry_price = entry_price
         self.quantity = quantity
         self.original_quantity = quantity
         self.entry_change_pct = entry_change_pct
+        self.entry_time = entry_time
 
         self.current_price = entry_price
         self.peak_price = entry_price
@@ -85,6 +93,7 @@ class RunnerPosition:
         return {
             "ticker": self.ticker,
             "entry_price": round(self.entry_price, 4),
+            "entry_time": self.entry_time,
             "current_price": round(self.current_price, 4),
             "quantity": self.quantity,
             "original_quantity": self.original_quantity,
@@ -123,6 +132,9 @@ class RunnerStrategyRuntime:
         self._position: RunnerPosition | None = None
         self._pending_open_symbol: str | None = None
         self._pending_close_symbol: str | None = None
+        self._pending_close_reason: str = ""
+        self._daily_pnl = 0.0
+        self._closed_today: list[dict[str, object]] = []
 
     def set_watchlist(self, symbols: Iterable[str]) -> None:
         self.watchlist = {symbol.upper() for symbol in symbols if symbol}
@@ -229,6 +241,7 @@ class RunnerStrategyRuntime:
                     entry_price=fill_price,
                     quantity=filled_qty or self.default_quantity,
                     entry_change_pct=entry_change_pct,
+                    entry_time=self.now_provider().strftime("%I:%M:%S %p ET"),
                 )
             else:
                 self._position.update_price(fill_price)
@@ -236,9 +249,14 @@ class RunnerStrategyRuntime:
 
         if intent_type == "close" and side == "sell" and self._position and self._position.ticker == normalized:
             if filled_qty >= self._position.quantity:
+                closed = self._close_position(fill_price, self._pending_close_reason or "OMS_FILL")
                 self._position = None
                 self._pending_close_symbol = None
+                self._pending_close_reason = ""
                 self._cooldown_until[normalized] = self.now_provider() + timedelta(seconds=self.config.cooldown_seconds)
+                if closed is not None:
+                    self._closed_today.append(closed)
+                    self._daily_pnl += float(closed["pnl"])
                 return
 
             self._position.quantity -= filled_qty
@@ -274,6 +292,8 @@ class RunnerStrategyRuntime:
             "pending_open_symbols": [self._pending_open_symbol] if self._pending_open_symbol else [],
             "pending_close_symbols": [self._pending_close_symbol] if self._pending_close_symbol else [],
             "pending_scale_levels": [],
+            "daily_pnl": self._daily_pnl,
+            "closed_today": list(self._closed_today),
         }
 
     def active_symbols(self) -> set[str]:
@@ -417,6 +437,7 @@ class RunnerStrategyRuntime:
             raise RuntimeError("runner close intent requested without an open position")
 
         self._pending_close_symbol = self._position.ticker
+        self._pending_close_reason = reason
         return TradeIntentEvent(
             source_service=self.source_service,
             payload=TradeIntentPayload(
@@ -434,3 +455,25 @@ class RunnerStrategyRuntime:
                 },
             ),
         )
+
+    def _close_position(self, exit_price: float, reason: str) -> dict[str, object] | None:
+        if self._position is None:
+            return None
+        pnl = (exit_price - self._position.entry_price) * self._position.quantity
+        pnl_pct = (
+            ((exit_price - self._position.entry_price) / self._position.entry_price) * 100
+            if self._position.entry_price > 0
+            else 0.0
+        )
+        return {
+            "ticker": self._position.ticker,
+            "entry_price": round(self._position.entry_price, 4),
+            "exit_price": round(exit_price, 4),
+            "quantity": self._position.quantity,
+            "pnl": round(pnl, 2),
+            "pnl_pct": round(pnl_pct, 2),
+            "reason": reason,
+            "entry_time": self._position.entry_time,
+            "exit_time": self.now_provider().strftime("%I:%M:%S %p ET"),
+            "peak_profit_pct": round(self._position.peak_profit_pct, 2),
+        }

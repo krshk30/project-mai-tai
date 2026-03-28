@@ -8,6 +8,7 @@ from project_mai_tai.strategy_core.config import (
 )
 from project_mai_tai.strategy_core.entry import EntryEngine
 from project_mai_tai.strategy_core.exit import ExitEngine
+from project_mai_tai.strategy_core.five_pillars import FivePillarsConfig, apply_five_pillars
 from project_mai_tai.strategy_core.indicators import IndicatorEngine
 from project_mai_tai.strategy_core.models import (
     DaySnapshot,
@@ -22,6 +23,7 @@ from project_mai_tai.strategy_core.momentum_alerts import MomentumAlertEngine
 from project_mai_tai.strategy_core.momentum_confirmed import MomentumConfirmedScanner
 from project_mai_tai.strategy_core.position_tracker import Position, PositionTracker
 from project_mai_tai.strategy_core.runner import RunnerConfig, RunnerPosition, RunnerStrategyRuntime
+from project_mai_tai.strategy_core.top_gainers import TopGainersConfig, TopGainersTracker
 from project_mai_tai.strategy_core.trading_config import TradingConfig
 
 __all__ = [
@@ -30,6 +32,7 @@ __all__ = [
     "DaySnapshot",
     "EntryEngine",
     "ExitEngine",
+    "FivePillarsConfig",
     "IndicatorConfig",
     "IndicatorEngine",
     "LastTrade",
@@ -47,5 +50,8 @@ __all__ = [
     "RunnerConfig",
     "RunnerPosition",
     "RunnerStrategyRuntime",
+    "TopGainersConfig",
+    "TopGainersTracker",
     "TradingConfig",
+    "apply_five_pillars",
 ]

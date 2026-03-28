@@ -246,7 +246,73 @@ def make_streams(prefix: str) -> dict[str, list[tuple[str, dict[str, str]]]]:
         source_service="strategy-engine",
         payload=StrategyStateSnapshotPayload(
             watchlist=["UGRO"],
-            top_confirmed=[{"ticker": "UGRO", "rank_score": 72}],
+            top_confirmed=[
+                {
+                    "ticker": "UGRO",
+                    "rank_score": 72,
+                    "price": 2.55,
+                    "change_pct": 12.5,
+                    "volume": 900_000,
+                    "rvol": 6.1,
+                    "shares_outstanding": 50_000,
+                    "spread_pct": 0.42,
+                    "confirmed_at": "10:00:00 AM ET",
+                    "first_spike_time": "09:55:00 AM ET",
+                    "squeeze_count": 2,
+                    "confirmation_path": "PATH_B_2SQ",
+                }
+            ],
+            five_pillars=[
+                {
+                    "ticker": "UGRO",
+                    "first_seen": "09:55:00 AM ET",
+                    "price": 2.55,
+                    "change_pct": 12.5,
+                    "bid": 2.54,
+                    "ask": 2.55,
+                    "spread_pct": 0.39,
+                    "volume": 900_000,
+                    "rvol": 6.1,
+                    "shares_outstanding": 50_000,
+                    "hod": 2.60,
+                    "vwap": 2.40,
+                    "prev_close": 2.27,
+                    "data_age_secs": 4,
+                }
+            ],
+            top_gainers=[
+                {
+                    "ticker": "UGRO",
+                    "first_seen": "09:55:00 AM ET",
+                    "price": 2.55,
+                    "change_pct": 12.5,
+                    "bid": 2.54,
+                    "ask": 2.55,
+                    "spread_pct": 0.39,
+                    "volume": 900_000,
+                    "rvol": 6.1,
+                    "shares_outstanding": 50_000,
+                    "hod": 2.60,
+                    "vwap": 2.40,
+                    "prev_close": 2.27,
+                    "data_age_secs": 4,
+                }
+            ],
+            recent_alerts=[
+                {
+                    "type": "VOLUME_SPIKE",
+                    "ticker": "UGRO",
+                    "price": 2.55,
+                    "bid": 2.54,
+                    "ask": 2.55,
+                    "volume": 900_000,
+                    "float": 50_000,
+                    "time": "09:55:00 AM ET",
+                    "details": {"spike_mult": 5.2},
+                }
+            ],
+            alert_warmup={"fully_ready": True, "squeeze_5min_ready": True, "squeeze_10min_ready": True},
+            cycle_count=42,
             bots=[
                 StrategyBotStatePayload(
                     strategy_code="macd_30s",
@@ -256,6 +322,7 @@ def make_streams(prefix: str) -> dict[str, list[tuple[str, dict[str, str]]]]:
                     pending_open_symbols=[],
                     pending_close_symbols=[],
                     pending_scale_levels=[],
+                    daily_pnl=125.5,
                 ),
                 StrategyBotStatePayload(
                     strategy_code="macd_1m",
@@ -325,6 +392,8 @@ def test_control_plane_overview_and_dashboard_render() -> None:
         scanner_body = scanner.json()
         assert scanner_body["scanner"]["watchlist"] == ["UGRO"]
         assert scanner_body["scanner"]["top_confirmed"][0]["rank_score"] == 72.0
+        assert scanner_body["scanner"]["five_pillars_count"] == 1
+        assert scanner_body["scanner"]["recent_alerts_count"] == 1
 
         bots = client.get("/api/bots")
         assert bots.status_code == 200
@@ -332,6 +401,38 @@ def test_control_plane_overview_and_dashboard_render() -> None:
         assert bots_body["bots"][0]["display_name"] == "MACD Bot"
         assert bots_body["bots"][0]["recent_intents"][0]["symbol"] == "UGRO"
         assert bots_body["bots"][0]["legacy_status"] == "running (dry run)"
+        assert bots_body["bots"][0]["daily_pnl"] == 125.5
+
+        legacy_scanner = client.get("/scanner/dashboard")
+        assert legacy_scanner.status_code == 200
+        assert "Momentum Scanner Dashboard" in legacy_scanner.text
+        assert "5 Pillars Scanner" in legacy_scanner.text
+        assert "Top Gainers" in legacy_scanner.text
+        assert "Momentum Alerts" in legacy_scanner.text
+
+        scanner_confirmed = client.get("/scanner/confirmed")
+        assert scanner_confirmed.status_code == 200
+        assert scanner_confirmed.json()["count"] == 1
+
+        scanner_pillars = client.get("/scanner/pillars")
+        assert scanner_pillars.status_code == 200
+        assert scanner_pillars.json()["stocks"][0]["ticker"] == "UGRO"
+
+        scanner_alerts = client.get("/scanner/alerts")
+        assert scanner_alerts.status_code == 200
+        assert scanner_alerts.json()["count"] == 1
+
+        bot_30s_page = client.get("/bot/30s")
+        assert bot_30s_page.status_code == 200
+        assert "30-Second MACD Bot" in bot_30s_page.text
+        assert "Open Positions" in bot_30s_page.text
+        assert "Recent Trades" in bot_30s_page.text
+        assert "Bot Decisions" in bot_30s_page.text
+
+        bot_runner_page = client.get("/bot/runner")
+        assert bot_runner_page.status_code == 200
+        assert "Runner Bot" in bot_runner_page.text
+        assert "Closed Trades" in bot_runner_page.text
 
         reconciliation = client.get("/api/reconciliation")
         assert reconciliation.status_code == 200

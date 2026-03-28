@@ -36,6 +36,7 @@ from project_mai_tai.strategy_core import (
     DaySnapshot,
     EntryEngine,
     ExitEngine,
+    FivePillarsConfig,
     IndicatorConfig,
     IndicatorEngine,
     LastTrade,
@@ -50,7 +51,10 @@ from project_mai_tai.strategy_core import (
     QuoteSnapshot,
     ReferenceData,
     RunnerStrategyRuntime,
+    TopGainersConfig,
+    TopGainersTracker,
     TradingConfig,
+    apply_five_pillars,
 )
 from project_mai_tai.strategy_core.bar_builder import BarBuilderManager
 
@@ -232,6 +236,8 @@ class StrategyBotRuntime:
             "pending_open_symbols": sorted(self.pending_open_symbols),
             "pending_close_symbols": sorted(self.pending_close_symbols),
             "pending_scale_levels": sorted(f"{symbol}:{level}" for symbol, level in self.pending_scale_levels),
+            "daily_pnl": self.positions.get_daily_pnl(),
+            "closed_today": self.positions.get_closed_today(),
         }
 
     def has_position(self, ticker: str) -> bool:
@@ -370,13 +376,34 @@ class StrategyEngineState:
         now_provider: Callable[[], datetime] | None = None,
     ):
         self.settings = settings or get_settings()
+        default_alert_config = alert_config or MomentumAlertConfig(
+            min_price=self.settings.market_data_scan_min_price,
+            max_price=self.settings.market_data_scan_max_price,
+        )
         self.alert_engine = MomentumAlertEngine(
-            alert_config or MomentumAlertConfig(),
+            default_alert_config,
             now_provider=now_provider,
         )
         self.confirmed_scanner = MomentumConfirmedScanner(confirmed_config or MomentumConfirmedConfig())
+        self.five_pillars_config = FivePillarsConfig(
+            min_price=self.settings.market_data_scan_min_price,
+            max_price=self.settings.market_data_scan_max_price,
+        )
+        self.top_gainers_tracker = TopGainersTracker(
+            TopGainersConfig(
+                min_price=self.settings.market_data_scan_min_price,
+                max_price=self.settings.market_data_scan_max_price,
+            )
+        )
         self.reference_data: dict[str, ReferenceData] = {}
         self.current_confirmed: list[dict[str, object]] = []
+        self.five_pillars: list[dict[str, object]] = []
+        self.top_gainers: list[dict[str, object]] = []
+        self.top_gainer_changes: list[dict[str, object]] = []
+        self.recent_alerts: list[dict[str, object]] = []
+        self.alert_warmup: dict[str, object] = self.alert_engine.get_warmup_status()
+        self.cycle_count = 0
+        self._first_seen_by_ticker: dict[str, str] = {}
         registrations = strategy_registration_map(self.settings)
 
         base_trading = base_trading_config or TradingConfig()
@@ -430,9 +457,27 @@ class StrategyEngineState:
         snapshots: Sequence[MarketSnapshot],
         reference_data: dict[str, ReferenceData],
     ) -> dict[str, object]:
+        self.cycle_count += 1
         self.reference_data.update(reference_data)
+        current_now = self.alert_engine.now_provider()
+        self.five_pillars = self._decorate_scanner_rows(
+            apply_five_pillars(
+                snapshots,
+                self.reference_data,
+                self.five_pillars_config,
+                now=current_now,
+            )
+        )
+        self.top_gainers, self.top_gainer_changes = self.top_gainers_tracker.update(
+            snapshots,
+            self.reference_data,
+            now=current_now,
+        )
+        self.top_gainers = self._decorate_scanner_rows(self.top_gainers)
         self.alert_engine.record_snapshot(snapshots)
         alerts = self.alert_engine.check_alerts(snapshots, self.reference_data)
+        self._record_recent_alerts(alerts)
+        self.alert_warmup = self.alert_engine.get_warmup_status()
         snapshot_lookup = {snapshot.ticker: snapshot for snapshot in snapshots}
         newly_confirmed = self.confirmed_scanner.process_alerts(
             alerts,
@@ -458,6 +503,9 @@ class StrategyEngineState:
             "alerts": alerts,
             "newly_confirmed": newly_confirmed,
             "top_confirmed": self.current_confirmed,
+            "five_pillars": self.five_pillars,
+            "top_gainers": self.top_gainers,
+            "recent_alerts": self.recent_alerts,
             "watchlist": watchlist,
             "market_data_symbols": self.market_data_symbols(),
         }
@@ -544,6 +592,12 @@ class StrategyEngineState:
         return {
             "watchlist": [str(stock["ticker"]) for stock in self.current_confirmed],
             "top_confirmed": self.current_confirmed,
+            "five_pillars": self.five_pillars,
+            "top_gainers": self.top_gainers,
+            "recent_alerts": self.recent_alerts,
+            "top_gainer_changes": self.top_gainer_changes,
+            "alert_warmup": self.alert_warmup,
+            "cycle_count": self.cycle_count,
             "bots": {code: bot.summary() for code, bot in self.bots.items()},
         }
 
@@ -552,6 +606,34 @@ class StrategyEngineState:
         for bot in self.bots.values():
             symbols.update(bot.active_symbols())
         return sorted(symbols)
+
+    def _decorate_scanner_rows(self, rows: Sequence[dict[str, object]]) -> list[dict[str, object]]:
+        decorated: list[dict[str, object]] = []
+        for row in rows:
+            ticker = str(row.get("ticker", "")).upper()
+            if ticker and ticker not in self._first_seen_by_ticker:
+                self._first_seen_by_ticker[ticker] = self.alert_engine.now_provider().strftime("%I:%M:%S %p ET")
+            decorated.append(
+                {
+                    **row,
+                    "ticker": ticker,
+                    "first_seen": self._first_seen_by_ticker.get(ticker, ""),
+                }
+            )
+        return decorated
+
+    def _record_recent_alerts(self, alerts: Sequence[dict[str, object]]) -> None:
+        if not alerts:
+            return
+        normalized = [
+            {
+                **alert,
+                "ticker": str(alert.get("ticker", "")).upper(),
+            }
+            for alert in alerts
+        ]
+        self.recent_alerts.extend(normalized)
+        self.recent_alerts = self.recent_alerts[-100:]
 
 
 class StrategyEngineService:
@@ -745,6 +827,8 @@ class StrategyEngineService:
                 pending_open_symbols=[str(symbol) for symbol in bot["pending_open_symbols"]],
                 pending_close_symbols=[str(symbol) for symbol in bot["pending_close_symbols"]],
                 pending_scale_levels=[str(level) for level in bot["pending_scale_levels"]],
+                daily_pnl=float(bot.get("daily_pnl", 0) or 0),
+                closed_today=list(bot.get("closed_today", [])),
             )
             for bot in summary["bots"].values()
         ]
@@ -753,6 +837,12 @@ class StrategyEngineService:
             payload=StrategyStateSnapshotPayload(
                 watchlist=[str(symbol) for symbol in summary["watchlist"]],
                 top_confirmed=list(summary["top_confirmed"]),
+                five_pillars=list(summary["five_pillars"]),
+                top_gainers=list(summary["top_gainers"]),
+                recent_alerts=list(summary["recent_alerts"]),
+                top_gainer_changes=list(summary["top_gainer_changes"]),
+                alert_warmup=dict(summary["alert_warmup"]),
+                cycle_count=int(summary["cycle_count"]),
                 bots=bots,
             ),
         )

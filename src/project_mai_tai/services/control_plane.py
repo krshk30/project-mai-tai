@@ -39,6 +39,12 @@ from project_mai_tai.log import configure_logging
 from project_mai_tai.runtime_registry import configured_strategy_registrations
 from project_mai_tai.shadow import LegacyShadowClient
 from project_mai_tai.settings import Settings, get_settings
+from project_mai_tai.strategy_core import (
+    FivePillarsConfig,
+    MomentumAlertConfig,
+    MomentumConfirmedConfig,
+    TopGainersConfig,
+)
 
 
 SERVICE_NAME = "control-plane"
@@ -109,6 +115,21 @@ class ControlPlaneRepository:
             "control_plane_url": self.settings.control_plane_base_url,
             "provider": self.settings.broker_default_provider,
             "oms_adapter": self.settings.oms_adapter,
+            "scanner_config": {
+                "five_pillars": FivePillarsConfig(
+                    min_price=self.settings.market_data_scan_min_price,
+                    max_price=self.settings.market_data_scan_max_price,
+                ).__dict__,
+                "top_gainers": TopGainersConfig(
+                    min_price=self.settings.market_data_scan_min_price,
+                    max_price=self.settings.market_data_scan_max_price,
+                ).__dict__,
+                "momentum_alerts": MomentumAlertConfig(
+                    min_price=self.settings.market_data_scan_min_price,
+                    max_price=self.settings.market_data_scan_max_price,
+                ).__dict__,
+                "momentum_confirmed": MomentumConfirmedConfig().__dict__,
+            },
             "streams": {
                 "market_data": stream_name(self.settings.redis_stream_prefix, "market-data"),
                 "snapshot_batches": stream_name(self.settings.redis_stream_prefix, "snapshot-batches"),
@@ -177,10 +198,19 @@ class ControlPlaneRepository:
         ]
         return {
             "status": "active" if top_confirmed else "idle",
+            "cycle_count": int(strategy_runtime.get("cycle_count", 0) or 0),
             "watchlist": watchlist,
             "watchlist_count": len(watchlist),
             "top_confirmed_count": len(top_confirmed),
             "top_confirmed": top_confirmed,
+            "five_pillars": list(strategy_runtime.get("five_pillars", [])),
+            "five_pillars_count": len(strategy_runtime.get("five_pillars", [])),
+            "top_gainers": list(strategy_runtime.get("top_gainers", [])),
+            "top_gainers_count": len(strategy_runtime.get("top_gainers", [])),
+            "recent_alerts": list(strategy_runtime.get("recent_alerts", [])),
+            "recent_alerts_count": len(strategy_runtime.get("recent_alerts", [])),
+            "top_gainer_changes": list(strategy_runtime.get("top_gainer_changes", [])),
+            "alert_warmup": dict(strategy_runtime.get("alert_warmup", {})),
             "active_subscription_symbols": int(market_data.get("active_subscription_symbols", 0) or 0),
             "subscription_symbols": list(market_data.get("subscription_symbols", [])),
             "latest_snapshot_batch": market_data.get("latest_snapshot_batch"),
@@ -243,6 +273,8 @@ class ControlPlaneRepository:
                     "pending_close_symbols": pending_close,
                     "pending_scale_levels": pending_scale,
                     "pending_count": len(pending_open) + len(pending_close) + len(pending_scale),
+                    "daily_pnl": float(runtime_bot.get("daily_pnl", 0) or 0),
+                    "closed_today": list(runtime_bot.get("closed_today", [])),
                     "recent_intents": [
                         item for item in recent_intents if item.get("strategy_code") == code
                     ][:3],
@@ -371,7 +403,7 @@ class ControlPlaneRepository:
                     }
 
                 for intent in session.scalars(
-                    select(TradeIntent).order_by(desc(TradeIntent.updated_at)).limit(10)
+                    select(TradeIntent).order_by(desc(TradeIntent.updated_at)).limit(50)
                 ).all():
                     strategy = strategy_lookup.get(intent.strategy_id)
                     account = account_lookup.get(intent.broker_account_id)
@@ -390,7 +422,7 @@ class ControlPlaneRepository:
                     )
 
                 for order in session.scalars(
-                    select(BrokerOrder).order_by(desc(BrokerOrder.updated_at)).limit(10)
+                    select(BrokerOrder).order_by(desc(BrokerOrder.updated_at)).limit(50)
                 ).all():
                     strategy = strategy_lookup.get(order.strategy_id)
                     account = account_lookup.get(order.broker_account_id)
@@ -408,7 +440,7 @@ class ControlPlaneRepository:
                         }
                     )
 
-                for fill in session.scalars(select(Fill).order_by(desc(Fill.filled_at)).limit(10)).all():
+                for fill in session.scalars(select(Fill).order_by(desc(Fill.filled_at)).limit(50)).all():
                     strategy = strategy_lookup.get(fill.strategy_id)
                     account = account_lookup.get(fill.broker_account_id)
                     recent_fills.append(
@@ -499,6 +531,12 @@ class ControlPlaneRepository:
         strategy_runtime = {
             "watchlist": [],
             "top_confirmed": [],
+            "five_pillars": [],
+            "top_gainers": [],
+            "recent_alerts": [],
+            "top_gainer_changes": [],
+            "alert_warmup": {},
+            "cycle_count": 0,
             "bots": {},
         }
 
@@ -548,6 +586,12 @@ class ControlPlaneRepository:
                 strategy_runtime = {
                     "watchlist": event.payload.watchlist,
                     "top_confirmed": event.payload.top_confirmed,
+                    "five_pillars": event.payload.five_pillars,
+                    "top_gainers": event.payload.top_gainers,
+                    "recent_alerts": event.payload.recent_alerts,
+                    "top_gainer_changes": event.payload.top_gainer_changes,
+                    "alert_warmup": event.payload.alert_warmup,
+                    "cycle_count": event.payload.cycle_count,
                     "bots": {
                         bot.strategy_code: bot.model_dump()
                         for bot in event.payload.bots
@@ -838,6 +882,84 @@ def build_app(
             "legacy_shadow": data["legacy_shadow"],
             "strategy_runtime": data["strategy_runtime"],
         }
+
+    @app.get("/scanner/confirmed")
+    async def scanner_confirmed() -> dict[str, Any]:
+        data = await app.state.repository.load_dashboard_data()
+        return {
+            "stocks": data["scanner"]["top_confirmed"],
+            "count": data["scanner"]["top_confirmed_count"],
+        }
+
+    @app.get("/scanner/pillars")
+    async def scanner_pillars() -> dict[str, Any]:
+        data = await app.state.repository.load_dashboard_data()
+        return {
+            "stocks": data["scanner"]["five_pillars"],
+            "count": data["scanner"]["five_pillars_count"],
+        }
+
+    @app.get("/scanner/gainers")
+    async def scanner_gainers() -> dict[str, Any]:
+        data = await app.state.repository.load_dashboard_data()
+        return {
+            "stocks": data["scanner"]["top_gainers"],
+            "count": data["scanner"]["top_gainers_count"],
+        }
+
+    @app.get("/scanner/alerts")
+    async def scanner_alerts() -> dict[str, Any]:
+        data = await app.state.repository.load_dashboard_data()
+        return {
+            "alerts": data["scanner"]["recent_alerts"],
+            "count": data["scanner"]["recent_alerts_count"],
+            "warmup": data["scanner"]["alert_warmup"],
+        }
+
+    @app.get("/scanner/dashboard", response_class=HTMLResponse)
+    async def scanner_dashboard() -> str:
+        data = await app.state.repository.load_dashboard_data()
+        return _render_scanner_dashboard(data)
+
+    @app.get("/bot")
+    async def bot_30s_status() -> dict[str, Any]:
+        data = await app.state.repository.load_dashboard_data()
+        return _build_bot_api_payload(data, "macd_30s")
+
+    @app.get("/bot1m")
+    async def bot_1m_status() -> dict[str, Any]:
+        data = await app.state.repository.load_dashboard_data()
+        return _build_bot_api_payload(data, "macd_1m")
+
+    @app.get("/tosbot")
+    async def tos_bot_status() -> dict[str, Any]:
+        data = await app.state.repository.load_dashboard_data()
+        return _build_bot_api_payload(data, "tos")
+
+    @app.get("/runnerbot")
+    async def runner_bot_status() -> dict[str, Any]:
+        data = await app.state.repository.load_dashboard_data()
+        return _build_bot_api_payload(data, "runner")
+
+    @app.get("/bot/30s", response_class=HTMLResponse)
+    async def bot_30s_page() -> str:
+        data = await app.state.repository.load_dashboard_data()
+        return _render_bot_detail_page(data, "macd_30s")
+
+    @app.get("/bot/1m", response_class=HTMLResponse)
+    async def bot_1m_page() -> str:
+        data = await app.state.repository.load_dashboard_data()
+        return _render_bot_detail_page(data, "macd_1m")
+
+    @app.get("/bot/tos", response_class=HTMLResponse)
+    async def bot_tos_page() -> str:
+        data = await app.state.repository.load_dashboard_data()
+        return _render_bot_detail_page(data, "tos")
+
+    @app.get("/bot/runner", response_class=HTMLResponse)
+    async def bot_runner_page() -> str:
+        data = await app.state.repository.load_dashboard_data()
+        return _render_bot_detail_page(data, "runner")
 
     @app.get("/", response_class=HTMLResponse)
     async def dashboard() -> str:
@@ -1344,6 +1466,11 @@ def _render_dashboard(data: dict[str, Any]) -> str:
           </section>
 
           <nav class="nav">
+            <a href="/scanner/dashboard">Scanner Page</a>
+            <a href="/bot/30s">30s Bot</a>
+            <a href="/bot/1m">1m Bot</a>
+            <a href="/bot/tos">TOS Bot</a>
+            <a href="/bot/runner">Runner Bot</a>
             <a href="#scanner">Scanner</a>
             <a href="#bots">Bots</a>
             <a href="#shadow">Shadow</a>
@@ -1650,6 +1777,523 @@ def _render_dashboard(data: dict[str, Any]) -> str:
     """
 
 
+BOT_PAGE_META = {
+    "macd_30s": {"title": "30-Second MACD Bot", "emoji": "🤖", "color": "#2979ff", "path": "/bot/30s"},
+    "macd_1m": {"title": "1-Minute MACD Bot", "emoji": "⏱️", "color": "#9c27b0", "path": "/bot/1m"},
+    "tos": {"title": "TOS Bot", "emoji": "📊", "color": "#ff6f00", "path": "/bot/tos"},
+    "runner": {"title": "Runner Bot", "emoji": "🚀", "color": "#e91e63", "path": "/bot/runner"},
+}
+
+
+def _find_bot_view(data: dict[str, Any], strategy_code: str) -> dict[str, Any] | None:
+    return next(
+        (bot for bot in data["bots"] if bot["strategy_code"] == strategy_code),
+        None,
+    )
+
+
+def _build_bot_api_payload(data: dict[str, Any], strategy_code: str) -> dict[str, Any]:
+    bot = _find_bot_view(data, strategy_code)
+    if bot is None:
+        return {"error": "Bot not initialized"}
+    return {
+        "status": bot["wiring_status"],
+        "watched_tickers": bot["watchlist"],
+        "positions": bot["positions"],
+        "pending_open_symbols": bot["pending_open_symbols"],
+        "pending_close_symbols": bot["pending_close_symbols"],
+        "pending_scale_levels": bot["pending_scale_levels"],
+        "daily_pnl": bot["daily_pnl"],
+        "closed_today": bot["closed_today"],
+        "recent_intents": bot["recent_intents"],
+        "recent_orders": bot["recent_orders"],
+        "recent_fills": bot["recent_fills"],
+        "trade_log": _build_bot_decision_entries(bot),
+    }
+
+
+def _render_scanner_dashboard(data: dict[str, Any]) -> str:
+    scanner = data["scanner"]
+    scanner_state = data["strategy_runtime"]
+    config = data["scanner_config"]
+    latest_snapshot = data["market_data"]["latest_snapshot_batch"] or {}
+    services = {service["service_name"]: service for service in data["services"]}
+    market_data_service = services.get("market-data-gateway", {})
+    subscription_symbols = set(scanner["subscription_symbols"])
+
+    confirmed_rows = _render_scanner_confirmed_rows(scanner_state.get("top_confirmed", []), subscription_symbols)
+    pillar_rows = _render_scanner_stock_rows(scanner["five_pillars"], subscription_symbols)
+    gainer_rows = _render_scanner_stock_rows(scanner["top_gainers"], subscription_symbols)
+    alert_rows = _render_alert_rows(scanner["recent_alerts"])
+
+    warmup = scanner["alert_warmup"]
+    websocket_status = market_data_service.get("status", "unknown")
+    websocket_label = "⚡ live" if websocket_status == "healthy" else websocket_status
+    reconcile_note = (
+        "✅ All positions synced"
+        if data["counts"]["open_incidents"] == 0
+        else f'⚠️ {data["counts"]["open_incidents"]} open incidents'
+    )
+
+    return f"""<!DOCTYPE html>
+<html>
+<head>
+    <title>Momentum Scanner Dashboard</title>
+    <meta http-equiv="refresh" content="10">
+    <style>
+        body {{ background:#1a1a2e; color:#eee; font-family:'Consolas','Monaco',monospace; margin:0; padding:20px; }}
+        h1 {{ color:#00e5ff; margin-bottom:5px; }}
+        h2 {{ color:#ffd600; margin-top:30px; margin-bottom:10px; }}
+        .meta {{ color:#888; font-size:14px; margin-bottom:20px; }}
+        .meta span {{ color:#00e5ff; }}
+        table {{ border-collapse:collapse; width:100%; margin-bottom:10px; font-size:14px; }}
+        th {{ background:#16213e; color:#ffd600; padding:8px 12px; text-align:left; border-bottom:2px solid #0f3460; }}
+        td {{ padding:6px 12px; border-bottom:1px solid #1a1a3e; }}
+        tr:hover {{ background:#16213e; }}
+        .section {{ margin-bottom:30px; }}
+        .badge {{ display:inline-block; padding:2px 10px; border-radius:4px; font-size:12px; font-weight:bold; margin-left:10px; }}
+        .badge-green {{ background:#00c853; color:#000; }}
+        .badge-blue {{ background:#2979ff; color:#fff; }}
+        .badge-orange {{ background:#ff9100; color:#000; }}
+        .nav {{ margin-bottom:20px; }}
+        .nav a {{ color:#00e5ff; text-decoration:none; margin-right:12px; padding:5px 15px; border:1px solid #0f3460; border-radius:4px; }}
+        .stats {{ display:flex; gap:20px; margin-bottom:20px; flex-wrap:wrap; }}
+        .stat-box {{ background:#16213e; padding:15px 22px; border-radius:8px; border:1px solid #0f3460; min-width:180px; }}
+        .stat-value {{ font-size:28px; font-weight:bold; color:#00e5ff; }}
+        .stat-label {{ font-size:12px; color:#888; margin-top:4px; }}
+    </style>
+</head>
+<body>
+    <h1>📊 Momentum Scanner Dashboard</h1>
+    <div class="meta">
+        Status: <span>{escape(scanner["status"])}</span> |
+        Cycle: <span>{scanner["cycle_count"]}</span> |
+        Last Scan: <span>{escape(latest_snapshot.get("completed_at", "N/A"))}</span> |
+        Ref Tickers: <span>{latest_snapshot.get("reference_count", 0):,}</span> |
+        WebSocket: <span>{escape(websocket_label)} ({scanner["active_subscription_symbols"]} subs)</span> |
+        Auto-refreshes every 10s
+    </div>
+
+    <div class="nav">
+        <a href="/scanner/dashboard">🔴 Live</a>
+        <a href="/">🧭 Control Plane</a>
+        <a href="/bot/30s">🤖 30s</a>
+        <a href="/bot/1m">⏱️ 1m</a>
+        <a href="/bot/tos">📊 TOS</a>
+        <a href="/bot/runner">🚀 Runner</a>
+    </div>
+
+    <div class="stats">
+        <div class="stat-box" style="border:2px solid #00ff41;">
+            <div class="stat-value" style="color:#00ff41;">{len(scanner_state.get("top_confirmed", []))}</div>
+            <div class="stat-label">🎯 Confirmed Candidates</div>
+        </div>
+        <div class="stat-box">
+            <div class="stat-value">{scanner["five_pillars_count"]}</div>
+            <div class="stat-label">5 Pillars Qualifying</div>
+        </div>
+        <div class="stat-box">
+            <div class="stat-value">{scanner["top_gainers_count"]}</div>
+            <div class="stat-label">Top Gainers</div>
+        </div>
+        <div class="stat-box">
+            <div class="stat-value">{scanner["recent_alerts_count"]}</div>
+            <div class="stat-label">Momentum Alerts</div>
+        </div>
+    </div>
+
+    <div class="section">
+        <details>
+            <summary style="cursor:pointer;color:#ffd600;font-size:16px;font-weight:bold;">⚙️ Active Configuration</summary>
+            <div style="display:flex;gap:20px;flex-wrap:wrap;margin-top:10px;">
+                <div style="background:#16213e;padding:12px 18px;border-radius:8px;border:1px solid #0f3460;min-width:240px;">
+                    <div style="color:#ffd600;font-weight:bold;margin-bottom:8px;">🏛️ 5 Pillars Filter</div>
+                    <div style="font-size:13px;color:#ddd;">Price ${config["five_pillars"]["min_price"]:.0f}-${config["five_pillars"]["max_price"]:.0f}<br>Float ≤ {_short_volume(config["five_pillars"]["max_float"])}<br>Volume ≥ {_short_volume(config["five_pillars"]["min_today_volume"])}<br>Change ≥ {config["five_pillars"]["min_change_pct"]}%<br>RVol ≥ {config["five_pillars"]["min_rvol_5pillars"]}x</div>
+                </div>
+                <div style="background:#16213e;padding:12px 18px;border-radius:8px;border:1px solid #0f3460;min-width:240px;">
+                    <div style="color:#ffd600;font-weight:bold;margin-bottom:8px;">🚀 Top Gainers</div>
+                    <div style="font-size:13px;color:#ddd;">Price ${config["top_gainers"]["min_price"]:.0f}-${config["top_gainers"]["max_price"]:.0f}<br>RVol ≥ {config["top_gainers"]["min_rvol_top_gainers"]}x<br>Top {config["top_gainers"]["top_gainers_count"]} by change%</div>
+                </div>
+                <div style="background:#16213e;padding:12px 18px;border-radius:8px;border:1px solid #0f3460;min-width:240px;">
+                    <div style="color:#ffd600;font-weight:bold;margin-bottom:8px;">⚡ Momentum Alerts</div>
+                    <div style="font-size:13px;color:#ddd;">Min Volume ≥ {_short_volume(config["momentum_alerts"]["min_momentum_volume"])}<br>Squeeze 5m ≥ {config["momentum_alerts"]["squeeze_5min_pct"]}%<br>Squeeze 10m ≥ {config["momentum_alerts"]["squeeze_10min_pct"]}%<br>Spike ≥ {config["momentum_alerts"]["volume_spike_mult"]}x<br>Cooldown {config["momentum_alerts"]["alert_cooldown_mins"]}m</div>
+                </div>
+                <div style="background:#0a1a0a;padding:12px 18px;border-radius:8px;border:1px solid #00ff41;min-width:240px;">
+                    <div style="color:#00ff41;font-weight:bold;margin-bottom:8px;">🎯 Momentum Confirmed</div>
+                    <div style="font-size:13px;color:#ddd;">Min Volume ≥ {_short_volume(config["momentum_confirmed"]["confirmed_min_volume"])}<br>Max Float ≤ {_short_volume(config["momentum_confirmed"]["confirmed_max_float"])}<br>Min Rank Score ≥ {config["momentum_confirmed"]["rank_min_score"]}</div>
+                </div>
+            </div>
+        </details>
+    </div>
+
+    <div class="section" style="border:2px solid #00ff41;border-radius:8px;padding:15px;background:#0a1a0a;">
+        <h2 style="color:#00ff41;">🎯 Momentum Confirmed — Bot Candidates <span class="badge" style="background:#00ff41;color:#000;">{len(scanner_state.get("top_confirmed", []))} stocks</span></h2>
+        <p style="color:#888;font-size:12px;">Legacy-style scanner output from the new runtime. Reconcile: {escape(reconcile_note)}</p>
+        <table>
+            <thead><tr><th>#</th><th>Ticker / Bot</th><th>Path</th><th>Score</th><th>Confirmed</th><th>Price</th><th>Change%</th><th>Spread</th><th>Volume</th><th>RVol</th><th>Float</th><th>Squeezes</th><th>1st Spike</th></tr></thead>
+            <tbody>{confirmed_rows}</tbody>
+        </table>
+    </div>
+
+    <div class="section" style="background:#16213e;border-radius:8px;padding:15px;margin-bottom:20px;">
+        <h3 style="color:#00e5ff;">🤖 Trading Bots</h3>
+        <div style="display:flex;gap:15px;flex-wrap:wrap;">
+            <a href="/bot/30s" style="color:#2979ff;text-decoration:none;padding:10px 20px;border:2px solid #2979ff;border-radius:8px;">🤖 30s MACD Bot</a>
+            <a href="/bot/1m" style="color:#9c27b0;text-decoration:none;padding:10px 20px;border:2px solid #9c27b0;border-radius:8px;">⏱️ 1M MACD Bot</a>
+            <a href="/bot/tos" style="color:#ff6f00;text-decoration:none;padding:10px 20px;border:2px solid #ff6f00;border-radius:8px;">📊 TOS Bot</a>
+            <a href="/bot/runner" style="color:#e91e63;text-decoration:none;padding:10px 20px;border:2px solid #e91e63;border-radius:8px;">🚀 Runner</a>
+            <a href="/" style="color:#ff1744;text-decoration:none;padding:10px 20px;border:2px solid #ff1744;border-radius:8px;">🔄 Control Plane</a>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>🏛️ 5 Pillars Scanner <span class="badge badge-green">{scanner["five_pillars_count"]} stocks</span></h2>
+        <table>
+            <thead><tr><th>#</th><th>Ticker</th><th>First Seen</th><th>Price</th><th>Change%</th><th>Bid</th><th>Ask</th><th>Spread</th><th>Volume</th><th>RVol</th><th>Float</th><th>HOD</th><th>VWAP</th><th>Prev Close</th><th>Age</th></tr></thead>
+            <tbody>{pillar_rows}</tbody>
+        </table>
+    </div>
+
+    <div class="section">
+        <h2>🚀 Top Gainers <span class="badge badge-blue">{scanner["top_gainers_count"]} stocks</span></h2>
+        <table>
+            <thead><tr><th>#</th><th>Ticker</th><th>First Seen</th><th>Price</th><th>Change%</th><th>Bid</th><th>Ask</th><th>Spread</th><th>Volume</th><th>RVol</th><th>Float</th><th>HOD</th><th>VWAP</th><th>Prev Close</th><th>Age</th></tr></thead>
+            <tbody>{gainer_rows}</tbody>
+        </table>
+    </div>
+
+    <div class="section">
+        <h2>⚡ Momentum Alerts <span class="badge badge-orange">{scanner["recent_alerts_count"]} alerts</span></h2>
+        <p style="color:#888;font-size:12px;">Warmup: {"✅ Ready" if warmup.get("fully_ready") else "⏳ Warming up"} | 5m ready: {"yes" if warmup.get("squeeze_5min_ready") else "no"} | 10m ready: {"yes" if warmup.get("squeeze_10min_ready") else "no"}</p>
+        <table>
+            <thead><tr><th>Type</th><th>Ticker</th><th>Price</th><th>Bid</th><th>Ask</th><th>Volume</th><th>Float</th><th>Details</th><th>Time</th></tr></thead>
+            <tbody>{alert_rows}</tbody>
+        </table>
+    </div>
+</body>
+</html>"""
+
+
+def _render_bot_detail_page(data: dict[str, Any], strategy_code: str) -> str:
+    bot = _find_bot_view(data, strategy_code)
+    if bot is None:
+        return "<h1>Bot not initialized</h1>"
+
+    meta = BOT_PAGE_META[strategy_code]
+    recent_fills = [item for item in data["recent_fills"] if item["strategy_code"] == strategy_code][:50]
+    decision_entries = _build_bot_decision_entries(bot)
+    position_rows = _build_bot_position_rows(data, bot)
+    closed_today = list(bot.get("closed_today", []))
+    closed_rows = _build_closed_trade_rows(closed_today)
+    account_note = ""
+    if strategy_code in {"tos", "runner"}:
+        account_note = '<div style="color:#888;font-size:12px;margin-top:8px;">Shared Alpaca paper account with sibling strategy. Account-level quantities may include sibling exposure.</div>'
+
+    trades_rows = "".join(
+        f"""<tr>
+            <td style="font-size:11px">{escape(item["filled_at"])}</td>
+            <td style="color:{'#00c853' if item['side'] == 'buy' else '#ff1744'};font-weight:bold">{escape(item["side"].upper())}</td>
+            <td><strong>{escape(item["symbol"])}</strong></td>
+            <td style="text-align:right">{escape(item["quantity"])}</td>
+            <td style="text-align:right">${escape(item["price"])}</td>
+            <td style="text-align:right">${_decimal_total(item["quantity"], item["price"])}</td>
+        </tr>"""
+        for item in recent_fills
+    ) or '<tr><td colspan="6" style="text-align:center;color:#888;padding:15px;">No trades yet</td></tr>'
+
+    decision_lines = "".join(
+        f'<div style="color:{entry["color"]};padding:3px 0;">{escape(entry["text"])}</div>'
+        for entry in decision_entries
+    ) or '<div style="color:#888;padding:15px;text-align:center;">No decisions yet</div>'
+
+    current_position = bot["positions"][0] if strategy_code == "runner" and bot["positions"] else None
+    runner_position_html = ""
+    if strategy_code == "runner":
+        if current_position:
+            pnl_pct = float(current_position.get("current_profit_pct", 0) or 0)
+            pnl_color = "#00c853" if pnl_pct >= 0 else "#ff1744"
+            runner_position_html = f"""
+            <div style="background:#0a2e0a;border:2px solid #00c853;border-radius:8px;padding:15px;">
+                <h3 style="color:#00c853;margin:0;">🚀 RIDING: {escape(str(current_position.get("ticker", "")))}</h3>
+                <div style="display:flex;gap:24px;flex-wrap:wrap;margin-top:10px;">
+                    <div>Entry: <strong>${float(current_position.get("entry_price", 0) or 0):.2f}</strong><br><span style="font-size:11px;color:#888;">{escape(str(current_position.get("entry_time", "")))}</span></div>
+                    <div>Current: <strong>${float(current_position.get("current_price", 0) or 0):.2f}</strong></div>
+                    <div style="color:{pnl_color}">P&L: <strong>{pnl_pct:+.1f}%</strong></div>
+                    <div>Peak: <strong>{float(current_position.get("peak_profit_pct", 0) or 0):.1f}%</strong></div>
+                    <div>Trail: <strong>{float(current_position.get("trail_pct", 0) or 0):.0f}%</strong><br>Stop: ${float(current_position.get("trail_stop", 0) or 0):.2f}</div>
+                    <div>VolFade: <strong>{"YES ⚠️" if current_position.get("volume_faded") else "NO"}</strong></div>
+                    <div>Qty: <strong>{escape(str(current_position.get("quantity", 0)))}</strong></div>
+                    <div>Entry Δ: <strong>{float(current_position.get("entry_change_pct", 0) or 0):+.1f}%</strong></div>
+                </div>
+            </div>"""
+        else:
+            runner_position_html = '<div style="background:#1a1a2e;border:1px solid #444;border-radius:8px;padding:20px;text-align:center;color:#888;">👁️ Scanning for runners... (Score≥70, Change≥35%, after 7AM, accelerating)</div>'
+
+    return f"""<!DOCTYPE html><html><head>
+    <title>{meta["emoji"]} {meta["title"]}</title>
+    <meta http-equiv="refresh" content="10">
+    <style>
+        body {{ background:#0a0a23; color:#e0e0e0; font-family:'Courier New',monospace; padding:15px; margin:0; }}
+        h1 {{ color:{meta["color"]}; margin:0 0 5px 0; }}
+        table {{ width:100%; border-collapse:collapse; font-size:12px; }}
+        th {{ text-align:left; padding:6px 8px; border-bottom:2px solid #333; color:#888; }}
+        td {{ padding:5px 8px; }}
+        .section {{ background:#111; border:1px solid #333; border-radius:8px; padding:12px; margin:10px 0; }}
+        .account {{ background:#1a1a2e; border:2px solid {meta["color"]}; border-radius:8px; padding:12px; margin:10px 0; }}
+        a.nav-link {{ text-decoration:none; padding:6px 12px; border-radius:4px; border:1px solid; }}
+    </style>
+    </head><body>
+    {_render_page_nav(strategy_code)}
+    <h1>{meta["emoji"]} {meta["title"]}</h1>
+
+    <div class="account">
+        <span style="color:#888;">Execution:</span> <strong>{escape(bot["wiring_status"].upper())}</strong> |
+        <span style="color:#888;">Account:</span> <strong>{escape(bot["account_name"])}</strong> |
+        <span style="color:#888;">Watchlist:</span> <strong>{bot["watchlist_count"]}</strong> |
+        <span style="color:#888;">Open Positions:</span> <strong>{bot["position_count"]}</strong> |
+        <span style="color:#888;">P&L Day:</span> <strong style="color:{'#00c853' if bot['daily_pnl'] >= 0 else '#ff1744'}">${bot['daily_pnl']:+,.2f}</strong> |
+        <span style="color:#888;">Legacy Shadow:</span> <strong>{escape(bot["legacy_status"])}</strong>
+        {account_note}
+    </div>
+
+    {"<p style='color:#888;'>Entry: Score≥70 | Change≥35% | After 7AM | Accelerating | Trail: 10/15/20% tiered + EMA break</p>" if strategy_code == "runner" else ""}
+    {runner_position_html}
+
+    <div class="section">
+        <h3 style="color:{meta["color"]};margin:0 0 8px 0;">📈 Open Positions</h3>
+        <table>
+            <thead><tr><th>Ticker</th><th style="text-align:right">Bot Qty<br>Time</th><th style="text-align:right">Bot $</th><th style="text-align:right">Virtual Qty<br>Avg</th><th style="text-align:right">Account Qty<br>Current</th><th style="text-align:right">P&L</th><th>Status</th></tr></thead>
+            <tbody>{position_rows}</tbody>
+        </table>
+    </div>
+
+    <div class="section">
+        <h3 style="color:{meta["color"]};margin:0 0 8px 0;">📜 Recent Trades</h3>
+        <table>
+            <thead><tr><th>Filled</th><th>Side</th><th>Ticker</th><th style="text-align:right">Qty</th><th style="text-align:right">Fill $</th><th style="text-align:right">Total $</th></tr></thead>
+            <tbody>{trades_rows}</tbody>
+        </table>
+    </div>
+
+    <div class="section">
+        <h3 style="color:{meta["color"]};margin:0 0 8px 0;">🧠 Bot Decisions</h3>
+        <div style="font-family:monospace;font-size:12px;">{decision_lines}</div>
+    </div>
+
+    {f'''<div class="section">
+        <h3 style="color:{meta["color"]};">📊 Closed Trades</h3>
+        <table>
+            <thead><tr><th>Ticker</th><th>Entry</th><th>Exit</th><th>P&L</th><th>Reason</th><th>Peak</th><th>Duration</th></tr></thead>
+            <tbody>{closed_rows}</tbody>
+        </table>
+    </div>''' if strategy_code == "runner" else ""}
+
+    </body></html>"""
+
+
+def _render_page_nav(active: str) -> str:
+    links: list[str] = []
+    for code, meta in BOT_PAGE_META.items():
+        border = "2px" if code == active else "1px"
+        weight = "font-weight:bold;" if code == active else ""
+        links.append(
+            f'<a class="nav-link" href="{meta["path"]}" style="color:{meta["color"]};border-color:{meta["color"]};{weight}border-width:{border};">{meta["emoji"]} {escape(meta["title"].replace(" Bot", ""))}</a>'
+        )
+    return (
+        '<div style="display:flex;gap:10px;margin-bottom:15px;flex-wrap:wrap;">'
+        '<a class="nav-link" href="/scanner/dashboard" style="color:#00e5ff;border-color:#00e5ff;">📡 Scanner</a>'
+        + "".join(links)
+        + '<a class="nav-link" href="/" style="color:#00c853;border-color:#00c853;">💚 Control Plane</a>'
+        + "</div>"
+    )
+
+
+def _build_bot_position_rows(data: dict[str, Any], bot: dict[str, Any]) -> str:
+    strategy_code = bot["strategy_code"]
+    account_name = bot["account_name"]
+    runtime_positions = {str(item.get("ticker", "")).upper(): item for item in bot["positions"] if item.get("ticker")}
+    virtual_positions = {
+        str(item.get("symbol", "")).upper(): item
+        for item in data["virtual_positions"]
+        if item.get("strategy_code") == strategy_code
+    }
+    account_positions = {
+        str(item.get("symbol", "")).upper(): item
+        for item in data["account_positions"]
+        if item.get("broker_account_name") == account_name
+    }
+
+    symbols = sorted(set(runtime_positions) | set(virtual_positions) | set(account_positions))
+    if not symbols:
+        return '<tr><td colspan="7" style="text-align:center;color:#888;padding:15px;">No open positions</td></tr>'
+
+    rows: list[str] = []
+    for symbol in symbols:
+        runtime = runtime_positions.get(symbol)
+        virtual = virtual_positions.get(symbol)
+        account = account_positions.get(symbol)
+
+        runtime_qty = _as_float(runtime.get("quantity")) if runtime else 0.0
+        virtual_qty = _as_float(virtual.get("quantity")) if virtual else 0.0
+        account_qty = _as_float(account.get("quantity")) if account else 0.0
+        runtime_entry = _as_float(runtime.get("entry_price")) if runtime else 0.0
+        virtual_avg = _as_float(virtual.get("average_price")) if virtual else 0.0
+        account_market_value = _as_float(account.get("market_value")) if account else 0.0
+        current_price = 0.0
+        if account and account_qty:
+            current_price = account_market_value / max(account_qty, 0.0001)
+        elif runtime:
+            current_price = _as_float(runtime.get("current_price"))
+
+        if runtime and virtual and abs(runtime_qty - virtual_qty) < 0.0001:
+            status_html = '<span style="color:#00c853">✅ SYNCED</span>'
+        elif runtime and virtual:
+            status_html = f'<span style="color:#ff9100">⚠️ VQTY: bot={runtime_qty:g} virt={virtual_qty:g}</span>'
+        elif account and not runtime:
+            status_html = '<span style="color:#ff1744">⚠️ ACCOUNT-ONLY</span>'
+        elif runtime and not account and strategy_code in {"macd_30s", "macd_1m"}:
+            status_html = '<span style="color:#ff1744">⚠️ GHOST (not on broker)</span>'
+        else:
+            status_html = '<span style="color:#888">—</span>'
+
+        pnl_amount = 0.0
+        pnl_pct = 0.0
+        if current_price > 0 and runtime_entry > 0 and runtime_qty > 0:
+            pnl_amount = (current_price - runtime_entry) * runtime_qty
+            pnl_pct = ((current_price - runtime_entry) / runtime_entry) * 100
+        pnl_color = "#00c853" if pnl_amount >= 0 else "#ff1744"
+        time_text = escape(str(runtime.get("entry_time", ""))) if runtime else "—"
+
+        rows.append(
+            f"""<tr style="border-bottom:1px solid #222;">
+            <td><strong>{escape(symbol)}</strong></td>
+            <td style="text-align:right">{_fmt_qty(runtime_qty)}<br><span style="font-size:10px;color:#888;">{time_text}</span></td>
+            <td style="text-align:right">{_fmt_money(runtime_entry)}</td>
+            <td style="text-align:right">{_fmt_qty(virtual_qty)}<br><span style="font-size:10px;color:#888;">{_fmt_money(virtual_avg)}</span></td>
+            <td style="text-align:right">{_fmt_qty(account_qty)}<br><span style="font-size:10px;color:#888;">{_fmt_money(current_price)}</span></td>
+            <td style="text-align:right;color:{pnl_color}"><strong>${pnl_amount:+.2f}</strong><br><strong>{pnl_pct:+.1f}%</strong></td>
+            <td>{status_html}</td>
+        </tr>"""
+        )
+    return "".join(rows)
+
+
+def _build_bot_decision_entries(bot: dict[str, Any]) -> list[dict[str, str]]:
+    entries: list[dict[str, str]] = []
+    for item in bot["recent_intents"]:
+        entries.append(
+            {
+                "color": "#00c853" if item["intent_type"] == "open" else "#ffd600" if item["intent_type"] == "scale" else "#ff1744",
+                "text": f'{item["updated_at"]} {item["intent_type"].upper()} {item["symbol"]} {item["side"].upper()} qty={item["quantity"]} | {item["reason"]} | {item["status"].upper()}',
+            }
+        )
+    return entries[:50]
+
+
+def _build_closed_trade_rows(closed_today: list[dict[str, Any]]) -> str:
+    if not closed_today:
+        return '<tr><td colspan="7" style="text-align:center;color:#888;">No closed trades</td></tr>'
+    rows = []
+    for item in closed_today:
+        pnl = _as_float(item.get("pnl"))
+        color = "#00c853" if pnl >= 0 else "#ff1744"
+        rows.append(
+            f"""<tr>
+            <td>{escape(str(item.get("ticker", "")))}</td>
+            <td>{_fmt_money(_as_float(item.get("entry_price")))}</td>
+            <td>{_fmt_money(_as_float(item.get("exit_price")))}</td>
+            <td style="color:{color}">${pnl:+.2f} ({_as_float(item.get("pnl_pct")):+.1f}%)</td>
+            <td>{escape(str(item.get("reason", "")))}</td>
+            <td>pk:{_as_float(item.get("peak_profit_pct")):.1f}%</td>
+            <td>{escape(str(item.get("entry_time", "")))}→{escape(str(item.get("exit_time", "")))}</td>
+        </tr>"""
+        )
+    return "".join(rows)
+
+
+def _render_scanner_confirmed_rows(rows: list[dict[str, Any]], live_symbols: set[str]) -> str:
+    if not rows:
+        return '<tr><td colspan="13" style="text-align:center;color:#888;padding:20px;">No confirmed candidates yet</td></tr>'
+    rendered = []
+    for index, item in enumerate(rows, start=1):
+        ticker = str(item.get("ticker", "")).upper()
+        live_badge = ' <span style="color:#00ff41;font-size:10px;">⚡LIVE</span>' if ticker in live_symbols else ""
+        watched_by = ", ".join(item.get("watched_by", [])) if item.get("watched_by") else "—"
+        rendered.append(
+            f"""<tr>
+            <td style="text-align:center">{index}</td>
+            <td><strong>{escape(ticker)}</strong>{live_badge}<br><span style="font-size:10px;color:#888;">{escape(watched_by)}</span></td>
+            <td>{escape(str(item.get("confirmation_path", "")))}</td>
+            <td style="color:#ffd600;font-weight:bold;">{_as_float(item.get("rank_score")):.0f}</td>
+            <td style="color:#00ff41;">{escape(str(item.get("confirmed_at", item.get("first_spike_time", ""))))}</td>
+            <td>{_fmt_money(_as_float(item.get("price")))}</td>
+            <td style="color:{'#00c853' if _as_float(item.get('change_pct')) >= 0 else '#ff1744'}">{_as_float(item.get("change_pct")):+.1f}%</td>
+            <td>{_as_float(item.get("spread_pct")):.2f}%</td>
+            <td>{_short_volume(item.get("volume"))}</td>
+            <td>{_as_float(item.get("rvol")):.1f}x</td>
+            <td>{_short_volume(item.get("shares_outstanding"))}</td>
+            <td>{int(item.get("squeeze_count", 0) or 0)}</td>
+            <td>{escape(str(item.get("first_spike_time", "")))}</td>
+        </tr>"""
+        )
+    return "".join(rendered)
+
+
+def _render_scanner_stock_rows(rows: list[dict[str, Any]], live_symbols: set[str]) -> str:
+    if not rows:
+        return '<tr><td colspan="15" style="text-align:center;color:#888;padding:20px;">No stocks qualifying</td></tr>'
+    rendered = []
+    for index, item in enumerate(rows, start=1):
+        ticker = str(item.get("ticker", "")).upper()
+        live_badge = ' <span style="color:#00ff41;font-size:10px;">⚡LIVE</span>' if ticker in live_symbols else ""
+        rendered.append(
+            f"""<tr>
+            <td style="text-align:center">{index}</td>
+            <td><strong>{escape(ticker)}</strong>{live_badge}</td>
+            <td style="color:#00e5ff;font-size:12px;">{escape(str(item.get("first_seen", "")))}</td>
+            <td style="text-align:right">{_fmt_money(_as_float(item.get("price")))}</td>
+            <td style="text-align:right;color:{'#00c853' if _as_float(item.get('change_pct')) >= 0 else '#ff1744'}">{_as_float(item.get("change_pct")):+.1f}%</td>
+            <td style="text-align:right">{_fmt_money(_as_float(item.get("bid")))}</td>
+            <td style="text-align:right">{_fmt_money(_as_float(item.get("ask")))}</td>
+            <td style="text-align:right">{_as_float(item.get("spread_pct")):.2f}%</td>
+            <td style="text-align:right">{_short_volume(item.get("volume"))}</td>
+            <td style="text-align:right">{_as_float(item.get("rvol")):.1f}x</td>
+            <td style="text-align:right">{_short_volume(item.get("shares_outstanding"))}</td>
+            <td style="text-align:right">{_fmt_money(_as_float(item.get("hod")))}</td>
+            <td style="text-align:right">{_fmt_money(_as_float(item.get("vwap")))}</td>
+            <td style="text-align:right">{_fmt_money(_as_float(item.get("prev_close")))}</td>
+            <td style="text-align:right">{escape(_format_age(item.get("data_age_secs")))}</td>
+        </tr>"""
+        )
+    return "".join(rendered)
+
+
+def _render_alert_rows(alerts: list[dict[str, Any]]) -> str:
+    if not alerts:
+        return '<tr><td colspan="9" style="text-align:center;color:#888;padding:20px;">No alerts fired yet</td></tr>'
+    rendered = []
+    for alert in reversed(alerts[-100:]):
+        details = alert.get("details", {})
+        if isinstance(details, dict):
+            details_str = ", ".join(f"{key}={value}" for key, value in details.items())
+        else:
+            details_str = str(details)
+        rendered.append(
+            f"""<tr>
+            <td>{escape(str(alert.get("type", "")))}</td>
+            <td><strong>{escape(str(alert.get("ticker", "")))}</strong></td>
+            <td>{_fmt_money(_as_float(alert.get("price")))}</td>
+            <td>{_fmt_money(_as_float(alert.get("bid")))}</td>
+            <td>{_fmt_money(_as_float(alert.get("ask")))}</td>
+            <td>{_short_volume(alert.get("volume"))}</td>
+            <td>{_short_volume(alert.get("float"))}</td>
+            <td>{escape(details_str)}</td>
+            <td>{escape(str(alert.get("time", "")))}</td>
+        </tr>"""
+        )
+    return "".join(rendered)
+
+
 def _status_badge(status: str) -> str:
     normalized = status.lower().replace(" ", "_")
     return f'<span class="pill status-{escape(normalized)}">{escape(status.upper())}</span>'
@@ -1710,3 +2354,43 @@ def _datetime_str(value: datetime | None) -> str:
     if value is None:
         return ""
     return value.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+
+def _format_age(seconds: Any) -> str:
+    try:
+        numeric = int(seconds)
+    except (TypeError, ValueError):
+        return "?"
+    if numeric < 0:
+        return "?"
+    if numeric < 60:
+        return f"{numeric}s"
+    minutes, remaining = divmod(numeric, 60)
+    if minutes < 60:
+        return f"{minutes}m{remaining}s"
+    return f"{minutes}m"
+
+
+def _fmt_money(value: float) -> str:
+    if value <= 0:
+        return "—"
+    return f"${value:.2f}"
+
+
+def _fmt_qty(value: float) -> str:
+    if abs(value) < 0.0001:
+        return "—"
+    if abs(value - round(value)) < 0.0001:
+        return str(int(round(value)))
+    return f"{value:.2f}"
+
+
+def _as_float(value: Any) -> float:
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _decimal_total(quantity: str, price: str) -> str:
+    return f"{_as_float(quantity) * _as_float(price):,.2f}"

@@ -158,11 +158,19 @@ class StrategyBotStatePayload(BaseModel):
     pending_open_symbols: list[str] = Field(default_factory=list)
     pending_close_symbols: list[str] = Field(default_factory=list)
     pending_scale_levels: list[str] = Field(default_factory=list)
+    daily_pnl: float = 0.0
+    closed_today: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class StrategyStateSnapshotPayload(BaseModel):
     watchlist: list[str] = Field(default_factory=list)
     top_confirmed: list[dict[str, Any]] = Field(default_factory=list)
+    five_pillars: list[dict[str, Any]] = Field(default_factory=list)
+    top_gainers: list[dict[str, Any]] = Field(default_factory=list)
+    recent_alerts: list[dict[str, Any]] = Field(default_factory=list)
+    top_gainer_changes: list[dict[str, Any]] = Field(default_factory=list)
+    alert_warmup: dict[str, Any] = Field(default_factory=dict)
+    cycle_count: int = 0
     bots: list[StrategyBotStatePayload] = Field(default_factory=list)
 
 
