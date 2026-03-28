@@ -428,13 +428,18 @@ def test_control_plane_overview_and_dashboard_render() -> None:
         bot_30s_page = client.get("/bot/30s")
         assert bot_30s_page.status_code == 200
         assert "30-Second MACD Bot" in bot_30s_page.text
+        assert "Execution Workspace" in bot_30s_page.text
         assert "Open Positions" in bot_30s_page.text
         assert "Recent Trades" in bot_30s_page.text
-        assert "Bot Decisions" in bot_30s_page.text
+        assert "Trade Intents" in bot_30s_page.text
+        assert "Recent Orders" in bot_30s_page.text
+        assert "Account Exposure" in bot_30s_page.text
+        assert "Decision Tape" in bot_30s_page.text
 
         bot_runner_page = client.get("/bot/runner")
         assert bot_runner_page.status_code == 200
         assert "Runner Bot" in bot_runner_page.text
+        assert "Current Runner Ride" in bot_runner_page.text
         assert "Closed Trades" in bot_runner_page.text
 
         reconciliation = client.get("/api/reconciliation")

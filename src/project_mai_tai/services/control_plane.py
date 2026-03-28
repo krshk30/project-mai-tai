@@ -2251,11 +2251,567 @@ def _render_bot_detail_page(data: dict[str, Any], strategy_code: str) -> str:
     position_rows = _build_bot_position_rows(data, bot)
     closed_today = list(bot.get("closed_today", []))
     closed_rows = _build_closed_trade_rows(closed_today)
-    account_note = ""
-    if strategy_code in {"tos", "runner"}:
-        account_note = '<div style="color:#888;font-size:12px;margin-top:8px;">Shared Alpaca paper account with sibling strategy. Account-level quantities may include sibling exposure.</div>'
+    trades_rows = _build_bot_fill_rows(recent_fills)
+    intent_rows = _build_bot_intent_rows(bot)
+    order_rows = _build_bot_order_rows(bot)
+    account_rows = _build_bot_account_rows(data, bot)
+    decision_lines = _build_bot_decision_lines(decision_entries)
+    watchlist_html = _render_chip_cloud(bot["watchlist"], empty_text="No symbols on watch")
+    pending_open_html = _render_chip_cloud(bot["pending_open_symbols"], variant="live", empty_text="None queued")
+    pending_close_html = _render_chip_cloud(bot["pending_close_symbols"], variant="danger", empty_text="None queued")
+    pending_scale_html = _render_chip_cloud(bot["pending_scale_levels"], variant="amber", empty_text="No scale levels armed")
+    account_note = (
+        "Shared Alpaca paper account with sibling strategy. Account-level quantities can include sibling exposure."
+        if strategy_code in {"tos", "runner"}
+        else "Dedicated paper account mapped to this bot."
+    )
+    pnl_color = "#5fff8d" if bot["daily_pnl"] >= 0 else "#ff6b6b"
+    recent_fill_count = len(recent_fills)
+    current_position = bot["positions"][0] if strategy_code == "runner" and bot["positions"] else None
 
-    trades_rows = "".join(
+    runner_status_panel = ""
+    if strategy_code == "runner":
+        if current_position:
+            current_profit_pct = _as_float(current_position.get("current_profit_pct"))
+            runner_color = "#5fff8d" if current_profit_pct >= 0 else "#ff6b6b"
+            runner_status_panel = f"""
+            <section class="panel full accent-panel">
+                <div class="panel-header">
+                    <div>
+                        <h2>Current Runner Ride</h2>
+                        <div class="sub">Live runner management, trailing protection, and fade checks.</div>
+                    </div>
+                    <span class="count accent">{escape(str(current_position.get("ticker", "")))}</span>
+                </div>
+                <div class="hero-grid">
+                    <div class="hero-card"><span>Entry</span><strong>{_fmt_money(_as_float(current_position.get("entry_price")))}</strong><small>{escape(str(current_position.get("entry_time", "")))}</small></div>
+                    <div class="hero-card"><span>Current</span><strong>{_fmt_money(_as_float(current_position.get("current_price")))}</strong><small>Qty {escape(str(current_position.get("quantity", 0)))}</small></div>
+                    <div class="hero-card"><span>P&L</span><strong style="color:{runner_color}">{current_profit_pct:+.1f}%</strong><small>Peak {_as_float(current_position.get("peak_profit_pct")):.1f}%</small></div>
+                    <div class="hero-card"><span>Trail</span><strong>{_as_float(current_position.get("trail_pct")):.0f}%</strong><small>Stop {_fmt_money(_as_float(current_position.get("trail_stop")))}</small></div>
+                    <div class="hero-card"><span>Vol Fade</span><strong>{"YES" if current_position.get("volume_faded") else "NO"}</strong><small>Entry Δ {_as_float(current_position.get("entry_change_pct")):+.1f}%</small></div>
+                </div>
+            </section>"""
+        else:
+            runner_status_panel = """
+            <section class="panel full accent-panel">
+                <div class="panel-header">
+                    <div>
+                        <h2>Current Runner Ride</h2>
+                        <div class="sub">The runner engine is waiting for a fresh breakout candidate.</div>
+                    </div>
+                    <span class="count accent">Idle</span>
+                </div>
+                <div class="panel-copy">Scanning for runners... Score≥70, Change≥35%, after 7AM, accelerating, then managed with tiered trails and EMA checks.</div>
+            </section>"""
+
+    closed_trades_panel = ""
+    if strategy_code == "runner":
+        closed_trades_panel = f"""
+        <section class="panel">
+            <div class="panel-header">
+                <div>
+                    <h3>Closed Trades</h3>
+                    <div class="sub">Completed runner rides captured by the strategy runtime.</div>
+                </div>
+                <span class="count pink">{len(closed_today)}</span>
+            </div>
+            <div class="table-wrap">
+                <table>
+                    <thead><tr><th>Ticker</th><th>Entry</th><th>Exit</th><th>P&L</th><th>Reason</th><th>Peak</th><th>Duration</th></tr></thead>
+                    <tbody>{closed_rows}</tbody>
+                </table>
+            </div>
+        </section>"""
+
+    return f"""<!DOCTYPE html>
+<html>
+<head>
+    <title>{meta["emoji"]} {meta["title"]}</title>
+    <meta http-equiv="refresh" content="10">
+    <style>
+        :root {{
+            --bg: #131a2b;
+            --panel: #202b46;
+            --panel-alt: #1c2540;
+            --line: rgba(121, 146, 193, 0.28);
+            --ink: #f0f4ff;
+            --muted: #98a6c8;
+            --cyan: #59d7ff;
+            --green: #5fff8d;
+            --amber: #ffcc5b;
+            --pink: #d05bff;
+            --red: #ff6b6b;
+            --accent: {meta["color"]};
+        }}
+        * {{ box-sizing: border-box; }}
+        body {{
+            background:
+                radial-gradient(circle at top left, rgba(89,215,255,0.08), transparent 28%),
+                linear-gradient(180deg, #0f1525, var(--bg));
+            color: var(--ink);
+            font-family: 'Consolas','Monaco',monospace;
+            margin: 0;
+        }}
+        .shell {{
+            display: grid;
+            grid-template-columns: 300px minmax(0, 1fr);
+            gap: 16px;
+            min-height: 100vh;
+            padding: 16px;
+        }}
+        .sidebar {{
+            position: sticky;
+            top: 16px;
+            align-self: start;
+            background: rgba(17, 24, 41, 0.96);
+            border: 1px solid var(--line);
+            border-radius: 22px;
+            padding: 18px;
+            box-shadow: 0 24px 60px rgba(0, 0, 0, 0.28);
+        }}
+        .brand {{
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 20px;
+        }}
+        .brand-badge {{
+            width: 68px;
+            height: 68px;
+            border-radius: 18px;
+            display: grid;
+            place-items: center;
+            background: linear-gradient(135deg, var(--accent), #59d7ff);
+            color: white;
+            font-weight: 700;
+            text-align: center;
+            font-size: 24px;
+            line-height: 1;
+        }}
+        .brand h1 {{ margin: 0; font-size: 24px; color: white; }}
+        .brand p {{ margin: 4px 0 0 0; color: var(--muted); font-size: 13px; }}
+        .side-section {{ margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--line); }}
+        .side-label {{
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--muted);
+            margin-bottom: 10px;
+        }}
+        .metric-grid {{
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 10px;
+        }}
+        .metric-card {{
+            background: var(--panel-alt);
+            border: 1px solid var(--line);
+            border-radius: 14px;
+            padding: 10px;
+        }}
+        .metric-card strong {{ display: block; font-size: 22px; color: var(--cyan); }}
+        .metric-card span {{ font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }}
+        .stack {{ display: grid; gap: 8px; }}
+        .line-item {{
+            background: rgba(255,255,255,0.03);
+            border: 1px solid var(--line);
+            border-radius: 12px;
+            padding: 10px 12px;
+            font-size: 13px;
+            color: var(--muted);
+            line-height: 1.45;
+        }}
+        .line-item strong {{ color: var(--ink); }}
+        .nav-grid {{
+            display: grid;
+            gap: 8px;
+        }}
+        .nav-grid a {{
+            text-decoration: none;
+            color: var(--ink);
+            background: linear-gradient(180deg, rgba(89,215,255,0.08), rgba(255,255,255,0.02));
+            border: 1px solid var(--line);
+            border-radius: 12px;
+            padding: 10px 12px;
+            font-size: 13px;
+        }}
+        .nav-grid a.active {{
+            border-color: var(--accent);
+            box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 80%, white 20%);
+            background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 18%, transparent), rgba(255,255,255,0.02));
+        }}
+        .pill-chip {{
+            display: inline-flex;
+            margin: 0 6px 6px 0;
+            padding: 4px 8px;
+            border-radius: 999px;
+            background: rgba(255,255,255,0.06);
+            border: 1px solid var(--line);
+            color: var(--ink);
+            font-size: 12px;
+        }}
+        .pill-chip.live {{ background: rgba(95,255,141,0.12); color: var(--green); }}
+        .pill-chip.danger {{ background: rgba(255,107,107,0.12); color: var(--red); }}
+        .pill-chip.amber {{ background: rgba(255,204,91,0.12); color: var(--amber); }}
+        .queue-group {{ margin-bottom: 10px; }}
+        .queue-group strong {{ display: block; margin-bottom: 6px; color: var(--ink); font-size: 12px; }}
+        .workspace {{
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 16px;
+            align-content: start;
+        }}
+        .panel {{
+            background: rgba(24, 32, 54, 0.96);
+            border: 1px solid var(--line);
+            border-radius: 20px;
+            overflow: hidden;
+            box-shadow: 0 18px 42px rgba(0, 0, 0, 0.24);
+            min-width: 0;
+        }}
+        .panel.full {{ grid-column: 1 / -1; }}
+        .accent-panel {{
+            border-color: color-mix(in srgb, var(--accent) 52%, rgba(121,146,193,0.28));
+            box-shadow: 0 18px 42px rgba(0, 0, 0, 0.24), 0 0 0 1px color-mix(in srgb, var(--accent) 22%, transparent);
+        }}
+        .panel-header {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            padding: 14px 16px;
+            background: linear-gradient(180deg, rgba(89,215,255,0.08), rgba(0,0,0,0));
+            border-bottom: 1px solid var(--line);
+        }}
+        .panel-header h2, .panel-header h3 {{
+            margin: 0;
+            font-size: 16px;
+            color: var(--ink);
+        }}
+        .panel-header .sub {{
+            color: var(--muted);
+            font-size: 12px;
+            margin-top: 3px;
+        }}
+        .count {{
+            padding: 4px 10px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 700;
+            background: rgba(89,215,255,0.12);
+            color: var(--cyan);
+        }}
+        .count.accent {{
+            background: color-mix(in srgb, var(--accent) 18%, transparent);
+            color: color-mix(in srgb, var(--accent) 75%, white 25%);
+        }}
+        .count.pink {{ background: rgba(208,91,255,0.12); color: #f1b3ff; }}
+        .panel-copy {{
+            padding: 14px 16px;
+            color: var(--muted);
+            font-size: 12px;
+            line-height: 1.5;
+        }}
+        .hero-grid {{
+            display: grid;
+            grid-template-columns: repeat(5, minmax(0, 1fr));
+            gap: 12px;
+            padding: 0 16px 16px 16px;
+        }}
+        .hero-card {{
+            background: rgba(255,255,255,0.03);
+            border: 1px solid var(--line);
+            border-radius: 14px;
+            padding: 12px;
+        }}
+        .hero-card span {{
+            display: block;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--muted);
+            margin-bottom: 6px;
+        }}
+        .hero-card strong {{ display: block; font-size: 18px; color: var(--ink); }}
+        .hero-card small {{ color: var(--muted); font-size: 11px; }}
+        .badge-row {{
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            padding: 0 16px 16px 16px;
+        }}
+        .badge {{
+            padding: 6px 10px;
+            border-radius: 999px;
+            font-size: 12px;
+            border: 1px solid var(--line);
+            background: rgba(255,255,255,0.04);
+        }}
+        .table-wrap {{
+            max-height: 420px;
+            overflow: auto;
+        }}
+        table {{ border-collapse: collapse; width: 100%; font-size: 13px; }}
+        th {{
+            position: sticky;
+            top: 0;
+            z-index: 1;
+            background: #253556;
+            color: #b9c6e4;
+            padding: 8px 10px;
+            text-align: left;
+            border-bottom: 1px solid var(--line);
+        }}
+        td {{
+            padding: 8px 10px;
+            border-bottom: 1px solid rgba(121, 146, 193, 0.16);
+            color: #edf3ff;
+            vertical-align: top;
+        }}
+        tbody tr:nth-child(odd) {{ background: rgba(255,255,255,0.015); }}
+        tbody tr:hover {{ background: rgba(89,215,255,0.06); }}
+        .log-wrap {{
+            padding: 12px 16px 16px 16px;
+            display: grid;
+            gap: 8px;
+        }}
+        .log-line {{
+            font-size: 12px;
+            padding: 8px 10px;
+            border-radius: 10px;
+            background: rgba(255,255,255,0.03);
+            border: 1px solid rgba(121, 146, 193, 0.16);
+        }}
+        @media (max-width: 1200px) {{
+            .shell {{ grid-template-columns: 1fr; }}
+            .sidebar {{ position: static; }}
+            .hero-grid {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
+        }}
+        @media (max-width: 900px) {{
+            .workspace {{ grid-template-columns: 1fr; }}
+            .panel.full {{ grid-column: auto; }}
+            .hero-grid {{ grid-template-columns: 1fr; }}
+        }}
+    </style>
+</head>
+<body>
+    <div class="shell">
+        <aside class="sidebar">
+            <div class="brand">
+                <div class="brand-badge">{meta["emoji"]}</div>
+                <div>
+                    <h1>{meta["title"]}</h1>
+                    <p>Dedicated execution workspace for this bot.</p>
+                </div>
+            </div>
+
+            <div class="metric-grid">
+                <div class="metric-card">
+                    <span>Watchlist</span>
+                    <strong>{bot["watchlist_count"]}</strong>
+                </div>
+                <div class="metric-card">
+                    <span>Open</span>
+                    <strong>{bot["position_count"]}</strong>
+                </div>
+                <div class="metric-card">
+                    <span>Pending</span>
+                    <strong>{bot["pending_count"]}</strong>
+                </div>
+                <div class="metric-card">
+                    <span>Fills</span>
+                    <strong>{recent_fill_count}</strong>
+                </div>
+            </div>
+
+            <div class="side-section">
+                <div class="side-label">Overview</div>
+                <div class="stack">
+                    <div class="line-item"><strong>Execution:</strong> {escape(bot["wiring_status"].upper())}</div>
+                    <div class="line-item"><strong>Account:</strong> {escape(bot["account_name"])}</div>
+                    <div class="line-item"><strong>Legacy Shadow:</strong> {escape(bot["legacy_status"])}</div>
+                    <div class="line-item"><strong>P&amp;L Day:</strong> <span style="color:{pnl_color};">${bot["daily_pnl"]:+,.2f}</span></div>
+                    <div class="line-item"><strong>Account Model:</strong> {escape(account_note)}</div>
+                </div>
+            </div>
+
+            <div class="side-section">
+                <div class="side-label">Navigation</div>
+                {_render_page_nav(strategy_code)}
+            </div>
+
+            <div class="side-section">
+                <div class="side-label">Watchlist</div>
+                <div>{watchlist_html}</div>
+            </div>
+
+            <div class="side-section">
+                <div class="side-label">Pending Workflow</div>
+                <div class="queue-group"><strong>Open Queue</strong><div>{pending_open_html}</div></div>
+                <div class="queue-group"><strong>Close Queue</strong><div>{pending_close_html}</div></div>
+                <div class="queue-group"><strong>Scale Queue</strong><div>{pending_scale_html}</div></div>
+            </div>
+
+            <div class="side-section">
+                <div class="side-label">Bot Notes</div>
+                <div class="stack">
+                    <div class="line-item"><strong>Trade Log:</strong> Recent intents, orders, and fills are shown on the right for quick operator review.</div>
+                    <div class="line-item"><strong>Reconcile:</strong> Use account exposure and position status together to catch drift before cutover.</div>
+                    <div class="line-item"><strong>Strategy:</strong> {"Score≥70 | Change≥35% | After 7AM | Accelerating | Tiered trail + EMA break" if strategy_code == "runner" else "Preserved entry, exit, and position-tracking logic from the legacy runtime."}</div>
+                </div>
+            </div>
+        </aside>
+
+        <main class="workspace">
+            <section class="panel full accent-panel">
+                <div class="panel-header">
+                    <div>
+                        <h2>{meta["title"]}</h2>
+                        <div class="sub">Bot deck view for execution readiness, activity, and broker alignment.</div>
+                    </div>
+                    <span class="count accent">{escape(bot["display_name"])}</span>
+                </div>
+                <div class="badge-row">
+                    <span class="badge">Execution Workspace</span>
+                    <span class="badge">Mode {escape(bot["execution_mode"].upper())}</span>
+                    <span class="badge">Provider {escape(bot["provider"].upper())}</span>
+                    <span class="badge">Legacy Shadow {escape(bot["legacy_status"])}</span>
+                </div>
+                <div class="hero-grid">
+                    <div class="hero-card"><span>Watchlist</span><strong>{bot["watchlist_count"]}</strong><small>Symbols assigned to this bot</small></div>
+                    <div class="hero-card"><span>Open Positions</span><strong>{bot["position_count"]}</strong><small>Strategy-owned live positions</small></div>
+                    <div class="hero-card"><span>Pending Actions</span><strong>{bot["pending_count"]}</strong><small>Open, close, and scale queues</small></div>
+                    <div class="hero-card"><span>Recent Fills</span><strong>{recent_fill_count}</strong><small>Latest fills tracked by OMS</small></div>
+                    <div class="hero-card"><span>P&amp;L Day</span><strong style="color:{pnl_color};">${bot["daily_pnl"]:+,.2f}</strong><small>{escape(bot["account_name"])}</small></div>
+                </div>
+            </section>
+
+            {runner_status_panel}
+
+            <section class="panel">
+                <div class="panel-header">
+                    <div>
+                        <h3>Open Positions</h3>
+                        <div class="sub">Runtime, virtual, and account quantities side by side.</div>
+                    </div>
+                    <span class="count">{bot["position_count"]}</span>
+                </div>
+                <div class="table-wrap">
+                    <table>
+                        <thead><tr><th>Ticker</th><th style="text-align:right">Bot Qty<br>Time</th><th style="text-align:right">Bot $</th><th style="text-align:right">Virtual Qty<br>Avg</th><th style="text-align:right">Account Qty<br>Current</th><th style="text-align:right">P&amp;L</th><th>Status</th></tr></thead>
+                        <tbody>{position_rows}</tbody>
+                    </table>
+                </div>
+            </section>
+
+            <section class="panel">
+                <div class="panel-header">
+                    <div>
+                        <h3>Recent Trades</h3>
+                        <div class="sub">Filled executions seen by OMS for this bot.</div>
+                    </div>
+                    <span class="count">{recent_fill_count}</span>
+                </div>
+                <div class="table-wrap">
+                    <table>
+                        <thead><tr><th>Filled</th><th>Side</th><th>Ticker</th><th style="text-align:right">Qty</th><th style="text-align:right">Fill $</th><th style="text-align:right">Total $</th></tr></thead>
+                        <tbody>{trades_rows}</tbody>
+                    </table>
+                </div>
+            </section>
+
+            <section class="panel">
+                <div class="panel-header">
+                    <div>
+                        <h3>Trade Intents</h3>
+                        <div class="sub">Latest strategy intents emitted into OMS.</div>
+                    </div>
+                    <span class="count">{len(bot["recent_intents"])}</span>
+                </div>
+                <div class="table-wrap">
+                    <table>
+                        <thead><tr><th>Updated</th><th>Type</th><th>Side</th><th>Ticker</th><th style="text-align:right">Qty</th><th>Reason</th><th>Status</th></tr></thead>
+                        <tbody>{intent_rows}</tbody>
+                    </table>
+                </div>
+            </section>
+
+            <section class="panel">
+                <div class="panel-header">
+                    <div>
+                        <h3>Recent Orders</h3>
+                        <div class="sub">Broker-order lifecycle tied back to the same bot.</div>
+                    </div>
+                    <span class="count pink">{len(bot["recent_orders"])}</span>
+                </div>
+                <div class="table-wrap">
+                    <table>
+                        <thead><tr><th>Updated</th><th>Side</th><th>Ticker</th><th style="text-align:right">Qty</th><th>Status</th><th>Client Order ID</th></tr></thead>
+                        <tbody>{order_rows}</tbody>
+                    </table>
+                </div>
+            </section>
+
+            <section class="panel">
+                <div class="panel-header">
+                    <div>
+                        <h3>Account Exposure</h3>
+                        <div class="sub">Broker-account positions under this bot's mapped account.</div>
+                    </div>
+                    <span class="count">{len([item for item in data["account_positions"] if item.get("broker_account_name") == bot["account_name"]])}</span>
+                </div>
+                <div class="table-wrap">
+                    <table>
+                        <thead><tr><th>Account</th><th>Ticker</th><th style="text-align:right">Qty</th><th style="text-align:right">Avg Px</th><th style="text-align:right">Market Value</th><th>Updated</th></tr></thead>
+                        <tbody>{account_rows}</tbody>
+                    </table>
+                </div>
+            </section>
+
+            {closed_trades_panel}
+
+            <section class="panel full">
+                <div class="panel-header">
+                    <div>
+                        <h3>Decision Tape</h3>
+                        <div class="sub">Compact log of the bot's most recent intent activity.</div>
+                    </div>
+                    <span class="count accent">{len(decision_entries)}</span>
+                </div>
+                <div class="log-wrap">{decision_lines}</div>
+            </section>
+        </main>
+    </div>
+</body>
+</html>"""
+
+
+def _render_page_nav(active: str) -> str:
+    links: list[str] = []
+    for code, meta in BOT_PAGE_META.items():
+        links.append(
+            f'<a href="{meta["path"]}" class="{"active" if code == active else ""}">{meta["emoji"]} {escape(meta["title"].replace(" Bot", ""))}</a>'
+        )
+    return (
+        '<div class="nav-grid">'
+        '<a href="/scanner/dashboard">📡 Scanner</a>'
+        + "".join(links)
+        + '<a href="/">💚 Control Plane</a>'
+        + "</div>"
+    )
+
+
+def _render_chip_cloud(items: list[str], *, variant: str = "", empty_text: str = "None") -> str:
+    if not items:
+        return f'<span style="color:#7b86a4;">{escape(empty_text)}</span>'
+    class_name = f"pill-chip {variant}".strip()
+    return "".join(f'<span class="{class_name}">{escape(str(item))}</span>' for item in items)
+
+
+def _build_bot_fill_rows(recent_fills: list[dict[str, Any]]) -> str:
+    if not recent_fills:
+        return '<tr><td colspan="6" style="text-align:center;color:#7b86a4;padding:15px;">No trades yet</td></tr>'
+    return "".join(
         f"""<tr>
             <td style="font-size:11px">{escape(item["filled_at"])}</td>
             <td style="color:{'#00c853' if item['side'] == 'buy' else '#ff1744'};font-weight:bold">{escape(item["side"].upper())}</td>
@@ -2265,112 +2821,76 @@ def _render_bot_detail_page(data: dict[str, Any], strategy_code: str) -> str:
             <td style="text-align:right">${_decimal_total(item["quantity"], item["price"])}</td>
         </tr>"""
         for item in recent_fills
-    ) or '<tr><td colspan="6" style="text-align:center;color:#888;padding:15px;">No trades yet</td></tr>'
-
-    decision_lines = "".join(
-        f'<div style="color:{entry["color"]};padding:3px 0;">{escape(entry["text"])}</div>'
-        for entry in decision_entries
-    ) or '<div style="color:#888;padding:15px;text-align:center;">No decisions yet</div>'
-
-    current_position = bot["positions"][0] if strategy_code == "runner" and bot["positions"] else None
-    runner_position_html = ""
-    if strategy_code == "runner":
-        if current_position:
-            pnl_pct = float(current_position.get("current_profit_pct", 0) or 0)
-            pnl_color = "#00c853" if pnl_pct >= 0 else "#ff1744"
-            runner_position_html = f"""
-            <div style="background:#0a2e0a;border:2px solid #00c853;border-radius:8px;padding:15px;">
-                <h3 style="color:#00c853;margin:0;">🚀 RIDING: {escape(str(current_position.get("ticker", "")))}</h3>
-                <div style="display:flex;gap:24px;flex-wrap:wrap;margin-top:10px;">
-                    <div>Entry: <strong>${float(current_position.get("entry_price", 0) or 0):.2f}</strong><br><span style="font-size:11px;color:#888;">{escape(str(current_position.get("entry_time", "")))}</span></div>
-                    <div>Current: <strong>${float(current_position.get("current_price", 0) or 0):.2f}</strong></div>
-                    <div style="color:{pnl_color}">P&L: <strong>{pnl_pct:+.1f}%</strong></div>
-                    <div>Peak: <strong>{float(current_position.get("peak_profit_pct", 0) or 0):.1f}%</strong></div>
-                    <div>Trail: <strong>{float(current_position.get("trail_pct", 0) or 0):.0f}%</strong><br>Stop: ${float(current_position.get("trail_stop", 0) or 0):.2f}</div>
-                    <div>VolFade: <strong>{"YES ⚠️" if current_position.get("volume_faded") else "NO"}</strong></div>
-                    <div>Qty: <strong>{escape(str(current_position.get("quantity", 0)))}</strong></div>
-                    <div>Entry Δ: <strong>{float(current_position.get("entry_change_pct", 0) or 0):+.1f}%</strong></div>
-                </div>
-            </div>"""
-        else:
-            runner_position_html = '<div style="background:#1a1a2e;border:1px solid #444;border-radius:8px;padding:20px;text-align:center;color:#888;">👁️ Scanning for runners... (Score≥70, Change≥35%, after 7AM, accelerating)</div>'
-
-    return f"""<!DOCTYPE html><html><head>
-    <title>{meta["emoji"]} {meta["title"]}</title>
-    <meta http-equiv="refresh" content="10">
-    <style>
-        body {{ background:#0a0a23; color:#e0e0e0; font-family:'Courier New',monospace; padding:15px; margin:0; }}
-        h1 {{ color:{meta["color"]}; margin:0 0 5px 0; }}
-        table {{ width:100%; border-collapse:collapse; font-size:12px; }}
-        th {{ text-align:left; padding:6px 8px; border-bottom:2px solid #333; color:#888; }}
-        td {{ padding:5px 8px; }}
-        .section {{ background:#111; border:1px solid #333; border-radius:8px; padding:12px; margin:10px 0; }}
-        .account {{ background:#1a1a2e; border:2px solid {meta["color"]}; border-radius:8px; padding:12px; margin:10px 0; }}
-        a.nav-link {{ text-decoration:none; padding:6px 12px; border-radius:4px; border:1px solid; }}
-    </style>
-    </head><body>
-    {_render_page_nav(strategy_code)}
-    <h1>{meta["emoji"]} {meta["title"]}</h1>
-
-    <div class="account">
-        <span style="color:#888;">Execution:</span> <strong>{escape(bot["wiring_status"].upper())}</strong> |
-        <span style="color:#888;">Account:</span> <strong>{escape(bot["account_name"])}</strong> |
-        <span style="color:#888;">Watchlist:</span> <strong>{bot["watchlist_count"]}</strong> |
-        <span style="color:#888;">Open Positions:</span> <strong>{bot["position_count"]}</strong> |
-        <span style="color:#888;">P&L Day:</span> <strong style="color:{'#00c853' if bot['daily_pnl'] >= 0 else '#ff1744'}">${bot['daily_pnl']:+,.2f}</strong> |
-        <span style="color:#888;">Legacy Shadow:</span> <strong>{escape(bot["legacy_status"])}</strong>
-        {account_note}
-    </div>
-
-    {"<p style='color:#888;'>Entry: Score≥70 | Change≥35% | After 7AM | Accelerating | Trail: 10/15/20% tiered + EMA break</p>" if strategy_code == "runner" else ""}
-    {runner_position_html}
-
-    <div class="section">
-        <h3 style="color:{meta["color"]};margin:0 0 8px 0;">📈 Open Positions</h3>
-        <table>
-            <thead><tr><th>Ticker</th><th style="text-align:right">Bot Qty<br>Time</th><th style="text-align:right">Bot $</th><th style="text-align:right">Virtual Qty<br>Avg</th><th style="text-align:right">Account Qty<br>Current</th><th style="text-align:right">P&L</th><th>Status</th></tr></thead>
-            <tbody>{position_rows}</tbody>
-        </table>
-    </div>
-
-    <div class="section">
-        <h3 style="color:{meta["color"]};margin:0 0 8px 0;">📜 Recent Trades</h3>
-        <table>
-            <thead><tr><th>Filled</th><th>Side</th><th>Ticker</th><th style="text-align:right">Qty</th><th style="text-align:right">Fill $</th><th style="text-align:right">Total $</th></tr></thead>
-            <tbody>{trades_rows}</tbody>
-        </table>
-    </div>
-
-    <div class="section">
-        <h3 style="color:{meta["color"]};margin:0 0 8px 0;">🧠 Bot Decisions</h3>
-        <div style="font-family:monospace;font-size:12px;">{decision_lines}</div>
-    </div>
-
-    {f'''<div class="section">
-        <h3 style="color:{meta["color"]};">📊 Closed Trades</h3>
-        <table>
-            <thead><tr><th>Ticker</th><th>Entry</th><th>Exit</th><th>P&L</th><th>Reason</th><th>Peak</th><th>Duration</th></tr></thead>
-            <tbody>{closed_rows}</tbody>
-        </table>
-    </div>''' if strategy_code == "runner" else ""}
-
-    </body></html>"""
+    )
 
 
-def _render_page_nav(active: str) -> str:
-    links: list[str] = []
-    for code, meta in BOT_PAGE_META.items():
-        border = "2px" if code == active else "1px"
-        weight = "font-weight:bold;" if code == active else ""
-        links.append(
-            f'<a class="nav-link" href="{meta["path"]}" style="color:{meta["color"]};border-color:{meta["color"]};{weight}border-width:{border};">{meta["emoji"]} {escape(meta["title"].replace(" Bot", ""))}</a>'
+def _build_bot_intent_rows(bot: dict[str, Any]) -> str:
+    intents = bot["recent_intents"]
+    if not intents:
+        return '<tr><td colspan="7" style="text-align:center;color:#7b86a4;padding:15px;">No intents yet</td></tr>'
+    rows: list[str] = []
+    for item in intents:
+        status_color = "#5fff8d" if item["status"] in {"filled", "submitted", "accepted"} else "#ffcc5b"
+        rows.append(
+            f"""<tr>
+            <td>{escape(item["updated_at"])}</td>
+            <td>{escape(item["intent_type"].upper())}</td>
+            <td>{escape(item["side"].upper())}</td>
+            <td><strong>{escape(item["symbol"])}</strong></td>
+            <td style="text-align:right">{escape(item["quantity"])}</td>
+            <td>{escape(item["reason"])}</td>
+            <td style="color:{status_color}">{escape(item["status"].upper())}</td>
+        </tr>"""
         )
-    return (
-        '<div style="display:flex;gap:10px;margin-bottom:15px;flex-wrap:wrap;">'
-        '<a class="nav-link" href="/scanner/dashboard" style="color:#00e5ff;border-color:#00e5ff;">📡 Scanner</a>'
-        + "".join(links)
-        + '<a class="nav-link" href="/" style="color:#00c853;border-color:#00c853;">💚 Control Plane</a>'
-        + "</div>"
+    return "".join(rows)
+
+
+def _build_bot_order_rows(bot: dict[str, Any]) -> str:
+    orders = bot["recent_orders"]
+    if not orders:
+        return '<tr><td colspan="6" style="text-align:center;color:#7b86a4;padding:15px;">No orders yet</td></tr>'
+    rows: list[str] = []
+    for item in orders:
+        side_color = "#00c853" if item["side"] == "buy" else "#ff1744"
+        client_order_id = str(item.get("client_order_id", ""))
+        rows.append(
+            f"""<tr>
+            <td>{escape(item["updated_at"])}</td>
+            <td style="color:{side_color};font-weight:bold;">{escape(item["side"].upper())}</td>
+            <td><strong>{escape(item["symbol"])}</strong></td>
+            <td style="text-align:right">{escape(item["quantity"])}</td>
+            <td>{escape(item["status"].upper())}</td>
+            <td style="font-size:11px;">{escape(client_order_id[-24:] if len(client_order_id) > 24 else client_order_id)}</td>
+        </tr>"""
+        )
+    return "".join(rows)
+
+
+def _build_bot_account_rows(data: dict[str, Any], bot: dict[str, Any]) -> str:
+    rows = [
+        item for item in data["account_positions"] if item.get("broker_account_name") == bot["account_name"]
+    ]
+    if not rows:
+        return '<tr><td colspan="6" style="text-align:center;color:#7b86a4;padding:15px;">No broker-account positions</td></tr>'
+    return "".join(
+        f"""<tr>
+            <td>{escape(str(item.get("broker_account_name", "")))}</td>
+            <td><strong>{escape(str(item.get("symbol", "")))}</strong></td>
+            <td style="text-align:right">{escape(str(item.get("quantity", "")))}</td>
+            <td style="text-align:right">{_fmt_money(_as_float(item.get("average_price")))}</td>
+            <td style="text-align:right">{_fmt_money(_as_float(item.get("market_value")))}</td>
+            <td>{escape(str(item.get("updated_at", "")))}</td>
+        </tr>"""
+        for item in rows
+    )
+
+
+def _build_bot_decision_lines(decision_entries: list[dict[str, str]]) -> str:
+    if not decision_entries:
+        return '<div class="log-line" style="color:#7b86a4;text-align:center;">No decisions yet</div>'
+    return "".join(
+        f'<div class="log-line" style="color:{entry["color"]};">{escape(entry["text"])}</div>'
+        for entry in decision_entries
     )
 
 
