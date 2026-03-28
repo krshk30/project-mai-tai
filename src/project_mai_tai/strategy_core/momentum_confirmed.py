@@ -292,6 +292,7 @@ class MomentumConfirmedScanner:
         spread = round(ask - bid, 4) if ask > 0 and bid > 0 else 0
         mid = (ask + bid) / 2 if ask > 0 and bid > 0 else 0
         spread_pct = round((spread / mid) * 100, 2) if mid > 0 else 0
+        catalyst = self._get_catalyst_display_data(ticker)
 
         ref = reference_data.get(ticker) if reference_data else None
         avg_daily_volume = ref.avg_daily_volume if ref else 0.0
@@ -334,9 +335,30 @@ class MomentumConfirmedScanner:
             "first_spike_time": track["first_spike_time"],
             "first_spike_price": track["first_spike_price"],
             "squeeze_count": len(track["squeezes"]),
+            "headline": str(catalyst.get("headline", "")),
+            "catalyst": str(catalyst.get("catalyst", "")),
+            "sentiment": str(catalyst.get("sentiment", "")),
+            "news_url": str(catalyst.get("url", "")),
+            "news_date": str(catalyst.get("published", "")),
             "data_age_secs": 0,
             "confirmation_path": "",
         }
+
+    def _get_catalyst_display_data(self, ticker: str) -> Mapping[str, object]:
+        if self._catalyst_source is None:
+            return {}
+
+        try:
+            if callable(self._catalyst_source):
+                catalyst = self._catalyst_source(ticker)
+            else:
+                catalyst = self._catalyst_source.get_catalyst(ticker)
+        except Exception:
+            return {}
+
+        if isinstance(catalyst, Mapping):
+            return catalyst
+        return {}
 
     def _calculate_score(self, stock: dict[str, object], all_candidates: list[dict[str, object]]) -> float:
         if not all_candidates:

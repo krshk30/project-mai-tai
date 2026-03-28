@@ -250,16 +250,27 @@ def make_streams(prefix: str) -> dict[str, list[tuple[str, dict[str, str]]]]:
                 {
                     "ticker": "UGRO",
                     "rank_score": 72,
+                    "confirmed_at": "10:00:12 AM ET",
+                    "entry_price": 2.48,
                     "price": 2.55,
                     "change_pct": 12.5,
                     "volume": 900_000,
                     "rvol": 6.1,
                     "shares_outstanding": 50_000,
+                    "bid": 2.54,
+                    "ask": 2.55,
+                    "bid_size": 7,
+                    "ask_size": 9,
+                    "spread": 0.01,
                     "spread_pct": 0.42,
-                    "confirmed_at": "10:00:00 AM ET",
                     "first_spike_time": "09:55:00 AM ET",
                     "squeeze_count": 2,
                     "confirmation_path": "PATH_B_2SQ",
+                    "catalyst": "NEWS",
+                    "headline": "Quantum Biopharma Provides Corporate Update",
+                    "sentiment": "bullish",
+                    "news_url": "https://example.com/ugro-news",
+                    "news_date": "2026-03-28",
                 }
             ],
             five_pillars=[
@@ -412,6 +423,11 @@ def test_control_plane_overview_and_dashboard_render() -> None:
         assert "Top Gainers" in legacy_scanner.text
         assert "Momentum Alerts" in legacy_scanner.text
         assert "Top Gainer Changes" in legacy_scanner.text
+        assert "Catalyst" in legacy_scanner.text
+        assert "Entry Price" in legacy_scanner.text
+        assert "Quantum Biopharma Provides Corporate Update" in legacy_scanner.text
+        assert "📰" in legacy_scanner.text
+        assert "🚫" in legacy_scanner.text
 
         scanner_confirmed = client.get("/scanner/confirmed")
         assert scanner_confirmed.status_code == 200

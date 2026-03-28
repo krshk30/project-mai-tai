@@ -175,20 +175,39 @@ class ControlPlaneRepository:
                 for strategy_code, bot in bot_states.items()
                 if ticker and ticker in {str(symbol).upper() for symbol in bot.get("watchlist", [])}
             ]
+            bid = float(item.get("bid", 0) or 0)
+            ask = float(item.get("ask", 0) or 0)
+            spread = float(item.get("spread", 0) or 0)
+            if spread <= 0 and bid > 0 and ask > 0:
+                spread = round(ask - bid, 4)
             top_confirmed.append(
                 {
+                    **item,
                     "rank": index,
                     "ticker": ticker,
                     "rank_score": float(item.get("rank_score", 0) or 0),
                     "confirmation_path": str(item.get("confirmation_path", "")),
+                    "confirmed_at": str(item.get("confirmed_at", "")),
+                    "entry_price": float(item.get("entry_price", 0) or 0),
                     "price": float(item.get("price", 0) or 0),
                     "change_pct": float(item.get("change_pct", 0) or 0),
                     "volume": float(item.get("volume", 0) or 0),
                     "rvol": float(item.get("rvol", 0) or 0),
+                    "bid": bid,
+                    "ask": ask,
+                    "bid_size": int(item.get("bid_size", 0) or 0),
+                    "ask_size": int(item.get("ask_size", 0) or 0),
+                    "spread": spread,
                     "spread_pct": float(item.get("spread_pct", 0) or 0),
                     "squeeze_count": int(item.get("squeeze_count", 0) or 0),
                     "first_spike_time": str(item.get("first_spike_time", "")),
+                    "catalyst": str(item.get("catalyst", "")),
+                    "headline": str(item.get("headline", "")),
+                    "sentiment": str(item.get("sentiment", "")),
+                    "news_url": str(item.get("news_url", "")),
+                    "news_date": str(item.get("news_date", "")),
                     "watched_by": watched_by,
+                    "is_top5": bool(watched_by),
                 }
             )
 
@@ -2164,7 +2183,7 @@ def _render_scanner_dashboard(data: dict[str, Any]) -> str:
                 </div>
                 <div class="table-wrap">
                     <table>
-                        <thead><tr><th>#</th><th>Ticker / Bot</th><th>Path</th><th>Score</th><th>Confirmed</th><th>Price</th><th>Change%</th><th>Spread</th><th>Volume</th><th>RVol</th><th>Float</th><th>Squeezes</th><th>1st Spike</th></tr></thead>
+                        <thead><tr><th>#</th><th>Ticker / Bot</th><th>Path</th><th>Score</th><th>Confirmed</th><th>Entry Price</th><th>Price</th><th>Change%</th><th>Bid</th><th>Ask</th><th>Spread</th><th>Volume</th><th>RVol</th><th>Float</th><th>Squeezes</th><th>1st Spike</th><th>Catalyst</th><th>📰</th><th>🚫</th></tr></thead>
                         <tbody>{confirmed_rows}</tbody>
                     </table>
                 </div>
@@ -2999,30 +3018,110 @@ def _build_closed_trade_rows(closed_today: list[dict[str, Any]]) -> str:
 
 def _render_scanner_confirmed_rows(rows: list[dict[str, Any]], live_symbols: set[str]) -> str:
     if not rows:
-        return '<tr><td colspan="13" style="text-align:center;color:#888;padding:20px;">No confirmed candidates yet</td></tr>'
+        return '<tr><td colspan="19" style="text-align:center;color:#888;padding:20px;">No confirmed candidates yet</td></tr>'
     rendered = []
     for index, item in enumerate(rows, start=1):
         ticker = str(item.get("ticker", "")).upper()
         live_badge = ' <span style="color:#00ff41;font-size:10px;">⚡LIVE</span>' if ticker in live_symbols else ""
         watched_by = ", ".join(item.get("watched_by", [])) if item.get("watched_by") else "—"
+        path = str(item.get("confirmation_path", ""))
+        path_badge = (
+            '<span style="background:#ff9100;color:#000;font-size:9px;padding:1px 4px;border-radius:3px;">A</span>'
+            if "PATH_A" in path
+            else '<span style="background:#2979ff;color:#fff;font-size:9px;padding:1px 4px;border-radius:3px;">B</span>'
+        )
+        top5_badge = (
+            ' <span style="background:#ffd600;color:#000;font-size:9px;padding:1px 4px;border-radius:3px;font-weight:bold;">⭐TOP5</span>'
+            if item.get("is_top5")
+            else ""
+        )
+        bid = _as_float(item.get("bid"))
+        ask = _as_float(item.get("ask"))
+        bid_size = int(item.get("bid_size", 0) or 0)
+        ask_size = int(item.get("ask_size", 0) or 0)
+        spread_cents = _as_float(item.get("spread")) * 100 if item.get("spread") is not None else max(ask - bid, 0) * 100
+        spread_color = "#00c853" if spread_cents <= 1 else ("#ffd600" if spread_cents <= 3 else "#ff1744")
+        change_pct = _as_float(item.get("change_pct"))
+        row_bg = "#0a1a0a" if item.get("is_top5") else "transparent"
+        catalyst_html = _render_confirmed_catalyst_cell(item)
+        news_link_html = _render_confirmed_news_icon(item)
+        blacklist_html = _render_confirmed_blacklist_placeholder(ticker)
         rendered.append(
-            f"""<tr>
+            f"""<tr style="background:{row_bg};">
             <td style="text-align:center">{index}</td>
-            <td><strong>{escape(ticker)}</strong>{live_badge}<br><span style="font-size:10px;color:#888;">{escape(watched_by)}</span></td>
-            <td>{escape(str(item.get("confirmation_path", "")))}</td>
+            <td><strong>{escape(ticker)}</strong>{live_badge}{top5_badge}<br><span style="font-size:10px;color:#888;">{escape(watched_by)}</span></td>
+            <td style="text-align:center">{path_badge}</td>
             <td style="color:#ffd600;font-weight:bold;">{_as_float(item.get("rank_score")):.0f}</td>
             <td style="color:#00ff41;">{escape(str(item.get("confirmed_at", item.get("first_spike_time", ""))))}</td>
+            <td>{_fmt_money(_as_float(item.get("entry_price")))}</td>
             <td>{_fmt_money(_as_float(item.get("price")))}</td>
-            <td style="color:{'#00c853' if _as_float(item.get('change_pct')) >= 0 else '#ff1744'}">{_as_float(item.get("change_pct")):+.1f}%</td>
-            <td>{_as_float(item.get("spread_pct")):.2f}%</td>
+            <td style="color:{'#00c853' if change_pct >= 0 else '#ff1744'}">{change_pct:+.1f}%</td>
+            <td>{_fmt_money(bid)} <span style="color:#888;font-size:11px">x{bid_size}</span></td>
+            <td>{_fmt_money(ask)} <span style="color:#888;font-size:11px">x{ask_size}</span></td>
+            <td style="color:{spread_color}">{spread_cents:.0f}¢</td>
             <td>{_short_volume(item.get("volume"))}</td>
             <td>{_as_float(item.get("rvol")):.1f}x</td>
             <td>{_short_volume(item.get("shares_outstanding"))}</td>
             <td>{int(item.get("squeeze_count", 0) or 0)}</td>
             <td>{escape(str(item.get("first_spike_time", "")))}</td>
+            <td style="font-size:12px;min-width:250px;max-width:400px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{catalyst_html}</td>
+            <td style="text-align:center">{news_link_html}</td>
+            <td style="text-align:center">{blacklist_html}</td>
         </tr>"""
         )
     return "".join(rendered)
+
+
+def _render_confirmed_catalyst_cell(item: dict[str, Any]) -> str:
+    catalyst = str(item.get("catalyst", "") or "").strip()
+    headline = str(item.get("headline", "") or "").strip()
+    news_url = str(item.get("news_url", "") or "").strip()
+    news_date = str(item.get("news_date", "") or "").strip()
+    sentiment = str(item.get("sentiment", "") or "").strip().lower()
+
+    if not catalyst and not headline:
+        return '<span style="color:#555">No recent news</span>'
+
+    sent_color = {"bullish": "#00c853", "bearish": "#ff1744", "neutral": "#ffd600"}.get(sentiment, "#888")
+    sent_bg = {"bullish": "#0a2e0a", "bearish": "#2e0a0a", "neutral": "#2e2e0a"}.get(sentiment, "transparent")
+    sent_label = {"bullish": "🟢", "bearish": "🔴", "neutral": "🟡"}.get(sentiment, "")
+
+    display_headline = headline
+    if display_headline.startswith("["):
+        bracket_end = display_headline.find("]")
+        if bracket_end > 0:
+            display_headline = display_headline[bracket_end + 1 :].strip()
+
+    headline_html = escape(display_headline)
+    if news_url:
+        headline_html = f'<a href="{escape(news_url)}" target="_blank" rel="noreferrer" style="color:#4fc3f7;text-decoration:none;">{headline_html}</a>'
+
+    date_html = f'<span style="color:#888;">{escape(news_date)}</span> ' if news_date else ""
+    catalyst_label = f'{escape(catalyst)} ' if catalyst else ""
+    return (
+        f'<span style="display:block;background:{sent_bg};border-left:3px solid {sent_color};padding-left:8px;">'
+        f'{sent_label} {catalyst_label}{date_html}{headline_html}</span>'
+    )
+
+
+def _render_confirmed_news_icon(item: dict[str, Any]) -> str:
+    news_url = str(item.get("news_url", "") or "").strip()
+    if not news_url:
+        return '<span style="color:#61758a;">—</span>'
+    return (
+        f'<a href="{escape(news_url)}" target="_blank" rel="noreferrer" '
+        'style="color:#00e5ff;text-decoration:none;font-size:14px;" title="Open news article">📰</a>'
+    )
+
+
+def _render_confirmed_blacklist_placeholder(ticker: str) -> str:
+    if not ticker:
+        return '<span style="color:#61758a;">—</span>'
+    return (
+        '<span style="color:#ff6b6b;font-size:11px;padding:2px 6px;'
+        'border:1px solid #ff6b6b;border-radius:3px;opacity:0.55;" '
+        f'title="Blacklist workflow is not wired yet for {escape(ticker)}">🚫</span>'
+    )
 
 
 def _render_scanner_stock_rows(rows: list[dict[str, Any]], live_symbols: set[str]) -> str:
