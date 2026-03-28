@@ -14,6 +14,8 @@ from redis.asyncio import Redis
 from project_mai_tai.events import (
     HeartbeatEvent,
     HeartbeatPayload,
+    MarketDataSubscriptionEvent,
+    MarketDataSubscriptionPayload,
     MarketSnapshotPayload,
     SnapshotBatchEvent,
     TradeIntentEvent,
@@ -203,6 +205,14 @@ class StrategyBotRuntime:
 
     def has_position(self, ticker: str) -> bool:
         return self.positions.has_position(ticker) or ticker in self.pending_open_symbols
+
+    def active_symbols(self) -> set[str]:
+        active = set(self.watchlist)
+        active.update(self.pending_open_symbols)
+        active.update(self.pending_close_symbols)
+        active.update(symbol for symbol, _level in self.pending_scale_levels)
+        active.update(position["ticker"] for position in self.positions.get_all_positions())
+        return active
 
     def _evaluate_completed_bar(self, symbol: str) -> list[TradeIntentEvent]:
         bars = self.builder_manager.get_bars(symbol)
@@ -398,6 +408,7 @@ class StrategyEngineState:
             "newly_confirmed": newly_confirmed,
             "top_confirmed": self.current_confirmed,
             "watchlist": watchlist,
+            "market_data_symbols": self.market_data_symbols(),
         }
 
     def handle_trade_tick(
@@ -449,6 +460,12 @@ class StrategyEngineState:
             "bots": {code: bot.summary() for code, bot in self.bots.items()},
         }
 
+    def market_data_symbols(self) -> list[str]:
+        symbols: set[str] = set()
+        for bot in self.bots.values():
+            symbols.update(bot.active_symbols())
+        return sorted(symbols)
+
 
 class StrategyEngineService:
     def __init__(self, settings: Settings | None = None, redis_client: Redis | None = None):
@@ -461,6 +478,7 @@ class StrategyEngineService:
             stream_name(self.settings.redis_stream_prefix, "market-data"): "$",
             stream_name(self.settings.redis_stream_prefix, "snapshot-batches"): "$",
         }
+        self._last_market_data_symbols: set[str] = set()
 
     async def run(self) -> None:
         stop_event = asyncio.Event()
@@ -516,6 +534,7 @@ class StrategyEngineService:
                 for item in event.payload.reference_data
             }
             summary = self.state.process_snapshot_batch(snapshots, reference)
+            await self._sync_market_data_subscriptions(summary["market_data_symbols"])
             self.logger.info(
                 "snapshot batch processed | alerts=%s confirmed=%s",
                 len(summary["alerts"]),
@@ -533,6 +552,8 @@ class StrategyEngineService:
             )
             for intent in intents:
                 await self._publish_intent(intent)
+            if intents:
+                await self._sync_market_data_subscriptions(self.state.market_data_symbols())
             if intents:
                 self.logger.info(
                     "generated %s intents from %s trade tick",
@@ -560,10 +581,28 @@ class StrategyEngineService:
         )
         await self.redis.xadd(stream, {"data": event.model_dump_json()})
 
+    async def _sync_market_data_subscriptions(self, symbols: Sequence[str]) -> None:
+        normalized = {symbol.upper() for symbol in symbols if symbol}
+        if normalized == self._last_market_data_symbols:
+            return
+
+        self._last_market_data_symbols = normalized
+        stream = stream_name(self.settings.redis_stream_prefix, "market-data-subscriptions")
+        event = MarketDataSubscriptionEvent(
+            source_service=SERVICE_NAME,
+            payload=MarketDataSubscriptionPayload(
+                consumer_name=SERVICE_NAME,
+                mode="replace",
+                symbols=sorted(normalized),
+            ),
+        )
+        await self.redis.xadd(stream, {"data": event.model_dump_json()})
+
 
 def snapshot_from_payload(payload: MarketSnapshotPayload) -> MarketSnapshot:
     return MarketSnapshot(
         ticker=payload.symbol,
+        previous_close=float(payload.previous_close) if payload.previous_close is not None else None,
         day=DaySnapshot(
             close=float(payload.day_close) if payload.day_close is not None else None,
             volume=payload.day_volume,

@@ -90,6 +90,7 @@ class QuoteSnapshot:
 @dataclass
 class MarketSnapshot:
     ticker: str
+    previous_close: float | None = None
     day: DaySnapshot | None = None
     minute: MinuteSnapshot | None = None
     last_trade: LastTrade | None = None

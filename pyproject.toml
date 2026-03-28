@@ -20,6 +20,7 @@ dependencies = [
   "alembic>=1.13,<2.0",
   "psycopg[binary]>=3.2,<4.0",
   "redis>=5.0,<6.0",
+  "massive>=2.0,<3.0",
 ]
 
 [project.optional-dependencies]

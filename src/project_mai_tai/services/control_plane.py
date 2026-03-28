@@ -35,6 +35,11 @@ def build_app(settings: Settings | None = None) -> FastAPI:
             "legacy_api_base_url": active_settings.legacy_api_base_url,
             "streams": {
                 "market_data": stream_name(active_settings.redis_stream_prefix, "market-data"),
+                "snapshot_batches": stream_name(active_settings.redis_stream_prefix, "snapshot-batches"),
+                "market_data_subscriptions": stream_name(
+                    active_settings.redis_stream_prefix,
+                    "market-data-subscriptions",
+                ),
                 "strategy_intents": stream_name(active_settings.redis_stream_prefix, "strategy-intents"),
                 "order_events": stream_name(active_settings.redis_stream_prefix, "order-events"),
                 "heartbeats": stream_name(active_settings.redis_stream_prefix, "heartbeats"),

@@ -289,8 +289,8 @@ class MomentumConfirmedScanner:
         change_pct = 0.0
         if snapshot_lookup and ticker in snapshot_lookup:
             snapshot = snapshot_lookup[ticker]
-            if snapshot.day and snapshot.day.close:
-                prev_close = snapshot.day.close
+            if snapshot.previous_close:
+                prev_close = snapshot.previous_close
                 if prev_close > 0:
                     change_pct = round((float(squeeze["price"]) - prev_close) / prev_close * 100, 2)
             hod = get_current_hod(snapshot)

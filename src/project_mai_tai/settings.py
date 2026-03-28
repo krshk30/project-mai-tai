@@ -29,6 +29,15 @@ class Settings(BaseSettings):
 
     legacy_api_base_url: str | None = None
 
+    massive_api_key: str | None = None
+    market_data_snapshot_interval_seconds: int = 30
+    market_data_reference_cache_path: str = "data/cache/reference_data.json"
+    market_data_reference_cache_max_age_hours: int = 24
+    market_data_reference_lookback_days: int = 20
+    market_data_scan_min_price: float = 1.0
+    market_data_scan_max_price: float = 10.0
+    market_data_static_symbols: str = ""
+
     broker_default_provider: str = "alpaca"
     alpaca_paper_base_url: str = "https://paper-api.alpaca.markets"
 
@@ -39,6 +48,19 @@ class Settings(BaseSettings):
     @property
     def control_plane_base_url(self) -> str:
         return f"http://{self.control_plane_host}:{self.control_plane_port}"
+
+    @computed_field
+    @property
+    def market_data_static_symbol_list(self) -> list[str]:
+        if not self.market_data_static_symbols.strip():
+            return []
+        return sorted(
+            {
+                symbol.strip().upper()
+                for symbol in self.market_data_static_symbols.split(",")
+                if symbol.strip()
+            }
+        )
 
 
 @lru_cache

@@ -1,0 +1,215 @@
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import socket
+from collections.abc import Iterable
+
+from redis.asyncio import Redis
+
+from project_mai_tai.events import MarketDataSubscriptionEvent, stream_name
+from project_mai_tai.market_data.massive_provider import MassiveSnapshotProvider, MassiveTradeStream
+from project_mai_tai.market_data.models import QuoteTickRecord, SnapshotRecord, TradeTickRecord
+from project_mai_tai.market_data.protocols import SnapshotProvider, TradeStreamProvider
+from project_mai_tai.market_data.publisher import MarketDataPublisher
+from project_mai_tai.market_data.reference_cache import ReferenceDataCache
+from project_mai_tai.services.runtime import _install_signal_handlers
+from project_mai_tai.settings import Settings, get_settings
+
+logger = logging.getLogger(__name__)
+
+SERVICE_NAME = "market-data-gateway"
+
+
+class MarketDataGatewayService:
+    def __init__(
+        self,
+        settings: Settings | None = None,
+        redis_client: Redis | None = None,
+        *,
+        snapshot_provider: SnapshotProvider | None = None,
+        trade_stream: TradeStreamProvider | None = None,
+        reference_cache: ReferenceDataCache | None = None,
+    ):
+        self.settings = settings or get_settings()
+        self.redis = redis_client or Redis.from_url(self.settings.redis_url, decode_responses=True)
+        self.publisher = MarketDataPublisher(
+            self.redis,
+            self.settings.redis_stream_prefix,
+            SERVICE_NAME,
+        )
+        self.snapshot_provider = snapshot_provider or self._build_snapshot_provider()
+        self.trade_stream = trade_stream or self._build_trade_stream()
+        self.reference_cache = reference_cache or ReferenceDataCache(
+            self.snapshot_provider,
+            cache_path=self.settings.market_data_reference_cache_path,
+            max_age_hours=self.settings.market_data_reference_cache_max_age_hours,
+            min_price=self.settings.market_data_scan_min_price,
+            max_price=self.settings.market_data_scan_max_price,
+            lookback_days=self.settings.market_data_reference_lookback_days,
+        )
+        self.logger = logging.getLogger(SERVICE_NAME)
+        self.instance_name = socket.gethostname()
+        self._trade_queue: asyncio.Queue[TradeTickRecord] = asyncio.Queue()
+        self._quote_queue: asyncio.Queue[QuoteTickRecord] = asyncio.Queue()
+        self._desired_symbols_by_consumer: dict[str, set[str]] = {
+            "static": set(self.settings.market_data_static_symbol_list),
+        }
+        self._active_symbols: set[str] = set(self.settings.market_data_static_symbol_list)
+        self._subscription_offsets = {
+            stream_name(self.settings.redis_stream_prefix, "market-data-subscriptions"): "$",
+        }
+
+    async def run(self) -> None:
+        stop_event = asyncio.Event()
+        _install_signal_handlers(stop_event)
+
+        await self._ensure_reference_data()
+        await self.publisher.publish_heartbeat(
+            instance_name=self.instance_name,
+            status="starting",
+            details={"reference_tickers": str(self.reference_cache.ticker_count())},
+        )
+
+        loop = asyncio.get_running_loop()
+        await self.trade_stream.start(
+            on_trade=lambda record: loop.call_soon_threadsafe(self._trade_queue.put_nowait, record),
+            on_quote=lambda record: loop.call_soon_threadsafe(self._quote_queue.put_nowait, record),
+        )
+        await self.trade_stream.sync_subscriptions(self._active_symbols)
+
+        tasks = [
+            asyncio.create_task(self._snapshot_loop(stop_event)),
+            asyncio.create_task(self._subscription_loop(stop_event)),
+            asyncio.create_task(self._stream_publish_loop(stop_event)),
+            asyncio.create_task(self._heartbeat_loop(stop_event)),
+        ]
+
+        try:
+            await stop_event.wait()
+        finally:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            await self.trade_stream.stop()
+            await self.publisher.publish_heartbeat(
+                instance_name=self.instance_name,
+                status="stopping",
+                details={"active_symbols": str(len(self._active_symbols))},
+            )
+            await self.redis.aclose()
+
+    async def publish_snapshot_batch_once(self, snapshots: Iterable[SnapshotRecord]) -> int:
+        snapshot_list = list(snapshots)
+        reference_payloads = self.reference_cache.as_payloads(snapshot.symbol for snapshot in snapshot_list)
+        await self.publisher.publish_snapshot_batch(snapshot_list, reference_payloads)
+        return len(snapshot_list)
+
+    async def apply_subscription_event(self, event: MarketDataSubscriptionEvent) -> set[str]:
+        symbols = {symbol.upper() for symbol in event.payload.symbols if symbol}
+        consumer = event.payload.consumer_name
+        mode = event.payload.mode
+
+        current = self._desired_symbols_by_consumer.get(consumer, set())
+        if mode == "replace":
+            updated = symbols
+        elif mode == "add":
+            updated = current | symbols
+        else:
+            updated = current - symbols
+
+        self._desired_symbols_by_consumer[consumer] = updated
+        next_symbols = set().union(*self._desired_symbols_by_consumer.values())
+        if next_symbols != self._active_symbols:
+            self._active_symbols = next_symbols
+            await self.trade_stream.sync_subscriptions(sorted(self._active_symbols))
+        return set(self._active_symbols)
+
+    def active_symbols(self) -> set[str]:
+        return set(self._active_symbols)
+
+    def _build_snapshot_provider(self) -> SnapshotProvider:
+        if not self.settings.massive_api_key:
+            raise RuntimeError("MAI_TAI_MASSIVE_API_KEY is required for market-data polling.")
+        return MassiveSnapshotProvider(self.settings.massive_api_key)
+
+    def _build_trade_stream(self) -> TradeStreamProvider:
+        if not self.settings.massive_api_key:
+            raise RuntimeError("MAI_TAI_MASSIVE_API_KEY is required for market-data streaming.")
+        return MassiveTradeStream(self.settings.massive_api_key)
+
+    async def _ensure_reference_data(self) -> None:
+        loaded = await asyncio.to_thread(self.reference_cache.load_from_cache)
+        if loaded:
+            return
+        await asyncio.to_thread(self.reference_cache.build)
+
+    async def _snapshot_loop(self, stop_event: asyncio.Event) -> None:
+        interval = max(1, self.settings.market_data_snapshot_interval_seconds)
+        while not stop_event.is_set():
+            try:
+                snapshots = await asyncio.to_thread(self.snapshot_provider.fetch_all_snapshots)
+                count = await self.publish_snapshot_batch_once(snapshots)
+                self.logger.info("published snapshot batch with %s records", count)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                self.logger.exception("snapshot polling failed")
+
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=interval)
+            except TimeoutError:
+                continue
+
+    async def _subscription_loop(self, stop_event: asyncio.Event) -> None:
+        while not stop_event.is_set():
+            try:
+                messages = await self.redis.xread(self._subscription_offsets, block=1000, count=50)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                self.logger.exception("subscription stream read failed")
+                await asyncio.sleep(1)
+                continue
+
+            for stream, entries in messages:
+                for message_id, fields in entries:
+                    self._subscription_offsets[stream] = message_id
+                    data = fields.get("data")
+                    if not data:
+                        continue
+                    event = MarketDataSubscriptionEvent.model_validate(json.loads(data))
+                    symbols = await self.apply_subscription_event(event)
+                    self.logger.info(
+                        "market-data subscriptions updated by %s -> %s symbols",
+                        event.payload.consumer_name,
+                        len(symbols),
+                    )
+
+    async def _stream_publish_loop(self, stop_event: asyncio.Event) -> None:
+        while not stop_event.is_set():
+            try:
+                trade = await asyncio.wait_for(self._trade_queue.get(), timeout=1.0)
+                await self.publisher.publish_trade_tick(trade)
+            except TimeoutError:
+                pass
+
+            while not self._quote_queue.empty():
+                quote = await self._quote_queue.get()
+                await self.publisher.publish_quote_tick(quote)
+
+    async def _heartbeat_loop(self, stop_event: asyncio.Event) -> None:
+        interval = max(1, self.settings.service_heartbeat_interval_seconds)
+        while not stop_event.is_set():
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=interval)
+            except TimeoutError:
+                await self.publisher.publish_heartbeat(
+                    instance_name=self.instance_name,
+                    status="healthy",
+                    details={
+                        "reference_tickers": str(self.reference_cache.ticker_count()),
+                        "active_symbols": str(len(self._active_symbols)),
+                    },
+                )

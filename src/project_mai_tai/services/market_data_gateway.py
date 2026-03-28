@@ -2,18 +2,15 @@ from __future__ import annotations
 
 import asyncio
 
-from project_mai_tai.services.runtime import run_placeholder_worker
+from project_mai_tai.market_data.gateway import MarketDataGatewayService
 
 
 SERVICE_NAME = "market-data-gateway"
 
 
 async def main() -> None:
-    await run_placeholder_worker(
-        service_name=SERVICE_NAME,
-        description="Owns Massive/Polygon ingestion and publishes normalized market events.",
-        topics=["market-data", "heartbeats"],
-    )
+    service = MarketDataGatewayService()
+    await service.run()
 
 
 def run() -> None:

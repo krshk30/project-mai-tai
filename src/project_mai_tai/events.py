@@ -81,6 +81,7 @@ class SnapshotRefreshEvent(EventEnvelope):
 
 class MarketSnapshotPayload(BaseModel):
     symbol: str
+    previous_close: Decimal | None = None
     day_close: Decimal | None = None
     day_volume: int | None = None
     day_high: Decimal | None = None
@@ -114,6 +115,17 @@ class SnapshotBatchPayload(BaseModel):
 class SnapshotBatchEvent(EventEnvelope):
     event_type: Literal["snapshot_batch"] = "snapshot_batch"
     payload: SnapshotBatchPayload
+
+
+class MarketDataSubscriptionPayload(BaseModel):
+    consumer_name: str
+    mode: Literal["replace", "add", "remove"] = "replace"
+    symbols: list[str] = Field(default_factory=list)
+
+
+class MarketDataSubscriptionEvent(EventEnvelope):
+    event_type: Literal["market_data_subscription"] = "market_data_subscription"
+    payload: MarketDataSubscriptionPayload
 
 
 class TradeIntentPayload(BaseModel):
