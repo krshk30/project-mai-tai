@@ -1,0 +1,591 @@
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import socket
+from collections.abc import Callable, Iterable, Sequence
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from decimal import Decimal
+
+from redis.asyncio import Redis
+
+from project_mai_tai.events import (
+    HeartbeatEvent,
+    HeartbeatPayload,
+    MarketSnapshotPayload,
+    SnapshotBatchEvent,
+    TradeIntentEvent,
+    TradeIntentPayload,
+    TradeTickEvent,
+    stream_name,
+)
+from project_mai_tai.log import configure_logging
+from project_mai_tai.services.runtime import _install_signal_handlers
+from project_mai_tai.settings import Settings, get_settings
+from project_mai_tai.strategy_core import (
+    DaySnapshot,
+    EntryEngine,
+    ExitEngine,
+    IndicatorConfig,
+    IndicatorEngine,
+    LastTrade,
+    MarketSnapshot,
+    MinuteSnapshot,
+    MomentumAlertConfig,
+    MomentumAlertEngine,
+    MomentumConfirmedConfig,
+    MomentumConfirmedScanner,
+    OHLCVBar,
+    PositionTracker,
+    QuoteSnapshot,
+    ReferenceData,
+    TradingConfig,
+)
+from project_mai_tai.strategy_core.bar_builder import BarBuilderManager
+
+logger = logging.getLogger(__name__)
+
+SERVICE_NAME = "strategy-engine"
+
+
+def utcnow() -> datetime:
+    return datetime.now(UTC)
+
+
+@dataclass(frozen=True)
+class StrategyDefinition:
+    code: str
+    display_name: str
+    account_name: str
+    interval_secs: int
+    trading_config: TradingConfig
+    indicator_config: IndicatorConfig
+
+
+class StrategyBotRuntime:
+    def __init__(
+        self,
+        definition: StrategyDefinition,
+        *,
+        now_provider: Callable[[], datetime] | None = None,
+    ):
+        self.definition = definition
+        self.builder_manager = BarBuilderManager(interval_secs=definition.interval_secs)
+        self.indicator_engine = IndicatorEngine(definition.indicator_config)
+        self.entry_engine = EntryEngine(
+            definition.trading_config,
+            name=definition.display_name,
+            now_provider=now_provider,
+        )
+        self.exit_engine = ExitEngine(definition.trading_config)
+        self.positions = PositionTracker(definition.trading_config)
+        self.watchlist: set[str] = set()
+        self.last_indicators: dict[str, dict[str, float | bool]] = {}
+        self.pending_open_symbols: set[str] = set()
+        self.pending_close_symbols: set[str] = set()
+        self.pending_scale_levels: set[tuple[str, str]] = set()
+
+    def set_watchlist(self, symbols: Iterable[str]) -> None:
+        self.watchlist = set(symbols)
+
+    def seed_bars(self, symbol: str, bars: Sequence[dict[str, float | int]]) -> None:
+        builder = self.builder_manager.get_or_create(symbol)
+        builder.reset()
+
+        hydrated = [
+            OHLCVBar(
+                open=float(bar["open"]),
+                high=float(bar["high"]),
+                low=float(bar["low"]),
+                close=float(bar["close"]),
+                volume=int(bar["volume"]),
+                timestamp=float(bar["timestamp"]),
+                trade_count=int(bar.get("trade_count", 1)),
+            )
+            for bar in bars
+        ]
+        if not hydrated:
+            return
+
+        builder.bars = hydrated[:-1][-builder.max_bars :]
+        builder._bar_count = len(builder.bars)
+        builder._current_bar = hydrated[-1]
+        builder._current_bar_start = hydrated[-1].timestamp
+
+    def handle_trade_tick(
+        self,
+        symbol: str,
+        price: float,
+        size: int,
+        timestamp_ns: int | None = None,
+    ) -> list[TradeIntentEvent]:
+        intents: list[TradeIntentEvent] = []
+
+        position = self.positions.get_position(symbol)
+        if position is not None:
+            position.update_price(price)
+            hard_stop = self.exit_engine.check_hard_stop(position, price)
+            if hard_stop and symbol not in self.pending_close_symbols:
+                intents.append(self._emit_close_intent(hard_stop))
+
+        if symbol not in self.watchlist and position is None:
+            return intents
+
+        completed_bars = self.builder_manager.on_trade(symbol, price, size, timestamp_ns or 0)
+        for _bar in completed_bars:
+            intents.extend(self._evaluate_completed_bar(symbol))
+
+        return intents
+
+    def apply_execution_fill(
+        self,
+        *,
+        symbol: str,
+        intent_type: str,
+        side: str,
+        quantity: Decimal,
+        price: Decimal,
+        level: str | None = None,
+        path: str | None = None,
+    ) -> None:
+        qty = int(quantity)
+        fill_price = float(price)
+        position = self.positions.get_position(symbol)
+
+        if intent_type == "open" and side == "buy":
+            self.pending_open_symbols.discard(symbol)
+            if position is None:
+                self.positions.open_position(symbol, fill_price, quantity=qty, path=path or "")
+                return
+
+            total_qty = position.quantity + qty
+            if total_qty <= 0:
+                return
+
+            weighted_cost = position.entry_price * position.quantity + fill_price * qty
+            position.entry_price = weighted_cost / total_qty
+            position.quantity = total_qty
+            position.original_quantity += qty
+            position.update_price(fill_price)
+            return
+
+        if intent_type == "close" and side == "sell":
+            if position is None:
+                self.pending_close_symbols.discard(symbol)
+                return
+
+            if qty >= position.quantity:
+                self.pending_close_symbols.discard(symbol)
+                self.positions.close_position(symbol, fill_price, reason="OMS_FILL")
+                bar_index = self.builder_manager.get_or_create(symbol).get_bar_count()
+                self.entry_engine.record_exit(symbol, bar_index)
+                return
+
+            position.scale_pnl += (fill_price - position.entry_price) * qty
+            position.quantity -= qty
+            return
+
+        if intent_type == "scale" and side == "sell" and level and position is not None:
+            self.pending_scale_levels.discard((symbol, level))
+            position.apply_scale(level, qty, fill_price)
+
+    def summary(self) -> dict[str, object]:
+        return {
+            "strategy": self.definition.code,
+            "watchlist": sorted(self.watchlist),
+            "positions": self.positions.get_all_positions(),
+            "pending_open_symbols": sorted(self.pending_open_symbols),
+            "pending_close_symbols": sorted(self.pending_close_symbols),
+            "pending_scale_levels": sorted(f"{symbol}:{level}" for symbol, level in self.pending_scale_levels),
+        }
+
+    def has_position(self, ticker: str) -> bool:
+        return self.positions.has_position(ticker) or ticker in self.pending_open_symbols
+
+    def _evaluate_completed_bar(self, symbol: str) -> list[TradeIntentEvent]:
+        bars = self.builder_manager.get_bars(symbol)
+        if not bars:
+            return []
+
+        indicators = self.indicator_engine.calculate(bars)
+        if indicators is None:
+            return []
+
+        self.last_indicators[symbol] = indicators
+        intents: list[TradeIntentEvent] = []
+
+        position = self.positions.get_position(symbol)
+        if position is not None:
+            position.increment_bars()
+            exit_signal = self.exit_engine.check_exit(position, indicators)
+            if exit_signal:
+                if exit_signal["action"] == "SCALE":
+                    level = str(exit_signal["level"])
+                    if (symbol, level) not in self.pending_scale_levels:
+                        intents.append(self._emit_scale_intent(exit_signal))
+                elif symbol not in self.pending_close_symbols:
+                    intents.append(self._emit_close_intent(exit_signal))
+            return intents
+
+        if symbol in self.pending_open_symbols:
+            return []
+
+        can_open, _reason = self.positions.can_open_position()
+        if not can_open:
+            return []
+
+        signal = self.entry_engine.check_entry(symbol, indicators, len(bars), self)
+        if signal is None:
+            return []
+
+        intents.append(self._emit_open_intent(signal))
+        return intents
+
+    def _emit_open_intent(self, signal: dict[str, float | int | str]) -> TradeIntentEvent:
+        symbol = str(signal["ticker"])
+        self.pending_open_symbols.add(symbol)
+        metadata = {
+            "path": str(signal["path"]),
+            "score": str(signal["score"]),
+            "score_details": str(signal["score_details"]),
+            "timeframe_secs": str(self.definition.interval_secs),
+        }
+        return TradeIntentEvent(
+            source_service=SERVICE_NAME,
+            payload=TradeIntentPayload(
+                strategy_code=self.definition.code,
+                broker_account_name=self.definition.account_name,
+                symbol=symbol,
+                side="buy",
+                quantity=Decimal(str(self.definition.trading_config.default_quantity)),
+                intent_type="open",
+                reason=f"ENTRY_{signal['path']}",
+                metadata=metadata,
+            ),
+        )
+
+    def _emit_close_intent(self, signal: dict[str, float | int | str]) -> TradeIntentEvent:
+        symbol = str(signal["ticker"])
+        self.pending_close_symbols.add(symbol)
+        position = self.positions.get_position(symbol)
+        quantity = Decimal(str(position.quantity if position else self.definition.trading_config.default_quantity))
+        return TradeIntentEvent(
+            source_service=SERVICE_NAME,
+            payload=TradeIntentPayload(
+                strategy_code=self.definition.code,
+                broker_account_name=self.definition.account_name,
+                symbol=symbol,
+                side="sell",
+                quantity=quantity,
+                intent_type="close",
+                reason=str(signal["reason"]),
+                metadata={
+                    "tier": str(signal.get("tier", "")),
+                    "profit_pct": str(signal.get("profit_pct", "")),
+                },
+            ),
+        )
+
+    def _emit_scale_intent(self, signal: dict[str, float | int | str]) -> TradeIntentEvent:
+        symbol = str(signal["ticker"])
+        level = str(signal["level"])
+        self.pending_scale_levels.add((symbol, level))
+        return TradeIntentEvent(
+            source_service=SERVICE_NAME,
+            payload=TradeIntentPayload(
+                strategy_code=self.definition.code,
+                broker_account_name=self.definition.account_name,
+                symbol=symbol,
+                side="sell",
+                quantity=Decimal(str(signal["sell_qty"])),
+                intent_type="scale",
+                reason=str(signal["reason"]),
+                metadata={
+                    "level": level,
+                    "sell_pct": str(signal["sell_pct"]),
+                    "profit_pct": str(signal["profit_pct"]),
+                },
+            ),
+        )
+
+
+class StrategyEngineState:
+    def __init__(
+        self,
+        settings: Settings | None = None,
+        *,
+        alert_config: MomentumAlertConfig | None = None,
+        confirmed_config: MomentumConfirmedConfig | None = None,
+        indicator_config: IndicatorConfig | None = None,
+        base_trading_config: TradingConfig | None = None,
+        now_provider: Callable[[], datetime] | None = None,
+    ):
+        self.settings = settings or get_settings()
+        self.alert_engine = MomentumAlertEngine(
+            alert_config or MomentumAlertConfig(),
+            now_provider=now_provider,
+        )
+        self.confirmed_scanner = MomentumConfirmedScanner(confirmed_config or MomentumConfirmedConfig())
+        self.reference_data: dict[str, ReferenceData] = {}
+        self.current_confirmed: list[dict[str, object]] = []
+
+        base_trading = base_trading_config or TradingConfig()
+        default_indicator_config = indicator_config or IndicatorConfig()
+        self.bots: dict[str, StrategyBotRuntime] = {
+            "macd_30s": StrategyBotRuntime(
+                StrategyDefinition(
+                    code="macd_30s",
+                    display_name="MACD Bot",
+                    account_name="paper:macd_30s",
+                    interval_secs=30,
+                    trading_config=base_trading,
+                    indicator_config=default_indicator_config,
+                ),
+                now_provider=now_provider,
+            ),
+            "macd_1m": StrategyBotRuntime(
+                StrategyDefinition(
+                    code="macd_1m",
+                    display_name="MACD Bot 1M",
+                    account_name="paper:macd_1m",
+                    interval_secs=60,
+                    trading_config=base_trading.make_1m_variant(),
+                    indicator_config=default_indicator_config,
+                ),
+                now_provider=now_provider,
+            ),
+            "tos": StrategyBotRuntime(
+                StrategyDefinition(
+                    code="tos",
+                    display_name="TOS Bot",
+                    account_name="paper:tos_runner_shared",
+                    interval_secs=60,
+                    trading_config=base_trading.make_tos_variant(),
+                    indicator_config=default_indicator_config,
+                ),
+                now_provider=now_provider,
+            ),
+        }
+
+    def process_snapshot_batch(
+        self,
+        snapshots: Sequence[MarketSnapshot],
+        reference_data: dict[str, ReferenceData],
+    ) -> dict[str, object]:
+        self.reference_data.update(reference_data)
+        self.alert_engine.record_snapshot(snapshots)
+        alerts = self.alert_engine.check_alerts(snapshots, self.reference_data)
+        snapshot_lookup = {snapshot.ticker: snapshot for snapshot in snapshots}
+        newly_confirmed = self.confirmed_scanner.process_alerts(
+            alerts,
+            self.reference_data,
+            snapshot_lookup,
+        )
+        self.confirmed_scanner.update_live_prices(snapshot_lookup)
+
+        confirmed_candidates = self.confirmed_scanner.get_all_confirmed()
+        min_score = 0.0 if len(confirmed_candidates) <= 1 else None
+        self.current_confirmed = self.confirmed_scanner.get_top_n(min_score=min_score)
+
+        watchlist = [str(stock["ticker"]) for stock in self.current_confirmed]
+        for bot in self.bots.values():
+            bot.set_watchlist(watchlist)
+
+        return {
+            "alerts": alerts,
+            "newly_confirmed": newly_confirmed,
+            "top_confirmed": self.current_confirmed,
+            "watchlist": watchlist,
+        }
+
+    def handle_trade_tick(
+        self,
+        symbol: str,
+        price: float,
+        size: int,
+        timestamp_ns: int | None = None,
+    ) -> list[TradeIntentEvent]:
+        intents: list[TradeIntentEvent] = []
+        for bot in self.bots.values():
+            intents.extend(bot.handle_trade_tick(symbol, price, size, timestamp_ns))
+        return intents
+
+    def seed_bars(
+        self,
+        strategy_code: str,
+        symbol: str,
+        bars: Sequence[dict[str, float | int]],
+    ) -> None:
+        self.bots[strategy_code].seed_bars(symbol, bars)
+
+    def apply_execution_fill(
+        self,
+        *,
+        strategy_code: str,
+        symbol: str,
+        intent_type: str,
+        side: str,
+        quantity: Decimal,
+        price: Decimal,
+        level: str | None = None,
+        path: str | None = None,
+    ) -> None:
+        self.bots[strategy_code].apply_execution_fill(
+            symbol=symbol,
+            intent_type=intent_type,
+            side=side,
+            quantity=quantity,
+            price=price,
+            level=level,
+            path=path,
+        )
+
+    def summary(self) -> dict[str, object]:
+        return {
+            "watchlist": [str(stock["ticker"]) for stock in self.current_confirmed],
+            "top_confirmed": self.current_confirmed,
+            "bots": {code: bot.summary() for code, bot in self.bots.items()},
+        }
+
+
+class StrategyEngineService:
+    def __init__(self, settings: Settings | None = None, redis_client: Redis | None = None):
+        self.settings = settings or get_settings()
+        self.redis = redis_client or Redis.from_url(self.settings.redis_url, decode_responses=True)
+        self.state = StrategyEngineState(self.settings)
+        self.logger = configure_logging(SERVICE_NAME, self.settings.log_level)
+        self.instance_name = socket.gethostname()
+        self._stream_offsets = {
+            stream_name(self.settings.redis_stream_prefix, "market-data"): "$",
+            stream_name(self.settings.redis_stream_prefix, "snapshot-batches"): "$",
+        }
+
+    async def run(self) -> None:
+        stop_event = asyncio.Event()
+        _install_signal_handlers(stop_event)
+        heartbeat_interval_secs = max(1, self.settings.service_heartbeat_interval_seconds)
+        last_heartbeat_at = utcnow()
+
+        self.logger.info("%s starting", SERVICE_NAME)
+        await self._publish_heartbeat("starting")
+
+        while not stop_event.is_set():
+            try:
+                messages = await self.redis.xread(
+                    self._stream_offsets,
+                    block=heartbeat_interval_secs * 1000,
+                    count=50,
+                )
+            except Exception:
+                self.logger.exception("redis xread failed")
+                await asyncio.sleep(1)
+                continue
+
+            if messages:
+                for stream, entries in messages:
+                    for message_id, fields in entries:
+                        self._stream_offsets[stream] = message_id
+                        await self._handle_stream_message(stream, fields)
+
+            if (utcnow() - last_heartbeat_at).total_seconds() >= heartbeat_interval_secs:
+                await self._publish_heartbeat("healthy")
+                last_heartbeat_at = utcnow()
+
+        await self._publish_heartbeat("stopping")
+        await self.redis.aclose()
+        self.logger.info("%s stopping", SERVICE_NAME)
+
+    async def _handle_stream_message(self, stream: str, fields: dict[str, str]) -> None:
+        del stream
+        data = fields.get("data")
+        if not data:
+            return
+
+        payload = json.loads(data)
+        event_type = payload.get("event_type")
+        if event_type == "snapshot_batch":
+            event = SnapshotBatchEvent.model_validate(payload)
+            snapshots = [snapshot_from_payload(item) for item in event.payload.snapshots]
+            reference = {
+                item.symbol: ReferenceData(
+                    shares_outstanding=item.shares_outstanding,
+                    avg_daily_volume=float(item.avg_daily_volume),
+                )
+                for item in event.payload.reference_data
+            }
+            summary = self.state.process_snapshot_batch(snapshots, reference)
+            self.logger.info(
+                "snapshot batch processed | alerts=%s confirmed=%s",
+                len(summary["alerts"]),
+                len(summary["top_confirmed"]),
+            )
+            return
+
+        if event_type == "trade_tick":
+            event = TradeTickEvent.model_validate(payload)
+            intents = self.state.handle_trade_tick(
+                symbol=event.payload.symbol,
+                price=float(event.payload.price),
+                size=event.payload.size,
+                timestamp_ns=event.payload.timestamp_ns,
+            )
+            for intent in intents:
+                await self._publish_intent(intent)
+            if intents:
+                self.logger.info(
+                    "generated %s intents from %s trade tick",
+                    len(intents),
+                    event.payload.symbol,
+                )
+
+    async def _publish_intent(self, intent: TradeIntentEvent) -> None:
+        stream = stream_name(self.settings.redis_stream_prefix, "strategy-intents")
+        await self.redis.xadd(stream, {"data": intent.model_dump_json()})
+
+    async def _publish_heartbeat(self, status: str) -> None:
+        stream = stream_name(self.settings.redis_stream_prefix, "heartbeats")
+        event = HeartbeatEvent(
+            source_service=SERVICE_NAME,
+            payload=HeartbeatPayload(
+                service_name=SERVICE_NAME,
+                instance_name=self.instance_name,
+                status=status,
+                details={
+                    "watchlist_size": str(len(self.state.current_confirmed)),
+                    "bot_count": str(len(self.state.bots)),
+                },
+            ),
+        )
+        await self.redis.xadd(stream, {"data": event.model_dump_json()})
+
+
+def snapshot_from_payload(payload: MarketSnapshotPayload) -> MarketSnapshot:
+    return MarketSnapshot(
+        ticker=payload.symbol,
+        day=DaySnapshot(
+            close=float(payload.day_close) if payload.day_close is not None else None,
+            volume=payload.day_volume,
+            high=float(payload.day_high) if payload.day_high is not None else None,
+            vwap=float(payload.day_vwap) if payload.day_vwap is not None else None,
+        ),
+        minute=MinuteSnapshot(
+            close=float(payload.minute_close) if payload.minute_close is not None else None,
+            accumulated_volume=payload.minute_accumulated_volume,
+            high=float(payload.minute_high) if payload.minute_high is not None else None,
+            vwap=float(payload.minute_vwap) if payload.minute_vwap is not None else None,
+        ),
+        last_trade=LastTrade(
+            price=float(payload.last_trade_price) if payload.last_trade_price is not None else None,
+            timestamp_ns=payload.last_trade_timestamp_ns,
+        ),
+        last_quote=QuoteSnapshot(
+            bid_price=float(payload.bid_price) if payload.bid_price is not None else None,
+            ask_price=float(payload.ask_price) if payload.ask_price is not None else None,
+            bid_size=payload.bid_size,
+            ask_size=payload.ask_size,
+        ),
+        todays_change_percent=float(payload.todays_change_percent) if payload.todays_change_percent is not None else None,
+        updated_ns=payload.updated_ns,
+    )

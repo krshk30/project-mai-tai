@@ -28,6 +28,7 @@ class TradeTickPayload(BaseModel):
     symbol: str
     price: Decimal
     size: int
+    timestamp_ns: int | None = None
     exchange: str | None = None
     conditions: list[str] = Field(default_factory=list)
 
@@ -76,6 +77,43 @@ class SnapshotRefreshPayload(BaseModel):
 class SnapshotRefreshEvent(EventEnvelope):
     event_type: Literal["snapshot_refresh"] = "snapshot_refresh"
     payload: SnapshotRefreshPayload
+
+
+class MarketSnapshotPayload(BaseModel):
+    symbol: str
+    day_close: Decimal | None = None
+    day_volume: int | None = None
+    day_high: Decimal | None = None
+    day_vwap: Decimal | None = None
+    minute_close: Decimal | None = None
+    minute_accumulated_volume: int | None = None
+    minute_high: Decimal | None = None
+    minute_vwap: Decimal | None = None
+    last_trade_price: Decimal | None = None
+    last_trade_timestamp_ns: int | None = None
+    bid_price: Decimal | None = None
+    ask_price: Decimal | None = None
+    bid_size: int | None = None
+    ask_size: int | None = None
+    todays_change_percent: Decimal | None = None
+    updated_ns: int | None = None
+
+
+class ReferenceDataPayload(BaseModel):
+    symbol: str
+    shares_outstanding: int = 0
+    avg_daily_volume: Decimal = Decimal("0")
+
+
+class SnapshotBatchPayload(BaseModel):
+    snapshots: list[MarketSnapshotPayload]
+    reference_data: list[ReferenceDataPayload] = Field(default_factory=list)
+    completed_at: datetime = Field(default_factory=utcnow)
+
+
+class SnapshotBatchEvent(EventEnvelope):
+    event_type: Literal["snapshot_batch"] = "snapshot_batch"
+    payload: SnapshotBatchPayload
 
 
 class TradeIntentPayload(BaseModel):
