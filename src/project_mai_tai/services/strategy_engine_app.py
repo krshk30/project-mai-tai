@@ -10,7 +10,11 @@ from datetime import UTC, datetime
 from decimal import Decimal
 
 from redis.asyncio import Redis
+from sqlalchemy import delete
+from sqlalchemy.orm import Session, sessionmaker
 
+from project_mai_tai.db.models import DashboardSnapshot
+from project_mai_tai.db.session import build_session_factory
 from project_mai_tai.events import (
     HeartbeatEvent,
     HeartbeatPayload,
@@ -637,9 +641,21 @@ class StrategyEngineState:
 
 
 class StrategyEngineService:
-    def __init__(self, settings: Settings | None = None, redis_client: Redis | None = None):
+    def __init__(
+        self,
+        settings: Settings | None = None,
+        redis_client: Redis | None = None,
+        session_factory: sessionmaker[Session] | None = None,
+    ):
         self.settings = settings or get_settings()
         self.redis = redis_client or Redis.from_url(self.settings.redis_url, decode_responses=True)
+        self.session_factory = (
+            session_factory
+            if session_factory is not None
+            else build_session_factory(self.settings)
+            if self.settings.dashboard_snapshot_persistence_enabled
+            else None
+        )
         self.state = StrategyEngineState(self.settings)
         self.logger = configure_logging(SERVICE_NAME, self.settings.log_level)
         self.instance_name = socket.gethostname()
@@ -847,6 +863,7 @@ class StrategyEngineService:
             ),
         )
         await self.redis.xadd(stream, {"data": event.model_dump_json()})
+        self._persist_scanner_snapshots(summary)
 
     async def _sync_market_data_subscriptions(self, symbols: Sequence[str]) -> None:
         normalized = {symbol.upper() for symbol in symbols if symbol}
@@ -864,6 +881,42 @@ class StrategyEngineService:
             ),
         )
         await self.redis.xadd(stream, {"data": event.model_dump_json()})
+
+    def _persist_scanner_snapshots(self, summary: dict[str, object]) -> None:
+        if self.session_factory is None:
+            return
+
+        top_confirmed = list(summary.get("top_confirmed", []))
+        if not top_confirmed:
+            return
+
+        payload = {
+            "top_confirmed": top_confirmed,
+            "watchlist": list(summary.get("watchlist", [])),
+            "cycle_count": int(summary.get("cycle_count", 0) or 0),
+            "persisted_at": utcnow().isoformat(),
+        }
+        self._replace_dashboard_snapshot("scanner_confirmed_last_nonempty", payload)
+
+    def _replace_dashboard_snapshot(self, snapshot_type: str, payload: dict[str, object]) -> None:
+        if self.session_factory is None:
+            return
+
+        safe_payload = json.loads(json.dumps(payload, default=str))
+        try:
+            with self.session_factory() as session:
+                session.execute(
+                    delete(DashboardSnapshot).where(DashboardSnapshot.snapshot_type == snapshot_type)
+                )
+                session.add(
+                    DashboardSnapshot(
+                        snapshot_type=snapshot_type,
+                        payload=safe_payload,
+                    )
+                )
+                session.commit()
+        except Exception:
+            self.logger.exception("failed to persist dashboard snapshot %s", snapshot_type)
 
 
 def snapshot_from_payload(payload: MarketSnapshotPayload) -> MarketSnapshot:

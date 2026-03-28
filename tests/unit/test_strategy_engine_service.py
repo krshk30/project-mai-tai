@@ -4,7 +4,12 @@ from datetime import datetime
 from decimal import Decimal
 
 import pytest
+from sqlalchemy import create_engine, select
+from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import StaticPool
 
+from project_mai_tai.db.base import Base
+from project_mai_tai.db.models import DashboardSnapshot
 from project_mai_tai.events import (
     HistoricalBarPayload,
     HistoricalBarsEvent,
@@ -29,6 +34,17 @@ class FakeRedis:
     async def xadd(self, stream: str, fields: dict[str, str]) -> str:
         self.entries.append((stream, fields["data"]))
         return "1-0"
+
+
+def build_test_session_factory() -> sessionmaker[Session]:
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        future=True,
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    return sessionmaker(bind=engine, expire_on_commit=False)
 
 
 def make_snapshot_payload(*, symbol: str, price: float, volume: int) -> MarketSnapshotPayload:
@@ -156,7 +172,7 @@ def test_trade_tick_generates_open_intent_for_confirmed_watchlist(monkeypatch) -
 async def test_order_event_fill_opens_position_and_clears_pending_state() -> None:
     redis = FakeRedis()
     service = StrategyEngineService(
-        settings=Settings(redis_stream_prefix="test"),
+        settings=Settings(redis_stream_prefix="test", dashboard_snapshot_persistence_enabled=False),
         redis_client=redis,
     )
     bot = service.state.bots["macd_30s"]
@@ -197,7 +213,7 @@ async def test_order_event_fill_opens_position_and_clears_pending_state() -> Non
 async def test_historical_bars_hydrate_matching_strategy_intervals() -> None:
     redis = FakeRedis()
     service = StrategyEngineService(
-        settings=Settings(redis_stream_prefix="test"),
+        settings=Settings(redis_stream_prefix="test", dashboard_snapshot_persistence_enabled=False),
         redis_client=redis,
     )
 
@@ -259,3 +275,51 @@ async def test_historical_bars_hydrate_matching_strategy_intervals() -> None:
     assert len(service.state.bots["macd_1m"].builder_manager.get_bars("UGRO")) == 0
     assert len(service.state.bots["tos"].builder_manager.get_bars("UGRO")) == 0
     assert len(service.state.bots["runner"].builder_manager.get_bars("UGRO")) == 2
+
+
+@pytest.mark.asyncio
+async def test_strategy_state_snapshot_persists_last_nonempty_confirmed_snapshot() -> None:
+    redis = FakeRedis()
+    session_factory = build_test_session_factory()
+    service = StrategyEngineService(
+        settings=Settings(redis_stream_prefix="test", dashboard_snapshot_persistence_enabled=True),
+        redis_client=redis,
+        session_factory=session_factory,
+    )
+    service.state.current_confirmed = [
+        {
+            "ticker": "UGRO",
+            "confirmed_at": "10:00:00 AM ET",
+            "entry_price": 2.25,
+            "price": 2.4,
+            "change_pct": 12.5,
+            "volume": 900_000,
+            "rvol": 6.2,
+            "shares_outstanding": 50_000,
+            "bid": 2.39,
+            "ask": 2.40,
+            "spread": 0.01,
+            "spread_pct": 0.42,
+            "first_spike_time": "09:55:00 AM ET",
+            "squeeze_count": 2,
+            "confirmation_path": "PATH_B_2SQ",
+            "headline": "Quantum Biopharma Provides Corporate Update",
+            "catalyst": "NEWS",
+            "sentiment": "bullish",
+            "news_url": "https://example.com/ugro-news",
+            "news_date": "2026-03-28",
+        }
+    ]
+
+    await service._publish_strategy_state_snapshot()
+
+    with session_factory() as session:
+        snapshot = session.scalar(
+            select(DashboardSnapshot).where(
+                DashboardSnapshot.snapshot_type == "scanner_confirmed_last_nonempty"
+            )
+        )
+
+    assert snapshot is not None
+    assert snapshot.payload["top_confirmed"][0]["ticker"] == "UGRO"
+    assert snapshot.payload["top_confirmed"][0]["headline"] == "Quantum Biopharma Provides Corporate Update"

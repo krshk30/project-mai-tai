@@ -19,6 +19,7 @@ from project_mai_tai.db.models import (
     AccountPosition,
     BrokerAccount,
     BrokerOrder,
+    DashboardSnapshot,
     Fill,
     ReconciliationFinding,
     ReconciliationRun,
@@ -87,6 +88,7 @@ class ControlPlaneRepository:
             market_data=stream_state["market_data"],
             strategy_runtime=stream_state["strategy_runtime"],
             legacy_shadow=legacy_shadow,
+            persisted_snapshots=db_state["dashboard_snapshots"],
         )
         bots = self._build_bot_views(
             strategy_runtime=stream_state["strategy_runtime"],
@@ -164,64 +166,41 @@ class ControlPlaneRepository:
         market_data: dict[str, Any],
         strategy_runtime: dict[str, Any],
         legacy_shadow: dict[str, Any],
+        persisted_snapshots: dict[str, Any],
     ) -> dict[str, Any]:
         bot_states = strategy_runtime.get("bots", {})
         watchlist = [str(symbol) for symbol in strategy_runtime.get("watchlist", [])]
-        top_confirmed: list[dict[str, Any]] = []
-        for index, item in enumerate(strategy_runtime.get("top_confirmed", []), start=1):
-            ticker = str(item.get("ticker", "")).upper()
-            watched_by = [
-                strategy_code
-                for strategy_code, bot in bot_states.items()
-                if ticker and ticker in {str(symbol).upper() for symbol in bot.get("watchlist", [])}
+        top_confirmed = [
+            self._normalize_confirmed_row(index=index, item=item, bot_states=bot_states)
+            for index, item in enumerate(strategy_runtime.get("top_confirmed", []), start=1)
+        ]
+        top_confirmed_source = "live"
+        top_confirmed_snapshot_at = ""
+
+        if not top_confirmed:
+            restored = persisted_snapshots.get("scanner_confirmed_last_nonempty") or {}
+            restored_rows = [
+                self._normalize_confirmed_row(index=index, item=item, bot_states=bot_states)
+                for index, item in enumerate(restored.get("top_confirmed", []), start=1)
             ]
-            bid = float(item.get("bid", 0) or 0)
-            ask = float(item.get("ask", 0) or 0)
-            spread = float(item.get("spread", 0) or 0)
-            if spread <= 0 and bid > 0 and ask > 0:
-                spread = round(ask - bid, 4)
-            top_confirmed.append(
-                {
-                    **item,
-                    "rank": index,
-                    "ticker": ticker,
-                    "rank_score": float(item.get("rank_score", 0) or 0),
-                    "confirmation_path": str(item.get("confirmation_path", "")),
-                    "confirmed_at": str(item.get("confirmed_at", "")),
-                    "entry_price": float(item.get("entry_price", 0) or 0),
-                    "price": float(item.get("price", 0) or 0),
-                    "change_pct": float(item.get("change_pct", 0) or 0),
-                    "volume": float(item.get("volume", 0) or 0),
-                    "rvol": float(item.get("rvol", 0) or 0),
-                    "bid": bid,
-                    "ask": ask,
-                    "bid_size": int(item.get("bid_size", 0) or 0),
-                    "ask_size": int(item.get("ask_size", 0) or 0),
-                    "spread": spread,
-                    "spread_pct": float(item.get("spread_pct", 0) or 0),
-                    "squeeze_count": int(item.get("squeeze_count", 0) or 0),
-                    "first_spike_time": str(item.get("first_spike_time", "")),
-                    "catalyst": str(item.get("catalyst", "")),
-                    "headline": str(item.get("headline", "")),
-                    "sentiment": str(item.get("sentiment", "")),
-                    "news_url": str(item.get("news_url", "")),
-                    "news_date": str(item.get("news_date", "")),
-                    "watched_by": watched_by,
-                    "is_top5": bool(watched_by),
-                }
-            )
+            if restored_rows:
+                top_confirmed = restored_rows
+                top_confirmed_source = "restored"
+                top_confirmed_snapshot_at = str(restored.get("created_at", ""))
 
         legacy_confirmed = [
             str(symbol).upper()
             for symbol in legacy_shadow.get("scanner", {}).get("confirmed_symbols", [])
         ]
         return {
-            "status": "active" if top_confirmed else "idle",
+            "status": "active" if top_confirmed_source == "live" and top_confirmed else "restored" if top_confirmed else "idle",
             "cycle_count": int(strategy_runtime.get("cycle_count", 0) or 0),
             "watchlist": watchlist,
             "watchlist_count": len(watchlist),
             "top_confirmed_count": len(top_confirmed),
             "top_confirmed": top_confirmed,
+            "top_confirmed_source": top_confirmed_source,
+            "top_confirmed_snapshot_at": top_confirmed_snapshot_at,
             "five_pillars": list(strategy_runtime.get("five_pillars", [])),
             "five_pillars_count": len(strategy_runtime.get("five_pillars", [])),
             "top_gainers": list(strategy_runtime.get("top_gainers", [])),
@@ -235,6 +214,54 @@ class ControlPlaneRepository:
             "latest_snapshot_batch": market_data.get("latest_snapshot_batch"),
             "legacy_confirmed_symbols": legacy_confirmed,
             "legacy_confirmed_count": len(legacy_confirmed),
+        }
+
+    def _normalize_confirmed_row(
+        self,
+        *,
+        index: int,
+        item: dict[str, Any],
+        bot_states: dict[str, Any],
+    ) -> dict[str, Any]:
+        ticker = str(item.get("ticker", "")).upper()
+        watched_by = [
+            strategy_code
+            for strategy_code, bot in bot_states.items()
+            if ticker and ticker in {str(symbol).upper() for symbol in bot.get("watchlist", [])}
+        ]
+        bid = float(item.get("bid", 0) or 0)
+        ask = float(item.get("ask", 0) or 0)
+        spread = float(item.get("spread", 0) or 0)
+        if spread <= 0 and bid > 0 and ask > 0:
+            spread = round(ask - bid, 4)
+
+        return {
+            **item,
+            "rank": index,
+            "ticker": ticker,
+            "rank_score": float(item.get("rank_score", 0) or 0),
+            "confirmation_path": str(item.get("confirmation_path", "")),
+            "confirmed_at": str(item.get("confirmed_at", "")),
+            "entry_price": float(item.get("entry_price", 0) or 0),
+            "price": float(item.get("price", 0) or 0),
+            "change_pct": float(item.get("change_pct", 0) or 0),
+            "volume": float(item.get("volume", 0) or 0),
+            "rvol": float(item.get("rvol", 0) or 0),
+            "bid": bid,
+            "ask": ask,
+            "bid_size": int(item.get("bid_size", 0) or 0),
+            "ask_size": int(item.get("ask_size", 0) or 0),
+            "spread": spread,
+            "spread_pct": float(item.get("spread_pct", 0) or 0),
+            "squeeze_count": int(item.get("squeeze_count", 0) or 0),
+            "first_spike_time": str(item.get("first_spike_time", "")),
+            "catalyst": str(item.get("catalyst", "")),
+            "headline": str(item.get("headline", "")),
+            "sentiment": str(item.get("sentiment", "")),
+            "news_url": str(item.get("news_url", "")),
+            "news_date": str(item.get("news_date", "")),
+            "watched_by": watched_by,
+            "is_top5": bool(watched_by),
         }
 
     def _build_bot_views(
@@ -342,6 +369,7 @@ class ControlPlaneRepository:
             "findings": [],
         }
         incidents: list[dict[str, Any]] = []
+        dashboard_snapshots: dict[str, dict[str, Any]] = {}
 
         try:
             with self.session_factory() as session:
@@ -524,6 +552,17 @@ class ControlPlaneRepository:
                             "opened_at": _datetime_str(incident.opened_at),
                         }
                     )
+
+                confirmed_snapshot = session.scalar(
+                    select(DashboardSnapshot)
+                    .where(DashboardSnapshot.snapshot_type == "scanner_confirmed_last_nonempty")
+                    .order_by(desc(DashboardSnapshot.created_at))
+                )
+                if confirmed_snapshot is not None:
+                    dashboard_snapshots["scanner_confirmed_last_nonempty"] = {
+                        **confirmed_snapshot.payload,
+                        "created_at": _datetime_str(confirmed_snapshot.created_at),
+                    }
         except Exception as exc:
             errors.append(f"database:{exc}")
 
@@ -536,6 +575,7 @@ class ControlPlaneRepository:
             "account_positions": account_positions,
             "reconciliation": reconciliation,
             "incidents": incidents,
+            "dashboard_snapshots": dashboard_snapshots,
             "errors": errors,
         }
 
@@ -1833,17 +1873,21 @@ def _build_bot_api_payload(data: dict[str, Any], strategy_code: str) -> dict[str
 
 def _render_scanner_dashboard(data: dict[str, Any]) -> str:
     scanner = data["scanner"]
-    scanner_state = data["strategy_runtime"]
     config = data["scanner_config"]
     latest_snapshot = data["market_data"]["latest_snapshot_batch"] or {}
     services = {service["service_name"]: service for service in data["services"]}
     market_data_service = services.get("market-data-gateway", {})
     subscription_symbols = set(scanner["subscription_symbols"])
 
-    confirmed_rows = _render_scanner_confirmed_rows(scanner_state.get("top_confirmed", []), subscription_symbols)
+    confirmed_rows = _render_scanner_confirmed_rows(scanner["top_confirmed"], subscription_symbols)
     pillar_rows = _render_scanner_stock_rows(scanner["five_pillars"], subscription_symbols)
     gainer_rows = _render_scanner_stock_rows(scanner["top_gainers"], subscription_symbols)
     alert_rows = _render_alert_rows(scanner["recent_alerts"])
+    confirmed_sub = (
+        f'Restored from last non-empty snapshot at {escape(scanner["top_confirmed_snapshot_at"])}.'
+        if scanner.get("top_confirmed_source") == "restored" and scanner.get("top_confirmed_snapshot_at")
+        else "Bot-ready candidates from the new scanner runtime."
+    )
 
     warmup = scanner["alert_warmup"]
     websocket_status = market_data_service.get("status", "unknown")
@@ -2103,7 +2147,7 @@ def _render_scanner_dashboard(data: dict[str, Any]) -> str:
             <div class="metric-grid">
                 <div class="metric-card">
                     <span>Confirmed</span>
-                    <strong>{len(scanner_state.get("top_confirmed", []))}</strong>
+                    <strong>{scanner["top_confirmed_count"]}</strong>
                 </div>
                 <div class="metric-card">
                     <span>Pillars</span>
@@ -2177,9 +2221,9 @@ def _render_scanner_dashboard(data: dict[str, Any]) -> str:
                 <div class="panel-header">
                     <div>
                         <h2>Momentum Confirmed</h2>
-                        <div class="sub">Bot-ready candidates from the new scanner runtime.</div>
+                        <div class="sub">{confirmed_sub}</div>
                     </div>
-                    <span class="count green">{len(scanner_state.get("top_confirmed", []))} names</span>
+                    <span class="count green">{scanner["top_confirmed_count"]} names</span>
                 </div>
                 <div class="table-wrap">
                     <table>

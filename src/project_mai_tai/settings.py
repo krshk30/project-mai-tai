@@ -63,6 +63,7 @@ class Settings(BaseSettings):
     oms_broker_sync_interval_seconds: int = 15
 
     dashboard_refresh_seconds: int = 5
+    dashboard_snapshot_persistence_enabled: bool = True
     service_heartbeat_interval_seconds: int = 15
     reconciliation_interval_seconds: int = 30
     reconciliation_stuck_order_seconds: int = 180

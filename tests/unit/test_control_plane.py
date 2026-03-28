@@ -13,6 +13,7 @@ from project_mai_tai.db.models import (
     AccountPosition,
     BrokerAccount,
     BrokerOrder,
+    DashboardSnapshot,
     Fill,
     ReconciliationFinding,
     ReconciliationRun,
@@ -208,6 +209,41 @@ def seed_database(session_factory: sessionmaker[Session]) -> None:
             payload={"fingerprint": "stuck-order:test"},
             opened_at=datetime.now(UTC),
         )
+        dashboard_snapshot = DashboardSnapshot(
+            snapshot_type="scanner_confirmed_last_nonempty",
+            payload={
+                "top_confirmed": [
+                    {
+                        "ticker": "UGRO",
+                        "rank_score": 72,
+                        "confirmed_at": "10:00:00 AM ET",
+                        "entry_price": 2.48,
+                        "price": 2.55,
+                        "change_pct": 12.5,
+                        "volume": 900_000,
+                        "rvol": 6.1,
+                        "shares_outstanding": 50_000,
+                        "bid": 2.54,
+                        "ask": 2.55,
+                        "bid_size": 7,
+                        "ask_size": 9,
+                        "spread": 0.01,
+                        "spread_pct": 0.42,
+                        "first_spike_time": "09:55:00 AM ET",
+                        "squeeze_count": 2,
+                        "confirmation_path": "PATH_B_2SQ",
+                        "catalyst": "NEWS",
+                        "headline": "Quantum Biopharma Provides Corporate Update",
+                        "sentiment": "bullish",
+                        "news_url": "https://example.com/ugro-news",
+                        "news_date": "2026-03-28",
+                    }
+                ],
+                "watchlist": ["UGRO"],
+                "cycle_count": 42,
+                "persisted_at": "2026-03-28T14:00:00+00:00",
+            },
+        )
         session.add_all(
             [
                 fill,
@@ -215,12 +251,13 @@ def seed_database(session_factory: sessionmaker[Session]) -> None:
                 account_position,
                 reconciliation_finding,
                 incident,
+                dashboard_snapshot,
             ]
         )
         session.commit()
 
 
-def make_streams(prefix: str) -> dict[str, list[tuple[str, dict[str, str]]]]:
+def make_streams(prefix: str, *, include_confirmed: bool = True) -> dict[str, list[tuple[str, dict[str, str]]]]:
     heartbeat = HeartbeatEvent(
         source_service="strategy-engine",
         payload=HeartbeatPayload(
@@ -246,33 +283,37 @@ def make_streams(prefix: str) -> dict[str, list[tuple[str, dict[str, str]]]]:
         source_service="strategy-engine",
         payload=StrategyStateSnapshotPayload(
             watchlist=["UGRO"],
-            top_confirmed=[
-                {
-                    "ticker": "UGRO",
-                    "rank_score": 72,
-                    "confirmed_at": "10:00:12 AM ET",
-                    "entry_price": 2.48,
-                    "price": 2.55,
-                    "change_pct": 12.5,
-                    "volume": 900_000,
-                    "rvol": 6.1,
-                    "shares_outstanding": 50_000,
-                    "bid": 2.54,
-                    "ask": 2.55,
-                    "bid_size": 7,
-                    "ask_size": 9,
-                    "spread": 0.01,
-                    "spread_pct": 0.42,
-                    "first_spike_time": "09:55:00 AM ET",
-                    "squeeze_count": 2,
-                    "confirmation_path": "PATH_B_2SQ",
-                    "catalyst": "NEWS",
-                    "headline": "Quantum Biopharma Provides Corporate Update",
-                    "sentiment": "bullish",
-                    "news_url": "https://example.com/ugro-news",
-                    "news_date": "2026-03-28",
-                }
-            ],
+            top_confirmed=(
+                [
+                    {
+                        "ticker": "UGRO",
+                        "rank_score": 72,
+                        "confirmed_at": "10:00:12 AM ET",
+                        "entry_price": 2.48,
+                        "price": 2.55,
+                        "change_pct": 12.5,
+                        "volume": 900_000,
+                        "rvol": 6.1,
+                        "shares_outstanding": 50_000,
+                        "bid": 2.54,
+                        "ask": 2.55,
+                        "bid_size": 7,
+                        "ask_size": 9,
+                        "spread": 0.01,
+                        "spread_pct": 0.42,
+                        "first_spike_time": "09:55:00 AM ET",
+                        "squeeze_count": 2,
+                        "confirmation_path": "PATH_B_2SQ",
+                        "catalyst": "NEWS",
+                        "headline": "Quantum Biopharma Provides Corporate Update",
+                        "sentiment": "bullish",
+                        "news_url": "https://example.com/ugro-news",
+                        "news_date": "2026-03-28",
+                    }
+                ]
+                if include_confirmed
+                else []
+            ),
             five_pillars=[
                 {
                     "ticker": "UGRO",
@@ -484,3 +525,31 @@ def test_control_plane_overview_and_dashboard_render() -> None:
         assert "Order stuck in accepted for UGRO" in dashboard.text
         assert "Legacy Shadow" in dashboard.text
         assert "SBET" in dashboard.text
+
+
+def test_control_plane_restores_last_nonempty_confirmed_snapshot() -> None:
+    settings = Settings(redis_stream_prefix="test", oms_adapter="alpaca_paper")
+    session_factory = build_test_session_factory()
+    seed_database(session_factory)
+    redis = FakeRedis(make_streams(settings.redis_stream_prefix, include_confirmed=False))
+
+    app = build_app(
+        settings=settings,
+        session_factory=session_factory,
+        redis_client=redis,
+        legacy_client=FakeLegacyClient(),
+    )
+
+    with TestClient(app) as client:
+        scanner = client.get("/api/scanner")
+        assert scanner.status_code == 200
+        scanner_body = scanner.json()["scanner"]
+        assert scanner_body["top_confirmed_source"] == "restored"
+        assert scanner_body["top_confirmed_count"] == 1
+        assert scanner_body["top_confirmed"][0]["ticker"] == "UGRO"
+        assert scanner_body["top_confirmed_snapshot_at"]
+
+        dashboard = client.get("/scanner/dashboard")
+        assert dashboard.status_code == 200
+        assert "Restored from last non-empty snapshot" in dashboard.text
+        assert "Quantum Biopharma Provides Corporate Update" in dashboard.text
