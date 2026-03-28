@@ -14,7 +14,10 @@ from project_mai_tai.db.models import (
     BrokerAccount,
     BrokerOrder,
     Fill,
+    ReconciliationFinding,
+    ReconciliationRun,
     Strategy,
+    SystemIncident,
     TradeIntent,
     VirtualPosition,
 )
@@ -124,7 +127,49 @@ def seed_database(session_factory: sessionmaker[Session]) -> None:
             market_value=Decimal("25.5"),
             source_updated_at=datetime.now(UTC),
         )
-        session.add_all([fill, virtual_position, account_position])
+        reconciliation_run = ReconciliationRun(
+            broker_account_id=account.id,
+            status="completed",
+            started_at=datetime.now(UTC),
+            completed_at=datetime.now(UTC),
+            summary={
+                "cutover_confidence": 90,
+                "total_findings": 1,
+                "critical_findings": 0,
+                "warning_findings": 1,
+            },
+        )
+        session.add(reconciliation_run)
+        session.flush()
+
+        reconciliation_finding = ReconciliationFinding(
+            reconciliation_run_id=reconciliation_run.id,
+            order_id=order.id,
+            severity="warning",
+            finding_type="stuck_order",
+            symbol="UGRO",
+            payload={
+                "title": "Order stuck in accepted for UGRO",
+                "fingerprint": "stuck-order:test",
+            },
+        )
+        incident = SystemIncident(
+            service_name="reconciler",
+            severity="warning",
+            title="Order stuck in accepted for UGRO",
+            status="open",
+            payload={"fingerprint": "stuck-order:test"},
+            opened_at=datetime.now(UTC),
+        )
+        session.add_all(
+            [
+                fill,
+                virtual_position,
+                account_position,
+                reconciliation_finding,
+                incident,
+            ]
+        )
         session.commit()
 
 
@@ -173,9 +218,18 @@ def test_control_plane_overview_and_dashboard_render() -> None:
         assert body["virtual_positions"][0]["symbol"] == "UGRO"
         assert body["services"][0]["service_name"] == "strategy-engine"
         assert body["market_data"]["active_subscription_symbols"] == 1
+        assert body["reconciliation"]["latest_run"]["summary"]["cutover_confidence"] == 90
+        assert body["reconciliation"]["findings"][0]["finding_type"] == "stuck_order"
+
+        reconciliation = client.get("/api/reconciliation")
+        assert reconciliation.status_code == 200
+        reconciliation_body = reconciliation.json()
+        assert reconciliation_body["reconciliation"]["findings"][0]["title"] == "Order stuck in accepted for UGRO"
 
         dashboard = client.get("/")
         assert dashboard.status_code == 200
         assert "Project Mai Tai Operator View" in dashboard.text
         assert "UGRO" in dashboard.text
         assert "Virtual Positions" in dashboard.text
+        assert "Cutover Confidence" in dashboard.text
+        assert "Order stuck in accepted for UGRO" in dashboard.text

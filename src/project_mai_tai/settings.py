@@ -44,6 +44,11 @@ class Settings(BaseSettings):
 
     dashboard_refresh_seconds: int = 5
     service_heartbeat_interval_seconds: int = 15
+    reconciliation_interval_seconds: int = 30
+    reconciliation_stuck_order_seconds: int = 180
+    reconciliation_stuck_intent_seconds: int = 180
+    reconciliation_position_quantity_tolerance: float = 0.0001
+    reconciliation_average_price_tolerance: float = 0.02
 
     @computed_field
     @property

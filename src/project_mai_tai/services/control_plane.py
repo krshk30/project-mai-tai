@@ -10,7 +10,7 @@ from typing import Any
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from redis.asyncio import Redis
-from sqlalchemy import desc, func, select, text
+from sqlalchemy import case, desc, func, select, text
 from sqlalchemy.orm import Session, sessionmaker
 import uvicorn
 
@@ -19,6 +19,8 @@ from project_mai_tai.db.models import (
     BrokerAccount,
     BrokerOrder,
     Fill,
+    ReconciliationFinding,
+    ReconciliationRun,
     Strategy,
     SystemIncident,
     TradeIntent,
@@ -63,6 +65,11 @@ class ControlPlaneRepository:
             overall_status = "degraded"
         elif any(service["status"] not in {"healthy", "starting"} for service in stream_state["services"]):
             overall_status = "degraded"
+        elif (
+            db_state["reconciliation"]["latest_run"] is not None
+            and db_state["reconciliation"]["latest_run"]["summary"].get("total_findings", 0) > 0
+        ):
+            overall_status = "degraded"
 
         return {
             "generated_at": utcnow().isoformat(),
@@ -91,6 +98,7 @@ class ControlPlaneRepository:
             "recent_fills": db_state["recent_fills"],
             "virtual_positions": db_state["virtual_positions"],
             "account_positions": db_state["account_positions"],
+            "reconciliation": db_state["reconciliation"],
             "incidents": db_state["incidents"],
             "errors": db_state["errors"] + stream_state["errors"],
         }
@@ -118,12 +126,17 @@ class ControlPlaneRepository:
             "open_virtual_positions": 0,
             "open_account_positions": 0,
             "open_incidents": 0,
+            "latest_reconciliation_findings": 0,
         }
         recent_intents: list[dict[str, Any]] = []
         recent_orders: list[dict[str, Any]] = []
         recent_fills: list[dict[str, Any]] = []
         virtual_positions: list[dict[str, Any]] = []
         account_positions: list[dict[str, Any]] = []
+        reconciliation = {
+            "latest_run": None,
+            "findings": [],
+        }
         incidents: list[dict[str, Any]] = []
 
         try:
@@ -164,6 +177,45 @@ class ControlPlaneRepository:
                     )
                     or 0
                 )
+
+                latest_reconciliation_run = session.scalar(
+                    select(ReconciliationRun).order_by(desc(ReconciliationRun.started_at))
+                )
+                if latest_reconciliation_run is not None:
+                    latest_finding_rows = session.scalars(
+                        select(ReconciliationFinding)
+                        .where(ReconciliationFinding.reconciliation_run_id == latest_reconciliation_run.id)
+                        .order_by(
+                            desc(
+                                case(
+                                    (ReconciliationFinding.severity == "critical", 2),
+                                    (ReconciliationFinding.severity == "warning", 1),
+                                    else_=0,
+                                )
+                            ),
+                            desc(ReconciliationFinding.created_at),
+                        )
+                        .limit(20)
+                    ).all()
+                    counts["latest_reconciliation_findings"] = len(latest_finding_rows)
+                    reconciliation = {
+                        "latest_run": {
+                            "status": latest_reconciliation_run.status,
+                            "started_at": _datetime_str(latest_reconciliation_run.started_at),
+                            "completed_at": _datetime_str(latest_reconciliation_run.completed_at),
+                            "summary": latest_reconciliation_run.summary,
+                        },
+                        "findings": [
+                            {
+                                "severity": finding.severity,
+                                "finding_type": finding.finding_type,
+                                "symbol": finding.symbol or "",
+                                "title": str(finding.payload.get("title", finding.finding_type)),
+                                "created_at": _datetime_str(finding.created_at),
+                            }
+                            for finding in latest_finding_rows
+                        ],
+                    }
 
                 for intent in session.scalars(
                     select(TradeIntent).order_by(desc(TradeIntent.updated_at)).limit(10)
@@ -278,6 +330,7 @@ class ControlPlaneRepository:
             "recent_fills": recent_fills,
             "virtual_positions": virtual_positions,
             "account_positions": account_positions,
+            "reconciliation": reconciliation,
             "incidents": incidents,
             "errors": errors,
         }
@@ -419,6 +472,14 @@ def build_app(
             "account_positions": data["account_positions"],
         }
 
+    @app.get("/api/reconciliation")
+    async def reconciliation() -> dict[str, Any]:
+        data = await app.state.repository.load_dashboard_data()
+        return {
+            "reconciliation": data["reconciliation"],
+            "incidents": data["incidents"],
+        }
+
     @app.get("/", response_class=HTMLResponse)
     async def dashboard() -> str:
         data = await app.state.repository.load_dashboard_data()
@@ -546,6 +607,19 @@ def _render_dashboard(data: dict[str, Any]) -> str:
         for item in data["incidents"]
     ) or _empty_row(5, "No incidents logged")
 
+    reconciliation_rows = "".join(
+        f"""
+        <tr>
+          <td>{_status_badge(item["severity"])}</td>
+          <td>{escape(item["finding_type"])}</td>
+          <td>{escape(item["symbol"] or "-")}</td>
+          <td>{escape(item["title"])}</td>
+          <td>{escape(item["created_at"])}</td>
+        </tr>
+        """
+        for item in data["reconciliation"]["findings"]
+    ) or _empty_row(5, "No reconciliation findings in the latest run")
+
     latest_snapshot = data["market_data"]["latest_snapshot_batch"] or {}
     snapshot_summary = (
         f'{latest_snapshot.get("snapshot_count", 0)} snapshots / '
@@ -555,6 +629,9 @@ def _render_dashboard(data: dict[str, Any]) -> str:
     )
     subscription_symbols = data["market_data"]["subscription_symbols"][:12]
     subscription_summary = ", ".join(subscription_symbols) or "No dynamic subscriptions yet"
+    latest_reconciliation = data["reconciliation"]["latest_run"] or {}
+    latest_reconciliation_summary = latest_reconciliation.get("summary", {})
+    cutover_confidence = latest_reconciliation_summary.get("cutover_confidence", 0)
 
     return f"""
     <html>
@@ -765,6 +842,11 @@ def _render_dashboard(data: dict[str, Any]) -> str:
                 <p>{escape(subscription_summary)}</p>
               </div>
               <div class="card">
+                <div class="label">Cutover Confidence</div>
+                <div class="value">{cutover_confidence}/100</div>
+                <p>{escape(latest_reconciliation.get("completed_at", "No reconciliation run yet"))}</p>
+              </div>
+              <div class="card">
                 <div class="label">Control Plane</div>
                 <div class="value"><code>{escape(data["control_plane_url"])}</code></div>
                 <p>{escape(data["generated_at"])}</p>
@@ -803,9 +885,47 @@ def _render_dashboard(data: dict[str, Any]) -> str:
                 <p><strong>Broker Accounts:</strong> {data["counts"]["broker_accounts"]}</p>
                 <p><strong>Strategies:</strong> {data["counts"]["strategies"]}</p>
                 <p><strong>Open Incidents:</strong> {data["counts"]["open_incidents"]}</p>
+                <p><strong>Latest Reconciliation Findings:</strong> {data["counts"]["latest_reconciliation_findings"]}</p>
+                <p><strong>Latest Reconciliation Status:</strong> {escape(latest_reconciliation.get("status", "not-run"))}</p>
                 <p><strong>Refresh:</strong> Every {refresh_seconds}s</p>
               </div>
               <div style="margin-top: 16px;">{errors_html}</div>
+            </section>
+          </div>
+
+          <div class="grid-2">
+            <section class="section">
+              <div class="section-header">
+                <div>
+                  <h2>Reconciliation</h2>
+                  <div class="sub">Latest shared-account consistency check across OMS state and attributed positions.</div>
+                </div>
+              </div>
+              <div class="muted-box">
+                <p><strong>Status:</strong> {escape(latest_reconciliation.get("status", "not-run"))}</p>
+                <p><strong>Started:</strong> {escape(latest_reconciliation.get("started_at", ""))}</p>
+                <p><strong>Completed:</strong> {escape(latest_reconciliation.get("completed_at", ""))}</p>
+                <p><strong>Total Findings:</strong> {latest_reconciliation_summary.get("total_findings", 0)}</p>
+                <p><strong>Critical Findings:</strong> {latest_reconciliation_summary.get("critical_findings", 0)}</p>
+                <p><strong>Warning Findings:</strong> {latest_reconciliation_summary.get("warning_findings", 0)}</p>
+              </div>
+            </section>
+
+            <section class="section">
+              <div class="section-header">
+                <div>
+                  <h2>Latest Findings</h2>
+                  <div class="sub">Current blockers to shared-account correctness and safe cutover.</div>
+                </div>
+              </div>
+              <div class="table-card">
+                <table>
+                  <thead>
+                    <tr><th>Severity</th><th>Type</th><th>Symbol</th><th>Title</th><th>Detected</th></tr>
+                  </thead>
+                  <tbody>{reconciliation_rows}</tbody>
+                </table>
+              </div>
             </section>
           </div>
 
