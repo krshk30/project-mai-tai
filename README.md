@@ -45,3 +45,17 @@ Local bootstrap commands once dependencies are installed:
 - `python services/strategy-engine/main.py`
 - `python services/oms-risk/main.py`
 - `python services/reconciler/main.py`
+
+## Local Dev
+
+Recommended toolchain:
+- `uv`
+- `Python 3.12`
+
+Fresh setup:
+- `uv python install 3.12`
+- `uv venv --python 3.12 .venv`
+- `uv pip install --python .venv/bin/python -e ".[dev]"`
+
+Test run:
+- `.venv/bin/python -m pytest`
