@@ -47,6 +47,7 @@ from project_mai_tai.strategy_core import (
     PositionTracker,
     QuoteSnapshot,
     ReferenceData,
+    RunnerStrategyRuntime,
     TradingConfig,
 )
 from project_mai_tai.strategy_core.bar_builder import BarBuilderManager
@@ -352,6 +353,9 @@ class StrategyBotRuntime:
         )
 
 
+StrategyRuntime = StrategyBotRuntime | RunnerStrategyRuntime
+
+
 class StrategyEngineState:
     def __init__(
         self,
@@ -374,7 +378,8 @@ class StrategyEngineState:
 
         base_trading = base_trading_config or TradingConfig()
         default_indicator_config = indicator_config or IndicatorConfig()
-        self.bots: dict[str, StrategyBotRuntime] = {
+        runner_trading = base_trading.make_tos_variant(quantity=100, bar_interval_secs=300)
+        self.bots: dict[str, StrategyRuntime] = {
             "macd_30s": StrategyBotRuntime(
                 StrategyDefinition(
                     code="macd_30s",
@@ -408,6 +413,13 @@ class StrategyEngineState:
                 ),
                 now_provider=now_provider,
             ),
+            "runner": RunnerStrategyRuntime(
+                definition_code="runner",
+                account_name="paper:tos_runner_shared",
+                default_quantity=runner_trading.default_quantity,
+                now_provider=now_provider,
+                source_service=SERVICE_NAME,
+            ),
         }
 
     def process_snapshot_batch(
@@ -431,7 +443,12 @@ class StrategyEngineState:
         self.current_confirmed = self.confirmed_scanner.get_top_n(min_score=min_score)
 
         watchlist = [str(stock["ticker"]) for stock in self.current_confirmed]
-        for bot in self.bots.values():
+        runner_watchlist = [str(stock["ticker"]) for stock in confirmed_candidates]
+        for code, bot in self.bots.items():
+            if code == "runner":
+                bot.set_watchlist(runner_watchlist)
+                bot.update_candidates(confirmed_candidates)
+                continue
             bot.set_watchlist(watchlist)
 
         return {

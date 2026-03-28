@@ -165,6 +165,22 @@ class MomentumConfirmedScanner:
             prev_close = float(stock.get("prev_close", 0) or 0)
             if price > 0 and prev_close > 0:
                 stock["change_pct"] = ((price - prev_close) / prev_close) * 100
+            if snapshot.last_quote:
+                bid = snapshot.last_quote.bid_price or 0
+                ask = snapshot.last_quote.ask_price or 0
+                if bid > 0:
+                    stock["bid"] = bid
+                if ask > 0:
+                    stock["ask"] = ask
+                if snapshot.last_quote.bid_size is not None:
+                    stock["bid_size"] = snapshot.last_quote.bid_size
+                if snapshot.last_quote.ask_size is not None:
+                    stock["ask_size"] = snapshot.last_quote.ask_size
+                if bid > 0 and ask > 0:
+                    spread = round(ask - bid, 4)
+                    mid = (ask + bid) / 2 if (ask + bid) > 0 else 0
+                    stock["spread"] = spread
+                    stock["spread_pct"] = round((spread / mid) * 100, 2) if mid > 0 else 0
             volume = snapshot.minute.accumulated_volume if snapshot.minute and snapshot.minute.accumulated_volume else 0
             if snapshot.day and snapshot.day.volume and snapshot.day.volume > 0:
                 volume = snapshot.day.volume
