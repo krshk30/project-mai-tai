@@ -226,6 +226,13 @@ class ControlPlaneRepository:
                     "display_name": registration.display_name if registration else code.replace("_", " ").upper(),
                     "account_name": runtime_bot.get("account_name")
                     or (registration.account_name if registration else ""),
+                    "execution_mode": registration.execution_mode if registration else "unknown",
+                    "provider": self.settings.broker_default_provider if registration else "unknown",
+                    "wiring_status": (
+                        f'{registration.execution_mode}/{self.settings.broker_default_provider}'
+                        if registration
+                        else "unknown"
+                    ),
                     "legacy_status": str(legacy_bot.get("status", "not_available")),
                     "legacy_present": bool(legacy_bot),
                     "watchlist": watchlist,
@@ -890,7 +897,7 @@ def _render_dashboard(data: dict[str, Any]) -> str:
               <h3>{escape(bot["display_name"])}</h3>
               <div class="sub">{escape(bot["strategy_code"])} / {escape(bot["account_name"] or "-")}</div>
             </div>
-            {_status_badge(bot["legacy_status"] if bot["legacy_present"] else "not-wired")}
+            {_status_badge(bot["wiring_status"])}
           </div>
           <div class="bot-metrics">
             <div><span class="mini-label">Watching</span><strong>{bot["watchlist_count"]}</strong></div>
@@ -898,6 +905,8 @@ def _render_dashboard(data: dict[str, Any]) -> str:
             <div><span class="mini-label">Pending</span><strong>{bot["pending_count"]}</strong></div>
           </div>
           <div class="bot-lines">
+            <p><strong>Execution:</strong> {escape(bot["execution_mode"])} via {escape(bot["provider"])}</p>
+            <p><strong>Legacy Shadow:</strong> {escape(bot["legacy_status"] if bot["legacy_present"] else "not available")}</p>
             <p><strong>Watchlist:</strong> {escape(", ".join(bot["watchlist"][:8]) or "None")}</p>
             <p><strong>Pending Opens:</strong> {escape(", ".join(bot["pending_open_symbols"][:6]) or "None")}</p>
             <p><strong>Pending Closes:</strong> {escape(", ".join(bot["pending_close_symbols"][:6]) or "None")}</p>

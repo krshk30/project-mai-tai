@@ -287,7 +287,7 @@ def make_streams(prefix: str) -> dict[str, list[tuple[str, dict[str, str]]]]:
 
 
 def test_control_plane_overview_and_dashboard_render() -> None:
-    settings = Settings(redis_stream_prefix="test")
+    settings = Settings(redis_stream_prefix="test", oms_adapter="alpaca_paper")
     session_factory = build_test_session_factory()
     seed_database(session_factory)
     redis = FakeRedis(make_streams(settings.redis_stream_prefix))
@@ -311,6 +311,9 @@ def test_control_plane_overview_and_dashboard_render() -> None:
         assert body["scanner"]["legacy_confirmed_symbols"] == ["UGRO", "SBET"]
         assert body["bots"][0]["strategy_code"] == "macd_30s"
         assert body["bots"][0]["watchlist"] == ["UGRO"]
+        assert body["bots"][0]["execution_mode"] == "paper"
+        assert body["bots"][0]["provider"] == "alpaca"
+        assert body["bots"][0]["wiring_status"] == "paper/alpaca"
         assert body["reconciliation"]["latest_run"]["summary"]["cutover_confidence"] == 90
         assert body["reconciliation"]["findings"][0]["finding_type"] == "stuck_order"
         assert body["legacy_shadow"]["divergence"]["status"] == "drifted"
@@ -328,6 +331,7 @@ def test_control_plane_overview_and_dashboard_render() -> None:
         bots_body = bots.json()
         assert bots_body["bots"][0]["display_name"] == "MACD Bot"
         assert bots_body["bots"][0]["recent_intents"][0]["symbol"] == "UGRO"
+        assert bots_body["bots"][0]["legacy_status"] == "running (dry run)"
 
         reconciliation = client.get("/api/reconciliation")
         assert reconciliation.status_code == 200
@@ -348,6 +352,8 @@ def test_control_plane_overview_and_dashboard_render() -> None:
         assert "Legacy-style bot visibility for 30s, 1m, TOS, and Runner." in dashboard.text
         assert "UGRO" in dashboard.text
         assert "MACD Bot" in dashboard.text
+        assert "paper/alpaca" in dashboard.text
+        assert "Legacy Shadow:" in dashboard.text
         assert "Virtual Positions" in dashboard.text
         assert "Cutover Confidence" in dashboard.text
         assert "Order stuck in accepted for UGRO" in dashboard.text
