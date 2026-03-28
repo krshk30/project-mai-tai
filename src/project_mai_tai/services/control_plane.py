@@ -1834,6 +1834,24 @@ def _render_scanner_dashboard(data: dict[str, Any]) -> str:
         if data["counts"]["open_incidents"] == 0
         else f'⚠️ {data["counts"]["open_incidents"]} open incidents'
     )
+    top_gainer_change_rows = "".join(
+        f"""<tr>
+            <td>{escape(str(item.get("type", "")))}</td>
+            <td><strong>{escape(str(item.get("ticker", "")))}</strong></td>
+            <td>{escape(str(item.get("time", "")))}</td>
+            <td>{escape(str(item.get("direction", item.get("rank", "-"))))}</td>
+        </tr>"""
+        for item in scanner.get("top_gainer_changes", [])[:20]
+    ) or '<tr><td colspan="4" style="text-align:center;color:#7b86a4;padding:18px;">No top-gainer rank changes yet</td></tr>'
+
+    watchlist_html = "".join(
+        f'<span class="pill-chip">{escape(symbol)}</span>'
+        for symbol in scanner["watchlist"][:24]
+    ) or '<span style="color:#7b86a4;">No active watchlist symbols</span>'
+    subscription_html = "".join(
+        f'<span class="pill-chip live">{escape(symbol)}</span>'
+        for symbol in scanner["subscription_symbols"][:24]
+    ) or '<span style="color:#7b86a4;">No live subscriptions yet</span>'
 
     return f"""<!DOCTYPE html>
 <html>
@@ -1841,134 +1859,382 @@ def _render_scanner_dashboard(data: dict[str, Any]) -> str:
     <title>Momentum Scanner Dashboard</title>
     <meta http-equiv="refresh" content="10">
     <style>
-        body {{ background:#1a1a2e; color:#eee; font-family:'Consolas','Monaco',monospace; margin:0; padding:20px; }}
-        h1 {{ color:#00e5ff; margin-bottom:5px; }}
-        h2 {{ color:#ffd600; margin-top:30px; margin-bottom:10px; }}
-        .meta {{ color:#888; font-size:14px; margin-bottom:20px; }}
-        .meta span {{ color:#00e5ff; }}
-        table {{ border-collapse:collapse; width:100%; margin-bottom:10px; font-size:14px; }}
-        th {{ background:#16213e; color:#ffd600; padding:8px 12px; text-align:left; border-bottom:2px solid #0f3460; }}
-        td {{ padding:6px 12px; border-bottom:1px solid #1a1a3e; }}
-        tr:hover {{ background:#16213e; }}
-        .section {{ margin-bottom:30px; }}
-        .badge {{ display:inline-block; padding:2px 10px; border-radius:4px; font-size:12px; font-weight:bold; margin-left:10px; }}
-        .badge-green {{ background:#00c853; color:#000; }}
-        .badge-blue {{ background:#2979ff; color:#fff; }}
-        .badge-orange {{ background:#ff9100; color:#000; }}
-        .nav {{ margin-bottom:20px; }}
-        .nav a {{ color:#00e5ff; text-decoration:none; margin-right:12px; padding:5px 15px; border:1px solid #0f3460; border-radius:4px; }}
-        .stats {{ display:flex; gap:20px; margin-bottom:20px; flex-wrap:wrap; }}
-        .stat-box {{ background:#16213e; padding:15px 22px; border-radius:8px; border:1px solid #0f3460; min-width:180px; }}
-        .stat-value {{ font-size:28px; font-weight:bold; color:#00e5ff; }}
-        .stat-label {{ font-size:12px; color:#888; margin-top:4px; }}
+        :root {{
+            --bg: #131a2b;
+            --bg-soft: #1a2238;
+            --panel: #202b46;
+            --panel-alt: #1c2540;
+            --line: rgba(121, 146, 193, 0.28);
+            --ink: #f0f4ff;
+            --muted: #98a6c8;
+            --cyan: #59d7ff;
+            --green: #5fff8d;
+            --lime: #8fff4d;
+            --amber: #ffcc5b;
+            --pink: #d05bff;
+            --red: #ff6b6b;
+        }}
+        * {{ box-sizing: border-box; }}
+        body {{ background:
+            radial-gradient(circle at top left, rgba(89,215,255,0.08), transparent 28%),
+            linear-gradient(180deg, #0f1525, var(--bg));
+            color: var(--ink);
+            font-family: 'Consolas','Monaco',monospace;
+            margin: 0;
+        }}
+        .shell {{
+            display: grid;
+            grid-template-columns: 300px minmax(0, 1fr);
+            gap: 16px;
+            min-height: 100vh;
+            padding: 16px;
+        }}
+        .sidebar {{
+            position: sticky;
+            top: 16px;
+            align-self: start;
+            background: rgba(17, 24, 41, 0.96);
+            border: 1px solid var(--line);
+            border-radius: 22px;
+            padding: 18px;
+            box-shadow: 0 24px 60px rgba(0, 0, 0, 0.28);
+        }}
+        .brand {{
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 20px;
+        }}
+        .brand-badge {{
+            width: 68px;
+            height: 68px;
+            border-radius: 18px;
+            display: grid;
+            place-items: center;
+            background: linear-gradient(135deg, #7b2cff, #59d7ff);
+            color: white;
+            font-weight: 700;
+            text-align: center;
+            font-size: 13px;
+            line-height: 1.1;
+            letter-spacing: 0.04em;
+        }}
+        .brand h1 {{ margin: 0; font-size: 24px; color: white; }}
+        .brand p {{ margin: 4px 0 0 0; color: var(--muted); font-size: 13px; }}
+        .side-section {{ margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--line); }}
+        .side-label {{
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--muted);
+            margin-bottom: 10px;
+        }}
+        .metric-grid {{
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 10px;
+        }}
+        .metric-card {{
+            background: var(--panel-alt);
+            border: 1px solid var(--line);
+            border-radius: 14px;
+            padding: 10px;
+        }}
+        .metric-card strong {{ display: block; font-size: 22px; color: var(--cyan); }}
+        .metric-card span {{ font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }}
+        .stack {{ display: grid; gap: 8px; }}
+        .line-item {{
+            background: rgba(255,255,255,0.03);
+            border: 1px solid var(--line);
+            border-radius: 12px;
+            padding: 10px 12px;
+            font-size: 13px;
+            color: var(--muted);
+        }}
+        .line-item strong {{ color: var(--ink); }}
+        .nav-grid {{
+            display: grid;
+            gap: 8px;
+        }}
+        .nav-grid a {{
+            text-decoration: none;
+            color: var(--ink);
+            background: linear-gradient(180deg, rgba(89,215,255,0.08), rgba(255,255,255,0.02));
+            border: 1px solid var(--line);
+            border-radius: 12px;
+            padding: 10px 12px;
+            font-size: 13px;
+        }}
+        .pill-chip {{
+            display: inline-flex;
+            margin: 0 6px 6px 0;
+            padding: 4px 8px;
+            border-radius: 999px;
+            background: rgba(255,255,255,0.06);
+            border: 1px solid var(--line);
+            color: var(--ink);
+            font-size: 12px;
+        }}
+        .pill-chip.live {{
+            background: rgba(95,255,141,0.12);
+            color: var(--green);
+        }}
+        .workspace {{
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 16px;
+            align-content: start;
+        }}
+        .panel {{
+            background: rgba(24, 32, 54, 0.96);
+            border: 1px solid var(--line);
+            border-radius: 20px;
+            overflow: hidden;
+            box-shadow: 0 18px 42px rgba(0, 0, 0, 0.24);
+            min-width: 0;
+        }}
+        .panel.full {{ grid-column: 1 / -1; }}
+        .panel-header {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            padding: 14px 16px;
+            background: linear-gradient(180deg, rgba(89,215,255,0.08), rgba(0,0,0,0));
+            border-bottom: 1px solid var(--line);
+        }}
+        .panel-header h2, .panel-header h3 {{
+            margin: 0;
+            font-size: 16px;
+            color: var(--ink);
+        }}
+        .panel-header .sub {{
+            color: var(--muted);
+            font-size: 12px;
+            margin-top: 3px;
+        }}
+        .count {{
+            padding: 4px 10px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 700;
+            background: rgba(89,215,255,0.12);
+            color: var(--cyan);
+        }}
+        .count.green {{ background: rgba(95,255,141,0.12); color: var(--green); }}
+        .count.pink {{ background: rgba(208,91,255,0.12); color: #f1b3ff; }}
+        .count.amber {{ background: rgba(255,204,91,0.12); color: var(--amber); }}
+        .panel-copy {{
+            padding: 14px 16px 0 16px;
+            color: var(--muted);
+            font-size: 12px;
+        }}
+        .table-wrap {{
+            max-height: 420px;
+            overflow: auto;
+        }}
+        table {{ border-collapse: collapse; width: 100%; font-size: 13px; }}
+        th {{
+            position: sticky;
+            top: 0;
+            z-index: 1;
+            background: #253556;
+            color: #b9c6e4;
+            padding: 8px 10px;
+            text-align: left;
+            border-bottom: 1px solid var(--line);
+        }}
+        td {{
+            padding: 8px 10px;
+            border-bottom: 1px solid rgba(121, 146, 193, 0.16);
+            color: #edf3ff;
+            vertical-align: top;
+        }}
+        tbody tr:nth-child(odd) {{ background: rgba(255,255,255,0.015); }}
+        tbody tr:hover {{ background: rgba(89,215,255,0.06); }}
+        .status-positive {{ color: var(--green); }}
+        .status-negative {{ color: var(--red); }}
+        .mono-note {{
+            color: var(--muted);
+            font-size: 12px;
+            line-height: 1.5;
+            padding: 14px 16px 16px 16px;
+        }}
+        @media (max-width: 1200px) {{
+            .shell {{ grid-template-columns: 1fr; }}
+            .sidebar {{ position: static; }}
+        }}
+        @media (max-width: 900px) {{
+            .workspace {{ grid-template-columns: 1fr; }}
+            .panel.full {{ grid-column: auto; }}
+        }}
     </style>
 </head>
 <body>
-    <h1>📊 Momentum Scanner Dashboard</h1>
-    <div class="meta">
-        Status: <span>{escape(scanner["status"])}</span> |
-        Cycle: <span>{scanner["cycle_count"]}</span> |
-        Last Scan: <span>{escape(latest_snapshot.get("completed_at", "N/A"))}</span> |
-        Ref Tickers: <span>{latest_snapshot.get("reference_count", 0):,}</span> |
-        WebSocket: <span>{escape(websocket_label)} ({scanner["active_subscription_symbols"]} subs)</span> |
-        Auto-refreshes every 10s
-    </div>
-
-    <div class="nav">
-        <a href="/scanner/dashboard">🔴 Live</a>
-        <a href="/">🧭 Control Plane</a>
-        <a href="/bot/30s">🤖 30s</a>
-        <a href="/bot/1m">⏱️ 1m</a>
-        <a href="/bot/tos">📊 TOS</a>
-        <a href="/bot/runner">🚀 Runner</a>
-    </div>
-
-    <div class="stats">
-        <div class="stat-box" style="border:2px solid #00ff41;">
-            <div class="stat-value" style="color:#00ff41;">{len(scanner_state.get("top_confirmed", []))}</div>
-            <div class="stat-label">🎯 Confirmed Candidates</div>
-        </div>
-        <div class="stat-box">
-            <div class="stat-value">{scanner["five_pillars_count"]}</div>
-            <div class="stat-label">5 Pillars Qualifying</div>
-        </div>
-        <div class="stat-box">
-            <div class="stat-value">{scanner["top_gainers_count"]}</div>
-            <div class="stat-label">Top Gainers</div>
-        </div>
-        <div class="stat-box">
-            <div class="stat-value">{scanner["recent_alerts_count"]}</div>
-            <div class="stat-label">Momentum Alerts</div>
-        </div>
-    </div>
-
-    <div class="section">
-        <details>
-            <summary style="cursor:pointer;color:#ffd600;font-size:16px;font-weight:bold;">⚙️ Active Configuration</summary>
-            <div style="display:flex;gap:20px;flex-wrap:wrap;margin-top:10px;">
-                <div style="background:#16213e;padding:12px 18px;border-radius:8px;border:1px solid #0f3460;min-width:240px;">
-                    <div style="color:#ffd600;font-weight:bold;margin-bottom:8px;">🏛️ 5 Pillars Filter</div>
-                    <div style="font-size:13px;color:#ddd;">Price ${config["five_pillars"]["min_price"]:.0f}-${config["five_pillars"]["max_price"]:.0f}<br>Float ≤ {_short_volume(config["five_pillars"]["max_float"])}<br>Volume ≥ {_short_volume(config["five_pillars"]["min_today_volume"])}<br>Change ≥ {config["five_pillars"]["min_change_pct"]}%<br>RVol ≥ {config["five_pillars"]["min_rvol_5pillars"]}x</div>
-                </div>
-                <div style="background:#16213e;padding:12px 18px;border-radius:8px;border:1px solid #0f3460;min-width:240px;">
-                    <div style="color:#ffd600;font-weight:bold;margin-bottom:8px;">🚀 Top Gainers</div>
-                    <div style="font-size:13px;color:#ddd;">Price ${config["top_gainers"]["min_price"]:.0f}-${config["top_gainers"]["max_price"]:.0f}<br>RVol ≥ {config["top_gainers"]["min_rvol_top_gainers"]}x<br>Top {config["top_gainers"]["top_gainers_count"]} by change%</div>
-                </div>
-                <div style="background:#16213e;padding:12px 18px;border-radius:8px;border:1px solid #0f3460;min-width:240px;">
-                    <div style="color:#ffd600;font-weight:bold;margin-bottom:8px;">⚡ Momentum Alerts</div>
-                    <div style="font-size:13px;color:#ddd;">Min Volume ≥ {_short_volume(config["momentum_alerts"]["min_momentum_volume"])}<br>Squeeze 5m ≥ {config["momentum_alerts"]["squeeze_5min_pct"]}%<br>Squeeze 10m ≥ {config["momentum_alerts"]["squeeze_10min_pct"]}%<br>Spike ≥ {config["momentum_alerts"]["volume_spike_mult"]}x<br>Cooldown {config["momentum_alerts"]["alert_cooldown_mins"]}m</div>
-                </div>
-                <div style="background:#0a1a0a;padding:12px 18px;border-radius:8px;border:1px solid #00ff41;min-width:240px;">
-                    <div style="color:#00ff41;font-weight:bold;margin-bottom:8px;">🎯 Momentum Confirmed</div>
-                    <div style="font-size:13px;color:#ddd;">Min Volume ≥ {_short_volume(config["momentum_confirmed"]["confirmed_min_volume"])}<br>Max Float ≤ {_short_volume(config["momentum_confirmed"]["confirmed_max_float"])}<br>Min Rank Score ≥ {config["momentum_confirmed"]["rank_min_score"]}</div>
+    <div class="shell">
+        <aside class="sidebar">
+            <div class="brand">
+                <div class="brand-badge">MAI<br>TAI</div>
+                <div>
+                    <h1>Scanner Deck</h1>
+                    <p>Dedicated scanner workspace for the new platform</p>
                 </div>
             </div>
-        </details>
-    </div>
 
-    <div class="section" style="border:2px solid #00ff41;border-radius:8px;padding:15px;background:#0a1a0a;">
-        <h2 style="color:#00ff41;">🎯 Momentum Confirmed — Bot Candidates <span class="badge" style="background:#00ff41;color:#000;">{len(scanner_state.get("top_confirmed", []))} stocks</span></h2>
-        <p style="color:#888;font-size:12px;">Legacy-style scanner output from the new runtime. Reconcile: {escape(reconcile_note)}</p>
-        <table>
-            <thead><tr><th>#</th><th>Ticker / Bot</th><th>Path</th><th>Score</th><th>Confirmed</th><th>Price</th><th>Change%</th><th>Spread</th><th>Volume</th><th>RVol</th><th>Float</th><th>Squeezes</th><th>1st Spike</th></tr></thead>
-            <tbody>{confirmed_rows}</tbody>
-        </table>
-    </div>
+            <div class="metric-grid">
+                <div class="metric-card">
+                    <span>Confirmed</span>
+                    <strong>{len(scanner_state.get("top_confirmed", []))}</strong>
+                </div>
+                <div class="metric-card">
+                    <span>Pillars</span>
+                    <strong>{scanner["five_pillars_count"]}</strong>
+                </div>
+                <div class="metric-card">
+                    <span>Gainers</span>
+                    <strong>{scanner["top_gainers_count"]}</strong>
+                </div>
+                <div class="metric-card">
+                    <span>Alerts</span>
+                    <strong>{scanner["recent_alerts_count"]}</strong>
+                </div>
+            </div>
 
-    <div class="section" style="background:#16213e;border-radius:8px;padding:15px;margin-bottom:20px;">
-        <h3 style="color:#00e5ff;">🤖 Trading Bots</h3>
-        <div style="display:flex;gap:15px;flex-wrap:wrap;">
-            <a href="/bot/30s" style="color:#2979ff;text-decoration:none;padding:10px 20px;border:2px solid #2979ff;border-radius:8px;">🤖 30s MACD Bot</a>
-            <a href="/bot/1m" style="color:#9c27b0;text-decoration:none;padding:10px 20px;border:2px solid #9c27b0;border-radius:8px;">⏱️ 1M MACD Bot</a>
-            <a href="/bot/tos" style="color:#ff6f00;text-decoration:none;padding:10px 20px;border:2px solid #ff6f00;border-radius:8px;">📊 TOS Bot</a>
-            <a href="/bot/runner" style="color:#e91e63;text-decoration:none;padding:10px 20px;border:2px solid #e91e63;border-radius:8px;">🚀 Runner</a>
-            <a href="/" style="color:#ff1744;text-decoration:none;padding:10px 20px;border:2px solid #ff1744;border-radius:8px;">🔄 Control Plane</a>
-        </div>
-    </div>
+            <div class="side-section">
+                <div class="side-label">Overview</div>
+                <div class="stack">
+                    <div class="line-item"><strong>Status:</strong> {escape(scanner["status"])}</div>
+                    <div class="line-item"><strong>Cycle:</strong> {scanner["cycle_count"]}</div>
+                    <div class="line-item"><strong>Last Scan:</strong> {escape(latest_snapshot.get("completed_at", "N/A"))}</div>
+                    <div class="line-item"><strong>Ref Tickers:</strong> {latest_snapshot.get("reference_count", 0):,}</div>
+                    <div class="line-item"><strong>WebSocket:</strong> {escape(websocket_label)} ({scanner["active_subscription_symbols"]} subs)</div>
+                    <div class="line-item"><strong>Reconcile:</strong> {escape(reconcile_note)}</div>
+                </div>
+            </div>
 
-    <div class="section">
-        <h2>🏛️ 5 Pillars Scanner <span class="badge badge-green">{scanner["five_pillars_count"]} stocks</span></h2>
-        <table>
-            <thead><tr><th>#</th><th>Ticker</th><th>First Seen</th><th>Price</th><th>Change%</th><th>Bid</th><th>Ask</th><th>Spread</th><th>Volume</th><th>RVol</th><th>Float</th><th>HOD</th><th>VWAP</th><th>Prev Close</th><th>Age</th></tr></thead>
-            <tbody>{pillar_rows}</tbody>
-        </table>
-    </div>
+            <div class="side-section">
+                <div class="side-label">Warmup</div>
+                <div class="stack">
+                    <div class="line-item"><strong>5m Squeeze:</strong> {"Ready" if warmup.get("squeeze_5min_ready") else "Warming"}</div>
+                    <div class="line-item"><strong>10m Squeeze:</strong> {"Ready" if warmup.get("squeeze_10min_ready") else "Warming"}</div>
+                    <div class="line-item"><strong>Alert Engine:</strong> {"Ready" if warmup.get("fully_ready") else "History building"}</div>
+                </div>
+            </div>
 
-    <div class="section">
-        <h2>🚀 Top Gainers <span class="badge badge-blue">{scanner["top_gainers_count"]} stocks</span></h2>
-        <table>
-            <thead><tr><th>#</th><th>Ticker</th><th>First Seen</th><th>Price</th><th>Change%</th><th>Bid</th><th>Ask</th><th>Spread</th><th>Volume</th><th>RVol</th><th>Float</th><th>HOD</th><th>VWAP</th><th>Prev Close</th><th>Age</th></tr></thead>
-            <tbody>{gainer_rows}</tbody>
-        </table>
-    </div>
+            <div class="side-section">
+                <div class="side-label">Navigation</div>
+                <div class="nav-grid">
+                    <a href="/scanner/dashboard">📡 Scanner</a>
+                    <a href="/">🧭 Control Plane</a>
+                    <a href="/bot/30s">🤖 30s Bot</a>
+                    <a href="/bot/1m">⏱️ 1m Bot</a>
+                    <a href="/bot/tos">📊 TOS Bot</a>
+                    <a href="/bot/runner">🚀 Runner Bot</a>
+                </div>
+            </div>
 
-    <div class="section">
-        <h2>⚡ Momentum Alerts <span class="badge badge-orange">{scanner["recent_alerts_count"]} alerts</span></h2>
-        <p style="color:#888;font-size:12px;">Warmup: {"✅ Ready" if warmup.get("fully_ready") else "⏳ Warming up"} | 5m ready: {"yes" if warmup.get("squeeze_5min_ready") else "no"} | 10m ready: {"yes" if warmup.get("squeeze_10min_ready") else "no"}</p>
-        <table>
-            <thead><tr><th>Type</th><th>Ticker</th><th>Price</th><th>Bid</th><th>Ask</th><th>Volume</th><th>Float</th><th>Details</th><th>Time</th></tr></thead>
-            <tbody>{alert_rows}</tbody>
-        </table>
+            <div class="side-section">
+                <div class="side-label">Active Watchlist</div>
+                <div>{watchlist_html}</div>
+            </div>
+
+            <div class="side-section">
+                <div class="side-label">Live Subscriptions</div>
+                <div>{subscription_html}</div>
+            </div>
+
+            <div class="side-section">
+                <div class="side-label">Scanner Rules</div>
+                <div class="stack">
+                    <div class="line-item"><strong>5 Pillars:</strong> ${config["five_pillars"]["min_price"]:.0f}-${config["five_pillars"]["max_price"]:.0f}, float ≤ {_short_volume(config["five_pillars"]["max_float"])}, volume ≥ {_short_volume(config["five_pillars"]["min_today_volume"])}, rvol ≥ {config["five_pillars"]["min_rvol_5pillars"]}x</div>
+                    <div class="line-item"><strong>Top Gainers:</strong> top {config["top_gainers"]["top_gainers_count"]} with rvol ≥ {config["top_gainers"]["min_rvol_top_gainers"]}x</div>
+                    <div class="line-item"><strong>Alerts:</strong> squeeze 5m {config["momentum_alerts"]["squeeze_5min_pct"]}% / 10m {config["momentum_alerts"]["squeeze_10min_pct"]}% / spike {config["momentum_alerts"]["volume_spike_mult"]}x</div>
+                </div>
+            </div>
+        </aside>
+
+        <main class="workspace">
+            <section class="panel full">
+                <div class="panel-header">
+                    <div>
+                        <h2>Momentum Confirmed</h2>
+                        <div class="sub">Bot-ready candidates from the new scanner runtime.</div>
+                    </div>
+                    <span class="count green">{len(scanner_state.get("top_confirmed", []))} names</span>
+                </div>
+                <div class="table-wrap">
+                    <table>
+                        <thead><tr><th>#</th><th>Ticker / Bot</th><th>Path</th><th>Score</th><th>Confirmed</th><th>Price</th><th>Change%</th><th>Spread</th><th>Volume</th><th>RVol</th><th>Float</th><th>Squeezes</th><th>1st Spike</th></tr></thead>
+                        <tbody>{confirmed_rows}</tbody>
+                    </table>
+                </div>
+            </section>
+
+            <section class="panel">
+                <div class="panel-header">
+                    <div>
+                        <h3>5 Pillars Scanner</h3>
+                        <div class="sub">Qualifying names across the preserved five-pillar filter.</div>
+                    </div>
+                    <span class="count green">{scanner["five_pillars_count"]}</span>
+                </div>
+                <div class="table-wrap">
+                    <table>
+                        <thead><tr><th>#</th><th>Ticker</th><th>First Seen</th><th>Price</th><th>Change%</th><th>Bid</th><th>Ask</th><th>Spread</th><th>Volume</th><th>RVol</th><th>Float</th><th>HOD</th><th>VWAP</th><th>Prev Close</th><th>Age</th></tr></thead>
+                        <tbody>{pillar_rows}</tbody>
+                    </table>
+                </div>
+            </section>
+
+            <section class="panel">
+                <div class="panel-header">
+                    <div>
+                        <h3>Top Gainers</h3>
+                        <div class="sub">Independent ranker refreshed from snapshot state.</div>
+                    </div>
+                    <span class="count pink">{scanner["top_gainers_count"]}</span>
+                </div>
+                <div class="table-wrap">
+                    <table>
+                        <thead><tr><th>#</th><th>Ticker</th><th>First Seen</th><th>Price</th><th>Change%</th><th>Bid</th><th>Ask</th><th>Spread</th><th>Volume</th><th>RVol</th><th>Float</th><th>HOD</th><th>VWAP</th><th>Prev Close</th><th>Age</th></tr></thead>
+                        <tbody>{gainer_rows}</tbody>
+                    </table>
+                </div>
+            </section>
+
+            <section class="panel">
+                <div class="panel-header">
+                    <div>
+                        <h3>Momentum Alerts</h3>
+                        <div class="sub">Recent alert tape across spike and squeeze detectors.</div>
+                    </div>
+                    <span class="count amber">{scanner["recent_alerts_count"]}</span>
+                </div>
+                <div class="panel-copy">Warmup: {"Ready" if warmup.get("fully_ready") else "History building"} | 5m ready: {"yes" if warmup.get("squeeze_5min_ready") else "no"} | 10m ready: {"yes" if warmup.get("squeeze_10min_ready") else "no"}</div>
+                <div class="table-wrap">
+                    <table>
+                        <thead><tr><th>Type</th><th>Ticker</th><th>Price</th><th>Bid</th><th>Ask</th><th>Volume</th><th>Float</th><th>Details</th><th>Time</th></tr></thead>
+                        <tbody>{alert_rows}</tbody>
+                    </table>
+                </div>
+            </section>
+
+            <section class="panel">
+                <div class="panel-header">
+                    <div>
+                        <h3>Top Gainer Changes</h3>
+                        <div class="sub">Rank moves, new entrants, and drops in the top-gainer deck.</div>
+                    </div>
+                    <span class="count">{len(scanner.get("top_gainer_changes", []))}</span>
+                </div>
+                <div class="table-wrap">
+                    <table>
+                        <thead><tr><th>Type</th><th>Ticker</th><th>Time</th><th>Move</th></tr></thead>
+                        <tbody>{top_gainer_change_rows}</tbody>
+                    </table>
+                </div>
+            </section>
+        </main>
     </div>
 </body>
 </html>"""

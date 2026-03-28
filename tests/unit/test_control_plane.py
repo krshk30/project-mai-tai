@@ -406,9 +406,12 @@ def test_control_plane_overview_and_dashboard_render() -> None:
         legacy_scanner = client.get("/scanner/dashboard")
         assert legacy_scanner.status_code == 200
         assert "Momentum Scanner Dashboard" in legacy_scanner.text
+        assert "Scanner Deck" in legacy_scanner.text
+        assert "Dedicated scanner workspace for the new platform" in legacy_scanner.text
         assert "5 Pillars Scanner" in legacy_scanner.text
         assert "Top Gainers" in legacy_scanner.text
         assert "Momentum Alerts" in legacy_scanner.text
+        assert "Top Gainer Changes" in legacy_scanner.text
 
         scanner_confirmed = client.get("/scanner/confirmed")
         assert scanner_confirmed.status_code == 200
