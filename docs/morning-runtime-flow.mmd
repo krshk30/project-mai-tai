@@ -13,8 +13,9 @@ flowchart TD
         C --> H["Every 30s<br/>fetch full-market snapshot batch from Massive"]
         H --> I["Publish snapshot-batches stream<br/>include reference data"]
         I --> J["Strategy Engine scans batch<br/>5 Pillars<br/>Top Gainers<br/>Momentum Alerts<br/>Momentum Confirmed"]
-        J --> K{"Any top confirmed names?"}
-        K -- "No" --> H
+        J --> K{"Any top confirmed names<br/>this cycle?"}
+        K -- "No" --> K1["No new confirmed names<br/>keep scanning next 30s batch<br/>watchlist/subscriptions stay as-is"]
+        K1 --> H
         K -- "Yes" --> L["Update watchlist for 30s / 1m / TOS / Runner"]
         L --> M["Publish market-data subscription update"]
         M --> N["Market Data Gateway syncs WS subscriptions"]
@@ -29,6 +30,7 @@ flowchart TD
         U --> V["Order events published<br/>accepted / filled / rejected"]
         V --> W["Strategy Engine updates pending state<br/>positions / scale levels / watchlist"]
         W --> P
+        W -. "snapshot loop still continues every 30s in parallel" .-> H
     end
 
     subgraph SAFETY["Background Safety Loops"]
