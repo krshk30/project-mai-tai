@@ -9,6 +9,28 @@ Context:
 - Snapshot polling was working.
 - Live WebSocket behavior should still be re-checked during an active subscribed-symbol session.
 
+## Preflight Status For Monday, March 30, 2026
+
+Completed on Sunday, March 29, 2026:
+- [x] Public site reachable at `https://project-mai-tai.live` behind basic auth.
+- [x] `UTC` user-facing timestamps replaced with `ET` across the main dashboard, scanner page, bot pages, and JSON endpoints.
+- [x] `/health` is green with all five services reporting healthy after the Redis retention fix.
+- [x] Redis stream retention is bounded, and Redis memory returned to a normal baseline after trimming the oversized snapshot stream.
+- [x] Massive snapshot access verified live from the VPS.
+- [x] All three Alpaca paper accounts verified live from the VPS as `ACTIVE`, with no `trading_blocked` or `account_blocked` flags.
+- [x] Alpaca paper broker positions verified directly: all three accounts currently report `0` open positions.
+- [x] Strategy/account seed state present: `4` strategies and `3` broker accounts.
+- [x] OMS is configured for `alpaca_paper`.
+
+Known caution:
+- [ ] The VPS still reports `*** System restart required ***`. Do not reboot before the Monday paper session unless you want a coordinated maintenance restart for both the legacy and Mai Tai stacks.
+
+Tomorrow still requires live-session verification:
+- [ ] First non-empty `top_confirmed -> watchlist -> subscription` cycle.
+- [ ] First `intent -> accepted -> filled` paper order path.
+- [ ] Shared-account attribution check when `tos` or `runner` trades.
+- [ ] Live subscribed-symbol WebSocket stability during active order flow.
+
 ## Session Header
 
 - Date:
