@@ -40,3 +40,34 @@ Practical rule:
 The main orchestration layer that consumes this package is:
 
 - `src/project_mai_tai/services/strategy_engine_app.py`
+
+## Entry And Exit Quick Map
+
+The current MACD/TOS-style entry and exit pipeline is split across:
+
+- `trading_config.py`
+  - strategy-level thresholds, confirm-bar requirements, cooldowns, stop-loss settings, and scale percentages
+- `entry.py`
+  - entry gating, path detection, pending confirmations, and quality scoring
+- `position_tracker.py`
+  - live position state, peak-profit tracking, floor calculation, and scale bookkeeping
+- `exit.py`
+  - floor-breach exits, scale actions, tier-specific closes, and hard-stop checks
+
+High-level flow:
+
+1. Entry checks hard gates such as trading hours, dead zone, cooldown, existing position, and optional EMA gate.
+2. If gates pass, the engine checks one of the supported entry paths such as MACD cross, VWAP breakout, or MACD surge.
+3. Depending on `confirm_bars`, the signal either fires immediately or waits for follow-through confirmation.
+4. A quality score can further reject weak confirmations before a buy signal is emitted.
+5. After entry, `PositionTracker` advances tiers and trailing floor behavior as profit improves.
+6. Exit logic checks, in order, for floor breach, scale actions, tier-specific bearish conditions, and hard stops.
+
+Important nuance:
+
+- `runner.py` is not just another thin variant of `entry.py` and `exit.py`
+- Runner keeps its own strategy runtime and should be treated as a separate behavior family
+
+For the durable project-level explanation of preserved behavior, also see:
+
+- `../../../docs/strategy-preservation.md`

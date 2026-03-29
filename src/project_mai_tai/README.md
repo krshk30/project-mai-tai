@@ -9,16 +9,22 @@
   - see [broker_adapters/README.md](./broker_adapters/README.md)
 - `db/`
   - SQLAlchemy models, base metadata, and session construction
+  - see [db/README.md](./db/README.md)
 - `market_data/`
   - snapshot/trade/quote ingestion, reference caching, payload models, and Redis publishers
+  - see [market_data/README.md](./market_data/README.md)
 - `oms/`
   - intent processing, order/fill persistence, and position/account attribution
+  - see [oms/README.md](./oms/README.md)
 - `reconciliation/`
   - periodic drift detection and incident/finding generation
+  - see [reconciliation/README.md](./reconciliation/README.md)
 - `services/`
   - service runners and orchestration glue for the runtime processes
+  - see [services/README.md](./services/README.md)
 - `shadow/`
   - optional legacy-shadow client used by the control plane for comparison views
+  - see [shadow/README.md](./shadow/README.md)
 - `strategy_core/`
   - preserved strategy/scanner logic, indicators, entries, exits, and runner runtime
   - see [strategy_core/README.md](./strategy_core/README.md)
