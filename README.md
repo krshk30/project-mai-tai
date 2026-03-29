@@ -26,6 +26,7 @@ Core decisions:
 - `Nginx + basic auth + HTTPS` once the domain is available
 
 See:
+- [Session Handoff 2026-03-29](./docs/session-handoff-2026-03-29.md)
 - [Architecture](./docs/architecture.md)
 - [Active Market Verification Todo](./docs/active-market-verification-todo.md)
 - [Implementation Roadmap](./docs/implementation-roadmap.md)
