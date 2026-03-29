@@ -235,6 +235,232 @@ Because the market was inactive at the time of the last check, a blank confirmed
 - use recent news starting from previous market close
 - make news safer and less misleading
 
+## User-Requested Validation Themes
+
+These are not random nice-to-haves. The user explicitly asked about these repeatedly during the session, so the next agent should treat them as standing expectations.
+
+### 1. Legacy UI Parity
+
+The user asked the agent to review the legacy screens directly and make sure Mai Tai had matching operational surfaces for:
+
+- scanner dashboard
+- `30s` bot page
+- `1m` bot page
+- `tos` bot page
+- `runner` bot page
+
+What was learned:
+
+- early Mai Tai versions were missing several legacy-style surfaces
+- missing items included multiple scanners, alerts, trade-log style panels, and dedicated bot screens
+- the user wants Mai Tai to feel familiar and usable as a primary operator interface, not just technically correct
+
+What was done:
+
+- scanner workspace page added
+- dedicated bot pages added
+- top-level control plane shortened and made more trading-focused
+- scanner page redesigned toward the legacy workstation layout
+- bot pages redesigned to follow that style
+
+What still matters for the next agent:
+
+- continue comparing Mai Tai screens directly against legacy if parity questions come up
+- prefer matching user workflow and operator visibility over abstract UI cleanliness
+
+### 2. Scanner Page Expectations
+
+The user explicitly wanted the scanner page to look and feel closer to the legacy multi-panel workstation, especially:
+
+- left-side overview rail
+- multiple scanners and alerts on one dedicated page
+- more dense trading-oriented layout
+- momentum confirmed table with the same important columns
+
+What was learned:
+
+- structural parity matters more to the user than a generic dashboard aesthetic
+- the user notices missing columns and missing scanner categories quickly
+
+What was done:
+
+- scanner workspace restructured with left rail and multi-panel deck
+- added `Momentum Confirmed`, `5 Pillars`, `Top Gainers`, `Momentum Alerts`, and `Top Gainer Changes`
+- added missing confirmed columns including catalyst/news-related fields
+- added restored non-empty confirmed snapshot behavior so the table does not go blank after restart/off-hours
+
+What still matters for the next agent:
+
+- if the user says “legacy has X on scanner and Mai Tai does not,” verify directly against legacy before answering
+- treat scanner UX parity as a product requirement, not a cosmetic preference
+
+### 3. Bot Page Expectations
+
+The user wanted the same style improvement applied to all bots.
+
+What was learned:
+
+- the user uses bot pages as primary operational views
+- compact left-side overview plus multi-panel workspace is preferred
+- misleading execution status labels are not acceptable
+
+What was done:
+
+- all bot pages now share the same workstation-style layout
+- fixed misleading legacy-shadow execution labels so Mai Tai’s own bot wiring is shown correctly
+
+What still matters for the next agent:
+
+- if bot page parity is questioned again, compare against legacy screen by screen
+- broker account summary blocks are still a good next parity improvement
+
+### 4. Timezone And Labeling Expectations
+
+The user explicitly asked that Mai Tai stop showing `UTC` and present ET consistently.
+
+What was learned:
+
+- user-facing time labels must be ET everywhere
+- wording and labels matter a lot for trust
+- the main control-plane header needed to be simpler and more operator-friendly
+
+What was done:
+
+- ET display normalization across UI and APIs
+- simplified control-plane wording
+- compact system dock moved to the top
+
+What still matters for the next agent:
+
+- if adding new UI or API fields, default user-facing timestamps to ET
+- avoid reintroducing verbose or academic UI wording
+
+### 5. “Healthy” Must Be Explainable
+
+The user explicitly pushed back on vague health labels like:
+
+- `Platform HEALTHY`
+- long environment/provider strings without basis
+
+What was learned:
+
+- health must be grounded in visible checks
+- compact status summaries are preferred over long prose
+
+What was done:
+
+- top health card simplified
+- health view tied to service health, database, Redis, and incident state
+
+What still matters for the next agent:
+
+- any future health/status text should answer “healthy based on what?”
+
+### 6. Flowchart And Runtime Understanding
+
+The user asked for a PDF flowchart of the daily startup/runtime loop and then questioned whether scanning stops when no confirmed names exist.
+
+What was learned:
+
+- the user wants operational flow documentation, not just code
+- the flowchart must make continuous snapshot scanning explicit
+
+What was done:
+
+- morning flowchart and PDF created
+- corrected to show full-market snapshot scanning continues every `30s`
+
+What still matters for the next agent:
+
+- if runtime behavior changes, update the flowchart too
+
+### 7. News Logic Trustworthiness
+
+The user explicitly said they were not confident in the bullish/bearish news logic and observed that “bullish” names had not behaved bullish.
+
+What was learned:
+
+- the user understands news is only part of the flow, especially for runner
+- the user still wants that component tightened because it affects confirmation and earlier-entry thresholds
+- the user specifically asked to use recent news starting from previous market close, e.g. “yesterday 4 PM onwards”
+
+What was done:
+
+- stricter catalyst model
+- previous close `4:00 PM ET` session window
+- weekend handling
+- no price-action-only bullish classification
+- strict `PATH_A_NEWS` gating
+- scanner UI now shows why a catalyst is trusted or not
+
+What still matters for the next agent:
+
+- if the user questions news again, verify current runtime behavior in Mai Tai, not just static code
+- the next active session should confirm that catalyst data is being populated as expected for live names
+
+### 8. TOS Comparison Expectations
+
+The user wants live trading to happen in thinkorswim and asked whether comparing Mai Tai calculations to TOS is the right idea.
+
+What was learned:
+
+- `1m` parity is the practical comparison target
+- `30s` exact TOS parity is not realistic because TOS does not expose `30s` aggregation in the relevant way
+
+What was done:
+
+- added a TOS parity panel for `1m`-based runtimes
+
+What still matters for the next agent:
+
+- parity panel currently shows Mai Tai’s own values in TOS-aligned settings
+- it does not ingest TOS indicator values automatically
+- tolerance highlighting is still a good next improvement
+
+### 9. Active-Market Validation Matters More Than Quiet-Time Validation
+
+The user repeatedly wanted validation of real functionality, not just code structure.
+
+What was learned:
+
+- many important checks can only be proven during an active trading session
+- a quiet weekend dashboard being green is necessary but not sufficient
+
+What was done:
+
+- active-session todo tracker created
+
+What still matters for the next agent:
+
+- if the next session is during market hours, prioritize live functional validation before cosmetic work
+
+## Validation Requests Already Asked By The User
+
+The next agent should assume the user cares about all of the following, because they already asked for them in this session:
+
+- compare Mai Tai screens directly against legacy
+- verify missing scanners/alerts/trade-log-style sections and add them
+- verify momentum confirmed table columns against legacy
+- verify ET display consistency
+- verify runtime health claims are meaningful
+- verify morning runtime flow and scanning loop behavior
+- verify TOS comparison approach
+- review and tighten news logic
+- carry forward all active-session validations into repo docs so they are not lost
+
+If any of those topics come up again, the next agent should not start from zero.
+
+## Known Learnings From The Session
+
+- User preference strongly favors operator familiarity over abstract redesign.
+- Compact top-level status is better than long explanatory dashboard prose.
+- Empty weekend/off-hours tables can still be correct, but the UI should explain why.
+- Restored scanner snapshots reduce operator anxiety when live runtime is quiet.
+- Shared-account attribution is a structural requirement because Schwab live will use one real account.
+- News should be an input to timing, not a vague trust signal.
+- “Healthy” without basis undermines confidence.
+- GitHub is the source of deployment truth; do not rely on local-only deploy habits.
+
 ## Important Files For A New Agent
 
 Read these first:

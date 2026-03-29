@@ -31,6 +31,36 @@ Tomorrow still requires live-session verification:
 - [ ] Shared-account attribution check when `tos` or `runner` trades.
 - [ ] Live subscribed-symbol WebSocket stability during active order flow.
 
+## Standing Validation Expectations From User
+
+These should be treated as ongoing validation requirements, not one-off questions from the previous agent.
+
+- [ ] Continue verifying Mai Tai UI parity against legacy when the user calls out missing surfaces or columns.
+- [ ] Treat scanner and bot pages as primary operator tools, not secondary admin pages.
+- [ ] Keep user-facing time displays in ET on any new surface.
+- [ ] Make health/status labels compact but explainable if questioned.
+- [ ] When validating news-driven behavior, use current-session logic starting from previous market close (`4:00 PM ET`) rather than generic “last 24h” assumptions.
+- [ ] When validating runner/news behavior, remember that news is meant to relax earlier entry only for strict `PATH_A_NEWS`, not act as a stand-alone trade trigger.
+
+## Legacy Parity Checks To Re-Use
+
+If the user asks whether Mai Tai matches the legacy workflow, re-check these classes of surfaces directly:
+
+- [ ] scanner dashboard structure
+- [ ] momentum confirmed table columns
+- [ ] 5 Pillars panel
+- [ ] Top Gainers panel
+- [ ] Momentum Alerts panel
+- [ ] Top Gainer Changes panel
+- [ ] `30s` bot page
+- [ ] `1m` bot page
+- [ ] `tos` bot page
+- [ ] `runner` bot page
+
+Notes:
+- The user specifically notices missing columns, alerts, and trade-log style panels.
+- The expectation is not pixel-perfect copying, but workflow parity and operator usefulness.
+
 ## Session Header
 
 - Date:
@@ -58,6 +88,18 @@ Notes:
 - [ ] Verify `strategy_runtime.watchlist` becomes non-empty when confirmed names appear.
 - [ ] Verify `market_data.active_subscription_symbols` becomes greater than `0` after watchlist population.
 - [ ] Verify legacy/new shadow comparison stays reasonable once live movers appear.
+- [ ] Verify the scanner page still feels complete during live flow:
+  - momentum confirmed
+  - 5 pillars
+  - top gainers
+  - momentum alerts
+  - top gainer changes
+- [ ] If `Momentum Confirmed` is populated, verify catalyst cells show:
+  - confidence
+  - article count
+  - freshness
+  - reason
+  - `PATH A ready` only when appropriate
 
 Success criteria:
 - New system moves from `snapshot -> top_confirmed -> watchlist -> active subscriptions` without manual intervention.
@@ -153,3 +195,14 @@ Final assessment:
 - Ready for continued paper rollout:
 - Blockers found:
 - Follow-up actions:
+
+## Learning Log For Next Agent
+
+Use this section to append new observations, not to replace prior context.
+
+- The user values operational confidence and parity much more than abstract architecture discussion during live validation.
+- Quiet/off-hours correctness should still be explained clearly in the UI.
+- If a functionality question comes up, the preferred pattern is:
+  1. verify against legacy if relevant
+  2. verify current Mai Tai runtime behavior
+  3. record the conclusion here or in the session handoff
