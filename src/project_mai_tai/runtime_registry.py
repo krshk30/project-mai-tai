@@ -27,7 +27,7 @@ class BrokerAccountRegistration:
 
 
 def configured_strategy_registrations(settings: Settings) -> tuple[StrategyRegistration, ...]:
-    execution_mode = "paper" if settings.oms_adapter == "alpaca_paper" else "shadow"
+    execution_mode = settings.resolved_execution_mode
     return (
         StrategyRegistration(
             code="macd_30s",
@@ -98,7 +98,7 @@ def configured_broker_account_registrations(settings: Settings) -> tuple[BrokerA
             strategy.account_name,
             BrokerAccountRegistration(
                 name=strategy.account_name,
-                provider=settings.broker_default_provider,
+                provider=settings.resolved_broker_provider,
                 environment=settings.environment,
             ),
         )

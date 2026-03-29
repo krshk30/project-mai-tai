@@ -106,6 +106,81 @@ async def test_alpaca_adapter_rejects_when_account_credentials_are_missing() -> 
 
 
 @pytest.mark.asyncio
+async def test_alpaca_adapter_cancels_order_by_client_order_id_lookup(monkeypatch) -> None:
+    settings = Settings(
+        oms_adapter="alpaca_paper",
+        alpaca_macd_30s_api_key="key-30s",
+        alpaca_macd_30s_secret_key="secret-30s",
+    )
+    adapter = AlpacaPaperBrokerAdapter(settings)
+    responses = iter(
+        [
+            (
+                200,
+                {
+                    "id": "ord-123",
+                    "client_order_id": "macd_30s-UGRO-open-abc123",
+                    "status": "accepted",
+                    "symbol": "UGRO",
+                    "side": "buy",
+                    "qty": "10",
+                    "filled_qty": "0",
+                    "updated_at": "2026-03-28T14:00:00Z",
+                },
+            ),
+            (204, {}),
+            (
+                200,
+                {
+                    "id": "ord-123",
+                    "client_order_id": "macd_30s-UGRO-open-abc123",
+                    "status": "canceled",
+                    "symbol": "UGRO",
+                    "side": "buy",
+                    "qty": "10",
+                    "filled_qty": "0",
+                    "updated_at": "2026-03-28T14:00:02Z",
+                },
+            ),
+        ]
+    )
+
+    async def fake_request_json(credentials, method, path, body=None):
+        assert credentials.api_key == "key-30s"
+        assert body is None
+        if method == "GET" and path.startswith("/v2/orders:by_client_order_id"):
+            assert "client_order_id=macd_30s-UGRO-open-abc123" in path
+            return next(responses)
+        if method == "DELETE":
+            assert path == "/v2/orders/ord-123"
+            return next(responses)
+        assert method == "GET"
+        assert path == "/v2/orders/ord-123"
+        return next(responses)
+
+    monkeypatch.setattr(adapter, "_request_json", fake_request_json)
+
+    reports = await adapter.submit_order(
+        OrderRequest(
+            client_order_id="macd_30s-UGRO-open-abc123",
+            broker_account_name="paper:macd_30s",
+            strategy_code="macd_30s",
+            symbol="UGRO",
+            side="buy",
+            intent_type="cancel",
+            quantity=Decimal("10"),
+            reason="USER_CANCEL",
+            metadata={},
+        )
+    )
+
+    assert len(reports) == 1
+    assert reports[0].event_type == "cancelled"
+    assert reports[0].broker_order_id == "ord-123"
+    assert reports[0].client_order_id == "macd_30s-UGRO-open-abc123"
+
+
+@pytest.mark.asyncio
 async def test_alpaca_adapter_lists_account_positions(monkeypatch) -> None:
     settings = Settings(
         oms_adapter="alpaca_paper",

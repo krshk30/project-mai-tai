@@ -132,6 +132,10 @@ Useful operator commands:
 - `ops/systemd/restart_all.sh`
 - `mai-tai-seed-runtime`
 
+Live-market note:
+- do not use `ops/systemd/restart_all.sh` during an active session
+- use [Live Market Restart Runbook](./live-market-restart-runbook.md) for coordinated restarts of strategy, OMS, or market data
+
 ## Runtime Assumptions
 
 The production units assume:
@@ -167,3 +171,35 @@ Runtime mapping fields:
 When OMS starts, it now seeds the configured strategies and broker accounts into
 Postgres automatically. That means the dashboard shows the intended runtime
 layout even before the first strategy intent is emitted.
+
+## Schwab Live Phase
+
+The repo now also supports Schwab live execution through the OMS adapter.
+
+Recommended live layout:
+- all four strategies share one account name such as `live:schwab_shared`
+- all four strategies map to the same Schwab account hash
+- OMS refreshes bearer tokens from a writable token-store JSON file
+
+Environment file fields:
+- `MAI_TAI_OMS_ADAPTER=schwab`
+- `MAI_TAI_STRATEGY_MACD_30S_ACCOUNT_NAME=live:schwab_shared`
+- `MAI_TAI_STRATEGY_MACD_1M_ACCOUNT_NAME=live:schwab_shared`
+- `MAI_TAI_STRATEGY_TOS_ACCOUNT_NAME=live:schwab_shared`
+- `MAI_TAI_STRATEGY_RUNNER_ACCOUNT_NAME=live:schwab_shared`
+- `MAI_TAI_SCHWAB_ACCOUNT_HASH`
+- `MAI_TAI_SCHWAB_CLIENT_ID`
+- `MAI_TAI_SCHWAB_CLIENT_SECRET`
+- `MAI_TAI_SCHWAB_TOKEN_STORE_PATH=/var/lib/project-mai-tai/schwab_token.json`
+
+Optional overrides:
+- `MAI_TAI_SCHWAB_MACD_30S_ACCOUNT_HASH`
+- `MAI_TAI_SCHWAB_MACD_1M_ACCOUNT_HASH`
+- `MAI_TAI_SCHWAB_TOS_RUNNER_ACCOUNT_HASH`
+
+Operational expectation:
+- the token-store file is root-owned and writable by the runtime user
+- the file holds the latest `access_token`, `refresh_token`, and `expires_at`
+- OMS refreshes and rewrites the token store as tokens rotate
+
+See [Schwab Onboarding](./schwab-onboarding.md) for the recommended first-run flow.

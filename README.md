@@ -29,7 +29,9 @@ See:
 - [Session Handoff 2026-03-29](./docs/session-handoff-2026-03-29.md)
 - [Architecture](./docs/architecture.md)
 - [Active Market Verification Todo](./docs/active-market-verification-todo.md)
+- [Live Market Restart Runbook](./docs/live-market-restart-runbook.md)
 - [Implementation Roadmap](./docs/implementation-roadmap.md)
+- [Schwab Onboarding](./docs/schwab-onboarding.md)
 - [VPS Deployment](./docs/vps-deployment.md)
 - [Strategy Preservation](./docs/strategy-preservation.md)
 
@@ -91,3 +93,16 @@ To enable real paper execution instead of the simulated OMS adapter:
 
 The OMS seeds the configured strategies and broker accounts on startup, so the
 dashboard no longer has to wait for the first intent before it shows runtime metadata.
+
+## Schwab Live Config
+
+Schwab live execution is now supported through the OMS broker abstraction.
+
+Recommended live setup:
+- set `MAI_TAI_OMS_ADAPTER=schwab`
+- point all four `MAI_TAI_STRATEGY_*_ACCOUNT_NAME` values at the same shared live account name
+- set `MAI_TAI_SCHWAB_ACCOUNT_HASH`
+- set `MAI_TAI_SCHWAB_CLIENT_ID` and `MAI_TAI_SCHWAB_CLIENT_SECRET`
+- set `MAI_TAI_SCHWAB_TOKEN_STORE_PATH` to a writable root-owned JSON file
+
+The onboarding and token-store details live in [Schwab Onboarding](./docs/schwab-onboarding.md).

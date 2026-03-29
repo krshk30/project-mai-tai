@@ -74,6 +74,22 @@ class Settings(BaseSettings):
     alpaca_macd_1m_secret_key: str | None = None
     alpaca_tos_runner_api_key: str | None = None
     alpaca_tos_runner_secret_key: str | None = None
+    schwab_base_url: str = "https://api.schwabapi.com"
+    schwab_token_url: str = "https://api.schwabapi.com/v1/oauth/token"
+    schwab_request_timeout_seconds: int = 10
+    schwab_order_fill_timeout_seconds: int = 10
+    schwab_order_poll_interval_seconds: float = 0.5
+    schwab_token_refresh_margin_seconds: int = 60
+    schwab_access_token: str | None = None
+    schwab_access_token_expires_at: str | None = None
+    schwab_refresh_token: str | None = None
+    schwab_client_id: str | None = None
+    schwab_client_secret: str | None = None
+    schwab_token_store_path: str | None = None
+    schwab_account_hash: str | None = None
+    schwab_macd_30s_account_hash: str | None = None
+    schwab_macd_1m_account_hash: str | None = None
+    schwab_tos_runner_account_hash: str | None = None
     oms_broker_sync_interval_seconds: int = 15
 
     dashboard_refresh_seconds: int = 5
@@ -102,6 +118,24 @@ class Settings(BaseSettings):
                 if symbol.strip()
             }
         )
+
+    @computed_field
+    @property
+    def resolved_broker_provider(self) -> str:
+        if self.oms_adapter == "alpaca_paper":
+            return "alpaca"
+        if self.oms_adapter == "schwab":
+            return "schwab"
+        return self.broker_default_provider
+
+    @computed_field
+    @property
+    def resolved_execution_mode(self) -> str:
+        if self.oms_adapter == "alpaca_paper":
+            return "paper"
+        if self.oms_adapter == "schwab":
+            return "live"
+        return "shadow"
 
 
 @lru_cache

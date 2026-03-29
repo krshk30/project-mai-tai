@@ -27,6 +27,8 @@ def utcnow() -> datetime:
 
 
 class OmsStore:
+    OPEN_ORDER_STATUSES = ("pending", "submitted", "accepted", "partially_filled")
+
     def list_active_broker_accounts(self, session: Session) -> list[BrokerAccount]:
         return session.scalars(
             select(BrokerAccount)
@@ -200,6 +202,72 @@ class OmsStore:
         if order.submitted_at is None:
             order.submitted_at = utcnow()
         session.flush()
+        return order
+
+    def find_open_order_for_cancel(
+        self,
+        session: Session,
+        *,
+        strategy_id: UUID,
+        broker_account_id: UUID,
+        symbol: str,
+        metadata: dict[str, str],
+    ) -> BrokerOrder | None:
+        def is_cancellable(order: BrokerOrder | None) -> BrokerOrder | None:
+            if order is None:
+                return None
+            if order.strategy_id != strategy_id or order.broker_account_id != broker_account_id:
+                return None
+            if order.symbol != symbol:
+                return None
+            if order.status not in self.OPEN_ORDER_STATUSES:
+                return None
+            return order
+
+        target_client_order_id = metadata.get("target_client_order_id") or metadata.get("client_order_id")
+        target_broker_order_id = metadata.get("broker_order_id")
+
+        if target_client_order_id:
+            order = is_cancellable(
+                session.scalar(
+                    select(BrokerOrder).where(BrokerOrder.client_order_id == target_client_order_id)
+                )
+            )
+            if order is not None:
+                return order
+
+        if target_broker_order_id:
+            order = is_cancellable(
+                session.scalar(
+                    select(BrokerOrder).where(BrokerOrder.broker_order_id == target_broker_order_id)
+                )
+            )
+            if order is not None:
+                return order
+
+        return session.scalar(
+            select(BrokerOrder)
+            .where(BrokerOrder.strategy_id == strategy_id)
+            .where(BrokerOrder.broker_account_id == broker_account_id)
+            .where(BrokerOrder.symbol == symbol)
+            .where(BrokerOrder.status.in_(self.OPEN_ORDER_STATUSES))
+            .order_by(BrokerOrder.updated_at.desc())
+        )
+
+    def update_order_from_report(
+        self,
+        order: BrokerOrder,
+        *,
+        report: ExecutionReport,
+        metadata: dict[str, str],
+        preserve_status: bool = False,
+    ) -> BrokerOrder:
+        if not preserve_status:
+            order.status = report.event_type
+        order.broker_order_id = report.broker_order_id or order.broker_order_id
+        order.payload = dict(metadata)
+        if order.submitted_at is None:
+            order.submitted_at = report.reported_at
         return order
 
     def append_order_event(

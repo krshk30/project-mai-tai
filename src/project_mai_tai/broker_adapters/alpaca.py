@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 import urllib.error
+from urllib.parse import quote
 import urllib.request
 
 from project_mai_tai.broker_adapters.protocols import (
@@ -88,20 +89,6 @@ class AlpacaPaperBrokerAdapter:
         self._sleep = asyncio.sleep
 
     async def submit_order(self, request: OrderRequest) -> list[ExecutionReport]:
-        if request.intent_type == "cancel":
-            return [
-                ExecutionReport(
-                    event_type="rejected",
-                    client_order_id=request.client_order_id,
-                    symbol=request.symbol,
-                    side=request.side,
-                    intent_type=request.intent_type,
-                    quantity=request.quantity,
-                    reason="cancel intents are not implemented for alpaca_paper adapter",
-                    metadata=dict(request.metadata),
-                )
-            ]
-
         credentials = self.credentials_by_account.get(request.broker_account_name)
         if credentials is None:
             return [
@@ -116,6 +103,9 @@ class AlpacaPaperBrokerAdapter:
                     metadata=dict(request.metadata),
                 )
             ]
+
+        if request.intent_type == "cancel":
+            return await self._cancel_order(credentials, request)
 
         status_code, response = await self._request_json(
             credentials,
@@ -165,6 +155,102 @@ class AlpacaPaperBrokerAdapter:
             )
         )
         return reports
+
+    async def _cancel_order(
+        self,
+        credentials: AlpacaCredentials,
+        request: OrderRequest,
+    ) -> list[ExecutionReport]:
+        broker_order_id = str(request.metadata.get("broker_order_id", "")).strip()
+        target_client_order_id = str(
+            request.metadata.get("target_client_order_id") or request.client_order_id
+        ).strip()
+
+        if not broker_order_id and target_client_order_id:
+            status_code, response = await self._request_json(
+                credentials,
+                "GET",
+                f"/v2/orders:by_client_order_id?client_order_id={quote(target_client_order_id, safe='')}",
+            )
+            if status_code < 400 and isinstance(response, dict):
+                broker_order_id = str(response.get("id", "")).strip()
+            elif status_code >= 400:
+                return [
+                    ExecutionReport(
+                        event_type="rejected",
+                        client_order_id=target_client_order_id or request.client_order_id,
+                        broker_order_id=None,
+                        symbol=request.symbol,
+                        side=request.side,
+                        intent_type="cancel",
+                        quantity=request.quantity,
+                        reason=self._extract_error_reason(response),
+                        metadata=dict(request.metadata),
+                    )
+                ]
+
+        if not broker_order_id:
+            return [
+                ExecutionReport(
+                    event_type="rejected",
+                    client_order_id=target_client_order_id or request.client_order_id,
+                    broker_order_id=None,
+                    symbol=request.symbol,
+                    side=request.side,
+                    intent_type="cancel",
+                    quantity=request.quantity,
+                    reason="missing broker_order_id for cancel intent",
+                    metadata=dict(request.metadata),
+                )
+            ]
+
+        status_code, response = await self._request_json(
+            credentials,
+            "DELETE",
+            f"/v2/orders/{quote(broker_order_id, safe='')}",
+        )
+        if status_code >= 400:
+            return [
+                ExecutionReport(
+                    event_type="rejected",
+                    client_order_id=target_client_order_id or request.client_order_id,
+                    broker_order_id=broker_order_id,
+                    symbol=request.symbol,
+                    side=request.side,
+                    intent_type="cancel",
+                    quantity=request.quantity,
+                    reason=self._extract_error_reason(response),
+                    metadata=dict(request.metadata),
+                )
+            ]
+
+        status_code, order = await self._request_json(
+            credentials,
+            "GET",
+            f"/v2/orders/{quote(broker_order_id, safe='')}",
+        )
+        if status_code >= 400 or not isinstance(order, dict):
+            return [
+                ExecutionReport(
+                    event_type="cancelled",
+                    client_order_id=target_client_order_id or request.client_order_id,
+                    broker_order_id=broker_order_id,
+                    symbol=request.symbol,
+                    side=request.side,
+                    intent_type="cancel",
+                    quantity=request.quantity,
+                    reason=request.reason,
+                    metadata=dict(request.metadata),
+                )
+            ]
+
+        return [
+            self._execution_report_from_order(
+                request=request,
+                order=order,
+                event_type=self._map_order_status(str(order.get("status", ""))),
+            )
+        ]
 
     async def list_account_positions(self, broker_account_name: str) -> list[BrokerPositionSnapshot]:
         credentials = self.credentials_by_account.get(broker_account_name)

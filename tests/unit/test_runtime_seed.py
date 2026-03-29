@@ -58,3 +58,28 @@ def test_runtime_seed_updates_existing_records_when_adapter_changes() -> None:
         strategies = session.scalars(select(Strategy)).all()
         assert len(strategies) == 4
         assert all(strategy.execution_mode == "paper" for strategy in strategies)
+
+
+def test_runtime_seed_supports_single_shared_schwab_live_account() -> None:
+    session_factory = build_test_session_factory()
+    summary = seed_runtime_metadata(
+        Settings(
+            oms_adapter="schwab",
+            strategy_macd_30s_account_name="live:schwab_shared",
+            strategy_macd_1m_account_name="live:schwab_shared",
+            strategy_tos_account_name="live:schwab_shared",
+            strategy_runner_account_name="live:schwab_shared",
+        ),
+        session_factory=session_factory,
+    )
+
+    assert summary.strategies == 4
+    assert summary.broker_accounts == 1
+
+    with session_factory() as session:
+        strategies = session.scalars(select(Strategy).order_by(Strategy.code)).all()
+        broker_accounts = session.scalars(select(BrokerAccount).order_by(BrokerAccount.name)).all()
+
+        assert all(strategy.execution_mode == "live" for strategy in strategies)
+        assert [account.name for account in broker_accounts] == ["live:schwab_shared"]
+        assert broker_accounts[0].provider == "schwab"

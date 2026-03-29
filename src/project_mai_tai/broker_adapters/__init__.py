@@ -2,11 +2,13 @@
 
 from project_mai_tai.broker_adapters.alpaca import AlpacaPaperBrokerAdapter
 from project_mai_tai.broker_adapters.protocols import ExecutionReport, OrderRequest
+from project_mai_tai.broker_adapters.schwab import SchwabBrokerAdapter
 from project_mai_tai.broker_adapters.simulated import SimulatedBrokerAdapter
 
 __all__ = [
     "AlpacaPaperBrokerAdapter",
     "ExecutionReport",
     "OrderRequest",
+    "SchwabBrokerAdapter",
     "SimulatedBrokerAdapter",
 ]

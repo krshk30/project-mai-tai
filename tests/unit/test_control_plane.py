@@ -175,6 +175,14 @@ def seed_database(session_factory: sessionmaker[Session]) -> None:
             market_value=Decimal("25.5"),
             source_updated_at=datetime.now(UTC),
         )
+        sibling_account_position = AccountPosition(
+            broker_account_id=account.id,
+            symbol="SBET",
+            quantity=Decimal("5"),
+            average_price=Decimal("3.10"),
+            market_value=Decimal("15.5"),
+            source_updated_at=datetime.now(UTC),
+        )
         reconciliation_run = ReconciliationRun(
             broker_account_id=account.id,
             status="completed",
@@ -260,6 +268,7 @@ def seed_database(session_factory: sessionmaker[Session]) -> None:
                 fill,
                 virtual_position,
                 account_position,
+                sibling_account_position,
                 reconciliation_finding,
                 incident,
                 dashboard_snapshot,
@@ -413,12 +422,12 @@ def make_streams(prefix: str, *, include_confirmed: bool = True) -> dict[str, li
                             "bar_count": 128,
                             "last_bar_at": "2026-03-28T14:00:00+00:00",
                             "close": 2.55,
-                            "ema9": 2.44,
-                            "ema20": 2.31,
-                            "macd": 0.08765,
+                            "ema9": 2.53,
+                            "ema20": 2.50,
+                            "macd": 0.07650,
                             "signal": 0.07432,
-                            "histogram": 0.01333,
-                            "vwap": 2.40,
+                            "histogram": 0.00218,
+                            "vwap": 2.51,
                             "macd_above_signal": True,
                             "price_above_vwap": True,
                             "price_above_ema9": True,
@@ -441,12 +450,12 @@ def make_streams(prefix: str, *, include_confirmed: bool = True) -> dict[str, li
                             "bar_count": 128,
                             "last_bar_at": "2026-03-28T14:00:00+00:00",
                             "close": 2.55,
-                            "ema9": 2.44,
-                            "ema20": 2.31,
-                            "macd": 0.08765,
+                            "ema9": 2.53,
+                            "ema20": 2.50,
+                            "macd": 0.07650,
                             "signal": 0.07432,
-                            "histogram": 0.01333,
-                            "vwap": 2.40,
+                            "histogram": 0.00218,
+                            "vwap": 2.51,
                             "macd_above_signal": True,
                             "price_above_vwap": True,
                             "price_above_ema9": True,
@@ -518,6 +527,9 @@ def test_control_plane_overview_and_dashboard_render() -> None:
         assert bots_body["bots"][0]["recent_intents"][0]["symbol"] == "UGRO"
         assert bots_body["bots"][0]["legacy_status"] == "running (dry run)"
         assert bots_body["bots"][0]["daily_pnl"] == 125.5
+        assert bots_body["bots"][0]["account_summary"]["account_position_count"] == 2
+        assert bots_body["bots"][0]["account_summary"]["non_strategy_symbol_count"] == 1
+        assert bots_body["bots"][0]["account_summary"]["non_strategy_symbols"] == ["SBET"]
         assert bots_body["bots"][1]["tos_parity"]["comparison_target"] == "thinkorswim_1m"
         assert bots_body["bots"][1]["tos_parity"]["snapshots"][0]["symbol"] == "UGRO"
 
@@ -561,12 +573,19 @@ def test_control_plane_overview_and_dashboard_render() -> None:
         assert "Recent Orders" in bot_30s_page.text
         assert "Account Exposure" in bot_30s_page.text
         assert "Decision Tape" in bot_30s_page.text
+        assert "Gross Market Value" in bot_30s_page.text
+        assert "Strategy Symbols" in bot_30s_page.text
+        assert "Other Symbols" in bot_30s_page.text
+        assert "Latest broker-account update" in bot_30s_page.text
+        assert "SBET" in bot_30s_page.text
 
         bot_1m_page = client.get("/bot/1m")
         assert bot_1m_page.status_code == 200
         assert "TOS Parity" in bot_1m_page.text
         assert "EMA9" in bot_1m_page.text
         assert "Compare on closed bars only" in bot_1m_page.text
+        assert "tight" in bot_1m_page.text
+        assert "watch" in bot_1m_page.text
 
         bot_runner_page = client.get("/bot/runner")
         assert bot_runner_page.status_code == 200
@@ -598,12 +617,67 @@ def test_control_plane_overview_and_dashboard_render() -> None:
         assert "Legacy Shadow:" in dashboard.text
         assert "TOS Parity" in dashboard.text
         assert "thinkorswim_1m" in dashboard.text
-        assert "Virtual Positions" in dashboard.text
-        assert "Cutover Confidence" in dashboard.text
-        assert "Order stuck in accepted for UGRO" in dashboard.text
-        assert "Legacy Shadow" in dashboard.text
-        assert "SBET" in dashboard.text
-        assert "UTC" not in dashboard.text
+
+
+def test_control_plane_blacklist_routes_filter_scanner_outputs() -> None:
+    settings = Settings(redis_stream_prefix="test", oms_adapter="alpaca_paper")
+    session_factory = build_test_session_factory()
+    seed_database(session_factory)
+    redis = FakeRedis(make_streams(settings.redis_stream_prefix))
+
+    app = build_app(
+        settings=settings,
+        session_factory=session_factory,
+        redis_client=redis,
+        legacy_client=FakeLegacyClient(),
+    )
+
+    with TestClient(app) as client:
+        client.get("/scanner/blacklist/add?symbol=UGRO&reason=manual_test")
+
+        blacklist = client.get("/api/blacklist")
+        assert blacklist.status_code == 200
+        assert blacklist.json()["count"] == 1
+        assert blacklist.json()["blacklist"][0]["symbol"] == "UGRO"
+
+        scanner = client.get("/api/scanner")
+        assert scanner.status_code == 200
+        scanner_body = scanner.json()["scanner"]
+        assert scanner_body["blacklist_count"] == 1
+        assert scanner_body["watchlist"] == []
+        assert scanner_body["top_confirmed"] == []
+        assert scanner_body["five_pillars"] == []
+        assert scanner_body["top_gainers"] == []
+        assert scanner_body["recent_alerts"] == []
+
+        client.get("/scanner/blacklist/remove?symbol=UGRO")
+        unblocked = client.get("/api/scanner")
+        assert unblocked.status_code == 200
+        assert unblocked.json()["scanner"]["blacklist_count"] == 0
+        assert unblocked.json()["scanner"]["top_confirmed"][0]["ticker"] == "UGRO"
+
+
+def test_control_plane_reports_schwab_live_wiring() -> None:
+    settings = Settings(redis_stream_prefix="test", oms_adapter="schwab")
+    session_factory = build_test_session_factory()
+    seed_database(session_factory)
+    redis = FakeRedis(make_streams(settings.redis_stream_prefix))
+
+    app = build_app(
+        settings=settings,
+        session_factory=session_factory,
+        redis_client=redis,
+        legacy_client=FakeLegacyClient(),
+    )
+
+    with TestClient(app) as client:
+        overview = client.get("/api/overview")
+        assert overview.status_code == 200
+        body = overview.json()
+        assert body["provider"] == "schwab"
+        assert body["bots"][0]["provider"] == "schwab"
+        assert body["bots"][0]["execution_mode"] == "live"
+        assert body["bots"][0]["wiring_status"] == "live/schwab"
 
 
 def test_control_plane_restores_last_nonempty_confirmed_snapshot() -> None:

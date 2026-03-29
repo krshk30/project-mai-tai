@@ -10,10 +10,10 @@ from datetime import UTC, datetime
 from decimal import Decimal
 
 from redis.asyncio import Redis
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session, sessionmaker
 
-from project_mai_tai.db.models import DashboardSnapshot
+from project_mai_tai.db.models import DashboardSnapshot, ScannerBlacklistEntry
 from project_mai_tai.db.session import build_session_factory
 from project_mai_tai.events import (
     HeartbeatEvent,
@@ -496,26 +496,43 @@ class StrategyEngineState:
         self,
         snapshots: Sequence[MarketSnapshot],
         reference_data: dict[str, ReferenceData],
+        *,
+        blacklisted_symbols: set[str] | None = None,
     ) -> dict[str, object]:
         self.cycle_count += 1
-        self.reference_data.update(reference_data)
+        blocked = {symbol.upper() for symbol in (blacklisted_symbols or set()) if symbol}
+        if blocked:
+            self.confirmed_scanner.remove_tickers(blocked)
+
+        filtered_snapshots = [
+            snapshot
+            for snapshot in snapshots
+            if snapshot.ticker.upper() not in blocked
+        ]
+        filtered_reference_data = {
+            symbol: value
+            for symbol, value in reference_data.items()
+            if symbol.upper() not in blocked
+        }
+
+        self.reference_data.update(filtered_reference_data)
         current_now = self.alert_engine.now_provider()
         self.five_pillars = self._decorate_scanner_rows(
             apply_five_pillars(
-                snapshots,
+                filtered_snapshots,
                 self.reference_data,
                 self.five_pillars_config,
                 now=current_now,
             )
         )
         self.top_gainers, self.top_gainer_changes = self.top_gainers_tracker.update(
-            snapshots,
+            filtered_snapshots,
             self.reference_data,
             now=current_now,
         )
         self.top_gainers = self._decorate_scanner_rows(self.top_gainers)
-        self.alert_engine.record_snapshot(snapshots)
-        alerts = self.alert_engine.check_alerts(snapshots, self.reference_data)
+        self.alert_engine.record_snapshot(filtered_snapshots)
+        alerts = self.alert_engine.check_alerts(filtered_snapshots, self.reference_data)
         if self.catalyst_engine is not None:
             catalyst_tickers = {
                 str(alert.get("ticker", "")).upper()
@@ -531,17 +548,25 @@ class StrategyEngineState:
                 self.catalyst_engine.get_catalysts_batch(sorted(catalyst_tickers))
         self._record_recent_alerts(alerts)
         self.alert_warmup = self.alert_engine.get_warmup_status()
-        snapshot_lookup = {snapshot.ticker: snapshot for snapshot in snapshots}
+        snapshot_lookup = {snapshot.ticker: snapshot for snapshot in filtered_snapshots}
         newly_confirmed = self.confirmed_scanner.process_alerts(
             alerts,
-            self.reference_data,
+            filtered_reference_data,
             snapshot_lookup,
         )
         self.confirmed_scanner.update_live_prices(snapshot_lookup)
 
-        confirmed_candidates = self.confirmed_scanner.get_all_confirmed()
+        confirmed_candidates = [
+            stock
+            for stock in self.confirmed_scanner.get_all_confirmed()
+            if str(stock.get("ticker", "")).upper() not in blocked
+        ]
         min_score = 0.0 if len(confirmed_candidates) <= 1 else None
-        self.current_confirmed = self.confirmed_scanner.get_top_n(min_score=min_score)
+        self.current_confirmed = [
+            stock
+            for stock in self.confirmed_scanner.get_top_n(min_score=min_score)
+            if str(stock.get("ticker", "")).upper() not in blocked
+        ]
 
         watchlist = [str(stock["ticker"]) for stock in self.current_confirmed]
         runner_watchlist = [str(stock["ticker"]) for stock in confirmed_candidates]
@@ -815,7 +840,11 @@ class StrategyEngineService:
                 )
                 for item in event.payload.reference_data
             }
-            summary = self.state.process_snapshot_batch(snapshots, reference)
+            summary = self.state.process_snapshot_batch(
+                snapshots,
+                reference,
+                blacklisted_symbols=self._load_scanner_blacklist_symbols(),
+            )
             await self._sync_market_data_subscriptions(summary["market_data_symbols"])
             await self._publish_strategy_state_snapshot()
             self.logger.info(
@@ -1034,6 +1063,22 @@ class StrategyEngineService:
                 session.commit()
         except Exception:
             self.logger.exception("failed to persist dashboard snapshot %s", snapshot_type)
+
+    def _load_scanner_blacklist_symbols(self) -> set[str]:
+        if self.session_factory is None:
+            return set()
+
+        try:
+            with self.session_factory() as session:
+                return {
+                    str(entry.symbol).upper()
+                    for entry in session.scalars(
+                        select(ScannerBlacklistEntry).order_by(ScannerBlacklistEntry.symbol)
+                    ).all()
+                }
+        except Exception:
+            self.logger.exception("failed to load scanner blacklist entries")
+            return set()
 
 
 def snapshot_from_payload(payload: MarketSnapshotPayload) -> MarketSnapshot:

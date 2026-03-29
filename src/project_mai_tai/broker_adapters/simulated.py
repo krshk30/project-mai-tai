@@ -23,6 +23,21 @@ class SimulatedBrokerAdapter:
         self._positions: dict[str, dict[str, _PositionState]] = {}
 
     async def submit_order(self, request: OrderRequest) -> list[ExecutionReport]:
+        if request.intent_type == "cancel":
+            return [
+                ExecutionReport(
+                    event_type="rejected",
+                    client_order_id=request.client_order_id,
+                    broker_order_id=str(request.metadata.get("broker_order_id", "")).strip() or None,
+                    symbol=request.symbol,
+                    side=request.side,
+                    intent_type="cancel",
+                    quantity=request.quantity,
+                    reason="simulated adapter fills immediately; no open order remains to cancel",
+                    metadata=dict(request.metadata),
+                )
+            ]
+
         reference_price = request.metadata.get("reference_price")
         broker_order_id = f"sim-order-{uuid4().hex[:16]}"
 

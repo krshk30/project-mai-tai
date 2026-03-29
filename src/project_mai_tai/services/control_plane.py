@@ -7,10 +7,11 @@ from decimal import Decimal
 from html import escape
 import json
 from typing import Any
+from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from redis.asyncio import Redis
 from sqlalchemy import case, desc, func, select, text
 from sqlalchemy.orm import Session, sessionmaker
@@ -24,6 +25,7 @@ from project_mai_tai.db.models import (
     Fill,
     ReconciliationFinding,
     ReconciliationRun,
+    ScannerBlacklistEntry,
     Strategy,
     SystemIncident,
     TradeIntent,
@@ -79,6 +81,44 @@ class ControlPlaneRepository:
         self._legacy_cache_at: datetime | None = None
         self._legacy_cache_lock = asyncio.Lock()
 
+    def add_scanner_blacklist_symbol(self, symbol: str, *, reason: str = "manual") -> bool:
+        normalized = symbol.strip().upper()
+        if not normalized:
+            return False
+
+        with self.session_factory() as session:
+            entry = session.scalar(
+                select(ScannerBlacklistEntry).where(ScannerBlacklistEntry.symbol == normalized)
+            )
+            if entry is None:
+                session.add(
+                    ScannerBlacklistEntry(
+                        symbol=normalized,
+                        reason=reason,
+                        source="control-plane",
+                    )
+                )
+            else:
+                entry.reason = reason
+                entry.source = "control-plane"
+            session.commit()
+        return True
+
+    def remove_scanner_blacklist_symbol(self, symbol: str) -> bool:
+        normalized = symbol.strip().upper()
+        if not normalized:
+            return False
+
+        with self.session_factory() as session:
+            entry = session.scalar(
+                select(ScannerBlacklistEntry).where(ScannerBlacklistEntry.symbol == normalized)
+            )
+            if entry is None:
+                return False
+            session.delete(entry)
+            session.commit()
+        return True
+
     async def load_dashboard_data(self) -> dict[str, Any]:
         db_state = self._load_database_state()
         stream_state = await self._load_stream_state()
@@ -91,6 +131,7 @@ class ControlPlaneRepository:
             strategy_runtime=stream_state["strategy_runtime"],
             legacy_shadow=legacy_shadow,
             persisted_snapshots=db_state["dashboard_snapshots"],
+            blacklist_entries=db_state["scanner_blacklist"],
         )
         bots = self._build_bot_views(
             strategy_runtime=stream_state["strategy_runtime"],
@@ -117,7 +158,7 @@ class ControlPlaneRepository:
             "environment": self.settings.environment,
             "domain": "project-mai-tai.live",
             "control_plane_url": self.settings.control_plane_base_url,
-            "provider": self.settings.broker_default_provider,
+            "provider": self.settings.resolved_broker_provider,
             "oms_adapter": self.settings.oms_adapter,
             "scanner_config": {
                 "five_pillars": FivePillarsConfig(
@@ -159,6 +200,7 @@ class ControlPlaneRepository:
             "strategy_runtime": stream_state["strategy_runtime"],
             "legacy_shadow": legacy_shadow,
             "incidents": db_state["incidents"],
+            "scanner_blacklist": db_state["scanner_blacklist"],
             "errors": db_state["errors"] + stream_state["errors"] + legacy_shadow["errors"],
         }
 
@@ -169,12 +211,23 @@ class ControlPlaneRepository:
         strategy_runtime: dict[str, Any],
         legacy_shadow: dict[str, Any],
         persisted_snapshots: dict[str, Any],
+        blacklist_entries: list[dict[str, Any]],
     ) -> dict[str, Any]:
+        blacklisted_symbols = {
+            str(entry.get("symbol", "")).upper()
+            for entry in blacklist_entries
+            if entry.get("symbol")
+        }
         bot_states = strategy_runtime.get("bots", {})
-        watchlist = [str(symbol) for symbol in strategy_runtime.get("watchlist", [])]
+        watchlist = [
+            str(symbol)
+            for symbol in strategy_runtime.get("watchlist", [])
+            if str(symbol).upper() not in blacklisted_symbols
+        ]
         top_confirmed = [
             self._normalize_confirmed_row(index=index, item=item, bot_states=bot_states)
             for index, item in enumerate(strategy_runtime.get("top_confirmed", []), start=1)
+            if str(item.get("ticker", "")).upper() not in blacklisted_symbols
         ]
         top_confirmed_source = "live"
         top_confirmed_snapshot_at = ""
@@ -184,6 +237,7 @@ class ControlPlaneRepository:
             restored_rows = [
                 self._normalize_confirmed_row(index=index, item=item, bot_states=bot_states)
                 for index, item in enumerate(restored.get("top_confirmed", []), start=1)
+                if str(item.get("ticker", "")).upper() not in blacklisted_symbols
             ]
             if restored_rows:
                 top_confirmed = restored_rows
@@ -203,19 +257,56 @@ class ControlPlaneRepository:
             "top_confirmed": top_confirmed,
             "top_confirmed_source": top_confirmed_source,
             "top_confirmed_snapshot_at": top_confirmed_snapshot_at,
-            "five_pillars": list(strategy_runtime.get("five_pillars", [])),
-            "five_pillars_count": len(strategy_runtime.get("five_pillars", [])),
-            "top_gainers": list(strategy_runtime.get("top_gainers", [])),
-            "top_gainers_count": len(strategy_runtime.get("top_gainers", [])),
-            "recent_alerts": list(strategy_runtime.get("recent_alerts", [])),
-            "recent_alerts_count": len(strategy_runtime.get("recent_alerts", [])),
-            "top_gainer_changes": list(strategy_runtime.get("top_gainer_changes", [])),
+            "five_pillars": [
+                item
+                for item in strategy_runtime.get("five_pillars", [])
+                if str(item.get("ticker", "")).upper() not in blacklisted_symbols
+            ],
+            "five_pillars_count": len(
+                [
+                    item
+                    for item in strategy_runtime.get("five_pillars", [])
+                    if str(item.get("ticker", "")).upper() not in blacklisted_symbols
+                ]
+            ),
+            "top_gainers": [
+                item
+                for item in strategy_runtime.get("top_gainers", [])
+                if str(item.get("ticker", "")).upper() not in blacklisted_symbols
+            ],
+            "top_gainers_count": len(
+                [
+                    item
+                    for item in strategy_runtime.get("top_gainers", [])
+                    if str(item.get("ticker", "")).upper() not in blacklisted_symbols
+                ]
+            ),
+            "recent_alerts": [
+                item
+                for item in strategy_runtime.get("recent_alerts", [])
+                if str(item.get("ticker", "")).upper() not in blacklisted_symbols
+            ],
+            "recent_alerts_count": len(
+                [
+                    item
+                    for item in strategy_runtime.get("recent_alerts", [])
+                    if str(item.get("ticker", "")).upper() not in blacklisted_symbols
+                ]
+            ),
+            "top_gainer_changes": [
+                item
+                for item in strategy_runtime.get("top_gainer_changes", [])
+                if str(item.get("ticker", "")).upper() not in blacklisted_symbols
+            ],
             "alert_warmup": dict(strategy_runtime.get("alert_warmup", {})),
             "active_subscription_symbols": int(market_data.get("active_subscription_symbols", 0) or 0),
             "subscription_symbols": list(market_data.get("subscription_symbols", [])),
             "latest_snapshot_batch": market_data.get("latest_snapshot_batch"),
             "legacy_confirmed_symbols": legacy_confirmed,
             "legacy_confirmed_count": len(legacy_confirmed),
+            "blacklist": blacklist_entries,
+            "blacklist_symbols": sorted(blacklisted_symbols),
+            "blacklist_count": len(blacklist_entries),
         }
 
     def _normalize_confirmed_row(
@@ -326,9 +417,9 @@ class ControlPlaneRepository:
                     "account_name": runtime_bot.get("account_name")
                     or (registration.account_name if registration else ""),
                     "execution_mode": registration.execution_mode if registration else "unknown",
-                    "provider": self.settings.broker_default_provider if registration else "unknown",
+                    "provider": self.settings.resolved_broker_provider if registration else "unknown",
                     "wiring_status": (
-                        f'{registration.execution_mode}/{self.settings.broker_default_provider}'
+                        f'{registration.execution_mode}/{self.settings.resolved_broker_provider}'
                         if registration
                         else "unknown"
                     ),
@@ -447,6 +538,7 @@ class ControlPlaneRepository:
             "open_account_positions": 0,
             "open_incidents": 0,
             "latest_reconciliation_findings": 0,
+            "blacklisted_symbols": 0,
         }
         recent_intents: list[dict[str, Any]] = []
         recent_orders: list[dict[str, Any]] = []
@@ -459,6 +551,7 @@ class ControlPlaneRepository:
         }
         incidents: list[dict[str, Any]] = []
         dashboard_snapshots: dict[str, dict[str, Any]] = {}
+        scanner_blacklist: list[dict[str, Any]] = []
 
         try:
             with self.session_factory() as session:
@@ -652,6 +745,21 @@ class ControlPlaneRepository:
                         **confirmed_snapshot.payload,
                         "created_at": _datetime_str(confirmed_snapshot.created_at),
                     }
+
+                blacklist_entries = session.scalars(
+                    select(ScannerBlacklistEntry).order_by(ScannerBlacklistEntry.symbol)
+                ).all()
+                counts["blacklisted_symbols"] = len(blacklist_entries)
+                scanner_blacklist = [
+                    {
+                        "symbol": entry.symbol,
+                        "reason": entry.reason,
+                        "source": entry.source,
+                        "created_at": _datetime_str(entry.created_at),
+                        "updated_at": _datetime_str(entry.updated_at),
+                    }
+                    for entry in blacklist_entries
+                ]
         except Exception as exc:
             errors.append(f"database:{exc}")
 
@@ -665,6 +773,7 @@ class ControlPlaneRepository:
             "reconciliation": reconciliation,
             "incidents": incidents,
             "dashboard_snapshots": dashboard_snapshots,
+            "scanner_blacklist": scanner_blacklist,
             "errors": errors,
         }
 
@@ -996,7 +1105,15 @@ def build_app(
     @app.get("/api/bots")
     async def bots() -> dict[str, Any]:
         data = await app.state.repository.load_dashboard_data()
-        return {"bots": data["bots"]}
+        return {
+            "bots": [
+                {
+                    **bot,
+                    "account_summary": _build_bot_account_summary(data, bot),
+                }
+                for bot in data["bots"]
+            ]
+        }
 
     @app.get("/api/orders")
     async def orders() -> dict[str, Any]:
@@ -1030,6 +1147,31 @@ def build_app(
             "legacy_shadow": data["legacy_shadow"],
             "strategy_runtime": data["strategy_runtime"],
         }
+
+    @app.get("/api/blacklist")
+    async def blacklist() -> dict[str, Any]:
+        data = await app.state.repository.load_dashboard_data()
+        return {
+            "blacklist": data["scanner"]["blacklist"],
+            "count": data["scanner"]["blacklist_count"],
+        }
+
+    @app.get("/scanner/blacklist/add")
+    async def scanner_blacklist_add(
+        symbol: str,
+        reason: str = "manual_scanner_blacklist",
+        redirect_to: str = "/scanner/dashboard",
+    ) -> RedirectResponse:
+        app.state.repository.add_scanner_blacklist_symbol(symbol, reason=reason)
+        return RedirectResponse(url=redirect_to, status_code=303)
+
+    @app.get("/scanner/blacklist/remove")
+    async def scanner_blacklist_remove(
+        symbol: str,
+        redirect_to: str = "/scanner/dashboard",
+    ) -> RedirectResponse:
+        app.state.repository.remove_scanner_blacklist_symbol(symbol)
+        return RedirectResponse(url=redirect_to, status_code=303)
 
     @app.get("/scanner/confirmed")
     async def scanner_confirmed() -> dict[str, Any]:
@@ -2253,6 +2395,7 @@ def _build_bot_api_payload(data: dict[str, Any], strategy_code: str) -> dict[str
         "recent_fills": bot["recent_fills"],
         "indicator_snapshots": bot["indicator_snapshots"],
         "tos_parity": bot["tos_parity"],
+        "account_summary": _build_bot_account_summary(data, bot),
         "trade_log": _build_bot_decision_entries(bot),
     }
 
@@ -2265,7 +2408,11 @@ def _render_scanner_dashboard(data: dict[str, Any]) -> str:
     market_data_service = services.get("market-data-gateway", {})
     subscription_symbols = set(scanner["subscription_symbols"])
 
-    confirmed_rows = _render_scanner_confirmed_rows(scanner["top_confirmed"], subscription_symbols)
+    confirmed_rows = _render_scanner_confirmed_rows(
+        scanner["top_confirmed"],
+        subscription_symbols,
+        set(scanner.get("blacklist_symbols", [])),
+    )
     pillar_rows = _render_scanner_stock_rows(scanner["five_pillars"], subscription_symbols)
     gainer_rows = _render_scanner_stock_rows(scanner["top_gainers"], subscription_symbols)
     alert_rows = _render_alert_rows(scanner["recent_alerts"])
@@ -2301,6 +2448,7 @@ def _render_scanner_dashboard(data: dict[str, Any]) -> str:
         f'<span class="pill-chip live">{escape(symbol)}</span>'
         for symbol in scanner["subscription_symbols"][:24]
     ) or '<span style="color:#7b86a4;">No live subscriptions yet</span>'
+    blacklist_html = _render_scanner_blacklist_entries(scanner.get("blacklist", []))
 
     return f"""<!DOCTYPE html>
 <html>
@@ -2547,6 +2695,10 @@ def _render_scanner_dashboard(data: dict[str, Any]) -> str:
                     <span>Alerts</span>
                     <strong>{scanner["recent_alerts_count"]}</strong>
                 </div>
+                <div class="metric-card">
+                    <span>Blacklisted</span>
+                    <strong>{scanner["blacklist_count"]}</strong>
+                </div>
             </div>
 
             <div class="side-section">
@@ -2590,6 +2742,11 @@ def _render_scanner_dashboard(data: dict[str, Any]) -> str:
             <div class="side-section">
                 <div class="side-label">Live Subscriptions</div>
                 <div>{subscription_html}</div>
+            </div>
+
+            <div class="side-section">
+                <div class="side-label">Scanner Blacklist</div>
+                <div class="stack">{blacklist_html}</div>
             </div>
 
             <div class="side-section">
@@ -2704,15 +2861,16 @@ def _render_bot_detail_page(data: dict[str, Any], strategy_code: str) -> str:
     intent_rows = _build_bot_intent_rows(bot)
     order_rows = _build_bot_order_rows(bot)
     account_rows = _build_bot_account_rows(data, bot)
+    account_summary = _build_bot_account_summary(data, bot)
     decision_lines = _build_bot_decision_lines(decision_entries)
     watchlist_html = _render_chip_cloud(bot["watchlist"], empty_text="No symbols on watch")
     pending_open_html = _render_chip_cloud(bot["pending_open_symbols"], variant="live", empty_text="None queued")
     pending_close_html = _render_chip_cloud(bot["pending_close_symbols"], variant="danger", empty_text="None queued")
     pending_scale_html = _render_chip_cloud(bot["pending_scale_levels"], variant="amber", empty_text="No scale levels armed")
     account_note = (
-        "Shared Alpaca paper account with sibling strategy. Account-level quantities can include sibling exposure."
+        f'Shared {escape(str(bot.get("provider", "broker"))).upper()} account with sibling strategy. Account-level quantities can include sibling exposure.'
         if strategy_code in {"tos", "runner"}
-        else "Dedicated paper account mapped to this bot."
+        else f'Dedicated {escape(str(bot.get("provider", "broker"))).upper()} account mapped to this bot.'
     )
     pnl_color = "#5fff8d" if bot["daily_pnl"] >= 0 else "#ff6b6b"
     recent_fill_count = len(recent_fills)
@@ -2731,7 +2889,7 @@ def _render_bot_detail_page(data: dict[str, Any], strategy_code: str) -> str:
                     </div>
                     <span class="count amber">{escape(parity.get("status", "idle"))}</span>
                 </div>
-                <div class="panel-copy">{escape(parity.get("summary", ""))}</div>
+                <div class="panel-copy">{escape(parity.get("summary", ""))} Amber deltas are tight to a crossover, cyan deltas are worth watching, and green/red deltas are clearly separated.</div>
                 <div class="badge-row">{parity_settings}</div>
                 <div class="table-wrap">
                     <table>
@@ -2990,6 +3148,12 @@ def _render_bot_detail_page(data: dict[str, Any], strategy_code: str) -> str:
             gap: 12px;
             padding: 0 16px 16px 16px;
         }}
+        .summary-grid {{
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 12px;
+            padding: 0 16px 16px 16px;
+        }}
         .hero-card {{
             background: rgba(255,255,255,0.03);
             border: 1px solid var(--line);
@@ -3063,6 +3227,7 @@ def _render_bot_detail_page(data: dict[str, Any], strategy_code: str) -> str:
             .workspace {{ grid-template-columns: 1fr; }}
             .panel.full {{ grid-column: auto; }}
             .hero-grid {{ grid-template-columns: 1fr; }}
+            .summary-grid {{ grid-template-columns: 1fr; }}
         }}
     </style>
 </head>
@@ -3234,6 +3399,13 @@ def _render_bot_detail_page(data: dict[str, Any], strategy_code: str) -> str:
                     </div>
                     <span class="count">{len([item for item in data["account_positions"] if item.get("broker_account_name") == bot["account_name"]])}</span>
                 </div>
+                <div class="summary-grid">
+                    <div class="hero-card"><span>Account Positions</span><strong>{account_summary["account_position_count"]}</strong><small>{escape(bot["account_name"])}</small></div>
+                    <div class="hero-card"><span>Gross Market Value</span><strong>${account_summary["gross_market_value"]:,.2f}</strong><small>Across all broker-held symbols</small></div>
+                    <div class="hero-card"><span>Strategy Symbols</span><strong>{account_summary["strategy_symbol_count"]}</strong><small>Virtual positions attributed to this bot</small></div>
+                    <div class="hero-card"><span>Other Symbols</span><strong>{account_summary["non_strategy_symbol_count"]}</strong><small>{escape(", ".join(account_summary["non_strategy_symbols"][:3]) or "No sibling-only exposure")}</small></div>
+                </div>
+                <div class="panel-copy">Latest broker-account update: {escape(account_summary["latest_updated_at"] or "No broker account update recorded yet")}.</div>
                 <div class="table-wrap">
                     <table>
                         <thead><tr><th>Account</th><th>Ticker</th><th style="text-align:right">Qty</th><th style="text-align:right">Avg Px</th><th style="text-align:right">Market Value</th><th>Updated</th></tr></thead>
@@ -3347,6 +3519,11 @@ def _build_tos_parity_rows(parity: dict[str, Any]) -> str:
 
     rows: list[str] = []
     for item in snapshots:
+        close_price = _as_float(item.get("close"))
+        ema9_delta = close_price - _as_float(item.get("ema9"))
+        ema20_delta = close_price - _as_float(item.get("ema20"))
+        macd_delta = _as_float(item.get("macd")) - _as_float(item.get("signal"))
+        vwap_delta = close_price - _as_float(item.get("vwap"))
         flags = []
         flags.append("MACD>Signal" if item.get("macd_above_signal") else "MACD<Signal")
         if item.get("price_above_vwap"):
@@ -3360,16 +3537,55 @@ def _build_tos_parity_rows(parity: dict[str, Any]) -> str:
             <td><strong>{escape(item["symbol"])}</strong></td>
             <td>{escape(item["last_bar_at"])}</td>
             <td style="text-align:right">{item["close"]:.4f}</td>
-            <td style="text-align:right">{item["ema9"]:.4f}</td>
-            <td style="text-align:right">{item["ema20"]:.4f}</td>
-            <td style="text-align:right">{item["macd"]:.5f}</td>
+            <td style="text-align:right">{item["ema9"]:.4f}<br>{_render_tos_tolerance_hint(ema9_delta, label="Δ", tight=0.02, watch=0.05)}</td>
+            <td style="text-align:right">{item["ema20"]:.4f}<br>{_render_tos_tolerance_hint(ema20_delta, label="Δ", tight=0.03, watch=0.08)}</td>
+            <td style="text-align:right">{item["macd"]:.5f}<br>{_render_tos_tolerance_hint(macd_delta, label="gap", tight=0.003, watch=0.010)}</td>
             <td style="text-align:right">{item["signal"]:.5f}</td>
             <td style="text-align:right">{item["histogram"]:.5f}</td>
-            <td style="text-align:right">{item["vwap"]:.4f}</td>
+            <td style="text-align:right">{item["vwap"]:.4f}<br>{_render_tos_tolerance_hint(vwap_delta, label="Δ", tight=0.02, watch=0.05)}</td>
             <td>{escape(', '.join(flags) or '-')}</td>
         </tr>"""
         )
     return "".join(rows)
+
+
+def _render_tos_tolerance_hint(delta: float, *, label: str, tight: float, watch: float) -> str:
+    abs_delta = abs(delta)
+    if abs_delta <= tight:
+        color = "#ffcc5b"
+        state = "tight"
+    elif abs_delta <= watch:
+        color = "#59d7ff"
+        state = "watch"
+    else:
+        color = "#5fff8d" if delta >= 0 else "#ff6b6b"
+        state = "clear"
+    return (
+        f'<span style="font-size:10px;color:{color};">'
+        f'{escape(label)} {_format_signed_decimal(delta)} {escape(state)}</span>'
+    )
+
+
+def _build_bot_account_summary(data: dict[str, Any], bot: dict[str, Any]) -> dict[str, Any]:
+    account_rows = [
+        item for item in data["account_positions"] if item.get("broker_account_name") == bot["account_name"]
+    ]
+    virtual_rows = [
+        item for item in data["virtual_positions"] if item.get("strategy_code") == bot["strategy_code"]
+    ]
+    strategy_symbols = {str(item.get("symbol", "")).upper() for item in virtual_rows if item.get("symbol")}
+    account_symbols = {str(item.get("symbol", "")).upper() for item in account_rows if item.get("symbol")}
+    other_symbols = sorted(account_symbols - strategy_symbols)
+    gross_market_value = sum(_as_float(item.get("market_value")) for item in account_rows)
+    latest_updated_at = max((str(item.get("updated_at", "")) for item in account_rows), default="")
+    return {
+        "account_position_count": len(account_rows),
+        "strategy_symbol_count": len(strategy_symbols),
+        "non_strategy_symbol_count": len(other_symbols),
+        "non_strategy_symbols": other_symbols,
+        "gross_market_value": gross_market_value,
+        "latest_updated_at": latest_updated_at,
+    }
 
 
 def _build_bot_account_rows(data: dict[str, Any], bot: dict[str, Any]) -> str:
@@ -3503,7 +3719,11 @@ def _build_closed_trade_rows(closed_today: list[dict[str, Any]]) -> str:
     return "".join(rows)
 
 
-def _render_scanner_confirmed_rows(rows: list[dict[str, Any]], live_symbols: set[str]) -> str:
+def _render_scanner_confirmed_rows(
+    rows: list[dict[str, Any]],
+    live_symbols: set[str],
+    blacklisted_symbols: set[str],
+) -> str:
     if not rows:
         return '<tr><td colspan="19" style="text-align:center;color:#888;padding:20px;">No confirmed candidates yet</td></tr>'
     rendered = []
@@ -3532,7 +3752,10 @@ def _render_scanner_confirmed_rows(rows: list[dict[str, Any]], live_symbols: set
         row_bg = "#0a1a0a" if item.get("is_top5") else "transparent"
         catalyst_html = _render_confirmed_catalyst_cell(item)
         news_link_html = _render_confirmed_news_icon(item)
-        blacklist_html = _render_confirmed_blacklist_placeholder(ticker)
+        blacklist_html = _render_confirmed_blacklist_action(
+            ticker,
+            blacklisted_symbols=blacklisted_symbols,
+        )
         rendered.append(
             f"""<tr style="background:{row_bg};">
             <td style="text-align:center">{index}</td>
@@ -3654,14 +3877,42 @@ def _render_confirmed_news_icon(item: dict[str, Any]) -> str:
     )
 
 
-def _render_confirmed_blacklist_placeholder(ticker: str) -> str:
+def _render_confirmed_blacklist_action(ticker: str, *, blacklisted_symbols: set[str]) -> str:
     if not ticker:
         return '<span style="color:#61758a;">—</span>'
+
+    action = "remove" if ticker in blacklisted_symbols else "add"
+    label = "Unblock" if action == "remove" else "Block"
+    color = "#ffcc5b" if action == "remove" else "#ff6b6b"
+    url = f'/scanner/blacklist/{action}?symbol={quote(ticker)}&redirect_to={quote("/scanner/dashboard", safe="/")}'
     return (
-        '<span style="color:#ff6b6b;font-size:11px;padding:2px 6px;'
-        'border:1px solid #ff6b6b;border-radius:3px;opacity:0.55;" '
-        f'title="Blacklist workflow is not wired yet for {escape(ticker)}">🚫</span>'
+        f'<a href="{escape(url)}" '
+        f'style="color:{color};font-size:11px;padding:2px 6px;border:1px solid {color};'
+        'border-radius:3px;text-decoration:none;display:inline-block;" '
+        f'title="{escape(label)} {escape(ticker)} from the scanner deck">{escape(label)}</a>'
     )
+
+
+def _render_scanner_blacklist_entries(entries: list[dict[str, Any]]) -> str:
+    if not entries:
+        return '<div class="line-item">No blocked symbols.</div>'
+
+    rendered: list[str] = []
+    for entry in entries[:20]:
+        symbol = str(entry.get("symbol", "")).upper()
+        reason = str(entry.get("reason", "") or "manual")
+        remove_url = (
+            f'/scanner/blacklist/remove?symbol={quote(symbol)}&redirect_to='
+            f'{quote("/scanner/dashboard", safe="/")}'
+        )
+        rendered.append(
+            f"""<div class="line-item">
+            <strong>{escape(symbol)}</strong><br>
+            <span style="font-size:11px;color:#98a6c8;">{escape(reason)}</span><br>
+            <a href="{escape(remove_url)}" style="color:#ffcc5b;font-size:11px;text-decoration:none;">remove</a>
+        </div>"""
+        )
+    return "".join(rendered)
 
 
 def _render_scanner_stock_rows(rows: list[dict[str, Any]], live_symbols: set[str]) -> str:
@@ -3815,6 +4066,10 @@ def _fmt_qty(value: float) -> str:
     if abs(value - round(value)) < 0.0001:
         return str(int(round(value)))
     return f"{value:.2f}"
+
+
+def _format_signed_decimal(value: float) -> str:
+    return f"{value:+.4f}" if abs(value) >= 0.01 else f"{value:+.5f}"
 
 
 def _as_float(value: Any) -> float:

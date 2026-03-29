@@ -335,3 +335,23 @@ class DashboardSnapshot(Base):
         default=utcnow,
         server_default=func.now(),
     )
+
+
+class ScannerBlacklistEntry(Base):
+    __tablename__ = "scanner_blacklist_entries"
+
+    id: Mapped[UUID] = mapped_column(Uuid(), primary_key=True, default=uuid4)
+    symbol: Mapped[str] = mapped_column(String(16), unique=True, index=True)
+    reason: Mapped[str] = mapped_column(Text, default="")
+    source: Mapped[str] = mapped_column(String(32), default="operator")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow,
+        server_default=func.now(),
+        onupdate=utcnow,
+    )

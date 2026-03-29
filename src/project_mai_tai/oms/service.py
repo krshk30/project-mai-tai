@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from project_mai_tai.broker_adapters.alpaca import AlpacaPaperBrokerAdapter
 from project_mai_tai.broker_adapters.protocols import BrokerAdapter, ExecutionReport, OrderRequest
+from project_mai_tai.broker_adapters.schwab import SchwabBrokerAdapter
 from project_mai_tai.broker_adapters.simulated import SimulatedBrokerAdapter
 from project_mai_tai.db.session import build_session_factory
 from project_mai_tai.events import (
@@ -140,7 +141,7 @@ class OmsRiskService:
             broker_account = self.store.ensure_broker_account(
                 session,
                 event.payload.broker_account_name,
-                provider=self.settings.broker_default_provider,
+                provider=self.settings.resolved_broker_provider,
                 environment=self.settings.environment,
             )
             intent = self.store.create_trade_intent(
@@ -168,6 +169,19 @@ class OmsRiskService:
                 session.commit()
                 await self._publish_order_event(order_event)
                 return [order_event]
+
+            if event.payload.intent_type == "cancel":
+                published_events = await self._process_cancel_intent(
+                    session=session,
+                    strategy_id=strategy.id,
+                    broker_account_id=broker_account.id,
+                    intent=intent,
+                    event=event,
+                )
+                session.commit()
+                for order_event in published_events:
+                    await self._publish_order_event(order_event)
+                return published_events
 
             client_order_id = self._build_client_order_id(event)
             request = OrderRequest(
@@ -248,6 +262,82 @@ class OmsRiskService:
         await self.sync_broker_positions(account_names=[event.payload.broker_account_name])
         return published_events
 
+    async def _process_cancel_intent(
+        self,
+        *,
+        session: Session,
+        strategy_id: UUID,
+        broker_account_id: UUID,
+        intent,
+        event: TradeIntentEvent,
+    ) -> list[OrderEventEvent]:
+        metadata = dict(event.payload.metadata)
+        target_order = self.store.find_open_order_for_cancel(
+            session,
+            strategy_id=strategy_id,
+            broker_account_id=broker_account_id,
+            symbol=event.payload.symbol,
+            metadata=metadata,
+        )
+        if target_order is None:
+            self.store.mark_intent_status(intent, "rejected")
+            return [
+                self._build_rejected_event(
+                    event,
+                    intent.id,
+                    reason="cancel_target_not_found",
+                )
+            ]
+
+        metadata.setdefault("target_client_order_id", target_order.client_order_id)
+        if target_order.broker_order_id:
+            metadata.setdefault("broker_order_id", target_order.broker_order_id)
+
+        request = OrderRequest(
+            client_order_id=target_order.client_order_id,
+            broker_account_name=event.payload.broker_account_name,
+            strategy_code=event.payload.strategy_code,
+            symbol=target_order.symbol,
+            side=target_order.side,  # type: ignore[arg-type]
+            intent_type="cancel",
+            quantity=target_order.quantity,
+            reason=event.payload.reason,
+            metadata=metadata,
+        )
+        reports = await self.broker_adapter.submit_order(request)
+        published_events: list[OrderEventEvent] = []
+
+        for report in reports:
+            order = self.store.update_order_from_report(
+                target_order,
+                report=report,
+                metadata=dict(report.metadata),
+                preserve_status=report.event_type == "rejected",
+            )
+            payload = {
+                "client_order_id": report.client_order_id,
+                "broker_order_id": report.broker_order_id,
+                "broker_fill_id": report.broker_fill_id,
+                "metadata": dict(report.metadata),
+                "reason": report.reason,
+            }
+            self.store.append_order_event(session, order=order, report=report, payload=payload)
+            self.store.mark_intent_status(intent, report.event_type)
+            published_events.append(
+                self._build_order_event(
+                    intent_event=event,
+                intent_db_id=intent.id,
+                order_db_id=order.id,
+                report=report,
+                client_order_id=order.client_order_id,
+                symbol=order.symbol,
+                side=order.side,
+                quantity=order.quantity,
+                )
+            )
+
+        return published_events
+
     async def sync_broker_positions(self, *, account_names: list[str] | None = None) -> dict[str, int]:
         with self.session_factory() as session:
             if account_names is None:
@@ -303,6 +393,8 @@ class OmsRiskService:
             return SimulatedBrokerAdapter()
         if self.settings.oms_adapter == "alpaca_paper":
             return AlpacaPaperBrokerAdapter(self.settings)
+        if self.settings.oms_adapter == "schwab":
+            return SchwabBrokerAdapter(self.settings)
         raise RuntimeError(f"Unsupported OMS adapter: {self.settings.oms_adapter}")
 
     def seed_runtime_metadata(self) -> dict[str, int]:
@@ -317,7 +409,10 @@ class OmsRiskService:
         }
 
     def _evaluate_risk(self, event: TradeIntentEvent) -> tuple[bool, str]:
-        if event.payload.quantity <= 0:
+        if event.payload.intent_type == "cancel":
+            if event.payload.quantity < 0:
+                return False, "cancel quantity cannot be negative"
+        elif event.payload.quantity <= 0:
             return False, "quantity must be positive"
         if event.payload.intent_type not in {"open", "scale", "close", "cancel"}:
             return False, f"unsupported intent_type={event.payload.intent_type}"
@@ -336,6 +431,10 @@ class OmsRiskService:
         intent_db_id: UUID,
         order_db_id: UUID,
         report: ExecutionReport,
+        client_order_id: str | None = None,
+        symbol: str | None = None,
+        side: str | None = None,
+        quantity: Decimal | None = None,
     ) -> OrderEventEvent:
         return OrderEventEvent(
             source_service=SERVICE_NAME,
@@ -346,14 +445,14 @@ class OmsRiskService:
                 order_db_id=order_db_id,
                 strategy_code=intent_event.payload.strategy_code,
                 broker_account_name=intent_event.payload.broker_account_name,
-                client_order_id=report.client_order_id,
+                client_order_id=client_order_id if client_order_id is not None else report.client_order_id,
                 broker_order_id=report.broker_order_id,
                 broker_fill_id=report.broker_fill_id,
-                symbol=intent_event.payload.symbol,
-                side=intent_event.payload.side,
+                symbol=symbol if symbol is not None else intent_event.payload.symbol,
+                side=(side or intent_event.payload.side),  # type: ignore[arg-type]
                 intent_type=intent_event.payload.intent_type,
                 status=report.event_type,
-                quantity=intent_event.payload.quantity,
+                quantity=quantity if quantity is not None else intent_event.payload.quantity,
                 filled_quantity=report.filled_quantity,
                 fill_price=report.fill_price,
                 reason=report.reason or intent_event.payload.reason,
@@ -361,8 +460,17 @@ class OmsRiskService:
             ),
         )
 
-    def _build_rejected_event(self, intent_event: TradeIntentEvent, intent_db_id: UUID) -> OrderEventEvent:
-        client_order_id = self._build_client_order_id(intent_event)
+    def _build_rejected_event(
+        self,
+        intent_event: TradeIntentEvent,
+        intent_db_id: UUID,
+        *,
+        reason: str = "risk_rejected",
+    ) -> OrderEventEvent:
+        client_order_id = (
+            intent_event.payload.metadata.get("target_client_order_id")
+            or self._build_client_order_id(intent_event)
+        )
         return OrderEventEvent(
             source_service=SERVICE_NAME,
             correlation_id=intent_event.event_id,
@@ -382,7 +490,7 @@ class OmsRiskService:
                 quantity=intent_event.payload.quantity,
                 filled_quantity=Decimal("0"),
                 fill_price=None,
-                reason="risk_rejected",
+                reason=reason,
                 metadata=dict(intent_event.payload.metadata),
             ),
         )

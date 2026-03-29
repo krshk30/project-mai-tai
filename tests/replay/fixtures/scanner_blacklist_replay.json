@@ -1,0 +1,97 @@
+{
+  "blacklisted_symbols": ["UGRO"],
+  "reference_data": {
+    "UGRO": {
+      "shares_outstanding": 50000,
+      "avg_daily_volume": 390000
+    },
+    "SBET": {
+      "shares_outstanding": 62000,
+      "avg_daily_volume": 410000
+    }
+  },
+  "snapshots": [
+    {
+      "symbol": "UGRO",
+      "previous_close": "2.13",
+      "day_close": "2.40",
+      "day_volume": 900000,
+      "day_high": "2.45",
+      "day_vwap": "2.31",
+      "minute_close": "2.40",
+      "minute_accumulated_volume": 900000,
+      "minute_high": "2.45",
+      "minute_vwap": "2.31",
+      "last_trade_price": "2.40",
+      "bid_price": "2.39",
+      "ask_price": "2.40",
+      "bid_size": 7,
+      "ask_size": 9,
+      "todays_change_percent": "12.50"
+    },
+    {
+      "symbol": "SBET",
+      "previous_close": "2.20",
+      "day_close": "2.68",
+      "day_volume": 1100000,
+      "day_high": "2.70",
+      "day_vwap": "2.54",
+      "minute_close": "2.68",
+      "minute_accumulated_volume": 1100000,
+      "minute_high": "2.70",
+      "minute_vwap": "2.54",
+      "last_trade_price": "2.68",
+      "bid_price": "2.67",
+      "ask_price": "2.68",
+      "bid_size": 8,
+      "ask_size": 10,
+      "todays_change_percent": "21.82"
+    }
+  ],
+  "confirmed": [
+    {
+      "ticker": "UGRO",
+      "confirmed_at": "10:00:00 AM ET",
+      "entry_price": 2.25,
+      "price": 2.40,
+      "change_pct": 12.5,
+      "volume": 900000,
+      "rvol": 6.2,
+      "shares_outstanding": 50000,
+      "bid": 2.39,
+      "ask": 2.40,
+      "spread": 0.01,
+      "spread_pct": 0.42,
+      "hod": 2.45,
+      "vwap": 2.31,
+      "prev_close": 2.13,
+      "avg_daily_volume": 390000,
+      "first_spike_time": "09:55:00 AM ET",
+      "first_spike_price": 2.10,
+      "squeeze_count": 2,
+      "confirmation_path": "PATH_B_2SQ"
+    },
+    {
+      "ticker": "SBET",
+      "confirmed_at": "10:01:00 AM ET",
+      "entry_price": 2.35,
+      "price": 2.68,
+      "change_pct": 21.82,
+      "volume": 1100000,
+      "rvol": 7.4,
+      "shares_outstanding": 62000,
+      "bid": 2.67,
+      "ask": 2.68,
+      "spread": 0.01,
+      "spread_pct": 0.37,
+      "hod": 2.70,
+      "vwap": 2.54,
+      "prev_close": 2.20,
+      "avg_daily_volume": 410000,
+      "first_spike_time": "09:57:00 AM ET",
+      "first_spike_price": 2.28,
+      "squeeze_count": 2,
+      "confirmation_path": "PATH_B_2SQ"
+    }
+  ]
+}
