@@ -428,6 +428,8 @@ def test_control_plane_overview_and_dashboard_render() -> None:
         assert body["market_data"]["active_subscription_symbols"] == 1
         assert body["scanner"]["top_confirmed"][0]["ticker"] == "UGRO"
         assert body["scanner"]["legacy_confirmed_symbols"] == ["UGRO", "SBET"]
+        assert body["generated_at"].endswith("ET")
+        assert body["services"][0]["observed_at"].endswith("ET")
         assert body["bots"][0]["strategy_code"] == "macd_30s"
         assert body["bots"][0]["watchlist"] == ["UGRO"]
         assert body["bots"][0]["execution_mode"] == "paper"
@@ -525,6 +527,7 @@ def test_control_plane_overview_and_dashboard_render() -> None:
         assert "Order stuck in accepted for UGRO" in dashboard.text
         assert "Legacy Shadow" in dashboard.text
         assert "SBET" in dashboard.text
+        assert "UTC" not in dashboard.text
 
 
 def test_control_plane_restores_last_nonempty_confirmed_snapshot() -> None:
@@ -548,6 +551,7 @@ def test_control_plane_restores_last_nonempty_confirmed_snapshot() -> None:
         assert scanner_body["top_confirmed_count"] == 1
         assert scanner_body["top_confirmed"][0]["ticker"] == "UGRO"
         assert scanner_body["top_confirmed_snapshot_at"]
+        assert scanner_body["top_confirmed_snapshot_at"].endswith("ET")
 
         dashboard = client.get("/scanner/dashboard")
         assert dashboard.status_code == 200

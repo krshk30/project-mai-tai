@@ -7,6 +7,7 @@ from decimal import Decimal
 from html import escape
 import json
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
@@ -49,6 +50,7 @@ from project_mai_tai.strategy_core import (
 
 
 SERVICE_NAME = "control-plane"
+EASTERN_TZ = ZoneInfo("America/New_York")
 
 
 def utcnow() -> datetime:
@@ -110,7 +112,7 @@ class ControlPlaneRepository:
             overall_status = "degraded"
 
         return {
-            "generated_at": utcnow().isoformat(),
+            "generated_at": _datetime_str(utcnow()),
             "status": overall_status,
             "environment": self.settings.environment,
             "domain": "project-mai-tai.live",
@@ -186,7 +188,7 @@ class ControlPlaneRepository:
             if restored_rows:
                 top_confirmed = restored_rows
                 top_confirmed_source = "restored"
-                top_confirmed_snapshot_at = str(restored.get("created_at", ""))
+                top_confirmed_snapshot_at = _datetime_str(restored.get("created_at"))
 
         legacy_confirmed = [
             str(symbol).upper()
@@ -3279,10 +3281,17 @@ def _decimal_str(value: Decimal | None) -> str:
     return format(value.normalize() if value != 0 else Decimal("0"), "f")
 
 
-def _datetime_str(value: datetime | None) -> str:
+def _datetime_str(value: datetime | str | None) -> str:
     if value is None:
         return ""
-    return value.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return value
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return value.astimezone(EASTERN_TZ).strftime("%Y-%m-%d %I:%M:%S %p ET")
 
 
 def _format_age(seconds: Any) -> str:

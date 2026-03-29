@@ -18,6 +18,7 @@ from project_mai_tai.strategy_core.models import (
 )
 from project_mai_tai.strategy_core.momentum_alerts import MomentumAlertEngine
 from project_mai_tai.strategy_core.momentum_confirmed import MomentumConfirmedScanner
+from project_mai_tai.strategy_core.top_gainers import TopGainersTracker
 
 
 def snapshot(
@@ -138,3 +139,18 @@ def test_alert_engine_and_confirmed_scanner_path_b() -> None:
     assert len(newly_confirmed) == 1
     assert newly_confirmed[0]["ticker"] == "UGRO"
     assert newly_confirmed[0]["confirmation_path"] == "PATH_B_2SQ"
+
+
+def test_top_gainer_changes_use_eastern_time_labels() -> None:
+    tracker = TopGainersTracker()
+    ref = {"UGRO": ReferenceData(shares_outstanding=50_000, avg_daily_volume=390_000)}
+
+    gainers, changes = tracker.update(
+        [snapshot(ticker="UGRO", price=2.5, volume=900_000, change_pct=12.5)],
+        ref,
+        now=datetime(2026, 3, 28, 10, 0),
+    )
+
+    assert gainers
+    assert changes
+    assert str(changes[0]["time"]).endswith("ET")

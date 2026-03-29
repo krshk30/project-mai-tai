@@ -14,6 +14,7 @@ from project_mai_tai.strategy_core.snapshot_utils import (
     get_current_vwap,
     get_data_age_secs,
     get_minutes_since_4am,
+    now_eastern,
 )
 
 
@@ -107,7 +108,7 @@ class TopGainersTracker:
         current_ranks: dict[str, int],
         top_gainers: list[dict[str, object]],
     ) -> list[dict[str, object]]:
-        now_str = datetime.now().strftime("%H:%M:%S")
+        now_str = now_eastern().strftime("%I:%M:%S %p ET")
         previous_set = set(self._previous_tickers)
         current_set = set(current_tickers)
         events: list[dict[str, object]] = []
