@@ -1,0 +1,51 @@
+flowchart TD
+    A["Systemd keeps Mai Tai services running overnight"] --> B["4:00 AM ET<br/>premarket scan clock becomes meaningful<br/>RVOL math uses minutes since 4 AM"]
+
+    subgraph BOOT["Service Runtime"]
+        B --> C["Market Data Gateway startup<br/>load or rebuild reference cache<br/>connect Massive REST + WebSocket<br/>publish heartbeat"]
+        B --> D["Strategy Engine startup<br/>load bots and scanner state<br/>listen for snapshot batches, ticks,<br/>historical bars, and order events"]
+        B --> E["OMS startup<br/>seed strategies + broker accounts<br/>listen for trade intents<br/>sync broker positions"]
+        B --> F["Reconciler startup<br/>run shared-account checks<br/>publish health + findings"]
+        B --> G["Control Plane startup<br/>render operator UI<br/>refresh every 5s"]
+    end
+
+    subgraph LOOP["Morning Operating Loop"]
+        C --> H["Every 30s<br/>fetch full-market snapshot batch from Massive"]
+        H --> I["Publish snapshot-batches stream<br/>include reference data"]
+        I --> J["Strategy Engine scans batch<br/>5 Pillars<br/>Top Gainers<br/>Momentum Alerts<br/>Momentum Confirmed"]
+        J --> K{"Any top confirmed names?"}
+        K -- "No" --> H
+        K -- "Yes" --> L["Update watchlist for 30s / 1m / TOS / Runner"]
+        L --> M["Publish market-data subscription update"]
+        M --> N["Market Data Gateway syncs WS subscriptions"]
+        N --> O["Warmup new symbols with historical bars<br/>30s / 1m / 5m"]
+        O --> P["Live ticks + quotes stream in"]
+        P --> Q["Bar builders update bars<br/>30s / 1m / 5m"]
+        Q --> R["Indicators + bot logic run<br/>entry / scale / exit decisions"]
+        R --> S{"Trade intent emitted?"}
+        S -- "No" --> P
+        S -- "Yes" --> T["OMS receives intent"]
+        T --> U["Risk check + client_order_id<br/>submit to Alpaca paper"]
+        U --> V["Order events published<br/>accepted / filled / rejected"]
+        V --> W["Strategy Engine updates pending state<br/>positions / scale levels / watchlist"]
+        W --> P
+    end
+
+    subgraph SAFETY["Background Safety Loops"]
+        E --> X["Every 15s<br/>OMS broker-position sync"]
+        E --> Y["Every 15s<br/>OMS heartbeat"]
+        D --> Z["Every 15s<br/>Strategy heartbeat"]
+        C --> AA["Every 15s<br/>Market-data heartbeat"]
+        F --> AB["Every 30s<br/>Reconciliation cycle"]
+        AB --> AC["Check quantity mismatches<br/>stuck orders<br/>stuck intents"]
+        AC --> AD["Open or close incidents<br/>update cutover confidence"]
+        AD --> G
+    end
+
+    subgraph OPERATOR["What You See In The UI"]
+        G --> AE["Overview<br/>confirmed count<br/>watchlist count<br/>live symbols<br/>pending intents<br/>open positions"]
+        G --> AF["System Dock<br/>one-line service health<br/>green / amber / red status dots"]
+        G --> AG["Foldouts<br/>Overview<br/>System & Health<br/>Shadow & Parity<br/>Reconciliation<br/>Orders & Fills<br/>Positions & Incidents"]
+    end
+
+    AH["If Mai Tai is restarted during the morning<br/>systemd brings services back<br/>dashboard snapshots persist<br/>OMS re-syncs broker positions<br/>reconciler verifies state"] --> BOOT
