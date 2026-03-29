@@ -44,6 +44,9 @@ class MarketDataGatewayService:
             self.redis,
             self.settings.redis_stream_prefix,
             SERVICE_NAME,
+            snapshot_batch_stream_maxlen=self.settings.redis_snapshot_batch_stream_maxlen,
+            market_data_stream_maxlen=self.settings.redis_market_data_stream_maxlen,
+            heartbeat_stream_maxlen=self.settings.redis_heartbeat_stream_maxlen,
         )
         self.snapshot_provider = snapshot_provider or self._build_snapshot_provider()
         self.trade_stream = trade_stream or self._build_trade_stream()

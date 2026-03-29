@@ -149,6 +149,8 @@ class ReconciliationService:
         await self.redis.xadd(
             stream_name(self.settings.redis_stream_prefix, "heartbeats"),
             {"data": event.model_dump_json()},
+            maxlen=self.settings.redis_heartbeat_stream_maxlen,
+            approximate=True,
         )
 
     def _collect_findings(self, session: Session) -> list[FindingSpec]:

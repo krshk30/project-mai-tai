@@ -24,8 +24,8 @@ from project_mai_tai.settings import Settings
 
 
 class FakeRedis:
-    async def xadd(self, stream: str, fields: dict[str, str]) -> str:
-        del stream, fields
+    async def xadd(self, stream: str, fields: dict[str, str], **kwargs) -> str:
+        del stream, fields, kwargs
         return "1-0"
 
     async def aclose(self) -> None:

@@ -277,6 +277,8 @@ class OmsRiskService:
         await self.redis.xadd(
             stream_name(self.settings.redis_stream_prefix, "order-events"),
             {"data": event.model_dump_json()},
+            maxlen=self.settings.redis_order_event_stream_maxlen,
+            approximate=True,
         )
 
     async def _publish_heartbeat(self, status: str, details: dict[str, str]) -> None:
@@ -292,6 +294,8 @@ class OmsRiskService:
         await self.redis.xadd(
             stream_name(self.settings.redis_stream_prefix, "heartbeats"),
             {"data": event.model_dump_json()},
+            maxlen=self.settings.redis_heartbeat_stream_maxlen,
+            approximate=True,
         )
 
     def _build_broker_adapter(self) -> BrokerAdapter:

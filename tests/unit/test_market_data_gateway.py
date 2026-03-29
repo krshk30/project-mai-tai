@@ -12,10 +12,10 @@ from project_mai_tai.settings import Settings
 
 class FakeRedis:
     def __init__(self) -> None:
-        self.entries: list[tuple[str, dict[str, object]]] = []
+        self.entries: list[tuple[str, dict[str, object], dict[str, object]]] = []
 
-    async def xadd(self, stream: str, fields: dict[str, str]) -> str:
-        self.entries.append((stream, json.loads(fields["data"])))
+    async def xadd(self, stream: str, fields: dict[str, str], **kwargs) -> str:
+        self.entries.append((stream, json.loads(fields["data"]), kwargs))
         return "1-0"
 
     async def xread(self, offsets, block=0, count=0):
@@ -123,6 +123,7 @@ async def test_publish_snapshot_batch_once_writes_snapshot_batch_event() -> None
     assert payload["payload"]["snapshots"][0]["symbol"] == "UGRO"
     assert payload["payload"]["snapshots"][0]["previous_close"] == "2.1"
     assert payload["payload"]["reference_data"][0]["shares_outstanding"] == 50000
+    assert redis.entries[0][2]["maxlen"] == 4
 
 
 @pytest.mark.asyncio
@@ -152,7 +153,7 @@ async def test_apply_subscription_event_unions_static_and_consumer_symbols() -> 
     assert trade_stream.synced[-1] == ["ANNA", "SPY", "UGRO"]
     warmup_events = [
         payload
-        for stream, payload in redis.entries
+        for stream, payload, _kwargs in redis.entries
         if stream == "test:market-data" and payload["event_type"] == "historical_bars"
     ]
     assert len(warmup_events) == 6

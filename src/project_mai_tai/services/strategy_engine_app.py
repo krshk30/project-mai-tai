@@ -813,7 +813,12 @@ class StrategyEngineService:
 
     async def _publish_intent(self, intent: TradeIntentEvent) -> None:
         stream = stream_name(self.settings.redis_stream_prefix, "strategy-intents")
-        await self.redis.xadd(stream, {"data": intent.model_dump_json()})
+        await self.redis.xadd(
+            stream,
+            {"data": intent.model_dump_json()},
+            maxlen=self.settings.redis_strategy_intent_stream_maxlen,
+            approximate=True,
+        )
 
     async def _publish_heartbeat(self, status: str) -> None:
         stream = stream_name(self.settings.redis_stream_prefix, "heartbeats")
@@ -829,7 +834,12 @@ class StrategyEngineService:
                 },
             ),
         )
-        await self.redis.xadd(stream, {"data": event.model_dump_json()})
+        await self.redis.xadd(
+            stream,
+            {"data": event.model_dump_json()},
+            maxlen=self.settings.redis_heartbeat_stream_maxlen,
+            approximate=True,
+        )
 
     async def _publish_strategy_state_snapshot(self) -> None:
         stream = stream_name(self.settings.redis_stream_prefix, "strategy-state")
@@ -862,7 +872,12 @@ class StrategyEngineService:
                 bots=bots,
             ),
         )
-        await self.redis.xadd(stream, {"data": event.model_dump_json()})
+        await self.redis.xadd(
+            stream,
+            {"data": event.model_dump_json()},
+            maxlen=self.settings.redis_strategy_state_stream_maxlen,
+            approximate=True,
+        )
         self._persist_scanner_snapshots(summary)
 
     async def _sync_market_data_subscriptions(self, symbols: Sequence[str]) -> None:
@@ -880,7 +895,12 @@ class StrategyEngineService:
                 symbols=sorted(normalized),
             ),
         )
-        await self.redis.xadd(stream, {"data": event.model_dump_json()})
+        await self.redis.xadd(
+            stream,
+            {"data": event.model_dump_json()},
+            maxlen=self.settings.redis_market_data_subscription_stream_maxlen,
+            approximate=True,
+        )
 
     def _persist_scanner_snapshots(self, summary: dict[str, object]) -> None:
         if self.session_factory is None:

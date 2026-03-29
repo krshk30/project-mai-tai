@@ -19,10 +19,22 @@ from project_mai_tai.market_data.models import HistoricalBarsRecord, QuoteTickRe
 
 
 class MarketDataPublisher:
-    def __init__(self, redis: Redis, stream_prefix: str, service_name: str):
+    def __init__(
+        self,
+        redis: Redis,
+        stream_prefix: str,
+        service_name: str,
+        *,
+        snapshot_batch_stream_maxlen: int = 4,
+        market_data_stream_maxlen: int = 10_000,
+        heartbeat_stream_maxlen: int = 1_000,
+    ):
         self.redis = redis
         self.stream_prefix = stream_prefix
         self.service_name = service_name
+        self.snapshot_batch_stream_maxlen = max(1, snapshot_batch_stream_maxlen)
+        self.market_data_stream_maxlen = max(100, market_data_stream_maxlen)
+        self.heartbeat_stream_maxlen = max(10, heartbeat_stream_maxlen)
 
     async def publish_snapshot_batch(
         self,
@@ -39,6 +51,8 @@ class MarketDataPublisher:
         return await self.redis.xadd(
             stream_name(self.stream_prefix, "snapshot-batches"),
             {"data": event.model_dump_json()},
+            maxlen=self.snapshot_batch_stream_maxlen,
+            approximate=True,
         )
 
     async def publish_trade_tick(self, record: TradeTickRecord) -> str:
@@ -49,6 +63,8 @@ class MarketDataPublisher:
         return await self.redis.xadd(
             stream_name(self.stream_prefix, "market-data"),
             {"data": event.model_dump_json()},
+            maxlen=self.market_data_stream_maxlen,
+            approximate=True,
         )
 
     async def publish_quote_tick(self, record: QuoteTickRecord) -> str:
@@ -59,6 +75,8 @@ class MarketDataPublisher:
         return await self.redis.xadd(
             stream_name(self.stream_prefix, "market-data"),
             {"data": event.model_dump_json()},
+            maxlen=self.market_data_stream_maxlen,
+            approximate=True,
         )
 
     async def publish_historical_bars(self, record: HistoricalBarsRecord) -> str:
@@ -69,6 +87,8 @@ class MarketDataPublisher:
         return await self.redis.xadd(
             stream_name(self.stream_prefix, "market-data"),
             {"data": event.model_dump_json()},
+            maxlen=self.market_data_stream_maxlen,
+            approximate=True,
         )
 
     async def publish_heartbeat(
@@ -90,4 +110,6 @@ class MarketDataPublisher:
         return await self.redis.xadd(
             stream_name(self.stream_prefix, "heartbeats"),
             {"data": event.model_dump_json()},
+            maxlen=self.heartbeat_stream_maxlen,
+            approximate=True,
         )

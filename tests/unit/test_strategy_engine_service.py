@@ -31,7 +31,8 @@ class FakeRedis:
     def __init__(self) -> None:
         self.entries: list[tuple[str, str]] = []
 
-    async def xadd(self, stream: str, fields: dict[str, str]) -> str:
+    async def xadd(self, stream: str, fields: dict[str, str], **kwargs) -> str:
+        del kwargs
         self.entries.append((stream, fields["data"]))
         return "1-0"
 

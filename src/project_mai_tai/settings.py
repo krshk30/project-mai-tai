@@ -26,6 +26,13 @@ class Settings(BaseSettings):
     )
     redis_url: str = "redis://localhost:6379/0"
     redis_stream_prefix: str = "mai_tai"
+    redis_snapshot_batch_stream_maxlen: int = 4
+    redis_market_data_stream_maxlen: int = 10_000
+    redis_market_data_subscription_stream_maxlen: int = 250
+    redis_strategy_intent_stream_maxlen: int = 2_000
+    redis_order_event_stream_maxlen: int = 2_000
+    redis_strategy_state_stream_maxlen: int = 250
+    redis_heartbeat_stream_maxlen: int = 1_000
 
     legacy_api_base_url: str | None = None
     legacy_api_timeout_seconds: int = 3
