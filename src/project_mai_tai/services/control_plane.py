@@ -1048,6 +1048,21 @@ def _render_dashboard(data: dict[str, Any]) -> str:
     refresh_seconds = 5
     scanner = data["scanner"]
     bot_views = data["bots"]
+    active_service_count = len(data["services"])
+    healthy_service_count = sum(1 for service in data["services"] if service["status"] == "healthy")
+    starting_service_count = sum(1 for service in data["services"] if service["status"] == "starting")
+    degraded_service_count = active_service_count - healthy_service_count - starting_service_count
+    live_bot_count = sum(1 for bot in bot_views if bot["watchlist_count"] or bot["position_count"] or bot["pending_count"])
+    service_chip_html = "".join(
+        f"""
+        <span class="service-chip">
+          <span class="status-dot status-{escape(service["status"].lower().replace(" ", "_"))}"></span>
+          <span>{escape(service["service_name"])}</span>
+          <strong>{escape(service["status"])}</strong>
+        </span>
+        """
+        for service in data["services"]
+    ) or '<span class="service-chip"><span class="status-dot status-warning"></span><span>No service heartbeats</span></span>'
     errors_html = "".join(
         f'<div class="alert">{escape(error)}</div>' for error in data["errors"]
     ) or '<div class="ok-banner">No current control-plane read errors.</div>'
@@ -1245,6 +1260,37 @@ def _render_dashboard(data: dict[str, Any]) -> str:
     shadow_divergence = legacy_shadow["divergence"]
     shadow_confirmed_legacy = ", ".join(shadow_divergence["confirmed_only_in_legacy"][:10]) or "None"
     shadow_confirmed_new = ", ".join(shadow_divergence["confirmed_only_in_new"][:10]) or "None"
+    latest_fill = data["recent_fills"][0] if data["recent_fills"] else None
+    latest_fill_summary = (
+        f'{latest_fill["strategy_code"]} {latest_fill["side"]} {latest_fill["symbol"]} @ {latest_fill["price"]}'
+        if latest_fill
+        else "No fills yet"
+    )
+    health_summary = (
+        f"{healthy_service_count}/{active_service_count} healthy"
+        + (f" · {starting_service_count} starting" if starting_service_count else "")
+        + (f" · {degraded_service_count} attention" if degraded_service_count else "")
+    )
+    ops_summary = (
+        f'{data["counts"]["open_incidents"]} incidents · '
+        f'{data["counts"]["latest_reconciliation_findings"]} findings · '
+        f'refresh {refresh_seconds}s'
+    )
+    shadow_summary = (
+        f'{shadow_divergence["issue_count"]} shadow issues · '
+        f'{len(shadow_divergence["confirmed_only_in_legacy"])} legacy-only confirmed · '
+        f'{len(shadow_divergence["confirmed_only_in_new"])} new-only confirmed'
+    )
+    orderflow_summary = (
+        f'{len(data["recent_intents"])} intents · '
+        f'{len(data["recent_orders"])} orders · '
+        f'{len(data["recent_fills"])} fills'
+    )
+    position_summary = (
+        f'{len(data["virtual_positions"])} virtual · '
+        f'{len(data["account_positions"])} broker-level · '
+        f'{len(data["incidents"])} incidents'
+    )
 
     return f"""
     <html>
@@ -1302,6 +1348,9 @@ def _render_dashboard(data: dict[str, Any]) -> str:
             padding: 28px;
             margin-bottom: 20px;
           }}
+          .hero-copy {{
+            max-width: 720px;
+          }}
           .eyebrow {{
             color: var(--accent);
             font-size: 13px;
@@ -1345,6 +1394,109 @@ def _render_dashboard(data: dict[str, Any]) -> str:
             grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
             gap: 16px;
             margin-top: 16px;
+          }}
+          .ops-strip {{
+            display: grid;
+            gap: 10px;
+            margin: 0 0 16px 0;
+            padding: 14px 18px;
+            background: rgba(255,255,255,0.76);
+            border: 1px solid var(--line);
+            border-radius: 18px;
+            box-shadow: 0 12px 28px rgba(18, 36, 51, 0.06);
+          }}
+          .ops-strip-top {{
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: space-between;
+            gap: 10px;
+            align-items: center;
+          }}
+          .ops-strip-title {{
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 14px;
+            color: var(--muted);
+          }}
+          .ops-strip-title strong {{
+            color: var(--ink);
+            font-size: 15px;
+          }}
+          .service-strip {{
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+          }}
+          .service-chip {{
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 10px;
+            border-radius: 999px;
+            border: 1px solid var(--line);
+            background: rgba(255,255,255,0.78);
+            font-size: 12px;
+            color: var(--muted);
+          }}
+          .service-chip strong {{
+            color: var(--ink);
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+          }}
+          .status-dot {{
+            width: 10px;
+            height: 10px;
+            border-radius: 999px;
+            display: inline-block;
+            flex: 0 0 auto;
+          }}
+          .fold-panel {{
+            margin-top: 16px;
+            background: var(--panel);
+            border: 1px solid var(--line);
+            border-radius: 22px;
+            box-shadow: 0 18px 42px rgba(18, 36, 51, 0.08);
+            overflow: hidden;
+          }}
+          .fold-panel summary {{
+            list-style: none;
+            cursor: pointer;
+            padding: 16px 20px;
+          }}
+          .fold-panel summary::-webkit-details-marker {{
+            display: none;
+          }}
+          .fold-summary {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+          }}
+          .fold-title {{
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 18px;
+          }}
+          .fold-title small {{
+            color: var(--muted);
+            font-size: 13px;
+            font-weight: normal;
+          }}
+          .fold-meta {{
+            color: var(--muted);
+            font-size: 13px;
+            text-align: right;
+          }}
+          .fold-content {{
+            padding: 0 20px 20px 20px;
+          }}
+          .details-grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 16px;
           }}
           .bot-grid {{
             display: grid;
@@ -1441,17 +1593,33 @@ def _render_dashboard(data: dict[str, Any]) -> str:
             background: rgba(15, 127, 102, 0.12);
             color: var(--accent);
           }}
+          .status-dot.status-healthy, .status-dot.status-filled, .status-dot.status-pass, .status-dot.status-open {{
+            background: var(--accent);
+            color: transparent;
+          }}
           .status-starting, .status-accepted, .status-submitted, .status-warning {{
             background: rgba(212, 128, 0, 0.12);
             color: var(--warn);
+          }}
+          .status-dot.status-starting, .status-dot.status-accepted, .status-dot.status-submitted, .status-dot.status-warning {{
+            background: var(--warn);
+            color: transparent;
           }}
           .status-rejected, .status-degraded, .status-error, .status-closed, .status-critical {{
             background: rgba(192, 57, 43, 0.12);
             color: var(--danger);
           }}
+          .status-dot.status-rejected, .status-dot.status-degraded, .status-dot.status-error, .status-dot.status-closed, .status-dot.status-critical {{
+            background: var(--danger);
+            color: transparent;
+          }}
           .status-pending, .status-cancelled {{
             background: rgba(18, 36, 51, 0.1);
             color: var(--ink);
+          }}
+          .status-dot.status-pending, .status-dot.status-cancelled {{
+            background: var(--ink);
+            color: transparent;
           }}
           .muted-box {{
             color: var(--muted);
@@ -1483,35 +1651,45 @@ def _render_dashboard(data: dict[str, Any]) -> str:
           <section class="hero">
             <div class="eyebrow">Project Mai Tai Operator View</div>
             <h1>Parallel Live-Trading Rebuild</h1>
-            <p>
+            <p class="hero-copy">
               This control plane is reading the new platform's durable OMS state and live stream
               health so you can validate it beside the legacy system before cutover.
             </p>
             <div class="cards">
               <div class="card">
-                <div class="label">Platform Status</div>
+                <div class="label">Platform</div>
                 <div class="value">{data["status"].upper()}</div>
                 <p>{escape(data["environment"])} / {escape(data["provider"])} / {escape(data["oms_adapter"])}</p>
               </div>
               <div class="card">
-                <div class="label">Open Virtual Positions</div>
-                <div class="value">{data["counts"]["open_virtual_positions"]}</div>
-                <p>Strategy-attributed positions inside shared accounts.</p>
+                <div class="label">Confirmed</div>
+                <div class="value">{scanner["top_confirmed_count"]}</div>
+                <p>{escape(scanner["status"])} scanner state</p>
+              </div>
+              <div class="card">
+                <div class="label">Watchlist</div>
+                <div class="value">{scanner["watchlist_count"]}</div>
+                <p>{escape(", ".join(scanner["watchlist"][:4]) or "No active symbols")}</p>
+              </div>
+              <div class="card">
+                <div class="label">Live Symbols</div>
+                <div class="value">{data["market_data"]["active_subscription_symbols"]}</div>
+                <p>{escape(subscription_summary)}</p>
               </div>
               <div class="card">
                 <div class="label">Pending Intents</div>
                 <div class="value">{data["counts"]["pending_intents"]}</div>
-                <p>Open, submitted, or accepted intents waiting on broker lifecycle.</p>
+                <p>{orderflow_summary}</p>
               </div>
               <div class="card">
-                <div class="label">Latest Snapshot</div>
-                <div class="value">{escape(snapshot_summary)}</div>
-                <p>{escape(latest_snapshot.get("completed_at", "No snapshot timestamp yet"))}</p>
+                <div class="label">Open Positions</div>
+                <div class="value">{data["counts"]["open_virtual_positions"]}</div>
+                <p>{position_summary}</p>
               </div>
               <div class="card">
-                <div class="label">Active Market Symbols</div>
-                <div class="value">{data["market_data"]["active_subscription_symbols"]}</div>
-                <p>{escape(subscription_summary)}</p>
+                <div class="label">Latest Fill</div>
+                <div class="value">{len(data["recent_fills"])}</div>
+                <p>{escape(latest_fill_summary)}</p>
               </div>
               <div class="card">
                 <div class="label">Cutover Confidence</div>
@@ -1519,9 +1697,9 @@ def _render_dashboard(data: dict[str, Any]) -> str:
                 <p>{escape(latest_reconciliation.get("completed_at", "No reconciliation run yet"))}</p>
               </div>
               <div class="card">
-                <div class="label">Control Plane</div>
-                <div class="value"><code>{escape(data["control_plane_url"])}</code></div>
-                <p>{escape(data["generated_at"])}</p>
+                <div class="label">Bots With Activity</div>
+                <div class="value">{live_bot_count}</div>
+                <p>of {len(bot_views)} strategy runtimes</p>
               </div>
             </div>
           </section>
@@ -1539,6 +1717,18 @@ def _render_dashboard(data: dict[str, Any]) -> str:
             <a href="#orders">Orders</a>
             <a href="#positions">Positions</a>
           </nav>
+
+          <section class="ops-strip">
+            <div class="ops-strip-top">
+              <div class="ops-strip-title">
+                <span class="status-dot status-{escape(data["status"].lower().replace(" ", "_"))}"></span>
+                <strong>Mai Tai System Dock</strong>
+                <span>{escape(health_summary)}</span>
+              </div>
+              <div class="fold-meta">{escape(ops_summary)} · {escape(data["generated_at"])}</div>
+            </div>
+            <div class="service-strip">{service_chip_html}</div>
+          </section>
 
           <div class="grid-2" id="scanner">
             <section class="section">
@@ -1600,238 +1790,356 @@ def _render_dashboard(data: dict[str, Any]) -> str:
             <div class="bot-grid">{bot_cards}</div>
           </section>
 
-          <div class="grid-2">
-            <section class="section">
-              <div class="section-header">
-                <div>
-                  <h2>Service Health</h2>
-                  <div class="sub">Latest heartbeat per service from Redis streams.</div>
-                </div>
+          <details class="fold-panel" open>
+            <summary>
+              <div class="fold-summary">
+                <div class="fold-title">📡 Scanner Pipeline <small>watchlist flow, subscriptions, and top confirmed names</small></div>
+                <div class="fold-meta">{scanner["top_confirmed_count"]} confirmed · {scanner["watchlist_count"]} watchlist · {scanner["active_subscription_symbols"]} live symbols</div>
               </div>
-              <div class="table-card">
-                <table>
-                  <thead>
-                    <tr><th>Service</th><th>Status</th><th>Instance</th><th>Observed</th><th>Details</th></tr>
-                  </thead>
-                  <tbody>{services_rows}</tbody>
-                </table>
-              </div>
-            </section>
+            </summary>
+            <div class="fold-content">
+              <div class="details-grid">
+                <section class="section">
+                  <div class="section-header">
+                    <div>
+                      <h2>Scanner Pipeline</h2>
+                      <div class="sub">Closest equivalent to the legacy scanner dashboard: confirmed names, watchlist flow, and subscription state.</div>
+                    </div>
+                  </div>
+                  <div class="muted-box">
+                    <p><strong>Scanner Status:</strong> {escape(scanner["status"])}</p>
+                    <p><strong>Watchlist Count:</strong> {scanner["watchlist_count"]}</p>
+                    <p><strong>Top Confirmed Count:</strong> {scanner["top_confirmed_count"]}</p>
+                    <p><strong>Active Subscriptions:</strong> {scanner["active_subscription_symbols"]}</p>
+                    <p><strong>Watchlist:</strong> {escape(", ".join(scanner["watchlist"][:12]) or "None")}</p>
+                    <p><strong>Legacy Confirmed:</strong> {escape(", ".join(scanner["legacy_confirmed_symbols"][:12]) or "None")}</p>
+                  </div>
+                </section>
 
-            <section class="section">
-              <div class="section-header">
-                <div>
-                  <h2>Control Plane Notes</h2>
-                  <div class="sub">Fast checks and current read-model diagnostics.</div>
-                </div>
+                <section class="section">
+                  <div class="section-header">
+                    <div>
+                      <h2>Subscriptions</h2>
+                      <div class="sub">Symbols currently pushed into the live tick pipeline.</div>
+                    </div>
+                  </div>
+                  <div class="muted-box">
+                    <p><strong>Latest Snapshot Batch:</strong> {escape(snapshot_summary)}</p>
+                    <p><strong>Snapshot Completed:</strong> {escape(latest_snapshot.get("completed_at", "No snapshot timestamp yet"))}</p>
+                    <p><strong>Subscribed Symbols:</strong> {escape(", ".join(scanner["subscription_symbols"][:20]) or "None")}</p>
+                  </div>
+                </section>
               </div>
-              <div class="muted-box">
-                <p><strong>Domain:</strong> {escape(data["domain"])}</p>
-                <p><strong>Redis Prefix:</strong> <code>{escape(data["streams"]["heartbeats"].split(":")[0])}</code></p>
-                <p><strong>Broker Accounts:</strong> {data["counts"]["broker_accounts"]}</p>
-                <p><strong>Strategies:</strong> {data["counts"]["strategies"]}</p>
-                <p><strong>Open Incidents:</strong> {data["counts"]["open_incidents"]}</p>
-                <p><strong>Latest Reconciliation Findings:</strong> {data["counts"]["latest_reconciliation_findings"]}</p>
-                <p><strong>Latest Reconciliation Status:</strong> {escape(latest_reconciliation.get("status", "not-run"))}</p>
-                <p><strong>Refresh:</strong> Every {refresh_seconds}s</p>
-              </div>
-              <div style="margin-top: 16px;">{errors_html}</div>
-            </section>
-          </div>
 
-          <div class="grid-2">
-            <section class="section">
-              <div class="section-header">
-                <div>
-                  <h2>Legacy Shadow</h2>
-                  <div class="sub">Side-by-side divergence against the legacy VPS app.</div>
+              <section class="section">
+                <div class="section-header">
+                  <div>
+                    <h2>Confirmed Candidates</h2>
+                    <div class="sub">New scanner output promoted to bot-ready candidates, including score, path, and which bots are watching.</div>
+                  </div>
                 </div>
-              </div>
-              <div class="muted-box">
-                <p><strong>Status:</strong> {escape(shadow_divergence["status"])}</p>
-                <p><strong>Connected:</strong> {"yes" if legacy_shadow["connected"] else "no"}</p>
-                <p><strong>Fetched:</strong> {escape(legacy_shadow.get("fetched_at") or "")}</p>
-                <p><strong>Total Shadow Issues:</strong> {shadow_divergence["issue_count"]}</p>
-                <p><strong>Confirmed Only In Legacy:</strong> {escape(shadow_confirmed_legacy)}</p>
-                <p><strong>Confirmed Only In New:</strong> {escape(shadow_confirmed_new)}</p>
-              </div>
-            </section>
-
-            <section class="section">
-              <div class="section-header">
-                <div>
-                  <h2>New Strategy State</h2>
-                  <div class="sub">Latest in-memory strategy snapshot published by the new engine.</div>
+                <div class="table-card">
+                  <table>
+                    <thead>
+                      <tr><th>Rank</th><th>Ticker</th><th>Path</th><th>Score</th><th>Price</th><th>Change</th><th>Volume</th><th>RVOL</th><th>Spread</th><th>Squeezes</th><th>First Spike</th><th>Watched By</th></tr>
+                    </thead>
+                    <tbody>{scanner_rows}</tbody>
+                  </table>
                 </div>
-              </div>
-              <div class="muted-box">
-                <p><strong>Watchlist:</strong> {escape(", ".join(data["strategy_runtime"]["watchlist"][:12]) or "None")}</p>
-                <p><strong>Top Confirmed Count:</strong> {len(data["strategy_runtime"]["top_confirmed"])}</p>
-                <p><strong>Strategy Snapshots:</strong> {len(data["strategy_runtime"]["bots"])}</p>
-              </div>
-            </section>
-          </div>
+              </section>
+            </div>
+          </details>
 
-          <section class="section" id="shadow">
+          <section class="section" id="bots">
             <div class="section-header">
               <div>
-                  <h2>Shadow Divergence</h2>
-                <div class="sub">Confirmed-name drift, missing strategy wiring, watched symbol gaps, and position mismatches.</div>
+                <h2>Bot Deck</h2>
+                <div class="sub">Legacy-style bot visibility for 30s, 1m, TOS, and Runner.</div>
               </div>
             </div>
-            <div class="table-card">
-              <table>
-                <thead>
-                  <tr><th>Strategy</th><th>Legacy Status</th><th>New Present</th><th>Watched Only Legacy</th><th>Watched Only New</th><th>Pos Mismatches</th><th>Issues</th></tr>
-                </thead>
-                <tbody>{shadow_strategy_rows}</tbody>
-              </table>
-            </div>
+            <div class="bot-grid">{bot_cards}</div>
           </section>
 
-          <div class="grid-2" id="reconciliation">
-            <section class="section">
-              <div class="section-header">
-                <div>
-                  <h2>Reconciliation</h2>
-                  <div class="sub">Latest shared-account consistency check across OMS state and attributed positions.</div>
-                </div>
+          <details class="fold-panel">
+            <summary>
+              <div class="fold-summary">
+                <div class="fold-title">🩺 System & Health <small>services, control-plane notes, and runtime diagnostics</small></div>
+                <div class="fold-meta">{escape(health_summary)} · {escape(ops_summary)}</div>
               </div>
-              <div class="muted-box">
-                <p><strong>Status:</strong> {escape(latest_reconciliation.get("status", "not-run"))}</p>
-                <p><strong>Started:</strong> {escape(latest_reconciliation.get("started_at", ""))}</p>
-                <p><strong>Completed:</strong> {escape(latest_reconciliation.get("completed_at", ""))}</p>
-                <p><strong>Total Findings:</strong> {latest_reconciliation_summary.get("total_findings", 0)}</p>
-                <p><strong>Critical Findings:</strong> {latest_reconciliation_summary.get("critical_findings", 0)}</p>
-                <p><strong>Warning Findings:</strong> {latest_reconciliation_summary.get("warning_findings", 0)}</p>
-              </div>
-            </section>
+            </summary>
+            <div class="fold-content">
+              <div class="details-grid">
+                <section class="section">
+                  <div class="section-header">
+                    <div>
+                      <h2>Service Health</h2>
+                      <div class="sub">Latest heartbeat per service from Redis streams.</div>
+                    </div>
+                  </div>
+                  <div class="table-card">
+                    <table>
+                      <thead>
+                        <tr><th>Service</th><th>Status</th><th>Instance</th><th>Observed</th><th>Details</th></tr>
+                      </thead>
+                      <tbody>{services_rows}</tbody>
+                    </table>
+                  </div>
+                </section>
 
-            <section class="section">
-              <div class="section-header">
-                <div>
-                  <h2>Latest Findings</h2>
-                  <div class="sub">Current blockers to shared-account correctness and safe cutover.</div>
-                </div>
+                <section class="section">
+                  <div class="section-header">
+                    <div>
+                      <h2>Control Plane Notes</h2>
+                      <div class="sub">Fast checks and current read-model diagnostics.</div>
+                    </div>
+                  </div>
+                  <div class="muted-box">
+                    <p><strong>Domain:</strong> {escape(data["domain"])}</p>
+                    <p><strong>Redis Prefix:</strong> <code>{escape(data["streams"]["heartbeats"].split(":")[0])}</code></p>
+                    <p><strong>Broker Accounts:</strong> {data["counts"]["broker_accounts"]}</p>
+                    <p><strong>Strategies:</strong> {data["counts"]["strategies"]}</p>
+                    <p><strong>Open Incidents:</strong> {data["counts"]["open_incidents"]}</p>
+                    <p><strong>Latest Reconciliation Findings:</strong> {data["counts"]["latest_reconciliation_findings"]}</p>
+                    <p><strong>Latest Reconciliation Status:</strong> {escape(latest_reconciliation.get("status", "not-run"))}</p>
+                    <p><strong>Refresh:</strong> Every {refresh_seconds}s</p>
+                  </div>
+                  <div style="margin-top: 16px;">{errors_html}</div>
+                </section>
               </div>
-              <div class="table-card">
-                <table>
-                  <thead>
-                    <tr><th>Severity</th><th>Type</th><th>Symbol</th><th>Title</th><th>Detected</th></tr>
-                  </thead>
-                  <tbody>{reconciliation_rows}</tbody>
-                </table>
-              </div>
-            </section>
-          </div>
+            </div>
+          </details>
 
-          <div class="grid-2" id="orders">
-            <section class="section">
-              <div class="section-header">
-                <div>
-                  <h2>Recent Intents</h2>
-                  <div class="sub">Latest strategy decisions accepted by the event bus.</div>
-                </div>
+          <details class="fold-panel" id="shadow">
+            <summary>
+              <div class="fold-summary">
+                <div class="fold-title">🪞 Shadow & Parity <small>legacy comparison and divergence review</small></div>
+                <div class="fold-meta">{escape(shadow_summary)}</div>
               </div>
-              <div class="table-card">
-                <table>
-                  <thead>
-                    <tr><th>Strategy</th><th>Symbol</th><th>Type</th><th>Side</th><th>Qty</th><th>Status</th><th>Updated</th></tr>
-                  </thead>
-                  <tbody>{intents_rows}</tbody>
-                </table>
-              </div>
-            </section>
+            </summary>
+            <div class="fold-content">
+              <div class="details-grid">
+                <section class="section">
+                  <div class="section-header">
+                    <div>
+                      <h2>Legacy Shadow</h2>
+                      <div class="sub">Side-by-side divergence against the legacy VPS app.</div>
+                    </div>
+                  </div>
+                  <div class="muted-box">
+                    <p><strong>Status:</strong> {escape(shadow_divergence["status"])}</p>
+                    <p><strong>Connected:</strong> {"yes" if legacy_shadow["connected"] else "no"}</p>
+                    <p><strong>Fetched:</strong> {escape(legacy_shadow.get("fetched_at") or "")}</p>
+                    <p><strong>Total Shadow Issues:</strong> {shadow_divergence["issue_count"]}</p>
+                    <p><strong>Confirmed Only In Legacy:</strong> {escape(shadow_confirmed_legacy)}</p>
+                    <p><strong>Confirmed Only In New:</strong> {escape(shadow_confirmed_new)}</p>
+                  </div>
+                </section>
 
-            <section class="section">
-              <div class="section-header">
-                <div>
-                  <h2>Recent Orders</h2>
-                  <div class="sub">Durable OMS order state keyed by client order id.</div>
-                </div>
+                <section class="section">
+                  <div class="section-header">
+                    <div>
+                      <h2>New Strategy State</h2>
+                      <div class="sub">Latest in-memory strategy snapshot published by the new engine.</div>
+                    </div>
+                  </div>
+                  <div class="muted-box">
+                    <p><strong>Watchlist:</strong> {escape(", ".join(data["strategy_runtime"]["watchlist"][:12]) or "None")}</p>
+                    <p><strong>Top Confirmed Count:</strong> {len(data["strategy_runtime"]["top_confirmed"])}</p>
+                    <p><strong>Strategy Snapshots:</strong> {len(data["strategy_runtime"]["bots"])}</p>
+                  </div>
+                </section>
               </div>
-              <div class="table-card">
-                <table>
-                  <thead>
-                    <tr><th>Strategy</th><th>Symbol</th><th>Side</th><th>Qty</th><th>Status</th><th>Client Id</th><th>Updated</th></tr>
-                  </thead>
-                  <tbody>{orders_rows}</tbody>
-                </table>
-              </div>
-            </section>
-          </div>
 
-          <div class="grid-2" id="positions">
-            <section class="section">
-              <div class="section-header">
-                <div>
-                  <h2>Recent Fills</h2>
-                  <div class="sub">Execution reports persisted by the OMS layer.</div>
+              <section class="section">
+                <div class="section-header">
+                  <div>
+                      <h2>Shadow Divergence</h2>
+                    <div class="sub">Confirmed-name drift, missing strategy wiring, watched symbol gaps, and position mismatches.</div>
+                  </div>
                 </div>
-              </div>
-              <div class="table-card">
-                <table>
-                  <thead>
-                    <tr><th>Strategy</th><th>Symbol</th><th>Side</th><th>Qty</th><th>Price</th><th>Filled</th></tr>
-                  </thead>
-                  <tbody>{fills_rows}</tbody>
-                </table>
-              </div>
-            </section>
+                <div class="table-card">
+                  <table>
+                    <thead>
+                      <tr><th>Strategy</th><th>Legacy Status</th><th>New Present</th><th>Watched Only Legacy</th><th>Watched Only New</th><th>Pos Mismatches</th><th>Issues</th></tr>
+                    </thead>
+                    <tbody>{shadow_strategy_rows}</tbody>
+                  </table>
+                </div>
+              </section>
+            </div>
+          </details>
 
-            <section class="section">
-              <div class="section-header">
-                <div>
-                  <h2>Incidents</h2>
-                  <div class="sub">Any control-plane or runtime issues that have been logged.</div>
-                </div>
+          <details class="fold-panel" id="reconciliation">
+            <summary>
+              <div class="fold-summary">
+                <div class="fold-title">🔎 Reconciliation <small>shared-account integrity and cutover safety</small></div>
+                <div class="fold-meta">{latest_reconciliation_summary.get("total_findings", 0)} findings · {latest_reconciliation_summary.get("critical_findings", 0)} critical · confidence {cutover_confidence}/100</div>
               </div>
-              <div class="table-card">
-                <table>
-                  <thead>
-                    <tr><th>Service</th><th>Severity</th><th>Title</th><th>Status</th><th>Opened</th></tr>
-                  </thead>
-                  <tbody>{incidents_rows}</tbody>
-                </table>
-              </div>
-            </section>
-          </div>
+            </summary>
+            <div class="fold-content">
+              <div class="details-grid">
+                <section class="section">
+                  <div class="section-header">
+                    <div>
+                      <h2>Reconciliation</h2>
+                      <div class="sub">Latest shared-account consistency check across OMS state and attributed positions.</div>
+                    </div>
+                  </div>
+                  <div class="muted-box">
+                    <p><strong>Status:</strong> {escape(latest_reconciliation.get("status", "not-run"))}</p>
+                    <p><strong>Started:</strong> {escape(latest_reconciliation.get("started_at", ""))}</p>
+                    <p><strong>Completed:</strong> {escape(latest_reconciliation.get("completed_at", ""))}</p>
+                    <p><strong>Total Findings:</strong> {latest_reconciliation_summary.get("total_findings", 0)}</p>
+                    <p><strong>Critical Findings:</strong> {latest_reconciliation_summary.get("critical_findings", 0)}</p>
+                    <p><strong>Warning Findings:</strong> {latest_reconciliation_summary.get("warning_findings", 0)}</p>
+                  </div>
+                </section>
 
-          <div class="grid-2">
-            <section class="section">
-              <div class="section-header">
-                <div>
-                  <h2>Virtual Positions</h2>
-                  <div class="sub">Strategy-attributed holdings inside each broker account.</div>
-                </div>
+                <section class="section">
+                  <div class="section-header">
+                    <div>
+                      <h2>Latest Findings</h2>
+                      <div class="sub">Current blockers to shared-account correctness and safe cutover.</div>
+                    </div>
+                  </div>
+                  <div class="table-card">
+                    <table>
+                      <thead>
+                        <tr><th>Severity</th><th>Type</th><th>Symbol</th><th>Title</th><th>Detected</th></tr>
+                      </thead>
+                      <tbody>{reconciliation_rows}</tbody>
+                    </table>
+                  </div>
+                </section>
               </div>
-              <div class="table-card">
-                <table>
-                  <thead>
-                    <tr><th>Strategy</th><th>Account</th><th>Symbol</th><th>Qty</th><th>Avg Px</th><th>Realized PnL</th><th>Updated</th></tr>
-                  </thead>
-                  <tbody>{virtual_positions_rows}</tbody>
-                </table>
-              </div>
-            </section>
+            </div>
+          </details>
 
-            <section class="section">
-              <div class="section-header">
-                <div>
-                  <h2>Account Positions</h2>
-                  <div class="sub">Broker-account level holdings for reconciliation and operator checks.</div>
-                </div>
+          <details class="fold-panel" id="orders">
+            <summary>
+              <div class="fold-summary">
+                <div class="fold-title">🧾 Orders & Fills <small>intent, order, and fill flow</small></div>
+                <div class="fold-meta">{escape(orderflow_summary)} · latest fill {escape(latest_fill_summary)}</div>
               </div>
-              <div class="table-card">
-                <table>
-                  <thead>
-                    <tr><th>Account</th><th>Symbol</th><th>Qty</th><th>Avg Px</th><th>Market Value</th><th>Updated</th></tr>
-                  </thead>
-                  <tbody>{account_positions_rows}</tbody>
-                </table>
+            </summary>
+            <div class="fold-content">
+              <div class="details-grid">
+                <section class="section">
+                  <div class="section-header">
+                    <div>
+                      <h2>Recent Intents</h2>
+                      <div class="sub">Latest strategy decisions accepted by the event bus.</div>
+                    </div>
+                  </div>
+                  <div class="table-card">
+                    <table>
+                      <thead>
+                        <tr><th>Strategy</th><th>Symbol</th><th>Type</th><th>Side</th><th>Qty</th><th>Status</th><th>Updated</th></tr>
+                      </thead>
+                      <tbody>{intents_rows}</tbody>
+                    </table>
+                  </div>
+                </section>
+
+                <section class="section">
+                  <div class="section-header">
+                    <div>
+                      <h2>Recent Orders</h2>
+                      <div class="sub">Durable OMS order state keyed by client order id.</div>
+                    </div>
+                  </div>
+                  <div class="table-card">
+                    <table>
+                      <thead>
+                        <tr><th>Strategy</th><th>Symbol</th><th>Side</th><th>Qty</th><th>Status</th><th>Client Id</th><th>Updated</th></tr>
+                      </thead>
+                      <tbody>{orders_rows}</tbody>
+                    </table>
+                  </div>
+                </section>
+
+                <section class="section">
+                  <div class="section-header">
+                    <div>
+                      <h2>Recent Fills</h2>
+                      <div class="sub">Execution reports persisted by the OMS layer.</div>
+                    </div>
+                  </div>
+                  <div class="table-card">
+                    <table>
+                      <thead>
+                        <tr><th>Strategy</th><th>Symbol</th><th>Side</th><th>Qty</th><th>Price</th><th>Filled</th></tr>
+                      </thead>
+                      <tbody>{fills_rows}</tbody>
+                    </table>
+                  </div>
+                </section>
               </div>
-            </section>
-          </div>
+            </div>
+          </details>
+
+          <details class="fold-panel" id="positions">
+            <summary>
+              <div class="fold-summary">
+                <div class="fold-title">📦 Positions & Incidents <small>virtual positions, broker positions, and logged issues</small></div>
+                <div class="fold-meta">{escape(position_summary)}</div>
+              </div>
+            </summary>
+            <div class="fold-content">
+              <div class="details-grid">
+                <section class="section">
+                  <div class="section-header">
+                    <div>
+                      <h2>Virtual Positions</h2>
+                      <div class="sub">Strategy-attributed holdings inside each broker account.</div>
+                    </div>
+                  </div>
+                  <div class="table-card">
+                    <table>
+                      <thead>
+                        <tr><th>Strategy</th><th>Account</th><th>Symbol</th><th>Qty</th><th>Avg Px</th><th>Realized PnL</th><th>Updated</th></tr>
+                      </thead>
+                      <tbody>{virtual_positions_rows}</tbody>
+                    </table>
+                  </div>
+                </section>
+
+                <section class="section">
+                  <div class="section-header">
+                    <div>
+                      <h2>Account Positions</h2>
+                      <div class="sub">Broker-account level holdings for reconciliation and operator checks.</div>
+                    </div>
+                  </div>
+                  <div class="table-card">
+                    <table>
+                      <thead>
+                        <tr><th>Account</th><th>Symbol</th><th>Qty</th><th>Avg Px</th><th>Market Value</th><th>Updated</th></tr>
+                      </thead>
+                      <tbody>{account_positions_rows}</tbody>
+                    </table>
+                  </div>
+                </section>
+
+                <section class="section">
+                  <div class="section-header">
+                    <div>
+                      <h2>Incidents</h2>
+                      <div class="sub">Any control-plane or runtime issues that have been logged.</div>
+                    </div>
+                  </div>
+                  <div class="table-card">
+                    <table>
+                      <thead>
+                        <tr><th>Service</th><th>Severity</th><th>Title</th><th>Status</th><th>Opened</th></tr>
+                      </thead>
+                      <tbody>{incidents_rows}</tbody>
+                    </table>
+                  </div>
+                </section>
+              </div>
+            </div>
+          </details>
         </div>
       </body>
     </html>
