@@ -1730,66 +1730,6 @@ def _render_dashboard(data: dict[str, Any]) -> str:
             <div class="service-strip">{service_chip_html}</div>
           </section>
 
-          <div class="grid-2" id="scanner">
-            <section class="section">
-              <div class="section-header">
-                <div>
-                  <h2>Scanner Pipeline</h2>
-                  <div class="sub">Closest equivalent to the legacy scanner dashboard: confirmed names, watchlist flow, and subscription state.</div>
-                </div>
-              </div>
-              <div class="muted-box">
-                <p><strong>Scanner Status:</strong> {escape(scanner["status"])}</p>
-                <p><strong>Watchlist Count:</strong> {scanner["watchlist_count"]}</p>
-                <p><strong>Top Confirmed Count:</strong> {scanner["top_confirmed_count"]}</p>
-                <p><strong>Active Subscriptions:</strong> {scanner["active_subscription_symbols"]}</p>
-                <p><strong>Watchlist:</strong> {escape(", ".join(scanner["watchlist"][:12]) or "None")}</p>
-                <p><strong>Legacy Confirmed:</strong> {escape(", ".join(scanner["legacy_confirmed_symbols"][:12]) or "None")}</p>
-              </div>
-            </section>
-
-            <section class="section">
-              <div class="section-header">
-                <div>
-                  <h2>Subscriptions</h2>
-                  <div class="sub">Symbols currently pushed into the live tick pipeline.</div>
-                </div>
-              </div>
-              <div class="muted-box">
-                <p><strong>Latest Snapshot Batch:</strong> {escape(snapshot_summary)}</p>
-                <p><strong>Snapshot Completed:</strong> {escape(latest_snapshot.get("completed_at", "No snapshot timestamp yet"))}</p>
-                <p><strong>Subscribed Symbols:</strong> {escape(", ".join(scanner["subscription_symbols"][:20]) or "None")}</p>
-              </div>
-            </section>
-          </div>
-
-          <section class="section">
-            <div class="section-header">
-              <div>
-                <h2>Confirmed Candidates</h2>
-                <div class="sub">New scanner output promoted to bot-ready candidates, including score, path, and which bots are watching.</div>
-              </div>
-            </div>
-            <div class="table-card">
-              <table>
-                <thead>
-                  <tr><th>Rank</th><th>Ticker</th><th>Path</th><th>Score</th><th>Price</th><th>Change</th><th>Volume</th><th>RVOL</th><th>Spread</th><th>Squeezes</th><th>First Spike</th><th>Watched By</th></tr>
-                </thead>
-                <tbody>{scanner_rows}</tbody>
-              </table>
-            </div>
-          </section>
-
-          <section class="section" id="bots">
-            <div class="section-header">
-              <div>
-                <h2>Bot Deck</h2>
-                <div class="sub">Legacy-style bot visibility for 30s, 1m, TOS, and Runner.</div>
-              </div>
-            </div>
-            <div class="bot-grid">{bot_cards}</div>
-          </section>
-
           <details class="fold-panel" open>
             <summary>
               <div class="fold-summary">
