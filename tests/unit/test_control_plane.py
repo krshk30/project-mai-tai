@@ -513,8 +513,9 @@ def test_control_plane_overview_and_dashboard_render() -> None:
 
         dashboard = client.get("/")
         assert dashboard.status_code == 200
-        assert "Project Mai Tai Operator View" in dashboard.text
-        assert "Scanner Pipeline" in dashboard.text
+        assert "Mai Tai Project" in dashboard.text
+        assert "Mai Tai System Dock" in dashboard.text
+        assert "Overview" in dashboard.text
         assert "Confirmed Candidates" in dashboard.text
         assert "Bot Deck" in dashboard.text
         assert "Legacy-style bot visibility for 30s, 1m, TOS, and Runner." in dashboard.text

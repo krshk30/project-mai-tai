@@ -1291,6 +1291,12 @@ def _render_dashboard(data: dict[str, Any]) -> str:
         f'{len(data["account_positions"])} broker-level · '
         f'{len(data["incidents"])} incidents'
     )
+    health_basis_summary = (
+        f"{healthy_service_count}/{active_service_count} services healthy · "
+        f"db {'connected' if not any(error.startswith('database:') for error in data['errors']) else 'attention'} · "
+        f"redis {'connected' if not any(error.startswith('redis:') for error in data['errors']) else 'attention'} · "
+        f"{data['counts']['open_incidents']} incidents"
+    )
 
     return f"""
     <html>
@@ -1345,11 +1351,18 @@ def _render_dashboard(data: dict[str, Any]) -> str:
             box-shadow: 0 18px 42px rgba(18, 36, 51, 0.08);
           }}
           .hero {{
-            padding: 28px;
-            margin-bottom: 20px;
+            padding: 22px 24px;
+            margin-bottom: 16px;
+          }}
+          .hero-head {{
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 16px;
+            flex-wrap: wrap;
           }}
           .hero-copy {{
-            max-width: 720px;
+            max-width: 560px;
           }}
           .eyebrow {{
             color: var(--accent);
@@ -1398,12 +1411,13 @@ def _render_dashboard(data: dict[str, Any]) -> str:
           .ops-strip {{
             display: grid;
             gap: 10px;
-            margin: 0 0 16px 0;
-            padding: 14px 18px;
+            margin: 0;
+            padding: 12px 16px;
             background: rgba(255,255,255,0.76);
             border: 1px solid var(--line);
             border-radius: 18px;
             box-shadow: 0 12px 28px rgba(18, 36, 51, 0.06);
+            min-width: min(100%, 560px);
           }}
           .ops-strip-top {{
             display: flex;
@@ -1649,17 +1663,29 @@ def _render_dashboard(data: dict[str, Any]) -> str:
       <body>
         <div class="shell">
           <section class="hero">
-            <div class="eyebrow">Project Mai Tai Operator View</div>
-            <h1>Parallel Live-Trading Rebuild</h1>
-            <p class="hero-copy">
-              This control plane is reading the new platform's durable OMS state and live stream
-              health so you can validate it beside the legacy system before cutover.
-            </p>
+            <div class="hero-head">
+              <div class="hero-copy">
+                <div class="eyebrow">Mai Tai</div>
+                <h1>Mai Tai Project</h1>
+                <p>Paper trading control plane.</p>
+              </div>
+              <section class="ops-strip">
+                <div class="ops-strip-top">
+                  <div class="ops-strip-title">
+                    <span class="status-dot status-{escape(data["status"].lower().replace(" ", "_"))}"></span>
+                    <strong>Mai Tai System Dock</strong>
+                    <span>{escape(health_summary)}</span>
+                  </div>
+                  <div class="fold-meta">{escape(ops_summary)} · {escape(data["generated_at"])}</div>
+                </div>
+                <div class="service-strip">{service_chip_html}</div>
+              </section>
+            </div>
             <div class="cards">
               <div class="card">
-                <div class="label">Platform</div>
+                <div class="label">Health</div>
                 <div class="value">{data["status"].upper()}</div>
-                <p>{escape(data["environment"])} / {escape(data["provider"])} / {escape(data["oms_adapter"])}</p>
+                <p>{escape(health_basis_summary)}</p>
               </div>
               <div class="card">
                 <div class="label">Confirmed</div>
@@ -1718,22 +1744,10 @@ def _render_dashboard(data: dict[str, Any]) -> str:
             <a href="#positions">Positions</a>
           </nav>
 
-          <section class="ops-strip">
-            <div class="ops-strip-top">
-              <div class="ops-strip-title">
-                <span class="status-dot status-{escape(data["status"].lower().replace(" ", "_"))}"></span>
-                <strong>Mai Tai System Dock</strong>
-                <span>{escape(health_summary)}</span>
-              </div>
-              <div class="fold-meta">{escape(ops_summary)} · {escape(data["generated_at"])}</div>
-            </div>
-            <div class="service-strip">{service_chip_html}</div>
-          </section>
-
           <details class="fold-panel" open>
             <summary>
               <div class="fold-summary">
-                <div class="fold-title">📡 Scanner Pipeline <small>watchlist flow, subscriptions, and top confirmed names</small></div>
+                <div class="fold-title">📈 Overview <small>scanner flow, subscriptions, and top confirmed names</small></div>
                 <div class="fold-meta">{scanner["top_confirmed_count"]} confirmed · {scanner["watchlist_count"]} watchlist · {scanner["active_subscription_symbols"]} live symbols</div>
               </div>
             </summary>
@@ -1742,8 +1756,8 @@ def _render_dashboard(data: dict[str, Any]) -> str:
                 <section class="section">
                   <div class="section-header">
                     <div>
-                      <h2>Scanner Pipeline</h2>
-                      <div class="sub">Closest equivalent to the legacy scanner dashboard: confirmed names, watchlist flow, and subscription state.</div>
+                      <h2>Overview</h2>
+                      <div class="sub">Confirmed names, watchlist flow, and subscription state.</div>
                     </div>
                   </div>
                   <div class="muted-box">
