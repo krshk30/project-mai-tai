@@ -347,11 +347,22 @@ async def test_strategy_state_snapshot_persists_last_nonempty_confirmed_snapshot
             "first_spike_time": "09:55:00 AM ET",
             "squeeze_count": 2,
             "confirmation_path": "PATH_B_2SQ",
-            "headline": "Quantum Biopharma Provides Corporate Update",
-            "catalyst": "NEWS",
+            "headline": "Quantum Biopharma Wins Hospital Supply Agreement",
+            "catalyst": "DEAL/CONTRACT",
+            "catalyst_type": "DEAL/CONTRACT",
             "sentiment": "bullish",
+            "direction": "bullish",
             "news_url": "https://example.com/ugro-news",
-            "news_date": "2026-03-28",
+            "news_date": "03/27 05:05PM ET",
+            "news_window_start": "03/27 04:00PM ET",
+            "catalyst_reason": "Bullish DEAL/CONTRACT catalyst across 2 article(s), latest 55m old.",
+            "catalyst_confidence": 0.91,
+            "article_count": 3,
+            "real_catalyst_article_count": 2,
+            "freshness_minutes": 55,
+            "is_generic_roundup": False,
+            "has_real_catalyst": True,
+            "path_a_eligible": True,
         }
     ]
 
@@ -366,4 +377,5 @@ async def test_strategy_state_snapshot_persists_last_nonempty_confirmed_snapshot
 
     assert snapshot is not None
     assert snapshot.payload["top_confirmed"][0]["ticker"] == "UGRO"
-    assert snapshot.payload["top_confirmed"][0]["headline"] == "Quantum Biopharma Provides Corporate Update"
+    assert snapshot.payload["top_confirmed"][0]["headline"] == "Quantum Biopharma Wins Hospital Supply Agreement"
+    assert snapshot.payload["top_confirmed"][0]["path_a_eligible"] is True

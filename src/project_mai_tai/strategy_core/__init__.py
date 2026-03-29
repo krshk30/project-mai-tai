@@ -1,6 +1,7 @@
 """Preserved deterministic strategy logic ported from the legacy platform."""
 
 from project_mai_tai.strategy_core.bar_builder import BarBuilder, BarBuilderManager
+from project_mai_tai.strategy_core.catalyst import CatalystConfig, CatalystEngine
 from project_mai_tai.strategy_core.config import (
     IndicatorConfig,
     MomentumAlertConfig,
@@ -29,6 +30,8 @@ from project_mai_tai.strategy_core.trading_config import TradingConfig
 __all__ = [
     "BarBuilder",
     "BarBuilderManager",
+    "CatalystConfig",
+    "CatalystEngine",
     "DaySnapshot",
     "EntryEngine",
     "ExitEngine",

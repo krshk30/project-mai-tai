@@ -49,6 +49,13 @@ class Settings(BaseSettings):
     market_data_warmup_enabled: bool = True
     market_data_warmup_lookback_days: int = 14
     market_data_warmup_bar_limit: int = 50_000
+    news_enabled: bool = True
+    news_session_start_hour_et: int = 16
+    news_cache_ttl_minutes: int = 15
+    news_request_timeout_seconds: int = 5
+    news_max_articles_per_symbol: int = 20
+    news_batch_size: int = 5
+    news_path_a_min_confidence: float = 0.85
 
     broker_default_provider: str = "alpaca"
     oms_adapter: str = "simulated"

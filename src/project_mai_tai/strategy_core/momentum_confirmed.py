@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 import logging
 
 from project_mai_tai.strategy_core.config import MomentumConfirmedConfig
@@ -186,6 +186,7 @@ class MomentumConfirmedScanner:
                 volume = snapshot.day.volume
             if volume > 0:
                 stock["volume"] = volume
+        self.refresh_catalysts()
 
     def allow_reconfirmation(self, ticker: str) -> None:
         if ticker in self._tracking:
@@ -216,27 +217,39 @@ class MomentumConfirmedScanner:
         return True, ""
 
     def _has_bullish_news(self, ticker: str) -> bool:
-        if self._catalyst_source is None:
+        catalyst = self._get_catalyst_display_data(ticker)
+        if not catalyst:
             return False
 
-        try:
-            if callable(self._catalyst_source):
-                catalyst = self._catalyst_source(ticker)
-            else:
-                catalyst = self._catalyst_source.get_catalyst(ticker)
-        except Exception:
-            return False
+        eligible = bool(catalyst.get("path_a_eligible", False))
+        direction = str(catalyst.get("direction") or catalyst.get("sentiment") or "")
+        confidence = float(catalyst.get("confidence", catalyst.get("ai_confidence", 0)) or 0)
+        reason = str(catalyst.get("reason") or catalyst.get("ai_reason") or "").strip()
 
-        sentiment = str(catalyst.get("sentiment", ""))
-        confidence = float(catalyst.get("ai_confidence", 0) or 0)
-        if sentiment == "bullish" and confidence >= 0.8:
-            logger.info("[CONFIRMED] %s — PATH A: AI BULLISH (%.0f%%)", ticker, confidence * 100)
+        if eligible:
+            logger.info(
+                "[CONFIRMED] %s — PATH A eligible (%.0f%%) | %s",
+                ticker,
+                confidence * 100,
+                reason or "fresh bullish catalyst",
+            )
             return True
 
-        if sentiment == "bullish":
-            logger.debug("[CONFIRMED] %s — PATH A bullish but low confidence (%.0f%%)", ticker, confidence * 100)
+        if direction == "bullish":
+            logger.debug(
+                "[CONFIRMED] %s — PATH A bullish but not eligible (%.0f%%) | %s",
+                ticker,
+                confidence * 100,
+                reason or "missing qualifying catalyst",
+            )
         else:
-            logger.debug("[CONFIRMED] %s — PATH A rejected: %s (%.0f%%)", ticker, sentiment, confidence * 100)
+            logger.debug(
+                "[CONFIRMED] %s — PATH A rejected: %s (%.0f%%) | %s",
+                ticker,
+                direction or "no news",
+                confidence * 100,
+                reason or "no qualifying catalyst",
+            )
         return False
 
     def _confirm_ticker(
@@ -335,14 +348,41 @@ class MomentumConfirmedScanner:
             "first_spike_time": track["first_spike_time"],
             "first_spike_price": track["first_spike_price"],
             "squeeze_count": len(track["squeezes"]),
-            "headline": str(catalyst.get("headline", "")),
-            "catalyst": str(catalyst.get("catalyst", "")),
-            "sentiment": str(catalyst.get("sentiment", "")),
-            "news_url": str(catalyst.get("url", "")),
-            "news_date": str(catalyst.get("published", "")),
             "data_age_secs": 0,
             "confirmation_path": "",
+            **self._normalize_catalyst_fields(catalyst),
         }
+
+    def refresh_catalysts(self, tickers: Iterable[str] | None = None) -> None:
+        if self._catalyst_source is None or not self._confirmed:
+            return
+
+        target = {str(ticker).upper() for ticker in tickers or () if ticker}
+        if not target:
+            target = {str(stock.get("ticker", "")).upper() for stock in self._confirmed if stock.get("ticker")}
+        if not target:
+            return
+
+        catalyst_batch: dict[str, Mapping[str, object]] = {}
+        if hasattr(self._catalyst_source, "get_catalysts_batch"):
+            try:
+                raw_batch = self._catalyst_source.get_catalysts_batch(sorted(target))
+            except Exception:
+                logger.exception("Failed to refresh catalyst batch for confirmed watchlist")
+                raw_batch = {}
+            if isinstance(raw_batch, Mapping):
+                catalyst_batch = {
+                    str(symbol).upper(): value
+                    for symbol, value in raw_batch.items()
+                    if isinstance(value, Mapping)
+                }
+
+        for stock in self._confirmed:
+            ticker = str(stock.get("ticker", "")).upper()
+            if ticker not in target:
+                continue
+            catalyst = catalyst_batch.get(ticker) or self._get_catalyst_display_data(ticker)
+            stock.update(self._normalize_catalyst_fields(catalyst))
 
     def _get_catalyst_display_data(self, ticker: str) -> Mapping[str, object]:
         if self._catalyst_source is None:
@@ -359,6 +399,50 @@ class MomentumConfirmedScanner:
         if isinstance(catalyst, Mapping):
             return catalyst
         return {}
+
+    def _normalize_catalyst_fields(self, catalyst: Mapping[str, object]) -> dict[str, object]:
+        confidence_raw = catalyst.get("confidence", catalyst.get("ai_confidence", 0))
+        try:
+            confidence = float(confidence_raw or 0)
+        except (TypeError, ValueError):
+            confidence = 0.0
+
+        article_count_raw = catalyst.get("article_count", catalyst.get("news_count", 0))
+        try:
+            article_count = int(article_count_raw or 0)
+        except (TypeError, ValueError):
+            article_count = 0
+
+        real_article_count_raw = catalyst.get("real_catalyst_article_count", 0)
+        try:
+            real_article_count = int(real_article_count_raw or 0)
+        except (TypeError, ValueError):
+            real_article_count = 0
+
+        freshness_raw = catalyst.get("freshness_minutes")
+        try:
+            freshness_minutes = int(freshness_raw) if freshness_raw is not None else None
+        except (TypeError, ValueError):
+            freshness_minutes = None
+
+        return {
+            "headline": str(catalyst.get("headline", "")),
+            "catalyst": str(catalyst.get("catalyst") or catalyst.get("catalyst_type") or ""),
+            "catalyst_type": str(catalyst.get("catalyst_type") or catalyst.get("catalyst") or ""),
+            "sentiment": str(catalyst.get("sentiment") or catalyst.get("direction") or ""),
+            "direction": str(catalyst.get("direction") or catalyst.get("sentiment") or ""),
+            "news_url": str(catalyst.get("url", "")),
+            "news_date": str(catalyst.get("published", "")),
+            "news_window_start": str(catalyst.get("window_start_label") or catalyst.get("window_start") or ""),
+            "catalyst_reason": str(catalyst.get("reason") or catalyst.get("ai_reason") or ""),
+            "catalyst_confidence": confidence,
+            "article_count": article_count,
+            "real_catalyst_article_count": real_article_count,
+            "freshness_minutes": freshness_minutes,
+            "is_generic_roundup": bool(catalyst.get("is_generic_roundup", False)),
+            "has_real_catalyst": bool(catalyst.get("has_real_catalyst", False)),
+            "path_a_eligible": bool(catalyst.get("path_a_eligible", False)),
+        }
 
     def _calculate_score(self, stock: dict[str, object], all_candidates: list[dict[str, object]]) -> float:
         if not all_candidates:

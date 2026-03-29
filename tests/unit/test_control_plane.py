@@ -232,11 +232,22 @@ def seed_database(session_factory: sessionmaker[Session]) -> None:
                         "first_spike_time": "09:55:00 AM ET",
                         "squeeze_count": 2,
                         "confirmation_path": "PATH_B_2SQ",
-                        "catalyst": "NEWS",
-                        "headline": "Quantum Biopharma Provides Corporate Update",
+                        "catalyst": "DEAL/CONTRACT",
+                        "catalyst_type": "DEAL/CONTRACT",
+                        "headline": "Quantum Biopharma Wins Hospital Supply Agreement",
                         "sentiment": "bullish",
+                        "direction": "bullish",
                         "news_url": "https://example.com/ugro-news",
-                        "news_date": "2026-03-28",
+                        "news_date": "03/27 05:05PM ET",
+                        "news_window_start": "03/27 04:00PM ET",
+                        "catalyst_reason": "Bullish DEAL/CONTRACT catalyst across 2 article(s), latest 55m old.",
+                        "catalyst_confidence": 0.91,
+                        "article_count": 3,
+                        "real_catalyst_article_count": 2,
+                        "freshness_minutes": 55,
+                        "is_generic_roundup": False,
+                        "has_real_catalyst": True,
+                        "path_a_eligible": True,
                     }
                 ],
                 "watchlist": ["UGRO"],
@@ -304,11 +315,22 @@ def make_streams(prefix: str, *, include_confirmed: bool = True) -> dict[str, li
                         "first_spike_time": "09:55:00 AM ET",
                         "squeeze_count": 2,
                         "confirmation_path": "PATH_B_2SQ",
-                        "catalyst": "NEWS",
-                        "headline": "Quantum Biopharma Provides Corporate Update",
+                        "catalyst": "DEAL/CONTRACT",
+                        "catalyst_type": "DEAL/CONTRACT",
+                        "headline": "Quantum Biopharma Wins Hospital Supply Agreement",
                         "sentiment": "bullish",
+                        "direction": "bullish",
                         "news_url": "https://example.com/ugro-news",
-                        "news_date": "2026-03-28",
+                        "news_date": "03/27 05:05PM ET",
+                        "news_window_start": "03/27 04:00PM ET",
+                        "catalyst_reason": "Bullish DEAL/CONTRACT catalyst across 2 article(s), latest 55m old.",
+                        "catalyst_confidence": 0.91,
+                        "article_count": 3,
+                        "real_catalyst_article_count": 2,
+                        "freshness_minutes": 55,
+                        "is_generic_roundup": False,
+                        "has_real_catalyst": True,
+                        "path_a_eligible": True,
                     }
                 ]
                 if include_confirmed
@@ -484,6 +506,8 @@ def test_control_plane_overview_and_dashboard_render() -> None:
         scanner_body = scanner.json()
         assert scanner_body["scanner"]["watchlist"] == ["UGRO"]
         assert scanner_body["scanner"]["top_confirmed"][0]["rank_score"] == 72.0
+        assert scanner_body["scanner"]["top_confirmed"][0]["article_count"] == 3
+        assert scanner_body["scanner"]["top_confirmed"][0]["path_a_eligible"] is True
         assert scanner_body["scanner"]["five_pillars_count"] == 1
         assert scanner_body["scanner"]["recent_alerts_count"] == 1
 
@@ -508,7 +532,10 @@ def test_control_plane_overview_and_dashboard_render() -> None:
         assert "Top Gainer Changes" in legacy_scanner.text
         assert "Catalyst" in legacy_scanner.text
         assert "Entry Price" in legacy_scanner.text
-        assert "Quantum Biopharma Provides Corporate Update" in legacy_scanner.text
+        assert "Quantum Biopharma Wins Hospital Supply Agreement" in legacy_scanner.text
+        assert "91% conf" in legacy_scanner.text
+        assert "55m old" in legacy_scanner.text
+        assert "PATH A ready" in legacy_scanner.text
         assert "📰" in legacy_scanner.text
         assert "🚫" in legacy_scanner.text
 
@@ -605,4 +632,4 @@ def test_control_plane_restores_last_nonempty_confirmed_snapshot() -> None:
         dashboard = client.get("/scanner/dashboard")
         assert dashboard.status_code == 200
         assert "Restored from last non-empty snapshot" in dashboard.text
-        assert "Quantum Biopharma Provides Corporate Update" in dashboard.text
+        assert "Quantum Biopharma Wins Hospital Supply Agreement" in dashboard.text

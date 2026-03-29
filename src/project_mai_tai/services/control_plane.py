@@ -258,10 +258,25 @@ class ControlPlaneRepository:
             "squeeze_count": int(item.get("squeeze_count", 0) or 0),
             "first_spike_time": str(item.get("first_spike_time", "")),
             "catalyst": str(item.get("catalyst", "")),
+            "catalyst_type": str(item.get("catalyst_type") or item.get("catalyst") or ""),
             "headline": str(item.get("headline", "")),
             "sentiment": str(item.get("sentiment", "")),
+            "direction": str(item.get("direction") or item.get("sentiment") or ""),
             "news_url": str(item.get("news_url", "")),
             "news_date": str(item.get("news_date", "")),
+            "news_window_start": str(item.get("news_window_start", "")),
+            "catalyst_reason": str(item.get("catalyst_reason", "")),
+            "catalyst_confidence": float(item.get("catalyst_confidence", 0) or 0),
+            "article_count": int(item.get("article_count", 0) or 0),
+            "real_catalyst_article_count": int(item.get("real_catalyst_article_count", 0) or 0),
+            "freshness_minutes": (
+                int(item.get("freshness_minutes", 0))
+                if item.get("freshness_minutes") is not None
+                else None
+            ),
+            "is_generic_roundup": bool(item.get("is_generic_roundup", False)),
+            "has_real_catalyst": bool(item.get("has_real_catalyst", False)),
+            "path_a_eligible": bool(item.get("path_a_eligible", False)),
             "watched_by": watched_by,
             "is_top5": bool(watched_by),
         }
@@ -3545,18 +3560,36 @@ def _render_scanner_confirmed_rows(rows: list[dict[str, Any]], live_symbols: set
 
 
 def _render_confirmed_catalyst_cell(item: dict[str, Any]) -> str:
-    catalyst = str(item.get("catalyst", "") or "").strip()
+    catalyst = str(item.get("catalyst_type") or item.get("catalyst") or "").strip()
     headline = str(item.get("headline", "") or "").strip()
     news_url = str(item.get("news_url", "") or "").strip()
     news_date = str(item.get("news_date", "") or "").strip()
-    sentiment = str(item.get("sentiment", "") or "").strip().lower()
+    sentiment = str(item.get("direction") or item.get("sentiment") or "").strip().lower()
+    confidence = _as_float(item.get("catalyst_confidence"))
+    article_count = int(item.get("article_count", 0) or 0)
+    real_article_count = int(item.get("real_catalyst_article_count", 0) or 0)
+    freshness_minutes = item.get("freshness_minutes")
+    is_generic_roundup = bool(item.get("is_generic_roundup", False))
+    has_real_catalyst = bool(item.get("has_real_catalyst", False))
+    reason = str(item.get("catalyst_reason", "") or "").strip()
+    news_window_start = str(item.get("news_window_start", "") or "").strip()
+    path_a_eligible = bool(item.get("path_a_eligible", False))
 
-    if not catalyst and not headline:
-        return '<span style="color:#555">No recent news</span>'
+    if not catalyst and not headline and article_count <= 0:
+        return '<span style="color:#555">No qualifying news since last market close</span>'
 
-    sent_color = {"bullish": "#00c853", "bearish": "#ff1744", "neutral": "#ffd600"}.get(sentiment, "#888")
-    sent_bg = {"bullish": "#0a2e0a", "bearish": "#2e0a0a", "neutral": "#2e2e0a"}.get(sentiment, "transparent")
-    sent_label = {"bullish": "🟢", "bearish": "🔴", "neutral": "🟡"}.get(sentiment, "")
+    sent_color = {"bullish": "#00c853", "bearish": "#ff1744", "neutral": "#ffd600"}.get(sentiment, "#8e9bb3")
+    sent_bg = {"bullish": "#0a2e0a", "bearish": "#2e0a0a", "neutral": "#2e2e0a"}.get(sentiment, "#162033")
+    sent_label = {"bullish": "🟢", "bearish": "🔴", "neutral": "🟡"}.get(sentiment, "⚪")
+
+    if is_generic_roundup:
+        sent_color = "#8e9bb3"
+        sent_bg = "#1a2435"
+        sent_label = "⚪"
+    elif not has_real_catalyst:
+        sent_color = "#90a4ae"
+        sent_bg = "#18222f"
+        sent_label = "ℹ️"
 
     display_headline = headline
     if display_headline.startswith("["):
@@ -3564,15 +3597,50 @@ def _render_confirmed_catalyst_cell(item: dict[str, Any]) -> str:
         if bracket_end > 0:
             display_headline = display_headline[bracket_end + 1 :].strip()
 
+    if not display_headline:
+        display_headline = reason or "Recent catalyst window"
+
     headline_html = escape(display_headline)
     if news_url:
-        headline_html = f'<a href="{escape(news_url)}" target="_blank" rel="noreferrer" style="color:#4fc3f7;text-decoration:none;">{headline_html}</a>'
+        headline_html = (
+            f'<a href="{escape(news_url)}" target="_blank" rel="noreferrer" '
+            f'style="color:#4fc3f7;text-decoration:none;">{headline_html}</a>'
+        )
 
-    date_html = f'<span style="color:#888;">{escape(news_date)}</span> ' if news_date else ""
-    catalyst_label = f'{escape(catalyst)} ' if catalyst else ""
+    meta_bits: list[str] = []
+    if catalyst:
+        meta_bits.append(catalyst)
+    if confidence > 0:
+        meta_bits.append(f"{confidence:.0%} conf")
+    if article_count > 0:
+        meta_bits.append(f"{article_count} art")
+    if real_article_count > 0 and real_article_count != article_count:
+        meta_bits.append(f"{real_article_count} real")
+    if freshness_minutes is not None:
+        meta_bits.append(f"{int(freshness_minutes)}m old")
+    if news_date:
+        meta_bits.append(news_date)
+    if path_a_eligible:
+        meta_bits.append("PATH A ready")
+    elif is_generic_roundup:
+        meta_bits.append("roundup only")
+    elif article_count > 0 and not has_real_catalyst:
+        meta_bits.append("informational")
+
+    meta_html = " · ".join(escape(bit) for bit in meta_bits)
+    footer_text = reason or (f"Window: {news_window_start} onward" if news_window_start else "")
+    footer_html = (
+        f'<div style="color:#8da2b7;font-size:10px;line-height:1.35;margin-top:3px;">{escape(footer_text)}</div>'
+        if footer_text
+        else ""
+    )
     return (
-        f'<span style="display:block;background:{sent_bg};border-left:3px solid {sent_color};padding-left:8px;">'
-        f'{sent_label} {catalyst_label}{date_html}{headline_html}</span>'
+        f'<span style="display:block;background:{sent_bg};border-left:3px solid {sent_color};padding:4px 0 4px 8px;'
+        f'border-radius:4px;">'
+        f'<div>{sent_label} <strong style="color:{sent_color};">{escape(catalyst or "NEWS")}</strong></div>'
+        f'<div style="color:#cfe1ff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{headline_html}</div>'
+        f'<div style="color:#8da2b7;font-size:10px;line-height:1.3;">{meta_html}</div>'
+        f"{footer_html}</span>"
     )
 
 

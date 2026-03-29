@@ -37,6 +37,8 @@ from project_mai_tai.runtime_registry import strategy_registration_map
 from project_mai_tai.services.runtime import _install_signal_handlers
 from project_mai_tai.settings import Settings, get_settings
 from project_mai_tai.strategy_core import (
+    CatalystConfig,
+    CatalystEngine,
     DaySnapshot,
     EntryEngine,
     ExitEngine,
@@ -420,6 +422,9 @@ class StrategyEngineState:
             now_provider=now_provider,
         )
         self.confirmed_scanner = MomentumConfirmedScanner(confirmed_config or MomentumConfirmedConfig())
+        self.catalyst_engine = self._build_catalyst_engine(now_provider=now_provider)
+        if self.catalyst_engine is not None:
+            self.confirmed_scanner.set_catalyst_engine(self.catalyst_engine)
         self.five_pillars_config = FivePillarsConfig(
             min_price=self.settings.market_data_scan_min_price,
             max_price=self.settings.market_data_scan_max_price,
@@ -511,6 +516,19 @@ class StrategyEngineState:
         self.top_gainers = self._decorate_scanner_rows(self.top_gainers)
         self.alert_engine.record_snapshot(snapshots)
         alerts = self.alert_engine.check_alerts(snapshots, self.reference_data)
+        if self.catalyst_engine is not None:
+            catalyst_tickers = {
+                str(alert.get("ticker", "")).upper()
+                for alert in alerts
+                if str(alert.get("ticker", "")).strip()
+            }
+            catalyst_tickers.update(
+                str(stock.get("ticker", "")).upper()
+                for stock in self.confirmed_scanner.get_all_confirmed()
+                if str(stock.get("ticker", "")).strip()
+            )
+            if catalyst_tickers:
+                self.catalyst_engine.get_catalysts_batch(sorted(catalyst_tickers))
         self._record_recent_alerts(alerts)
         self.alert_warmup = self.alert_engine.get_warmup_status()
         snapshot_lookup = {snapshot.ticker: snapshot for snapshot in snapshots}
@@ -669,6 +687,53 @@ class StrategyEngineState:
         ]
         self.recent_alerts.extend(normalized)
         self.recent_alerts = self.recent_alerts[-100:]
+
+    def _build_catalyst_engine(
+        self,
+        *,
+        now_provider: Callable[[], datetime] | None = None,
+    ) -> CatalystEngine | None:
+        if not self.settings.news_enabled:
+            return None
+
+        api_key, secret_key = self._resolve_news_credentials()
+        if not api_key or not secret_key:
+            logger.info("Catalyst engine disabled: no Alpaca credentials available for news enrichment")
+            return None
+
+        return CatalystEngine(
+            api_key=api_key,
+            secret_key=secret_key,
+            config=CatalystConfig(
+                session_start_hour_et=self.settings.news_session_start_hour_et,
+                cache_ttl_minutes=self.settings.news_cache_ttl_minutes,
+                request_timeout_seconds=self.settings.news_request_timeout_seconds,
+                max_articles_per_symbol=self.settings.news_max_articles_per_symbol,
+                batch_size=self.settings.news_batch_size,
+                path_a_min_confidence=self.settings.news_path_a_min_confidence,
+            ),
+            now_provider=now_provider,
+        )
+
+    def _resolve_news_credentials(self) -> tuple[str | None, str | None]:
+        candidates = (
+            (
+                self.settings.alpaca_macd_1m_api_key,
+                self.settings.alpaca_macd_1m_secret_key,
+            ),
+            (
+                self.settings.alpaca_macd_30s_api_key,
+                self.settings.alpaca_macd_30s_secret_key,
+            ),
+            (
+                self.settings.alpaca_tos_runner_api_key,
+                self.settings.alpaca_tos_runner_secret_key,
+            ),
+        )
+        for api_key, secret_key in candidates:
+            if api_key and secret_key:
+                return api_key, secret_key
+        return None, None
 
 
 class StrategyEngineService:
