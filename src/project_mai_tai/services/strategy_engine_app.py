@@ -242,6 +242,7 @@ class StrategyBotRuntime:
             "pending_scale_levels": sorted(f"{symbol}:{level}" for symbol, level in self.pending_scale_levels),
             "daily_pnl": self.positions.get_daily_pnl(),
             "closed_today": self.positions.get_closed_today(),
+            "indicator_snapshots": self._indicator_snapshots(),
         }
 
     def has_position(self, ticker: str) -> bool:
@@ -293,6 +294,36 @@ class StrategyBotRuntime:
 
         intents.append(self._emit_open_intent(signal))
         return intents
+
+    def _indicator_snapshots(self) -> list[dict[str, object]]:
+        snapshots: list[dict[str, object]] = []
+        for symbol, indicators in sorted(self.last_indicators.items()):
+            builder = self.builder_manager.get_builder(symbol)
+            if builder is None or not builder.bars:
+                continue
+
+            last_bar = builder.bars[-1]
+            snapshots.append(
+                {
+                    "symbol": symbol,
+                    "interval_secs": self.definition.interval_secs,
+                    "bar_count": builder.get_bar_count(),
+                    "last_bar_at": datetime.fromtimestamp(last_bar.timestamp, UTC).isoformat(),
+                    "close": float(indicators.get("price", 0) or 0),
+                    "ema9": float(indicators.get("ema9", 0) or 0),
+                    "ema20": float(indicators.get("ema20", 0) or 0),
+                    "macd": float(indicators.get("macd", 0) or 0),
+                    "signal": float(indicators.get("signal", 0) or 0),
+                    "histogram": float(indicators.get("histogram", 0) or 0),
+                    "vwap": float(indicators.get("vwap", 0) or 0),
+                    "macd_above_signal": bool(indicators.get("macd_above_signal", False)),
+                    "price_above_vwap": bool(indicators.get("price_above_vwap", False)),
+                    "price_above_ema9": bool(indicators.get("price_above_ema9", False)),
+                    "price_above_ema20": bool(indicators.get("price_above_ema20", False)),
+                }
+            )
+        snapshots.sort(key=lambda item: str(item["last_bar_at"]), reverse=True)
+        return snapshots[:8]
 
     def _emit_open_intent(self, signal: dict[str, float | int | str]) -> TradeIntentEvent:
         symbol = str(signal["ticker"])
@@ -855,6 +886,7 @@ class StrategyEngineService:
                 pending_scale_levels=[str(level) for level in bot["pending_scale_levels"]],
                 daily_pnl=float(bot.get("daily_pnl", 0) or 0),
                 closed_today=list(bot.get("closed_today", [])),
+                indicator_snapshots=list(bot.get("indicator_snapshots", [])),
             )
             for bot in summary["bots"].values()
         ]

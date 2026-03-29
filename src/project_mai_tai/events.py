@@ -160,6 +160,7 @@ class StrategyBotStatePayload(BaseModel):
     pending_scale_levels: list[str] = Field(default_factory=list)
     daily_pnl: float = 0.0
     closed_today: list[dict[str, Any]] = Field(default_factory=list)
+    indicator_snapshots: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class StrategyStateSnapshotPayload(BaseModel):

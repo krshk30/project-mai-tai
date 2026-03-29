@@ -169,6 +169,9 @@ class BarBuilderManager:
     def on_trade(self, ticker: str, price: float, size: int, timestamp_ns: int = 0) -> list[OHLCVBar]:
         return self.get_or_create(ticker).on_trade(price, size, timestamp_ns)
 
+    def get_builder(self, ticker: str) -> BarBuilder | None:
+        return self._builders.get(ticker)
+
     def get_bars(self, ticker: str) -> list[dict[str, float | int]]:
         builder = self._builders.get(ticker)
         return builder.get_bars_as_dicts() if builder else []

@@ -297,6 +297,12 @@ class ControlPlaneRepository:
             pending_open = [str(symbol) for symbol in runtime_bot.get("pending_open_symbols", [])]
             pending_close = [str(symbol) for symbol in runtime_bot.get("pending_close_symbols", [])]
             pending_scale = [str(level) for level in runtime_bot.get("pending_scale_levels", [])]
+            indicator_snapshots = list(runtime_bot.get("indicator_snapshots", []))
+            tos_parity = self._build_tos_parity_view(
+                strategy_code=code,
+                indicator_snapshots=indicator_snapshots,
+                watchlist=watchlist,
+            )
 
             bot_views.append(
                 {
@@ -323,6 +329,8 @@ class ControlPlaneRepository:
                     "pending_count": len(pending_open) + len(pending_close) + len(pending_scale),
                     "daily_pnl": float(runtime_bot.get("daily_pnl", 0) or 0),
                     "closed_today": list(runtime_bot.get("closed_today", [])),
+                    "indicator_snapshots": indicator_snapshots,
+                    "tos_parity": tos_parity,
                     "recent_intents": [
                         item for item in recent_intents if item.get("strategy_code") == code
                     ][:3],
@@ -335,6 +343,70 @@ class ControlPlaneRepository:
                 }
             )
         return bot_views
+
+    def _build_tos_parity_view(
+        self,
+        *,
+        strategy_code: str,
+        indicator_snapshots: list[dict[str, Any]],
+        watchlist: list[str],
+    ) -> dict[str, Any]:
+        enabled = strategy_code in {"macd_1m", "tos"}
+        if not enabled:
+            return {
+                "enabled": False,
+                "status": "not_applicable",
+                "comparison_target": "thinkorswim_1m",
+                "summary": "TOS parity is only tracked for the 1-minute and TOS runtimes.",
+                "snapshots": [],
+                "settings": [],
+            }
+
+        normalized_snapshots = [
+            {
+                **item,
+                "symbol": str(item.get("symbol", "")).upper(),
+                "last_bar_at": _datetime_str(item.get("last_bar_at")),
+                "close": float(item.get("close", 0) or 0),
+                "ema9": float(item.get("ema9", 0) or 0),
+                "ema20": float(item.get("ema20", 0) or 0),
+                "macd": float(item.get("macd", 0) or 0),
+                "signal": float(item.get("signal", 0) or 0),
+                "histogram": float(item.get("histogram", 0) or 0),
+                "vwap": float(item.get("vwap", 0) or 0),
+                "bar_count": int(item.get("bar_count", 0) or 0),
+                "macd_above_signal": bool(item.get("macd_above_signal", False)),
+                "price_above_vwap": bool(item.get("price_above_vwap", False)),
+                "price_above_ema9": bool(item.get("price_above_ema9", False)),
+                "price_above_ema20": bool(item.get("price_above_ema20", False)),
+            }
+            for item in indicator_snapshots
+        ]
+        normalized_snapshots.sort(key=lambda item: str(item["last_bar_at"]), reverse=True)
+        status = "ready" if normalized_snapshots else "warming" if watchlist else "idle"
+        settings = [
+            "Aggregation 1m",
+            "EMA lengths 9 / 20",
+            "MACD 12 / 26 / 9",
+            "Average type exponential",
+            "VWAP intraday reset",
+            "Compare on closed bars only",
+        ]
+        summary = (
+            f'{len(normalized_snapshots)} local 1m snapshots ready for side-by-side TOS checks.'
+            if normalized_snapshots
+            else "Waiting for closed 1m bars before parity comparison is meaningful."
+            if watchlist
+            else "No active 1m symbols yet."
+        )
+        return {
+            "enabled": True,
+            "status": status,
+            "comparison_target": "thinkorswim_1m",
+            "summary": summary,
+            "snapshots": normalized_snapshots[:6],
+            "settings": settings,
+        }
 
     async def load_health(self) -> dict[str, Any]:
         overview = await self.load_dashboard_data()
@@ -1117,6 +1189,22 @@ def _render_dashboard(data: dict[str, Any]) -> str:
         for bot in bot_views
     ) or '<div class="muted-box">No bot runtime snapshots available yet.</div>'
 
+    parity_bots = [bot for bot in bot_views if bot.get("tos_parity", {}).get("enabled")]
+    parity_rows = "".join(
+        f"""
+        <tr>
+          <td><strong>{escape(bot["display_name"])}</strong></td>
+          <td>{_status_badge(bot["tos_parity"]["status"])}</td>
+          <td>{escape(bot["tos_parity"]["comparison_target"])}</td>
+          <td>{len(bot["tos_parity"]["snapshots"])}</td>
+          <td>{escape(", ".join(item["symbol"] for item in bot["tos_parity"]["snapshots"][:4]) or "None")}</td>
+          <td>{escape(bot["tos_parity"]["snapshots"][0]["last_bar_at"] if bot["tos_parity"]["snapshots"] else "Awaiting closed 1m bar")}</td>
+          <td>{escape(bot["tos_parity"]["summary"])}</td>
+        </tr>
+        """
+        for bot in parity_bots
+    ) or _empty_row(7, "No TOS parity-ready bot snapshots yet")
+
     services_rows = "".join(
         f"""
         <tr>
@@ -1603,19 +1691,19 @@ def _render_dashboard(data: dict[str, Any]) -> str:
             font-size: 12px;
             font-weight: bold;
           }}
-          .status-healthy, .status-filled, .status-pass, .status-open {{
+          .status-healthy, .status-filled, .status-pass, .status-open, .status-ready {{
             background: rgba(15, 127, 102, 0.12);
             color: var(--accent);
           }}
-          .status-dot.status-healthy, .status-dot.status-filled, .status-dot.status-pass, .status-dot.status-open {{
+          .status-dot.status-healthy, .status-dot.status-filled, .status-dot.status-pass, .status-dot.status-open, .status-dot.status-ready {{
             background: var(--accent);
             color: transparent;
           }}
-          .status-starting, .status-accepted, .status-submitted, .status-warning {{
+          .status-starting, .status-accepted, .status-submitted, .status-warning, .status-warming {{
             background: rgba(212, 128, 0, 0.12);
             color: var(--warn);
           }}
-          .status-dot.status-starting, .status-dot.status-accepted, .status-dot.status-submitted, .status-dot.status-warning {{
+          .status-dot.status-starting, .status-dot.status-accepted, .status-dot.status-submitted, .status-dot.status-warning, .status-dot.status-warming {{
             background: var(--warn);
             color: transparent;
           }}
@@ -1627,11 +1715,11 @@ def _render_dashboard(data: dict[str, Any]) -> str:
             background: var(--danger);
             color: transparent;
           }}
-          .status-pending, .status-cancelled {{
+          .status-pending, .status-cancelled, .status-idle {{
             background: rgba(18, 36, 51, 0.1);
             color: var(--ink);
           }}
-          .status-dot.status-pending, .status-dot.status-cancelled {{
+          .status-dot.status-pending, .status-dot.status-cancelled, .status-dot.status-idle {{
             background: var(--ink);
             color: transparent;
           }}
@@ -1812,6 +1900,23 @@ def _render_dashboard(data: dict[str, Any]) -> str:
               </div>
             </div>
             <div class="bot-grid">{bot_cards}</div>
+          </section>
+
+          <section class="section">
+            <div class="section-header">
+              <div>
+                <h2>TOS Parity</h2>
+                <div class="sub">Closed 1m indicator values published by Mai Tai for side-by-side comparison with thinkorswim charts.</div>
+              </div>
+            </div>
+            <div class="table-card">
+              <table>
+                <thead>
+                  <tr><th>Bot</th><th>Status</th><th>Target</th><th>Snapshots</th><th>Symbols</th><th>Latest Bar</th><th>Summary</th></tr>
+                </thead>
+                <tbody>{parity_rows}</tbody>
+              </table>
+            </div>
           </section>
 
           <details class="fold-panel">
@@ -2131,6 +2236,8 @@ def _build_bot_api_payload(data: dict[str, Any], strategy_code: str) -> dict[str
         "recent_intents": bot["recent_intents"],
         "recent_orders": bot["recent_orders"],
         "recent_fills": bot["recent_fills"],
+        "indicator_snapshots": bot["indicator_snapshots"],
+        "tos_parity": bot["tos_parity"],
         "trade_log": _build_bot_decision_entries(bot),
     }
 
@@ -2595,6 +2702,29 @@ def _render_bot_detail_page(data: dict[str, Any], strategy_code: str) -> str:
     pnl_color = "#5fff8d" if bot["daily_pnl"] >= 0 else "#ff6b6b"
     recent_fill_count = len(recent_fills)
     current_position = bot["positions"][0] if strategy_code == "runner" and bot["positions"] else None
+    parity = bot.get("tos_parity", {})
+    parity_settings = _render_chip_cloud(parity.get("settings", []), empty_text="No parity settings defined")
+    parity_rows = _build_tos_parity_rows(parity)
+    parity_panel = ""
+    if parity.get("enabled"):
+        parity_panel = f"""
+            <section class="panel">
+                <div class="panel-header">
+                    <div>
+                        <h3>TOS Parity</h3>
+                        <div class="sub">Mai Tai's latest closed 1m values for comparison against your thinkorswim chart.</div>
+                    </div>
+                    <span class="count amber">{escape(parity.get("status", "idle"))}</span>
+                </div>
+                <div class="panel-copy">{escape(parity.get("summary", ""))}</div>
+                <div class="badge-row">{parity_settings}</div>
+                <div class="table-wrap">
+                    <table>
+                        <thead><tr><th>Ticker</th><th>Closed Bar</th><th style="text-align:right">Close</th><th style="text-align:right">EMA9</th><th style="text-align:right">EMA20</th><th style="text-align:right">MACD</th><th style="text-align:right">Signal</th><th style="text-align:right">Hist</th><th style="text-align:right">VWAP</th><th>Flags</th></tr></thead>
+                        <tbody>{parity_rows}</tbody>
+                    </table>
+                </div>
+            </section>"""
 
     runner_status_panel = ""
     if strategy_code == "runner":
@@ -3015,6 +3145,8 @@ def _render_bot_detail_page(data: dict[str, Any], strategy_code: str) -> str:
 
             {runner_status_panel}
 
+            {parity_panel}
+
             <section class="panel">
                 <div class="panel-header">
                     <div>
@@ -3188,6 +3320,38 @@ def _build_bot_order_rows(bot: dict[str, Any]) -> str:
             <td style="text-align:right">{escape(item["quantity"])}</td>
             <td>{escape(item["status"].upper())}</td>
             <td style="font-size:11px;">{escape(client_order_id[-24:] if len(client_order_id) > 24 else client_order_id)}</td>
+        </tr>"""
+        )
+    return "".join(rows)
+
+
+def _build_tos_parity_rows(parity: dict[str, Any]) -> str:
+    snapshots = parity.get("snapshots", [])
+    if not snapshots:
+        return '<tr><td colspan="10" style="text-align:center;color:#7b86a4;padding:15px;">No closed 1m bars published yet</td></tr>'
+
+    rows: list[str] = []
+    for item in snapshots:
+        flags = []
+        flags.append("MACD>Signal" if item.get("macd_above_signal") else "MACD<Signal")
+        if item.get("price_above_vwap"):
+            flags.append("Above VWAP")
+        if item.get("price_above_ema9"):
+            flags.append("Above EMA9")
+        if item.get("price_above_ema20"):
+            flags.append("Above EMA20")
+        rows.append(
+            f"""<tr>
+            <td><strong>{escape(item["symbol"])}</strong></td>
+            <td>{escape(item["last_bar_at"])}</td>
+            <td style="text-align:right">{item["close"]:.4f}</td>
+            <td style="text-align:right">{item["ema9"]:.4f}</td>
+            <td style="text-align:right">{item["ema20"]:.4f}</td>
+            <td style="text-align:right">{item["macd"]:.5f}</td>
+            <td style="text-align:right">{item["signal"]:.5f}</td>
+            <td style="text-align:right">{item["histogram"]:.5f}</td>
+            <td style="text-align:right">{item["vwap"]:.4f}</td>
+            <td>{escape(', '.join(flags) or '-')}</td>
         </tr>"""
         )
     return "".join(rows)

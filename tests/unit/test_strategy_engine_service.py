@@ -169,6 +169,49 @@ def test_trade_tick_generates_open_intent_for_confirmed_watchlist(monkeypatch) -
     assert "UGRO" in bot.pending_open_symbols
 
 
+def test_strategy_summary_includes_indicator_snapshots_for_1m_parity(monkeypatch) -> None:
+    state = StrategyEngineState(now_provider=fixed_now)
+    bot = state.bots["macd_1m"]
+    bot.set_watchlist(["UGRO"])
+    state.seed_bars(
+        "macd_1m",
+        "UGRO",
+        seed_trending_bars(start_timestamp=1_700_000_000.0, interval_secs=60),
+    )
+    monkeypatch.setattr(
+        bot.indicator_engine,
+        "calculate",
+        lambda bars: {
+            "price": 2.8,
+            "ema9": 2.7,
+            "ema20": 2.55,
+            "macd": 0.08231,
+            "signal": 0.07411,
+            "histogram": 0.0082,
+            "vwap": 2.61,
+            "macd_above_signal": True,
+            "price_above_vwap": True,
+            "price_above_ema9": True,
+            "price_above_ema20": True,
+        },
+    )
+    monkeypatch.setattr(bot.entry_engine, "check_entry", lambda *args, **kwargs: None)
+
+    state.handle_trade_tick(
+        symbol="UGRO",
+        price=2.8,
+        size=200,
+        timestamp_ns=1_700_003_000_000_000_000,
+    )
+
+    summary = state.summary()
+    indicator_snapshots = summary["bots"]["macd_1m"]["indicator_snapshots"]
+    assert indicator_snapshots
+    assert indicator_snapshots[0]["symbol"] == "UGRO"
+    assert indicator_snapshots[0]["interval_secs"] == 60
+    assert indicator_snapshots[0]["macd_above_signal"] is True
+
+
 @pytest.mark.asyncio
 async def test_order_event_fill_opens_position_and_clears_pending_state() -> None:
     redis = FakeRedis()

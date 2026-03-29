@@ -294,6 +294,7 @@ class RunnerStrategyRuntime:
             "pending_scale_levels": [],
             "daily_pnl": self._daily_pnl,
             "closed_today": list(self._closed_today),
+            "indicator_snapshots": [],
         }
 
     def active_symbols(self) -> set[str]:

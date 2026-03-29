@@ -384,6 +384,25 @@ def make_streams(prefix: str, *, include_confirmed: bool = True) -> dict[str, li
                     pending_open_symbols=[],
                     pending_close_symbols=[],
                     pending_scale_levels=[],
+                    indicator_snapshots=[
+                        {
+                            "symbol": "UGRO",
+                            "interval_secs": 60,
+                            "bar_count": 128,
+                            "last_bar_at": "2026-03-28T14:00:00+00:00",
+                            "close": 2.55,
+                            "ema9": 2.44,
+                            "ema20": 2.31,
+                            "macd": 0.08765,
+                            "signal": 0.07432,
+                            "histogram": 0.01333,
+                            "vwap": 2.40,
+                            "macd_above_signal": True,
+                            "price_above_vwap": True,
+                            "price_above_ema9": True,
+                            "price_above_ema20": True,
+                        }
+                    ],
                 ),
                 StrategyBotStatePayload(
                     strategy_code="tos",
@@ -393,6 +412,25 @@ def make_streams(prefix: str, *, include_confirmed: bool = True) -> dict[str, li
                     pending_open_symbols=[],
                     pending_close_symbols=[],
                     pending_scale_levels=[],
+                    indicator_snapshots=[
+                        {
+                            "symbol": "UGRO",
+                            "interval_secs": 60,
+                            "bar_count": 128,
+                            "last_bar_at": "2026-03-28T14:00:00+00:00",
+                            "close": 2.55,
+                            "ema9": 2.44,
+                            "ema20": 2.31,
+                            "macd": 0.08765,
+                            "signal": 0.07432,
+                            "histogram": 0.01333,
+                            "vwap": 2.40,
+                            "macd_above_signal": True,
+                            "price_above_vwap": True,
+                            "price_above_ema9": True,
+                            "price_above_ema20": True,
+                        }
+                    ],
                 ),
             ],
         ),
@@ -456,6 +494,8 @@ def test_control_plane_overview_and_dashboard_render() -> None:
         assert bots_body["bots"][0]["recent_intents"][0]["symbol"] == "UGRO"
         assert bots_body["bots"][0]["legacy_status"] == "running (dry run)"
         assert bots_body["bots"][0]["daily_pnl"] == 125.5
+        assert bots_body["bots"][1]["tos_parity"]["comparison_target"] == "thinkorswim_1m"
+        assert bots_body["bots"][1]["tos_parity"]["snapshots"][0]["symbol"] == "UGRO"
 
         legacy_scanner = client.get("/scanner/dashboard")
         assert legacy_scanner.status_code == 200
@@ -495,6 +535,12 @@ def test_control_plane_overview_and_dashboard_render() -> None:
         assert "Account Exposure" in bot_30s_page.text
         assert "Decision Tape" in bot_30s_page.text
 
+        bot_1m_page = client.get("/bot/1m")
+        assert bot_1m_page.status_code == 200
+        assert "TOS Parity" in bot_1m_page.text
+        assert "EMA9" in bot_1m_page.text
+        assert "Compare on closed bars only" in bot_1m_page.text
+
         bot_runner_page = client.get("/bot/runner")
         assert bot_runner_page.status_code == 200
         assert "Runner Bot" in bot_runner_page.text
@@ -523,6 +569,8 @@ def test_control_plane_overview_and_dashboard_render() -> None:
         assert "MACD Bot" in dashboard.text
         assert "paper/alpaca" in dashboard.text
         assert "Legacy Shadow:" in dashboard.text
+        assert "TOS Parity" in dashboard.text
+        assert "thinkorswim_1m" in dashboard.text
         assert "Virtual Positions" in dashboard.text
         assert "Cutover Confidence" in dashboard.text
         assert "Order stuck in accepted for UGRO" in dashboard.text
