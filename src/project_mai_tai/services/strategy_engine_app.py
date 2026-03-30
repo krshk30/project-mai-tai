@@ -100,6 +100,7 @@ class StrategyBotRuntime:
         )
         self.exit_engine = ExitEngine(definition.trading_config)
         self.positions = PositionTracker(definition.trading_config)
+        self.positions.load_closed_trades()
         self.watchlist: set[str] = set()
         self.last_indicators: dict[str, dict[str, float | bool]] = {}
         self.pending_open_symbols: set[str] = set()

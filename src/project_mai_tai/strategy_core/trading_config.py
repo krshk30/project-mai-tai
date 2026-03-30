@@ -7,7 +7,7 @@ from dataclasses import asdict, dataclass
 class TradingConfig:
     dry_run: bool = True
 
-    default_quantity: int = 10
+    default_quantity: int = 100
     max_positions: int = 10
     max_daily_loss: float = -500.0
 
@@ -19,7 +19,7 @@ class TradingConfig:
     dead_zone_start: str = "00:00"
     dead_zone_end: str = "00:00"
 
-    confirm_bars: int = 2
+    confirm_bars: int = 1
     min_score: int = 4
     surge_rate: float = 0.001
     vol_min: int = 10_000

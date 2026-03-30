@@ -33,6 +33,10 @@ class FakeRedis:
         del offsets, block, count
         return []
 
+    async def xrevrange(self, stream: str, count: int | None = None, **kwargs):
+        del stream, count, kwargs
+        return []
+
     async def aclose(self) -> None:
         return None
 
@@ -119,7 +123,7 @@ async def test_strategy_and_oms_roundtrip_opens_positions_across_services(monkey
 
     position = strategy_service.state.bots["macd_30s"].positions.get_position("UGRO")
     assert position is not None
-    assert position.quantity == 10
+    assert position.quantity == 100
     assert position.entry_price == 2.8
 
     with session_factory() as session:
@@ -127,6 +131,6 @@ async def test_strategy_and_oms_roundtrip_opens_positions_across_services(monkey
         account_position = session.scalar(select(AccountPosition))
 
         assert virtual_position is not None
-        assert virtual_position.quantity == Decimal("10")
+        assert virtual_position.quantity == Decimal("100")
         assert account_position is not None
-        assert account_position.quantity == Decimal("10")
+        assert account_position.quantity == Decimal("100")

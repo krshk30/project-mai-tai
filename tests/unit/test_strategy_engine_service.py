@@ -19,9 +19,15 @@ from project_mai_tai.events import (
     OrderEventPayload,
     SnapshotBatchEvent,
 )
-from project_mai_tai.services.strategy_engine_app import StrategyEngineService, StrategyEngineState, snapshot_from_payload
+from project_mai_tai.services.strategy_engine_app import (
+    StrategyBotRuntime,
+    StrategyDefinition,
+    StrategyEngineService,
+    StrategyEngineState,
+    snapshot_from_payload,
+)
 from project_mai_tai.settings import Settings
-from project_mai_tai.strategy_core import ReferenceData
+from project_mai_tai.strategy_core import IndicatorConfig, ReferenceData, TradingConfig
 
 
 def fixed_now() -> datetime:
@@ -913,3 +919,31 @@ def test_seeded_confirmed_candidates_drop_when_missing_from_fresh_snapshots() ->
     assert service.state._seeded_confirmed_pending_revalidation is False
     assert summary["watchlist"] == []
     assert summary["top_confirmed"] == []
+
+
+def test_strategy_bot_runtime_loads_closed_trades_for_daily_pnl(monkeypatch) -> None:
+    calls: list[str] = []
+
+    def fake_load_closed_trades(self) -> None:
+        calls.append(self.config.__class__.__name__)
+        self._daily_pnl = 42.5
+
+    monkeypatch.setattr(
+        "project_mai_tai.services.strategy_engine_app.PositionTracker.load_closed_trades",
+        fake_load_closed_trades,
+    )
+
+    runtime = StrategyBotRuntime(
+        StrategyDefinition(
+            code="macd_30s",
+            display_name="MACD Bot",
+            account_name="paper:macd_30s",
+            interval_secs=30,
+            trading_config=TradingConfig(),
+            indicator_config=IndicatorConfig(),
+        ),
+        now_provider=fixed_now,
+    )
+
+    assert calls == ["TradingConfig"]
+    assert runtime.positions.get_daily_pnl() == 42.5
