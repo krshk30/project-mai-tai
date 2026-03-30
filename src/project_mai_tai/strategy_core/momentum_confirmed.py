@@ -540,8 +540,6 @@ class MomentumConfirmedScanner:
     def _calculate_score(self, stock: dict[str, object], all_candidates: list[dict[str, object]]) -> float:
         if not all_candidates:
             return 0.0
-        if len(all_candidates) == 1:
-            return 100.0
 
         volumes = [float(candidate.get("volume", 0) or 0) for candidate in all_candidates]
         floats = [float(candidate.get("shares_outstanding", 0) or 0) for candidate in all_candidates]

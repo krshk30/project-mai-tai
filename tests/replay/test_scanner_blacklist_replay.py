@@ -41,8 +41,9 @@ def test_replay_blacklist_filters_confirmed_watchlists(monkeypatch) -> None:
         blacklisted_symbols=set(fixture["blacklisted_symbols"]),
     )
 
-    assert summary["watchlist"] == ["SBET"]
-    assert [item["ticker"] for item in summary["top_confirmed"]] == ["SBET"]
-    assert state.bots["macd_30s"].watchlist == {"SBET"}
-    assert state.bots["runner"].watchlist == {"SBET"}
+    assert summary["watchlist"] == []
+    assert summary["top_confirmed"] == []
+    assert [item["ticker"] for item in state.confirmed_scanner.get_all_confirmed()] == ["SBET"]
+    assert state.bots["macd_30s"].watchlist == set()
+    assert state.bots["runner"].watchlist == set()
     assert [item["ticker"] for item in state.confirmed_scanner.get_all_confirmed()] == ["SBET"]
