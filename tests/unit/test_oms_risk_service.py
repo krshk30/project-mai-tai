@@ -165,6 +165,31 @@ class FakePendingExitBrokerAdapter:
         ]
 
 
+class FakeAcceptedOnlyBrokerAdapter:
+    async def submit_order(self, request):
+        return [
+            ExecutionReport(
+                event_type="accepted",
+                client_order_id=request.client_order_id,
+                broker_order_id=f"ord-{request.client_order_id}",
+                symbol=request.symbol,
+                side=request.side,
+                intent_type=request.intent_type,
+                quantity=request.quantity,
+                reason=request.reason,
+                metadata=dict(request.metadata),
+            )
+        ]
+
+    async def fetch_order_update(self, request):
+        del request
+        return None
+
+    async def list_account_positions(self, broker_account_name: str):
+        del broker_account_name
+        return []
+
+
 def build_test_session_factory() -> sessionmaker[Session]:
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",
@@ -627,6 +652,167 @@ async def test_oms_service_rejects_duplicate_exit_in_flight() -> None:
     assert len(duplicate) == 1
     assert duplicate[0].payload.status == "rejected"
     assert duplicate[0].payload.reason == "duplicate_exit_in_flight"
+
+
+@pytest.mark.asyncio
+async def test_oms_service_shared_account_exit_uses_strategy_virtual_quantity() -> None:
+    redis = FakeRedis()
+    session_factory = build_test_session_factory()
+    service = OmsRiskService(
+        settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
+        redis_client=redis,
+        session_factory=session_factory,
+        broker_adapter=FakeAcceptedOnlyBrokerAdapter(),
+    )
+
+    with session_factory() as session:
+        tos = service.store.ensure_strategy(session, "tos")
+        runner = service.store.ensure_strategy(session, "runner")
+        account = service.store.ensure_broker_account(
+            session,
+            "paper:tos_runner_shared",
+            provider="alpaca",
+            environment="paper",
+        )
+        session.add_all(
+            [
+                VirtualPosition(
+                    strategy_id=tos.id,
+                    broker_account_id=account.id,
+                    symbol="UGRO",
+                    quantity=Decimal("60"),
+                    average_price=Decimal("2.00"),
+                    realized_pnl=Decimal("0"),
+                ),
+                VirtualPosition(
+                    strategy_id=runner.id,
+                    broker_account_id=account.id,
+                    symbol="UGRO",
+                    quantity=Decimal("40"),
+                    average_price=Decimal("2.10"),
+                    realized_pnl=Decimal("0"),
+                ),
+                AccountPosition(
+                    broker_account_id=account.id,
+                    symbol="UGRO",
+                    quantity=Decimal("100"),
+                    average_price=Decimal("2.04"),
+                    market_value=Decimal("204.00"),
+                ),
+            ]
+        )
+        session.commit()
+
+    events = await service.process_trade_intent(
+        TradeIntentEvent(
+            source_service="strategy-engine",
+            payload=TradeIntentPayload(
+                strategy_code="runner",
+                broker_account_name="paper:tos_runner_shared",
+                symbol="UGRO",
+                side="sell",
+                quantity=Decimal("100"),
+                intent_type="close",
+                reason="TRAIL_STOP_10%",
+                metadata={},
+            ),
+        )
+    )
+
+    assert len(events) == 1
+    assert events[0].payload.status == "accepted"
+    assert events[0].payload.quantity == Decimal("40")
+
+
+@pytest.mark.asyncio
+async def test_oms_service_shared_account_exit_respects_pending_exit_reservations() -> None:
+    redis = FakeRedis()
+    session_factory = build_test_session_factory()
+    service = OmsRiskService(
+        settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
+        redis_client=redis,
+        session_factory=session_factory,
+        broker_adapter=FakeAcceptedOnlyBrokerAdapter(),
+    )
+
+    with session_factory() as session:
+        tos = service.store.ensure_strategy(session, "tos")
+        runner = service.store.ensure_strategy(session, "runner")
+        account = service.store.ensure_broker_account(
+            session,
+            "paper:tos_runner_shared",
+            provider="alpaca",
+            environment="paper",
+        )
+        existing_intent = TradeIntent(
+            strategy_id=tos.id,
+            broker_account_id=account.id,
+            symbol="UGRO",
+            side="sell",
+            intent_type="close",
+            quantity=Decimal("60"),
+            reason="TRAIL_STOP_10%",
+            status="submitted",
+            payload={},
+        )
+        session.add(existing_intent)
+        session.flush()
+        session.add(
+            BrokerOrder(
+                intent_id=existing_intent.id,
+                strategy_id=tos.id,
+                broker_account_id=account.id,
+                client_order_id="tos-exit-1",
+                broker_order_id="ord-existing",
+                symbol="UGRO",
+                side="sell",
+                order_type="market",
+                time_in_force="day",
+                quantity=Decimal("60"),
+                status="accepted",
+                payload={},
+            )
+        )
+        session.add_all(
+            [
+                VirtualPosition(
+                    strategy_id=runner.id,
+                    broker_account_id=account.id,
+                    symbol="UGRO",
+                    quantity=Decimal("50"),
+                    average_price=Decimal("2.10"),
+                    realized_pnl=Decimal("0"),
+                ),
+                AccountPosition(
+                    broker_account_id=account.id,
+                    symbol="UGRO",
+                    quantity=Decimal("100"),
+                    average_price=Decimal("2.04"),
+                    market_value=Decimal("204.00"),
+                ),
+            ]
+        )
+        session.commit()
+
+    events = await service.process_trade_intent(
+        TradeIntentEvent(
+            source_service="strategy-engine",
+            payload=TradeIntentPayload(
+                strategy_code="runner",
+                broker_account_name="paper:tos_runner_shared",
+                symbol="UGRO",
+                side="sell",
+                quantity=Decimal("50"),
+                intent_type="close",
+                reason="TRAIL_STOP_10%",
+                metadata={},
+            ),
+        )
+    )
+
+    assert len(events) == 1
+    assert events[0].payload.status == "accepted"
+    assert events[0].payload.quantity == Decimal("40")
 
 
 def test_store_clears_virtual_positions_without_broker_backing() -> None:

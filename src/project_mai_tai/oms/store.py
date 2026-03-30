@@ -74,6 +74,42 @@ class OmsStore:
             )
         )
 
+    def get_virtual_position(
+        self,
+        session: Session,
+        *,
+        strategy_id: UUID,
+        broker_account_id: UUID,
+        symbol: str,
+    ) -> VirtualPosition | None:
+        return session.scalar(
+            select(VirtualPosition).where(
+                VirtualPosition.strategy_id == strategy_id,
+                VirtualPosition.broker_account_id == broker_account_id,
+                VirtualPosition.symbol == symbol,
+            )
+        )
+
+    def get_open_exit_reserved_quantity(
+        self,
+        session: Session,
+        *,
+        broker_account_id: UUID,
+        symbol: str,
+    ) -> Decimal:
+        orders = session.scalars(
+            select(BrokerOrder).where(
+                BrokerOrder.broker_account_id == broker_account_id,
+                BrokerOrder.symbol == symbol,
+                BrokerOrder.side == "sell",
+                BrokerOrder.status.in_(self.OPEN_ORDER_STATUSES),
+            )
+        ).all()
+        total = Decimal("0")
+        for order in orders:
+            total += order.quantity
+        return total
+
     def find_open_exit_order(
         self,
         session: Session,

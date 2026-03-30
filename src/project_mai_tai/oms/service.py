@@ -205,6 +205,28 @@ class OmsRiskService:
                     await self._publish_order_event(order_event)
                     return [order_event]
 
+                virtual_position = self.store.get_virtual_position(
+                    session,
+                    strategy_id=strategy.id,
+                    broker_account_id=broker_account.id,
+                    symbol=event.payload.symbol,
+                )
+                strategy_available_quantity = (
+                    virtual_position.quantity
+                    if virtual_position is not None and virtual_position.quantity > 0
+                    else Decimal("0")
+                )
+                if strategy_available_quantity <= 0:
+                    self.store.mark_intent_status(intent, "rejected")
+                    order_event = self._build_rejected_event(
+                        event,
+                        intent.id,
+                        reason="no strategy position available to sell",
+                    )
+                    session.commit()
+                    await self._publish_order_event(order_event)
+                    return [order_event]
+
                 account_position = self.store.get_account_position(
                     session,
                     broker_account_id=broker_account.id,
@@ -226,7 +248,28 @@ class OmsRiskService:
                     await self._publish_order_event(order_event)
                     return [order_event]
 
-                request_quantity = min(event.payload.quantity, available_quantity)
+                reserved_exit_quantity = self.store.get_open_exit_reserved_quantity(
+                    session,
+                    broker_account_id=broker_account.id,
+                    symbol=event.payload.symbol,
+                )
+                remaining_account_quantity = max(Decimal("0"), available_quantity - reserved_exit_quantity)
+                if remaining_account_quantity <= 0:
+                    self.store.mark_intent_status(intent, "rejected")
+                    order_event = self._build_rejected_event(
+                        event,
+                        intent.id,
+                        reason="broker quantity already reserved for pending exits",
+                    )
+                    session.commit()
+                    await self._publish_order_event(order_event)
+                    return [order_event]
+
+                request_quantity = min(
+                    event.payload.quantity,
+                    strategy_available_quantity,
+                    remaining_account_quantity,
+                )
                 intent.quantity = request_quantity
 
             client_order_id = self._build_client_order_id(event)
