@@ -8,6 +8,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from project_mai_tai.broker_adapters.protocols import ExecutionReport
 from project_mai_tai.db.base import Base
 from project_mai_tai.db.models import AccountPosition, BrokerOrder, Fill, TradeIntent, VirtualPosition
 from project_mai_tai.events import TradeIntentEvent, TradeIntentPayload
@@ -30,6 +31,44 @@ class FakeRedis:
 
     async def aclose(self) -> None:
         return None
+
+
+class FakeCancelBrokerAdapter:
+    def __init__(self, *, cancel_event_type: str = "cancelled") -> None:
+        self.cancel_event_type = cancel_event_type
+
+    async def submit_order(self, request):
+        if request.intent_type == "open":
+            return [
+                ExecutionReport(
+                    event_type="accepted",
+                    client_order_id=request.client_order_id,
+                    broker_order_id="ord-123",
+                    symbol=request.symbol,
+                    side=request.side,
+                    intent_type=request.intent_type,
+                    quantity=request.quantity,
+                    reason=request.reason,
+                    metadata=dict(request.metadata),
+                )
+            ]
+        return [
+            ExecutionReport(
+                event_type=self.cancel_event_type,  # type: ignore[arg-type]
+                client_order_id=request.client_order_id,
+                broker_order_id="ord-123",
+                symbol=request.symbol,
+                side=request.side,
+                intent_type="cancel",
+                quantity=request.quantity,
+                reason=request.reason or "USER_CANCEL",
+                metadata=dict(request.metadata),
+            )
+        ]
+
+    async def list_account_positions(self, broker_account_name: str):
+        del broker_account_name
+        return []
 
 
 def build_test_session_factory() -> sessionmaker[Session]:
@@ -170,3 +209,116 @@ async def test_oms_service_syncs_account_positions_from_broker_truth() -> None:
         assert account_position is not None
         assert account_position.quantity == Decimal("10")
         assert account_position.average_price == Decimal("2.55")
+
+
+@pytest.mark.asyncio
+async def test_oms_service_cancels_open_order_using_existing_order_identity() -> None:
+    redis = FakeRedis()
+    session_factory = build_test_session_factory()
+    service = OmsRiskService(
+        settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
+        redis_client=redis,
+        session_factory=session_factory,
+        broker_adapter=FakeCancelBrokerAdapter(),
+    )
+
+    open_events = await service.process_trade_intent(
+        TradeIntentEvent(
+            source_service="strategy-engine",
+            payload=TradeIntentPayload(
+                strategy_code="macd_30s",
+                broker_account_name="paper:macd_30s",
+                symbol="UGRO",
+                side="buy",
+                quantity=Decimal("10"),
+                intent_type="open",
+                reason="ENTRY_P1_MACD_CROSS",
+                metadata={"reference_price": "2.55"},
+            ),
+        )
+    )
+    cancel_events = await service.process_trade_intent(
+        TradeIntentEvent(
+            source_service="strategy-engine",
+            payload=TradeIntentPayload(
+                strategy_code="macd_30s",
+                broker_account_name="paper:macd_30s",
+                symbol="UGRO",
+                side="buy",
+                quantity=Decimal("0"),
+                intent_type="cancel",
+                reason="USER_CANCEL",
+                metadata={},
+            ),
+        )
+    )
+
+    assert [event.payload.status for event in open_events] == ["accepted"]
+    assert [event.payload.status for event in cancel_events] == ["cancelled"]
+    assert cancel_events[0].payload.client_order_id == open_events[0].payload.client_order_id
+    assert cancel_events[0].payload.quantity == Decimal("10")
+
+    with session_factory() as session:
+        stored_order = session.scalar(select(BrokerOrder))
+        intents = session.scalars(select(TradeIntent).order_by(TradeIntent.created_at)).all()
+
+        assert stored_order is not None
+        assert stored_order.status == "cancelled"
+        assert [intent.intent_type for intent in intents] == ["open", "cancel"]
+        assert intents[0].status == "submitted"
+        assert intents[1].status == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_oms_service_keeps_open_order_status_when_cancel_is_rejected() -> None:
+    redis = FakeRedis()
+    session_factory = build_test_session_factory()
+    service = OmsRiskService(
+        settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
+        redis_client=redis,
+        session_factory=session_factory,
+        broker_adapter=FakeCancelBrokerAdapter(cancel_event_type="rejected"),
+    )
+
+    await service.process_trade_intent(
+        TradeIntentEvent(
+            source_service="strategy-engine",
+            payload=TradeIntentPayload(
+                strategy_code="macd_30s",
+                broker_account_name="paper:macd_30s",
+                symbol="UGRO",
+                side="buy",
+                quantity=Decimal("10"),
+                intent_type="open",
+                reason="ENTRY_P1_MACD_CROSS",
+                metadata={"reference_price": "2.55"},
+            ),
+        )
+    )
+    cancel_events = await service.process_trade_intent(
+        TradeIntentEvent(
+            source_service="strategy-engine",
+            payload=TradeIntentPayload(
+                strategy_code="macd_30s",
+                broker_account_name="paper:macd_30s",
+                symbol="UGRO",
+                side="buy",
+                quantity=Decimal("0"),
+                intent_type="cancel",
+                reason="USER_CANCEL",
+                metadata={},
+            ),
+        )
+    )
+
+    assert [event.payload.status for event in cancel_events] == ["rejected"]
+
+    with session_factory() as session:
+        stored_order = session.scalar(select(BrokerOrder))
+        cancel_intent = session.scalars(
+            select(TradeIntent).where(TradeIntent.intent_type == "cancel")
+        ).one()
+
+        assert stored_order is not None
+        assert stored_order.status == "accepted"
+        assert cancel_intent.status == "rejected"

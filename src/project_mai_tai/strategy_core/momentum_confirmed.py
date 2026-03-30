@@ -195,6 +195,22 @@ class MomentumConfirmedScanner:
             self._tracking[ticker]["squeezes"] = []
             logger.info("[CONFIRMED] %s — reset for re-confirmation", ticker)
 
+    def remove_tickers(self, tickers: Iterable[str]) -> None:
+        blocked = {str(ticker).upper() for ticker in tickers if ticker}
+        if not blocked:
+            return
+
+        self._tracking = {
+            ticker: track
+            for ticker, track in self._tracking.items()
+            if str(ticker).upper() not in blocked
+        }
+        self._confirmed = [
+            stock
+            for stock in self._confirmed
+            if str(stock.get("ticker", "")).upper() not in blocked
+        ]
+
     def reset(self) -> None:
         self._tracking.clear()
         self._confirmed.clear()

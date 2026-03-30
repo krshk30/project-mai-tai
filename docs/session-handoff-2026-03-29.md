@@ -225,6 +225,111 @@ Last explicitly verified:
 
 Because the market was inactive at the time of the last check, a blank confirmed table was expected.
 
+## Continuation Update - Later 2026-03-29
+
+This section captures the follow-up work completed after the original handoff.
+
+### Access State
+
+Access is now working from the current Windows machine for both:
+
+- VPS SSH
+- GitHub SSH
+
+Working VPS target:
+
+- `trader@104.236.43.107`
+
+Local repo is now configured to use the GitHub SSH remote:
+
+- `git@github.com:krshk30/project-mai-tai.git`
+
+### Branch And Commit State
+
+The follow-up work was committed and pushed on:
+
+- branch: `codex/trading-followups`
+- commit: `ccc365c` - `Add broker follow-ups and live restart runbooks`
+
+This branch includes:
+
+- scanner blacklist work
+- Alpaca cancel-intent work
+- Schwab adapter/readiness work
+- restart helper scripts and live restart docs
+- associated test coverage
+
+### New Operational Docs And Scripts
+
+Added:
+
+- `/Users/velkris/src/project-mai-tai/docs/live-market-restart-runbook.md`
+- `/Users/velkris/src/project-mai-tai/docs/schwab-onboarding.md`
+- `/Users/velkris/src/project-mai-tai/ops/systemd/live_helpers.sh`
+- `/Users/velkris/src/project-mai-tai/ops/systemd/restart_control_live.sh`
+- `/Users/velkris/src/project-mai-tai/ops/systemd/restart_reconciler_live.sh`
+- `/Users/velkris/src/project-mai-tai/ops/systemd/restart_strategy_live.sh`
+- `/Users/velkris/src/project-mai-tai/ops/systemd/restart_oms_live.sh`
+- `/Users/velkris/src/project-mai-tai/ops/systemd/restart_market_data_live.sh`
+
+These scripts are intended to be used instead of ad hoc restart sequences during live operations.
+
+### Real VPS Restart Verification Was Performed
+
+Off-hours verification was run on the real VPS while the account was flat.
+
+Verified successfully:
+
+- control-plane restart helper
+- reconciler restart helper
+- coordinated `strategy -> oms -> strategy`
+- coordinated `strategy -> market-data -> strategy`
+
+Observed during verification:
+
+- services restarted successfully under `systemd`
+- final settled health returned `healthy`
+- immediately after coordinated restarts, `/health` could briefly show `degraded`
+- that short degraded window was caused by heartbeat timing/staleness, not by a persistent service failure
+
+Important detail:
+
+- after market-data restart, control-plane briefly still showed the old market-data heartbeat as `stopping`
+- direct Redis inspection confirmed fresh healthy market-data heartbeats were already being published again
+- a later settled `/health` check returned fully healthy
+
+Practical meaning for the next agent:
+
+- do not panic if `/health` is briefly degraded right after a coordinated restart
+- wait for fresh heartbeats before concluding the restart failed
+
+### Flat-State Verification Context
+
+At the time of the VPS restart verification:
+
+- `pending_intents = 0`
+- `open_virtual_positions = 0`
+- `open_account_positions = 0`
+- reconciliation findings = `0`
+
+This proves off-hours restart behavior, but it does **not** replace the still-needed active-session validation with real open positions.
+
+### Important VPS Checkout Note
+
+Before GitHub SSH/push access was fully set up from this machine, the restart helper files were copied directly into the VPS checkout to enable testing.
+
+That means the VPS checkout may contain local modified or untracked files corresponding to the same work now pushed on `codex/trading-followups`.
+
+Before any future deploy or branch switch on the VPS, the next agent should first run:
+
+```bash
+cd /home/trader/project-mai-tai
+git status --short
+git fetch origin
+```
+
+Do not assume the VPS checkout is a perfectly clean fast-forward candidate until that is checked.
+
 ## What The User Explicitly Wants Preserved
 
 - keep the legacy app running separately until comfortable with cutover

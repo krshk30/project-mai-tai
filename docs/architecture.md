@@ -2,80 +2,142 @@
 
 ## Purpose
 
-`project-mai-tai` replaces the legacy single-process trading runtime with a durable, restart-safe platform while preserving the working strategy logic.
+`project-mai-tai` replaces the legacy single-process trading runtime with a service-oriented platform while preserving the proven scanner and bot behavior.
 
-The legacy application remains online during migration.
+The legacy application is intentionally kept separate during migration.
 
 ## Service Topology
 
-### `services/control-plane`
+Runtime services are implemented in `src/project_mai_tai/` and launched through thin wrappers in `services/`.
+
+### `control-plane`
+
+Primary code:
+
+- `src/project_mai_tai/services/control_plane.py`
 
 Responsibilities:
-- operator dashboard
-- admin API
-- health and incident views
-- reconciliation views
-- shadow-vs-legacy comparison views
+
+- operator dashboard and HTML views
+- JSON APIs for health, scanner, bot, order, and reconciliation state
+- latest Redis stream inspection plus Postgres-backed state views
+- optional legacy-shadow comparison views
+- scanner blacklist management
+- broker-account summary and runtime-status surfaces for operators
 
 Rules:
-- never mutates in-memory trading state directly
-- all write actions go through OMS APIs or command streams
 
-### `services/market-data-gateway`
+- does not talk to broker APIs directly
+- does not own trading decisions
+- write actions must route through persisted state or OMS-safe flows
+
+### `market-data-gateway`
+
+Primary code:
+
+- `src/project_mai_tai/market_data/`
+- `src/project_mai_tai/services/market_data_gateway.py`
 
 Responsibilities:
-- owns Massive/Polygon REST and WebSocket access
-- normalizes trades, quotes, bars, and snapshot refreshes
-- publishes market-data events into Redis Streams
+
+- owns Massive/Polygon snapshot polling
+- owns Massive/Polygon live trade and quote subscriptions
+- builds reference-data cache
+- publishes historical warmup bars for `30s`, `1m`, and `5m`
+- manages dynamic symbol subscriptions requested by downstream consumers
+- publishes normalized market-data events into Redis Streams
 
 Rules:
-- single owner of market-data connections for the new platform
+
+- single owner of external market-data connections for the new platform
 - no strategy logic
+- no broker logic
 
-### `services/strategy-engine`
+### `strategy-engine`
+
+Primary code:
+
+- `src/project_mai_tai/services/strategy_engine_app.py`
+- `src/project_mai_tai/strategy_core/`
 
 Responsibilities:
-- runs strategy libraries for:
-  - 30s MACD
-  - 1m MACD
-  - TOS
-  - Runner
-- consumes normalized market-data events
-- emits trade intents
+
+- processes snapshot batches, trade ticks, historical warmup, and order events
+- computes scanner surfaces including momentum alerts, momentum confirmed, five pillars, and top gainers
+- maintains watchlists and publishes desired market-data subscriptions
+- runs four bot runtimes:
+  - `macd_30s`
+  - `macd_1m`
+  - `tos`
+  - `runner`
+- emits trade intents for OMS
+- publishes strategy state snapshots for the dashboard
+- applies scanner blacklist filtering from Postgres
 
 Rules:
+
 - no direct broker calls
-- no authoritative position storage
-- deterministic logic whenever possible
+- no authoritative execution persistence
+- strategy behavior should stay as deterministic as practical
 
-### `services/oms-risk`
+### `oms-risk`
+
+Primary code:
+
+- `src/project_mai_tai/oms/service.py`
+- `src/project_mai_tai/oms/store.py`
+- `src/project_mai_tai/broker_adapters/`
 
 Responsibilities:
-- validates trade intents
-- applies account and strategy risk checks
-- submits, cancels, and replaces broker orders
-- persists broker orders, events, fills, and derived positions
-- exposes strategy-attributed virtual positions inside shared brokerage accounts
+
+- seeds runtime strategy and broker-account metadata
+- validates trade intents and records risk checks
+- submits and cancels broker orders through the selected adapter
+- persists broker orders, order events, and fills
+- maintains:
+  - `virtual_positions`
+  - `account_positions`
+- supports shared-account attribution across strategies
+- syncs broker positions back into Postgres on an interval
+
+Supported adapters today:
+
+- `simulated`
+- `alpaca_paper`
+- `schwab`
 
 Rules:
+
 - only service allowed to talk to broker trading APIs
-- source of execution truth is Postgres, reconciled against broker truth
+- Postgres is the execution truth inside Mai Tai
+- broker truth must still be reconciled back into that execution model
 
-### `services/reconciler`
+### `reconciler`
+
+Primary code:
+
+- `src/project_mai_tai/reconciliation/service.py`
 
 Responsibilities:
-- compares broker account positions/orders to OMS state
-- creates incidents and repair recommendations
-- verifies recovery after restart
+
+- compares virtual positions to account positions
+- checks average-price drift
+- detects stuck orders
+- detects stuck intents
+- writes reconciliation runs, findings, and incidents
+- publishes service health based on reconciliation outcome
 
 Rules:
-- repairs happen through OMS flows, never by manual mutation of tracker state
+
+- reconciliation identifies and records problems
+- repair should happen through OMS-safe flows, not ad hoc tracker mutation
 
 ## Persistence Model
 
 ### Postgres
 
-Source of truth for:
+Postgres is the durable source of truth for:
+
 - broker accounts
 - strategies
 - trade intents
@@ -83,69 +145,121 @@ Source of truth for:
 - broker order events
 - fills
 - account positions
-- virtual per-strategy positions
-- reconciliation findings
-- health heartbeats
-- operator incidents
+- virtual positions
+- reconciliation runs and findings
+- system incidents
+- dashboard snapshots
+- scanner blacklist entries
+
+Primary model definitions live in:
+
+- `src/project_mai_tai/db/models.py`
 
 ### Redis Streams
 
-Used for:
-- market-data fanout
-- internal commands
-- background workflow triggers
+Redis Streams are the internal event bus, not the final source of truth.
 
-Not used as the final source of truth.
+Current stream families include:
+
+- `market-data`
+- `snapshot-batches`
+- `market-data-subscriptions`
+- `strategy-intents`
+- `order-events`
+- `strategy-state`
+- `heartbeats`
+
+Event envelopes and payloads live in:
+
+- `src/project_mai_tai/events.py`
 
 ## Shared Account Model
 
-The platform must support:
-- separate Alpaca paper accounts during migration
-- one shared Charles Schwab live account later
+The platform must support both:
 
-To support this, every order and fill must be attributable by:
+- separate paper accounts during migration
+- one shared live brokerage account later
+
+To support that, OMS records and derives state by:
+
 - `broker_account_id`
 - `strategy_id`
-- `bot_id`
 - `intent_id`
 - `client_order_id`
+- broker-side order/fill identifiers when available
 
-Two levels of position state are required:
-- `account_positions`: what the broker account actually holds
-- `virtual_positions`: strategy-level attribution inside that account
+Two position layers are intentionally kept:
+
+- `account_positions`
+  - what the broker account actually holds
+- `virtual_positions`
+  - strategy-attributed position ownership inside that account
 
 ## Operator Surface
 
-The dashboard is a first-class requirement, not an afterthought.
+The dashboard is a first-class runtime requirement.
 
-Minimum operator views:
-- overall health
-- scanner pipeline
-- confirmed candidates
-- strategy state
-- order timeline
-- fills
-- virtual positions
-- account positions
-- reconciliation findings
-- shadow divergence vs legacy
+Current operator surfaces include:
 
-## Security Model
+- overall health and service heartbeats
+- scanner pipeline and confirmed candidates
+- watchlist/runtime state snapshots
+- bot-level positions, pending states, and recent decisions
+- broker-account summaries
+- recent intents, orders, and fills
+- virtual and account positions
+- reconciliation runs and findings
+- incident tracking
+- optional shadow comparison against the legacy app
 
-Initial production approach:
+## Security And Deployment Model
+
+Production assumptions in the repo today:
+
 - services bind to localhost where possible
-- Nginx reverse proxy at the edge
-- basic auth for the dashboard
-- HTTPS at `https://project-mai-tai.live`
-- `www.project-mai-tai.live` redirects to the apex domain
-- root-owned env files under `/etc/project-mai-tai/`
+- Nginx is the public edge
+- dashboard access is protected with basic auth
+- HTTPS terminates at `project-mai-tai.live`
+- env files are root-owned under `/etc/project-mai-tai/`
+- services are managed by `systemd`
+
+Operational assets live in:
+
+- `ops/bootstrap/`
+- `ops/env/`
+- `ops/nginx/`
+- `ops/systemd/`
+
+## Recovery And Restart Reality
+
+The architecture aims for restart-safe execution truth, but not every runtime concern is fully rehydrated yet.
+
+What survives a restart cleanly:
+
+- broker-side orders and positions
+- Postgres-backed intents, orders, fills, virtual positions, and account positions
+- dashboard visibility of persisted execution state
+
+What is still more fragile:
+
+- in-memory strategy runtime state
+- Redis stream offsets started from new-message positions
+- coordinated restarts during active trading
+
+That is why the repo now includes:
+
+- `docs/live-market-restart-runbook.md`
+- live-session restart helpers under `ops/systemd/`
+
+Treat those runbooks as part of the current architecture, not as optional side docs.
 
 ## Migration Principle
 
 Preserve strategy behavior, replace runtime architecture.
 
 This repo intentionally avoids:
-- CSV/JSON as authoritative state
-- direct dashboard mutation of internals
-- single-process trading brain
-- broker logic embedded inside strategy code
+
+- CSV/JSON as execution truth
+- dashboard mutation of bot internals
+- direct strategy-to-broker calls
+- a single-process trading brain
