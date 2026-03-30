@@ -86,6 +86,7 @@ Use these docs to orient quickly:
 - [Live Market Restart Runbook](./docs/live-market-restart-runbook.md)
 - [Active Market Verification Todo](./docs/active-market-verification-todo.md)
 - [GitHub Actions Deploy](./docs/github-actions-deploy.md)
+- [Deployment Operating Model](./docs/deployment-operating-model.md)
 - [Schwab Onboarding](./docs/schwab-onboarding.md)
 - [VPS Deployment](./docs/vps-deployment.md)
 - [Source Layout](./src/README.md)
@@ -183,6 +184,9 @@ Important restart rule:
 - GitHub Actions validation runs automatically, but production deploy is manual via [GitHub Actions Deploy](./docs/github-actions-deploy.md) and the VPS script `ops/systemd/deploy_main.sh`
 
 ## GitHub Deploy Workflow
+
+For the full current design, operator steps, and risk-based responsibility split, see
+[Deployment Operating Model](./docs/deployment-operating-model.md).
 
 This repo now uses:
 
