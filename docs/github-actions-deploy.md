@@ -51,8 +51,24 @@ Add these repository secrets before enabling production deploys:
   - example: `trader`
 - `VPS_SSH_KEY`
   - private key that GitHub Actions should use to SSH into the VPS
+- `VPS_SSH_KEY_BASE64`
+  - optional safer alternative to `VPS_SSH_KEY`
+  - if present, the workflow prefers this value and base64-decodes it into the key file
 
 The VPS itself must already be able to `git fetch origin` for this repo.
+
+Recommended practice:
+
+- prefer `VPS_SSH_KEY_BASE64`
+- use `VPS_SSH_KEY` only if you are confident the multiline private key was pasted cleanly
+
+Windows command to generate the base64 form of the deploy key:
+
+```powershell
+[Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes((Get-Content C:\Users\kkvkr\.ssh\id_ed25519_codex_vps -Raw)))
+```
+
+Paste that single-line output into the GitHub secret `VPS_SSH_KEY_BASE64`.
 
 ## What The Deploy Script Does
 
