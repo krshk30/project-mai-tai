@@ -173,3 +173,20 @@ def test_entry_engine_allows_default_window_until_6pm_et() -> None:
     )
 
     assert gate["passed"] is True
+
+
+def test_entry_engine_no_longer_blocks_midday_dead_zone() -> None:
+    engine = EntryEngine(
+        TradingConfig(),
+        now_provider=lambda: datetime(2026, 3, 30, 13, 30),
+    )
+
+    gate = engine._check_hard_gates(
+        "ELAB",
+        {
+            "price_above_ema20": True,
+        },
+        bar_index=1,
+    )
+
+    assert gate["passed"] is True

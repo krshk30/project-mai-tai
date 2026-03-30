@@ -16,8 +16,8 @@ class TradingConfig:
 
     trading_start_hour: int = 7
     trading_end_hour: int = 18
-    dead_zone_start: str = "12:01"
-    dead_zone_end: str = "15:00"
+    dead_zone_start: str = "00:00"
+    dead_zone_end: str = "00:00"
 
     confirm_bars: int = 2
     min_score: int = 4
