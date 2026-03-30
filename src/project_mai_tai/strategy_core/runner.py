@@ -14,8 +14,7 @@ from project_mai_tai.strategy_core.models import OHLCVBar
 @dataclass(frozen=True)
 class RunnerConfig:
     min_score: float = 70.0
-    min_change_pct: float = 35.0
-    min_change_pct_with_news: float = 20.0
+    min_change_pct: float = 30.0
     max_change_pct: float = 50.0
     live_change_floor_ratio: float = 0.90
     max_spread_cents: float = 10.0
@@ -72,15 +71,7 @@ class RunnerPosition:
             self.peak_profit_pct = self.current_profit_pct
 
     def get_trail_pct(self, config: RunnerConfig) -> float:
-        trail_pct = config.trail_pct_low
-        if self.peak_profit_pct >= 100.0:
-            trail_pct = config.trail_pct_high
-        elif self.peak_profit_pct >= 80.0:
-            trail_pct = config.trail_pct_mid
-
-        if self.volume_faded:
-            trail_pct -= config.volume_fade_trail_tighten_pct
-        return max(trail_pct, 5.0)
+        return config.trail_pct_low
 
     def get_trail_stop_price(self, config: RunnerConfig) -> float:
         return self.peak_price * (1 - self.get_trail_pct(config) / 100)
@@ -358,10 +349,7 @@ class RunnerStrategyRuntime:
         if candidate_change_pct > self.config.max_change_pct:
             return False
 
-        min_change = self.config.min_change_pct
-        if str(candidate.get("confirmation_path", "")) == "PATH_A_NEWS":
-            min_change = self.config.min_change_pct_with_news
-        if candidate_change_pct < min_change:
+        if candidate_change_pct < self.config.min_change_pct:
             return False
 
         cooldown_until = self._cooldown_until.get(symbol)
