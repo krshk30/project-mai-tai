@@ -19,6 +19,7 @@ Use this directory when you need to answer:
 - where runtime env vars should live
 - how traffic reaches the control plane
 - how services should be started, stopped, restarted, and inspected
+- how GitHub Actions hands off a validated `main` deploy to the VPS
 
 Start here:
 
@@ -31,3 +32,4 @@ Operational rule of thumb:
 - `bootstrap/` is for first-run host setup
 - `systemd/` is for day-2 runtime operations
 - live-market restart behavior is documented in `../docs/live-market-restart-runbook.md`
+- GitHub Actions deploy flow is documented in `../docs/github-actions-deploy.md`

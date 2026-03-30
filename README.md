@@ -85,6 +85,7 @@ Use these docs to orient quickly:
 - [Session Handoff 2026-03-29](./docs/session-handoff-2026-03-29.md)
 - [Live Market Restart Runbook](./docs/live-market-restart-runbook.md)
 - [Active Market Verification Todo](./docs/active-market-verification-todo.md)
+- [GitHub Actions Deploy](./docs/github-actions-deploy.md)
 - [Schwab Onboarding](./docs/schwab-onboarding.md)
 - [VPS Deployment](./docs/vps-deployment.md)
 - [Source Layout](./src/README.md)
@@ -154,6 +155,7 @@ Important restart rule:
 
 - `ops/systemd/restart_all.sh` is for off-hours or flat-account use
 - during an active session, use the coordinated scripts in `ops/systemd/` plus [Live Market Restart Runbook](./docs/live-market-restart-runbook.md)
+- GitHub Actions deploys use [GitHub Actions Deploy](./docs/github-actions-deploy.md) and the VPS script `ops/systemd/deploy_main.sh`
 
 ## Current Documentation Truth
 

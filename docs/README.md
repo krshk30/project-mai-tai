@@ -10,6 +10,8 @@ Use these files by question:
   - what still needs to be proven during a real session
 - `live-market-restart-runbook.md`
   - how to restart safely during live operations
+- `github-actions-deploy.md`
+  - how validation plus VPS deploy is wired through GitHub Actions
 - `vps-deployment.md`
   - how the runtime is deployed on the VPS
 - `schwab-onboarding.md`
