@@ -99,7 +99,11 @@ class StrategyBotRuntime:
             now_provider=now_provider,
         )
         self.exit_engine = ExitEngine(definition.trading_config)
-        self.positions = PositionTracker(definition.trading_config)
+        self.positions = PositionTracker(
+            definition.trading_config,
+            positions_file=self._positions_file_for_strategy(definition.code),
+            closed_file_prefix=self._closed_trade_prefix_for_strategy(definition.code),
+        )
         self.positions.load_closed_trades()
         self.watchlist: set[str] = set()
         self.last_indicators: dict[str, dict[str, float | bool]] = {}
@@ -109,6 +113,16 @@ class StrategyBotRuntime:
         self.exit_retry_blocked_until: dict[str, datetime] = {}
         self.scale_retry_blocked_until: dict[tuple[str, str], datetime] = {}
         self.recent_decisions: list[dict[str, str]] = []
+
+    @staticmethod
+    def _positions_file_for_strategy(strategy_code: str) -> str:
+        return f"data/cache/positions_{strategy_code}.json"
+
+    @staticmethod
+    def _closed_trade_prefix_for_strategy(strategy_code: str) -> str:
+        if strategy_code == "macd_30s":
+            return "macdbot"
+        return strategy_code
 
     def set_watchlist(self, symbols: Iterable[str]) -> None:
         self.watchlist = set(symbols)

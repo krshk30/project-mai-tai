@@ -947,3 +947,43 @@ def test_strategy_bot_runtime_loads_closed_trades_for_daily_pnl(monkeypatch) -> 
 
     assert calls == ["TradingConfig"]
     assert runtime.positions.get_daily_pnl() == 42.5
+
+
+def test_strategy_bot_runtime_uses_strategy_specific_trade_history(tmp_path, monkeypatch) -> None:
+    repo_dir = tmp_path / "project-mai-tai"
+    data_dir = tmp_path / "project-mai-tai-data" / "history"
+    repo_dir.mkdir()
+    data_dir.mkdir(parents=True)
+    monkeypatch.chdir(repo_dir)
+
+    (data_dir / "macdbot_closed_2026-03-30.csv").write_text(
+        "ticker,entry_price,exit_price,quantity,pnl,pnl_pct,reason,entry_time,exit_time,peak_profit_pct,tier,scales_done,path\n"
+        "ELAB,3.00,3.10,100,10.0,3.33,OMS_FILL,09:30:00 AM ET,09:31:00 AM ET,4.0,1,,P1_MACD_CROSS\n",
+        encoding="utf-8",
+    )
+    (data_dir / "macd_1m_closed_2026-03-30.csv").write_text(
+        "ticker,entry_price,exit_price,quantity,pnl,pnl_pct,reason,entry_time,exit_time,peak_profit_pct,tier,scales_done,path\n"
+        "ASTC,4.00,4.50,100,50.0,12.50,OMS_FILL,09:35:00 AM ET,09:36:00 AM ET,10.0,2,,P3_MACD_SURGE\n",
+        encoding="utf-8",
+    )
+    (data_dir / "tos_closed_2026-03-30.csv").write_text(
+        "ticker,entry_price,exit_price,quantity,pnl,pnl_pct,reason,entry_time,exit_time,peak_profit_pct,tier,scales_done,path\n"
+        "BFRG,1.00,0.95,100,-5.0,-5.00,OMS_FILL,09:40:00 AM ET,09:41:00 AM ET,2.0,1,,P1_MACD_CROSS\n",
+        encoding="utf-8",
+    )
+
+    def make_runtime(strategy_code: str) -> StrategyBotRuntime:
+        return StrategyBotRuntime(
+            StrategyDefinition(
+                code=strategy_code,
+                display_name=strategy_code,
+                account_name=f"paper:{strategy_code}",
+                interval_secs=30 if strategy_code == "macd_30s" else 60,
+                trading_config=TradingConfig(),
+                indicator_config=IndicatorConfig(),
+            )
+        )
+
+    assert make_runtime("macd_30s").summary()["daily_pnl"] == 10.0
+    assert make_runtime("macd_1m").summary()["daily_pnl"] == 50.0
+    assert make_runtime("tos").summary()["daily_pnl"] == -5.0
