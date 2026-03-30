@@ -52,9 +52,9 @@ If any of those conditions is not true, the auto-merge workflow exits without me
 
 If the `automerge` label does not exist yet in the repository, create it once in GitHub and reuse it for PRs you want merged automatically.
 
-## Safety Guard
+## Deploy Safety Guard
 
-Automatic deploys are blocked during ET market hours unless a manual workflow run explicitly sets:
+Manual deploys are blocked during ET market hours unless the workflow run explicitly sets:
 
 - `allow_live_restart = true`
 

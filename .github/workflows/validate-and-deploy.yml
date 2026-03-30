@@ -88,7 +88,7 @@ jobs:
 
           if is_weekday and in_market_window and not allow_live:
               raise SystemExit(
-                  "Automatic deploy blocked during ET market hours. "
+                  "Deploy blocked during ET market hours. "
                   "Use workflow_dispatch with allow_live_restart=true only when the live restart risk is understood."
               )
 
