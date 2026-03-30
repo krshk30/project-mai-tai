@@ -569,11 +569,10 @@ class StrategyEngineState:
         ]
 
         watchlist = [str(stock["ticker"]) for stock in self.current_confirmed]
-        runner_watchlist = [str(stock["ticker"]) for stock in confirmed_candidates]
         for code, bot in self.bots.items():
             if code == "runner":
-                bot.set_watchlist(runner_watchlist)
-                bot.update_candidates(confirmed_candidates)
+                bot.set_watchlist(watchlist)
+                bot.update_candidates(self.current_confirmed)
                 continue
             bot.set_watchlist(watchlist)
 
