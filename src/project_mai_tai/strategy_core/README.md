@@ -57,6 +57,7 @@ The current MACD/TOS-style entry and exit pipeline is split across:
 High-level flow:
 
 1. Entry checks hard gates such as trading hours, dead zone, cooldown, existing position, and optional EMA gate.
+   The default MACD-family trading window is 7:00 AM to 6:00 PM ET, with a dead zone from 12:01 PM to 3:00 PM ET.
 2. If gates pass, the engine checks one of the supported entry paths such as MACD cross, VWAP breakout, or MACD surge.
 3. Depending on `confirm_bars`, the signal either fires immediately or waits for follow-through confirmation.
 4. A quality score can further reject weak confirmations before a buy signal is emitted.

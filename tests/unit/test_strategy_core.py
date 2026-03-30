@@ -9,6 +9,7 @@ from project_mai_tai.strategy_core.config import (
     MomentumConfirmedConfig,
 )
 from project_mai_tai.strategy_core.indicators import IndicatorEngine
+from project_mai_tai.strategy_core.entry import EntryEngine
 from project_mai_tai.strategy_core.models import (
     DaySnapshot,
     LastTrade,
@@ -19,6 +20,7 @@ from project_mai_tai.strategy_core.models import (
 from project_mai_tai.strategy_core.momentum_alerts import MomentumAlertEngine
 from project_mai_tai.strategy_core.momentum_confirmed import MomentumConfirmedScanner
 from project_mai_tai.strategy_core.top_gainers import TopGainersTracker
+from project_mai_tai.strategy_core.trading_config import TradingConfig
 
 
 def snapshot(
@@ -154,3 +156,20 @@ def test_top_gainer_changes_use_eastern_time_labels() -> None:
     assert gainers
     assert changes
     assert str(changes[0]["time"]).endswith("ET")
+
+
+def test_entry_engine_allows_default_window_until_6pm_et() -> None:
+    engine = EntryEngine(
+        TradingConfig(),
+        now_provider=lambda: datetime(2026, 3, 30, 17, 0),
+    )
+
+    gate = engine._check_hard_gates(
+        "ELAB",
+        {
+            "price_above_ema20": True,
+        },
+        bar_index=1,
+    )
+
+    assert gate["passed"] is True

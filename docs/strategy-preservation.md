@@ -69,7 +69,9 @@ The MACD/TOS-style entry engine currently works in this order:
 
 1. hard gates
    - trading hours
+     - default MACD-family window is 7:00 AM to 6:00 PM ET
    - midday dead zone
+     - 12:01 PM to 3:00 PM ET
    - optional EMA20 gate
    - cooldown after a recent exit
    - dedup on the same bar
