@@ -11,6 +11,7 @@ Workflow file:
 
 - `.github/workflows/validate-and-deploy.yml`
 - `.github/workflows/automerge-pr.yml`
+- `.github/workflows/default-automerge-label.yml`
 
 Deploy script used on the VPS:
 
@@ -50,7 +51,9 @@ PRs into `main` can be auto-merged when all of these are true:
 
 If any of those conditions is not true, the auto-merge workflow exits without merging.
 
-If the `automerge` label does not exist yet in the repository, create it once in GitHub and reuse it for PRs you want merged automatically.
+For same-repo PRs into `main`, the `default-automerge-label.yml` workflow now adds the `automerge` label automatically when the PR is opened, reopened, or marked ready for review.
+
+Remove the label on any PR you do not want merged automatically.
 
 ## Deploy Safety Guard
 
@@ -111,7 +114,7 @@ On the current GitHub plan for a private repository, branch protection is not en
 
 1. push branches and PRs normally
 2. let `validate` run automatically
-3. optionally use the `automerge` label for PRs you want merged automatically after validation
+3. let the default `automerge` label stay on PRs you want merged automatically after validation, or remove it when you do not
 4. merge to `main`
 5. run deploy manually from Actions when you intentionally want production updated
 

@@ -177,10 +177,10 @@ Use this as the standard operating flow:
 1. Make changes on a branch such as `codex/...`.
 2. Push the branch to GitHub.
 3. Open a PR.
-4. Add the `automerge` label if you want GitHub to merge the PR automatically after validation passes.
+4. For same-repo PRs into `main`, GitHub adds the `automerge` label by default when the PR is opened or marked ready for review.
 5. Wait for the `validate` job to pass.
-6. If the PR has the `automerge` label and is mergeable, GitHub will merge it automatically after `validate` passes.
-7. If the PR does not have the `automerge` label, merge it manually into `main`.
+6. If the PR still has the `automerge` label and is mergeable, GitHub will merge it automatically after `validate` passes.
+7. Remove the `automerge` label if you do **not** want the PR to merge automatically.
 8. Manually run the deploy workflow when you actually want the VPS updated.
 
 ### What You Have To Do To Deploy
@@ -209,7 +209,9 @@ This repo can auto-merge PRs into `main` when all of these are true:
 
 Auto-merge does **not** deploy production. Deploy stays manual.
 
-If the `automerge` label does not exist yet in GitHub, create it once in the repository labels UI and reuse it from then on.
+For same-repo PRs into `main`, GitHub now adds the `automerge` label by default on PR open or when a draft PR is marked ready for review.
+
+Remove the label on any PR you want to keep out of auto-merge.
 
 ### When To Use `allow_live_restart`
 
@@ -267,7 +269,6 @@ Current recommended split:
   - run local validation where possible
   - commit and push branch work
   - open or prepare PR-ready changes
-  - optionally add the `automerge` label when automatic merge is desired
   - keep `main` as the source of deployment truth
 - user responsibilities
   - review PRs or decide when branch work should land on `main`
@@ -280,7 +281,7 @@ In practical day-to-day use:
 
 1. the agent should do the implementation and validation work
 2. the agent should push the branch
-3. the user should either allow `automerge` to proceed or merge manually when satisfied
+3. the user should either allow the default `automerge` label to proceed or remove it and merge manually when satisfied
 4. the user should run deploy when production should actually change
 
 This split is intentional for safety on a private trading repo where GitHub cannot fully enforce protected-branch policy on the current plan.
