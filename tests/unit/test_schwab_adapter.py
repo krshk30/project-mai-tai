@@ -203,8 +203,11 @@ async def test_schwab_adapter_lists_account_positions(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_schwab_adapter_refreshes_and_persists_token_store(monkeypatch) -> None:
-    token_store_path = Path(".venv/test-schwab-token-store.json")
+async def test_schwab_adapter_refreshes_and_persists_token_store(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    token_store_path = tmp_path / "test-schwab-token-store.json"
     token_store_path.write_text(
         json.dumps(
             {
