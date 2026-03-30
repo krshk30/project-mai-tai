@@ -335,6 +335,55 @@ def test_trade_tick_generates_open_intent_for_confirmed_watchlist(monkeypatch) -
     assert "UGRO" in bot.pending_open_symbols
 
 
+def test_trade_tick_records_blocked_decision_reason(monkeypatch) -> None:
+    state = StrategyEngineState(now_provider=fixed_now)
+    bot = state.bots["macd_30s"]
+    bot.set_watchlist(["UGRO"])
+    state.seed_bars(
+        "macd_30s",
+        "UGRO",
+        seed_trending_bars(start_timestamp=1_700_000_000.0, interval_secs=30),
+    )
+    monkeypatch.setattr(
+        bot.indicator_engine,
+        "calculate",
+        lambda bars: {
+            "price": 2.8,
+            "price_above_ema20": True,
+            "macd_cross_above": False,
+            "price_cross_above_vwap": False,
+            "macd_above_signal": True,
+            "macd_increasing": True,
+            "macd_delta": 0.0,
+            "macd_delta_accelerating": False,
+            "histogram": 0.0,
+            "price_above_ema9": True,
+            "volume": 20_000,
+            "histogram_growing": False,
+            "stoch_k_rising": False,
+            "price_above_vwap": True,
+            "price_above_both_emas": True,
+            "macd": 0.1,
+            "signal": 0.05,
+            "stoch_k": 40.0,
+            "ema9": 2.7,
+            "ema20": 2.6,
+        },
+    )
+
+    intents = state.handle_trade_tick(
+        symbol="UGRO",
+        price=2.8,
+        size=200,
+        timestamp_ns=1_700_001_500_000_000_000,
+    )
+
+    assert intents == []
+    recent_decision = bot.summary()["recent_decisions"][0]
+    assert recent_decision["status"] == "idle"
+    assert recent_decision["reason"] == "no entry path matched"
+
+
 def test_strategy_summary_includes_indicator_snapshots_for_1m_parity(monkeypatch) -> None:
     state = StrategyEngineState(now_provider=fixed_now)
     bot = state.bots["macd_1m"]

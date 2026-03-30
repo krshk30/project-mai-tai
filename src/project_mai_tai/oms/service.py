@@ -413,6 +413,11 @@ class OmsRiskService:
                 )
                 synced_accounts += 1
 
+            self.store.clear_virtual_positions_without_account_backing(
+                session,
+                broker_account_ids=[account.id for account in broker_accounts],
+            )
+
             session.commit()
 
         return {

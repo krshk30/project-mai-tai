@@ -23,6 +23,7 @@ class EntryEngine:
         self._pending: dict[str, dict[str, int | float | str]] = {}
         self._last_buy_bar: dict[str, int] = {}
         self._last_exit_bar: dict[str, int] = {}
+        self._last_decision: dict[str, dict[str, str]] = {}
 
     def check_entry(
         self,
@@ -39,6 +40,7 @@ class EntryEngine:
             if ticker in self._pending:
                 logger.info("[%s] %s confirmation CANCELLED: %s", self.name, ticker, gate_result["reason"])
                 del self._pending[ticker]
+            self._record_decision(ticker, status="blocked", reason=str(gate_result["reason"]))
             return None
 
         if ticker in self._pending:
@@ -46,6 +48,7 @@ class EntryEngine:
 
         path = self._check_paths(ticker, indicators)
         if path is None:
+            self._record_decision(ticker, status="idle", reason="no entry path matched")
             return None
 
         if self.config.confirm_bars <= 0:
@@ -54,6 +57,14 @@ class EntryEngine:
             if self.config.min_score <= 0:
                 score = 0
                 score_details = "no_score"
+            self._record_decision(
+                ticker,
+                status="signal",
+                reason=path,
+                path=path,
+                score=score,
+                score_details=score_details,
+            )
             logger.info(
                 "[%s] BUY %s instant | %s | price=%.4f",
                 self.name,
@@ -69,8 +80,9 @@ class EntryEngine:
             "path": path,
             "bars_waiting": 0,
         }
+        self._record_decision(ticker, status="pending", reason=f"{path} waiting confirmation", path=path)
         logger.info(
-            "[%s] %s — %s triggered @ $%.4f | waiting %s bars",
+            "[%s] %s - %s triggered @ $%.4f | waiting %s bars",
             self.name,
             ticker,
             path,
@@ -85,9 +97,13 @@ class EntryEngine:
     def cancel_pending(self, ticker: str) -> None:
         self._pending.pop(ticker, None)
 
+    def pop_last_decision(self, ticker: str) -> dict[str, str] | None:
+        return self._last_decision.pop(ticker, None)
+
     def reset(self) -> None:
         self._pending.clear()
         self._last_exit_bar.clear()
+        self._last_decision.clear()
 
     def _check_hard_gates(
         self,
@@ -127,7 +143,7 @@ class EntryEngine:
     def _check_paths(self, ticker: str, indicators: dict[str, float | bool]) -> str | None:
         if bool(indicators["macd_cross_above"]):
             if not self.config.p1_require_below_3bars or bool(indicators.get("macd_was_below_3bars", False)):
-                logger.debug("[%s] %s — P1 MACD Cross triggered", self.name, ticker)
+                logger.debug("[%s] %s - P1 MACD Cross triggered", self.name, ticker)
                 return "P1_MACD_CROSS"
 
         if (
@@ -135,7 +151,7 @@ class EntryEngine:
             and bool(indicators["macd_above_signal"])
             and bool(indicators["macd_increasing"])
         ):
-            logger.debug("[%s] %s — P2 VWAP Breakout triggered", self.name, ticker)
+            logger.debug("[%s] %s - P2 VWAP Breakout triggered", self.name, ticker)
             return "P2_VWAP_BREAKOUT"
 
         min_hist = 0.01 if self.name == "MACD Bot" else 0.001
@@ -148,7 +164,7 @@ class EntryEngine:
             and bool(indicators.get("price_above_ema9", False))
             and float(indicators["volume"]) >= 5000
         ):
-            logger.debug("[%s] %s — P3 MACD Surge triggered", self.name, ticker)
+            logger.debug("[%s] %s - P3 MACD Surge triggered", self.name, ticker)
             return "P3_MACD_SURGE"
 
         return None
@@ -164,24 +180,48 @@ class EntryEngine:
 
         if not bool(indicators["macd_above_signal"]):
             del self._pending[ticker]
+            self._record_decision(ticker, status="blocked", reason="confirmation lost: MACD below signal")
             return None
 
         if float(indicators["price"]) < float(pending["trigger_price"]):
             del self._pending[ticker]
+            self._record_decision(ticker, status="blocked", reason="confirmation lost: price below trigger")
             return None
 
         if int(pending["bars_waiting"]) < self.config.confirm_bars:
+            self._record_decision(
+                ticker,
+                status="pending",
+                reason=f'{pending["path"]} confirming ({pending["bars_waiting"]}/{self.config.confirm_bars})',
+                path=str(pending["path"]),
+            )
             return None
 
         score, details = self._quality_score(indicators)
         required_score = 5 if pending["path"] == "P3_MACD_SURGE" else self.config.min_score
         if score < required_score:
             del self._pending[ticker]
+            self._record_decision(
+                ticker,
+                status="blocked",
+                reason=f"score {score} below required {required_score}",
+                path=str(pending["path"]),
+                score=score,
+                score_details=details,
+            )
             return None
 
         path = str(pending["path"])
         del self._pending[ticker]
         self._last_buy_bar[ticker] = bar_index
+        self._record_decision(
+            ticker,
+            status="signal",
+            reason=path,
+            path=path,
+            score=score,
+            score_details=details,
+        )
         logger.info("[%s] BUY SIGNAL %s | %s | score=%s/6", self.name, ticker, path, score)
         return self._build_buy_signal(ticker, path, indicators, score, details)
 
@@ -229,3 +269,25 @@ class EntryEngine:
             "vwap": float(indicators["vwap"]),
             "bar_volume": float(indicators["volume"]),
         }
+
+    def _record_decision(
+        self,
+        ticker: str,
+        *,
+        status: str,
+        reason: str,
+        path: str | None = None,
+        score: int | None = None,
+        score_details: str | None = None,
+    ) -> None:
+        decision = {
+            "status": status,
+            "reason": reason,
+        }
+        if path:
+            decision["path"] = path
+        if score is not None:
+            decision["score"] = str(score)
+        if score_details:
+            decision["score_details"] = score_details
+        self._last_decision[ticker] = decision

@@ -434,6 +434,7 @@ class ControlPlaneRepository:
             pending_open = [str(symbol) for symbol in runtime_bot.get("pending_open_symbols", [])]
             pending_close = [str(symbol) for symbol in runtime_bot.get("pending_close_symbols", [])]
             pending_scale = [str(level) for level in runtime_bot.get("pending_scale_levels", [])]
+            recent_decisions = list(runtime_bot.get("recent_decisions", []))
             indicator_snapshots = list(runtime_bot.get("indicator_snapshots", []))
             tos_parity = self._build_tos_parity_view(
                 strategy_code=code,
@@ -466,6 +467,7 @@ class ControlPlaneRepository:
                     "pending_count": len(pending_open) + len(pending_close) + len(pending_scale),
                     "daily_pnl": float(runtime_bot.get("daily_pnl", 0) or 0),
                     "closed_today": list(runtime_bot.get("closed_today", [])),
+                    "recent_decisions": recent_decisions[:12],
                     "indicator_snapshots": indicator_snapshots,
                     "tos_parity": tos_parity,
                     "recent_intents": [
@@ -2421,6 +2423,7 @@ def _build_bot_api_payload(data: dict[str, Any], strategy_code: str) -> dict[str
         "pending_scale_levels": bot["pending_scale_levels"],
         "daily_pnl": bot["daily_pnl"],
         "closed_today": bot["closed_today"],
+        "recent_decisions": bot["recent_decisions"],
         "recent_intents": bot["recent_intents"],
         "recent_orders": bot["recent_orders"],
         "recent_fills": bot["recent_fills"],
@@ -3715,6 +3718,24 @@ def _build_bot_position_rows(data: dict[str, Any], bot: dict[str, Any]) -> str:
 
 def _build_bot_decision_entries(bot: dict[str, Any]) -> list[dict[str, str]]:
     entries: list[dict[str, str]] = []
+    for item in bot.get("recent_decisions", []):
+        status = str(item.get("status", "info"))
+        color = "#7b86a4"
+        if status == "signal":
+            color = "#00c853"
+        elif status == "blocked":
+            color = "#ff9100"
+        elif status == "pending":
+            color = "#40c4ff"
+        text = (
+            f'{item.get("last_bar_at", "")} BAR {item.get("symbol", "")}'
+            f' | {status.upper()} | {item.get("reason", "")}'
+        )
+        if item.get("path"):
+            text += f' | {item["path"]}'
+        if item.get("score"):
+            text += f' | score={item["score"]}'
+        entries.append({"color": color, "text": text})
     for item in bot["recent_intents"]:
         entries.append(
             {

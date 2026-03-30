@@ -306,6 +306,46 @@ async def test_oms_service_syncs_account_positions_from_broker_truth() -> None:
 
 
 @pytest.mark.asyncio
+async def test_oms_service_sync_clears_virtual_positions_without_broker_backing() -> None:
+    redis = FakeRedis()
+    session_factory = build_test_session_factory()
+    service = OmsRiskService(
+        settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
+        redis_client=redis,
+        session_factory=session_factory,
+    )
+
+    with session_factory() as session:
+        strategy = service.store.ensure_strategy(session, "macd_30s")
+        account = service.store.ensure_broker_account(
+            session,
+            "paper:macd_30s",
+            provider="alpaca",
+            environment="paper",
+        )
+        session.add(
+            VirtualPosition(
+                strategy_id=strategy.id,
+                broker_account_id=account.id,
+                symbol="ASTC",
+                quantity=Decimal("10"),
+                average_price=Decimal("5.36"),
+                realized_pnl=Decimal("0"),
+            )
+        )
+        session.commit()
+
+    sync_summary = await service.sync_broker_positions(account_names=["paper:macd_30s"])
+    assert sync_summary == {"accounts": 1, "positions": 0}
+
+    with session_factory() as session:
+        virtual_position = session.scalar(select(VirtualPosition).where(VirtualPosition.symbol == "ASTC"))
+        assert virtual_position is not None
+        assert virtual_position.quantity == Decimal("0")
+        assert virtual_position.average_price == Decimal("0")
+
+
+@pytest.mark.asyncio
 async def test_oms_service_cancels_open_order_using_existing_order_identity() -> None:
     redis = FakeRedis()
     session_factory = build_test_session_factory()

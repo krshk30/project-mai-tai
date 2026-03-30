@@ -107,6 +107,7 @@ class StrategyBotRuntime:
         self.pending_scale_levels: set[tuple[str, str]] = set()
         self.exit_retry_blocked_until: dict[str, datetime] = {}
         self.scale_retry_blocked_until: dict[tuple[str, str], datetime] = {}
+        self.recent_decisions: list[dict[str, str]] = []
 
     def set_watchlist(self, symbols: Iterable[str]) -> None:
         self.watchlist = set(symbols)
@@ -267,6 +268,7 @@ class StrategyBotRuntime:
             "pending_scale_levels": sorted(f"{symbol}:{level}" for symbol, level in self.pending_scale_levels),
             "daily_pnl": self.positions.get_daily_pnl(),
             "closed_today": self.positions.get_closed_today(),
+            "recent_decisions": list(self.recent_decisions),
             "indicator_snapshots": self._indicator_snapshots(),
         }
 
@@ -311,9 +313,16 @@ class StrategyBotRuntime:
 
         can_open, _reason = self.positions.can_open_position()
         if not can_open:
+            self._record_decision(
+                symbol=symbol,
+                status="blocked",
+                reason=str(_reason),
+                indicators=indicators,
+            )
             return []
 
         signal = self.entry_engine.check_entry(symbol, indicators, len(bars), self)
+        self._capture_entry_decision(symbol, indicators)
         if signal is None:
             return []
 
@@ -431,6 +440,49 @@ class StrategyBotRuntime:
     @staticmethod
     def _is_no_position_reason(reason: str) -> bool:
         return "cannot be sold short" in reason or "insufficient qty" in reason or "no broker position available to sell" in reason
+
+    def _capture_entry_decision(self, symbol: str, indicators: dict[str, float | bool]) -> None:
+        decision = self.entry_engine.pop_last_decision(symbol)
+        if decision is None:
+            return
+        self._record_decision(
+            symbol=symbol,
+            status=decision.get("status", "info"),
+            reason=decision.get("reason", ""),
+            indicators=indicators,
+            path=decision.get("path", ""),
+            score=decision.get("score", ""),
+            score_details=decision.get("score_details", ""),
+        )
+
+    def _record_decision(
+        self,
+        *,
+        symbol: str,
+        status: str,
+        reason: str,
+        indicators: dict[str, float | bool],
+        path: str = "",
+        score: str = "",
+        score_details: str = "",
+    ) -> None:
+        builder = self.builder_manager.get_builder(symbol)
+        bar_time = ""
+        if builder is not None and builder.bars:
+            last_bar = builder.bars[-1]
+            bar_time = datetime.fromtimestamp(last_bar.timestamp, UTC).astimezone().isoformat()
+        entry = {
+            "symbol": symbol,
+            "status": status,
+            "reason": reason,
+            "path": path,
+            "score": score,
+            "score_details": score_details,
+            "price": f'{float(indicators.get("price", 0) or 0):.4f}',
+            "last_bar_at": bar_time,
+        }
+        self.recent_decisions.insert(0, entry)
+        self.recent_decisions = self.recent_decisions[:50]
 
 
 StrategyRuntime = StrategyBotRuntime | RunnerStrategyRuntime
@@ -1065,6 +1117,7 @@ class StrategyEngineService:
                 pending_scale_levels=[str(level) for level in bot["pending_scale_levels"]],
                 daily_pnl=float(bot.get("daily_pnl", 0) or 0),
                 closed_today=list(bot.get("closed_today", [])),
+                recent_decisions=list(bot.get("recent_decisions", [])),
                 indicator_snapshots=list(bot.get("indicator_snapshots", [])),
             )
             for bot in summary["bots"].values()
