@@ -86,6 +86,7 @@ Use these docs to orient quickly:
 - [Live Market Restart Runbook](./docs/live-market-restart-runbook.md)
 - [Active Market Verification Todo](./docs/active-market-verification-todo.md)
 - [GitHub Actions Deploy](./docs/github-actions-deploy.md)
+- [Operator Cheat Sheet](./docs/operator-cheat-sheet.md)
 - [Schwab Onboarding](./docs/schwab-onboarding.md)
 - [VPS Deployment](./docs/vps-deployment.md)
 - [Source Layout](./src/README.md)
@@ -181,6 +182,7 @@ Important restart rule:
 - `ops/systemd/restart_all.sh` is for off-hours or flat-account use
 - during an active session, use the coordinated scripts in `ops/systemd/` plus [Live Market Restart Runbook](./docs/live-market-restart-runbook.md)
 - GitHub Actions validation runs automatically, but production deploy is manual via [GitHub Actions Deploy](./docs/github-actions-deploy.md) and the VPS script `ops/systemd/deploy_main.sh`
+- if you want the shortest “what exactly do I click or run right now” guide, use [Operator Cheat Sheet](./docs/operator-cheat-sheet.md)
 
 ## GitHub Deploy Workflow
 

@@ -12,6 +12,8 @@ Use these files by question:
   - how to restart safely during live operations
 - `github-actions-deploy.md`
   - how validation plus VPS deploy is wired through GitHub Actions
+- `operator-cheat-sheet.md`
+  - exact GitHub clicks and VPS commands when Codex asks you to deploy or restart
 - `vps-deployment.md`
   - how the runtime is deployed on the VPS
 - `schwab-onboarding.md`

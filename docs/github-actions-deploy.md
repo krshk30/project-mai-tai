@@ -194,3 +194,7 @@ If a live-session deploy is ever required, prefer:
 For the full live-session guidance, see:
 
 - `docs/live-market-restart-runbook.md`
+
+For the short operator playbook, see:
+
+- `docs/operator-cheat-sheet.md`
