@@ -882,6 +882,8 @@ class StrategyEngineService:
             stream_name(self.settings.redis_stream_prefix, "snapshot-batches"): "$",
         }
         self._last_market_data_symbols: set[str] = set()
+        self._historical_hydration_attempts = 5
+        self._historical_hydration_poll_delay_secs = 0.2
 
     async def run(self) -> None:
         stop_event = asyncio.Event()
@@ -1171,6 +1173,82 @@ class StrategyEngineService:
             maxlen=self.settings.redis_market_data_subscription_stream_maxlen,
             approximate=True,
         )
+        await self._hydrate_recent_historical_bars(normalized)
+
+    async def _hydrate_recent_historical_bars(self, symbols: set[str]) -> None:
+        if not symbols:
+            return
+
+        target_intervals = {
+            int(bot.definition.interval_secs)
+            for bot in self.state.bots.values()
+            if hasattr(bot, "definition")
+        }
+        if not target_intervals:
+            return
+
+        pending = {(symbol, interval) for symbol in symbols for interval in target_intervals}
+        stream = stream_name(self.settings.redis_stream_prefix, "market-data")
+        hydrated_any = False
+
+        for _attempt in range(self._historical_hydration_attempts):
+            try:
+                entries = await self.redis.xrevrange(stream, count=500)
+            except Exception:
+                self.logger.exception("historical bar hydration replay failed")
+                return
+
+            for _message_id, fields in entries:
+                data = fields.get("data")
+                if not data:
+                    continue
+                try:
+                    payload = json.loads(data)
+                except Exception:
+                    continue
+                if payload.get("event_type") != "historical_bars":
+                    continue
+
+                event = HistoricalBarsEvent.model_validate(payload)
+                pair = (event.payload.symbol.upper(), int(event.payload.interval_secs))
+                if pair not in pending:
+                    continue
+
+                bars = [
+                    {
+                        "open": float(bar.open),
+                        "high": float(bar.high),
+                        "low": float(bar.low),
+                        "close": float(bar.close),
+                        "volume": int(bar.volume),
+                        "timestamp": float(bar.timestamp),
+                        "trade_count": int(bar.trade_count),
+                    }
+                    for bar in event.payload.bars
+                ]
+                hydrated = self.state.hydrate_historical_bars(
+                    symbol=event.payload.symbol,
+                    interval_secs=event.payload.interval_secs,
+                    bars=bars,
+                )
+                if hydrated:
+                    hydrated_any = True
+                    self.logger.info(
+                        "replayed %s historical bars for %s @ %ss into %s",
+                        len(bars),
+                        event.payload.symbol,
+                        event.payload.interval_secs,
+                        ",".join(hydrated),
+                    )
+                pending.discard(pair)
+
+            if not pending:
+                break
+
+            await asyncio.sleep(self._historical_hydration_poll_delay_secs)
+
+        if hydrated_any:
+            await self._publish_strategy_state_snapshot()
 
     def _persist_scanner_snapshots(self, summary: dict[str, object]) -> None:
         if self.session_factory is None:

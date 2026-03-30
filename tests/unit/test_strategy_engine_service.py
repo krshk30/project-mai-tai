@@ -603,6 +603,79 @@ async def test_snapshot_batch_history_prefill_restores_alert_warmup() -> None:
 
 
 @pytest.mark.asyncio
+async def test_subscription_sync_replays_recent_historical_bars_for_active_symbols() -> None:
+    redis = FakeRedis()
+    service = StrategyEngineService(
+        settings=Settings(redis_stream_prefix="test", dashboard_snapshot_persistence_enabled=False),
+        redis_client=redis,
+    )
+
+    historical_30s = HistoricalBarsEvent(
+        source_service="market-data-gateway",
+        payload=HistoricalBarsPayload(
+            symbol="UGRO",
+            interval_secs=30,
+            bars=[
+                HistoricalBarPayload(
+                    open=Decimal("2.00"),
+                    high=Decimal("2.10"),
+                    low=Decimal("1.99"),
+                    close=Decimal("2.05"),
+                    volume=20_000,
+                    timestamp=1_700_000_000.0,
+                ),
+                HistoricalBarPayload(
+                    open=Decimal("2.05"),
+                    high=Decimal("2.15"),
+                    low=Decimal("2.04"),
+                    close=Decimal("2.12"),
+                    volume=22_000,
+                    timestamp=1_700_000_030.0,
+                ),
+            ],
+        ),
+    )
+    historical_60s = HistoricalBarsEvent(
+        source_service="market-data-gateway",
+        payload=HistoricalBarsPayload(
+            symbol="UGRO",
+            interval_secs=60,
+            bars=[
+                HistoricalBarPayload(
+                    open=Decimal("2.00"),
+                    high=Decimal("2.20"),
+                    low=Decimal("1.95"),
+                    close=Decimal("2.15"),
+                    volume=80_000,
+                    timestamp=1_700_000_000.0,
+                ),
+                HistoricalBarPayload(
+                    open=Decimal("2.15"),
+                    high=Decimal("2.25"),
+                    low=Decimal("2.10"),
+                    close=Decimal("2.22"),
+                    volume=85_000,
+                    timestamp=1_700_000_060.0,
+                ),
+            ],
+        ),
+    )
+    redis.stream_entries.setdefault("test:market-data", []).extend(
+        [
+            ("2-0", {"data": historical_30s.model_dump_json()}),
+            ("3-0", {"data": historical_60s.model_dump_json()}),
+        ]
+    )
+
+    await service._sync_market_data_subscriptions(["UGRO"])
+
+    assert len(service.state.bots["macd_30s"].builder_manager.get_bars("UGRO")) == 1
+    assert len(service.state.bots["macd_1m"].builder_manager.get_bars("UGRO")) == 1
+    assert len(service.state.bots["tos"].builder_manager.get_bars("UGRO")) == 1
+    assert len(service.state.bots["runner"].builder_manager.get_bars("UGRO")) == 2
+
+
+@pytest.mark.asyncio
 async def test_strategy_state_snapshot_persists_last_nonempty_confirmed_snapshot() -> None:
     redis = FakeRedis()
     session_factory = build_test_session_factory()
