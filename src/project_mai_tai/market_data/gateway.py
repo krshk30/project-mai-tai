@@ -25,7 +25,7 @@ from project_mai_tai.settings import Settings, get_settings
 logger = logging.getLogger(__name__)
 
 SERVICE_NAME = "market-data-gateway"
-WARMUP_INTERVALS = (30, 60, 300)
+WARMUP_INTERVALS = (30, 60)
 
 
 class MarketDataGatewayService:

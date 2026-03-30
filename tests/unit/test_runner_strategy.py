@@ -26,7 +26,7 @@ def seed_runner_bars(
                 "low": close - 0.03,
                 "close": close,
                 "volume": 40_000 + index * 2_000,
-                "timestamp": start_timestamp + index * 300,
+                "timestamp": start_timestamp + index * 60,
             }
         )
     return bars

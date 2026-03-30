@@ -156,5 +156,5 @@ async def test_apply_subscription_event_unions_static_and_consumer_symbols() -> 
         for stream, payload, _kwargs in redis.entries
         if stream == "test:market-data" and payload["event_type"] == "historical_bars"
     ]
-    assert len(warmup_events) == 6
-    assert {event["payload"]["interval_secs"] for event in warmup_events} == {30, 60, 300}
+    assert len(warmup_events) == 4
+    assert {event["payload"]["interval_secs"] for event in warmup_events} == {30, 60}

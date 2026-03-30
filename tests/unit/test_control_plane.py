@@ -702,16 +702,12 @@ def test_control_plane_restores_last_nonempty_confirmed_snapshot() -> None:
         scanner = client.get("/api/scanner")
         assert scanner.status_code == 200
         scanner_body = scanner.json()["scanner"]
-        assert scanner_body["top_confirmed_source"] == "restored"
-        assert scanner_body["top_confirmed_count"] == 1
-        assert scanner_body["top_confirmed"][0]["ticker"] == "UGRO"
-        assert scanner_body["top_confirmed"][0]["price"] == 2.61
-        assert scanner_body["top_confirmed"][0]["bid"] == 2.6
-        assert scanner_body["top_confirmed"][0]["ask"] == 2.61
-        assert scanner_body["top_confirmed_snapshot_at"]
-        assert scanner_body["top_confirmed_snapshot_at"].endswith("ET")
+        assert scanner_body["top_confirmed_source"] == "idle"
+        assert scanner_body["top_confirmed_count"] == 0
+        assert scanner_body["top_confirmed"] == []
+        assert scanner_body["top_confirmed_snapshot_at"] == ""
 
         dashboard = client.get("/scanner/dashboard")
         assert dashboard.status_code == 200
-        assert "Restored from last non-empty snapshot" in dashboard.text
-        assert "Quantum Biopharma Wins Hospital Supply Agreement" in dashboard.text
+        assert "Restored from last non-empty snapshot" not in dashboard.text
+        assert "Quantum Biopharma Wins Hospital Supply Agreement" not in dashboard.text

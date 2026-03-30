@@ -114,6 +114,7 @@ class RunnerStrategyRuntime:
         definition_code: str,
         account_name: str,
         default_quantity: int,
+        bar_interval_secs: int = 60,
         now_provider: Callable[[], datetime] | None = None,
         config: RunnerConfig | None = None,
         source_service: str = "strategy-engine",
@@ -125,7 +126,7 @@ class RunnerStrategyRuntime:
         self.config = config or RunnerConfig()
         self.source_service = source_service
 
-        self.builder_manager = BarBuilderManager(interval_secs=300)
+        self.builder_manager = BarBuilderManager(interval_secs=bar_interval_secs)
         self.watchlist: set[str] = set()
         self._candidates: dict[str, dict[str, object]] = {}
         self._cooldown_until: dict[str, datetime] = {}

@@ -449,7 +449,7 @@ class StrategyEngineState:
 
         base_trading = base_trading_config or TradingConfig()
         default_indicator_config = indicator_config or IndicatorConfig()
-        runner_trading = base_trading.make_tos_variant(quantity=100, bar_interval_secs=300)
+        runner_trading = base_trading.make_tos_variant(quantity=100, bar_interval_secs=60)
         self.bots: dict[str, StrategyRuntime] = {
             "macd_30s": StrategyBotRuntime(
                 StrategyDefinition(
@@ -488,6 +488,7 @@ class StrategyEngineState:
                 definition_code="runner",
                 account_name=registrations["runner"].account_name,
                 default_quantity=runner_trading.default_quantity,
+                bar_interval_secs=runner_trading.bar_interval_secs,
                 now_provider=now_provider,
                 source_service=SERVICE_NAME,
             ),
@@ -623,7 +624,8 @@ class StrategyEngineState:
                 hydrated.append(code)
                 continue
 
-            if code == "runner" and interval_secs == 300:
+            runner_interval = getattr(getattr(bot, "builder_manager", None), "interval_secs", None)
+            if code == "runner" and runner_interval == interval_secs:
                 bot.seed_bars(symbol, bars)
                 hydrated.append(code)
         return hydrated

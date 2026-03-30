@@ -68,6 +68,7 @@ Important nuance:
 
 - `runner.py` is not just another thin variant of `entry.py` and `exit.py`
 - Runner keeps its own strategy runtime and should be treated as a separate behavior family
+- Runner now evaluates on `1m` bars, but still keeps its own stricter candidate, timing, and exit rules
 
 For the durable project-level explanation of preserved behavior, also see:
 

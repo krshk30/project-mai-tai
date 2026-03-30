@@ -72,13 +72,13 @@ Current runtime cadence is intentionally split by responsibility:
   - `macd_30s`: `30s`
   - `macd_1m`: `60s`
   - `tos`: `60s`
-  - `runner`: `300s`
+  - `runner`: `60s`
 
 Important distinction:
 
 - scanner surfaces are driven by full-market snapshots
 - bot runtimes are driven by subscribed live trade ticks once a name is on feed
-- if the control plane has to restore a previous confirmed row, it now overlays current live scanner price/bid/ask when available instead of showing an old price as if it were live
+- `Momentum Confirmed` is treated as fresh-only active state after restart; alerts may be prefetched for warmup, but confirmed candidates and ranked top-5 feed are recomputed from live post-restart data before bots consume them
 
 ## Broker Modes
 

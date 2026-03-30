@@ -434,11 +434,11 @@ async def test_historical_bars_hydrate_matching_strategy_intervals() -> None:
             ],
         ),
     )
-    historical_5m = HistoricalBarsEvent(
+    historical_runner = HistoricalBarsEvent(
         source_service="market-data-gateway",
         payload=HistoricalBarsPayload(
             symbol="UGRO",
-            interval_secs=300,
+            interval_secs=60,
             bars=[
                 HistoricalBarPayload(
                     open=Decimal("2.00"),
@@ -454,18 +454,18 @@ async def test_historical_bars_hydrate_matching_strategy_intervals() -> None:
                     low=Decimal("2.10"),
                     close=Decimal("2.22"),
                     volume=85_000,
-                    timestamp=1_700_000_300.0,
+                    timestamp=1_700_000_060.0,
                 ),
             ],
         ),
     )
 
     await service._handle_stream_message("test:market-data", {"data": historical_30s.model_dump_json()})
-    await service._handle_stream_message("test:market-data", {"data": historical_5m.model_dump_json()})
+    await service._handle_stream_message("test:market-data", {"data": historical_runner.model_dump_json()})
 
     assert len(service.state.bots["macd_30s"].builder_manager.get_bars("UGRO")) == 1
-    assert len(service.state.bots["macd_1m"].builder_manager.get_bars("UGRO")) == 0
-    assert len(service.state.bots["tos"].builder_manager.get_bars("UGRO")) == 0
+    assert len(service.state.bots["macd_1m"].builder_manager.get_bars("UGRO")) == 1
+    assert len(service.state.bots["tos"].builder_manager.get_bars("UGRO")) == 1
     assert len(service.state.bots["runner"].builder_manager.get_bars("UGRO")) == 2
 
 

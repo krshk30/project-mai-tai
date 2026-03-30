@@ -43,7 +43,7 @@ Responsibilities:
 - owns Massive/Polygon snapshot polling
 - owns Massive/Polygon live trade and quote subscriptions
 - builds reference-data cache
-- publishes historical warmup bars for `30s`, `1m`, and `5m`
+- publishes historical warmup bars for `30s` and `1m`
 - manages dynamic symbol subscriptions requested by downstream consumers
 - publishes normalized market-data events into Redis Streams
 
@@ -83,7 +83,8 @@ Cadence:
 
 - scanner surfaces update on each snapshot batch
 - alert warmup and squeeze windows are computed from the configured snapshot interval
-- bot runtimes update on trade ticks and emit decisions on completed `30s`, `60s`, or `300s` bars depending on strategy
+- bot runtimes update on trade ticks and emit decisions on completed `30s` or `60s` bars depending on strategy
+- alert history may be prefetched on restart, but active momentum-confirmed candidates are recalculated fresh before the ranked bot feed is rebuilt
 
 Rules:
 

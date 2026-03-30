@@ -235,32 +235,15 @@ class ControlPlaneRepository:
             for index, item in enumerate(strategy_runtime.get("top_confirmed", []), start=1)
             if str(item.get("ticker", "")).upper() not in blacklisted_symbols
         ]
-        top_confirmed_source = "live"
+        top_confirmed_source = "live" if top_confirmed else "idle"
         top_confirmed_snapshot_at = ""
-
-        if not top_confirmed:
-            restored = persisted_snapshots.get("scanner_confirmed_last_nonempty") or {}
-            restored_rows = [
-                self._normalize_confirmed_row(
-                    index=index,
-                    item=item,
-                    bot_states=bot_states,
-                    live_market_row=live_market_rows.get(str(item.get("ticker", "")).upper()),
-                )
-                for index, item in enumerate(restored.get("top_confirmed", []), start=1)
-                if str(item.get("ticker", "")).upper() not in blacklisted_symbols
-            ]
-            if restored_rows:
-                top_confirmed = restored_rows
-                top_confirmed_source = "restored"
-                top_confirmed_snapshot_at = _datetime_str(restored.get("created_at"))
 
         legacy_confirmed = [
             str(symbol).upper()
             for symbol in legacy_shadow.get("scanner", {}).get("confirmed_symbols", [])
         ]
         return {
-            "status": "active" if top_confirmed_source == "live" and top_confirmed else "restored" if top_confirmed else "idle",
+            "status": "active" if top_confirmed else "idle",
             "cycle_count": int(strategy_runtime.get("cycle_count", 0) or 0),
             "watchlist": watchlist,
             "watchlist_count": len(watchlist),
@@ -2464,11 +2447,7 @@ def _render_scanner_dashboard(data: dict[str, Any]) -> str:
     pillar_rows = _render_scanner_stock_rows(scanner["five_pillars"], subscription_symbols)
     gainer_rows = _render_scanner_stock_rows(scanner["top_gainers"], subscription_symbols)
     alert_rows = _render_alert_rows(scanner["recent_alerts"])
-    confirmed_sub = (
-        f'Restored from last non-empty snapshot at {escape(scanner["top_confirmed_snapshot_at"])}.'
-        if scanner.get("top_confirmed_source") == "restored" and scanner.get("top_confirmed_snapshot_at")
-        else "Bot-ready candidates from the new scanner runtime."
-    )
+    confirmed_sub = "Bot-ready candidates from the new scanner runtime."
 
     warmup = scanner["alert_warmup"]
     websocket_status = market_data_service.get("status", "unknown")
