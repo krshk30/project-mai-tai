@@ -170,6 +170,7 @@ class StrategyBotRuntime:
         *,
         symbol: str,
         intent_type: str,
+        status: str,
         side: str,
         quantity: Decimal,
         price: Decimal,
@@ -202,7 +203,7 @@ class StrategyBotRuntime:
                 self.pending_close_symbols.discard(symbol)
                 return
 
-            if qty >= position.quantity:
+            if status == "filled" or qty >= position.quantity:
                 self.pending_close_symbols.discard(symbol)
                 self.positions.close_position(symbol, fill_price, reason="OMS_FILL")
                 bar_index = self.builder_manager.get_or_create(symbol).get_bar_count()
@@ -721,6 +722,7 @@ class StrategyEngineState:
         strategy_code: str,
         symbol: str,
         intent_type: str,
+        status: str,
         side: str,
         quantity: Decimal,
         price: Decimal,
@@ -730,6 +732,7 @@ class StrategyEngineState:
         self.bots[strategy_code].apply_execution_fill(
             symbol=symbol,
             intent_type=intent_type,
+            status=status,
             side=side,
             quantity=quantity,
             price=price,
@@ -1063,6 +1066,7 @@ class StrategyEngineService:
                     strategy_code=order.strategy_code,
                     symbol=order.symbol,
                     intent_type=order.intent_type,
+                    status=order.status,
                     side=order.side,
                     quantity=order.filled_quantity,
                     price=order.fill_price,

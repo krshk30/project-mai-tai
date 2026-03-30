@@ -297,6 +297,25 @@ def test_bot_runtime_clears_ghost_position_on_no_position_reject() -> None:
     assert "ASTC" not in bot.pending_close_symbols
 
 
+def test_bot_runtime_clears_position_on_final_close_fill_even_if_qty_differs() -> None:
+    state = StrategyEngineState(now_provider=fixed_now)
+    bot = state.bots["macd_30s"]
+    bot.positions.open_position("BFRG", 1.28, quantity=10, path="P1_MACD_CROSS")
+    bot.pending_close_symbols.add("BFRG")
+
+    bot.apply_execution_fill(
+        symbol="BFRG",
+        intent_type="close",
+        status="filled",
+        side="sell",
+        quantity=Decimal("9"),
+        price=Decimal("1.28"),
+    )
+
+    assert bot.positions.get_position("BFRG") is None
+    assert "BFRG" not in bot.pending_close_symbols
+
+
 def test_trade_tick_generates_open_intent_for_confirmed_watchlist(monkeypatch) -> None:
     state = StrategyEngineState(now_provider=fixed_now)
     bot = state.bots["macd_30s"]

@@ -70,6 +70,7 @@ def test_runner_trailing_stop_emits_close_intent() -> None:
     runner.apply_execution_fill(
         symbol="UGRO",
         intent_type="open",
+        status="filled",
         side="buy",
         quantity=Decimal("100"),
         price=Decimal("2.00"),

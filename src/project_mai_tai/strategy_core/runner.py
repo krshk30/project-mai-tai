@@ -218,6 +218,7 @@ class RunnerStrategyRuntime:
         *,
         symbol: str,
         intent_type: str,
+        status: str,
         side: str,
         quantity: Decimal,
         price: Decimal,
@@ -250,7 +251,7 @@ class RunnerStrategyRuntime:
             return
 
         if intent_type == "close" and side == "sell" and self._position and self._position.ticker == normalized:
-            if filled_qty >= self._position.quantity:
+            if status == "filled" or filled_qty >= self._position.quantity:
                 closed = self._close_position(fill_price, self._pending_close_reason or "OMS_FILL")
                 self._position = None
                 self._pending_close_symbol = None
