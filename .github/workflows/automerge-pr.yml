@@ -3,7 +3,7 @@ name: Auto Merge PR
 on:
   workflow_run:
     workflows:
-      - Validate And Deploy
+      - Validate
     types:
       - completed
   pull_request_target:

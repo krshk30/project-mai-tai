@@ -191,9 +191,9 @@ This repo now uses:
 
 That means:
 
-- pushes and PRs run the `validate` job automatically
+- pushes and PRs run the `Validate` workflow automatically
 - merging to `main` does **not** restart the VPS by itself
-- production deploy happens only when you manually run the `Validate And Deploy` workflow in GitHub Actions
+- production deploy happens only when you manually run the `Deploy Main` workflow in GitHub Actions
 
 ### Normal Change Flow
 
@@ -213,13 +213,14 @@ Use this as the standard operating flow:
 After the change is already merged to `main`:
 
 1. Open GitHub `Actions`.
-2. Open the workflow named `Validate And Deploy`.
+2. Open the workflow named `Deploy Main`.
 3. Click `Run workflow`.
 4. Select branch `main`.
 5. Leave `allow_live_restart` unchecked for normal off-hours deploys.
 6. Click `Run workflow`.
-7. Watch the `validate` job finish green.
-8. Watch the `deploy` job SSH into the VPS, fast-forward the checkout to `origin/main`, run install/migrations, restart services, and check `/health`.
+7. Watch the `deploy` job SSH into the VPS, fast-forward the checkout to `origin/main`, run install/migrations, restart services, and check `/health`.
+
+`Deploy Main` does **not** rerun tests. It assumes the `main` commit you are deploying already passed the normal `Validate` workflow before merge.
 
 ### Optional PR Auto-Merge
 
@@ -254,7 +255,7 @@ For live-session restart guidance, use:
 
 ### First-Time GitHub Setup
 
-The workflow requires these repository secrets:
+The deploy workflow requires these repository secrets:
 
 - `VPS_HOST`
 - `VPS_USER`
@@ -276,6 +277,14 @@ That script:
 4. runs `ops/bootstrap/08_install_runtime.sh`
 5. restarts the app stack
 6. waits for a healthy local `/health` response
+
+By default this is a full app-stack deploy. It restarts:
+
+- `project-mai-tai-market-data.service`
+- `project-mai-tai-strategy.service`
+- `project-mai-tai-oms.service`
+- `project-mai-tai-reconciler.service`
+- `project-mai-tai-control.service`
 
 ### Practical Rule
 

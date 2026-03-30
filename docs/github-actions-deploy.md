@@ -9,7 +9,8 @@ This repo now supports a GitHub Actions path that matches the intended workflow:
 
 Workflow file:
 
-- `.github/workflows/validate-and-deploy.yml`
+- `.github/workflows/validate.yml`
+- `.github/workflows/deploy-main.yml`
 - `.github/workflows/automerge-pr.yml`
 - `.github/workflows/default-automerge-label.yml`
 
@@ -24,20 +25,18 @@ Validation runs on:
 - pull requests
 - pushes to `main`
 - pushes to `codex/**`
-- manual workflow dispatch
 
 Auto-merge runs when:
 
-- a `Validate And Deploy` workflow run for a PR finishes successfully
+- a `Validate` workflow run for a PR finishes successfully
 - or a PR is labeled `automerge`
 
 Deploy runs only when:
 
-- the workflow is started manually with `workflow_dispatch`
+- the `Deploy Main` workflow is started manually with `workflow_dispatch`
 - the selected ref is `main`
-- validation in that same run already passed
 
-PR auto-merge is separate from deploy. A PR can merge automatically into `main`, but production still changes only when someone manually runs deploy.
+PR auto-merge is separate from deploy. A PR can merge automatically into `main`, but production still changes only when someone manually runs `Deploy Main`.
 
 ## PR Auto-Merge Behavior
 
@@ -107,6 +106,12 @@ Paste that single-line output into the GitHub secret `VPS_SSH_KEY_BASE64`.
 6. waits for all five services plus a healthy local `/health` response
 
 This means GitHub Actions deploys are using the same install/restart path we already verified on the server.
+
+`Deploy Main` does not rerun test/lint validation. The intended model is:
+
+1. `Validate` runs automatically on PRs and pushes
+2. `main` only receives changes that already passed validation
+3. `Deploy Main` updates the VPS to the already-validated `origin/main`
 
 ## Recommended Operating Model
 
