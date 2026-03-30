@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from project_mai_tai.deploy_preflight import evaluate_live_deploy_preflight
+from project_mai_tai.deploy_preflight import evaluate_live_deploy_preflight, parse_datetime
 
 
 def _datetime_str(value: datetime) -> str:
@@ -127,3 +127,10 @@ def test_live_deploy_preflight_blocks_stale_or_unhealthy_services() -> None:
 
     assert any("not healthy" in item for item in failures)
     assert any("stale" in item for item in failures)
+
+
+def test_parse_datetime_accepts_control_plane_eastern_format() -> None:
+    parsed = parse_datetime("2026-03-30 07:10:07 AM ET")
+
+    assert parsed is not None
+    assert parsed == datetime(2026, 3, 30, 11, 10, 7, tzinfo=UTC)

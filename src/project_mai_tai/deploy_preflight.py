@@ -6,6 +6,7 @@ import json
 from typing import Any
 from urllib.error import URLError
 from urllib.request import urlopen
+from zoneinfo import ZoneInfo
 
 
 EXPECTED_SERVICE_NAMES = {
@@ -25,6 +26,7 @@ TARGET_SERVICE_NAMES = {
 }
 
 IN_FLIGHT_INTENT_STATUSES = {"pending", "submitted", "accepted"}
+EASTERN = ZoneInfo("America/New_York")
 
 
 def utcnow() -> datetime:
@@ -36,7 +38,21 @@ def parse_datetime(value: str | None) -> datetime | None:
         return None
 
     normalized = value.replace("Z", "+00:00")
-    parsed = datetime.fromisoformat(normalized)
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        for pattern in ("%Y-%m-%d %I:%M:%S %p ET", "%Y-%m-%d %H:%M:%S %z"):
+            try:
+                parsed = datetime.strptime(value, pattern)
+                if pattern.endswith("ET"):
+                    parsed = parsed.replace(tzinfo=EASTERN)
+                elif parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=UTC)
+                return parsed.astimezone(UTC)
+            except ValueError:
+                continue
+        return None
+
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=UTC)
     return parsed.astimezone(UTC)
