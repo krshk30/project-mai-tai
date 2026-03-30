@@ -128,7 +128,145 @@ def test_snapshot_batch_keeps_single_confirmed_name_in_watchlist(monkeypatch) ->
 
     assert summary["watchlist"] == ["UGRO"]
     assert summary["top_confirmed"][0]["rank_score"] == 0.0
-    assert "UGRO" in state.bots["macd_30s"].watchlist
+    for code in ("macd_30s", "macd_1m", "tos", "runner"):
+        assert state.bots[code].watchlist == {"UGRO"}
+
+
+def test_snapshot_batch_keeps_runner_aligned_to_visible_confirmed_names(monkeypatch) -> None:
+    state = StrategyEngineState(now_provider=fixed_now)
+    visible_confirmed = [
+        {
+            "ticker": "ELAB",
+            "confirmed_at": "10:00:00 AM ET",
+            "entry_price": 3.19,
+            "price": 2.78,
+            "change_pct": 66.5,
+            "volume": 7_200_000,
+            "rvol": 12.0,
+            "shares_outstanding": 541_500,
+            "bid": 2.76,
+            "ask": 2.77,
+            "spread": 0.01,
+            "spread_pct": 0.36,
+            "hod": 3.19,
+            "vwap": 2.81,
+            "prev_close": 1.67,
+            "avg_daily_volume": 600_000,
+            "first_spike_time": "09:45:00 AM ET",
+            "first_spike_price": 2.20,
+            "squeeze_count": 3,
+            "data_age_secs": 0,
+            "confirmation_path": "PATH_B_2SQ",
+            "rank_score": 75.0,
+        }
+    ]
+    hidden_confirmed = [
+        *visible_confirmed,
+        {
+            "ticker": "ABCD",
+            "rank_score": 20.0,
+            "change_pct": 18.0,
+            "confirmed_at": "09:40:00 AM ET",
+            "confirmation_path": "PATH_B_2SQ",
+        },
+        {
+            "ticker": "WXYZ",
+            "rank_score": 15.0,
+            "change_pct": 14.0,
+            "confirmed_at": "09:41:00 AM ET",
+            "confirmation_path": "PATH_B_2SQ",
+        },
+        {
+            "ticker": "MNOP",
+            "rank_score": 10.0,
+            "change_pct": 11.0,
+            "confirmed_at": "09:42:00 AM ET",
+            "confirmation_path": "PATH_A_NEWS",
+        },
+    ]
+
+    monkeypatch.setattr(state.alert_engine, "check_alerts", lambda snapshots, reference_data: [])
+    monkeypatch.setattr(
+        state.confirmed_scanner,
+        "process_alerts",
+        lambda alerts, reference_data, snapshot_lookup: [],
+    )
+    monkeypatch.setattr(
+        state.confirmed_scanner,
+        "get_all_confirmed",
+        lambda: list(hidden_confirmed),
+    )
+    monkeypatch.setattr(
+        state.confirmed_scanner,
+        "get_top_n",
+        lambda *args, **kwargs: list(visible_confirmed),
+    )
+
+    summary = state.process_snapshot_batch(
+        [snapshot_from_payload(make_snapshot_payload(symbol="ELAB", price=2.78, volume=7_200_000))],
+        {"ELAB": ReferenceData(shares_outstanding=541_500, avg_daily_volume=600_000)},
+    )
+
+    assert summary["watchlist"] == ["ELAB"]
+    for code in ("macd_30s", "macd_1m", "tos", "runner"):
+        assert state.bots[code].watchlist == {"ELAB"}
+    assert state.bots["runner"]._candidates == {"ELAB": visible_confirmed[0]}
+
+
+def test_snapshot_batch_releases_removed_symbols_from_all_bot_watchlists(monkeypatch) -> None:
+    state = StrategyEngineState(now_provider=fixed_now)
+    first_confirmed = [
+        {"ticker": "ELAB", "rank_score": 80.0, "change_pct": 40.0, "confirmed_at": "09:45:00 AM ET"},
+        {"ticker": "UGRO", "rank_score": 70.0, "change_pct": 32.0, "confirmed_at": "09:50:00 AM ET"},
+    ]
+    second_confirmed = [
+        {"ticker": "ELAB", "rank_score": 82.0, "change_pct": 42.0, "confirmed_at": "09:45:00 AM ET"}
+    ]
+    current_all = {"value": list(first_confirmed)}
+    current_top = {"value": list(first_confirmed)}
+
+    monkeypatch.setattr(state.alert_engine, "check_alerts", lambda snapshots, reference_data: [])
+    monkeypatch.setattr(
+        state.confirmed_scanner,
+        "process_alerts",
+        lambda alerts, reference_data, snapshot_lookup: [],
+    )
+    monkeypatch.setattr(
+        state.confirmed_scanner,
+        "get_all_confirmed",
+        lambda: list(current_all["value"]),
+    )
+    monkeypatch.setattr(
+        state.confirmed_scanner,
+        "get_top_n",
+        lambda *args, **kwargs: list(current_top["value"]),
+    )
+
+    state.process_snapshot_batch(
+        [
+            snapshot_from_payload(make_snapshot_payload(symbol="ELAB", price=2.78, volume=7_200_000)),
+            snapshot_from_payload(make_snapshot_payload(symbol="UGRO", price=2.40, volume=900_000)),
+        ],
+        {
+            "ELAB": ReferenceData(shares_outstanding=541_500, avg_daily_volume=600_000),
+            "UGRO": ReferenceData(shares_outstanding=50_000, avg_daily_volume=390_000),
+        },
+    )
+
+    for code in ("macd_30s", "macd_1m", "tos", "runner"):
+        assert state.bots[code].watchlist == {"ELAB", "UGRO"}
+
+    current_all["value"] = list(second_confirmed)
+    current_top["value"] = list(second_confirmed)
+
+    state.process_snapshot_batch(
+        [snapshot_from_payload(make_snapshot_payload(symbol="ELAB", price=2.82, volume=7_400_000))],
+        {"ELAB": ReferenceData(shares_outstanding=541_500, avg_daily_volume=600_000)},
+    )
+
+    for code in ("macd_30s", "macd_1m", "tos", "runner"):
+        assert state.bots[code].watchlist == {"ELAB"}
+    assert state.bots["runner"]._candidates == {"ELAB": second_confirmed[0]}
 
 
 def test_trade_tick_generates_open_intent_for_confirmed_watchlist(monkeypatch) -> None:
