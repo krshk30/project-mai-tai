@@ -17,6 +17,7 @@ from project_mai_tai.events import (
     MarketSnapshotPayload,
     OrderEventEvent,
     OrderEventPayload,
+    SnapshotBatchEvent,
 )
 from project_mai_tai.services.strategy_engine_app import StrategyEngineService, StrategyEngineState, snapshot_from_payload
 from project_mai_tai.settings import Settings
@@ -30,11 +31,20 @@ def fixed_now() -> datetime:
 class FakeRedis:
     def __init__(self) -> None:
         self.entries: list[tuple[str, str]] = []
+        self.stream_entries: dict[str, list[tuple[str, dict[str, str]]]] = {}
 
     async def xadd(self, stream: str, fields: dict[str, str], **kwargs) -> str:
         del kwargs
         self.entries.append((stream, fields["data"]))
+        self.stream_entries.setdefault(stream, []).insert(0, ("1-0", dict(fields)))
         return "1-0"
+
+    async def xrevrange(self, stream: str, count: int | None = None, **kwargs):
+        del kwargs
+        entries = list(self.stream_entries.get(stream, []))
+        if count is not None:
+            entries = entries[:count]
+        return entries
 
 
 def build_test_session_factory() -> sessionmaker[Session]:
@@ -457,6 +467,49 @@ async def test_historical_bars_hydrate_matching_strategy_intervals() -> None:
     assert len(service.state.bots["macd_1m"].builder_manager.get_bars("UGRO")) == 0
     assert len(service.state.bots["tos"].builder_manager.get_bars("UGRO")) == 0
     assert len(service.state.bots["runner"].builder_manager.get_bars("UGRO")) == 2
+
+
+@pytest.mark.asyncio
+async def test_snapshot_batch_history_prefill_restores_alert_warmup() -> None:
+    redis = FakeRedis()
+    service = StrategyEngineService(
+        settings=Settings(redis_stream_prefix="test", dashboard_snapshot_persistence_enabled=False),
+        redis_client=redis,
+    )
+
+    snapshot_stream = "test:snapshot-batches"
+    for index in range(20):
+        event = SnapshotBatchEvent(
+            source_service="market-data-gateway",
+            payload={
+                "snapshots": [
+                    make_snapshot_payload(
+                        symbol="UGRO",
+                        price=2.40 + index * 0.01,
+                        volume=900_000 + index * 10_000,
+                    )
+                ],
+                "reference_data": [
+                    {
+                        "symbol": "UGRO",
+                        "shares_outstanding": 50_000,
+                        "avg_daily_volume": "390000",
+                    }
+                ],
+            },
+        )
+        redis.stream_entries.setdefault(snapshot_stream, []).insert(
+            0,
+            (f"{index + 1}-0", {"data": event.model_dump_json()}),
+        )
+
+    await service._prefill_alert_history_from_snapshot_batches()
+
+    warmup = service.state.alert_warmup
+    assert warmup["history_cycles"] == 20
+    assert warmup["squeeze_5min_ready"] is True
+    assert warmup["squeeze_10min_ready"] is True
+    assert warmup["fully_ready"] is True
 
 
 @pytest.mark.asyncio

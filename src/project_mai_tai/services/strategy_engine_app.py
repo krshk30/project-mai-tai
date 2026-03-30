@@ -793,6 +793,7 @@ class StrategyEngineService:
         last_heartbeat_at = utcnow()
 
         self.logger.info("%s starting", SERVICE_NAME)
+        await self._prefill_alert_history_from_snapshot_batches()
         await self._publish_heartbeat("starting")
 
         while not stop_event.is_set():
@@ -820,6 +821,47 @@ class StrategyEngineService:
         await self._publish_heartbeat("stopping")
         await self.redis.aclose()
         self.logger.info("%s stopping", SERVICE_NAME)
+
+    async def _prefill_alert_history_from_snapshot_batches(self) -> None:
+        required_cycles = int(self.state.alert_engine.get_warmup_status().get("squeeze_10min_needs", 0) or 0)
+        if required_cycles <= 0:
+            return
+
+        stream = stream_name(self.settings.redis_stream_prefix, "snapshot-batches")
+        try:
+            entries = await self.redis.xrevrange(stream, count=required_cycles)
+        except Exception:
+            self.logger.exception("snapshot batch warmup prefill failed")
+            return
+
+        if not entries:
+            return
+
+        history_batches: list[list[MarketSnapshot]] = []
+        for _message_id, fields in reversed(entries):
+            data = fields.get("data")
+            if not data:
+                continue
+            try:
+                payload = json.loads(data)
+                event = SnapshotBatchEvent.model_validate(payload)
+            except Exception:
+                self.logger.exception("invalid snapshot batch during warmup prefill")
+                continue
+
+            snapshots = [snapshot_from_payload(item) for item in event.payload.snapshots]
+            if snapshots:
+                history_batches.append(snapshots)
+
+        if not history_batches:
+            return
+
+        self.state.alert_engine.prefill_history(history_batches)
+        self.state.alert_warmup = self.state.alert_engine.get_warmup_status()
+        self.logger.info(
+            "prefilled momentum alert history from %s snapshot batches",
+            len(history_batches),
+        )
 
     async def _handle_stream_message(self, stream: str, fields: dict[str, str]) -> None:
         del stream
