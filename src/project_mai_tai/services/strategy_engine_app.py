@@ -892,6 +892,8 @@ class StrategyEngineService:
         self.logger.info("%s starting", SERVICE_NAME)
         self._seed_confirmed_candidates_from_dashboard_snapshot()
         await self._prefill_alert_history_from_snapshot_batches()
+        await self._sync_market_data_subscriptions(self.state.market_data_symbols())
+        await self._publish_strategy_state_snapshot()
         await self._publish_heartbeat("starting")
 
         while not stop_event.is_set():
