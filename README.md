@@ -240,6 +240,32 @@ If you only remember one thing, remember this:
 - merge to `main` when code is ready
 - run deploy manually when production should change
 
+### Agent Vs User Responsibilities
+
+Current recommended split:
+
+- agent responsibilities
+  - inspect the repo and make code or doc changes
+  - add or update tests when behavior changes
+  - run local validation where possible
+  - commit and push branch work
+  - open or prepare PR-ready changes
+  - keep `main` as the source of deployment truth
+- user responsibilities
+  - review and merge PRs or decide when branch work should land on `main`
+  - manually trigger the production deploy workflow in GitHub Actions
+  - decide whether a live-session deploy is acceptable
+  - manage GitHub repository settings, secrets, and access policy
+
+In practical day-to-day use:
+
+1. the agent should do the implementation and validation work
+2. the agent should push the branch
+3. the user should merge when satisfied
+4. the user should run deploy when production should actually change
+
+This split is intentional for safety on a private trading repo where GitHub cannot fully enforce protected-branch policy on the current plan.
+
 ## Current Documentation Truth
 
 The README and architecture docs are intended to describe the current code, not just the original March 28-29 build milestone.
