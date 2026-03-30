@@ -574,3 +574,101 @@ async def test_strategy_state_snapshot_persists_last_nonempty_confirmed_snapshot
     assert snapshot.payload["top_confirmed"][0]["ticker"] == "UGRO"
     assert snapshot.payload["top_confirmed"][0]["headline"] == "Quantum Biopharma Wins Hospital Supply Agreement"
     assert snapshot.payload["top_confirmed"][0]["path_a_eligible"] is True
+
+
+def test_seeded_confirmed_candidates_are_revalidated_into_fresh_top_confirmed() -> None:
+    session_factory = build_test_session_factory()
+    with session_factory() as session:
+        session.add(
+            DashboardSnapshot(
+                snapshot_type="scanner_confirmed_last_nonempty",
+                payload={
+                    "top_confirmed": [
+                        {
+                            "ticker": "UGRO",
+                            "rank_score": 72.0,
+                            "confirmed_at": "10:00:00 AM ET",
+                            "entry_price": 2.25,
+                            "price": 2.40,
+                            "change_pct": 12.5,
+                            "volume": 900_000,
+                            "rvol": 6.2,
+                            "shares_outstanding": 50_000,
+                            "bid": 2.39,
+                            "ask": 2.40,
+                            "spread": 0.01,
+                            "spread_pct": 0.42,
+                            "squeeze_count": 2,
+                            "confirmation_path": "PATH_B_2SQ",
+                        }
+                    ]
+                },
+            )
+        )
+        session.commit()
+
+    service = StrategyEngineService(
+        settings=Settings(redis_stream_prefix="test", dashboard_snapshot_persistence_enabled=True),
+        redis_client=FakeRedis(),
+        session_factory=session_factory,
+    )
+    service._seed_confirmed_candidates_from_dashboard_snapshot()
+
+    summary = service.state.process_snapshot_batch(
+        [snapshot_from_payload(make_snapshot_payload(symbol="UGRO", price=2.62, volume=1_100_000))],
+        {"UGRO": ReferenceData(shares_outstanding=50_000, avg_daily_volume=390_000)},
+    )
+
+    assert service.state._seeded_confirmed_pending_revalidation is False
+    assert summary["watchlist"] == ["UGRO"]
+    assert summary["top_confirmed"][0]["ticker"] == "UGRO"
+    assert summary["top_confirmed"][0]["price"] == 2.62
+    assert summary["top_confirmed"][0]["volume"] == 1_100_000
+
+
+def test_seeded_confirmed_candidates_drop_when_missing_from_fresh_snapshots() -> None:
+    session_factory = build_test_session_factory()
+    with session_factory() as session:
+        session.add(
+            DashboardSnapshot(
+                snapshot_type="scanner_confirmed_last_nonempty",
+                payload={
+                    "top_confirmed": [
+                        {
+                            "ticker": "UGRO",
+                            "rank_score": 72.0,
+                            "confirmed_at": "10:00:00 AM ET",
+                            "entry_price": 2.25,
+                            "price": 2.40,
+                            "change_pct": 12.5,
+                            "volume": 900_000,
+                            "rvol": 6.2,
+                            "shares_outstanding": 50_000,
+                            "bid": 2.39,
+                            "ask": 2.40,
+                            "spread": 0.01,
+                            "spread_pct": 0.42,
+                            "squeeze_count": 2,
+                            "confirmation_path": "PATH_B_2SQ",
+                        }
+                    ]
+                },
+            )
+        )
+        session.commit()
+
+    service = StrategyEngineService(
+        settings=Settings(redis_stream_prefix="test", dashboard_snapshot_persistence_enabled=True),
+        redis_client=FakeRedis(),
+        session_factory=session_factory,
+    )
+    service._seed_confirmed_candidates_from_dashboard_snapshot()
+
+    summary = service.state.process_snapshot_batch(
+        [snapshot_from_payload(make_snapshot_payload(symbol="ELAB", price=2.62, volume=1_100_000))],
+        {"ELAB": ReferenceData(shares_outstanding=50_000, avg_daily_volume=390_000)},
+    )
+
+    assert service.state._seeded_confirmed_pending_revalidation is False
+    assert summary["watchlist"] == []
+    assert summary["top_confirmed"] == []

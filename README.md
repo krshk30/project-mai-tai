@@ -78,7 +78,7 @@ Important distinction:
 
 - scanner surfaces are driven by full-market snapshots
 - bot runtimes are driven by subscribed live trade ticks once a name is on feed
-- `Momentum Confirmed` is treated as fresh-only active state after restart; alerts may be prefetched for warmup, but confirmed candidates and ranked top-5 feed are recomputed from live post-restart data before bots consume them
+- `Momentum Confirmed` is rebuilt from live post-restart data before bots consume it; the last confirmed names may be loaded as provisional seeds, but they are revalidated against fresh snapshots and reranked before the new top-5 feed is published
 
 ## Broker Modes
 

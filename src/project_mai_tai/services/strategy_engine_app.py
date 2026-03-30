@@ -445,6 +445,7 @@ class StrategyEngineState:
         self.alert_warmup: dict[str, object] = self.alert_engine.get_warmup_status()
         self.cycle_count = 0
         self._first_seen_by_ticker: dict[str, str] = {}
+        self._seeded_confirmed_pending_revalidation = False
         registrations = strategy_registration_map(self.settings)
 
         base_trading = base_trading_config or TradingConfig()
@@ -551,6 +552,9 @@ class StrategyEngineState:
         self._record_recent_alerts(alerts)
         self.alert_warmup = self.alert_engine.get_warmup_status()
         snapshot_lookup = {snapshot.ticker: snapshot for snapshot in filtered_snapshots}
+        if self._seeded_confirmed_pending_revalidation:
+            self.confirmed_scanner.revalidate_seeded_candidates(snapshot_lookup, self.reference_data)
+            self._seeded_confirmed_pending_revalidation = False
         newly_confirmed = self.confirmed_scanner.process_alerts(
             alerts,
             filtered_reference_data,
@@ -681,6 +685,10 @@ class StrategyEngineState:
             "bots": {code: bot.summary() for code, bot in self.bots.items()},
         }
 
+    def seed_confirmed_candidates(self, candidates: Sequence[dict[str, object]]) -> None:
+        self.confirmed_scanner.seed_confirmed_candidates(candidates)
+        self._seeded_confirmed_pending_revalidation = bool(candidates)
+
     def market_data_symbols(self) -> list[str]:
         symbols: set[str] = set()
         for bot in self.bots.values():
@@ -796,6 +804,7 @@ class StrategyEngineService:
         last_heartbeat_at = utcnow()
 
         self.logger.info("%s starting", SERVICE_NAME)
+        self._seed_confirmed_candidates_from_dashboard_snapshot()
         await self._prefill_alert_history_from_snapshot_batches()
         await self._publish_heartbeat("starting")
 
@@ -1087,6 +1096,35 @@ class StrategyEngineService:
             "persisted_at": utcnow().isoformat(),
         }
         self._replace_dashboard_snapshot("scanner_confirmed_last_nonempty", payload)
+
+    def _seed_confirmed_candidates_from_dashboard_snapshot(self) -> None:
+        if self.session_factory is None:
+            return
+
+        try:
+            with self.session_factory() as session:
+                snapshot = session.scalar(
+                    select(DashboardSnapshot).where(
+                        DashboardSnapshot.snapshot_type == "scanner_confirmed_last_nonempty"
+                    )
+                )
+        except Exception:
+            self.logger.exception("failed to load seeded confirmed candidates")
+            return
+
+        if snapshot is None or not isinstance(snapshot.payload, dict):
+            return
+
+        top_confirmed = snapshot.payload.get("top_confirmed", [])
+        if not isinstance(top_confirmed, list) or not top_confirmed:
+            return
+
+        seeded = [dict(item) for item in top_confirmed if isinstance(item, dict)]
+        if not seeded:
+            return
+
+        self.state.seed_confirmed_candidates(seeded)
+        self.logger.info("seeded %s confirmed candidates for fresh restart revalidation", len(seeded))
 
     def _replace_dashboard_snapshot(self, snapshot_type: str, payload: dict[str, object]) -> None:
         if self.session_factory is None:

@@ -22,6 +22,83 @@ class MomentumConfirmedScanner:
         self._confirmed: list[dict[str, object]] = []
         self._catalyst_source: Callable[[str], Mapping[str, object]] | object | None = None
 
+    def seed_confirmed_candidates(self, candidates: Iterable[Mapping[str, object]]) -> None:
+        seeded: list[dict[str, object]] = []
+        for item in candidates:
+            ticker = str(item.get("ticker", "")).upper()
+            if not ticker:
+                continue
+            seeded.append(
+                {
+                    **dict(item),
+                    "ticker": ticker,
+                }
+            )
+        self._confirmed = seeded
+
+    def revalidate_seeded_candidates(
+        self,
+        snapshot_lookup: Mapping[str, MarketSnapshot],
+        reference_data: Mapping[str, ReferenceData] | None = None,
+    ) -> list[dict[str, object]]:
+        revalidated: list[dict[str, object]] = []
+        for stock in self._confirmed:
+            ticker = str(stock.get("ticker", "")).upper()
+            snapshot = snapshot_lookup.get(ticker)
+            if snapshot is None:
+                continue
+
+            updated = dict(stock)
+            ref = reference_data.get(ticker) if reference_data else None
+            if ref is not None:
+                updated["shares_outstanding"] = ref.shares_outstanding
+                updated["avg_daily_volume"] = ref.avg_daily_volume
+
+            price = get_current_hod(snapshot)
+            if price > 0:
+                updated["price"] = price
+            prev_close = float(snapshot.previous_close or updated.get("prev_close", 0) or 0)
+            updated["prev_close"] = prev_close
+            if price > 0 and prev_close > 0:
+                updated["change_pct"] = round(((price - prev_close) / prev_close) * 100, 2)
+
+            if snapshot.last_quote:
+                bid = float(snapshot.last_quote.bid_price or 0)
+                ask = float(snapshot.last_quote.ask_price or 0)
+                if bid > 0:
+                    updated["bid"] = bid
+                if ask > 0:
+                    updated["ask"] = ask
+                if snapshot.last_quote.bid_size is not None:
+                    updated["bid_size"] = snapshot.last_quote.bid_size
+                if snapshot.last_quote.ask_size is not None:
+                    updated["ask_size"] = snapshot.last_quote.ask_size
+                if bid > 0 and ask > 0:
+                    spread = round(ask - bid, 4)
+                    mid = (ask + bid) / 2 if (ask + bid) > 0 else 0
+                    updated["spread"] = spread
+                    updated["spread_pct"] = round((spread / mid) * 100, 2) if mid > 0 else 0
+
+            volume = snapshot.minute.accumulated_volume if snapshot.minute and snapshot.minute.accumulated_volume else 0
+            if snapshot.day and snapshot.day.volume and snapshot.day.volume > 0:
+                volume = snapshot.day.volume
+            if volume > 0:
+                updated["volume"] = volume
+
+            avg_daily_volume = float(updated.get("avg_daily_volume", 0) or 0)
+            minutes = get_minutes_since_4am()
+            if volume > 0 and avg_daily_volume > 0:
+                updated["rvol"] = round(compute_rvol(float(volume), avg_daily_volume, minutes), 2)
+
+            updated["hod"] = get_current_hod(snapshot)
+            updated["vwap"] = get_current_vwap(snapshot)
+            updated["data_age_secs"] = 0
+            revalidated.append(updated)
+
+        self._confirmed = revalidated
+        self.refresh_catalysts()
+        return list(self._confirmed)
+
     def set_catalyst_engine(self, catalyst_engine: Callable[[str], Mapping[str, object]] | object) -> None:
         self._catalyst_source = catalyst_engine
 
