@@ -158,6 +158,20 @@ class PositionTracker:
         self._closed_file_prefix = closed_file_prefix
         self._history_dir = history_dir
 
+    def _resolve_history_dir(self) -> Path:
+        configured = Path(self._history_dir)
+        if configured.is_absolute():
+            return configured
+
+        repo_relative = Path.cwd() / configured
+        sibling_data_dir = Path.cwd().with_name(f"{Path.cwd().name}-data") / configured.name
+
+        if repo_relative.exists():
+            return repo_relative
+        if sibling_data_dir.exists():
+            return sibling_data_dir
+        return repo_relative
+
     def has_position(self, ticker: str) -> bool:
         return ticker in self._positions
 
@@ -297,7 +311,7 @@ class PositionTracker:
             logger.exception("Failed to load positions: %s", target)
 
     def load_closed_trades(self) -> None:
-        filepath = Path(self._history_dir) / f"{self._closed_file_prefix}_closed_{today_eastern_str()}.csv"
+        filepath = self._resolve_history_dir() / f"{self._closed_file_prefix}_closed_{today_eastern_str()}.csv"
         if not filepath.exists():
             return
         try:
@@ -329,7 +343,7 @@ class PositionTracker:
         self._closed_today.clear()
 
     def _save_closed_trade(self, closed: dict[str, object]) -> None:
-        filepath = Path(self._history_dir) / f"{self._closed_file_prefix}_closed_{today_eastern_str()}.csv"
+        filepath = self._resolve_history_dir() / f"{self._closed_file_prefix}_closed_{today_eastern_str()}.csv"
         headers = [
             "ticker",
             "entry_price",

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 from datetime import datetime
 
 from project_mai_tai.strategy_core.bar_builder import BarBuilder
@@ -19,6 +20,7 @@ from project_mai_tai.strategy_core.models import (
 )
 from project_mai_tai.strategy_core.momentum_alerts import MomentumAlertEngine
 from project_mai_tai.strategy_core.momentum_confirmed import MomentumConfirmedScanner
+from project_mai_tai.strategy_core.position_tracker import PositionTracker
 from project_mai_tai.strategy_core.top_gainers import TopGainersTracker
 from project_mai_tai.strategy_core.trading_config import TradingConfig
 
@@ -190,3 +192,56 @@ def test_entry_engine_no_longer_blocks_midday_dead_zone() -> None:
     )
 
     assert gate["passed"] is True
+
+
+def test_position_tracker_loads_closed_trades_from_sibling_data_dir(tmp_path, monkeypatch) -> None:
+    repo_dir = tmp_path / "project-mai-tai"
+    repo_dir.mkdir()
+    history_dir = tmp_path / "project-mai-tai-data" / "history"
+    history_dir.mkdir(parents=True)
+    filepath = history_dir / "macdbot_closed_2026-03-30.csv"
+
+    with filepath.open("w", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(
+            [
+                "ticker",
+                "entry_price",
+                "exit_price",
+                "quantity",
+                "pnl",
+                "pnl_pct",
+                "reason",
+                "entry_time",
+                "exit_time",
+                "peak_profit_pct",
+                "tier",
+                "scales_done",
+                "path",
+            ]
+        )
+        writer.writerow(
+            [
+                "ELAB",
+                "3.10",
+                "3.40",
+                "100",
+                "30.0",
+                "9.68",
+                "OMS_FILL",
+                "2026-03-30 03:00:00 PM ET",
+                "2026-03-30 03:10:00 PM ET",
+                "9.7",
+                "2",
+                "",
+                "P1_MACD_CROSS",
+            ]
+        )
+
+    monkeypatch.chdir(repo_dir)
+    tracker = PositionTracker(TradingConfig())
+
+    tracker.load_closed_trades()
+
+    assert tracker.get_daily_pnl() == 30.0
+    assert tracker.get_closed_today()[0]["ticker"] == "ELAB"
