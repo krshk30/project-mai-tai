@@ -105,14 +105,16 @@ Typical setup:
 
 1. Create a virtualenv.
 2. Install the package in editable mode with dev dependencies.
-3. Run migrations.
-4. Start whichever services you need.
+3. Install pre-commit hooks.
+4. Run migrations.
+5. Start whichever services you need.
 
 Windows example:
 
 ```powershell
 uv venv --python 3.12 .venv
 uv pip install --python .venv\Scripts\python.exe -e ".[dev]"
+.venv\Scripts\pre-commit.exe install
 alembic upgrade head
 ```
 
@@ -121,6 +123,7 @@ macOS/Linux example:
 ```bash
 uv venv --python 3.12 .venv
 uv pip install --python .venv/bin/python -e ".[dev]"
+.venv/bin/pre-commit install
 alembic upgrade head
 ```
 
@@ -139,6 +142,28 @@ Verification:
 
 - Windows: `.venv\Scripts\python.exe -m pytest -p no:cacheprovider tests`
 - macOS/Linux: `.venv/bin/python -m pytest -p no:cacheprovider tests`
+
+Pre-commit:
+
+- config file: `.pre-commit-config.yaml`
+- install once per checkout:
+  - Windows: `.venv\Scripts\pre-commit.exe install`
+  - macOS/Linux: `.venv/bin/pre-commit install`
+- run across the repo manually when needed:
+  - Windows: `.venv\Scripts\pre-commit.exe run --all-files`
+  - macOS/Linux: `.venv/bin/pre-commit run --all-files`
+
+Current pre-commit hooks are intentionally lightweight:
+
+- file hygiene checks
+- JSON/YAML/TOML validation
+- debug-statement detection
+- private-key detection
+- Ruff lint with safe `--fix` support
+
+We intentionally do **not** run a repo-wide formatter in pre-commit yet. The codebase is not
+fully normalized to a single formatting baseline, so automatic formatting would create noisy
+large diffs unrelated to the actual change being reviewed.
 
 ## Production/VPS Assets
 
