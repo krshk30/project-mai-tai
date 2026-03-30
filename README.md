@@ -260,6 +260,20 @@ GitHub Actions steps:
 - `oms` -> stops `strategy`, restarts `oms`, then starts `strategy` again unless `hold_strategy=true`
 - `market-data` -> stops `strategy`, restarts `market-data`, then starts `strategy` again unless `hold_strategy=true`
 
+For risky live targets (`strategy`, `oms`, `market-data`), `Deploy Service` now runs an
+automated preflight when `allow_live_restart=true`. The workflow will fail instead of
+restarting if any of these are true:
+
+- pending or in-flight intents still exist
+- broker/account or virtual positions are still open
+- recent fills are still settling
+- reconciliation has critical findings
+- service heartbeats are stale or unhealthy
+
+If that preflight fails, treat the deploy as a human-review case and use
+[Live Market Restart Runbook](./docs/live-market-restart-runbook.md) before deciding whether
+to proceed manually.
+
 ### Optional PR Auto-Merge
 
 This repo can auto-merge PRs into `main` when all of these are true:
