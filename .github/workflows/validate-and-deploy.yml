@@ -127,4 +127,14 @@ jobs:
           fi
 
           ssh -i ~/.ssh/project_mai_tai_vps "${VPS_USER}@${VPS_HOST}" \
-            "cd /home/trader/project-mai-tai && MAI_TAI_ALLOW_LIVE_RESTART=${DEPLOY_ALLOW_LIVE} bash ops/systemd/deploy_main.sh /home/trader/project-mai-tai main"
+            "set -euo pipefail; \
+            cd /home/trader/project-mai-tai; \
+            if [ -n \"\$(git status --porcelain)\" ]; then \
+              echo 'refusing deploy because repo has local changes'; \
+              git status --short; \
+              exit 1; \
+            fi; \
+            git fetch origin; \
+            git checkout main; \
+            git merge --ff-only origin/main; \
+            MAI_TAI_ALLOW_LIVE_RESTART=${DEPLOY_ALLOW_LIVE} bash ops/systemd/deploy_main.sh /home/trader/project-mai-tai main"
