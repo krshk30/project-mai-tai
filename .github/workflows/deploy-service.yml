@@ -1,0 +1,133 @@
+name: Deploy Service
+
+on:
+  workflow_dispatch:
+    inputs:
+      service:
+        description: "Service target"
+        required: true
+        type: choice
+        options:
+          - control
+          - reconciler
+          - strategy
+          - oms
+          - market-data
+      allow_live_restart:
+        description: "Allow strategy/OMS/market-data deploy during ET market hours"
+        required: false
+        default: false
+        type: boolean
+      run_migrations:
+        description: "Run alembic upgrade head before restarting the selected service"
+        required: false
+        default: false
+        type: boolean
+      hold_strategy:
+        description: "Leave strategy stopped after OMS or market-data deploy"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  deploy_service:
+    runs-on: ubuntu-latest
+    environment: production
+    concurrency:
+      group: project-mai-tai-service-deploy-${{ inputs.service }}
+      cancel-in-progress: false
+    steps:
+      - name: Require main ref
+        env:
+          GITHUB_REF: ${{ github.ref }}
+        run: |
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "Deploy Service must be run from the main branch."
+            exit 1
+          fi
+
+      - name: Validate workflow inputs
+        env:
+          SERVICE: ${{ inputs.service }}
+          HOLD_STRATEGY: ${{ inputs.hold_strategy || false }}
+        run: |
+          if [ "$HOLD_STRATEGY" = "true" ] && [ "$SERVICE" != "oms" ] && [ "$SERVICE" != "market-data" ]; then
+            echo "hold_strategy is only valid for oms or market-data deploys."
+            exit 1
+          fi
+
+      - name: Check deploy secrets
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_SSH_KEY_BASE64: ${{ secrets.VPS_SSH_KEY_BASE64 }}
+        run: |
+          if [ -z "$VPS_HOST" ] || [ -z "$VPS_USER" ]; then
+            echo "Missing deploy secrets: VPS_HOST and VPS_USER are required."
+            exit 1
+          fi
+
+          if [ -z "$VPS_SSH_KEY" ] && [ -z "$VPS_SSH_KEY_BASE64" ]; then
+            echo "Missing deploy secret: add VPS_SSH_KEY or VPS_SSH_KEY_BASE64."
+            exit 1
+          fi
+
+      - name: Prepare SSH key
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_SSH_KEY_BASE64: ${{ secrets.VPS_SSH_KEY_BASE64 }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+        run: |
+          mkdir -p ~/.ssh
+          if [ -n "$VPS_SSH_KEY_BASE64" ]; then
+            printf '%s' "$VPS_SSH_KEY_BASE64" | base64 --decode > ~/.ssh/project_mai_tai_vps
+          else
+            printf '%b' "$VPS_SSH_KEY" | tr -d '\r' > ~/.ssh/project_mai_tai_vps
+          fi
+          chmod 600 ~/.ssh/project_mai_tai_vps
+          ssh-keygen -y -f ~/.ssh/project_mai_tai_vps >/dev/null
+          ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts
+
+      - name: Deploy selected service to VPS
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          SERVICE: ${{ inputs.service }}
+          ALLOW_LIVE_RESTART: ${{ inputs.allow_live_restart || false }}
+          RUN_MIGRATIONS: ${{ inputs.run_migrations || false }}
+          HOLD_STRATEGY: ${{ inputs.hold_strategy || false }}
+        run: |
+          DEPLOY_ALLOW_LIVE=0
+          if [ "$ALLOW_LIVE_RESTART" = "true" ]; then
+            DEPLOY_ALLOW_LIVE=1
+          fi
+
+          DEPLOY_RUN_MIGRATIONS=0
+          if [ "$RUN_MIGRATIONS" = "true" ]; then
+            DEPLOY_RUN_MIGRATIONS=1
+          fi
+
+          DEPLOY_HOLD_STRATEGY=0
+          if [ "$HOLD_STRATEGY" = "true" ]; then
+            DEPLOY_HOLD_STRATEGY=1
+          fi
+
+          ssh -i ~/.ssh/project_mai_tai_vps "${VPS_USER}@${VPS_HOST}" \
+            "set -euo pipefail; \
+            cd /home/trader/project-mai-tai; \
+            if [ -n \"\$(git status --porcelain)\" ]; then \
+              echo 'refusing deploy because repo has local changes'; \
+              git status --short; \
+              exit 1; \
+            fi; \
+            git fetch origin; \
+            git checkout main; \
+            git merge --ff-only origin/main; \
+            MAI_TAI_ALLOW_LIVE_RESTART=${DEPLOY_ALLOW_LIVE} \
+            MAI_TAI_RUN_MIGRATIONS=${DEPLOY_RUN_MIGRATIONS} \
+            MAI_TAI_HOLD_STRATEGY=${DEPLOY_HOLD_STRATEGY} \
+            bash ops/systemd/deploy_service.sh /home/trader/project-mai-tai main '${SERVICE}'"
