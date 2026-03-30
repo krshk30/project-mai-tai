@@ -158,3 +158,39 @@ async def test_apply_subscription_event_unions_static_and_consumer_symbols() -> 
     ]
     assert len(warmup_events) == 4
     assert {event["payload"]["interval_secs"] for event in warmup_events} == {30, 60}
+
+
+@pytest.mark.asyncio
+async def test_apply_subscription_event_replace_replays_warmup_when_symbols_unchanged() -> None:
+    redis = FakeRedis()
+    trade_stream = FakeTradeStream()
+    service = MarketDataGatewayService(
+        settings=Settings(redis_stream_prefix="test"),
+        redis_client=redis,
+        snapshot_provider=FakeSnapshotProvider(),
+        trade_stream=trade_stream,
+        reference_cache=FakeReferenceCache(),
+    )
+    service._desired_symbols_by_consumer["strategy-engine"] = {"UGRO"}
+    service._active_symbols = {"UGRO"}
+
+    symbols = await service.apply_subscription_event(
+        MarketDataSubscriptionEvent(
+            source_service="strategy-engine",
+            payload=MarketDataSubscriptionPayload(
+                consumer_name="strategy-engine",
+                mode="replace",
+                symbols=["UGRO"],
+            ),
+        )
+    )
+
+    assert symbols == {"UGRO"}
+    assert trade_stream.synced == []
+    warmup_events = [
+        payload
+        for stream, payload, _kwargs in redis.entries
+        if stream == "test:market-data" and payload["event_type"] == "historical_bars"
+    ]
+    assert len(warmup_events) == 2
+    assert {event["payload"]["interval_secs"] for event in warmup_events} == {30, 60}

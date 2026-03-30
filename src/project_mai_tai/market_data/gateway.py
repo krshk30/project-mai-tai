@@ -132,10 +132,13 @@ class MarketDataGatewayService:
         self._desired_symbols_by_consumer[consumer] = updated
         next_symbols = set().union(*self._desired_symbols_by_consumer.values())
         added_symbols = next_symbols - self._active_symbols
+        refresh_symbols = set(updated) if mode == "replace" and updated else set()
         if next_symbols != self._active_symbols:
             self._active_symbols = next_symbols
             await self.trade_stream.sync_subscriptions(sorted(self._active_symbols))
             await self._publish_historical_warmup(added_symbols)
+        elif refresh_symbols:
+            await self._publish_historical_warmup(refresh_symbols)
         return set(self._active_symbols)
 
     def active_symbols(self) -> set[str]:
