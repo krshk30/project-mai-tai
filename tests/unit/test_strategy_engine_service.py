@@ -560,6 +560,44 @@ async def test_strategy_state_snapshot_persists_last_nonempty_confirmed_snapshot
             "path_a_eligible": True,
         }
     ]
+    service.state.confirmed_scanner.seed_confirmed_candidates(
+        [
+            {
+                "ticker": "UGRO",
+                "rank_score": 72.0,
+                "confirmed_at": "10:00:00 AM ET",
+                "entry_price": 2.25,
+                "price": 2.40,
+                "change_pct": 12.5,
+                "volume": 900_000,
+                "rvol": 6.2,
+                "shares_outstanding": 50_000,
+                "bid": 2.39,
+                "ask": 2.40,
+                "spread": 0.01,
+                "spread_pct": 0.42,
+                "squeeze_count": 2,
+                "confirmation_path": "PATH_B_2SQ",
+            },
+            {
+                "ticker": "ELAB",
+                "rank_score": 82.0,
+                "confirmed_at": "10:05:00 AM ET",
+                "entry_price": 3.05,
+                "price": 3.82,
+                "change_pct": 128.7,
+                "volume": 26_400_000,
+                "rvol": 13.0,
+                "shares_outstanding": 541_461,
+                "bid": 3.81,
+                "ask": 3.82,
+                "spread": 0.01,
+                "spread_pct": 0.26,
+                "squeeze_count": 2,
+                "confirmation_path": "PATH_B_2SQ",
+            },
+        ]
+    )
 
     await service._publish_strategy_state_snapshot()
 
@@ -572,6 +610,7 @@ async def test_strategy_state_snapshot_persists_last_nonempty_confirmed_snapshot
 
     assert snapshot is not None
     assert snapshot.payload["top_confirmed"][0]["ticker"] == "UGRO"
+    assert len(snapshot.payload["all_confirmed_candidates"]) == 2
     assert snapshot.payload["top_confirmed"][0]["headline"] == "Quantum Biopharma Wins Hospital Supply Agreement"
     assert snapshot.payload["top_confirmed"][0]["path_a_eligible"] is True
 
@@ -583,6 +622,42 @@ def test_seeded_confirmed_candidates_are_revalidated_into_fresh_top_confirmed() 
             DashboardSnapshot(
                 snapshot_type="scanner_confirmed_last_nonempty",
                 payload={
+                    "all_confirmed_candidates": [
+                        {
+                            "ticker": "UGRO",
+                            "rank_score": 72.0,
+                            "confirmed_at": "10:00:00 AM ET",
+                            "entry_price": 2.25,
+                            "price": 2.40,
+                            "change_pct": 12.5,
+                            "volume": 900_000,
+                            "rvol": 6.2,
+                            "shares_outstanding": 50_000,
+                            "bid": 2.39,
+                            "ask": 2.40,
+                            "spread": 0.01,
+                            "spread_pct": 0.42,
+                            "squeeze_count": 2,
+                            "confirmation_path": "PATH_B_2SQ",
+                        },
+                        {
+                            "ticker": "ELAB",
+                            "rank_score": 82.0,
+                            "confirmed_at": "10:05:00 AM ET",
+                            "entry_price": 3.05,
+                            "price": 3.82,
+                            "change_pct": 128.7,
+                            "volume": 26_400_000,
+                            "rvol": 13.0,
+                            "shares_outstanding": 541_461,
+                            "bid": 3.81,
+                            "ask": 3.82,
+                            "spread": 0.01,
+                            "spread_pct": 0.26,
+                            "squeeze_count": 2,
+                            "confirmation_path": "PATH_B_2SQ",
+                        },
+                    ],
                     "top_confirmed": [
                         {
                             "ticker": "UGRO",
@@ -615,15 +690,22 @@ def test_seeded_confirmed_candidates_are_revalidated_into_fresh_top_confirmed() 
     service._seed_confirmed_candidates_from_dashboard_snapshot()
 
     summary = service.state.process_snapshot_batch(
-        [snapshot_from_payload(make_snapshot_payload(symbol="UGRO", price=2.62, volume=1_100_000))],
-        {"UGRO": ReferenceData(shares_outstanding=50_000, avg_daily_volume=390_000)},
+        [
+            snapshot_from_payload(make_snapshot_payload(symbol="UGRO", price=2.62, volume=1_100_000)),
+            snapshot_from_payload(make_snapshot_payload(symbol="ELAB", price=3.90, volume=28_000_000)),
+        ],
+        {
+            "UGRO": ReferenceData(shares_outstanding=50_000, avg_daily_volume=390_000),
+            "ELAB": ReferenceData(shares_outstanding=541_461, avg_daily_volume=1_941_514.84),
+        },
     )
 
     assert service.state._seeded_confirmed_pending_revalidation is False
-    assert summary["watchlist"] == ["UGRO"]
-    assert summary["top_confirmed"][0]["ticker"] == "UGRO"
-    assert summary["top_confirmed"][0]["price"] == 2.62
-    assert summary["top_confirmed"][0]["volume"] == 1_100_000
+    assert [item["ticker"] for item in service.state.confirmed_scanner.get_all_confirmed()] == ["UGRO", "ELAB"]
+    assert summary["watchlist"] == ["ELAB"]
+    assert [item["ticker"] for item in summary["top_confirmed"]] == ["ELAB"]
+    assert summary["top_confirmed"][0]["price"] == 3.90
+    assert service.state.confirmed_scanner.get_all_confirmed()[0]["volume"] == 1_100_000
 
 
 def test_seeded_confirmed_candidates_drop_when_missing_from_fresh_snapshots() -> None:

@@ -1086,11 +1086,13 @@ class StrategyEngineService:
             return
 
         top_confirmed = list(summary.get("top_confirmed", []))
-        if not top_confirmed:
+        all_confirmed_candidates = list(self.state.confirmed_scanner.get_all_confirmed())
+        if not top_confirmed and not all_confirmed_candidates:
             return
 
         payload = {
             "top_confirmed": top_confirmed,
+            "all_confirmed_candidates": all_confirmed_candidates,
             "watchlist": list(summary.get("watchlist", [])),
             "cycle_count": int(summary.get("cycle_count", 0) or 0),
             "persisted_at": utcnow().isoformat(),
@@ -1115,11 +1117,13 @@ class StrategyEngineService:
         if snapshot is None or not isinstance(snapshot.payload, dict):
             return
 
-        top_confirmed = snapshot.payload.get("top_confirmed", [])
-        if not isinstance(top_confirmed, list) or not top_confirmed:
+        seeded_candidates = snapshot.payload.get("all_confirmed_candidates")
+        if not isinstance(seeded_candidates, list) or not seeded_candidates:
+            seeded_candidates = snapshot.payload.get("top_confirmed", [])
+        if not isinstance(seeded_candidates, list) or not seeded_candidates:
             return
 
-        seeded = [dict(item) for item in top_confirmed if isinstance(item, dict)]
+        seeded = [dict(item) for item in seeded_candidates if isinstance(item, dict)]
         if not seeded:
             return
 
