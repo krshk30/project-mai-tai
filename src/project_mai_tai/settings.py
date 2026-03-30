@@ -39,7 +39,7 @@ class Settings(BaseSettings):
     legacy_api_cache_ttl_seconds: int = 5
 
     massive_api_key: str | None = None
-    market_data_snapshot_interval_seconds: int = 30
+    market_data_snapshot_interval_seconds: int = 5
     market_data_reference_cache_path: str = "data/cache/reference_data.json"
     market_data_reference_cache_max_age_hours: int = 24
     market_data_reference_lookback_days: int = 20

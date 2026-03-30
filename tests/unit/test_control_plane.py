@@ -277,7 +277,12 @@ def seed_database(session_factory: sessionmaker[Session]) -> None:
         session.commit()
 
 
-def make_streams(prefix: str, *, include_confirmed: bool = True) -> dict[str, list[tuple[str, dict[str, str]]]]:
+def make_streams(
+    prefix: str,
+    *,
+    include_confirmed: bool = True,
+    live_price: float = 2.55,
+) -> dict[str, list[tuple[str, dict[str, str]]]]:
     heartbeat = HeartbeatEvent(
         source_service="strategy-engine",
         payload=HeartbeatPayload(
@@ -349,10 +354,10 @@ def make_streams(prefix: str, *, include_confirmed: bool = True) -> dict[str, li
                 {
                     "ticker": "UGRO",
                     "first_seen": "09:55:00 AM ET",
-                    "price": 2.55,
+                    "price": live_price,
                     "change_pct": 12.5,
-                    "bid": 2.54,
-                    "ask": 2.55,
+                    "bid": round(live_price - 0.01, 2),
+                    "ask": round(live_price, 2),
                     "spread_pct": 0.39,
                     "volume": 900_000,
                     "rvol": 6.1,
@@ -367,10 +372,10 @@ def make_streams(prefix: str, *, include_confirmed: bool = True) -> dict[str, li
                 {
                     "ticker": "UGRO",
                     "first_seen": "09:55:00 AM ET",
-                    "price": 2.55,
+                    "price": live_price,
                     "change_pct": 12.5,
-                    "bid": 2.54,
-                    "ask": 2.55,
+                    "bid": round(live_price - 0.01, 2),
+                    "ask": round(live_price, 2),
                     "spread_pct": 0.39,
                     "volume": 900_000,
                     "rvol": 6.1,
@@ -684,7 +689,7 @@ def test_control_plane_restores_last_nonempty_confirmed_snapshot() -> None:
     settings = Settings(redis_stream_prefix="test", oms_adapter="alpaca_paper")
     session_factory = build_test_session_factory()
     seed_database(session_factory)
-    redis = FakeRedis(make_streams(settings.redis_stream_prefix, include_confirmed=False))
+    redis = FakeRedis(make_streams(settings.redis_stream_prefix, include_confirmed=False, live_price=2.61))
 
     app = build_app(
         settings=settings,
@@ -700,6 +705,9 @@ def test_control_plane_restores_last_nonempty_confirmed_snapshot() -> None:
         assert scanner_body["top_confirmed_source"] == "restored"
         assert scanner_body["top_confirmed_count"] == 1
         assert scanner_body["top_confirmed"][0]["ticker"] == "UGRO"
+        assert scanner_body["top_confirmed"][0]["price"] == 2.61
+        assert scanner_body["top_confirmed"][0]["bid"] == 2.6
+        assert scanner_body["top_confirmed"][0]["ask"] == 2.61
         assert scanner_body["top_confirmed_snapshot_at"]
         assert scanner_body["top_confirmed_snapshot_at"].endswith("ET")
 

@@ -473,7 +473,11 @@ async def test_historical_bars_hydrate_matching_strategy_intervals() -> None:
 async def test_snapshot_batch_history_prefill_restores_alert_warmup() -> None:
     redis = FakeRedis()
     service = StrategyEngineService(
-        settings=Settings(redis_stream_prefix="test", dashboard_snapshot_persistence_enabled=False),
+        settings=Settings(
+            redis_stream_prefix="test",
+            dashboard_snapshot_persistence_enabled=False,
+            market_data_snapshot_interval_seconds=30,
+        ),
         redis_client=redis,
     )
 

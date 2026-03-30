@@ -59,6 +59,27 @@ Service split:
 
 Control plane defaults to `127.0.0.1:8100`. Nginx handles the public edge in production.
 
+## Refresh Cadence
+
+Current runtime cadence is intentionally split by responsibility:
+
+- control-plane UI/API refresh target: `5s`
+- legacy-shadow fetch cache TTL: `5s`
+- full-market scanner snapshot polling: `5s`
+- scanner alerts and confirmed-candidate evaluation: on each snapshot batch
+- bot execution input for subscribed names: live trade ticks plus historical warmup bars
+- MACD bot bar intervals:
+  - `macd_30s`: `30s`
+  - `macd_1m`: `60s`
+  - `tos`: `60s`
+  - `runner`: `300s`
+
+Important distinction:
+
+- scanner surfaces are driven by full-market snapshots
+- bot runtimes are driven by subscribed live trade ticks once a name is on feed
+- if the control plane has to restore a previous confirmed row, it now overlays current live scanner price/bid/ask when available instead of showing an old price as if it were live
+
 ## Broker Modes
 
 Current OMS adapters:

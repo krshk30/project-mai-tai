@@ -219,13 +219,19 @@ class ControlPlaneRepository:
             if entry.get("symbol")
         }
         bot_states = strategy_runtime.get("bots", {})
+        live_market_rows = self._build_live_market_lookup(strategy_runtime)
         watchlist = [
             str(symbol)
             for symbol in strategy_runtime.get("watchlist", [])
             if str(symbol).upper() not in blacklisted_symbols
         ]
         top_confirmed = [
-            self._normalize_confirmed_row(index=index, item=item, bot_states=bot_states)
+            self._normalize_confirmed_row(
+                index=index,
+                item=item,
+                bot_states=bot_states,
+                live_market_row=live_market_rows.get(str(item.get("ticker", "")).upper()),
+            )
             for index, item in enumerate(strategy_runtime.get("top_confirmed", []), start=1)
             if str(item.get("ticker", "")).upper() not in blacklisted_symbols
         ]
@@ -235,7 +241,12 @@ class ControlPlaneRepository:
         if not top_confirmed:
             restored = persisted_snapshots.get("scanner_confirmed_last_nonempty") or {}
             restored_rows = [
-                self._normalize_confirmed_row(index=index, item=item, bot_states=bot_states)
+                self._normalize_confirmed_row(
+                    index=index,
+                    item=item,
+                    bot_states=bot_states,
+                    live_market_row=live_market_rows.get(str(item.get("ticker", "")).upper()),
+                )
                 for index, item in enumerate(restored.get("top_confirmed", []), start=1)
                 if str(item.get("ticker", "")).upper() not in blacklisted_symbols
             ]
@@ -309,12 +320,27 @@ class ControlPlaneRepository:
             "blacklist_count": len(blacklist_entries),
         }
 
+    def _build_live_market_lookup(self, strategy_runtime: dict[str, Any]) -> dict[str, dict[str, Any]]:
+        lookup: dict[str, dict[str, Any]] = {}
+        for collection_name in ("five_pillars", "top_gainers"):
+            for item in strategy_runtime.get(collection_name, []):
+                ticker = str(item.get("ticker", "")).upper()
+                if not ticker:
+                    continue
+                current = lookup.get(ticker)
+                current_age = int(current.get("data_age_secs", 10**9)) if current else 10**9
+                item_age = int(item.get("data_age_secs", 10**9) or 10**9)
+                if current is None or item_age <= current_age:
+                    lookup[ticker] = item
+        return lookup
+
     def _normalize_confirmed_row(
         self,
         *,
         index: int,
         item: dict[str, Any],
         bot_states: dict[str, Any],
+        live_market_row: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         ticker = str(item.get("ticker", "")).upper()
         watched_by = [
@@ -322,52 +348,74 @@ class ControlPlaneRepository:
             for strategy_code, bot in bot_states.items()
             if ticker and ticker in {str(symbol).upper() for symbol in bot.get("watchlist", [])}
         ]
-        bid = float(item.get("bid", 0) or 0)
-        ask = float(item.get("ask", 0) or 0)
-        spread = float(item.get("spread", 0) or 0)
+        merged_item = dict(item)
+        if live_market_row:
+            for field in (
+                "price",
+                "change_pct",
+                "volume",
+                "rvol",
+                "shares_outstanding",
+                "bid",
+                "ask",
+                "bid_size",
+                "ask_size",
+                "spread",
+                "spread_pct",
+                "hod",
+                "vwap",
+                "prev_close",
+                "avg_daily_volume",
+                "data_age_secs",
+            ):
+                if live_market_row.get(field) is not None:
+                    merged_item[field] = live_market_row.get(field)
+        bid = float(merged_item.get("bid", 0) or 0)
+        ask = float(merged_item.get("ask", 0) or 0)
+        spread = float(merged_item.get("spread", 0) or 0)
         if spread <= 0 and bid > 0 and ask > 0:
             spread = round(ask - bid, 4)
 
         return {
-            **item,
+            **merged_item,
             "rank": index,
             "ticker": ticker,
-            "rank_score": float(item.get("rank_score", 0) or 0),
-            "confirmation_path": str(item.get("confirmation_path", "")),
-            "confirmed_at": str(item.get("confirmed_at", "")),
-            "entry_price": float(item.get("entry_price", 0) or 0),
-            "price": float(item.get("price", 0) or 0),
-            "change_pct": float(item.get("change_pct", 0) or 0),
-            "volume": float(item.get("volume", 0) or 0),
-            "rvol": float(item.get("rvol", 0) or 0),
+            "rank_score": float(merged_item.get("rank_score", 0) or 0),
+            "confirmation_path": str(merged_item.get("confirmation_path", "")),
+            "confirmed_at": str(merged_item.get("confirmed_at", "")),
+            "entry_price": float(merged_item.get("entry_price", 0) or 0),
+            "price": float(merged_item.get("price", 0) or 0),
+            "change_pct": float(merged_item.get("change_pct", 0) or 0),
+            "volume": float(merged_item.get("volume", 0) or 0),
+            "rvol": float(merged_item.get("rvol", 0) or 0),
             "bid": bid,
             "ask": ask,
-            "bid_size": int(item.get("bid_size", 0) or 0),
-            "ask_size": int(item.get("ask_size", 0) or 0),
+            "bid_size": int(merged_item.get("bid_size", 0) or 0),
+            "ask_size": int(merged_item.get("ask_size", 0) or 0),
             "spread": spread,
-            "spread_pct": float(item.get("spread_pct", 0) or 0),
-            "squeeze_count": int(item.get("squeeze_count", 0) or 0),
-            "first_spike_time": str(item.get("first_spike_time", "")),
-            "catalyst": str(item.get("catalyst", "")),
-            "catalyst_type": str(item.get("catalyst_type") or item.get("catalyst") or ""),
-            "headline": str(item.get("headline", "")),
-            "sentiment": str(item.get("sentiment", "")),
-            "direction": str(item.get("direction") or item.get("sentiment") or ""),
-            "news_url": str(item.get("news_url", "")),
-            "news_date": str(item.get("news_date", "")),
-            "news_window_start": str(item.get("news_window_start", "")),
-            "catalyst_reason": str(item.get("catalyst_reason", "")),
-            "catalyst_confidence": float(item.get("catalyst_confidence", 0) or 0),
-            "article_count": int(item.get("article_count", 0) or 0),
-            "real_catalyst_article_count": int(item.get("real_catalyst_article_count", 0) or 0),
+            "spread_pct": float(merged_item.get("spread_pct", 0) or 0),
+            "squeeze_count": int(merged_item.get("squeeze_count", 0) or 0),
+            "first_spike_time": str(merged_item.get("first_spike_time", "")),
+            "catalyst": str(merged_item.get("catalyst", "")),
+            "catalyst_type": str(merged_item.get("catalyst_type") or merged_item.get("catalyst") or ""),
+            "headline": str(merged_item.get("headline", "")),
+            "sentiment": str(merged_item.get("sentiment", "")),
+            "direction": str(merged_item.get("direction") or merged_item.get("sentiment") or ""),
+            "news_url": str(merged_item.get("news_url", "")),
+            "news_date": str(merged_item.get("news_date", "")),
+            "news_window_start": str(merged_item.get("news_window_start", "")),
+            "catalyst_reason": str(merged_item.get("catalyst_reason", "")),
+            "catalyst_confidence": float(merged_item.get("catalyst_confidence", 0) or 0),
+            "article_count": int(merged_item.get("article_count", 0) or 0),
+            "real_catalyst_article_count": int(merged_item.get("real_catalyst_article_count", 0) or 0),
             "freshness_minutes": (
-                int(item.get("freshness_minutes", 0))
-                if item.get("freshness_minutes") is not None
+                int(merged_item.get("freshness_minutes", 0))
+                if merged_item.get("freshness_minutes") is not None
                 else None
             ),
-            "is_generic_roundup": bool(item.get("is_generic_roundup", False)),
-            "has_real_catalyst": bool(item.get("has_real_catalyst", False)),
-            "path_a_eligible": bool(item.get("path_a_eligible", False)),
+            "is_generic_roundup": bool(merged_item.get("is_generic_roundup", False)),
+            "has_real_catalyst": bool(merged_item.get("has_real_catalyst", False)),
+            "path_a_eligible": bool(merged_item.get("path_a_eligible", False)),
             "watched_by": watched_by,
             "is_top5": bool(watched_by),
         }

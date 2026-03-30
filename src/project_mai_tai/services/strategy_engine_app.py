@@ -419,6 +419,7 @@ class StrategyEngineState:
         )
         self.alert_engine = MomentumAlertEngine(
             default_alert_config,
+            scan_interval_secs=self.settings.market_data_snapshot_interval_seconds,
             now_provider=now_provider,
         )
         self.confirmed_scanner = MomentumConfirmedScanner(confirmed_config or MomentumConfirmedConfig())

@@ -47,6 +47,11 @@ Responsibilities:
 - manages dynamic symbol subscriptions requested by downstream consumers
 - publishes normalized market-data events into Redis Streams
 
+Cadence:
+
+- full-market snapshot polling defaults to `5s`
+- live subscribed trades and quotes stream continuously for active symbols
+
 Rules:
 
 - single owner of external market-data connections for the new platform
@@ -73,6 +78,12 @@ Responsibilities:
 - emits trade intents for OMS
 - publishes strategy state snapshots for the dashboard
 - applies scanner blacklist filtering from Postgres
+
+Cadence:
+
+- scanner surfaces update on each snapshot batch
+- alert warmup and squeeze windows are computed from the configured snapshot interval
+- bot runtimes update on trade ticks and emit decisions on completed `30s`, `60s`, or `300s` bars depending on strategy
 
 Rules:
 
