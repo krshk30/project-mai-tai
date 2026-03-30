@@ -280,6 +280,23 @@ def test_snapshot_batch_releases_removed_symbols_from_all_bot_watchlists(monkeyp
     assert state.bots["runner"]._candidates == {"ELAB": second_confirmed[0]}
 
 
+def test_bot_runtime_clears_ghost_position_on_no_position_reject() -> None:
+    state = StrategyEngineState(now_provider=fixed_now)
+    bot = state.bots["macd_30s"]
+    bot.positions.open_position("ASTC", 5.31, quantity=10, path="P1_MACD_CROSS")
+    bot.pending_close_symbols.add("ASTC")
+
+    bot.apply_order_status(
+        symbol="ASTC",
+        intent_type="close",
+        status="rejected",
+        reason='asset "ASTC" cannot be sold short',
+    )
+
+    assert bot.positions.get_position("ASTC") is None
+    assert "ASTC" not in bot.pending_close_symbols
+
+
 def test_trade_tick_generates_open_intent_for_confirmed_watchlist(monkeypatch) -> None:
     state = StrategyEngineState(now_provider=fixed_now)
     bot = state.bots["macd_30s"]

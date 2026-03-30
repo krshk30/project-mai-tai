@@ -60,6 +60,40 @@ class OmsStore:
             .order_by(BrokerAccount.name)
         ).all()
 
+    def get_account_position(
+        self,
+        session: Session,
+        *,
+        broker_account_id: UUID,
+        symbol: str,
+    ) -> AccountPosition | None:
+        return session.scalar(
+            select(AccountPosition).where(
+                AccountPosition.broker_account_id == broker_account_id,
+                AccountPosition.symbol == symbol,
+            )
+        )
+
+    def find_open_exit_order(
+        self,
+        session: Session,
+        *,
+        strategy_id: UUID,
+        broker_account_id: UUID,
+        symbol: str,
+    ) -> BrokerOrder | None:
+        return session.scalar(
+            select(BrokerOrder)
+            .where(
+                BrokerOrder.strategy_id == strategy_id,
+                BrokerOrder.broker_account_id == broker_account_id,
+                BrokerOrder.symbol == symbol,
+                BrokerOrder.side == "sell",
+                BrokerOrder.status.in_(self.OPEN_ORDER_STATUSES),
+            )
+            .order_by(desc(BrokerOrder.updated_at))
+        )
+
     def ensure_strategy(
         self,
         session: Session,

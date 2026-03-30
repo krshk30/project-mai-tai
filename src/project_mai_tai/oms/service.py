@@ -41,6 +41,8 @@ def utcnow() -> datetime:
 
 
 class OmsRiskService:
+    NO_POSITION_REASONS = ("cannot be sold short", "insufficient qty", "no broker position available to sell")
+
     def __init__(
         self,
         settings: Settings | None = None,
@@ -184,6 +186,49 @@ class OmsRiskService:
                     await self._publish_order_event(order_event)
                 return published_events
 
+            request_quantity = event.payload.quantity
+            if event.payload.intent_type in {"close", "scale"} and event.payload.side == "sell":
+                duplicate_exit = self.store.find_open_exit_order(
+                    session,
+                    strategy_id=strategy.id,
+                    broker_account_id=broker_account.id,
+                    symbol=event.payload.symbol,
+                )
+                if duplicate_exit is not None:
+                    self.store.mark_intent_status(intent, "rejected")
+                    order_event = self._build_rejected_event(
+                        event,
+                        intent.id,
+                        reason="duplicate_exit_in_flight",
+                    )
+                    session.commit()
+                    await self._publish_order_event(order_event)
+                    return [order_event]
+
+                account_position = self.store.get_account_position(
+                    session,
+                    broker_account_id=broker_account.id,
+                    symbol=event.payload.symbol,
+                )
+                available_quantity = (
+                    account_position.quantity
+                    if account_position is not None and account_position.quantity > 0
+                    else Decimal("0")
+                )
+                if available_quantity <= 0:
+                    self.store.mark_intent_status(intent, "rejected")
+                    order_event = self._build_rejected_event(
+                        event,
+                        intent.id,
+                        reason="no broker position available to sell",
+                    )
+                    session.commit()
+                    await self._publish_order_event(order_event)
+                    return [order_event]
+
+                request_quantity = min(event.payload.quantity, available_quantity)
+                intent.quantity = request_quantity
+
             client_order_id = self._build_client_order_id(event)
             request = OrderRequest(
                 client_order_id=client_order_id,
@@ -192,7 +237,7 @@ class OmsRiskService:
                 symbol=event.payload.symbol,
                 side=event.payload.side,
                 intent_type=event.payload.intent_type,
-                quantity=event.payload.quantity,
+                quantity=request_quantity,
                 reason=event.payload.reason,
                 metadata=dict(event.payload.metadata),
             )
@@ -208,7 +253,7 @@ class OmsRiskService:
                     client_order_id=client_order_id,
                     symbol=event.payload.symbol,
                     side=event.payload.side,
-                    quantity=event.payload.quantity,
+                    quantity=request_quantity,
                     metadata=dict(event.payload.metadata),
                     broker_order_id=report.broker_order_id,
                     status=report.event_type,
@@ -252,6 +297,7 @@ class OmsRiskService:
                         intent_db_id=intent.id,
                         order_db_id=order.id,
                         report=report,
+                        quantity=request_quantity,
                     )
                 )
 

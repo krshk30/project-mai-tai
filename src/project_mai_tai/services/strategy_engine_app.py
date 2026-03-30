@@ -6,7 +6,7 @@ import logging
 import socket
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from redis.asyncio import Redis
@@ -105,6 +105,8 @@ class StrategyBotRuntime:
         self.pending_open_symbols: set[str] = set()
         self.pending_close_symbols: set[str] = set()
         self.pending_scale_levels: set[tuple[str, str]] = set()
+        self.exit_retry_blocked_until: dict[str, datetime] = {}
+        self.scale_retry_blocked_until: dict[tuple[str, str], datetime] = {}
 
     def set_watchlist(self, symbols: Iterable[str]) -> None:
         self.watchlist = set(symbols)
@@ -146,7 +148,11 @@ class StrategyBotRuntime:
         if position is not None:
             position.update_price(price)
             hard_stop = self.exit_engine.check_hard_stop(position, price)
-            if hard_stop and symbol not in self.pending_close_symbols:
+            if (
+                hard_stop
+                and symbol not in self.pending_close_symbols
+                and not self._is_exit_retry_blocked(symbol)
+            ):
                 intents.append(self._emit_close_intent(hard_stop))
 
         if symbol not in self.watchlist and position is None:
@@ -217,9 +223,12 @@ class StrategyBotRuntime:
         intent_type: str,
         status: str,
         level: str | None = None,
+        reason: str | None = None,
     ) -> None:
         if status not in {"rejected", "cancelled"}:
             return
+
+        normalized_reason = (reason or "").strip().lower()
 
         if intent_type == "open":
             self.pending_open_symbols.discard(symbol)
@@ -228,10 +237,24 @@ class StrategyBotRuntime:
 
         if intent_type == "close":
             self.pending_close_symbols.discard(symbol)
+            if self._is_no_position_reason(normalized_reason):
+                self.positions.drop_position(symbol)
+                bar_index = self.builder_manager.get_or_create(symbol).get_bar_count()
+                self.entry_engine.record_exit(symbol, bar_index)
+                return
+            if "rate limit exceeded" in normalized_reason:
+                self.exit_retry_blocked_until[symbol] = utcnow() + timedelta(seconds=5)
             return
 
         if intent_type == "scale" and level:
             self.pending_scale_levels.discard((symbol, level))
+            if self._is_no_position_reason(normalized_reason):
+                self.positions.drop_position(symbol)
+                bar_index = self.builder_manager.get_or_create(symbol).get_bar_count()
+                self.entry_engine.record_exit(symbol, bar_index)
+                return
+            if "rate limit exceeded" in normalized_reason:
+                self.scale_retry_blocked_until[(symbol, level)] = utcnow() + timedelta(seconds=5)
 
     def summary(self) -> dict[str, object]:
         return {
@@ -277,9 +300,9 @@ class StrategyBotRuntime:
             if exit_signal:
                 if exit_signal["action"] == "SCALE":
                     level = str(exit_signal["level"])
-                    if (symbol, level) not in self.pending_scale_levels:
+                    if (symbol, level) not in self.pending_scale_levels and not self._is_scale_retry_blocked(symbol, level):
                         intents.append(self._emit_scale_intent(exit_signal))
-                elif symbol not in self.pending_close_symbols:
+                elif symbol not in self.pending_close_symbols and not self._is_exit_retry_blocked(symbol):
                     intents.append(self._emit_close_intent(exit_signal))
             return intents
 
@@ -396,6 +419,18 @@ class StrategyBotRuntime:
                 },
             ),
         )
+
+    def _is_exit_retry_blocked(self, symbol: str) -> bool:
+        blocked_until = self.exit_retry_blocked_until.get(symbol)
+        return blocked_until is not None and utcnow() < blocked_until
+
+    def _is_scale_retry_blocked(self, symbol: str, level: str) -> bool:
+        blocked_until = self.scale_retry_blocked_until.get((symbol, level))
+        return blocked_until is not None and utcnow() < blocked_until
+
+    @staticmethod
+    def _is_no_position_reason(reason: str) -> bool:
+        return "cannot be sold short" in reason or "insufficient qty" in reason or "no broker position available to sell" in reason
 
 
 StrategyRuntime = StrategyBotRuntime | RunnerStrategyRuntime
@@ -658,12 +693,14 @@ class StrategyEngineState:
         intent_type: str,
         status: str,
         level: str | None = None,
+        reason: str | None = None,
     ) -> None:
         self.bots[strategy_code].apply_order_status(
             symbol=symbol,
             intent_type=intent_type,
             status=status,
             level=level,
+            reason=reason,
         )
 
     def summary(self) -> dict[str, object]:
@@ -962,6 +999,7 @@ class StrategyEngineService:
                 intent_type=order.intent_type,
                 status=order.status,
                 level=level,
+                reason=order.reason,
             )
 
             if (

@@ -8,7 +8,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from project_mai_tai.broker_adapters.protocols import ExecutionReport
+from project_mai_tai.broker_adapters.protocols import BrokerPositionSnapshot, ExecutionReport
 from project_mai_tai.db.base import Base
 from project_mai_tai.db.models import AccountPosition, BrokerOrder, Fill, TradeIntent, VirtualPosition
 from project_mai_tai.events import TradeIntentEvent, TradeIntentPayload
@@ -101,6 +101,67 @@ class FakeOrderSyncBrokerAdapter:
     async def list_account_positions(self, broker_account_name: str):
         del broker_account_name
         return []
+
+
+class FakePendingExitBrokerAdapter:
+    async def submit_order(self, request):
+        if request.intent_type == "open":
+            return [
+                ExecutionReport(
+                    event_type="accepted",
+                    client_order_id=request.client_order_id,
+                    broker_order_id="ord-open",
+                    symbol=request.symbol,
+                    side=request.side,
+                    intent_type=request.intent_type,
+                    quantity=request.quantity,
+                    reason=request.reason,
+                    metadata=dict(request.metadata),
+                ),
+                ExecutionReport(
+                    event_type="filled",
+                    client_order_id=request.client_order_id,
+                    broker_order_id="ord-open",
+                    broker_fill_id="fill-open",
+                    symbol=request.symbol,
+                    side=request.side,
+                    intent_type=request.intent_type,
+                    quantity=request.quantity,
+                    filled_quantity=request.quantity,
+                    fill_price=Decimal("2.55"),
+                    reason=request.reason,
+                    metadata=dict(request.metadata),
+                ),
+            ]
+        return [
+            ExecutionReport(
+                event_type="accepted",
+                client_order_id=request.client_order_id,
+                broker_order_id="ord-exit",
+                symbol=request.symbol,
+                side=request.side,
+                intent_type=request.intent_type,
+                quantity=request.quantity,
+                reason=request.reason,
+                metadata=dict(request.metadata),
+            )
+        ]
+
+    async def fetch_order_update(self, request):
+        del request
+        return None
+
+    async def list_account_positions(self, broker_account_name: str):
+        return [
+            BrokerPositionSnapshot(
+                broker_account_name=broker_account_name,
+                symbol="UGRO",
+                quantity=Decimal("10"),
+                average_price=Decimal("2.55"),
+                market_value=None,
+                as_of=None,
+            )
+        ]
 
 
 def build_test_session_factory() -> sessionmaker[Session]:
@@ -407,3 +468,121 @@ async def test_oms_service_syncs_open_order_status_from_broker() -> None:
         assert stored_order.status == "cancelled"
         assert stored_intent is not None
         assert stored_intent.status == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_oms_service_rejects_exit_when_broker_has_no_position() -> None:
+    redis = FakeRedis()
+    session_factory = build_test_session_factory()
+    service = OmsRiskService(
+        settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
+        redis_client=redis,
+        session_factory=session_factory,
+    )
+
+    await service.process_trade_intent(
+        TradeIntentEvent(
+            source_service="strategy-engine",
+            payload=TradeIntentPayload(
+                strategy_code="macd_30s",
+                broker_account_name="paper:macd_30s",
+                symbol="UGRO",
+                side="buy",
+                quantity=Decimal("10"),
+                intent_type="open",
+                reason="ENTRY_P1_MACD_CROSS",
+                metadata={"reference_price": "2.55"},
+            ),
+        )
+    )
+
+    with session_factory() as session:
+        account_position = session.scalar(select(AccountPosition))
+        assert account_position is not None
+        account_position.quantity = Decimal("0")
+        session.commit()
+
+    events = await service.process_trade_intent(
+        TradeIntentEvent(
+            source_service="strategy-engine",
+            payload=TradeIntentPayload(
+                strategy_code="macd_30s",
+                broker_account_name="paper:macd_30s",
+                symbol="UGRO",
+                side="sell",
+                quantity=Decimal("10"),
+                intent_type="close",
+                reason="HARD_STOP",
+                metadata={"reference_price": "2.40"},
+            ),
+        )
+    )
+
+    assert len(events) == 1
+    assert events[0].payload.status == "rejected"
+    assert events[0].payload.reason == "no broker position available to sell"
+
+
+@pytest.mark.asyncio
+async def test_oms_service_rejects_duplicate_exit_in_flight() -> None:
+    redis = FakeRedis()
+    session_factory = build_test_session_factory()
+    service = OmsRiskService(
+        settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
+        redis_client=redis,
+        session_factory=session_factory,
+        broker_adapter=FakePendingExitBrokerAdapter(),
+    )
+
+    await service.process_trade_intent(
+        TradeIntentEvent(
+            source_service="strategy-engine",
+            payload=TradeIntentPayload(
+                strategy_code="macd_30s",
+                broker_account_name="paper:macd_30s",
+                symbol="UGRO",
+                side="buy",
+                quantity=Decimal("10"),
+                intent_type="open",
+                reason="ENTRY_P1_MACD_CROSS",
+                metadata={"reference_price": "2.55"},
+            ),
+        )
+    )
+
+    first = await service.process_trade_intent(
+        TradeIntentEvent(
+            source_service="strategy-engine",
+            payload=TradeIntentPayload(
+                strategy_code="macd_30s",
+                broker_account_name="paper:macd_30s",
+                symbol="UGRO",
+                side="sell",
+                quantity=Decimal("10"),
+                intent_type="close",
+                reason="HARD_STOP",
+                metadata={"reference_price": "2.40"},
+            ),
+        )
+    )
+    assert first[0].payload.status == "accepted"
+
+    duplicate = await service.process_trade_intent(
+        TradeIntentEvent(
+            source_service="strategy-engine",
+            payload=TradeIntentPayload(
+                strategy_code="macd_30s",
+                broker_account_name="paper:macd_30s",
+                symbol="UGRO",
+                side="sell",
+                quantity=Decimal("10"),
+                intent_type="close",
+                reason="HARD_STOP",
+                metadata={"reference_price": "2.39"},
+            ),
+        )
+    )
+
+    assert len(duplicate) == 1
+    assert duplicate[0].payload.status == "rejected"
+    assert duplicate[0].payload.reason == "duplicate_exit_in_flight"

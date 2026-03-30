@@ -164,6 +164,9 @@ class PositionTracker:
     def get_position(self, ticker: str) -> Position | None:
         return self._positions.get(ticker)
 
+    def drop_position(self, ticker: str) -> Position | None:
+        return self._positions.pop(ticker, None)
+
     def get_all_positions(self) -> list[dict[str, object]]:
         return [position.to_dict() for position in self._positions.values()]
 

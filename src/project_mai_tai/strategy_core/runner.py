@@ -134,6 +134,7 @@ class RunnerStrategyRuntime:
         self._pending_open_symbol: str | None = None
         self._pending_close_symbol: str | None = None
         self._pending_close_reason: str = ""
+        self._close_retry_blocked_until: datetime | None = None
         self._daily_pnl = 0.0
         self._closed_today: list[dict[str, object]] = []
 
@@ -179,10 +180,10 @@ class RunnerStrategyRuntime:
 
         if self._position and self._position.ticker == normalized:
             self._position.update_price(price)
-            if self._should_force_time_close() and self._pending_close_symbol is None:
+            if self._should_force_time_close() and self._pending_close_symbol is None and not self._is_close_retry_blocked():
                 intents.append(self._emit_close_intent(reason="TIME_CLOSE_6PM"))
                 return intents
-            if self._position.is_trail_breached(self.config) and self._pending_close_symbol is None:
+            if self._position.is_trail_breached(self.config) and self._pending_close_symbol is None and not self._is_close_retry_blocked():
                 trail_pct = round(self._position.get_trail_pct(self.config), 0)
                 intents.append(self._emit_close_intent(reason=f"TRAIL_STOP_{trail_pct:.0f}%"))
                 return intents
@@ -270,6 +271,7 @@ class RunnerStrategyRuntime:
         intent_type: str,
         status: str,
         level: str | None = None,
+        reason: str | None = None,
     ) -> None:
         del level
         normalized = symbol.upper()
@@ -282,6 +284,16 @@ class RunnerStrategyRuntime:
 
         if intent_type == "close" and self._pending_close_symbol == normalized:
             self._pending_close_symbol = None
+            normalized_reason = (reason or "").strip().lower()
+            if "rate limit exceeded" in normalized_reason:
+                self._close_retry_blocked_until = self.now_provider() + timedelta(seconds=5)
+            elif (
+                "cannot be sold short" in normalized_reason
+                or "insufficient qty" in normalized_reason
+                or "no broker position available to sell" in normalized_reason
+            ):
+                self._position = None
+                self._pending_close_reason = ""
 
     def summary(self) -> dict[str, object]:
         positions = [self._position.to_dict(self.config)] if self._position is not None else []
@@ -321,7 +333,7 @@ class RunnerStrategyRuntime:
         ):
             self._position.volume_faded = True
 
-        if self._pending_close_symbol is None:
+        if self._pending_close_symbol is None and not self._is_close_retry_blocked():
             ema_break = self._check_ema_break(symbol)
             if ema_break is not None:
                 return [self._emit_close_intent(reason=ema_break)]
@@ -457,6 +469,9 @@ class RunnerStrategyRuntime:
                 },
             ),
         )
+
+    def _is_close_retry_blocked(self) -> bool:
+        return self._close_retry_blocked_until is not None and self.now_provider() < self._close_retry_blocked_until
 
     def _close_position(self, exit_price: float, reason: str) -> dict[str, object] | None:
         if self._position is None:
