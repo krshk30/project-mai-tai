@@ -92,6 +92,10 @@ class SimulatedBrokerAdapter:
             ),
         ]
 
+    async def fetch_order_update(self, request: OrderRequest) -> ExecutionReport | None:
+        del request
+        return None
+
     async def list_account_positions(self, broker_account_name: str) -> list[BrokerPositionSnapshot]:
         account_positions = self._positions.get(broker_account_name, {})
         snapshots: list[BrokerPositionSnapshot] = []

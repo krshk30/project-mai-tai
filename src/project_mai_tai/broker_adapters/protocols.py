@@ -56,5 +56,8 @@ class BrokerAdapter(Protocol):
     async def submit_order(self, request: OrderRequest) -> list[ExecutionReport]:
         """Submit an order and return the resulting execution reports."""
 
+    async def fetch_order_update(self, request: OrderRequest) -> ExecutionReport | None:
+        """Return the broker's current status for an existing order, if available."""
+
     async def list_account_positions(self, broker_account_name: str) -> list[BrokerPositionSnapshot]:
         """Return the broker's current position snapshots for a specific account."""

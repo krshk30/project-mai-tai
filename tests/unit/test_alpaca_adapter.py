@@ -221,3 +221,73 @@ async def test_alpaca_adapter_lists_account_positions(monkeypatch) -> None:
     assert positions[0].symbol == "UGRO"
     assert positions[0].quantity == Decimal("10")
     assert positions[0].average_price == Decimal("2.55")
+
+
+@pytest.mark.asyncio
+async def test_alpaca_adapter_marks_timeout_cancelled_when_cancel_reflection_lags(monkeypatch) -> None:
+    settings = Settings(
+        oms_adapter="alpaca_paper",
+        alpaca_macd_1m_api_key="key-1m",
+        alpaca_macd_1m_secret_key="secret-1m",
+        alpaca_cancel_confirm_timeout_seconds=0,
+    )
+    adapter = AlpacaPaperBrokerAdapter(settings)
+    credentials = adapter.credentials_by_account["paper:macd_1m"]
+
+    async def fake_request_json(credentials, method, path, body=None):
+        assert credentials.api_key == "key-1m"
+        assert method == "GET"
+        assert path == "/v2/orders/ord-123"
+        assert body is None
+        return (
+            200,
+            {
+                "id": "ord-123",
+                "client_order_id": "macd_1m-BFRG-open-abc123",
+                "status": "accepted",
+                "symbol": "BFRG",
+                "side": "buy",
+                "qty": "100",
+                "filled_qty": "0",
+                "updated_at": "2026-03-30T13:35:10Z",
+            },
+        )
+
+    async def fake_sleep(_delay: float) -> None:
+        return None
+
+    monkeypatch.setattr(adapter, "_request_json", fake_request_json)
+    monkeypatch.setattr(adapter, "_sleep", fake_sleep)
+
+    order = await adapter._wait_for_cancel_confirmation(
+        credentials=credentials,
+        request=OrderRequest(
+            client_order_id="macd_1m-BFRG-open-abc123",
+            broker_account_name="paper:macd_1m",
+            strategy_code="macd_1m",
+            symbol="BFRG",
+            side="buy",
+            intent_type="open",
+            quantity=Decimal("100"),
+            reason="ENTRY_P3_MACD_SURGE",
+            metadata={"reference_price": "1.15"},
+        ),
+        order_id="ord-123",
+    )
+
+    assert order is not None
+    assert order["status"] == "canceled"
+    assert order["id"] == "ord-123"
+
+
+def test_alpaca_paper_adapter_uses_paper_timeout_defaults() -> None:
+    settings = Settings(
+        oms_adapter="alpaca_paper",
+        alpaca_macd_30s_api_key="key-30s",
+        alpaca_macd_30s_secret_key="secret-30s",
+    )
+
+    adapter = AlpacaPaperBrokerAdapter(settings)
+
+    assert adapter.fill_timeout_seconds == 20
+    assert adapter.cancel_unfilled_after_timeout is True

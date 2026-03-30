@@ -70,6 +70,38 @@ class FakeCancelBrokerAdapter:
         del broker_account_name
         return []
 
+    async def fetch_order_update(self, request):
+        del request
+        return None
+
+
+class FakeOrderSyncBrokerAdapter:
+    def __init__(self, report: ExecutionReport | None = None) -> None:
+        self.report = report
+
+    async def submit_order(self, request):
+        return [
+            ExecutionReport(
+                event_type="accepted",
+                client_order_id=request.client_order_id,
+                broker_order_id="ord-123",
+                symbol=request.symbol,
+                side=request.side,
+                intent_type=request.intent_type,
+                quantity=request.quantity,
+                reason=request.reason,
+                metadata=dict(request.metadata),
+            )
+        ]
+
+    async def fetch_order_update(self, request):
+        assert request.metadata["broker_order_id"] == "ord-123"
+        return self.report
+
+    async def list_account_positions(self, broker_account_name: str):
+        del broker_account_name
+        return []
+
 
 def build_test_session_factory() -> sessionmaker[Session]:
     engine = create_engine(
@@ -322,3 +354,56 @@ async def test_oms_service_keeps_open_order_status_when_cancel_is_rejected() -> 
         assert stored_order is not None
         assert stored_order.status == "accepted"
         assert cancel_intent.status == "rejected"
+
+
+@pytest.mark.asyncio
+async def test_oms_service_syncs_open_order_status_from_broker() -> None:
+    redis = FakeRedis()
+    session_factory = build_test_session_factory()
+    adapter = FakeOrderSyncBrokerAdapter()
+    service = OmsRiskService(
+        settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
+        redis_client=redis,
+        session_factory=session_factory,
+        broker_adapter=adapter,
+    )
+
+    await service.process_trade_intent(
+        TradeIntentEvent(
+            source_service="strategy-engine",
+            payload=TradeIntentPayload(
+                strategy_code="macd_1m",
+                broker_account_name="paper:macd_1m",
+                symbol="BFRG",
+                side="buy",
+                quantity=Decimal("100"),
+                intent_type="open",
+                reason="ENTRY_P3_MACD_SURGE",
+                metadata={"reference_price": "1.15"},
+            ),
+        )
+    )
+
+    adapter.report = ExecutionReport(
+        event_type="cancelled",
+        client_order_id="macd_1m-BFRG-open-abc123",
+        broker_order_id="ord-123",
+        symbol="BFRG",
+        side="buy",
+        intent_type="open",
+        quantity=Decimal("100"),
+        reason="ENTRY_P3_MACD_SURGE",
+        metadata={},
+    )
+
+    summary = await service.sync_broker_orders(account_names=["paper:macd_1m"])
+    assert summary == {"orders": 1, "terminal_orders": 1}
+
+    with session_factory() as session:
+        stored_order = session.scalar(select(BrokerOrder))
+        stored_intent = session.scalar(select(TradeIntent))
+
+        assert stored_order is not None
+        assert stored_order.status == "cancelled"
+        assert stored_intent is not None
+        assert stored_intent.status == "cancelled"

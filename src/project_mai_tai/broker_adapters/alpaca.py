@@ -83,9 +83,10 @@ class AlpacaPaperBrokerAdapter:
         self.base_url = settings.alpaca_paper_base_url.rstrip("/")
         self.credentials_by_account = credentials_by_account or configured_alpaca_credentials(settings)
         self.request_timeout_seconds = settings.alpaca_request_timeout_seconds
-        self.fill_timeout_seconds = settings.alpaca_order_fill_timeout_seconds
+        self.fill_timeout_seconds = settings.alpaca_paper_order_fill_timeout_seconds
         self.poll_interval_seconds = settings.alpaca_order_poll_interval_seconds
-        self.cancel_unfilled_after_timeout = settings.alpaca_cancel_unfilled_after_timeout
+        self.cancel_unfilled_after_timeout = settings.alpaca_paper_cancel_unfilled_after_timeout
+        self.cancel_confirm_timeout_seconds = settings.alpaca_cancel_confirm_timeout_seconds
         self._sleep = asyncio.sleep
 
     async def submit_order(self, request: OrderRequest) -> list[ExecutionReport]:
@@ -252,6 +253,29 @@ class AlpacaPaperBrokerAdapter:
             )
         ]
 
+    async def fetch_order_update(self, request: OrderRequest) -> ExecutionReport | None:
+        credentials = self.credentials_by_account.get(request.broker_account_name)
+        if credentials is None:
+            return None
+
+        broker_order_id = str(request.metadata.get("broker_order_id", "")).strip()
+        if not broker_order_id:
+            return None
+
+        status_code, order = await self._request_json(
+            credentials,
+            "GET",
+            f"/v2/orders/{quote(broker_order_id, safe='')}",
+        )
+        if status_code >= 400 or not isinstance(order, dict):
+            return None
+
+        return self._execution_report_from_order(
+            request=request,
+            order=order,
+            event_type=self._map_order_status(str(order.get("status", ""))),
+        )
+
     async def list_account_positions(self, broker_account_name: str) -> list[BrokerPositionSnapshot]:
         credentials = self.credentials_by_account.get(broker_account_name)
         if credentials is None:
@@ -334,19 +358,57 @@ class AlpacaPaperBrokerAdapter:
             return None
 
         await self._request_json(credentials, "DELETE", f"/v2/orders/{order_id}")
-        status_code, order = await self._request_json(credentials, "GET", f"/v2/orders/{order_id}")
-        if status_code >= 400 or not isinstance(order, dict):
-            return {
-                "id": order_id,
-                "status": "canceled",
-                "symbol": request.symbol,
-                "side": request.side,
-                "qty": self._decimal_to_string(request.quantity),
-                "filled_qty": "0",
-                "client_order_id": request.client_order_id,
-                "updated_at": datetime.now(UTC).isoformat(),
-            }
-        return order
+        cancelled_order = await self._wait_for_cancel_confirmation(
+            credentials=credentials,
+            request=request,
+            order_id=order_id,
+        )
+        if cancelled_order is not None:
+            return cancelled_order
+        return {
+            "id": order_id,
+            "status": "canceled",
+            "symbol": request.symbol,
+            "side": request.side,
+            "qty": self._decimal_to_string(request.quantity),
+            "filled_qty": "0",
+            "client_order_id": request.client_order_id,
+            "updated_at": datetime.now(UTC).isoformat(),
+        }
+
+    async def _wait_for_cancel_confirmation(
+        self,
+        *,
+        credentials: AlpacaCredentials,
+        request: OrderRequest,
+        order_id: str,
+    ) -> dict[str, object] | None:
+        deadline = asyncio.get_running_loop().time() + max(0.0, self.cancel_confirm_timeout_seconds)
+        last_seen_order: dict[str, object] | None = None
+
+        while True:
+            status_code, order = await self._request_json(credentials, "GET", f"/v2/orders/{order_id}")
+            if status_code < 400 and isinstance(order, dict):
+                last_seen_order = order
+                mapped_status = self._map_order_status(str(order.get("status", "")))
+                if mapped_status in {"filled", "partially_filled", "rejected", "cancelled"}:
+                    return order
+
+            if asyncio.get_running_loop().time() >= deadline:
+                break
+            await self._sleep(self.poll_interval_seconds)
+
+        if last_seen_order is not None:
+            synthetic = dict(last_seen_order)
+            synthetic["status"] = "canceled"
+            synthetic["client_order_id"] = synthetic.get("client_order_id") or request.client_order_id
+            synthetic["symbol"] = synthetic.get("symbol") or request.symbol
+            synthetic["side"] = synthetic.get("side") or request.side
+            synthetic["qty"] = synthetic.get("qty") or self._decimal_to_string(request.quantity)
+            synthetic["filled_qty"] = synthetic.get("filled_qty") or "0"
+            synthetic["updated_at"] = datetime.now(UTC).isoformat()
+            return synthetic
+        return None
 
     async def _request_json(
         self,

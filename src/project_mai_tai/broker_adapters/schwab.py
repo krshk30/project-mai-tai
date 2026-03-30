@@ -253,6 +253,26 @@ class SchwabBrokerAdapter:
             )
         return snapshots
 
+    async def fetch_order_update(self, request: OrderRequest) -> ExecutionReport | None:
+        account = self.accounts_by_name.get(request.broker_account_name)
+        if account is None:
+            return None
+
+        broker_order_id = str(request.metadata.get("broker_order_id", "")).strip()
+        if not broker_order_id:
+            return None
+
+        order = await self._fetch_order(account, broker_order_id)
+        if order is None:
+            return None
+
+        return self._execution_report_from_order(
+            request=request,
+            order=order,
+            event_type=self._map_order_status(order),
+            broker_order_id=broker_order_id,
+        )
+
     async def _cancel_order(
         self,
         account: SchwabAccountConfig,

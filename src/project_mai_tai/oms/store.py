@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
 from project_mai_tai.broker_adapters.protocols import BrokerPositionSnapshot, ExecutionReport
@@ -28,6 +28,21 @@ def utcnow() -> datetime:
 
 class OmsStore:
     OPEN_ORDER_STATUSES = ("pending", "submitted", "accepted", "partially_filled")
+
+    def list_open_orders(
+        self,
+        session: Session,
+        *,
+        broker_account_ids: list[UUID] | None = None,
+    ) -> list[BrokerOrder]:
+        query = (
+            select(BrokerOrder)
+            .where(BrokerOrder.status.in_(self.OPEN_ORDER_STATUSES))
+            .order_by(desc(BrokerOrder.updated_at))
+        )
+        if broker_account_ids:
+            query = query.where(BrokerOrder.broker_account_id.in_(broker_account_ids))
+        return session.scalars(query).all()
 
     def list_active_broker_accounts(self, session: Session) -> list[BrokerAccount]:
         return session.scalars(
