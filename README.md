@@ -155,7 +155,7 @@ Important restart rule:
 
 - `ops/systemd/restart_all.sh` is for off-hours or flat-account use
 - during an active session, use the coordinated scripts in `ops/systemd/` plus [Live Market Restart Runbook](./docs/live-market-restart-runbook.md)
-- GitHub Actions deploys use [GitHub Actions Deploy](./docs/github-actions-deploy.md) and the VPS script `ops/systemd/deploy_main.sh`
+- GitHub Actions validation runs automatically, but production deploy is manual via [GitHub Actions Deploy](./docs/github-actions-deploy.md) and the VPS script `ops/systemd/deploy_main.sh`
 
 ## Current Documentation Truth
 

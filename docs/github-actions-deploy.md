@@ -5,7 +5,7 @@ This repo now supports a GitHub Actions path that matches the intended workflow:
 1. make changes
 2. validate tests and lint
 3. push to GitHub
-4. deploy `main` to the VPS
+4. deploy `main` to the VPS manually
 
 Workflow file:
 
@@ -26,9 +26,9 @@ Validation runs on:
 
 Deploy runs only when:
 
-- the ref is `main`
-- validation already passed
-- the event is `push` or `workflow_dispatch`
+- the workflow is started manually with `workflow_dispatch`
+- the selected ref is `main`
+- validation in that same run already passed
 
 ## Safety Guard
 
@@ -82,6 +82,17 @@ Paste that single-line output into the GitHub secret `VPS_SSH_KEY_BASE64`.
 6. waits for all five services plus a healthy local `/health` response
 
 This means GitHub Actions deploys are using the same install/restart path we already verified on the server.
+
+## Recommended Operating Model
+
+On the current GitHub plan for a private repository, branch protection is not enforced. Because of that, the safer operating model is:
+
+1. push branches and PRs normally
+2. let `validate` run automatically
+3. merge to `main`
+4. run deploy manually from Actions when you intentionally want production updated
+
+This avoids automatic VPS restarts from any accidental direct push to `main`.
 
 ## Operational Note
 
