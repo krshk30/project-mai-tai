@@ -562,15 +562,9 @@ class StrategyEngineState:
         )
         self.confirmed_scanner.update_live_prices(snapshot_lookup)
 
-        confirmed_candidates = [
-            stock
-            for stock in self.confirmed_scanner.get_all_confirmed()
-            if str(stock.get("ticker", "")).upper() not in blocked
-        ]
-        min_score = 0.0 if len(confirmed_candidates) <= 1 else None
         self.current_confirmed = [
             stock
-            for stock in self.confirmed_scanner.get_top_n(min_score=min_score)
+            for stock in self.confirmed_scanner.get_top_n()
             if str(stock.get("ticker", "")).upper() not in blocked
         ]
 

@@ -137,7 +137,7 @@ def test_snapshot_batch_keeps_single_confirmed_name_in_watchlist(monkeypatch) ->
     )
 
     assert summary["watchlist"] == ["UGRO"]
-    assert summary["top_confirmed"][0]["rank_score"] == 0.0
+    assert summary["top_confirmed"][0]["rank_score"] == 100.0
     for code in ("macd_30s", "macd_1m", "tos", "runner"):
         assert state.bots[code].watchlist == {"UGRO"}
 
