@@ -489,6 +489,36 @@ class OmsStore:
         session.flush()
         return len(snapshots)
 
+    def clear_virtual_positions_without_account_backing(
+        self,
+        session: Session,
+        *,
+        broker_account_ids: list[UUID] | None = None,
+    ) -> int:
+        query = select(VirtualPosition).where(VirtualPosition.quantity > 0)
+        if broker_account_ids:
+            query = query.where(VirtualPosition.broker_account_id.in_(broker_account_ids))
+
+        cleared = 0
+        for virtual_position in session.scalars(query).all():
+            account_position = session.scalar(
+                select(AccountPosition).where(
+                    AccountPosition.broker_account_id == virtual_position.broker_account_id,
+                    AccountPosition.symbol == virtual_position.symbol,
+                )
+            )
+            account_quantity = account_position.quantity if account_position is not None else Decimal("0")
+            if account_quantity > 0:
+                continue
+
+            virtual_position.quantity = Decimal("0")
+            virtual_position.average_price = Decimal("0")
+            virtual_position.opened_at = None
+            cleared += 1
+
+        session.flush()
+        return cleared
+
     def _apply_position_fill(
         self,
         *,

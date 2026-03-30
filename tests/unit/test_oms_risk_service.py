@@ -10,9 +10,10 @@ from sqlalchemy.pool import StaticPool
 
 from project_mai_tai.broker_adapters.protocols import BrokerPositionSnapshot, ExecutionReport
 from project_mai_tai.db.base import Base
-from project_mai_tai.db.models import AccountPosition, BrokerOrder, Fill, TradeIntent, VirtualPosition
+from project_mai_tai.db.models import AccountPosition, BrokerAccount, BrokerOrder, Fill, Strategy, TradeIntent, VirtualPosition
 from project_mai_tai.events import TradeIntentEvent, TradeIntentPayload
 from project_mai_tai.oms.service import OmsRiskService
+from project_mai_tai.oms.store import OmsStore
 from project_mai_tai.settings import Settings
 
 
@@ -586,3 +587,52 @@ async def test_oms_service_rejects_duplicate_exit_in_flight() -> None:
     assert len(duplicate) == 1
     assert duplicate[0].payload.status == "rejected"
     assert duplicate[0].payload.reason == "duplicate_exit_in_flight"
+
+
+def test_store_clears_virtual_positions_without_broker_backing() -> None:
+    session_factory = build_test_session_factory()
+    with session_factory() as session:
+        strategy = Strategy(code="macd_30s", name="MACD 30S", execution_mode="paper", metadata_json={})
+        account = BrokerAccount(name="paper:macd_30s", provider="alpaca", environment="development")
+        session.add_all([strategy, account])
+        session.flush()
+        session.add_all(
+            [
+                VirtualPosition(
+                    strategy_id=strategy.id,
+                    broker_account_id=account.id,
+                    symbol="UGRO",
+                    quantity=Decimal("10"),
+                    average_price=Decimal("2.50"),
+                    realized_pnl=Decimal("0"),
+                ),
+                VirtualPosition(
+                    strategy_id=strategy.id,
+                    broker_account_id=account.id,
+                    symbol="MESA",
+                    quantity=Decimal("5"),
+                    average_price=Decimal("1.25"),
+                    realized_pnl=Decimal("0"),
+                ),
+                AccountPosition(
+                    broker_account_id=account.id,
+                    symbol="MESA",
+                    quantity=Decimal("5"),
+                    average_price=Decimal("1.25"),
+                    market_value=Decimal("6.25"),
+                ),
+            ]
+        )
+        session.commit()
+
+    store = OmsStore()
+    with session_factory() as session:
+        cleared = store.clear_virtual_positions_without_account_backing(session)
+        session.commit()
+
+    assert cleared == 1
+    with session_factory() as session:
+        positions = {position.symbol: position for position in session.scalars(select(VirtualPosition)).all()}
+        assert positions["UGRO"].quantity == Decimal("0")
+        assert positions["UGRO"].average_price == Decimal("0")
+        assert positions["MESA"].quantity == Decimal("5")
