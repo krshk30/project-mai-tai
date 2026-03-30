@@ -9,6 +9,8 @@ on:
   pull_request_target:
     types:
       - labeled
+      - unlabeled
+      - ready_for_review
 
 permissions:
   contents: write
@@ -22,8 +24,11 @@ jobs:
        github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.event == 'pull_request') ||
       (github.event_name == 'pull_request_target' &&
-       github.event.action == 'labeled' &&
-       github.event.label.name == 'automerge')
+       (
+         github.event.action == 'ready_for_review' ||
+         github.event.action == 'unlabeled' ||
+         github.event.action == 'labeled'
+       ))
     runs-on: ubuntu-latest
     steps:
       - name: Merge eligible PR
@@ -32,7 +37,7 @@ jobs:
           script: |
             const owner = context.repo.owner;
             const repo = context.repo.repo;
-            const autoMergeLabel = "automerge";
+            const manualMergeLabel = "manual-merge";
 
             async function loadPullRequest(number) {
               const response = await github.rest.pulls.get({
@@ -93,8 +98,8 @@ jobs:
                 core.info(`Skipping PR #${number}: PR is draft.`);
                 return;
               }
-              if (!labels.has(autoMergeLabel)) {
-                core.info(`Skipping PR #${number}: missing ${autoMergeLabel} label.`);
+              if (labels.has(manualMergeLabel)) {
+                core.info(`Skipping PR #${number}: ${manualMergeLabel} label opts this PR out of default auto-merge.`);
                 return;
               }
               if (!pr.head.repo || pr.head.repo.full_name !== `${owner}/${repo}`) {

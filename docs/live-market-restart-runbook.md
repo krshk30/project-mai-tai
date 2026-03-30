@@ -70,9 +70,17 @@ Convenience scripts:
 - `bash ops/systemd/restart_oms_live.sh`
 - `bash ops/systemd/restart_market_data_live.sh`
 
+GitHub Actions equivalents:
+- `Deploy Service` with `service=control`
+- `Deploy Service` with `service=reconciler`
+- `Deploy Service` with `service=strategy`
+- `Deploy Service` with `service=oms`
+- `Deploy Service` with `service=market-data`
+
 Optional hold behavior:
 - `bash ops/systemd/restart_oms_live.sh --hold-strategy`
 - `bash ops/systemd/restart_market_data_live.sh --hold-strategy`
+- `Deploy Service` with `hold_strategy=true` for `oms` or `market-data`
 
 ## Preflight Before Any Trading-Critical Restart
 

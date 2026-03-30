@@ -188,12 +188,14 @@ This repo now uses:
 
 - automatic validation
 - manual production deploy
+- manual service-scoped deploy for live-session use
 
 That means:
 
 - pushes and PRs run the `Validate` workflow automatically
 - merging to `main` does **not** restart the VPS by itself
-- production deploy happens only when you manually run the `Deploy Main` workflow in GitHub Actions
+- full-stack production deploy happens only when you manually run the `Deploy Main` workflow in GitHub Actions
+- service-scoped deploy happens only when you manually run the `Deploy Service` workflow in GitHub Actions
 
 ### Normal Change Flow
 
@@ -202,11 +204,10 @@ Use this as the standard operating flow:
 1. Make changes on a branch such as `codex/...`.
 2. Push the branch to GitHub.
 3. Open a PR.
-4. For same-repo PRs into `main`, GitHub adds the `automerge` label by default when the PR is opened or marked ready for review.
-5. Wait for the `validate` job to pass.
-6. If the PR still has the `automerge` label and is mergeable, GitHub will merge it automatically after `validate` passes.
-7. Remove the `automerge` label if you do **not** want the PR to merge automatically.
-8. Manually run the deploy workflow when you actually want the VPS updated.
+4. Wait for the `validate` job to pass.
+5. For same-repo PRs into `main`, GitHub will merge automatically after `validate` passes if the PR is mergeable and not draft.
+6. Add the `manual-merge` label if you do **not** want the PR to merge automatically.
+7. Once the PR lands on `main`, manually run `Deploy Main` or `Deploy Service` when you actually want the VPS updated.
 
 ### What You Have To Do To Deploy
 
@@ -222,22 +223,55 @@ After the change is already merged to `main`:
 
 `Deploy Main` does **not** rerun tests. It assumes the `main` commit you are deploying already passed the normal `Validate` workflow before merge.
 
+### What You Have To Do For A Service-Level Deploy
+
+Use this only when:
+
+- the code change is isolated to one service or one coordinated pair
+- you do **not** want a full-stack restart
+- you understand the live-session restart guidance for that service
+
+GitHub Actions steps:
+
+1. Open GitHub `Actions`.
+2. Open the workflow named `Deploy Service`.
+3. Click `Run workflow`.
+4. Select branch `main`.
+5. Choose the service target:
+   - `control`
+   - `reconciler`
+   - `strategy`
+   - `oms`
+   - `market-data`
+6. Leave `run_migrations` off unless the change truly needs a schema migration.
+7. For `oms` or `market-data`, optionally set `hold_strategy=true` if you want strategy to remain stopped after the deploy.
+8. Leave `allow_live_restart` off unless you intentionally approve a live-session restart of `strategy`, `oms`, or `market-data`.
+9. Run the workflow and watch the service-specific restart sequence complete.
+
+`Deploy Service` updates the VPS checkout to `origin/main`, refreshes the Python environment, and then restarts only the selected service path:
+
+- `control` -> restarts only `project-mai-tai-control.service`
+- `reconciler` -> restarts only `project-mai-tai-reconciler.service`
+- `strategy` -> restarts only `project-mai-tai-strategy.service`
+- `oms` -> stops `strategy`, restarts `oms`, then starts `strategy` again unless `hold_strategy=true`
+- `market-data` -> stops `strategy`, restarts `market-data`, then starts `strategy` again unless `hold_strategy=true`
+
 ### Optional PR Auto-Merge
 
 This repo can auto-merge PRs into `main` when all of these are true:
 
-- the PR has the label `automerge`
 - the PR targets `main`
 - the PR is open and not draft
 - the PR branch comes from this repository
 - the `validate` job passed for the current PR head commit
 - GitHub reports the PR is mergeable
+- the PR does **not** have the label `manual-merge`
 
 Auto-merge does **not** deploy production. Deploy stays manual.
 
-For same-repo PRs into `main`, GitHub now adds the `automerge` label by default on PR open or when a draft PR is marked ready for review.
+For same-repo PRs into `main`, auto-merge is now default-on.
 
-Remove the label on any PR you want to keep out of auto-merge.
+Add the `manual-merge` label on any PR you want to keep out of auto-merge.
 
 ### When To Use `allow_live_restart`
 
@@ -268,6 +302,7 @@ The deploy workflow requires these repository secrets:
 The GitHub Action does not invent a separate deploy path. It uses the repo's checked-in VPS script:
 
 - `ops/systemd/deploy_main.sh`
+- `ops/systemd/deploy_service.sh`
 
 That script:
 
@@ -285,6 +320,8 @@ By default this is a full app-stack deploy. It restarts:
 - `project-mai-tai-oms.service`
 - `project-mai-tai-reconciler.service`
 - `project-mai-tai-control.service`
+
+`Deploy Service` is the lower-blast-radius option. It still fast-forwards the VPS checkout to `origin/main`, but it restarts only the selected service path instead of the whole stack.
 
 ### Practical Rule
 
@@ -306,7 +343,7 @@ Current recommended split:
   - keep `main` as the source of deployment truth
 - user responsibilities
   - review PRs or decide when branch work should land on `main`
-  - remove the `automerge` label if you do not want a PR to merge automatically
+  - add the `manual-merge` label if you do not want a PR to merge automatically
   - manually trigger the production deploy workflow in GitHub Actions
   - decide whether a live-session deploy is acceptable
   - manage GitHub repository settings, secrets, and access policy
@@ -315,7 +352,7 @@ In practical day-to-day use:
 
 1. the agent should do the implementation and validation work
 2. the agent should push the branch
-3. the user should either allow the default `automerge` label to proceed or remove it and merge manually when satisfied
+3. the user should either let the PR auto-merge after validation or add `manual-merge` and merge manually when satisfied
 4. the user should run deploy when production should actually change
 
 This split is intentional for safety on a private trading repo where GitHub cannot fully enforce protected-branch policy on the current plan.
