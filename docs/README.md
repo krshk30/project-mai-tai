@@ -12,6 +12,8 @@ Use these files by question:
   - how to restart safely during live operations
 - `github-actions-deploy.md`
   - how validation plus VPS deploy is wired through GitHub Actions
+- `deployment-operating-model.md`
+  - current deploy design, agent vs user actions, and the risk-based operating model
 - `vps-deployment.md`
   - how the runtime is deployed on the VPS
 - `schwab-onboarding.md`

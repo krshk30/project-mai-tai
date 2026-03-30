@@ -7,6 +7,10 @@ This repo now supports a GitHub Actions path that matches the intended workflow:
 3. push to GitHub
 4. deploy `main` to the VPS manually
 
+For the operator decision model, agent-vs-user actions, and risk boundaries, see:
+
+- `docs/deployment-operating-model.md`
+
 Workflow file:
 
 - `.github/workflows/validate.yml`
