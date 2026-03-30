@@ -157,6 +157,89 @@ Important restart rule:
 - during an active session, use the coordinated scripts in `ops/systemd/` plus [Live Market Restart Runbook](./docs/live-market-restart-runbook.md)
 - GitHub Actions validation runs automatically, but production deploy is manual via [GitHub Actions Deploy](./docs/github-actions-deploy.md) and the VPS script `ops/systemd/deploy_main.sh`
 
+## GitHub Deploy Workflow
+
+This repo now uses:
+
+- automatic validation
+- manual production deploy
+
+That means:
+
+- pushes and PRs run the `validate` job automatically
+- merging to `main` does **not** restart the VPS by itself
+- production deploy happens only when you manually run the `Validate And Deploy` workflow in GitHub Actions
+
+### Normal Change Flow
+
+Use this as the standard operating flow:
+
+1. Make changes on a branch such as `codex/...`.
+2. Push the branch to GitHub.
+3. Open a PR.
+4. Wait for the `validate` job to pass.
+5. Merge the PR into `main`.
+6. Manually run the deploy workflow when you actually want the VPS updated.
+
+### What You Have To Do To Deploy
+
+After the change is already merged to `main`:
+
+1. Open GitHub `Actions`.
+2. Open the workflow named `Validate And Deploy`.
+3. Click `Run workflow`.
+4. Select branch `main`.
+5. Leave `allow_live_restart` unchecked for normal off-hours deploys.
+6. Click `Run workflow`.
+7. Watch the `validate` job finish green.
+8. Watch the `deploy` job SSH into the VPS, fast-forward the checkout to `origin/main`, run install/migrations, restart services, and check `/health`.
+
+### When To Use `allow_live_restart`
+
+Leave `allow_live_restart` as `false` unless you intentionally want to permit a deploy during ET market hours.
+
+Use `allow_live_restart=true` only when:
+
+- you understand the live restart risk
+- you have reviewed open positions and in-flight work
+- you are deliberately choosing a live-session deploy
+
+For live-session restart guidance, use:
+
+- [Live Market Restart Runbook](./docs/live-market-restart-runbook.md)
+
+### First-Time GitHub Setup
+
+The workflow requires these repository secrets:
+
+- `VPS_HOST`
+- `VPS_USER`
+- `VPS_SSH_KEY_BASE64`
+
+`VPS_SSH_KEY_BASE64` is the preferred form of the deploy key because it avoids multiline copy/paste issues in GitHub secrets.
+
+### What The Deploy Job Actually Does
+
+The GitHub Action does not invent a separate deploy path. It uses the repo's checked-in VPS script:
+
+- `ops/systemd/deploy_main.sh`
+
+That script:
+
+1. refuses to run if the VPS checkout is dirty
+2. fetches `origin`
+3. fast-forwards the VPS checkout to `origin/main`
+4. runs `ops/bootstrap/08_install_runtime.sh`
+5. restarts the app stack
+6. waits for a healthy local `/health` response
+
+### Practical Rule
+
+If you only remember one thing, remember this:
+
+- merge to `main` when code is ready
+- run deploy manually when production should change
+
 ## Current Documentation Truth
 
 The README and architecture docs are intended to describe the current code, not just the original March 28-29 build milestone.
