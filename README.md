@@ -177,9 +177,11 @@ Use this as the standard operating flow:
 1. Make changes on a branch such as `codex/...`.
 2. Push the branch to GitHub.
 3. Open a PR.
-4. Wait for the `validate` job to pass.
-5. Merge the PR into `main`.
-6. Manually run the deploy workflow when you actually want the VPS updated.
+4. Add the `automerge` label if you want GitHub to merge the PR automatically after validation passes.
+5. Wait for the `validate` job to pass.
+6. If the PR has the `automerge` label and is mergeable, GitHub will merge it automatically after `validate` passes.
+7. If the PR does not have the `automerge` label, merge it manually into `main`.
+8. Manually run the deploy workflow when you actually want the VPS updated.
 
 ### What You Have To Do To Deploy
 
@@ -193,6 +195,21 @@ After the change is already merged to `main`:
 6. Click `Run workflow`.
 7. Watch the `validate` job finish green.
 8. Watch the `deploy` job SSH into the VPS, fast-forward the checkout to `origin/main`, run install/migrations, restart services, and check `/health`.
+
+### Optional PR Auto-Merge
+
+This repo can auto-merge PRs into `main` when all of these are true:
+
+- the PR has the label `automerge`
+- the PR targets `main`
+- the PR is open and not draft
+- the PR branch comes from this repository
+- the `validate` job passed for the current PR head commit
+- GitHub reports the PR is mergeable
+
+Auto-merge does **not** deploy production. Deploy stays manual.
+
+If the `automerge` label does not exist yet in GitHub, create it once in the repository labels UI and reuse it from then on.
 
 ### When To Use `allow_live_restart`
 
@@ -250,9 +267,11 @@ Current recommended split:
   - run local validation where possible
   - commit and push branch work
   - open or prepare PR-ready changes
+  - optionally add the `automerge` label when automatic merge is desired
   - keep `main` as the source of deployment truth
 - user responsibilities
-  - review and merge PRs or decide when branch work should land on `main`
+  - review PRs or decide when branch work should land on `main`
+  - remove the `automerge` label if you do not want a PR to merge automatically
   - manually trigger the production deploy workflow in GitHub Actions
   - decide whether a live-session deploy is acceptable
   - manage GitHub repository settings, secrets, and access policy
@@ -261,7 +280,7 @@ In practical day-to-day use:
 
 1. the agent should do the implementation and validation work
 2. the agent should push the branch
-3. the user should merge when satisfied
+3. the user should either allow `automerge` to proceed or merge manually when satisfied
 4. the user should run deploy when production should actually change
 
 This split is intentional for safety on a private trading repo where GitHub cannot fully enforce protected-branch policy on the current plan.

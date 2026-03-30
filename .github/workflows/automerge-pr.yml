@@ -1,0 +1,129 @@
+name: Auto Merge PR
+
+on:
+  workflow_run:
+    workflows:
+      - Validate And Deploy
+    types:
+      - completed
+  pull_request_target:
+    types:
+      - labeled
+
+permissions:
+  contents: write
+  pull-requests: write
+  checks: read
+
+jobs:
+  auto_merge:
+    if: |
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'pull_request') ||
+      (github.event_name == 'pull_request_target' &&
+       github.event.action == 'labeled' &&
+       github.event.label.name == 'automerge')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Merge eligible PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const autoMergeLabel = "automerge";
+
+            async function loadPullRequest(number) {
+              const response = await github.rest.pulls.get({
+                owner,
+                repo,
+                pull_number: number,
+              });
+              return response.data;
+            }
+
+            async function waitForMergeability(number) {
+              for (let attempt = 0; attempt < 6; attempt += 1) {
+                const pr = await loadPullRequest(number);
+                if (pr.mergeable !== null) {
+                  return pr;
+                }
+                await new Promise((resolve) => setTimeout(resolve, 5000));
+              }
+              return loadPullRequest(number);
+            }
+
+            async function validateCheckPassed(ref) {
+              const checks = await github.paginate(
+                github.rest.checks.listForRef,
+                {
+                  owner,
+                  repo,
+                  ref,
+                  per_page: 100,
+                },
+              );
+
+              const validateRuns = checks
+                .filter((check) => check.name === "validate")
+                .sort((a, b) => new Date(b.started_at || b.completed_at || 0) - new Date(a.started_at || a.completed_at || 0));
+
+              if (validateRuns.length === 0) {
+                return false;
+              }
+
+              const latest = validateRuns[0];
+              return latest.status === "completed" && latest.conclusion === "success";
+            }
+
+            async function maybeMerge(number) {
+              const pr = await waitForMergeability(number);
+              const labels = new Set((pr.labels || []).map((label) => label.name));
+
+              if (pr.base.ref !== "main") {
+                core.info(`Skipping PR #${number}: base branch is ${pr.base.ref}, not main.`);
+                return;
+              }
+              if (pr.state !== "open") {
+                core.info(`Skipping PR #${number}: PR is not open.`);
+                return;
+              }
+              if (pr.draft) {
+                core.info(`Skipping PR #${number}: PR is draft.`);
+                return;
+              }
+              if (!labels.has(autoMergeLabel)) {
+                core.info(`Skipping PR #${number}: missing ${autoMergeLabel} label.`);
+                return;
+              }
+              if (!pr.head.repo || pr.head.repo.full_name !== `${owner}/${repo}`) {
+                core.info(`Skipping PR #${number}: head branch is not from this repository.`);
+                return;
+              }
+              if (pr.mergeable !== true) {
+                core.info(`Skipping PR #${number}: mergeable=${pr.mergeable}, mergeable_state=${pr.mergeable_state}.`);
+                return;
+              }
+              if (!(await validateCheckPassed(pr.head.sha))) {
+                core.info(`Skipping PR #${number}: validate check has not passed for ${pr.head.sha}.`);
+                return;
+              }
+
+              core.info(`Merging PR #${number} into main.`);
+              await github.rest.pulls.merge({
+                owner,
+                repo,
+                pull_number: number,
+                merge_method: "merge",
+              });
+            }
+
+            const pullRequests =
+              context.eventName === "workflow_run"
+                ? (context.payload.workflow_run.pull_requests || []).map((pr) => pr.number)
+                : [context.payload.pull_request.number];
+
+            for (const number of [...new Set(pullRequests)]) {
+              await maybeMerge(number);
+            }

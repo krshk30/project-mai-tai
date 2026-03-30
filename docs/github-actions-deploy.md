@@ -10,6 +10,7 @@ This repo now supports a GitHub Actions path that matches the intended workflow:
 Workflow file:
 
 - `.github/workflows/validate-and-deploy.yml`
+- `.github/workflows/automerge-pr.yml`
 
 Deploy script used on the VPS:
 
@@ -24,11 +25,32 @@ Validation runs on:
 - pushes to `codex/**`
 - manual workflow dispatch
 
+Auto-merge runs when:
+
+- a `Validate And Deploy` workflow run for a PR finishes successfully
+- or a PR is labeled `automerge`
+
 Deploy runs only when:
 
 - the workflow is started manually with `workflow_dispatch`
 - the selected ref is `main`
 - validation in that same run already passed
+
+PR auto-merge is separate from deploy. A PR can merge automatically into `main`, but production still changes only when someone manually runs deploy.
+
+## PR Auto-Merge Behavior
+
+PRs into `main` can be auto-merged when all of these are true:
+
+- the PR has the `automerge` label
+- the PR is open and not draft
+- the PR branch comes from this repository
+- the latest `validate` check for the PR head SHA passed
+- GitHub reports the PR is mergeable
+
+If any of those conditions is not true, the auto-merge workflow exits without merging.
+
+If the `automerge` label does not exist yet in the repository, create it once in GitHub and reuse it for PRs you want merged automatically.
 
 ## Safety Guard
 
@@ -89,8 +111,9 @@ On the current GitHub plan for a private repository, branch protection is not en
 
 1. push branches and PRs normally
 2. let `validate` run automatically
-3. merge to `main`
-4. run deploy manually from Actions when you intentionally want production updated
+3. optionally use the `automerge` label for PRs you want merged automatically after validation
+4. merge to `main`
+5. run deploy manually from Actions when you intentionally want production updated
 
 This avoids automatic VPS restarts from any accidental direct push to `main`.
 
