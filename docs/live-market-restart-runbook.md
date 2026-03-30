@@ -77,6 +77,11 @@ GitHub Actions equivalents:
 - `Deploy Service` with `service=oms`
 - `Deploy Service` with `service=market-data`
 
+Automated live preflight:
+- risky `Deploy Service` runs now block automatically if live state is not clean
+- current preflight checks cover pending intents, open positions, recent fills, critical reconciliation findings, and stale/unhealthy heartbeats
+- if preflight blocks the workflow, treat the situation as operator-reviewed rather than retrying casually
+
 Optional hold behavior:
 - `bash ops/systemd/restart_oms_live.sh --hold-strategy`
 - `bash ops/systemd/restart_market_data_live.sh --hold-strategy`

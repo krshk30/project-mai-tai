@@ -8,6 +8,7 @@ ALLOW_LIVE_RESTART="${MAI_TAI_ALLOW_LIVE_RESTART:-0}"
 RUN_MIGRATIONS="${MAI_TAI_RUN_MIGRATIONS:-0}"
 HOLD_STRATEGY="${MAI_TAI_HOLD_STRATEGY:-0}"
 APP_HEALTH_URL="${APP_HEALTH_URL:-http://127.0.0.1:8100/health}"
+APP_OVERVIEW_URL="${APP_OVERVIEW_URL:-http://127.0.0.1:8100/api/overview}"
 
 if [[ ! -d "$REPO_DIR/.git" ]]; then
   echo "missing git repo: $REPO_DIR"
@@ -53,9 +54,20 @@ fi
 
 eastern_hour="$(TZ=America/New_York date +%H)"
 eastern_weekday="$(TZ=America/New_York date +%u)"
-if [[ "$HIGH_RISK" == "1" && "$ALLOW_LIVE_RESTART" != "1" && "$eastern_weekday" -le 5 && "$eastern_hour" -ge 7 && "$eastern_hour" -lt 16 ]]; then
+IN_MARKET_WINDOW=0
+if [[ "$eastern_weekday" -le 5 && "$eastern_hour" -ge 7 && "$eastern_hour" -lt 16 ]]; then
+  IN_MARKET_WINDOW=1
+fi
+
+if [[ "$HIGH_RISK" == "1" && "$ALLOW_LIVE_RESTART" != "1" && "$IN_MARKET_WINDOW" == "1" ]]; then
   echo "refusing $SERVICE_TARGET deploy during ET market hours without MAI_TAI_ALLOW_LIVE_RESTART=1"
   echo "control and reconciler are lower-risk; strategy, oms, and market-data require explicit live approval"
+  exit 1
+fi
+
+if [[ "$RUN_MIGRATIONS" == "1" && "$IN_MARKET_WINDOW" == "1" ]]; then
+  echo "refusing live service deploy with migrations enabled"
+  echo "schema migrations during ET market hours remain a human-approved red-zone operation"
   exit 1
 fi
 
@@ -106,6 +118,13 @@ start_unit() {
   wait_for_unit_active "$unit"
 }
 
+run_live_preflight() {
+  echo "Running live deploy preflight for $SERVICE_TARGET..."
+  python3 "$REPO_DIR/src/project_mai_tai/deploy_preflight.py" \
+    --service "$SERVICE_TARGET" \
+    --overview-url "$APP_OVERVIEW_URL"
+}
+
 cd "$REPO_DIR"
 
 if [[ -n "$(git status --porcelain)" ]]; then
@@ -117,6 +136,10 @@ fi
 git fetch origin
 git checkout "$BRANCH"
 git merge --ff-only "origin/$BRANCH"
+
+if [[ "$HIGH_RISK" == "1" && "$ALLOW_LIVE_RESTART" == "1" && "$IN_MARKET_WINDOW" == "1" ]]; then
+  run_live_preflight
+fi
 
 echo "Refreshing runtime in $REPO_DIR (migrations=$RUN_MIGRATIONS)..."
 sudo MAI_TAI_RUN_MIGRATIONS="$RUN_MIGRATIONS" bash ops/bootstrap/08_install_runtime.sh "$REPO_DIR"

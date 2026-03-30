@@ -73,6 +73,15 @@ For `Deploy Service`, that live-session block applies to:
 
 `control` and `reconciler` are treated as lower-risk service deploys.
 
+For risky live service deploys, `Deploy Service` now runs an automated preflight before the
+restart is allowed to continue. The preflight blocks the deploy if it sees:
+
+- pending or in-flight intents
+- open broker/account or virtual positions
+- very recent fills
+- critical reconciliation findings
+- stale or unhealthy service heartbeats
+
 This matches the repo's current restart-safety reality:
 
 - off-hours deploys can use full-stack restart flow
@@ -141,6 +150,10 @@ This means GitHub Actions deploys are using the same install/restart path we alr
 5. restarts only the selected service or coordinated service pair
 6. prints the current `/health` payload after the restart
 
+For live risky service deploys, the preflight runs before runtime refresh or restart. If the
+preflight is not clean, the workflow exits with the blocking reasons and no service restart is
+attempted.
+
 Service targets currently supported:
 
 - `control`
@@ -153,6 +166,10 @@ Coordinated behavior:
 
 - `oms` deploy stops `strategy`, restarts `oms`, then starts `strategy` again unless `hold_strategy=true`
 - `market-data` deploy stops `strategy`, restarts `market-data`, then starts `strategy` again unless `hold_strategy=true`
+
+Additional live guard:
+
+- `run_migrations=true` is refused during ET market hours
 
 ## Recommended Operating Model
 
