@@ -52,8 +52,8 @@ if [[ "$HOLD_STRATEGY" == "1" && "$SERVICE_TARGET" != "oms" && "$SERVICE_TARGET"
   exit 1
 fi
 
-eastern_hour="$(TZ=America/New_York date +%H)"
-eastern_weekday="$(TZ=America/New_York date +%u)"
+eastern_hour=$((10#$(TZ=America/New_York date +%H)))
+eastern_weekday=$((10#$(TZ=America/New_York date +%u)))
 IN_MARKET_WINDOW=0
 if [[ "$eastern_weekday" -le 5 && "$eastern_hour" -ge 7 && "$eastern_hour" -lt 16 ]]; then
   IN_MARKET_WINDOW=1

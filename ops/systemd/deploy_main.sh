@@ -12,8 +12,8 @@ if [[ ! -d "$REPO_DIR/.git" ]]; then
   exit 1
 fi
 
-eastern_hour="$(TZ=America/New_York date +%H)"
-eastern_weekday="$(TZ=America/New_York date +%u)"
+eastern_hour=$((10#$(TZ=America/New_York date +%H)))
+eastern_weekday=$((10#$(TZ=America/New_York date +%u)))
 if [[ "$ALLOW_LIVE_RESTART" != "1" && "$eastern_weekday" -le 5 && "$eastern_hour" -ge 7 && "$eastern_hour" -lt 16 ]]; then
   echo "refusing automated deploy during ET market hours"
   echo "rerun with MAI_TAI_ALLOW_LIVE_RESTART=1 only if the live-session restart risk is understood"
