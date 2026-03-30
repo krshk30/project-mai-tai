@@ -1327,14 +1327,14 @@ def _render_dashboard(data: dict[str, Any]) -> str:
             {_status_badge(bot["wiring_status"])}
           </div>
           <div class="bot-metrics">
-            <div><span class="mini-label">Watching</span><strong>{bot["watchlist_count"]}</strong></div>
+            <div><span class="mini-label">Eligible Feed</span><strong>{bot["watchlist_count"]}</strong></div>
             <div><span class="mini-label">Positions</span><strong>{bot["position_count"]}</strong></div>
             <div><span class="mini-label">Pending</span><strong>{bot["pending_count"]}</strong></div>
           </div>
           <div class="bot-lines">
             <p><strong>Execution:</strong> {escape(bot["execution_mode"])} via {escape(bot["provider"])}</p>
             <p><strong>Legacy Shadow:</strong> {escape(bot["legacy_status"] if bot["legacy_present"] else "not available")}</p>
-            <p><strong>Watchlist:</strong> {escape(", ".join(bot["watchlist"][:8]) or "None")}</p>
+            <p><strong>Ranked Feed:</strong> {escape(", ".join(bot["watchlist"][:8]) or "None")}</p>
             <p><strong>Pending Opens:</strong> {escape(", ".join(bot["pending_open_symbols"][:6]) or "None")}</p>
             <p><strong>Pending Closes:</strong> {escape(", ".join(bot["pending_close_symbols"][:6]) or "None")}</p>
             <p><strong>Pending Scales:</strong> {escape(", ".join(bot["pending_scale_levels"][:6]) or "None")}</p>
@@ -2002,15 +2002,15 @@ def _render_dashboard(data: dict[str, Any]) -> str:
                   <div class="section-header">
                     <div>
                       <h2>Overview</h2>
-                      <div class="sub">Confirmed names, watchlist flow, and subscription state.</div>
+                    <div class="sub">Confirmed names, ranked-feed flow, and subscription state.</div>
                     </div>
                   </div>
                   <div class="muted-box">
                     <p><strong>Scanner Status:</strong> {escape(scanner["status"])}</p>
-                    <p><strong>Watchlist Count:</strong> {scanner["watchlist_count"]}</p>
+                    <p><strong>Ranked Feed Count:</strong> {scanner["watchlist_count"]}</p>
                     <p><strong>Top Confirmed Count:</strong> {scanner["top_confirmed_count"]}</p>
                     <p><strong>Active Subscriptions:</strong> {scanner["active_subscription_symbols"]}</p>
-                    <p><strong>Watchlist:</strong> {escape(", ".join(scanner["watchlist"][:12]) or "None")}</p>
+                    <p><strong>Ranked Feed:</strong> {escape(", ".join(scanner["watchlist"][:12]) or "None")}</p>
                     <p><strong>Legacy Confirmed:</strong> {escape(", ".join(scanner["legacy_confirmed_symbols"][:12]) or "None")}</p>
                   </div>
                 </section>
@@ -2034,13 +2034,13 @@ def _render_dashboard(data: dict[str, Any]) -> str:
                 <div class="section-header">
                   <div>
                     <h2>Confirmed Candidates</h2>
-                    <div class="sub">New scanner output promoted to bot-ready candidates, including score, path, and which bots are watching.</div>
+                    <div class="sub">New scanner output promoted into the shared ranked feed, including score, path, and which bots currently receive that feed.</div>
                   </div>
                 </div>
                 <div class="table-card">
                   <table>
                     <thead>
-                      <tr><th>Rank</th><th>Ticker</th><th>Path</th><th>Score</th><th>Price</th><th>Change</th><th>Volume</th><th>RVOL</th><th>Spread</th><th>Squeezes</th><th>First Spike</th><th>Watched By</th></tr>
+                      <tr><th>Rank</th><th>Ticker</th><th>Path</th><th>Score</th><th>Price</th><th>Change</th><th>Volume</th><th>RVOL</th><th>Spread</th><th>Squeezes</th><th>First Spike</th><th>Feed To</th></tr>
                     </thead>
                     <tbody>{scanner_rows}</tbody>
                   </table>
@@ -2735,7 +2735,7 @@ def _render_scanner_dashboard(data: dict[str, Any]) -> str:
             </div>
 
             <div class="side-section">
-                <div class="side-label">Active Watchlist</div>
+                <div class="side-label">Active Ranked Feed</div>
                 <div>{watchlist_html}</div>
             </div>
 
@@ -3244,7 +3244,7 @@ def _render_bot_detail_page(data: dict[str, Any], strategy_code: str) -> str:
 
             <div class="metric-grid">
                 <div class="metric-card">
-                    <span>Watchlist</span>
+                    <span>Eligible Feed</span>
                     <strong>{bot["watchlist_count"]}</strong>
                 </div>
                 <div class="metric-card">
@@ -3278,7 +3278,7 @@ def _render_bot_detail_page(data: dict[str, Any], strategy_code: str) -> str:
             </div>
 
             <div class="side-section">
-                <div class="side-label">Watchlist</div>
+                <div class="side-label">Ranked Feed</div>
                 <div>{watchlist_html}</div>
             </div>
 
@@ -3315,7 +3315,7 @@ def _render_bot_detail_page(data: dict[str, Any], strategy_code: str) -> str:
                     <span class="badge">Legacy Shadow {escape(bot["legacy_status"])}</span>
                 </div>
                 <div class="hero-grid">
-                    <div class="hero-card"><span>Watchlist</span><strong>{bot["watchlist_count"]}</strong><small>Symbols assigned to this bot</small></div>
+                    <div class="hero-card"><span>Eligible Feed</span><strong>{bot["watchlist_count"]}</strong><small>Ranked scanner names this bot may evaluate</small></div>
                     <div class="hero-card"><span>Open Positions</span><strong>{bot["position_count"]}</strong><small>Strategy-owned live positions</small></div>
                     <div class="hero-card"><span>Pending Actions</span><strong>{bot["pending_count"]}</strong><small>Open, close, and scale queues</small></div>
                     <div class="hero-card"><span>Recent Fills</span><strong>{recent_fill_count}</strong><small>Latest fills tracked by OMS</small></div>
@@ -3759,7 +3759,7 @@ def _render_scanner_confirmed_rows(
         rendered.append(
             f"""<tr style="background:{row_bg};">
             <td style="text-align:center">{index}</td>
-            <td><strong>{escape(ticker)}</strong>{live_badge}{top5_badge}<br><span style="font-size:10px;color:#888;">{escape(watched_by)}</span></td>
+            <td><strong>{escape(ticker)}</strong>{live_badge}{top5_badge}<br><span style="font-size:10px;color:#888;">feed: {escape(watched_by)}</span></td>
             <td style="text-align:center">{path_badge}</td>
             <td style="color:#ffd600;font-weight:bold;">{_as_float(item.get("rank_score")):.0f}</td>
             <td style="color:#00ff41;">{escape(str(item.get("confirmed_at", item.get("first_spike_time", ""))))}</td>
