@@ -25,6 +25,7 @@ def _healthy_overview(now: datetime) -> dict:
         ]
     ]
     return {
+        "status": "healthy",
         "counts": {
             "pending_intents": 0,
             "open_virtual_positions": 0,
@@ -127,6 +128,20 @@ def test_live_deploy_preflight_blocks_stale_or_unhealthy_services() -> None:
 
     assert any("not healthy" in item for item in failures)
     assert any("stale" in item for item in failures)
+
+
+def test_live_deploy_preflight_uses_overview_status_for_control_plane() -> None:
+    now = datetime(2026, 3, 30, 14, 0, tzinfo=UTC)
+    overview = _healthy_overview(now)
+    overview["status"] = "degraded"
+
+    failures = evaluate_live_deploy_preflight(
+        overview,
+        service_target="strategy",
+        now=now,
+    )
+
+    assert any("control-plane overview endpoint is not healthy" in item for item in failures)
 
 
 def test_parse_datetime_accepts_control_plane_eastern_format() -> None:

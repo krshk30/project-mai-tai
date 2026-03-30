@@ -10,7 +10,6 @@ from zoneinfo import ZoneInfo
 
 
 EXPECTED_SERVICE_NAMES = {
-    "control-plane",
     "market-data-gateway",
     "strategy-engine",
     "oms-risk",
@@ -81,6 +80,13 @@ def evaluate_live_deploy_preflight(
     failures: list[str] = []
     counts = overview.get("counts", {})
     target_service_name = TARGET_SERVICE_NAMES[service_target]
+
+    control_plane_status = str(overview.get("status", "")).lower()
+    if control_plane_status != "healthy":
+        failures.append(
+            "control-plane overview endpoint is not healthy before deploy "
+            f"(status={control_plane_status or 'unknown'})."
+        )
 
     pending_intents = int(counts.get("pending_intents", 0) or 0)
     if pending_intents > 0:
