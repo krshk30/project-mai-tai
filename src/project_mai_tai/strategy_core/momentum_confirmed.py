@@ -265,6 +265,31 @@ class MomentumConfirmedScanner:
                 stock["volume"] = volume
         self.refresh_catalysts()
 
+    def prune_faded_candidates(self, min_change_pct: float | None = None) -> list[str]:
+        threshold = self.config.live_min_change_pct if min_change_pct is None else min_change_pct
+        if threshold <= 0:
+            return []
+
+        dropped: list[str] = []
+        retained: list[dict[str, object]] = []
+        for stock in self._confirmed:
+            ticker = str(stock.get("ticker", "")).upper()
+            change_pct = float(stock.get("change_pct", 0) or 0)
+            if change_pct < threshold:
+                dropped.append(ticker)
+                self.allow_reconfirmation(ticker)
+                logger.info(
+                    "[CONFIRMED] %s - removed from confirmed after fading below %.1f%% (live %.2f%%)",
+                    ticker,
+                    threshold,
+                    change_pct,
+                )
+                continue
+            retained.append(stock)
+
+        self._confirmed = retained
+        return dropped
+
     def allow_reconfirmation(self, ticker: str) -> None:
         if ticker in self._tracking:
             self._tracking[ticker]["confirmed"] = False

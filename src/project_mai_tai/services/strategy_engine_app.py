@@ -755,6 +755,7 @@ class StrategyEngineState:
             snapshot_lookup,
         )
         self.confirmed_scanner.update_live_prices(snapshot_lookup)
+        self.confirmed_scanner.prune_faded_candidates()
 
         self.current_confirmed = [
             stock

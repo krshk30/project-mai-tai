@@ -31,3 +31,4 @@ class MomentumConfirmedConfig:
     confirmed_min_volume: int = 500_000
     confirmed_max_float: int = 50_000_000
     rank_min_score: float = 50.0
+    live_min_change_pct: float = 20.0

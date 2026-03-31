@@ -160,6 +160,49 @@ def test_top_gainer_changes_use_eastern_time_labels() -> None:
     assert str(changes[0]["time"]).endswith("ET")
 
 
+def test_confirmed_scanner_prunes_faded_candidates_and_allows_reconfirmation() -> None:
+    confirmed_scanner = MomentumConfirmedScanner(
+        MomentumConfirmedConfig(
+            confirmed_min_volume=1_000,
+            confirmed_max_float=1_000_000,
+            live_min_change_pct=20.0,
+        )
+    )
+    confirmed_scanner.seed_confirmed_candidates(
+        [
+            {
+                "ticker": "POLA",
+                "confirmed_at": "08:00:00 AM ET",
+                "entry_price": 2.30,
+                "price": 2.32,
+                "change_pct": 19.4,
+                "volume": 900_000,
+                "rvol": 8.0,
+                "shares_outstanding": 1_000_000,
+                "confirmation_path": "PATH_B_2SQ",
+            }
+        ]
+    )
+    confirmed_scanner._tracking["POLA"] = {
+        "has_volume_spike": True,
+        "first_spike_time": "07:45:00 AM ET",
+        "first_spike_price": 2.1,
+        "first_spike_volume": 500_000,
+        "squeezes": [{"time": "08:00:00 AM ET", "price": 2.32, "volume": 900_000}],
+        "confirmed": True,
+        "confirmed_at": "08:00:00 AM ET",
+        "confirmed_price": 2.32,
+    }
+
+    dropped = confirmed_scanner.prune_faded_candidates()
+
+    assert dropped == ["POLA"]
+    assert confirmed_scanner.get_all_confirmed() == []
+    assert confirmed_scanner._tracking["POLA"]["confirmed"] is False
+    assert confirmed_scanner._tracking["POLA"]["has_volume_spike"] is False
+    assert confirmed_scanner._tracking["POLA"]["squeezes"] == []
+
+
 def test_entry_engine_allows_default_window_until_6pm_et() -> None:
     engine = EntryEngine(
         TradingConfig(),

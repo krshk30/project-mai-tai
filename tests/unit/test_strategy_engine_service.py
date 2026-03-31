@@ -201,7 +201,7 @@ def test_snapshot_batch_keeps_single_confirmed_name_in_watchlist(monkeypatch) ->
             "confirmed_at": "10:00:00 AM ET",
             "entry_price": 2.25,
             "price": 2.4,
-            "change_pct": 12.5,
+            "change_pct": 24.5,
             "volume": 900_000,
             "rvol": 6.2,
             "shares_outstanding": 50_000,
@@ -228,7 +228,7 @@ def test_snapshot_batch_keeps_single_confirmed_name_in_watchlist(monkeypatch) ->
     )
 
     summary = state.process_snapshot_batch(
-        [snapshot_from_payload(make_snapshot_payload(symbol="UGRO", price=2.4, volume=900_000))],
+        [snapshot_from_payload(make_snapshot_payload(symbol="UGRO", price=2.7, volume=900_000))],
         {"UGRO": ReferenceData(shares_outstanding=50_000, avg_daily_volume=390_000)},
     )
 
@@ -374,6 +374,53 @@ def test_snapshot_batch_releases_removed_symbols_from_all_bot_watchlists(monkeyp
     for code in ("macd_30s", "macd_1m", "tos", "runner"):
         assert state.bots[code].watchlist == {"ELAB"}
     assert state.bots["runner"]._candidates == {"ELAB": second_confirmed[0]}
+
+
+def test_snapshot_batch_prunes_faded_confirmed_symbols_from_all_bot_watchlists() -> None:
+    state = StrategyEngineState(now_provider=fixed_now)
+    state.confirmed_scanner.seed_confirmed_candidates(
+        [
+            {
+                "ticker": "POLA",
+                "confirmed_at": "08:00:00 AM ET",
+                "entry_price": 2.30,
+                "price": 2.32,
+                "change_pct": 24.0,
+                "volume": 900_000,
+                "rvol": 8.0,
+                "shares_outstanding": 1_000_000,
+                "bid": 2.31,
+                "ask": 2.32,
+                "spread": 0.01,
+                "spread_pct": 0.43,
+                "first_spike_time": "07:45:00 AM ET",
+                "squeeze_count": 2,
+                "confirmation_path": "PATH_B_2SQ",
+                "rank_score": 72.0,
+                "prev_close": 2.0,
+            }
+        ]
+    )
+    state.confirmed_scanner._tracking["POLA"] = {
+        "has_volume_spike": True,
+        "first_spike_time": "07:45:00 AM ET",
+        "first_spike_price": 2.1,
+        "first_spike_volume": 500_000,
+        "squeezes": [{"time": "08:00:00 AM ET", "price": 2.32, "volume": 900_000}],
+        "confirmed": True,
+        "confirmed_at": "08:00:00 AM ET",
+        "confirmed_price": 2.32,
+    }
+
+    state.process_snapshot_batch(
+        [snapshot_from_payload(make_snapshot_payload(symbol="POLA", price=2.10, volume=950_000))],
+        {"POLA": ReferenceData(shares_outstanding=1_000_000, avg_daily_volume=200_000)},
+    )
+
+    assert state.confirmed_scanner.get_all_confirmed() == []
+    for code in ("macd_30s", "macd_1m", "tos", "runner"):
+        assert state.bots[code].watchlist == set()
+    assert state.bots["runner"]._candidates == {}
 
 
 def test_bot_runtime_clears_ghost_position_on_no_position_reject() -> None:
@@ -885,7 +932,7 @@ def test_seeded_confirmed_candidates_are_revalidated_into_fresh_top_confirmed(mo
                             "confirmed_at": "10:00:00 AM ET",
                             "entry_price": 2.25,
                             "price": 2.40,
-                            "change_pct": 12.5,
+                            "change_pct": 24.5,
                             "volume": 900_000,
                             "rvol": 6.2,
                             "shares_outstanding": 50_000,
@@ -915,16 +962,16 @@ def test_seeded_confirmed_candidates_are_revalidated_into_fresh_top_confirmed(mo
                         },
                     ],
                     "top_confirmed": [
-                        {
-                            "ticker": "UGRO",
-                            "rank_score": 72.0,
-                            "confirmed_at": "10:00:00 AM ET",
-                            "entry_price": 2.25,
-                            "price": 2.40,
-                            "change_pct": 12.5,
-                            "volume": 900_000,
-                            "rvol": 6.2,
-                            "shares_outstanding": 50_000,
+                            {
+                                "ticker": "UGRO",
+                                "rank_score": 72.0,
+                                "confirmed_at": "10:00:00 AM ET",
+                                "entry_price": 2.25,
+                                "price": 2.40,
+                                "change_pct": 24.5,
+                                "volume": 900_000,
+                                "rvol": 6.2,
+                                "shares_outstanding": 50_000,
                             "bid": 2.39,
                             "ask": 2.40,
                             "spread": 0.01,
