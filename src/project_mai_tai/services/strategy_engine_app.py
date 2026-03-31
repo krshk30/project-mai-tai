@@ -63,6 +63,7 @@ from project_mai_tai.strategy_core import (
     TradingConfig,
     apply_five_pillars,
 )
+from project_mai_tai.strategy_core.time_utils import today_eastern_str
 from project_mai_tai.strategy_core.bar_builder import BarBuilderManager
 
 logger = logging.getLogger(__name__)
@@ -114,6 +115,7 @@ class StrategyBotRuntime:
             closed_file_prefix=self._closed_trade_prefix_for_strategy(definition.code),
         )
         self.positions.load_closed_trades()
+        self._active_day = today_eastern_str()
         self.watchlist: set[str] = set()
         self.last_indicators: dict[str, dict[str, float | bool]] = {}
         self.pending_open_symbols: set[str] = set()
@@ -167,6 +169,7 @@ class StrategyBotRuntime:
         size: int,
         timestamp_ns: int | None = None,
     ) -> list[TradeIntentEvent]:
+        self._roll_day_if_needed()
         intents: list[TradeIntentEvent] = []
 
         position = self.positions.get_position(symbol)
@@ -201,6 +204,7 @@ class StrategyBotRuntime:
         level: str | None = None,
         path: str | None = None,
     ) -> None:
+        self._roll_day_if_needed()
         qty = int(quantity)
         fill_price = float(price)
         position = self.positions.get_position(symbol)
@@ -251,6 +255,7 @@ class StrategyBotRuntime:
         level: str | None = None,
         reason: str | None = None,
     ) -> None:
+        self._roll_day_if_needed()
         if status not in {"rejected", "cancelled"}:
             return
 
@@ -283,6 +288,7 @@ class StrategyBotRuntime:
                 self.scale_retry_blocked_until[(symbol, level)] = utcnow() + timedelta(seconds=5)
 
     def summary(self) -> dict[str, object]:
+        self._roll_day_if_needed()
         return {
             "strategy": self.definition.code,
             "account_name": self.definition.account_name,
@@ -296,6 +302,14 @@ class StrategyBotRuntime:
             "recent_decisions": list(self.recent_decisions),
             "indicator_snapshots": self._indicator_snapshots(),
         }
+
+    def _roll_day_if_needed(self) -> None:
+        current_day = today_eastern_str()
+        if current_day == self._active_day:
+            return
+        self.positions.reset()
+        self.positions.load_closed_trades()
+        self._active_day = current_day
 
     def has_position(self, ticker: str) -> bool:
         return self.positions.has_position(ticker) or ticker in self.pending_open_symbols

@@ -134,3 +134,23 @@ def test_runner_trail_pct_stays_flat_at_ten_percent() -> None:
     position.volume_faded = True
 
     assert position.get_trail_pct(config) == 10.0
+
+
+def test_runner_rolls_daily_pnl_and_closed_trades_at_new_et_day(monkeypatch) -> None:
+    active_day = {"value": "2026-03-30"}
+    monkeypatch.setattr(
+        "project_mai_tai.strategy_core.runner.today_eastern_str",
+        lambda: active_day["value"],
+    )
+
+    state = StrategyEngineState(now_provider=fixed_now)
+    runner = state.bots["runner"]
+    runner._daily_pnl = 25.0
+    runner._closed_today = [{"ticker": "MASK"}]
+
+    active_day["value"] = "2026-03-31"
+
+    summary = runner.summary()
+
+    assert summary["daily_pnl"] == 0.0
+    assert summary["closed_today"] == []

@@ -9,6 +9,7 @@ from project_mai_tai.events import TradeIntentEvent, TradeIntentPayload
 from project_mai_tai.strategy_core.bar_builder import BarBuilderManager
 from project_mai_tai.strategy_core.indicators import ema
 from project_mai_tai.strategy_core.models import OHLCVBar
+from project_mai_tai.strategy_core.time_utils import today_eastern_str
 
 
 @dataclass(frozen=True)
@@ -128,6 +129,7 @@ class RunnerStrategyRuntime:
         self._close_retry_blocked_until: datetime | None = None
         self._daily_pnl = 0.0
         self._closed_today: list[dict[str, object]] = []
+        self._active_day = today_eastern_str()
 
     def set_watchlist(self, symbols: Iterable[str]) -> None:
         self.watchlist = {symbol.upper() for symbol in symbols if symbol}
@@ -166,6 +168,7 @@ class RunnerStrategyRuntime:
         size: int,
         timestamp_ns: int | None = None,
     ) -> list[TradeIntentEvent]:
+        self._roll_day_if_needed()
         normalized = symbol.upper()
         intents: list[TradeIntentEvent] = []
 
@@ -216,6 +219,7 @@ class RunnerStrategyRuntime:
         level: str | None = None,
         path: str | None = None,
     ) -> None:
+        self._roll_day_if_needed()
         del level
         del path
 
@@ -265,6 +269,7 @@ class RunnerStrategyRuntime:
         level: str | None = None,
         reason: str | None = None,
     ) -> None:
+        self._roll_day_if_needed()
         del level
         normalized = symbol.upper()
         if status not in {"rejected", "cancelled"}:
@@ -288,6 +293,7 @@ class RunnerStrategyRuntime:
                 self._pending_close_reason = ""
 
     def summary(self) -> dict[str, object]:
+        self._roll_day_if_needed()
         positions = [self._position.to_dict(self.config)] if self._position is not None else []
         return {
             "strategy": self.definition_code,
@@ -301,6 +307,14 @@ class RunnerStrategyRuntime:
             "closed_today": list(self._closed_today),
             "indicator_snapshots": [],
         }
+
+    def _roll_day_if_needed(self) -> None:
+        current_day = today_eastern_str()
+        if current_day == self._active_day:
+            return
+        self._daily_pnl = 0.0
+        self._closed_today.clear()
+        self._active_day = current_day
 
     def active_symbols(self) -> set[str]:
         symbols = set(self.watchlist)

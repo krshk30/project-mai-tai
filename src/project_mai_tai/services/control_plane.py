@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from html import escape
 import json
@@ -57,6 +57,28 @@ EASTERN_TZ = ZoneInfo("America/New_York")
 
 def utcnow() -> datetime:
     return datetime.now(UTC)
+
+
+def current_eastern_day_start_utc(now: datetime | None = None) -> datetime:
+    current = now or utcnow()
+    current_et = current.astimezone(EASTERN_TZ)
+    day_start_et = current_et.replace(hour=0, minute=0, second=0, microsecond=0)
+    return day_start_et.astimezone(UTC)
+
+
+def current_eastern_day_end_utc(now: datetime | None = None) -> datetime:
+    return current_eastern_day_start_utc(now) + timedelta(days=1)
+
+
+def _within_current_eastern_day(timestamp: datetime | None, now: datetime | None = None) -> bool:
+    if timestamp is None:
+        return False
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=UTC)
+    day_start = current_eastern_day_start_utc(now)
+    day_end = current_eastern_day_end_utc(now)
+    timestamp_utc = timestamp.astimezone(UTC)
+    return day_start <= timestamp_utc < day_end
 
 
 class ControlPlaneRepository:
@@ -585,6 +607,7 @@ class ControlPlaneRepository:
         incidents: list[dict[str, Any]] = []
         dashboard_snapshots: dict[str, dict[str, Any]] = {}
         scanner_blacklist: list[dict[str, Any]] = []
+        now = utcnow()
 
         try:
             with self.session_factory() as session:
@@ -667,6 +690,8 @@ class ControlPlaneRepository:
                 for intent in session.scalars(
                     select(TradeIntent).order_by(desc(TradeIntent.updated_at)).limit(50)
                 ).all():
+                    if not _within_current_eastern_day(intent.updated_at, now):
+                        continue
                     strategy = strategy_lookup.get(intent.strategy_id)
                     account = account_lookup.get(intent.broker_account_id)
                     recent_intents.append(
@@ -686,6 +711,8 @@ class ControlPlaneRepository:
                 for order in session.scalars(
                     select(BrokerOrder).order_by(desc(BrokerOrder.updated_at)).limit(50)
                 ).all():
+                    if not _within_current_eastern_day(order.updated_at, now):
+                        continue
                     strategy = strategy_lookup.get(order.strategy_id)
                     account = account_lookup.get(order.broker_account_id)
                     recent_orders.append(
@@ -703,6 +730,8 @@ class ControlPlaneRepository:
                     )
 
                 for fill in session.scalars(select(Fill).order_by(desc(Fill.filled_at)).limit(50)).all():
+                    if not _within_current_eastern_day(fill.filled_at, now):
+                        continue
                     strategy = strategy_lookup.get(fill.strategy_id)
                     account = account_lookup.get(fill.broker_account_id)
                     recent_fills.append(

@@ -1038,3 +1038,36 @@ def test_strategy_bot_runtime_uses_strategy_specific_trade_history(tmp_path, mon
     assert make_runtime("macd_30s").summary()["daily_pnl"] == 10.0
     assert make_runtime("macd_1m").summary()["daily_pnl"] == 50.0
     assert make_runtime("tos").summary()["daily_pnl"] == -5.0
+
+
+def test_strategy_bot_runtime_rolls_daily_pnl_and_closed_trades_at_new_et_day(monkeypatch) -> None:
+    active_day = {"value": "2026-03-30"}
+
+    monkeypatch.setattr(
+        "project_mai_tai.services.strategy_engine_app.today_eastern_str",
+        lambda: active_day["value"],
+    )
+    monkeypatch.setattr(
+        "project_mai_tai.services.strategy_engine_app.PositionTracker.load_closed_trades",
+        lambda self: None,
+    )
+
+    runtime = StrategyBotRuntime(
+        StrategyDefinition(
+            code="macd_30s",
+            display_name="macd_30s",
+            account_name="paper:macd_30s",
+            interval_secs=30,
+            trading_config=TradingConfig(),
+            indicator_config=IndicatorConfig(),
+        )
+    )
+    runtime.positions._daily_pnl = 12.5
+    runtime.positions._closed_today = [{"ticker": "ELAB"}]
+
+    active_day["value"] = "2026-03-31"
+
+    summary = runtime.summary()
+
+    assert summary["daily_pnl"] == 0.0
+    assert summary["closed_today"] == []

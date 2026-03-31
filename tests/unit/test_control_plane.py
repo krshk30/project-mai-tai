@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -683,6 +683,101 @@ def test_control_plane_reports_schwab_live_wiring() -> None:
         assert body["bots"][0]["provider"] == "schwab"
         assert body["bots"][0]["execution_mode"] == "live"
         assert body["bots"][0]["wiring_status"] == "live/schwab"
+
+
+def test_control_plane_filters_recent_orders_and_fills_to_current_eastern_day(monkeypatch) -> None:
+    settings = Settings(redis_stream_prefix="test", oms_adapter="alpaca_paper")
+    session_factory = build_test_session_factory()
+    seed_database(session_factory)
+
+    fixed_now = datetime(2026, 3, 31, 14, 0, tzinfo=UTC)
+    monkeypatch.setattr("project_mai_tai.services.control_plane.utcnow", lambda: fixed_now)
+
+    with session_factory() as session:
+        strategy = session.scalar(select(Strategy).where(Strategy.code == "macd_30s"))
+        account = session.scalar(select(BrokerAccount).where(BrokerAccount.name == "paper:macd_30s"))
+        assert strategy is not None
+        assert account is not None
+
+        old_order = BrokerOrder(
+            intent_id=None,
+            strategy_id=strategy.id,
+            broker_account_id=account.id,
+            client_order_id="macd_30s-OLD-open-1",
+            broker_order_id="old-order-1",
+            symbol="OLD",
+            side="buy",
+            order_type="market",
+            time_in_force="day",
+            quantity=Decimal("10"),
+            status="filled",
+            payload={},
+            submitted_at=datetime(2026, 3, 30, 14, 0, tzinfo=UTC),
+            updated_at=datetime(2026, 3, 30, 14, 1, tzinfo=UTC),
+        )
+        old_fill = Fill(
+            order_id=None,
+            strategy_id=strategy.id,
+            broker_account_id=account.id,
+            broker_fill_id="old-fill-1",
+            symbol="OLD",
+            side="buy",
+            quantity=Decimal("10"),
+            price=Decimal("1.00"),
+            filled_at=datetime(2026, 3, 30, 14, 1, tzinfo=UTC),
+            payload={},
+        )
+        today_order = BrokerOrder(
+            intent_id=None,
+            strategy_id=strategy.id,
+            broker_account_id=account.id,
+            client_order_id="macd_30s-NEW-open-1",
+            broker_order_id="new-order-1",
+            symbol="NEW",
+            side="buy",
+            order_type="market",
+            time_in_force="day",
+            quantity=Decimal("10"),
+            status="filled",
+            payload={},
+            submitted_at=datetime(2026, 3, 31, 13, 0, tzinfo=UTC),
+            updated_at=datetime(2026, 3, 31, 13, 1, tzinfo=UTC),
+        )
+        session.add_all([old_order, today_order])
+        session.flush()
+
+        old_fill.order_id = old_order.id
+        today_fill = Fill(
+            order_id=today_order.id,
+            strategy_id=strategy.id,
+            broker_account_id=account.id,
+            broker_fill_id="new-fill-1",
+            symbol="NEW",
+            side="buy",
+            quantity=Decimal("10"),
+            price=Decimal("2.00"),
+            filled_at=datetime(2026, 3, 31, 13, 1, tzinfo=UTC),
+            payload={},
+        )
+        session.add_all([old_fill, today_fill])
+        session.commit()
+
+    redis = FakeRedis(make_streams(settings.redis_stream_prefix))
+    app = build_app(
+        settings=settings,
+        session_factory=session_factory,
+        redis_client=redis,
+        legacy_client=FakeLegacyClient(),
+    )
+
+    with TestClient(app) as client:
+        bots = client.get("/api/bots")
+        assert bots.status_code == 200
+        bot_30s = next(item for item in bots.json()["bots"] if item["strategy_code"] == "macd_30s")
+        assert all(item["symbol"] != "OLD" for item in bot_30s["recent_orders"])
+        assert all(item["symbol"] != "OLD" for item in bot_30s["recent_fills"])
+        assert any(item["symbol"] == "NEW" for item in bot_30s["recent_orders"])
+        assert any(item["symbol"] == "NEW" for item in bot_30s["recent_fills"])
 
 
 def test_control_plane_restores_last_nonempty_confirmed_snapshot() -> None:
