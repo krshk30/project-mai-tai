@@ -149,6 +149,7 @@ class StrategyBotRuntime:
         self.pending_scale_levels: set[tuple[str, str]] = set()
         self.exit_retry_blocked_until: dict[str, datetime] = {}
         self.scale_retry_blocked_until: dict[tuple[str, str], datetime] = {}
+        self._applied_fill_quantity_by_order: dict[str, Decimal] = {}
         self.recent_decisions: list[dict[str, str]] = []
 
     @staticmethod
@@ -233,6 +234,7 @@ class StrategyBotRuntime:
     def apply_execution_fill(
         self,
         *,
+        client_order_id: str,
         symbol: str,
         intent_type: str,
         status: str,
@@ -243,7 +245,11 @@ class StrategyBotRuntime:
         path: str | None = None,
     ) -> None:
         self._roll_day_if_needed()
-        qty = int(quantity)
+        incremental_quantity = self._incremental_fill_quantity(client_order_id, quantity)
+        if incremental_quantity <= 0:
+            return
+
+        qty = int(incremental_quantity)
         fill_price = float(price)
         position = self.positions.get_position(symbol)
 
@@ -283,6 +289,15 @@ class StrategyBotRuntime:
         if intent_type == "scale" and side == "sell" and level and position is not None:
             self.pending_scale_levels.discard((symbol, level))
             position.apply_scale(level, qty, fill_price)
+
+    def _incremental_fill_quantity(self, client_order_id: str, cumulative_quantity: Decimal) -> Decimal:
+        if not client_order_id:
+            return cumulative_quantity
+        already_applied = self._applied_fill_quantity_by_order.get(client_order_id, Decimal("0"))
+        incremental_quantity = cumulative_quantity - already_applied
+        if incremental_quantity > 0:
+            self._applied_fill_quantity_by_order[client_order_id] = cumulative_quantity
+        return incremental_quantity
 
     def apply_order_status(
         self,
@@ -828,6 +843,7 @@ class StrategyEngineState:
     def apply_execution_fill(
         self,
         *,
+        client_order_id: str,
         strategy_code: str,
         symbol: str,
         intent_type: str,
@@ -839,6 +855,7 @@ class StrategyEngineState:
         path: str | None = None,
     ) -> None:
         self.bots[strategy_code].apply_execution_fill(
+            client_order_id=client_order_id,
             symbol=symbol,
             intent_type=intent_type,
             status=status,
@@ -1176,6 +1193,7 @@ class StrategyEngineService:
                 and order.filled_quantity > 0
             ):
                 self.state.apply_execution_fill(
+                    client_order_id=order.client_order_id,
                     strategy_code=order.strategy_code,
                     symbol=order.symbol,
                     intent_type=order.intent_type,

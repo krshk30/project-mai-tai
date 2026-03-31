@@ -131,7 +131,11 @@ def test_order_routing_metadata_uses_market_in_regular_session() -> None:
     assert metadata == {}
 
 
-def test_macd_runtime_uses_quote_anchored_limit_prices_in_extended_hours() -> None:
+def test_macd_runtime_uses_quote_anchored_limit_prices_in_extended_hours(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "project_mai_tai.services.strategy_engine_app.utcnow",
+        lambda: datetime(2026, 3, 31, 11, 0, tzinfo=UTC),
+    )
     runtime = StrategyBotRuntime(
         StrategyDefinition(
             code="macd_30s",
@@ -447,6 +451,7 @@ def test_bot_runtime_clears_position_on_final_close_fill_even_if_qty_differs() -
     bot.pending_close_symbols.add("BFRG")
 
     bot.apply_execution_fill(
+        client_order_id="macd_30s-BFRG-close-1",
         symbol="BFRG",
         intent_type="close",
         status="filled",
@@ -628,6 +633,64 @@ async def test_order_event_fill_opens_position_and_clears_pending_state() -> Non
     assert position.entry_price == 2.55
     assert "UGRO" not in bot.pending_open_symbols
     assert any(stream == "test:strategy-state" for stream, _payload in redis.entries)
+
+
+@pytest.mark.asyncio
+async def test_order_event_fill_uses_incremental_quantity_for_cumulative_reports() -> None:
+    redis = FakeRedis()
+    service = StrategyEngineService(
+        settings=Settings(redis_stream_prefix="test", dashboard_snapshot_persistence_enabled=False),
+        redis_client=redis,
+    )
+    bot = service.state.bots["macd_30s"]
+    bot.pending_open_symbols.add("ELAB")
+
+    partial_fill = OrderEventEvent(
+        source_service="oms-risk",
+        payload=OrderEventPayload(
+            strategy_code="macd_30s",
+            broker_account_name="paper:macd_30s",
+            client_order_id="macd_30s-ELAB-open-cumulative",
+            broker_order_id="broker-order-1",
+            broker_fill_id="fill-1",
+            symbol="ELAB",
+            side="buy",
+            intent_type="open",
+            status="partially_filled",
+            quantity=Decimal("100"),
+            filled_quantity=Decimal("19"),
+            fill_price=Decimal("3.95"),
+            reason="ENTRY_P1_MACD_CROSS",
+            metadata={"path": "P1_MACD_CROSS", "reference_price": "3.95"},
+        ),
+    )
+    final_fill = OrderEventEvent(
+        source_service="oms-risk",
+        payload=OrderEventPayload(
+            strategy_code="macd_30s",
+            broker_account_name="paper:macd_30s",
+            client_order_id="macd_30s-ELAB-open-cumulative",
+            broker_order_id="broker-order-1",
+            broker_fill_id="fill-2",
+            symbol="ELAB",
+            side="buy",
+            intent_type="open",
+            status="filled",
+            quantity=Decimal("100"),
+            filled_quantity=Decimal("100"),
+            fill_price=Decimal("3.95"),
+            reason="ENTRY_P1_MACD_CROSS",
+            metadata={"path": "P1_MACD_CROSS", "reference_price": "3.95"},
+        ),
+    )
+
+    await service._handle_stream_message("test:order-events", {"data": partial_fill.model_dump_json()})
+    await service._handle_stream_message("test:order-events", {"data": final_fill.model_dump_json()})
+
+    position = bot.positions.get_position("ELAB")
+    assert position is not None
+    assert position.quantity == 100
+    assert position.original_quantity == 100
 
 
 @pytest.mark.asyncio

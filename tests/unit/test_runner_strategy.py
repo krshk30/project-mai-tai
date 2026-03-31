@@ -69,6 +69,7 @@ def test_runner_trailing_stop_emits_close_intent() -> None:
     state = StrategyEngineState(now_provider=fixed_now)
     runner = state.bots["runner"]
     runner.apply_execution_fill(
+        client_order_id="runner-UGRO-open-1",
         symbol="UGRO",
         intent_type="open",
         status="filled",
@@ -96,6 +97,34 @@ def test_runner_trailing_stop_emits_close_intent() -> None:
     assert close_intents[0].payload.strategy_code == "runner"
     assert close_intents[0].payload.intent_type == "close"
     assert close_intents[0].payload.reason == "TRAIL_STOP_10%"
+
+
+def test_runner_apply_execution_fill_uses_incremental_quantity_for_cumulative_reports() -> None:
+    state = StrategyEngineState(now_provider=fixed_now)
+    runner = state.bots["runner"]
+
+    runner.apply_execution_fill(
+        client_order_id="runner-MASK-open-1",
+        symbol="MASK",
+        intent_type="open",
+        status="partially_filled",
+        side="buy",
+        quantity=Decimal("19"),
+        price=Decimal("1.82"),
+    )
+    runner.apply_execution_fill(
+        client_order_id="runner-MASK-open-1",
+        symbol="MASK",
+        intent_type="open",
+        status="filled",
+        side="buy",
+        quantity=Decimal("100"),
+        price=Decimal("1.82"),
+    )
+
+    summary = runner.summary()
+    assert len(summary["positions"]) == 1
+    assert summary["positions"][0]["quantity"] == 100
 
 
 def test_runner_requires_same_min_change_without_news_discount() -> None:

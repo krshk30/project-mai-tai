@@ -156,6 +156,7 @@ class RunnerStrategyRuntime:
         self._pending_close_symbol: str | None = None
         self._pending_close_reason: str = ""
         self._close_retry_blocked_until: datetime | None = None
+        self._applied_fill_quantity_by_order: dict[str, Decimal] = {}
         self._daily_pnl = 0.0
         self._closed_today: list[dict[str, object]] = []
         self._active_day = today_eastern_str()
@@ -255,6 +256,7 @@ class RunnerStrategyRuntime:
     def apply_execution_fill(
         self,
         *,
+        client_order_id: str,
         symbol: str,
         intent_type: str,
         status: str,
@@ -269,7 +271,11 @@ class RunnerStrategyRuntime:
         del path
 
         normalized = symbol.upper()
-        filled_qty = int(quantity)
+        incremental_quantity = self._incremental_fill_quantity(client_order_id, quantity)
+        if incremental_quantity <= 0:
+            return
+
+        filled_qty = int(incremental_quantity)
         fill_price = float(price)
 
         if intent_type == "open" and side == "buy":
@@ -287,6 +293,13 @@ class RunnerStrategyRuntime:
                     entry_time=self.now_provider().strftime("%I:%M:%S %p ET"),
                 )
             else:
+                total_qty = self._position.quantity + filled_qty
+                if total_qty > 0:
+                    self._position.entry_price = (
+                        (self._position.entry_price * self._position.quantity)
+                        + (fill_price * filled_qty)
+                    ) / total_qty
+                self._position.quantity = total_qty
                 self._position.update_price(fill_price)
             return
 
@@ -304,6 +317,15 @@ class RunnerStrategyRuntime:
 
             self._position.quantity -= filled_qty
             self._position.update_price(fill_price)
+
+    def _incremental_fill_quantity(self, client_order_id: str, cumulative_quantity: Decimal) -> Decimal:
+        if not client_order_id:
+            return cumulative_quantity
+        already_applied = self._applied_fill_quantity_by_order.get(client_order_id, Decimal("0"))
+        incremental_quantity = cumulative_quantity - already_applied
+        if incremental_quantity > 0:
+            self._applied_fill_quantity_by_order[client_order_id] = cumulative_quantity
+        return incremental_quantity
 
     def apply_order_status(
         self,
