@@ -8,6 +8,7 @@ from project_mai_tai.strategy_core.models import MarketSnapshot, ReferenceData
 from project_mai_tai.strategy_core.snapshot_utils import (
     compute_rvol,
     get_current_hod,
+    get_current_price,
     get_current_vwap,
     get_minutes_since_4am,
 )
@@ -54,7 +55,7 @@ class MomentumConfirmedScanner:
                 updated["shares_outstanding"] = ref.shares_outstanding
                 updated["avg_daily_volume"] = ref.avg_daily_volume
 
-            price = get_current_hod(snapshot)
+            price = float(get_current_price(snapshot) or 0)
             if price > 0:
                 updated["price"] = price
             prev_close = float(snapshot.previous_close or updated.get("prev_close", 0) or 0)
@@ -236,7 +237,7 @@ class MomentumConfirmedScanner:
             snapshot = snapshot_lookup.get(ticker)
             if snapshot is None:
                 continue
-            price = get_current_hod(snapshot)
+            price = float(get_current_price(snapshot) or 0)
             if price > 0:
                 stock["price"] = price
             prev_close = float(stock.get("prev_close", 0) or 0)
