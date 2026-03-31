@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import deque
 from collections.abc import Callable, Mapping, Sequence
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 import logging
 from typing import Dict, Union
 
@@ -47,6 +47,97 @@ class MomentumAlertEngine:
                 self._history.append(entry)
             else:
                 self._history.append(self._build_history_entry(entry))
+
+    def export_state(self) -> dict[str, object]:
+        return {
+            "history": list(self._history),
+            "cooldowns": [
+                {
+                    "ticker": ticker,
+                    "alert_type": alert_type,
+                    "last_fired_at": fired_at.astimezone(UTC).isoformat(),
+                }
+                for (ticker, alert_type), fired_at in self._cooldowns.items()
+            ],
+            "last_spike_volume": dict(self._last_spike_volume),
+            "volume_spike_tickers": sorted(self._volume_spike_tickers),
+            "persisted_at": self.now_provider().astimezone(UTC).isoformat(),
+        }
+
+    def restore_state(self, payload: Mapping[str, object]) -> bool:
+        history = payload.get("history")
+        if not isinstance(history, Sequence) or isinstance(history, (str, bytes)):
+            return False
+
+        restored_history: deque[HistoryEntry] = deque(maxlen=self._history.maxlen)
+        for entry in history:
+            if not isinstance(entry, dict):
+                continue
+            normalized_entry: HistoryEntry = {}
+            for ticker, values in entry.items():
+                if not isinstance(ticker, str) or not isinstance(values, dict):
+                    continue
+                price = values.get("price")
+                volume = values.get("volume")
+                hod = values.get("hod")
+                if price is None or volume is None or hod is None:
+                    continue
+                normalized_entry[ticker.upper()] = {
+                    "price": float(price),
+                    "volume": int(volume),
+                    "hod": float(hod),
+                }
+            if normalized_entry:
+                restored_history.append(normalized_entry)
+
+        self._history = restored_history
+        self._cooldowns.clear()
+
+        cooldowns = payload.get("cooldowns")
+        if isinstance(cooldowns, Sequence) and not isinstance(cooldowns, (str, bytes)):
+            for item in cooldowns:
+                if not isinstance(item, dict):
+                    continue
+                ticker = str(item.get("ticker", "")).upper()
+                alert_type = str(item.get("alert_type", "")).upper()
+                last_fired_at = item.get("last_fired_at")
+                if not ticker or not alert_type or not isinstance(last_fired_at, str):
+                    continue
+                try:
+                    fired_at = datetime.fromisoformat(last_fired_at)
+                except ValueError:
+                    continue
+                if fired_at.tzinfo is None:
+                    fired_at = fired_at.replace(tzinfo=UTC)
+                self._cooldowns[(ticker, alert_type)] = fired_at.astimezone(self.now_provider().tzinfo or UTC)
+
+        last_spike_volume = payload.get("last_spike_volume")
+        self._last_spike_volume = {}
+        if isinstance(last_spike_volume, dict):
+            for ticker, volume in last_spike_volume.items():
+                try:
+                    normalized_ticker = str(ticker).upper()
+                    self._last_spike_volume[normalized_ticker] = int(volume)
+                except (TypeError, ValueError):
+                    continue
+
+        volume_spike_tickers = payload.get("volume_spike_tickers")
+        self._volume_spike_tickers = set()
+        if isinstance(volume_spike_tickers, Sequence) and not isinstance(
+            volume_spike_tickers,
+            (str, bytes),
+        ):
+            self._volume_spike_tickers = {
+                str(ticker).upper() for ticker in volume_spike_tickers if str(ticker).strip()
+            }
+
+        logger.info(
+            "Momentum alert engine restored | history_cycles=%s spike_tickers=%s cooldowns=%s",
+            len(self._history),
+            len(self._volume_spike_tickers),
+            len(self._cooldowns),
+        )
+        return len(self._history) > 0
 
     def record_snapshot(self, snapshots: Sequence[MarketSnapshot]) -> None:
         self._history.append(self._build_history_entry(snapshots))

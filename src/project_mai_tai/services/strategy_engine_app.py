@@ -1025,6 +1025,7 @@ class StrategyEngineService:
         last_heartbeat_at = utcnow()
 
         self.logger.info("%s starting", SERVICE_NAME)
+        self._restore_alert_engine_state_from_dashboard_snapshot()
         self._seed_confirmed_candidates_from_dashboard_snapshot()
         await self._prefill_alert_history_from_snapshot_batches()
         await self._sync_market_data_subscriptions(self.state.market_data_symbols())
@@ -1390,17 +1391,67 @@ class StrategyEngineService:
 
         top_confirmed = list(summary.get("top_confirmed", []))
         all_confirmed_candidates = list(self.state.confirmed_scanner.get_all_confirmed())
-        if not top_confirmed and not all_confirmed_candidates:
+        if top_confirmed or all_confirmed_candidates:
+            payload = {
+                "top_confirmed": top_confirmed,
+                "all_confirmed_candidates": all_confirmed_candidates,
+                "watchlist": list(summary.get("watchlist", [])),
+                "cycle_count": int(summary.get("cycle_count", 0) or 0),
+                "persisted_at": utcnow().isoformat(),
+            }
+            self._replace_dashboard_snapshot("scanner_confirmed_last_nonempty", payload)
+
+        alert_state = self.state.alert_engine.export_state()
+        alert_state["cycle_count"] = int(summary.get("cycle_count", 0) or 0)
+        self._replace_dashboard_snapshot("scanner_alert_engine_state", alert_state)
+
+    def _restore_alert_engine_state_from_dashboard_snapshot(self) -> None:
+        if self.session_factory is None:
             return
 
-        payload = {
-            "top_confirmed": top_confirmed,
-            "all_confirmed_candidates": all_confirmed_candidates,
-            "watchlist": list(summary.get("watchlist", [])),
-            "cycle_count": int(summary.get("cycle_count", 0) or 0),
-            "persisted_at": utcnow().isoformat(),
-        }
-        self._replace_dashboard_snapshot("scanner_confirmed_last_nonempty", payload)
+        try:
+            with self.session_factory() as session:
+                snapshot = session.scalar(
+                    select(DashboardSnapshot).where(
+                        DashboardSnapshot.snapshot_type == "scanner_alert_engine_state"
+                    )
+                )
+        except Exception:
+            self.logger.exception("failed to load alert-engine warmup snapshot")
+            return
+
+        if snapshot is None or not isinstance(snapshot.payload, dict):
+            return
+
+        persisted_at_raw = snapshot.payload.get("persisted_at")
+        if not isinstance(persisted_at_raw, str):
+            self.logger.info("skipping alert-engine restore: persisted_at missing")
+            return
+
+        try:
+            persisted_at = datetime.fromisoformat(persisted_at_raw)
+        except ValueError:
+            self.logger.info("skipping alert-engine restore: invalid persisted_at=%s", persisted_at_raw)
+            return
+
+        if persisted_at.tzinfo is None:
+            persisted_at = persisted_at.replace(tzinfo=UTC)
+
+        session_start = current_scanner_session_start_utc()
+        if persisted_at.astimezone(UTC) < session_start:
+            self.logger.info(
+                "skipping alert-engine restore from prior session: persisted_at=%s session_start=%s",
+                persisted_at.isoformat(),
+                session_start.isoformat(),
+            )
+            return
+
+        if self.state.alert_engine.restore_state(snapshot.payload):
+            self.state.alert_warmup = self.state.alert_engine.get_warmup_status()
+            self.logger.info(
+                "restored momentum alert warmup from dashboard snapshot | history_cycles=%s",
+                self.state.alert_warmup.get("history_cycles", 0),
+            )
 
     def _seed_confirmed_candidates_from_dashboard_snapshot(self) -> None:
         if self.session_factory is None:

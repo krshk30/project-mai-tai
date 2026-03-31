@@ -243,6 +243,43 @@ def test_snapshot_batch_keeps_single_confirmed_name_in_watchlist(monkeypatch) ->
         assert state.bots[code].watchlist == set()
 
 
+def test_alert_engine_state_persists_and_restores_from_dashboard_snapshot() -> None:
+    session_factory = build_test_session_factory()
+    service = StrategyEngineService(
+        settings=Settings(),
+        redis_client=FakeRedis(),
+        session_factory=session_factory,
+    )
+
+    snapshots = [
+        snapshot_from_payload(make_snapshot_payload(symbol="MASK", price=2.5, volume=200_000)),
+        snapshot_from_payload(make_snapshot_payload(symbol="ELAB", price=3.1, volume=300_000)),
+    ]
+    service.state.alert_engine.record_snapshot(snapshots)
+    service.state.alert_engine._volume_spike_tickers.add("MASK")
+    service.state.alert_engine._last_spike_volume["MASK"] = 200_000
+
+    service._persist_scanner_snapshots(
+        {
+            "top_confirmed": [],
+            "watchlist": [],
+            "cycle_count": 1,
+        }
+    )
+
+    restored = StrategyEngineService(
+        settings=Settings(),
+        redis_client=FakeRedis(),
+        session_factory=session_factory,
+    )
+    restored._restore_alert_engine_state_from_dashboard_snapshot()
+
+    warmup = restored.state.alert_engine.get_warmup_status()
+    assert warmup["history_cycles"] == 1
+    assert "MASK" in restored.state.alert_engine._volume_spike_tickers
+    assert restored.state.alert_engine._last_spike_volume["MASK"] == 200_000
+
+
 def test_snapshot_batch_keeps_runner_aligned_to_visible_confirmed_names(monkeypatch) -> None:
     state = StrategyEngineState(now_provider=fixed_now)
     visible_confirmed = [
