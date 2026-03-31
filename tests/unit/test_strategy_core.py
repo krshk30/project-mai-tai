@@ -236,9 +236,13 @@ def test_position_tracker_loads_closed_trades_from_sibling_data_dir(tmp_path, mo
                 "",
                 "P1_MACD_CROSS",
             ]
-        )
+    )
 
     monkeypatch.chdir(repo_dir)
+    monkeypatch.setattr(
+        "project_mai_tai.strategy_core.position_tracker.today_eastern_str",
+        lambda: "2026-03-30",
+    )
     tracker = PositionTracker(TradingConfig())
 
     tracker.load_closed_trades()

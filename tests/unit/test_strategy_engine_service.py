@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
@@ -780,13 +780,14 @@ async def test_strategy_state_snapshot_persists_last_nonempty_confirmed_snapshot
     assert snapshot.payload["top_confirmed"][0]["path_a_eligible"] is True
 
 
-def test_seeded_confirmed_candidates_are_revalidated_into_fresh_top_confirmed() -> None:
+def test_seeded_confirmed_candidates_are_revalidated_into_fresh_top_confirmed(monkeypatch) -> None:
     session_factory = build_test_session_factory()
     with session_factory() as session:
         session.add(
             DashboardSnapshot(
                 snapshot_type="scanner_confirmed_last_nonempty",
                 payload={
+                    "persisted_at": datetime(2026, 3, 30, 10, 5, tzinfo=UTC).isoformat(),
                     "all_confirmed_candidates": [
                         {
                             "ticker": "UGRO",
@@ -847,6 +848,11 @@ def test_seeded_confirmed_candidates_are_revalidated_into_fresh_top_confirmed() 
         )
         session.commit()
 
+    monkeypatch.setattr(
+        "project_mai_tai.services.strategy_engine_app.utcnow",
+        lambda: datetime(2026, 3, 30, 14, 0, tzinfo=UTC),
+    )
+
     service = StrategyEngineService(
         settings=Settings(redis_stream_prefix="test", dashboard_snapshot_persistence_enabled=True),
         redis_client=FakeRedis(),
@@ -880,6 +886,7 @@ def test_seeded_confirmed_candidates_drop_when_missing_from_fresh_snapshots() ->
             DashboardSnapshot(
                 snapshot_type="scanner_confirmed_last_nonempty",
                 payload={
+                    "persisted_at": datetime(2026, 3, 30, 10, 5, tzinfo=UTC).isoformat(),
                     "top_confirmed": [
                         {
                             "ticker": "UGRO",
@@ -919,6 +926,46 @@ def test_seeded_confirmed_candidates_drop_when_missing_from_fresh_snapshots() ->
     assert service.state._seeded_confirmed_pending_revalidation is False
     assert summary["watchlist"] == []
     assert summary["top_confirmed"] == []
+
+
+def test_seeded_confirmed_candidates_skip_prior_session_snapshot(monkeypatch) -> None:
+    session_factory = build_test_session_factory()
+    with session_factory() as session:
+        session.add(
+            DashboardSnapshot(
+                snapshot_type="scanner_confirmed_last_nonempty",
+                payload={
+                    "persisted_at": datetime(2026, 3, 30, 1, 0, tzinfo=UTC).isoformat(),
+                    "top_confirmed": [
+                        {
+                            "ticker": "ELAB",
+                            "rank_score": 72.0,
+                            "confirmed_at": "06:03:59 PM ET",
+                            "entry_price": 3.73,
+                            "price": 3.32,
+                            "change_pct": 98.8,
+                            "volume": 249_300,
+                        }
+                    ],
+                },
+            )
+        )
+        session.commit()
+
+    monkeypatch.setattr(
+        "project_mai_tai.services.strategy_engine_app.utcnow",
+        lambda: datetime(2026, 3, 31, 9, 0, tzinfo=UTC),
+    )
+
+    service = StrategyEngineService(
+        settings=Settings(redis_stream_prefix="test", dashboard_snapshot_persistence_enabled=True),
+        redis_client=FakeRedis(),
+        session_factory=session_factory,
+    )
+    service._seed_confirmed_candidates_from_dashboard_snapshot()
+
+    assert service.state.confirmed_scanner.get_all_confirmed() == []
+    assert service.state._seeded_confirmed_pending_revalidation is False
 
 
 def test_strategy_bot_runtime_loads_closed_trades_for_daily_pnl(monkeypatch) -> None:
@@ -970,6 +1017,10 @@ def test_strategy_bot_runtime_uses_strategy_specific_trade_history(tmp_path, mon
         "ticker,entry_price,exit_price,quantity,pnl,pnl_pct,reason,entry_time,exit_time,peak_profit_pct,tier,scales_done,path\n"
         "BFRG,1.00,0.95,100,-5.0,-5.00,OMS_FILL,09:40:00 AM ET,09:41:00 AM ET,2.0,1,,P1_MACD_CROSS\n",
         encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "project_mai_tai.strategy_core.position_tracker.today_eastern_str",
+        lambda: "2026-03-30",
     )
 
     def make_runtime(strategy_code: str) -> StrategyBotRuntime:

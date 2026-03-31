@@ -8,6 +8,7 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 from redis.asyncio import Redis
 from sqlalchemy import delete, select
@@ -67,10 +68,18 @@ from project_mai_tai.strategy_core.bar_builder import BarBuilderManager
 logger = logging.getLogger(__name__)
 
 SERVICE_NAME = "strategy-engine"
+EASTERN_TZ = ZoneInfo("America/New_York")
 
 
 def utcnow() -> datetime:
     return datetime.now(UTC)
+
+
+def current_scanner_session_start_utc(now: datetime | None = None) -> datetime:
+    current = now or utcnow()
+    current_et = current.astimezone(EASTERN_TZ)
+    session_start_et = current_et.replace(hour=4, minute=0, second=0, microsecond=0)
+    return session_start_et.astimezone(UTC)
 
 
 @dataclass(frozen=True)
@@ -1299,6 +1308,29 @@ class StrategyEngineService:
             return
 
         if snapshot is None or not isinstance(snapshot.payload, dict):
+            return
+
+        persisted_at_raw = snapshot.payload.get("persisted_at")
+        if not isinstance(persisted_at_raw, str):
+            self.logger.info("skipping confirmed-candidate seed: persisted_at missing")
+            return
+
+        try:
+            persisted_at = datetime.fromisoformat(persisted_at_raw)
+        except ValueError:
+            self.logger.info("skipping confirmed-candidate seed: invalid persisted_at=%s", persisted_at_raw)
+            return
+
+        if persisted_at.tzinfo is None:
+            persisted_at = persisted_at.replace(tzinfo=UTC)
+
+        session_start = current_scanner_session_start_utc()
+        if persisted_at.astimezone(UTC) < session_start:
+            self.logger.info(
+                "skipping confirmed-candidate seed from prior session: persisted_at=%s session_start=%s",
+                persisted_at.isoformat(),
+                session_start.isoformat(),
+            )
             return
 
         seeded_candidates = snapshot.payload.get("all_confirmed_candidates")
