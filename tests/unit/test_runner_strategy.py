@@ -127,6 +127,30 @@ def test_runner_apply_execution_fill_uses_incremental_quantity_for_cumulative_re
     assert summary["positions"][0]["quantity"] == 100
 
 
+def test_runner_clears_ghost_position_on_no_strategy_position_reject() -> None:
+    state = StrategyEngineState(now_provider=fixed_now)
+    runner = state.bots["runner"]
+    runner.apply_execution_fill(
+        client_order_id="runner-MASK-open-1",
+        symbol="MASK",
+        intent_type="open",
+        status="filled",
+        side="buy",
+        quantity=Decimal("100"),
+        price=Decimal("1.82"),
+    )
+    runner._pending_close_symbol = "MASK"
+
+    runner.apply_order_status(
+        symbol="MASK",
+        intent_type="close",
+        status="rejected",
+        reason="no strategy position available to sell",
+    )
+
+    assert runner.summary()["positions"] == []
+
+
 def test_runner_requires_same_min_change_without_news_discount() -> None:
     state = StrategyEngineState(now_provider=fixed_now)
     runner = state.bots["runner"]

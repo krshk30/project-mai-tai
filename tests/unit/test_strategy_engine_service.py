@@ -444,6 +444,24 @@ def test_bot_runtime_clears_ghost_position_on_no_position_reject() -> None:
     assert "ASTC" not in bot.pending_close_symbols
 
 
+def test_bot_runtime_clears_ghost_position_on_no_strategy_position_reject() -> None:
+    state = StrategyEngineState(now_provider=fixed_now)
+    bot = state.bots["macd_30s"]
+    bot.positions.open_position("BFRG", 1.83, quantity=24, path="P3_MACD_SURGE")
+    bot.pending_scale_levels.add(("BFRG", "FAST4"))
+
+    bot.apply_order_status(
+        symbol="BFRG",
+        intent_type="scale",
+        status="rejected",
+        level="FAST4",
+        reason="no strategy position available to sell",
+    )
+
+    assert bot.positions.get_position("BFRG") is None
+    assert ("BFRG", "FAST4") not in bot.pending_scale_levels
+
+
 def test_bot_runtime_clears_position_on_final_close_fill_even_if_qty_differs() -> None:
     state = StrategyEngineState(now_provider=fixed_now)
     bot = state.bots["macd_30s"]

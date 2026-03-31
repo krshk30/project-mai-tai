@@ -559,7 +559,12 @@ class StrategyBotRuntime:
 
     @staticmethod
     def _is_no_position_reason(reason: str) -> bool:
-        return "cannot be sold short" in reason or "insufficient qty" in reason or "no broker position available to sell" in reason
+        return (
+            "cannot be sold short" in reason
+            or "insufficient qty" in reason
+            or "no broker position available to sell" in reason
+            or "no strategy position available to sell" in reason
+        )
 
     def _capture_entry_decision(self, symbol: str, indicators: dict[str, float | bool]) -> None:
         decision = self.entry_engine.pop_last_decision(symbol)

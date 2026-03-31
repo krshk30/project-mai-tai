@@ -360,6 +360,7 @@ class RunnerStrategyRuntime:
                 "cannot be sold short" in normalized_reason
                 or "insufficient qty" in normalized_reason
                 or "no broker position available to sell" in normalized_reason
+                or "no strategy position available to sell" in normalized_reason
             ):
                 self._position = None
                 self._pending_close_reason = ""
