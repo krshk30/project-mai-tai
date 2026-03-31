@@ -113,6 +113,37 @@ class FakeOrderSyncBrokerAdapter:
         return []
 
 
+class FakeSequentialOrderSyncBrokerAdapter:
+    def __init__(self, reports: list[ExecutionReport | None]) -> None:
+        self.reports = reports
+        self.fetch_calls = 0
+
+    async def submit_order(self, request):
+        return [
+            ExecutionReport(
+                event_type="accepted",
+                client_order_id=request.client_order_id,
+                broker_order_id="ord-123",
+                symbol=request.symbol,
+                side=request.side,
+                intent_type=request.intent_type,
+                quantity=request.quantity,
+                reason=request.reason,
+                metadata=dict(request.metadata),
+            )
+        ]
+
+    async def fetch_order_update(self, request):
+        del request
+        report = self.reports[min(self.fetch_calls, len(self.reports) - 1)]
+        self.fetch_calls += 1
+        return report
+
+    async def list_account_positions(self, broker_account_name: str):
+        del broker_account_name
+        return []
+
+
 class FakePendingExitBrokerAdapter:
     async def submit_order(self, request):
         if request.intent_type == "open":
@@ -197,6 +228,11 @@ class FakeAcceptedOnlyBrokerAdapter:
     async def list_account_positions(self, broker_account_name: str):
         del broker_account_name
         return []
+
+
+async def _noop_sync_broker_state(*, account_names=None):
+    del account_names
+    return {"accounts": 0, "positions": 0, "orders": 0, "terminal_orders": 0}
 
 
 class FakeRejectNotTradableBrokerAdapter:
@@ -587,6 +623,7 @@ async def test_oms_service_syncs_open_order_status_from_broker() -> None:
         session_factory=session_factory,
         broker_adapter=adapter,
     )
+    service.sync_broker_state = _noop_sync_broker_state  # type: ignore[method-assign]
 
     await service.process_trade_intent(
         TradeIntentEvent(
@@ -627,6 +664,128 @@ async def test_oms_service_syncs_open_order_status_from_broker() -> None:
         assert stored_order.status == "cancelled"
         assert stored_intent is not None
         assert stored_intent.status == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_oms_service_sync_publishes_terminal_order_event_for_strategy_runtime() -> None:
+    redis = FakeRedis()
+    session_factory = build_test_session_factory()
+    adapter = FakeSequentialOrderSyncBrokerAdapter(
+        reports=[
+            ExecutionReport(
+                event_type="partially_filled",
+                client_order_id="macd_1m-MASK-open-abc123",
+                broker_order_id="ord-123",
+                broker_fill_id="fill-92",
+                symbol="MASK",
+                side="buy",
+                intent_type="open",
+                quantity=Decimal("100"),
+                filled_quantity=Decimal("92"),
+                fill_price=Decimal("2.43"),
+                reason="ENTRY_P2_VWAP_BREAKOUT",
+                metadata={},
+            ),
+            ExecutionReport(
+                event_type="filled",
+                client_order_id="macd_1m-MASK-open-abc123",
+                broker_order_id="ord-123",
+                broker_fill_id="fill-100",
+                symbol="MASK",
+                side="buy",
+                intent_type="open",
+                quantity=Decimal("100"),
+                filled_quantity=Decimal("100"),
+                fill_price=Decimal("2.43"),
+                reason="ENTRY_P2_VWAP_BREAKOUT",
+                metadata={},
+            ),
+        ]
+    )
+    service = OmsRiskService(
+        settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
+        redis_client=redis,
+        session_factory=session_factory,
+        broker_adapter=adapter,
+    )
+    service.sync_broker_state = _noop_sync_broker_state  # type: ignore[method-assign]
+
+    await service.process_trade_intent(
+        TradeIntentEvent(
+            source_service="strategy-engine",
+            payload=TradeIntentPayload(
+                strategy_code="macd_1m",
+                broker_account_name="paper:macd_1m",
+                symbol="MASK",
+                side="buy",
+                quantity=Decimal("100"),
+                intent_type="open",
+                reason="ENTRY_P2_VWAP_BREAKOUT",
+                metadata={},
+            ),
+        )
+    )
+
+    first_summary = await service.sync_broker_orders(account_names=["paper:macd_1m"])
+    second_summary = await service.sync_broker_orders(account_names=["paper:macd_1m"])
+
+    assert first_summary == {"orders": 1, "terminal_orders": 0}
+    assert second_summary == {"orders": 1, "terminal_orders": 1}
+    order_events = [payload for stream, payload in redis.entries if stream == "test:order-events"]
+    assert [item["payload"]["status"] for item in order_events] == ["accepted", "partially_filled", "filled"]
+
+
+@pytest.mark.asyncio
+async def test_oms_service_sync_skips_duplicate_partial_without_new_fill_progress() -> None:
+    redis = FakeRedis()
+    session_factory = build_test_session_factory()
+    adapter = FakeOrderSyncBrokerAdapter(
+        ExecutionReport(
+            event_type="partially_filled",
+            client_order_id="macd_1m-MASK-open-abc123",
+            broker_order_id="ord-123",
+            broker_fill_id="fill-92",
+            symbol="MASK",
+            side="buy",
+            intent_type="open",
+            quantity=Decimal("100"),
+            filled_quantity=Decimal("92"),
+            fill_price=Decimal("2.43"),
+            reason="ENTRY_P2_VWAP_BREAKOUT",
+            metadata={},
+        )
+    )
+    service = OmsRiskService(
+        settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
+        redis_client=redis,
+        session_factory=session_factory,
+        broker_adapter=adapter,
+    )
+    service.sync_broker_state = _noop_sync_broker_state  # type: ignore[method-assign]
+
+    await service.process_trade_intent(
+        TradeIntentEvent(
+            source_service="strategy-engine",
+            payload=TradeIntentPayload(
+                strategy_code="macd_1m",
+                broker_account_name="paper:macd_1m",
+                symbol="MASK",
+                side="buy",
+                quantity=Decimal("100"),
+                intent_type="open",
+                reason="ENTRY_P2_VWAP_BREAKOUT",
+                metadata={},
+            ),
+        )
+    )
+
+    first_summary = await service.sync_broker_orders(account_names=["paper:macd_1m"])
+    second_summary = await service.sync_broker_orders(account_names=["paper:macd_1m"])
+
+    assert first_summary == {"orders": 1, "terminal_orders": 0}
+    assert second_summary == {"orders": 0, "terminal_orders": 0}
+    order_events = [payload for stream, payload in redis.entries if stream == "test:order-events"]
+    assert [item["payload"]["status"] for item in order_events] == ["accepted", "partially_filled"]
 
 
 @pytest.mark.asyncio

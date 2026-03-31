@@ -10,6 +10,7 @@ from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from redis.asyncio import Redis
+from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from project_mai_tai.broker_adapters.alpaca import AlpacaPaperBrokerAdapter
@@ -17,13 +18,14 @@ from project_mai_tai.broker_adapters.protocols import BrokerAdapter, ExecutionRe
 from project_mai_tai.broker_adapters.schwab import SchwabBrokerAdapter
 from project_mai_tai.broker_adapters.simulated import SimulatedBrokerAdapter
 from project_mai_tai.db.session import build_session_factory
-from project_mai_tai.db.models import TradeIntent
+from project_mai_tai.db.models import Strategy, TradeIntent
 from project_mai_tai.events import (
     HeartbeatEvent,
     HeartbeatPayload,
     OrderEventEvent,
     OrderEventPayload,
     TradeIntentEvent,
+    TradeIntentPayload,
     stream_name,
 )
 from project_mai_tai.oms.store import OmsStore
@@ -500,6 +502,10 @@ class OmsRiskService:
                 broker_accounts = self.store.list_named_broker_accounts(session, account_names)
 
             account_lookup = {account.id: account for account in broker_accounts}
+            strategy_lookup = {
+                strategy.id: strategy
+                for strategy in session.scalars(select(Strategy)).all()
+            }
             open_orders = self.store.list_open_orders(
                 session,
                 broker_account_ids=list(account_lookup.keys()),
@@ -507,6 +513,7 @@ class OmsRiskService:
 
             synced_orders = 0
             terminal_orders = 0
+            published_events: list[OrderEventEvent] = []
             for order in open_orders:
                 account = account_lookup.get(order.broker_account_id)
                 if account is None or not order.broker_order_id:
@@ -515,6 +522,7 @@ class OmsRiskService:
                 intent = session.get(TradeIntent, order.intent_id) if order.intent_id else None
                 if intent is None:
                     continue
+                strategy = strategy_lookup.get(order.strategy_id)
 
                 request = OrderRequest(
                     client_order_id=order.client_order_id,
@@ -533,18 +541,7 @@ class OmsRiskService:
                 if report is None:
                     continue
 
-                status_changed = report.event_type != order.status
-                fill_progressed = report.filled_quantity > 0
-                if not status_changed and not fill_progressed:
-                    continue
-
-                synced_orders += 1
                 previous_status = order.status
-                self.store.update_order_from_report(
-                    order,
-                    report=report,
-                    metadata=dict(report.metadata),
-                )
                 payload = {
                     "client_order_id": report.client_order_id,
                     "broker_order_id": report.broker_order_id,
@@ -552,7 +549,6 @@ class OmsRiskService:
                     "metadata": dict(report.metadata),
                     "reason": report.reason,
                 }
-                self.store.append_order_event(session, order=order, report=report, payload=payload)
                 fill = self.store.record_fill_if_needed(
                     session,
                     order=order,
@@ -561,6 +557,17 @@ class OmsRiskService:
                     report=report,
                     payload=payload,
                 )
+                status_changed = report.event_type != previous_status
+                if not status_changed and fill is None:
+                    continue
+
+                synced_orders += 1
+                self.store.update_order_from_report(
+                    order,
+                    report=report,
+                    metadata=dict(report.metadata),
+                )
+                self.store.append_order_event(session, order=order, report=report, payload=payload)
                 if fill is not None:
                     self.store.apply_fill_to_positions(
                         session,
@@ -579,8 +586,35 @@ class OmsRiskService:
                 self.store.mark_intent_status(intent, intent_status)
                 if previous_status in self.store.OPEN_ORDER_STATUSES and report.event_type in {"filled", "cancelled", "rejected"}:
                     terminal_orders += 1
+                published_events.append(
+                    self._build_order_event(
+                        intent_event=TradeIntentEvent(
+                            source_service=SERVICE_NAME,
+                            payload=TradeIntentPayload(
+                                strategy_code=strategy.code if strategy is not None else "",
+                                broker_account_name=account.name,
+                                symbol=order.symbol,
+                                side=order.side,  # type: ignore[arg-type]
+                                quantity=order.quantity,
+                                intent_type=intent.intent_type,  # type: ignore[arg-type]
+                                reason=intent.reason,
+                                metadata={**{str(k): str(v) for k, v in (order.payload or {}).items()}},
+                            ),
+                        ),
+                        intent_db_id=intent.id,
+                        order_db_id=order.id,
+                        report=report,
+                        client_order_id=order.client_order_id,
+                        symbol=order.symbol,
+                        side=order.side,
+                        quantity=order.quantity,
+                    )
+                )
 
             session.commit()
+
+        for order_event in published_events:
+            await self._publish_order_event(order_event)
 
         return {
             "orders": synced_orders,

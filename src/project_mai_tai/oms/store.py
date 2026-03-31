@@ -390,7 +390,7 @@ class OmsStore:
         if report.broker_fill_id:
             existing = session.scalar(select(Fill).where(Fill.broker_fill_id == report.broker_fill_id))
             if existing is not None:
-                return existing
+                return None
 
         recorded_quantity = session.scalar(
             select(Fill.quantity)
