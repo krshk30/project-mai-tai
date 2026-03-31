@@ -131,6 +131,43 @@ def test_order_routing_metadata_uses_market_in_regular_session() -> None:
     assert metadata == {}
 
 
+def test_macd_runtime_uses_quote_anchored_limit_prices_in_extended_hours() -> None:
+    runtime = StrategyBotRuntime(
+        StrategyDefinition(
+            code="macd_30s",
+            display_name="30s",
+            account_name="paper:test",
+            interval_secs=30,
+            trading_config=TradingConfig(),
+            indicator_config=IndicatorConfig(),
+        ),
+        now_provider=lambda: datetime(2026, 3, 31, 11, 0, tzinfo=UTC),
+    )
+    runtime.update_market_snapshots(
+        [
+            snapshot_from_payload(
+                MarketSnapshotPayload(
+                    symbol="KIDZ",
+                    last_trade_price=Decimal("3.10"),
+                    bid_price=Decimal("3.11"),
+                    ask_price=Decimal("3.12"),
+                )
+            )
+        ]
+    )
+    runtime.positions.open_position("KIDZ", 3.10, quantity=100, path="P1")
+
+    open_intent = runtime._emit_open_intent(
+        {"ticker": "KIDZ", "price": 3.10, "path": "P1_MACD_CROSS", "score": 5, "score_details": "x"}
+    )
+    close_intent = runtime._emit_close_intent({"ticker": "KIDZ", "price": 3.10, "reason": "TEST"})
+
+    assert open_intent.payload.metadata["limit_price"] == "3.12"
+    assert open_intent.payload.metadata["price_source"] == "ask"
+    assert close_intent.payload.metadata["limit_price"] == "3.11"
+    assert close_intent.payload.metadata["price_source"] == "bid"
+
+
 def test_snapshot_batch_keeps_single_confirmed_name_in_watchlist(monkeypatch) -> None:
     state = StrategyEngineState(now_provider=fixed_now)
     state.confirmed_scanner._confirmed = [

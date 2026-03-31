@@ -167,3 +167,29 @@ def test_runner_order_routing_metadata_uses_extended_hours_limit_in_premarket() 
     assert metadata["extended_hours"] == "true"
     assert metadata["limit_price"] == "2.80"
     assert metadata["price_source"] == "ask"
+
+
+def test_runner_uses_quote_anchored_limit_prices_in_extended_hours() -> None:
+    state = StrategyEngineState(now_provider=lambda: datetime(2026, 3, 31, 11, 0, tzinfo=UTC))
+    runner = state.bots["runner"]
+    runner.update_market_snapshots(
+        [
+            type(
+                "Snapshot",
+                (),
+                {
+                    "ticker": "UGRO",
+                    "last_quote": type("Quote", (), {"bid_price": 2.79, "ask_price": 2.80})(),
+                },
+            )()
+        ]
+    )
+    runner._position = RunnerPosition("UGRO", entry_price=2.0, quantity=100)
+
+    open_intent = runner._emit_open_intent({"ticker": "UGRO", "rank_score": 78.0, "change_pct": 40.0}, 2.75)
+    close_intent = runner._emit_close_intent(reason="TEST")
+
+    assert open_intent.payload.metadata["limit_price"] == "2.80"
+    assert open_intent.payload.metadata["price_source"] == "ask"
+    assert close_intent.payload.metadata["limit_price"] == "2.79"
+    assert close_intent.payload.metadata["price_source"] == "bid"

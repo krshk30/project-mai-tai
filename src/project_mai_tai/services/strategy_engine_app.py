@@ -76,6 +76,15 @@ def utcnow() -> datetime:
     return datetime.now(UTC)
 
 
+def _format_limit_price(value: float | str | Decimal | None) -> str | None:
+    if value is None:
+        return None
+    try:
+        return format(Decimal(str(value)).quantize(Decimal("0.01")), "f")
+    except Exception:
+        return None
+
+
 def order_routing_metadata(*, price: str, side: str, now: datetime | None = None) -> dict[str, str]:
     current = (now or utcnow()).astimezone(EASTERN_TZ)
     regular_open = current.replace(hour=9, minute=30, second=0, microsecond=0)
@@ -134,6 +143,7 @@ class StrategyBotRuntime:
         self._active_day = today_eastern_str()
         self.watchlist: set[str] = set()
         self.last_indicators: dict[str, dict[str, float | bool]] = {}
+        self.latest_quotes: dict[str, dict[str, float]] = {}
         self.pending_open_symbols: set[str] = set()
         self.pending_close_symbols: set[str] = set()
         self.pending_scale_levels: set[tuple[str, str]] = set()
@@ -153,6 +163,18 @@ class StrategyBotRuntime:
 
     def set_watchlist(self, symbols: Iterable[str]) -> None:
         self.watchlist = set(symbols)
+
+    def update_market_snapshots(self, snapshots: Sequence[MarketSnapshot]) -> None:
+        for snapshot in snapshots:
+            if snapshot.last_quote is None:
+                continue
+            quote: dict[str, float] = {}
+            if snapshot.last_quote.bid_price is not None and snapshot.last_quote.bid_price > 0:
+                quote["bid"] = float(snapshot.last_quote.bid_price)
+            if snapshot.last_quote.ask_price is not None and snapshot.last_quote.ask_price > 0:
+                quote["ask"] = float(snapshot.last_quote.ask_price)
+            if quote:
+                self.latest_quotes[snapshot.ticker.upper()] = quote
 
     def seed_bars(self, symbol: str, bars: Sequence[dict[str, float | int]]) -> None:
         builder = self.builder_manager.get_or_create(symbol)
@@ -418,6 +440,8 @@ class StrategyBotRuntime:
         symbol = str(signal["ticker"])
         self.pending_open_symbols.add(symbol)
         reference_price = str(signal["price"])
+        quote = self.latest_quotes.get(symbol.upper(), {})
+        routed_price = _format_limit_price(quote.get("ask")) or _format_limit_price(reference_price) or reference_price
         metadata = {
             "path": str(signal["path"]),
             "score": str(signal["score"]),
@@ -425,7 +449,7 @@ class StrategyBotRuntime:
             "timeframe_secs": str(self.definition.interval_secs),
             "reference_price": reference_price,
         }
-        metadata.update(order_routing_metadata(price=reference_price, side="buy"))
+        metadata.update(order_routing_metadata(price=routed_price, side="buy"))
         return TradeIntentEvent(
             source_service=SERVICE_NAME,
             payload=TradeIntentPayload(
@@ -446,13 +470,15 @@ class StrategyBotRuntime:
         position = self.positions.get_position(symbol)
         quantity = Decimal(str(position.quantity if position else self.definition.trading_config.default_quantity))
         reference_price = str(signal.get("price", ""))
+        quote = self.latest_quotes.get(symbol.upper(), {})
+        routed_price = _format_limit_price(quote.get("bid")) or _format_limit_price(reference_price) or reference_price
         metadata = {
             "tier": str(signal.get("tier", "")),
             "profit_pct": str(signal.get("profit_pct", "")),
             "reference_price": reference_price,
         }
-        if reference_price:
-            metadata.update(order_routing_metadata(price=reference_price, side="sell"))
+        if routed_price:
+            metadata.update(order_routing_metadata(price=routed_price, side="sell"))
         return TradeIntentEvent(
             source_service=SERVICE_NAME,
             payload=TradeIntentPayload(
@@ -472,14 +498,16 @@ class StrategyBotRuntime:
         level = str(signal["level"])
         self.pending_scale_levels.add((symbol, level))
         reference_price = str(signal.get("price", ""))
+        quote = self.latest_quotes.get(symbol.upper(), {})
+        routed_price = _format_limit_price(quote.get("bid")) or _format_limit_price(reference_price) or reference_price
         metadata = {
             "level": level,
             "sell_pct": str(signal["sell_pct"]),
             "profit_pct": str(signal["profit_pct"]),
             "reference_price": reference_price,
         }
-        if reference_price:
-            metadata.update(order_routing_metadata(price=reference_price, side="sell"))
+        if routed_price:
+            metadata.update(order_routing_metadata(price=routed_price, side="sell"))
         return TradeIntentEvent(
             source_service=SERVICE_NAME,
             payload=TradeIntentPayload(
@@ -596,6 +624,7 @@ class StrategyEngineState:
         self.recent_alerts: list[dict[str, object]] = []
         self.alert_warmup: dict[str, object] = self.alert_engine.get_warmup_status()
         self.cycle_count = 0
+        self.latest_snapshots: dict[str, MarketSnapshot] = {}
         self._first_seen_by_ticker: dict[str, str] = {}
         self._seeded_confirmed_pending_revalidation = False
         registrations = strategy_registration_map(self.settings)
@@ -671,6 +700,7 @@ class StrategyEngineState:
         }
 
         self.reference_data.update(filtered_reference_data)
+        self.latest_snapshots.update({snapshot.ticker.upper(): snapshot for snapshot in filtered_snapshots})
         current_now = self.alert_engine.now_provider()
         self.five_pillars = self._decorate_scanner_rows(
             apply_five_pillars(
@@ -723,9 +753,11 @@ class StrategyEngineState:
         watchlist = [str(stock["ticker"]) for stock in self.current_confirmed]
         for code, bot in self.bots.items():
             if code == "runner":
+                bot.update_market_snapshots(filtered_snapshots)
                 bot.set_watchlist(watchlist)
                 bot.update_candidates(self.current_confirmed)
                 continue
+            bot.update_market_snapshots(filtered_snapshots)
             bot.set_watchlist(watchlist)
 
         return {

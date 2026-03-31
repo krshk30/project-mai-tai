@@ -15,6 +15,15 @@ from project_mai_tai.strategy_core.time_utils import today_eastern_str
 EASTERN_TZ = ZoneInfo("America/New_York")
 
 
+def _format_limit_price(value: float | str | Decimal | None) -> str | None:
+    if value is None:
+        return None
+    try:
+        return format(Decimal(str(value)).quantize(Decimal("0.01")), "f")
+    except Exception:
+        return None
+
+
 def order_routing_metadata(*, price: str, side: str, now: datetime) -> dict[str, str]:
     current = now.astimezone(EASTERN_TZ)
     regular_open = current.replace(hour=9, minute=30, second=0, microsecond=0)
@@ -140,6 +149,7 @@ class RunnerStrategyRuntime:
         self.builder_manager = BarBuilderManager(interval_secs=bar_interval_secs)
         self.watchlist: set[str] = set()
         self._candidates: dict[str, dict[str, object]] = {}
+        self._latest_quotes: dict[str, dict[str, float]] = {}
         self._cooldown_until: dict[str, datetime] = {}
         self._position: RunnerPosition | None = None
         self._pending_open_symbol: str | None = None
@@ -152,6 +162,22 @@ class RunnerStrategyRuntime:
 
     def set_watchlist(self, symbols: Iterable[str]) -> None:
         self.watchlist = {symbol.upper() for symbol in symbols if symbol}
+
+    def update_market_snapshots(self, snapshots: Sequence[object]) -> None:
+        for snapshot in snapshots:
+            ticker = str(getattr(snapshot, "ticker", "")).upper()
+            if not ticker:
+                continue
+            last_quote = getattr(snapshot, "last_quote", None)
+            bid = getattr(last_quote, "bid_price", None) if last_quote is not None else None
+            ask = getattr(last_quote, "ask_price", None) if last_quote is not None else None
+            quote: dict[str, float] = {}
+            if bid is not None and bid > 0:
+                quote["bid"] = float(bid)
+            if ask is not None and ask > 0:
+                quote["ask"] = float(ask)
+            if quote:
+                self._latest_quotes[ticker] = quote
 
     def update_candidates(self, candidates: Sequence[dict[str, object]]) -> None:
         self._candidates = {str(candidate.get("ticker", "")).upper(): dict(candidate) for candidate in candidates}
@@ -450,13 +476,15 @@ class RunnerStrategyRuntime:
         symbol = str(candidate.get("ticker", "")).upper()
         self._pending_open_symbol = symbol
         reference_price = str(live_price)
+        quote = self._latest_quotes.get(symbol, {})
+        routed_price = _format_limit_price(quote.get("ask")) or _format_limit_price(reference_price) or reference_price
         metadata = {
             "reference_price": reference_price,
             "rank_score": str(candidate.get("rank_score", "")),
             "change_pct": str(candidate.get("change_pct", "")),
             "confirmation_path": str(candidate.get("confirmation_path", "")),
         }
-        metadata.update(order_routing_metadata(price=reference_price, side="buy", now=self.now_provider()))
+        metadata.update(order_routing_metadata(price=routed_price, side="buy", now=self.now_provider()))
         return TradeIntentEvent(
             source_service=self.source_service,
             payload=TradeIntentPayload(
@@ -478,12 +506,14 @@ class RunnerStrategyRuntime:
         self._pending_close_symbol = self._position.ticker
         self._pending_close_reason = reason
         reference_price = str(self._position.current_price)
+        quote = self._latest_quotes.get(self._position.ticker, {})
+        routed_price = _format_limit_price(quote.get("bid")) or _format_limit_price(reference_price) or reference_price
         metadata = {
             "reference_price": reference_price,
             "peak_profit_pct": str(self._position.peak_profit_pct),
             "trail_pct": str(self._position.get_trail_pct(self.config)),
         }
-        metadata.update(order_routing_metadata(price=reference_price, side="sell", now=self.now_provider()))
+        metadata.update(order_routing_metadata(price=routed_price, side="sell", now=self.now_provider()))
         return TradeIntentEvent(
             source_service=self.source_service,
             payload=TradeIntentPayload(
