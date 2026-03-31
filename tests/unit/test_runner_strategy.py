@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 
 from project_mai_tai.services.strategy_engine_app import StrategyEngineState
-from project_mai_tai.strategy_core.runner import RunnerConfig, RunnerPosition
+from project_mai_tai.strategy_core.runner import RunnerConfig, RunnerPosition, order_routing_metadata
 
 
 def fixed_now() -> datetime:
@@ -154,3 +154,16 @@ def test_runner_rolls_daily_pnl_and_closed_trades_at_new_et_day(monkeypatch) -> 
 
     assert summary["daily_pnl"] == 0.0
     assert summary["closed_today"] == []
+
+
+def test_runner_order_routing_metadata_uses_extended_hours_limit_in_premarket() -> None:
+    metadata = order_routing_metadata(
+        price="2.80",
+        side="buy",
+        now=datetime(2026, 3, 31, 11, 0, tzinfo=UTC),
+    )
+
+    assert metadata["order_type"] == "limit"
+    assert metadata["extended_hours"] == "true"
+    assert metadata["limit_price"] == "2.80"
+    assert metadata["price_source"] == "ask"

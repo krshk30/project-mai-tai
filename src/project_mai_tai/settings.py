@@ -64,7 +64,7 @@ class Settings(BaseSettings):
     alpaca_order_fill_timeout_seconds: int = 10
     alpaca_order_poll_interval_seconds: float = 0.5
     alpaca_cancel_unfilled_after_timeout: bool = True
-    alpaca_paper_order_fill_timeout_seconds: int = 20
+    alpaca_paper_order_fill_timeout_seconds: int = 10
     alpaca_paper_cancel_unfilled_after_timeout: bool = True
     alpaca_cancel_confirm_timeout_seconds: float = 5.0
     strategy_macd_30s_account_name: str = "paper:macd_30s"

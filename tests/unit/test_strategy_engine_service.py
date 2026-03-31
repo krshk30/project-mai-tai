@@ -24,6 +24,7 @@ from project_mai_tai.services.strategy_engine_app import (
     StrategyDefinition,
     StrategyEngineService,
     StrategyEngineState,
+    order_routing_metadata,
     snapshot_from_payload,
 )
 from project_mai_tai.settings import Settings
@@ -101,6 +102,33 @@ def seed_trending_bars(
             }
         )
     return bars
+
+
+def test_order_routing_metadata_uses_extended_hours_limit_in_premarket() -> None:
+    metadata = order_routing_metadata(
+        price="2.55",
+        side="buy",
+        now=datetime(2026, 3, 31, 7, 0, tzinfo=UTC),
+    )
+
+    assert metadata == {
+        "order_type": "limit",
+        "time_in_force": "day",
+        "extended_hours": "true",
+        "limit_price": "2.55",
+        "reference_price": "2.55",
+        "price_source": "ask",
+    }
+
+
+def test_order_routing_metadata_uses_market_in_regular_session() -> None:
+    metadata = order_routing_metadata(
+        price="2.55",
+        side="buy",
+        now=datetime(2026, 3, 31, 14, 0, tzinfo=UTC),
+    )
+
+    assert metadata == {}
 
 
 def test_snapshot_batch_keeps_single_confirmed_name_in_watchlist(monkeypatch) -> None:

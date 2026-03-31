@@ -4,12 +4,31 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 from project_mai_tai.events import TradeIntentEvent, TradeIntentPayload
 from project_mai_tai.strategy_core.bar_builder import BarBuilderManager
 from project_mai_tai.strategy_core.indicators import ema
 from project_mai_tai.strategy_core.models import OHLCVBar
 from project_mai_tai.strategy_core.time_utils import today_eastern_str
+
+EASTERN_TZ = ZoneInfo("America/New_York")
+
+
+def order_routing_metadata(*, price: str, side: str, now: datetime) -> dict[str, str]:
+    current = now.astimezone(EASTERN_TZ)
+    regular_open = current.replace(hour=9, minute=30, second=0, microsecond=0)
+    regular_close = current.replace(hour=16, minute=0, second=0, microsecond=0)
+    if regular_open <= current < regular_close:
+        return {}
+    return {
+        "order_type": "limit",
+        "time_in_force": "day",
+        "extended_hours": "true",
+        "limit_price": price,
+        "reference_price": price,
+        "price_source": "ask" if side == "buy" else "bid",
+    }
 
 
 @dataclass(frozen=True)
@@ -430,6 +449,14 @@ class RunnerStrategyRuntime:
     def _emit_open_intent(self, candidate: dict[str, object], live_price: float) -> TradeIntentEvent:
         symbol = str(candidate.get("ticker", "")).upper()
         self._pending_open_symbol = symbol
+        reference_price = str(live_price)
+        metadata = {
+            "reference_price": reference_price,
+            "rank_score": str(candidate.get("rank_score", "")),
+            "change_pct": str(candidate.get("change_pct", "")),
+            "confirmation_path": str(candidate.get("confirmation_path", "")),
+        }
+        metadata.update(order_routing_metadata(price=reference_price, side="buy", now=self.now_provider()))
         return TradeIntentEvent(
             source_service=self.source_service,
             payload=TradeIntentPayload(
@@ -440,12 +467,7 @@ class RunnerStrategyRuntime:
                 quantity=Decimal(str(self.default_quantity)),
                 intent_type="open",
                 reason="ENTRY_RUNNER_MOMENTUM",
-                metadata={
-                    "reference_price": str(live_price),
-                    "rank_score": str(candidate.get("rank_score", "")),
-                    "change_pct": str(candidate.get("change_pct", "")),
-                    "confirmation_path": str(candidate.get("confirmation_path", "")),
-                },
+                metadata=metadata,
             ),
         )
 
@@ -455,6 +477,13 @@ class RunnerStrategyRuntime:
 
         self._pending_close_symbol = self._position.ticker
         self._pending_close_reason = reason
+        reference_price = str(self._position.current_price)
+        metadata = {
+            "reference_price": reference_price,
+            "peak_profit_pct": str(self._position.peak_profit_pct),
+            "trail_pct": str(self._position.get_trail_pct(self.config)),
+        }
+        metadata.update(order_routing_metadata(price=reference_price, side="sell", now=self.now_provider()))
         return TradeIntentEvent(
             source_service=self.source_service,
             payload=TradeIntentPayload(
@@ -465,11 +494,7 @@ class RunnerStrategyRuntime:
                 quantity=Decimal(str(self._position.quantity)),
                 intent_type="close",
                 reason=reason,
-                metadata={
-                    "reference_price": str(self._position.current_price),
-                    "peak_profit_pct": str(self._position.peak_profit_pct),
-                    "trail_pct": str(self._position.get_trail_pct(self.config)),
-                },
+                metadata=metadata,
             ),
         )
 

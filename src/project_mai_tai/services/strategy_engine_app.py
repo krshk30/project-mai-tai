@@ -76,6 +76,22 @@ def utcnow() -> datetime:
     return datetime.now(UTC)
 
 
+def order_routing_metadata(*, price: str, side: str, now: datetime | None = None) -> dict[str, str]:
+    current = (now or utcnow()).astimezone(EASTERN_TZ)
+    regular_open = current.replace(hour=9, minute=30, second=0, microsecond=0)
+    regular_close = current.replace(hour=16, minute=0, second=0, microsecond=0)
+    if regular_open <= current < regular_close:
+        return {}
+    return {
+        "order_type": "limit",
+        "time_in_force": "day",
+        "extended_hours": "true",
+        "limit_price": price,
+        "reference_price": price,
+        "price_source": "ask" if side == "buy" else "bid",
+    }
+
+
 def current_scanner_session_start_utc(now: datetime | None = None) -> datetime:
     current = now or utcnow()
     current_et = current.astimezone(EASTERN_TZ)
@@ -401,13 +417,15 @@ class StrategyBotRuntime:
     def _emit_open_intent(self, signal: dict[str, float | int | str]) -> TradeIntentEvent:
         symbol = str(signal["ticker"])
         self.pending_open_symbols.add(symbol)
+        reference_price = str(signal["price"])
         metadata = {
             "path": str(signal["path"]),
             "score": str(signal["score"]),
             "score_details": str(signal["score_details"]),
             "timeframe_secs": str(self.definition.interval_secs),
-            "reference_price": str(signal["price"]),
+            "reference_price": reference_price,
         }
+        metadata.update(order_routing_metadata(price=reference_price, side="buy"))
         return TradeIntentEvent(
             source_service=SERVICE_NAME,
             payload=TradeIntentPayload(
@@ -427,6 +445,14 @@ class StrategyBotRuntime:
         self.pending_close_symbols.add(symbol)
         position = self.positions.get_position(symbol)
         quantity = Decimal(str(position.quantity if position else self.definition.trading_config.default_quantity))
+        reference_price = str(signal.get("price", ""))
+        metadata = {
+            "tier": str(signal.get("tier", "")),
+            "profit_pct": str(signal.get("profit_pct", "")),
+            "reference_price": reference_price,
+        }
+        if reference_price:
+            metadata.update(order_routing_metadata(price=reference_price, side="sell"))
         return TradeIntentEvent(
             source_service=SERVICE_NAME,
             payload=TradeIntentPayload(
@@ -437,11 +463,7 @@ class StrategyBotRuntime:
                 quantity=quantity,
                 intent_type="close",
                 reason=str(signal["reason"]),
-                metadata={
-                    "tier": str(signal.get("tier", "")),
-                    "profit_pct": str(signal.get("profit_pct", "")),
-                    "reference_price": str(signal.get("price", "")),
-                },
+                metadata=metadata,
             ),
         )
 
@@ -449,6 +471,15 @@ class StrategyBotRuntime:
         symbol = str(signal["ticker"])
         level = str(signal["level"])
         self.pending_scale_levels.add((symbol, level))
+        reference_price = str(signal.get("price", ""))
+        metadata = {
+            "level": level,
+            "sell_pct": str(signal["sell_pct"]),
+            "profit_pct": str(signal["profit_pct"]),
+            "reference_price": reference_price,
+        }
+        if reference_price:
+            metadata.update(order_routing_metadata(price=reference_price, side="sell"))
         return TradeIntentEvent(
             source_service=SERVICE_NAME,
             payload=TradeIntentPayload(
@@ -459,12 +490,7 @@ class StrategyBotRuntime:
                 quantity=Decimal(str(signal["sell_qty"])),
                 intent_type="scale",
                 reason=str(signal["reason"]),
-                metadata={
-                    "level": level,
-                    "sell_pct": str(signal["sell_pct"]),
-                    "profit_pct": str(signal["profit_pct"]),
-                    "reference_price": str(signal.get("price", "")),
-                },
+                metadata=metadata,
             ),
         )
 

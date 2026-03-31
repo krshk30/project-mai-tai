@@ -289,5 +289,5 @@ def test_alpaca_paper_adapter_uses_paper_timeout_defaults() -> None:
 
     adapter = AlpacaPaperBrokerAdapter(settings)
 
-    assert adapter.fill_timeout_seconds == 20
+    assert adapter.fill_timeout_seconds == 10
     assert adapter.cancel_unfilled_after_timeout is True
