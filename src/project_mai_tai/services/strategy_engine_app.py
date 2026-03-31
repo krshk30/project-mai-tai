@@ -779,7 +779,9 @@ class StrategyEngineState:
 
         self.current_confirmed = [
             stock
-            for stock in self.confirmed_scanner.get_top_n()
+            for stock in self.confirmed_scanner.get_top_n(
+                min_change_pct=self.confirmed_scanner.config.live_min_change_pct
+            )
             if str(stock.get("ticker", "")).upper() not in blocked
         ]
 
