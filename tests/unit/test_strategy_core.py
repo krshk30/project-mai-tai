@@ -147,7 +147,7 @@ def test_alert_engine_and_confirmed_scanner_path_b() -> None:
 
 def test_top_gainer_changes_use_eastern_time_labels() -> None:
     tracker = TopGainersTracker()
-    ref = {"UGRO": ReferenceData(shares_outstanding=50_000, avg_daily_volume=390_000)}
+    ref = {"UGRO": ReferenceData(shares_outstanding=50_000, avg_daily_volume=175_000)}
 
     gainers, changes = tracker.update(
         [snapshot(ticker="UGRO", price=2.5, volume=900_000, change_pct=12.5)],

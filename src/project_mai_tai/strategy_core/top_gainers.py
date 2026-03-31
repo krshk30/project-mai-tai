@@ -22,7 +22,7 @@ from project_mai_tai.strategy_core.snapshot_utils import (
 class TopGainersConfig:
     min_price: float = 1.0
     max_price: float = 10.0
-    min_rvol_top_gainers: float = 2.0
+    min_rvol_top_gainers: float = 5.0
     top_gainers_count: int = 20
 
 
