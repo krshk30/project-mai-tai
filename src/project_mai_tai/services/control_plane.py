@@ -103,6 +103,14 @@ class ControlPlaneRepository:
         self._legacy_cache_at: datetime | None = None
         self._legacy_cache_lock = asyncio.Lock()
 
+    async def _reconnect_redis(self) -> None:
+        previous = self.redis
+        self.redis = Redis.from_url(self.settings.redis_url, decode_responses=True)
+        try:
+            await previous.aclose()
+        except Exception:
+            pass
+
     def add_scanner_blacklist_symbol(self, symbol: str, *, reason: str = "manual") -> bool:
         normalized = symbol.strip().upper()
         if not normalized:
@@ -259,6 +267,33 @@ class ControlPlaneRepository:
         ]
         top_confirmed_source = "live" if top_confirmed else "idle"
         top_confirmed_snapshot_at = ""
+
+        if not top_confirmed:
+            snapshot = persisted_snapshots.get("scanner_confirmed_last_nonempty", {})
+            snapshot_payload = snapshot if isinstance(snapshot, dict) else {}
+            restored_rows = snapshot_payload.get("top_confirmed", [])
+            restored_watchlist = snapshot_payload.get("watchlist", [])
+            restored_at = str(snapshot_payload.get("persisted_at", "") or "")
+            if isinstance(restored_rows, list) and restored_rows:
+                top_confirmed = [
+                    self._normalize_confirmed_row(
+                        index=index,
+                        item=item,
+                        bot_states=bot_states,
+                        live_market_row=live_market_rows.get(str(item.get("ticker", "")).upper()),
+                    )
+                    for index, item in enumerate(restored_rows, start=1)
+                    if isinstance(item, dict)
+                    and str(item.get("ticker", "")).upper() not in blacklisted_symbols
+                ]
+                watchlist = [
+                    str(symbol)
+                    for symbol in restored_watchlist
+                    if str(symbol).upper() not in blacklisted_symbols
+                ]
+                if top_confirmed:
+                    top_confirmed_source = "restored"
+                    top_confirmed_snapshot_at = restored_at
 
         legacy_confirmed = [
             str(symbol).upper()
@@ -928,7 +963,11 @@ class ControlPlaneRepository:
 
     async def _read_stream_events(self, topic: str, *, limit: int) -> list[dict[str, Any]]:
         stream = stream_name(self.settings.redis_stream_prefix, topic)
-        entries = await self.redis.xrevrange(stream, count=limit)
+        try:
+            entries = await self.redis.xrevrange(stream, count=limit)
+        except Exception:
+            await self._reconnect_redis()
+            entries = await self.redis.xrevrange(stream, count=limit)
         payloads: list[dict[str, Any]] = []
         for _message_id, fields in entries:
             data = fields.get("data")

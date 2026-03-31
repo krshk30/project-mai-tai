@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from decimal import Decimal
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
@@ -40,9 +41,13 @@ from project_mai_tai.settings import Settings
 class FakeRedis:
     def __init__(self, streams: dict[str, list[tuple[str, dict[str, str]]]]) -> None:
         self.streams = streams
+        self.fail_next = False
 
     async def xrevrange(self, stream: str, count: int | None = None, **kwargs):
         del kwargs
+        if self.fail_next:
+            self.fail_next = False
+            raise RuntimeError("temporary redis failure")
         entries = self.streams.get(stream, [])
         if count is not None:
             entries = entries[:count]
@@ -797,12 +802,38 @@ def test_control_plane_restores_last_nonempty_confirmed_snapshot() -> None:
         scanner = client.get("/api/scanner")
         assert scanner.status_code == 200
         scanner_body = scanner.json()["scanner"]
-        assert scanner_body["top_confirmed_source"] == "idle"
-        assert scanner_body["top_confirmed_count"] == 0
-        assert scanner_body["top_confirmed"] == []
-        assert scanner_body["top_confirmed_snapshot_at"] == ""
+        assert scanner_body["top_confirmed_source"] == "restored"
+        assert scanner_body["top_confirmed_count"] == 1
+        assert scanner_body["top_confirmed"][0]["ticker"] == "UGRO"
+        assert scanner_body["watchlist"] == ["UGRO"]
+        assert scanner_body["top_confirmed_snapshot_at"] == "2026-03-28T14:00:00+00:00"
 
         dashboard = client.get("/scanner/dashboard")
         assert dashboard.status_code == 200
-        assert "Restored from last non-empty snapshot" not in dashboard.text
-        assert "Quantum Biopharma Wins Hospital Supply Agreement" not in dashboard.text
+        assert "UGRO" in dashboard.text
+        assert "Quantum Biopharma Wins Hospital Supply Agreement" in dashboard.text
+
+
+def test_control_plane_recovers_after_transient_redis_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = Settings(redis_stream_prefix="test", oms_adapter="alpaca_paper")
+    session_factory = build_test_session_factory()
+    seed_database(session_factory)
+    redis = FakeRedis(make_streams(settings.redis_stream_prefix))
+    redis.fail_next = True
+    monkeypatch.setattr(
+        "project_mai_tai.services.control_plane.Redis.from_url",
+        lambda *args, **kwargs: redis,
+    )
+
+    app = build_app(
+        settings=settings,
+        session_factory=session_factory,
+        redis_client=redis,
+        legacy_client=FakeLegacyClient(),
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/health")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["redis_connected"] is True
