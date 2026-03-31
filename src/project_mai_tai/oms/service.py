@@ -4,9 +4,10 @@ import asyncio
 import json
 import logging
 import socket
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from redis.asyncio import Redis
 from sqlalchemy.orm import Session, sessionmaker
@@ -34,6 +35,7 @@ from project_mai_tai.settings import Settings, get_settings
 logger = logging.getLogger(__name__)
 
 SERVICE_NAME = "oms-risk"
+SESSION_TZ = ZoneInfo("America/New_York")
 
 
 def utcnow() -> datetime:
@@ -42,6 +44,7 @@ def utcnow() -> datetime:
 
 class OmsRiskService:
     NO_POSITION_REASONS = ("cannot be sold short", "insufficient qty", "no broker position available to sell")
+    NOT_TRADABLE_REASONS = ("is not tradable",)
 
     def __init__(
         self,
@@ -185,6 +188,21 @@ class OmsRiskService:
                 for order_event in published_events:
                     await self._publish_order_event(order_event)
                 return published_events
+
+            blocked_reason = await self._get_session_symbol_block_reason(
+                account_name=event.payload.broker_account_name,
+                symbol=event.payload.symbol,
+            )
+            if blocked_reason and event.payload.intent_type in {"open", "scale"}:
+                self.store.mark_intent_status(intent, "rejected")
+                order_event = self._build_rejected_event(
+                    event,
+                    intent.id,
+                    reason=blocked_reason,
+                )
+                session.commit()
+                await self._publish_order_event(order_event)
+                return [order_event]
 
             request_quantity = event.payload.quantity
             if event.payload.intent_type in {"close", "scale"} and event.payload.side == "sell":
@@ -333,6 +351,12 @@ class OmsRiskService:
                 if report.event_type == "accepted":
                     intent_status = "submitted"
                 self.store.mark_intent_status(intent, intent_status)
+                if report.event_type == "rejected" and self._is_not_tradable_reason(report.reason):
+                    await self._set_session_symbol_block(
+                        account_name=event.payload.broker_account_name,
+                        symbol=event.payload.symbol,
+                        reason="broker_symbol_not_tradable_for_session",
+                    )
 
                 published_events.append(
                     self._build_order_event(
@@ -694,3 +718,37 @@ class OmsRiskService:
                 metadata=dict(intent_event.payload.metadata),
             ),
         )
+
+    def _session_symbol_block_key(self, *, account_name: str, symbol: str, session_date: str | None = None) -> str:
+        day = session_date or datetime.now(SESSION_TZ).date().isoformat()
+        safe_account = account_name.replace(":", "_")
+        return f"{self.settings.redis_stream_prefix}:symbol-block:{day}:{safe_account}:{symbol.upper()}"
+
+    def _seconds_until_session_end(self) -> int:
+        now = datetime.now(SESSION_TZ)
+        tomorrow = (now + timedelta(days=1)).date()
+        next_midnight = datetime.combine(tomorrow, datetime.min.time(), tzinfo=SESSION_TZ)
+        return max(60, int((next_midnight - now).total_seconds()))
+
+    async def _get_session_symbol_block_reason(self, *, account_name: str, symbol: str) -> str | None:
+        getter = getattr(self.redis, "get", None)
+        if getter is None:
+            return None
+        value = await getter(self._session_symbol_block_key(account_name=account_name, symbol=symbol))
+        return str(value) if value else None
+
+    async def _set_session_symbol_block(self, *, account_name: str, symbol: str, reason: str) -> None:
+        setter = getattr(self.redis, "set", None)
+        if setter is None:
+            return
+        await setter(
+            self._session_symbol_block_key(account_name=account_name, symbol=symbol),
+            reason,
+            ex=self._seconds_until_session_end(),
+        )
+
+    def _is_not_tradable_reason(self, reason: str | None) -> bool:
+        if not reason:
+            return False
+        lowered = reason.lower()
+        return any(fragment in lowered for fragment in self.NOT_TRADABLE_REASONS)

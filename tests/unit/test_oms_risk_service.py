@@ -20,11 +20,20 @@ from project_mai_tai.settings import Settings
 class FakeRedis:
     def __init__(self) -> None:
         self.entries: list[tuple[str, dict[str, object]]] = []
+        self.values: dict[str, str] = {}
 
     async def xadd(self, stream: str, fields: dict[str, str], **kwargs) -> str:
         del kwargs
         self.entries.append((stream, json.loads(fields["data"])))
         return "1-0"
+
+    async def get(self, key: str):
+        return self.values.get(key)
+
+    async def set(self, key: str, value: str, ex: int | None = None):
+        del ex
+        self.values[key] = value
+        return True
 
     async def xread(self, offsets, block=0, count=0):
         del offsets, block, count
@@ -190,6 +199,35 @@ class FakeAcceptedOnlyBrokerAdapter:
         return []
 
 
+class FakeRejectNotTradableBrokerAdapter:
+    def __init__(self) -> None:
+        self.requests = []
+
+    async def submit_order(self, request):
+        self.requests.append(request)
+        return [
+            ExecutionReport(
+                event_type="rejected",
+                client_order_id=request.client_order_id,
+                broker_order_id=None,
+                symbol=request.symbol,
+                side=request.side,
+                intent_type=request.intent_type,
+                quantity=request.quantity,
+                reason='asset "JCSE" is not tradable',
+                metadata=dict(request.metadata),
+            )
+        ]
+
+    async def fetch_order_update(self, request):
+        del request
+        return None
+
+    async def list_account_positions(self, broker_account_name: str):
+        del broker_account_name
+        return []
+
+
 def build_test_session_factory() -> sessionmaker[Session]:
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",
@@ -285,6 +323,61 @@ async def test_oms_service_rejects_non_positive_quantity() -> None:
         stored_intent = session.scalar(select(TradeIntent))
         assert stored_intent is not None
         assert stored_intent.status == "rejected"
+
+
+@pytest.mark.asyncio
+async def test_oms_service_blocks_not_tradable_symbol_for_rest_of_session() -> None:
+    redis = FakeRedis()
+    session_factory = build_test_session_factory()
+    adapter = FakeRejectNotTradableBrokerAdapter()
+    service = OmsRiskService(
+        settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
+        redis_client=redis,
+        session_factory=session_factory,
+        broker_adapter=adapter,
+    )
+
+    first = await service.process_trade_intent(
+        TradeIntentEvent(
+            source_service="strategy-engine",
+            payload=TradeIntentPayload(
+                strategy_code="macd_30s",
+                broker_account_name="paper:macd_30s",
+                symbol="JCSE",
+                side="buy",
+                quantity=Decimal("10"),
+                intent_type="open",
+                reason="ENTRY_P1_MACD_CROSS",
+                metadata={},
+            ),
+        )
+    )
+    second = await service.process_trade_intent(
+        TradeIntentEvent(
+            source_service="strategy-engine",
+            payload=TradeIntentPayload(
+                strategy_code="macd_30s",
+                broker_account_name="paper:macd_30s",
+                symbol="JCSE",
+                side="buy",
+                quantity=Decimal("10"),
+                intent_type="open",
+                reason="ENTRY_P1_MACD_CROSS",
+                metadata={},
+            ),
+        )
+    )
+
+    assert len(adapter.requests) == 1
+    assert first[0].payload.status == "rejected"
+    assert 'tradable' in (first[0].payload.reason or '')
+    assert second[0].payload.status == "rejected"
+    assert second[0].payload.reason == "broker_symbol_not_tradable_for_session"
+
+    with session_factory() as session:
+        intents = session.scalars(select(TradeIntent).order_by(TradeIntent.created_at.asc())).all()
+        assert len(intents) == 2
+        assert all(intent.status == "rejected" for intent in intents)
 
 
 @pytest.mark.asyncio
