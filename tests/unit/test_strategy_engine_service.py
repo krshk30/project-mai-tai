@@ -168,6 +168,31 @@ def test_macd_runtime_uses_quote_anchored_limit_prices_in_extended_hours() -> No
     assert close_intent.payload.metadata["price_source"] == "bid"
 
 
+def test_runtime_blocks_close_retries_after_duplicate_exit_reject() -> None:
+    runtime = StrategyBotRuntime(
+        StrategyDefinition(
+            code="macd_30s",
+            display_name="30s",
+            account_name="paper:test",
+            interval_secs=30,
+            trading_config=TradingConfig(),
+            indicator_config=IndicatorConfig(),
+        ),
+        now_provider=lambda: datetime(2026, 3, 31, 14, 0, tzinfo=UTC),
+    )
+
+    runtime.pending_close_symbols.add("ELAB")
+    runtime.apply_order_status(
+        symbol="ELAB",
+        intent_type="close",
+        status="rejected",
+        reason="duplicate_exit_in_flight",
+    )
+
+    assert "ELAB" not in runtime.pending_close_symbols
+    assert runtime._is_exit_retry_blocked("ELAB") is True
+
+
 def test_snapshot_batch_keeps_single_confirmed_name_in_watchlist(monkeypatch) -> None:
     state = StrategyEngineState(now_provider=fixed_now)
     state.confirmed_scanner._confirmed = [

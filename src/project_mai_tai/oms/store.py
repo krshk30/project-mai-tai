@@ -392,6 +392,20 @@ class OmsStore:
             if existing is not None:
                 return existing
 
+        recorded_quantity = session.scalar(
+            select(Fill.quantity)
+            .where(Fill.order_id == order.id)
+        )
+        del recorded_quantity
+        existing_fills = session.scalars(select(Fill).where(Fill.order_id == order.id)).all()
+        already_recorded = Decimal("0")
+        for existing_fill in existing_fills:
+            already_recorded += existing_fill.quantity
+
+        incremental_quantity = report.filled_quantity - already_recorded
+        if incremental_quantity <= 0:
+            return None
+
         fill = Fill(
             order_id=order.id,
             strategy_id=strategy_id,
@@ -399,7 +413,7 @@ class OmsStore:
             broker_fill_id=report.broker_fill_id,
             symbol=order.symbol,
             side=order.side,
-            quantity=report.filled_quantity,
+            quantity=incremental_quantity,
             price=report.fill_price,
             filled_at=report.reported_at,
             payload=payload,

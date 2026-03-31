@@ -193,3 +193,20 @@ def test_runner_uses_quote_anchored_limit_prices_in_extended_hours() -> None:
     assert open_intent.payload.metadata["price_source"] == "ask"
     assert close_intent.payload.metadata["limit_price"] == "2.79"
     assert close_intent.payload.metadata["price_source"] == "bid"
+
+
+def test_runner_blocks_close_retries_after_duplicate_exit_reject() -> None:
+    state = StrategyEngineState(now_provider=lambda: datetime(2026, 3, 31, 14, 0, tzinfo=UTC))
+    runner = state.bots["runner"]
+    runner._position = RunnerPosition("UGRO", entry_price=2.0, quantity=100)
+    runner._pending_close_symbol = "UGRO"
+
+    runner.apply_order_status(
+        symbol="UGRO",
+        intent_type="close",
+        status="rejected",
+        reason="duplicate_exit_in_flight",
+    )
+
+    assert runner._pending_close_symbol is None
+    assert runner._is_close_retry_blocked() is True

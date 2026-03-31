@@ -330,6 +330,11 @@ class RunnerStrategyRuntime:
             if "rate limit exceeded" in normalized_reason:
                 self._close_retry_blocked_until = self.now_provider() + timedelta(seconds=5)
             elif (
+                "duplicate_exit_in_flight" in normalized_reason
+                or "broker quantity already reserved for pending exits" in normalized_reason
+            ):
+                self._close_retry_blocked_until = self.now_provider() + timedelta(seconds=2)
+            elif (
                 "cannot be sold short" in normalized_reason
                 or "insufficient qty" in normalized_reason
                 or "no broker position available to sell" in normalized_reason

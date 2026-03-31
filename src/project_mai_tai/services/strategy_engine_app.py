@@ -311,6 +311,12 @@ class StrategyBotRuntime:
                 bar_index = self.builder_manager.get_or_create(symbol).get_bar_count()
                 self.entry_engine.record_exit(symbol, bar_index)
                 return
+            if (
+                "duplicate_exit_in_flight" in normalized_reason
+                or "broker quantity already reserved for pending exits" in normalized_reason
+            ):
+                self.exit_retry_blocked_until[symbol] = utcnow() + timedelta(seconds=2)
+                return
             if "rate limit exceeded" in normalized_reason:
                 self.exit_retry_blocked_until[symbol] = utcnow() + timedelta(seconds=5)
             return
@@ -321,6 +327,12 @@ class StrategyBotRuntime:
                 self.positions.drop_position(symbol)
                 bar_index = self.builder_manager.get_or_create(symbol).get_bar_count()
                 self.entry_engine.record_exit(symbol, bar_index)
+                return
+            if (
+                "duplicate_exit_in_flight" in normalized_reason
+                or "broker quantity already reserved for pending exits" in normalized_reason
+            ):
+                self.scale_retry_blocked_until[(symbol, level)] = utcnow() + timedelta(seconds=2)
                 return
             if "rate limit exceeded" in normalized_reason:
                 self.scale_retry_blocked_until[(symbol, level)] = utcnow() + timedelta(seconds=5)
