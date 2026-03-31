@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import csv
-from datetime import datetime
+from datetime import UTC, datetime
 
 from project_mai_tai.strategy_core.bar_builder import BarBuilder
 from project_mai_tai.strategy_core.config import (
@@ -9,7 +9,7 @@ from project_mai_tai.strategy_core.config import (
     MomentumAlertConfig,
     MomentumConfirmedConfig,
 )
-from project_mai_tai.strategy_core.indicators import IndicatorEngine
+from project_mai_tai.strategy_core.indicators import IndicatorEngine, vwap
 from project_mai_tai.strategy_core.entry import EntryEngine
 from project_mai_tai.strategy_core.models import (
     DaySnapshot,
@@ -42,24 +42,47 @@ def snapshot(
     )
 
 
-def test_bar_builder_ignores_odd_lots_and_fills_gap() -> None:
+def test_bar_builder_keeps_odd_lots_and_does_not_fill_gaps() -> None:
     builder = BarBuilder("UGRO", interval_secs=30, time_provider=lambda: 0)
     base_ns = 1_700_000_000_000_000_000
 
-    assert builder.on_trade(price=3.5, size=50, timestamp_ns=base_ns + 30_000_000_000) == []
-
-    first_completed = builder.on_trade(price=3.5, size=100, timestamp_ns=base_ns + 30_000_000_000)
+    first_completed = builder.on_trade(price=3.5, size=50, timestamp_ns=base_ns + 30_000_000_000)
     assert first_completed == []
 
     completed = builder.on_trade(price=3.7, size=100, timestamp_ns=base_ns + 120_000_000_000)
 
-    assert len(completed) == 3
+    assert len(completed) == 1
     assert completed[0].timestamp % 30 == 0
-    assert completed[1].volume == 0
-    assert completed[1].timestamp - completed[0].timestamp == 30
-    assert completed[2].volume == 0
-    assert completed[2].timestamp - completed[1].timestamp == 30
+    assert completed[0].volume == 50
     assert builder.get_current_price() == 3.7
+
+
+def test_vwap_resets_on_regular_session_anchor() -> None:
+    timestamps = [
+        datetime(2026, 3, 31, 13, 29, tzinfo=UTC).timestamp(),  # 09:29 ET
+        datetime(2026, 3, 31, 13, 30, tzinfo=UTC).timestamp(),  # 09:30 ET
+        datetime(2026, 3, 31, 13, 31, tzinfo=UTC).timestamp(),  # 09:31 ET
+    ]
+    highs = [10.0, 20.0, 30.0]
+    lows = [10.0, 20.0, 30.0]
+    closes = [10.0, 20.0, 30.0]
+    volumes = [1.0, 1.0, 1.0]
+
+    values = vwap(
+        highs,
+        lows,
+        closes,
+        volumes,
+        timestamps,
+        session_start_hour=9,
+        session_start_minute=30,
+        session_end_hour=16,
+        session_end_minute=0,
+    )
+
+    assert values[0] == 10.0
+    assert values[1] == 20.0
+    assert values[2] == 25.0
 
 
 def test_indicator_engine_generates_expected_flags() -> None:
@@ -203,10 +226,10 @@ def test_confirmed_scanner_prunes_faded_candidates_and_allows_reconfirmation() -
     assert confirmed_scanner._tracking["POLA"]["squeezes"] == []
 
 
-def test_entry_engine_allows_default_window_until_6pm_et() -> None:
+def test_entry_engine_allows_default_window_until_8pm_et() -> None:
     engine = EntryEngine(
         TradingConfig(),
-        now_provider=lambda: datetime(2026, 3, 30, 17, 0),
+        now_provider=lambda: datetime(2026, 3, 30, 19, 0),
     )
 
     gate = engine._check_hard_gates(

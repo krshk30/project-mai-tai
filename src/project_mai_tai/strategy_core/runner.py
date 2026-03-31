@@ -48,8 +48,8 @@ class RunnerConfig:
     live_change_floor_ratio: float = 0.90
     max_spread_cents: float = 10.0
     entry_start_hour: int = 7
-    entry_cutoff_hour: int = 18
-    exit_cutoff_hour: int = 18
+    entry_cutoff_hour: int = 20
+    exit_cutoff_hour: int = 20
     min_entry_ema_bars: int = 10
     min_exit_ema_bars: int = 25
     cooldown_seconds: int = 300

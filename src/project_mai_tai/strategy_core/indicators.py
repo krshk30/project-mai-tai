@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from datetime import UTC, datetime
 import logging
 
 from project_mai_tai.strategy_core.config import IndicatorConfig
 from project_mai_tai.strategy_core.models import OHLCVBar
+from project_mai_tai.strategy_core.time_utils import EASTERN_TZ
 
 logger = logging.getLogger(__name__)
 
@@ -72,20 +74,63 @@ def stoch_k(
     return raw_k
 
 
-def vwap(highs: list[float], lows: list[float], closes: list[float], volumes: list[float]) -> list[float]:
+def _is_within_vwap_session(
+    timestamp: float,
+    *,
+    session_start_hour: int,
+    session_start_minute: int,
+    session_end_hour: int,
+    session_end_minute: int,
+) -> bool:
+    eastern = datetime.fromtimestamp(timestamp, UTC).astimezone(EASTERN_TZ)
+    current_minutes = eastern.hour * 60 + eastern.minute
+    session_start = session_start_hour * 60 + session_start_minute
+    session_end = session_end_hour * 60 + session_end_minute
+    return session_start <= current_minutes < session_end
+
+
+def vwap(
+    highs: list[float],
+    lows: list[float],
+    closes: list[float],
+    volumes: list[float],
+    timestamps: list[float],
+    *,
+    session_start_hour: int,
+    session_start_minute: int,
+    session_end_hour: int,
+    session_end_minute: int,
+) -> list[float]:
     if not closes:
         return []
 
     result: list[float] = []
     cumulative_tp_volume = 0.0
     cumulative_volume = 0.0
+    session_vwap = closes[0]
+    previous_in_session = False
 
     for index in range(len(closes)):
+        timestamp = timestamps[index] if index < len(timestamps) else 0.0
+        in_session = _is_within_vwap_session(
+            timestamp,
+            session_start_hour=session_start_hour,
+            session_start_minute=session_start_minute,
+            session_end_hour=session_end_hour,
+            session_end_minute=session_end_minute,
+        )
+        if in_session and not previous_in_session:
+            cumulative_tp_volume = 0.0
+            cumulative_volume = 0.0
+
         typical_price = (highs[index] + lows[index] + closes[index]) / 3
         volume = volumes[index] if index < len(volumes) else 0
-        cumulative_tp_volume += typical_price * volume
-        cumulative_volume += volume
-        result.append(cumulative_tp_volume / cumulative_volume if cumulative_volume > 0 else closes[index])
+        if in_session:
+            cumulative_tp_volume += typical_price * volume
+            cumulative_volume += volume
+            session_vwap = cumulative_tp_volume / cumulative_volume if cumulative_volume > 0 else closes[index]
+        result.append(session_vwap)
+        previous_in_session = in_session
 
     return result
 
@@ -109,6 +154,7 @@ class IndicatorEngine:
         highs = [_bar_value(bar, "high") for bar in bars]
         lows = [_bar_value(bar, "low") for bar in bars]
         volumes = [_bar_value(bar, "volume") for bar in bars]
+        timestamps = [_bar_value(bar, "timestamp") for bar in bars]
 
         macd_data = macd(closes, self.config.macd_fast, self.config.macd_slow, self.config.macd_signal)
         macd_line = macd_data["macd"]
@@ -118,7 +164,17 @@ class IndicatorEngine:
         stoch = stoch_k(highs, lows, closes, self.config.stoch_len, self.config.stoch_smooth_k)
         ema9 = ema(closes, self.config.ema1_len)
         ema20 = ema(closes, self.config.ema2_len)
-        vwap_values = vwap(highs, lows, closes, volumes)
+        vwap_values = vwap(
+            highs,
+            lows,
+            closes,
+            volumes,
+            timestamps,
+            session_start_hour=self.config.vwap_session_start_hour,
+            session_start_minute=self.config.vwap_session_start_minute,
+            session_end_hour=self.config.vwap_session_end_hour,
+            session_end_minute=self.config.vwap_session_end_minute,
+        )
 
         index = len(closes) - 1
         previous_index = index - 1 if index > 0 else 0

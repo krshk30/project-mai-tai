@@ -13,6 +13,10 @@ class IndicatorConfig:
     stoch_exit_level: float = 20.0
     ema1_len: int = 9
     ema2_len: int = 20
+    vwap_session_start_hour: int = 9
+    vwap_session_start_minute: int = 30
+    vwap_session_end_hour: int = 16
+    vwap_session_end_minute: int = 0
 
 
 @dataclass

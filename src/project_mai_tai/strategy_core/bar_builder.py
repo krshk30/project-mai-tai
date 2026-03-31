@@ -35,9 +35,6 @@ class BarBuilder:
         if price <= 0:
             return []
 
-        if size < 100:
-            return []
-
         now = self._resolve_timestamp(timestamp_ns)
         bar_start = (now // self.interval_secs) * self.interval_secs
         completed: list[OHLCVBar] = []
@@ -51,18 +48,6 @@ class BarBuilder:
             closed = self._close_current_bar()
             if closed is not None:
                 completed.append(closed)
-
-            if self.bars:
-                last_close = self.bars[-1].close
-                gap_start = self._current_bar_start + self.interval_secs
-                filled = 0
-                while gap_start < bar_start and filled < 120:
-                    gap_bar = OHLCVBar.flat_fill(last_close, gap_start)
-                    self.bars.append(gap_bar)
-                    completed.append(gap_bar)
-                    self._trim_history()
-                    filled += 1
-                    gap_start += self.interval_secs
 
             self._current_bar = OHLCVBar.from_trade(price, size, bar_start)
             self._current_bar_start = bar_start

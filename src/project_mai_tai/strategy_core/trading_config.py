@@ -15,7 +15,7 @@ class TradingConfig:
     stop_loss_pct: float = 1.5
 
     trading_start_hour: int = 7
-    trading_end_hour: int = 18
+    trading_end_hour: int = 20
     dead_zone_start: str = "00:00"
     dead_zone_end: str = "00:00"
 
