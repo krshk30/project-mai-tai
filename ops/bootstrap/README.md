@@ -23,6 +23,9 @@ Notes:
 - Keep Cloudflare records as `DNS only` during initial certificate issuance.
 - If `ufw` is active, `04_enable_http_site.sh` now opens `80/443` via the
   `Nginx Full` profile automatically.
+- `02_prepare_host.sh` also writes a Redis drop-in under
+  `/etc/redis/redis.conf.d/99-project-mai-tai.conf` so Redis stays a bounded
+  cache/event bus instead of loading oversized persisted snapshots into memory.
 - After `07_bootstrap_database.sh`, store the same database password in the
   root-owned env file under `/etc/project-mai-tai/`.
 - Edit `/etc/project-mai-tai/project-mai-tai.env` before `08_install_runtime.sh`

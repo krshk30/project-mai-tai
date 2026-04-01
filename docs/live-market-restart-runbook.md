@@ -298,6 +298,36 @@ If a restart causes uncertainty:
 4. Inspect `strategy.log`, `oms.log`, and `market-data.log`.
 5. Do not resume strategy until open positions and account positions are understood.
 
+## Redis OOM Recovery
+
+Use this when `/health` shows `redis_connected=false` and `redis-server`
+crash-loops while loading old cache state.
+
+Symptoms:
+- `sudo systemctl status redis-server` shows `Status: "Redis is loading..."`
+- `sudo journalctl -u redis-server -n 100 -l --no-pager` shows `OOM killer`
+  or repeated `status=9/KILL`
+
+Safe recovery:
+```bash
+sudo systemctl stop project-mai-tai-strategy.service
+sudo systemctl stop project-mai-tai-control.service
+sudo systemctl stop redis-server
+sudo mkdir -p /var/lib/redis/backup
+sudo mv /var/lib/redis/dump.rdb /var/lib/redis/backup/dump.rdb.$(date +%Y%m%d-%H%M%S)
+sudo systemctl start redis-server
+redis-cli ping
+sudo systemctl restart project-mai-tai-control.service
+sudo systemctl restart project-mai-tai-strategy.service
+curl -fsS http://127.0.0.1:8100/health
+```
+
+Notes:
+- move the old `dump.rdb`; do not delete it blindly
+- Postgres remains the source of truth for orders, fills, positions, and
+  dashboard snapshots
+- Redis should be treated as a transient cache/event bus only
+
 ## Follow-Up Improvement Gap
 
 This runbook exists because restart recovery is not fully automated yet.

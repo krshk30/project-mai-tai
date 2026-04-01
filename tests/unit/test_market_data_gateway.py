@@ -123,7 +123,7 @@ async def test_publish_snapshot_batch_once_writes_snapshot_batch_event() -> None
     assert payload["payload"]["snapshots"][0]["symbol"] == "UGRO"
     assert payload["payload"]["snapshots"][0]["previous_close"] == "2.1"
     assert payload["payload"]["reference_data"][0]["shares_outstanding"] == 50000
-    assert redis.entries[0][2]["maxlen"] == 180
+    assert redis.entries[0][2]["maxlen"] == 12
 
 
 @pytest.mark.asyncio
