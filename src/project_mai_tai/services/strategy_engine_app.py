@@ -1400,8 +1400,8 @@ class StrategyEngineState:
                 ),
                 now_provider=now_provider,
                 session_factory=session_factory if self.settings.strategy_history_persistence_enabled else None,
-                use_live_aggregate_bars=False,
-                live_aggregate_fallback_enabled=False,
+                use_live_aggregate_bars=use_live_aggregate_bars,
+                live_aggregate_fallback_enabled=self.settings.strategy_macd_30s_live_aggregate_fallback_enabled,
                 live_aggregate_stale_after_seconds=self.settings.strategy_macd_30s_live_aggregate_stale_after_seconds,
                 indicator_overlay_provider=macd_30s_indicator_overlay_provider,
                 builder_manager=SchwabNativeBarBuilderManager(
@@ -3101,7 +3101,9 @@ class StrategyEngineService:
         if hasattr(runtime, "_pending_close_reasons"):
             runtime._pending_close_reasons.pop(normalized, None)  # type: ignore[attr-defined]
         if hasattr(runtime, "_close_retry_blocked_until"):
-            runtime._close_retry_blocked_until.pop(normalized, None)  # type: ignore[attr-defined]
+            blocked_until = runtime._close_retry_blocked_until  # type: ignore[attr-defined]
+            if blocked_until is not None:
+                blocked_until.pop(normalized, None)
 
         if hasattr(runtime, "entry_engine") and hasattr(runtime, "builder_manager"):
             try:

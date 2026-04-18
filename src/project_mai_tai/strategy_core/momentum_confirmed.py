@@ -149,10 +149,16 @@ class MomentumConfirmedScanner:
             if "SQUEEZE" in alert_type and track["has_volume_spike"]:
                 details = alert.get("details", {})
                 change_pct = details.get("change_pct", 0) if isinstance(details, dict) else 0
+                effective_volume = volume
+                if snapshot_lookup is not None:
+                    effective_volume = max(
+                        effective_volume,
+                        self._current_snapshot_volume(snapshot_lookup.get(ticker)),
+                    )
                 squeeze = {
                     "time": time_str,
                     "price": price,
-                    "volume": volume,
+                    "volume": effective_volume,
                     "change_pct": change_pct,
                     "type": alert_type,
                     "bid": bid,
@@ -186,9 +192,7 @@ class MomentumConfirmedScanner:
                         logger.debug("[CONFIRMED] %s — PATH B rejected: %s", ticker, reason)
                         continue
 
-                    if sq2["price"] <= sq1["price"]:
-                        continue
-                    if sq2["volume"] < sq1["volume"]:
+                    if not self._qualifies_path_b(sq1, sq2):
                         continue
 
                     self._confirm_ticker(
@@ -218,6 +222,16 @@ class MomentumConfirmedScanner:
         min_change_pct: float = 0,
         min_score: float | None = None,
     ) -> list[dict[str, object]]:
+        candidates = [stock for stock in self._confirmed if float(stock.get("change_pct", 0)) >= min_change_pct]
+        ranked = self.get_ranked_confirmed(min_change_pct=min_change_pct, min_score=min_score)
+        return ranked[:n]
+
+    def get_ranked_confirmed(
+        self,
+        *,
+        min_change_pct: float = 0,
+        min_score: float | None = None,
+    ) -> list[dict[str, object]]:
         threshold = self.config.rank_min_score if min_score is None else min_score
         candidates = [stock for stock in self._confirmed if float(stock.get("change_pct", 0)) >= min_change_pct]
         if not candidates:
@@ -229,7 +243,7 @@ class MomentumConfirmedScanner:
         ranked = sorted(candidates, key=lambda candidate: float(candidate.get("rank_score", 0)), reverse=True)
         if threshold > 0:
             ranked = [stock for stock in ranked if float(stock.get("rank_score", 0)) >= threshold]
-        return ranked[:n]
+        return ranked
 
     def update_live_prices(self, snapshot_lookup: Mapping[str, MarketSnapshot]) -> None:
         for stock in self._confirmed:
@@ -271,25 +285,19 @@ class MomentumConfirmedScanner:
         if threshold <= 0:
             return []
 
-        dropped: list[str] = []
-        retained: list[dict[str, object]] = []
-        for stock in self._confirmed:
-            ticker = str(stock.get("ticker", "")).upper()
-            change_pct = float(stock.get("change_pct", 0) or 0)
-            if change_pct < threshold:
-                dropped.append(ticker)
-                self.allow_reconfirmation(ticker)
-                logger.info(
-                    "[CONFIRMED] %s - removed from confirmed after fading below %.1f%% (live %.2f%%)",
-                    ticker,
-                    threshold,
-                    change_pct,
-                )
-                continue
-            retained.append(stock)
-
-        self._confirmed = retained
-        return dropped
+        faded = [
+            str(stock.get("ticker", "")).upper()
+            for stock in self._confirmed
+            if float(stock.get("change_pct", 0) or 0) < threshold
+        ]
+        if faded:
+            logger.debug(
+                "[CONFIRMED] retained %s faded candidates below %.1f%% for session continuity: %s",
+                len(faded),
+                threshold,
+                ", ".join(faded),
+            )
+        return []
 
     def allow_reconfirmation(self, ticker: str) -> None:
         if ticker in self._tracking:
@@ -297,6 +305,34 @@ class MomentumConfirmedScanner:
             self._tracking[ticker]["has_volume_spike"] = False
             self._tracking[ticker]["squeezes"] = []
             logger.info("[CONFIRMED] %s — reset for re-confirmation", ticker)
+
+    def _qualifies_path_b(self, sq1: Mapping[str, object], sq2: Mapping[str, object]) -> bool:
+        price_1 = float(sq1.get("price", 0) or 0)
+        price_2 = float(sq2.get("price", 0) or 0)
+        volume_1 = int(sq1.get("volume", 0) or 0)
+        volume_2 = int(sq2.get("volume", 0) or 0)
+        type_1 = str(sq1.get("type", "")).upper()
+        type_2 = str(sq2.get("type", "")).upper()
+        time_1 = str(sq1.get("time", ""))
+        time_2 = str(sq2.get("time", ""))
+
+        if price_2 > price_1 and volume_2 >= volume_1:
+            return True
+
+        return (
+            time_1 == time_2
+            and type_1 != type_2
+            and {"SQUEEZE_5MIN", "SQUEEZE_10MIN"} == {type_1, type_2}
+        )
+
+    def _current_snapshot_volume(self, snapshot: MarketSnapshot | None) -> int:
+        if snapshot is None:
+            return 0
+        if snapshot.day and snapshot.day.volume and snapshot.day.volume > 0:
+            return int(snapshot.day.volume)
+        if snapshot.minute and snapshot.minute.accumulated_volume and snapshot.minute.accumulated_volume > 0:
+            return int(snapshot.minute.accumulated_volume)
+        return 0
 
     def remove_tickers(self, tickers: Iterable[str]) -> None:
         blocked = {str(ticker).upper() for ticker in tickers if ticker}
@@ -550,6 +586,8 @@ class MomentumConfirmedScanner:
             "catalyst_type": str(catalyst.get("catalyst_type") or catalyst.get("catalyst") or ""),
             "sentiment": str(catalyst.get("sentiment") or catalyst.get("direction") or ""),
             "direction": str(catalyst.get("direction") or catalyst.get("sentiment") or ""),
+            "news_fetch_status": str(catalyst.get("news_fetch_status", "")),
+            "catalyst_status": str(catalyst.get("catalyst_status", "")),
             "news_url": str(catalyst.get("url", "")),
             "news_date": str(catalyst.get("published", "")),
             "news_window_start": str(catalyst.get("window_start_label") or catalyst.get("window_start") or ""),
@@ -561,11 +599,26 @@ class MomentumConfirmedScanner:
             "is_generic_roundup": bool(catalyst.get("is_generic_roundup", False)),
             "has_real_catalyst": bool(catalyst.get("has_real_catalyst", False)),
             "path_a_eligible": bool(catalyst.get("path_a_eligible", False)),
+            "ai_shadow_status": str(catalyst.get("ai_shadow_status", "")),
+            "ai_shadow_provider": str(catalyst.get("ai_shadow_provider", "")),
+            "ai_shadow_model": str(catalyst.get("ai_shadow_model", "")),
+            "ai_shadow_direction": str(catalyst.get("ai_shadow_direction", "")),
+            "ai_shadow_category": str(catalyst.get("ai_shadow_category", "")),
+            "ai_shadow_confidence": float(catalyst.get("ai_shadow_confidence", 0.0) or 0.0),
+            "ai_shadow_has_real_catalyst": bool(catalyst.get("ai_shadow_has_real_catalyst", False)),
+            "ai_shadow_is_generic_roundup": bool(catalyst.get("ai_shadow_is_generic_roundup", False)),
+            "ai_shadow_is_company_specific": bool(catalyst.get("ai_shadow_is_company_specific", False)),
+            "ai_shadow_path_a_eligible": bool(catalyst.get("ai_shadow_path_a_eligible", False)),
+            "ai_shadow_reason": str(catalyst.get("ai_shadow_reason", "")),
+            "ai_shadow_headline_basis": str(catalyst.get("ai_shadow_headline_basis", "")),
+            "ai_shadow_positive_phrases": list(catalyst.get("ai_shadow_positive_phrases", []) or []),
         }
 
     def _calculate_score(self, stock: dict[str, object], all_candidates: list[dict[str, object]]) -> float:
         if not all_candidates:
             return 0.0
+        if len(all_candidates) == 1:
+            return 100.0
 
         volumes = [float(candidate.get("volume", 0) or 0) for candidate in all_candidates]
         floats = [float(candidate.get("shares_outstanding", 0) or 0) for candidate in all_candidates]

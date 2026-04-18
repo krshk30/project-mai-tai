@@ -3,9 +3,15 @@ from __future__ import annotations
 import csv
 import json
 import logging
+from datetime import timedelta
 from pathlib import Path
 
-from project_mai_tai.strategy_core.time_utils import now_eastern_str, today_eastern_str
+from project_mai_tai.strategy_core.time_utils import (
+    now_eastern,
+    now_eastern_str,
+    session_day_eastern_str,
+    today_eastern_str,
+)
 from project_mai_tai.strategy_core.trading_config import TradingConfig
 
 logger = logging.getLogger(__name__)
@@ -19,6 +25,10 @@ class Position:
         quantity: int,
         entry_time: str = "",
         path: str = "",
+        floor_lock_at_1pct_peak_pct: float = 0.0,
+        floor_lock_at_2pct_peak_pct: float = 0.5,
+        floor_lock_at_3pct_peak_pct: float = 1.5,
+        floor_trail_buffer_over_4pct_pct: float = 1.5,
     ):
         self.ticker = ticker
         self.entry_price = entry_price
@@ -30,6 +40,11 @@ class Position:
         self.peak_profit_pct = 0.0
         self.current_profit_pct = 0.0
         self.current_price = entry_price
+
+        self.floor_lock_at_1pct_peak_pct = floor_lock_at_1pct_peak_pct
+        self.floor_lock_at_2pct_peak_pct = floor_lock_at_2pct_peak_pct
+        self.floor_lock_at_3pct_peak_pct = floor_lock_at_3pct_peak_pct
+        self.floor_trail_buffer_over_4pct_pct = floor_trail_buffer_over_4pct_pct
 
         self.tier = 1
         self.floor_pct = -999.0
@@ -132,13 +147,13 @@ class Position:
     def _calculate_floor_pct(self) -> float:
         peak = self.peak_profit_pct
         if peak >= 4.0:
-            return peak - 1.5
+            return peak - self.floor_trail_buffer_over_4pct_pct
         if peak >= 3.0:
-            return 1.5
+            return self.floor_lock_at_3pct_peak_pct
         if peak >= 2.0:
-            return 0.5
+            return self.floor_lock_at_2pct_peak_pct
         if peak >= 1.0:
-            return 0.0
+            return self.floor_lock_at_1pct_peak_pct
         return -999.0
 
 
@@ -154,6 +169,8 @@ class PositionTracker:
         self._positions: dict[str, Position] = {}
         self._daily_pnl = 0.0
         self._closed_today: list[dict[str, object]] = []
+        self._ticker_loss_streaks: dict[str, int] = {}
+        self._ticker_pause_until: dict[str, object] = {}
         self._positions_file = positions_file
         self._closed_file_prefix = closed_file_prefix
         self._history_dir = history_dir
@@ -201,7 +218,16 @@ class PositionTracker:
         path: str = "",
     ) -> Position:
         qty = quantity or self.config.default_quantity
-        position = Position(ticker, entry_price, qty, path=path)
+        position = Position(
+            ticker,
+            entry_price,
+            qty,
+            path=path,
+            floor_lock_at_1pct_peak_pct=self.config.profit_floor_lock_at_1pct_peak_pct,
+            floor_lock_at_2pct_peak_pct=self.config.profit_floor_lock_at_2pct_peak_pct,
+            floor_lock_at_3pct_peak_pct=self.config.profit_floor_lock_at_3pct_peak_pct,
+            floor_trail_buffer_over_4pct_pct=self.config.profit_floor_trail_buffer_over_4pct_pct,
+        )
         self._positions[ticker] = position
         return position
 
@@ -236,14 +262,19 @@ class PositionTracker:
             "path": position.entry_path,
         }
         self._closed_today.append(result)
+        self._record_ticker_outcome(ticker, total_pnl, position.peak_profit_pct)
         self._save_closed_trade(result)
         return result
 
-    def can_open_position(self) -> tuple[bool, str]:
+    def can_open_position(self, ticker: str | None = None) -> tuple[bool, str]:
         if len(self._positions) >= self.config.max_positions:
             return False, f"max positions ({self.config.max_positions})"
         if self._daily_pnl <= self.config.max_daily_loss:
             return False, f"daily loss limit (${self._daily_pnl:.2f})"
+        if ticker:
+            pause_reason = self._ticker_pause_reason(ticker)
+            if pause_reason:
+                return False, pause_reason
         return True, ""
 
     def update_all_prices(self, price_map: dict[str, float]) -> None:
@@ -261,7 +292,7 @@ class PositionTracker:
         target = filepath or self._positions_file
         try:
             Path(target).parent.mkdir(parents=True, exist_ok=True)
-            data = {"date": today_eastern_str(), "positions": {}}
+            data = {"date": session_day_eastern_str(), "positions": {}}
             for ticker, position in self._positions.items():
                 data["positions"][ticker] = {
                     "entry_price": position.entry_price,
@@ -288,7 +319,7 @@ class PositionTracker:
             return
         try:
             raw = json.loads(path.read_text())
-            if raw.get("date") != today_eastern_str():
+            if raw.get("date") != session_day_eastern_str():
                 return
             for ticker, pdata in raw.get("positions", {}).items():
                 position = Position(
@@ -297,6 +328,10 @@ class PositionTracker:
                     quantity=pdata["quantity"],
                     entry_time=pdata.get("entry_time", ""),
                     path=pdata.get("entry_path", ""),
+                    floor_lock_at_1pct_peak_pct=self.config.profit_floor_lock_at_1pct_peak_pct,
+                    floor_lock_at_2pct_peak_pct=self.config.profit_floor_lock_at_2pct_peak_pct,
+                    floor_lock_at_3pct_peak_pct=self.config.profit_floor_lock_at_3pct_peak_pct,
+                    floor_trail_buffer_over_4pct_pct=self.config.profit_floor_trail_buffer_over_4pct_pct,
                 )
                 position.original_quantity = pdata.get("original_quantity", position.quantity)
                 position.peak_profit_pct = pdata.get("peak_profit_pct", 0)
@@ -311,7 +346,7 @@ class PositionTracker:
             logger.exception("Failed to load positions: %s", target)
 
     def load_closed_trades(self) -> None:
-        filepath = self._resolve_history_dir() / f"{self._closed_file_prefix}_closed_{today_eastern_str()}.csv"
+        filepath = self._resolve_history_dir() / f"{self._closed_file_prefix}_closed_{session_day_eastern_str()}.csv"
         if not filepath.exists():
             return
         try:
@@ -335,15 +370,22 @@ class PositionTracker:
                     }
                     self._closed_today.append(closed)
                     self._daily_pnl += float(closed["pnl"])
+                    self._record_ticker_outcome(
+                        closed["ticker"],
+                        float(closed["pnl"]),
+                        float(closed.get("peak_profit_pct", 0.0) or 0.0),
+                    )
         except Exception:
             logger.exception("Failed to load closed trades")
 
     def reset(self) -> None:
         self._daily_pnl = 0.0
         self._closed_today.clear()
+        self._ticker_loss_streaks.clear()
+        self._ticker_pause_until.clear()
 
     def _save_closed_trade(self, closed: dict[str, object]) -> None:
-        filepath = self._resolve_history_dir() / f"{self._closed_file_prefix}_closed_{today_eastern_str()}.csv"
+        filepath = self._resolve_history_dir() / f"{self._closed_file_prefix}_closed_{session_day_eastern_str()}.csv"
         headers = [
             "ticker",
             "entry_price",
@@ -371,3 +413,49 @@ class PositionTracker:
                 writer.writerow(row)
         except Exception:
             logger.exception("Failed to save closed trade")
+
+    def _record_ticker_outcome(self, ticker: str, pnl: float, peak_profit_pct: float = 0.0) -> None:
+        normalized = str(ticker or "").upper()
+        if not normalized or self.config.ticker_loss_pause_streak_limit <= 0:
+            return
+        if pnl >= 0:
+            self._ticker_loss_streaks[normalized] = 0
+            self._ticker_pause_until.pop(normalized, None)
+            return
+
+        if (
+            self.config.ticker_loss_pause_only_on_cold_losses
+            and peak_profit_pct >= self.config.ticker_loss_pause_cold_peak_profit_pct
+        ):
+            self._ticker_loss_streaks[normalized] = 0
+            self._ticker_pause_until.pop(normalized, None)
+            return
+
+        streak = self._ticker_loss_streaks.get(normalized, 0) + 1
+        self._ticker_loss_streaks[normalized] = streak
+        if streak >= self.config.ticker_loss_pause_streak_limit:
+            self._ticker_pause_until[normalized] = now_eastern() + timedelta(
+                minutes=self.config.ticker_loss_pause_minutes
+            )
+
+    def _ticker_pause_reason(self, ticker: str) -> str:
+        normalized = str(ticker or "").upper()
+        if not normalized or self.config.ticker_loss_pause_streak_limit <= 0:
+            return ""
+
+        paused_until = self._ticker_pause_until.get(normalized)
+        if paused_until is None:
+            return ""
+
+        now = now_eastern()
+        if paused_until <= now:
+            self._ticker_pause_until.pop(normalized, None)
+            self._ticker_loss_streaks[normalized] = 0
+            return ""
+
+        minutes_left = max(1, int((paused_until - now).total_seconds() // 60))
+        streak = self._ticker_loss_streaks.get(normalized, 0)
+        return (
+            f"{normalized} paused ({minutes_left} min left after "
+            f"{streak} consecutive losses)"
+        )

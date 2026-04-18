@@ -10,7 +10,7 @@ from project_mai_tai.events import TradeIntentEvent, TradeIntentPayload
 from project_mai_tai.strategy_core.bar_builder import BarBuilderManager
 from project_mai_tai.strategy_core.indicators import ema
 from project_mai_tai.strategy_core.models import OHLCVBar
-from project_mai_tai.strategy_core.time_utils import today_eastern_str
+from project_mai_tai.strategy_core.time_utils import now_eastern, session_day_eastern_str
 
 EASTERN_TZ = ZoneInfo("America/New_York")
 
@@ -142,7 +142,7 @@ class RunnerStrategyRuntime:
         self.definition_code = definition_code
         self.account_name = account_name
         self.default_quantity = default_quantity
-        self.now_provider = now_provider or datetime.now
+        self.now_provider = now_provider or now_eastern
         self.config = config or RunnerConfig()
         self.source_service = source_service
 
@@ -151,18 +151,20 @@ class RunnerStrategyRuntime:
         self._candidates: dict[str, dict[str, object]] = {}
         self._latest_quotes: dict[str, dict[str, float]] = {}
         self._cooldown_until: dict[str, datetime] = {}
-        self._position: RunnerPosition | None = None
-        self._pending_open_symbol: str | None = None
-        self._pending_close_symbol: str | None = None
-        self._pending_close_reason: str = ""
-        self._close_retry_blocked_until: datetime | None = None
+        self._entered_today: set[str] = set()
+        self._positions: dict[str, RunnerPosition] = {}
+        self._pending_open_symbols: set[str] = set()
+        self._pending_close_symbols: set[str] = set()
+        self._pending_close_reasons: dict[str, str] = {}
+        self._close_retry_blocked_until: dict[str, datetime] = {}
         self._applied_fill_quantity_by_order: dict[str, Decimal] = {}
         self._daily_pnl = 0.0
         self._closed_today: list[dict[str, object]] = []
-        self._active_day = today_eastern_str()
+        self._active_day = session_day_eastern_str(self.now_provider())
 
     def set_watchlist(self, symbols: Iterable[str]) -> None:
         self.watchlist = {symbol.upper() for symbol in symbols if symbol}
+        self._prune_runtime_state()
 
     def update_market_snapshots(self, snapshots: Sequence[object]) -> None:
         for snapshot in snapshots:
@@ -182,6 +184,36 @@ class RunnerStrategyRuntime:
 
     def update_candidates(self, candidates: Sequence[dict[str, object]]) -> None:
         self._candidates = {str(candidate.get("ticker", "")).upper(): dict(candidate) for candidate in candidates}
+        self._prune_runtime_state()
+
+    def restore_position(
+        self,
+        *,
+        symbol: str,
+        quantity: int,
+        average_price: float,
+        path: str = "",
+    ) -> None:
+        del path
+        normalized = symbol.upper()
+        if quantity <= 0 or average_price <= 0:
+            return
+        self._entered_today.add(normalized)
+        self._positions[normalized] = RunnerPosition(
+            ticker=normalized,
+            entry_price=average_price,
+            quantity=quantity,
+            entry_change_pct=0.0,
+            entry_time=self.now_provider().strftime("%I:%M:%S %p ET"),
+        )
+
+    def restore_pending_open(self, symbol: str) -> None:
+        if symbol:
+            self._pending_open_symbols.add(symbol.upper())
+
+    def restore_pending_close(self, symbol: str) -> None:
+        if symbol:
+            self._pending_close_symbols.add(symbol.upper())
 
     def seed_bars(self, symbol: str, bars: Sequence[dict[str, float | int]]) -> None:
         builder = self.builder_manager.get_or_create(symbol)
@@ -207,36 +239,80 @@ class RunnerStrategyRuntime:
         builder._current_bar = None
         builder._current_bar_start = 0.0
 
+    def _prune_runtime_state(self) -> None:
+        keep = set(self.watchlist)
+        keep.update(self._candidates.keys())
+        keep.update(self._positions.keys())
+        keep.update(self._pending_open_symbols)
+        keep.update(self._pending_close_symbols)
+
+        self._latest_quotes = {
+            symbol: quote
+            for symbol, quote in self._latest_quotes.items()
+            if symbol in keep
+        }
+        self._cooldown_until = {
+            symbol: blocked_until
+            for symbol, blocked_until in self._cooldown_until.items()
+            if symbol in keep
+        }
+        self._close_retry_blocked_until = {
+            symbol: blocked_until
+            for symbol, blocked_until in self._close_retry_blocked_until.items()
+            if symbol in keep
+        }
+        self._pending_close_reasons = {
+            symbol: reason
+            for symbol, reason in self._pending_close_reasons.items()
+            if symbol in keep
+        }
+        self._pending_open_symbols = {symbol for symbol in self._pending_open_symbols if symbol in keep}
+        self._pending_close_symbols = {symbol for symbol in self._pending_close_symbols if symbol in keep}
+        self.builder_manager.remove_tickers(
+            {ticker for ticker in self.builder_manager.get_all_tickers() if ticker not in keep}
+        )
+
     def handle_trade_tick(
         self,
         symbol: str,
         price: float,
         size: int,
         timestamp_ns: int | None = None,
+        cumulative_volume: int | None = None,
     ) -> list[TradeIntentEvent]:
+        del cumulative_volume
         self._roll_day_if_needed()
         normalized = symbol.upper()
         intents: list[TradeIntentEvent] = []
+        position = self._positions.get(normalized)
 
-        if self._position and self._position.ticker == normalized:
-            self._position.update_price(price)
-            if self._should_force_time_close() and self._pending_close_symbol is None and not self._is_close_retry_blocked():
-                intents.append(self._emit_close_intent(reason="TIME_CLOSE_6PM"))
+        if position is not None:
+            position.update_price(price)
+            if (
+                self._should_force_time_close()
+                and normalized not in self._pending_close_symbols
+                and not self._is_close_retry_blocked(normalized)
+            ):
+                intents.append(self._emit_close_intent(symbol=normalized, reason="TIME_CLOSE_6PM"))
                 return intents
-            if self._position.is_trail_breached(self.config) and self._pending_close_symbol is None and not self._is_close_retry_blocked():
-                trail_pct = round(self._position.get_trail_pct(self.config), 0)
-                intents.append(self._emit_close_intent(reason=f"TRAIL_STOP_{trail_pct:.0f}%"))
+            if (
+                position.is_trail_breached(self.config)
+                and normalized not in self._pending_close_symbols
+                and not self._is_close_retry_blocked(normalized)
+            ):
+                trail_pct = round(position.get_trail_pct(self.config), 0)
+                intents.append(self._emit_close_intent(symbol=normalized, reason=f"TRAIL_STOP_{trail_pct:.0f}%"))
                 return intents
 
         should_build_bars = normalized in self.watchlist
-        should_build_bars = should_build_bars or (self._position is not None and self._position.ticker == normalized)
+        should_build_bars = should_build_bars or normalized in self._positions
         should_build_bars = should_build_bars or normalized in self.builder_manager.get_all_tickers()
         if should_build_bars and size >= self.config.minimum_trade_size:
             completed_bars = self.builder_manager.on_trade(normalized, price, size, timestamp_ns or 0)
             for bar in completed_bars:
                 intents.extend(self._handle_completed_bar(normalized, bar))
 
-        if self._position is not None or self._pending_open_symbol is not None or self._pending_close_symbol is not None:
+        if normalized in self._positions or normalized in self._pending_open_symbols or normalized in self._pending_close_symbols:
             return intents
         if normalized not in self.watchlist:
             return intents
@@ -279,13 +355,14 @@ class RunnerStrategyRuntime:
         fill_price = float(price)
 
         if intent_type == "open" and side == "buy":
-            if self._pending_open_symbol == normalized:
-                self._pending_open_symbol = None
+            self._pending_open_symbols.discard(normalized)
 
             candidate = self._candidates.get(normalized, {})
             entry_change_pct = float(candidate.get("change_pct", 0) or 0)
-            if self._position is None:
-                self._position = RunnerPosition(
+            self._entered_today.add(normalized)
+            position = self._positions.get(normalized)
+            if position is None:
+                self._positions[normalized] = RunnerPosition(
                     ticker=normalized,
                     entry_price=fill_price,
                     quantity=filled_qty or self.default_quantity,
@@ -293,30 +370,31 @@ class RunnerStrategyRuntime:
                     entry_time=self.now_provider().strftime("%I:%M:%S %p ET"),
                 )
             else:
-                total_qty = self._position.quantity + filled_qty
+                total_qty = position.quantity + filled_qty
                 if total_qty > 0:
-                    self._position.entry_price = (
-                        (self._position.entry_price * self._position.quantity)
+                    position.entry_price = (
+                        (position.entry_price * position.quantity)
                         + (fill_price * filled_qty)
                     ) / total_qty
-                self._position.quantity = total_qty
-                self._position.update_price(fill_price)
+                position.quantity = total_qty
+                position.update_price(fill_price)
             return
 
-        if intent_type == "close" and side == "sell" and self._position and self._position.ticker == normalized:
-            if status == "filled" or filled_qty >= self._position.quantity:
-                closed = self._close_position(fill_price, self._pending_close_reason or "OMS_FILL")
-                self._position = None
-                self._pending_close_symbol = None
-                self._pending_close_reason = ""
+        position = self._positions.get(normalized)
+        if intent_type == "close" and side == "sell" and position is not None:
+            if status == "filled" or filled_qty >= position.quantity:
+                closed = self._close_position(normalized, fill_price, self._pending_close_reasons.get(normalized, "OMS_FILL"))
+                self._positions.pop(normalized, None)
+                self._pending_close_symbols.discard(normalized)
+                self._pending_close_reasons.pop(normalized, None)
                 self._cooldown_until[normalized] = self.now_provider() + timedelta(seconds=self.config.cooldown_seconds)
                 if closed is not None:
                     self._closed_today.append(closed)
                     self._daily_pnl += float(closed["pnl"])
                 return
 
-            self._position.quantity -= filled_qty
-            self._position.update_price(fill_price)
+            position.quantity -= filled_qty
+            position.update_price(fill_price)
 
     def _incremental_fill_quantity(self, client_order_id: str, cumulative_quantity: Decimal) -> Decimal:
         if not client_order_id:
@@ -342,80 +420,79 @@ class RunnerStrategyRuntime:
         if status not in {"rejected", "cancelled"}:
             return
 
-        if intent_type == "open" and self._pending_open_symbol == normalized:
-            self._pending_open_symbol = None
+        if intent_type == "open" and normalized in self._pending_open_symbols:
+            self._pending_open_symbols.discard(normalized)
             return
 
-        if intent_type == "close" and self._pending_close_symbol == normalized:
-            self._pending_close_symbol = None
+        if intent_type == "close" and normalized in self._pending_close_symbols:
+            self._pending_close_symbols.discard(normalized)
             normalized_reason = (reason or "").strip().lower()
             if "rate limit exceeded" in normalized_reason:
-                self._close_retry_blocked_until = self.now_provider() + timedelta(seconds=5)
+                self._close_retry_blocked_until[normalized] = self.now_provider() + timedelta(seconds=5)
             elif (
                 "duplicate_exit_in_flight" in normalized_reason
                 or "broker quantity already reserved for pending exits" in normalized_reason
             ):
-                self._close_retry_blocked_until = self.now_provider() + timedelta(seconds=2)
+                self._close_retry_blocked_until[normalized] = self.now_provider() + timedelta(seconds=2)
             elif (
                 "cannot be sold short" in normalized_reason
                 or "insufficient qty" in normalized_reason
                 or "no broker position available to sell" in normalized_reason
                 or "no strategy position available to sell" in normalized_reason
             ):
-                self._position = None
-                self._pending_close_reason = ""
+                self._positions.pop(normalized, None)
+                self._pending_close_reasons.pop(normalized, None)
 
     def summary(self) -> dict[str, object]:
         self._roll_day_if_needed()
-        positions = [self._position.to_dict(self.config)] if self._position is not None else []
         return {
             "strategy": self.definition_code,
             "account_name": self.account_name,
             "watchlist": sorted(self.watchlist),
-            "positions": positions,
-            "pending_open_symbols": [self._pending_open_symbol] if self._pending_open_symbol else [],
-            "pending_close_symbols": [self._pending_close_symbol] if self._pending_close_symbol else [],
+            "positions": [position.to_dict(self.config) for position in self._positions.values()],
+            "pending_open_symbols": sorted(self._pending_open_symbols),
+            "pending_close_symbols": sorted(self._pending_close_symbols),
             "pending_scale_levels": [],
+            "entered_today": sorted(self._entered_today),
             "daily_pnl": self._daily_pnl,
             "closed_today": list(self._closed_today),
             "indicator_snapshots": [],
         }
 
     def _roll_day_if_needed(self) -> None:
-        current_day = today_eastern_str()
+        current_day = session_day_eastern_str(self.now_provider())
         if current_day == self._active_day:
             return
         self._daily_pnl = 0.0
         self._closed_today.clear()
+        self._entered_today.clear()
         self._active_day = current_day
 
     def active_symbols(self) -> set[str]:
         symbols = set(self.watchlist)
-        if self._position is not None:
-            symbols.add(self._position.ticker)
-        if self._pending_open_symbol:
-            symbols.add(self._pending_open_symbol)
-        if self._pending_close_symbol:
-            symbols.add(self._pending_close_symbol)
+        symbols.update(self._positions.keys())
+        symbols.update(self._pending_open_symbols)
+        symbols.update(self._pending_close_symbols)
         return symbols
 
     def _handle_completed_bar(self, symbol: str, bar: OHLCVBar) -> list[TradeIntentEvent]:
-        if self._position is None or self._position.ticker != symbol:
+        position = self._positions.get(symbol)
+        if position is None:
             return []
 
         bar_volume = int(bar.volume)
-        if bar_volume > self._position.peak_5min_volume:
-            self._position.peak_5min_volume = bar_volume
+        if bar_volume > position.peak_5min_volume:
+            position.peak_5min_volume = bar_volume
         elif (
-            self._position.peak_5min_volume > 0
-            and bar_volume < self._position.peak_5min_volume * self.config.volume_fade_ratio
+            position.peak_5min_volume > 0
+            and bar_volume < position.peak_5min_volume * self.config.volume_fade_ratio
         ):
-            self._position.volume_faded = True
+            position.volume_faded = True
 
-        if self._pending_close_symbol is None and not self._is_close_retry_blocked():
+        if symbol not in self._pending_close_symbols and not self._is_close_retry_blocked(symbol):
             ema_break = self._check_ema_break(symbol)
             if ema_break is not None:
-                return [self._emit_close_intent(reason=ema_break)]
+                return [self._emit_close_intent(symbol=symbol, reason=ema_break)]
         return []
 
     def _entry_window_open(self) -> bool:
@@ -441,6 +518,9 @@ class RunnerStrategyRuntime:
 
         cooldown_until = self._cooldown_until.get(symbol)
         if cooldown_until is not None and self.now_provider() < cooldown_until:
+            return False
+
+        if symbol in self._entered_today:
             return False
 
         if not self._confirmed_after_open(candidate):
@@ -481,7 +561,8 @@ class RunnerStrategyRuntime:
 
     def _check_ema_break(self, symbol: str) -> str | None:
         bars = self.builder_manager.get_bars(symbol)
-        if len(bars) < self.config.min_exit_ema_bars or self._position is None:
+        position = self._positions.get(symbol)
+        if len(bars) < self.config.min_exit_ema_bars or position is None:
             return None
 
         closes = [float(bar["close"]) for bar in bars]
@@ -491,7 +572,7 @@ class RunnerStrategyRuntime:
         if not ema9 or not ema20:
             return None
 
-        if self._position.peak_profit_pct < self.config.high_profit_break_pct:
+        if position.peak_profit_pct < self.config.high_profit_break_pct:
             if current_close < ema9[-1]:
                 return f"EMA9_BREAK(5m) price=${current_close:.2f}<EMA9=${ema9[-1]:.2f}"
             return None
@@ -502,7 +583,7 @@ class RunnerStrategyRuntime:
 
     def _emit_open_intent(self, candidate: dict[str, object], live_price: float) -> TradeIntentEvent:
         symbol = str(candidate.get("ticker", "")).upper()
-        self._pending_open_symbol = symbol
+        self._pending_open_symbols.add(symbol)
         reference_price = str(live_price)
         quote = self._latest_quotes.get(symbol, {})
         routed_price = _format_limit_price(quote.get("ask")) or _format_limit_price(reference_price) or reference_price
@@ -527,19 +608,20 @@ class RunnerStrategyRuntime:
             ),
         )
 
-    def _emit_close_intent(self, *, reason: str) -> TradeIntentEvent:
-        if self._position is None:
+    def _emit_close_intent(self, *, symbol: str, reason: str) -> TradeIntentEvent:
+        position = self._positions.get(symbol)
+        if position is None:
             raise RuntimeError("runner close intent requested without an open position")
 
-        self._pending_close_symbol = self._position.ticker
-        self._pending_close_reason = reason
-        reference_price = str(self._position.current_price)
-        quote = self._latest_quotes.get(self._position.ticker, {})
+        self._pending_close_symbols.add(symbol)
+        self._pending_close_reasons[symbol] = reason
+        reference_price = str(position.current_price)
+        quote = self._latest_quotes.get(symbol, {})
         routed_price = _format_limit_price(quote.get("bid")) or _format_limit_price(reference_price) or reference_price
         metadata = {
             "reference_price": reference_price,
-            "peak_profit_pct": str(self._position.peak_profit_pct),
-            "trail_pct": str(self._position.get_trail_pct(self.config)),
+            "peak_profit_pct": str(position.peak_profit_pct),
+            "trail_pct": str(position.get_trail_pct(self.config)),
         }
         metadata.update(order_routing_metadata(price=routed_price, side="sell", now=self.now_provider()))
         return TradeIntentEvent(
@@ -547,36 +629,38 @@ class RunnerStrategyRuntime:
             payload=TradeIntentPayload(
                 strategy_code=self.definition_code,
                 broker_account_name=self.account_name,
-                symbol=self._position.ticker,
+                symbol=symbol,
                 side="sell",
-                quantity=Decimal(str(self._position.quantity)),
+                quantity=Decimal(str(position.quantity)),
                 intent_type="close",
                 reason=reason,
                 metadata=metadata,
             ),
         )
 
-    def _is_close_retry_blocked(self) -> bool:
-        return self._close_retry_blocked_until is not None and self.now_provider() < self._close_retry_blocked_until
+    def _is_close_retry_blocked(self, symbol: str) -> bool:
+        blocked_until = self._close_retry_blocked_until.get(symbol)
+        return blocked_until is not None and self.now_provider() < blocked_until
 
-    def _close_position(self, exit_price: float, reason: str) -> dict[str, object] | None:
-        if self._position is None:
+    def _close_position(self, symbol: str, exit_price: float, reason: str) -> dict[str, object] | None:
+        position = self._positions.get(symbol)
+        if position is None:
             return None
-        pnl = (exit_price - self._position.entry_price) * self._position.quantity
+        pnl = (exit_price - position.entry_price) * position.quantity
         pnl_pct = (
-            ((exit_price - self._position.entry_price) / self._position.entry_price) * 100
-            if self._position.entry_price > 0
+            ((exit_price - position.entry_price) / position.entry_price) * 100
+            if position.entry_price > 0
             else 0.0
         )
         return {
-            "ticker": self._position.ticker,
-            "entry_price": round(self._position.entry_price, 4),
+            "ticker": position.ticker,
+            "entry_price": round(position.entry_price, 4),
             "exit_price": round(exit_price, 4),
-            "quantity": self._position.quantity,
+            "quantity": position.quantity,
             "pnl": round(pnl, 2),
             "pnl_pct": round(pnl_pct, 2),
             "reason": reason,
-            "entry_time": self._position.entry_time,
+            "entry_time": position.entry_time,
             "exit_time": self.now_provider().strftime("%I:%M:%S %p ET"),
-            "peak_profit_pct": round(self._position.peak_profit_pct, 2),
+            "peak_profit_pct": round(position.peak_profit_pct, 2),
         }

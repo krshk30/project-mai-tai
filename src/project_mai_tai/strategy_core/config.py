@@ -10,6 +10,7 @@ class IndicatorConfig:
     macd_signal: int = 9
     stoch_len: int = 5
     stoch_smooth_k: int = 1
+    stoch_smooth_d: int = 3
     stoch_exit_level: float = 20.0
     ema1_len: int = 9
     ema2_len: int = 20
@@ -17,6 +18,10 @@ class IndicatorConfig:
     vwap_session_start_minute: int = 30
     vwap_session_end_hour: int = 16
     vwap_session_end_minute: int = 0
+    extended_vwap_session_start_hour: int = 4
+    extended_vwap_session_start_minute: int = 0
+    extended_vwap_session_end_hour: int = 16
+    extended_vwap_session_end_minute: int = 0
 
 
 @dataclass
