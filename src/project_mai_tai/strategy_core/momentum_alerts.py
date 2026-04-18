@@ -4,7 +4,7 @@ from collections import deque
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 import logging
-from typing import Dict, Union
+from typing import Dict
 
 from project_mai_tai.strategy_core.config import MomentumAlertConfig
 from project_mai_tai.strategy_core.models import MarketSnapshot, ReferenceData
@@ -18,7 +18,8 @@ from project_mai_tai.strategy_core.snapshot_utils import (
 
 logger = logging.getLogger(__name__)
 
-HistoryEntry = Dict[str, Dict[str, Union[float, int]]]
+HistoryPoint = tuple[float, int]
+HistoryEntry = Dict[str, HistoryPoint]
 
 
 class MomentumAlertEngine:
@@ -75,18 +76,12 @@ class MomentumAlertEngine:
                 continue
             normalized_entry: HistoryEntry = {}
             for ticker, values in entry.items():
-                if not isinstance(ticker, str) or not isinstance(values, dict):
+                if not isinstance(ticker, str):
                     continue
-                price = values.get("price")
-                volume = values.get("volume")
-                hod = values.get("hod")
-                if price is None or volume is None or hod is None:
+                normalized = self._normalize_history_point(values)
+                if normalized is None:
                     continue
-                normalized_entry[ticker.upper()] = {
-                    "price": float(price),
-                    "volume": int(volume),
-                    "hod": float(hod),
-                }
+                normalized_entry[ticker.upper()] = normalized
             if normalized_entry:
                 restored_history.append(normalized_entry)
 
@@ -194,84 +189,121 @@ class MomentumAlertEngine:
                 "time": time_str,
             }
 
+            old_5min = None
+            vol_5min = 0
+            expected_5min = 0.0
+            relative_spike = False
+            absolute_spike = False
             if history_len >= self._snaps_per_5min and reference_data is not None:
-                old = self._history[-self._snaps_per_5min].get(ticker)
-                if old and ref:
-                    vol_5min = volume - int(old["volume"])
+                old_5min = self._history[-self._snaps_per_5min].get(ticker)
+                if old_5min and ref:
+                    _old_price, old_volume = old_5min
+                    vol_5min = volume - old_volume
                     expected_5min = ref.avg_daily_volume / 78.0
                     relative_spike = (
                         expected_5min > 0
                         and vol_5min >= expected_5min * self.config.volume_spike_mult
                     )
                     absolute_spike = vol_5min >= 50_000
-                    if relative_spike or absolute_spike:
-                        last_spike_volume = self._last_spike_volume.get(ticker, 0)
-                        should_fire = False
-                        if last_spike_volume == 0:
-                            should_fire = True
-                        elif volume >= last_spike_volume * 2:
-                            should_fire = True
 
-                        if should_fire:
-                            spike_type = "relative" if relative_spike else "absolute"
-                            self._last_spike_volume[ticker] = volume
-                            self._volume_spike_tickers.add(ticker)
-                            alerts.append(
-                                {
-                                    **base,
-                                    "type": "VOLUME_SPIKE",
-                                    "details": {
-                                        "vol_5min": int(vol_5min),
-                                        "expected_5min": int(expected_5min),
-                                        "spike_mult": round(vol_5min / max(expected_5min, 1), 1),
-                                        "total_vol": volume,
-                                        "spike_type": spike_type,
-                                    },
-                                }
-                            )
-                            self._set_cooldown(ticker, "VOLUME_SPIKE", now)
+            squeeze_5min_pct = None
+            if old_5min and old_5min[0] > 0:
+                old_price, _old_volume = old_5min
+                squeeze_5min_pct = (price - old_price) / old_price * 100
 
-            if ticker in self._volume_spike_tickers and history_len >= self._snaps_per_5min:
-                old = self._history[-self._snaps_per_5min].get(ticker)
-                if old and float(old["price"]) > 0:
-                    pct = (price - float(old["price"])) / float(old["price"]) * 100
-                    if pct >= self.config.squeeze_5min_pct and not self._on_cooldown(
-                        ticker,
-                        "SQUEEZE_5MIN",
-                        now,
-                    ):
-                        alerts.append(
-                            {
-                                **base,
-                                "type": "SQUEEZE_5MIN",
-                                "details": {
-                                    "change_pct": round(pct, 1),
-                                    "price_5min_ago": round(float(old["price"]), 3),
-                                },
-                            }
-                        )
-                        self._set_cooldown(ticker, "SQUEEZE_5MIN", now)
+            old_10min = None
+            squeeze_10min_pct = None
+            if history_len >= self._snaps_per_10min:
+                old_10min = self._history[-self._snaps_per_10min].get(ticker)
+                if old_10min and old_10min[0] > 0:
+                    old_price, _old_volume = old_10min
+                    squeeze_10min_pct = (price - old_price) / old_price * 100
 
-            if ticker in self._volume_spike_tickers and history_len >= self._snaps_per_10min:
-                old = self._history[-self._snaps_per_10min].get(ticker)
-                if old and float(old["price"]) > 0:
-                    pct = (price - float(old["price"])) / float(old["price"]) * 100
-                    if pct >= self.config.squeeze_10min_pct and not self._on_cooldown(
-                        ticker,
-                        "SQUEEZE_10MIN",
-                        now,
-                    ):
-                        alerts.append(
-                            {
-                                **base,
-                                "type": "SQUEEZE_10MIN",
-                                "details": {
-                                    "change_pct": round(pct, 1),
-                                    "price_10min_ago": round(float(old["price"]), 3),
-                                },
-                            }
-                        )
-                        self._set_cooldown(ticker, "SQUEEZE_10MIN", now)
+            late_catchup_seed = (
+                (relative_spike or absolute_spike)
+                and ticker not in self._volume_spike_tickers
+                and not self._on_cooldown(ticker, "VOLUME_SPIKE", now)
+                and (
+                    (squeeze_5min_pct is not None and squeeze_5min_pct >= self.config.squeeze_5min_pct)
+                    or (squeeze_10min_pct is not None and squeeze_10min_pct >= self.config.squeeze_10min_pct)
+                )
+            )
+
+            emitted_volume_spike = False
+            if relative_spike or absolute_spike:
+                last_spike_volume = self._last_spike_volume.get(ticker, 0)
+                should_fire = False
+                if last_spike_volume == 0:
+                    should_fire = True
+                elif volume >= last_spike_volume * 2:
+                    should_fire = True
+                elif late_catchup_seed:
+                    # If we missed the earlier seed, allow a later explosive move to
+                    # backfill the spike so squeeze alerts can still be emitted.
+                    should_fire = True
+
+                if should_fire and not self._on_cooldown(ticker, "VOLUME_SPIKE", now):
+                    spike_type = "relative" if relative_spike else "absolute"
+                    details = {
+                        "vol_5min": int(vol_5min),
+                        "expected_5min": int(expected_5min),
+                        "spike_mult": round(vol_5min / max(expected_5min, 1), 1),
+                        "total_vol": volume,
+                        "spike_type": spike_type,
+                    }
+                    if late_catchup_seed:
+                        details["catchup_seed"] = True
+                    self._last_spike_volume[ticker] = volume
+                    self._volume_spike_tickers.add(ticker)
+                    emitted_volume_spike = True
+                    alerts.append(
+                        {
+                            **base,
+                            "type": "VOLUME_SPIKE",
+                            "details": details,
+                        }
+                    )
+                    self._set_cooldown(ticker, "VOLUME_SPIKE", now)
+
+            volume_gate_open = ticker in self._volume_spike_tickers or emitted_volume_spike
+
+            if volume_gate_open and squeeze_5min_pct is not None and old_5min:
+                old_price, _old_volume = old_5min
+                if squeeze_5min_pct >= self.config.squeeze_5min_pct and not self._on_cooldown(
+                    ticker,
+                    "SQUEEZE_5MIN",
+                    now,
+                ):
+                    alerts.append(
+                        {
+                            **base,
+                            "type": "SQUEEZE_5MIN",
+                            "details": {
+                                "change_pct": round(squeeze_5min_pct, 1),
+                                "price_5min_ago": round(old_price, 3),
+                            },
+                        }
+                    )
+                    self._set_cooldown(ticker, "SQUEEZE_5MIN", now)
+
+            if volume_gate_open and squeeze_10min_pct is not None and old_10min:
+                old_price, _old_volume = old_10min
+                if squeeze_10min_pct >= self.config.squeeze_10min_pct and not self._on_cooldown(
+                    ticker,
+                    "SQUEEZE_10MIN",
+                    now,
+                ):
+                    alerts.append(
+                        {
+                            **base,
+                            "type": "SQUEEZE_10MIN",
+                            "details": {
+                                "change_pct": round(squeeze_10min_pct, 1),
+                                "price_10min_ago": round(old_price, 3),
+                            },
+                        }
+                    )
+                    self._set_cooldown(ticker, "SQUEEZE_10MIN", now)
 
         for alert in alerts:
             logger.info("[ALERT] [%s] %s @ $%.2f | %s", alert["type"], alert["ticker"], alert["price"], alert["details"])
@@ -313,12 +345,33 @@ class MomentumAlertEngine:
             price = get_current_price(snapshot)
             if price is None:
                 continue
-            entry[snapshot.ticker] = {
-                "price": price,
-                "volume": get_current_volume(snapshot),
-                "hod": get_current_hod(snapshot) or price,
-            }
+            if not (self.config.min_price <= price <= self.config.max_price):
+                continue
+            entry[snapshot.ticker] = (
+                float(price),
+                int(get_current_volume(snapshot)),
+            )
         return entry
+
+    @staticmethod
+    def _normalize_history_point(value: object) -> HistoryPoint | None:
+        if isinstance(value, dict):
+            price = value.get("price")
+            volume = value.get("volume")
+            if price is None or volume is None:
+                return None
+            try:
+                return (float(price), int(volume))
+            except (TypeError, ValueError):
+                return None
+
+        if isinstance(value, Sequence) and not isinstance(value, (str, bytes)) and len(value) >= 2:
+            try:
+                return (float(value[0]), int(value[1]))
+            except (TypeError, ValueError):
+                return None
+
+        return None
 
     def _on_cooldown(self, ticker: str, alert_type: str, now: datetime) -> bool:
         last_fired = self._cooldowns.get((ticker, alert_type))

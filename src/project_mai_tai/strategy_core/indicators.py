@@ -151,6 +151,7 @@ class IndicatorEngine:
             return None
 
         closes = [_bar_value(bar, "close") for bar in bars]
+        opens = [_bar_value(bar, "open") for bar in bars]
         highs = [_bar_value(bar, "high") for bar in bars]
         lows = [_bar_value(bar, "low") for bar in bars]
         volumes = [_bar_value(bar, "volume") for bar in bars]
@@ -162,6 +163,7 @@ class IndicatorEngine:
         histogram = macd_data["histogram"]
 
         stoch = stoch_k(highs, lows, closes, self.config.stoch_len, self.config.stoch_smooth_k)
+        stoch_d = sma(stoch, self.config.stoch_smooth_d) if stoch else []
         ema9 = ema(closes, self.config.ema1_len)
         ema20 = ema(closes, self.config.ema2_len)
         vwap_values = vwap(
@@ -175,11 +177,24 @@ class IndicatorEngine:
             session_end_hour=self.config.vwap_session_end_hour,
             session_end_minute=self.config.vwap_session_end_minute,
         )
+        extended_vwap_values = vwap(
+            highs,
+            lows,
+            closes,
+            volumes,
+            timestamps,
+            session_start_hour=self.config.extended_vwap_session_start_hour,
+            session_start_minute=self.config.extended_vwap_session_start_minute,
+            session_end_hour=self.config.extended_vwap_session_end_hour,
+            session_end_minute=self.config.extended_vwap_session_end_minute,
+        )
 
         index = len(closes) - 1
         previous_index = index - 1 if index > 0 else 0
+        previous2_index = index - 2 if index > 1 else 0
 
         return {
+            "open": opens[index],
             "price": closes[index],
             "price_prev": closes[previous_index],
             "high": highs[index],
@@ -193,9 +208,13 @@ class IndicatorEngine:
             "histogram_prev": histogram[previous_index],
             "stoch_k": stoch[index] if index < len(stoch) else 50.0,
             "stoch_k_prev": stoch[previous_index] if previous_index < len(stoch) else 50.0,
+            "stoch_k_prev2": stoch[previous2_index] if previous2_index < len(stoch) else 50.0,
+            "stoch_d": stoch_d[index] if index < len(stoch_d) else 50.0,
+            "stoch_d_prev": stoch_d[previous_index] if previous_index < len(stoch_d) else 50.0,
             "ema9": ema9[index],
             "ema20": ema20[index],
             "vwap": vwap_values[index],
+            "extended_vwap": extended_vwap_values[index],
             "macd_above_signal": macd_line[index] > signal_line[index],
             "macd_cross_above": macd_line[index] > signal_line[index]
             and macd_line[previous_index] <= signal_line[previous_index],
@@ -223,11 +242,14 @@ class IndicatorEngine:
             if index < len(stoch) and previous_index < len(stoch)
             else False,
             "price_above_vwap": closes[index] > vwap_values[index],
+            "price_above_extended_vwap": closes[index] > extended_vwap_values[index],
             "price_above_ema9": closes[index] > ema9[index],
             "price_above_ema20": closes[index] > ema20[index],
             "price_above_both_emas": closes[index] > ema9[index] and closes[index] > ema20[index],
             "price_cross_above_vwap": closes[index] > vwap_values[index]
             and closes[previous_index] <= vwap_values[previous_index],
+            "price_cross_above_extended_vwap": closes[index] > extended_vwap_values[index]
+            and closes[previous_index] <= extended_vwap_values[previous_index],
             "macd_was_below_3bars": (
                 index >= 4
                 and macd_line[previous_index] <= signal_line[previous_index]
