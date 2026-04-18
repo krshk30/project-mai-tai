@@ -30,6 +30,7 @@ class TradeTickPayload(BaseModel):
     price: Decimal
     size: int
     timestamp_ns: int | None = None
+    cumulative_volume: int | None = None
     exchange: str | None = None
     conditions: list[str] = Field(default_factory=list)
 
@@ -71,6 +72,23 @@ class HistoricalBarsPayload(BaseModel):
 class HistoricalBarsEvent(EventEnvelope):
     event_type: Literal["historical_bars"] = "historical_bars"
     payload: HistoricalBarsPayload
+
+
+class LiveBarPayload(BaseModel):
+    symbol: str
+    interval_secs: int
+    open: Decimal
+    high: Decimal
+    low: Decimal
+    close: Decimal
+    volume: int
+    timestamp: float
+    trade_count: int = 1
+
+
+class LiveBarEvent(EventEnvelope):
+    event_type: Literal["live_bar"] = "live_bar"
+    payload: LiveBarPayload
 
 
 class BarClosedPayload(BaseModel):
@@ -165,6 +183,7 @@ class StrategyBotStatePayload(BaseModel):
 
 
 class StrategyStateSnapshotPayload(BaseModel):
+    all_confirmed: list[dict[str, Any]] = Field(default_factory=list)
     watchlist: list[str] = Field(default_factory=list)
     top_confirmed: list[dict[str, Any]] = Field(default_factory=list)
     five_pillars: list[dict[str, Any]] = Field(default_factory=list)

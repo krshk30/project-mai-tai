@@ -26,6 +26,18 @@ class OHLCVBar:
         )
 
     @classmethod
+    def from_bar(cls, bar: "OHLCVBar", *, timestamp: float | None = None) -> "OHLCVBar":
+        return cls(
+            open=bar.open,
+            high=bar.high,
+            low=bar.low,
+            close=bar.close,
+            volume=bar.volume,
+            timestamp=bar.timestamp if timestamp is None else timestamp,
+            trade_count=bar.trade_count,
+        )
+
+    @classmethod
     def flat_fill(cls, price: float, timestamp: float) -> "OHLCVBar":
         return cls(
             open=price,
@@ -46,6 +58,15 @@ class OHLCVBar:
         self.volume += volume
         self.trade_count += 1
 
+    def merge_bar(self, bar: "OHLCVBar") -> None:
+        if bar.high > self.high:
+            self.high = bar.high
+        if bar.low < self.low:
+            self.low = bar.low
+        self.close = bar.close
+        self.volume += bar.volume
+        self.trade_count += bar.trade_count
+
     def as_dict(self) -> dict[str, float | int]:
         return {
             "open": self.open,
@@ -54,6 +75,7 @@ class OHLCVBar:
             "close": self.close,
             "volume": self.volume,
             "timestamp": self.timestamp,
+            "trade_count": self.trade_count,
         }
 
 

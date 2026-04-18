@@ -1,7 +1,12 @@
 """Preserved deterministic strategy logic ported from the legacy platform."""
 
 from project_mai_tai.strategy_core.bar_builder import BarBuilder, BarBuilderManager
-from project_mai_tai.strategy_core.catalyst import CatalystConfig, CatalystEngine
+from project_mai_tai.strategy_core.catalyst import (
+    CatalystAiConfig,
+    CatalystAiEvaluator,
+    CatalystConfig,
+    CatalystEngine,
+)
 from project_mai_tai.strategy_core.config import (
     IndicatorConfig,
     MomentumAlertConfig,
@@ -24,12 +29,20 @@ from project_mai_tai.strategy_core.momentum_alerts import MomentumAlertEngine
 from project_mai_tai.strategy_core.momentum_confirmed import MomentumConfirmedScanner
 from project_mai_tai.strategy_core.position_tracker import Position, PositionTracker
 from project_mai_tai.strategy_core.runner import RunnerConfig, RunnerPosition, RunnerStrategyRuntime
+from project_mai_tai.strategy_core.schwab_native_30s import (
+    SchwabNativeBarBuilder,
+    SchwabNativeBarBuilderManager,
+    SchwabNativeEntryEngine,
+    SchwabNativeIndicatorEngine,
+)
 from project_mai_tai.strategy_core.top_gainers import TopGainersConfig, TopGainersTracker
 from project_mai_tai.strategy_core.trading_config import TradingConfig
 
 __all__ = [
     "BarBuilder",
     "BarBuilderManager",
+    "CatalystAiConfig",
+    "CatalystAiEvaluator",
     "CatalystConfig",
     "CatalystEngine",
     "DaySnapshot",
@@ -53,6 +66,10 @@ __all__ = [
     "RunnerConfig",
     "RunnerPosition",
     "RunnerStrategyRuntime",
+    "SchwabNativeBarBuilder",
+    "SchwabNativeBarBuilderManager",
+    "SchwabNativeEntryEngine",
+    "SchwabNativeIndicatorEngine",
     "TopGainersConfig",
     "TopGainersTracker",
     "TradingConfig",

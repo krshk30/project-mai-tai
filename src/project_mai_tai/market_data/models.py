@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from project_mai_tai.events import (
     HistoricalBarPayload,
     HistoricalBarsPayload,
+    LiveBarPayload,
     MarketSnapshotPayload,
     QuoteTickPayload,
     TradeTickPayload,
@@ -61,6 +62,7 @@ class TradeTickRecord:
     price: float
     size: int
     timestamp_ns: int | None = None
+    cumulative_volume: int | None = None
     exchange: str | None = None
     conditions: tuple[str, ...] = ()
 
@@ -70,6 +72,7 @@ class TradeTickRecord:
             price=self.price,
             size=self.size,
             timestamp_ns=self.timestamp_ns,
+            cumulative_volume=self.cumulative_volume,
             exchange=self.exchange,
             conditions=list(self.conditions),
         )
@@ -126,4 +129,30 @@ class HistoricalBarsRecord:
             symbol=self.symbol,
             interval_secs=self.interval_secs,
             bars=[bar.to_payload() for bar in self.bars],
+        )
+
+
+@dataclass(frozen=True)
+class LiveBarRecord:
+    symbol: str
+    interval_secs: int
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: int
+    timestamp: float
+    trade_count: int = 1
+
+    def to_payload(self) -> LiveBarPayload:
+        return LiveBarPayload(
+            symbol=self.symbol,
+            interval_secs=self.interval_secs,
+            open=self.open,
+            high=self.high,
+            low=self.low,
+            close=self.close,
+            volume=self.volume,
+            timestamp=self.timestamp,
+            trade_count=self.trade_count,
         )

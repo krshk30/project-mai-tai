@@ -1494,13 +1494,6 @@ class StrategyEngineState:
         else:
             raise ValueError(f"Unsupported 30s variant: {variant}")
 
-    def _resolve_schwab_stream_bot_codes(self) -> tuple[str, ...]:
-        codes: list[str] = []
-        for code in ("macd_30s", "tos"):
-            if self.settings.provider_for_strategy(code) == "schwab":
-                codes.append(code)
-        return tuple(codes)
-
         config = self._apply_trading_config_overrides(
             config,
             self.settings.strategy_macd_30s_common_config_overrides_json,
@@ -1511,6 +1504,13 @@ class StrategyEngineState:
             raw_overrides,
             scope=scope,
         )
+
+    def _resolve_schwab_stream_bot_codes(self) -> tuple[str, ...]:
+        codes: list[str] = []
+        for code in ("macd_30s", "tos"):
+            if self.settings.provider_for_strategy(code) == "schwab":
+                codes.append(code)
+        return tuple(codes)
 
     def _apply_trading_config_overrides(
         self,

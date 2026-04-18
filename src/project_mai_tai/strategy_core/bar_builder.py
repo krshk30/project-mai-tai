@@ -31,7 +31,14 @@ class BarBuilder:
         self._current_bar_start = 0.0
         self._bar_count = 0
 
-    def on_trade(self, price: float, size: int, timestamp_ns: int = 0) -> list[OHLCVBar]:
+    def on_trade(
+        self,
+        price: float,
+        size: int,
+        timestamp_ns: int = 0,
+        cumulative_volume: int | None = None,
+    ) -> list[OHLCVBar]:
+        del cumulative_volume
         if price <= 0:
             return []
 
@@ -39,9 +46,27 @@ class BarBuilder:
         bar_start = (now // self.interval_secs) * self.interval_secs
         completed: list[OHLCVBar] = []
 
+        if self._current_bar is None and self.bars and bar_start < self.bars[-1].timestamp:
+            logger.debug(
+                "[BAR] Ignoring stale trade for %s at %.3f (< last closed %.3f)",
+                self.ticker,
+                bar_start,
+                self.bars[-1].timestamp,
+            )
+            return completed
+
         if self._current_bar is None:
             self._current_bar = OHLCVBar.from_trade(price, size, bar_start)
             self._current_bar_start = bar_start
+            return completed
+
+        if bar_start < self._current_bar_start:
+            logger.debug(
+                "[BAR] Ignoring stale trade for %s at %.3f (< current %.3f)",
+                self.ticker,
+                bar_start,
+                self._current_bar_start,
+            )
             return completed
 
         if bar_start > self._current_bar_start:
@@ -54,6 +79,50 @@ class BarBuilder:
             return completed
 
         self._current_bar.update(price, size)
+        return completed
+
+    def on_bar(self, bar: OHLCVBar) -> list[OHLCVBar]:
+        if bar.close <= 0:
+            return []
+
+        bar_start = (bar.timestamp // self.interval_secs) * self.interval_secs
+        completed: list[OHLCVBar] = []
+
+        if self._current_bar is None and self.bars and bar_start < self.bars[-1].timestamp:
+            logger.debug(
+                "[BAR] Ignoring stale aggregate bar for %s at %.3f (< last closed %.3f)",
+                self.ticker,
+                bar_start,
+                self.bars[-1].timestamp,
+            )
+            return completed
+
+        aligned_bar = OHLCVBar.from_bar(bar, timestamp=bar_start)
+
+        if self._current_bar is None:
+            self._current_bar = aligned_bar
+            self._current_bar_start = bar_start
+            return completed
+
+        if bar_start < self._current_bar_start:
+            logger.debug(
+                "[BAR] Ignoring stale aggregate bar for %s at %.3f (< current %.3f)",
+                self.ticker,
+                bar_start,
+                self._current_bar_start,
+            )
+            return completed
+
+        if bar_start > self._current_bar_start:
+            closed = self._close_current_bar()
+            if closed is not None:
+                completed.append(closed)
+
+            self._current_bar = aligned_bar
+            self._current_bar_start = bar_start
+            return completed
+
+        self._current_bar.merge_bar(bar)
         return completed
 
     def check_bar_close(self) -> OHLCVBar | None:
@@ -151,8 +220,18 @@ class BarBuilderManager:
             logger.info("[BAR] Created bar builder for %s (%ss bars)", ticker, self.interval_secs)
         return self._builders[ticker]
 
-    def on_trade(self, ticker: str, price: float, size: int, timestamp_ns: int = 0) -> list[OHLCVBar]:
-        return self.get_or_create(ticker).on_trade(price, size, timestamp_ns)
+    def on_trade(
+        self,
+        ticker: str,
+        price: float,
+        size: int,
+        timestamp_ns: int = 0,
+        cumulative_volume: int | None = None,
+    ) -> list[OHLCVBar]:
+        return self.get_or_create(ticker).on_trade(price, size, timestamp_ns, cumulative_volume)
+
+    def on_bar(self, ticker: str, bar: OHLCVBar) -> list[OHLCVBar]:
+        return self.get_or_create(ticker).on_bar(bar)
 
     def get_builder(self, ticker: str) -> BarBuilder | None:
         return self._builders.get(ticker)
@@ -161,16 +240,20 @@ class BarBuilderManager:
         builder = self._builders.get(ticker)
         return builder.get_bars_as_dicts() if builder else []
 
-    def check_all_bar_closes(self) -> list[OHLCVBar]:
-        completed: list[OHLCVBar] = []
-        for builder in self._builders.values():
+    def check_all_bar_closes(self) -> list[tuple[str, OHLCVBar]]:
+        completed: list[tuple[str, OHLCVBar]] = []
+        for ticker, builder in self._builders.items():
             bar = builder.check_bar_close()
             if bar is not None:
-                completed.append(bar)
+                completed.append((ticker, bar))
         return completed
 
     def get_all_tickers(self) -> list[str]:
         return list(self._builders.keys())
+
+    def remove_tickers(self, tickers: set[str] | list[str]) -> None:
+        for ticker in tickers:
+            self._builders.pop(ticker, None)
 
     def reset(self) -> None:
         self._builders.clear()

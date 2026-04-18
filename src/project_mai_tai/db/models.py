@@ -8,6 +8,7 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     ForeignKey,
+    Integer,
     Numeric,
     String,
     Text,
@@ -334,6 +335,50 @@ class DashboardSnapshot(Base):
         DateTime(timezone=True),
         default=utcnow,
         server_default=func.now(),
+    )
+
+
+class StrategyBarHistory(Base):
+    __tablename__ = "strategy_bar_history"
+    __table_args__ = (
+        UniqueConstraint(
+            "strategy_code",
+            "symbol",
+            "interval_secs",
+            "bar_time",
+            name="uq_strategy_bar_history_strategy_symbol_interval_time",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(), primary_key=True, default=uuid4)
+    strategy_code: Mapped[str] = mapped_column(String(64), index=True)
+    symbol: Mapped[str] = mapped_column(String(16), index=True)
+    interval_secs: Mapped[int] = mapped_column(Integer, index=True)
+    bar_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    open_price: Mapped[Decimal] = mapped_column(Numeric(18, 8))
+    high_price: Mapped[Decimal] = mapped_column(Numeric(18, 8))
+    low_price: Mapped[Decimal] = mapped_column(Numeric(18, 8))
+    close_price: Mapped[Decimal] = mapped_column(Numeric(18, 8))
+    volume: Mapped[int] = mapped_column(Integer)
+    trade_count: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
+    position_state: Mapped[str] = mapped_column(String(32), default="flat")
+    position_quantity: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
+    decision_status: Mapped[str] = mapped_column(String(32), default="", server_default=text("''"), index=True)
+    decision_reason: Mapped[str] = mapped_column(Text, default="", server_default=text("''"))
+    decision_path: Mapped[str] = mapped_column(String(64), default="", server_default=text("''"))
+    decision_score: Mapped[str] = mapped_column(String(32), default="", server_default=text("''"))
+    decision_score_details: Mapped[str] = mapped_column(Text, default="", server_default=text("''"))
+    indicators_json: Mapped[dict[str, object]] = mapped_column("indicators", JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow,
+        server_default=func.now(),
+        onupdate=utcnow,
     )
 
 
