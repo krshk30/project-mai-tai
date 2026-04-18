@@ -10,7 +10,7 @@ from project_mai_tai.events import TradeIntentEvent, TradeIntentPayload
 from project_mai_tai.strategy_core.bar_builder import BarBuilderManager
 from project_mai_tai.strategy_core.indicators import ema
 from project_mai_tai.strategy_core.models import OHLCVBar
-from project_mai_tai.strategy_core.time_utils import now_eastern, session_day_eastern_str, today_eastern_str
+from project_mai_tai.strategy_core.time_utils import now_eastern, session_day_eastern_str
 
 EASTERN_TZ = ZoneInfo("America/New_York")
 

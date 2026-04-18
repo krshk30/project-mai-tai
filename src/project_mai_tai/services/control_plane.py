@@ -1953,21 +1953,6 @@ def _render_dashboard(data: dict[str, Any]) -> str:
         for item in data["reconciliation"]["findings"]
     ) or _empty_row(5, "No reconciliation findings in the latest run")
 
-    shadow_strategy_rows = "".join(
-        f"""
-        <tr>
-          <td>{escape(strategy_code)}</td>
-          <td>{_status_badge(details["legacy_status"]) if details["legacy_present"] else '<span style="color:#61758a;">missing</span>'}</td>
-          <td>{'YES' if details["new_present"] else 'NO'}</td>
-          <td>{escape(", ".join(details["watched_only_in_legacy"][:6]) or "-")}</td>
-          <td>{escape(", ".join(details["watched_only_in_new"][:6]) or "-")}</td>
-          <td>{len(details["position_mismatches"])}</td>
-          <td>{details["issue_count"]}</td>
-        </tr>
-        """
-        for strategy_code, details in data["legacy_shadow"]["divergence"]["strategies"].items()
-    ) or _empty_row(7, "No legacy shadow comparison available")
-
     latest_snapshot = data["market_data"]["latest_snapshot_batch"] or {}
     snapshot_summary = (
         f'{latest_snapshot.get("snapshot_count", 0)} snapshots / '
@@ -1980,10 +1965,6 @@ def _render_dashboard(data: dict[str, Any]) -> str:
     latest_reconciliation = data["reconciliation"]["latest_run"] or {}
     latest_reconciliation_summary = latest_reconciliation.get("summary", {})
     cutover_confidence = latest_reconciliation_summary.get("cutover_confidence", 0)
-    legacy_shadow = data["legacy_shadow"]
-    shadow_divergence = legacy_shadow["divergence"]
-    shadow_confirmed_legacy = ", ".join(shadow_divergence["confirmed_only_in_legacy"][:10]) or "None"
-    shadow_confirmed_new = ", ".join(shadow_divergence["confirmed_only_in_new"][:10]) or "None"
     latest_fill = data["recent_fills"][0] if data["recent_fills"] else None
     latest_fill_summary = (
         f'{latest_fill["strategy_code"]} {latest_fill["side"]} {latest_fill["symbol"]} @ {latest_fill["price"]}'
@@ -1999,11 +1980,6 @@ def _render_dashboard(data: dict[str, Any]) -> str:
         f'{data["counts"]["open_incidents"]} incidents · '
         f'{data["counts"]["latest_reconciliation_findings"]} findings · '
         f'refresh {refresh_seconds}s'
-    )
-    shadow_summary = (
-        f'{shadow_divergence["issue_count"]} shadow issues · '
-        f'{len(shadow_divergence["confirmed_only_in_legacy"])} legacy-only confirmed · '
-        f'{len(shadow_divergence["confirmed_only_in_new"])} new-only confirmed'
     )
     orderflow_summary = (
         f'{len(data["recent_intents"])} intents · '
@@ -2849,7 +2825,6 @@ def _build_bot_api_payload(data: dict[str, Any], strategy_code: str) -> dict[str
 
 def _render_scanner_dashboard(data: dict[str, Any]) -> str:
     scanner = data["scanner"]
-    config = data["scanner_config"]
     latest_snapshot = data["market_data"]["latest_snapshot_batch"] or {}
     services = {service["service_name"]: service for service in data["services"]}
     market_data_service = services.get("market-data-gateway", {})
@@ -2904,20 +2879,6 @@ def _render_scanner_dashboard(data: dict[str, Any]) -> str:
         </tr>"""
         for item in scanner.get("top_gainer_changes", [])[:20]
     ) or '<tr><td colspan="4" style="text-align:center;color:#7b86a4;padding:18px;">No top-gainer rank changes yet</td></tr>'
-
-    watchlist_html = "".join(
-        f'<span class="pill-chip">{escape(symbol)}</span>'
-        for symbol in scanner["watchlist"][:24]
-    ) or '<span style="color:#7b86a4;">No active watchlist symbols</span>'
-    subscription_html = "".join(
-        f'<span class="pill-chip live">{escape(symbol)}</span>'
-        for symbol in scanner["subscription_symbols"][:24]
-    ) or (
-        f'<span style="color:#7b86a4;">Heartbeat reports {displayed_subscription_count} live symbols; subscription stream details unavailable.</span>'
-        if displayed_subscription_count > 0
-        else '<span style="color:#7b86a4;">No live subscriptions yet</span>'
-    )
-    blacklist_html = _render_scanner_blacklist_entries(scanner.get("blacklist", []))
 
     return f"""<!DOCTYPE html>
 <html>
@@ -4596,21 +4557,6 @@ def _render_confirmed_catalyst_cell_legacy(item: dict[str, Any]) -> str:
     reason = str(item.get("catalyst_reason", "") or "").strip()
     news_window_start = str(item.get("news_window_start", "") or "").strip()
     path_a_eligible = bool(item.get("path_a_eligible", False))
-    ai_shadow_status = str(item.get("ai_shadow_status", "") or "").strip().lower()
-    ai_shadow_provider = str(item.get("ai_shadow_provider", "") or "").strip()
-    ai_shadow_model = str(item.get("ai_shadow_model", "") or "").strip()
-    ai_shadow_direction = str(item.get("ai_shadow_direction", "") or "").strip().lower()
-    ai_shadow_category = str(item.get("ai_shadow_category", "") or "").strip()
-    ai_shadow_confidence = _as_float(item.get("ai_shadow_confidence"))
-    ai_shadow_path_a_eligible = bool(item.get("ai_shadow_path_a_eligible", False))
-    ai_shadow_reason = str(item.get("ai_shadow_reason", "") or "").strip()
-    ai_shadow_headline_basis = str(item.get("ai_shadow_headline_basis", "") or "").strip()
-    ai_shadow_positive_phrases = [
-        str(phrase).strip()
-        for phrase in (item.get("ai_shadow_positive_phrases", []) or [])
-        if str(phrase).strip()
-    ]
-
     if not catalyst and not headline and article_count <= 0:
         if news_fetch_status == "error":
             empty_reason = reason or "News provider request failed; Mai Tai will retry shortly."

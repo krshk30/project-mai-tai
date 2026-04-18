@@ -430,8 +430,6 @@ class EntryEngine:
                 sub_high, sub_low, sub_range_atr = _compression_range(comp_window[start : start + min_comp_bars])
                 if sub_range_atr <= self.config.pretrigger_max_compression_range_atr:
                     compression_ok = True
-                    comp_high = sub_high
-                    comp_low = sub_low
                     comp_range_atr = sub_range_atr
                     break
 
@@ -468,7 +466,6 @@ class EntryEngine:
         selected_vwap = self._selected_vwap_value(indicators)
         ema9 = float(indicators.get("ema9", 0) or 0)
         dist_to_ema9_pct = self._pct_distance(float(indicators["price"]), ema9)
-        dist_to_vwap_pct = self._pct_distance(float(indicators["price"]), selected_vwap)
         ema9_reclaim_floor = ema9 * (1.0 - self.config.pretrigger_max_pullback_below_ema9_pct) if ema9 > 0 else 0.0
         support_ok = (
             float(indicators["price"]) >= ema9_reclaim_floor
@@ -989,17 +986,6 @@ class EntryEngine:
             macd_near_signal=macd_near_signal,
         )
         volume_reason = self._reclaim_volume_reason(bar_rel_vol=bar_rel_vol)
-        starter_candle_reason = self._reclaim_candle_reason(
-            current_price=current_price,
-            current_open=current_open,
-            body_pct=body_pct,
-            close_pos_pct=close_pos_pct,
-            upper_wick_pct=upper_wick_pct,
-            min_body_pct=self.config.pretrigger_reclaim_min_body_pct,
-            min_close_pos_pct=self.config.pretrigger_reclaim_min_close_pos_pct,
-            max_upper_wick_pct=self.config.pretrigger_reclaim_max_upper_wick_pct,
-            label="starter candle",
-        )
         soft_candle_reason = self._reclaim_candle_reason(
             current_price=current_price,
             current_open=current_open,

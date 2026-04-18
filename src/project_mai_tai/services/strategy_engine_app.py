@@ -1202,8 +1202,6 @@ class StrategyBotRuntime:
         histogram_prev = float(indicators.get("histogram_prev", 0) or 0)
         stoch_k = float(indicators.get("stoch_k", 0) or 0)
         stoch_k_prev = float(indicators.get("stoch_k_prev", 0) or 0)
-        stoch_k_prev2 = float(indicators.get("stoch_k_prev2", 0) or 0)
-        stoch_d = float(indicators.get("stoch_d", 0) or 0)
         price = float(indicators.get("price", 0) or 0)
         price_prev = float(indicators.get("price_prev", 0) or 0)
         ema9 = float(indicators.get("ema9", 0) or 0)

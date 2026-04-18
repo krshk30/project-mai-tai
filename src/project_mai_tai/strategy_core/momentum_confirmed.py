@@ -222,7 +222,6 @@ class MomentumConfirmedScanner:
         min_change_pct: float = 0,
         min_score: float | None = None,
     ) -> list[dict[str, object]]:
-        candidates = [stock for stock in self._confirmed if float(stock.get("change_pct", 0)) >= min_change_pct]
         ranked = self.get_ranked_confirmed(min_change_pct=min_change_pct, min_score=min_score)
         return ranked[:n]
 
