@@ -2367,7 +2367,7 @@ class EntryEngine:
         *,
         bar_index: int | None = None,
     ) -> dict[str, float] | None:
-        required_fields = ("open", "price", "high", "low", "volume", "ema9", "ema20", "vwap", "extended_vwap")
+        required_fields = ("open", "price", "high", "low", "volume", "ema9", "ema20", "vwap")
         if any(field not in indicators for field in required_fields):
             return None
         snapshot = {

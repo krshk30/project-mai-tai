@@ -34,7 +34,7 @@ from project_mai_tai.events import (
     StrategyStateSnapshotEvent,
     StrategyStateSnapshotPayload,
 )
-from project_mai_tai.services.control_plane import build_app
+from project_mai_tai.services.control_plane import _render_confirmed_catalyst_cell, build_app
 from project_mai_tai.settings import Settings
 
 
@@ -99,6 +99,48 @@ class FakeLegacyClient:
             },
             "errors": [],
         }
+
+
+def test_render_confirmed_catalyst_cell_shows_specific_no_article_reason() -> None:
+    html = _render_confirmed_catalyst_cell(
+        {
+            "ticker": "BTBD",
+            "article_count": 0,
+            "news_fetch_status": "ok",
+            "catalyst_status": "no_articles",
+            "catalyst_reason": "No company-specific Alpaca news article has been returned yet for BTBD in the current catalyst window.",
+        }
+    )
+
+    assert "No company-specific Alpaca news article has been returned yet for BTBD" in html
+
+
+def test_render_confirmed_catalyst_cell_shows_ai_shadow_overlay() -> None:
+    html = _render_confirmed_catalyst_cell(
+        {
+            "ticker": "ROLR",
+            "catalyst": "NEWS",
+            "headline": "High Roller inks Crypto.com deal to launch U.S. event-based prediction markets",
+            "catalyst_reason": "ROLR has 1 recent Alpaca article, but none matched a qualifying Path A catalyst pattern.",
+            "article_count": 1,
+            "catalyst_status": "non_qualifying_articles",
+            "ai_shadow_status": "ok",
+            "ai_shadow_provider": "openai",
+            "ai_shadow_model": "gpt-4.1-mini",
+            "ai_shadow_direction": "bullish",
+            "ai_shadow_category": "DEAL/CONTRACT",
+            "ai_shadow_confidence": 0.91,
+            "ai_shadow_path_a_eligible": True,
+            "ai_shadow_reason": "AI sees a fresh company-specific partnership catalyst.",
+            "ai_shadow_positive_phrases": ["inks deal", "launch"],
+        }
+    )
+
+    assert "AI shadow: bullish" in html
+    assert "DEAL/CONTRACT" in html
+    assert "PATH A ready" in html
+    assert "AI sees a fresh company-specific partnership catalyst." in html
+    assert "inks deal" in html
 
 
 def build_test_session_factory() -> sessionmaker[Session]:
@@ -225,6 +267,62 @@ def seed_database(session_factory: sessionmaker[Session]) -> None:
         dashboard_snapshot = DashboardSnapshot(
             snapshot_type="scanner_confirmed_last_nonempty",
             payload={
+                "all_confirmed_candidates": [
+                    {
+                        "ticker": "UGRO",
+                        "rank_score": 72,
+                        "confirmed_at": "10:00:00 AM ET",
+                        "entry_price": 2.48,
+                        "price": 2.55,
+                        "change_pct": 12.5,
+                        "volume": 900_000,
+                        "rvol": 6.1,
+                        "shares_outstanding": 50_000,
+                        "bid": 2.54,
+                        "ask": 2.55,
+                        "bid_size": 7,
+                        "ask_size": 9,
+                        "spread": 0.01,
+                        "spread_pct": 0.42,
+                        "first_spike_time": "09:55:00 AM ET",
+                        "squeeze_count": 2,
+                        "confirmation_path": "PATH_B_2SQ",
+                        "catalyst": "DEAL/CONTRACT",
+                        "catalyst_type": "DEAL/CONTRACT",
+                        "headline": "Quantum Biopharma Wins Hospital Supply Agreement",
+                        "sentiment": "bullish",
+                        "direction": "bullish",
+                        "news_url": "https://example.com/ugro-news",
+                        "news_date": "03/27 05:05PM ET",
+                        "news_window_start": "03/27 04:00PM ET",
+                        "catalyst_reason": "Bullish DEAL/CONTRACT catalyst across 2 article(s), latest 55m old.",
+                        "catalyst_confidence": 0.91,
+                        "article_count": 3,
+                        "real_catalyst_article_count": 2,
+                        "freshness_minutes": 55,
+                        "is_generic_roundup": False,
+                        "has_real_catalyst": True,
+                        "path_a_eligible": True,
+                    },
+                    {
+                        "ticker": "SBET",
+                        "rank_score": 14,
+                        "confirmed_at": "10:01:00 AM ET",
+                        "entry_price": 3.10,
+                        "price": 3.02,
+                        "change_pct": 4.5,
+                        "volume": 250_000,
+                        "rvol": 1.2,
+                        "shares_outstanding": 1_500_000,
+                        "bid": 3.01,
+                        "ask": 3.03,
+                        "spread": 0.02,
+                        "spread_pct": 0.66,
+                        "first_spike_time": "09:56:00 AM ET",
+                        "squeeze_count": 2,
+                        "confirmation_path": "PATH_B_2SQ",
+                    },
+                ],
                 "top_confirmed": [
                     {
                         "ticker": "UGRO",
@@ -312,6 +410,66 @@ def make_streams(
     strategy_state = StrategyStateSnapshotEvent(
         source_service="strategy-engine",
         payload=StrategyStateSnapshotPayload(
+            all_confirmed=(
+                [
+                    {
+                        "ticker": "UGRO",
+                        "rank_score": 72,
+                        "confirmed_at": "10:00:12 AM ET",
+                        "entry_price": 2.48,
+                        "price": 2.55,
+                        "change_pct": 12.5,
+                        "volume": 900_000,
+                        "rvol": 6.1,
+                        "shares_outstanding": 50_000,
+                        "bid": 2.54,
+                        "ask": 2.55,
+                        "bid_size": 7,
+                        "ask_size": 9,
+                        "spread": 0.01,
+                        "spread_pct": 0.42,
+                        "first_spike_time": "09:55:00 AM ET",
+                        "squeeze_count": 2,
+                        "confirmation_path": "PATH_B_2SQ",
+                        "catalyst": "DEAL/CONTRACT",
+                        "catalyst_type": "DEAL/CONTRACT",
+                        "headline": "Quantum Biopharma Wins Hospital Supply Agreement",
+                        "sentiment": "bullish",
+                        "direction": "bullish",
+                        "news_url": "https://example.com/ugro-news",
+                        "news_date": "03/27 05:05PM ET",
+                        "news_window_start": "03/27 04:00PM ET",
+                        "catalyst_reason": "Bullish DEAL/CONTRACT catalyst across 2 article(s), latest 55m old.",
+                        "catalyst_confidence": 0.91,
+                        "article_count": 3,
+                        "real_catalyst_article_count": 2,
+                        "freshness_minutes": 55,
+                        "is_generic_roundup": False,
+                        "has_real_catalyst": True,
+                        "path_a_eligible": True,
+                    },
+                    {
+                        "ticker": "SBET",
+                        "rank_score": 14,
+                        "confirmed_at": "10:01:00 AM ET",
+                        "entry_price": 3.10,
+                        "price": 3.02,
+                        "change_pct": 4.5,
+                        "volume": 250_000,
+                        "rvol": 1.2,
+                        "shares_outstanding": 1_500_000,
+                        "bid": 3.01,
+                        "ask": 3.03,
+                        "spread": 0.02,
+                        "spread_pct": 0.66,
+                        "first_spike_time": "09:56:00 AM ET",
+                        "squeeze_count": 2,
+                        "confirmation_path": "PATH_B_2SQ",
+                    },
+                ]
+                if include_confirmed
+                else []
+            ),
             watchlist=["UGRO"],
             top_confirmed=(
                 [
@@ -484,6 +642,100 @@ def make_streams(
     }
 
 
+def test_control_plane_surfaces_probe_and_reclaim_bot_pages_when_enabled() -> None:
+    settings = Settings(
+        redis_stream_prefix="test",
+        oms_adapter="alpaca_paper",
+        strategy_macd_30s_probe_enabled=True,
+        strategy_macd_30s_reclaim_enabled=True,
+    )
+    session_factory = build_test_session_factory()
+    seed_database(session_factory)
+    streams = make_streams(settings.redis_stream_prefix)
+    strategy_state_stream = streams[f"{settings.redis_stream_prefix}:strategy-state"]
+    strategy_state_event = StrategyStateSnapshotEvent.model_validate_json(
+        strategy_state_stream[0][1]["data"]
+    )
+    strategy_state_event.payload.bots.append(
+        StrategyBotStatePayload(
+            strategy_code="macd_30s_probe",
+            account_name="paper:macd_30s_probe",
+            watchlist=["UGRO"],
+            positions=[],
+            pending_open_symbols=["UGRO"],
+            pending_close_symbols=[],
+            pending_scale_levels=[],
+            daily_pnl=12.5,
+        )
+    )
+    strategy_state_event.payload.bots.append(
+        StrategyBotStatePayload(
+            strategy_code="macd_30s_reclaim",
+            account_name="paper:macd_30s_reclaim",
+            watchlist=["UGRO"],
+            positions=[],
+            pending_open_symbols=[],
+            pending_close_symbols=[],
+            pending_scale_levels=[],
+            daily_pnl=-4.0,
+        )
+    )
+    strategy_state_stream[0][1]["data"] = strategy_state_event.model_dump_json()
+    redis = FakeRedis(streams)
+
+    app = build_app(
+        settings=settings,
+        session_factory=session_factory,
+        redis_client=redis,
+        legacy_client=FakeLegacyClient(),
+    )
+
+    with TestClient(app) as client:
+        bots = client.get("/api/bots")
+        assert bots.status_code == 200
+        strategy_codes = [item["strategy_code"] for item in bots.json()["bots"]]
+        assert "macd_30s_probe" in strategy_codes
+        assert "macd_30s_reclaim" in strategy_codes
+
+        probe_page = client.get("/bot/30s-probe")
+        assert probe_page.status_code == 200
+        assert "30-Second Probe Bot" in probe_page.text
+        assert "Interval:</strong> 30s" in probe_page.text
+
+        reclaim_page = client.get("/bot/30s-reclaim")
+        assert reclaim_page.status_code == 200
+        assert "30-Second Reclaim Bot" in reclaim_page.text
+        assert "Interval:</strong> 30s" in reclaim_page.text
+
+
+def test_control_plane_ignores_stale_runtime_pending_open_without_open_broker_order() -> None:
+    settings = Settings(redis_stream_prefix="test", oms_adapter="alpaca_paper")
+    session_factory = build_test_session_factory()
+    seed_database(session_factory)
+    streams = make_streams(settings.redis_stream_prefix)
+    strategy_state_stream = streams[f"{settings.redis_stream_prefix}:strategy-state"]
+    strategy_state_event = StrategyStateSnapshotEvent.model_validate_json(
+        strategy_state_stream[0][1]["data"]
+    )
+    strategy_state_event.payload.bots[0].pending_open_symbols = ["UGRO"]
+    strategy_state_stream[0][1]["data"] = strategy_state_event.model_dump_json()
+    redis = FakeRedis(streams)
+
+    app = build_app(
+        settings=settings,
+        session_factory=session_factory,
+        redis_client=redis,
+        legacy_client=FakeLegacyClient(),
+    )
+
+    with TestClient(app) as client:
+        bots = client.get("/api/bots")
+        assert bots.status_code == 200
+        bot_30s = next(item for item in bots.json()["bots"] if item["strategy_code"] == "macd_30s")
+        assert bot_30s["pending_open_symbols"] == []
+        assert bot_30s["pending_count"] == 0
+
+
 def test_control_plane_overview_and_dashboard_render() -> None:
     settings = Settings(redis_stream_prefix="test", oms_adapter="alpaca_paper")
     session_factory = build_test_session_factory()
@@ -505,7 +757,10 @@ def test_control_plane_overview_and_dashboard_render() -> None:
         assert body["virtual_positions"][0]["symbol"] == "UGRO"
         assert body["services"][0]["service_name"] == "strategy-engine"
         assert body["market_data"]["active_subscription_symbols"] == 1
+        assert body["recent_orders"][0]["reason"] == "ENTRY_P1_MACD_CROSS"
         assert body["scanner"]["top_confirmed"][0]["ticker"] == "UGRO"
+        assert body["scanner"]["all_confirmed_count"] == 2
+        assert body["scanner"]["all_confirmed"][1]["ticker"] == "SBET"
         assert body["scanner"]["legacy_confirmed_symbols"] == ["UGRO", "SBET"]
         assert body["generated_at"].endswith("ET")
         assert body["services"][0]["observed_at"].endswith("ET")
@@ -517,13 +772,14 @@ def test_control_plane_overview_and_dashboard_render() -> None:
         assert body["reconciliation"]["latest_run"]["summary"]["cutover_confidence"] == 90
         assert body["reconciliation"]["findings"][0]["finding_type"] == "stuck_order"
         assert body["legacy_shadow"]["divergence"]["status"] == "drifted"
-        assert body["legacy_shadow"]["divergence"]["confirmed_only_in_legacy"] == ["SBET"]
+        assert body["legacy_shadow"]["divergence"]["confirmed_only_in_legacy"] == []
         assert body["strategy_runtime"]["watchlist"] == ["UGRO"]
 
         scanner = client.get("/api/scanner")
         assert scanner.status_code == 200
         scanner_body = scanner.json()
         assert scanner_body["scanner"]["watchlist"] == ["UGRO"]
+        assert scanner_body["scanner"]["all_confirmed_count"] == 2
         assert scanner_body["scanner"]["top_confirmed"][0]["rank_score"] == 72.0
         assert scanner_body["scanner"]["top_confirmed"][0]["article_count"] == 3
         assert scanner_body["scanner"]["top_confirmed"][0]["path_a_eligible"] is True
@@ -533,21 +789,25 @@ def test_control_plane_overview_and_dashboard_render() -> None:
         bots = client.get("/api/bots")
         assert bots.status_code == 200
         bots_body = bots.json()
-        assert bots_body["bots"][0]["display_name"] == "MACD Bot"
-        assert bots_body["bots"][0]["recent_intents"][0]["symbol"] == "UGRO"
-        assert bots_body["bots"][0]["legacy_status"] == "running (dry run)"
-        assert bots_body["bots"][0]["daily_pnl"] == 125.5
-        assert bots_body["bots"][0]["account_summary"]["account_position_count"] == 2
-        assert bots_body["bots"][0]["account_summary"]["non_strategy_symbol_count"] == 1
-        assert bots_body["bots"][0]["account_summary"]["non_strategy_symbols"] == ["SBET"]
-        assert bots_body["bots"][1]["tos_parity"]["comparison_target"] == "thinkorswim_1m"
-        assert bots_body["bots"][1]["tos_parity"]["snapshots"][0]["symbol"] == "UGRO"
+        bot_30s = next(item for item in bots_body["bots"] if item["strategy_code"] == "macd_30s")
+        bot_1m = next(item for item in bots_body["bots"] if item["strategy_code"] == "macd_1m")
+        assert bot_30s["display_name"] == "MACD Bot"
+        assert bot_30s["recent_intents"][0]["symbol"] == "UGRO"
+        assert bot_30s["legacy_status"] == "running (dry run)"
+        assert bot_30s["daily_pnl"] == 125.5
+        assert bot_30s["account_summary"]["account_position_count"] == 2
+        assert bot_30s["account_summary"]["non_strategy_symbol_count"] == 1
+        assert bot_30s["account_summary"]["non_strategy_symbols"] == ["SBET"]
+        assert bot_1m["tos_parity"]["comparison_target"] == "thinkorswim_1m"
+        assert bot_1m["tos_parity"]["snapshots"][0]["symbol"] == "UGRO"
 
         legacy_scanner = client.get("/scanner/dashboard")
         assert legacy_scanner.status_code == 200
         assert "Momentum Scanner Dashboard" in legacy_scanner.text
         assert "Scanner Deck" in legacy_scanner.text
         assert "Dedicated scanner workspace for the new platform" in legacy_scanner.text
+        assert "Mai Tai 30s Reclaim" in legacy_scanner.text
+        assert "SBET" in legacy_scanner.text
         assert "5 Pillars Scanner" in legacy_scanner.text
         assert "Top Gainers" in legacy_scanner.text
         assert "Momentum Alerts" in legacy_scanner.text
@@ -563,7 +823,7 @@ def test_control_plane_overview_and_dashboard_render() -> None:
 
         scanner_confirmed = client.get("/scanner/confirmed")
         assert scanner_confirmed.status_code == 200
-        assert scanner_confirmed.json()["count"] == 1
+        assert scanner_confirmed.json()["count"] == 2
 
         scanner_pillars = client.get("/scanner/pillars")
         assert scanner_pillars.status_code == 200
@@ -596,6 +856,82 @@ def test_control_plane_overview_and_dashboard_render() -> None:
         assert "Compare on closed bars only" in bot_1m_page.text
         assert "tight" in bot_1m_page.text
         assert "watch" in bot_1m_page.text
+
+
+def test_bot_page_renders_simple_trade_summary_table() -> None:
+    settings = Settings(redis_stream_prefix="test", oms_adapter="alpaca_paper")
+    session_factory = build_test_session_factory()
+    seed_database(session_factory)
+    redis = FakeRedis(make_streams(settings.redis_stream_prefix))
+
+    app = build_app(
+        settings=settings,
+        session_factory=session_factory,
+        redis_client=redis,
+        legacy_client=FakeLegacyClient(),
+    )
+
+    with TestClient(app) as client:
+        bot_30s_page = client.get("/bot/30s")
+        assert bot_30s_page.status_code == 200
+        assert "Trade Summary" in bot_30s_page.text
+        assert "One row per reclaim trade attempt, paired from entry through exit when available." in bot_30s_page.text
+        assert "Open Position" in bot_30s_page.text
+        assert "ENTRY_P1_MACD_CROSS" in bot_30s_page.text
+        assert "Mai Tai Scanner" in bot_30s_page.text
+        assert "Mai Tai Control Plane" in bot_30s_page.text
+
+
+def test_control_plane_treats_fresh_market_data_as_live_when_heartbeat_lags() -> None:
+    settings = Settings(redis_stream_prefix="test", oms_adapter="alpaca_paper")
+    session_factory = build_test_session_factory()
+    seed_database(session_factory)
+    with session_factory() as session:
+        latest_run = session.scalar(select(ReconciliationRun))
+        assert latest_run is not None
+        latest_run.summary = {**latest_run.summary, "total_findings": 0}
+        session.commit()
+    streams = make_streams(settings.redis_stream_prefix)
+    market_data_heartbeat = HeartbeatEvent(
+        source_service="market-data-gateway",
+        payload=HeartbeatPayload(
+            service_name="market-data-gateway",
+            instance_name="market-data-1",
+            status="stopping",
+            details={"active_symbols": "3"},
+        ),
+    )
+    streams[f"{settings.redis_stream_prefix}:heartbeats"].insert(
+        0,
+        ("2-0", {"data": market_data_heartbeat.model_dump_json()}),
+    )
+    redis = FakeRedis(streams)
+
+    app = build_app(
+        settings=settings,
+        session_factory=session_factory,
+        redis_client=redis,
+        legacy_client=FakeLegacyClient(),
+    )
+
+    with TestClient(app) as client:
+        overview = client.get("/api/overview")
+        assert overview.status_code == 200
+        body = overview.json()
+        market_data_service = next(
+            item for item in body["services"] if item["service_name"] == "market-data-gateway"
+        )
+        assert body["status"] == "healthy"
+        assert market_data_service["status"] == "stopping"
+        assert market_data_service["effective_status"] == "healthy"
+        assert "Fresh snapshot/subscription activity" in market_data_service["status_note"]
+        assert body["scanner"]["feed_status"] == "live"
+        assert body["scanner"]["heartbeat_active_symbols"] == 3
+
+        dashboard = client.get("/scanner/dashboard")
+        assert dashboard.status_code == 200
+        assert "Feed Note:" in dashboard.text
+        assert "Heartbeat raw status stopping." in dashboard.text
 
         bot_runner_page = client.get("/bot/runner")
         assert bot_runner_page.status_code == 200
@@ -688,6 +1024,218 @@ def test_control_plane_reports_schwab_live_wiring() -> None:
         assert body["bots"][0]["provider"] == "schwab"
         assert body["bots"][0]["execution_mode"] == "live"
         assert body["bots"][0]["wiring_status"] == "live/schwab"
+        assert body["bots"][0]["account_display_name"] == "live:macd_30s"
+
+        bot_page = client.get("/bot/30s")
+        assert bot_page.status_code == 200
+        assert "Account:</strong> live:macd_30s" in bot_page.text
+
+
+def test_control_plane_hides_ignored_mismatch_symbols_from_ui() -> None:
+    settings = Settings(
+        redis_stream_prefix="test",
+        oms_adapter="alpaca_paper",
+        reconciliation_ignored_position_mismatches="paper:macd_30s:CYN,CANF",
+    )
+    session_factory = build_test_session_factory()
+    seed_database(session_factory)
+
+    with session_factory() as session:
+        strategy = session.scalar(select(Strategy).where(Strategy.code == "macd_30s"))
+        account = session.scalar(select(BrokerAccount).where(BrokerAccount.name == "paper:macd_30s"))
+        assert strategy is not None
+        assert account is not None
+
+        cyn_intent = TradeIntent(
+            strategy_id=strategy.id,
+            broker_account_id=account.id,
+            symbol="CYN",
+            side="buy",
+            intent_type="open",
+            quantity=Decimal("10"),
+            reason="ENTRY_TEST",
+            status="filled",
+            payload={},
+        )
+        canf_intent = TradeIntent(
+            strategy_id=strategy.id,
+            broker_account_id=account.id,
+            symbol="CANF",
+            side="buy",
+            intent_type="open",
+            quantity=Decimal("12"),
+            reason="ENTRY_TEST",
+            status="filled",
+            payload={},
+        )
+        session.add_all([cyn_intent, canf_intent])
+        session.flush()
+
+        cyn_order = BrokerOrder(
+            intent_id=cyn_intent.id,
+            strategy_id=strategy.id,
+            broker_account_id=account.id,
+            client_order_id="macd_30s-CYN-open-1",
+            broker_order_id="cyn-order-1",
+            symbol="CYN",
+            side="buy",
+            order_type="market",
+            time_in_force="day",
+            quantity=Decimal("10"),
+            status="filled",
+            payload={},
+            submitted_at=datetime.now(UTC),
+        )
+        canf_order = BrokerOrder(
+            intent_id=canf_intent.id,
+            strategy_id=strategy.id,
+            broker_account_id=account.id,
+            client_order_id="macd_30s-CANF-open-1",
+            broker_order_id="canf-order-1",
+            symbol="CANF",
+            side="buy",
+            order_type="market",
+            time_in_force="day",
+            quantity=Decimal("12"),
+            status="filled",
+            payload={},
+            submitted_at=datetime.now(UTC),
+        )
+        session.add_all([cyn_order, canf_order])
+        session.flush()
+
+        session.add_all(
+            [
+                Fill(
+                    order_id=cyn_order.id,
+                    strategy_id=strategy.id,
+                    broker_account_id=account.id,
+                    broker_fill_id="cyn-fill-1",
+                    symbol="CYN",
+                    side="buy",
+                    quantity=Decimal("10"),
+                    price=Decimal("1.10"),
+                    filled_at=datetime.now(UTC),
+                    payload={},
+                ),
+                Fill(
+                    order_id=canf_order.id,
+                    strategy_id=strategy.id,
+                    broker_account_id=account.id,
+                    broker_fill_id="canf-fill-1",
+                    symbol="CANF",
+                    side="buy",
+                    quantity=Decimal("12"),
+                    price=Decimal("1.20"),
+                    filled_at=datetime.now(UTC),
+                    payload={},
+                ),
+                VirtualPosition(
+                    strategy_id=strategy.id,
+                    broker_account_id=account.id,
+                    symbol="CYN",
+                    quantity=Decimal("10"),
+                    average_price=Decimal("1.10"),
+                    realized_pnl=Decimal("0"),
+                    opened_at=datetime.now(UTC),
+                ),
+                VirtualPosition(
+                    strategy_id=strategy.id,
+                    broker_account_id=account.id,
+                    symbol="CANF",
+                    quantity=Decimal("12"),
+                    average_price=Decimal("1.20"),
+                    realized_pnl=Decimal("0"),
+                    opened_at=datetime.now(UTC),
+                ),
+                AccountPosition(
+                    broker_account_id=account.id,
+                    symbol="CYN",
+                    quantity=Decimal("10"),
+                    average_price=Decimal("1.10"),
+                    market_value=Decimal("11.0"),
+                    source_updated_at=datetime.now(UTC),
+                ),
+                AccountPosition(
+                    broker_account_id=account.id,
+                    symbol="CANF",
+                    quantity=Decimal("12"),
+                    average_price=Decimal("1.20"),
+                    market_value=Decimal("14.4"),
+                    source_updated_at=datetime.now(UTC),
+                ),
+                SystemIncident(
+                    service_name="reconciler",
+                    severity="critical",
+                    title="Position quantity mismatch for CYN",
+                    status="closed",
+                    payload={"symbol": "CYN", "broker_account_name": "paper:macd_30s"},
+                    opened_at=datetime.now(UTC),
+                ),
+                SystemIncident(
+                    service_name="reconciler",
+                    severity="critical",
+                    title="Position quantity mismatch for CANF",
+                    status="closed",
+                    payload={"symbol": "CANF", "broker_account_name": "paper:macd_30s"},
+                    opened_at=datetime.now(UTC),
+                ),
+            ]
+        )
+        session.commit()
+
+    streams = make_streams(settings.redis_stream_prefix)
+    strategy_state_stream = streams[f"{settings.redis_stream_prefix}:strategy-state"]
+    strategy_state_event = StrategyStateSnapshotEvent.model_validate_json(
+        strategy_state_stream[0][1]["data"]
+    )
+    strategy_state_event.payload.bots[0].watchlist = ["UGRO", "CYN", "CANF"]
+    strategy_state_event.payload.bots[0].positions = [
+        {"ticker": "UGRO", "quantity": 10},
+        {"ticker": "CYN", "quantity": 10},
+        {"ticker": "CANF", "quantity": 12},
+    ]
+    strategy_state_event.payload.bots[0].pending_open_symbols = ["CYN"]
+    strategy_state_event.payload.bots[0].pending_close_symbols = ["CANF"]
+    strategy_state_stream[0][1]["data"] = strategy_state_event.model_dump_json()
+    redis = FakeRedis(streams)
+
+    app = build_app(
+        settings=settings,
+        session_factory=session_factory,
+        redis_client=redis,
+        legacy_client=FakeLegacyClient(),
+    )
+
+    with TestClient(app) as client:
+        overview = client.get("/api/overview")
+        assert overview.status_code == 200
+        body = overview.json()
+
+        hidden_symbols = {"CYN", "CANF"}
+        assert body["counts"]["open_virtual_positions"] == 1
+        assert body["counts"]["open_account_positions"] == 2
+        assert all(item["symbol"] not in hidden_symbols for item in body["virtual_positions"])
+        assert all(item["symbol"] not in hidden_symbols for item in body["account_positions"])
+        assert all(item["symbol"] not in hidden_symbols for item in body["recent_orders"])
+        assert all(item["symbol"] not in hidden_symbols for item in body["recent_fills"])
+        assert all(item["symbol"] not in hidden_symbols for item in body["recent_intents"])
+        assert all("CYN" not in item["title"] and "CANF" not in item["title"] for item in body["incidents"])
+
+        bot_30s = next(item for item in body["bots"] if item["strategy_code"] == "macd_30s")
+        assert bot_30s["watchlist"] == ["UGRO"]
+        assert [item["ticker"] for item in bot_30s["positions"]] == ["UGRO"]
+        assert bot_30s["pending_open_symbols"] == []
+        assert bot_30s["pending_close_symbols"] == []
+        assert all(item["symbol"] not in hidden_symbols for item in bot_30s["recent_orders"])
+        assert all(item["symbol"] not in hidden_symbols for item in bot_30s["recent_fills"])
+        assert all(item["symbol"] not in hidden_symbols for item in bot_30s["recent_intents"])
+
+        bot_page = client.get("/bot/30s")
+        assert bot_page.status_code == 200
+        assert "UGRO" in bot_page.text
+        assert "CYN" not in bot_page.text
+        assert "CANF" not in bot_page.text
 
 
 def test_control_plane_filters_recent_orders_and_fills_to_current_eastern_day(monkeypatch) -> None:
@@ -791,6 +1339,47 @@ def test_control_plane_restores_last_nonempty_confirmed_snapshot() -> None:
     seed_database(session_factory)
     redis = FakeRedis(make_streams(settings.redis_stream_prefix, include_confirmed=False, live_price=2.61))
 
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr(
+            "project_mai_tai.services.control_plane.current_scanner_session_start_utc",
+            lambda now=None: datetime(2026, 3, 28, 13, 0, tzinfo=UTC),
+        )
+        app = build_app(
+            settings=settings,
+            session_factory=session_factory,
+            redis_client=redis,
+            legacy_client=FakeLegacyClient(),
+        )
+
+        with TestClient(app) as client:
+            scanner = client.get("/api/scanner")
+            assert scanner.status_code == 200
+            scanner_body = scanner.json()["scanner"]
+            assert scanner_body["top_confirmed_source"] == "restored"
+            assert scanner_body["top_confirmed_count"] == 1
+            assert scanner_body["top_confirmed"][0]["ticker"] == "UGRO"
+            assert scanner_body["watchlist"] == ["UGRO"]
+            assert scanner_body["top_confirmed_snapshot_at"] == "2026-03-28T14:00:00+00:00"
+
+            dashboard = client.get("/scanner/dashboard")
+            assert dashboard.status_code == 200
+            assert "UGRO" in dashboard.text
+            assert "Quantum Biopharma Wins Hospital Supply Agreement" in dashboard.text
+
+
+def test_control_plane_skips_restored_confirmed_snapshot_from_prior_scanner_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = Settings(redis_stream_prefix="test", oms_adapter="alpaca_paper")
+    session_factory = build_test_session_factory()
+    seed_database(session_factory)
+    redis = FakeRedis(make_streams(settings.redis_stream_prefix, include_confirmed=False, live_price=2.61))
+
+    monkeypatch.setattr(
+        "project_mai_tai.services.control_plane.current_scanner_session_start_utc",
+        lambda now=None: datetime(2026, 3, 28, 15, 0, tzinfo=UTC),
+    )
+
     app = build_app(
         settings=settings,
         session_factory=session_factory,
@@ -802,16 +1391,31 @@ def test_control_plane_restores_last_nonempty_confirmed_snapshot() -> None:
         scanner = client.get("/api/scanner")
         assert scanner.status_code == 200
         scanner_body = scanner.json()["scanner"]
-        assert scanner_body["top_confirmed_source"] == "restored"
-        assert scanner_body["top_confirmed_count"] == 1
-        assert scanner_body["top_confirmed"][0]["ticker"] == "UGRO"
-        assert scanner_body["watchlist"] == ["UGRO"]
-        assert scanner_body["top_confirmed_snapshot_at"] == "2026-03-28T14:00:00+00:00"
+        assert scanner_body["top_confirmed_source"] == "idle"
+        assert scanner_body["top_confirmed_count"] == 0
+        assert scanner_body["top_confirmed"] == []
 
-        dashboard = client.get("/scanner/dashboard")
-        assert dashboard.status_code == 200
-        assert "UGRO" in dashboard.text
-        assert "Quantum Biopharma Wins Hospital Supply Agreement" in dashboard.text
+
+def test_legacy_divergence_uses_new_confirmed_not_watchlist() -> None:
+    settings = Settings(redis_stream_prefix="test", oms_adapter="alpaca_paper")
+    session_factory = build_test_session_factory()
+    seed_database(session_factory)
+    redis = FakeRedis(make_streams(settings.redis_stream_prefix, include_confirmed=False))
+
+    app = build_app(
+        settings=settings,
+        session_factory=session_factory,
+        redis_client=redis,
+        legacy_client=FakeLegacyClient(),
+    )
+
+    with TestClient(app) as client:
+        overview = client.get("/api/overview")
+        assert overview.status_code == 200
+        divergence = overview.json()["legacy_shadow"]["divergence"]
+        assert divergence["status"] == "drifted"
+        assert divergence["confirmed_only_in_legacy"] == ["SBET", "UGRO"]
+        assert divergence["confirmed_only_in_new"] == []
 
 
 def test_control_plane_recovers_after_transient_redis_failure(monkeypatch: pytest.MonkeyPatch) -> None:
