@@ -8,12 +8,14 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from project_mai_tai.broker_adapters.routing import RoutingBrokerAdapter
 from project_mai_tai.broker_adapters.protocols import BrokerPositionSnapshot, ExecutionReport
 from project_mai_tai.db.base import Base
 from project_mai_tai.db.models import AccountPosition, BrokerAccount, BrokerOrder, Fill, Strategy, TradeIntent, VirtualPosition
 from project_mai_tai.events import TradeIntentEvent, TradeIntentPayload
 from project_mai_tai.oms.service import OmsRiskService
 from project_mai_tai.oms.store import OmsStore
+from project_mai_tai.runtime_registry import configured_broker_account_registrations, strategy_registration_map
 from project_mai_tai.settings import Settings
 
 
@@ -205,6 +207,75 @@ class FakePendingExitBrokerAdapter:
         ]
 
 
+class FakeStopRejectedFallbackBrokerAdapter:
+    def __init__(self) -> None:
+        self.submitted: list[tuple[str, str, str, Decimal]] = []
+        self.quantity = Decimal("10")
+
+    async def submit_order(self, request):
+        self.submitted.append((request.intent_type, request.side, request.symbol, request.quantity))
+        if request.intent_type == "open":
+            return [
+                ExecutionReport(
+                    event_type="rejected",
+                    client_order_id=request.client_order_id,
+                    broker_order_id="ord-open",
+                    symbol=request.symbol,
+                    side=request.side,
+                    intent_type=request.intent_type,
+                    quantity=request.quantity,
+                    reason="child stop rejected at/below stop",
+                    metadata=dict(request.metadata),
+                )
+            ]
+        self.quantity = Decimal("0")
+        return [
+            ExecutionReport(
+                event_type="accepted",
+                client_order_id=request.client_order_id,
+                broker_order_id="ord-fallback",
+                symbol=request.symbol,
+                side=request.side,
+                intent_type=request.intent_type,
+                quantity=request.quantity,
+                reason=request.reason,
+                metadata=dict(request.metadata),
+            ),
+            ExecutionReport(
+                event_type="filled",
+                client_order_id=request.client_order_id,
+                broker_order_id="ord-fallback",
+                broker_fill_id="fill-fallback",
+                symbol=request.symbol,
+                side=request.side,
+                intent_type=request.intent_type,
+                quantity=request.quantity,
+                filled_quantity=request.quantity,
+                fill_price=Decimal("2.40"),
+                reason=request.reason,
+                metadata=dict(request.metadata),
+            ),
+        ]
+
+    async def fetch_order_update(self, request):
+        del request
+        return None
+
+    async def list_account_positions(self, broker_account_name: str):
+        if self.quantity <= 0:
+            return []
+        return [
+            BrokerPositionSnapshot(
+                broker_account_name=broker_account_name,
+                symbol="UGRO",
+                quantity=self.quantity,
+                average_price=Decimal("2.55"),
+                market_value=None,
+                as_of=None,
+            )
+        ]
+
+
 class FakeAcceptedOnlyBrokerAdapter:
     async def submit_order(self, request):
         return [
@@ -273,6 +344,52 @@ def build_test_session_factory() -> sessionmaker[Session]:
     )
     Base.metadata.create_all(engine)
     return sessionmaker(bind=engine, expire_on_commit=False)
+
+
+def test_runtime_registry_can_route_macd_30s_to_schwab_only() -> None:
+    settings = Settings(
+        oms_adapter="simulated",
+        strategy_macd_30s_broker_provider="schwab",
+    )
+
+    registrations = strategy_registration_map(settings)
+    broker_accounts = {item.name: item for item in configured_broker_account_registrations(settings)}
+
+    assert registrations["macd_30s"].execution_mode == "live"
+    assert registrations["macd_30s"].metadata["provider"] == "schwab"
+    assert registrations["macd_1m"].execution_mode == "shadow"
+    assert broker_accounts[settings.strategy_macd_30s_account_name].provider == "schwab"
+    assert broker_accounts[settings.strategy_macd_1m_account_name].provider == "alpaca"
+
+
+def test_oms_service_builds_routing_adapter_for_mixed_brokers() -> None:
+    service = OmsRiskService(
+        settings=Settings(
+            redis_stream_prefix="test",
+            oms_adapter="simulated",
+            strategy_macd_30s_broker_provider="schwab",
+        ),
+        redis_client=FakeRedis(),
+        session_factory=build_test_session_factory(),
+    )
+
+    assert isinstance(service.broker_adapter, RoutingBrokerAdapter)
+
+
+def test_runtime_registry_can_route_tos_to_schwab_only() -> None:
+    settings = Settings(
+        oms_adapter="simulated",
+        strategy_tos_broker_provider="schwab",
+    )
+
+    registrations = strategy_registration_map(settings)
+    broker_accounts = {item.name: item for item in configured_broker_account_registrations(settings)}
+
+    assert registrations["tos"].execution_mode == "live"
+    assert registrations["tos"].metadata["provider"] == "schwab"
+    assert registrations["macd_1m"].execution_mode == "shadow"
+    assert broker_accounts[settings.strategy_tos_account_name].provider == "schwab"
+    assert broker_accounts[settings.strategy_macd_1m_account_name].provider == "alpaca"
 
 
 @pytest.mark.asyncio
@@ -789,7 +906,7 @@ async def test_oms_service_sync_skips_duplicate_partial_without_new_fill_progres
 
 
 @pytest.mark.asyncio
-async def test_oms_service_rejects_exit_when_broker_has_no_position() -> None:
+async def test_oms_service_refreshes_broker_positions_before_rejecting_exit() -> None:
     redis = FakeRedis()
     session_factory = build_test_session_factory()
     service = OmsRiskService(
@@ -819,6 +936,64 @@ async def test_oms_service_rejects_exit_when_broker_has_no_position() -> None:
         assert account_position is not None
         account_position.quantity = Decimal("0")
         session.commit()
+
+    events = await service.process_trade_intent(
+        TradeIntentEvent(
+            source_service="strategy-engine",
+            payload=TradeIntentPayload(
+                strategy_code="macd_30s",
+                broker_account_name="paper:macd_30s",
+                symbol="UGRO",
+                side="sell",
+                quantity=Decimal("10"),
+                intent_type="close",
+                reason="HARD_STOP",
+                metadata={"reference_price": "2.40"},
+            ),
+        )
+    )
+
+    assert [event.payload.status for event in events] == ["accepted", "filled"]
+
+    with session_factory() as session:
+        account_position = session.scalar(select(AccountPosition).where(AccountPosition.symbol == "UGRO"))
+        assert account_position is not None
+        assert account_position.quantity == Decimal("0")
+
+
+@pytest.mark.asyncio
+async def test_oms_service_still_rejects_exit_when_broker_refresh_confirms_no_position() -> None:
+    redis = FakeRedis()
+    session_factory = build_test_session_factory()
+    service = OmsRiskService(
+        settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
+        redis_client=redis,
+        session_factory=session_factory,
+    )
+
+    await service.process_trade_intent(
+        TradeIntentEvent(
+            source_service="strategy-engine",
+            payload=TradeIntentPayload(
+                strategy_code="macd_30s",
+                broker_account_name="paper:macd_30s",
+                symbol="UGRO",
+                side="buy",
+                quantity=Decimal("10"),
+                intent_type="open",
+                reason="ENTRY_P1_MACD_CROSS",
+                metadata={"reference_price": "2.55"},
+            ),
+        )
+    )
+
+    with session_factory() as session:
+        account_position = session.scalar(select(AccountPosition))
+        assert account_position is not None
+        account_position.quantity = Decimal("0")
+        session.commit()
+
+    service.broker_adapter.seed_account_positions("paper:macd_30s", {})  # type: ignore[attr-defined]
 
     events = await service.process_trade_intent(
         TradeIntentEvent(
@@ -904,6 +1079,48 @@ async def test_oms_service_rejects_duplicate_exit_in_flight() -> None:
     assert len(duplicate) == 1
     assert duplicate[0].payload.status == "rejected"
     assert duplicate[0].payload.reason == "duplicate_exit_in_flight"
+
+
+@pytest.mark.asyncio
+async def test_oms_service_submits_market_fallback_after_stop_rejection() -> None:
+    redis = FakeRedis()
+    session_factory = build_test_session_factory()
+    broker_adapter = FakeStopRejectedFallbackBrokerAdapter()
+    service = OmsRiskService(
+        settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
+        redis_client=redis,
+        session_factory=session_factory,
+        broker_adapter=broker_adapter,
+    )
+
+    events = await service.process_trade_intent(
+        TradeIntentEvent(
+            source_service="strategy-engine",
+            payload=TradeIntentPayload(
+                strategy_code="macd_30s",
+                broker_account_name="paper:macd_30s",
+                symbol="UGRO",
+                side="buy",
+                quantity=Decimal("10"),
+                intent_type="open",
+                reason="ENTRY_P1_MACD_CROSS",
+                metadata={"reference_price": "2.55"},
+            ),
+        )
+    )
+
+    assert [event.payload.status for event in events] == ["rejected", "accepted", "filled"]
+    assert events[1].payload.intent_type == "close"
+    assert events[2].payload.reason == "STOP_REJECTED_FALLBACK"
+    assert broker_adapter.submitted == [
+        ("open", "buy", "UGRO", Decimal("10")),
+        ("close", "sell", "UGRO", Decimal("10")),
+    ]
+
+    with session_factory() as session:
+        account_position = session.scalar(select(AccountPosition).where(AccountPosition.symbol == "UGRO"))
+        assert account_position is not None
+        assert account_position.quantity == Decimal("0")
 
 
 @pytest.mark.asyncio
