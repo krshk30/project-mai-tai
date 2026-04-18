@@ -24,7 +24,7 @@ def build_test_session_factory() -> sessionmaker[Session]:
 def test_runtime_seed_creates_expected_strategies_and_accounts() -> None:
     session_factory = build_test_session_factory()
     summary = seed_runtime_metadata(
-        Settings(oms_adapter="alpaca_paper"),
+        Settings(oms_adapter="alpaca_paper", strategy_macd_30s_reclaim_enabled=False),
         session_factory=session_factory,
     )
 
@@ -51,8 +51,14 @@ def test_runtime_seed_creates_expected_strategies_and_accounts() -> None:
 
 def test_runtime_seed_updates_existing_records_when_adapter_changes() -> None:
     session_factory = build_test_session_factory()
-    seed_runtime_metadata(Settings(oms_adapter="simulated"), session_factory=session_factory)
-    seed_runtime_metadata(Settings(oms_adapter="alpaca_paper"), session_factory=session_factory)
+    seed_runtime_metadata(
+        Settings(oms_adapter="simulated", strategy_macd_30s_reclaim_enabled=False),
+        session_factory=session_factory,
+    )
+    seed_runtime_metadata(
+        Settings(oms_adapter="alpaca_paper", strategy_macd_30s_reclaim_enabled=False),
+        session_factory=session_factory,
+    )
 
     with session_factory() as session:
         strategies = session.scalars(select(Strategy)).all()
@@ -65,6 +71,7 @@ def test_runtime_seed_supports_single_shared_schwab_live_account() -> None:
     summary = seed_runtime_metadata(
         Settings(
             oms_adapter="schwab",
+            strategy_macd_30s_reclaim_enabled=False,
             strategy_macd_30s_account_name="live:schwab_shared",
             strategy_macd_1m_account_name="live:schwab_shared",
             strategy_tos_account_name="live:schwab_shared",
@@ -83,3 +90,32 @@ def test_runtime_seed_supports_single_shared_schwab_live_account() -> None:
         assert all(strategy.execution_mode == "live" for strategy in strategies)
         assert [account.name for account in broker_accounts] == ["live:schwab_shared"]
         assert broker_accounts[0].provider == "schwab"
+
+
+def test_runtime_seed_can_mix_schwab_macd_30s_with_default_accounts() -> None:
+    session_factory = build_test_session_factory()
+    summary = seed_runtime_metadata(
+        Settings(
+            oms_adapter="simulated",
+            strategy_macd_30s_reclaim_enabled=False,
+            strategy_macd_30s_broker_provider="schwab",
+        ),
+        session_factory=session_factory,
+    )
+
+    assert summary.strategies == 4
+    assert summary.broker_accounts == 3
+
+    with session_factory() as session:
+        strategies = {strategy.code: strategy for strategy in session.scalars(select(Strategy)).all()}
+        broker_accounts = {
+            account.name: account for account in session.scalars(select(BrokerAccount)).all()
+        }
+
+    assert strategies["macd_30s"].execution_mode == "live"
+    assert strategies["macd_30s"].metadata_json["provider"] == "schwab"
+    assert strategies["macd_30s"].metadata_json["account_display_name"] == "live:macd_30s"
+    assert strategies["macd_1m"].metadata_json["account_display_name"] == "paper:macd_1m"
+    assert strategies["macd_1m"].execution_mode == "shadow"
+    assert broker_accounts["paper:macd_30s"].provider == "schwab"
+    assert broker_accounts["paper:macd_1m"].provider == "alpaca"

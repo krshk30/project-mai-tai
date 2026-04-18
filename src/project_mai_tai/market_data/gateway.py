@@ -12,6 +12,7 @@ from project_mai_tai.events import MarketDataSubscriptionEvent, stream_name
 from project_mai_tai.market_data.massive_provider import MassiveSnapshotProvider, MassiveTradeStream
 from project_mai_tai.market_data.models import (
     HistoricalBarsRecord,
+    LiveBarRecord,
     QuoteTickRecord,
     SnapshotRecord,
     TradeTickRecord,
@@ -62,6 +63,11 @@ class MarketDataGatewayService:
         self.instance_name = socket.gethostname()
         self._trade_queue: asyncio.Queue[TradeTickRecord] = asyncio.Queue()
         self._quote_queue: asyncio.Queue[QuoteTickRecord] = asyncio.Queue()
+        self._bar_queue: asyncio.Queue[LiveBarRecord] = asyncio.Queue()
+        self._live_aggregate_stream_enabled = (
+            self.settings.market_data_live_aggregate_stream_enabled
+            or self.settings.strategy_macd_30s_live_aggregate_bars_enabled
+        )
         self._desired_symbols_by_consumer: dict[str, set[str]] = {
             "static": set(self.settings.market_data_static_symbol_list),
         }
@@ -85,6 +91,11 @@ class MarketDataGatewayService:
         await self.trade_stream.start(
             on_trade=lambda record: loop.call_soon_threadsafe(self._trade_queue.put_nowait, record),
             on_quote=lambda record: loop.call_soon_threadsafe(self._quote_queue.put_nowait, record),
+            on_agg=(
+                (lambda record: loop.call_soon_threadsafe(self._bar_queue.put_nowait, record))
+                if self._live_aggregate_stream_enabled
+                else None
+            ),
         )
         await self.trade_stream.sync_subscriptions(self._active_symbols)
         await self._publish_historical_warmup(self._active_symbols)
@@ -209,6 +220,10 @@ class MarketDataGatewayService:
                 await self.publisher.publish_trade_tick(trade)
             except TimeoutError:
                 pass
+
+            while not self._bar_queue.empty():
+                bar = await self._bar_queue.get()
+                await self.publisher.publish_live_bar(bar)
 
             while not self._quote_queue.empty():
                 quote = await self._quote_queue.get()

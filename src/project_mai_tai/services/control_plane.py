@@ -21,6 +21,7 @@ from project_mai_tai.db.models import (
     AccountPosition,
     BrokerAccount,
     BrokerOrder,
+    BrokerOrderEvent,
     DashboardSnapshot,
     Fill,
     ReconciliationFinding,
@@ -41,6 +42,7 @@ from project_mai_tai.events import (
 )
 from project_mai_tai.log import configure_logging
 from project_mai_tai.runtime_registry import configured_strategy_registrations
+from project_mai_tai.services.strategy_engine_app import current_scanner_session_start_utc
 from project_mai_tai.shadow import LegacyShadowClient
 from project_mai_tai.settings import Settings, get_settings
 from project_mai_tai.strategy_core import (
@@ -103,6 +105,55 @@ class ControlPlaneRepository:
         self._legacy_cache_at: datetime | None = None
         self._legacy_cache_lock = asyncio.Lock()
 
+    def _is_ui_hidden_symbol(self, account_name: str | None, symbol: str | None) -> bool:
+        normalized_account = str(account_name or "").strip()
+        normalized_symbol = str(symbol or "").strip().upper()
+        if not normalized_account or not normalized_symbol:
+            return False
+        return (
+            normalized_account,
+            normalized_symbol,
+        ) in self.settings.reconciliation_ignored_position_mismatch_pairs
+
+    def _filter_symbol_rows(
+        self,
+        rows: list[dict[str, Any]],
+        *,
+        account_key: str = "broker_account_name",
+        symbol_key: str = "symbol",
+    ) -> list[dict[str, Any]]:
+        return [
+            item
+            for item in rows
+            if not self._is_ui_hidden_symbol(item.get(account_key), item.get(symbol_key))
+        ]
+
+    def _is_ui_hidden_symbol_any_account(self, symbol: str | None) -> bool:
+        normalized_symbol = str(symbol or "").strip().upper()
+        if not normalized_symbol:
+            return False
+        return any(
+            ignored_symbol == normalized_symbol
+            for _, ignored_symbol in self.settings.reconciliation_ignored_position_mismatch_pairs
+        )
+
+    def _incident_symbol(self, title: str | None, payload: dict[str, Any] | None) -> str:
+        data = payload if isinstance(payload, dict) else {}
+        direct_symbol = str(data.get("symbol") or data.get("ticker") or "").strip().upper()
+        if direct_symbol:
+            return direct_symbol
+        title_text = str(title or "").strip()
+        if " for " not in title_text:
+            return ""
+        candidate = title_text.rsplit(" for ", 1)[1].strip().upper()
+        return candidate if candidate.isalnum() else ""
+
+    def _display_account_name(self, account_name: str) -> str:
+        display_name = getattr(self.settings, "display_account_name", None)
+        if callable(display_name):
+            return str(display_name(account_name))
+        return account_name
+
     async def _reconnect_redis(self) -> None:
         previous = self.redis
         self.redis = Redis.from_url(self.settings.redis_url, decode_responses=True)
@@ -152,29 +203,34 @@ class ControlPlaneRepository:
     async def load_dashboard_data(self) -> dict[str, Any]:
         db_state = self._load_database_state()
         stream_state = await self._load_stream_state()
+        normalized_strategy_runtime = self._normalize_strategy_runtime(stream_state["strategy_runtime"])
         legacy_shadow = await self._load_legacy_shadow_data(
-            strategy_runtime=stream_state["strategy_runtime"],
+            strategy_runtime=normalized_strategy_runtime,
             recent_intents=db_state["recent_intents"],
         )
         scanner = self._build_scanner_view(
             market_data=stream_state["market_data"],
-            strategy_runtime=stream_state["strategy_runtime"],
+            strategy_runtime=normalized_strategy_runtime,
             legacy_shadow=legacy_shadow,
             persisted_snapshots=db_state["dashboard_snapshots"],
             blacklist_entries=db_state["scanner_blacklist"],
         )
         bots = self._build_bot_views(
-            strategy_runtime=stream_state["strategy_runtime"],
+            strategy_runtime=normalized_strategy_runtime,
             legacy_shadow=legacy_shadow,
             recent_intents=db_state["recent_intents"],
             recent_orders=db_state["recent_orders"],
             recent_fills=db_state["recent_fills"],
+            open_orders=db_state["open_orders"],
         )
 
         overall_status = "healthy"
         if db_state["errors"] or stream_state["errors"]:
             overall_status = "degraded"
-        elif any(service["status"] not in {"healthy", "starting"} for service in stream_state["services"]):
+        elif any(
+            service.get("effective_status", service["status"]) not in {"healthy", "starting"}
+            for service in stream_state["services"]
+        ):
             overall_status = "degraded"
         elif (
             db_state["reconciliation"]["latest_run"] is not None
@@ -188,8 +244,9 @@ class ControlPlaneRepository:
             "environment": self.settings.environment,
             "domain": "project-mai-tai.live",
             "control_plane_url": self.settings.control_plane_base_url,
-            "provider": self.settings.resolved_broker_provider,
-            "oms_adapter": self.settings.oms_adapter,
+            "provider": self.settings.broker_provider_label,
+            "oms_adapter": self.settings.oms_adapter_label,
+            "active_broker_providers": self.settings.active_broker_providers,
             "scanner_config": {
                 "five_pillars": FivePillarsConfig(
                     min_price=self.settings.market_data_scan_min_price,
@@ -227,12 +284,46 @@ class ControlPlaneRepository:
             "virtual_positions": db_state["virtual_positions"],
             "account_positions": db_state["account_positions"],
             "reconciliation": db_state["reconciliation"],
-            "strategy_runtime": stream_state["strategy_runtime"],
+            "strategy_runtime": normalized_strategy_runtime,
             "legacy_shadow": legacy_shadow,
             "incidents": db_state["incidents"],
             "scanner_blacklist": db_state["scanner_blacklist"],
             "errors": db_state["errors"] + stream_state["errors"] + legacy_shadow["errors"],
         }
+
+    def _normalize_strategy_runtime(self, strategy_runtime: dict[str, Any]) -> dict[str, Any]:
+        normalized = dict(strategy_runtime)
+        raw_bots = strategy_runtime.get("bots", {})
+        if not isinstance(raw_bots, dict):
+            return normalized
+
+        normalized_bots: dict[str, Any] = {}
+        for code, bot in raw_bots.items():
+            if not isinstance(bot, dict):
+                normalized_bots[code] = bot
+                continue
+
+            normalized_bot = dict(bot)
+            normalized_bot["recent_decisions"] = [
+                {
+                    **dict(item),
+                    "last_bar_at": _datetime_str(item.get("last_bar_at")),
+                }
+                for item in bot.get("recent_decisions", [])
+                if isinstance(item, dict)
+            ]
+            normalized_bot["indicator_snapshots"] = [
+                {
+                    **dict(item),
+                    "last_bar_at": _datetime_str(item.get("last_bar_at")),
+                }
+                for item in bot.get("indicator_snapshots", [])
+                if isinstance(item, dict)
+            ]
+            normalized_bots[code] = normalized_bot
+
+        normalized["bots"] = normalized_bots
+        return normalized
 
     def _build_scanner_view(
         self,
@@ -255,6 +346,16 @@ class ControlPlaneRepository:
             for symbol in strategy_runtime.get("watchlist", [])
             if str(symbol).upper() not in blacklisted_symbols
         ]
+        all_confirmed = [
+            self._normalize_confirmed_row(
+                index=index,
+                item=item,
+                bot_states=bot_states,
+                live_market_row=live_market_rows.get(str(item.get("ticker", "")).upper()),
+            )
+            for index, item in enumerate(strategy_runtime.get("all_confirmed", []), start=1)
+            if str(item.get("ticker", "")).upper() not in blacklisted_symbols
+        ]
         top_confirmed = [
             self._normalize_confirmed_row(
                 index=index,
@@ -268,14 +369,27 @@ class ControlPlaneRepository:
         top_confirmed_source = "live" if top_confirmed else "idle"
         top_confirmed_snapshot_at = ""
 
-        if not top_confirmed:
+        if not all_confirmed:
             snapshot = persisted_snapshots.get("scanner_confirmed_last_nonempty", {})
             snapshot_payload = snapshot if isinstance(snapshot, dict) else {}
-            restored_rows = snapshot_payload.get("top_confirmed", [])
+            restored_rows = snapshot_payload.get("all_confirmed_candidates", [])
+            restored_top_rows = snapshot_payload.get("top_confirmed", [])
             restored_watchlist = snapshot_payload.get("watchlist", [])
             restored_at = str(snapshot_payload.get("persisted_at", "") or "")
-            if isinstance(restored_rows, list) and restored_rows:
-                top_confirmed = [
+            restored_at_is_current = False
+            if restored_at:
+                try:
+                    restored_at_dt = datetime.fromisoformat(restored_at)
+                except ValueError:
+                    restored_at_dt = None
+                if restored_at_dt is not None:
+                    if restored_at_dt.tzinfo is None:
+                        restored_at_dt = restored_at_dt.replace(tzinfo=UTC)
+                    restored_at_is_current = (
+                        restored_at_dt.astimezone(UTC) >= current_scanner_session_start_utc()
+                    )
+            if isinstance(restored_rows, list) and restored_rows and restored_at_is_current:
+                all_confirmed = [
                     self._normalize_confirmed_row(
                         index=index,
                         item=item,
@@ -283,6 +397,18 @@ class ControlPlaneRepository:
                         live_market_row=live_market_rows.get(str(item.get("ticker", "")).upper()),
                     )
                     for index, item in enumerate(restored_rows, start=1)
+                    if isinstance(item, dict)
+                    and str(item.get("ticker", "")).upper() not in blacklisted_symbols
+                ]
+            if isinstance(restored_top_rows, list) and restored_top_rows and restored_at_is_current:
+                top_confirmed = [
+                    self._normalize_confirmed_row(
+                        index=index,
+                        item=item,
+                        bot_states=bot_states,
+                        live_market_row=live_market_rows.get(str(item.get("ticker", "")).upper()),
+                    )
+                    for index, item in enumerate(restored_top_rows, start=1)
                     if isinstance(item, dict)
                     and str(item.get("ticker", "")).upper() not in blacklisted_symbols
                 ]
@@ -300,10 +426,12 @@ class ControlPlaneRepository:
             for symbol in legacy_shadow.get("scanner", {}).get("confirmed_symbols", [])
         ]
         return {
-            "status": "active" if top_confirmed else "idle",
+            "status": "active" if all_confirmed else "idle",
             "cycle_count": int(strategy_runtime.get("cycle_count", 0) or 0),
             "watchlist": watchlist,
             "watchlist_count": len(watchlist),
+            "all_confirmed_count": len(all_confirmed),
+            "all_confirmed": all_confirmed,
             "top_confirmed_count": len(top_confirmed),
             "top_confirmed": top_confirmed,
             "top_confirmed_source": top_confirmed_source,
@@ -351,8 +479,11 @@ class ControlPlaneRepository:
             ],
             "alert_warmup": dict(strategy_runtime.get("alert_warmup", {})),
             "active_subscription_symbols": int(market_data.get("active_subscription_symbols", 0) or 0),
+            "heartbeat_active_symbols": int(market_data.get("heartbeat_active_symbols", 0) or 0),
             "subscription_symbols": list(market_data.get("subscription_symbols", [])),
             "latest_snapshot_batch": market_data.get("latest_snapshot_batch"),
+            "feed_status": str(market_data.get("feed_status", "unknown") or "unknown"),
+            "feed_status_note": str(market_data.get("feed_status_note", "") or ""),
             "legacy_confirmed_symbols": legacy_confirmed,
             "legacy_confirmed_count": len(legacy_confirmed),
             "blacklist": blacklist_entries,
@@ -441,6 +572,8 @@ class ControlPlaneRepository:
             "headline": str(merged_item.get("headline", "")),
             "sentiment": str(merged_item.get("sentiment", "")),
             "direction": str(merged_item.get("direction") or merged_item.get("sentiment") or ""),
+            "news_fetch_status": str(merged_item.get("news_fetch_status", "")),
+            "catalyst_status": str(merged_item.get("catalyst_status", "")),
             "news_url": str(merged_item.get("news_url", "")),
             "news_date": str(merged_item.get("news_date", "")),
             "news_window_start": str(merged_item.get("news_window_start", "")),
@@ -456,6 +589,19 @@ class ControlPlaneRepository:
             "is_generic_roundup": bool(merged_item.get("is_generic_roundup", False)),
             "has_real_catalyst": bool(merged_item.get("has_real_catalyst", False)),
             "path_a_eligible": bool(merged_item.get("path_a_eligible", False)),
+            "ai_shadow_status": str(merged_item.get("ai_shadow_status", "")),
+            "ai_shadow_provider": str(merged_item.get("ai_shadow_provider", "")),
+            "ai_shadow_model": str(merged_item.get("ai_shadow_model", "")),
+            "ai_shadow_direction": str(merged_item.get("ai_shadow_direction", "")),
+            "ai_shadow_category": str(merged_item.get("ai_shadow_category", "")),
+            "ai_shadow_confidence": float(merged_item.get("ai_shadow_confidence", 0) or 0),
+            "ai_shadow_has_real_catalyst": bool(merged_item.get("ai_shadow_has_real_catalyst", False)),
+            "ai_shadow_is_generic_roundup": bool(merged_item.get("ai_shadow_is_generic_roundup", False)),
+            "ai_shadow_is_company_specific": bool(merged_item.get("ai_shadow_is_company_specific", False)),
+            "ai_shadow_path_a_eligible": bool(merged_item.get("ai_shadow_path_a_eligible", False)),
+            "ai_shadow_reason": str(merged_item.get("ai_shadow_reason", "")),
+            "ai_shadow_headline_basis": str(merged_item.get("ai_shadow_headline_basis", "")),
+            "ai_shadow_positive_phrases": list(merged_item.get("ai_shadow_positive_phrases", []) or []),
             "watched_by": watched_by,
             "is_top5": bool(watched_by),
         }
@@ -468,6 +614,7 @@ class ControlPlaneRepository:
         recent_intents: list[dict[str, Any]],
         recent_orders: list[dict[str, Any]],
         recent_fills: list[dict[str, Any]],
+        open_orders: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
         registrations = configured_strategy_registrations(self.settings)
         ordered_codes = [registration.code for registration in registrations]
@@ -485,14 +632,69 @@ class ControlPlaneRepository:
             runtime_bot = runtime_bots.get(code, {})
             legacy_bot = legacy_bots.get(code, {})
             registration = registration_map.get(code)
+            account_name = str(
+                runtime_bot.get("account_name")
+                or (registration.account_name if registration else "")
+                or ""
+            )
 
-            positions = list(runtime_bot.get("positions", []))
-            watchlist = [str(symbol) for symbol in runtime_bot.get("watchlist", [])]
-            pending_open = [str(symbol) for symbol in runtime_bot.get("pending_open_symbols", [])]
-            pending_close = [str(symbol) for symbol in runtime_bot.get("pending_close_symbols", [])]
-            pending_scale = [str(level) for level in runtime_bot.get("pending_scale_levels", [])]
-            recent_decisions = list(runtime_bot.get("recent_decisions", []))
-            indicator_snapshots = list(runtime_bot.get("indicator_snapshots", []))
+            positions = [
+                item
+                for item in list(runtime_bot.get("positions", []))
+                if not self._is_ui_hidden_symbol(account_name, item.get("ticker") or item.get("symbol"))
+            ]
+            watchlist = [
+                str(symbol)
+                for symbol in runtime_bot.get("watchlist", [])
+                if not self._is_ui_hidden_symbol(account_name, symbol)
+            ]
+            matching_open_orders = [
+                item
+                for item in open_orders
+                if item.get("strategy_code") == code
+                and item.get("broker_account_name") == account_name
+            ]
+            pending_open = sorted(
+                {
+                    str(item.get("symbol", "")).upper()
+                    for item in matching_open_orders
+                    if str(item.get("intent_type", "")).lower() == "open"
+                    and str(item.get("side", "")).lower() == "buy"
+                    and str(item.get("symbol", "")).strip()
+                    and not self._is_ui_hidden_symbol(account_name, item.get("symbol"))
+                }
+            )
+            pending_close = sorted(
+                {
+                    str(item.get("symbol", "")).upper()
+                    for item in matching_open_orders
+                    if str(item.get("intent_type", "")).lower() == "close"
+                    and str(item.get("side", "")).lower() == "sell"
+                    and str(item.get("symbol", "")).strip()
+                    and not self._is_ui_hidden_symbol(account_name, item.get("symbol"))
+                }
+            )
+            pending_scale = sorted(
+                {
+                    f'{str(item.get("symbol", "")).upper()}:{str(item.get("level", "")).upper()}'
+                    for item in matching_open_orders
+                    if str(item.get("intent_type", "")).lower() == "scale"
+                    and str(item.get("side", "")).lower() == "sell"
+                    and str(item.get("symbol", "")).strip()
+                    and str(item.get("level", "")).strip()
+                    and not self._is_ui_hidden_symbol(account_name, item.get("symbol"))
+                }
+            )
+            recent_decisions = [
+                item
+                for item in list(runtime_bot.get("recent_decisions", []))
+                if not self._is_ui_hidden_symbol(account_name, item.get("ticker") or item.get("symbol"))
+            ]
+            indicator_snapshots = [
+                item
+                for item in list(runtime_bot.get("indicator_snapshots", []))
+                if not self._is_ui_hidden_symbol(account_name, item.get("ticker") or item.get("symbol"))
+            ]
             tos_parity = self._build_tos_parity_view(
                 strategy_code=code,
                 indicator_snapshots=indicator_snapshots,
@@ -503,12 +705,26 @@ class ControlPlaneRepository:
                 {
                     "strategy_code": code,
                     "display_name": registration.display_name if registration else code.replace("_", " ").upper(),
-                    "account_name": runtime_bot.get("account_name")
-                    or (registration.account_name if registration else ""),
+                    "account_name": account_name,
+                    "account_display_name": self._display_account_name(account_name),
+                    "interval_secs": int(
+                        runtime_bot.get("interval_secs")
+                        or (registration.interval_secs if registration else 0)
+                        or 0
+                    ),
+                    "runtime_kind": (
+                        registration.runtime_kind
+                        if registration
+                        else str(runtime_bot.get("runtime_kind", "unknown") or "unknown")
+                    ),
                     "execution_mode": registration.execution_mode if registration else "unknown",
-                    "provider": self.settings.resolved_broker_provider if registration else "unknown",
+                    "provider": (
+                        self.settings.provider_for_strategy(code)
+                        if registration
+                        else "unknown"
+                    ),
                     "wiring_status": (
-                        f'{registration.execution_mode}/{self.settings.resolved_broker_provider}'
+                        f'{registration.execution_mode}/{self.settings.provider_for_strategy(code)}'
                         if registration
                         else "unknown"
                     ),
@@ -528,13 +744,22 @@ class ControlPlaneRepository:
                     "indicator_snapshots": indicator_snapshots,
                     "tos_parity": tos_parity,
                     "recent_intents": [
-                        item for item in recent_intents if item.get("strategy_code") == code
+                        item
+                        for item in recent_intents
+                        if item.get("strategy_code") == code
+                        and not self._is_ui_hidden_symbol(account_name, item.get("symbol"))
                     ][:3],
                     "recent_orders": [
-                        item for item in recent_orders if item.get("strategy_code") == code
+                        item
+                        for item in recent_orders
+                        if item.get("strategy_code") == code
+                        and not self._is_ui_hidden_symbol(account_name, item.get("symbol"))
                     ][:3],
                     "recent_fills": [
-                        item for item in recent_fills if item.get("strategy_code") == code
+                        item
+                        for item in recent_fills
+                        if item.get("strategy_code") == code
+                        and not self._is_ui_hidden_symbol(account_name, item.get("symbol"))
                     ][:3],
                 }
             )
@@ -633,6 +858,7 @@ class ControlPlaneRepository:
         recent_intents: list[dict[str, Any]] = []
         recent_orders: list[dict[str, Any]] = []
         recent_fills: list[dict[str, Any]] = []
+        open_orders: list[dict[str, Any]] = []
         virtual_positions: list[dict[str, Any]] = []
         account_positions: list[dict[str, Any]] = []
         reconciliation = {
@@ -719,8 +945,10 @@ class ControlPlaneRepository:
                                 "created_at": _datetime_str(finding.created_at),
                             }
                             for finding in latest_finding_rows
+                            if not self._is_ui_hidden_symbol_any_account(finding.symbol)
                         ],
                     }
+                    counts["latest_reconciliation_findings"] = len(reconciliation["findings"])
 
                 for intent in session.scalars(
                     select(TradeIntent).order_by(desc(TradeIntent.updated_at)).limit(50)
@@ -743,6 +971,12 @@ class ControlPlaneRepository:
                         }
                     )
 
+                latest_order_event_by_order: dict[Any, BrokerOrderEvent] = {}
+                for entry in session.scalars(
+                    select(BrokerOrderEvent).order_by(desc(BrokerOrderEvent.event_at)).limit(200)
+                ).all():
+                    latest_order_event_by_order.setdefault(entry.order_id, entry)
+
                 for order in session.scalars(
                     select(BrokerOrder).order_by(desc(BrokerOrder.updated_at)).limit(50)
                 ).all():
@@ -750,17 +984,53 @@ class ControlPlaneRepository:
                         continue
                     strategy = strategy_lookup.get(order.strategy_id)
                     account = account_lookup.get(order.broker_account_id)
+                    intent = session.get(TradeIntent, order.intent_id) if order.intent_id else None
+                    latest_event = latest_order_event_by_order.get(order.id)
+                    latest_event_payload = (
+                        latest_event.payload
+                        if latest_event is not None and isinstance(latest_event.payload, dict)
+                        else {}
+                    )
                     recent_orders.append(
                         {
                             "strategy_code": strategy.code if strategy else str(order.strategy_id),
                             "broker_account_name": account.name if account else str(order.broker_account_id),
                             "symbol": order.symbol,
                             "side": order.side,
+                            "intent_type": intent.intent_type if intent is not None else "",
                             "quantity": _decimal_str(order.quantity),
                             "status": order.status,
+                            "reason": str(latest_event_payload.get("reason") or (intent.reason if intent else "")),
                             "client_order_id": order.client_order_id,
                             "broker_order_id": order.broker_order_id or "",
+                            "order_type": order.order_type,
+                            "time_in_force": order.time_in_force,
+                            "extended_hours": bool(
+                                str((order.payload or {}).get("extended_hours", "")).lower() == "true"
+                            ),
                             "updated_at": _datetime_str(order.updated_at),
+                        }
+                    )
+
+                for order in session.scalars(
+                    select(BrokerOrder).where(
+                        BrokerOrder.status.in_(["pending", "submitted", "accepted", "partially_filled"])
+                    )
+                ).all():
+                    strategy = strategy_lookup.get(order.strategy_id)
+                    account = account_lookup.get(order.broker_account_id)
+                    intent = session.get(TradeIntent, order.intent_id) if order.intent_id else None
+                    payload = order.payload if isinstance(order.payload, dict) else {}
+                    open_orders.append(
+                        {
+                            "strategy_code": strategy.code if strategy else str(order.strategy_id),
+                            "broker_account_name": account.name if account else str(order.broker_account_id),
+                            "symbol": order.symbol,
+                            "side": order.side,
+                            "intent_type": intent.intent_type if intent is not None else "",
+                            "status": order.status,
+                            "client_order_id": order.client_order_id,
+                            "level": str(payload.get("level", "") or ""),
                         }
                     )
 
@@ -822,6 +1092,16 @@ class ControlPlaneRepository:
                 for incident in session.scalars(
                     select(SystemIncident).order_by(desc(SystemIncident.opened_at)).limit(10)
                 ).all():
+                    payload = incident.payload if isinstance(incident.payload, dict) else {}
+                    incident_account_name = str(
+                        payload.get("broker_account_name") or payload.get("account_name") or ""
+                    ).strip()
+                    incident_symbol = self._incident_symbol(incident.title, payload)
+                    if incident_account_name:
+                        if self._is_ui_hidden_symbol(incident_account_name, incident_symbol):
+                            continue
+                    elif self._is_ui_hidden_symbol_any_account(incident_symbol):
+                        continue
                     incidents.append(
                         {
                             "service_name": incident.service_name or "system",
@@ -860,11 +1140,21 @@ class ControlPlaneRepository:
         except Exception as exc:
             errors.append(f"database:{exc}")
 
+        recent_intents = self._filter_symbol_rows(recent_intents)
+        recent_orders = self._filter_symbol_rows(recent_orders)
+        recent_fills = self._filter_symbol_rows(recent_fills)
+        open_orders = self._filter_symbol_rows(open_orders)
+        virtual_positions = self._filter_symbol_rows(virtual_positions)
+        account_positions = self._filter_symbol_rows(account_positions)
+        counts["open_virtual_positions"] = len(virtual_positions)
+        counts["open_account_positions"] = len(account_positions)
+
         return {
             "counts": counts,
             "recent_intents": recent_intents,
             "recent_orders": recent_orders,
             "recent_fills": recent_fills,
+            "open_orders": open_orders,
             "virtual_positions": virtual_positions,
             "account_positions": account_positions,
             "reconciliation": reconciliation,
@@ -881,8 +1171,12 @@ class ControlPlaneRepository:
             "latest_snapshot_batch": None,
             "active_subscription_symbols": 0,
             "subscription_symbols": [],
+            "heartbeat_active_symbols": 0,
+            "feed_status": "unknown",
+            "feed_status_note": "",
         }
         strategy_runtime = {
+            "all_confirmed": [],
             "watchlist": [],
             "top_confirmed": [],
             "five_pillars": [],
@@ -898,15 +1192,19 @@ class ControlPlaneRepository:
             heartbeats = await self._read_stream_events("heartbeats", limit=50)
             latest_by_service: dict[str, dict[str, Any]] = {}
             for event in heartbeats:
-                payload = HeartbeatEvent.model_validate(event).payload
+                heartbeat = HeartbeatEvent.model_validate(event)
+                payload = heartbeat.payload
                 if payload.service_name in latest_by_service:
                     continue
                 latest_by_service[payload.service_name] = {
                     "service_name": payload.service_name,
                     "instance_name": payload.instance_name,
                     "status": payload.status,
+                    "raw_status": payload.status,
+                    "effective_status": payload.status,
                     "details": payload.details,
-                    "observed_at": _datetime_str(HeartbeatEvent.model_validate(event).produced_at),
+                    "observed_at": _datetime_str(heartbeat.produced_at),
+                    "observed_at_raw": heartbeat.produced_at,
                 }
             services = sorted(latest_by_service.values(), key=lambda item: item["service_name"])
         except Exception as exc:
@@ -921,6 +1219,7 @@ class ControlPlaneRepository:
                     "reference_count": len(event.payload.reference_data),
                     "completed_at": _datetime_str(event.payload.completed_at),
                 }
+                market_data["latest_snapshot_completed_at_raw"] = event.payload.completed_at
         except Exception as exc:
             errors.append(f"redis:snapshot-batches:{exc}")
 
@@ -930,6 +1229,7 @@ class ControlPlaneRepository:
                 event = MarketDataSubscriptionEvent.model_validate(subscription_events[0])
                 market_data["active_subscription_symbols"] = len(event.payload.symbols)
                 market_data["subscription_symbols"] = event.payload.symbols
+                market_data["latest_subscription_observed_at_raw"] = event.produced_at
         except Exception as exc:
             errors.append(f"redis:market-data-subscriptions:{exc}")
 
@@ -938,6 +1238,7 @@ class ControlPlaneRepository:
             if strategy_state_events:
                 event = StrategyStateSnapshotEvent.model_validate(strategy_state_events[0])
                 strategy_runtime = {
+                    "all_confirmed": event.payload.all_confirmed,
                     "watchlist": event.payload.watchlist,
                     "top_confirmed": event.payload.top_confirmed,
                     "five_pillars": event.payload.five_pillars,
@@ -954,12 +1255,64 @@ class ControlPlaneRepository:
         except Exception as exc:
             errors.append(f"redis:strategy-state:{exc}")
 
+        self._apply_market_data_feed_status(services=services, market_data=market_data)
+
         return {
             "services": services,
             "market_data": market_data,
             "strategy_runtime": strategy_runtime,
             "errors": errors,
         }
+
+    def _apply_market_data_feed_status(
+        self,
+        *,
+        services: list[dict[str, Any]],
+        market_data: dict[str, Any],
+    ) -> None:
+        market_data_service = next(
+            (service for service in services if service.get("service_name") == "market-data-gateway"),
+            None,
+        )
+        if market_data_service is None:
+            return
+
+        heartbeat_active_symbols = _safe_int(
+            market_data_service.get("details", {}).get("active_symbols", 0)
+        )
+        snapshot_recent = _is_recent_datetime(
+            market_data.get("latest_snapshot_completed_at_raw"),
+            max_age_seconds=20,
+        )
+        subscription_recent = _is_recent_datetime(
+            market_data.get("latest_subscription_observed_at_raw"),
+            max_age_seconds=30,
+        )
+        displayed_subscription_count = max(
+            _safe_int(market_data.get("active_subscription_symbols", 0)),
+            heartbeat_active_symbols,
+        )
+        raw_status = str(market_data_service.get("status", "unknown") or "unknown")
+        effective_status = raw_status
+        status_note = ""
+
+        if raw_status in {"starting", "stopping"} and (snapshot_recent or subscription_recent):
+            effective_status = "healthy"
+            status_note = "Fresh snapshot/subscription activity is still flowing while the heartbeat catches up."
+        elif raw_status == "healthy" and not snapshot_recent and displayed_subscription_count == 0:
+            status_note = "Heartbeat is healthy, but no fresh snapshot batch has been observed yet."
+
+        market_data_service["raw_status"] = raw_status
+        market_data_service["effective_status"] = effective_status
+        if status_note:
+            market_data_service["status_note"] = status_note
+
+        market_data["heartbeat_active_symbols"] = heartbeat_active_symbols
+        if snapshot_recent or subscription_recent or effective_status == "healthy":
+            market_data["feed_status"] = "live"
+        else:
+            market_data["feed_status"] = effective_status
+        market_data["feed_status_note"] = status_note
 
     async def _read_stream_events(self, topic: str, *, limit: int) -> list[dict[str, Any]]:
         stream = stream_name(self.settings.redis_stream_prefix, topic)
@@ -1024,7 +1377,11 @@ class ControlPlaneRepository:
         strategy_runtime: dict[str, Any],
         recent_intents: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        new_watchlist = {str(symbol).upper() for symbol in strategy_runtime.get("watchlist", [])}
+        new_confirmed = {
+            str(item.get("ticker", "")).upper()
+            for item in strategy_runtime.get("all_confirmed", [])
+            if item.get("ticker")
+        }
         legacy_confirmed = {
             str(symbol).upper()
             for symbol in legacy_snapshot.get("scanner", {}).get("confirmed_symbols", [])
@@ -1104,8 +1461,8 @@ class ControlPlaneRepository:
                 "issue_count": issue_count,
             }
 
-        confirmed_only_in_legacy = sorted(legacy_confirmed - new_watchlist)
-        confirmed_only_in_new = sorted(new_watchlist - legacy_confirmed)
+        confirmed_only_in_legacy = sorted(legacy_confirmed - new_confirmed)
+        confirmed_only_in_new = sorted(new_confirmed - legacy_confirmed)
         total_issues += len(confirmed_only_in_legacy) + len(confirmed_only_in_new)
 
         return {
@@ -1180,7 +1537,9 @@ def build_app(
             "app_name": active_settings.app_name,
             "domain": "project-mai-tai.live",
             "legacy_api_base_url": active_settings.legacy_api_base_url,
-            "oms_adapter": active_settings.oms_adapter,
+            "provider": active_settings.broker_provider_label,
+            "active_broker_providers": active_settings.active_broker_providers,
+            "oms_adapter": active_settings.oms_adapter_label,
             "streams": {
                 "market_data": stream_name(active_settings.redis_stream_prefix, "market-data"),
                 "snapshot_batches": stream_name(active_settings.redis_stream_prefix, "snapshot-batches"),
@@ -1278,8 +1637,8 @@ def build_app(
     async def scanner_confirmed() -> dict[str, Any]:
         data = await app.state.repository.load_dashboard_data()
         return {
-            "stocks": data["scanner"]["top_confirmed"],
-            "count": data["scanner"]["top_confirmed_count"],
+            "stocks": data["scanner"]["all_confirmed"],
+            "count": data["scanner"]["all_confirmed_count"],
         }
 
     @app.get("/scanner/pillars")
@@ -1322,6 +1681,16 @@ def build_app(
         data = await app.state.repository.load_dashboard_data()
         return _build_bot_api_payload(data, "macd_1m")
 
+    @app.get("/botprobe")
+    async def bot_probe_status() -> dict[str, Any]:
+        data = await app.state.repository.load_dashboard_data()
+        return _build_bot_api_payload(data, "macd_30s_probe")
+
+    @app.get("/botreclaim")
+    async def bot_reclaim_status() -> dict[str, Any]:
+        data = await app.state.repository.load_dashboard_data()
+        return _build_bot_api_payload(data, "macd_30s_reclaim")
+
     @app.get("/tosbot")
     async def tos_bot_status() -> dict[str, Any]:
         data = await app.state.repository.load_dashboard_data()
@@ -1336,6 +1705,16 @@ def build_app(
     async def bot_30s_page() -> str:
         data = await app.state.repository.load_dashboard_data()
         return _render_bot_detail_page(data, "macd_30s")
+
+    @app.get("/bot/30s-probe", response_class=HTMLResponse)
+    async def bot_30s_probe_page() -> str:
+        data = await app.state.repository.load_dashboard_data()
+        return _render_bot_detail_page(data, "macd_30s_probe")
+
+    @app.get("/bot/30s-reclaim", response_class=HTMLResponse)
+    async def bot_30s_reclaim_page() -> str:
+        data = await app.state.repository.load_dashboard_data()
+        return _render_bot_detail_page(data, "macd_30s_reclaim")
 
     @app.get("/bot/1m", response_class=HTMLResponse)
     async def bot_1m_page() -> str:
@@ -1414,7 +1793,7 @@ def _render_dashboard(data: dict[str, Any]) -> str:
           <td>{escape(", ".join(item["watched_by"]) or "-")}</td>
         </tr>
         """
-        for item in scanner["top_confirmed"]
+        for item in scanner["all_confirmed"]
     ) or _empty_row(12, "No confirmed candidates yet")
 
     bot_cards = "".join(
@@ -1423,7 +1802,7 @@ def _render_dashboard(data: dict[str, Any]) -> str:
           <div class="bot-head">
             <div>
               <h3>{escape(bot["display_name"])}</h3>
-              <div class="sub">{escape(bot["strategy_code"])} / {escape(bot["account_name"] or "-")}</div>
+              <div class="sub">{escape(bot["strategy_code"])} / {escape(bot["account_display_name"] or "-")}</div>
             </div>
             {_status_badge(bot["wiring_status"])}
           </div>
@@ -1434,11 +1813,8 @@ def _render_dashboard(data: dict[str, Any]) -> str:
           </div>
           <div class="bot-lines">
             <p><strong>Execution:</strong> {escape(bot["execution_mode"])} via {escape(bot["provider"])}</p>
-            <p><strong>Legacy Shadow:</strong> {escape(bot["legacy_status"] if bot["legacy_present"] else "not available")}</p>
-            <p><strong>Ranked Feed:</strong> {escape(", ".join(bot["watchlist"][:8]) or "None")}</p>
-            <p><strong>Pending Opens:</strong> {escape(", ".join(bot["pending_open_symbols"][:6]) or "None")}</p>
-            <p><strong>Pending Closes:</strong> {escape(", ".join(bot["pending_close_symbols"][:6]) or "None")}</p>
-            <p><strong>Pending Scales:</strong> {escape(", ".join(bot["pending_scale_levels"][:6]) or "None")}</p>
+            <p><strong>Account:</strong> {escape(bot["account_display_name"] or "-")}</p>
+            <p><strong>Live Symbols:</strong> {escape(", ".join(bot["watchlist"][:5]) or "None")}</p>
             <p><strong>Positions:</strong> {escape(_position_preview(bot["positions"]))}</p>
             <p><strong>Recent Intents:</strong> {escape(_intent_preview(bot["recent_intents"]))}</p>
           </div>
@@ -1495,16 +1871,18 @@ def _render_dashboard(data: dict[str, Any]) -> str:
         f"""
         <tr>
           <td>{escape(item["strategy_code"])}</td>
+          <td>{escape(item.get("intent_type", ""))}</td>
           <td>{escape(item["symbol"])}</td>
           <td>{escape(item["side"])}</td>
           <td>{escape(item["quantity"])}</td>
           <td>{_status_badge(item["status"])}</td>
+          <td>{escape(item.get("reason", ""))}</td>
           <td><code>{escape(item["client_order_id"])}</code></td>
           <td>{escape(item["updated_at"])}</td>
         </tr>
         """
         for item in data["recent_orders"]
-    ) or _empty_row(7, "No broker orders recorded yet")
+    ) or _empty_row(9, "No broker orders recorded yet")
 
     fills_rows = "".join(
         f"""
@@ -2079,12 +2457,13 @@ def _render_dashboard(data: dict[str, Any]) -> str:
           <nav class="nav">
             <a href="/scanner/dashboard">Scanner Page</a>
             <a href="/bot/30s">30s Bot</a>
+            <a href="/bot/30s-probe">30s Probe</a>
+            <a href="/bot/30s-reclaim">30s Reclaim</a>
             <a href="/bot/1m">1m Bot</a>
             <a href="/bot/tos">TOS Bot</a>
             <a href="/bot/runner">Runner Bot</a>
             <a href="#scanner">Scanner</a>
             <a href="#bots">Bots</a>
-            <a href="#shadow">Shadow</a>
             <a href="#reconciliation">Reconciliation</a>
             <a href="#orders">Orders</a>
             <a href="#positions">Positions</a>
@@ -2103,28 +2482,26 @@ def _render_dashboard(data: dict[str, Any]) -> str:
                   <div class="section-header">
                     <div>
                       <h2>Overview</h2>
-                    <div class="sub">Confirmed names, ranked-feed flow, and subscription state.</div>
+                    <div class="sub">Critical scanner state and the live symbol set.</div>
                     </div>
                   </div>
                   <div class="muted-box">
                     <p><strong>Scanner Status:</strong> {escape(scanner["status"])}</p>
-                    <p><strong>Ranked Feed Count:</strong> {scanner["watchlist_count"]}</p>
                     <p><strong>Top Confirmed Count:</strong> {scanner["top_confirmed_count"]}</p>
                     <p><strong>Active Subscriptions:</strong> {scanner["active_subscription_symbols"]}</p>
-                    <p><strong>Ranked Feed:</strong> {escape(", ".join(scanner["watchlist"][:12]) or "None")}</p>
-                    <p><strong>Legacy Confirmed:</strong> {escape(", ".join(scanner["legacy_confirmed_symbols"][:12]) or "None")}</p>
+                    <p><strong>Latest Snapshot:</strong> {escape(snapshot_summary)}</p>
+                    <p><strong>Latest Fill:</strong> {escape(latest_fill_summary)}</p>
                   </div>
                 </section>
 
                 <section class="section">
                   <div class="section-header">
                     <div>
-                      <h2>Subscriptions</h2>
+                      <h2>Live Symbols</h2>
                       <div class="sub">Symbols currently pushed into the live tick pipeline.</div>
                     </div>
                   </div>
                   <div class="muted-box">
-                    <p><strong>Latest Snapshot Batch:</strong> {escape(snapshot_summary)}</p>
                     <p><strong>Snapshot Completed:</strong> {escape(latest_snapshot.get("completed_at", "No snapshot timestamp yet"))}</p>
                     <p><strong>Subscribed Symbols:</strong> {escape(", ".join(scanner["subscription_symbols"][:20]) or "None")}</p>
                   </div>
@@ -2135,7 +2512,7 @@ def _render_dashboard(data: dict[str, Any]) -> str:
                 <div class="section-header">
                   <div>
                     <h2>Confirmed Candidates</h2>
-                    <div class="sub">New scanner output promoted into the shared ranked feed, including score, path, and which bots currently receive that feed.</div>
+                    <div class="sub">Top confirmed names promoted into the shared bot feed.</div>
                   </div>
                 </div>
                 <div class="table-card">
@@ -2180,108 +2557,27 @@ def _render_dashboard(data: dict[str, Any]) -> str:
           <details class="fold-panel">
             <summary>
               <div class="fold-summary">
-                <div class="fold-title">🩺 System & Health <small>services, control-plane notes, and runtime diagnostics</small></div>
+                <div class="fold-title">🩺 System & Health <small>services and runtime diagnostics</small></div>
                 <div class="fold-meta">{escape(health_summary)} · {escape(ops_summary)}</div>
               </div>
             </summary>
             <div class="fold-content">
-              <div class="details-grid">
-                <section class="section">
-                  <div class="section-header">
-                    <div>
-                      <h2>Service Health</h2>
-                      <div class="sub">Latest heartbeat per service from Redis streams.</div>
-                    </div>
-                  </div>
-                  <div class="table-card">
-                    <table>
-                      <thead>
-                        <tr><th>Service</th><th>Status</th><th>Instance</th><th>Observed</th><th>Details</th></tr>
-                      </thead>
-                      <tbody>{services_rows}</tbody>
-                    </table>
-                  </div>
-                </section>
-
-                <section class="section">
-                  <div class="section-header">
-                    <div>
-                      <h2>Control Plane Notes</h2>
-                      <div class="sub">Fast checks and current read-model diagnostics.</div>
-                    </div>
-                  </div>
-                  <div class="muted-box">
-                    <p><strong>Domain:</strong> {escape(data["domain"])}</p>
-                    <p><strong>Redis Prefix:</strong> <code>{escape(data["streams"]["heartbeats"].split(":")[0])}</code></p>
-                    <p><strong>Broker Accounts:</strong> {data["counts"]["broker_accounts"]}</p>
-                    <p><strong>Strategies:</strong> {data["counts"]["strategies"]}</p>
-                    <p><strong>Open Incidents:</strong> {data["counts"]["open_incidents"]}</p>
-                    <p><strong>Latest Reconciliation Findings:</strong> {data["counts"]["latest_reconciliation_findings"]}</p>
-                    <p><strong>Latest Reconciliation Status:</strong> {escape(latest_reconciliation.get("status", "not-run"))}</p>
-                    <p><strong>Refresh:</strong> Every {refresh_seconds}s</p>
-                  </div>
-                  <div style="margin-top: 16px;">{errors_html}</div>
-                </section>
-              </div>
-            </div>
-          </details>
-
-          <details class="fold-panel" id="shadow">
-            <summary>
-              <div class="fold-summary">
-                <div class="fold-title">🪞 Shadow & Parity <small>legacy comparison and divergence review</small></div>
-                <div class="fold-meta">{escape(shadow_summary)}</div>
-              </div>
-            </summary>
-            <div class="fold-content">
-              <div class="details-grid">
-                <section class="section">
-                  <div class="section-header">
-                    <div>
-                      <h2>Legacy Shadow</h2>
-                      <div class="sub">Side-by-side divergence against the legacy VPS app.</div>
-                    </div>
-                  </div>
-                  <div class="muted-box">
-                    <p><strong>Status:</strong> {escape(shadow_divergence["status"])}</p>
-                    <p><strong>Connected:</strong> {"yes" if legacy_shadow["connected"] else "no"}</p>
-                    <p><strong>Fetched:</strong> {escape(legacy_shadow.get("fetched_at") or "")}</p>
-                    <p><strong>Total Shadow Issues:</strong> {shadow_divergence["issue_count"]}</p>
-                    <p><strong>Confirmed Only In Legacy:</strong> {escape(shadow_confirmed_legacy)}</p>
-                    <p><strong>Confirmed Only In New:</strong> {escape(shadow_confirmed_new)}</p>
-                  </div>
-                </section>
-
-                <section class="section">
-                  <div class="section-header">
-                    <div>
-                      <h2>New Strategy State</h2>
-                      <div class="sub">Latest in-memory strategy snapshot published by the new engine.</div>
-                    </div>
-                  </div>
-                  <div class="muted-box">
-                    <p><strong>Watchlist:</strong> {escape(", ".join(data["strategy_runtime"]["watchlist"][:12]) or "None")}</p>
-                    <p><strong>Top Confirmed Count:</strong> {len(data["strategy_runtime"]["top_confirmed"])}</p>
-                    <p><strong>Strategy Snapshots:</strong> {len(data["strategy_runtime"]["bots"])}</p>
-                  </div>
-                </section>
-              </div>
-
               <section class="section">
                 <div class="section-header">
                   <div>
-                      <h2>Shadow Divergence</h2>
-                    <div class="sub">Confirmed-name drift, missing strategy wiring, watched symbol gaps, and position mismatches.</div>
+                    <h2>Service Health</h2>
+                    <div class="sub">Latest heartbeat per service from Redis streams.</div>
                   </div>
                 </div>
                 <div class="table-card">
                   <table>
                     <thead>
-                      <tr><th>Strategy</th><th>Legacy Status</th><th>New Present</th><th>Watched Only Legacy</th><th>Watched Only New</th><th>Pos Mismatches</th><th>Issues</th></tr>
+                      <tr><th>Service</th><th>Status</th><th>Instance</th><th>Observed</th><th>Details</th></tr>
                     </thead>
-                    <tbody>{shadow_strategy_rows}</tbody>
+                    <tbody>{services_rows}</tbody>
                   </table>
                 </div>
+                <div style="margin-top: 16px;">{errors_html}</div>
               </section>
             </div>
           </details>
@@ -2368,7 +2664,7 @@ def _render_dashboard(data: dict[str, Any]) -> str:
                   <div class="table-card">
                     <table>
                       <thead>
-                        <tr><th>Strategy</th><th>Symbol</th><th>Side</th><th>Qty</th><th>Status</th><th>Client Id</th><th>Updated</th></tr>
+                        <tr><th>Strategy</th><th>Type</th><th>Symbol</th><th>Side</th><th>Qty</th><th>Status</th><th>Reason</th><th>Client Id</th><th>Updated</th></tr>
                       </thead>
                       <tbody>{orders_rows}</tbody>
                     </table>
@@ -2464,11 +2760,60 @@ def _render_dashboard(data: dict[str, Any]) -> str:
 
 
 BOT_PAGE_META = {
-    "macd_30s": {"title": "30-Second MACD Bot", "emoji": "🤖", "color": "#2979ff", "path": "/bot/30s"},
-    "macd_1m": {"title": "1-Minute MACD Bot", "emoji": "⏱️", "color": "#9c27b0", "path": "/bot/1m"},
-    "tos": {"title": "TOS Bot", "emoji": "📊", "color": "#ff6f00", "path": "/bot/tos"},
-    "runner": {"title": "Runner Bot", "emoji": "🚀", "color": "#e91e63", "path": "/bot/runner"},
+    "macd_30s": {
+        "title": "Mai Tai 30-Second MACD Bot",
+        "nav_title": "Mai Tai 30s Core",
+        "badge": "30",
+        "color": "#2979ff",
+        "path": "/bot/30s",
+    },
+    "macd_30s_probe": {
+        "title": "Mai Tai 30-Second Probe Bot",
+        "nav_title": "Mai Tai 30s Probe",
+        "badge": "P",
+        "color": "#00897b",
+        "path": "/bot/30s-probe",
+    },
+    "macd_30s_reclaim": {
+        "title": "Mai Tai 30-Second Reclaim Bot",
+        "nav_title": "Mai Tai 30s Reclaim",
+        "badge": "R",
+        "color": "#c62828",
+        "path": "/bot/30s-reclaim",
+    },
+    "macd_1m": {
+        "title": "Mai Tai 1-Minute MACD Bot",
+        "nav_title": "Mai Tai 1m",
+        "badge": "1M",
+        "color": "#9c27b0",
+        "path": "/bot/1m",
+    },
+    "tos": {
+        "title": "Mai Tai TOS Bot",
+        "nav_title": "Mai Tai TOS",
+        "badge": "TOS",
+        "color": "#ff6f00",
+        "path": "/bot/tos",
+    },
+    "runner": {
+        "title": "Mai Tai Runner Bot",
+        "nav_title": "Mai Tai Runner",
+        "badge": "RUN",
+        "color": "#e91e63",
+        "path": "/bot/runner",
+    },
 }
+
+
+def _format_interval_label(interval_secs: object) -> str:
+    value = int(interval_secs or 0)
+    if value == 30:
+        return "30s"
+    if value == 60:
+        return "1m"
+    if value <= 0:
+        return "-"
+    return f"{value}s"
 
 
 def _find_bot_view(data: dict[str, Any], strategy_code: str) -> dict[str, Any] | None:
@@ -2509,24 +2854,46 @@ def _render_scanner_dashboard(data: dict[str, Any]) -> str:
     services = {service["service_name"]: service for service in data["services"]}
     market_data_service = services.get("market-data-gateway", {})
     subscription_symbols = set(scanner["subscription_symbols"])
+    heartbeat_active_symbols = max(
+        _safe_int(scanner.get("heartbeat_active_symbols", 0)),
+        _safe_int(market_data_service.get("details", {}).get("active_symbols", 0)),
+    )
+    displayed_subscription_count = max(int(scanner["active_subscription_symbols"] or 0), heartbeat_active_symbols)
+    latest_snapshot_recent = _is_recent_eastern_label(latest_snapshot.get("completed_at"), max_age_seconds=20)
 
     confirmed_rows = _render_scanner_confirmed_rows(
-        scanner["top_confirmed"],
+        scanner["all_confirmed"][:20],
         subscription_symbols,
         set(scanner.get("blacklist_symbols", [])),
     )
-    pillar_rows = _render_scanner_stock_rows(scanner["five_pillars"], subscription_symbols)
-    gainer_rows = _render_scanner_stock_rows(scanner["top_gainers"], subscription_symbols)
+    pillar_rows = _render_scanner_stock_rows(scanner["five_pillars"][:20], subscription_symbols)
+    gainer_rows = _render_scanner_stock_rows(scanner["top_gainers"][:20], subscription_symbols)
     alert_rows = _render_alert_rows(scanner["recent_alerts"])
-    confirmed_sub = "Bot-ready candidates from the new scanner runtime."
+    confirmed_sub = "Full confirmed universe for the current session. TOP5 and bot badges mark the active ranked subset."
 
     warmup = scanner["alert_warmup"]
     websocket_status = market_data_service.get("status", "unknown")
     websocket_label = "⚡ live" if websocket_status == "healthy" else websocket_status
+    if latest_snapshot_recent and websocket_status != "healthy":
+        websocket_label = "LIVE"
+    effective_websocket_status = str(
+        market_data_service.get("effective_status", market_data_service.get("status", "unknown"))
+    )
+    raw_websocket_status = str(
+        market_data_service.get("raw_status", market_data_service.get("status", "unknown"))
+    )
+    websocket_status = effective_websocket_status
+    websocket_label = "LIVE" if scanner.get("feed_status") == "live" else websocket_status
+    if raw_websocket_status == "healthy" and websocket_status == "healthy":
+        websocket_label = "LIVE"
+    feed_status_note = str(scanner.get("feed_status_note", "") or market_data_service.get("status_note", "") or "")
+    if raw_websocket_status != websocket_status:
+        prefix = f"Heartbeat raw status {raw_websocket_status}."
+        feed_status_note = f"{prefix} {feed_status_note}".strip()
     reconcile_note = (
-        "✅ All positions synced"
+        "All positions synced"
         if data["counts"]["open_incidents"] == 0
-        else f'⚠️ {data["counts"]["open_incidents"]} open incidents'
+        else f'{data["counts"]["open_incidents"]} open incidents'
     )
     top_gainer_change_rows = "".join(
         f"""<tr>
@@ -2545,13 +2912,18 @@ def _render_scanner_dashboard(data: dict[str, Any]) -> str:
     subscription_html = "".join(
         f'<span class="pill-chip live">{escape(symbol)}</span>'
         for symbol in scanner["subscription_symbols"][:24]
-    ) or '<span style="color:#7b86a4;">No live subscriptions yet</span>'
+    ) or (
+        f'<span style="color:#7b86a4;">Heartbeat reports {displayed_subscription_count} live symbols; subscription stream details unavailable.</span>'
+        if displayed_subscription_count > 0
+        else '<span style="color:#7b86a4;">No live subscriptions yet</span>'
+    )
     blacklist_html = _render_scanner_blacklist_entries(scanner.get("blacklist", []))
 
     return f"""<!DOCTYPE html>
 <html>
 <head>
     <title>Momentum Scanner Dashboard</title>
+    <meta charset="utf-8">
     <meta http-equiv="refresh" content="10">
     <style>
         :root {{
@@ -2647,18 +3019,25 @@ def _render_scanner_dashboard(data: dict[str, Any]) -> str:
             color: var(--muted);
         }}
         .line-item strong {{ color: var(--ink); }}
-        .nav-grid {{
-            display: grid;
+        .nav-strip {{
+            display: flex;
+            flex-wrap: wrap;
             gap: 8px;
         }}
-        .nav-grid a {{
+        .nav-strip a {{
             text-decoration: none;
             color: var(--ink);
             background: linear-gradient(180deg, rgba(89,215,255,0.08), rgba(255,255,255,0.02));
             border: 1px solid var(--line);
-            border-radius: 12px;
-            padding: 10px 12px;
-            font-size: 13px;
+            border-radius: 999px;
+            padding: 6px 10px;
+            font-size: 12px;
+            line-height: 1;
+        }}
+        .nav-strip a.active {{
+            border-color: #59d7ff;
+            box-shadow: inset 0 0 0 1px rgba(89,215,255,0.5);
+            background: linear-gradient(180deg, rgba(89,215,255,0.18), rgba(255,255,255,0.02));
         }}
         .pill-chip {{
             display: inline-flex;
@@ -2725,8 +3104,17 @@ def _render_scanner_dashboard(data: dict[str, Any]) -> str:
             font-size: 12px;
         }}
         .table-wrap {{
-            max-height: 420px;
             overflow: auto;
+            max-width: 100%;
+        }}
+        .table-wrap-confirmed {{
+            max-height: 520px;
+        }}
+        .table-wrap-list {{
+            max-height: 360px;
+        }}
+        .table-wrap-alerts {{
+            max-height: 420px;
         }}
         table {{ border-collapse: collapse; width: 100%; font-size: 13px; }}
         th {{
@@ -2771,7 +3159,7 @@ def _render_scanner_dashboard(data: dict[str, Any]) -> str:
             <div class="brand">
                 <div class="brand-badge">MAI<br>TAI</div>
                 <div>
-                    <h1>Scanner Deck</h1>
+                    <h1>Mai Tai Scanner Deck</h1>
                     <p>Dedicated scanner workspace for the new platform</p>
                 </div>
             </div>
@@ -2779,7 +3167,7 @@ def _render_scanner_dashboard(data: dict[str, Any]) -> str:
             <div class="metric-grid">
                 <div class="metric-card">
                     <span>Confirmed</span>
-                    <strong>{scanner["top_confirmed_count"]}</strong>
+                    <strong>{scanner["all_confirmed_count"]}</strong>
                 </div>
                 <div class="metric-card">
                     <span>Pillars</span>
@@ -2800,14 +3188,16 @@ def _render_scanner_dashboard(data: dict[str, Any]) -> str:
             </div>
 
             <div class="side-section">
-                <div class="side-label">Overview</div>
-                <div class="stack">
-                    <div class="line-item"><strong>Status:</strong> {escape(scanner["status"])}</div>
-                    <div class="line-item"><strong>Cycle:</strong> {scanner["cycle_count"]}</div>
-                    <div class="line-item"><strong>Last Scan:</strong> {escape(latest_snapshot.get("completed_at", "N/A"))}</div>
-                    <div class="line-item"><strong>Ref Tickers:</strong> {latest_snapshot.get("reference_count", 0):,}</div>
-                    <div class="line-item"><strong>WebSocket:</strong> {escape(websocket_label)} ({scanner["active_subscription_symbols"]} subs)</div>
-                    <div class="line-item"><strong>Reconcile:</strong> {escape(reconcile_note)}</div>
+                <div class="side-label">Navigation</div>
+                <div class="nav-strip">
+                    <a href="/scanner/dashboard" class="active">Mai Tai Scanner</a>
+                    <a href="/">Mai Tai Control Plane</a>
+                    <a href="/bot/30s">Mai Tai 30s Core</a>
+                    <a href="/bot/30s-probe">Mai Tai 30s Probe</a>
+                    <a href="/bot/30s-reclaim">Mai Tai 30s Reclaim</a>
+                    <a href="/bot/1m">Mai Tai 1m</a>
+                    <a href="/bot/tos">Mai Tai TOS</a>
+                    <a href="/bot/runner">Mai Tai Runner</a>
                 </div>
             </div>
 
@@ -2821,38 +3211,12 @@ def _render_scanner_dashboard(data: dict[str, Any]) -> str:
             </div>
 
             <div class="side-section">
-                <div class="side-label">Navigation</div>
-                <div class="nav-grid">
-                    <a href="/scanner/dashboard">📡 Scanner</a>
-                    <a href="/">🧭 Control Plane</a>
-                    <a href="/bot/30s">🤖 30s Bot</a>
-                    <a href="/bot/1m">⏱️ 1m Bot</a>
-                    <a href="/bot/tos">📊 TOS Bot</a>
-                    <a href="/bot/runner">🚀 Runner Bot</a>
-                </div>
-            </div>
-
-            <div class="side-section">
-                <div class="side-label">Active Ranked Feed</div>
-                <div>{watchlist_html}</div>
-            </div>
-
-            <div class="side-section">
-                <div class="side-label">Live Subscriptions</div>
-                <div>{subscription_html}</div>
-            </div>
-
-            <div class="side-section">
-                <div class="side-label">Scanner Blacklist</div>
-                <div class="stack">{blacklist_html}</div>
-            </div>
-
-            <div class="side-section">
-                <div class="side-label">Scanner Rules</div>
+                <div class="side-label">Overview</div>
                 <div class="stack">
-                    <div class="line-item"><strong>5 Pillars:</strong> ${config["five_pillars"]["min_price"]:.0f}-${config["five_pillars"]["max_price"]:.0f}, float ≤ {_short_volume(config["five_pillars"]["max_float"])}, volume ≥ {_short_volume(config["five_pillars"]["min_today_volume"])}, rvol ≥ {config["five_pillars"]["min_rvol_5pillars"]}x</div>
-                    <div class="line-item"><strong>Top Gainers:</strong> top {config["top_gainers"]["top_gainers_count"]} with rvol ≥ {config["top_gainers"]["min_rvol_top_gainers"]}x</div>
-                    <div class="line-item"><strong>Alerts:</strong> squeeze 5m {config["momentum_alerts"]["squeeze_5min_pct"]}% / 10m {config["momentum_alerts"]["squeeze_10min_pct"]}% / spike {config["momentum_alerts"]["volume_spike_mult"]}x</div>
+                    <div class="line-item"><strong>Status:</strong> {escape(scanner["status"])}</div>
+                    <div class="line-item"><strong>Ref Tickers:</strong> {latest_snapshot.get("reference_count", 0):,}</div>
+                    <div class="line-item"><strong>WebSocket:</strong> {escape(websocket_label)} ({displayed_subscription_count} subs)</div>
+                    <div class="line-item"><strong>Reconcile:</strong> {escape(reconcile_note)}</div>
                 </div>
             </div>
         </aside>
@@ -2864,17 +3228,17 @@ def _render_scanner_dashboard(data: dict[str, Any]) -> str:
                         <h2>Momentum Confirmed</h2>
                         <div class="sub">{confirmed_sub}</div>
                     </div>
-                    <span class="count green">{scanner["top_confirmed_count"]} names</span>
+                    <span class="count green">{scanner["all_confirmed_count"]} names</span>
                 </div>
-                <div class="table-wrap">
+                <div class="table-wrap table-wrap-confirmed">
                     <table>
-                        <thead><tr><th>#</th><th>Ticker / Bot</th><th>Path</th><th>Score</th><th>Confirmed</th><th>Entry Price</th><th>Price</th><th>Change%</th><th>Bid</th><th>Ask</th><th>Spread</th><th>Volume</th><th>RVol</th><th>Float</th><th>Squeezes</th><th>1st Spike</th><th>Catalyst</th><th>📰</th><th>🚫</th></tr></thead>
+                        <thead><tr><th>#</th><th>Ticker / Bot</th><th>Score</th><th>Confirmed</th><th>Entry Price</th><th>Price</th><th>Change%</th><th>Volume</th><th>RVol</th><th>Squeezes</th><th>1st Spike</th><th>Catalyst</th></tr></thead>
                         <tbody>{confirmed_rows}</tbody>
                     </table>
                 </div>
             </section>
 
-            <section class="panel">
+            <section class="panel full">
                 <div class="panel-header">
                     <div>
                         <h3>5 Pillars Scanner</h3>
@@ -2882,15 +3246,15 @@ def _render_scanner_dashboard(data: dict[str, Any]) -> str:
                     </div>
                     <span class="count green">{scanner["five_pillars_count"]}</span>
                 </div>
-                <div class="table-wrap">
+                <div class="table-wrap table-wrap-list">
                     <table>
-                        <thead><tr><th>#</th><th>Ticker</th><th>First Seen</th><th>Price</th><th>Change%</th><th>Bid</th><th>Ask</th><th>Spread</th><th>Volume</th><th>RVol</th><th>Float</th><th>HOD</th><th>VWAP</th><th>Prev Close</th><th>Age</th></tr></thead>
+                        <thead><tr><th>#</th><th>Ticker</th><th>First Seen</th><th>Price</th><th>Change%</th><th>Spread</th><th>Volume</th><th>RVol</th><th>Age</th></tr></thead>
                         <tbody>{pillar_rows}</tbody>
                     </table>
                 </div>
             </section>
 
-            <section class="panel">
+            <section class="panel full">
                 <div class="panel-header">
                     <div>
                         <h3>Top Gainers</h3>
@@ -2898,43 +3262,43 @@ def _render_scanner_dashboard(data: dict[str, Any]) -> str:
                     </div>
                     <span class="count pink">{scanner["top_gainers_count"]}</span>
                 </div>
-                <div class="table-wrap">
+                <div class="table-wrap table-wrap-list">
                     <table>
-                        <thead><tr><th>#</th><th>Ticker</th><th>First Seen</th><th>Price</th><th>Change%</th><th>Bid</th><th>Ask</th><th>Spread</th><th>Volume</th><th>RVol</th><th>Float</th><th>HOD</th><th>VWAP</th><th>Prev Close</th><th>Age</th></tr></thead>
+                        <thead><tr><th>#</th><th>Ticker</th><th>First Seen</th><th>Price</th><th>Change%</th><th>Spread</th><th>Volume</th><th>RVol</th><th>Age</th></tr></thead>
                         <tbody>{gainer_rows}</tbody>
                     </table>
                 </div>
             </section>
 
-            <section class="panel">
+            <section class="panel full">
                 <div class="panel-header">
                     <div>
-                        <h3>Momentum Alerts</h3>
-                        <div class="sub">Recent alert tape across spike and squeeze detectors.</div>
+                        <h3>Top Gainer Changes</h3>
+                        <div class="sub">Latest rank and direction changes flowing through the top-gainer feed.</div>
                     </div>
-                    <span class="count amber">{scanner["recent_alerts_count"]}</span>
+                    <span class="count amber">{len(scanner.get("top_gainer_changes", []))}</span>
                 </div>
-                <div class="panel-copy">Warmup: {"Ready" if warmup.get("fully_ready") else "History building"} | 5m ready: {"yes" if warmup.get("squeeze_5min_ready") else "no"} | 10m ready: {"yes" if warmup.get("squeeze_10min_ready") else "no"}</div>
-                <div class="table-wrap">
+                <div class="table-wrap table-wrap-list">
                     <table>
-                        <thead><tr><th>Type</th><th>Ticker</th><th>Price</th><th>Bid</th><th>Ask</th><th>Volume</th><th>Float</th><th>Details</th><th>Time</th></tr></thead>
-                        <tbody>{alert_rows}</tbody>
+                        <thead><tr><th>Type</th><th>Ticker</th><th>Time</th><th>Direction</th></tr></thead>
+                        <tbody>{top_gainer_change_rows}</tbody>
                     </table>
                 </div>
             </section>
 
-            <section class="panel">
+            <section class="panel full">
                 <div class="panel-header">
                     <div>
-                        <h3>Top Gainer Changes</h3>
-                        <div class="sub">Rank moves, new entrants, and drops in the top-gainer deck.</div>
+                        <h3>Momentum Alerts</h3>
+                        <div class="sub">Latest alert tape with simple color-coded momentum events.</div>
                     </div>
-                    <span class="count">{len(scanner.get("top_gainer_changes", []))}</span>
+                    <span class="count amber">{scanner["recent_alerts_count"]}</span>
                 </div>
-                <div class="table-wrap">
+                <div class="panel-copy">Warmup: {"Ready" if warmup.get("fully_ready") else "History building"} | 5m ready: {"yes" if warmup.get("squeeze_5min_ready") else "no"} | 10m ready: {"yes" if warmup.get("squeeze_10min_ready") else "no"}</div>
+                <div class="table-wrap table-wrap-alerts">
                     <table>
-                        <thead><tr><th>Type</th><th>Ticker</th><th>Time</th><th>Move</th></tr></thead>
-                        <tbody>{top_gainer_change_rows}</tbody>
+                        <thead><tr><th>Time</th><th>Type</th><th>Ticker</th><th style="text-align:right">Price</th><th style="text-align:right">Volume</th><th>Details</th></tr></thead>
+                        <tbody>{alert_rows}</tbody>
                     </table>
                 </div>
             </section>
@@ -2951,52 +3315,46 @@ def _render_bot_detail_page(data: dict[str, Any], strategy_code: str) -> str:
 
     meta = BOT_PAGE_META[strategy_code]
     recent_fills = [item for item in data["recent_fills"] if item["strategy_code"] == strategy_code][:50]
-    decision_entries = _build_bot_decision_entries(bot)
     position_rows = _build_bot_position_rows(data, bot)
-    closed_today = list(bot.get("closed_today", []))
-    closed_rows = _build_closed_trade_rows(closed_today)
-    trades_rows = _build_bot_fill_rows(recent_fills)
-    intent_rows = _build_bot_intent_rows(bot)
-    order_rows = _build_bot_order_rows(bot)
-    account_rows = _build_bot_account_rows(data, bot)
-    account_summary = _build_bot_account_summary(data, bot)
-    decision_lines = _build_bot_decision_lines(decision_entries)
-    watchlist_html = _render_chip_cloud(bot["watchlist"], empty_text="No symbols on watch")
-    pending_open_html = _render_chip_cloud(bot["pending_open_symbols"], variant="live", empty_text="None queued")
-    pending_close_html = _render_chip_cloud(bot["pending_close_symbols"], variant="danger", empty_text="None queued")
-    pending_scale_html = _render_chip_cloud(bot["pending_scale_levels"], variant="amber", empty_text="No scale levels armed")
-    account_note = (
-        f'Shared {escape(str(bot.get("provider", "broker"))).upper()} account with sibling strategy. Account-level quantities can include sibling exposure.'
-        if strategy_code in {"tos", "runner"}
-        else f'Dedicated {escape(str(bot.get("provider", "broker"))).upper()} account mapped to this bot.'
+    closed_today = sorted(
+        list(bot.get("closed_today", [])),
+        key=lambda item: str(item.get("exit_time", "") or item.get("closed_at", "") or item.get("entry_time", "")),
+        reverse=True,
     )
+    closed_rows = _build_closed_trade_rows_v2(closed_today)
+    trade_summary_rows, trade_summary_count = _build_trade_summary_rows(bot)
+    decision_rows = _build_bot_decision_rows(bot)
+    failed_rows, failed_count = _build_failed_action_rows(bot)
     pnl_color = "#5fff8d" if bot["daily_pnl"] >= 0 else "#ff6b6b"
     recent_fill_count = len(recent_fills)
+    active_symbols: list[str] = []
+    for item in bot["positions"]:
+        symbol = str(item.get("ticker") or item.get("symbol") or "").upper()
+        if symbol and symbol not in active_symbols:
+            active_symbols.append(symbol)
+    for symbol in bot["pending_open_symbols"]:
+        normalized = str(symbol).upper()
+        if normalized and normalized not in active_symbols:
+            active_symbols.append(normalized)
+    for symbol in bot["pending_close_symbols"]:
+        normalized = str(symbol).upper()
+        if normalized and normalized not in active_symbols:
+            active_symbols.append(normalized)
+    for symbol in bot["watchlist"][:10]:
+        normalized = str(symbol).upper()
+        if normalized and normalized not in active_symbols:
+            active_symbols.append(normalized)
+    open_symbols = {
+        str(item.get("ticker") or item.get("symbol") or "").upper()
+        for item in bot["positions"]
+        if item.get("ticker") or item.get("symbol")
+    }
+    pending_symbols = {str(symbol).upper() for symbol in bot["pending_open_symbols"] + bot["pending_close_symbols"]}
+    live_symbol_html = "".join(
+        f'<span class="pill-chip {"live" if symbol in open_symbols else "amber" if symbol in pending_symbols else ""}">{escape(symbol)}</span>'
+        for symbol in active_symbols
+    ) or '<span style="color:#7b86a4;">No live symbols in this bot</span>'
     current_position = bot["positions"][0] if strategy_code == "runner" and bot["positions"] else None
-    parity = bot.get("tos_parity", {})
-    parity_settings = _render_chip_cloud(parity.get("settings", []), empty_text="No parity settings defined")
-    parity_rows = _build_tos_parity_rows(parity)
-    parity_panel = ""
-    if parity.get("enabled"):
-        parity_panel = f"""
-            <section class="panel">
-                <div class="panel-header">
-                    <div>
-                        <h3>TOS Parity</h3>
-                        <div class="sub">Mai Tai's latest closed 1m values for comparison against your thinkorswim chart.</div>
-                    </div>
-                    <span class="count amber">{escape(parity.get("status", "idle"))}</span>
-                </div>
-                <div class="panel-copy">{escape(parity.get("summary", ""))} Amber deltas are tight to a crossover, cyan deltas are worth watching, and green/red deltas are clearly separated.</div>
-                <div class="badge-row">{parity_settings}</div>
-                <div class="table-wrap">
-                    <table>
-                        <thead><tr><th>Ticker</th><th>Closed Bar</th><th style="text-align:right">Close</th><th style="text-align:right">EMA9</th><th style="text-align:right">EMA20</th><th style="text-align:right">MACD</th><th style="text-align:right">Signal</th><th style="text-align:right">Hist</th><th style="text-align:right">VWAP</th><th>Flags</th></tr></thead>
-                        <tbody>{parity_rows}</tbody>
-                    </table>
-                </div>
-            </section>"""
-
     runner_status_panel = ""
     if strategy_code == "runner":
         if current_position:
@@ -3032,20 +3390,18 @@ def _render_bot_detail_page(data: dict[str, Any], strategy_code: str) -> str:
                 <div class="panel-copy">Scanning for runners... Score≥70, Change≥35%, after 7AM, accelerating, then managed with tiered trails and EMA checks.</div>
             </section>"""
 
-    closed_trades_panel = ""
-    if strategy_code == "runner":
-        closed_trades_panel = f"""
-        <section class="panel">
+    closed_trades_panel = f"""
+        <section class="panel full">
             <div class="panel-header">
                 <div>
                     <h3>Closed Trades</h3>
-                    <div class="sub">Completed runner rides captured by the strategy runtime.</div>
+                    <div class="sub">Completed trades with entry, exit, realized P&amp;L, and close reason.</div>
                 </div>
                 <span class="count pink">{len(closed_today)}</span>
             </div>
             <div class="table-wrap">
                 <table>
-                    <thead><tr><th>Ticker</th><th>Entry</th><th>Exit</th><th>P&L</th><th>Reason</th><th>Peak</th><th>Duration</th></tr></thead>
+                    <thead><tr><th>Ticker</th><th>Path</th><th style="text-align:right">Qty</th><th>Entry Time</th><th style="text-align:right">Entry</th><th>Exit Time</th><th style="text-align:right">Exit</th><th>P&amp;L</th><th>Reason</th></tr></thead>
                     <tbody>{closed_rows}</tbody>
                 </table>
             </div>
@@ -3054,7 +3410,8 @@ def _render_bot_detail_page(data: dict[str, Any], strategy_code: str) -> str:
     return f"""<!DOCTYPE html>
 <html>
 <head>
-    <title>{meta["emoji"]} {meta["title"]}</title>
+    <title>{meta["title"]}</title>
+    <meta charset="utf-8">
     <meta http-equiv="refresh" content="10">
     <style>
         :root {{
@@ -3164,6 +3521,26 @@ def _render_bot_detail_page(data: dict[str, Any], strategy_code: str) -> str:
             font-size: 13px;
         }}
         .nav-grid a.active {{
+            border-color: var(--accent);
+            box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 80%, white 20%);
+            background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 18%, transparent), rgba(255,255,255,0.02));
+        }}
+        .nav-strip {{
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }}
+        .nav-strip a {{
+            text-decoration: none;
+            color: var(--ink);
+            background: linear-gradient(180deg, rgba(89,215,255,0.08), rgba(255,255,255,0.02));
+            border: 1px solid var(--line);
+            border-radius: 999px;
+            padding: 6px 10px;
+            font-size: 12px;
+            line-height: 1;
+        }}
+        .nav-strip a.active {{
             border-color: var(--accent);
             box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 80%, white 20%);
             background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 18%, transparent), rgba(255,255,255,0.02));
@@ -3333,66 +3710,51 @@ def _render_bot_detail_page(data: dict[str, Any], strategy_code: str) -> str:
     <div class="shell">
         <aside class="sidebar">
             <div class="brand">
-                <div class="brand-badge">{meta["emoji"]}</div>
+                <div class="brand-badge">{meta["badge"]}</div>
                 <div>
                     <h1>{meta["title"]}</h1>
                     <p>Dedicated execution workspace for this bot.</p>
                 </div>
             </div>
 
-            <div class="metric-grid">
-                <div class="metric-card">
-                    <span>Eligible Feed</span>
-                    <strong>{bot["watchlist_count"]}</strong>
+            <div class="side-section">
+                <div class="stack">
+                    <div class="line-item"><strong>Status:</strong> {escape(bot["wiring_status"].upper())}</div>
+                    <div class="line-item"><strong>Account:</strong> {escape(bot["account_display_name"])}</div>
+                    <div class="line-item"><strong>Mode:</strong> {escape(bot["execution_mode"].upper())}</div>
+                    <div class="line-item"><strong>Provider:</strong> {escape(bot["provider"].upper())}</div>
+                    <div class="line-item"><strong>Interval:</strong> {_format_interval_label(bot.get("interval_secs"))}</div>
                 </div>
-                <div class="metric-card">
-                    <span>Open</span>
-                    <strong>{bot["position_count"]}</strong>
-                </div>
-                <div class="metric-card">
-                    <span>Pending</span>
-                    <strong>{bot["pending_count"]}</strong>
-                </div>
-                <div class="metric-card">
-                    <span>Fills</span>
-                    <strong>{recent_fill_count}</strong>
-                </div>
+            </div>
+
+            <div class="side-section">
+                <div class="side-label">Live Symbols</div>
+                <div>{live_symbol_html}</div>
             </div>
 
             <div class="side-section">
                 <div class="side-label">Overview</div>
-                <div class="stack">
-                    <div class="line-item"><strong>Execution:</strong> {escape(bot["wiring_status"].upper())}</div>
-                    <div class="line-item"><strong>Account:</strong> {escape(bot["account_name"])}</div>
-                    <div class="line-item"><strong>Legacy Shadow:</strong> {escape(bot["legacy_status"])}</div>
-                    <div class="line-item"><strong>P&amp;L Day:</strong> <span style="color:{pnl_color};">${bot["daily_pnl"]:+,.2f}</span></div>
-                    <div class="line-item"><strong>Account Model:</strong> {escape(account_note)}</div>
-                </div>
-            </div>
-
-            <div class="side-section">
-                <div class="side-label">Navigation</div>
-                {_render_page_nav(strategy_code)}
-            </div>
-
-            <div class="side-section">
-                <div class="side-label">Ranked Feed</div>
-                <div>{watchlist_html}</div>
-            </div>
-
-            <div class="side-section">
-                <div class="side-label">Pending Workflow</div>
-                <div class="queue-group"><strong>Open Queue</strong><div>{pending_open_html}</div></div>
-                <div class="queue-group"><strong>Close Queue</strong><div>{pending_close_html}</div></div>
-                <div class="queue-group"><strong>Scale Queue</strong><div>{pending_scale_html}</div></div>
-            </div>
-
-            <div class="side-section">
-                <div class="side-label">Bot Notes</div>
-                <div class="stack">
-                    <div class="line-item"><strong>Trade Log:</strong> Recent intents, orders, and fills are shown on the right for quick operator review.</div>
-                    <div class="line-item"><strong>Reconcile:</strong> Use account exposure and position status together to catch drift before cutover.</div>
-                    <div class="line-item"><strong>Strategy:</strong> {"Score≥70 | Change≥35% | After 7AM | Accelerating | Tiered trail + EMA break" if strategy_code == "runner" else "Preserved entry, exit, and position-tracking logic from the legacy runtime."}</div>
+                <div class="metric-grid">
+                    <div class="metric-card">
+                        <span>Daily P&amp;L</span>
+                        <strong style="color:{pnl_color};">${bot["daily_pnl"]:+,.2f}</strong>
+                    </div>
+                    <div class="metric-card">
+                        <span>Open</span>
+                        <strong>{bot["position_count"]}</strong>
+                    </div>
+                    <div class="metric-card">
+                        <span>Closed</span>
+                        <strong>{len(closed_today)}</strong>
+                    </div>
+                    <div class="metric-card">
+                        <span>Pending</span>
+                        <strong>{bot["pending_count"]}</strong>
+                    </div>
+                    <div class="metric-card">
+                        <span>Trades</span>
+                        <strong>{recent_fill_count}</strong>
+                    </div>
                 </div>
             </div>
         </aside>
@@ -3401,29 +3763,15 @@ def _render_bot_detail_page(data: dict[str, Any], strategy_code: str) -> str:
             <section class="panel full accent-panel">
                 <div class="panel-header">
                     <div>
-                        <h2>{meta["title"]}</h2>
-                        <div class="sub">Bot deck view for execution readiness, activity, and broker alignment.</div>
+                        <h2>Bot Navigation</h2>
+                        <div class="sub">Quick switch between scanner, control plane, and bot pages.</div>
                     </div>
                     <span class="count accent">{escape(bot["display_name"])}</span>
                 </div>
-                <div class="badge-row">
-                    <span class="badge">Execution Workspace</span>
-                    <span class="badge">Mode {escape(bot["execution_mode"].upper())}</span>
-                    <span class="badge">Provider {escape(bot["provider"].upper())}</span>
-                    <span class="badge">Legacy Shadow {escape(bot["legacy_status"])}</span>
-                </div>
-                <div class="hero-grid">
-                    <div class="hero-card"><span>Eligible Feed</span><strong>{bot["watchlist_count"]}</strong><small>Ranked scanner names this bot may evaluate</small></div>
-                    <div class="hero-card"><span>Open Positions</span><strong>{bot["position_count"]}</strong><small>Strategy-owned live positions</small></div>
-                    <div class="hero-card"><span>Pending Actions</span><strong>{bot["pending_count"]}</strong><small>Open, close, and scale queues</small></div>
-                    <div class="hero-card"><span>Recent Fills</span><strong>{recent_fill_count}</strong><small>Latest fills tracked by OMS</small></div>
-                    <div class="hero-card"><span>P&amp;L Day</span><strong style="color:{pnl_color};">${bot["daily_pnl"]:+,.2f}</strong><small>{escape(bot["account_name"])}</small></div>
-                </div>
+                <div class="panel-copy">{_render_page_nav(strategy_code)}</div>
             </section>
 
             {runner_status_panel}
-
-            {parity_panel}
 
             <section class="panel">
                 <div class="panel-header">
@@ -3441,73 +3789,18 @@ def _render_bot_detail_page(data: dict[str, Any], strategy_code: str) -> str:
                 </div>
             </section>
 
-            <section class="panel">
+            <section class="panel full">
                 <div class="panel-header">
                     <div>
-                        <h3>Recent Trades</h3>
-                        <div class="sub">Filled executions seen by OMS for this bot.</div>
+                        <h3>Trade Summary</h3>
+                        <div class="sub">One row per reclaim trade attempt, paired from entry through exit when available.</div>
                     </div>
-                    <span class="count">{recent_fill_count}</span>
+                    <span class="count accent">{trade_summary_count}</span>
                 </div>
                 <div class="table-wrap">
                     <table>
-                        <thead><tr><th>Filled</th><th>Side</th><th>Ticker</th><th style="text-align:right">Qty</th><th style="text-align:right">Fill $</th><th style="text-align:right">Total $</th></tr></thead>
-                        <tbody>{trades_rows}</tbody>
-                    </table>
-                </div>
-            </section>
-
-            <section class="panel">
-                <div class="panel-header">
-                    <div>
-                        <h3>Trade Intents</h3>
-                        <div class="sub">Latest strategy intents emitted into OMS.</div>
-                    </div>
-                    <span class="count">{len(bot["recent_intents"])}</span>
-                </div>
-                <div class="table-wrap">
-                    <table>
-                        <thead><tr><th>Updated</th><th>Type</th><th>Side</th><th>Ticker</th><th style="text-align:right">Qty</th><th>Reason</th><th>Status</th></tr></thead>
-                        <tbody>{intent_rows}</tbody>
-                    </table>
-                </div>
-            </section>
-
-            <section class="panel">
-                <div class="panel-header">
-                    <div>
-                        <h3>Recent Orders</h3>
-                        <div class="sub">Broker-order lifecycle tied back to the same bot.</div>
-                    </div>
-                    <span class="count pink">{len(bot["recent_orders"])}</span>
-                </div>
-                <div class="table-wrap">
-                    <table>
-                        <thead><tr><th>Updated</th><th>Side</th><th>Ticker</th><th style="text-align:right">Qty</th><th>Status</th><th>Client Order ID</th></tr></thead>
-                        <tbody>{order_rows}</tbody>
-                    </table>
-                </div>
-            </section>
-
-            <section class="panel">
-                <div class="panel-header">
-                    <div>
-                        <h3>Account Exposure</h3>
-                        <div class="sub">Broker-account positions under this bot's mapped account.</div>
-                    </div>
-                    <span class="count">{len([item for item in data["account_positions"] if item.get("broker_account_name") == bot["account_name"]])}</span>
-                </div>
-                <div class="summary-grid">
-                    <div class="hero-card"><span>Account Positions</span><strong>{account_summary["account_position_count"]}</strong><small>{escape(bot["account_name"])}</small></div>
-                    <div class="hero-card"><span>Gross Market Value</span><strong>${account_summary["gross_market_value"]:,.2f}</strong><small>Across all broker-held symbols</small></div>
-                    <div class="hero-card"><span>Strategy Symbols</span><strong>{account_summary["strategy_symbol_count"]}</strong><small>Virtual positions attributed to this bot</small></div>
-                    <div class="hero-card"><span>Other Symbols</span><strong>{account_summary["non_strategy_symbol_count"]}</strong><small>{escape(", ".join(account_summary["non_strategy_symbols"][:3]) or "No sibling-only exposure")}</small></div>
-                </div>
-                <div class="panel-copy">Latest broker-account update: {escape(account_summary["latest_updated_at"] or "No broker account update recorded yet")}.</div>
-                <div class="table-wrap">
-                    <table>
-                        <thead><tr><th>Account</th><th>Ticker</th><th style="text-align:right">Qty</th><th style="text-align:right">Avg Px</th><th style="text-align:right">Market Value</th><th>Updated</th></tr></thead>
-                        <tbody>{account_rows}</tbody>
+                        <thead><tr><th>Ticker</th><th>Entry Time</th><th>Entry</th><th style="text-align:right">Qty</th><th>Exit Time</th><th>Exit</th><th>Status</th></tr></thead>
+                        <tbody>{trade_summary_rows}</tbody>
                     </table>
                 </div>
             </section>
@@ -3517,12 +3810,33 @@ def _render_bot_detail_page(data: dict[str, Any], strategy_code: str) -> str:
             <section class="panel full">
                 <div class="panel-header">
                     <div>
-                        <h3>Decision Tape</h3>
-                        <div class="sub">Compact log of the bot's most recent intent activity.</div>
+                        <h3>Bot Decisions</h3>
+                        <div class="sub">Recent entry checks and block reasons from the strategy runtime.</div>
                     </div>
-                    <span class="count accent">{len(decision_entries)}</span>
+                    <span class="count accent">{min(len(bot.get("recent_decisions", [])), 50)}</span>
                 </div>
-                <div class="log-wrap">{decision_lines}</div>
+                <div class="table-wrap">
+                    <table>
+                        <thead><tr><th>Bar Time</th><th>Ticker</th><th>Status</th><th>Reason</th><th>Path</th><th style="text-align:right">Score</th><th style="text-align:right">Price</th></tr></thead>
+                        <tbody>{decision_rows}</tbody>
+                    </table>
+                </div>
+            </section>
+
+            <section class="panel full">
+                <div class="panel-header">
+                    <div>
+                        <h3>Failed Actions</h3>
+                        <div class="sub">Recent failed intent and order events in a simple tape format.</div>
+                    </div>
+                    <span class="count pink">{failed_count}</span>
+                </div>
+                <div class="table-wrap">
+                    <table>
+                        <thead><tr><th>Time</th><th>Ticker</th><th>Stage</th><th>Action</th><th style="text-align:right">Qty</th><th>Status</th><th>Reason</th><th>Note</th></tr></thead>
+                        <tbody>{failed_rows}</tbody>
+                    </table>
+                </div>
             </section>
         </main>
     </div>
@@ -3534,13 +3848,13 @@ def _render_page_nav(active: str) -> str:
     links: list[str] = []
     for code, meta in BOT_PAGE_META.items():
         links.append(
-            f'<a href="{meta["path"]}" class="{"active" if code == active else ""}">{meta["emoji"]} {escape(meta["title"].replace(" Bot", ""))}</a>'
+            f'<a href="{meta["path"]}" class="{"active" if code == active else ""}">{escape(str(meta.get("nav_title", meta["title"])).replace(" Bot", ""))}</a>'
         )
     return (
-        '<div class="nav-grid">'
-        '<a href="/scanner/dashboard">📡 Scanner</a>'
+        '<div class="nav-strip">'
+        '<a href="/scanner/dashboard">Mai Tai Scanner</a>'
         + "".join(links)
-        + '<a href="/">💚 Control Plane</a>'
+        + '<a href="/">Mai Tai Control Plane</a>'
         + "</div>"
     )
 
@@ -3566,6 +3880,133 @@ def _build_bot_fill_rows(recent_fills: list[dict[str, Any]]) -> str:
         </tr>"""
         for item in recent_fills
     )
+
+
+def _build_trade_summary_rows(bot: dict[str, Any]) -> tuple[str, int]:
+    fills_by_symbol_side: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for item in reversed(bot.get("recent_fills", [])):
+        symbol = str(item.get("symbol", "")).upper()
+        side = str(item.get("side", "")).lower()
+        if symbol and side:
+            fills_by_symbol_side.setdefault((symbol, side), []).append(item)
+
+    def _consume_fill(symbol: str, side: str, *, only_when_filled: bool) -> dict[str, Any] | None:
+        if only_when_filled:
+            queue = fills_by_symbol_side.get((symbol, side), [])
+            if queue:
+                return queue.pop(0)
+        return None
+
+    rows: list[dict[str, str]] = []
+    open_rows_by_symbol: dict[str, list[dict[str, str]]] = {}
+
+    for item in reversed(bot.get("recent_intents", [])):
+        intent_type = str(item.get("intent_type", "")).lower()
+        if intent_type not in {"open", "close"}:
+            continue
+
+        symbol = str(item.get("symbol", "")).upper()
+        side = str(item.get("side", "")).lower()
+        status = str(item.get("status", "")).lower()
+        quantity = str(item.get("quantity", "") or "-")
+        reason = str(item.get("reason", "") or "-")
+        updated_at = str(item.get("updated_at", "") or "-")
+        fill = _consume_fill(symbol, side, only_when_filled=status == "filled")
+        fill_price = _fmt_money(_as_float(fill.get("price"))) if fill else "-"
+        fill_time = str(fill.get("filled_at", "") or updated_at) if fill else updated_at
+
+        if intent_type == "open":
+            if status == "filled":
+                status_label = "Open Position"
+                status_color = "#5fff8d"
+            elif status in {"submitted", "accepted", "pending", "partially_filled"}:
+                status_label = "Open Order Pending"
+                status_color = "#ffcc5b"
+            elif status == "cancelled":
+                status_label = "Cancelled"
+                status_color = "#ff8c42"
+            elif status == "rejected":
+                status_label = "Rejected"
+                status_color = "#ff6b6b"
+            else:
+                status_label = status.replace("_", " ").title() or "Open"
+                status_color = "#98a6c8"
+
+            row = {
+                "symbol": symbol or "-",
+                "entry_time": fill_time,
+                "entry_detail": f"{fill_price}<br><span style=\"font-size:11px;color:#98a6c8;\">{escape(reason)}</span>",
+                "quantity": escape(quantity),
+                "exit_time": "-",
+                "exit_detail": '<span style="color:#7b86a4;">Waiting</span>',
+                "status_label": status_label,
+                "status_color": status_color,
+                "sort_time": fill_time,
+            }
+            rows.append(row)
+            if status in {"filled", "submitted", "accepted", "pending", "partially_filled"}:
+                open_rows_by_symbol.setdefault(symbol, []).append(row)
+            continue
+
+        close_status = status.replace("_", " ").title() or "Close"
+        close_color = "#98a6c8"
+        if status == "filled":
+            close_status = "Closed"
+            close_color = "#59d7ff"
+        elif status in {"submitted", "accepted", "pending", "partially_filled"}:
+            close_status = "Close Pending"
+            close_color = "#ffcc5b"
+        elif status == "cancelled":
+            close_status = "Close Cancelled"
+            close_color = "#ff8c42"
+        elif status == "rejected":
+            close_status = "Close Rejected"
+            close_color = "#ff6b6b"
+
+        open_queue = open_rows_by_symbol.get(symbol, [])
+        target_row = next((candidate for candidate in open_queue if candidate["exit_time"] == "-"), None)
+        if target_row is None:
+            target_row = {
+                "symbol": symbol or "-",
+                "entry_time": "-",
+                "entry_detail": '<span style="color:#7b86a4;">Entry not found on page</span>',
+                "quantity": escape(quantity),
+                "exit_time": "-",
+                "exit_detail": '<span style="color:#7b86a4;">Waiting</span>',
+                "status_label": close_status,
+                "status_color": close_color,
+                "sort_time": fill_time,
+            }
+            rows.append(target_row)
+
+        target_row["exit_time"] = fill_time
+        target_row["exit_detail"] = (
+            f"{fill_price}<br><span style=\"font-size:11px;color:#98a6c8;\">{escape(reason)}</span>"
+        )
+        target_row["status_label"] = close_status
+        target_row["status_color"] = close_color
+        target_row["sort_time"] = fill_time
+
+    if not rows:
+        return (
+            '<tr><td colspan="7" style="text-align:center;color:#7b86a4;padding:15px;">'
+            "No trade attempts yet</td></tr>",
+            0,
+        )
+
+    rendered = "".join(
+        f"""<tr>
+            <td><strong>{escape(row["symbol"])}</strong></td>
+            <td style="font-size:11px">{escape(row["entry_time"])}</td>
+            <td>{row["entry_detail"]}</td>
+            <td style="text-align:right">{row["quantity"]}</td>
+            <td style="font-size:11px">{escape(row["exit_time"])}</td>
+            <td>{row["exit_detail"]}</td>
+            <td><span style="color:{row["status_color"]};font-weight:700;">{escape(row["status_label"])}</span></td>
+        </tr>"""
+        for row in sorted(rows, key=lambda item: str(item.get("entry_time", "")), reverse=True)[:25]
+    )
+    return rendered, len(rows)
 
 
 def _build_bot_intent_rows(bot: dict[str, Any]) -> str:
@@ -3729,7 +4170,22 @@ def _build_bot_position_rows(data: dict[str, Any], bot: dict[str, Any]) -> str:
         if item.get("broker_account_name") == account_name
     }
 
-    symbols = sorted(set(runtime_positions) | set(virtual_positions) | set(account_positions))
+    def _symbol_sort_key(symbol: str) -> str:
+        runtime = runtime_positions.get(symbol) or {}
+        virtual = virtual_positions.get(symbol) or {}
+        account = account_positions.get(symbol) or {}
+        return str(
+            runtime.get("entry_time")
+            or virtual.get("updated_at")
+            or account.get("updated_at")
+            or ""
+        )
+
+    symbols = sorted(
+        set(runtime_positions) | set(virtual_positions) | set(account_positions),
+        key=_symbol_sort_key,
+        reverse=True,
+    )
     if not symbols:
         return '<tr><td colspan="7" style="text-align:center;color:#888;padding:15px;">No open positions</td></tr>'
 
@@ -3757,10 +4213,10 @@ def _build_bot_position_rows(data: dict[str, Any], bot: dict[str, Any]) -> str:
             status_html = f'<span style="color:#ff9100">⚠️ VQTY: bot={runtime_qty:g} virt={virtual_qty:g}</span>'
         elif account and not runtime:
             status_html = '<span style="color:#ff1744">⚠️ ACCOUNT-ONLY</span>'
-        elif runtime and not account and strategy_code in {"macd_30s", "macd_1m"}:
+        elif runtime and not account and bot.get("runtime_kind") == "macd":
             status_html = '<span style="color:#ff1744">⚠️ GHOST (not on broker)</span>'
         else:
-            status_html = '<span style="color:#888">—</span>'
+            status_html = '<span style="color:#888">-</span>'
 
         pnl_amount = 0.0
         pnl_pct = 0.0
@@ -3768,7 +4224,7 @@ def _build_bot_position_rows(data: dict[str, Any], bot: dict[str, Any]) -> str:
             pnl_amount = (current_price - runtime_entry) * runtime_qty
             pnl_pct = ((current_price - runtime_entry) / runtime_entry) * 100
         pnl_color = "#00c853" if pnl_amount >= 0 else "#ff1744"
-        time_text = escape(str(runtime.get("entry_time", ""))) if runtime else "—"
+        time_text = escape(str(runtime.get("entry_time", ""))) if runtime else "-"
 
         rows.append(
             f"""<tr style="border-bottom:1px solid #222;">
@@ -3814,6 +4270,173 @@ def _build_bot_decision_entries(bot: dict[str, Any]) -> list[dict[str, str]]:
     return entries[:50]
 
 
+def _build_bot_decision_rows(bot: dict[str, Any]) -> str:
+    rows: list[str] = []
+    for item in bot.get("recent_decisions", [])[:50]:
+        status = str(item.get("status", "") or "").lower()
+        if status == "signal":
+            status_color = "#00c853"
+        elif status == "blocked":
+            status_color = "#ff9100"
+        elif status == "pending":
+            status_color = "#40c4ff"
+        else:
+            status_color = "#98a6c8"
+        score = item.get("score")
+        score_text = "-" if score in (None, "") else escape(str(score))
+        price = item.get("price")
+        price_text = "-" if price in (None, "") else _fmt_money(_as_float(price))
+        rows.append(
+            f"""<tr>
+            <td>{escape(str(item.get("last_bar_at", "")) or "-")}</td>
+            <td><strong>{escape(str(item.get("symbol", "")) or "-")}</strong></td>
+            <td style="color:{status_color};font-weight:bold;">{escape(status.upper() or "INFO")}</td>
+            <td>{escape(str(item.get("reason", "")) or "-")}</td>
+            <td>{escape(str(item.get("path", "")) or "-")}</td>
+            <td style="text-align:right">{score_text}</td>
+            <td style="text-align:right">{price_text}</td>
+        </tr>"""
+        )
+    if not rows:
+        return '<tr><td colspan="7" style="text-align:center;color:#888;">No bot decisions yet</td></tr>'
+    return "".join(rows)
+
+
+def _build_failed_action_rows(bot: dict[str, Any]) -> tuple[str, int]:
+    failed_statuses = {"rejected", "canceled", "cancelled", "failed", "expired", "error"}
+    failures: list[dict[str, str]] = []
+
+    for item in bot.get("recent_orders", []):
+        status = str(item.get("status", "") or "").lower()
+        if status not in failed_statuses:
+            continue
+        failures.append(
+            {
+                "updated": str(item.get("updated_at", "") or ""),
+                "stage": "order",
+                "ticker": str(item.get("symbol", "") or ""),
+                "side": str(item.get("side", "") or ""),
+                "intent_type": str(item.get("intent_type", "") or ""),
+                "qty": str(item.get("quantity", "") or ""),
+                "status": status,
+                "reason": _failure_reason_label(status, item.get("reason")),
+                "note": _failure_order_note(item),
+            }
+        )
+
+    for item in bot.get("recent_intents", []):
+        status = str(item.get("status", "") or "").lower()
+        if status not in failed_statuses:
+            continue
+        failures.append(
+            {
+                "updated": str(item.get("updated_at", "") or ""),
+                "stage": "intent",
+                "ticker": str(item.get("symbol", "") or ""),
+                "side": str(item.get("side", "") or ""),
+                "intent_type": str(item.get("intent_type", "") or ""),
+                "qty": str(item.get("quantity", "") or ""),
+                "status": status,
+                "reason": _failure_reason_label(status, item.get("reason")),
+                "note": "strategy intent",
+            }
+        )
+
+    failures.sort(key=lambda item: item.get("updated", ""), reverse=True)
+    if not failures:
+        return '<tr><td colspan="8" style="text-align:center;color:#888;">No failed actions</td></tr>', 0
+
+    rows: list[str] = []
+    for item in failures[:50]:
+        status = item["status"].upper()
+        status_color = "#ff6b6b" if status in {"REJECTED", "FAILED", "ERROR"} else "#ffcc5b"
+        action = _failure_action_label(item.get("intent_type", ""), item.get("side", ""))
+        rows.append(
+            f"""<tr>
+            <td>{escape(item["updated"] or "-")}</td>
+            <td><strong>{escape(item["ticker"] or "-")}</strong></td>
+            <td>{escape(str(item.get("stage", "")).upper() or "-")}</td>
+            <td>{escape(action)}</td>
+            <td style="text-align:right">{escape(item["qty"] or "-")}</td>
+            <td style="color:{status_color};font-weight:bold;">{escape(status)}</td>
+            <td>{escape(item["reason"] or "-")}</td>
+            <td>{escape(str(item.get("note", "")) or "-")}</td>
+        </tr>"""
+        )
+    return "".join(rows), len(failures)
+
+
+def _failure_action_label(intent_type: str, side: str) -> str:
+    intent = (intent_type or "").strip().lower()
+    side_text = (side or "").strip().lower()
+    intent_label = intent.replace("_", " ").title() if intent else "Order"
+    side_label = side_text.title() if side_text else ""
+    return f"{intent_label} {side_label}".strip() or "-"
+
+
+def _failure_reason_label(status: str, raw_reason: Any) -> str:
+    reason_text = str(raw_reason or "").strip()
+    normalized_status = (status or "").lower()
+    if reason_text and not reason_text.startswith("{"):
+        return reason_text
+    if normalized_status in {"canceled", "cancelled"}:
+        return "Broker cancel"
+    if normalized_status == "rejected":
+        return "Broker reject"
+    if normalized_status == "expired":
+        return "Order expired"
+    if normalized_status in {"failed", "error"}:
+        return "Broker error"
+    return "Execution issue"
+
+
+def _failure_order_note(item: dict[str, Any]) -> str:
+    bits: list[str] = []
+    order_type = str(item.get("order_type", "") or "").strip()
+    tif = str(item.get("time_in_force", "") or "").strip()
+    if order_type:
+        bits.append(order_type.lower())
+    if tif:
+        bits.append(tif.lower())
+    if item.get("extended_hours"):
+        bits.append("extended hours")
+    client_order_id = str(item.get("client_order_id", "") or "").strip()
+    if not bits and client_order_id:
+        bits.append("broker order")
+    return ", ".join(bits) if bits else "broker order"
+
+
+def _build_closed_trade_rows_v2(closed_today: list[dict[str, Any]]) -> str:
+    if not closed_today:
+        return '<tr><td colspan="9" style="text-align:center;color:#888;">No closed trades</td></tr>'
+
+    rows: list[str] = []
+    for item in sorted(
+        closed_today,
+        key=lambda item: str(item.get("exit_time", "") or item.get("closed_at", "") or item.get("entry_time", "")),
+        reverse=True,
+    ):
+        pnl = _as_float(item.get("pnl"))
+        color = "#00c853" if pnl >= 0 else "#ff1744"
+        qty = item.get("quantity", item.get("qty", ""))
+        path = str(item.get("path", "") or item.get("entry_path", "") or "-")
+        reason = str(item.get("reason", "") or item.get("exit_reason", "") or "-")
+        rows.append(
+            f"""<tr>
+            <td><strong>{escape(str(item.get("ticker", "")) or "-")}</strong></td>
+            <td>{escape(path)}</td>
+            <td style="text-align:right">{escape(str(qty) or "-")}</td>
+            <td>{escape(str(item.get("entry_time", "")) or "-")}</td>
+            <td style="text-align:right">{_fmt_money(_as_float(item.get("entry_price")))}</td>
+            <td>{escape(str(item.get("exit_time", "")) or "-")}</td>
+            <td style="text-align:right">{_fmt_money(_as_float(item.get("exit_price")))}</td>
+            <td style="color:{color}">${pnl:+.2f} ({_as_float(item.get("pnl_pct")):+.1f}%)</td>
+            <td>{escape(reason)}</td>
+        </tr>"""
+        )
+    return "".join(rows)
+
+
 def _build_closed_trade_rows(closed_today: list[dict[str, Any]]) -> str:
     if not closed_today:
         return '<tr><td colspan="7" style="text-align:center;color:#888;">No closed trades</td></tr>'
@@ -3841,69 +4464,46 @@ def _render_scanner_confirmed_rows(
     blacklisted_symbols: set[str],
 ) -> str:
     if not rows:
-        return '<tr><td colspan="19" style="text-align:center;color:#888;padding:20px;">No confirmed candidates yet</td></tr>'
+        return '<tr><td colspan="12" style="text-align:center;color:#888;padding:20px;">No confirmed candidates yet</td></tr>'
     rendered = []
     for index, item in enumerate(rows, start=1):
         ticker = str(item.get("ticker", "")).upper()
-        live_badge = ' <span style="color:#00ff41;font-size:10px;">⚡LIVE</span>' if ticker in live_symbols else ""
-        watched_by = ", ".join(item.get("watched_by", [])) if item.get("watched_by") else "—"
-        path = str(item.get("confirmation_path", ""))
-        path_badge = (
-            '<span style="background:#ff9100;color:#000;font-size:9px;padding:1px 4px;border-radius:3px;">A</span>'
-            if "PATH_A" in path
-            else '<span style="background:#2979ff;color:#fff;font-size:9px;padding:1px 4px;border-radius:3px;">B</span>'
-        )
+        live_badge = ' <span style="color:#00ff41;font-size:10px;">LIVE</span>' if ticker in live_symbols else ""
         top5_badge = (
-            ' <span style="background:#ffd600;color:#000;font-size:9px;padding:1px 4px;border-radius:3px;font-weight:bold;">⭐TOP5</span>'
+            ' <span style="background:#ffd600;color:#000;font-size:9px;padding:1px 4px;border-radius:3px;font-weight:bold;">TOP5</span>'
             if item.get("is_top5")
             else ""
         )
-        bid = _as_float(item.get("bid"))
-        ask = _as_float(item.get("ask"))
-        bid_size = int(item.get("bid_size", 0) or 0)
-        ask_size = int(item.get("ask_size", 0) or 0)
-        spread_cents = _as_float(item.get("spread")) * 100 if item.get("spread") is not None else max(ask - bid, 0) * 100
-        spread_color = "#00c853" if spread_cents <= 1 else ("#ffd600" if spread_cents <= 3 else "#ff1744")
         change_pct = _as_float(item.get("change_pct"))
         row_bg = "#0a1a0a" if item.get("is_top5") else "transparent"
         catalyst_html = _render_confirmed_catalyst_cell(item)
-        news_link_html = _render_confirmed_news_icon(item)
-        blacklist_html = _render_confirmed_blacklist_action(
-            ticker,
-            blacklisted_symbols=blacklisted_symbols,
-        )
         rendered.append(
             f"""<tr style="background:{row_bg};">
             <td style="text-align:center">{index}</td>
-            <td><strong>{escape(ticker)}</strong>{live_badge}{top5_badge}<br><span style="font-size:10px;color:#888;">feed: {escape(watched_by)}</span></td>
-            <td style="text-align:center">{path_badge}</td>
+            <td><strong>{escape(ticker)}</strong>{live_badge}{top5_badge}</td>
             <td style="color:#ffd600;font-weight:bold;">{_as_float(item.get("rank_score")):.0f}</td>
             <td style="color:#00ff41;">{escape(str(item.get("confirmed_at", item.get("first_spike_time", ""))))}</td>
-            <td>{_fmt_money(_as_float(item.get("entry_price")))}</td>
-            <td>{_fmt_money(_as_float(item.get("price")))}</td>
-            <td style="color:{'#00c853' if change_pct >= 0 else '#ff1744'}">{change_pct:+.1f}%</td>
-            <td>{_fmt_money(bid)} <span style="color:#888;font-size:11px">x{bid_size}</span></td>
-            <td>{_fmt_money(ask)} <span style="color:#888;font-size:11px">x{ask_size}</span></td>
-            <td style="color:{spread_color}">{spread_cents:.0f}¢</td>
-            <td>{_short_volume(item.get("volume"))}</td>
-            <td>{_as_float(item.get("rvol")):.1f}x</td>
-            <td>{_short_volume(item.get("shares_outstanding"))}</td>
-            <td>{int(item.get("squeeze_count", 0) or 0)}</td>
+            <td style="text-align:right">{_fmt_money(_as_float(item.get("entry_price")))}</td>
+            <td style="text-align:right">{_fmt_money(_as_float(item.get("price")))}</td>
+            <td style="text-align:right;color:{'#00c853' if change_pct >= 0 else '#ff1744'}">{change_pct:+.1f}%</td>
+            <td style="text-align:right">{_short_volume(item.get("volume"))}</td>
+            <td style="text-align:right">{_as_float(item.get("rvol")):.1f}x</td>
+            <td style="text-align:right">{int(item.get("squeeze_count", 0) or 0)}</td>
             <td>{escape(str(item.get("first_spike_time", "")))}</td>
-            <td style="font-size:12px;min-width:250px;max-width:400px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{catalyst_html}</td>
-            <td style="text-align:center">{news_link_html}</td>
-            <td style="text-align:center">{blacklist_html}</td>
+            <td style="font-size:12px;min-width:180px;max-width:320px;white-space:normal;overflow-wrap:anywhere;">{catalyst_html}</td>
         </tr>"""
         )
     return "".join(rendered)
 
 
-def _render_confirmed_catalyst_cell(item: dict[str, Any]) -> str:
+def _render_confirmed_catalyst_cell_legacy(item: dict[str, Any]) -> str:
     catalyst = str(item.get("catalyst_type") or item.get("catalyst") or "").strip()
     headline = str(item.get("headline", "") or "").strip()
     news_url = str(item.get("news_url", "") or "").strip()
     news_date = str(item.get("news_date", "") or "").strip()
     sentiment = str(item.get("direction") or item.get("sentiment") or "").strip().lower()
+    news_fetch_status = str(item.get("news_fetch_status", "") or "").strip().lower()
+    catalyst_status = str(item.get("catalyst_status", "") or "").strip().lower()
     confidence = _as_float(item.get("catalyst_confidence"))
     article_count = int(item.get("article_count", 0) or 0)
     real_article_count = int(item.get("real_catalyst_article_count", 0) or 0)
@@ -3913,22 +4513,44 @@ def _render_confirmed_catalyst_cell(item: dict[str, Any]) -> str:
     reason = str(item.get("catalyst_reason", "") or "").strip()
     news_window_start = str(item.get("news_window_start", "") or "").strip()
     path_a_eligible = bool(item.get("path_a_eligible", False))
+    ai_shadow_status = str(item.get("ai_shadow_status", "") or "").strip().lower()
+    ai_shadow_provider = str(item.get("ai_shadow_provider", "") or "").strip()
+    ai_shadow_model = str(item.get("ai_shadow_model", "") or "").strip()
+    ai_shadow_direction = str(item.get("ai_shadow_direction", "") or "").strip().lower()
+    ai_shadow_category = str(item.get("ai_shadow_category", "") or "").strip()
+    ai_shadow_confidence = _as_float(item.get("ai_shadow_confidence"))
+    ai_shadow_path_a_eligible = bool(item.get("ai_shadow_path_a_eligible", False))
+    ai_shadow_reason = str(item.get("ai_shadow_reason", "") or "").strip()
+    ai_shadow_headline_basis = str(item.get("ai_shadow_headline_basis", "") or "").strip()
+    ai_shadow_positive_phrases = [
+        str(phrase).strip()
+        for phrase in (item.get("ai_shadow_positive_phrases", []) or [])
+        if str(phrase).strip()
+    ]
 
     if not catalyst and not headline and article_count <= 0:
-        return '<span style="color:#555">No qualifying news since last market close</span>'
+        if news_fetch_status == "error":
+            empty_reason = reason or "News provider request failed; Mai Tai will retry shortly."
+        elif news_fetch_status == "disabled":
+            empty_reason = reason or "News provider is unavailable, so Path A cannot evaluate this symbol."
+        elif catalyst_status == "no_articles":
+            empty_reason = reason or "No company-specific news has been returned yet in the current catalyst window."
+        else:
+            empty_reason = reason or "No qualifying news since last market close"
+        return f'<span style="color:#8da2b7">{escape(empty_reason)}</span>'
 
     sent_color = {"bullish": "#00c853", "bearish": "#ff1744", "neutral": "#ffd600"}.get(sentiment, "#8e9bb3")
     sent_bg = {"bullish": "#0a2e0a", "bearish": "#2e0a0a", "neutral": "#2e2e0a"}.get(sentiment, "#162033")
-    sent_label = {"bullish": "🟢", "bearish": "🔴", "neutral": "🟡"}.get(sentiment, "⚪")
+    sent_label = {"bullish": "BULL", "bearish": "BEAR", "neutral": "NEUTRAL"}.get(sentiment, "NEWS")
 
     if is_generic_roundup:
         sent_color = "#8e9bb3"
         sent_bg = "#1a2435"
-        sent_label = "⚪"
+        sent_label = "NEWS"
     elif not has_real_catalyst:
         sent_color = "#90a4ae"
         sent_bg = "#18222f"
-        sent_label = "ℹ️"
+        sent_label = "INFO"
 
     display_headline = headline
     if display_headline.startswith("["):
@@ -3961,8 +4583,14 @@ def _render_confirmed_catalyst_cell(item: dict[str, Any]) -> str:
         meta_bits.append(news_date)
     if path_a_eligible:
         meta_bits.append("PATH A ready")
+    elif news_fetch_status == "error":
+        meta_bits.append("provider retry")
+    elif news_fetch_status == "disabled":
+        meta_bits.append("provider unavailable")
     elif is_generic_roundup:
         meta_bits.append("roundup only")
+    elif catalyst_status == "no_articles":
+        meta_bits.append("no articles yet")
     elif article_count > 0 and not has_real_catalyst:
         meta_bits.append("informational")
 
@@ -3973,6 +4601,153 @@ def _render_confirmed_catalyst_cell(item: dict[str, Any]) -> str:
         if footer_text
         else ""
     )
+    return (
+        f'<span style="display:block;background:{sent_bg};border-left:3px solid {sent_color};padding:4px 0 4px 8px;'
+        f'border-radius:4px;">'
+        f'<div>{sent_label} <strong style="color:{sent_color};">{escape(catalyst or "NEWS")}</strong></div>'
+        f'<div style="color:#cfe1ff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{headline_html}</div>'
+        f'<div style="color:#8da2b7;font-size:10px;line-height:1.3;">{meta_html}</div>'
+        f"{footer_html}</span>"
+    )
+
+
+def _render_confirmed_catalyst_cell(item: dict[str, Any]) -> str:
+    catalyst = str(item.get("catalyst_type") or item.get("catalyst") or "").strip()
+    headline = str(item.get("headline", "") or "").strip()
+    news_url = str(item.get("news_url", "") or "").strip()
+    news_date = str(item.get("news_date", "") or "").strip()
+    sentiment = str(item.get("direction") or item.get("sentiment") or "").strip().lower()
+    news_fetch_status = str(item.get("news_fetch_status", "") or "").strip().lower()
+    catalyst_status = str(item.get("catalyst_status", "") or "").strip().lower()
+    confidence = _as_float(item.get("catalyst_confidence"))
+    article_count = int(item.get("article_count", 0) or 0)
+    real_article_count = int(item.get("real_catalyst_article_count", 0) or 0)
+    freshness_minutes = item.get("freshness_minutes")
+    is_generic_roundup = bool(item.get("is_generic_roundup", False))
+    has_real_catalyst = bool(item.get("has_real_catalyst", False))
+    reason = str(item.get("catalyst_reason", "") or "").strip()
+    news_window_start = str(item.get("news_window_start", "") or "").strip()
+    path_a_eligible = bool(item.get("path_a_eligible", False))
+    ai_shadow_status = str(item.get("ai_shadow_status", "") or "").strip().lower()
+    ai_shadow_provider = str(item.get("ai_shadow_provider", "") or "").strip()
+    ai_shadow_model = str(item.get("ai_shadow_model", "") or "").strip()
+    ai_shadow_direction = str(item.get("ai_shadow_direction", "") or "").strip().lower()
+    ai_shadow_category = str(item.get("ai_shadow_category", "") or "").strip()
+    ai_shadow_confidence = _as_float(item.get("ai_shadow_confidence"))
+    ai_shadow_path_a_eligible = bool(item.get("ai_shadow_path_a_eligible", False))
+    ai_shadow_reason = str(item.get("ai_shadow_reason", "") or "").strip()
+    ai_shadow_headline_basis = str(item.get("ai_shadow_headline_basis", "") or "").strip()
+    ai_shadow_positive_phrases = [
+        str(phrase).strip()
+        for phrase in (item.get("ai_shadow_positive_phrases", []) or [])
+        if str(phrase).strip()
+    ]
+
+    if not catalyst and not headline and article_count <= 0:
+        if news_fetch_status == "error":
+            empty_reason = reason or "News provider request failed; Mai Tai will retry shortly."
+        elif news_fetch_status == "disabled":
+            empty_reason = reason or "News provider is unavailable, so Path A cannot evaluate this symbol."
+        elif catalyst_status == "no_articles":
+            empty_reason = reason or "No company-specific news has been returned yet in the current catalyst window."
+        else:
+            empty_reason = reason or "No qualifying news since last market close"
+        return f'<span style="color:#8da2b7">{escape(empty_reason)}</span>'
+
+    sent_color = {"bullish": "#00c853", "bearish": "#ff1744", "neutral": "#ffd600"}.get(sentiment, "#8e9bb3")
+    sent_bg = {"bullish": "#0a2e0a", "bearish": "#2e0a0a", "neutral": "#2e2e0a"}.get(sentiment, "#162033")
+    sent_label = {"bullish": "BULL", "bearish": "BEAR", "neutral": "NEUTRAL"}.get(sentiment, "NEWS")
+
+    if is_generic_roundup:
+        sent_color = "#8e9bb3"
+        sent_bg = "#1a2435"
+        sent_label = "NEWS"
+    elif not has_real_catalyst:
+        sent_color = "#90a4ae"
+        sent_bg = "#18222f"
+        sent_label = "INFO"
+
+    display_headline = headline
+    if display_headline.startswith("["):
+        bracket_end = display_headline.find("]")
+        if bracket_end > 0:
+            display_headline = display_headline[bracket_end + 1 :].strip()
+
+    if not display_headline:
+        display_headline = reason or "Recent catalyst window"
+
+    headline_html = escape(display_headline)
+    if news_url:
+        headline_html = (
+            f'<a href="{escape(news_url)}" target="_blank" rel="noreferrer" '
+            f'style="color:#4fc3f7;text-decoration:none;">{headline_html}</a>'
+        )
+
+    meta_bits: list[str] = []
+    if catalyst:
+        meta_bits.append(catalyst)
+    if confidence > 0:
+        meta_bits.append(f"{confidence:.0%} conf")
+    if article_count > 0:
+        meta_bits.append(f"{article_count} art")
+    if real_article_count > 0 and real_article_count != article_count:
+        meta_bits.append(f"{real_article_count} real")
+    if freshness_minutes is not None:
+        meta_bits.append(f"{int(freshness_minutes)}m old")
+    if news_date:
+        meta_bits.append(news_date)
+    if path_a_eligible:
+        meta_bits.append("PATH A ready")
+    elif news_fetch_status == "error":
+        meta_bits.append("provider retry")
+    elif news_fetch_status == "disabled":
+        meta_bits.append("provider unavailable")
+    elif is_generic_roundup:
+        meta_bits.append("roundup only")
+    elif catalyst_status == "no_articles":
+        meta_bits.append("no articles yet")
+    elif article_count > 0 and not has_real_catalyst:
+        meta_bits.append("informational")
+
+    meta_html = " &middot; ".join(escape(bit) for bit in meta_bits)
+    footer_parts: list[str] = []
+    footer_text = reason or (f"Window: {news_window_start} onward" if news_window_start else "")
+    if footer_text:
+        footer_parts.append(
+            f'<div style="color:#8da2b7;font-size:10px;line-height:1.35;margin-top:3px;">{escape(footer_text)}</div>'
+        )
+
+    if ai_shadow_status and ai_shadow_status != "disabled":
+        ai_bits: list[str] = [f"AI shadow: {ai_shadow_direction or 'neutral'}"]
+        if ai_shadow_category:
+            ai_bits.append(ai_shadow_category)
+        if ai_shadow_confidence > 0:
+            ai_bits.append(f"{ai_shadow_confidence:.0%}")
+        if ai_shadow_path_a_eligible:
+            ai_bits.append("PATH A ready")
+        if ai_shadow_provider:
+            provider_label = ai_shadow_provider
+            if ai_shadow_model:
+                provider_label = f"{provider_label}/{ai_shadow_model}"
+            ai_bits.append(provider_label)
+        footer_parts.append(
+            '<div style="color:#9ec1ff;font-size:10px;line-height:1.35;margin-top:3px;">'
+            + " &middot; ".join(escape(bit) for bit in ai_bits)
+            + "</div>"
+        )
+        ai_detail = ai_shadow_reason or ai_shadow_headline_basis
+        if ai_shadow_positive_phrases:
+            ai_detail = f"{ai_detail} Positive phrases: {', '.join(ai_shadow_positive_phrases[:3])}.".strip()
+        if ai_detail:
+            footer_parts.append(
+                f'<div style="color:#7f98ba;font-size:10px;line-height:1.35;margin-top:2px;">{escape(ai_detail)}</div>'
+            )
+    elif ai_shadow_status == "disabled":
+        footer_parts.append(
+            '<div style="color:#64748b;font-size:10px;line-height:1.35;margin-top:3px;">AI shadow: disabled</div>'
+        )
+
+    footer_html = "".join(footer_parts)
     return (
         f'<span style="display:block;background:{sent_bg};border-left:3px solid {sent_color};padding:4px 0 4px 8px;'
         f'border-radius:4px;">'
@@ -4033,11 +4808,11 @@ def _render_scanner_blacklist_entries(entries: list[dict[str, Any]]) -> str:
 
 def _render_scanner_stock_rows(rows: list[dict[str, Any]], live_symbols: set[str]) -> str:
     if not rows:
-        return '<tr><td colspan="15" style="text-align:center;color:#888;padding:20px;">No stocks qualifying</td></tr>'
+        return '<tr><td colspan="9" style="text-align:center;color:#888;padding:20px;">No stocks qualifying</td></tr>'
     rendered = []
     for index, item in enumerate(rows, start=1):
         ticker = str(item.get("ticker", "")).upper()
-        live_badge = ' <span style="color:#00ff41;font-size:10px;">⚡LIVE</span>' if ticker in live_symbols else ""
+        live_badge = ' <span style="color:#00ff41;font-size:10px;">LIVE</span>' if ticker in live_symbols else ""
         rendered.append(
             f"""<tr>
             <td style="text-align:center">{index}</td>
@@ -4045,15 +4820,9 @@ def _render_scanner_stock_rows(rows: list[dict[str, Any]], live_symbols: set[str
             <td style="color:#00e5ff;font-size:12px;">{escape(str(item.get("first_seen", "")))}</td>
             <td style="text-align:right">{_fmt_money(_as_float(item.get("price")))}</td>
             <td style="text-align:right;color:{'#00c853' if _as_float(item.get('change_pct')) >= 0 else '#ff1744'}">{_as_float(item.get("change_pct")):+.1f}%</td>
-            <td style="text-align:right">{_fmt_money(_as_float(item.get("bid")))}</td>
-            <td style="text-align:right">{_fmt_money(_as_float(item.get("ask")))}</td>
             <td style="text-align:right">{_as_float(item.get("spread_pct")):.2f}%</td>
             <td style="text-align:right">{_short_volume(item.get("volume"))}</td>
             <td style="text-align:right">{_as_float(item.get("rvol")):.1f}x</td>
-            <td style="text-align:right">{_short_volume(item.get("shares_outstanding"))}</td>
-            <td style="text-align:right">{_fmt_money(_as_float(item.get("hod")))}</td>
-            <td style="text-align:right">{_fmt_money(_as_float(item.get("vwap")))}</td>
-            <td style="text-align:right">{_fmt_money(_as_float(item.get("prev_close")))}</td>
             <td style="text-align:right">{escape(_format_age(item.get("data_age_secs")))}</td>
         </tr>"""
         )
@@ -4062,25 +4831,33 @@ def _render_scanner_stock_rows(rows: list[dict[str, Any]], live_symbols: set[str
 
 def _render_alert_rows(alerts: list[dict[str, Any]]) -> str:
     if not alerts:
-        return '<tr><td colspan="9" style="text-align:center;color:#888;padding:20px;">No alerts fired yet</td></tr>'
+        return '<tr><td colspan="6" style="text-align:center;color:#888;padding:20px;">No alerts fired yet</td></tr>'
     rendered = []
-    for alert in reversed(alerts[-100:]):
+    for alert in reversed(alerts[-50:]):
         details = alert.get("details", {})
         if isinstance(details, dict):
-            details_str = ", ".join(f"{key}={value}" for key, value in details.items())
+            detail_pairs = list(details.items())[:4]
+            details_str = ", ".join(f"{key}={value}" for key, value in detail_pairs)
         else:
             details_str = str(details)
+        alert_type = str(alert.get("type", "") or "")
+        if "SPIKE" in alert_type:
+            type_color = "#ffcc5b"
+            type_bg = "rgba(255,204,91,0.12)"
+        elif "SQUEEZE" in alert_type:
+            type_color = "#59d7ff"
+            type_bg = "rgba(89,215,255,0.12)"
+        else:
+            type_color = "#98a6c8"
+            type_bg = "rgba(255,255,255,0.06)"
         rendered.append(
             f"""<tr>
-            <td>{escape(str(alert.get("type", "")))}</td>
-            <td><strong>{escape(str(alert.get("ticker", "")))}</strong></td>
-            <td>{_fmt_money(_as_float(alert.get("price")))}</td>
-            <td>{_fmt_money(_as_float(alert.get("bid")))}</td>
-            <td>{_fmt_money(_as_float(alert.get("ask")))}</td>
-            <td>{_short_volume(alert.get("volume"))}</td>
-            <td>{_short_volume(alert.get("float"))}</td>
-            <td>{escape(details_str)}</td>
             <td>{escape(str(alert.get("time", "")))}</td>
+            <td><span style="display:inline-flex;padding:4px 8px;border-radius:999px;background:{type_bg};color:{type_color};font-weight:bold;">{escape(alert_type)}</span></td>
+            <td><strong>{escape(str(alert.get("ticker", "")))}</strong></td>
+            <td style="text-align:right">{_fmt_money(_as_float(alert.get("price")))}</td>
+            <td style="text-align:right">{_short_volume(alert.get("volume"))}</td>
+            <td>{escape(details_str)}</td>
         </tr>"""
         )
     return "".join(rendered)
@@ -4155,6 +4932,33 @@ def _datetime_str(value: datetime | str | None) -> str:
     return value.astimezone(EASTERN_TZ).strftime("%Y-%m-%d %I:%M:%S %p ET")
 
 
+def _is_recent_eastern_label(value: str | None, *, max_age_seconds: int) -> bool:
+    if not value:
+        return False
+    try:
+        parsed = datetime.strptime(value, "%Y-%m-%d %I:%M:%S %p ET").replace(tzinfo=EASTERN_TZ)
+    except ValueError:
+        return False
+    age = (utcnow().astimezone(EASTERN_TZ) - parsed).total_seconds()
+    return 0 <= age <= max_age_seconds
+
+
+def _is_recent_datetime(value: Any, *, max_age_seconds: int) -> bool:
+    if not isinstance(value, datetime):
+        return False
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    age = (utcnow() - value.astimezone(UTC)).total_seconds()
+    return 0 <= age <= max_age_seconds
+
+
+def _safe_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def _format_age(seconds: Any) -> str:
     try:
         numeric = int(seconds)
@@ -4172,13 +4976,13 @@ def _format_age(seconds: Any) -> str:
 
 def _fmt_money(value: float) -> str:
     if value <= 0:
-        return "—"
+        return "-"
     return f"${value:.2f}"
 
 
 def _fmt_qty(value: float) -> str:
     if abs(value) < 0.0001:
-        return "—"
+        return "-"
     if abs(value - round(value)) < 0.0001:
         return str(int(round(value)))
     return f"{value:.2f}"

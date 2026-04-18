@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from project_mai_tai.broker_adapters.alpaca import AlpacaPaperBrokerAdapter
 from project_mai_tai.broker_adapters.protocols import BrokerAdapter, ExecutionReport, OrderRequest
+from project_mai_tai.broker_adapters.routing import RoutingBrokerAdapter
 from project_mai_tai.broker_adapters.schwab import SchwabBrokerAdapter
 from project_mai_tai.broker_adapters.simulated import SimulatedBrokerAdapter
 from project_mai_tai.db.session import build_session_factory
@@ -29,7 +30,7 @@ from project_mai_tai.events import (
     stream_name,
 )
 from project_mai_tai.oms.store import OmsStore
-from project_mai_tai.runtime_registry import strategy_registration_map
+from project_mai_tai.runtime_registry import configured_broker_account_registrations, strategy_registration_map
 from project_mai_tai.runtime_seed import seed_runtime_metadata
 from project_mai_tai.services.runtime import _install_signal_handlers
 from project_mai_tai.settings import Settings, get_settings
@@ -83,7 +84,13 @@ class OmsRiskService:
             seed_summary["strategies"],
             seed_summary["broker_accounts"],
         )
-        await self._publish_heartbeat("starting", {"adapter": self.settings.oms_adapter})
+        await self._publish_heartbeat(
+            "starting",
+            {
+                "adapter": self.settings.oms_adapter_label,
+                "providers": ",".join(self.settings.active_broker_providers),
+            },
+        )
         while not stop_event.is_set():
             loop_now = asyncio.get_running_loop().time()
             read_timeout_secs = min(
@@ -117,11 +124,20 @@ class OmsRiskService:
                     self.logger.debug("broker state sync complete: %s", sync_summary)
                 last_broker_sync = now
             if now - last_heartbeat >= heartbeat_interval_secs:
-                heartbeat_details = {"adapter": self.settings.oms_adapter}
+                heartbeat_details = {
+                    "adapter": self.settings.oms_adapter_label,
+                    "providers": ",".join(self.settings.active_broker_providers),
+                }
                 await self._publish_heartbeat("healthy", heartbeat_details)
                 last_heartbeat = now
 
-        await self._publish_heartbeat("stopping", {"adapter": self.settings.oms_adapter})
+        await self._publish_heartbeat(
+            "stopping",
+            {
+                "adapter": self.settings.oms_adapter_label,
+                "providers": ",".join(self.settings.active_broker_providers),
+            },
+        )
         await self.redis.aclose()
 
     async def _handle_stream_message(self, fields: dict[str, str]) -> None:
@@ -149,7 +165,7 @@ class OmsRiskService:
             broker_account = self.store.ensure_broker_account(
                 session,
                 event.payload.broker_account_name,
-                provider=self.settings.resolved_broker_provider,
+                provider=self.settings.provider_for_account(event.payload.broker_account_name),
                 environment=self.settings.environment,
             )
             intent = self.store.create_trade_intent(
@@ -258,6 +274,13 @@ class OmsRiskService:
                     else Decimal("0")
                 )
                 if available_quantity <= 0:
+                    available_quantity = await self._refresh_broker_position_quantity(
+                        session=session,
+                        broker_account_id=broker_account.id,
+                        broker_account_name=broker_account.name,
+                        symbol=event.payload.symbol,
+                    )
+                if available_quantity <= 0:
                     self.store.mark_intent_status(intent, "rejected")
                     order_event = self._build_rejected_event(
                         event,
@@ -305,68 +328,25 @@ class OmsRiskService:
                 metadata=dict(event.payload.metadata),
             )
             reports = await self.broker_adapter.submit_order(request)
-            published_events: list[OrderEventEvent] = []
-
-            for report in reports:
-                order = self.store.get_or_create_order(
-                    session,
-                    intent=intent,
-                    strategy_id=strategy.id,
-                    broker_account_id=broker_account.id,
-                    client_order_id=client_order_id,
-                    symbol=event.payload.symbol,
-                    side=event.payload.side,
-                    quantity=request_quantity,
-                    metadata=dict(event.payload.metadata),
-                    broker_order_id=report.broker_order_id,
-                    status=report.event_type,
-                )
-                payload = {
-                    "client_order_id": report.client_order_id,
-                    "broker_order_id": report.broker_order_id,
-                    "broker_fill_id": report.broker_fill_id,
-                    "metadata": dict(report.metadata),
-                    "reason": report.reason,
-                }
-                self.store.append_order_event(session, order=order, report=report, payload=payload)
-                fill = self.store.record_fill_if_needed(
-                    session,
-                    order=order,
-                    strategy_id=strategy.id,
-                    broker_account_id=broker_account.id,
-                    report=report,
-                    payload=payload,
-                )
-                if fill is not None:
-                    self.store.apply_fill_to_positions(
-                        session,
-                        strategy_id=strategy.id,
-                        broker_account_id=broker_account.id,
-                        symbol=event.payload.symbol,
-                        side=event.payload.side,
-                        quantity=fill.quantity,
-                        price=fill.price,
-                        reported_at=fill.filled_at,
-                    )
-
-                intent_status = report.event_type
-                if report.event_type == "accepted":
-                    intent_status = "submitted"
-                self.store.mark_intent_status(intent, intent_status)
-                if report.event_type == "rejected" and self._is_not_tradable_reason(report.reason):
-                    await self._set_session_symbol_block(
-                        account_name=event.payload.broker_account_name,
-                        symbol=event.payload.symbol,
-                        reason="broker_symbol_not_tradable_for_session",
-                    )
-
-                published_events.append(
-                    self._build_order_event(
-                        intent_event=event,
-                        intent_db_id=intent.id,
-                        order_db_id=order.id,
-                        report=report,
-                        quantity=request_quantity,
+            published_events = await self._record_order_reports(
+                session=session,
+                intent=intent,
+                strategy_id=strategy.id,
+                broker_account_id=broker_account.id,
+                intent_event=event,
+                request=request,
+                reports=reports,
+            )
+            stop_reject_reason = self._stop_reject_reason(request=request, reports=reports)
+            if stop_reject_reason:
+                published_events.extend(
+                    await self._process_stop_reject_market_fallback(
+                        session=session,
+                        strategy=strategy,
+                        broker_account=broker_account,
+                        original_event=event,
+                        original_request=request,
+                        rejection_reason=stop_reject_reason,
                     )
                 )
 
@@ -647,13 +627,35 @@ class OmsRiskService:
         )
 
     def _build_broker_adapter(self) -> BrokerAdapter:
+        registrations = configured_broker_account_registrations(self.settings)
+        provider_by_account = {registration.name: registration.provider for registration in registrations}
+        unique_providers = {provider for provider in provider_by_account.values() if provider}
+        if not unique_providers:
+            unique_providers = {self.settings.resolved_broker_provider}
+
+        if len(unique_providers) == 1:
+            return self._build_provider_adapter(next(iter(unique_providers)))
+
+        return RoutingBrokerAdapter(
+            default_provider=self.settings.resolved_broker_provider,
+            provider_by_account=provider_by_account,
+            factories_by_provider={
+                provider: (lambda provider=provider: self._build_provider_adapter(provider))
+                for provider in unique_providers | {self.settings.resolved_broker_provider}
+            },
+        )
+
+    def _build_provider_adapter(self, provider: str) -> BrokerAdapter:
+        normalized = str(provider).strip().lower()
         if self.settings.oms_adapter == "simulated":
             return SimulatedBrokerAdapter()
-        if self.settings.oms_adapter == "alpaca_paper":
+        if normalized == "simulated":
+            return SimulatedBrokerAdapter()
+        if normalized == "alpaca":
             return AlpacaPaperBrokerAdapter(self.settings)
-        if self.settings.oms_adapter == "schwab":
+        if normalized == "schwab":
             return SchwabBrokerAdapter(self.settings)
-        raise RuntimeError(f"Unsupported OMS adapter: {self.settings.oms_adapter}")
+        raise RuntimeError(f"Unsupported broker provider: {provider}")
 
     def seed_runtime_metadata(self) -> dict[str, int]:
         summary = seed_runtime_metadata(
@@ -781,8 +783,217 @@ class OmsRiskService:
             ex=self._seconds_until_session_end(),
         )
 
+    async def _refresh_broker_position_quantity(
+        self,
+        *,
+        session: Session,
+        broker_account_id: UUID,
+        broker_account_name: str,
+        symbol: str,
+    ) -> Decimal:
+        try:
+            snapshots = await self.broker_adapter.list_account_positions(broker_account_name)
+        except Exception as exc:
+            self.logger.warning(
+                "failed broker position refresh before exit recheck for %s %s: %s",
+                broker_account_name,
+                symbol,
+                exc,
+            )
+            return Decimal("0")
+
+        self.store.sync_account_positions(
+            session,
+            broker_account_id=broker_account_id,
+            snapshots=snapshots,
+        )
+        refreshed_position = self.store.get_account_position(
+            session,
+            broker_account_id=broker_account_id,
+            symbol=symbol,
+        )
+        if refreshed_position is None or refreshed_position.quantity <= 0:
+            return Decimal("0")
+        return refreshed_position.quantity
+
+    async def _record_order_reports(
+        self,
+        *,
+        session: Session,
+        intent,
+        strategy_id: UUID,
+        broker_account_id: UUID,
+        intent_event: TradeIntentEvent,
+        request: OrderRequest,
+        reports: list[ExecutionReport],
+    ) -> list[OrderEventEvent]:
+        published_events: list[OrderEventEvent] = []
+        for report in reports:
+            order = self.store.get_or_create_order(
+                session,
+                intent=intent,
+                strategy_id=strategy_id,
+                broker_account_id=broker_account_id,
+                client_order_id=request.client_order_id,
+                symbol=request.symbol,
+                side=request.side,
+                quantity=request.quantity,
+                metadata=dict(request.metadata),
+                broker_order_id=report.broker_order_id,
+                status=report.event_type,
+            )
+            payload = {
+                "client_order_id": report.client_order_id,
+                "broker_order_id": report.broker_order_id,
+                "broker_fill_id": report.broker_fill_id,
+                "metadata": dict(report.metadata),
+                "reason": report.reason,
+            }
+            self.store.append_order_event(session, order=order, report=report, payload=payload)
+            fill = self.store.record_fill_if_needed(
+                session,
+                order=order,
+                strategy_id=strategy_id,
+                broker_account_id=broker_account_id,
+                report=report,
+                payload=payload,
+            )
+            if fill is not None:
+                self.store.apply_fill_to_positions(
+                    session,
+                    strategy_id=strategy_id,
+                    broker_account_id=broker_account_id,
+                    symbol=request.symbol,
+                    side=request.side,
+                    quantity=fill.quantity,
+                    price=fill.price,
+                    reported_at=fill.filled_at,
+                )
+
+            intent_status = report.event_type
+            if report.event_type == "accepted":
+                intent_status = "submitted"
+            self.store.mark_intent_status(intent, intent_status)
+            if report.event_type == "rejected" and self._is_not_tradable_reason(report.reason):
+                await self._set_session_symbol_block(
+                    account_name=intent_event.payload.broker_account_name,
+                    symbol=intent_event.payload.symbol,
+                    reason="broker_symbol_not_tradable_for_session",
+                )
+
+            published_events.append(
+                self._build_order_event(
+                    intent_event=intent_event,
+                    intent_db_id=intent.id,
+                    order_db_id=order.id,
+                    report=report,
+                    client_order_id=request.client_order_id,
+                    symbol=request.symbol,
+                    side=request.side,
+                    quantity=request.quantity,
+                )
+            )
+        return published_events
+
+    def _stop_reject_reason(
+        self,
+        *,
+        request: OrderRequest,
+        reports: list[ExecutionReport],
+    ) -> str | None:
+        if str(request.metadata.get("stop_reject_fallback", "")).lower() == "true":
+            return None
+        if request.intent_type not in {"open", "scale"}:
+            return None
+        for report in reports:
+            if report.event_type == "rejected" and self._is_stop_rejection_reason(report.reason):
+                return report.reason or "stop_rejected"
+        return None
+
+    async def _process_stop_reject_market_fallback(
+        self,
+        *,
+        session: Session,
+        strategy,
+        broker_account,
+        original_event: TradeIntentEvent,
+        original_request: OrderRequest,
+        rejection_reason: str,
+    ) -> list[OrderEventEvent]:
+        available_quantity = await self._refresh_broker_position_quantity(
+            session=session,
+            broker_account_id=broker_account.id,
+            broker_account_name=broker_account.name,
+            symbol=original_event.payload.symbol,
+        )
+        if available_quantity <= 0:
+            return []
+
+        fallback_metadata = {
+            **{str(k): str(v) for k, v in original_request.metadata.items()},
+            "fallback_for_client_order_id": original_request.client_order_id,
+            "fallback_rejection_reason": rejection_reason,
+            "stop_reject_fallback": "true",
+            "order_type": "market",
+        }
+        fallback_event = TradeIntentEvent(
+            source_service=SERVICE_NAME,
+            payload=TradeIntentPayload(
+                strategy_code=original_event.payload.strategy_code,
+                broker_account_name=original_event.payload.broker_account_name,
+                symbol=original_event.payload.symbol,
+                side="sell",
+                quantity=available_quantity,
+                intent_type="close",
+                reason="STOP_REJECTED_FALLBACK",
+                metadata=fallback_metadata,
+            ),
+        )
+        fallback_intent = self.store.create_trade_intent(
+            session,
+            strategy=strategy,
+            broker_account=broker_account,
+            event=fallback_event,
+        )
+        self.store.record_risk_check(
+            session,
+            intent=fallback_intent,
+            strategy_id=strategy.id,
+            broker_account_id=broker_account.id,
+            outcome="pass",
+            reason="stop_rejected_fallback",
+            payload={"metadata": dict(fallback_metadata)},
+        )
+        fallback_request = OrderRequest(
+            client_order_id=self._build_client_order_id(fallback_event),
+            broker_account_name=broker_account.name,
+            strategy_code=original_event.payload.strategy_code,
+            symbol=original_event.payload.symbol,
+            side="sell",
+            intent_type="close",
+            quantity=available_quantity,
+            reason="STOP_REJECTED_FALLBACK",
+            metadata=fallback_metadata,
+        )
+        fallback_reports = await self.broker_adapter.submit_order(fallback_request)
+        return await self._record_order_reports(
+            session=session,
+            intent=fallback_intent,
+            strategy_id=strategy.id,
+            broker_account_id=broker_account.id,
+            intent_event=fallback_event,
+            request=fallback_request,
+            reports=fallback_reports,
+        )
+
     def _is_not_tradable_reason(self, reason: str | None) -> bool:
         if not reason:
             return False
         lowered = reason.lower()
         return any(fragment in lowered for fragment in self.NOT_TRADABLE_REASONS)
+
+    def _is_stop_rejection_reason(self, reason: str | None) -> bool:
+        if not reason:
+            return False
+        lowered = reason.lower()
+        return "stop" in lowered and ("reject" in lowered or "below" in lowered or "at/below" in lowered)

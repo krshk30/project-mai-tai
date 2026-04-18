@@ -139,7 +139,7 @@ def test_runner_clears_ghost_position_on_no_strategy_position_reject() -> None:
         quantity=Decimal("100"),
         price=Decimal("1.82"),
     )
-    runner._pending_close_symbol = "MASK"
+    runner._pending_close_symbols.add("MASK")
 
     runner.apply_order_status(
         symbol="MASK",
@@ -189,17 +189,18 @@ def test_runner_trail_pct_stays_flat_at_ten_percent() -> None:
     assert position.get_trail_pct(config) == 10.0
 
 
-def test_runner_rolls_daily_pnl_and_closed_trades_at_new_et_day(monkeypatch) -> None:
+def test_runner_rolls_daily_pnl_and_closed_trades_at_new_session_after_eight_pm_et(monkeypatch) -> None:
     active_day = {"value": "2026-03-30"}
     monkeypatch.setattr(
-        "project_mai_tai.strategy_core.runner.today_eastern_str",
-        lambda: active_day["value"],
+        "project_mai_tai.strategy_core.runner.session_day_eastern_str",
+        lambda *_args, **_kwargs: active_day["value"],
     )
 
     state = StrategyEngineState(now_provider=fixed_now)
     runner = state.bots["runner"]
     runner._daily_pnl = 25.0
     runner._closed_today = [{"ticker": "MASK"}]
+    runner._entered_today = {"MASK"}
 
     active_day["value"] = "2026-03-31"
 
@@ -207,6 +208,132 @@ def test_runner_rolls_daily_pnl_and_closed_trades_at_new_et_day(monkeypatch) -> 
 
     assert summary["daily_pnl"] == 0.0
     assert summary["closed_today"] == []
+    assert summary["entered_today"] == []
+
+
+def test_runner_does_not_reenter_same_symbol_after_first_filled_trade() -> None:
+    state = StrategyEngineState(now_provider=fixed_now)
+    runner = state.bots["runner"]
+    candidate = {
+        "ticker": "UGRO",
+        "rank_score": 78.0,
+        "change_pct": 40.0,
+        "prev_close": 2.0,
+        "confirmed_at": "09:45:00 AM ET",
+        "bid": 2.79,
+        "ask": 2.80,
+        "confirmation_path": "PATH_B_2SQ",
+    }
+
+    runner.set_watchlist(["UGRO"])
+    runner.update_candidates([candidate])
+    state.seed_bars("runner", "UGRO", seed_runner_bars())
+
+    first_intents = state.handle_trade_tick(
+        symbol="UGRO",
+        price=2.80,
+        size=500,
+        timestamp_ns=1_700_001_800_000_000_000,
+    )
+
+    assert first_intents
+    runner.apply_execution_fill(
+        client_order_id="runner-UGRO-open-1",
+        symbol="UGRO",
+        intent_type="open",
+        status="filled",
+        side="buy",
+        quantity=Decimal("100"),
+        price=Decimal("2.80"),
+    )
+    runner.apply_execution_fill(
+        client_order_id="runner-UGRO-close-1",
+        symbol="UGRO",
+        intent_type="close",
+        status="filled",
+        side="sell",
+        quantity=Decimal("100"),
+        price=Decimal("2.70"),
+    )
+
+    second_intents = state.handle_trade_tick(
+        symbol="UGRO",
+        price=2.85,
+        size=500,
+        timestamp_ns=1_700_001_860_000_000_000,
+    )
+
+    assert second_intents == []
+    assert runner.summary()["entered_today"] == ["UGRO"]
+
+
+def test_runner_can_hold_multiple_symbols_at_once() -> None:
+    state = StrategyEngineState(now_provider=fixed_now)
+    runner = state.bots["runner"]
+    ugro = {
+        "ticker": "UGRO",
+        "rank_score": 78.0,
+        "change_pct": 40.0,
+        "prev_close": 2.0,
+        "confirmed_at": "09:45:00 AM ET",
+        "bid": 2.79,
+        "ask": 2.80,
+        "confirmation_path": "PATH_B_2SQ",
+    }
+    mask = {
+        "ticker": "MASK",
+        "rank_score": 82.0,
+        "change_pct": 36.0,
+        "prev_close": 1.5,
+        "confirmed_at": "09:46:00 AM ET",
+        "bid": 2.09,
+        "ask": 2.10,
+        "confirmation_path": "PATH_B_2SQ",
+    }
+
+    runner.set_watchlist(["UGRO", "MASK"])
+    runner.update_candidates([ugro, mask])
+    state.seed_bars("runner", "UGRO", seed_runner_bars(start_price=2.0))
+    state.seed_bars("runner", "MASK", seed_runner_bars(start_price=1.6))
+
+    ugro_intents = state.handle_trade_tick(
+        symbol="UGRO",
+        price=2.80,
+        size=500,
+        timestamp_ns=1_700_001_800_000_000_000,
+    )
+    mask_intents = state.handle_trade_tick(
+        symbol="MASK",
+        price=2.10,
+        size=500,
+        timestamp_ns=1_700_001_860_000_000_000,
+    )
+
+    assert ugro_intents
+    assert mask_intents
+    runner.apply_execution_fill(
+        client_order_id="runner-UGRO-open-1",
+        symbol="UGRO",
+        intent_type="open",
+        status="filled",
+        side="buy",
+        quantity=Decimal("100"),
+        price=Decimal("2.80"),
+    )
+    runner.apply_execution_fill(
+        client_order_id="runner-MASK-open-1",
+        symbol="MASK",
+        intent_type="open",
+        status="filled",
+        side="buy",
+        quantity=Decimal("100"),
+        price=Decimal("2.10"),
+    )
+
+    summary = runner.summary()
+    tickers = sorted(position["ticker"] for position in summary["positions"])
+
+    assert tickers == ["MASK", "UGRO"]
 
 
 def test_runner_order_routing_metadata_uses_extended_hours_limit_in_premarket() -> None:
@@ -237,10 +364,10 @@ def test_runner_uses_quote_anchored_limit_prices_in_extended_hours() -> None:
             )()
         ]
     )
-    runner._position = RunnerPosition("UGRO", entry_price=2.0, quantity=100)
+    runner._positions["UGRO"] = RunnerPosition("UGRO", entry_price=2.0, quantity=100)
 
     open_intent = runner._emit_open_intent({"ticker": "UGRO", "rank_score": 78.0, "change_pct": 40.0}, 2.75)
-    close_intent = runner._emit_close_intent(reason="TEST")
+    close_intent = runner._emit_close_intent(symbol="UGRO", reason="TEST")
 
     assert open_intent.payload.metadata["limit_price"] == "2.80"
     assert open_intent.payload.metadata["price_source"] == "ask"
@@ -251,8 +378,8 @@ def test_runner_uses_quote_anchored_limit_prices_in_extended_hours() -> None:
 def test_runner_blocks_close_retries_after_duplicate_exit_reject() -> None:
     state = StrategyEngineState(now_provider=lambda: datetime(2026, 3, 31, 14, 0, tzinfo=UTC))
     runner = state.bots["runner"]
-    runner._position = RunnerPosition("UGRO", entry_price=2.0, quantity=100)
-    runner._pending_close_symbol = "UGRO"
+    runner._positions["UGRO"] = RunnerPosition("UGRO", entry_price=2.0, quantity=100)
+    runner._pending_close_symbols.add("UGRO")
 
     runner.apply_order_status(
         symbol="UGRO",
@@ -261,5 +388,5 @@ def test_runner_blocks_close_retries_after_duplicate_exit_reject() -> None:
         reason="duplicate_exit_in_flight",
     )
 
-    assert runner._pending_close_symbol is None
-    assert runner._is_close_retry_blocked() is True
+    assert "UGRO" not in runner._pending_close_symbols
+    assert runner._is_close_retry_blocked("UGRO") is True

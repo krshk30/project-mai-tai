@@ -10,7 +10,7 @@ from project_mai_tai.events import TradeIntentEvent, TradeIntentPayload
 from project_mai_tai.strategy_core.bar_builder import BarBuilderManager
 from project_mai_tai.strategy_core.indicators import ema
 from project_mai_tai.strategy_core.models import OHLCVBar
-from project_mai_tai.strategy_core.time_utils import now_eastern, session_day_eastern_str
+from project_mai_tai.strategy_core.time_utils import now_eastern, session_day_eastern_str, today_eastern_str
 
 EASTERN_TZ = ZoneInfo("America/New_York")
 
@@ -161,6 +161,36 @@ class RunnerStrategyRuntime:
         self._daily_pnl = 0.0
         self._closed_today: list[dict[str, object]] = []
         self._active_day = session_day_eastern_str(self.now_provider())
+
+    @property
+    def _position(self) -> RunnerPosition | None:
+        return next(iter(self._positions.values()), None)
+
+    @_position.setter
+    def _position(self, value: RunnerPosition | None) -> None:
+        self._positions.clear()
+        if value is not None:
+            self._positions[value.ticker.upper()] = value
+
+    @property
+    def _pending_open_symbol(self) -> str | None:
+        return next(iter(sorted(self._pending_open_symbols)), None)
+
+    @_pending_open_symbol.setter
+    def _pending_open_symbol(self, value: str | None) -> None:
+        self._pending_open_symbols.clear()
+        if value:
+            self._pending_open_symbols.add(str(value).upper())
+
+    @property
+    def _pending_close_symbol(self) -> str | None:
+        return next(iter(sorted(self._pending_close_symbols)), None)
+
+    @_pending_close_symbol.setter
+    def _pending_close_symbol(self, value: str | None) -> None:
+        self._pending_close_symbols.clear()
+        if value:
+            self._pending_close_symbols.add(str(value).upper())
 
     def set_watchlist(self, symbols: Iterable[str]) -> None:
         self.watchlist = {symbol.upper() for symbol in symbols if symbol}
@@ -608,7 +638,13 @@ class RunnerStrategyRuntime:
             ),
         )
 
-    def _emit_close_intent(self, *, symbol: str, reason: str) -> TradeIntentEvent:
+    def _emit_close_intent(self, *, symbol: str | None = None, reason: str) -> TradeIntentEvent:
+        if symbol is None:
+            position = self._position
+            symbol = position.ticker if position is not None else None
+        if symbol is None:
+            raise RuntimeError("runner close intent requested without an open position")
+        symbol = symbol.upper()
         position = self._positions.get(symbol)
         if position is None:
             raise RuntimeError("runner close intent requested without an open position")
@@ -638,7 +674,17 @@ class RunnerStrategyRuntime:
             ),
         )
 
-    def _is_close_retry_blocked(self, symbol: str) -> bool:
+    def _is_close_retry_blocked(self, symbol: str | None = None) -> bool:
+        if symbol is None:
+            pending_symbol = self._pending_close_symbol
+            if pending_symbol is not None:
+                symbol = pending_symbol
+            else:
+                position = self._position
+                symbol = position.ticker if position is not None else None
+        if symbol is None:
+            return False
+        symbol = symbol.upper()
         blocked_until = self._close_retry_blocked_until.get(symbol)
         return blocked_until is not None and self.now_provider() < blocked_until
 
