@@ -197,3 +197,34 @@ def test_reconciler_closes_incidents_when_findings_resolve() -> None:
         incidents = session.scalars(select(SystemIncident).order_by(SystemIncident.opened_at)).all()
         assert incidents
         assert all(incident.status == "closed" for incident in incidents)
+
+
+def test_reconciler_can_ignore_position_mismatch_for_specific_account_symbols() -> None:
+    session_factory = build_test_session_factory()
+    seed_reconciliation_state(session_factory)
+    service = ReconciliationService(
+        settings=Settings(
+            redis_stream_prefix="test",
+            reconciliation_stuck_order_seconds=60,
+            reconciliation_stuck_intent_seconds=60,
+            reconciliation_ignored_position_mismatches="paper:shared:UGRO",
+        ),
+        redis_client=FakeRedis(),
+        session_factory=session_factory,
+    )
+
+    result = service.run_reconciliation_cycle()
+
+    assert result["summary"]["total_findings"] == 2
+    assert result["summary"]["critical_findings"] == 0
+    assert result["summary"]["warning_findings"] == 2
+
+    with session_factory() as session:
+        findings = session.scalars(select(ReconciliationFinding)).all()
+        incidents = session.scalars(select(SystemIncident)).all()
+
+        assert {finding.finding_type for finding in findings} == {
+            "stuck_order",
+            "stuck_intent",
+        }
+        assert len(incidents) == 2

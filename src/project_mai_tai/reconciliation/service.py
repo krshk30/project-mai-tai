@@ -163,6 +163,7 @@ class ReconciliationService:
     def _build_position_findings(self, session: Session) -> list[FindingSpec]:
         tolerance = Decimal(str(self.settings.reconciliation_position_quantity_tolerance))
         avg_price_tolerance = Decimal(str(self.settings.reconciliation_average_price_tolerance))
+        ignored_pairs = self.settings.reconciliation_ignored_position_mismatch_pairs
         account_lookup = {
             account.id: account
             for account in session.scalars(select(BrokerAccount)).all()
@@ -203,6 +204,8 @@ class ReconciliationService:
         for account_id, symbol in keys:
             account = account_lookup.get(account_id)
             account_name = account.name if account is not None else str(account_id)
+            if (account_name, symbol.upper()) in ignored_pairs:
+                continue
             aggregate = aggregates.get((account_id, symbol))
             account_position = account_positions.get((account_id, symbol))
 
