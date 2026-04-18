@@ -820,6 +820,7 @@ def test_bot_runtime_clears_position_on_final_close_fill_even_if_qty_differs() -
 def test_bot_runtime_preserves_strategy_close_reason_on_filled_close() -> None:
     state = StrategyEngineState(now_provider=fixed_now)
     bot = state.bots["macd_30s_reclaim"]
+    bot.positions.reset()
     bot.positions.open_position("ROLR", 7.25, quantity=25, path="PRETRIGGER_RECLAIM")
     bot.pending_close_symbols.add("ROLR")
 
@@ -1083,6 +1084,17 @@ def test_trimmed_history_does_not_lock_out_new_open_after_cancel(monkeypatch) ->
             "ema9": 2.7,
             "ema20": 2.6,
             "macd_was_below_3bars": True,
+        },
+    )
+    monkeypatch.setattr(
+        bot.entry_engine,
+        "check_entry",
+        lambda symbol, indicators, bar_index, runtime: {
+            "ticker": symbol,
+            "price": float(indicators["price"]),
+            "path": "P1_MACD_CROSS",
+            "score": 5,
+            "score_details": "trim-history-test",
         },
     )
 

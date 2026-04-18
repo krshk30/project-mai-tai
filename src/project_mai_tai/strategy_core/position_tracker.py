@@ -319,7 +319,7 @@ class PositionTracker:
             return
         try:
             raw = json.loads(path.read_text())
-            if raw.get("date") != session_day_eastern_str():
+            if raw.get("date") not in self._active_day_keys():
                 return
             for ticker, pdata in raw.get("positions", {}).items():
                 position = Position(
@@ -346,37 +346,40 @@ class PositionTracker:
             logger.exception("Failed to load positions: %s", target)
 
     def load_closed_trades(self) -> None:
-        filepath = self._resolve_history_dir() / f"{self._closed_file_prefix}_closed_{session_day_eastern_str()}.csv"
-        if not filepath.exists():
-            return
-        try:
-            with filepath.open("r", newline="") as handle:
-                reader = csv.DictReader(handle)
-                for row in reader:
-                    closed = {
-                        "ticker": row.get("ticker", ""),
-                        "entry_price": float(row.get("entry_price", 0) or 0),
-                        "exit_price": float(row.get("exit_price", 0) or 0),
-                        "quantity": int(float(row.get("quantity", 0) or 0)),
-                        "pnl": float(row.get("pnl", 0) or 0),
-                        "pnl_pct": float(row.get("pnl_pct", 0) or 0),
-                        "reason": row.get("reason", ""),
-                        "entry_time": row.get("entry_time", ""),
-                        "exit_time": row.get("exit_time", ""),
-                        "peak_profit_pct": float(row.get("peak_profit_pct", 0) or 0),
-                        "tier": int(float(row.get("tier", 0) or 0)),
-                        "scales_done": row.get("scales_done", "").split(",") if row.get("scales_done") else [],
-                        "path": row.get("path", ""),
-                    }
-                    self._closed_today.append(closed)
-                    self._daily_pnl += float(closed["pnl"])
-                    self._record_ticker_outcome(
-                        closed["ticker"],
-                        float(closed["pnl"]),
-                        float(closed.get("peak_profit_pct", 0.0) or 0.0),
-                    )
-        except Exception:
-            logger.exception("Failed to load closed trades")
+        for day_key in self._active_day_keys():
+            filepath = self._resolve_history_dir() / f"{self._closed_file_prefix}_closed_{day_key}.csv"
+            if not filepath.exists():
+                continue
+            try:
+                with filepath.open("r", newline="") as handle:
+                    reader = csv.DictReader(handle)
+                    for row in reader:
+                        closed = {
+                            "ticker": row.get("ticker", ""),
+                            "entry_price": float(row.get("entry_price", 0) or 0),
+                            "exit_price": float(row.get("exit_price", 0) or 0),
+                            "quantity": int(float(row.get("quantity", 0) or 0)),
+                            "pnl": float(row.get("pnl", 0) or 0),
+                            "pnl_pct": float(row.get("pnl_pct", 0) or 0),
+                            "reason": row.get("reason", ""),
+                            "entry_time": row.get("entry_time", ""),
+                            "exit_time": row.get("exit_time", ""),
+                            "peak_profit_pct": float(row.get("peak_profit_pct", 0) or 0),
+                            "tier": int(float(row.get("tier", 0) or 0)),
+                            "scales_done": row.get("scales_done", "").split(",") if row.get("scales_done") else [],
+                            "path": row.get("path", ""),
+                        }
+                        self._closed_today.append(closed)
+                        self._daily_pnl += float(closed["pnl"])
+                        self._record_ticker_outcome(
+                            closed["ticker"],
+                            float(closed["pnl"]),
+                            float(closed.get("peak_profit_pct", 0.0) or 0.0),
+                        )
+                return
+            except Exception:
+                logger.exception("Failed to load closed trades")
+                return
 
     def reset(self) -> None:
         self._daily_pnl = 0.0
@@ -413,6 +416,14 @@ class PositionTracker:
                 writer.writerow(row)
         except Exception:
             logger.exception("Failed to save closed trade")
+
+    @staticmethod
+    def _active_day_keys() -> tuple[str, ...]:
+        session_key = session_day_eastern_str()
+        today_key = today_eastern_str()
+        if today_key == session_key:
+            return (session_key,)
+        return (session_key, today_key)
 
     def _record_ticker_outcome(self, ticker: str, pnl: float, peak_profit_pct: float = 0.0) -> None:
         normalized = str(ticker or "").upper()

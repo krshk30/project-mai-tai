@@ -2633,8 +2633,6 @@ class StrategyEngineService:
     def _build_schwab_tick_archive(self) -> SchwabTickArchive | None:
         if not self.settings.schwab_tick_archive_enabled:
             return None
-        if not self.state.schwab_stream_strategy_codes():
-            return None
         return SchwabTickArchive(self.settings.schwab_tick_archive_root)
 
     def _enqueue_schwab_trade_tick(self, record: TradeTickRecord) -> None:

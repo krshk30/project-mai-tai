@@ -2531,7 +2531,7 @@ def _render_dashboard(data: dict[str, Any]) -> str:
             <div class="section-header">
               <div>
                 <h2>Bot Deck</h2>
-                <div class="sub">Legacy-style bot visibility for 30s, 1m, TOS, and Runner.</div>
+                <div class="sub">Legacy Shadow: Legacy-style bot visibility for 30s, 1m, TOS, and Runner.</div>
               </div>
             </div>
             <div class="bot-grid">{bot_cards}</div>
@@ -3216,6 +3216,7 @@ def _render_scanner_dashboard(data: dict[str, Any]) -> str:
                     <div class="line-item"><strong>Status:</strong> {escape(scanner["status"])}</div>
                     <div class="line-item"><strong>Ref Tickers:</strong> {latest_snapshot.get("reference_count", 0):,}</div>
                     <div class="line-item"><strong>WebSocket:</strong> {escape(websocket_label)} ({displayed_subscription_count} subs)</div>
+                    <div class="line-item"><strong>Feed Note:</strong> {escape(feed_status_note or "No feed note")}</div>
                     <div class="line-item"><strong>Reconcile:</strong> {escape(reconcile_note)}</div>
                 </div>
             </div>
@@ -3323,6 +3324,12 @@ def _render_bot_detail_page(data: dict[str, Any], strategy_code: str) -> str:
     )
     closed_rows = _build_closed_trade_rows_v2(closed_today)
     trade_summary_rows, trade_summary_count = _build_trade_summary_rows(bot)
+    intent_rows = _build_bot_intent_rows(bot)
+    order_rows = _build_bot_order_rows(bot)
+    account_summary = _build_bot_account_summary(data, bot)
+    account_rows = _build_bot_account_rows(data, bot)
+    tos_parity = bot.get("tos_parity", {})
+    tos_parity_rows = _build_tos_parity_rows(tos_parity)
     decision_rows = _build_bot_decision_rows(bot)
     failed_rows, failed_count = _build_failed_action_rows(bot)
     pnl_color = "#5fff8d" if bot["daily_pnl"] >= 0 else "#ff6b6b"
@@ -3394,7 +3401,7 @@ def _render_bot_detail_page(data: dict[str, Any], strategy_code: str) -> str:
         <section class="panel full">
             <div class="panel-header">
                 <div>
-                    <h3>Closed Trades</h3>
+                    <h3>Recent Trades</h3>
                     <div class="sub">Completed trades with entry, exit, realized P&amp;L, and close reason.</div>
                 </div>
                 <span class="count pink">{len(closed_today)}</span>
@@ -3713,7 +3720,7 @@ def _render_bot_detail_page(data: dict[str, Any], strategy_code: str) -> str:
                 <div class="brand-badge">{meta["badge"]}</div>
                 <div>
                     <h1>{meta["title"]}</h1>
-                    <p>Dedicated execution workspace for this bot.</p>
+                    <p>Execution Workspace for this bot.</p>
                 </div>
             </div>
 
@@ -3730,6 +3737,16 @@ def _render_bot_detail_page(data: dict[str, Any], strategy_code: str) -> str:
             <div class="side-section">
                 <div class="side-label">Live Symbols</div>
                 <div>{live_symbol_html}</div>
+            </div>
+
+            <div class="side-section">
+                <div class="side-label">Account Exposure</div>
+                <div class="stack">
+                    <div class="line-item"><strong>Gross Market Value:</strong> {_fmt_money(_as_float(account_summary.get("gross_market_value")))}</div>
+                    <div class="line-item"><strong>Strategy Symbols:</strong> {escape(str(account_summary.get("strategy_symbol_count", 0)))}</div>
+                    <div class="line-item"><strong>Other Symbols:</strong> {escape(", ".join(account_summary.get("non_strategy_symbols", [])) or "None")}</div>
+                    <div class="line-item"><strong>Latest broker-account update:</strong> {escape(str(account_summary.get("latest_updated_at", "") or "Unknown"))}</div>
+                </div>
             </div>
 
             <div class="side-section">
@@ -3792,8 +3809,8 @@ def _render_bot_detail_page(data: dict[str, Any], strategy_code: str) -> str:
             <section class="panel full">
                 <div class="panel-header">
                     <div>
-                        <h3>Trade Summary</h3>
-                        <div class="sub">One row per reclaim trade attempt, paired from entry through exit when available.</div>
+                        <h3>Recent Trades / Trade Summary</h3>
+                        <div class="sub">One row per reclaim trade attempt, paired from entry through exit when available. Closed Trades stay visible here for session review.</div>
                     </div>
                     <span class="count accent">{trade_summary_count}</span>
                 </div>
@@ -3810,7 +3827,72 @@ def _render_bot_detail_page(data: dict[str, Any], strategy_code: str) -> str:
             <section class="panel full">
                 <div class="panel-header">
                     <div>
-                        <h3>Bot Decisions</h3>
+                        <h3>Trade Intents</h3>
+                        <div class="sub">Recent strategy intents emitted by this runtime.</div>
+                    </div>
+                    <span class="count accent">{min(len(bot.get("recent_intents", [])), 50)}</span>
+                </div>
+                <div class="table-wrap">
+                    <table>
+                        <thead><tr><th>Time</th><th>Type</th><th>Side</th><th>Ticker</th><th style="text-align:right">Qty</th><th>Status</th><th>Reason</th></tr></thead>
+                        <tbody>{intent_rows}</tbody>
+                    </table>
+                </div>
+            </section>
+
+            <section class="panel full">
+                <div class="panel-header">
+                    <div>
+                        <h3>Recent Orders</h3>
+                        <div class="sub">Durable OMS orders for this bot.</div>
+                    </div>
+                    <span class="count accent">{min(len(bot.get("recent_orders", [])), 50)}</span>
+                </div>
+                <div class="table-wrap">
+                    <table>
+                        <thead><tr><th>Time</th><th>Ticker</th><th>Side</th><th style="text-align:right">Qty</th><th>Status</th><th>Reason</th></tr></thead>
+                        <tbody>{order_rows}</tbody>
+                    </table>
+                </div>
+            </section>
+
+            <section class="panel full">
+                <div class="panel-header">
+                    <div>
+                        <h3>Account Exposure</h3>
+                        <div class="sub">Broker-account positions tied to this execution workspace.</div>
+                    </div>
+                    <span class="count accent">{escape(str(account_summary.get("account_position_count", 0)))}</span>
+                </div>
+                <div class="table-wrap">
+                    <table>
+                        <thead><tr><th>Ticker</th><th style="text-align:right">Qty</th><th style="text-align:right">Avg Price</th><th style="text-align:right">Market Value</th><th>Updated</th></tr></thead>
+                        <tbody>{account_rows}</tbody>
+                    </table>
+                </div>
+            </section>
+
+            <section class="panel full">
+                <div class="panel-header">
+                    <div>
+                        <h3>TOS Parity</h3>
+                        <div class="sub">{escape(str(tos_parity.get("summary", "TOS parity is only tracked for the 1-minute and TOS runtimes.")))}</div>
+                    </div>
+                    <span class="count accent">{len(tos_parity.get("snapshots", []))}</span>
+                </div>
+                <div class="panel-copy">{escape(", ".join(tos_parity.get("settings", [])) or "No parity settings loaded.")}</div>
+                <div class="table-wrap">
+                    <table>
+                        <thead><tr><th>Ticker</th><th>Last Bar</th><th style="text-align:right">Close</th><th style="text-align:right">EMA9</th><th style="text-align:right">EMA20</th><th style="text-align:right">MACD</th><th style="text-align:right">Signal</th><th style="text-align:right">Hist</th><th style="text-align:right">VWAP</th><th>Flags</th></tr></thead>
+                        <tbody>{tos_parity_rows}</tbody>
+                    </table>
+                </div>
+            </section>
+
+            <section class="panel full">
+                <div class="panel-header">
+                    <div>
+                        <h3>Decision Tape</h3>
                         <div class="sub">Recent entry checks and block reasons from the strategy runtime.</div>
                     </div>
                     <span class="count accent">{min(len(bot.get("recent_decisions", [])), 50)}</span>
@@ -4476,6 +4558,7 @@ def _render_scanner_confirmed_rows(
         )
         change_pct = _as_float(item.get("change_pct"))
         row_bg = "#0a1a0a" if item.get("is_top5") else "transparent"
+        news_icon_html = _render_confirmed_news_icon(item)
         catalyst_html = _render_confirmed_catalyst_cell(item)
         rendered.append(
             f"""<tr style="background:{row_bg};">
@@ -4490,7 +4573,7 @@ def _render_scanner_confirmed_rows(
             <td style="text-align:right">{_as_float(item.get("rvol")):.1f}x</td>
             <td style="text-align:right">{int(item.get("squeeze_count", 0) or 0)}</td>
             <td>{escape(str(item.get("first_spike_time", "")))}</td>
-            <td style="font-size:12px;min-width:180px;max-width:320px;white-space:normal;overflow-wrap:anywhere;">{catalyst_html}</td>
+            <td style="font-size:12px;min-width:180px;max-width:320px;white-space:normal;overflow-wrap:anywhere;"><div style="display:flex;gap:8px;align-items:flex-start;"><div style="padding-top:2px;">{news_icon_html}</div><div style="flex:1;">{catalyst_html}</div></div></td>
         </tr>"""
         )
     return "".join(rendered)
@@ -4761,7 +4844,7 @@ def _render_confirmed_catalyst_cell(item: dict[str, Any]) -> str:
 def _render_confirmed_news_icon(item: dict[str, Any]) -> str:
     news_url = str(item.get("news_url", "") or "").strip()
     if not news_url:
-        return '<span style="color:#61758a;">—</span>'
+        return '<span style="color:#61758a;font-size:14px;" title="No news article">🚫</span>'
     return (
         f'<a href="{escape(news_url)}" target="_blank" rel="noreferrer" '
         'style="color:#00e5ff;text-decoration:none;font-size:14px;" title="Open news article">📰</a>'

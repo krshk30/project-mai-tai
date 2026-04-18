@@ -33,7 +33,7 @@ class SchwabNativeBarBuilder:
         self,
         ticker: str,
         interval_secs: int = 30,
-        max_bars: int = 100,
+        max_bars: int = 2000,
         time_provider: Callable[[], float] | None = None,
     ) -> None:
         self.ticker = ticker
@@ -87,6 +87,39 @@ class SchwabNativeBarBuilder:
 
         self._current_bar.update(price, max(0, delta_volume))
         self._current_bar_last_cum_volume = cumulative_volume
+        return completed
+
+    def on_bar(self, bar: OHLCVBar) -> list[OHLCVBar]:
+        if bar.close <= 0:
+            return []
+
+        bar_start = (bar.timestamp // self.interval_secs) * self.interval_secs
+        completed: list[OHLCVBar] = []
+        aligned_bar = OHLCVBar.from_bar(bar, timestamp=bar_start)
+
+        if self._current_bar is None:
+            self._current_bar = aligned_bar
+            self._current_bar_start = bar_start
+            self._current_bar_last_cum_volume = None
+            return completed
+
+        if bar_start < self._current_bar_start:
+            logger.debug(
+                "[SCHWAB30] Ignoring stale aggregate bar for %s at %.3f (< current %.3f)",
+                self.ticker,
+                bar_start,
+                self._current_bar_start,
+            )
+            return completed
+
+        if bar_start > self._current_bar_start:
+            completed.append(self._close_current_bar())
+            self._current_bar = aligned_bar
+            self._current_bar_start = bar_start
+            self._current_bar_last_cum_volume = None
+            return completed
+
+        self._current_bar.merge_bar(aligned_bar)
         return completed
 
     def check_bar_closes(self) -> list[OHLCVBar]:
@@ -209,6 +242,9 @@ class SchwabNativeBarBuilderManager:
         cumulative_volume: int | None = None,
     ) -> list[OHLCVBar]:
         return self.get_or_create(ticker).on_trade(price, size, timestamp_ns, cumulative_volume)
+
+    def on_bar(self, ticker: str, bar: OHLCVBar) -> list[OHLCVBar]:
+        return self.get_or_create(ticker).on_bar(bar)
 
     def check_all_bar_closes(self) -> list[tuple[str, OHLCVBar]]:
         completed: list[tuple[str, OHLCVBar]] = []
