@@ -10,11 +10,20 @@ Current state as of March 29, 2026:
 
 This means live-market restarts must be coordinated.
 
+Branch and deploy rule:
+
+- restart and deploy from `main`
+- do not leave the VPS on a feature branch after validation work
+- if an emergency requires a temporary feature-branch deploy, document the
+  reason and rollback plan in the session handoff, then return the VPS to
+  `main` as soon as possible
+
 ## Service Risk Levels
 
 Lower-risk restarts during market hours:
 - `project-mai-tai-control.service`
 - `project-mai-tai-reconciler.service`
+- `project-mai-tai-tv-alerts.service`
 
 Higher-risk restarts during market hours:
 - `project-mai-tai-strategy.service`
@@ -43,6 +52,7 @@ Service checks:
 sudo systemctl status \
   project-mai-tai-market-data.service \
   project-mai-tai-strategy.service \
+  project-mai-tai-tv-alerts.service \
   project-mai-tai-oms.service \
   project-mai-tai-reconciler.service \
   project-mai-tai-control.service \
@@ -52,6 +62,7 @@ sudo systemctl status \
 Tail logs:
 ```bash
 sudo tail -n 80 /var/log/project-mai-tai/strategy.log
+sudo tail -n 80 /var/log/project-mai-tai/tv-alerts.log
 sudo tail -n 80 /var/log/project-mai-tai/oms.log
 sudo tail -n 80 /var/log/project-mai-tai/market-data.log
 sudo tail -n 80 /var/log/project-mai-tai/reconciler.log
@@ -66,6 +77,7 @@ sudo journalctl -u project-mai-tai-strategy.service -n 100 --no-pager -f
 Convenience scripts:
 - `bash ops/systemd/restart_control_live.sh`
 - `bash ops/systemd/restart_reconciler_live.sh`
+- `sudo systemctl restart project-mai-tai-tv-alerts.service`
 - `bash ops/systemd/restart_strategy_live.sh`
 - `bash ops/systemd/restart_oms_live.sh`
 - `bash ops/systemd/restart_market_data_live.sh`
@@ -73,6 +85,7 @@ Convenience scripts:
 GitHub Actions equivalents:
 - `Deploy Service` with `service=control`
 - `Deploy Service` with `service=reconciler`
+- `Deploy Service` with `service=tv-alerts`
 - `Deploy Service` with `service=strategy`
 - `Deploy Service` with `service=oms`
 - `Deploy Service` with `service=market-data`
@@ -171,6 +184,29 @@ If runtime positions disappear but account positions remain:
 - treat the bot as not fully recovered
 - do not assume the strategy remembers the position lifecycle
 - watch for reconciliation drift and do not make a second trading-critical change casually
+
+## TradingView Alerts Restart
+
+Use when:
+- only TradingView alert automation code changed
+- the watchlist-to-alert mirror is stalled
+- you need to refresh the browser automation profile or env values for alert creation
+
+Expected impact:
+- existing broker positions and OMS state are unaffected
+- new TradingView alerts may lag until the sidecar catches up from `strategy-state`
+- on restart, the service bootstraps from the latest `strategy-state` snapshot and then resumes stream consumption
+
+Command:
+```bash
+sudo systemctl restart project-mai-tai-tv-alerts.service
+```
+
+Post-checks:
+1. `sudo systemctl status project-mai-tai-tv-alerts.service --no-pager` shows active.
+2. `sudo tail -n 80 /var/log/project-mai-tai/tv-alerts.log` shows no sign-in or selector errors.
+3. `/api/overview` still shows `strategy-engine` and `market-data-gateway` healthy.
+4. The alert service status endpoint or logs show the current watchlist syncing again.
 
 ## OMS Restart
 

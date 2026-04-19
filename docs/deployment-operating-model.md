@@ -1,7 +1,29 @@
 # Deployment Operating Model
 
-This document describes the current production deployment design and the recommended
-risk-based operating model for working with Codex on a live trading system.
+This document describes the current production deployment design and the
+standard operating model for working with Codex on a live trading system.
+
+## Required Branch And Deploy Rule
+
+This is the default rule going forward:
+
+- `main` is the only deployable branch
+- the VPS should always run `origin/main`
+- feature branches such as `codex/...` are for development and validation only
+- do not treat a feature branch as "live" unless there is a true emergency and
+  that exception is written down explicitly in the session handoff
+
+Practical meaning:
+
+1. build and test on `codex/...`
+2. push branch and open PR
+3. wait for GitHub `Validate` to pass
+4. merge into `main`
+5. update local `main`
+6. pull `origin/main` on the VPS
+7. restart only the required services
+8. verify local `main`, GitHub `main`, and VPS `main` are all on the same SHA
+9. record that deployed SHA in the session handoff
 
 As of March 30, 2026, the repo is intentionally split into:
 
@@ -11,6 +33,57 @@ As of March 30, 2026, the repo is intentionally split into:
 
 That split is deliberate. The code integration path is automated, but live runtime restarts
 still have real risk for `strategy`, `oms`, and `market-data`.
+
+## Standard Release Flow
+
+Use this for normal work unless there is a clearly documented emergency.
+
+### 1. Develop On A Feature Branch
+
+- create or continue a branch such as `codex/...`
+- keep local work there until validation is complete
+- do not deploy this branch to the VPS as the normal path
+
+### 2. Validate Before Merge
+
+- run the relevant local tests first
+- push the branch
+- open or update the PR
+- wait for GitHub `Validate` to pass on the branch head
+
+### 3. Merge To Main
+
+- merge only after green validation
+- if a new commit lands on the branch, validation must go green again before
+  merge
+
+### 4. Deploy Only From Main
+
+- switch local checkout back to `main` and pull `origin/main`
+- on the VPS, check out `main` and pull `origin/main`
+- restart only the services required for the change
+
+### 5. Verify Alignment
+
+Before calling the change live, verify:
+
+- local `main` SHA
+- GitHub `main` SHA
+- VPS `main` SHA
+
+All three should match.
+
+### 6. Update The Session Log Immediately
+
+After deploy, update the handoff right away with:
+
+- deployed SHA
+- branch/PR reference if relevant
+- what changed
+- what was validated
+- any operational exceptions
+
+Do not rely on a later reminder to document it.
 
 ## What Happens Automatically Today
 
@@ -102,7 +175,7 @@ Behavior:
 5. fast-forwards the checkout to `origin/main`
 6. runs `ops/bootstrap/08_install_runtime.sh`
 7. runs `ops/systemd/restart_all.sh`
-8. waits for all five services plus healthy `/health`
+8. waits for all six services plus healthy `/health`
 
 Default use:
 - off-hours production deploy
@@ -119,6 +192,7 @@ Trigger:
 Targets:
 - `control`
 - `reconciler`
+- `tv-alerts`
 - `strategy`
 - `oms`
 - `market-data`
@@ -136,6 +210,8 @@ Special service behavior:
   - restarts only control plane
 - `reconciler`
   - restarts only reconciler
+- `tv-alerts`
+  - restarts only the TradingView alert sidecar
 - `strategy`
   - restarts only strategy
 - `oms`
@@ -148,7 +224,7 @@ Special service behavior:
   - restarts strategy unless `hold_strategy=true`
 
 Market-hour guard:
-- `control` and `reconciler` are treated as lower-risk
+- `control`, `reconciler`, and `tv-alerts` are treated as lower-risk
 - `strategy`, `oms`, and `market-data` are blocked during ET market hours unless
   `allow_live_restart=true`
 
@@ -181,7 +257,18 @@ Current default Codex responsibilities:
 4. push a branch to GitHub
 5. open a PR
 6. monitor validation results
-7. explain the correct deploy path for the risk level
+7. merge validated work to `main`
+8. deploy the VPS from `main`
+9. verify SHA alignment across local, GitHub, and VPS
+10. update the session handoff immediately
+
+This means Codex should not leave the system in one of these drifted states
+without explicitly calling it out:
+
+- GitHub `main` ahead of VPS `main`
+- VPS running a feature branch
+- local branch state not reflected in `main`
+- live deploy completed but handoff not updated
 
 Today, Codex should treat these as deploy zones:
 
@@ -190,6 +277,7 @@ Today, Codex should treat these as deploy zones:
   - off-hours `Deploy Service`
   - live `control`
   - live `reconciler`
+  - live `tv-alerts`
 - Yellow zone
   - live `strategy`
   - live `oms`
@@ -213,24 +301,27 @@ Use this when:
 Steps:
 1. let the agent push the branch and open the PR
 2. let `Validate` pass
-3. allow auto-merge, or add `manual-merge` and merge yourself
-4. run `Deploy Main`
-5. verify the workflow finishes green
+3. merge into `main`
+4. deploy from `main`
+5. verify local/GitHub/VPS SHA alignment
+6. update the session handoff immediately
 
 ### Low-Risk Live Change
 
 Use this for:
 - `control`
 - `reconciler`
+- `tv-alerts`
 
 Steps:
 1. let the agent push the branch and open the PR
 2. let `Validate` pass
-3. merge the PR or let it auto-merge
-4. run `Deploy Service`
-5. choose `control` or `reconciler`
+3. merge into `main`
+4. deploy from `main`
+5. choose `control`, `reconciler`, or `tv-alerts`
 6. leave `allow_live_restart=false`
-7. verify the workflow finishes green
+7. verify SHA alignment and service health
+8. update the session handoff immediately
 
 ### Higher-Risk Live Change
 
@@ -242,13 +333,14 @@ Use this for:
 Current safe steps:
 1. let the agent push the branch and open the PR
 2. let `Validate` pass
-3. merge the PR or let it auto-merge
+3. merge into `main`
 4. decide whether the account state is clean enough for a live restart
-5. if yes, run `Deploy Service`
+5. if yes, deploy from `main`
 6. choose the risky target
 7. use `hold_strategy=true` for `oms` or `market-data` if you want strategy to stay stopped
 8. set `allow_live_restart=true` only if you intentionally approve the live restart risk
 9. verify the service-specific post-checks in `docs/live-market-restart-runbook.md`
+10. verify SHA alignment and update the session handoff immediately
 
 ### Red-Zone Case
 
@@ -276,6 +368,7 @@ Codex acts without asking:
 - off-hours `Deploy Service`
 - live `Deploy Service` for `control`
 - live `Deploy Service` for `reconciler`
+- live `Deploy Service` for `tv-alerts`
 
 ### Yellow Zone
 
@@ -320,11 +413,29 @@ If you want less manual production work, the most valuable next steps are:
 
 These runtime improvements are what would truly allow more agent-owned live deploys.
 
+## Release Checklist
+
+Use this every time unless the session handoff explicitly documents an
+exception.
+
+1. work on `codex/...`
+2. run local validation
+3. push branch and update PR
+4. wait for green GitHub `Validate`
+5. merge into `main`
+6. update local `main`
+7. update VPS `main`
+8. restart only required services
+9. verify local/GitHub/VPS SHA match
+10. verify live health
+11. update the session handoff immediately
+
 ## Practical Summary
 
 If you only remember one thing:
 
-- code integration is mostly automated now
+- `main` is the release branch
+- VPS should stay on `main`
 - production deploy execution is still explicit
 - low-risk deploys can be mostly agent-owned
 - risky live trading deploys still need either preflight automation or human approval

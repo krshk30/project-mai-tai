@@ -17,6 +17,30 @@ Older dated handoffs have been archived under:
 This global handoff is based on the latest active session consolidation from
 `2026-04-17`.
 
+## Deployment Discipline
+
+Standard operating rule going forward:
+
+- `main` is the only deployable branch
+- the VPS should stay on `main`
+- feature branches such as `codex/...` are for development, validation, and PR
+  review only
+- after a change is validated, merge to `main`, deploy from `main`, verify SHA
+  alignment across local/GitHub/VPS, and update this handoff immediately
+
+Required release checklist:
+
+1. work on `codex/...`
+2. run local validation
+3. push branch and update PR
+4. wait for green GitHub `Validate`
+5. merge into `main`
+6. update local `main`
+7. update VPS `main`
+8. restart only the required services
+9. verify local/GitHub/VPS all match the same SHA
+10. record that SHA and the release summary in this handoff right away
+
 ## What Changed
 
 This handoff captures the TradingView automation and webhook work completed on
