@@ -61,6 +61,9 @@ from project_mai_tai.strategy_core import (
     DaySnapshot,
     EntryEngine,
     ExitEngine,
+    FeedRetentionConfig,
+    FeedRetentionMetrics,
+    FeedRetentionPolicy,
     FivePillarsConfig,
     IndicatorConfig,
     IndicatorEngine,
@@ -75,6 +78,7 @@ from project_mai_tai.strategy_core import (
     PositionTracker,
     QuoteSnapshot,
     ReferenceData,
+    RetainedSymbolState,
     RunnerStrategyRuntime,
     SchwabNativeBarBuilderManager,
     SchwabNativeEntryEngine,
@@ -105,6 +109,17 @@ def _format_limit_price(value: float | str | Decimal | None) -> str | None:
         return format(Decimal(str(value)).quantize(Decimal("0.01")), "f")
     except Exception:
         return None
+
+
+def _coerce_float(*values: object) -> float | None:
+    for value in values:
+        if value is None:
+            continue
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            continue
+    return None
 
 
 def order_routing_metadata(*, price: str, side: str, now: datetime | None = None) -> dict[str, str]:
@@ -180,6 +195,7 @@ class StrategyBotRuntime:
         self.watchlist: set[str] = set()
         self.last_indicators: dict[str, dict[str, object]] = {}
         self.latest_quotes: dict[str, dict[str, float]] = {}
+        self.entry_blocked_symbols: set[str] = set()
         self.pending_open_symbols: set[str] = set()
         self.pending_close_symbols: set[str] = set()
         self.pending_scale_levels: set[tuple[str, str]] = set()
@@ -207,6 +223,13 @@ class StrategyBotRuntime:
     def set_watchlist(self, symbols: Iterable[str]) -> None:
         self.watchlist = {str(symbol).upper() for symbol in symbols if str(symbol).strip()}
         self._prune_runtime_state()
+
+    def set_entry_blocked_symbols(self, symbols: Iterable[str]) -> None:
+        self.entry_blocked_symbols = {
+            str(symbol).upper()
+            for symbol in symbols
+            if str(symbol).strip()
+        }
 
     def restore_position(
         self,
@@ -548,6 +571,7 @@ class StrategyBotRuntime:
             "account_name": self.definition.account_name,
             "interval_secs": self.definition.interval_secs,
             "watchlist": sorted(self.watchlist),
+            "entry_blocked_symbols": sorted(self.entry_blocked_symbols),
             "positions": self.positions.get_all_positions(),
             "pending_open_symbols": sorted(self.pending_open_symbols),
             "pending_close_symbols": sorted(self.pending_close_symbols),
@@ -567,6 +591,7 @@ class StrategyBotRuntime:
         self.entry_engine.reset()
         self.last_indicators.clear()
         self.latest_quotes.clear()
+        self.entry_blocked_symbols.clear()
         self.builder_manager.reset()
         self._applied_fill_quantity_by_order.clear()
         self._last_live_bar_received_at.clear()
@@ -663,6 +688,15 @@ class StrategyBotRuntime:
                     indicators=indicators,
                 ),
             )
+
+        if symbol in self.entry_blocked_symbols:
+            decision = self._record_decision(
+                symbol=symbol,
+                status="blocked",
+                reason="feed retention cooldown active",
+                indicators=indicators,
+            )
+            return self._finalize_completed_bar(symbol, indicators, [], decision=decision)
 
         can_open, _reason = self.positions.can_open_position(symbol)
         if not can_open:
@@ -1297,6 +1331,7 @@ class StrategyEngineState:
         self.reference_data: dict[str, ReferenceData] = {}
         self.current_confirmed: list[dict[str, object]] = []
         self.all_confirmed: list[dict[str, object]] = []
+        self.retained_watchlist: list[str] = []
         self.five_pillars: list[dict[str, object]] = []
         self.top_gainers: list[dict[str, object]] = []
         self.top_gainer_changes: list[dict[str, object]] = []
@@ -1310,6 +1345,22 @@ class StrategyEngineState:
         self._active_scanner_session_start = current_scanner_session_start_utc(
             self.alert_engine.now_provider()
         )
+        self.feed_retention_policy = FeedRetentionPolicy(
+            FeedRetentionConfig(
+                structure_bars=max(1, int(self.settings.scanner_feed_retention_structure_bars)),
+                no_activity_minutes=max(1, int(self.settings.scanner_feed_retention_no_activity_minutes)),
+                cooldown_volume_ratio=max(0.0, float(self.settings.scanner_feed_retention_cooldown_volume_ratio)),
+                cooldown_max_5m_range_pct=max(0.0, float(self.settings.scanner_feed_retention_cooldown_max_5m_range_pct)),
+                resume_hold_bars=max(1, int(self.settings.scanner_feed_retention_resume_hold_bars)),
+                resume_min_5m_range_pct=max(0.0, float(self.settings.scanner_feed_retention_resume_min_5m_range_pct)),
+                resume_min_5m_volume_ratio=max(0.0, float(self.settings.scanner_feed_retention_resume_min_5m_volume_ratio)),
+                resume_min_5m_volume_abs=max(0.0, float(self.settings.scanner_feed_retention_resume_min_5m_volume_abs)),
+                drop_cooldown_minutes=max(1, int(self.settings.scanner_feed_retention_drop_cooldown_minutes)),
+                drop_max_5m_range_pct=max(0.0, float(self.settings.scanner_feed_retention_drop_max_5m_range_pct)),
+                drop_max_5m_volume_abs=max(0.0, float(self.settings.scanner_feed_retention_drop_max_5m_volume_abs)),
+            )
+        )
+        self.feed_retention_states: dict[str, RetainedSymbolState] = {}
         self._schwab_stream_bot_codes = self._resolve_schwab_stream_bot_codes()
         self.reclaim_excluded_symbols = set(
             self.settings.strategy_macd_30s_reclaim_excluded_symbol_list
@@ -1626,7 +1677,7 @@ class StrategyEngineState:
             if str(stock.get("ticker", "")).upper() not in blocked
         ]
 
-        watchlist = [str(stock["ticker"]) for stock in self.current_confirmed]
+        watchlist = self._update_retained_watchlist(snapshot_lookup)
         tracked_snapshot_symbols = {
             str(stock.get("ticker", "")).upper()
             for stock in self.all_confirmed
@@ -1638,6 +1689,7 @@ class StrategyEngineState:
             for symbol in tracked_snapshot_symbols
             if symbol in snapshot_lookup
         }
+        blocked_entries = self._entry_blocked_symbols()
         for code, bot in self.bots.items():
             bot_watchlist = self._watchlist_for_bot(code, watchlist)
             if code == "runner":
@@ -1648,6 +1700,8 @@ class StrategyEngineState:
             if code not in self._schwab_stream_bot_codes:
                 bot.update_market_snapshots(filtered_snapshots)
             bot.set_watchlist(bot_watchlist)
+            if hasattr(bot, "set_entry_blocked_symbols"):
+                bot.set_entry_blocked_symbols(blocked_entries)
 
         return {
             "alerts": alerts,
@@ -1658,6 +1712,7 @@ class StrategyEngineState:
             "top_gainers": self.top_gainers,
             "recent_alerts": self.recent_alerts,
             "watchlist": watchlist,
+            "retention_states": self.retention_summary(),
             "market_data_symbols": self.market_data_symbols(),
             "schwab_stream_symbols": self.schwab_stream_symbols(),
         }
@@ -1835,7 +1890,7 @@ class StrategyEngineState:
     def summary(self) -> dict[str, object]:
         return {
             "all_confirmed": self.all_confirmed,
-            "watchlist": [str(stock["ticker"]) for stock in self.current_confirmed],
+            "watchlist": list(self.retained_watchlist),
             "top_confirmed": self.current_confirmed,
             "five_pillars": self.five_pillars,
             "top_gainers": self.top_gainers,
@@ -1843,6 +1898,7 @@ class StrategyEngineState:
             "top_gainer_changes": self.top_gainer_changes,
             "alert_warmup": self.alert_warmup,
             "cycle_count": self.cycle_count,
+            "retention_states": self.retention_summary(),
             "bots": {code: bot.summary() for code, bot in self.bots.items()},
         }
 
@@ -1856,9 +1912,21 @@ class StrategyEngineState:
             for item in visible_confirmed
             if str(item.get("ticker", "")).strip()
         ]
-        watchlist = [str(stock["ticker"]) for stock in self.current_confirmed]
+        current_now = self.alert_engine.now_provider()
+        self.feed_retention_states = {
+            str(stock["ticker"]).upper(): self.feed_retention_policy.promote(
+                str(stock["ticker"]).upper(),
+                current_now,
+                None,
+            )
+            for stock in self.current_confirmed
+        }
+        watchlist = self._retained_watchlist_symbols()
+        blocked_entries = self._entry_blocked_symbols()
         for code, bot in self.bots.items():
             bot.set_watchlist(self._watchlist_for_bot(code, watchlist))
+            if hasattr(bot, "set_entry_blocked_symbols"):
+                bot.set_entry_blocked_symbols(blocked_entries)
             if code == "runner":
                 bot.update_candidates(self.current_confirmed)
 
@@ -1987,15 +2055,161 @@ class StrategyEngineState:
         self.confirmed_scanner.reset()
         self.all_confirmed = []
         self.current_confirmed = []
+        self.retained_watchlist = []
         self.five_pillars = []
         self.top_gainers = []
         self.top_gainer_changes = []
         self.recent_alerts = []
         self.latest_snapshots = {}
         self._first_seen_by_ticker.clear()
+        self.feed_retention_states.clear()
         self._seeded_confirmed_pending_revalidation = False
         self._pending_recent_alert_replay = False
         self._active_scanner_session_start = current_session_start
+
+    def retention_summary(self) -> list[dict[str, object]]:
+        rows: list[dict[str, object]] = []
+        for symbol, state in sorted(self.feed_retention_states.items()):
+            rows.append(
+                {
+                    "ticker": symbol,
+                    "state": state.state,
+                    "blocks_entries": state.blocks_entries(),
+                    "keeps_feed": state.keeps_feed(),
+                    "promoted_at": state.promoted_at.isoformat(),
+                    "last_confirmed_at": state.last_confirmed_at.isoformat(),
+                    "state_changed_at": state.state_changed_at.isoformat(),
+                    "cooldown_started_at": state.cooldown_started_at.isoformat() if state.cooldown_started_at is not None else "",
+                    "below_structure_bars": state.below_structure_bars,
+                    "above_structure_bars": state.above_structure_bars,
+                    "active_reference_5m_volume": state.active_reference_5m_volume,
+                }
+            )
+        return rows
+
+    def _retained_watchlist_symbols(self) -> list[str]:
+        retained = [
+            symbol
+            for symbol, state in self.feed_retention_states.items()
+            if state.keeps_feed()
+        ]
+        current_order = [str(stock["ticker"]).upper() for stock in self.current_confirmed]
+        extras = sorted(symbol for symbol in retained if symbol not in current_order)
+        self.retained_watchlist = current_order + extras
+        return list(self.retained_watchlist)
+
+    def _entry_blocked_symbols(self) -> list[str]:
+        return sorted(
+            symbol
+            for symbol, state in self.feed_retention_states.items()
+            if state.blocks_entries()
+        )
+
+    def _update_retained_watchlist(self, snapshot_lookup: dict[str, MarketSnapshot]) -> list[str]:
+        if not self.settings.scanner_feed_retention_enabled:
+            self.feed_retention_states = {
+                str(stock["ticker"]).upper(): self.feed_retention_policy.promote(
+                    str(stock["ticker"]).upper(),
+                    self.alert_engine.now_provider(),
+                    None,
+                )
+                for stock in self.current_confirmed
+            }
+            return self._retained_watchlist_symbols()
+
+        current_now = self.alert_engine.now_provider()
+        confirmed_symbols = {
+            str(stock["ticker"]).upper()
+            for stock in self.current_confirmed
+            if str(stock.get("ticker", "")).strip()
+        }
+        candidate_symbols = confirmed_symbols | set(self.feed_retention_states)
+        next_states: dict[str, RetainedSymbolState] = {}
+        for symbol in sorted(candidate_symbols):
+            metrics = self._retention_metrics_for_symbol(symbol, snapshot_lookup)
+            next_state = self.feed_retention_policy.evaluate(
+                self.feed_retention_states.get(symbol),
+                symbol=symbol,
+                now=current_now,
+                is_confirmed=symbol in confirmed_symbols,
+                metrics=metrics,
+            )
+            if next_state is None:
+                continue
+            if next_state.state == "dropped" and symbol not in confirmed_symbols:
+                continue
+            next_states[symbol] = next_state
+        self.feed_retention_states = next_states
+        return self._retained_watchlist_symbols()
+
+    def _retention_metrics_for_symbol(
+        self,
+        symbol: str,
+        snapshot_lookup: dict[str, MarketSnapshot],
+    ) -> FeedRetentionMetrics | None:
+        runtime = self._retention_runtime()
+        indicators: dict[str, object] = {}
+        rolling_volume: float | None = None
+        rolling_range_pct: float | None = None
+        bar_timestamp: float | None = None
+
+        if runtime is not None:
+            indicators = dict(runtime.last_indicators.get(symbol.upper(), {}))
+            builder = runtime.builder_manager.get_builder(symbol.upper())
+            if builder is not None:
+                bars = builder.get_bars_as_dicts()
+                if bars:
+                    bar_window = max(1, int(300 / max(1, runtime.definition.interval_secs)))
+                    recent_bars = bars[-bar_window:]
+                    rolling_volume = float(sum(float(bar.get("volume", 0) or 0) for bar in recent_bars))
+                    lows = [float(bar.get("low", 0) or 0) for bar in recent_bars if float(bar.get("low", 0) or 0) > 0]
+                    highs = [float(bar.get("high", 0) or 0) for bar in recent_bars]
+                    if lows and highs:
+                        floor = min(lows)
+                        if floor > 0:
+                            rolling_range_pct = ((max(highs) - floor) / floor) * 100.0
+                    bar_timestamp = float(recent_bars[-1].get("timestamp", 0) or 0)
+                    if "price" not in indicators and recent_bars:
+                        indicators["price"] = float(recent_bars[-1].get("close", 0) or 0)
+
+        snapshot = snapshot_lookup.get(symbol.upper()) or self.latest_snapshots.get(symbol.upper())
+        snapshot_price = float(snapshot.last_trade.price) if snapshot and snapshot.last_trade and snapshot.last_trade.price is not None else None
+        snapshot_vwap = None
+        if snapshot and snapshot.minute and snapshot.minute.vwap is not None:
+            snapshot_vwap = float(snapshot.minute.vwap)
+        elif snapshot and snapshot.day and snapshot.day.vwap is not None:
+            snapshot_vwap = float(snapshot.day.vwap)
+
+        price = _coerce_float(
+            indicators.get("price"),
+            snapshot_price,
+        )
+        vwap = _coerce_float(
+            indicators.get("selected_vwap"),
+            indicators.get("decision_vwap"),
+            indicators.get("vwap"),
+            snapshot_vwap,
+        )
+        ema20 = _coerce_float(indicators.get("ema20"))
+        if price is None:
+            return None
+        return FeedRetentionMetrics(
+            price=price,
+            vwap=vwap,
+            ema20=ema20,
+            rolling_5m_volume=rolling_volume,
+            rolling_5m_range_pct=rolling_range_pct,
+            bar_timestamp=bar_timestamp,
+        )
+
+    def _retention_runtime(self) -> StrategyBotRuntime | None:
+        runtime = self.bots.get("macd_30s")
+        if isinstance(runtime, StrategyBotRuntime):
+            return runtime
+        runtime = self.bots.get("tos")
+        if isinstance(runtime, StrategyBotRuntime):
+            return runtime
+        return None
 
     def _build_catalyst_engine(
         self,

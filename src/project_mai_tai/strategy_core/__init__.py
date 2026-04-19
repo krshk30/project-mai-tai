@@ -14,6 +14,12 @@ from project_mai_tai.strategy_core.config import (
 )
 from project_mai_tai.strategy_core.entry import EntryEngine
 from project_mai_tai.strategy_core.exit import ExitEngine
+from project_mai_tai.strategy_core.feed_retention import (
+    FeedRetentionConfig,
+    FeedRetentionMetrics,
+    FeedRetentionPolicy,
+    RetainedSymbolState,
+)
 from project_mai_tai.strategy_core.five_pillars import FivePillarsConfig, apply_five_pillars
 from project_mai_tai.strategy_core.indicators import IndicatorEngine
 from project_mai_tai.strategy_core.models import (
@@ -48,6 +54,9 @@ __all__ = [
     "DaySnapshot",
     "EntryEngine",
     "ExitEngine",
+    "FeedRetentionConfig",
+    "FeedRetentionMetrics",
+    "FeedRetentionPolicy",
     "FivePillarsConfig",
     "IndicatorConfig",
     "IndicatorEngine",
@@ -63,6 +72,7 @@ __all__ = [
     "PositionTracker",
     "QuoteSnapshot",
     "ReferenceData",
+    "RetainedSymbolState",
     "RunnerConfig",
     "RunnerPosition",
     "RunnerStrategyRuntime",

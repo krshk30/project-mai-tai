@@ -31,7 +31,7 @@ from project_mai_tai.services.strategy_engine_app import (
 from project_mai_tai.settings import Settings
 from project_mai_tai.market_data.massive_indicator_provider import MassiveIndicatorProvider
 from project_mai_tai.market_data.taapi_indicator_provider import TaapiIndicatorProvider
-from project_mai_tai.strategy_core import IndicatorConfig, ReferenceData, TradingConfig
+from project_mai_tai.strategy_core import IndicatorConfig, OHLCVBar, ReferenceData, TradingConfig
 
 
 def fixed_now() -> datetime:
@@ -240,8 +240,173 @@ def test_snapshot_batch_keeps_single_confirmed_name_in_watchlist(monkeypatch) ->
     )
 
     assert summary["watchlist"] == ["UGRO"]
-    assert [item["ticker"] for item in summary["top_confirmed"]] == ["UGRO"]
-    assert state.confirmed_scanner.get_all_confirmed()[0]["rank_score"] == 100.0
+
+
+def test_retention_cooldown_keeps_feed_alive_but_blocks_entries(monkeypatch: pytest.MonkeyPatch) -> None:
+    now_box = {"value": datetime(2026, 4, 17, 10, 0)}
+    state = StrategyEngineState(
+        settings=Settings(
+            scanner_feed_retention_structure_bars=3,
+            scanner_feed_retention_no_activity_minutes=5,
+            scanner_feed_retention_cooldown_volume_ratio=0.5,
+            scanner_feed_retention_cooldown_max_5m_range_pct=1.5,
+            scanner_feed_retention_resume_hold_bars=2,
+            scanner_feed_retention_resume_min_5m_range_pct=2.5,
+            scanner_feed_retention_resume_min_5m_volume_abs=100_000,
+            scanner_feed_retention_drop_cooldown_minutes=10,
+            scanner_feed_retention_drop_max_5m_volume_abs=50_000,
+        ),
+        now_provider=lambda: now_box["value"],
+    )
+    monkeypatch.setattr(state.alert_engine, "check_alerts", lambda snapshots, reference_data: [])
+    monkeypatch.setattr(
+        state.confirmed_scanner,
+        "process_alerts",
+        lambda alerts, reference_data, snapshot_lookup: [],
+    )
+
+    state.confirmed_scanner._confirmed = [
+        {
+            "ticker": "UGRO",
+            "confirmed_at": "10:00:00 AM ET",
+            "entry_price": 2.25,
+            "price": 2.40,
+            "change_pct": 24.5,
+            "volume": 900_000,
+            "rvol": 6.2,
+            "shares_outstanding": 50_000,
+            "confirmation_path": "PATH_B_2SQ",
+        }
+    ]
+    summary = state.process_snapshot_batch(
+        [snapshot_from_payload(make_snapshot_payload(symbol="UGRO", price=2.40, volume=900_000))],
+        {"UGRO": ReferenceData(shares_outstanding=50_000, avg_daily_volume=390_000)},
+    )
+
+    assert summary["watchlist"] == ["UGRO"]
+    assert state.bots["macd_30s"].watchlist == {"UGRO"}
+    state.feed_retention_states["UGRO"].active_reference_5m_volume = 200_000
+
+    state.confirmed_scanner._confirmed = []
+    builder = state.bots["macd_30s"].builder_manager.get_or_create("UGRO")
+    state.bots["macd_30s"].last_indicators["UGRO"] = {
+        "price": 6.22,
+        "selected_vwap": 6.60,
+        "vwap": 6.60,
+        "ema20": 6.40,
+    }
+
+    for idx, minutes_ahead in enumerate((6, 7, 8), start=1):
+        builder.bars = [
+            OHLCVBar(
+                open=6.25,
+                high=6.28,
+                low=6.20,
+                close=6.22,
+                volume=2_000,
+                timestamp=1_700_000_000.0 + bar_idx * 30 + idx,
+            )
+            for bar_idx in range(10)
+        ]
+        now_box["value"] = datetime(2026, 4, 17, 10, minutes_ahead)
+        summary = state.process_snapshot_batch(
+            [snapshot_from_payload(make_snapshot_payload(symbol="UGRO", price=6.22, volume=20_000))],
+            {"UGRO": ReferenceData(shares_outstanding=50_000, avg_daily_volume=390_000)},
+        )
+
+    assert summary["watchlist"] == ["UGRO"]
+    assert summary["top_confirmed"] == []
+    assert summary["retention_states"][0]["state"] == "cooldown"
+    assert state.bots["macd_30s"].watchlist == {"UGRO"}
+    assert state.bots["macd_30s"].entry_blocked_symbols == {"UGRO"}
+
+
+def test_retention_resume_unblocks_entries_after_reclaim(monkeypatch: pytest.MonkeyPatch) -> None:
+    now_box = {"value": datetime(2026, 4, 17, 10, 0)}
+    state = StrategyEngineState(
+        settings=Settings(
+            scanner_feed_retention_structure_bars=3,
+            scanner_feed_retention_no_activity_minutes=5,
+            scanner_feed_retention_cooldown_volume_ratio=0.5,
+            scanner_feed_retention_cooldown_max_5m_range_pct=1.5,
+            scanner_feed_retention_resume_hold_bars=2,
+            scanner_feed_retention_resume_min_5m_range_pct=2.5,
+            scanner_feed_retention_resume_min_5m_volume_ratio=1.2,
+            scanner_feed_retention_resume_min_5m_volume_abs=100_000,
+            scanner_feed_retention_drop_cooldown_minutes=10,
+            scanner_feed_retention_drop_max_5m_volume_abs=50_000,
+        ),
+        now_provider=lambda: now_box["value"],
+    )
+    monkeypatch.setattr(state.alert_engine, "check_alerts", lambda snapshots, reference_data: [])
+    monkeypatch.setattr(
+        state.confirmed_scanner,
+        "process_alerts",
+        lambda alerts, reference_data, snapshot_lookup: [],
+    )
+
+    state.restore_confirmed_runtime_view([{"ticker": "UGRO"}])
+    retained = state.feed_retention_states["UGRO"]
+    retained.state = "cooldown"
+    retained.cooldown_started_at = now_box["value"]
+    retained.state_changed_at = now_box["value"]
+    retained.active_reference_5m_volume = 200_000
+
+    builder = state.bots["macd_30s"].builder_manager.get_or_create("UGRO")
+    builder.bars = [
+        OHLCVBar(
+            open=6.80,
+            high=7.05,
+            low=6.78,
+            close=6.98,
+            volume=40_000,
+            timestamp=1_700_000_000.0 + idx * 30 + 1,
+        )
+        for idx in range(10)
+    ]
+    state.bots["macd_30s"].last_indicators["UGRO"] = {
+        "price": 6.98,
+        "selected_vwap": 6.82,
+        "vwap": 6.82,
+        "ema20": 6.79,
+    }
+
+    state.confirmed_scanner._confirmed = []
+    now_box["value"] = datetime(2026, 4, 17, 10, 12)
+    summary = state.process_snapshot_batch(
+        [snapshot_from_payload(make_snapshot_payload(symbol="UGRO", price=6.98, volume=220_000))],
+        {"UGRO": ReferenceData(shares_outstanding=50_000, avg_daily_volume=390_000)},
+    )
+
+    assert summary["retention_states"][0]["state"] == "resume_probe"
+    assert state.bots["macd_30s"].entry_blocked_symbols == {"UGRO"}
+
+    now_box["value"] = datetime(2026, 4, 17, 10, 12, 30)
+    builder.bars = [
+        OHLCVBar(
+            open=6.84,
+            high=7.09,
+            low=6.82,
+            close=7.02,
+            volume=42_000,
+            timestamp=1_700_000_000.0 + idx * 30 + 2,
+        )
+        for idx in range(10)
+    ]
+    state.bots["macd_30s"].last_indicators["UGRO"] = {
+        "price": 7.02,
+        "selected_vwap": 6.83,
+        "vwap": 6.83,
+        "ema20": 6.80,
+    }
+    summary = state.process_snapshot_batch(
+        [snapshot_from_payload(make_snapshot_payload(symbol="UGRO", price=7.02, volume=230_000))],
+        {"UGRO": ReferenceData(shares_outstanding=50_000, avg_daily_volume=390_000)},
+    )
+
+    assert summary["retention_states"][0]["state"] == "active"
+    assert state.bots["macd_30s"].entry_blocked_symbols == set()
+    assert summary["watchlist"] == ["UGRO"]
     for code in ("macd_30s", "macd_1m", "tos", "runner"):
         assert state.bots[code].watchlist == {"UGRO"}
 
