@@ -842,7 +842,7 @@ def test_snapshot_batch_releases_removed_symbols_from_all_bot_watchlists(monkeyp
     )
 
     for code in ("macd_30s", "macd_1m", "tos", "runner"):
-        assert state.bots[code].watchlist == {"ELAB"}
+        assert state.bots[code].watchlist == {"ELAB", "UGRO"}
     assert state.bots["runner"]._candidates == {"ELAB": second_confirmed[0]}
 
 
@@ -2902,6 +2902,7 @@ def test_publish_strategy_state_persists_scanner_cycle_history_snapshot() -> Non
             "data_age_secs": 0,
         }
     ]
+    service.state.retained_watchlist = ["ELAB"]
     for bot in service.state.bots.values():
         bot.set_watchlist(["ELAB"])
 
