@@ -512,3 +512,62 @@ Recommended final direction:
   - stronger resume weighting for high-quality `P4`
   - stronger resume weighting for strong `P3`
   - without reopening the midday churn windows the current policy now blocks
+
+Operational next step:
+
+- do not tune resume logic immediately
+- run the current central retention policy live for a few trading days first
+- review:
+  - names that were cooled too early
+  - names that should have resumed but did not
+  - names where cooldown correctly blocked churn
+- only after that short live observation window should the next pass begin on
+  smarter `resume` behavior
+
+Important data-capture note:
+
+- live Schwab tick capture is enabled for the Schwab-backed runtime path
+- raw tick/quote events are currently archived to file storage, not the SQL
+  database
+- archive path on VPS:
+  - `/var/lib/project-mai-tai/schwab_ticks/YYYY-MM-DD/SYMBOL.jsonl`
+- this is sufficient for later replay/simulation
+- if long-term queryable analytics are needed later, a future step could copy
+  or summarize that archive into the database, but that is not the current
+  storage model
+
+## Schwab Mid-Day Restart Warmup Reseed
+
+The Schwab-backed runtimes now reseed recent bar history on service startup.
+
+What changed:
+
+- `macd_30s` and `tos` already persisted completed bars into
+  `StrategyBarHistory`
+- startup restore previously brought back positions and pending orders, but did
+  not reload recent bars into the live Schwab runtimes
+- startup now reloads the current session's persisted bars for active
+  Schwab-backed symbols and reseeds the runtime bar builders before live ticks
+  resume
+
+Practical effect:
+
+- if the service starts at `4:00 AM ET` and stays up, both Schwab bots still
+  warm up naturally before trading
+- if the service restarts in the middle of the day, `macd_30s` and `tos` no
+  longer need to wait through a fresh full bar warmup window
+- they come back with enough restored bars to calculate indicators immediately,
+  and can resume normal completed-bar evaluation on the next closed bar
+
+Important boundary:
+
+- open positions and pending orders were already restored from DB/broker sync
+- this change closes the separate gap where Schwab runtime bar history was not
+  being reseeded after restart
+
+Validation:
+
+- focused restart reseed tests now pass in
+  [test_strategy_engine_service.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/tests/unit/test_strategy_engine_service.py)
+- compile checks passed for
+  [strategy_engine_app.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/src/project_mai_tai/services/strategy_engine_app.py)

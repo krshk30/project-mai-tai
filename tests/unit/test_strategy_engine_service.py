@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from project_mai_tai.db.base import Base
-from project_mai_tai.db.models import BrokerAccount, BrokerOrder, DashboardSnapshot, Strategy, TradeIntent, VirtualPosition
+from project_mai_tai.db.models import BrokerAccount, BrokerOrder, DashboardSnapshot, Strategy, StrategyBarHistory, TradeIntent, VirtualPosition
 from project_mai_tai.events import (
     HistoricalBarPayload,
     HistoricalBarsEvent,
@@ -3257,6 +3257,79 @@ def test_strategy_service_reconcile_clears_stale_runtime_position_without_virtua
     assert changed is True
     assert bot.positions.get_position("UGRO") is None
     assert "UGRO" not in bot.pending_close_symbols
+
+
+def test_restore_runtime_state_reseeds_schwab_bar_history_for_midday_restart() -> None:
+    session_factory = build_test_session_factory()
+    start_30s = datetime(2026, 3, 28, 13, 0, tzinfo=UTC)
+    start_60s = datetime(2026, 3, 28, 13, 0, tzinfo=UTC)
+
+    with session_factory() as session:
+        for index in range(50):
+            close = Decimal(str(2.00 + index * 0.01))
+            session.add(
+                StrategyBarHistory(
+                    strategy_code="macd_30s",
+                    symbol="UGRO",
+                    interval_secs=30,
+                    bar_time=start_30s + timedelta(seconds=index * 30),
+                    open_price=close - Decimal("0.01"),
+                    high_price=close + Decimal("0.02"),
+                    low_price=close - Decimal("0.02"),
+                    close_price=close,
+                    volume=20_000 + index * 100,
+                    trade_count=10,
+                )
+            )
+        for index in range(35):
+            close = Decimal(str(3.00 + index * 0.01))
+            session.add(
+                StrategyBarHistory(
+                    strategy_code="tos",
+                    symbol="UGRO",
+                    interval_secs=60,
+                    bar_time=start_60s + timedelta(seconds=index * 60),
+                    open_price=close - Decimal("0.01"),
+                    high_price=close + Decimal("0.02"),
+                    low_price=close - Decimal("0.02"),
+                    close_price=close,
+                    volume=30_000 + index * 100,
+                    trade_count=12,
+                )
+            )
+        session.commit()
+
+    service = StrategyEngineService(
+        settings=Settings(
+            redis_stream_prefix="test",
+            dashboard_snapshot_persistence_enabled=True,
+            strategy_macd_30s_broker_provider="schwab",
+            strategy_tos_broker_provider="schwab",
+        ),
+        redis_client=FakeRedis(),
+        session_factory=session_factory,
+    )
+    service.state.alert_engine.now_provider = fixed_now
+    service.state.restore_confirmed_runtime_view([{"ticker": "UGRO"}])
+
+    service._restore_runtime_state_from_database()
+
+    macd_runtime = service.state.bots["macd_30s"]
+    tos_runtime = service.state.bots["tos"]
+
+    assert macd_runtime.builder_manager.get_builder("UGRO") is not None
+    assert tos_runtime.builder_manager.get_builder("UGRO") is not None
+    macd_builder = macd_runtime.builder_manager.get_builder("UGRO")
+    tos_builder = tos_runtime.builder_manager.get_builder("UGRO")
+
+    assert macd_builder.get_current_price() == pytest.approx(2.49)
+    assert tos_builder.get_current_price() == pytest.approx(3.34)
+
+    macd_bars = macd_builder.get_bars_as_dicts() + [macd_builder._current_bar.as_dict()]
+    tos_bars = tos_builder.get_bars_as_dicts() + [tos_builder._current_bar.as_dict()]
+
+    assert macd_runtime.indicator_engine.calculate(macd_bars) is not None
+    assert tos_runtime.indicator_engine.calculate(tos_bars) is not None
 
 
 def test_strategy_bot_runtime_loads_closed_trades_for_daily_pnl(monkeypatch) -> None:

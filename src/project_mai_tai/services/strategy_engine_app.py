@@ -3058,6 +3058,90 @@ class StrategyEngineService:
 
     def _restore_runtime_state_from_database(self) -> None:
         self._reconcile_runtime_state_from_database(log_when_changed=True)
+        self._restore_runtime_bar_history_from_database()
+
+    def _restore_runtime_bar_history_from_database(self) -> None:
+        if self.session_factory is None:
+            return
+
+        restored_pairs = 0
+        session_start_utc = self._current_strategy_session_start_utc()
+
+        try:
+            with self.session_factory() as session:
+                for code in self.state.schwab_stream_strategy_codes():
+                    runtime = self.state.bots.get(code)
+                    if not isinstance(runtime, StrategyBotRuntime):
+                        continue
+
+                    symbols = sorted(runtime.active_symbols())
+                    if not symbols:
+                        continue
+
+                    history_limit = self._runtime_bar_history_restore_limit(runtime)
+                    if history_limit <= 0:
+                        continue
+
+                    for symbol in symbols:
+                        records = list(
+                            reversed(
+                                session.scalars(
+                                    select(StrategyBarHistory)
+                                    .where(
+                                        StrategyBarHistory.strategy_code == code,
+                                        StrategyBarHistory.symbol == symbol,
+                                        StrategyBarHistory.interval_secs == runtime.definition.interval_secs,
+                                        StrategyBarHistory.bar_time >= session_start_utc,
+                                    )
+                                    .order_by(desc(StrategyBarHistory.bar_time))
+                                    .limit(history_limit)
+                                ).all()
+                            )
+                        )
+                        if not records:
+                            continue
+
+                        bars = [
+                            {
+                                "open": float(record.open_price),
+                                "high": float(record.high_price),
+                                "low": float(record.low_price),
+                                "close": float(record.close_price),
+                                "volume": int(record.volume),
+                                "timestamp": float(record.bar_time.timestamp()),
+                                "trade_count": int(record.trade_count),
+                            }
+                            for record in records
+                        ]
+                        runtime.seed_bars(symbol, bars)
+                        restored_pairs += 1
+        except Exception:
+            self.logger.exception("failed to restore runtime bar history from database")
+            return
+
+        if restored_pairs:
+            self.logger.info(
+                "restored runtime bar history from database | symbol_pairs=%s",
+                restored_pairs,
+            )
+
+    def _runtime_bar_history_restore_limit(self, runtime: StrategyBotRuntime) -> int:
+        trading_config = runtime.definition.trading_config
+        indicator_config = runtime.definition.indicator_config
+        indicator_min_bars = int(indicator_config.macd_slow + indicator_config.macd_signal)
+        strategy_min_bars = int(getattr(trading_config, "schwab_native_warmup_bars_required", 0) or 0)
+        return max(indicator_min_bars, strategy_min_bars, 1)
+
+    def _current_strategy_session_start_utc(self) -> datetime:
+        current = self.state.alert_engine.now_provider()
+        if current.tzinfo is None:
+            current_et = current.replace(tzinfo=EASTERN_TZ)
+        else:
+            current_et = current.astimezone(EASTERN_TZ)
+        session_start_et = current_et.replace(hour=4, minute=0, second=0, microsecond=0)
+        if current_et < session_start_et:
+            session_start_et -= timedelta(days=1)
+        return session_start_et.astimezone(UTC)
 
     def _reconcile_runtime_state_from_database(self, *, log_when_changed: bool) -> bool:
         if self.session_factory is None:
