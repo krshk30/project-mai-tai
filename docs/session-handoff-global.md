@@ -823,3 +823,55 @@ Current live interpretation after this restart:
 - the requested Schwab-native `30s` config change is deployed
 - strategy is running from synced `main`
 - control plane / overview can still read as `degraded` because of the exception-driven reconciliation summary, even when the detailed visible findings list is empty
+
+## 2026-04-22 Schwab Native 30s Chop Regime Lock
+
+Scope of this change:
+
+- change is limited to the Schwab-native `macd_30s` entry engine
+- goal is to stop `P1` / `P2` in choppy tape, stop `P3` unless momentum is
+  truly exceptional, and leave `P4_BURST` / `P5_PULLBACK` as the exception path
+
+Files changed in this session:
+
+- [trading_config.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/src/project_mai_tai/strategy_core/trading_config.py)
+  - added explicit chop-regime and `P3` extreme-override config knobs
+  - enabled `schwab_native_use_chop_regime = True` in
+    `make_30s_schwab_native_variant(...)`
+- [schwab_native_30s.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/src/project_mai_tai/strategy_core/schwab_native_30s.py)
+  - added a per-symbol chop lock for the Schwab-native `30s` engine
+  - chop lock turns on when at least `2` of these `4` conditions hit:
+    - `EMA20` / `VWAP` compression versus ATR
+    - `EMA20` flatness
+    - `EMA20` / `VWAP` whipsaw crosses
+    - no clean side in recent closes
+  - `P1_CROSS` and `P2_VWAP` are blocked while the lock is active
+  - `P3_SURGE` is blocked while the lock is active unless the extreme-momentum
+    override passes
+  - `P4_BURST` and `P5_PULLBACK` remain exempt
+  - Decision Tape reasons now include the current chop hit count and flags, for
+    example:
+    - `chop lock active (current 4/4): COMPRESS|EMA20_FLAT|WHIPSAW|NO_CLEAN_SIDE; P1/P2/P3 gated`
+- [test_strategy_core.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/tests/unit/test_strategy_core.py)
+  - added targeted coverage for:
+    - `P1` blocked by the chop lock with debug reason text
+    - `P3` allowed through the chop lock only when the extreme override passes
+
+Validation completed in this session:
+
+- `compileall` passed for the changed files
+- direct bundled-Python strategy-engine harness checks passed for:
+  - chop lock blocks `P1` with a `4/4` Decision Tape reason
+  - `P3_SURGE` still fires when the extreme override passes during chop lock
+  - `P4_BURST` still fires
+  - `P5_PULLBACK` still fires
+- note:
+  - `pytest` is not installed in the current local shell/runtime, so validation
+    was done with direct Python harness execution instead of a normal `pytest`
+    run
+
+Deployment state:
+
+- this change has **not** been pushed to GitHub `main`
+- this change has **not** been deployed to the VPS
+- no service restart was performed in this session

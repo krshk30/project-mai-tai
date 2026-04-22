@@ -166,12 +166,25 @@ class TradingConfig:
     exit_stoch_overbought_level: float = 80.0
     schwab_native_warmup_bars_required: int = 50
     schwab_native_use_confirmation: bool = True
+    schwab_native_use_chop_regime: bool = False
     require_above_ema20: bool = True
     use_stoch_k_cap: bool = True
     stoch_k_cap_level: float = 90.0
     use_ema9_max_dist: bool = True
     ema9_max_dist_pct: float = 8.0
     vwap_max_dist_pct: float = 10.0
+    chop_atr_len: int = 14
+    chop_compress_mult: float = 0.25
+    chop_flat_mult: float = 0.35
+    chop_flat_bars: int = 5
+    chop_cross_bars: int = 10
+    chop_cross_min: int = 3
+    chop_clean_bars: int = 10
+    chop_clean_min: int = 7
+    chop_trigger_min_hits: int = 2
+    chop_restart_vwap_closes: int = 5
+    chop_restart_breakout_bars: int = 5
+    chop_restart_pullback_hold_bars: int = 5
     p1_min_bars_below_signal: int = 3
     p3_min_score: int = 5
     p3_allow_high_vwap: bool = True
@@ -181,6 +194,12 @@ class TradingConfig:
     p3_momentum_max_ema9_pct: float = 12.0
     p3_momentum_max_stoch_k: float = 98.0
     p3_momentum_vol_mult: float = 2.0
+    p3_extreme_hist_lookback: int = 20
+    p3_extreme_range_atr: float = 1.20
+    p3_extreme_vol_mult: float = 1.80
+    p3_extreme_delta_mult: float = 2.00
+    p3_extreme_hist_mult: float = 1.25
+    p3_extreme_clear_atr: float = 0.10
     p4_body_pct: float = 4.0
     p4_range_pct: float = 5.0
     p4_close_top_pct: float = 35.0
@@ -337,6 +356,7 @@ class TradingConfig:
                 "vwap_max_dist_pct": 10.0,
                 "entry_intrabar_enabled": False,
                 "schwab_native_use_confirmation": True,
+                "schwab_native_use_chop_regime": True,
                 "schwab_native_warmup_bars_required": 50,
             }
         )

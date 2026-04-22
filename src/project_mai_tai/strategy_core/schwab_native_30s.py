@@ -28,6 +28,33 @@ def _resolve_timestamp(timestamp_ns: int, fallback: Callable[[], float]) -> floa
     return fallback()
 
 
+def _series_cross(current_value: float, previous_value: float, current_level: float, previous_level: float) -> bool:
+    return (current_value > current_level and previous_value <= previous_level) or (
+        current_value < current_level and previous_value >= previous_level
+    )
+
+
+def _atr_value(bars: Sequence[dict[str, float]], length: int) -> float:
+    if not bars or length <= 0:
+        return 0.0
+    true_ranges: list[float] = []
+    previous_close: float | None = None
+    for bar in bars:
+        high = float(bar["high"])
+        low = float(bar["low"])
+        close = float(bar["close"])
+        if previous_close is None:
+            true_range = high - low
+        else:
+            true_range = max(high - low, abs(high - previous_close), abs(low - previous_close))
+        true_ranges.append(max(0.0, true_range))
+        previous_close = close
+    atr = true_ranges[0]
+    for true_range in true_ranges[1:]:
+        atr = ((atr * (length - 1)) + true_range) / length
+    return atr
+
+
 class SchwabNativeBarBuilder:
     def __init__(
         self,
@@ -401,6 +428,17 @@ class _PendingConfirmation:
     bars_waiting: int = 0
 
 
+@dataclass
+class _ChopEvaluation:
+    active: bool
+    valid: bool
+    hit_count: int
+    reasons: list[str]
+    blocks_p1p2: bool
+    blocks_p3: bool
+    extreme_p3_override: bool
+
+
 class SchwabNativeEntryEngine:
     def __init__(
         self,
@@ -421,6 +459,7 @@ class SchwabNativeEntryEngine:
         self._spike_anchor_bar: dict[str, int] = {}
         self._spike_anchor_high: dict[str, float] = {}
         self._active_day_by_ticker: dict[str, str] = {}
+        self._chop_lock_active: dict[str, bool] = {}
 
     def seed_recent_bars(
         self,
@@ -475,6 +514,7 @@ class SchwabNativeEntryEngine:
         self._spike_anchor_bar.clear()
         self._spike_anchor_high.clear()
         self._active_day_by_ticker.clear()
+        self._chop_lock_active.clear()
 
     def prune_tickers(self, keep: set[str]) -> None:
         for mapping in (
@@ -486,6 +526,7 @@ class SchwabNativeEntryEngine:
             self._spike_anchor_bar,
             self._spike_anchor_high,
             self._active_day_by_ticker,
+            self._chop_lock_active,
         ):
             stale = [ticker for ticker in mapping if ticker not in keep]
             for ticker in stale:
@@ -518,9 +559,12 @@ class SchwabNativeEntryEngine:
             if ticker in self._pending:
                 return None
 
-        path, score, score_details = self._evaluate_paths(ticker, indicators, bar_index)
+        path, score, score_details, chop = self._evaluate_paths(ticker, indicators, bar_index)
         if path is None:
-            self._record_decision(ticker, status="idle", reason="no entry path matched")
+            if chop.active:
+                self._record_decision(ticker, status="blocked", reason=self._format_chop_reason(chop))
+            else:
+                self._record_decision(ticker, status="idle", reason="no entry path matched")
             return None
 
         if path in {"P4_BURST", "P5_PULLBACK"} or not self.config.schwab_native_use_confirmation:
@@ -544,6 +588,19 @@ class SchwabNativeEntryEngine:
         bar_index: int,
     ) -> dict[str, float | int | str] | None:
         pending = self._pending[ticker]
+        current = self._snapshot_from_indicators(indicators, bar_index=bar_index)
+        recent = self._recent_bars.get(ticker, [])
+        if current is not None:
+            chop = self._evaluate_chop_lock(ticker, indicators, current, recent)
+            if self._path_blocked_by_chop(pending.trigger_path, chop):
+                self._pending.pop(ticker, None)
+                self._record_decision(
+                    ticker,
+                    status="blocked",
+                    reason=f"{pending.trigger_path} blocked by {self._format_chop_reason(chop)}",
+                    path=pending.trigger_path,
+                )
+                return None
         pending.bars_waiting += 1
         if bool(indicators.get("macd_cross_below", False)) or bool(indicators.get("stoch_cross_below_exit", False)):
             self._pending.pop(ticker, None)
@@ -586,15 +643,16 @@ class SchwabNativeEntryEngine:
         ticker: str,
         indicators: dict[str, float | bool],
         bar_index: int,
-    ) -> tuple[str | None, int, str]:
+    ) -> tuple[str | None, int, str, _ChopEvaluation]:
         common = self._common_gate_state(indicators)
         vol_ok = bool(common["vol_ok"])
         time_allowed = self._time_allowed()
         recent = self._recent_bars.get(ticker, [])
         current = self._snapshot_from_indicators(indicators, bar_index=bar_index)
         if current is None:
-            return None, 0, ""
+            return None, 0, "", _ChopEvaluation(False, False, 0, [], False, False, False)
         previous = recent[-1] if recent else None
+        chop = self._evaluate_chop_lock(ticker, indicators, current, recent)
 
         raw_p1 = (
             bool(indicators.get("macd_cross_above", False))
@@ -602,8 +660,10 @@ class SchwabNativeEntryEngine:
             and bool(common["p1p2_ok"])
         )
         if raw_p1 and vol_ok and time_allowed:
+            if chop.blocks_p1p2:
+                return None, 0, "", chop
             score, details = self._quality_score(indicators)
-            return "P1_CROSS", score, details
+            return "P1_CROSS", score, details, chop
 
         raw_p2 = (
             bool(indicators.get("price_cross_above_vwap", False))
@@ -612,8 +672,10 @@ class SchwabNativeEntryEngine:
             and bool(common["p1p2_ok"])
         )
         if raw_p2 and vol_ok and time_allowed:
+            if chop.blocks_p1p2:
+                return None, 0, "", chop
             score, details = self._quality_score(indicators)
-            return "P2_VWAP", score, details
+            return "P2_VWAP", score, details, chop
 
         raw_p3 = (
             bool(indicators.get("macd_above_signal", False))
@@ -625,8 +687,10 @@ class SchwabNativeEntryEngine:
             and bool(common["p3_ok"])
         )
         if raw_p3 and vol_ok and time_allowed:
+            if chop.blocks_p3:
+                return None, 0, "", chop
             score, details = self._quality_score(indicators)
-            return "P3_SURGE", score, details
+            return "P3_SURGE", score, details, chop
 
         if previous is not None:
             p4_body_pct = ((current["close"] - current["open"]) / current["open"]) * 100 if current["open"] > 0 else 0.0
@@ -651,13 +715,13 @@ class SchwabNativeEntryEngine:
             )
             if raw_p4:
                 score, details = self._quality_score(indicators)
-                return "P4_BURST", score, details
+                return "P4_BURST", score, details, chop
 
         if self._is_pullback_entry_ready(ticker, current, recent) and time_allowed:
             score, details = self._quality_score(indicators)
-            return "P5_PULLBACK", score, details
+            return "P5_PULLBACK", score, details, chop
 
-        return None, 0, ""
+        return None, 0, "", chop
 
     def _is_pullback_entry_ready(
         self,
@@ -698,6 +762,180 @@ class SchwabNativeEntryEngine:
             and current["ema9"] >= current["ema9_prev"] * 0.995
             and upmove_pct >= self.config.p5_momentum_min_pct
         )
+
+    def _evaluate_chop_lock(
+        self,
+        ticker: str,
+        indicators: dict[str, float | bool],
+        current: dict[str, float],
+        recent: list[dict[str, float]],
+    ) -> _ChopEvaluation:
+        if not self.config.schwab_native_use_chop_regime:
+            self._chop_lock_active.pop(ticker, None)
+            return _ChopEvaluation(False, False, 0, [], False, False, False)
+
+        series = [*recent, current]
+        minimum_history = max(
+            self.config.chop_atr_len,
+            self.config.chop_flat_bars + 1,
+            self.config.chop_cross_bars + 1,
+            self.config.chop_clean_bars,
+        )
+        max_lookback = max(
+            minimum_history,
+            self.config.chop_atr_len,
+            self.config.chop_flat_bars + 1,
+            self.config.chop_cross_bars + 1,
+            self.config.chop_clean_bars,
+            self.config.chop_restart_vwap_closes,
+            self.config.chop_restart_breakout_bars + 1,
+            self.config.chop_restart_pullback_hold_bars + 1,
+            self.config.p3_extreme_hist_lookback,
+            3,
+        )
+        series = series[-max_lookback:]
+        atr = _atr_value(series[-self.config.chop_atr_len :], self.config.chop_atr_len)
+        valid = (
+            bool(indicators.get("in_regular_session", False))
+            and current["vwap"] > 0
+            and atr > 0
+            and len(series) >= minimum_history
+        )
+
+        reasons: list[str] = []
+        hit_count = 0
+        if valid:
+            compression = abs(current["ema20"] - current["vwap"]) < atr * self.config.chop_compress_mult
+            if compression:
+                reasons.append("COMPRESS")
+                hit_count += 1
+
+            ema20_flat = False
+            if len(series) > self.config.chop_flat_bars:
+                ema20_then = series[-(self.config.chop_flat_bars + 1)]["ema20"]
+                ema20_flat = abs(current["ema20"] - ema20_then) < atr * self.config.chop_flat_mult
+            if ema20_flat:
+                reasons.append("EMA20_FLAT")
+                hit_count += 1
+
+            cross_count = 0
+            cross_window = series[-(self.config.chop_cross_bars + 1) :]
+            for previous_bar, current_bar in zip(cross_window, cross_window[1:]):
+                crossed_ema20 = _series_cross(
+                    current_bar["close"],
+                    previous_bar["close"],
+                    current_bar["ema20"],
+                    previous_bar["ema20"],
+                )
+                crossed_vwap = _series_cross(
+                    current_bar["close"],
+                    previous_bar["close"],
+                    current_bar["vwap"],
+                    previous_bar["vwap"],
+                )
+                if crossed_ema20 or crossed_vwap:
+                    cross_count += 1
+            whipsaw = cross_count >= self.config.chop_cross_min
+            if whipsaw:
+                reasons.append("WHIPSAW")
+                hit_count += 1
+
+            clean_window = series[-self.config.chop_clean_bars :]
+            clean_bull_count = sum(1 for bar in clean_window if bar["close"] > bar["ema20"] and bar["close"] > bar["vwap"])
+            clean_bear_count = sum(1 for bar in clean_window if bar["close"] < bar["ema20"] and bar["close"] < bar["vwap"])
+            clean_side_count = max(clean_bull_count, clean_bear_count)
+            no_clean_side = clean_side_count < self.config.chop_clean_min
+            if no_clean_side:
+                reasons.append("NO_CLEAN_SIDE")
+                hit_count += 1
+
+        active = self._chop_lock_active.get(ticker, False)
+        trigger = valid and hit_count >= self.config.chop_trigger_min_hits
+        restart_long = valid and self._restart_long_ready(current, series)
+        if trigger and not active:
+            active = True
+        elif active and restart_long:
+            active = False
+
+        if active:
+            self._chop_lock_active[ticker] = True
+        else:
+            self._chop_lock_active.pop(ticker, None)
+
+        extreme_p3_override = active and valid and self._p3_extreme_momentum_override(indicators, current, series, atr)
+        return _ChopEvaluation(
+            active=active,
+            valid=valid,
+            hit_count=hit_count,
+            reasons=reasons,
+            blocks_p1p2=active,
+            blocks_p3=active and not extreme_p3_override,
+            extreme_p3_override=extreme_p3_override,
+        )
+
+    def _restart_long_ready(self, current: dict[str, float], series: list[dict[str, float]]) -> bool:
+        if len(series) < max(self.config.chop_restart_vwap_closes, self.config.chop_restart_breakout_bars + 1, 3):
+            return False
+        restart_above_vwap = all(
+            bar["close"] > bar["vwap"] for bar in series[-self.config.chop_restart_vwap_closes :]
+        )
+        restart_ema20_up = series[-1]["ema20"] > series[-2]["ema20"] > series[-3]["ema20"]
+        pullback_window = series[-(self.config.chop_restart_pullback_hold_bars + 1) :]
+        restart_pullback_held = any(
+            (bar["low"] <= bar["ema20"] or bar["low"] <= bar["vwap"])
+            and bar["close"] > bar["ema20"]
+            and bar["close"] > bar["vwap"]
+            for bar in pullback_window
+        )
+        prior_highs = [bar["high"] for bar in series[-(self.config.chop_restart_breakout_bars + 1) : -1]]
+        restart_breakout = bool(prior_highs) and current["close"] > max(prior_highs)
+        return restart_above_vwap and restart_ema20_up and restart_pullback_held and restart_breakout
+
+    def _p3_extreme_momentum_override(
+        self,
+        indicators: dict[str, float | bool],
+        current: dict[str, float],
+        series: list[dict[str, float]],
+        atr: float,
+    ) -> bool:
+        hist_window = series[-self.config.p3_extreme_hist_lookback :]
+        hist_abs_avg = (
+            sum(abs(float(bar.get("hist_value", 0.0))) for bar in hist_window) / len(hist_window)
+            if hist_window
+            else 0.0
+        )
+        hist_abs_base = max(self.config.p3_histogram_floor, hist_abs_avg)
+        range_ok = (current["high"] - current["low"]) >= atr * self.config.p3_extreme_range_atr
+        vol_ok = current["volume"] >= current["vol_avg20"] * self.config.p3_extreme_vol_mult
+        macd_ok = (
+            bool(indicators.get("macd_above_signal", False))
+            and float(indicators.get("macd_delta", 0.0) or 0.0) >= self.config.surge_rate * self.config.p3_extreme_delta_mult
+            and bool(indicators.get("hist_growing", False))
+            and float(indicators.get("hist_value", 0.0) or 0.0)
+            >= max(self.config.p3_histogram_floor, hist_abs_base * self.config.p3_extreme_hist_mult)
+        )
+        clear_ok = (
+            current["close"] > current["ema20"]
+            and current["close"] > current["vwap"]
+            and (current["close"] - max(current["ema20"], current["vwap"])) >= atr * self.config.p3_extreme_clear_atr
+        )
+        return range_ok and vol_ok and macd_ok and clear_ok
+
+    def _format_chop_reason(self, chop: _ChopEvaluation) -> str:
+        if not chop.active:
+            return ""
+        if not chop.valid:
+            return "chop lock active (current 0/4, awaiting regular-session restart); P1/P2/P3 gated"
+        reasons = "|".join(chop.reasons) if chop.reasons else "NO_ACTIVE_FLAGS"
+        suffix = "; P1/P2 gated, P3 override active" if chop.extreme_p3_override else "; P1/P2/P3 gated"
+        return f"chop lock active (current {chop.hit_count}/4): {reasons}{suffix}"
+
+    def _path_blocked_by_chop(self, path: str, chop: _ChopEvaluation) -> bool:
+        if path in {"P1_CROSS", "P2_VWAP"}:
+            return chop.blocks_p1p2
+        if path == "P3_SURGE":
+            return chop.blocks_p3
+        return False
 
     def _common_gate_state(self, indicators: dict[str, float | bool]) -> dict[str, bool]:
         close = float(indicators["price"])
@@ -781,6 +1019,7 @@ class SchwabNativeEntryEngine:
             "vol_avg20": float(indicators["vol_avg20"]),
             "vol_avg5": float(indicators["vol_avg5"]),
             "ema9_prev": float(indicators.get("ema9_prev", indicators["ema9"]) or indicators["ema9"]),
+            "hist_value": float(indicators.get("hist_value", indicators.get("histogram", 0.0)) or 0.0),
         }
 
     def _remember_bar(self, ticker: str, snapshot: dict[str, float]) -> None:
@@ -884,3 +1123,4 @@ class SchwabNativeEntryEngine:
         self._session_highs.pop(ticker, None)
         self._spike_anchor_bar.pop(ticker, None)
         self._spike_anchor_high.pop(ticker, None)
+        self._chop_lock_active.pop(ticker, None)

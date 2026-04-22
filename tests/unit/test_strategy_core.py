@@ -609,6 +609,29 @@ def _make_schwab_native_base_indicators() -> dict[str, float | bool]:
     }
 
 
+def _seed_schwab_native_chop_history(engine: SchwabNativeEntryEngine, ticker: str) -> None:
+    history: list[dict[str, float | bool]] = []
+    for index in range(40, 60):
+        close = 2.03 if index % 2 == 0 else 1.98
+        history.append(
+            {
+                "open": 2.00,
+                "price": close,
+                "high": close + 0.04,
+                "low": close - 0.04,
+                "volume": 4_000.0,
+                "ema9": 2.00,
+                "ema20": 2.00 + ((index % 3) - 1) * 0.002,
+                "vwap": 2.01,
+                "vol_avg20": 3_000.0,
+                "vol_avg5": 3_000.0,
+                "ema9_prev": 2.00,
+                "hist_value": 0.02 if index % 2 == 0 else 0.015,
+            }
+        )
+    engine.seed_recent_bars(ticker, history)
+
+
 def test_schwab_native_entry_engine_blocks_p1_on_stoch_k_cap() -> None:
     config = TradingConfig().make_30s_schwab_native_variant()
     engine = SchwabNativeEntryEngine(config, now_provider=lambda: datetime(2026, 4, 17, 10, 0))
@@ -678,6 +701,79 @@ def test_schwab_native_entry_engine_can_fire_p3_with_momentum_override() -> None
             "price_above_vwap": False,
             "volume": 7_000.0,
             "vol_avg20": 3_000.0,
+        }
+    )
+
+    signal = engine.check_entry("ELAB", indicators, bar_index=60, position_tracker=None)
+
+    assert signal is not None
+    assert signal["path"] == "P3_SURGE"
+
+
+def test_schwab_native_entry_engine_blocks_p1_when_chop_lock_hits_threshold() -> None:
+    config = TradingConfig().make_30s_schwab_native_variant()
+    config.schwab_native_use_confirmation = False
+    engine = SchwabNativeEntryEngine(config, now_provider=lambda: datetime(2026, 4, 17, 10, 0))
+    _seed_schwab_native_chop_history(engine, "ELAB")
+    indicators = _make_schwab_native_base_indicators()
+    indicators.update(
+        {
+            "price": 2.02,
+            "high": 2.06,
+            "low": 1.98,
+            "ema9": 2.015,
+            "ema20": 2.00,
+            "vwap": 2.01,
+            "vol_avg20": 3_000.0,
+            "vol_avg5": 3_000.0,
+            "ema9_dist_pct": 0.25,
+            "vwap_dist_pct": 0.5,
+        }
+    )
+
+    signal = engine.check_entry("ELAB", indicators, bar_index=60, position_tracker=None)
+
+    assert signal is None
+    decision = engine.pop_last_decision("ELAB")
+    assert decision is not None
+    assert decision["status"] == "blocked"
+    assert "chop lock active (current 4/4)" in decision["reason"]
+    assert "COMPRESS" in decision["reason"]
+    assert "EMA20_FLAT" in decision["reason"]
+    assert "WHIPSAW" in decision["reason"]
+    assert "NO_CLEAN_SIDE" in decision["reason"]
+
+
+def test_schwab_native_entry_engine_allows_p3_extreme_override_during_chop_lock() -> None:
+    config = TradingConfig().make_30s_schwab_native_variant()
+    config.schwab_native_use_confirmation = False
+    engine = SchwabNativeEntryEngine(config, now_provider=lambda: datetime(2026, 4, 17, 10, 0))
+    _seed_schwab_native_chop_history(engine, "ELAB")
+    indicators = _make_schwab_native_base_indicators()
+    indicators.update(
+        {
+            "open": 2.03,
+            "price": 2.18,
+            "high": 2.23,
+            "low": 2.03,
+            "volume": 7_000.0,
+            "ema9": 2.07,
+            "ema20": 2.04,
+            "vwap": 2.05,
+            "vol_avg20": 3_000.0,
+            "vol_avg5": 3_500.0,
+            "macd_cross_above": False,
+            "price_cross_above_vwap": False,
+            "macd_delta": 0.003,
+            "macd_delta_prev": 0.001,
+            "hist_value": 0.04,
+            "histogram": 0.04,
+            "hist_growing": True,
+            "price_above_vwap": True,
+            "price_above_ema9": True,
+            "price_above_ema20": True,
+            "ema9_dist_pct": 3.0,
+            "vwap_dist_pct": 6.0,
         }
     )
 
