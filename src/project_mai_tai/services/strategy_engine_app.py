@@ -2518,15 +2518,14 @@ class StrategyEngineState:
             for stock in self.confirmed_scanner.get_all_confirmed()
             if str(stock.get("ticker", "")).upper() not in blocked
         ]
-        ranked_confirmed = self._ranked_confirmed_handoff_candidates()
-        self.current_confirmed = list(ranked_confirmed[:5])
+        self.current_confirmed = list(self.all_confirmed[:5])
         tracked_snapshot_symbols = {
             str(stock.get("ticker", "")).upper()
             for stock in self.all_confirmed
             if str(stock.get("ticker", "")).strip()
         }
         for code, bot in self.bots.items():
-            bot_watchlist = self._watchlist_for_bot(code, ranked_confirmed)
+            bot_watchlist = self._watchlist_for_bot(code, self.all_confirmed)
             if code == "runner":
                 bot.update_market_snapshots(filtered_snapshots)
                 bot.set_watchlist(bot_watchlist)
@@ -2782,14 +2781,25 @@ class StrategyEngineState:
         self.confirmed_scanner.seed_confirmed_candidates(candidates)
         self._seeded_confirmed_pending_revalidation = bool(candidates)
 
-    def restore_confirmed_runtime_view(self, visible_confirmed: Sequence[dict[str, object]]) -> None:
+    def restore_confirmed_runtime_view(
+        self,
+        visible_confirmed: Sequence[dict[str, object]],
+        *,
+        all_confirmed: Sequence[dict[str, object]] | None = None,
+    ) -> None:
         self.current_confirmed = [
             {**dict(item), "ticker": str(item.get("ticker", "")).upper()}
             for item in visible_confirmed
             if str(item.get("ticker", "")).strip()
             and str(item.get("ticker", "")).upper() not in self.global_manual_stop_symbols
         ]
-        self.all_confirmed = list(self.current_confirmed)
+        all_confirmed_rows = all_confirmed if all_confirmed is not None else self.current_confirmed
+        self.all_confirmed = [
+            {**dict(item), "ticker": str(item.get("ticker", "")).upper()}
+            for item in all_confirmed_rows
+            if str(item.get("ticker", "")).strip()
+            and str(item.get("ticker", "")).upper() not in self.global_manual_stop_symbols
+        ]
         self._resync_bot_watchlists_from_current_confirmed()
 
     def apply_global_manual_stop_symbols(self, symbols: Iterable[str] | None) -> None:
@@ -2853,11 +2863,11 @@ class StrategyEngineState:
         *,
         strategy_codes: Sequence[str] | None = None,
     ) -> None:
-        ranked_confirmed = self._ranked_confirmed_handoff_candidates()
+        confirmed_candidates = self._confirmed_handoff_candidates()
         for code, bot in self._iter_target_bots(strategy_codes=strategy_codes):
             if hasattr(bot, "set_manual_stop_symbols"):
                 bot.set_manual_stop_symbols(self._manual_stop_symbols_for_bot(code))
-            bot.set_watchlist(self._watchlist_for_bot(code, ranked_confirmed))
+            bot.set_watchlist(self._watchlist_for_bot(code, confirmed_candidates))
             if hasattr(bot, "set_entry_blocked_symbols"):
                 bot.set_entry_blocked_symbols(())
             if code == "runner":
@@ -2875,16 +2885,9 @@ class StrategyEngineState:
         )
         self.feed_retention_states = self._aggregate_bot_retention_states()
 
-    def _ranked_confirmed_handoff_candidates(self) -> list[dict[str, object]]:
-        ranked = [
-            stock
-            for stock in self.confirmed_scanner.get_ranked_confirmed(
-                min_change_pct=0,
-            )
-            if str(stock.get("ticker", "")).upper() not in self.global_manual_stop_symbols
-        ]
-        if ranked:
-            return ranked
+    def _confirmed_handoff_candidates(self) -> list[dict[str, object]]:
+        if self.all_confirmed:
+            return list(self.all_confirmed)
         return [
             stock
             for stock in self.current_confirmed
@@ -4309,15 +4312,13 @@ class StrategyEngineService:
             return
 
         self.state.seed_confirmed_candidates(seeded)
-        self.state.all_confirmed = self.state.confirmed_scanner.get_ranked_confirmed(min_score=0)
-        visible_confirmed = self.state.confirmed_scanner.get_top_n(
-            min_change_pct=0,
-            min_score=0,
-        )
+        self.state.all_confirmed = self.state.confirmed_scanner.get_all_confirmed()
+        visible_confirmed = list(self.state.all_confirmed[:5])
         if not visible_confirmed:
             visible_confirmed = list(self.state.all_confirmed)
         self.state.restore_confirmed_runtime_view(
-            [dict(item) for item in visible_confirmed if isinstance(item, dict)]
+            [dict(item) for item in visible_confirmed if isinstance(item, dict)],
+            all_confirmed=[dict(item) for item in self.state.all_confirmed if isinstance(item, dict)],
         )
         self.logger.info("seeded %s confirmed candidates for fresh restart revalidation", len(seeded))
 

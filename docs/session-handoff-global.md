@@ -1010,3 +1010,65 @@ Post-deploy live note:
   - paused symbols no longer consume per-bot handoff slots
   - when a symbol like `GNLN` is in the ranked confirmed universe, `macd_30s`
     should now backfill it instead of staying half-empty behind paused names
+
+## 2026-04-22 Remove Rank-Score Gating From Scanner-To-Bot Handoff
+
+Behavior change requested and implemented:
+
+- confirmed momentum names should be handed off to the bot immediately
+- bot-side logic should decide whether to trade
+- scanner rank score should no longer gate bot handoff
+- manual stop / resume stays bot-side and global scanner stop still removes a
+  symbol from handoff everywhere
+
+What was still wrong before this change:
+
+- the earlier `GNLN` fix only made bot watchlists backfill better after
+  bot-specific manual-stop filtering
+- handoff was still built from a ranked confirmed list
+- that meant a name could be fully confirmed in the momentum scanner but still
+  wait behind rank-score filtering before reaching `macd_30s`
+- this was not the intended operating model for the current live setup where
+  `macd_30s` is the active bot and should police entries itself
+
+Fix implemented:
+
+- [strategy_engine_app.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/src/project_mai_tai/services/strategy_engine_app.py)
+  - live snapshot processing now hands bot watchlists from `all_confirmed`
+    instead of the ranked confirmed handoff list
+  - `current_confirmed` remains the visible scanner subset (`all_confirmed[:5]`)
+    for dashboard display, but it no longer controls whether a confirmed symbol
+    reaches the bot
+  - manual-stop resync now rebuilds watchlists from the unranked confirmed set
+  - restart/restore seeding now preserves the full confirmed universe for bot
+    handoff instead of collapsing back down to the visible top list
+- [test_strategy_engine_service.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/tests/unit/test_strategy_engine_service.py)
+  - updated regression coverage to prove confirmed symbols are handed to bots
+    without rank-threshold gating
+  - updated manual-stop backfill coverage to prove the next confirmed symbol is
+    pulled in after bot-side stop filtering
+
+New canonical model after this change:
+
+- momentum alert fires -> symbol becomes confirmed
+- confirmed symbol enters `all_confirmed`
+- confirmed symbol is handed to bot watchlists immediately unless blocked by:
+  - global scanner manual stop
+  - bot-specific manual stop
+  - bot-specific exclusions like reclaim exclusions
+- trade/no-trade is then decided by the bot strategy itself
+
+Local validation completed:
+
+- `python -m compileall src/project_mai_tai/services/strategy_engine_app.py tests/unit/test_strategy_engine_service.py`
+- targeted repo `.venv` pytest slice passed:
+  - `test_snapshot_batch_hands_confirmed_symbols_to_bots_without_rank_threshold`
+  - `test_bot_watchlist_backfills_next_confirmed_symbol_after_manual_stop_filter`
+  - `test_manual_stop_update_removes_symbol_from_live_watchlist_immediately`
+  - `test_manual_stop_resume_readds_symbol_to_live_watchlist_immediately`
+
+Deployment state:
+
+- code changed locally on `main`
+- deploy / VPS restart status must be checked separately before assuming live
+  behavior matches this new handoff model

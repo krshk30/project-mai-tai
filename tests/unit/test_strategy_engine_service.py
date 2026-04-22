@@ -309,7 +309,7 @@ def test_snapshot_batch_keeps_single_confirmed_name_in_watchlist(monkeypatch) ->
     assert summary["watchlist"] == ["UGRO"]
 
 
-def test_snapshot_batch_feeds_extreme_mover_even_below_rank_threshold(monkeypatch) -> None:
+def test_snapshot_batch_hands_confirmed_symbols_to_bots_without_rank_threshold(monkeypatch) -> None:
     state = StrategyEngineState(now_provider=fixed_now)
     state.confirmed_scanner._confirmed = [
         {
@@ -379,12 +379,20 @@ def test_snapshot_batch_feeds_extreme_mover_even_below_rank_threshold(monkeypatc
         },
     )
 
-    assert [item["ticker"] for item in summary["top_confirmed"]] == ["ENVB", "CMND"]
+    assert [item["ticker"] for item in summary["top_confirmed"]] == ["CMND", "ENVB"]
     assert summary["watchlist"] == ["CMND", "ENVB"]
 
 
-def test_bot_watchlist_backfills_next_ranked_symbol_after_manual_stop_filter(monkeypatch) -> None:
+def test_bot_watchlist_backfills_next_confirmed_symbol_after_manual_stop_filter() -> None:
     state = StrategyEngineState(now_provider=fixed_now)
+    state.all_confirmed = [
+        {"ticker": "AKAN"},
+        {"ticker": "ELPW"},
+        {"ticker": "AGPU"},
+        {"ticker": "TORO"},
+        {"ticker": "WBUY"},
+        {"ticker": "GNLN"},
+    ]
     state.current_confirmed = [
         {"ticker": "AKAN"},
         {"ticker": "ELPW"},
@@ -392,18 +400,6 @@ def test_bot_watchlist_backfills_next_ranked_symbol_after_manual_stop_filter(mon
         {"ticker": "TORO"},
         {"ticker": "WBUY"},
     ]
-    monkeypatch.setattr(
-        state.confirmed_scanner,
-        "get_ranked_confirmed",
-        lambda min_change_pct=0, min_score=None: [
-            {"ticker": "AKAN"},
-            {"ticker": "ELPW"},
-            {"ticker": "AGPU"},
-            {"ticker": "TORO"},
-            {"ticker": "WBUY"},
-            {"ticker": "GNLN"},
-        ],
-    )
 
     state.apply_manual_stop_symbols({"macd_30s": {"ELPW", "TORO", "WBUY"}})
     state._resync_bot_watchlists_from_current_confirmed(strategy_codes=["macd_30s"])
