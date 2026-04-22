@@ -760,6 +760,31 @@ def test_position_tracker_scale_and_close_includes_scale_pnl(tmp_path) -> None:
     assert close["pnl"] > 0
 
 
+def test_position_tracker_uses_degraded_scale_profile(tmp_path) -> None:
+    config = TradingConfig(default_quantity=100)
+    tracker = PositionTracker(config, history_dir=str(tmp_path))
+    position = tracker.open_position("ENVB", entry_price=4.0, path="P3_MACD_SURGE", scale_profile="DEGRADED")
+
+    position.update_price(4.04)
+    first_scale = position.get_scale_action(config)
+    assert first_scale is not None
+    assert first_scale["level"] == "PCT1"
+    assert first_scale["sell_qty"] == 25
+    position.apply_scale(first_scale["level"], first_scale["sell_qty"], exit_price=4.04)
+
+    position.update_price(4.08)
+    second_scale = position.get_scale_action(config)
+    assert second_scale is not None
+    assert second_scale["level"] == "PCT2"
+    assert second_scale["sell_qty"] == 18
+    position.apply_scale(second_scale["level"], second_scale["sell_qty"], exit_price=4.08)
+
+    position.update_price(4.16)
+    third_scale = position.get_scale_action(config)
+    assert third_scale is not None
+    assert third_scale["level"] == "FAST4"
+
+
 def test_position_tracker_pauses_ticker_after_three_consecutive_losses(tmp_path) -> None:
     config = TradingConfig(
         default_quantity=10,

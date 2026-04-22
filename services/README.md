@@ -12,6 +12,8 @@ Mapping:
   - wrapper for `project_mai_tai.services.market_data_gateway`
 - `strategy-engine/`
   - wrapper for `project_mai_tai.services.strategy_engine`
+- `tradingview-alerts/`
+  - wrapper for `project_mai_tai.services.tradingview_alerts`
 - `oms-risk/`
   - wrapper for `project_mai_tai.services.oms_risk`
 - `reconciler/`

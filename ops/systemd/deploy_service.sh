@@ -16,7 +16,7 @@ if [[ ! -d "$REPO_DIR/.git" ]]; then
 fi
 
 if [[ -z "$SERVICE_TARGET" ]]; then
-  echo "usage: deploy_service.sh <repo_dir> <branch> <control|reconciler|strategy|oms|market-data>"
+  echo "usage: deploy_service.sh <repo_dir> <branch> <control|reconciler|strategy|tv-alerts|oms|market-data>"
   exit 1
 fi
 
@@ -32,6 +32,10 @@ case "$SERVICE_TARGET" in
   strategy)
     PRIMARY_UNIT="project-mai-tai-strategy.service"
     HIGH_RISK=1
+    ;;
+  tv-alerts)
+    PRIMARY_UNIT="project-mai-tai-tv-alerts.service"
+    HIGH_RISK=0
     ;;
   oms)
     PRIMARY_UNIT="project-mai-tai-oms.service"
@@ -61,7 +65,7 @@ fi
 
 if [[ "$HIGH_RISK" == "1" && "$ALLOW_LIVE_RESTART" != "1" && "$IN_MARKET_WINDOW" == "1" ]]; then
   echo "refusing $SERVICE_TARGET deploy during ET market hours without MAI_TAI_ALLOW_LIVE_RESTART=1"
-  echo "control and reconciler are lower-risk; strategy, oms, and market-data require explicit live approval"
+  echo "control, reconciler, and tv-alerts are lower-risk; strategy, oms, and market-data require explicit live approval"
   exit 1
 fi
 
@@ -145,7 +149,7 @@ echo "Refreshing runtime in $REPO_DIR (migrations=$RUN_MIGRATIONS)..."
 sudo MAI_TAI_RUN_MIGRATIONS="$RUN_MIGRATIONS" bash ops/bootstrap/08_install_runtime.sh "$REPO_DIR"
 
 case "$SERVICE_TARGET" in
-  control|reconciler|strategy)
+  control|reconciler|strategy|tv-alerts)
     restart_unit "$PRIMARY_UNIT"
     ;;
   oms)

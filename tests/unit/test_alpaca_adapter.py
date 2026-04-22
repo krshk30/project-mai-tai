@@ -291,3 +291,18 @@ def test_alpaca_paper_adapter_uses_paper_timeout_defaults() -> None:
 
     assert adapter.fill_timeout_seconds == 10
     assert adapter.cancel_unfilled_after_timeout is True
+
+
+def test_alpaca_paper_adapter_reuses_30s_credentials_for_30s_variants() -> None:
+    settings = Settings(
+        oms_adapter="alpaca_paper",
+        alpaca_macd_30s_api_key="key-30s",
+        alpaca_macd_30s_secret_key="secret-30s",
+    )
+
+    adapter = AlpacaPaperBrokerAdapter(settings)
+
+    assert adapter.credentials_by_account["paper:macd_30s"].api_key == "key-30s"
+    assert adapter.credentials_by_account["paper:macd_30s_probe"].api_key == "key-30s"
+    assert adapter.credentials_by_account["paper:macd_30s_reclaim"].api_key == "key-30s"
+    assert adapter.credentials_by_account["paper:macd_30s_retest"].api_key == "key-30s"

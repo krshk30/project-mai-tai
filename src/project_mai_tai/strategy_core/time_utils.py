@@ -23,7 +23,7 @@ def today_eastern_str() -> str:
 def session_day_eastern_str(
     now: datetime | None = None,
     *,
-    reset_hour: int = 20,
+    reset_hour: int = 4,
     reset_minute: int = 0,
 ) -> str:
     current = now.astimezone(EASTERN_TZ) if now is not None else now_eastern()

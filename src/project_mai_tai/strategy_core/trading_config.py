@@ -42,7 +42,11 @@ class TradingConfig:
     ticker_loss_pause_minutes: int = 30
     ticker_loss_pause_only_on_cold_losses: bool = False
     ticker_loss_pause_cold_peak_profit_pct: float = 1.0
+    max_entries_per_symbol_per_session: int = 0
+    hard_stop_pause_streak_limit: int = 2
+    hard_stop_pause_minutes: int = 60
     confirmation_hold_tolerance_pct: float = 0.003
+    entry_intrabar_enabled: bool = False
     pretrigger_lookback_compression_bars: int = 4
     pretrigger_max_compression_range_atr: float = 1.20
     pretrigger_min_higher_lows_count: int = 2
@@ -199,8 +203,12 @@ class TradingConfig:
 
     scale_fast4_pct: float = 4.0
     scale_fast4_sell_pct: float = 75.0
+    scale_degraded1_pct: float = 1.0
+    scale_degraded1_sell_pct: float = 25.0
     scale_normal2_pct: float = 2.0
     scale_normal2_sell_pct: float = 50.0
+    scale_degraded2_pct: float = 2.0
+    scale_degraded2_sell_pct: float = 25.0
     scale_4after2_pct: float = 4.0
     scale_4after2_sell_pct: float = 25.0
 
@@ -231,6 +239,7 @@ class TradingConfig:
                 "dead_zone_end": "00:00",
                 "entry_vwap_mode": "session_aware",
                 "entry_logic_mode": "tos_script",
+                "entry_intrabar_enabled": True,
                 "require_vwap_filter": True,
                 "allow_vwap_cross_entry": True,
                 "vol_min": 5_000,
@@ -289,6 +298,9 @@ class TradingConfig:
                 "confirmation_hold_tolerance_pct": 0.003,
                 "ticker_loss_pause_streak_limit": 3,
                 "ticker_loss_pause_minutes": 30,
+                "max_entries_per_symbol_per_session": 0,
+                "hard_stop_pause_streak_limit": 2,
+                "hard_stop_pause_minutes": 60,
             }
         )
         return TradingConfig(**fields)
@@ -310,7 +322,7 @@ class TradingConfig:
                 "trading_end_hour": 18,
                 "dead_zone_start": "00:00",
                 "dead_zone_end": "00:00",
-                "confirm_bars": 1,
+                "confirm_bars": 0,
                 "min_score": 4,
                 "p3_min_score": 5,
                 "vol_min": 2_500,
@@ -323,7 +335,8 @@ class TradingConfig:
                 "use_ema9_max_dist": True,
                 "ema9_max_dist_pct": 8.0,
                 "vwap_max_dist_pct": 10.0,
-                "schwab_native_use_confirmation": True,
+                "entry_intrabar_enabled": True,
+                "schwab_native_use_confirmation": False,
                 "schwab_native_warmup_bars_required": 50,
             }
         )
@@ -350,6 +363,9 @@ class TradingConfig:
                 "entry_vwap_mode": "session_aware",
                 "ticker_loss_pause_streak_limit": 3,
                 "ticker_loss_pause_minutes": 30,
+                "max_entries_per_symbol_per_session": 0,
+                "hard_stop_pause_streak_limit": 2,
+                "hard_stop_pause_minutes": 60,
             }
         )
         return TradingConfig(**fields)

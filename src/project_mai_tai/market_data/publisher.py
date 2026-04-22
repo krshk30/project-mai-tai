@@ -8,6 +8,7 @@ from project_mai_tai.events import (
     HeartbeatEvent,
     HeartbeatPayload,
     HistoricalBarsEvent,
+    LiveBarEvent,
     QuoteTickEvent,
     ReferenceDataPayload,
     SnapshotBatchEvent,
@@ -15,7 +16,13 @@ from project_mai_tai.events import (
     TradeTickEvent,
     stream_name,
 )
-from project_mai_tai.market_data.models import HistoricalBarsRecord, QuoteTickRecord, SnapshotRecord, TradeTickRecord
+from project_mai_tai.market_data.models import (
+    HistoricalBarsRecord,
+    LiveBarRecord,
+    QuoteTickRecord,
+    SnapshotRecord,
+    TradeTickRecord,
+)
 
 
 class MarketDataPublisher:
@@ -25,7 +32,7 @@ class MarketDataPublisher:
         stream_prefix: str,
         service_name: str,
         *,
-        snapshot_batch_stream_maxlen: int = 4,
+        snapshot_batch_stream_maxlen: int = 180,
         market_data_stream_maxlen: int = 10_000,
         heartbeat_stream_maxlen: int = 1_000,
     ):
@@ -81,6 +88,18 @@ class MarketDataPublisher:
 
     async def publish_historical_bars(self, record: HistoricalBarsRecord) -> str:
         event = HistoricalBarsEvent(
+            source_service=self.service_name,
+            payload=record.to_payload(),
+        )
+        return await self.redis.xadd(
+            stream_name(self.stream_prefix, "market-data"),
+            {"data": event.model_dump_json()},
+            maxlen=self.market_data_stream_maxlen,
+            approximate=True,
+        )
+
+    async def publish_live_bar(self, record: LiveBarRecord) -> str:
+        event = LiveBarEvent(
             source_service=self.service_name,
             payload=record.to_payload(),
         )

@@ -838,15 +838,9 @@ def test_control_plane_overview_and_dashboard_render() -> None:
         assert "30-Second MACD Bot" in bot_30s_page.text
         assert "Execution Workspace" in bot_30s_page.text
         assert "Open Positions" in bot_30s_page.text
-        assert "Recent Trades" in bot_30s_page.text
-        assert "Trade Intents" in bot_30s_page.text
-        assert "Recent Orders" in bot_30s_page.text
-        assert "Account Exposure" in bot_30s_page.text
+        assert "Completed Positions" in bot_30s_page.text
+        assert "Order History" in bot_30s_page.text
         assert "Decision Tape" in bot_30s_page.text
-        assert "Gross Market Value" in bot_30s_page.text
-        assert "Strategy Symbols" in bot_30s_page.text
-        assert "Other Symbols" in bot_30s_page.text
-        assert "Latest broker-account update" in bot_30s_page.text
         assert "SBET" in bot_30s_page.text
 
         bot_1m_page = client.get("/bot/1m")
@@ -874,12 +868,92 @@ def test_bot_page_renders_simple_trade_summary_table() -> None:
     with TestClient(app) as client:
         bot_30s_page = client.get("/bot/30s")
         assert bot_30s_page.status_code == 200
-        assert "Trade Summary" in bot_30s_page.text
-        assert "One row per reclaim trade attempt, paired from entry through exit when available." in bot_30s_page.text
-        assert "Open Position" in bot_30s_page.text
-        assert "ENTRY_P1_MACD_CROSS" in bot_30s_page.text
+        assert "Completed Positions" in bot_30s_page.text
+        assert "Completed trade cycles for this bot, including positions that finished by scale-out." in bot_30s_page.text
+        assert "Open Positions" in bot_30s_page.text
+        assert "Order History" in bot_30s_page.text
         assert "Mai Tai Scanner" in bot_30s_page.text
         assert "Mai Tai Control Plane" in bot_30s_page.text
+
+
+def test_bot_page_can_render_and_update_manual_stop_symbols() -> None:
+    settings = Settings(redis_stream_prefix="test", oms_adapter="alpaca_paper")
+    session_factory = build_test_session_factory()
+    seed_database(session_factory)
+    with session_factory() as session:
+        session.add(
+            DashboardSnapshot(
+                snapshot_type="bot_manual_stop_symbols",
+                payload={"bots": {"macd_30s": ["SBET"]}},
+            )
+        )
+        session.commit()
+    redis = FakeRedis(make_streams(settings.redis_stream_prefix))
+
+    app = build_app(
+        settings=settings,
+        session_factory=session_factory,
+        redis_client=redis,
+        legacy_client=FakeLegacyClient(),
+    )
+
+    with TestClient(app) as client:
+        bot_page = client.get("/bot/30s")
+        assert bot_page.status_code == 200
+        assert "Manual Stops" in bot_page.text
+        assert "SBET" in bot_page.text
+
+        response = client.get("/bot/symbol/stop?strategy_code=macd_30s&symbol=UGRO&redirect_to=/bot/30s")
+        assert response.status_code == 200
+
+    with session_factory() as session:
+        snapshot = session.scalar(
+            select(DashboardSnapshot)
+            .where(DashboardSnapshot.snapshot_type == "bot_manual_stop_symbols")
+            .order_by(DashboardSnapshot.created_at.desc())
+        )
+        assert snapshot is not None
+        assert snapshot.payload == {"bots": {"macd_30s": ["SBET", "UGRO"]}}
+
+
+def test_scanner_page_can_render_and_update_global_manual_stop_symbols() -> None:
+    settings = Settings(redis_stream_prefix="test", oms_adapter="alpaca_paper")
+    session_factory = build_test_session_factory()
+    seed_database(session_factory)
+    with session_factory() as session:
+        session.add(
+            DashboardSnapshot(
+                snapshot_type="global_manual_stop_symbols",
+                payload={"symbols": ["SBET"]},
+            )
+        )
+        session.commit()
+    redis = FakeRedis(make_streams(settings.redis_stream_prefix))
+
+    app = build_app(
+        settings=settings,
+        session_factory=session_factory,
+        redis_client=redis,
+        legacy_client=FakeLegacyClient(),
+    )
+
+    with TestClient(app) as client:
+        scanner_page = client.get("/scanner/dashboard")
+        assert scanner_page.status_code == 200
+        assert "Global Manual Stops" in scanner_page.text
+        assert "SBET" in scanner_page.text
+
+        response = client.get("/scanner/symbol/stop?symbol=UGRO&redirect_to=/scanner/dashboard")
+        assert response.status_code == 200
+
+    with session_factory() as session:
+        snapshot = session.scalar(
+            select(DashboardSnapshot)
+            .where(DashboardSnapshot.snapshot_type == "global_manual_stop_symbols")
+            .order_by(DashboardSnapshot.created_at.desc())
+        )
+        assert snapshot is not None
+        assert snapshot.payload == {"symbols": ["SBET", "UGRO"]}
 
 
 def test_control_plane_treats_fresh_market_data_as_live_when_heartbeat_lags() -> None:
@@ -937,7 +1011,7 @@ def test_control_plane_treats_fresh_market_data_as_live_when_heartbeat_lags() ->
         assert bot_runner_page.status_code == 200
         assert "Runner Bot" in bot_runner_page.text
         assert "Current Runner Ride" in bot_runner_page.text
-        assert "Closed Trades" in bot_runner_page.text
+        assert "Completed Positions" in bot_runner_page.text
 
         reconciliation = client.get("/api/reconciliation")
         assert reconciliation.status_code == 200

@@ -14,8 +14,133 @@ Older dated handoffs have been archived under:
 
 ## Current Source Snapshot
 
-This global handoff is based on the latest active session consolidation from
-`2026-04-17`.
+This global handoff now includes the latest active session consolidation from
+`2026-04-21`.
+
+## Session Update - 2026-04-21
+
+This session was an operational stabilization pass on the live Schwab-backed
+`macd_30s` bot after a messy live-trading day.
+
+Primary goals:
+
+- stop silent stale-state behavior
+- restore trust in the `30s` UI
+- remove prior-session leakage into the morning session
+- preserve the earlier `09:30-16:00` VWAP/session-anchor repair
+
+### What Was Disabled
+
+- degraded-mode trading overlay disabled for `macd_30s`
+- degraded `+1% / +2%` defensive scale profile disabled
+- feed-retention / lifecycle cooldown blocking disabled for current live path
+- legacy sibling-repo history fallback disabled in the live position tracker
+- separate direct-to-Schwab webhook trader service disabled so OMS remains the
+  live control path
+
+### What Was Reverted Or Restored
+
+- `macd_30s` VWAP/session anchor restored to regular-session behavior
+  matching TradingView intent:
+  - `09:30 AM ET -> 04:00 PM ET`
+- degraded-mode experiment rolled back so new entries use the normal scale
+  profile again
+
+### Live Runtime / UI Fixes Applied
+
+1. Session reset / stale carry-over cleanup
+   - aligned current-session reset behavior to the `4:00 AM ET` workflow
+   - fixed manual-stop reset so prior-day manual stops do not leak into the new
+     session
+   - removed old legacy history contamination from the prior
+     `momentum-stock-trader` repo
+
+2. Control-plane / UI cleanup
+   - fixed `Decision Tape` persisted-history fallback
+   - added `Listening Status` panel with:
+     - state
+     - last decision
+     - last market-data time
+     - last strategy heartbeat
+     - tracked symbols
+   - fixed `Completed Positions` pairing so recent fills are matched into the
+     correct completed cycles
+   - updated `Completed Positions` to rebuild from fills first instead of
+     depending mainly on recent order rows
+   - fixed duplicate completed-cycle rows by coalescing overlapping
+     fills/fallback rows
+   - restored single-line completed-position readability
+
+3. Runtime restart / stale-listener repairs
+   - startup now restores watchlists from seeded confirmed candidates instead of
+     coming back empty
+   - Schwab-backed `30s` runtime restore now reloads full current-session bar
+     history for session-aware indicators after restart
+   - restored bars are now treated as closed bars rather than incorrectly
+     becoming the live current bar
+   - latest indicator snapshot hydration now happens during bar seeding
+   - strategy-state snapshots now republish on direct Schwab activity, not only
+     on emitted trade intents
+   - aggregate-bar fallback logic now switches to trade-tick bar building when
+     aggregate updates are "fresh" by timestamp touch but the actual `30s`
+     bucket has stalled behind current time
+
+4. Safety / operator trust
+   - added a `4:00 AM` thread heartbeat automation to validate:
+     - session reset cleanliness
+     - fresh UI state
+     - live listening status
+     - advancing decision tape
+     - watchlist presence
+
+### What Was Validated
+
+- `Listening Status` now gives a trustworthy live/stale signal
+- `Decision Tape` is updating again after restart
+- fresh post-restart `macd_30s` decisions resumed instead of freezing at the
+  old `03:33 PM ET` point
+- focused local tests passed for:
+  - session-aware `30s` VWAP restore after restart
+  - lazy session history reseed
+  - latest indicator snapshot hydration
+  - aggregate-bar fallback to trade ticks when bar progression stalls
+- live strategy service was restarted after the runtime patch and resumed
+  publishing fresh strategy-state snapshots
+
+### Current Live Expectations Going Into Next Session
+
+The fastest operator trust checks are now:
+
+1. `Listening Status` must show the bot is actively listening, not stale
+2. `Decision Tape` newest timestamp must continue moving every `30s`
+3. no prior-session history/manual-stop leakage should appear after the
+   `4:00 AM ET` reset
+
+### Important Remaining Risk
+
+Exact TradingView bar-for-bar parity is still not guaranteed.
+
+The major stale-after-restart failure was fixed, but some TradingView-vs-Schwab
+close differences can still exist because the live data sources are different.
+If a suspicious trade appears again, compare immediately:
+
+- entry time
+- close
+- EMA20
+- VWAP
+- path
+
+Do not assume exact TradingView parity from UI alone.
+
+### Operational Exception
+
+This was an emergency live hotfix session with direct VPS deploys and service
+restarts. Standard GitHub `main` SHA alignment / PR bookkeeping was not fully
+performed during the session. Before the next formal release cycle, reconcile:
+
+- local branch state
+- GitHub branch / PR state
+- VPS deployed file state
 
 ## Deployment Discipline
 

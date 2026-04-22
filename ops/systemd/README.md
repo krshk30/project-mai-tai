@@ -22,7 +22,7 @@ Included assets:
 Operator note:
 - `restart_all.sh` is intended for off-hours or flat-account use
 - `deploy_main.sh` is also intended for off-hours by default and blocks ET market-hour deploys unless explicitly overridden
-- `deploy_service.sh` is the manual path for service-scoped deploys and uses lower-risk choreography for `control`, `reconciler`, `strategy`, `oms`, and `market-data`
+- `deploy_service.sh` is the manual path for service-scoped deploys and uses lower-risk choreography for `control`, `reconciler`, `tv-alerts`, `strategy`, `oms`, and `market-data`
 - during an active trading session, use `docs/live-market-restart-runbook.md` instead of a full-stack restart
 - the live-session scripts in this directory follow that runbook and stop for operator confirmation where automation would be unsafe
 - invoke the helper scripts with `bash ops/systemd/<script>.sh` if the executable bit is not present on your checkout

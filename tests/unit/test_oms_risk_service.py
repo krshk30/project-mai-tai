@@ -479,6 +479,86 @@ async def test_oms_service_rejects_non_positive_quantity() -> None:
 
 
 @pytest.mark.asyncio
+async def test_oms_service_rejects_disabled_strategy_code() -> None:
+    redis = FakeRedis()
+    session_factory = build_test_session_factory()
+    service = OmsRiskService(
+        settings=Settings(
+            redis_stream_prefix="test",
+            oms_adapter="simulated",
+            strategy_macd_30s_reclaim_enabled=False,
+        ),
+        redis_client=redis,
+        session_factory=session_factory,
+    )
+
+    events = await service.process_trade_intent(
+        TradeIntentEvent(
+            source_service="webhook-server",
+            payload=TradeIntentPayload(
+                strategy_code="macd_30s_reclaim",
+                broker_account_name="paper:macd_30s_reclaim",
+                symbol="UGRO",
+                side="buy",
+                quantity=Decimal("10"),
+                intent_type="open",
+                reason="WEBHOOK_ALERT",
+                metadata={},
+            ),
+        )
+    )
+
+    assert len(events) == 1
+    assert events[0].payload.status == "rejected"
+    assert events[0].payload.reason == "strategy_disabled_or_unknown=macd_30s_reclaim"
+    with session_factory() as session:
+        stored_intent = session.scalar(select(TradeIntent))
+        assert stored_intent is not None
+        assert stored_intent.status == "rejected"
+        assert session.scalar(select(BrokerOrder)) is None
+
+
+@pytest.mark.asyncio
+async def test_oms_service_rejects_open_quantity_above_strategy_limit() -> None:
+    redis = FakeRedis()
+    session_factory = build_test_session_factory()
+    service = OmsRiskService(
+        settings=Settings(
+            redis_stream_prefix="test",
+            oms_adapter="simulated",
+            strategy_macd_30s_default_quantity=10,
+        ),
+        redis_client=redis,
+        session_factory=session_factory,
+    )
+
+    events = await service.process_trade_intent(
+        TradeIntentEvent(
+            source_service="webhook-server",
+            payload=TradeIntentPayload(
+                strategy_code="macd_30s",
+                broker_account_name="paper:macd_30s",
+                symbol="UGRO",
+                side="buy",
+                quantity=Decimal("100"),
+                intent_type="open",
+                reason="WEBHOOK_ALERT",
+                metadata={},
+            ),
+        )
+    )
+
+    assert len(events) == 1
+    assert events[0].payload.status == "rejected"
+    assert events[0].payload.reason == "open_quantity_exceeds_limit=100>10"
+    with session_factory() as session:
+        stored_intent = session.scalar(select(TradeIntent))
+        assert stored_intent is not None
+        assert stored_intent.status == "rejected"
+        assert session.scalar(select(BrokerOrder)) is None
+
+
+@pytest.mark.asyncio
 async def test_oms_service_blocks_not_tradable_symbol_for_rest_of_session() -> None:
     redis = FakeRedis()
     session_factory = build_test_session_factory()

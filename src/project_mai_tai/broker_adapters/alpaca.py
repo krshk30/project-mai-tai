@@ -41,6 +41,21 @@ def configured_alpaca_credentials(settings: Settings) -> dict[str, AlpacaCredent
         settings.alpaca_macd_30s_secret_key,
     )
     add(
+        settings.strategy_macd_30s_probe_account_name,
+        settings.alpaca_macd_30s_api_key,
+        settings.alpaca_macd_30s_secret_key,
+    )
+    add(
+        settings.strategy_macd_30s_reclaim_account_name,
+        settings.alpaca_macd_30s_api_key,
+        settings.alpaca_macd_30s_secret_key,
+    )
+    add(
+        settings.strategy_macd_30s_retest_account_name,
+        settings.alpaca_macd_30s_api_key,
+        settings.alpaca_macd_30s_secret_key,
+    )
+    add(
         settings.strategy_macd_1m_account_name,
         settings.alpaca_macd_1m_api_key,
         settings.alpaca_macd_1m_secret_key,

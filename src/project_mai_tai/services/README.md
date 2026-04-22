@@ -16,6 +16,10 @@ Files:
   - runtime wrapper for OMS
 - `reconciler.py`
   - runtime wrapper for reconciliation
+- `tradingview_alerts.py`
+  - runtime wrapper for the TradingView alert-management sidecar
+- `tradingview_alerts_app.py`
+  - the actual alert-management service implementation, including strategy-state watchlist sync, local add/remove APIs, and persisted alert state
 - `runtime.py`
   - shared signal-handling helpers for clean service shutdown
 

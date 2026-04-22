@@ -76,6 +76,7 @@ For `Deploy Service`, that live-session block applies to:
 - `market-data`
 
 `control` and `reconciler` are treated as lower-risk service deploys.
+`tv-alerts` is also treated as a lower-risk service deploy.
 
 For risky live service deploys, `Deploy Service` now runs an automated preflight before the
 restart is allowed to continue. The preflight blocks the deploy if it sees:
@@ -135,7 +136,7 @@ The auto-merge workflow needs a writable `GITHUB_TOKEN` to merge PRs. If GitHub 
 3. fast-forwards the checked-out branch to `origin/main`
 4. runs `ops/bootstrap/08_install_runtime.sh`
 5. restarts the stack with `ops/systemd/restart_all.sh`
-6. waits for all five services plus a healthy local `/health` response
+6. waits for all six services plus a healthy local `/health` response
 
 This means GitHub Actions deploys are using the same install/restart path we already verified on the server.
 
@@ -162,6 +163,7 @@ Service targets currently supported:
 
 - `control`
 - `reconciler`
+- `tv-alerts`
 - `strategy`
 - `oms`
 - `market-data`

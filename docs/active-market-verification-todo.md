@@ -35,6 +35,11 @@ Tomorrow still requires live-session verification:
 
 These should be treated as ongoing validation requirements, not one-off questions from the previous agent.
 
+- [ ] When `macd_30s` and `tos` are both routed to Schwab live, keep their trading windows aligned unless there is an intentional documented exception. Current source mismatch observed on `2026-04-20`: `macd_30s` Schwab-native uses `7:00 AM - 6:00 PM ET`, while `tos` still uses the broader base window `4:00 AM - 8:00 PM ET`.
+
+- [ ] Revisit the `TOS Parity` panel wording and operator guidance. Current UI can be misread as an action/execution surface, but it is only a closed-bar indicator comparison view for side-by-side Thinkorswim checks.
+- [ ] Ignore or clean up stale local TradingView smoke-test state before live validation. The local cache file can contain old `log_only` test symbols such as `AAPL`, but live TradingView tracking should be validated only from the active VPS `tradingview-alerts` status, not from local smoke-test residue.
+
 - [ ] Continue verifying Mai Tai UI parity against legacy when the user calls out missing surfaces or columns.
 - [ ] Treat scanner and bot pages as primary operator tools, not secondary admin pages.
 - [ ] Keep user-facing time displays in ET on any new surface.
@@ -206,3 +211,18 @@ Use this section to append new observations, not to replace prior context.
   1. verify against legacy if relevant
   2. verify current Mai Tai runtime behavior
   3. record the conclusion here or in the session handoff
+- March 31, 2026 confirmed that indicator math was already close to
+  TradingView when the same OHLCV bars were used; the bigger drift was live bar
+  formation, especially for `30s`.
+- The `30s` bar builder and session-anchored VWAP were updated during the
+  March 31 session. Future parity work should compare fresh live-built bars
+  against TradingView exports rather than re-litigating EMA/MACD formulas.
+- Redis OOM was a real production incident on March 31, 2026 because Redis was
+  loading oversized cache state. Redis should now be treated as a bounded
+  cache/event bus, not a durable history store.
+- End-of-session live state on March 31, 2026 was healthy again with:
+  - scanner active
+  - watchlist restored to `BFRG`, `ELAB`, `KIDZ`, `MASK`
+  - `active_subscription_symbols = 4`
+  - no open virtual/account positions
+  - no reconciliation findings

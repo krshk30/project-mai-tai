@@ -20,3 +20,9 @@ build/
 *.log
 *.sqlite3
 ops/local/
+data/
+tmp_*
+bot30_*.html
+inspect_*.py
+force_live_env.txt
+temp_trade_summary.py

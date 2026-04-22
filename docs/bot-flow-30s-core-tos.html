@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Mai Tai Bot Flow - Core, 30s, and TOS</title>
+  <style>
+    @page {
+      size: letter portrait;
+      margin: 0.55in;
+    }
+
+    :root {
+      --ink: #18212b;
+      --muted: #5a6878;
+      --line: #cfd7e3;
+      --soft: #eef3f9;
+      --panel: #f7f9fc;
+      --accent: #1c5d99;
+      --accent-soft: #e8f1fb;
+      --success: #2f6f4f;
+      --warning: #8a5a00;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: #ffffff;
+      font-family: "Segoe UI", Arial, sans-serif;
+      line-height: 1.35;
+    }
+
+    .page {
+      min-height: 10in;
+      display: flex;
+      flex-direction: column;
+      gap: 0.28in;
+      page-break-after: always;
+    }
+
+    .page:last-child {
+      page-break-after: auto;
+    }
+
+    .header {
+      border-bottom: 3px solid var(--accent);
+      padding-bottom: 0.12in;
+    }
+
+    .title {
+      margin: 0;
+      font-size: 24pt;
+      font-weight: 700;
+      letter-spacing: 0.2px;
+    }
+
+    .subtitle {
+      margin: 0.08in 0 0;
+      font-size: 11pt;
+      color: var(--muted);
+    }
+
+    .legend {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.18in;
+    }
+
+    .legend-card {
+      padding: 0.14in 0.16in;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      border-radius: 12px;
+      font-size: 10.5pt;
+    }
+
+    .legend-card strong {
+      display: block;
+      margin-bottom: 0.04in;
+      font-size: 11pt;
+    }
+
+    .flow {
+      display: flex;
+      flex-direction: column;
+      gap: 0.1in;
+    }
+
+    .step {
+      display: grid;
+      grid-template-columns: 0.55in 1fr;
+      gap: 0.14in;
+      align-items: stretch;
+      padding: 0.14in 0.16in;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
+      box-shadow: 0 1px 0 rgba(24, 33, 43, 0.04);
+    }
+
+    .step-number {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-size: 14pt;
+      font-weight: 700;
+      min-height: 0.42in;
+    }
+
+    .step-content h2 {
+      margin: 0;
+      font-size: 14pt;
+      font-weight: 700;
+    }
+
+    .step-content p {
+      margin: 0.05in 0 0;
+      font-size: 11pt;
+      color: var(--ink);
+    }
+
+    .step-content .note {
+      color: var(--muted);
+      font-size: 10pt;
+    }
+
+    .arrow {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 0.28in;
+      color: var(--accent);
+      font-size: 18pt;
+      font-weight: 700;
+      letter-spacing: 4px;
+    }
+
+    .footer-note {
+      margin-top: auto;
+      padding: 0.14in 0.16in;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--soft);
+      font-size: 10.5pt;
+      color: var(--ink);
+    }
+
+    .tag-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.08in;
+      margin-top: 0.07in;
+    }
+
+    .tag {
+      display: inline-block;
+      padding: 0.04in 0.08in;
+      border-radius: 999px;
+      font-size: 9.5pt;
+      font-weight: 600;
+      border: 1px solid var(--line);
+      background: #ffffff;
+      color: var(--ink);
+    }
+
+    .tag.live {
+      border-color: #b7d6c0;
+      background: #edf8f0;
+      color: var(--success);
+    }
+
+    .tag.paper {
+      border-color: #dfd3b8;
+      background: #fff7e7;
+      color: var(--warning);
+    }
+  </style>
+</head>
+<body>
+  <section class="page">
+    <div class="header">
+      <h1 class="title">Shared Schwab Flow</h1>
+      <p class="subtitle">Top-to-bottom view of the live backbone shared by the two bot paths you are focusing on today: the 30-second core bot and the TOS bot, both routed to Schwab.</p>
+    </div>
+
+    <div class="legend">
+      <div class="legend-card">
+        <strong>What This Page Covers</strong>
+        The shared orchestration path for the two live Schwab-connected bot flows: market data comes in, the strategy engine ranks and retains symbols, bot watchlists are updated, and OMS executes through Schwab.
+      </div>
+      <div class="legend-card">
+        <strong>Today&apos;s Focus</strong>
+        This document is centered on the Schwab-connected live path only. It is intentionally not trying to document the Alpaca paper branches you are not focusing on today.
+      </div>
+    </div>
+
+    <div class="flow">
+      <div class="step">
+        <div class="step-number">1</div>
+        <div class="step-content">
+          <h2>Market Data Gateway collects the market view</h2>
+          <p>Full-market snapshot batches come in on the scanner cadence, and active-symbol live trades and quotes keep streaming for the names already on bot watchlists.</p>
+        </div>
+      </div>
+      <div class="arrow">↓</div>
+
+      <div class="step">
+        <div class="step-number">2</div>
+        <div class="step-content">
+          <h2>Strategy Engine scans and ranks names</h2>
+          <p>Each cycle updates the scanner surfaces: momentum alerts, momentum confirmed, five pillars, and top gainers. That creates the candidate set for downstream bots.</p>
+        </div>
+      </div>
+      <div class="arrow">↓</div>
+
+      <div class="step">
+        <div class="step-number">3</div>
+        <div class="step-content">
+          <h2>Feed-retention decides whether a symbol stays active</h2>
+          <p>Confirmed names can remain usable even after they temporarily weaken. The retention layer keeps strong names on the live feed longer, blocks weak ones, and eventually drops dead tape.</p>
+        </div>
+      </div>
+      <div class="arrow">↓</div>
+
+      <div class="step">
+        <div class="step-number">4</div>
+        <div class="step-content">
+          <h2>Symbols are assigned to the Schwab runtime lane</h2>
+          <p>The strategy engine updates each bot watchlist and moves live symbols into the Schwab stream lane used by the Schwab-backed runtimes you care about today.</p>
+          <div class="tag-row">
+            <span class="tag live">Schwab stream lane</span>
+            <span class="tag">Live watchlist orchestration</span>
+          </div>
+        </div>
+      </div>
+      <div class="arrow">↓</div>
+
+      <div class="step">
+        <div class="step-number">5</div>
+        <div class="step-content">
+          <h2>Bot runtimes warm up bars and evaluate signals</h2>
+          <p>Each runtime receives historical warmup data, then builds bars, indicators, and internal state from the live flow for its own interval and logic family. That includes entry checks, hard-stop checks, scale logic, and close logic.</p>
+        </div>
+      </div>
+      <div class="arrow">↓</div>
+
+      <div class="step">
+        <div class="step-number">6</div>
+        <div class="step-content">
+          <h2>Eligible bots emit trade intents</h2>
+          <p>When a bot sees an open, scale, or close condition, it emits a trade intent that includes its strategy code, account mapping, and routing metadata. The intent can represent entry, hard-stop close, profit-taking scale, normal close, or cancel follow-up logic.</p>
+        </div>
+      </div>
+      <div class="arrow">↓</div>
+
+      <div class="step">
+        <div class="step-number">7</div>
+        <div class="step-content">
+          <h2>OMS/Risk validates and routes to Schwab</h2>
+          <p>OMS is the execution owner. It records the intent, applies risk checks, rejects unsupported or blocked requests, prevents duplicate exits, handles cancel intents, submits the order through the Schwab adapter, and persists broker events and fills.</p>
+        </div>
+      </div>
+      <div class="arrow">↓</div>
+
+      <div class="step">
+        <div class="step-number">8</div>
+        <div class="step-content">
+          <h2>Order events flow back into strategy state and the dashboard</h2>
+          <p>Pending-open, pending-close, scale levels, fills, positions, account-position sync, virtual-position attribution, and service health all round-trip back into the platform so the next scanner and bot cycles operate on updated state.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="footer-note">
+      Read this page as the shared live backbone. The next two pages zoom into the 30-second core bot and the TOS bot without squeezing both flows into one dense diagram.
+    </div>
+  </section>
+
+  <section class="page">
+    <div class="header">
+      <h1 class="title">30s Core Bot Flow</h1>
+      <p class="subtitle">Readable vertical flow for the scanner-to-bot-to-Schwab path used by the 30-second core runtime.</p>
+    </div>
+
+    <div class="legend">
+      <div class="legend-card">
+        <strong>Bot Identity</strong>
+        Runtime registration: <code>macd_30s</code>. This is the dedicated 30-second core bot path you are focusing on today.
+      </div>
+      <div class="legend-card">
+        <strong>Routing View</strong>
+        This page treats the 30-second core bot as Schwab-connected and focuses on the live path only.
+      </div>
+    </div>
+
+    <div class="flow">
+      <div class="step">
+        <div class="step-number">1</div>
+        <div class="step-content">
+          <h2>Scanner confirms or retains a symbol</h2>
+          <p>The strategy engine promotes a name into the confirmed set or keeps it alive through the feed-retention layer long enough for a valid second-leg or resumed move.</p>
+        </div>
+      </div>
+      <div class="arrow">↓</div>
+
+      <div class="step">
+        <div class="step-number">2</div>
+        <div class="step-content">
+          <h2>The 30s runtime receives the symbol on its watchlist</h2>
+          <p>The watchlist update reaches the MACD 30s bot runtime, along with any blocked-entry state, pending order state, and existing position context.</p>
+        </div>
+      </div>
+      <div class="arrow">↓</div>
+
+      <div class="step">
+        <div class="step-number">3</div>
+        <div class="step-content">
+          <h2>The symbol joins the Schwab live data lane</h2>
+          <p>The 30-second core bot moves the symbol into the Schwab stream subscription lane so the runtime can trade against live Schwab-backed state.</p>
+          <div class="tag-row">
+            <span class="tag live">Schwab-backed live path</span>
+            <span class="tag">30-second runtime</span>
+          </div>
+        </div>
+      </div>
+      <div class="arrow">↓</div>
+
+      <div class="step">
+        <div class="step-number">4</div>
+        <div class="step-content">
+          <h2>Recent bar history is warmed up or reseeded</h2>
+          <p>The runtime gets historical bars so the 30s indicator stack does not start cold. On restart, persisted recent bars can be reloaded so the bot resumes with usable indicator context.</p>
+        </div>
+      </div>
+      <div class="arrow">↓</div>
+
+      <div class="step">
+        <div class="step-number">5</div>
+        <div class="step-content">
+          <h2>30-second bars and indicators are built continuously</h2>
+          <p>Incoming trades and quotes update the 30s bar builder. On each completed 30-second bar, the runtime calculates indicators and checks entry, hard-stop, scale, and exit conditions.</p>
+        </div>
+      </div>
+      <div class="arrow">↓</div>
+
+      <div class="step">
+        <div class="step-number">6</div>
+        <div class="step-content">
+          <h2>The bot emits a trade intent when conditions pass</h2>
+          <p>The intent carries <code>strategy_code=macd_30s</code>, the configured account name, the symbol, side, quantity, and any extended-hours routing metadata if needed. Hard-stop exits are emitted here as close intents, not as a separately resting OMS-managed stop order.</p>
+        </div>
+      </div>
+      <div class="arrow">↓</div>
+
+      <div class="step">
+        <div class="step-number">7</div>
+        <div class="step-content">
+          <h2>OMS sends the order through Schwab</h2>
+          <p>The intent is handed to OMS, which runs risk checks, handles cancel/duplicate-exit protections, submits through the Schwab adapter, and records the broker-side order lifecycle as the execution source of truth.</p>
+          <p class="note">Regular-hours requests default to market orders. Extended-hours routing adds limit-order metadata based on bid or ask pricing.</p>
+        </div>
+      </div>
+      <div class="arrow">↓</div>
+
+      <div class="step">
+        <div class="step-number">8</div>
+        <div class="step-content">
+          <h2>Fills and order events feed back into runtime state</h2>
+          <p>Pending-open, pending-close, scale levels, positions, and next-step watchlist handling are updated so the 30s bot stays in sync with the actual broker and OMS state.</p>
+          <p class="note">That feedback loop is what keeps hard-stop retries, scale protection, and restart recovery aligned with persisted execution state.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="footer-note">
+      The 30-second core bot is the clearest example of the scanner-driven live path: scanner promotion creates the watchlist target, the runtime builds 30-second bars, and OMS owns the Schwab execution truth.
+    </div>
+  </section>
+
+  <section class="page">
+    <div class="header">
+      <h1 class="title">TOS Bot Flow</h1>
+      <p class="subtitle">Readable vertical flow for the ThinkScript-style runtime from scanner confirmation through Schwab execution and shared-account state updates.</p>
+    </div>
+
+    <div class="legend">
+      <div class="legend-card">
+        <strong>Bot Identity</strong>
+        Runtime registration: <code>tos</code>. This is a dedicated TOS-style runtime family, not just a label placed on the generic MACD flow.
+      </div>
+      <div class="legend-card">
+        <strong>Important Distinction</strong>
+        The TOS path has its own entry mode. This page is intentionally centered on the Schwab-connected live TOS flow you are reviewing today.
+      </div>
+    </div>
+
+    <div class="flow">
+      <div class="step">
+        <div class="step-number">1</div>
+        <div class="step-content">
+          <h2>Scanner confirmation or retention makes a symbol eligible</h2>
+          <p>The strategy engine decides that the symbol should stay visible to the TOS runtime, either because it is currently confirmed or because retention rules still justify keeping it active.</p>
+        </div>
+      </div>
+      <div class="arrow">↓</div>
+
+      <div class="step">
+        <div class="step-number">2</div>
+        <div class="step-content">
+          <h2>The symbol is pushed onto the TOS watchlist</h2>
+          <p>The TOS runtime receives the same shared orchestration inputs as the other bots: watchlist membership, blocked-entry symbols, pending order state, and position context.</p>
+        </div>
+      </div>
+      <div class="arrow">↓</div>
+
+      <div class="step">
+        <div class="step-number">3</div>
+        <div class="step-content">
+          <h2>TOS shifts into the Schwab stream lane</h2>
+          <p>The TOS runtime subscribes active symbols through the Schwab stream path so live quotes, bars, and order state stay aligned with Schwab execution.</p>
+          <div class="tag-row">
+            <span class="tag live">Schwab-backed TOS</span>
+            <span class="tag">Dedicated TOS logic</span>
+          </div>
+        </div>
+      </div>
+      <div class="arrow">↓</div>
+
+      <div class="step">
+        <div class="step-number">4</div>
+        <div class="step-content">
+          <h2>1-minute bars are warmed up and kept restart-safe</h2>
+          <p>The runtime builds and restores enough recent bar history so it can resume indicator calculation quickly after service startup or intraday restart.</p>
+        </div>
+      </div>
+      <div class="arrow">↓</div>
+
+      <div class="step">
+        <div class="step-number">5</div>
+        <div class="step-content">
+          <h2>The dedicated TOS entry logic evaluates the bar</h2>
+          <p>The TOS path uses its own ThinkScript-style entry mode rather than simply reusing every generic MACD branch. That keeps the runtime behavior aligned with the intended TOS-style rule set.</p>
+          <p class="note">High-level examples from the repo docs: MACD cross and reclaim-style paths with VWAP-aware filtering.</p>
+        </div>
+      </div>
+      <div class="arrow">↓</div>
+
+      <div class="step">
+        <div class="step-number">6</div>
+        <div class="step-content">
+          <h2>The runtime emits a TOS trade intent</h2>
+          <p>The trade intent includes <code>strategy_code=tos</code>, the configured account mapping, the TOS quantity setting that OMS will use for execution, and close/scale intent details when TOS exits fire.</p>
+        </div>
+      </div>
+      <div class="arrow">↓</div>
+
+      <div class="step">
+        <div class="step-number">7</div>
+        <div class="step-content">
+          <h2>OMS submits through Schwab and records the shared-account event trail</h2>
+          <p>OMS owns the actual broker submission, risk checks, cancel handling, persistence, and attribution trail. That matters especially when TOS is sharing broker infrastructure with other strategies at the account layer.</p>
+          <p class="note">Like the 30s path, regular-hours requests default to market orders, while extended-hours routing adds limit-order metadata.</p>
+        </div>
+      </div>
+      <div class="arrow">↓</div>
+
+      <div class="step">
+        <div class="step-number">8</div>
+        <div class="step-content">
+          <h2>Order events, fills, and positions return to platform state</h2>
+          <p>The result comes back into the strategy engine, dashboard, and persistence model so TOS continues with accurate pending state, position ownership, future close logic, and restart-safe execution visibility.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="footer-note">
+      TOS is separate because its decision logic is separate. It shares the live backbone with the 30-second core bot, but its entry path and Schwab execution flow deserve their own readable page.
+    </div>
+  </section>
+</body>
+</html>

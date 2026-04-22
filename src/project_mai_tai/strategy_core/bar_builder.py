@@ -151,6 +151,12 @@ class BarBuilder:
     def get_bars_as_dicts(self) -> list[dict[str, float | int]]:
         return [bar.as_dict() for bar in self.bars]
 
+    def get_bars_with_current_as_dicts(self) -> list[dict[str, float | int]]:
+        bars = self.get_bars_as_dicts()
+        if self._current_bar is not None:
+            bars.append(self._current_bar.as_dict())
+        return bars
+
     def reset(self) -> None:
         self.bars.clear()
         self._current_bar = None

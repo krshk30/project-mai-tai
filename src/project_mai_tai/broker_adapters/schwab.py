@@ -4,6 +4,7 @@ import asyncio
 import base64
 import json
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
@@ -251,6 +252,66 @@ class SchwabBrokerAdapter:
                     as_of=as_of,
                 )
             )
+        return snapshots
+
+    async def fetch_quotes(self, symbols: Sequence[str]) -> dict[str, dict[str, float | None]]:
+        normalized = [str(symbol).upper() for symbol in symbols if str(symbol).strip()]
+        if not normalized:
+            return {}
+
+        query = urlencode(
+            {
+                "symbols": ",".join(sorted(set(normalized))),
+                "fields": "quote",
+            }
+        )
+        try:
+            status_code, _headers, response = await self._authorized_request_json(
+                "GET",
+                f"/marketdata/v1/quotes?{query}",
+            )
+        except RuntimeError:
+            logger.exception("failed fetching Schwab quotes for %s", ",".join(normalized))
+            return {}
+
+        if status_code >= 400 or not isinstance(response, dict):
+            logger.warning(
+                "failed fetching Schwab quotes for %s: %s",
+                ",".join(normalized),
+                self._extract_error_reason(response),
+            )
+            return {}
+
+        snapshots: dict[str, dict[str, float | None]] = {}
+        for symbol in normalized:
+            raw_payload = (
+                response.get(symbol)
+                or response.get(symbol.upper())
+                or response.get(symbol.lower())
+            )
+            if not isinstance(raw_payload, dict):
+                continue
+            quote_payload = raw_payload.get("quote")
+            payload = quote_payload if isinstance(quote_payload, dict) else raw_payload
+            bid_price = self._float_or_none(payload.get("bidPrice") or payload.get("bid"))
+            ask_price = self._float_or_none(payload.get("askPrice") or payload.get("ask"))
+            last_price = self._float_or_none(
+                payload.get("lastPrice")
+                or payload.get("last")
+                or payload.get("lastTradePrice")
+                or payload.get("mark")
+            )
+            bid_size = self._float_or_none(payload.get("bidSize"))
+            ask_size = self._float_or_none(payload.get("askSize"))
+            if all(value is None for value in (bid_price, ask_price, last_price)):
+                continue
+            snapshots[symbol] = {
+                "bid_price": bid_price,
+                "ask_price": ask_price,
+                "last_price": last_price,
+                "bid_size": bid_size,
+                "ask_size": ask_size,
+            }
         return snapshots
 
     async def fetch_order_update(self, request: OrderRequest) -> ExecutionReport | None:
@@ -765,6 +826,12 @@ class SchwabBrokerAdapter:
             return Decimal(str(value))
         except (InvalidOperation, TypeError):
             return None
+
+    def _float_or_none(self, value: object) -> float | None:
+        decimal_value = self._decimal_or_none(value)
+        if decimal_value is None:
+            return None
+        return float(decimal_value)
 
     def _decode_json(self, raw: str) -> object:
         if not raw:

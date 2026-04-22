@@ -99,6 +99,9 @@ class SchwabStreamerClient:
         self._desired_symbols = {str(symbol).upper() for symbol in symbols if str(symbol).strip()}
         await self._apply_subscription_delta()
 
+    async def force_resubscribe(self) -> None:
+        await self._apply_subscription_delta(force_resubscribe=True)
+
     async def probe(
         self,
         *,

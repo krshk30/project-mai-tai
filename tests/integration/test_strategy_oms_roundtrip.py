@@ -82,6 +82,7 @@ async def test_strategy_and_oms_roundtrip_opens_positions_across_services(monkey
     strategy_service = StrategyEngineService(
         settings=Settings(redis_stream_prefix="itest", dashboard_snapshot_persistence_enabled=False),
         redis_client=redis,
+        now_provider=fixed_now,
     )
     oms_service = OmsRiskService(
         settings=Settings(redis_stream_prefix="itest", oms_adapter="simulated"),
@@ -110,7 +111,7 @@ async def test_strategy_and_oms_roundtrip_opens_positions_across_services(monkey
         symbol="UGRO",
         price=2.8,
         size=200,
-        timestamp_ns=1_700_001_500_000_000_000,
+        timestamp_ns=1_700_001_501_000_000_000,
     )
     assert len(intents) == 1
 

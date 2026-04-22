@@ -11,6 +11,7 @@ on:
           - control
           - reconciler
           - strategy
+          - tv-alerts
           - oms
           - market-data
       allow_live_restart:

@@ -184,3 +184,163 @@ def test_feed_retention_drops_dead_tape_after_long_cooldown() -> None:
     assert dropped is not None
     assert dropped.state == "dropped"
     assert dropped.keeps_feed() is False
+
+
+def test_feed_retention_enters_degraded_mode_after_four_of_six_score_holds() -> None:
+    policy = FeedRetentionPolicy(
+        FeedRetentionConfig(
+            degraded_enabled=True,
+            degraded_warmup_bars=5,
+            degraded_enter_score=4,
+            degraded_enter_hold_bars=4,
+        )
+    )
+    now = datetime(2026, 4, 17, 10, 0)
+    state = policy.promote(
+        "ENVB",
+        now,
+        FeedRetentionMetrics(
+            price=4.4,
+            ema9=4.35,
+            vwap=4.30,
+            ema20=4.28,
+            rolling_5m_volume=300_000,
+            rolling_5m_range_pct=4.0,
+            avg_bar_volume_5=60_000,
+            avg_bar_volume_20=40_000,
+            total_bars=5,
+            bar_timestamp=1_000.0,
+        ),
+    )
+
+    for idx in range(4):
+        state = policy.evaluate(
+            state,
+            symbol="ENVB",
+            now=now + timedelta(minutes=1, seconds=30 * idx),
+            is_confirmed=False,
+            metrics=FeedRetentionMetrics(
+                price=4.10,
+                ema9=4.18,
+                vwap=4.20,
+                ema20=4.16,
+                rolling_5m_volume=180_000,
+                rolling_5m_range_pct=1.2,
+                avg_bar_volume_5=18_000,
+                avg_bar_volume_20=30_000,
+                ema9_falling=True,
+                lower_highs_or_closes=True,
+                total_bars=20,
+                bar_timestamp=1_010.0 + idx,
+            ),
+        )
+
+    assert state is not None
+    assert state.degraded_mode is True
+    assert state.degraded_score >= 4
+    assert state.degraded_since is not None
+
+
+def test_feed_retention_exits_degraded_mode_after_looser_recovery_hold() -> None:
+    policy = FeedRetentionPolicy(
+        FeedRetentionConfig(
+            degraded_enabled=True,
+            degraded_warmup_bars=5,
+            degraded_enter_score=4,
+            degraded_enter_hold_bars=4,
+            degraded_exit_score=3,
+            degraded_exit_hold_bars=4,
+        )
+    )
+    now = datetime(2026, 4, 17, 10, 0)
+    state = policy.promote(
+        "SST",
+        now,
+        FeedRetentionMetrics(
+            price=2.8,
+            ema9=2.75,
+            vwap=2.72,
+            ema20=2.70,
+            rolling_5m_volume=280_000,
+            rolling_5m_range_pct=3.0,
+            avg_bar_volume_5=56_000,
+            avg_bar_volume_20=42_000,
+            total_bars=5,
+            bar_timestamp=2_000.0,
+        ),
+    )
+    state.degraded_mode = True
+    state.degraded_since = now
+
+    for idx in range(4):
+        state = policy.evaluate(
+            state,
+            symbol="SST",
+            now=now + timedelta(minutes=5, seconds=30 * idx),
+            is_confirmed=False,
+            metrics=FeedRetentionMetrics(
+                price=2.92,
+                ema9=2.88,
+                vwap=2.84,
+                ema20=2.83,
+                rolling_5m_volume=260_000,
+                rolling_5m_range_pct=2.8,
+                avg_bar_volume_5=52_000,
+                avg_bar_volume_20=45_000,
+                ema9_rising=True,
+                higher_highs_or_closes=True,
+                total_bars=30,
+                bar_timestamp=2_010.0 + idx,
+            ),
+        )
+
+    assert state is not None
+    assert state.degraded_mode is False
+    assert state.degraded_since is None
+
+
+def test_feed_retention_degraded_overlay_disabled_by_default() -> None:
+    policy = FeedRetentionPolicy(FeedRetentionConfig())
+    now = datetime(2026, 4, 17, 10, 0)
+    state = policy.promote(
+        "ENVB",
+        now,
+        FeedRetentionMetrics(
+            price=4.4,
+            ema9=4.35,
+            vwap=4.30,
+            ema20=4.28,
+            rolling_5m_volume=300_000,
+            rolling_5m_range_pct=4.0,
+            avg_bar_volume_5=60_000,
+            avg_bar_volume_20=40_000,
+            total_bars=25,
+            bar_timestamp=1_000.0,
+        ),
+    )
+
+    for idx in range(6):
+        state = policy.evaluate(
+            state,
+            symbol="ENVB",
+            now=now + timedelta(minutes=1, seconds=30 * idx),
+            is_confirmed=False,
+            metrics=FeedRetentionMetrics(
+                price=4.10,
+                ema9=4.18,
+                vwap=4.20,
+                ema20=4.16,
+                rolling_5m_volume=180_000,
+                rolling_5m_range_pct=1.2,
+                avg_bar_volume_5=18_000,
+                avg_bar_volume_20=30_000,
+                ema9_falling=True,
+                lower_highs_or_closes=True,
+                total_bars=25,
+                bar_timestamp=1_010.0 + idx,
+            ),
+        )
+
+    assert state is not None
+    assert state.degraded_mode is False
+    assert state.degraded_score == 0

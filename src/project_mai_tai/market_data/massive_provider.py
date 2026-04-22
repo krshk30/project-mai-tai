@@ -8,6 +8,7 @@ from datetime import date, timedelta
 
 from project_mai_tai.market_data.models import (
     HistoricalBarRecord,
+    LiveBarRecord,
     QuoteTickRecord,
     SnapshotRecord,
     TradeTickRecord,
@@ -208,14 +209,17 @@ class MassiveTradeStream:
         self._subscriptions: set[str] = set()
         self._on_trade: Callable[[TradeTickRecord], None] | None = None
         self._on_quote: Callable[[QuoteTickRecord], None] | None = None
+        self._on_agg: Callable[[LiveBarRecord], None] | None = None
 
     async def start(
         self,
         on_trade: Callable[[TradeTickRecord], None],
         on_quote: Callable[[QuoteTickRecord], None] | None = None,
+        on_agg: Callable[[LiveBarRecord], None] | None = None,
     ) -> None:
         self._on_trade = on_trade
         self._on_quote = on_quote
+        self._on_agg = on_agg
         self._running = True
         self._task = asyncio.create_task(self._run_loop())
 
@@ -246,9 +250,13 @@ class MassiveTradeStream:
         if to_remove:
             self._ws.unsubscribe(*[f"T.{symbol}" for symbol in sorted(to_remove)])
             self._ws.unsubscribe(*[f"Q.{symbol}" for symbol in sorted(to_remove)])
+            if self._on_agg is not None:
+                self._ws.unsubscribe(*[f"A.{symbol}" for symbol in sorted(to_remove)])
         if to_add:
             self._ws.subscribe(*[f"T.{symbol}" for symbol in sorted(to_add)])
             self._ws.subscribe(*[f"Q.{symbol}" for symbol in sorted(to_add)])
+            if self._on_agg is not None:
+                self._ws.subscribe(*[f"A.{symbol}" for symbol in sorted(to_add)])
 
     async def _run_loop(self) -> None:
         while self._running:
@@ -258,6 +266,8 @@ class MassiveTradeStream:
                 if self._subscriptions:
                     ws.subscribe(*[f"T.{symbol}" for symbol in sorted(self._subscriptions)])
                     ws.subscribe(*[f"Q.{symbol}" for symbol in sorted(self._subscriptions)])
+                    if self._on_agg is not None:
+                        ws.subscribe(*[f"A.{symbol}" for symbol in sorted(self._subscriptions)])
                 self._connected = True
                 await asyncio.to_thread(ws.run, self._handle_messages)
             except asyncio.CancelledError:
@@ -313,6 +323,36 @@ class MassiveTradeStream:
                             ask_price=ask,
                             bid_size=_to_int(getattr(message, "bid_size", None)),
                             ask_size=_to_int(getattr(message, "ask_size", None)),
+                        )
+                    )
+                elif event_type == "A" and self._on_agg is not None:
+                    open_price = _to_float(getattr(message, "open", None))
+                    high_price = _to_float(getattr(message, "high", None))
+                    low_price = _to_float(getattr(message, "low", None))
+                    close_price = _to_float(getattr(message, "close", None))
+                    start_timestamp = _to_int(getattr(message, "start_timestamp", None))
+                    if (
+                        open_price is None
+                        or high_price is None
+                        or low_price is None
+                        or close_price is None
+                        or start_timestamp is None
+                    ):
+                        continue
+                    timestamp = (
+                        start_timestamp / 1000 if start_timestamp > 1_000_000_000_000 else float(start_timestamp)
+                    )
+                    self._on_agg(
+                        LiveBarRecord(
+                            symbol=symbol,
+                            interval_secs=1,
+                            open=open_price,
+                            high=high_price,
+                            low=low_price,
+                            close=close_price,
+                            volume=_to_int(getattr(message, "volume", None)) or 0,
+                            timestamp=timestamp,
+                            trade_count=1,
                         )
                     )
             except Exception:

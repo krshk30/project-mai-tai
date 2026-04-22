@@ -40,6 +40,7 @@ for _attempt in {1..45}; do
     project-mai-tai-control.service \
     project-mai-tai-market-data.service \
     project-mai-tai-strategy.service \
+    project-mai-tai-tv-alerts.service \
     project-mai-tai-oms.service \
     project-mai-tai-reconciler.service; then
     if curl -fsS "$APP_HEALTH_URL" > "$HEALTH_OUTPUT_FILE"; then

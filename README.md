@@ -7,6 +7,7 @@ This repository is not a UI mock or a scaffold anymore. The current codebase con
 - a FastAPI control plane
 - a market-data gateway for Massive/Polygon snapshots, warmup, trades, and quotes
 - a strategy engine for scanner surfaces plus `macd_30s`, `macd_1m`, `tos`, and `runner`
+- a TradingView alert-management sidecar that can mirror scanner watchlists into alert add/remove actions
 - an OMS/risk service with `simulated`, `alpaca_paper`, and `schwab` broker adapters
 - a reconciler that checks OMS truth against broker/account truth
 - Postgres-backed execution state and Redis Streams fanout
@@ -48,6 +49,9 @@ Service split:
   - package: `src/project_mai_tai/services/strategy_engine_app.py` and `src/project_mai_tai/strategy_core/`
   - wrapper: `services/strategy-engine/main.py`
   - role: scanner surfaces, watchlists, bot runtimes, and trade intents
+- `tradingview-alerts`
+  - package: `src/project_mai_tai/services/tradingview_alerts_app.py`
+  - role: mirror the strategy watchlist into TradingView alert add/remove actions and expose a local alert-management API
 - `oms-risk`
   - package: `src/project_mai_tai/oms/` and `src/project_mai_tai/broker_adapters/`
   - wrapper: `services/oms-risk/main.py`
@@ -109,6 +113,7 @@ Use these docs to orient quickly:
 - [GitHub Actions Deploy](./docs/github-actions-deploy.md)
 - [Deployment Operating Model](./docs/deployment-operating-model.md)
 - [Schwab Onboarding](./docs/schwab-onboarding.md)
+- [TradingView Alert Automation](./docs/tradingview-alert-automation.md)
 - [VPS Deployment](./docs/vps-deployment.md)
 - [Source Layout](./src/README.md)
 - [Service Wrappers](./services/README.md)
@@ -154,6 +159,7 @@ You can launch services through the installed console scripts:
 - `mai-tai-control`
 - `mai-tai-market-data`
 - `mai-tai-strategy`
+- `mai-tai-tv-alerts`
 - `mai-tai-oms`
 - `mai-tai-reconciler`
 - `mai-tai-seed-runtime`

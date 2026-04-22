@@ -176,6 +176,7 @@ class MomentumAlertEngine:
             bid_ask = get_bid_ask(snapshot)
             ref = reference_data.get(ticker) if reference_data else None
             float_shares = ref.shares_outstanding if ref else 0
+            current_day_change_pct = self._current_day_change_pct(snapshot, price)
 
             base: dict[str, object] = {
                 "ticker": ticker,
@@ -266,8 +267,9 @@ class MomentumAlertEngine:
                     self._set_cooldown(ticker, "VOLUME_SPIKE", now)
 
             volume_gate_open = ticker in self._volume_spike_tickers or emitted_volume_spike
+            extreme_move_open = current_day_change_pct >= self.config.extreme_mover_min_day_change_pct
 
-            if volume_gate_open and squeeze_5min_pct is not None and old_5min:
+            if (volume_gate_open or extreme_move_open) and squeeze_5min_pct is not None and old_5min:
                 old_price, _old_volume = old_5min
                 if squeeze_5min_pct >= self.config.squeeze_5min_pct and not self._on_cooldown(
                     ticker,
@@ -281,12 +283,14 @@ class MomentumAlertEngine:
                             "details": {
                                 "change_pct": round(squeeze_5min_pct, 1),
                                 "price_5min_ago": round(old_price, 3),
+                                "day_change_pct": round(current_day_change_pct, 2),
+                                "extreme_mover": extreme_move_open,
                             },
                         }
                     )
                     self._set_cooldown(ticker, "SQUEEZE_5MIN", now)
 
-            if volume_gate_open and squeeze_10min_pct is not None and old_10min:
+            if (volume_gate_open or extreme_move_open) and squeeze_10min_pct is not None and old_10min:
                 old_price, _old_volume = old_10min
                 if squeeze_10min_pct >= self.config.squeeze_10min_pct and not self._on_cooldown(
                     ticker,
@@ -300,6 +304,8 @@ class MomentumAlertEngine:
                             "details": {
                                 "change_pct": round(squeeze_10min_pct, 1),
                                 "price_10min_ago": round(old_price, 3),
+                                "day_change_pct": round(current_day_change_pct, 2),
+                                "extreme_mover": extreme_move_open,
                             },
                         }
                     )
@@ -352,6 +358,18 @@ class MomentumAlertEngine:
                 int(get_current_volume(snapshot)),
             )
         return entry
+
+    @staticmethod
+    def _current_day_change_pct(snapshot: MarketSnapshot, price: float) -> float:
+        previous_close = float(snapshot.previous_close or 0)
+        if previous_close > 0 and price > 0:
+            return ((price - previous_close) / previous_close) * 100
+        if snapshot.todays_change_percent is not None:
+            try:
+                return float(snapshot.todays_change_percent)
+            except (TypeError, ValueError):
+                return 0.0
+        return 0.0
 
     @staticmethod
     def _normalize_history_point(value: object) -> HistoryPoint | None:

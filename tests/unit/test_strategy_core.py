@@ -248,6 +248,44 @@ def test_alert_engine_backfills_missed_spike_when_late_squeeze_is_obvious() -> N
     assert alerts[1]["ticker"] == "EFOI"
 
 
+def test_alert_engine_emits_extreme_mover_squeeze_without_volume_spike() -> None:
+    times = iter(
+        [
+            datetime(2026, 4, 20, 7, 15),
+            datetime(2026, 4, 20, 7, 20),
+        ]
+    )
+    alert_engine = MomentumAlertEngine(
+        MomentumAlertConfig(
+            min_price=1.0,
+            max_price=10.0,
+            min_momentum_volume=1_000,
+            squeeze_5min_pct=5.0,
+            squeeze_10min_pct=10.0,
+            volume_spike_mult=10.0,
+            extreme_mover_min_day_change_pct=50.0,
+            alert_cooldown_mins=0,
+        ),
+        scan_interval_secs=300,
+        now_provider=lambda: next(times),
+    )
+    ref = {"ENVB": ReferenceData(shares_outstanding=1_887_535, avg_daily_volume=20_000_000)}
+
+    cycle1 = [snapshot(ticker="ENVB", price=2.0, volume=1_000)]
+    cycle1[0].previous_close = 2.0
+    alert_engine.record_snapshot(cycle1)
+    assert alert_engine.check_alerts(cycle1, ref) == []
+
+    cycle2 = [snapshot(ticker="ENVB", price=3.2, volume=1_500)]
+    cycle2[0].previous_close = 2.0
+    alert_engine.record_snapshot(cycle2)
+    alerts = alert_engine.check_alerts(cycle2, ref)
+
+    assert [alert["type"] for alert in alerts] == ["SQUEEZE_10MIN"]
+    assert alerts[0]["details"]["extreme_mover"] is True
+    assert "VOLUME_SPIKE" not in [alert["type"] for alert in alerts]
+
+
 def test_alert_engine_history_is_compact_and_backwards_compatible() -> None:
     alert_engine = MomentumAlertEngine(
         MomentumAlertConfig(
@@ -358,6 +396,65 @@ def test_confirmed_scanner_allows_same_cycle_5m_and_10m_squeeze_burst() -> None:
 
     assert [item["ticker"] for item in newly_confirmed] == ["RENX"]
     assert newly_confirmed[0]["confirmation_path"] == "PATH_B_2SQ"
+
+
+def test_confirmed_scanner_confirms_extreme_mover_on_first_squeeze_and_bypasses_rank_gate() -> None:
+    confirmed_scanner = MomentumConfirmedScanner(
+        MomentumConfirmedConfig(
+            confirmed_min_volume=500_000,
+            confirmed_max_float=10_000_000,
+            rank_min_score=50.0,
+            extreme_mover_min_day_change_pct=50.0,
+        )
+    )
+    ref = {"ENVB": ReferenceData(shares_outstanding=1_887_535, avg_daily_volume=595_000)}
+
+    envb_snapshot = snapshot(ticker="ENVB", price=3.2, volume=900_000)
+    envb_snapshot.previous_close = 2.0
+    newly_confirmed = confirmed_scanner.process_alerts(
+        [
+            {
+                "ticker": "ENVB",
+                "type": "SQUEEZE_5MIN",
+                "time": "07:23:31 AM ET",
+                "price": 3.2,
+                "volume": 900_000,
+                "float": 1_887_535,
+                "bid": 3.19,
+                "ask": 3.2,
+                "bid_size": 500,
+                "ask_size": 800,
+                "details": {"change_pct": 58.7, "day_change_pct": 60.0, "extreme_mover": True},
+            }
+        ],
+        ref,
+        {"ENVB": envb_snapshot},
+    )
+
+    assert [item["ticker"] for item in newly_confirmed] == ["ENVB"]
+    assert newly_confirmed[0]["confirmation_path"] == "PATH_C_EXTREME_MOVER"
+    assert newly_confirmed[0]["force_watchlist"] is True
+
+    confirmed_scanner.seed_confirmed_candidates(
+        [
+            {
+                "ticker": "CMND",
+                "change_pct": 69.5,
+                "volume": 75_000_000,
+                "rvol": 70.0,
+                "shares_outstanding": 158_076,
+                "bid": 1.22,
+                "ask": 1.23,
+                "force_watchlist": False,
+            },
+            newly_confirmed[0],
+        ]
+    )
+
+    top = confirmed_scanner.get_top_n(min_change_pct=0)
+
+    assert [item["ticker"] for item in top] == ["ENVB", "CMND"]
+    assert top[0]["force_watchlist"] is True
 
 
 def test_top_gainer_changes_use_eastern_time_labels() -> None:
@@ -812,3 +909,125 @@ def test_position_tracker_loads_closed_trades_from_sibling_data_dir(tmp_path, mo
 
     assert tracker.get_daily_pnl() == 30.0
     assert tracker.get_closed_today()[0]["ticker"] == "ELAB"
+
+
+def test_position_tracker_does_not_load_closed_trades_from_legacy_sibling_repo_history(tmp_path, monkeypatch) -> None:
+    repo_dir = tmp_path / "project-mai-tai"
+    legacy_repo_dir = tmp_path / "momentum-stock-trader"
+    repo_dir.mkdir()
+    legacy_history_dir = legacy_repo_dir / "data" / "history"
+    legacy_history_dir.mkdir(parents=True)
+    filepath = legacy_history_dir / "macdbot_closed_2026-03-30.csv"
+
+    with filepath.open("w", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(
+            [
+                "ticker",
+                "entry_price",
+                "exit_price",
+                "quantity",
+                "pnl",
+                "pnl_pct",
+                "reason",
+                "entry_time",
+                "exit_time",
+                "peak_profit_pct",
+                "tier",
+                "scales_done",
+                "path",
+            ]
+        )
+        writer.writerow(
+            [
+                "ENVB",
+                "4.60",
+                "4.55",
+                "10",
+                "-0.50",
+                "-1.09",
+                "HARD_STOP",
+                "2026-03-30 08:50:30 AM ET",
+                "2026-03-30 08:50:45 AM ET",
+                "0.2",
+                "1",
+                "",
+                "P3_MACD_SURGE",
+            ]
+        )
+
+    monkeypatch.chdir(repo_dir)
+    monkeypatch.setattr(
+        "project_mai_tai.strategy_core.position_tracker.today_eastern_str",
+        lambda: "2026-03-30",
+    )
+    tracker = PositionTracker(TradingConfig())
+
+    tracker.load_closed_trades()
+
+    assert tracker.get_daily_pnl() == 0.0
+    assert tracker.get_closed_today() == []
+
+
+def test_position_tracker_saves_closed_trades_to_sibling_data_dir_when_present(tmp_path, monkeypatch) -> None:
+    repo_dir = tmp_path / "project-mai-tai"
+    repo_dir.mkdir()
+    sibling_data_root = tmp_path / "project-mai-tai-data"
+    sibling_data_root.mkdir()
+    history_dir = sibling_data_root / "history"
+
+    monkeypatch.chdir(repo_dir)
+    monkeypatch.setattr(
+        "project_mai_tai.strategy_core.position_tracker.session_day_eastern_str",
+        lambda: "2026-03-30",
+    )
+
+    tracker = PositionTracker(TradingConfig())
+    tracker.open_position("ENVB", 4.60, quantity=10, path="P3_MACD_SURGE")
+    tracker.close_position("ENVB", 4.55, reason="HARD_STOP")
+
+    assert (history_dir / "macdbot_closed_2026-03-30.csv").exists()
+    assert not (repo_dir / "data" / "history" / "macdbot_closed_2026-03-30.csv").exists()
+
+
+def test_position_tracker_blocks_symbol_after_session_entry_cap() -> None:
+    tracker = PositionTracker(
+        TradingConfig(max_entries_per_symbol_per_session=2)
+    )
+
+    tracker.open_position("ENVB", 4.10, quantity=10, path="P1")
+    tracker.close_position("ENVB", 4.20, reason="SCALE_EXIT")
+    tracker.open_position("ENVB", 4.15, quantity=10, path="P3")
+    tracker.close_position("ENVB", 4.25, reason="SCALE_EXIT")
+
+    can_open, reason = tracker.can_open_position("ENVB")
+
+    assert can_open is False
+    assert "session entry cap" in reason
+
+
+def test_position_tracker_pauses_symbol_after_two_hard_stops(monkeypatch) -> None:
+    config = TradingConfig(
+        hard_stop_pause_streak_limit=2,
+        hard_stop_pause_minutes=60,
+    )
+    tracker = PositionTracker(config)
+
+    monkeypatch.setattr(
+        "project_mai_tai.strategy_core.position_tracker.now_eastern",
+        lambda: datetime(2026, 4, 20, 10, 0, tzinfo=UTC),
+    )
+    tracker.open_position("ENVB", 4.10, quantity=10, path="P1")
+    tracker.close_position("ENVB", 4.00, reason="HARD_STOP")
+
+    monkeypatch.setattr(
+        "project_mai_tai.strategy_core.position_tracker.now_eastern",
+        lambda: datetime(2026, 4, 20, 10, 10, tzinfo=UTC),
+    )
+    tracker.open_position("ENVB", 4.05, quantity=10, path="P3")
+    tracker.close_position("ENVB", 3.94, reason="HARD_STOP")
+
+    can_open, reason = tracker.can_open_position("ENVB")
+
+    assert can_open is False
+    assert "hard stops" in reason

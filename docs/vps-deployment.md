@@ -4,14 +4,14 @@
 
 Verified on the live VPS:
 - Ubuntu
-- 2 vCPU
-- 4 GB RAM
+- 4 vCPU
+- 8 GB RAM
 - 120 GB disk
 - no swap
 - `systemd` available
 - no Docker
-- no Postgres
-- no Redis
+- Postgres installed
+- Redis installed
 
 ## Deployment Target
 
@@ -40,6 +40,7 @@ Systemd units:
 - `project-mai-tai-control.service`
 - `project-mai-tai-market-data.service`
 - `project-mai-tai-strategy.service`
+- `project-mai-tai-tv-alerts.service`
 - `project-mai-tai-oms.service`
 - `project-mai-tai-reconciler.service`
 
@@ -113,6 +114,7 @@ Systemd assets now live under `ops/systemd/`:
 - `project-mai-tai-control.service`
 - `project-mai-tai-market-data.service`
 - `project-mai-tai-strategy.service`
+- `project-mai-tai-tv-alerts.service`
 - `project-mai-tai-oms.service`
 - `project-mai-tai-reconciler.service`
 

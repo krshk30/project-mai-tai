@@ -172,6 +172,7 @@ class StrategyBotStatePayload(BaseModel):
     strategy_code: str
     account_name: str
     watchlist: list[str] = Field(default_factory=list)
+    retention_states: list[dict[str, Any]] = Field(default_factory=list)
     positions: list[dict[str, Any]] = Field(default_factory=list)
     pending_open_symbols: list[str] = Field(default_factory=list)
     pending_close_symbols: list[str] = Field(default_factory=list)

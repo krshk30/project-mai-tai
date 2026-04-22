@@ -16,11 +16,13 @@ dependencies = [
   "uvicorn[standard]>=0.30,<1.0",
   "pydantic>=2.8,<3.0",
   "pydantic-settings>=2.4,<3.0",
+  "playwright>=1.52,<2.0",
   "sqlalchemy>=2.0,<3.0",
   "alembic>=1.13,<2.0",
   "psycopg[binary]>=3.2,<4.0",
   "redis>=5.0,<6.0",
   "massive>=2.0,<3.0",
+  "websockets>=16.0,<17.0",
 ]
 
 [project.optional-dependencies]
@@ -34,6 +36,9 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+  "asyncio: mark async tests that run with pytest-asyncio",
+]
 
 [tool.ruff]
 line-length = 100
@@ -52,6 +57,7 @@ where = ["src"]
 mai-tai-control = "project_mai_tai.services.control_plane:run"
 mai-tai-market-data = "project_mai_tai.services.market_data_gateway:run"
 mai-tai-strategy = "project_mai_tai.services.strategy_engine:run"
+mai-tai-tv-alerts = "project_mai_tai.services.tradingview_alerts:run"
 mai-tai-oms = "project_mai_tai.services.oms_risk:run"
 mai-tai-reconciler = "project_mai_tai.services.reconciler:run"
 mai-tai-seed-runtime = "project_mai_tai.runtime_seed:run"

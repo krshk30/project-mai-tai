@@ -159,6 +159,40 @@ async def test_schwab_adapter_cancels_order_by_broker_order_id(monkeypatch) -> N
     assert reports[0].broker_order_id == "987654321"
 
 
+def test_schwab_adapter_builds_extended_hours_limit_payload_with_session() -> None:
+    adapter = SchwabBrokerAdapter(
+        Settings(
+            oms_adapter="schwab",
+            schwab_access_token="token-123",
+            schwab_account_hash="hash-123",
+        )
+    )
+
+    payload = adapter._build_order_payload(
+        OrderRequest(
+            client_order_id="macd_30s-UGRO-open-abc123",
+            broker_account_name="paper:macd_30s",
+            strategy_code="macd_30s",
+            symbol="UGRO",
+            side="buy",
+            intent_type="open",
+            quantity=Decimal("10"),
+            reason="ENTRY_P1_MACD_CROSS",
+            metadata={
+                "session": "AM",
+                "order_type": "limit",
+                "time_in_force": "day",
+                "extended_hours": "true",
+                "limit_price": "2.55",
+            },
+        )
+    )
+
+    assert payload["session"] == "AM"
+    assert payload["orderType"] == "LIMIT"
+    assert payload["price"] == 2.55
+
+
 @pytest.mark.asyncio
 async def test_schwab_adapter_lists_account_positions(monkeypatch) -> None:
     adapter = SchwabBrokerAdapter(
@@ -200,6 +234,52 @@ async def test_schwab_adapter_lists_account_positions(monkeypatch) -> None:
     assert positions[0].symbol == "UGRO"
     assert positions[0].quantity == Decimal("10")
     assert positions[0].average_price == Decimal("2.55")
+
+
+@pytest.mark.asyncio
+async def test_schwab_adapter_fetches_quotes(monkeypatch) -> None:
+    adapter = SchwabBrokerAdapter(
+        Settings(
+            oms_adapter="schwab",
+            schwab_access_token="token-123",
+            schwab_account_hash="hash-123",
+        )
+    )
+
+    async def fake_authorized_request_json(method: str, path: str, *, body=None):
+        del body
+        assert method == "GET"
+        assert path == "/marketdata/v1/quotes?symbols=ENVB&fields=quote"
+        return (
+            200,
+            {},
+            {
+                "ENVB": {
+                    "assetMainType": "EQUITY",
+                    "quote": {
+                        "bidPrice": 4.24,
+                        "askPrice": 4.26,
+                        "lastPrice": 4.25,
+                        "bidSize": 1500,
+                        "askSize": 1200,
+                    },
+                }
+            },
+        )
+
+    monkeypatch.setattr(adapter, "_authorized_request_json", fake_authorized_request_json)
+
+    quotes = await adapter.fetch_quotes(["envb"])
+
+    assert quotes == {
+        "ENVB": {
+            "bid_price": 4.24,
+            "ask_price": 4.26,
+            "last_price": 4.25,
+            "bid_size": 1500.0,
+            "ask_size": 1200.0,
+        }
+    }
 
 
 @pytest.mark.asyncio

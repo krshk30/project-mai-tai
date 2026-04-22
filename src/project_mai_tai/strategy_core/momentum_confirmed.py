@@ -121,7 +121,8 @@ class MomentumConfirmedScanner:
             ask = float(alert.get("ask", 0) or 0)
             bid_size = int(alert.get("bid_size", 0) or 0)
             ask_size = int(alert.get("ask_size", 0) or 0)
-            float_shares = int(alert.get("float", 0) or 0)
+            ref = reference_data.get(ticker) if reference_data else None
+            float_shares = int(alert.get("float", 0) or (ref.shares_outstanding if ref else 0) or 0)
 
             if ticker not in self._tracking:
                 self._tracking[ticker] = {
@@ -146,7 +147,7 @@ class MomentumConfirmedScanner:
                 track["first_spike_volume"] = volume
                 logger.debug("[CONFIRMED] %s — volume spike recorded @ $%.2f", ticker, price)
 
-            if "SQUEEZE" in alert_type and track["has_volume_spike"]:
+            if "SQUEEZE" in alert_type:
                 details = alert.get("details", {})
                 change_pct = details.get("change_pct", 0) if isinstance(details, dict) else 0
                 effective_volume = volume
@@ -166,10 +167,34 @@ class MomentumConfirmedScanner:
                     "bid_size": bid_size,
                     "ask_size": ask_size,
                 }
+                passed, reason = self._check_common_filters(squeeze, float_shares)
+                day_change_pct = self._current_day_change_pct(ticker, price, snapshot_lookup)
+
+                if self._qualifies_path_c_extreme_mover(day_change_pct):
+                    if passed:
+                        if track["has_volume_spike"]:
+                            track["squeezes"].append(squeeze)
+                        else:
+                            track["squeezes"] = [squeeze]
+                        self._confirm_ticker(
+                            ticker,
+                            track,
+                            squeeze,
+                            float_shares,
+                            reference_data,
+                            snapshot_lookup,
+                            "PATH_C_EXTREME_MOVER",
+                            newly_confirmed,
+                        )
+                        continue
+                    logger.debug("[CONFIRMED] %s — PATH C rejected: %s", ticker, reason)
+
+                if not track["has_volume_spike"]:
+                    continue
+
                 track["squeezes"].append(squeeze)
 
                 if len(track["squeezes"]) == 1:
-                    passed, _reason = self._check_common_filters(squeeze, float_shares)
                     if passed and self._has_bullish_news(ticker):
                         self._confirm_ticker(
                             ticker,
@@ -239,9 +264,20 @@ class MomentumConfirmedScanner:
         for stock in candidates:
             stock["rank_score"] = self._calculate_score(stock, candidates)
 
-        ranked = sorted(candidates, key=lambda candidate: float(candidate.get("rank_score", 0)), reverse=True)
+        ranked = sorted(
+            candidates,
+            key=lambda candidate: (
+                bool(candidate.get("force_watchlist")),
+                float(candidate.get("rank_score", 0)),
+            ),
+            reverse=True,
+        )
         if threshold > 0:
-            ranked = [stock for stock in ranked if float(stock.get("rank_score", 0)) >= threshold]
+            ranked = [
+                stock
+                for stock in ranked
+                if float(stock.get("rank_score", 0)) >= threshold or bool(stock.get("force_watchlist"))
+            ]
         return ranked
 
     def update_live_prices(self, snapshot_lookup: Mapping[str, MarketSnapshot]) -> None:
@@ -406,6 +442,9 @@ class MomentumConfirmedScanner:
             )
         return False
 
+    def _qualifies_path_c_extreme_mover(self, day_change_pct: float) -> bool:
+        return day_change_pct >= self.config.extreme_mover_min_day_change_pct
+
     def _confirm_ticker(
         self,
         ticker: str,
@@ -431,10 +470,16 @@ class MomentumConfirmedScanner:
             snapshot_lookup=snapshot_lookup,
         )
         confirmed["confirmation_path"] = path
+        confirmed["force_watchlist"] = path == "PATH_C_EXTREME_MOVER"
         self._confirmed.append(confirmed)
         newly_confirmed.append(confirmed)
 
-        path_label = "NEWS+1SQ" if "PATH_A" in path else "2 SQUEEZES"
+        if "PATH_A" in path:
+            path_label = "NEWS+1SQ"
+        elif path == "PATH_C_EXTREME_MOVER":
+            path_label = "EXTREME+1SQ"
+        else:
+            path_label = "2 SQUEEZES"
         logger.info(
             "[CONFIRMED] ✅ %s — %s @ $%.2f | vol=%s | float=%s | squeezes=%s",
             ticker,
@@ -504,6 +549,7 @@ class MomentumConfirmedScanner:
             "squeeze_count": len(track["squeezes"]),
             "data_age_secs": 0,
             "confirmation_path": "",
+            "force_watchlist": False,
             **self._normalize_catalyst_fields(catalyst),
         }
 
@@ -612,6 +658,25 @@ class MomentumConfirmedScanner:
             "ai_shadow_headline_basis": str(catalyst.get("ai_shadow_headline_basis", "")),
             "ai_shadow_positive_phrases": list(catalyst.get("ai_shadow_positive_phrases", []) or []),
         }
+
+    def _current_day_change_pct(
+        self,
+        ticker: str,
+        price: float,
+        snapshot_lookup: Mapping[str, MarketSnapshot] | None,
+    ) -> float:
+        if snapshot_lookup is not None:
+            snapshot = snapshot_lookup.get(ticker)
+            if snapshot is not None:
+                previous_close = float(snapshot.previous_close or 0)
+                if previous_close > 0 and price > 0:
+                    return ((price - previous_close) / previous_close) * 100
+                if snapshot.todays_change_percent is not None:
+                    try:
+                        return float(snapshot.todays_change_percent)
+                    except (TypeError, ValueError):
+                        return 0.0
+        return 0.0
 
     def _calculate_score(self, stock: dict[str, object], all_candidates: list[dict[str, object]]) -> float:
         if not all_candidates:

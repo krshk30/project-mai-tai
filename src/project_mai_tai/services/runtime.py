@@ -14,7 +14,7 @@ def _install_signal_handlers(stop_event: asyncio.Event) -> None:
     for signum in (signal.SIGINT, signal.SIGTERM):
         try:
             loop.add_signal_handler(signum, stop_event.set)
-        except NotImplementedError:
+        except (NotImplementedError, RuntimeError):
             continue
 
 

@@ -102,6 +102,9 @@ class Settings(BaseSettings):
     scanner_feed_retention_drop_cooldown_minutes: int = 30
     scanner_feed_retention_drop_max_5m_range_pct: float = 1.0
     scanner_feed_retention_drop_max_5m_volume_abs: float = 75_000.0
+    strategy_macd_1m_enabled: bool = True
+    strategy_tos_enabled: bool = True
+    strategy_runner_enabled: bool = True
     strategy_macd_1m_massive_indicator_overlay_enabled: bool = False
     strategy_macd_1m_taapi_indicator_source_enabled: bool = False
     strategy_macd_30s_common_config_overrides_json: str = ""
@@ -171,6 +174,9 @@ class Settings(BaseSettings):
     schwab_tos_runner_account_hash: str | None = None
     schwab_tick_archive_enabled: bool = False
     schwab_tick_archive_root: str = "data/recordings/schwab_ticks"
+    schwab_stream_symbol_stale_after_seconds: float = 3.0
+    schwab_stream_symbol_quote_poll_interval_seconds: float = 2.0
+    schwab_stream_symbol_resubscribe_interval_seconds: float = 5.0
     oms_broker_sync_interval_seconds: int = 15
 
     dashboard_refresh_seconds: int = 5
@@ -314,9 +320,10 @@ class Settings(BaseSettings):
             override = self._normalize_provider_name(self.strategy_macd_30s_broker_provider)
             if override is not None:
                 providers.add(override)
-        override = self._normalize_provider_name(self.strategy_tos_broker_provider)
-        if override is not None:
-            providers.add(override)
+        if self.strategy_tos_enabled:
+            override = self._normalize_provider_name(self.strategy_tos_broker_provider)
+            if override is not None:
+                providers.add(override)
         return sorted(providers)
 
     @computed_field

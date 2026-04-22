@@ -24,13 +24,21 @@ def _format_limit_price(value: float | str | Decimal | None) -> str | None:
         return None
 
 
-def order_routing_metadata(*, price: str, side: str, now: datetime) -> dict[str, str]:
+def extended_hours_session(now: datetime) -> str | None:
     current = now.astimezone(EASTERN_TZ)
     regular_open = current.replace(hour=9, minute=30, second=0, microsecond=0)
     regular_close = current.replace(hour=16, minute=0, second=0, microsecond=0)
     if regular_open <= current < regular_close:
+        return None
+    return "AM" if current < regular_open else "PM"
+
+
+def order_routing_metadata(*, price: str, side: str, now: datetime) -> dict[str, str]:
+    session = extended_hours_session(now)
+    if session is None:
         return {}
     return {
+        "session": session,
         "order_type": "limit",
         "time_in_force": "day",
         "extended_hours": "true",
@@ -323,7 +331,9 @@ class RunnerStrategyRuntime:
                 and normalized not in self._pending_close_symbols
                 and not self._is_close_retry_blocked(normalized)
             ):
-                intents.append(self._emit_close_intent(symbol=normalized, reason="TIME_CLOSE_6PM"))
+                close_intent = self._emit_close_intent(symbol=normalized, reason="TIME_CLOSE_6PM")
+                if close_intent is not None:
+                    intents.append(close_intent)
                 return intents
             if (
                 position.is_trail_breached(self.config)
@@ -331,7 +341,9 @@ class RunnerStrategyRuntime:
                 and not self._is_close_retry_blocked(normalized)
             ):
                 trail_pct = round(position.get_trail_pct(self.config), 0)
-                intents.append(self._emit_close_intent(symbol=normalized, reason=f"TRAIL_STOP_{trail_pct:.0f}%"))
+                close_intent = self._emit_close_intent(symbol=normalized, reason=f"TRAIL_STOP_{trail_pct:.0f}%")
+                if close_intent is not None:
+                    intents.append(close_intent)
                 return intents
 
         should_build_bars = normalized in self.watchlist
@@ -356,7 +368,9 @@ class RunnerStrategyRuntime:
         if not self._is_candidate_eligible(candidate, price):
             return intents
 
-        intents.append(self._emit_open_intent(candidate, price))
+        open_intent = self._emit_open_intent(candidate, price)
+        if open_intent is not None:
+            intents.append(open_intent)
         return intents
 
     def apply_execution_fill(
@@ -522,7 +536,8 @@ class RunnerStrategyRuntime:
         if symbol not in self._pending_close_symbols and not self._is_close_retry_blocked(symbol):
             ema_break = self._check_ema_break(symbol)
             if ema_break is not None:
-                return [self._emit_close_intent(symbol=symbol, reason=ema_break)]
+                close_intent = self._emit_close_intent(symbol=symbol, reason=ema_break)
+                return [close_intent] if close_intent is not None else []
         return []
 
     def _entry_window_open(self) -> bool:
@@ -611,12 +626,17 @@ class RunnerStrategyRuntime:
             return f"EMA20_BREAK(5m) price=${current_close:.2f}<EMA20=${ema20[-1]:.2f}"
         return None
 
-    def _emit_open_intent(self, candidate: dict[str, object], live_price: float) -> TradeIntentEvent:
+    def _emit_open_intent(self, candidate: dict[str, object], live_price: float) -> TradeIntentEvent | None:
         symbol = str(candidate.get("ticker", "")).upper()
-        self._pending_open_symbols.add(symbol)
         reference_price = str(live_price)
-        quote = self._latest_quotes.get(symbol, {})
-        routed_price = _format_limit_price(quote.get("ask")) or _format_limit_price(reference_price) or reference_price
+        routed_price, _reason = self._resolve_routed_price(
+            symbol=symbol,
+            side="buy",
+            reference_price=reference_price,
+        )
+        if routed_price is None:
+            return None
+        self._pending_open_symbols.add(symbol)
         metadata = {
             "reference_price": reference_price,
             "rank_score": str(candidate.get("rank_score", "")),
@@ -638,7 +658,7 @@ class RunnerStrategyRuntime:
             ),
         )
 
-    def _emit_close_intent(self, *, symbol: str | None = None, reason: str) -> TradeIntentEvent:
+    def _emit_close_intent(self, *, symbol: str | None = None, reason: str) -> TradeIntentEvent | None:
         if symbol is None:
             position = self._position
             symbol = position.ticker if position is not None else None
@@ -649,11 +669,16 @@ class RunnerStrategyRuntime:
         if position is None:
             raise RuntimeError("runner close intent requested without an open position")
 
+        reference_price = str(position.current_price)
+        routed_price, _reason = self._resolve_routed_price(
+            symbol=symbol,
+            side="sell",
+            reference_price=reference_price,
+        )
+        if routed_price is None:
+            return None
         self._pending_close_symbols.add(symbol)
         self._pending_close_reasons[symbol] = reason
-        reference_price = str(position.current_price)
-        quote = self._latest_quotes.get(symbol, {})
-        routed_price = _format_limit_price(quote.get("bid")) or _format_limit_price(reference_price) or reference_price
         metadata = {
             "reference_price": reference_price,
             "peak_profit_pct": str(position.peak_profit_pct),
@@ -673,6 +698,24 @@ class RunnerStrategyRuntime:
                 metadata=metadata,
             ),
         )
+
+    def _resolve_routed_price(
+        self,
+        *,
+        symbol: str,
+        side: str,
+        reference_price: str,
+    ) -> tuple[str | None, str | None]:
+        session = extended_hours_session(self.now_provider())
+        quote = self._latest_quotes.get(symbol, {})
+        quote_field = "ask" if side == "buy" else "bid"
+        quote_price = _format_limit_price(quote.get(quote_field))
+        if session is None:
+            routed_price = quote_price or _format_limit_price(reference_price) or reference_price
+            return routed_price, None
+        if quote_price:
+            return quote_price, None
+        return None, f"missing {quote_field} quote for extended-hours routing"
 
     def _is_close_retry_blocked(self, symbol: str | None = None) -> bool:
         if symbol is None:

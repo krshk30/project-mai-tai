@@ -34,6 +34,7 @@ from project_mai_tai.runtime_registry import configured_broker_account_registrat
 from project_mai_tai.runtime_seed import seed_runtime_metadata
 from project_mai_tai.services.runtime import _install_signal_handlers
 from project_mai_tai.settings import Settings, get_settings
+from project_mai_tai.runtime_registry import StrategyRegistration
 
 logger = logging.getLogger(__name__)
 
@@ -161,6 +162,7 @@ class OmsRiskService:
                     if registration
                     else {"account_name": event.payload.broker_account_name}
                 ),
+                is_enabled=registration is not None,
             )
             broker_account = self.store.ensure_broker_account(
                 session,
@@ -175,7 +177,7 @@ class OmsRiskService:
                 event=event,
             )
 
-            passed, risk_reason = self._evaluate_risk(event)
+            passed, risk_reason = self._evaluate_risk(event, registration=registration)
             outcome = "pass" if passed else "reject"
             self.store.record_risk_check(
                 session,
@@ -189,7 +191,7 @@ class OmsRiskService:
 
             if not passed:
                 self.store.mark_intent_status(intent, "rejected")
-                order_event = self._build_rejected_event(event, intent.id)
+                order_event = self._build_rejected_event(event, intent.id, reason=risk_reason)
                 session.commit()
                 await self._publish_order_event(order_event)
                 return [order_event]
@@ -668,12 +670,31 @@ class OmsRiskService:
             "broker_accounts": summary.broker_accounts,
         }
 
-    def _evaluate_risk(self, event: TradeIntentEvent) -> tuple[bool, str]:
+    def _configured_open_quantity_limit(self, strategy_code: str) -> Decimal | None:
+        normalized = str(strategy_code).strip().lower()
+        if normalized in {"macd_30s", "macd_30s_probe", "macd_30s_reclaim", "macd_30s_retest"}:
+            return Decimal(str(self.settings.strategy_macd_30s_default_quantity))
+        if normalized == "tos":
+            return Decimal(str(self.settings.strategy_tos_default_quantity))
+        return None
+
+    def _evaluate_risk(
+        self,
+        event: TradeIntentEvent,
+        *,
+        registration: StrategyRegistration | None = None,
+    ) -> tuple[bool, str]:
+        if registration is None:
+            return False, f"strategy_disabled_or_unknown={event.payload.strategy_code}"
         if event.payload.intent_type == "cancel":
             if event.payload.quantity < 0:
                 return False, "cancel quantity cannot be negative"
         elif event.payload.quantity <= 0:
             return False, "quantity must be positive"
+        if event.payload.intent_type == "open":
+            limit = self._configured_open_quantity_limit(event.payload.strategy_code)
+            if limit is not None and event.payload.quantity > limit:
+                return False, f"open_quantity_exceeds_limit={event.payload.quantity}>{limit}"
         if event.payload.intent_type not in {"open", "scale", "close", "cancel"}:
             return False, f"unsupported intent_type={event.payload.intent_type}"
         if event.payload.side not in {"buy", "sell"}:

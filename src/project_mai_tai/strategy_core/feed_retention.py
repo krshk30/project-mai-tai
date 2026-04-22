@@ -6,6 +6,7 @@ from datetime import datetime
 
 @dataclass(frozen=True)
 class FeedRetentionConfig:
+    enabled: bool = True
     structure_bars: int = 10
     no_activity_minutes: int = 20
     cooldown_volume_ratio: float = 0.4
@@ -17,15 +18,33 @@ class FeedRetentionConfig:
     drop_cooldown_minutes: int = 30
     drop_max_5m_range_pct: float = 1.0
     drop_max_5m_volume_abs: float = 75_000.0
+    degraded_enabled: bool = False
+    degraded_warmup_bars: int = 20
+    degraded_enter_score: int = 4
+    degraded_enter_hold_bars: int = 4
+    degraded_exit_score: int = 3
+    degraded_exit_hold_bars: int = 4
+    degraded_volume_fade_ratio: float = 0.8
+    degraded_breakdown_volume_ratio: float = 1.5
 
 
 @dataclass(frozen=True)
 class FeedRetentionMetrics:
     price: float | None = None
+    ema9: float | None = None
     vwap: float | None = None
     ema20: float | None = None
     rolling_5m_volume: float | None = None
     rolling_5m_range_pct: float | None = None
+    avg_bar_volume_5: float | None = None
+    avg_bar_volume_20: float | None = None
+    latest_bar_volume: float | None = None
+    latest_bar_red: bool = False
+    ema9_falling: bool = False
+    ema9_rising: bool = False
+    lower_highs_or_closes: bool = False
+    higher_highs_or_closes: bool = False
+    total_bars: int = 0
     bar_timestamp: float | None = None
 
 
@@ -42,6 +61,12 @@ class RetainedSymbolState:
     below_structure_bars: int = 0
     above_structure_bars: int = 0
     last_bar_timestamp: float | None = None
+    degraded_mode: bool = False
+    degraded_since: datetime | None = None
+    degraded_score: int = 0
+    recovery_score: int = 0
+    degraded_enter_streak_bars: int = 0
+    degraded_exit_streak_bars: int = 0
 
     def blocks_entries(self) -> bool:
         return self.state in {"cooldown", "resume_probe"}
@@ -95,6 +120,8 @@ class FeedRetentionPolicy:
 
         if metrics is None or metrics.price is None:
             return state
+
+        self._update_degraded_overlay(state, metrics, now)
 
         above_structure = self._is_above_structure(metrics)
         below_structure = self._is_below_structure(metrics)
@@ -254,3 +281,115 @@ class FeedRetentionPolicy:
             state.active_reference_5m_volume = rolling_volume
             return
         state.active_reference_5m_volume = (state.active_reference_5m_volume * 0.8) + (rolling_volume * 0.2)
+
+    def _update_degraded_overlay(
+        self,
+        state: RetainedSymbolState,
+        metrics: FeedRetentionMetrics,
+        now: datetime,
+    ) -> None:
+        if not self.config.degraded_enabled:
+            state.degraded_mode = False
+            state.degraded_since = None
+            state.degraded_score = 0
+            state.recovery_score = 0
+            state.degraded_enter_streak_bars = 0
+            state.degraded_exit_streak_bars = 0
+            return
+
+        state.degraded_score = self._calculate_degraded_score(metrics)
+        state.recovery_score = self._calculate_recovery_score(metrics)
+
+        recovery_ready = self._is_recovery_ready(metrics)
+
+        if state.degraded_mode:
+            if recovery_ready and state.recovery_score >= self.config.degraded_exit_score:
+                state.degraded_exit_streak_bars += 1
+            else:
+                state.degraded_exit_streak_bars = 0
+
+            if state.degraded_exit_streak_bars >= self.config.degraded_exit_hold_bars:
+                state.degraded_mode = False
+                state.degraded_since = None
+                state.degraded_enter_streak_bars = 0
+                state.degraded_exit_streak_bars = 0
+            return
+
+        if metrics.total_bars < self.config.degraded_warmup_bars:
+            state.degraded_enter_streak_bars = 0
+            return
+
+        if state.degraded_score >= self.config.degraded_enter_score:
+            state.degraded_enter_streak_bars += 1
+        else:
+            state.degraded_enter_streak_bars = 0
+
+        if state.degraded_enter_streak_bars >= self.config.degraded_enter_hold_bars:
+            state.degraded_mode = True
+            state.degraded_since = now
+            state.degraded_exit_streak_bars = 0
+
+    def _calculate_degraded_score(self, metrics: FeedRetentionMetrics) -> int:
+        score = 0
+        price = metrics.price
+        if price is None:
+            return score
+        if metrics.ema9 is not None and price < metrics.ema9:
+            score += 1
+        if metrics.ema20 is not None and price < metrics.ema20:
+            score += 1
+        if metrics.vwap is not None and price < metrics.vwap:
+            score += 1
+        if metrics.ema9_falling:
+            score += 1
+        if self._has_degraded_volume_condition(metrics):
+            score += 1
+        if metrics.lower_highs_or_closes:
+            score += 1
+        return score
+
+    def _calculate_recovery_score(self, metrics: FeedRetentionMetrics) -> int:
+        score = 0
+        price = metrics.price
+        if price is None:
+            return score
+        if metrics.ema9 is not None and price > metrics.ema9:
+            score += 1
+        if metrics.ema20 is not None and price > metrics.ema20:
+            score += 1
+        if metrics.vwap is not None and price > metrics.vwap:
+            score += 1
+        if metrics.ema9_rising:
+            score += 1
+        if self._has_recovery_volume_condition(metrics):
+            score += 1
+        if metrics.higher_highs_or_closes:
+            score += 1
+        return score
+
+    def _has_degraded_volume_condition(self, metrics: FeedRetentionMetrics) -> bool:
+        avg_5 = float(metrics.avg_bar_volume_5 or 0)
+        avg_20 = float(metrics.avg_bar_volume_20 or 0)
+        volume_fade = avg_20 > 0 and avg_5 <= (avg_20 * self.config.degraded_volume_fade_ratio)
+        red_breakdown = (
+            metrics.latest_bar_red
+            and avg_20 > 0
+            and float(metrics.latest_bar_volume or 0) >= (avg_20 * self.config.degraded_breakdown_volume_ratio)
+        )
+        return volume_fade or red_breakdown
+
+    @staticmethod
+    def _has_recovery_volume_condition(metrics: FeedRetentionMetrics) -> bool:
+        avg_5 = float(metrics.avg_bar_volume_5 or 0)
+        avg_20 = float(metrics.avg_bar_volume_20 or 0)
+        return avg_20 > 0 and avg_5 >= avg_20
+
+    @staticmethod
+    def _is_recovery_ready(metrics: FeedRetentionMetrics) -> bool:
+        if metrics.price is None or metrics.ema9 is None:
+            return False
+        if metrics.price <= metrics.ema9:
+            return False
+        if metrics.vwap is not None and metrics.price <= metrics.vwap:
+            return False
+        return True
