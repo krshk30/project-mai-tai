@@ -2800,23 +2800,7 @@ class StrategyEngineState:
             and str(item.get("ticker", "")).upper() not in self.global_manual_stop_symbols
         ]
         self.all_confirmed = list(self.current_confirmed)
-        handoff_symbols = [str(stock["ticker"]).upper() for stock in self.current_confirmed]
-        for code, bot in self.bots.items():
-            if hasattr(bot, "set_manual_stop_symbols"):
-                bot.set_manual_stop_symbols(self._manual_stop_symbols_for_bot(code))
-            bot.set_watchlist(self._watchlist_for_bot(code, handoff_symbols))
-            if hasattr(bot, "set_entry_blocked_symbols"):
-                bot.set_entry_blocked_symbols(())
-            if code == "runner":
-                bot.update_candidates(self.current_confirmed)
-        self.retained_watchlist = sorted(
-            {
-                symbol.upper()
-                for bot in self.bots.values()
-                for symbol in bot.active_symbols()
-            }
-        )
-        self.feed_retention_states = self._aggregate_bot_retention_states()
+        self._resync_bot_watchlists_from_current_confirmed()
 
     def apply_global_manual_stop_symbols(self, symbols: Iterable[str] | None) -> None:
         self.global_manual_stop_symbols = {
@@ -2855,10 +2839,7 @@ class StrategyEngineState:
                 self.global_manual_stop_symbols.add(normalized_symbol)
             else:
                 self.global_manual_stop_symbols.discard(normalized_symbol)
-            for code, bot in self.bots.items():
-                set_manual_stops = getattr(bot, "set_manual_stop_symbols", None)
-                if set_manual_stops is not None:
-                    set_manual_stops(self._manual_stop_symbols_for_bot(code))
+            self._resync_bot_watchlists_from_current_confirmed()
             return
 
         code = str(strategy_code or "")
@@ -2870,16 +2851,43 @@ class StrategyEngineState:
         else:
             current.discard(normalized_symbol)
         self.manual_stop_symbols_by_strategy[code] = current
-        bot = self.bots.get(code)
-        if bot is not None:
-            set_manual_stops = getattr(bot, "set_manual_stop_symbols", None)
-            if set_manual_stops is not None:
-                set_manual_stops(self._manual_stop_symbols_for_bot(code))
+        self._resync_bot_watchlists_from_current_confirmed(strategy_codes=[code])
 
     def _manual_stop_symbols_for_bot(self, strategy_code: str) -> set[str]:
         return set(self.global_manual_stop_symbols) | set(
             self.manual_stop_symbols_by_strategy.get(str(strategy_code), set())
         )
+
+    def _resync_bot_watchlists_from_current_confirmed(
+        self,
+        *,
+        strategy_codes: Sequence[str] | None = None,
+    ) -> None:
+        handoff_symbols = [
+            str(stock.get("ticker", "")).upper()
+            for stock in self.current_confirmed
+            if str(stock.get("ticker", "")).strip()
+        ]
+        for code, bot in self._iter_target_bots(strategy_codes=strategy_codes):
+            if hasattr(bot, "set_manual_stop_symbols"):
+                bot.set_manual_stop_symbols(self._manual_stop_symbols_for_bot(code))
+            bot.set_watchlist(self._watchlist_for_bot(code, handoff_symbols))
+            if hasattr(bot, "set_entry_blocked_symbols"):
+                bot.set_entry_blocked_symbols(())
+            if code == "runner":
+                bot.update_candidates(self.current_confirmed)
+            else:
+                refresh_lifecycle = getattr(bot, "refresh_lifecycle", None)
+                if refresh_lifecycle is not None:
+                    refresh_lifecycle()
+        self.retained_watchlist = sorted(
+            {
+                symbol.upper()
+                for bot in self.bots.values()
+                for symbol in bot.active_symbols()
+            }
+        )
+        self.feed_retention_states = self._aggregate_bot_retention_states()
 
     def market_data_symbols(self) -> list[str]:
         symbols: set[str] = set()

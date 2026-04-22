@@ -876,3 +876,59 @@ Deployment state:
   `666f7b4c0bd6cf6d52006bc0f3be647d8ddd5b66`
 - this change has **not** been deployed to the VPS
 - no service restart was performed in this session
+
+## 2026-04-22 Manual Stop Resume Watchlist Resync
+
+New runtime bug found after the earlier manual-stop restart fix:
+
+- on the live `macd_30s` bot, pressing `Resume` on a bot-level manual stop removed
+  the symbol from the `Manual Stops` list, but did **not** put it back into the
+  bot watchlist immediately
+- this made the UI look broken:
+  - symbol vanished from `Manual Stops`
+  - symbol still did not appear under `Live Symbols`
+  - `Tracked Symbols` / watchlist counts could remain at `0`
+- important distinction:
+  - the earlier restart/restore bug was already fixed
+  - this was a separate live-update bug in the manual-stop event path
+
+Root cause:
+
+- [strategy_engine_app.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/src/project_mai_tai/services/strategy_engine_app.py)
+  handled live `manual_stop_update` resume events by only updating the bot's
+  `manual_stop_symbols`
+- when feed retention is disabled, `set_manual_stop_symbols(...)` removes a
+  stopped name from the live watchlist, but a later `resume` did not rebuild the
+  watchlist from `current_confirmed`
+- result:
+  - stop removed the symbol immediately
+  - resume cleared the stop flag
+  - but the symbol stayed absent until some later scanner/watchlist rebuild
+
+Fix implemented:
+
+- [strategy_engine_app.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/src/project_mai_tai/services/strategy_engine_app.py)
+  - added `_resync_bot_watchlists_from_current_confirmed(...)`
+  - live bot/global manual-stop updates now immediately rebuild bot watchlists
+    from the current confirmed scanner set after the stop/resume change
+  - `restore_confirmed_runtime_view(...)` now uses the same helper so the logic
+    stays consistent
+- [test_strategy_engine_service.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/tests/unit/test_strategy_engine_service.py)
+  - added a regression test proving:
+    - `stop` removes the symbol from the live watchlist
+    - `resume` re-adds it immediately
+
+Local validation completed:
+
+- targeted `pytest` slice passed locally in the repo `.venv`:
+  - `test_manual_stop_update_removes_symbol_from_live_watchlist_immediately`
+  - `test_manual_stop_resume_readds_symbol_to_live_watchlist_immediately`
+- direct runtime harness also confirmed:
+  - initial watchlist: `['AGPU', 'WBUY']`
+  - after stop: `['WBUY']`
+  - after resume: `['AGPU', 'WBUY']`
+
+Deployment state:
+
+- code is fixed locally but deployment status must be checked against the latest
+  commit / VPS state before assuming the live service has this resume-resync fix

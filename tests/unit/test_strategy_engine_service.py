@@ -1255,6 +1255,33 @@ def test_manual_stop_update_removes_symbol_from_live_watchlist_immediately() -> 
     assert "WBUY" in state.bots["macd_30s"].watchlist
 
 
+def test_manual_stop_resume_readds_symbol_to_live_watchlist_immediately() -> None:
+    state = StrategyEngineState(now_provider=fixed_now)
+    state.restore_confirmed_runtime_view(
+        [
+            {"ticker": "AGPU", "rank_score": 80.0, "change_pct": 40.0, "confirmed_at": "09:45:00 AM ET"},
+            {"ticker": "WBUY", "rank_score": 70.0, "change_pct": 32.0, "confirmed_at": "09:50:00 AM ET"},
+        ]
+    )
+    state.apply_manual_stop_update(
+        scope="bot",
+        action="stop",
+        strategy_code="macd_30s",
+        symbol="AGPU",
+    )
+
+    state.apply_manual_stop_update(
+        scope="bot",
+        action="resume",
+        strategy_code="macd_30s",
+        symbol="AGPU",
+    )
+
+    assert "AGPU" not in state.bots["macd_30s"].manual_stop_symbols
+    assert "AGPU" in state.bots["macd_30s"].watchlist
+    assert "WBUY" in state.bots["macd_30s"].watchlist
+
+
 def test_restore_confirmed_runtime_view_keeps_manual_stops_out_of_watchlist() -> None:
     state = StrategyEngineState(now_provider=fixed_now)
     state.apply_manual_stop_symbols({"macd_30s": {"AGPU"}})
