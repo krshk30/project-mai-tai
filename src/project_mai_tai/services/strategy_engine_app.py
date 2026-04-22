@@ -156,6 +156,17 @@ def current_scanner_session_start_utc(now: datetime | None = None) -> datetime:
     return session_start_et.astimezone(UTC)
 
 
+def _datetime_str(value: datetime | str | None) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    current = value
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=UTC)
+    return current.astimezone(EASTERN_TZ).strftime("%Y-%m-%d %I:%M:%S %p ET")
+
+
 @dataclass(frozen=True)
 class StrategyDefinition:
     code: str
@@ -216,6 +227,7 @@ class StrategyBotRuntime:
         self.scale_retry_blocked_until: dict[tuple[str, str], datetime] = {}
         self._applied_fill_quantity_by_order: dict[str, Decimal] = {}
         self.recent_decisions: list[dict[str, str]] = []
+        self._last_tick_at: dict[str, datetime] = {}
         self.session_factory = session_factory
         self.use_live_aggregate_bars = use_live_aggregate_bars
         self.live_aggregate_fallback_enabled = live_aggregate_fallback_enabled
@@ -266,6 +278,16 @@ class StrategyBotRuntime:
         self.manual_stop_symbols = {
             str(symbol).upper() for symbol in symbols if str(symbol).strip()
         }
+        if not self.lifecycle_policy.config.enabled:
+            self.watchlist = {
+                symbol
+                for symbol in self.watchlist
+                if symbol not in self.manual_stop_symbols
+            }
+            self.lifecycle_states.clear()
+            self.entry_blocked_symbols = set(self.manual_stop_symbols)
+            self._prune_runtime_state()
+            return
         for symbol in list(self.lifecycle_states):
             if symbol in self.manual_stop_symbols:
                 self.lifecycle_states.pop(symbol, None)
@@ -436,10 +458,11 @@ class StrategyBotRuntime:
 
         self._history_seed_attempted.add(normalized_symbol)
         session_start_utc = current_scanner_session_start_utc(self.now_provider())
+        required_bars = self._required_history_bars()
 
         try:
             with self.session_factory() as session:
-                records = list(
+                current_session_records = list(
                     session.scalars(
                         select(StrategyBarHistory)
                         .where(
@@ -451,6 +474,28 @@ class StrategyBotRuntime:
                         .order_by(StrategyBarHistory.bar_time.asc())
                     ).all()
                 )
+
+                records = list(current_session_records)
+                if len(records) < required_bars:
+                    older_records = list(
+                        reversed(
+                            list(
+                                session.scalars(
+                                    select(StrategyBarHistory)
+                                    .where(
+                                        StrategyBarHistory.strategy_code == self.definition.code,
+                                        StrategyBarHistory.symbol == normalized_symbol,
+                                        StrategyBarHistory.interval_secs == self.definition.interval_secs,
+                                        StrategyBarHistory.bar_time < session_start_utc,
+                                    )
+                                    .order_by(StrategyBarHistory.bar_time.desc())
+                                    .limit(max(required_bars - len(records), 0))
+                                ).all()
+                            )
+                        )
+                    )
+                    if older_records:
+                        records = older_records + records
         except Exception:
             logger.exception(
                 "failed lazy history seed for %s %s",
@@ -485,6 +530,7 @@ class StrategyBotRuntime:
         cumulative_volume: int | None = None,
     ) -> list[TradeIntentEvent]:
         self._roll_day_if_needed()
+        self._last_tick_at[str(symbol).upper()] = self._normalize_now(self.now_provider())
         intents = self._evaluate_position_price_intents(symbol, price)
 
         position = self.positions.get_position(symbol)
@@ -531,6 +577,7 @@ class StrategyBotRuntime:
         trade_count: int = 1,
     ) -> list[TradeIntentEvent]:
         self._roll_day_if_needed()
+        self._last_tick_at[str(symbol).upper()] = self._normalize_now(self.now_provider())
         intents: list[TradeIntentEvent] = []
 
         position = self.positions.get_position(symbol)
@@ -794,6 +841,8 @@ class StrategyBotRuntime:
             "closed_today": self.positions.get_closed_today(),
             "recent_decisions": list(self.recent_decisions),
             "indicator_snapshots": self._indicator_snapshots(),
+            "bar_counts": self._bar_counts(),
+            "last_tick_at": self._last_tick_summary(),
         }
 
     def _roll_day_if_needed(self) -> None:
@@ -989,7 +1038,9 @@ class StrategyBotRuntime:
             return []
 
         closed_bar_count = builder.get_bar_count()
-        if len(bars) <= closed_bar_count:
+        get_closed_bars = getattr(builder, "get_bars_as_dicts", None)
+        closed_bars = get_closed_bars() if callable(get_closed_bars) else []
+        if len(bars) <= len(closed_bars):
             return []
 
         local_indicators = self.indicator_engine.calculate(bars)
@@ -1392,6 +1443,24 @@ class StrategyBotRuntime:
         self.recent_decisions = self.recent_decisions[:50]
         return entry
 
+    def _bar_counts(self) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for symbol in self.builder_manager.get_all_tickers():
+            builder = self.builder_manager.get_builder(symbol)
+            if builder is None:
+                continue
+            if hasattr(builder, "bars"):
+                counts[str(symbol).upper()] = len(getattr(builder, "bars"))
+            else:
+                counts[str(symbol).upper()] = len(builder.get_bars_as_dicts())
+        return counts
+
+    def _last_tick_summary(self) -> dict[str, str]:
+        return {
+            str(symbol).upper(): _datetime_str(observed_at)
+            for symbol, observed_at in sorted(self._last_tick_at.items())
+        }
+
     def _build_persisted_decision(
         self,
         *,
@@ -1433,6 +1502,43 @@ class StrategyBotRuntime:
         *,
         decision: dict[str, str] | None = None,
     ) -> list[TradeIntentEvent]:
+        if decision is None:
+            position_state, _position_quantity = self._position_snapshot(symbol)
+            if position_state == "open":
+                decision = self._record_decision(
+                    symbol=symbol,
+                    status="position_open",
+                    reason="position open",
+                    indicators=indicators,
+                )
+            elif position_state == "pending_open":
+                decision = self._record_decision(
+                    symbol=symbol,
+                    status="pending_open",
+                    reason="awaiting open fill",
+                    indicators=indicators,
+                )
+            elif position_state == "pending_close":
+                decision = self._record_decision(
+                    symbol=symbol,
+                    status="pending_close",
+                    reason="awaiting close fill",
+                    indicators=indicators,
+                )
+            elif position_state == "pending_scale":
+                decision = self._record_decision(
+                    symbol=symbol,
+                    status="pending_scale",
+                    reason="awaiting scale fill",
+                    indicators=indicators,
+                )
+            else:
+                decision = self._record_decision(
+                    symbol=symbol,
+                    status="idle",
+                    reason="no entry path matched",
+                    indicators=indicators,
+                )
         self._persist_bar_history(symbol=symbol, indicators=indicators, decision=decision)
         return intents
 
@@ -2050,6 +2156,22 @@ class StrategyEngineState:
                 drop_max_5m_range_pct=max(0.0, float(self.settings.scanner_feed_retention_drop_max_5m_range_pct)),
                 drop_max_5m_volume_abs=max(0.0, float(self.settings.scanner_feed_retention_drop_max_5m_volume_abs)),
             )
+        )
+        logger.info(
+            "feed retention config | enabled=%s structure_bars=%s no_activity_min=%s cooldown_volume_ratio=%.2f cooldown_max_5m_range_pct=%.2f resume_hold_bars=%s resume_min_5m_range_pct=%.2f resume_min_5m_volume_ratio=%.2f resume_min_5m_volume_abs=%.0f drop_cooldown_min=%s drop_max_5m_range_pct=%.2f drop_max_5m_volume_abs=%.0f degraded_enabled=%s",
+            self.feed_retention_policy.config.enabled,
+            self.feed_retention_policy.config.structure_bars,
+            self.feed_retention_policy.config.no_activity_minutes,
+            self.feed_retention_policy.config.cooldown_volume_ratio,
+            self.feed_retention_policy.config.cooldown_max_5m_range_pct,
+            self.feed_retention_policy.config.resume_hold_bars,
+            self.feed_retention_policy.config.resume_min_5m_range_pct,
+            self.feed_retention_policy.config.resume_min_5m_volume_ratio,
+            self.feed_retention_policy.config.resume_min_5m_volume_abs,
+            self.feed_retention_policy.config.drop_cooldown_minutes,
+            self.feed_retention_policy.config.drop_max_5m_range_pct,
+            self.feed_retention_policy.config.drop_max_5m_volume_abs,
+            self.feed_retention_policy.config.degraded_enabled,
         )
         self.feed_retention_states: dict[str, RetainedSymbolState] = {}
         self.global_manual_stop_symbols: set[str] = set()
@@ -2751,9 +2873,6 @@ class StrategyEngineState:
         )
         pairs: set[tuple[str, int]] = set()
         for code, bot in self.bots.items():
-            if code in self._schwab_stream_bot_codes:
-                continue
-
             definition = getattr(bot, "definition", None)
             interval_secs = int(definition.interval_secs) if definition is not None else None
             if interval_secs is None:
@@ -3366,7 +3485,7 @@ class StrategyEngineService:
                 size=event.payload.size,
                 timestamp_ns=event.payload.timestamp_ns,
                 cumulative_volume=event.payload.cumulative_volume,
-                exclude_codes=self.state.schwab_stream_strategy_codes(),
+                strategy_codes=self._generic_market_data_strategy_codes(event.payload.symbol),
             )
             for intent in intents:
                 await self._publish_intent(intent)
@@ -3387,7 +3506,7 @@ class StrategyEngineService:
                 symbol=event.payload.symbol,
                 bid_price=float(event.payload.bid_price) if event.payload.bid_price is not None else None,
                 ask_price=float(event.payload.ask_price) if event.payload.ask_price is not None else None,
-                exclude_codes=self.state.schwab_stream_strategy_codes(),
+                strategy_codes=self._generic_market_data_strategy_codes(event.payload.symbol),
             )
             return
 
@@ -3403,7 +3522,7 @@ class StrategyEngineService:
                 volume=int(event.payload.volume),
                 timestamp=float(event.payload.timestamp),
                 trade_count=int(event.payload.trade_count),
-                exclude_codes=self.state.schwab_stream_strategy_codes(),
+                strategy_codes=self._generic_market_data_strategy_codes(event.payload.symbol),
             )
             for intent in intents:
                 await self._publish_intent(intent)
@@ -3435,7 +3554,7 @@ class StrategyEngineService:
                 symbol=event.payload.symbol,
                 interval_secs=event.payload.interval_secs,
                 bars=bars,
-                exclude_codes=self.state.schwab_stream_strategy_codes(),
+                strategy_codes=self._generic_market_data_strategy_codes(event.payload.symbol),
             )
             if hydrated:
                 self.logger.info(
@@ -3531,6 +3650,14 @@ class StrategyEngineService:
                 closed_today=list(bot.get("closed_today", [])),
                 recent_decisions=list(bot.get("recent_decisions", [])),
                 indicator_snapshots=list(bot.get("indicator_snapshots", [])),
+                bar_counts={
+                    str(symbol).upper(): int(count or 0)
+                    for symbol, count in dict(bot.get("bar_counts", {}) or {}).items()
+                },
+                last_tick_at={
+                    str(symbol).upper(): str(observed_at or "")
+                    for symbol, observed_at in dict(bot.get("last_tick_at", {}) or {}).items()
+                },
             )
             for bot in summary["bots"].values()
         ]
@@ -3598,14 +3725,44 @@ class StrategyEngineService:
         market_data_symbols: Sequence[str] | None = None,
         schwab_stream_symbols: Sequence[str] | None = None,
     ) -> None:
+        effective_market_data_symbols = (
+            self.state.market_data_symbols() if market_data_symbols is None else list(market_data_symbols)
+        )
+        effective_schwab_symbols = (
+            self.state.schwab_stream_symbols() if schwab_stream_symbols is None else list(schwab_stream_symbols)
+        )
+        if self._should_use_generic_market_data_fallback_for_schwab():
+            effective_market_data_symbols = sorted(
+                {str(symbol).upper() for symbol in effective_market_data_symbols}
+                | {str(symbol).upper() for symbol in effective_schwab_symbols}
+            )
         await self._sync_market_data_subscriptions(
-            self.state.market_data_symbols() if market_data_symbols is None else market_data_symbols
+            effective_market_data_symbols
         )
         await self._sync_schwab_stream_subscriptions(
-            self.state.schwab_stream_symbols()
-            if schwab_stream_symbols is None
-            else schwab_stream_symbols
+            effective_schwab_symbols
         )
+
+    def _should_use_generic_market_data_fallback_for_schwab(self) -> bool:
+        if not self.state.schwab_stream_strategy_codes():
+            return False
+        client = self._schwab_stream_client
+        if client is None:
+            return False
+        return not getattr(client, "connected", False)
+
+    def _generic_market_data_strategy_codes(self, symbol: str) -> tuple[str, ...]:
+        schwab_codes = set(self.state.schwab_stream_strategy_codes())
+        include_schwab = self._should_use_generic_market_data_fallback_for_schwab() or self._is_schwab_symbol_stale(
+            symbol,
+            utcnow(),
+        )
+        selected: list[str] = []
+        for code in self.state.bots:
+            if code in schwab_codes and not include_schwab:
+                continue
+            selected.append(code)
+        return tuple(selected)
 
     async def _hydrate_recent_historical_bars(self, symbols: set[str]) -> None:
         if not symbols:
@@ -3676,6 +3833,13 @@ class StrategyEngineService:
 
         if hydrated_any:
             await self._publish_strategy_state_snapshot()
+        if pending:
+            for symbol, interval_secs in sorted(pending):
+                self.logger.info(
+                    "no historical bars available for %s @ %ss during hydration replay",
+                    symbol,
+                    interval_secs,
+                )
 
     def _build_schwab_stream_client(self) -> SchwabStreamerClient | None:
         if not self.state.schwab_stream_strategy_codes():
@@ -4048,10 +4212,12 @@ class StrategyEngineService:
         if not isinstance(seeded_candidates, list) or not seeded_candidates:
             seeded_candidates = snapshot.payload.get("top_confirmed", [])
         if not isinstance(seeded_candidates, list) or not seeded_candidates:
+            self._restore_watchlist_from_scanner_cycle_history()
             return
 
         seeded = [dict(item) for item in seeded_candidates if isinstance(item, dict)]
         if not seeded:
+            self._restore_watchlist_from_scanner_cycle_history()
             return
 
         self.state.seed_confirmed_candidates(seeded)
@@ -4066,6 +4232,59 @@ class StrategyEngineService:
             [dict(item) for item in visible_confirmed if isinstance(item, dict)]
         )
         self.logger.info("seeded %s confirmed candidates for fresh restart revalidation", len(seeded))
+
+    def _restore_watchlist_from_scanner_cycle_history(self) -> None:
+        if self.session_factory is None:
+            return
+
+        try:
+            with self.session_factory() as session:
+                snapshot = session.scalar(
+                    select(DashboardSnapshot)
+                    .where(DashboardSnapshot.snapshot_type == "scanner_cycle_history")
+                    .order_by(desc(DashboardSnapshot.created_at), desc(DashboardSnapshot.id))
+                )
+        except Exception:
+            self.logger.exception("failed to load scanner cycle history watchlist fallback")
+            return
+
+        if snapshot is None or not isinstance(snapshot.payload, dict):
+            return
+
+        payload = snapshot.payload
+        persisted_at_raw = payload.get("persisted_at")
+        if not isinstance(persisted_at_raw, str):
+            return
+
+        try:
+            persisted_at = datetime.fromisoformat(persisted_at_raw)
+        except ValueError:
+            return
+
+        if persisted_at.tzinfo is None:
+            persisted_at = persisted_at.replace(tzinfo=UTC)
+
+        session_start = current_scanner_session_start_utc()
+        if persisted_at.astimezone(UTC) < session_start:
+            return
+
+        watchlist = payload.get("watchlist")
+        if not isinstance(watchlist, list) or not watchlist:
+            return
+
+        visible_confirmed = [
+            {"ticker": str(symbol).upper()}
+            for symbol in watchlist
+            if str(symbol).strip()
+        ]
+        if not visible_confirmed:
+            return
+
+        self.state.restore_confirmed_runtime_view(visible_confirmed)
+        self.logger.info(
+            "restored %s symbols from scanner cycle-history watchlist fallback",
+            len(visible_confirmed),
+        )
 
     def _restore_runtime_state_from_database(self) -> None:
         self._reconcile_runtime_state_from_database(log_when_changed=True)

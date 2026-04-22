@@ -28,6 +28,6 @@ def session_day_eastern_str(
 ) -> str:
     current = now.astimezone(EASTERN_TZ) if now is not None else now_eastern()
     session_roll = current.replace(hour=reset_hour, minute=reset_minute, second=0, microsecond=0)
-    if current >= session_roll:
-        current = current + timedelta(days=1)
+    if current < session_roll:
+        current = current - timedelta(days=1)
     return current.strftime("%Y-%m-%d")

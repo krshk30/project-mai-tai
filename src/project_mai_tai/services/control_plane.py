@@ -102,6 +102,9 @@ class ControlPlaneRepository:
         self._legacy_cache: dict[str, Any] | None = None
         self._legacy_cache_at: datetime | None = None
         self._legacy_cache_lock = asyncio.Lock()
+        self._overview_cache: dict[str, Any] | None = None
+        self._overview_cache_at: datetime | None = None
+        self._overview_cache_lock = asyncio.Lock()
 
     def _is_ui_hidden_symbol(self, account_name: str | None, symbol: str | None) -> bool:
         normalized_account = str(account_name or "").strip()
@@ -336,6 +339,25 @@ class ControlPlaneRepository:
         return True
 
     async def load_dashboard_data(self) -> dict[str, Any]:
+        cache_ttl_seconds = 2.0
+        async with self._overview_cache_lock:
+            cache_age = None
+            if self._overview_cache_at is not None:
+                cache_age = (utcnow() - self._overview_cache_at).total_seconds()
+            if self._overview_cache is not None and cache_age is not None and cache_age < cache_ttl_seconds:
+                return self._overview_cache
+
+            data = await self._load_dashboard_data_uncached()
+            self._overview_cache = data
+            self._overview_cache_at = utcnow()
+            return data
+
+    async def invalidate_overview_cache(self) -> None:
+        async with self._overview_cache_lock:
+            self._overview_cache = None
+            self._overview_cache_at = None
+
+    async def _load_dashboard_data_uncached(self) -> dict[str, Any]:
         db_state = self._load_database_state()
         stream_state = await self._load_stream_state()
         normalized_strategy_runtime = self._normalize_strategy_runtime(stream_state["strategy_runtime"])
@@ -353,13 +375,13 @@ class ControlPlaneRepository:
         bots = self._build_bot_views(
             strategy_runtime=normalized_strategy_runtime,
             legacy_shadow=legacy_shadow,
-        recent_intents=db_state["recent_intents"],
-        recent_orders=db_state["recent_orders"],
-        recent_fills=db_state["recent_fills"],
-        recent_bar_decisions=db_state["recent_bar_decisions"],
-        open_orders=db_state["open_orders"],
-        persisted_snapshots=db_state["dashboard_snapshots"],
-    )
+            recent_intents=db_state["recent_intents"],
+            recent_orders=db_state["recent_orders"],
+            recent_fills=db_state["recent_fills"],
+            recent_bar_decisions=db_state["recent_bar_decisions"],
+            open_orders=db_state["open_orders"],
+            persisted_snapshots=db_state["dashboard_snapshots"],
+        )
 
         overall_status = "healthy"
         if db_state["errors"] or stream_state["errors"]:
@@ -427,6 +449,51 @@ class ControlPlaneRepository:
             "incidents": db_state["incidents"],
             "scanner_blacklist": db_state["scanner_blacklist"],
             "errors": db_state["errors"] + stream_state["errors"] + legacy_shadow["errors"],
+        }
+
+    async def load_bot_dashboard_data(self) -> dict[str, Any]:
+        db_state = self._load_database_state(lightweight=True)
+        stream_state = await self._load_stream_state()
+        normalized_strategy_runtime = self._normalize_strategy_runtime(stream_state["strategy_runtime"])
+        legacy_shadow = self._empty_legacy_shadow_data()
+        bots = self._build_bot_views(
+            strategy_runtime=normalized_strategy_runtime,
+            legacy_shadow=legacy_shadow,
+            recent_intents=db_state["recent_intents"],
+            recent_orders=db_state["recent_orders"],
+            recent_fills=db_state["recent_fills"],
+            recent_bar_decisions=db_state["recent_bar_decisions"],
+            open_orders=db_state["open_orders"],
+            persisted_snapshots=db_state["dashboard_snapshots"],
+        )
+
+        overall_status = "healthy"
+        if db_state["errors"] or stream_state["errors"]:
+            overall_status = "degraded"
+        elif any(
+            service.get("effective_status", service["status"]) not in {"healthy", "starting"}
+            for service in stream_state["services"]
+        ):
+            overall_status = "degraded"
+
+        return {
+            "generated_at": _datetime_str(utcnow()),
+            "status": overall_status,
+            "environment": self.settings.environment,
+            "provider": self.settings.broker_provider_label,
+            "oms_adapter": self.settings.oms_adapter_label,
+            "services": stream_state["services"],
+            "market_data": stream_state["market_data"],
+            "bots": bots,
+            "recent_intents": db_state["recent_intents"],
+            "recent_orders": db_state["recent_orders"],
+            "recent_fills": db_state["recent_fills"],
+            "recent_bar_decisions": db_state["recent_bar_decisions"],
+            "virtual_positions": db_state["virtual_positions"],
+            "account_positions": db_state["account_positions"],
+            "strategy_runtime": normalized_strategy_runtime,
+            "legacy_shadow": legacy_shadow,
+            "errors": db_state["errors"] + stream_state["errors"],
         }
 
     def _normalize_strategy_runtime(self, strategy_runtime: dict[str, Any]) -> dict[str, Any]:
@@ -885,6 +952,16 @@ class ControlPlaneRepository:
                 for item in list(runtime_bot.get("indicator_snapshots", []))
                 if not self._is_ui_hidden_symbol(account_name, item.get("ticker") or item.get("symbol"))
             ]
+            bar_counts = {
+                str(symbol).upper(): int(count or 0)
+                for symbol, count in dict(runtime_bot.get("bar_counts", {}) or {}).items()
+                if not self._is_ui_hidden_symbol(account_name, symbol)
+            }
+            last_tick_at = {
+                str(symbol).upper(): str(observed_at or "")
+                for symbol, observed_at in dict(runtime_bot.get("last_tick_at", {}) or {}).items()
+                if not self._is_ui_hidden_symbol(account_name, symbol)
+            }
             retention_states = [
                 item
                 for item in list(runtime_bot.get("retention_states", []))
@@ -939,6 +1016,8 @@ class ControlPlaneRepository:
                     "closed_today": list(runtime_bot.get("closed_today", [])),
                     "recent_decisions": recent_decisions[:50],
                     "indicator_snapshots": indicator_snapshots,
+                    "bar_counts": bar_counts,
+                    "last_tick_at": last_tick_at,
                     "tos_parity": tos_parity,
                     "recent_intents": [
                         item
@@ -1027,19 +1106,40 @@ class ControlPlaneRepository:
         }
 
     async def load_health(self) -> dict[str, Any]:
-        overview = await self.load_dashboard_data()
+        stream_state = await self._load_stream_state()
+        database_error: str | None = None
+        try:
+            with self.session_factory() as session:
+                session.execute(text("SELECT 1"))
+        except Exception as exc:
+            database_error = f"database:{exc}"
+
+        errors = list(stream_state["errors"])
+        if database_error:
+            errors.append(database_error)
+
+        overall_status = "healthy"
+        if errors:
+            overall_status = "degraded"
+        elif any(
+            service.get("effective_status", service.get("status")) not in {"healthy", "starting"}
+            for service in stream_state["services"]
+        ):
+            overall_status = "degraded"
+
         return {
-            "status": overview["status"],
+            "status": overall_status,
             "service": SERVICE_NAME,
-            "timestamp": overview["generated_at"],
-            "environment": overview["environment"],
-            "database_connected": not any(error.startswith("database:") for error in overview["errors"]),
-            "redis_connected": not any(error.startswith("redis:") for error in overview["errors"]),
-            "counts": overview["counts"],
-            "services": overview["services"],
+            "timestamp": _datetime_str(utcnow()),
+            "environment": self.settings.environment,
+            "database_connected": database_error is None,
+            "redis_connected": not any(error.startswith("redis:") for error in errors),
+            "counts": {},
+            "services": stream_state["services"],
+            "errors": errors,
         }
 
-    def _load_database_state(self) -> dict[str, Any]:
+    def _load_database_state(self, *, lightweight: bool = False) -> dict[str, Any]:
         errors: list[str] = []
         counts = {
             "strategies": 0,
@@ -1077,6 +1177,9 @@ class ControlPlaneRepository:
                 strategy_lookup = {strategy.id: strategy for strategy in strategies}
                 account_lookup = {account.id: account for account in broker_accounts}
 
+                session_start = current_eastern_day_start_utc(now)
+                session_end = current_eastern_day_end_utc(now)
+
                 counts["strategies"] = len(strategies)
                 counts["broker_accounts"] = len(broker_accounts)
                 counts["pending_intents"] = int(
@@ -1087,7 +1190,15 @@ class ControlPlaneRepository:
                     )
                     or 0
                 )
-                counts["recent_fills"] = int(session.scalar(select(func.count()).select_from(Fill)) or 0)
+                counts["recent_fills"] = int(
+                    session.scalar(
+                        select(func.count()).select_from(Fill).where(
+                            Fill.filled_at >= session_start,
+                            Fill.filled_at < session_end,
+                        )
+                    )
+                    or 0
+                )
                 counts["open_virtual_positions"] = int(
                     session.scalar(
                         select(func.count()).select_from(VirtualPosition).where(VirtualPosition.quantity > 0)
@@ -1107,49 +1218,47 @@ class ControlPlaneRepository:
                     or 0
                 )
 
-                latest_reconciliation_run = session.scalar(
-                    select(ReconciliationRun).order_by(desc(ReconciliationRun.started_at))
-                )
-                if latest_reconciliation_run is not None:
-                    latest_finding_rows = session.scalars(
-                        select(ReconciliationFinding)
-                        .where(ReconciliationFinding.reconciliation_run_id == latest_reconciliation_run.id)
-                        .order_by(
-                            desc(
-                                case(
-                                    (ReconciliationFinding.severity == "critical", 2),
-                                    (ReconciliationFinding.severity == "warning", 1),
-                                    else_=0,
-                                )
-                            ),
-                            desc(ReconciliationFinding.created_at),
-                        )
-                        .limit(20)
-                    ).all()
-                    counts["latest_reconciliation_findings"] = len(latest_finding_rows)
-                    reconciliation = {
-                        "latest_run": {
-                            "status": latest_reconciliation_run.status,
-                            "started_at": _datetime_str(latest_reconciliation_run.started_at),
-                            "completed_at": _datetime_str(latest_reconciliation_run.completed_at),
-                            "summary": latest_reconciliation_run.summary,
-                        },
-                        "findings": [
-                            {
-                                "severity": finding.severity,
-                                "finding_type": finding.finding_type,
-                                "symbol": finding.symbol or "",
-                                "title": str(finding.payload.get("title", finding.finding_type)),
-                                "created_at": _datetime_str(finding.created_at),
-                            }
-                            for finding in latest_finding_rows
-                            if not self._is_ui_hidden_symbol_any_account(finding.symbol)
-                        ],
-                    }
-                    counts["latest_reconciliation_findings"] = len(reconciliation["findings"])
-
-                session_start = current_eastern_day_start_utc(now)
-                session_end = current_eastern_day_end_utc(now)
+                if not lightweight:
+                    latest_reconciliation_run = session.scalar(
+                        select(ReconciliationRun).order_by(desc(ReconciliationRun.started_at))
+                    )
+                    if latest_reconciliation_run is not None:
+                        latest_finding_rows = session.scalars(
+                            select(ReconciliationFinding)
+                            .where(ReconciliationFinding.reconciliation_run_id == latest_reconciliation_run.id)
+                            .order_by(
+                                desc(
+                                    case(
+                                        (ReconciliationFinding.severity == "critical", 2),
+                                        (ReconciliationFinding.severity == "warning", 1),
+                                        else_=0,
+                                    )
+                                ),
+                                desc(ReconciliationFinding.created_at),
+                            )
+                            .limit(20)
+                        ).all()
+                        counts["latest_reconciliation_findings"] = len(latest_finding_rows)
+                        reconciliation = {
+                            "latest_run": {
+                                "status": latest_reconciliation_run.status,
+                                "started_at": _datetime_str(latest_reconciliation_run.started_at),
+                                "completed_at": _datetime_str(latest_reconciliation_run.completed_at),
+                                "summary": latest_reconciliation_run.summary,
+                            },
+                            "findings": [
+                                {
+                                    "severity": finding.severity,
+                                    "finding_type": finding.finding_type,
+                                    "symbol": finding.symbol or "",
+                                    "title": str(finding.payload.get("title", finding.finding_type)),
+                                    "created_at": _datetime_str(finding.created_at),
+                                }
+                                for finding in latest_finding_rows
+                                if not self._is_ui_hidden_symbol_any_account(finding.symbol)
+                            ],
+                        }
+                        counts["latest_reconciliation_findings"] = len(reconciliation["findings"])
 
                 for intent in session.scalars(
                     select(TradeIntent)
@@ -1226,9 +1335,14 @@ class ControlPlaneRepository:
                     )
 
                 for order in session.scalars(
-                    select(BrokerOrder).where(
-                        BrokerOrder.status.in_(["pending", "submitted", "accepted", "partially_filled"])
+                    select(BrokerOrder)
+                    .where(
+                        BrokerOrder.status.in_(["pending", "submitted", "accepted", "partially_filled"]),
+                        BrokerOrder.updated_at >= session_start,
+                        BrokerOrder.updated_at < session_end,
                     )
+                    .order_by(desc(BrokerOrder.updated_at))
+                    .limit(500)
                 ).all():
                     strategy = strategy_lookup.get(order.strategy_id)
                     account = account_lookup.get(order.broker_account_id)
@@ -1322,25 +1436,31 @@ class ControlPlaneRepository:
                     if not bar_rows:
                         bar_rows = list(
                             session.execute(
-                            text(
-                                """
-                                SELECT
-                                    strategy_code,
-                                    symbol,
-                                    decision_status,
-                                    decision_reason,
-                                    decision_path,
-                                    decision_score,
-                                    decision_score_details,
-                                    close_price,
-                                    bar_time
-                                FROM strategy_bar_history
-                                WHERE decision_status <> ''
-                                ORDER BY bar_time DESC
-                                LIMIT 2000
-                                """
-                            )
-                        ).mappings()
+                                text(
+                                    """
+                                    SELECT
+                                        strategy_code,
+                                        symbol,
+                                        decision_status,
+                                        decision_reason,
+                                        decision_path,
+                                        decision_score,
+                                        decision_score_details,
+                                        close_price,
+                                        bar_time
+                                    FROM strategy_bar_history
+                                    WHERE bar_time >= :session_start
+                                      AND bar_time < :session_end
+                                      AND decision_status <> ''
+                                    ORDER BY bar_time DESC
+                                    LIMIT 2000
+                                    """
+                                ),
+                                {
+                                    "session_start": session_start,
+                                    "session_end": session_end,
+                                },
+                            ).mappings()
                         )
                     for row in bar_rows:
                         recent_bar_decisions.append(
@@ -1671,15 +1791,7 @@ class ControlPlaneRepository:
         recent_intents: list[dict[str, Any]],
     ) -> dict[str, Any]:
         if self.legacy_client is None:
-            return {
-                "enabled": False,
-                "connected": False,
-                "fetched_at": None,
-                "scanner": {"confirmed_symbols": [], "count": 0},
-                "bots": {},
-                "divergence": self._empty_legacy_divergence(),
-                "errors": [],
-            }
+            return self._empty_legacy_shadow_data()
 
         cached = await self._get_cached_legacy_snapshot()
         divergence = self._build_legacy_divergence(
@@ -1690,6 +1802,17 @@ class ControlPlaneRepository:
         return {
             **cached,
             "divergence": divergence,
+        }
+
+    def _empty_legacy_shadow_data(self) -> dict[str, Any]:
+        return {
+            "enabled": False,
+            "connected": False,
+            "fetched_at": None,
+            "scanner": {"confirmed_symbols": [], "count": 0},
+            "bots": {},
+            "divergence": self._empty_legacy_divergence(),
+            "errors": [],
         }
 
     async def _get_cached_legacy_snapshot(self) -> dict[str, Any]:
@@ -1900,7 +2023,7 @@ def build_app(
 
     @app.get("/api/bots")
     async def bots() -> dict[str, Any]:
-        data = await app.state.repository.load_dashboard_data()
+        data = await app.state.repository.load_bot_dashboard_data()
         return {
             "bots": [
                 {
@@ -1961,6 +2084,7 @@ def build_app(
         redirect_to: str = "/scanner/dashboard",
     ) -> RedirectResponse:
         app.state.repository.add_scanner_blacklist_symbol(symbol, reason=reason)
+        await app.state.repository.invalidate_overview_cache()
         return RedirectResponse(url=redirect_to, status_code=303)
 
     @app.get("/scanner/blacklist/remove")
@@ -1969,6 +2093,7 @@ def build_app(
         redirect_to: str = "/scanner/dashboard",
     ) -> RedirectResponse:
         app.state.repository.remove_scanner_blacklist_symbol(symbol)
+        await app.state.repository.invalidate_overview_cache()
         return RedirectResponse(url=redirect_to, status_code=303)
 
     @app.get("/bot/symbol/stop")
@@ -2045,62 +2170,62 @@ def build_app(
 
     @app.get("/bot")
     async def bot_30s_status() -> dict[str, Any]:
-        data = await app.state.repository.load_dashboard_data()
+        data = await app.state.repository.load_bot_dashboard_data()
         return _build_bot_api_payload(data, "macd_30s")
 
     @app.get("/bot1m")
     async def bot_1m_status() -> dict[str, Any]:
-        data = await app.state.repository.load_dashboard_data()
+        data = await app.state.repository.load_bot_dashboard_data()
         return _build_bot_api_payload(data, "macd_1m")
 
     @app.get("/botprobe")
     async def bot_probe_status() -> dict[str, Any]:
-        data = await app.state.repository.load_dashboard_data()
+        data = await app.state.repository.load_bot_dashboard_data()
         return _build_bot_api_payload(data, "macd_30s_probe")
 
     @app.get("/botreclaim")
     async def bot_reclaim_status() -> dict[str, Any]:
-        data = await app.state.repository.load_dashboard_data()
+        data = await app.state.repository.load_bot_dashboard_data()
         return _build_bot_api_payload(data, "macd_30s_reclaim")
 
     @app.get("/tosbot")
     async def tos_bot_status() -> dict[str, Any]:
-        data = await app.state.repository.load_dashboard_data()
+        data = await app.state.repository.load_bot_dashboard_data()
         return _build_bot_api_payload(data, "tos")
 
     @app.get("/runnerbot")
     async def runner_bot_status() -> dict[str, Any]:
-        data = await app.state.repository.load_dashboard_data()
+        data = await app.state.repository.load_bot_dashboard_data()
         return _build_bot_api_payload(data, "runner")
 
     @app.get("/bot/30s", response_class=HTMLResponse)
     async def bot_30s_page() -> str:
-        data = await app.state.repository.load_dashboard_data()
+        data = await app.state.repository.load_bot_dashboard_data()
         return _render_bot_detail_page(data, "macd_30s")
 
     @app.get("/bot/30s-probe", response_class=HTMLResponse)
     async def bot_30s_probe_page() -> str:
-        data = await app.state.repository.load_dashboard_data()
+        data = await app.state.repository.load_bot_dashboard_data()
         return _render_bot_detail_page(data, "macd_30s_probe")
 
     @app.get("/bot/30s-reclaim", response_class=HTMLResponse)
     async def bot_30s_reclaim_page() -> str:
-        data = await app.state.repository.load_dashboard_data()
+        data = await app.state.repository.load_bot_dashboard_data()
         return _render_bot_detail_page(data, "macd_30s_reclaim")
 
     @app.get("/bot/1m", response_class=HTMLResponse)
     async def bot_1m_page() -> str:
-        data = await app.state.repository.load_dashboard_data()
+        data = await app.state.repository.load_bot_dashboard_data()
         return _render_bot_detail_page(data, "macd_1m")
 
     @app.get("/bot/tos", response_class=HTMLResponse)
     async def bot_tos_page() -> str:
-        data = await app.state.repository.load_dashboard_data()
+        data = await app.state.repository.load_bot_dashboard_data()
         return _render_bot_detail_page(data, "tos")
 
     @app.get("/bot/runner", response_class=HTMLResponse)
     async def bot_runner_page() -> str:
-        data = await app.state.repository.load_dashboard_data()
+        data = await app.state.repository.load_bot_dashboard_data()
         return _render_bot_detail_page(data, "runner")
 
     @app.get("/", response_class=HTMLResponse)
@@ -3230,9 +3355,17 @@ def _build_bot_listening_status(
     if not latest_market_data_at:
         latest_market_data_at = _datetime_str(market_data.get("latest_subscription_observed_at_raw"))
     latest_decision_at = str(recent_decisions[0].get("last_bar_at") or "") if recent_decisions else ""
+    latest_bot_tick_at = max((str(value or "") for value in dict(bot.get("last_tick_at", {}) or {}).values()), default="")
+    indicator_snapshots = list(bot.get("indicator_snapshots", []) or [])
+    latest_indicator_at = max(
+        (str(snapshot.get("last_bar_at") or "") for snapshot in indicator_snapshots if str(snapshot.get("last_bar_at") or "").strip()),
+        default="",
+    )
     latest_heartbeat_at = str(strategy_service.get("observed_at") or "")
 
     decision_age_seconds = _seconds_since_eastern_label(latest_decision_at)
+    bot_tick_age_seconds = _seconds_since_eastern_label(latest_bot_tick_at)
+    indicator_age_seconds = _seconds_since_eastern_label(latest_indicator_at)
     market_data_age_seconds = _seconds_since_eastern_label(latest_market_data_at)
     heartbeat_age_seconds = _seconds_since_eastern_label(latest_heartbeat_at)
 
@@ -3247,15 +3380,16 @@ def _build_bot_listening_status(
     state = "LISTENING"
     detail = "Bot is actively evaluating bars."
     color = "#5fff8d"
+    has_fresh_bot_activity = (
+        (decision_age_seconds is not None and decision_age_seconds <= 120)
+        or (bot_tick_age_seconds is not None and bot_tick_age_seconds <= 90)
+        or (indicator_age_seconds is not None and indicator_age_seconds <= 120)
+    )
 
     if service_status in {"stopping", "stopped", "inactive"} or service_raw_status in {"stopping", "stopped", "inactive"}:
         state = "STOPPED"
         detail = "Strategy engine is not running."
         color = "#ff6b6b"
-    elif active_session and heartbeat_age_seconds is not None and heartbeat_age_seconds > 90:
-        state = "STALE"
-        detail = "Strategy heartbeat is stale."
-        color = "#ffcc5b"
     elif active_session and market_data_age_seconds is not None and market_data_age_seconds > 90:
         state = "STALE"
         detail = "Market data feed looks stale."
@@ -3265,23 +3399,35 @@ def _build_bot_listening_status(
         detail = "Bot is up, but there are no active symbols to evaluate."
         color = "#98a6c8"
     elif active_session and decision_age_seconds is not None and decision_age_seconds > 120 and watchlist_count > 0:
-        state = "STALE"
-        detail = "Bot has symbols, but no fresh decision rows are being recorded."
-        color = "#ffcc5b"
+        if indicator_age_seconds is not None and indicator_age_seconds <= 120:
+            detail = "Bars are updating; Decision Tape is lagging behind."
+        else:
+            state = "STALE"
+            detail = "Bot has symbols, but no fresh decision rows are being recorded."
+            color = "#ffcc5b"
     elif not recent_decisions and active_session and watchlist_count > 0:
         state = "STALE"
         detail = "No decision rows are available for an active session."
         color = "#ffcc5b"
+    elif active_session and heartbeat_age_seconds is not None and heartbeat_age_seconds > 90:
+        if has_fresh_bot_activity:
+            detail = "Bot activity is fresh; strategy heartbeat is lagging."
+        else:
+            state = "STALE"
+            detail = "Strategy heartbeat is stale."
+            color = "#ffcc5b"
 
     return {
         "state": state,
         "detail": detail,
         "color": color,
         "latest_decision_at": latest_decision_at,
+        "latest_bot_tick_at": latest_bot_tick_at,
         "latest_market_data_at": latest_market_data_at,
         "latest_heartbeat_at": latest_heartbeat_at,
         "watchlist_count": watchlist_count,
         "position_count": position_count,
+        "tracked_bar_count": sum(int(value or 0) for value in dict(bot.get("bar_counts", {}) or {}).values()),
     }
 
 
@@ -3305,6 +3451,8 @@ def _build_bot_api_payload(data: dict[str, Any], strategy_code: str) -> dict[str
         "recent_orders": bot["recent_orders"],
         "recent_fills": bot["recent_fills"],
         "indicator_snapshots": bot["indicator_snapshots"],
+        "bar_counts": bot.get("bar_counts", {}),
+        "last_tick_at": bot.get("last_tick_at", {}),
         "tos_parity": bot["tos_parity"],
         "account_summary": _build_bot_account_summary(data, bot),
         "trade_log": _build_bot_decision_entries(recent_decisions),
@@ -3780,6 +3928,7 @@ def _render_bot_detail_page(data: dict[str, Any], strategy_code: str) -> str:
         return "<h1>Bot not initialized</h1>"
 
     meta = BOT_PAGE_META[strategy_code]
+    refresh_seconds = 30
     recent_decisions = _resolved_bot_recent_decisions(data, bot)
     listening_status = _build_bot_listening_status(data, bot, recent_decisions)
     recent_fills = [item for item in data["recent_fills"] if item["strategy_code"] == strategy_code]
@@ -3902,9 +4051,10 @@ def _render_bot_detail_page(data: dict[str, Any], strategy_code: str) -> str:
                 <div class="hero-grid">
                     <div class="hero-card"><span>State</span><strong style="color:{listening_status["color"]}">{escape(listening_status["state"])}</strong><small>{escape(listening_status["detail"])}</small></div>
                     <div class="hero-card"><span>Last Decision</span><strong>{escape(listening_status["latest_decision_at"] or "-")}</strong><small>{len(recent_decisions)} rows visible</small></div>
+                    <div class="hero-card"><span>Last Bot Tick</span><strong>{escape(listening_status["latest_bot_tick_at"] or "-")}</strong><small>Latest tick that reached this bot</small></div>
                     <div class="hero-card"><span>Last Market Data</span><strong>{escape(listening_status["latest_market_data_at"] or "-")}</strong><small>Snapshot / subscription freshness</small></div>
                     <div class="hero-card"><span>Last Strategy Heartbeat</span><strong>{escape(listening_status["latest_heartbeat_at"] or "-")}</strong><small>strategy-engine heartbeat</small></div>
-                    <div class="hero-card"><span>Tracked Symbols</span><strong>{listening_status["watchlist_count"]}</strong><small>Open positions: {listening_status["position_count"]}</small></div>
+                    <div class="hero-card"><span>Tracked Symbols</span><strong>{listening_status["watchlist_count"]}</strong><small>Open positions: {listening_status["position_count"]} · Bars cached: {listening_status["tracked_bar_count"]}</small></div>
                 </div>
             </section>"""
 
@@ -3913,7 +4063,7 @@ def _render_bot_detail_page(data: dict[str, Any], strategy_code: str) -> str:
 <head>
     <title>{meta["title"]}</title>
     <meta charset="utf-8">
-    <meta http-equiv="refresh" content="10">
+    <meta http-equiv="refresh" content="{refresh_seconds}">
     <style>
         :root {{
             --bg: #131a2b;

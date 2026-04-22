@@ -223,7 +223,7 @@ class BarBuilderManager:
                 on_bar_complete=self.on_bar_complete,
                 time_provider=self.time_provider,
             )
-            logger.info("[BAR] Created bar builder for %s (%ss bars)", ticker, self.interval_secs)
+            logger.debug("[BAR] Created bar builder for %s (%ss bars)", ticker, self.interval_secs)
         return self._builders[ticker]
 
     def on_trade(

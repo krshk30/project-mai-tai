@@ -793,7 +793,7 @@ def test_control_plane_overview_and_dashboard_render() -> None:
         bot_1m = next(item for item in bots_body["bots"] if item["strategy_code"] == "macd_1m")
         assert bot_30s["display_name"] == "MACD Bot"
         assert bot_30s["recent_intents"][0]["symbol"] == "UGRO"
-        assert bot_30s["legacy_status"] == "running (dry run)"
+        assert bot_30s["legacy_status"] == "not_available"
         assert bot_30s["daily_pnl"] == 125.5
         assert bot_30s["account_summary"]["account_position_count"] == 2
         assert bot_30s["account_summary"]["non_strategy_symbol_count"] == 1

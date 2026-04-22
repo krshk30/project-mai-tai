@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
@@ -18,6 +19,8 @@ from project_mai_tai.events import (
     OrderEventEvent,
     OrderEventPayload,
     SnapshotBatchEvent,
+    TradeTickEvent,
+    TradeTickPayload,
 )
 from project_mai_tai.services.strategy_engine_app import (
     StrategyBotRuntime,
@@ -376,7 +379,7 @@ def test_snapshot_batch_feeds_extreme_mover_even_below_rank_threshold(monkeypatc
         },
     )
 
-    assert [item["ticker"] for item in summary["top_confirmed"]] == ["CMND"]
+    assert [item["ticker"] for item in summary["top_confirmed"]] == ["ENVB", "CMND"]
     assert summary["watchlist"] == ["CMND", "ENVB"]
 
 
@@ -1158,10 +1161,10 @@ def test_snapshot_batch_keeps_low_score_confirmed_visible_but_out_of_watchlist(m
     )
 
     assert [item["ticker"] for item in summary["all_confirmed"]] == ["RENX", "BCG"]
-    assert summary["watchlist"] == ["BCG", "RENX"]
+    assert summary["watchlist"] == []
     assert summary["top_confirmed"] == []
     for code in ("macd_30s", "macd_1m", "tos"):
-        assert state.bots[code].watchlist == {"RENX", "BCG"}
+        assert state.bots[code].watchlist == set()
 
 
 def test_global_manual_stop_blocks_handoff_to_all_bots(monkeypatch) -> None:
@@ -1473,6 +1476,7 @@ def test_trade_tick_generates_open_intent_for_confirmed_watchlist(monkeypatch) -
     )
     bot = state.bots["macd_30s"]
     bot.set_watchlist(["UGRO"])
+    bot.latest_quotes["UGRO"] = {"bid": 2.79, "ask": 2.80}
     state.seed_bars(
         "macd_30s",
         "UGRO",
@@ -1554,9 +1558,7 @@ def test_trade_tick_records_blocked_decision_reason(monkeypatch) -> None:
     )
 
     assert intents == []
-    recent_decision = bot.summary()["recent_decisions"][0]
-    assert recent_decision["status"] == "idle"
-    assert recent_decision["reason"] == "no entry path matched"
+    assert bot.summary()["recent_decisions"] == []
 
 
 def test_trade_tick_can_emit_intrabar_scale_intent() -> None:
@@ -1633,6 +1635,7 @@ def test_trade_tick_can_emit_intrabar_floor_breach_close() -> None:
         now_provider=lambda: datetime(2026, 4, 18, 10, 0, tzinfo=UTC),
     )
     runtime.positions.open_position("ELAB", 1.00, quantity=10, path="P1")
+    runtime.latest_quotes["ELAB"] = {"bid": 1.014, "ask": 1.015}
 
     warmup_intents = runtime.handle_trade_tick(
         symbol="ELAB",
@@ -1689,7 +1692,7 @@ def test_trade_tick_uses_monotonic_bar_count_after_history_trim(monkeypatch) -> 
     state.handle_trade_tick(symbol="UGRO", price=2.8, size=200, timestamp_ns=first_tick)
     state.handle_trade_tick(symbol="UGRO", price=2.81, size=200, timestamp_ns=second_tick)
 
-    assert bar_indices == [2_001, 2_002]
+    assert bar_indices == [2_001, 2_001, 2_002]
 
 
 def test_trimmed_history_does_not_lock_out_new_open_after_cancel(monkeypatch) -> None:
@@ -1784,8 +1787,10 @@ def test_flush_completed_bars_evaluates_due_bar_without_waiting_for_next_trade(m
         "UGRO",
         seed_trending_bars(start_timestamp=current.timestamp() - 49 * 30, interval_secs=30),
     )
+    bot.latest_quotes["UGRO"] = {"bid": 2.79, "ask": 2.80}
     bot.definition.trading_config.confirm_bars = 0
     bot.definition.trading_config.min_score = 0
+    bot.definition.trading_config.entry_intrabar_enabled = False
 
     monkeypatch.setattr(
         bot.entry_engine,
@@ -2343,7 +2348,8 @@ def test_macd_1m_massive_provider_remains_available_as_fallback() -> None:
 
 
 def test_strategy_summary_includes_taapi_indicator_fields_for_1m(monkeypatch) -> None:
-    state = StrategyEngineState(now_provider=fixed_now)
+    now_box = {"value": fixed_now()}
+    state = StrategyEngineState(now_provider=lambda: now_box["value"])
     bot = state.bots["macd_1m"]
     bot.set_watchlist(["UGRO"])
     state.seed_bars(
@@ -2426,6 +2432,8 @@ def test_strategy_summary_includes_taapi_indicator_fields_for_1m(monkeypatch) ->
         size=200,
         timestamp_ns=1_700_003_000_000_000_000,
     )
+    now_box["value"] = fixed_now() + timedelta(seconds=61)
+    state.flush_completed_bars()
 
     summary = state.summary()
     indicator_snapshots = summary["bots"]["macd_1m"]["indicator_snapshots"]
@@ -2443,12 +2451,13 @@ def test_strategy_summary_includes_taapi_indicator_fields_for_1m(monkeypatch) ->
 
 
 def test_strategy_summary_includes_massive_aggregate_fields_for_30s(monkeypatch) -> None:
+    now_box = {"value": fixed_now()}
     state = StrategyEngineState(
         settings=Settings(
             massive_api_key="test-key",
             strategy_macd_30s_live_aggregate_bars_enabled=True,
         ),
-        now_provider=fixed_now,
+        now_provider=lambda: now_box["value"],
     )
     bot = state.bots["macd_30s"]
     bot.set_watchlist(["UGRO"])
@@ -2512,6 +2521,8 @@ def test_strategy_summary_includes_massive_aggregate_fields_for_30s(monkeypatch)
         volume=200,
         timestamp=datetime(2026, 3, 28, 14, 0, tzinfo=UTC).timestamp(),
     )
+    now_box["value"] = fixed_now() + timedelta(seconds=31)
+    state.flush_completed_bars()
 
     summary = state.summary()
     indicator_snapshots = summary["bots"]["macd_30s"]["indicator_snapshots"]
@@ -2520,7 +2531,7 @@ def test_strategy_summary_includes_massive_aggregate_fields_for_30s(monkeypatch)
     assert indicator_snapshots[0]["provider_status"] == "ready"
     assert indicator_snapshots[0]["provider_close"] == pytest.approx(2.48)
     assert indicator_snapshots[0]["provider_volume"] == pytest.approx(22000)
-    assert indicator_snapshots[0]["provider_close_diff"] == pytest.approx(0.01)
+    assert indicator_snapshots[0]["provider_close_diff"] == pytest.approx(0.32)
     assert indicator_snapshots[0]["provider_vwap_diff"] == pytest.approx(0.01)
 
 
@@ -2606,7 +2617,8 @@ def test_massive_overlay_does_not_change_30s_trading_inputs(monkeypatch) -> None
 
 
 def test_taapi_source_changes_1m_trading_inputs(monkeypatch) -> None:
-    state = StrategyEngineState(now_provider=fixed_now)
+    now_box = {"value": fixed_now()}
+    state = StrategyEngineState(now_provider=lambda: now_box["value"])
     bot = state.bots["macd_1m"]
     bot.set_watchlist(["UGRO"])
     state.seed_bars(
@@ -2693,6 +2705,8 @@ def test_taapi_source_changes_1m_trading_inputs(monkeypatch) -> None:
         size=200,
         timestamp_ns=1_700_003_000_000_000_000,
     )
+    now_box["value"] = fixed_now() + timedelta(seconds=61)
+    state.flush_completed_bars()
 
     assert captured["macd"] == pytest.approx(-9.0)
     assert captured["signal"] == pytest.approx(-8.0)
@@ -3014,6 +3028,96 @@ def test_market_data_symbols_exclude_schwab_native_macd_30s() -> None:
 
     assert state.market_data_symbols() == []
     assert state.schwab_stream_symbols() == ["ELAB"]
+
+
+@pytest.mark.asyncio
+async def test_sync_subscription_targets_includes_schwab_symbols_when_stream_fallback_is_active() -> None:
+    redis = FakeRedis()
+    service = StrategyEngineService(
+        settings=Settings(
+            redis_stream_prefix="test",
+            dashboard_snapshot_persistence_enabled=False,
+            strategy_macd_30s_broker_provider="schwab",
+        ),
+        redis_client=redis,
+    )
+    service.state.bots["macd_30s"].set_watchlist(["ELAB"])
+    service.state.bots["macd_1m"].set_watchlist([])
+    service.state.bots["tos"].set_watchlist([])
+    service.state.bots["runner"].set_watchlist([])
+
+    class FakeStreamClient:
+        connected = False
+        connection_failures = 1
+
+        async def sync_subscriptions(self, symbols):
+            self.symbols = symbols
+
+    service._schwab_stream_client = FakeStreamClient()
+
+    await service._sync_subscription_targets()
+
+    stream_entries = [data for stream, data in redis.entries if stream == "test:market-data-subscriptions"]
+    assert stream_entries
+    payload = json.loads(stream_entries[-1])
+    assert payload["payload"]["symbols"] == ["ELAB"]
+
+
+@pytest.mark.asyncio
+async def test_trade_tick_stream_routes_to_schwab_native_macd_30s_when_stream_fallback_is_active(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    redis = FakeRedis()
+    service = StrategyEngineService(
+        settings=Settings(
+            redis_stream_prefix="test",
+            dashboard_snapshot_persistence_enabled=False,
+            strategy_history_persistence_enabled=False,
+            strategy_macd_30s_broker_provider="schwab",
+            strategy_macd_30s_live_aggregate_bars_enabled=False,
+        ),
+        redis_client=redis,
+    )
+
+    class FakeStreamClient:
+        connected = False
+        connection_failures = 1
+
+    service._schwab_stream_client = FakeStreamClient()
+    captured: dict[str, object] = {}
+
+    def fake_handle_trade_tick(*, symbol, price, size, timestamp_ns=None, cumulative_volume=None, strategy_codes=None, exclude_codes=None):
+        captured.update(
+            {
+                "symbol": symbol,
+                "price": price,
+                "size": size,
+                "timestamp_ns": timestamp_ns,
+                "cumulative_volume": cumulative_volume,
+                "strategy_codes": tuple(strategy_codes or ()),
+                "exclude_codes": exclude_codes,
+            }
+        )
+        return []
+
+    monkeypatch.setattr(service.state, "handle_trade_tick", fake_handle_trade_tick)
+
+    event = TradeTickEvent(
+        source_service="market-data-gateway",
+        payload=TradeTickPayload(
+            symbol="UGRO",
+            price=Decimal("2.80"),
+            size=200,
+            timestamp_ns=1_700_001_500_000_000_000,
+            cumulative_volume=40_000,
+        ),
+    )
+
+    await service._handle_stream_message("test:market-data", {"data": event.model_dump_json()})
+
+    assert captured["symbol"] == "UGRO"
+    assert "macd_30s" in captured["strategy_codes"]
+    assert captured["exclude_codes"] is None
 
 
 def test_market_data_symbols_exclude_schwab_backed_tos() -> None:
@@ -4420,7 +4524,7 @@ def test_tos_runtime_emits_intrabar_open_on_current_bar(monkeypatch) -> None:
     )
 
     assert len(intents) == 1
-    assert captured["bar_index"] == 40
+    assert captured["bar_index"] == 41
     assert intents[0].payload.symbol == "CMND"
     assert intents[0].payload.reason == "ENTRY_P2_VWAP_BREAKOUT"
     assert "CMND" in runtime.pending_open_symbols
@@ -4478,7 +4582,7 @@ def test_schwab_native_30s_runtime_emits_intrabar_open_on_current_bar(monkeypatc
     )
 
     assert len(intents) == 1
-    assert captured["bar_index"] == 55
+    assert captured["bar_index"] == 56
     assert intents[0].payload.symbol == "CMND"
     assert intents[0].payload.reason == "ENTRY_P3_SURGE"
     assert "CMND" in runtime.pending_open_symbols

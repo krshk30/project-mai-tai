@@ -66,6 +66,16 @@ class SchwabStreamerClient:
         self._stop_event = asyncio.Event()
         self._send_lock = asyncio.Lock()
         self._task: asyncio.Task[None] | None = None
+        self._connected = False
+        self._connection_failures = 0
+
+    @property
+    def connected(self) -> bool:
+        return self._connected
+
+    @property
+    def connection_failures(self) -> int:
+        return self._connection_failures
 
     async def start(
         self,
@@ -84,6 +94,7 @@ class SchwabStreamerClient:
         self._stop_event.set()
         ws = self._ws
         self._ws = None
+        self._connected = False
         if ws is not None:
             try:
                 await ws.close()
@@ -225,6 +236,15 @@ class SchwabStreamerClient:
                 )
                 self._ws = websocket
                 await self._login(websocket, self._credentials)
+                if self._connection_failures > 0:
+                    logger.info(
+                        "Schwab streamer connected after %s consecutive failure(s)",
+                        self._connection_failures,
+                    )
+                else:
+                    logger.info("Schwab streamer connected")
+                self._connected = True
+                self._connection_failures = 0
                 await self._apply_subscription_delta(force_resubscribe=True)
 
                 while not self._stop_event.is_set():
@@ -233,10 +253,23 @@ class SchwabStreamerClient:
             except asyncio.CancelledError:
                 raise
             except Exception:
+                self._connected = False
+                self._connection_failures += 1
                 if not self._stop_event.is_set():
-                    logger.exception("Schwab streamer connection loop failed")
+                    if self._connection_failures <= 5:
+                        logger.warning(
+                            "Schwab streamer connection loop failed (attempt %s)",
+                            self._connection_failures,
+                            exc_info=True,
+                        )
+                    else:
+                        logger.exception(
+                            "Schwab streamer connection loop failed (attempt %s)",
+                            self._connection_failures,
+                        )
             finally:
                 self._ws = None
+                self._connected = False
                 self._subscribed_symbols.clear()
                 if websocket is not None:
                     try:
