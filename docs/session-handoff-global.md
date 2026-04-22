@@ -1243,3 +1243,97 @@ Deployment state for this section:
 - no VPS deploy
 - no restart
 - change is only on the branch / PR until explicitly merged and deployed
+
+## 2026-04-22 PR #13 Merged, Deployed, And Live Env Recovered
+
+This section records the actual merge/deploy that followed the local-only notes
+above.
+
+GitHub merge:
+
+- PR [#13](https://github.com/krshk30/project-mai-tai/pull/13) was merged into
+  `main`
+- merged `main` commit:
+  - `5b0e77f15e03b8b3e3e716bc313ab43c2edbb59b`
+- merged scope:
+  - default runtime is `macd_30s` only unless non-30s bots are explicitly
+    enabled by env
+  - scanner score/rank remains visible in momentum-confirmed UI only
+  - bot handoff remains unranked from full confirmed scanner state
+  - `P3_SURGE` is tightened via:
+    - `p3_allow_momentum_override = False`
+    - `p3_entry_stoch_k_cap = 85.0`
+
+Initial VPS deploy:
+
+- VPS repo:
+  - `/home/trader/project-mai-tai`
+- the repo had an untracked `tmp_tv_session_probe/` directory, so the normal
+  deploy helper refused a clean deploy
+- deployment was completed manually from synced GitHub `main`:
+  - `git checkout main`
+  - `git merge --ff-only refs/remotes/origin/main`
+  - `sudo MAI_TAI_RUN_MIGRATIONS=0 bash ops/bootstrap/08_install_runtime.sh /home/trader/project-mai-tai`
+  - `sudo systemctl restart project-mai-tai-strategy.service`
+- first successful post-merge strategy restart:
+  - `2026-04-22 22:00:29 UTC`
+
+Critical incident during follow-up env cleanup:
+
+- the live env file `/etc/project-mai-tai/project-mai-tai.env` was accidentally
+  truncated while trying to force only the 30-second bot on the VPS
+- after that truncation, a restart at:
+  - `2026-04-22 22:01:55 UTC`
+  brought the strategy up with no bots:
+  - `strategy bot config | macd_30s=False reclaim=False macd_1m=False tos=False runner=False qty=10 bots=[]`
+- this was not a code regression in PR `#13`; it was a bad live env state
+
+Recovery:
+
+- the env file was reconstructed from the still-running service environment,
+  using the OMS process as the recovery source:
+  - `/proc/274832/environ`
+- the live strategy enable flags were then forced to the intended production
+  state:
+  - `MAI_TAI_STRATEGY_MACD_30S_ENABLED=true`
+  - `MAI_TAI_STRATEGY_MACD_30S_RECLAIM_ENABLED=false`
+  - `MAI_TAI_STRATEGY_MACD_30S_RETEST_ENABLED=false`
+  - `MAI_TAI_STRATEGY_MACD_30S_PROBE_ENABLED=false`
+  - `MAI_TAI_STRATEGY_MACD_1M_ENABLED=false`
+  - `MAI_TAI_STRATEGY_TOS_ENABLED=false`
+  - `MAI_TAI_STRATEGY_RUNNER_ENABLED=false`
+- the corrected env was reinstalled and both services were restarted
+
+Final live restart after recovery:
+
+- strategy:
+  - `2026-04-22 22:05:13 UTC`
+- control plane:
+  - `2026-04-22 22:05:14 UTC`
+
+Verified live state after recovery:
+
+- strategy log shows the intended production config:
+  - `strategy bot config | macd_30s=True reclaim=False macd_1m=False tos=False runner=False qty=10 bots=['macd_30s']`
+- control plane is listening on:
+  - `127.0.0.1:8100`
+  not `127.0.0.1:8000`
+- live `GET /api/bots` on `127.0.0.1:8100` shows only `macd_30s`
+- live `/health` on `127.0.0.1:8100` shows:
+  - `strategy-engine = healthy`
+  - `control-plane = degraded` only because the reconciler still reports
+    `cutover_confidence=30`, `total_findings=2`, `critical_findings=2`
+- per current operating assumptions, that reconciler degradation is tolerated
+  for now because the known mismatch exceptions remain:
+  - `CYN`
+  - `CANF`
+
+Current intended production model after this recovery:
+
+- only the Schwab-connected `macd_30s` bot should be live
+- scanner confirmation should hand off directly to the 30-second bot without
+  score/rank gating
+- scanner score remains visible only as informational context in the momentum
+  confirmed view
+- manual bot stop and global scanner stop remain the runtime/operator controls
+  for suppressing names
