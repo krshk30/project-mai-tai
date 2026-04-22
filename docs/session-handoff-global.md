@@ -1472,3 +1472,31 @@ Live verification after restart:
     from the restart window (`status=stopping`, `watchlist_size=5`)
   - the bot API was already healthy on the new process, so treat that as
     heartbeat freshness lag rather than a failed deploy
+
+## 2026-04-22 Morning Validation Automation Added
+
+User requested a proactive tomorrow-morning readiness check because the live
+environment behaved inconsistently earlier in the day.
+
+Automation created:
+
+- thread heartbeat automation:
+  - `4AM Mai Tai Check`
+- cadence:
+  - daily at approximately `4:10 AM` America/New_York
+- purpose:
+  - validate the overnight reset state
+  - confirm pages are blank/cleared for the new session as expected
+  - confirm control plane and strategy services are healthy
+  - confirm public HTTP/HTTPS is reachable
+  - confirm only the Schwab-backed `macd_30s` bot is active
+  - confirm scanner-to-bot handoff is behaving as designed
+  - report anything stale, broken, or inconsistent back into this thread
+
+Operational intent:
+
+- this automation is meant to catch the exact class of issues seen today:
+  - stale morning UI/runtime state
+  - broken public HTTP routing
+  - bot enablement drift
+  - scanner handoff drift
