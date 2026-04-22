@@ -2518,7 +2518,7 @@ class StrategyEngineState:
             for stock in self.confirmed_scanner.get_all_confirmed()
             if str(stock.get("ticker", "")).upper() not in blocked
         ]
-        self.current_confirmed = list(self.all_confirmed[:5])
+        self.current_confirmed = self._ranked_scanner_confirmed_view(limit=5)
         tracked_snapshot_symbols = {
             str(stock.get("ticker", "")).upper()
             for stock in self.all_confirmed
@@ -2801,6 +2801,18 @@ class StrategyEngineState:
             and str(item.get("ticker", "")).upper() not in self.global_manual_stop_symbols
         ]
         self._resync_bot_watchlists_from_current_confirmed()
+
+    def _ranked_scanner_confirmed_view(self, *, limit: int = 5) -> list[dict[str, object]]:
+        ranked_confirmed = [
+            dict(item)
+            for item in self.confirmed_scanner.get_ranked_confirmed(
+                min_change_pct=0,
+                min_score=0,
+            )
+            if str(item.get("ticker", "")).strip()
+            and str(item.get("ticker", "")).upper() not in self.global_manual_stop_symbols
+        ]
+        return ranked_confirmed[:limit]
 
     def apply_global_manual_stop_symbols(self, symbols: Iterable[str] | None) -> None:
         self.global_manual_stop_symbols = {
@@ -4313,7 +4325,7 @@ class StrategyEngineService:
 
         self.state.seed_confirmed_candidates(seeded)
         self.state.all_confirmed = self.state.confirmed_scanner.get_all_confirmed()
-        visible_confirmed = list(self.state.all_confirmed[:5])
+        visible_confirmed = self.state._ranked_scanner_confirmed_view(limit=5)
         if not visible_confirmed:
             visible_confirmed = list(self.state.all_confirmed)
         self.state.restore_confirmed_runtime_view(

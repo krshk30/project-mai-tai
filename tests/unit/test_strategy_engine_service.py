@@ -379,7 +379,7 @@ def test_snapshot_batch_hands_confirmed_symbols_to_bots_without_rank_threshold(m
         },
     )
 
-    assert [item["ticker"] for item in summary["top_confirmed"]] == ["CMND", "ENVB"]
+    assert [item["ticker"] for item in summary["top_confirmed"]] == ["ENVB", "CMND"]
     assert summary["watchlist"] == ["CMND", "ENVB"]
 
 
@@ -773,7 +773,14 @@ def test_snapshot_batch_applies_reclaim_specific_excluded_symbols(monkeypatch) -
 
 
 def test_snapshot_batch_preserves_low_score_confirmed_without_feeding_bots(monkeypatch) -> None:
-    state = StrategyEngineState(now_provider=fixed_now)
+    state = StrategyEngineState(
+        settings=Settings(
+            strategy_macd_1m_enabled=True,
+            strategy_tos_enabled=True,
+            strategy_runner_enabled=True,
+        ),
+        now_provider=fixed_now,
+    )
     state.confirmed_scanner._confirmed = [
         {
             "ticker": "UGRO",
@@ -839,12 +846,12 @@ def test_snapshot_batch_preserves_low_score_confirmed_without_feeding_bots(monke
     )
 
     assert [item["ticker"] for item in summary["all_confirmed"]] == ["UGRO", "SBET"]
-    assert [item["ticker"] for item in summary["top_confirmed"]] == ["UGRO"]
-    assert summary["watchlist"] == ["UGRO"]
+    assert [item["ticker"] for item in summary["top_confirmed"]] == ["UGRO", "SBET"]
+    assert summary["watchlist"] == ["SBET", "UGRO"]
     assert state.confirmed_scanner.get_all_confirmed()[0]["rank_score"] == 100.0
     assert state.confirmed_scanner.get_all_confirmed()[1]["rank_score"] == 0.0
     for code in ("macd_30s", "macd_1m", "tos", "runner"):
-        assert state.bots[code].watchlist == {"UGRO"}
+        assert state.bots[code].watchlist == {"UGRO", "SBET"}
 
 
 def test_alert_engine_state_persists_and_restores_from_dashboard_snapshot() -> None:
@@ -1021,7 +1028,14 @@ def test_alert_engine_restore_skips_prior_session_alert_tape() -> None:
 
 
 def test_snapshot_batch_keeps_runner_aligned_to_visible_confirmed_names(monkeypatch) -> None:
-    state = StrategyEngineState(now_provider=fixed_now)
+    state = StrategyEngineState(
+        settings=Settings(
+            strategy_macd_1m_enabled=True,
+            strategy_tos_enabled=True,
+            strategy_runner_enabled=True,
+        ),
+        now_provider=fixed_now,
+    )
     visible_confirmed = [
         {
             "ticker": "ELAB",
@@ -1084,25 +1098,28 @@ def test_snapshot_batch_keeps_runner_aligned_to_visible_confirmed_names(monkeypa
         "get_all_confirmed",
         lambda: list(hidden_confirmed),
     )
-    monkeypatch.setattr(
-        state.confirmed_scanner,
-        "get_top_n",
-        lambda *args, **kwargs: list(visible_confirmed),
-    )
+    monkeypatch.setattr(state.confirmed_scanner, "get_ranked_confirmed", lambda *args, **kwargs: list(visible_confirmed))
 
     summary = state.process_snapshot_batch(
         [snapshot_from_payload(make_snapshot_payload(symbol="ELAB", price=2.78, volume=7_200_000))],
         {"ELAB": ReferenceData(shares_outstanding=541_500, avg_daily_volume=600_000)},
     )
 
-    assert summary["watchlist"] == ["ELAB"]
+    assert summary["watchlist"] == ["ABCD", "ELAB", "MNOP", "WXYZ"]
     for code in ("macd_30s", "macd_1m", "tos", "runner"):
-        assert state.bots[code].watchlist == {"ELAB"}
+        assert state.bots[code].watchlist == {"ELAB", "ABCD", "WXYZ", "MNOP"}
     assert state.bots["runner"]._candidates == {"ELAB": visible_confirmed[0]}
 
 
-def test_snapshot_batch_releases_removed_symbols_from_all_bot_watchlists(monkeypatch) -> None:
-    state = StrategyEngineState(now_provider=fixed_now)
+def test_snapshot_batch_retains_removed_symbols_in_bot_watchlists_for_session_continuity(monkeypatch) -> None:
+    state = StrategyEngineState(
+        settings=Settings(
+            strategy_macd_1m_enabled=True,
+            strategy_tos_enabled=True,
+            strategy_runner_enabled=True,
+        ),
+        now_provider=fixed_now,
+    )
     first_confirmed = [
         {"ticker": "ELAB", "rank_score": 80.0, "change_pct": 40.0, "confirmed_at": "09:45:00 AM ET"},
         {"ticker": "UGRO", "rank_score": 70.0, "change_pct": 32.0, "confirmed_at": "09:50:00 AM ET"},
@@ -1124,11 +1141,7 @@ def test_snapshot_batch_releases_removed_symbols_from_all_bot_watchlists(monkeyp
         "get_all_confirmed",
         lambda: list(current_all["value"]),
     )
-    monkeypatch.setattr(
-        state.confirmed_scanner,
-        "get_top_n",
-        lambda *args, **kwargs: list(current_top["value"]),
-    )
+    monkeypatch.setattr(state.confirmed_scanner, "get_ranked_confirmed", lambda *args, **kwargs: list(current_top["value"]))
 
     state.process_snapshot_batch(
         [
@@ -1158,7 +1171,13 @@ def test_snapshot_batch_releases_removed_symbols_from_all_bot_watchlists(monkeyp
 
 
 def test_snapshot_batch_keeps_low_score_confirmed_visible_but_out_of_watchlist(monkeypatch) -> None:
-    state = StrategyEngineState(now_provider=fixed_now)
+    state = StrategyEngineState(
+        settings=Settings(
+            strategy_macd_1m_enabled=True,
+            strategy_tos_enabled=True,
+        ),
+        now_provider=fixed_now,
+    )
     low_score_confirmed = [
         {"ticker": "RENX", "rank_score": 32.0, "change_pct": 34.0, "confirmed_at": "07:31:05 AM ET"},
         {"ticker": "BCG", "rank_score": 28.0, "change_pct": 57.0, "confirmed_at": "07:10:00 AM ET"},
@@ -1171,7 +1190,7 @@ def test_snapshot_batch_keeps_low_score_confirmed_visible_but_out_of_watchlist(m
         lambda alerts, reference_data, snapshot_lookup: [],
     )
     monkeypatch.setattr(state.confirmed_scanner, "get_all_confirmed", lambda: list(low_score_confirmed))
-    monkeypatch.setattr(state.confirmed_scanner, "get_top_n", lambda *args, **kwargs: [])
+    monkeypatch.setattr(state.confirmed_scanner, "get_ranked_confirmed", lambda *args, **kwargs: list(low_score_confirmed))
 
     summary = state.process_snapshot_batch(
         [
@@ -1185,10 +1204,10 @@ def test_snapshot_batch_keeps_low_score_confirmed_visible_but_out_of_watchlist(m
     )
 
     assert [item["ticker"] for item in summary["all_confirmed"]] == ["RENX", "BCG"]
-    assert summary["watchlist"] == []
-    assert summary["top_confirmed"] == []
+    assert summary["watchlist"] == ["BCG", "RENX"]
+    assert [item["ticker"] for item in summary["top_confirmed"]] == ["RENX", "BCG"]
     for code in ("macd_30s", "macd_1m", "tos"):
-        assert state.bots[code].watchlist == set()
+        assert state.bots[code].watchlist == {"RENX", "BCG"}
 
 
 def test_global_manual_stop_blocks_handoff_to_all_bots(monkeypatch) -> None:
@@ -1390,7 +1409,14 @@ def test_state_ignores_order_updates_for_unknown_strategy_code() -> None:
 
 
 def test_snapshot_batch_keeps_faded_confirmed_symbols_in_bot_watchlists_for_session_continuity() -> None:
-    state = StrategyEngineState(now_provider=fixed_now)
+    state = StrategyEngineState(
+        settings=Settings(
+            strategy_macd_1m_enabled=True,
+            strategy_tos_enabled=True,
+            strategy_runner_enabled=True,
+        ),
+        now_provider=fixed_now,
+    )
     state.confirmed_scanner.seed_confirmed_candidates(
         [
             {
@@ -3417,6 +3443,7 @@ def test_snapshot_batch_does_not_push_polygon_quotes_into_schwab_native_macd_30s
         settings=Settings(
             strategy_macd_30s_enabled=True,
             strategy_macd_30s_broker_provider="schwab",
+            strategy_macd_1m_enabled=True,
         ),
         now_provider=fixed_now,
     )
@@ -3474,7 +3501,11 @@ def test_snapshot_batch_does_not_push_polygon_quotes_into_schwab_native_macd_30s
 
 def test_snapshot_batch_does_not_push_polygon_quotes_into_schwab_backed_tos(monkeypatch) -> None:
     state = StrategyEngineState(
-        settings=Settings(strategy_tos_broker_provider="schwab"),
+        settings=Settings(
+            strategy_macd_1m_enabled=True,
+            strategy_tos_enabled=True,
+            strategy_tos_broker_provider="schwab",
+        ),
         now_provider=fixed_now,
     )
     state.confirmed_scanner._confirmed = [
@@ -3702,13 +3733,19 @@ def test_seeded_confirmed_candidates_are_revalidated_into_fresh_top_confirmed(mo
     )
 
     service = StrategyEngineService(
-        settings=Settings(redis_stream_prefix="test", dashboard_snapshot_persistence_enabled=True),
+        settings=Settings(
+            redis_stream_prefix="test",
+            dashboard_snapshot_persistence_enabled=True,
+            strategy_macd_1m_enabled=True,
+            strategy_tos_enabled=True,
+            strategy_runner_enabled=True,
+        ),
         redis_client=FakeRedis(),
         session_factory=session_factory,
     )
     service._seed_confirmed_candidates_from_dashboard_snapshot()
 
-    assert [item["ticker"] for item in service.state.all_confirmed] == ["ELAB", "UGRO"]
+    assert [item["ticker"] for item in service.state.all_confirmed] == ["UGRO", "ELAB"]
     assert [item["ticker"] for item in service.state.current_confirmed] == ["ELAB", "UGRO"]
     for code in ("macd_30s", "macd_1m", "tos", "runner"):
         assert service.state.bots[code].watchlist == {"ELAB", "UGRO"}
@@ -3729,7 +3766,7 @@ def test_seeded_confirmed_candidates_are_revalidated_into_fresh_top_confirmed(mo
     assert [item["ticker"] for item in service.state.confirmed_scanner.get_all_confirmed()] == ["UGRO", "ELAB"]
     assert [item["ticker"] for item in summary["all_confirmed"]] == ["UGRO", "ELAB"]
     assert summary["watchlist"] == ["ELAB", "UGRO"]
-    assert [item["ticker"] for item in summary["top_confirmed"]] == ["ELAB"]
+    assert [item["ticker"] for item in summary["top_confirmed"]] == ["ELAB", "UGRO"]
     assert summary["top_confirmed"][0]["price"] == 3.90
     assert service.state.confirmed_scanner.get_all_confirmed()[0]["volume"] == 1_100_000
 
@@ -3823,7 +3860,13 @@ def test_seeded_confirmed_candidates_restore_watchlist_from_all_confirmed_when_t
         )
 
         service = StrategyEngineService(
-            settings=Settings(redis_stream_prefix="test", dashboard_snapshot_persistence_enabled=True),
+            settings=Settings(
+                redis_stream_prefix="test",
+                dashboard_snapshot_persistence_enabled=True,
+                strategy_macd_1m_enabled=True,
+                strategy_tos_enabled=True,
+                strategy_runner_enabled=True,
+            ),
             redis_client=FakeRedis(),
             session_factory=session_factory,
         )

@@ -86,7 +86,7 @@ class Settings(BaseSettings):
     strategy_macd_30s_live_aggregate_stale_after_seconds: int = 3
     strategy_macd_30s_massive_indicator_overlay_enabled: bool = True
     strategy_macd_30s_probe_enabled: bool = False
-    strategy_macd_30s_reclaim_enabled: bool = True
+    strategy_macd_30s_reclaim_enabled: bool = False
     strategy_macd_30s_retest_enabled: bool = False
     strategy_macd_30s_default_quantity: int = 100
     strategy_macd_30s_reclaim_excluded_symbols: str = "JEM,CYCN,BFRG,UCAR,BBGI"
@@ -102,9 +102,9 @@ class Settings(BaseSettings):
     scanner_feed_retention_drop_cooldown_minutes: int = 30
     scanner_feed_retention_drop_max_5m_range_pct: float = 1.0
     scanner_feed_retention_drop_max_5m_volume_abs: float = 75_000.0
-    strategy_macd_1m_enabled: bool = True
-    strategy_tos_enabled: bool = True
-    strategy_runner_enabled: bool = True
+    strategy_macd_1m_enabled: bool = False
+    strategy_tos_enabled: bool = False
+    strategy_runner_enabled: bool = False
     strategy_macd_1m_massive_indicator_overlay_enabled: bool = False
     strategy_macd_1m_taapi_indicator_source_enabled: bool = False
     strategy_macd_30s_common_config_overrides_json: str = ""

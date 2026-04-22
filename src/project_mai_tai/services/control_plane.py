@@ -589,12 +589,20 @@ class ControlPlaneRepository:
             if str(symbol).upper() not in blacklisted_symbols
             and str(symbol).upper() not in global_manual_stop_symbols
         ]
+        top_confirmed_tickers = {
+            str(item.get("ticker", "")).upper()
+            for item in strategy_runtime.get("top_confirmed", [])
+            if isinstance(item, dict)
+            and str(item.get("ticker", "")).upper() not in blacklisted_symbols
+            and str(item.get("ticker", "")).upper() not in global_manual_stop_symbols
+        }
         all_confirmed = [
             self._normalize_confirmed_row(
                 index=index,
                 item=item,
                 bot_states=bot_states,
                 live_market_row=live_market_rows.get(str(item.get("ticker", "")).upper()),
+                top_confirmed_tickers=top_confirmed_tickers,
             )
             for index, item in enumerate(strategy_runtime.get("all_confirmed", []), start=1)
             if str(item.get("ticker", "")).upper() not in blacklisted_symbols
@@ -606,6 +614,7 @@ class ControlPlaneRepository:
                 item=item,
                 bot_states=bot_states,
                 live_market_row=live_market_rows.get(str(item.get("ticker", "")).upper()),
+                top_confirmed_tickers=top_confirmed_tickers,
             )
             for index, item in enumerate(strategy_runtime.get("top_confirmed", []), start=1)
             if str(item.get("ticker", "")).upper() not in blacklisted_symbols
@@ -634,12 +643,20 @@ class ControlPlaneRepository:
                         restored_at_dt.astimezone(UTC) >= current_scanner_session_start_utc()
                     )
             if isinstance(restored_rows, list) and restored_rows and restored_at_is_current:
+                restored_top_confirmed_tickers = {
+                    str(item.get("ticker", "")).upper()
+                    for item in restored_top_rows
+                    if isinstance(item, dict)
+                    and str(item.get("ticker", "")).upper() not in blacklisted_symbols
+                    and str(item.get("ticker", "")).upper() not in global_manual_stop_symbols
+                }
                 all_confirmed = [
                     self._normalize_confirmed_row(
                         index=index,
                         item=item,
                         bot_states=bot_states,
                         live_market_row=live_market_rows.get(str(item.get("ticker", "")).upper()),
+                        top_confirmed_tickers=restored_top_confirmed_tickers,
                     )
                     for index, item in enumerate(restored_rows, start=1)
                     if isinstance(item, dict)
@@ -653,6 +670,7 @@ class ControlPlaneRepository:
                         item=item,
                         bot_states=bot_states,
                         live_market_row=live_market_rows.get(str(item.get("ticker", "")).upper()),
+                        top_confirmed_tickers=restored_top_confirmed_tickers,
                     )
                     for index, item in enumerate(restored_top_rows, start=1)
                     if isinstance(item, dict)
@@ -669,6 +687,34 @@ class ControlPlaneRepository:
                     top_confirmed_source = "restored"
                     top_confirmed_snapshot_at = restored_at
 
+        all_confirmed_by_ticker = {
+            str(item.get("ticker", "")).upper(): item
+            for item in all_confirmed
+            if str(item.get("ticker", "")).strip()
+        }
+        bot_handoff: list[dict[str, Any]] = []
+        for handoff_rank, symbol in enumerate(watchlist, start=1):
+            ticker = str(symbol).upper()
+            item = dict(all_confirmed_by_ticker.get(ticker, {}))
+            watched_by = [
+                strategy_code
+                for strategy_code, bot in bot_states.items()
+                if ticker and ticker in {str(candidate).upper() for candidate in bot.get("watchlist", [])}
+            ]
+            item.setdefault("ticker", ticker)
+            item.setdefault("confirmation_path", "")
+            item.setdefault("rank_score", 0.0)
+            item.setdefault("confirmed_at", "")
+            item.setdefault("price", 0.0)
+            item.setdefault("change_pct", 0.0)
+            item.setdefault("volume", 0.0)
+            item.setdefault("rvol", 0.0)
+            item["handoff_rank"] = handoff_rank
+            item["watched_by"] = watched_by
+            item["is_handed_to_bot"] = True
+            item["is_top5"] = ticker in {str(row.get("ticker", "")).upper() for row in top_confirmed}
+            bot_handoff.append(item)
+
         legacy_confirmed = [
             str(symbol).upper()
             for symbol in legacy_shadow.get("scanner", {}).get("confirmed_symbols", [])
@@ -684,6 +730,8 @@ class ControlPlaneRepository:
             "top_confirmed": top_confirmed,
             "top_confirmed_source": top_confirmed_source,
             "top_confirmed_snapshot_at": top_confirmed_snapshot_at,
+            "bot_handoff_count": len(bot_handoff),
+            "bot_handoff": bot_handoff,
             "five_pillars": [
                 item
                 for item in strategy_runtime.get("five_pillars", [])
@@ -763,6 +811,7 @@ class ControlPlaneRepository:
         item: dict[str, Any],
         bot_states: dict[str, Any],
         live_market_row: dict[str, Any] | None = None,
+        top_confirmed_tickers: set[str] | None = None,
     ) -> dict[str, Any]:
         ticker = str(item.get("ticker", "")).upper()
         watched_by = [
@@ -854,7 +903,8 @@ class ControlPlaneRepository:
             "ai_shadow_headline_basis": str(merged_item.get("ai_shadow_headline_basis", "")),
             "ai_shadow_positive_phrases": list(merged_item.get("ai_shadow_positive_phrases", []) or []),
             "watched_by": watched_by,
-            "is_top5": bool(watched_by),
+            "is_top5": ticker in (top_confirmed_tickers or set()),
+            "is_handed_to_bot": bool(watched_by),
         }
 
     def _build_bot_views(
@@ -2311,6 +2361,7 @@ def _render_dashboard(data: dict[str, Any]) -> str:
     refresh_seconds = 5
     scanner = data["scanner"]
     bot_views = data["bots"]
+    bot_nav_html = _build_bot_nav_html([str(bot["strategy_code"]) for bot in bot_views])
     active_service_count = len(data["services"])
     healthy_service_count = sum(1 for service in data["services"] if service["status"] == "healthy")
     starting_service_count = sum(1 for service in data["services"] if service["status"] == "starting")
@@ -2347,8 +2398,23 @@ def _render_dashboard(data: dict[str, Any]) -> str:
           <td>{escape(", ".join(item["watched_by"]) or "-")}</td>
         </tr>
         """
-        for item in scanner["all_confirmed"]
+        for item in scanner["top_confirmed"]
     ) or _empty_row(12, "No confirmed candidates yet")
+    handoff_rows = "".join(
+        f"""
+        <tr>
+          <td>{item["handoff_rank"]}</td>
+          <td><strong>{escape(item["ticker"])}</strong></td>
+          <td>{escape(", ".join(item["watched_by"]) or "-")}</td>
+          <td>{"yes" if item.get("is_top5") else "no"}</td>
+          <td>{item["rank_score"]:.0f}</td>
+          <td>{item["price"]:.2f}</td>
+          <td>{item["change_pct"]:+.1f}%</td>
+          <td>{escape(item["confirmation_path"] or "-")}</td>
+        </tr>
+        """
+        for item in scanner["bot_handoff"]
+    ) or _empty_row(8, "No symbols currently handed to bots")
 
     bot_cards = "".join(
         f"""
@@ -2942,13 +3008,13 @@ def _render_dashboard(data: dict[str, Any]) -> str:
                 <p>{escape(health_basis_summary)}</p>
               </div>
               <div class="card">
-                <div class="label">Confirmed</div>
+                <div class="label">Ranked Scanner</div>
                 <div class="value">{scanner["top_confirmed_count"]}</div>
-                <p>{escape(scanner["status"])} scanner state</p>
+                <p>Score stays visible here only</p>
               </div>
               <div class="card">
-                <div class="label">Watchlist</div>
-                <div class="value">{scanner["watchlist_count"]}</div>
+                <div class="label">Handed To Bots</div>
+                <div class="value">{scanner["bot_handoff_count"]}</div>
                 <p>{escape(", ".join(scanner["watchlist"][:4]) or "No active symbols")}</p>
               </div>
               <div class="card">
@@ -2984,20 +3050,7 @@ def _render_dashboard(data: dict[str, Any]) -> str:
             </div>
           </section>
 
-          <nav class="nav">
-            <a href="/scanner/dashboard">Scanner Page</a>
-            <a href="/bot/30s">30s Bot</a>
-            <a href="/bot/30s-probe">30s Probe</a>
-            <a href="/bot/30s-reclaim">30s Reclaim</a>
-            <a href="/bot/1m">1m Bot</a>
-            <a href="/bot/tos">TOS Bot</a>
-            <a href="/bot/runner">Runner Bot</a>
-            <a href="#scanner">Scanner</a>
-            <a href="#bots">Bots</a>
-            <a href="#reconciliation">Reconciliation</a>
-            <a href="#orders">Orders</a>
-            <a href="#positions">Positions</a>
-          </nav>
+          <nav class="nav">{bot_nav_html}</nav>
 
           <details class="fold-panel" open>
             <summary>
@@ -3017,7 +3070,8 @@ def _render_dashboard(data: dict[str, Any]) -> str:
                   </div>
                   <div class="muted-box">
                     <p><strong>Scanner Status:</strong> {escape(scanner["status"])}</p>
-                    <p><strong>Top Confirmed Count:</strong> {scanner["top_confirmed_count"]}</p>
+                    <p><strong>Ranked Scanner Count:</strong> {scanner["top_confirmed_count"]}</p>
+                    <p><strong>Handed To Bots:</strong> {scanner["bot_handoff_count"]}</p>
                     <p><strong>Active Subscriptions:</strong> {scanner["active_subscription_symbols"]}</p>
                     <p><strong>Latest Snapshot:</strong> {escape(snapshot_summary)}</p>
                     <p><strong>Latest Fill:</strong> {escape(latest_fill_summary)}</p>
@@ -3041,8 +3095,8 @@ def _render_dashboard(data: dict[str, Any]) -> str:
               <section class="section">
                 <div class="section-header">
                   <div>
-                    <h2>Confirmed Candidates</h2>
-                    <div class="sub">Top confirmed names promoted into the shared bot feed.</div>
+                    <h2>Ranked Scanner View</h2>
+                    <div class="sub">Momentum-confirmed names ranked for visibility only. Score does not gate bot handoff.</div>
                   </div>
                 </div>
                 <div class="table-card">
@@ -3054,6 +3108,23 @@ def _render_dashboard(data: dict[str, Any]) -> str:
                   </table>
                 </div>
               </section>
+
+              <section class="section">
+                <div class="section-header">
+                  <div>
+                    <h2>Handed To Bots</h2>
+                    <div class="sub">Current symbols flowing from the momentum scanner into active bot watchlists.</div>
+                  </div>
+                </div>
+                <div class="table-card">
+                  <table>
+                    <thead>
+                      <tr><th>#</th><th>Ticker</th><th>Feed To</th><th>Ranked View</th><th>Score</th><th>Price</th><th>Change</th><th>Path</th></tr>
+                    </thead>
+                    <tbody>{handoff_rows}</tbody>
+                  </table>
+                </div>
+              </section>
             </div>
           </details>
 
@@ -3061,7 +3132,7 @@ def _render_dashboard(data: dict[str, Any]) -> str:
             <div class="section-header">
               <div>
                 <h2>Bot Deck</h2>
-                <div class="sub">Legacy Shadow: Legacy-style bot visibility for 30s, 1m, TOS, and Runner.</div>
+                <div class="sub">Active strategy runtimes configured in this environment.</div>
               </div>
             </div>
             <div class="bot-grid">{bot_cards}</div>
@@ -3335,6 +3406,27 @@ BOT_PAGE_META = {
 }
 
 
+def _visible_bot_page_meta(available_codes: list[str] | None = None) -> list[tuple[str, dict[str, str]]]:
+    ordered_codes = available_codes or list(BOT_PAGE_META.keys())
+    return [(code, BOT_PAGE_META[code]) for code in ordered_codes if code in BOT_PAGE_META]
+
+
+def _build_bot_nav_html(available_codes: list[str]) -> str:
+    links = ["<a href=\"/scanner/dashboard\">Scanner Page</a>"]
+    for code, meta in _visible_bot_page_meta(available_codes):
+        links.append(f'<a href="{meta["path"]}">{escape(str(meta.get("nav_title", meta["title"])).replace("Mai Tai ", ""))}</a>')
+    links.extend(
+        [
+            '<a href="#scanner">Scanner</a>',
+            '<a href="#bots">Bots</a>',
+            '<a href="#reconciliation">Reconciliation</a>',
+            '<a href="#orders">Orders</a>',
+            '<a href="#positions">Positions</a>',
+        ]
+    )
+    return "".join(links)
+
+
 def _format_interval_label(interval_secs: object) -> str:
     value = int(interval_secs or 0)
     if value == 30:
@@ -3519,6 +3611,7 @@ def _build_bot_api_payload(data: dict[str, Any], strategy_code: str) -> dict[str
 
 def _render_scanner_dashboard(data: dict[str, Any]) -> str:
     scanner = data["scanner"]
+    bot_views = data["bots"]
     latest_snapshot = data["market_data"]["latest_snapshot_batch"] or {}
     services = {service["service_name"]: service for service in data["services"]}
     market_data_service = services.get("market-data-gateway", {})
@@ -3539,7 +3632,16 @@ def _render_scanner_dashboard(data: dict[str, Any]) -> str:
     pillar_rows = _render_scanner_stock_rows(scanner["five_pillars"][:20], subscription_symbols)
     gainer_rows = _render_scanner_stock_rows(scanner["top_gainers"][:20], subscription_symbols)
     alert_rows = _render_alert_rows(scanner["recent_alerts"])
-    confirmed_sub = "Full confirmed universe for the current session. TOP5 and bot badges mark the active ranked subset."
+    confirmed_sub = (
+        "Full confirmed universe for the current session. TOP5 marks the ranked scanner slice; "
+        "BOT marks symbols currently handed to active bot watchlists."
+    )
+    scanner_nav_links = ['<a href="/scanner/dashboard" class="active">Mai Tai Scanner</a>', '<a href="/">Mai Tai Control Plane</a>']
+    for code, meta in _visible_bot_page_meta([str(bot["strategy_code"]) for bot in bot_views]):
+        scanner_nav_links.append(
+            f'<a href="{meta["path"]}">{escape(str(meta.get("nav_title", meta["title"])))}</a>'
+        )
+    scanner_nav_html = "".join(scanner_nav_links)
 
     warmup = scanner["alert_warmup"]
     websocket_status = market_data_service.get("status", "unknown")
@@ -3826,6 +3928,10 @@ def _render_scanner_dashboard(data: dict[str, Any]) -> str:
                     <strong>{scanner["all_confirmed_count"]}</strong>
                 </div>
                 <div class="metric-card">
+                    <span>Handed</span>
+                    <strong>{scanner["bot_handoff_count"]}</strong>
+                </div>
+                <div class="metric-card">
                     <span>Pillars</span>
                     <strong>{scanner["five_pillars_count"]}</strong>
                 </div>
@@ -3849,16 +3955,7 @@ def _render_scanner_dashboard(data: dict[str, Any]) -> str:
 
             <div class="side-section">
                 <div class="side-label">Navigation</div>
-                <div class="nav-strip">
-                    <a href="/scanner/dashboard" class="active">Mai Tai Scanner</a>
-                    <a href="/">Mai Tai Control Plane</a>
-                    <a href="/bot/30s">Mai Tai 30s Core</a>
-                    <a href="/bot/30s-probe">Mai Tai 30s Probe</a>
-                    <a href="/bot/30s-reclaim">Mai Tai 30s Reclaim</a>
-                    <a href="/bot/1m">Mai Tai 1m</a>
-                    <a href="/bot/tos">Mai Tai TOS</a>
-                    <a href="/bot/runner">Mai Tai Runner</a>
-                </div>
+                <div class="nav-strip">{scanner_nav_html}</div>
             </div>
 
             <div class="side-section">
@@ -3874,6 +3971,7 @@ def _render_scanner_dashboard(data: dict[str, Any]) -> str:
                 <div class="side-label">Overview</div>
                 <div class="stack">
                     <div class="line-item"><strong>Status:</strong> {escape(scanner["status"])}</div>
+                    <div class="line-item"><strong>Handed To Bots:</strong> {scanner["bot_handoff_count"]}</div>
                     <div class="line-item"><strong>Ref Tickers:</strong> {latest_snapshot.get("reference_count", 0):,}</div>
                     <div class="line-item"><strong>WebSocket:</strong> {escape(websocket_label)} ({displayed_subscription_count} subs)</div>
                     <div class="line-item"><strong>Feed Note:</strong> {escape(feed_status_note or "No feed note")}</div>
@@ -4044,6 +4142,7 @@ def _render_bot_detail_page(data: dict[str, Any], strategy_code: str) -> str:
     )
     retention_html = _build_retention_status_html(retention_rows, tracked_symbols=set(active_symbols))
     current_position = bot["positions"][0] if strategy_code == "runner" and bot["positions"] else None
+    available_codes = [str(item["strategy_code"]) for item in data.get("bots", [])]
     runner_status_panel = ""
     if strategy_code == "runner":
         if current_position:
@@ -4486,7 +4585,7 @@ def _render_bot_detail_page(data: dict[str, Any], strategy_code: str) -> str:
                     </div>
                     <span class="count accent">{escape(bot["display_name"])}</span>
                 </div>
-                <div class="panel-copy">{_render_page_nav(strategy_code)}</div>
+                <div class="panel-copy">{_render_page_nav(strategy_code, available_codes)}</div>
             </section>
 
             {listening_panel}
@@ -4580,9 +4679,9 @@ def _render_bot_detail_page(data: dict[str, Any], strategy_code: str) -> str:
 </html>"""
 
 
-def _render_page_nav(active: str) -> str:
+def _render_page_nav(active: str, available_codes: list[str]) -> str:
     links: list[str] = []
-    for code, meta in BOT_PAGE_META.items():
+    for code, meta in _visible_bot_page_meta(available_codes):
         links.append(
             f'<a href="{meta["path"]}" class="{"active" if code == active else ""}">{escape(str(meta.get("nav_title", meta["title"])).replace(" Bot", ""))}</a>'
         )
@@ -5651,8 +5750,13 @@ def _render_scanner_confirmed_rows(
             if item.get("is_top5")
             else ""
         )
+        bot_badge = (
+            ' <span style="background:#00c853;color:#001b07;font-size:9px;padding:1px 4px;border-radius:3px;font-weight:bold;">BOT</span>'
+            if item.get("is_handed_to_bot")
+            else ""
+        )
         change_pct = _as_float(item.get("change_pct"))
-        row_bg = "#0a1a0a" if item.get("is_top5") else "transparent"
+        row_bg = "#0a1a0a" if item.get("is_handed_to_bot") else "transparent"
         news_icon_html = _render_confirmed_news_icon(item)
         catalyst_html = _render_confirmed_catalyst_cell(item)
         control_html = _render_confirmed_manual_stop_action(
@@ -5662,7 +5766,7 @@ def _render_scanner_confirmed_rows(
         rendered.append(
             f"""<tr style="background:{row_bg};">
             <td style="text-align:center">{index}</td>
-            <td><strong>{escape(ticker)}</strong>{live_badge}{top5_badge}</td>
+            <td><strong>{escape(ticker)}</strong>{live_badge}{top5_badge}{bot_badge}</td>
             <td style="color:#ffd600;font-weight:bold;">{_as_float(item.get("rank_score")):.0f}</td>
             <td style="color:#00ff41;">{escape(str(item.get("confirmed_at", item.get("first_spike_time", ""))))}</td>
             <td style="text-align:right">{_fmt_money(_as_float(item.get("entry_price")))}</td>
