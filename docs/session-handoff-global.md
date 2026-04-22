@@ -1449,3 +1449,26 @@ New canonical handoff rule after this change:
 - scanner score/rank is informational only
 - bot watchlist cap no longer blocks confirmed names from reaching the bot
 - trade decisions are owned by the bot runtime after handoff
+
+Deployment for this section:
+
+- committed on `main` as:
+  - `b4b5b441df584fdcae7258fe79eeb5e5b5f9a83a`
+- GitHub `main` updated
+- VPS repo fast-forwarded to the same SHA
+- live strategy service restarted at:
+  - `2026-04-22 23:48:44 UTC`
+
+Live verification after restart:
+
+- strategy log shows the intended bot config:
+  - `macd_30s=True reclaim=False macd_1m=False tos=False runner=False`
+- live `GET /api/bots` on `127.0.0.1:8100` remained healthy after restart
+- current live bot state at verification time showed:
+  - `watchlist=["GNLN"]`
+  - `watchlist_count=1`
+- one note:
+  - `/health` still briefly showed a stale strategy-engine heartbeat snapshot
+    from the restart window (`status=stopping`, `watchlist_size=5`)
+  - the bot API was already healthy on the new process, so treat that as
+    heartbeat freshness lag rather than a failed deploy
