@@ -2802,9 +2802,9 @@ class StrategyEngineState:
         self.all_confirmed = list(self.current_confirmed)
         handoff_symbols = [str(stock["ticker"]).upper() for stock in self.current_confirmed]
         for code, bot in self.bots.items():
-            bot.set_watchlist(self._watchlist_for_bot(code, handoff_symbols))
             if hasattr(bot, "set_manual_stop_symbols"):
                 bot.set_manual_stop_symbols(self._manual_stop_symbols_for_bot(code))
+            bot.set_watchlist(self._watchlist_for_bot(code, handoff_symbols))
             if hasattr(bot, "set_entry_blocked_symbols"):
                 bot.set_entry_blocked_symbols(())
             if code == "runner":
@@ -2987,6 +2987,9 @@ class StrategyEngineState:
 
     def _watchlist_for_bot(self, code: str, watchlist: Sequence[str]) -> list[str]:
         normalized = [str(symbol).upper() for symbol in watchlist if str(symbol).strip()]
+        blocked = self._manual_stop_symbols_for_bot(code)
+        if blocked:
+            normalized = [symbol for symbol in normalized if symbol not in blocked]
         if code != "macd_30s_reclaim" or not self.reclaim_excluded_symbols:
             return normalized
         return [
@@ -3319,6 +3322,7 @@ class StrategyEngineService:
         self._restore_alert_engine_state_from_dashboard_snapshot()
         self._seed_confirmed_candidates_from_dashboard_snapshot()
         self._restore_runtime_state_from_database()
+        self._preload_manual_stop_state()
         await self._prefill_alert_history_from_snapshot_batches()
         if self._schwab_stream_client is not None:
             await self._schwab_stream_client.start(
@@ -3497,8 +3501,7 @@ class StrategyEngineService:
                 )
                 for item in event.payload.reference_data
             }
-            self.state.apply_global_manual_stop_symbols(self._load_global_manual_stop_symbols())
-            self.state.apply_manual_stop_symbols(self._load_manual_stop_symbols())
+            self._preload_manual_stop_state()
             summary = self.state.process_snapshot_batch(
                 snapshots,
                 reference,
@@ -4069,7 +4072,15 @@ class StrategyEngineService:
         if not poll_symbols:
             return 0
 
-        quotes = await self._schwab_quote_poll_adapter.fetch_quotes(poll_symbols)
+        fetch_quotes = getattr(self._schwab_quote_poll_adapter, "fetch_quotes", None)
+        if not callable(fetch_quotes):
+            self.logger.error(
+                "Schwab quote poll adapter %s does not support fetch_quotes; skipping stale-symbol fallback",
+                type(self._schwab_quote_poll_adapter).__name__,
+            )
+            return 0
+
+        quotes = await fetch_quotes(poll_symbols)
         intent_count = 0
         for symbol in poll_symbols:
             self._schwab_symbol_last_quote_poll_at[symbol] = now
@@ -4902,6 +4913,10 @@ class StrategyEngineService:
         return {
             str(symbol).upper() for symbol in payload_symbols if str(symbol).strip()
         }
+
+    def _preload_manual_stop_state(self) -> None:
+        self.state.apply_global_manual_stop_symbols(self._load_global_manual_stop_symbols())
+        self.state.apply_manual_stop_symbols(self._load_manual_stop_symbols())
 
 
 def snapshot_from_payload(payload: MarketSnapshotPayload) -> MarketSnapshot:

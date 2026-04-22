@@ -1255,6 +1255,66 @@ def test_manual_stop_update_removes_symbol_from_live_watchlist_immediately() -> 
     assert "WBUY" in state.bots["macd_30s"].watchlist
 
 
+def test_restore_confirmed_runtime_view_keeps_manual_stops_out_of_watchlist() -> None:
+    state = StrategyEngineState(now_provider=fixed_now)
+    state.apply_manual_stop_symbols({"macd_30s": {"AGPU"}})
+
+    state.restore_confirmed_runtime_view(
+        [
+            {"ticker": "AGPU", "rank_score": 80.0, "change_pct": 40.0, "confirmed_at": "09:45:00 AM ET"},
+            {"ticker": "WBUY", "rank_score": 70.0, "change_pct": 32.0, "confirmed_at": "09:50:00 AM ET"},
+        ]
+    )
+
+    assert "AGPU" in state.bots["macd_30s"].manual_stop_symbols
+    assert "AGPU" not in state.bots["macd_30s"].watchlist
+    assert "WBUY" in state.bots["macd_30s"].watchlist
+
+
+def test_service_preloads_manual_stops_before_post_restart_trading() -> None:
+    session_factory = build_test_session_factory()
+    with session_factory() as session:
+        session.add(
+            DashboardSnapshot(
+                snapshot_type="bot_manual_stop_symbols",
+                payload={"bots": {"macd_30s": ["AGPU"]}},
+                created_at=datetime(2026, 4, 22, 13, 47, 24, tzinfo=UTC),
+            )
+        )
+        session.commit()
+
+    service = StrategyEngineService(
+        settings=Settings(
+            redis_url="redis://localhost:6379/0",
+            strategy_macd_30s_enabled=True,
+            strategy_macd_1m_enabled=False,
+            strategy_tos_enabled=False,
+            strategy_runner_enabled=False,
+            strategy_macd_30s_broker_provider="schwab",
+            strategy_macd_30s_probe_enabled=False,
+            strategy_macd_30s_reclaim_enabled=False,
+            strategy_macd_30s_retest_enabled=False,
+        ),
+        redis_client=FakeRedis(),
+        session_factory=session_factory,
+        now_provider=lambda: datetime(2026, 4, 22, 13, 49, 0, tzinfo=UTC),
+    )
+
+    service.state.restore_confirmed_runtime_view(
+        [
+            {"ticker": "AGPU", "rank_score": 80.0, "change_pct": 40.0, "confirmed_at": "09:45:00 AM ET"},
+            {"ticker": "WBUY", "rank_score": 70.0, "change_pct": 32.0, "confirmed_at": "09:50:00 AM ET"},
+        ]
+    )
+    assert "AGPU" in service.state.bots["macd_30s"].watchlist
+
+    service._preload_manual_stop_state()
+
+    assert "AGPU" in service.state.bots["macd_30s"].manual_stop_symbols
+    assert "AGPU" not in service.state.bots["macd_30s"].watchlist
+    assert "WBUY" in service.state.bots["macd_30s"].watchlist
+
+
 def test_state_ignores_order_updates_for_unknown_strategy_code() -> None:
     state = StrategyEngineState(now_provider=fixed_now)
 
@@ -3269,6 +3329,36 @@ async def test_service_uses_fallback_quotes_for_stale_schwab_open_positions() ->
     assert runtime.latest_quotes["ENVB"] == {"bid": 4.2, "ask": 4.22}
     assert published[0].payload.intent_type == "scale"
     assert published[0].payload.symbol == "ENVB"
+
+
+@pytest.mark.asyncio
+async def test_service_skips_stale_quote_poll_when_adapter_lacks_fetch_quotes() -> None:
+    settings = Settings(
+        strategy_macd_30s_broker_provider="schwab",
+        redis_stream_prefix="test",
+        dashboard_snapshot_persistence_enabled=False,
+        strategy_history_persistence_enabled=False,
+        schwab_stream_symbol_stale_after_seconds=1.0,
+        schwab_stream_symbol_quote_poll_interval_seconds=0.5,
+        schwab_stream_symbol_resubscribe_interval_seconds=1.0,
+    )
+    service = StrategyEngineService(settings=settings, redis_client=FakeRedis())
+    runtime = service.state.bots["macd_30s"]
+    runtime.positions.open_position("ENVB", 4.0, quantity=10, path="ENTRY")
+    old = datetime.now(UTC) - timedelta(seconds=10)
+    service._schwab_symbol_last_stream_trade_at["ENVB"] = old
+    service._schwab_symbol_last_stream_quote_at["ENVB"] = old
+
+    class FakeStreamClient:
+        async def force_resubscribe(self) -> None:
+            return None
+
+    service._schwab_stream_client = FakeStreamClient()
+    service._schwab_quote_poll_adapter = object()
+
+    intent_count = await service._monitor_schwab_symbol_health()
+
+    assert intent_count == 0
 
 
 def test_snapshot_batch_does_not_push_polygon_quotes_into_schwab_native_macd_30s(monkeypatch) -> None:

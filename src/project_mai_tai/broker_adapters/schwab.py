@@ -253,6 +253,63 @@ class SchwabBrokerAdapter:
             )
         return snapshots
 
+    async def fetch_quotes(
+        self,
+        symbols: list[str] | tuple[str, ...] | set[str],
+    ) -> dict[str, dict[str, float | None]]:
+        normalized = sorted({str(symbol).upper() for symbol in symbols if str(symbol).strip()})
+        if not normalized:
+            return {}
+
+        try:
+            status_code, _headers, response = await self._authorized_request_json(
+                "GET",
+                (
+                    "/marketdata/v1/quotes?"
+                    f"symbols={quote(','.join(normalized), safe='')}&fields=quote"
+                ),
+            )
+        except RuntimeError:
+            logger.exception("failed fetching Schwab quotes for %s", ",".join(normalized))
+            return {}
+
+        if status_code >= 400:
+            logger.warning(
+                "failed fetching Schwab quotes for %s: %s",
+                ",".join(normalized),
+                self._extract_error_reason(response),
+            )
+            return {}
+
+        if not isinstance(response, dict):
+            return {}
+
+        quotes: dict[str, dict[str, float | None]] = {}
+        for symbol in normalized:
+            payload = response.get(symbol)
+            if not isinstance(payload, dict):
+                continue
+            quote_payload = payload.get("quote")
+            if isinstance(quote_payload, dict):
+                payload = quote_payload
+            bid_price = self._float_or_none(
+                payload.get("bidPrice") or payload.get("bid") or payload.get("bid_price")
+            )
+            ask_price = self._float_or_none(
+                payload.get("askPrice") or payload.get("ask") or payload.get("ask_price")
+            )
+            last_price = self._float_or_none(
+                payload.get("lastPrice") or payload.get("last") or payload.get("last_price")
+            )
+            if bid_price is None and ask_price is None and last_price is None:
+                continue
+            quotes[symbol] = {
+                "bid_price": bid_price,
+                "ask_price": ask_price,
+                "last_price": last_price,
+            }
+        return quotes
+
     async def fetch_order_update(self, request: OrderRequest) -> ExecutionReport | None:
         account = self.accounts_by_name.get(request.broker_account_name)
         if account is None:
@@ -765,6 +822,12 @@ class SchwabBrokerAdapter:
             return Decimal(str(value))
         except (InvalidOperation, TypeError):
             return None
+
+    def _float_or_none(self, value: object) -> float | None:
+        decimal_value = self._decimal_or_none(value)
+        if decimal_value is None:
+            return None
+        return float(decimal_value)
 
     def _decode_json(self, raw: str) -> object:
         if not raw:
