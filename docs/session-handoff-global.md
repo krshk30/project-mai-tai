@@ -670,86 +670,119 @@ Recommended next step in a new chat:
 - review the minimal branch instead of the large backup branch
 - keep VPS untouched unless a fresh critical live bug appears
 
-## 2026-04-22 Main Deploy + Manual Stop Follow-Up
+## 2026-04-22 Final State After Manual-Stop Runtime Safety Merge
 
 Git / deploy status:
 
-- minimal stabilization branch was fast-forwarded into `main`
-- GitHub `main` and VPS were aligned to:
-  - `c127538cb83a66eb24288295b76fba9ba4a128af`
-- VPS was reset cleanly to `origin/main` and both services restarted:
-  - `project-mai-tai-strategy.service`
-  - `project-mai-tai-control.service`
+- the final manual-stop runtime safety fix was merged to `main` in:
+  - commit `e64f86228b32550e61f7eaae3989368f5a3e5c91`
+- local `main`, GitHub `main`, and VPS `HEAD` were verified aligned to that same SHA
+- PR status:
+  - [PR #12](https://github.com/krshk30/project-mai-tai/pull/12) merged
+  - [PR #11](https://github.com/krshk30/project-mai-tai/pull/11) merged earlier
+  - [PR #10](https://github.com/krshk30/project-mai-tai/pull/10) remains closed as backup snapshot only
 
-Important after-main observations:
+What was proved live:
 
-- after deploy, `/health` and `/bot/30s` were healthy
-- current-session bot activity depends on whether there are active tracked symbols
-- empty `Feed States` is expected while feed retention is disabled
+- the user was correct: `AGPU` really did open a fresh post-stop trade
+- it was not just a stale label or old open position
+- direct DB evidence showed:
+  - final stop around `2026-04-22 18:47:24 UTC`
+  - fresh `AGPU` open intent/order around `18:49:34 UTC`
+  - path/reason was `ENTRY_P3_SURGE`
 
-Manual stop bug discovered live:
+Actual root causes found:
 
-- stopping a symbol from `/bot/30s` updated the DB/UI immediately
-- but the running strategy service did not apply the stop immediately
-- result:
-  - symbol could appear in `Manual Stops`
-  - still remain in the live bot watchlist
-  - and could still trade until restart / later refresh
+- manual stops were not preloaded early enough after strategy restarts
+- stopped symbols could be reintroduced into the `macd_30s` watchlist during restore/reseed
+- a separate restart bug was also present:
+  - `_monitor_schwab_symbol_health()` called `fetch_quotes()` on `SchwabBrokerAdapter`
+  - `SchwabBrokerAdapter` did not implement `fetch_quotes`
+  - this could restart the strategy service and make stop behavior feel inconsistent
 
-Root cause:
+Code merged in PR #12:
 
-- control-plane stop/resume routes only persisted snapshot state
-- strategy runtime only reloaded manual stop state on startup or snapshot processing
-- there was no direct live runtime-control event for manual stop updates
+- [schwab.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/src/project_mai_tai/broker_adapters/schwab.py)
+  - added `SchwabBrokerAdapter.fetch_quotes(...)`
+- [strategy_engine_app.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/src/project_mai_tai/services/strategy_engine_app.py)
+  - preload manual stops at startup before post-restart trading resumes
+  - filter manual-stopped symbols out of restored watchlists
+  - apply manual stops before watchlist restore in `restore_confirmed_runtime_view(...)`
+  - guard stale-symbol quote polling so missing `fetch_quotes` no longer crashes the strategy loop
+- [test_strategy_engine_service.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/tests/unit/test_strategy_engine_service.py)
+  - regression tests added for:
+    - manual-stop restore safety
+    - manual-stop preload before post-restart trading
+    - missing-`fetch_quotes` stale-poll safety
 
-Fix applied:
+Validation completed:
 
-- added `manual_stop_update` event in
-  - [events.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/src/project_mai_tai/events.py)
-- control-plane now publishes a live runtime-control event on:
-  - `/bot/symbol/stop`
-  - `/bot/symbol/resume`
-  - `/scanner/symbol/stop`
-  - `/scanner/symbol/resume`
-- strategy runtime now consumes `manual_stop_update` directly and mutates in-memory stop state immediately
-- strategy runtime republishes strategy-state snapshot after applying the update
+- targeted `pytest` slice for the stop/restart/quote-poll tests passed locally
+- `ruff` passed on the changed files
+- after VPS update to `origin/main`, live `/api/bots` showed:
+  - `macd_30s.watchlist = []`
+  - `manual_stop_symbols = ["AGPU", "AKAN", "ELPW", "GP", "TORO", "WBUY"]`
+  - `positions = []`
 
-Live verification:
+Interpretation of current live bot state:
 
-- re-stopping `AGPU` after the fix caused the live runtime watchlist to drop it immediately
-- this closed the actual trading bug where a manually stopped symbol could still be traded
+- paused names are no longer in the live `macd_30s` watchlist
+- empty `Feed States` remains expected because feed retention is disabled
+- if a stopped symbol appears on screen again, distinguish:
+  - real open/pending position visibility
+  - versus watchlist/live-symbol rendering bug
+- as of the final verification in this session, the backend state was correct
 
-Second UI bug discovered:
+GitHub / workflow note:
 
-- even after the live runtime stop fix, manually stopped symbols still appeared under `Live Symbols`
-- root cause:
-  - bot page built `Live Symbols` from positions/pending/watchlist
-  - watchlist entries were not excluding `manual_stop_symbols`
+- code sync is clean:
+  - local `main` == GitHub `main` == VPS `HEAD` at `e64f862`
+- GitHub still showed failing `validate` / red `X` workflow notifications around merge time
+- this is a CI/workflow cleanliness issue, not a code-sync issue
 
-UI fix applied:
+Local-only changes intentionally left out:
 
-- bot-page rendering now excludes manually stopped symbols from `Live Symbols`
-- they still appear correctly under `Manual Stops`
-- exception:
-  - if a symbol has a real open or pending position, it can still appear for operator visibility
-
-Live verification after UI fix:
-
-- `AGPU` no longer appears in `Live Symbols`
-- `AGPU` appears only under `Manual Stops`
-
-Important current state:
-
-- local repo is now ahead of GitHub/main/VPS again by the manual-stop follow-up fix
-- if a future chat is asked to fully sync local/GitHub/VPS again, include:
-  - `events.py`
-  - `control_plane.py`
-  - `strategy_engine_app.py`
-  - updated handoff log
+- [active-market-verification-todo.md](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/docs/active-market-verification-todo.md)
+- [live-market-restart-runbook.md](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/docs/live-market-restart-runbook.md)
+- local `data/history/*.csv`
 
 Recommended starting point for next chat:
 
 - read this handoff file first
-- assume:
-  - main/VPS are aligned at `c127538`
-  - manual-stop follow-up exists locally but may still need Git/GitHub sync if not yet committed/pushed
+- assume the live manual-stop runtime fix is already merged and deployed
+- assume local/GitHub/VPS code are synced at `e64f862`
+- if anything still looks wrong on screen, debug it as either:
+  - UI freshness / rendering
+  - or a brand-new live runtime bug
+
+## 2026-04-22 Schwab Native 30s Confirmation Toggle
+
+Scope of this change:
+
+- scanner focus remains the same:
+  - live focus is still `macd_30s`
+  - live broker path is still Schwab-native
+  - other bots should remain disabled in the live env unless explicitly re-enabled later
+
+Config change requested in this session:
+
+- file changed:
+  - [trading_config.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/src/project_mai_tai/strategy_core/trading_config.py)
+- in `make_30s_schwab_native_variant(...)`:
+  - `schwab_native_use_confirmation` flipped from `False` to `True`
+  - `entry_intrabar_enabled` flipped from `True` to `False`
+
+Intent of the change:
+
+- require confirmation on the Schwab-native `macd_30s` path
+- disable intrabar entry handling instead of trying to carve out only selected paths such as `P4` / `P5`
+
+Local validation completed:
+
+- direct config smoke check confirmed:
+  - `entry_intrabar_enabled = False`
+  - `schwab_native_use_confirmation = True`
+
+Deployment note for this session:
+
+- requested live action is a strategy-service restart only after the updated `main` is pushed and deployed to the VPS

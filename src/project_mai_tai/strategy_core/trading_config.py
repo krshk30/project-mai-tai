@@ -335,8 +335,8 @@ class TradingConfig:
                 "use_ema9_max_dist": True,
                 "ema9_max_dist_pct": 8.0,
                 "vwap_max_dist_pct": 10.0,
-                "entry_intrabar_enabled": True,
-                "schwab_native_use_confirmation": False,
+                "entry_intrabar_enabled": False,
+                "schwab_native_use_confirmation": True,
                 "schwab_native_warmup_bars_required": 50,
             }
         )
