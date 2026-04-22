@@ -383,6 +383,34 @@ def test_snapshot_batch_feeds_extreme_mover_even_below_rank_threshold(monkeypatc
     assert summary["watchlist"] == ["CMND", "ENVB"]
 
 
+def test_bot_watchlist_backfills_next_ranked_symbol_after_manual_stop_filter(monkeypatch) -> None:
+    state = StrategyEngineState(now_provider=fixed_now)
+    state.current_confirmed = [
+        {"ticker": "AKAN"},
+        {"ticker": "ELPW"},
+        {"ticker": "AGPU"},
+        {"ticker": "TORO"},
+        {"ticker": "WBUY"},
+    ]
+    monkeypatch.setattr(
+        state.confirmed_scanner,
+        "get_ranked_confirmed",
+        lambda min_change_pct=0, min_score=None: [
+            {"ticker": "AKAN"},
+            {"ticker": "ELPW"},
+            {"ticker": "AGPU"},
+            {"ticker": "TORO"},
+            {"ticker": "WBUY"},
+            {"ticker": "GNLN"},
+        ],
+    )
+
+    state.apply_manual_stop_symbols({"macd_30s": {"ELPW", "TORO", "WBUY"}})
+    state._resync_bot_watchlists_from_current_confirmed(strategy_codes=["macd_30s"])
+
+    assert state.bots["macd_30s"].watchlist == {"AGPU", "AKAN", "GNLN"}
+
+
 def test_retention_cooldown_keeps_feed_alive_but_blocks_entries(monkeypatch: pytest.MonkeyPatch) -> None:
     now_box = {"value": datetime(2026, 4, 17, 10, 0)}
     state = StrategyEngineState(

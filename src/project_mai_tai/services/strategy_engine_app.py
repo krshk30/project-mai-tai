@@ -2518,25 +2518,15 @@ class StrategyEngineState:
             for stock in self.confirmed_scanner.get_all_confirmed()
             if str(stock.get("ticker", "")).upper() not in blocked
         ]
-        self.current_confirmed = [
-            stock
-            for stock in self.confirmed_scanner.get_top_n(
-                min_change_pct=0,
-            )
-            if str(stock.get("ticker", "")).upper() not in blocked
-        ]
-        handoff_symbols = [
-            str(stock.get("ticker", "")).upper()
-            for stock in self.current_confirmed
-            if str(stock.get("ticker", "")).strip()
-        ]
+        ranked_confirmed = self._ranked_confirmed_handoff_candidates()
+        self.current_confirmed = list(ranked_confirmed[:5])
         tracked_snapshot_symbols = {
             str(stock.get("ticker", "")).upper()
             for stock in self.all_confirmed
             if str(stock.get("ticker", "")).strip()
         }
         for code, bot in self.bots.items():
-            bot_watchlist = self._watchlist_for_bot(code, handoff_symbols)
+            bot_watchlist = self._watchlist_for_bot(code, ranked_confirmed)
             if code == "runner":
                 bot.update_market_snapshots(filtered_snapshots)
                 bot.set_watchlist(bot_watchlist)
@@ -2863,15 +2853,11 @@ class StrategyEngineState:
         *,
         strategy_codes: Sequence[str] | None = None,
     ) -> None:
-        handoff_symbols = [
-            str(stock.get("ticker", "")).upper()
-            for stock in self.current_confirmed
-            if str(stock.get("ticker", "")).strip()
-        ]
+        ranked_confirmed = self._ranked_confirmed_handoff_candidates()
         for code, bot in self._iter_target_bots(strategy_codes=strategy_codes):
             if hasattr(bot, "set_manual_stop_symbols"):
                 bot.set_manual_stop_symbols(self._manual_stop_symbols_for_bot(code))
-            bot.set_watchlist(self._watchlist_for_bot(code, handoff_symbols))
+            bot.set_watchlist(self._watchlist_for_bot(code, ranked_confirmed))
             if hasattr(bot, "set_entry_blocked_symbols"):
                 bot.set_entry_blocked_symbols(())
             if code == "runner":
@@ -2888,6 +2874,22 @@ class StrategyEngineState:
             }
         )
         self.feed_retention_states = self._aggregate_bot_retention_states()
+
+    def _ranked_confirmed_handoff_candidates(self) -> list[dict[str, object]]:
+        ranked = [
+            stock
+            for stock in self.confirmed_scanner.get_ranked_confirmed(
+                min_change_pct=0,
+            )
+            if str(stock.get("ticker", "")).upper() not in self.global_manual_stop_symbols
+        ]
+        if ranked:
+            return ranked
+        return [
+            stock
+            for stock in self.current_confirmed
+            if str(stock.get("ticker", "")).upper() not in self.global_manual_stop_symbols
+        ]
 
     def market_data_symbols(self) -> list[str]:
         symbols: set[str] = set()
@@ -2993,18 +2995,34 @@ class StrategyEngineState:
         self.recent_alerts.extend(normalized)
         self.recent_alerts = self.recent_alerts[-100:]
 
-    def _watchlist_for_bot(self, code: str, watchlist: Sequence[str]) -> list[str]:
-        normalized = [str(symbol).upper() for symbol in watchlist if str(symbol).strip()]
+    def _watchlist_for_bot(self, code: str, watchlist: Sequence[object]) -> list[str]:
+        normalized: list[str] = []
+        for item in watchlist:
+            if isinstance(item, dict):
+                symbol = str(item.get("ticker", "")).upper()
+            else:
+                symbol = str(item).upper()
+            if symbol:
+                normalized.append(symbol)
         blocked = self._manual_stop_symbols_for_bot(code)
         if blocked:
             normalized = [symbol for symbol in normalized if symbol not in blocked]
-        if code != "macd_30s_reclaim" or not self.reclaim_excluded_symbols:
-            return normalized
-        return [
-            symbol
-            for symbol in normalized
-            if symbol not in self.reclaim_excluded_symbols
-        ]
+        if code == "macd_30s_reclaim" and self.reclaim_excluded_symbols:
+            normalized = [
+                symbol
+                for symbol in normalized
+                if symbol not in self.reclaim_excluded_symbols
+            ]
+        seen: set[str] = set()
+        deduped: list[str] = []
+        for symbol in normalized:
+            if symbol in seen:
+                continue
+            seen.add(symbol)
+            deduped.append(symbol)
+            if len(deduped) >= 5:
+                break
+        return deduped
 
     def _roll_scanner_session_if_needed(self) -> None:
         current_session_start = current_scanner_session_start_utc(self.alert_engine.now_provider())

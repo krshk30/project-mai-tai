@@ -932,3 +932,59 @@ Deployment state:
 
 - code is fixed locally but deployment status must be checked against the latest
   commit / VPS state before assuming the live service has this resume-resync fix
+
+## 2026-04-22 Scanner-To-Bot Handoff Backfill For Manual-Stopped Top Slots
+
+Critical live issue found while investigating `GNLN`:
+
+- `GNLN` was confirmed in the scanner and remained in the confirmed universe,
+  but it did not reliably appear in the live `macd_30s` bot
+- at times it showed up in the `30s` watchlist and then disappeared again
+- this created the exact operator-facing symptom:
+  - scanner shows a strong confirmed name
+  - `30s` briefly gets it
+  - then `30s` loses it even though the symbol is still confirmed
+
+Root cause:
+
+- bot handoff was built from one shared scanner `top_confirmed` list first
+- only after that shared list was chosen did each bot apply its own manual-stop
+  filter
+- this meant manually stopped names could still consume shared top slots even
+  though `macd_30s` was not allowed to trade them
+- practical example observed live:
+  - shared top slots could include `ELPW`, `TORO`, or `WBUY`
+  - those names were manually stopped for `macd_30s`
+  - `macd_30s` ended up with only `AGPU` / `AKAN`
+  - `GNLN` could be the next eligible confirmed name but was still squeezed out
+- this also amplified rank churn:
+  - the fifth shared slot flipped between names like `GNLN`, `WBUY`, and `GP`
+  - when `GNLN` briefly won the slot it appeared in `30s`
+  - when it lost the slot, it disappeared again
+
+Fix implemented:
+
+- [strategy_engine_app.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/src/project_mai_tai/services/strategy_engine_app.py)
+  - bot watchlists now backfill from the ranked confirmed universe **after**
+    each bot's own manual-stop filter
+  - manually stopped symbols no longer waste live handoff slots for that bot
+  - `current_confirmed` / scanner top-confirmed UI remains the shared ranked view
+  - but each bot now receives the next eligible confirmed names instead of a
+    half-empty watchlist
+- [test_strategy_engine_service.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/tests/unit/test_strategy_engine_service.py)
+  - added regression coverage proving that when paused names occupy shared top
+    slots, `macd_30s` backfills with the next ranked eligible symbol
+
+Local validation completed:
+
+- `python -m compileall src/project_mai_tai/services/strategy_engine_app.py tests/unit/test_strategy_engine_service.py`
+- targeted `pytest` slice passed locally in the repo `.venv`:
+  - `test_manual_stop_update_removes_symbol_from_live_watchlist_immediately`
+  - `test_manual_stop_resume_readds_symbol_to_live_watchlist_immediately`
+  - `test_bot_watchlist_backfills_next_ranked_symbol_after_manual_stop_filter`
+
+Deployment state:
+
+- code is fixed locally
+- GitHub/VPS deployment and strategy restart must be completed before assuming
+  the live `GNLN` / scanner-to-`30s` handoff issue is resolved on the server
