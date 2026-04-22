@@ -102,57 +102,62 @@ def configured_strategy_registrations(settings: Settings) -> tuple[StrategyRegis
                 },
             )
         )
-    registrations.extend(
-        [
+    if settings.strategy_macd_1m_enabled:
+        registrations.append(
             StrategyRegistration(
-            code="macd_1m",
-            display_name="MACD Bot 1M",
-            account_name=settings.strategy_macd_1m_account_name,
-            interval_secs=60,
-            runtime_kind="macd",
-            execution_mode=settings.resolved_execution_mode,
-            metadata={
-                "account_name": settings.strategy_macd_1m_account_name,
-                "account_display_name": settings.display_account_name(settings.strategy_macd_1m_account_name),
-                "interval_secs": 60,
-                "runtime_kind": "macd",
-                "provider": settings.resolved_broker_provider,
-            },
-        ),
-        StrategyRegistration(
-            code="tos",
-            display_name="TOS Bot",
-            account_name=settings.strategy_tos_account_name,
-            interval_secs=60,
-            runtime_kind="tos",
-            execution_mode=settings.execution_mode_for_provider(
-                settings.provider_for_strategy("tos")
-            ),
-            metadata={
-                "account_name": settings.strategy_tos_account_name,
-                "account_display_name": settings.display_account_name(settings.strategy_tos_account_name),
-                "interval_secs": 60,
-                "runtime_kind": "tos",
-                "provider": settings.provider_for_strategy("tos"),
-            },
-        ),
-        StrategyRegistration(
-            code="runner",
-            display_name="Runner Bot",
-            account_name=settings.strategy_runner_account_name,
-            interval_secs=300,
-            runtime_kind="runner",
-            execution_mode=settings.resolved_execution_mode,
-            metadata={
-                "account_name": settings.strategy_runner_account_name,
-                "account_display_name": settings.display_account_name(settings.strategy_runner_account_name),
-                "interval_secs": 300,
-                "runtime_kind": "runner",
-                "provider": settings.resolved_broker_provider,
-            },
-        ),
-        ]
-    )
+                code="macd_1m",
+                display_name="MACD Bot 1M",
+                account_name=settings.strategy_macd_1m_account_name,
+                interval_secs=60,
+                runtime_kind="macd",
+                execution_mode=settings.resolved_execution_mode,
+                metadata={
+                    "account_name": settings.strategy_macd_1m_account_name,
+                    "account_display_name": settings.display_account_name(settings.strategy_macd_1m_account_name),
+                    "interval_secs": 60,
+                    "runtime_kind": "macd",
+                    "provider": settings.resolved_broker_provider,
+                },
+            )
+        )
+    if settings.strategy_tos_enabled:
+        registrations.append(
+            StrategyRegistration(
+                code="tos",
+                display_name="TOS Bot",
+                account_name=settings.strategy_tos_account_name,
+                interval_secs=60,
+                runtime_kind="tos",
+                execution_mode=settings.execution_mode_for_provider(
+                    settings.provider_for_strategy("tos")
+                ),
+                metadata={
+                    "account_name": settings.strategy_tos_account_name,
+                    "account_display_name": settings.display_account_name(settings.strategy_tos_account_name),
+                    "interval_secs": 60,
+                    "runtime_kind": "tos",
+                    "provider": settings.provider_for_strategy("tos"),
+                },
+            )
+        )
+    if settings.strategy_runner_enabled:
+        registrations.append(
+            StrategyRegistration(
+                code="runner",
+                display_name="Runner Bot",
+                account_name=settings.strategy_runner_account_name,
+                interval_secs=300,
+                runtime_kind="runner",
+                execution_mode=settings.resolved_execution_mode,
+                metadata={
+                    "account_name": settings.strategy_runner_account_name,
+                    "account_display_name": settings.display_account_name(settings.strategy_runner_account_name),
+                    "interval_secs": 300,
+                    "runtime_kind": "runner",
+                    "provider": settings.resolved_broker_provider,
+                },
+            )
+        )
     return tuple(registrations)
 
 

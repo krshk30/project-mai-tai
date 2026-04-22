@@ -737,7 +737,14 @@ def test_control_plane_ignores_stale_runtime_pending_open_without_open_broker_or
 
 
 def test_control_plane_overview_and_dashboard_render() -> None:
-    settings = Settings(redis_stream_prefix="test", oms_adapter="alpaca_paper")
+    settings = Settings(
+        redis_stream_prefix="test",
+        oms_adapter="alpaca_paper",
+        strategy_macd_30s_reclaim_enabled=True,
+        strategy_macd_1m_enabled=True,
+        strategy_tos_enabled=True,
+        strategy_runner_enabled=True,
+    )
     session_factory = build_test_session_factory()
     seed_database(session_factory)
     redis = FakeRedis(make_streams(settings.redis_stream_prefix))
@@ -780,7 +787,11 @@ def test_control_plane_overview_and_dashboard_render() -> None:
         scanner_body = scanner.json()
         assert scanner_body["scanner"]["watchlist"] == ["UGRO"]
         assert scanner_body["scanner"]["all_confirmed_count"] == 2
+        assert scanner_body["scanner"]["bot_handoff_count"] == 1
+        assert scanner_body["scanner"]["bot_handoff"][0]["ticker"] == "UGRO"
         assert scanner_body["scanner"]["top_confirmed"][0]["rank_score"] == 72.0
+        assert scanner_body["scanner"]["top_confirmed"][0]["is_top5"] is True
+        assert scanner_body["scanner"]["top_confirmed"][0]["is_handed_to_bot"] is True
         assert scanner_body["scanner"]["top_confirmed"][0]["article_count"] == 3
         assert scanner_body["scanner"]["top_confirmed"][0]["path_a_eligible"] is True
         assert scanner_body["scanner"]["five_pillars_count"] == 1
@@ -957,7 +968,13 @@ def test_scanner_page_can_render_and_update_global_manual_stop_symbols() -> None
 
 
 def test_control_plane_treats_fresh_market_data_as_live_when_heartbeat_lags() -> None:
-    settings = Settings(redis_stream_prefix="test", oms_adapter="alpaca_paper")
+    settings = Settings(
+        redis_stream_prefix="test",
+        oms_adapter="alpaca_paper",
+        strategy_macd_1m_enabled=True,
+        strategy_tos_enabled=True,
+        strategy_runner_enabled=True,
+    )
     session_factory = build_test_session_factory()
     seed_database(session_factory)
     with session_factory() as session:
@@ -1028,13 +1045,13 @@ def test_control_plane_treats_fresh_market_data_as_live_when_heartbeat_lags() ->
         assert "Mai Tai Project" in dashboard.text
         assert "Mai Tai System Dock" in dashboard.text
         assert "Overview" in dashboard.text
-        assert "Confirmed Candidates" in dashboard.text
+        assert "Ranked Scanner View" in dashboard.text
+        assert "Handed To Bots" in dashboard.text
         assert "Bot Deck" in dashboard.text
-        assert "Legacy-style bot visibility for 30s, 1m, TOS, and Runner." in dashboard.text
+        assert "Active strategy runtimes configured in this environment." in dashboard.text
         assert "UGRO" in dashboard.text
         assert "MACD Bot" in dashboard.text
         assert "paper/alpaca" in dashboard.text
-        assert "Legacy Shadow:" in dashboard.text
         assert "TOS Parity" in dashboard.text
         assert "thinkorswim_1m" in dashboard.text
 

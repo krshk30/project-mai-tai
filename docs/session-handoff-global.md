@@ -1097,3 +1097,149 @@ Post-deploy caveat:
   - `/api/bots` was serving fresh post-restart runtime state
 - treat that as a separate health/status freshness issue unless the strategy API
   itself stops updating
+
+## 2026-04-22 Disable Non-30s Defaults And Clarify Scanner-vs-Handoff UI
+
+Requested cleanup for the next code pass:
+
+- keep only the Schwab-backed `macd_30s` path enabled by default
+- stop showing score/rank as if it gates bot handoff
+- keep score visible in the momentum-confirmed scanner for operator context
+- make control-plane/scanner surfaces show ranked scanner names separately from
+  symbols actually handed to bots
+- do not deploy or restart anything yet from this change set
+
+Root cause found during the sweep:
+
+- the repo still had a split-brain setup:
+  - `settings.py` still defaulted `macd_1m`, `tos`, `runner`, and
+    `macd_30s_reclaim` to enabled
+  - `runtime_registry.py` was even worse: it unconditionally appended
+    `macd_1m`, `tos`, and `runner` registrations regardless of settings
+- control-plane wording still implied ranked `top_confirmed` names were the bot
+  feed even after the earlier unranked handoff change
+- scanner rows also mislabeled bot-fed names as `TOP5` because `is_top5` was
+  derived from `watched_by` instead of true ranked-scanner membership
+
+Fix implemented locally on branch `codex/disable-non30s-and-clarify-handoff`:
+
+- [settings.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/src/project_mai_tai/settings.py)
+  - defaulted these to disabled:
+    - `strategy_macd_30s_reclaim_enabled = False`
+    - `strategy_macd_1m_enabled = False`
+    - `strategy_tos_enabled = False`
+    - `strategy_runner_enabled = False`
+- [runtime_registry.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/src/project_mai_tai/runtime_registry.py)
+  - made `macd_1m`, `tos`, and `runner` registrations conditional on their
+    respective settings instead of always present
+- [strategy_engine_app.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/src/project_mai_tai/services/strategy_engine_app.py)
+  - preserved the current operating model:
+    - bot handoff still comes from full `all_confirmed`
+  - restored the scanner-visible `top_confirmed` slice back to a ranked view
+    using `get_ranked_confirmed(min_score=0)` so score remains visible only as
+    scanner context
+  - restart/restore seeding now rebuilds visible scanner rows from that ranked
+    view while preserving full `all_confirmed` for bot handoff
+- [control_plane.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/src/project_mai_tai/services/control_plane.py)
+  - added a separate `bot_handoff` view/count in the scanner payload
+  - fixed `is_top5` to mean actual ranked-scanner membership
+  - added `is_handed_to_bot` for explicit bot-feed badges
+  - updated dashboard copy so:
+    - ranked scanner view is clearly informational
+    - handed-to-bot symbols are shown separately
+  - bot navigation now follows enabled/registered bots instead of hardcoded
+    links to disabled runtimes
+- tests:
+  - [test_runtime_registry.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/tests/unit/test_runtime_registry.py)
+    adds direct coverage for default-vs-enabled registrations
+  - [test_control_plane.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/tests/unit/test_control_plane.py)
+    updated for the new UI/API shape and for explicit opt-in when older bot
+    pages are under test
+  - [test_strategy_engine_service.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/tests/unit/test_strategy_engine_service.py)
+    updated scanner/handoff expectations to the current model:
+    - ranked scanner view stays visible
+    - all confirmed names can still hand to enabled bots
+    - non-30s bots only exist in tests when explicitly enabled
+
+Current canonical behavior after this local change:
+
+- default local/runtime registration should expose only `macd_30s`
+- momentum-confirmed score/rank remains visible in scanner views only
+- score no longer gates whether a confirmed symbol reaches the bot
+- control plane should show:
+  - ranked scanner names
+  - handed-to-bot names
+  as separate concepts
+
+Local validation completed:
+
+- `python -m compileall` passed for:
+  - `src/project_mai_tai/runtime_registry.py`
+  - `src/project_mai_tai/settings.py`
+  - `src/project_mai_tai/services/strategy_engine_app.py`
+  - `src/project_mai_tai/services/control_plane.py`
+  - updated unit tests
+- repo `.venv` pytest passed:
+  - `tests/unit/test_runtime_registry.py`
+  - full `tests/unit/test_control_plane.py`
+  - targeted broader `tests/unit/test_strategy_engine_service.py` slice:
+    - `snapshot_batch`
+    - `restore_confirmed_runtime_view`
+    - `seeded_confirmed_candidates`
+    - `preload_manual_stop_state`
+- one note on test scope:
+  - the full `tests/unit/test_strategy_engine_service.py` file still timed out
+    in this local environment even with a long timeout, so validation for this
+    pass used the broader scanner/handoff slice instead of claiming a full-file
+    green run
+
+Deployment state for this section:
+
+- no VPS deploy
+- no restart
+- no GitHub merge yet
+- work remains local on branch `codex/disable-non30s-and-clarify-handoff`
+
+## 2026-04-22 Tighten P3 Surge Entry Gates Instead Of Disabling P3
+
+Requested follow-up:
+
+- do not disable `P3_SURGE`
+- instead tighten the live Schwab 30s entry gate so late/overextended P3
+  entries are blocked more aggressively
+
+Change implemented locally on branch `codex/disable-non30s-and-clarify-handoff`:
+
+- [trading_config.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/src/project_mai_tai/strategy_core/trading_config.py)
+  - added `p3_entry_stoch_k_cap: float | None = None` to `TradingConfig`
+  - updated `make_30s_schwab_native_variant()` to set:
+    - `p3_allow_momentum_override = False`
+    - `p3_entry_stoch_k_cap = 85.0`
+- [schwab_native_30s.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/src/project_mai_tai/strategy_core/schwab_native_30s.py)
+  - after path evaluation and before confirmation handling, `P3_SURGE` now
+    blocks immediately when `stoch_k >= p3_entry_stoch_k_cap`
+  - the decision tape reason is explicit:
+    - `P3 entry stoch_k cap (<value> >= 85.0)`
+
+Targeted regression coverage added:
+
+- [test_strategy_core.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/tests/unit/test_strategy_core.py)
+  - `P3` blocked when the old momentum-override style setup would otherwise
+    have fired (`stoch_k >= 90`)
+  - `P3` blocked when `stoch_k >= 85` at entry
+  - `P3` still fires when `stoch_k < 85` and the common gates pass
+
+Local validation completed:
+
+- `python -m compileall src/project_mai_tai/strategy_core/trading_config.py src/project_mai_tai/strategy_core/schwab_native_30s.py tests/unit/test_strategy_core.py`
+- repo `.venv` pytest slice passed:
+  - `test_schwab_native_entry_engine_blocks_p3_when_momentum_override_would_have_fired`
+  - `test_schwab_native_entry_engine_blocks_p3_when_entry_stoch_k_hits_cap`
+  - `test_schwab_native_entry_engine_allows_p3_when_entry_stoch_k_is_below_cap`
+  - `test_schwab_native_entry_engine_can_fire_p3_with_high_vwap_override`
+
+Deployment state for this section:
+
+- no VPS deploy
+- no restart
+- change is only on the branch / PR until explicitly merged and deployed

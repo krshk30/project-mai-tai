@@ -567,6 +567,20 @@ class SchwabNativeEntryEngine:
                 self._record_decision(ticker, status="idle", reason="no entry path matched")
             return None
 
+        if path == "P3_SURGE" and self.config.p3_entry_stoch_k_cap is not None:
+            stoch_k_val = float(indicators.get("stoch_k", 0) or 0)
+            if stoch_k_val >= self.config.p3_entry_stoch_k_cap:
+                self._record_decision(
+                    ticker,
+                    status="blocked",
+                    reason=(
+                        f"P3 entry stoch_k cap ({stoch_k_val:.1f} >= "
+                        f"{self.config.p3_entry_stoch_k_cap})"
+                    ),
+                    path="P3_SURGE",
+                )
+                return None
+
         if path in {"P4_BURST", "P5_PULLBACK"} or not self.config.schwab_native_use_confirmation:
             self._last_buy_bar[ticker] = bar_index
             self._record_decision(ticker, status="signal", reason=path, path=path, score=score, score_details=score_details)
