@@ -3035,8 +3035,6 @@ class StrategyEngineState:
                 continue
             seen.add(symbol)
             deduped.append(symbol)
-            if len(deduped) >= 5:
-                break
         return deduped
 
     def _roll_scanner_session_if_needed(self) -> None:
@@ -3715,7 +3713,7 @@ class StrategyEngineService:
                 instance_name=self.instance_name,
                 status=status,
                 details={
-                    "watchlist_size": str(len(self.state.current_confirmed)),
+                    "watchlist_size": str(len(self.state.retained_watchlist)),
                     "bot_count": str(len(self.state.bots)),
                     "schwab_stream_symbols": str(len(self.state.schwab_stream_symbols())),
                 },

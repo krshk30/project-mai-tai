@@ -407,6 +407,37 @@ def test_bot_watchlist_backfills_next_confirmed_symbol_after_manual_stop_filter(
     assert state.bots["macd_30s"].watchlist == {"AGPU", "AKAN", "GNLN"}
 
 
+def test_bot_watchlist_includes_all_confirmed_symbols_without_top5_cap() -> None:
+    state = StrategyEngineState(now_provider=fixed_now)
+    state.all_confirmed = [
+        {"ticker": "AKAN"},
+        {"ticker": "AGPU"},
+        {"ticker": "GNLN"},
+        {"ticker": "MASK"},
+        {"ticker": "RENX"},
+        {"ticker": "SBET"},
+    ]
+    state.current_confirmed = [
+        {"ticker": "AKAN"},
+        {"ticker": "AGPU"},
+        {"ticker": "GNLN"},
+        {"ticker": "MASK"},
+        {"ticker": "RENX"},
+    ]
+
+    state._resync_bot_watchlists_from_current_confirmed(strategy_codes=["macd_30s"])
+
+    assert state.bots["macd_30s"].watchlist == {
+        "AGPU",
+        "AKAN",
+        "GNLN",
+        "MASK",
+        "RENX",
+        "SBET",
+    }
+    assert state.retained_watchlist == ["AGPU", "AKAN", "GNLN", "MASK", "RENX", "SBET"]
+
+
 def test_retention_cooldown_keeps_feed_alive_but_blocks_entries(monkeypatch: pytest.MonkeyPatch) -> None:
     now_box = {"value": datetime(2026, 4, 17, 10, 0)}
     state = StrategyEngineState(

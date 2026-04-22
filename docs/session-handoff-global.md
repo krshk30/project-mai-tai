@@ -1391,3 +1391,61 @@ Verification:
   which is the expected Basic Auth challenge
 - this confirms the public reverse proxy is back and the outage was nginx
   routing drift, not an application crash
+
+## 2026-04-22 Remove Remaining Bot Watchlist Cap From Scanner Handoff
+
+Final clarification requested by user:
+
+- once a symbol is confirmed by the momentum scanner, it must be handed to the
+  bot immediately
+- scanner score/rank should remain visible only as informational context
+- scanner ranking must not later push a confirmed name back out of bot
+  eligibility
+- bot runtime rules, not scanner ranking, decide whether a handed-off symbol
+  actually trades
+
+Root cause of the remaining gap:
+
+- the rank gate had already been removed from handoff earlier
+- however, `_watchlist_for_bot()` in
+  [strategy_engine_app.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/src/project_mai_tai/services/strategy_engine_app.py)
+  still hard-capped each bot watchlist to `5` symbols
+- that meant:
+  - confirmed symbols beyond the first five handed-off names were still blocked
+    from new bot entry evaluation
+  - existing positions / pending symbols could still be managed, but fresh
+    symbols outside the capped watchlist could not enter
+
+Change implemented:
+
+- removed the remaining `5`-symbol truncation from `_watchlist_for_bot()`
+- current live/expected model is now:
+  - squeeze alert
+  - momentum scanner confirmation
+  - immediate handoff to bot watchlist
+  - bot decides whether to trade
+- manual stops and global scanner stops still filter symbols before bot entry,
+  by design
+
+Related runtime visibility cleanup:
+
+- strategy heartbeat `watchlist_size` now reports the actual retained bot
+  watchlist size instead of the ranked scanner `top_confirmed` size
+- this avoids misleading health counts now that bot handoff is no longer a
+  `top 5` concept
+
+Validation completed locally:
+
+- `python -m compileall src/project_mai_tai/services/strategy_engine_app.py tests/unit/test_strategy_engine_service.py`
+- repo `.venv` pytest slice passed for:
+  - handoff without rank threshold
+  - manual-stop backfill behavior
+  - new regression proving confirmed symbols are no longer truncated at `5`
+  - manual-stop remove/resume runtime resync coverage
+
+New canonical handoff rule after this change:
+
+- scanner confirmation is the handoff gate
+- scanner score/rank is informational only
+- bot watchlist cap no longer blocks confirmed names from reaching the bot
+- trade decisions are owned by the bot runtime after handoff
