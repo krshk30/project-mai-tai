@@ -1337,3 +1337,57 @@ Current intended production model after this recovery:
   confirmed view
 - manual bot stop and global scanner stop remain the runtime/operator controls
   for suppressing names
+
+## 2026-04-22 Public HTTP/HTTPS Outage Root Cause And Fix
+
+Issue observed after the recovery above:
+
+- the Mai Tai public site looked down even though the control plane process was
+  healthy
+
+What was actually happening:
+
+- `project-mai-tai-control.service` was running normally
+- the control plane was listening on:
+  - `127.0.0.1:8100`
+- public HTTPS returned:
+  - `502 Bad Gateway`
+
+Root cause:
+
+- nginx active site file:
+  - `/etc/nginx/sites-enabled/project-mai-tai.live.conf`
+  was still proxying to:
+  - `http://127.0.0.1:8000`
+- but the live control plane was bound to:
+  - `http://127.0.0.1:8100`
+- there was already a correct `sites-available` version pointing to `8100`,
+  but the enabled copy was stale
+
+Fix applied on VPS:
+
+- replaced the active enabled site config with the current `sites-available`
+  config so nginx now proxies to:
+  - `http://127.0.0.1:8100`
+- validated nginx config with:
+  - `nginx -t`
+- reloaded nginx
+
+Follow-up cleanup:
+
+- backup files under `/etc/nginx/sites-enabled/` were causing duplicate server
+  name warnings during reload
+- those `project-mai-tai.live.conf.bak-*` files were moved out of
+  `sites-enabled` into:
+  - `/etc/nginx/sites-backup/`
+- nginx config was retested and reloaded cleanly
+
+Verification:
+
+- local control plane health still responds on:
+  - `127.0.0.1:8100`
+- public HTTPS now returns:
+  - `401 Unauthorized`
+  which is the expected Basic Auth challenge
+- this confirms the public reverse proxy is back and the outage was nginx
+  routing drift, not an application crash
