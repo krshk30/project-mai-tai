@@ -985,6 +985,28 @@ Local validation completed:
 
 Deployment state:
 
-- code is fixed locally
-- GitHub/VPS deployment and strategy restart must be completed before assuming
-  the live `GNLN` / scanner-to-`30s` handoff issue is resolved on the server
+- local `main`, GitHub `main`, and the VPS checkout were synced to commit
+  `f45d98622c46c58f4366f1475fa907e6ca928feb`
+- because `systemctl restart` from the `trader` shell required interactive
+  authentication, the strategy process was recycled by sending `TERM` to the
+  running `mai-tai-strategy` process and letting systemd restart it under
+  `Restart=always`
+- new live strategy PID / start time after deploy:
+  - PID `456872`
+  - `2026-04-22 20:43:24 UTC`
+  - `2026-04-22 04:43:24 PM ET`
+- post-restart heartbeat returned healthy
+
+Post-deploy live note:
+
+- after the restart, the live scanner state no longer contained `GNLN`
+  (`strategy-state` latest payload had `all_has_gnln = false`)
+- because of that, live verification after the restart could only confirm:
+  - new code is deployed and running
+  - `macd_30s` is healthy on the new commit
+  - direct live validation against `GNLN` was no longer possible in the
+    restarted state
+- the root-cause fix remains:
+  - paused symbols no longer consume per-bot handoff slots
+  - when a symbol like `GNLN` is in the ranked confirmed universe, `macd_30s`
+    should now backfill it instead of staying half-empty behind paused names
