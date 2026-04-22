@@ -786,3 +786,40 @@ Local validation completed:
 Deployment note for this session:
 
 - requested live action is a strategy-service restart only after the updated `main` is pushed and deployed to the VPS
+
+Live deploy follow-up completed:
+
+- commit `ee8cbc621236b815939d0b0dfa0337be0612a805` was pushed to GitHub `main`
+- VPS repo was fast-forwarded to the same SHA on `main`
+- `project-mai-tai-strategy.service` was restarted on the VPS at:
+  - `2026-04-22 19:42:21 UTC`
+  - `2026-04-22 03:42:21 PM ET`
+
+Post-restart live verification:
+
+- strategy heartbeat returned after the restart
+- `macd_30s` bot API showed:
+  - `watchlist = []`
+  - `manual_stop_symbols = ["AGPU", "AKAN", "ELPW", "GP", "TORO", "WBUY"]`
+  - `position_count = 0`
+  - `pending_count = 0`
+  - `wiring_status = "live/schwab"`
+- strategy log showed the new startup and resumed Schwab stream connectivity
+
+Important operator note about live restart preflight:
+
+- the live deploy preflight still blocks on:
+  - raw `open_account_positions` count
+  - reconciliation summary totals from the latest run
+- but the VPS env explicitly contains an ignored position-mismatch exception list:
+  - `MAI_TAI_RECONCILIATION_IGNORED_POSITION_MISMATCHES=paper:macd_30s:CYN,CANF;paper:tos_runner_shared:CYN,CANF`
+- current practical meaning:
+  - `CYN` and `CANF` are known exception symbols
+  - UI/detail views hide those reconciliation findings correctly
+  - the deploy preflight script does **not** currently honor that exception list and can over-block risky-service restarts even when the only blockers are those known exception names
+
+Current live interpretation after this restart:
+
+- the requested Schwab-native `30s` config change is deployed
+- strategy is running from synced `main`
+- control plane / overview can still read as `degraded` because of the exception-driven reconciliation summary, even when the detailed visible findings list is empty
