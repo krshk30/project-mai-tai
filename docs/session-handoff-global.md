@@ -1070,5 +1070,30 @@ Local validation completed:
 Deployment state:
 
 - code changed locally on `main`
-- deploy / VPS restart status must be checked separately before assuming live
-  behavior matches this new handoff model
+- local `main`, GitHub `main`, and the VPS checkout were updated to commit
+  `d4b90c644a35ed7112d01973895aa53a95ffeffb`
+- VPS repo was fast-forwarded on `main`
+- `project-mai-tai-strategy.service` was restarted by sending `TERM` to the
+  running process and letting systemd restart it under `Restart=always`
+- new live strategy start time:
+  - `2026-04-22 21:06:13 UTC`
+  - `2026-04-22 05:06:13 PM ET`
+- direct post-restart `/api/bots` verification for `macd_30s` showed:
+  - `watchlist = ["AGPU", "AKAN", "GNLN"]`
+  - `watchlist_count = 3`
+  - `manual_stop_symbols = ["ELPW", "GP", "TORO", "WBUY"]`
+  - `position_count = 0`
+  - `pending_count = 0`
+- this confirms the live `30s` bot is carrying `GNLN` after the unranked
+  handoff deploy
+
+Post-deploy caveat:
+
+- the control-plane `/health` endpoint remained `degraded`, but that was still
+  driven by the existing reconciler findings
+- its `strategy-engine` row also continued to show a stale `stopping` snapshot
+  from `2026-04-22 05:06:07 PM ET` even though:
+  - systemd showed the strategy service active/running on the new PID
+  - `/api/bots` was serving fresh post-restart runtime state
+- treat that as a separate health/status freshness issue unless the strategy API
+  itself stops updating
