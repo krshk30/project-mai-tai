@@ -1199,3 +1199,47 @@ Deployment state for this section:
 - no restart
 - no GitHub merge yet
 - work remains local on branch `codex/disable-non30s-and-clarify-handoff`
+
+## 2026-04-22 Tighten P3 Surge Entry Gates Instead Of Disabling P3
+
+Requested follow-up:
+
+- do not disable `P3_SURGE`
+- instead tighten the live Schwab 30s entry gate so late/overextended P3
+  entries are blocked more aggressively
+
+Change implemented locally on branch `codex/disable-non30s-and-clarify-handoff`:
+
+- [trading_config.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/src/project_mai_tai/strategy_core/trading_config.py)
+  - added `p3_entry_stoch_k_cap: float | None = None` to `TradingConfig`
+  - updated `make_30s_schwab_native_variant()` to set:
+    - `p3_allow_momentum_override = False`
+    - `p3_entry_stoch_k_cap = 85.0`
+- [schwab_native_30s.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/src/project_mai_tai/strategy_core/schwab_native_30s.py)
+  - after path evaluation and before confirmation handling, `P3_SURGE` now
+    blocks immediately when `stoch_k >= p3_entry_stoch_k_cap`
+  - the decision tape reason is explicit:
+    - `P3 entry stoch_k cap (<value> >= 85.0)`
+
+Targeted regression coverage added:
+
+- [test_strategy_core.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/tests/unit/test_strategy_core.py)
+  - `P3` blocked when the old momentum-override style setup would otherwise
+    have fired (`stoch_k >= 90`)
+  - `P3` blocked when `stoch_k >= 85` at entry
+  - `P3` still fires when `stoch_k < 85` and the common gates pass
+
+Local validation completed:
+
+- `python -m compileall src/project_mai_tai/strategy_core/trading_config.py src/project_mai_tai/strategy_core/schwab_native_30s.py tests/unit/test_strategy_core.py`
+- repo `.venv` pytest slice passed:
+  - `test_schwab_native_entry_engine_blocks_p3_when_momentum_override_would_have_fired`
+  - `test_schwab_native_entry_engine_blocks_p3_when_entry_stoch_k_hits_cap`
+  - `test_schwab_native_entry_engine_allows_p3_when_entry_stoch_k_is_below_cap`
+  - `test_schwab_native_entry_engine_can_fire_p3_with_high_vwap_override`
+
+Deployment state for this section:
+
+- no VPS deploy
+- no restart
+- change is only on the branch / PR until explicitly merged and deployed

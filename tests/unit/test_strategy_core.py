@@ -686,9 +686,10 @@ def test_schwab_native_entry_engine_can_fire_p3_with_high_vwap_override() -> Non
     assert signal["path"] == "P3_SURGE"
 
 
-def test_schwab_native_entry_engine_can_fire_p3_with_momentum_override() -> None:
+def test_schwab_native_entry_engine_blocks_p3_when_momentum_override_would_have_fired() -> None:
     config = TradingConfig().make_30s_schwab_native_variant()
     config.schwab_native_use_confirmation = False
+    config.p3_allow_momentum_override = True
     engine = SchwabNativeEntryEngine(config, now_provider=lambda: datetime(2026, 4, 17, 10, 0))
     indicators = _make_schwab_native_base_indicators()
     indicators.update(
@@ -697,10 +698,62 @@ def test_schwab_native_entry_engine_can_fire_p3_with_momentum_override() -> None
             "price_cross_above_vwap": False,
             "vwap_dist_pct": 25.0,
             "ema9_dist_pct": 5.0,
-            "stoch_k": 85.0,
+            "stoch_k": 90.0,
             "price_above_vwap": False,
             "volume": 7_000.0,
             "vol_avg20": 3_000.0,
+        }
+    )
+
+    signal = engine.check_entry("ELAB", indicators, bar_index=60, position_tracker=None)
+
+    assert signal is None
+    decision = engine.pop_last_decision("ELAB")
+    assert decision is not None
+    assert decision["status"] == "blocked"
+    assert decision["path"] == "P3_SURGE"
+    assert "P3 entry stoch_k cap (90.0 >= 85.0)" == decision["reason"]
+
+
+def test_schwab_native_entry_engine_blocks_p3_when_entry_stoch_k_hits_cap() -> None:
+    config = TradingConfig().make_30s_schwab_native_variant()
+    config.schwab_native_use_confirmation = False
+    engine = SchwabNativeEntryEngine(config, now_provider=lambda: datetime(2026, 4, 17, 10, 0))
+    indicators = _make_schwab_native_base_indicators()
+    indicators.update(
+        {
+            "macd_cross_above": False,
+            "price_cross_above_vwap": False,
+            "vwap_dist_pct": 20.0,
+            "ema9_dist_pct": 1.5,
+            "price_above_vwap": False,
+            "stoch_k": 88.0,
+        }
+    )
+
+    signal = engine.check_entry("ELAB", indicators, bar_index=60, position_tracker=None)
+
+    assert signal is None
+    decision = engine.pop_last_decision("ELAB")
+    assert decision is not None
+    assert decision["status"] == "blocked"
+    assert decision["path"] == "P3_SURGE"
+    assert "P3 entry stoch_k cap (88.0 >= 85.0)" == decision["reason"]
+
+
+def test_schwab_native_entry_engine_allows_p3_when_entry_stoch_k_is_below_cap() -> None:
+    config = TradingConfig().make_30s_schwab_native_variant()
+    config.schwab_native_use_confirmation = False
+    engine = SchwabNativeEntryEngine(config, now_provider=lambda: datetime(2026, 4, 17, 10, 0))
+    indicators = _make_schwab_native_base_indicators()
+    indicators.update(
+        {
+            "macd_cross_above": False,
+            "price_cross_above_vwap": False,
+            "vwap_dist_pct": 20.0,
+            "ema9_dist_pct": 1.5,
+            "price_above_vwap": False,
+            "stoch_k": 84.0,
         }
     )
 

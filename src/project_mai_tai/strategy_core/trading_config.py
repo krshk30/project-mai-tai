@@ -190,6 +190,7 @@ class TradingConfig:
     p3_allow_high_vwap: bool = True
     p3_high_vwap_max_pct: float = 30.0
     p3_high_vwap_max_ema9_pct: float = 2.0
+    p3_entry_stoch_k_cap: float | None = None
     p3_allow_momentum_override: bool = True
     p3_momentum_max_ema9_pct: float = 12.0
     p3_momentum_max_stoch_k: float = 98.0
@@ -358,6 +359,8 @@ class TradingConfig:
                 "schwab_native_use_confirmation": True,
                 "schwab_native_use_chop_regime": True,
                 "schwab_native_warmup_bars_required": 50,
+                "p3_allow_momentum_override": False,
+                "p3_entry_stoch_k_cap": 85.0,
             }
         )
         return TradingConfig(**fields)
