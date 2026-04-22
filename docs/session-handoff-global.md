@@ -595,3 +595,77 @@ Validation:
   [test_strategy_engine_service.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/tests/unit/test_strategy_engine_service.py)
 - compile checks passed for
   [strategy_engine_app.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/src/project_mai_tai/services/strategy_engine_app.py)
+
+## 2026-04-22 Stabilization Handoff
+
+Current operational status:
+
+- live VPS was intentionally left alone during the final Git cleanup pass
+- active trading/runtime fixes were already deployed earlier in the session
+- later work focused on:
+  - control-plane trust/performance
+  - strategy/runtime state publication
+  - Git branch cleanup and sync
+
+Live/operator-trust state reached during the session:
+
+- `macd_30s` bot page was brought back to a trustworthy state with:
+  - `Listening Status`
+  - fresh `Decision Tape`
+  - `Last Bot Tick`
+  - `bar_counts`
+- `/bot/30s` and `/api/bots` were optimized and became fast enough for
+  real-time use
+- `/health` was decoupled from the heavy overview path
+- `/api/overview` still has a cold-start cost, but warm refreshes are fast
+
+Key logic/runtime fixes completed:
+
+- session-scoped Decision Tape fallback
+- watchlist restore after restart for `macd_30s`
+- 30s history hydration / warmup restore path
+- generic market-data fallback activation for Schwab-native runtime
+- mixed-version VPS drift cleanup during live incident
+- `bar_counts` and `last_tick_at` publication
+- reduced Schwab reconnect log noise
+- reduced 60s bar-builder log spam
+
+Retention/degraded state:
+
+- degraded mode disabled
+- feed retention disabled for current live behavior
+- empty `Feed States` panel is therefore expected while retention is off
+
+Git / branch status:
+
+- do not merge the large backup PR directly:
+  - [PR #10](https://github.com/krshk30/project-mai-tai/pull/10)
+  - this remains a backup snapshot only
+- new minimal branch created from `main` and validated:
+  - `codex/2026-04-22-minimal-stabilization`
+- new draft PR for the smaller merge path:
+  - [PR #11](https://github.com/krshk30/project-mai-tai/pull/11)
+
+Minimal branch validation completed:
+
+- `ruff check src tests`
+- deterministic per-test validation for:
+  - [test_time_utils.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/tests/unit/test_time_utils.py)
+  - [test_control_plane.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/tests/unit/test_control_plane.py)
+  - [test_strategy_engine_service.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/tests/unit/test_strategy_engine_service.py)
+
+Files included in the minimal stabilization branch:
+
+- [events.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/src/project_mai_tai/events.py)
+- [schwab_streamer.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/src/project_mai_tai/market_data/schwab_streamer.py)
+- [control_plane.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/src/project_mai_tai/services/control_plane.py)
+- [strategy_engine_app.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/src/project_mai_tai/services/strategy_engine_app.py)
+- [settings.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/src/project_mai_tai/settings.py)
+- selected `strategy_core/*` dependencies required for the stabilized runtime
+- matching unit tests
+
+Recommended next step in a new chat:
+
+- continue from [PR #11](https://github.com/krshk30/project-mai-tai/pull/11)
+- review the minimal branch instead of the large backup branch
+- keep VPS untouched unless a fresh critical live bug appears
