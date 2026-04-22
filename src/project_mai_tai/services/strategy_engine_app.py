@@ -31,6 +31,7 @@ from project_mai_tai.events import (
     HeartbeatPayload,
     HistoricalBarsEvent,
     LiveBarEvent,
+    ManualStopUpdateEvent,
     MarketDataSubscriptionEvent,
     MarketDataSubscriptionPayload,
     MarketSnapshotPayload,
@@ -2838,6 +2839,43 @@ class StrategyEngineState:
             if set_manual_stops is not None:
                 set_manual_stops(self._manual_stop_symbols_for_bot(code))
 
+    def apply_manual_stop_update(
+        self,
+        *,
+        scope: str,
+        action: str,
+        symbol: str,
+        strategy_code: str | None = None,
+    ) -> None:
+        normalized_symbol = str(symbol).upper()
+        if not normalized_symbol:
+            return
+        if scope == "global":
+            if action == "stop":
+                self.global_manual_stop_symbols.add(normalized_symbol)
+            else:
+                self.global_manual_stop_symbols.discard(normalized_symbol)
+            for code, bot in self.bots.items():
+                set_manual_stops = getattr(bot, "set_manual_stop_symbols", None)
+                if set_manual_stops is not None:
+                    set_manual_stops(self._manual_stop_symbols_for_bot(code))
+            return
+
+        code = str(strategy_code or "")
+        if not code:
+            return
+        current = set(self.manual_stop_symbols_by_strategy.get(code, set()))
+        if action == "stop":
+            current.add(normalized_symbol)
+        else:
+            current.discard(normalized_symbol)
+        self.manual_stop_symbols_by_strategy[code] = current
+        bot = self.bots.get(code)
+        if bot is not None:
+            set_manual_stops = getattr(bot, "set_manual_stop_symbols", None)
+            if set_manual_stops is not None:
+                set_manual_stops(self._manual_stop_symbols_for_bot(code))
+
     def _manual_stop_symbols_for_bot(self, strategy_code: str) -> set[str]:
         return set(self.global_manual_stop_symbols) | set(
             self.manual_stop_symbols_by_strategy.get(str(strategy_code), set())
@@ -3237,6 +3275,7 @@ class StrategyEngineService:
             stream_name(self.settings.redis_stream_prefix, "market-data"): "$",
             stream_name(self.settings.redis_stream_prefix, "order-events"): "$",
             stream_name(self.settings.redis_stream_prefix, "snapshot-batches"): "$",
+            stream_name(self.settings.redis_stream_prefix, "runtime-controls"): "$",
         }
         self._last_market_data_symbols: set[str] = set()
         self._last_schwab_stream_symbols: set[str] = set()
@@ -3475,6 +3514,18 @@ class StrategyEngineService:
                 len(summary["alerts"]),
                 len(summary["top_confirmed"]),
             )
+            return
+
+        if event_type == "manual_stop_update":
+            event = ManualStopUpdateEvent.model_validate(payload)
+            self.state.apply_manual_stop_update(
+                scope=event.payload.scope,
+                action=event.payload.action,
+                symbol=event.payload.symbol,
+                strategy_code=event.payload.strategy_code,
+            )
+            await self._publish_strategy_state_snapshot()
+            self.logger.info("manual stop update applied to live runtime")
             return
 
         if event_type == "trade_tick":

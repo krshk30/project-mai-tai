@@ -203,6 +203,18 @@ class StrategyStateSnapshotEvent(EventEnvelope):
     payload: StrategyStateSnapshotPayload
 
 
+class ManualStopUpdatePayload(BaseModel):
+    scope: Literal["bot", "global"]
+    action: Literal["stop", "resume"]
+    strategy_code: str | None = None
+    symbol: str
+
+
+class ManualStopUpdateEvent(EventEnvelope):
+    event_type: Literal["manual_stop_update"] = "manual_stop_update"
+    payload: ManualStopUpdatePayload
+
+
 class TradeIntentPayload(BaseModel):
     strategy_code: str
     broker_account_name: str

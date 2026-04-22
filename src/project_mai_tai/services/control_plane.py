@@ -36,6 +36,8 @@ from project_mai_tai.db.models import (
 from project_mai_tai.db.session import build_session_factory
 from project_mai_tai.events import (
     HeartbeatEvent,
+    ManualStopUpdateEvent,
+    ManualStopUpdatePayload,
     MarketDataSubscriptionEvent,
     SnapshotBatchEvent,
     StrategyStateSnapshotEvent,
@@ -79,6 +81,27 @@ def _within_current_eastern_day(timestamp: datetime | None, now: datetime | None
     day_end = current_eastern_day_end_utc(now)
     timestamp_utc = timestamp.astimezone(UTC)
     return day_start <= timestamp_utc < day_end
+
+
+async def _publish_manual_stop_update(
+    redis: Redis,
+    settings: Settings,
+    *,
+    scope: str,
+    action: str,
+    symbol: str,
+    strategy_code: str | None = None,
+) -> None:
+    if not hasattr(redis, "xadd"):
+        return
+    stream = stream_name(settings.redis_stream_prefix, "runtime-controls")
+    event = ManualStopUpdateEvent(
+        source_service=SERVICE_NAME,
+        payload=ManualStopUpdatePayload(
+            scope=scope, action=action, symbol=str(symbol).upper(), strategy_code=strategy_code
+        ),
+    )
+    await redis.xadd(stream, {"data": event.model_dump_json()})
 
 
 class ControlPlaneRepository:
@@ -2103,6 +2126,15 @@ def build_app(
         redirect_to: str = "/bot/30s",
     ) -> RedirectResponse:
         app.state.repository.set_bot_manual_stop_symbol(strategy_code, symbol)
+        await app.state.repository.invalidate_overview_cache()
+        await _publish_manual_stop_update(
+            app.state.repository.redis,
+            active_settings,
+            scope="bot",
+            action="stop",
+            strategy_code=strategy_code,
+            symbol=symbol,
+        )
         return RedirectResponse(url=redirect_to, status_code=303)
 
     @app.get("/bot/symbol/resume")
@@ -2112,6 +2144,15 @@ def build_app(
         redirect_to: str = "/bot/30s",
     ) -> RedirectResponse:
         app.state.repository.remove_bot_manual_stop_symbol(strategy_code, symbol)
+        await app.state.repository.invalidate_overview_cache()
+        await _publish_manual_stop_update(
+            app.state.repository.redis,
+            active_settings,
+            scope="bot",
+            action="resume",
+            strategy_code=strategy_code,
+            symbol=symbol,
+        )
         return RedirectResponse(url=redirect_to, status_code=303)
 
     @app.get("/scanner/symbol/stop")
@@ -2120,6 +2161,14 @@ def build_app(
         redirect_to: str = "/scanner/dashboard",
     ) -> RedirectResponse:
         app.state.repository.set_global_manual_stop_symbol(symbol)
+        await app.state.repository.invalidate_overview_cache()
+        await _publish_manual_stop_update(
+            app.state.repository.redis,
+            active_settings,
+            scope="global",
+            action="stop",
+            symbol=symbol,
+        )
         return RedirectResponse(url=redirect_to, status_code=303)
 
     @app.get("/scanner/symbol/resume")
@@ -2128,6 +2177,14 @@ def build_app(
         redirect_to: str = "/scanner/dashboard",
     ) -> RedirectResponse:
         app.state.repository.remove_global_manual_stop_symbol(symbol)
+        await app.state.repository.invalidate_overview_cache()
+        await _publish_manual_stop_update(
+            app.state.repository.redis,
+            active_settings,
+            scope="global",
+            action="resume",
+            symbol=symbol,
+        )
         return RedirectResponse(url=redirect_to, status_code=303)
 
     @app.get("/scanner/confirmed")
@@ -3956,9 +4013,14 @@ def _render_bot_detail_page(data: dict[str, Any], strategy_code: str) -> str:
         normalized = str(symbol).upper()
         if normalized and normalized not in active_symbols:
             active_symbols.append(normalized)
+    manual_stop_symbols = [
+        str(symbol).upper()
+        for symbol in bot.get("manual_stop_symbols", [])
+        if str(symbol).strip()
+    ]
     for symbol in bot["watchlist"][:10]:
         normalized = str(symbol).upper()
-        if normalized and normalized not in active_symbols:
+        if normalized and normalized not in active_symbols and normalized not in manual_stop_symbols:
             active_symbols.append(normalized)
     open_symbols = {
         str(item.get("ticker") or item.get("symbol") or "").upper()
@@ -3966,11 +4028,6 @@ def _render_bot_detail_page(data: dict[str, Any], strategy_code: str) -> str:
         if item.get("ticker") or item.get("symbol")
     }
     pending_symbols = {str(symbol).upper() for symbol in bot["pending_open_symbols"] + bot["pending_close_symbols"]}
-    manual_stop_symbols = [
-        str(symbol).upper()
-        for symbol in bot.get("manual_stop_symbols", [])
-        if str(symbol).strip()
-    ]
     live_symbol_html = _build_bot_symbol_action_html(
         strategy_code,
         symbols=active_symbols,

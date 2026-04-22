@@ -669,3 +669,87 @@ Recommended next step in a new chat:
 - continue from [PR #11](https://github.com/krshk30/project-mai-tai/pull/11)
 - review the minimal branch instead of the large backup branch
 - keep VPS untouched unless a fresh critical live bug appears
+
+## 2026-04-22 Main Deploy + Manual Stop Follow-Up
+
+Git / deploy status:
+
+- minimal stabilization branch was fast-forwarded into `main`
+- GitHub `main` and VPS were aligned to:
+  - `c127538cb83a66eb24288295b76fba9ba4a128af`
+- VPS was reset cleanly to `origin/main` and both services restarted:
+  - `project-mai-tai-strategy.service`
+  - `project-mai-tai-control.service`
+
+Important after-main observations:
+
+- after deploy, `/health` and `/bot/30s` were healthy
+- current-session bot activity depends on whether there are active tracked symbols
+- empty `Feed States` is expected while feed retention is disabled
+
+Manual stop bug discovered live:
+
+- stopping a symbol from `/bot/30s` updated the DB/UI immediately
+- but the running strategy service did not apply the stop immediately
+- result:
+  - symbol could appear in `Manual Stops`
+  - still remain in the live bot watchlist
+  - and could still trade until restart / later refresh
+
+Root cause:
+
+- control-plane stop/resume routes only persisted snapshot state
+- strategy runtime only reloaded manual stop state on startup or snapshot processing
+- there was no direct live runtime-control event for manual stop updates
+
+Fix applied:
+
+- added `manual_stop_update` event in
+  - [events.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/src/project_mai_tai/events.py)
+- control-plane now publishes a live runtime-control event on:
+  - `/bot/symbol/stop`
+  - `/bot/symbol/resume`
+  - `/scanner/symbol/stop`
+  - `/scanner/symbol/resume`
+- strategy runtime now consumes `manual_stop_update` directly and mutates in-memory stop state immediately
+- strategy runtime republishes strategy-state snapshot after applying the update
+
+Live verification:
+
+- re-stopping `AGPU` after the fix caused the live runtime watchlist to drop it immediately
+- this closed the actual trading bug where a manually stopped symbol could still be traded
+
+Second UI bug discovered:
+
+- even after the live runtime stop fix, manually stopped symbols still appeared under `Live Symbols`
+- root cause:
+  - bot page built `Live Symbols` from positions/pending/watchlist
+  - watchlist entries were not excluding `manual_stop_symbols`
+
+UI fix applied:
+
+- bot-page rendering now excludes manually stopped symbols from `Live Symbols`
+- they still appear correctly under `Manual Stops`
+- exception:
+  - if a symbol has a real open or pending position, it can still appear for operator visibility
+
+Live verification after UI fix:
+
+- `AGPU` no longer appears in `Live Symbols`
+- `AGPU` appears only under `Manual Stops`
+
+Important current state:
+
+- local repo is now ahead of GitHub/main/VPS again by the manual-stop follow-up fix
+- if a future chat is asked to fully sync local/GitHub/VPS again, include:
+  - `events.py`
+  - `control_plane.py`
+  - `strategy_engine_app.py`
+  - updated handoff log
+
+Recommended starting point for next chat:
+
+- read this handoff file first
+- assume:
+  - main/VPS are aligned at `c127538`
+  - manual-stop follow-up exists locally but may still need Git/GitHub sync if not yet committed/pushed
