@@ -200,6 +200,7 @@ class IndicatorEngine:
             "high": highs[index],
             "low": lows[index],
             "volume": volumes[index],
+            "bar_timestamp": timestamps[index],
             "macd": macd_line[index],
             "macd_prev": macd_line[previous_index],
             "signal": signal_line[index],

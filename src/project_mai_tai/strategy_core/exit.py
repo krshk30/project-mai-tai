@@ -53,18 +53,18 @@ class ExitEngine:
         if tier == 1:
             if self._should_take_stoch_exit(indicators):
                 exit_reason = "STOCHK_TIER1"
-            elif bool(indicators["macd_cross_below"]):
+            elif bool(indicators.get("macd_cross_below")):
                 exit_reason = "MACD_BEAR_T1"
         elif tier == 2:
             if (
                 self._should_take_stoch_exit(indicators)
-                and not bool(indicators["price_above_ema9"])
+                and not bool(indicators.get("price_above_ema9"))
             ):
                 exit_reason = "STOCHK_TIER2"
-            elif bool(indicators["macd_cross_below"]):
+            elif bool(indicators.get("macd_cross_below")):
                 exit_reason = "MACD_BEAR_T2"
         elif tier == 3:
-            if bool(indicators["macd_cross_below"]):
+            if bool(indicators.get("macd_cross_below")):
                 exit_reason = "MACD_BEAR_T3"
 
         if exit_reason is None:
@@ -80,7 +80,7 @@ class ExitEngine:
         }
 
     def _should_take_stoch_exit(self, indicators: dict[str, float | bool]) -> bool:
-        if not bool(indicators["stoch_k_below_exit"]) or not bool(indicators["stoch_k_falling"]):
+        if not bool(indicators.get("stoch_k_below_exit")) or not bool(indicators.get("stoch_k_falling")):
             return False
         if not self.config.exit_stoch_health_filter_enabled:
             return True

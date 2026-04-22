@@ -32,6 +32,7 @@ class MomentumAlertConfig:
     squeeze_5min_pct: float = 5.0
     squeeze_10min_pct: float = 10.0
     volume_spike_mult: float = 5.0
+    extreme_mover_min_day_change_pct: float = 50.0
     alert_cooldown_mins: int = 5
 
 
@@ -41,3 +42,4 @@ class MomentumConfirmedConfig:
     confirmed_max_float: int = 50_000_000
     rank_min_score: float = 50.0
     live_min_change_pct: float = 20.0
+    extreme_mover_min_day_change_pct: float = 50.0

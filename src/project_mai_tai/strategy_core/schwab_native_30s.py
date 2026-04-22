@@ -151,6 +151,12 @@ class SchwabNativeBarBuilder:
     def get_bars_as_dicts(self) -> list[dict[str, float | int]]:
         return [bar.as_dict() for bar in self.bars]
 
+    def get_bars_with_current_as_dicts(self) -> list[dict[str, float | int]]:
+        bars = self.get_bars_as_dicts()
+        if self._current_bar is not None:
+            bars.append(self._current_bar.as_dict())
+        return bars
+
     def reset(self) -> None:
         self.bars.clear()
         self._current_bar = None
@@ -297,9 +303,9 @@ class SchwabNativeIndicatorEngine:
             closes,
             volumes,
             timestamps,
-            session_start_hour=4,
-            session_start_minute=0,
-            session_end_hour=20,
+            session_start_hour=9,
+            session_start_minute=30,
+            session_end_hour=16,
             session_end_minute=0,
         )
         vol_avg20 = sma(volumes, 20)
@@ -475,7 +481,6 @@ class SchwabNativeEntryEngine:
             self._pending,
             self._recent_bars,
             self._last_buy_bar,
-            self._last_exit_bar,
             self._last_decision,
             self._session_highs,
             self._spike_anchor_bar,

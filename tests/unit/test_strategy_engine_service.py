@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
@@ -18,6 +19,8 @@ from project_mai_tai.events import (
     OrderEventEvent,
     OrderEventPayload,
     SnapshotBatchEvent,
+    TradeTickEvent,
+    TradeTickPayload,
 )
 from project_mai_tai.services.strategy_engine_app import (
     StrategyBotRuntime,
@@ -32,6 +35,7 @@ from project_mai_tai.settings import Settings
 from project_mai_tai.market_data.massive_indicator_provider import MassiveIndicatorProvider
 from project_mai_tai.market_data.taapi_indicator_provider import TaapiIndicatorProvider
 from project_mai_tai.strategy_core import IndicatorConfig, OHLCVBar, ReferenceData, TradingConfig
+from project_mai_tai.strategy_core.exit import ExitEngine
 
 
 def fixed_now() -> datetime:
@@ -115,6 +119,7 @@ def test_order_routing_metadata_uses_extended_hours_limit_in_premarket() -> None
     )
 
     assert metadata == {
+        "session": "AM",
         "order_type": "limit",
         "time_in_force": "day",
         "extended_hours": "true",
@@ -171,8 +176,44 @@ def test_macd_runtime_uses_quote_anchored_limit_prices_in_extended_hours(monkeyp
 
     assert open_intent.payload.metadata["limit_price"] == "3.12"
     assert open_intent.payload.metadata["price_source"] == "ask"
+    assert open_intent.payload.metadata["session"] == "AM"
     assert close_intent.payload.metadata["limit_price"] == "3.11"
     assert close_intent.payload.metadata["price_source"] == "bid"
+    assert close_intent.payload.metadata["session"] == "AM"
+
+
+def test_macd_runtime_blocks_extended_hours_entry_without_live_ask(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "project_mai_tai.services.strategy_engine_app.utcnow",
+        lambda: datetime(2026, 3, 31, 11, 0, tzinfo=UTC),
+    )
+    runtime = StrategyBotRuntime(
+        StrategyDefinition(
+            code="macd_30s",
+            display_name="30s",
+            account_name="paper:test",
+            interval_secs=30,
+            trading_config=TradingConfig(),
+            indicator_config=IndicatorConfig(),
+        ),
+        now_provider=lambda: datetime(2026, 3, 31, 11, 0, tzinfo=UTC),
+    )
+    runtime.update_market_snapshots(
+        [
+            snapshot_from_payload(
+                MarketSnapshotPayload(
+                    symbol="KIDZ",
+                    last_trade_price=Decimal("3.10"),
+                    bid_price=Decimal("3.11"),
+                )
+            )
+        ]
+    )
+
+    with pytest.raises(RuntimeError, match="missing ask quote for extended-hours entry"):
+        runtime._emit_open_intent(
+            {"ticker": "KIDZ", "price": 3.10, "path": "P1_MACD_CROSS", "score": 5, "score_details": "x"}
+        )
 
 
 def test_runtime_blocks_close_retries_after_duplicate_exit_reject() -> None:
@@ -198,6 +239,32 @@ def test_runtime_blocks_close_retries_after_duplicate_exit_reject() -> None:
 
     assert "ELAB" not in runtime.pending_close_symbols
     assert runtime._is_exit_retry_blocked("ELAB") is True
+
+
+def test_exit_engine_tolerates_missing_stoch_exit_keys() -> None:
+    engine = ExitEngine(TradingConfig())
+
+    class Position:
+        ticker = "UGRO"
+        tier = 1
+        current_price = 4.25
+        current_profit_pct = 1.2
+
+        def is_floor_breached(self) -> bool:
+            return False
+
+        def get_scale_action(self, config):
+            del config
+            return None
+
+    signal = engine.check_exit(
+        Position(),
+        {
+            "macd_cross_below": False,
+        },
+    )
+
+    assert signal is None
 
 
 def test_snapshot_batch_keeps_single_confirmed_name_in_watchlist(monkeypatch) -> None:
@@ -240,6 +307,80 @@ def test_snapshot_batch_keeps_single_confirmed_name_in_watchlist(monkeypatch) ->
     )
 
     assert summary["watchlist"] == ["UGRO"]
+
+
+def test_snapshot_batch_feeds_extreme_mover_even_below_rank_threshold(monkeypatch) -> None:
+    state = StrategyEngineState(now_provider=fixed_now)
+    state.confirmed_scanner._confirmed = [
+        {
+            "ticker": "CMND",
+            "confirmed_at": "10:00:00 AM ET",
+            "entry_price": 1.21,
+            "price": 1.22,
+            "change_pct": 69.5,
+            "volume": 75_000_000,
+            "rvol": 70.0,
+            "shares_outstanding": 158_076,
+            "bid": 1.22,
+            "ask": 1.23,
+            "spread": 0.01,
+            "spread_pct": 0.82,
+            "hod": 1.24,
+            "vwap": 1.223,
+            "prev_close": 0.7196,
+            "avg_daily_volume": 1_862_169,
+            "first_spike_time": "09:55:00 AM ET",
+            "first_spike_price": 1.1,
+            "squeeze_count": 2,
+            "data_age_secs": 0,
+            "confirmation_path": "PATH_B_2SQ",
+            "force_watchlist": False,
+        },
+        {
+            "ticker": "ENVB",
+            "confirmed_at": "10:00:00 AM ET",
+            "entry_price": 3.84,
+            "price": 3.73,
+            "change_pct": 104.9,
+            "volume": 22_900_000,
+            "rvol": 66.5,
+            "shares_outstanding": 1_887_535,
+            "bid": 3.72,
+            "ask": 3.73,
+            "spread": 0.01,
+            "spread_pct": 0.27,
+            "hod": 3.99,
+            "vwap": 3.90,
+            "prev_close": 1.82,
+            "avg_daily_volume": 595_857,
+            "first_spike_time": "",
+            "first_spike_price": 0.0,
+            "squeeze_count": 1,
+            "data_age_secs": 0,
+            "confirmation_path": "PATH_C_EXTREME_MOVER",
+            "force_watchlist": True,
+        },
+    ]
+    monkeypatch.setattr(state.alert_engine, "check_alerts", lambda snapshots, reference_data: [])
+    monkeypatch.setattr(
+        state.confirmed_scanner,
+        "process_alerts",
+        lambda alerts, reference_data, snapshot_lookup: [],
+    )
+
+    summary = state.process_snapshot_batch(
+        [
+            snapshot_from_payload(make_snapshot_payload(symbol="CMND", price=1.22, volume=75_000_000)),
+            snapshot_from_payload(make_snapshot_payload(symbol="ENVB", price=3.73, volume=22_900_000)),
+        ],
+        {
+            "CMND": ReferenceData(shares_outstanding=158_076, avg_daily_volume=1_862_169),
+            "ENVB": ReferenceData(shares_outstanding=1_887_535, avg_daily_volume=595_857),
+        },
+    )
+
+    assert [item["ticker"] for item in summary["top_confirmed"]] == ["ENVB", "CMND"]
+    assert summary["watchlist"] == ["CMND", "ENVB"]
 
 
 def test_retention_cooldown_keeps_feed_alive_but_blocks_entries(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -285,7 +426,7 @@ def test_retention_cooldown_keeps_feed_alive_but_blocks_entries(monkeypatch: pyt
 
     assert summary["watchlist"] == ["UGRO"]
     assert state.bots["macd_30s"].watchlist == {"UGRO"}
-    state.feed_retention_states["UGRO"].active_reference_5m_volume = 200_000
+    state.bots["macd_30s"].lifecycle_states["UGRO"].active_reference_5m_volume = 200_000
 
     state.confirmed_scanner._confirmed = []
     builder = state.bots["macd_30s"].builder_manager.get_or_create("UGRO")
@@ -346,7 +487,7 @@ def test_retention_resume_unblocks_entries_after_reclaim(monkeypatch: pytest.Mon
     )
 
     state.restore_confirmed_runtime_view([{"ticker": "UGRO"}])
-    retained = state.feed_retention_states["UGRO"]
+    retained = state.bots["macd_30s"].lifecycle_states["UGRO"]
     retained.state = "cooldown"
     retained.cooldown_started_at = now_box["value"]
     retained.state_changed_at = now_box["value"]
@@ -407,8 +548,154 @@ def test_retention_resume_unblocks_entries_after_reclaim(monkeypatch: pytest.Mon
     assert summary["retention_states"][0]["state"] == "active"
     assert state.bots["macd_30s"].entry_blocked_symbols == set()
     assert summary["watchlist"] == ["UGRO"]
-    for code in ("macd_30s", "macd_1m", "tos", "runner"):
+    for code in ("macd_30s", "macd_1m", "tos"):
         assert state.bots[code].watchlist == {"UGRO"}
+
+
+def test_cooldown_blocks_non_p4_signal_below_structure(monkeypatch: pytest.MonkeyPatch) -> None:
+    state = StrategyEngineState(now_provider=fixed_now)
+    state.restore_confirmed_runtime_view([{"ticker": "UGRO"}])
+    bot = state.bots["macd_30s"]
+    retained = bot.lifecycle_states["UGRO"]
+    retained.state = "cooldown"
+    retained.cooldown_started_at = fixed_now()
+    retained.state_changed_at = fixed_now()
+    bot._sync_watchlist_from_lifecycle()
+    state.seed_bars("macd_30s", "UGRO", seed_trending_bars())
+
+    monkeypatch.setattr(
+        bot.indicator_engine,
+        "calculate",
+        lambda bars: {
+            "price": 6.22,
+            "selected_vwap": 6.60,
+            "vwap": 6.60,
+            "ema20": 6.40,
+            "bar_timestamp": float(bars[-1]["timestamp"]),
+        },
+    )
+    monkeypatch.setattr(
+        bot.entry_engine,
+        "check_entry",
+        lambda symbol, indicators, bar_index, runtime: {
+            "action": "BUY",
+            "ticker": symbol,
+            "path": "P2_VWAP",
+            "price": indicators["price"],
+            "score": 5,
+            "score_details": "test",
+        },
+    )
+    monkeypatch.setattr(
+        bot.entry_engine,
+        "pop_last_decision",
+        lambda _symbol: {"status": "signal", "reason": "P2_VWAP", "path": "P2_VWAP", "score": "5"},
+    )
+
+    intents = bot._evaluate_completed_bar("UGRO")
+
+    assert intents == []
+    assert bot.lifecycle_states["UGRO"].state == "cooldown"
+    assert "UGRO" in bot.entry_blocked_symbols
+    assert bot.recent_decisions[0]["reason"] == "bot lifecycle cooldown active: waiting for P4 or VWAP/EMA20 reclaim"
+
+
+def test_cooldown_allows_p4_override_below_structure(monkeypatch: pytest.MonkeyPatch) -> None:
+    state = StrategyEngineState(now_provider=fixed_now)
+    state.restore_confirmed_runtime_view([{"ticker": "UGRO"}])
+    bot = state.bots["macd_30s"]
+    retained = bot.lifecycle_states["UGRO"]
+    retained.state = "cooldown"
+    retained.cooldown_started_at = fixed_now()
+    retained.state_changed_at = fixed_now()
+    bot._sync_watchlist_from_lifecycle()
+    state.seed_bars("macd_30s", "UGRO", seed_trending_bars())
+    bot.latest_quotes["UGRO"] = {"ask": 6.22}
+
+    monkeypatch.setattr(
+        bot.indicator_engine,
+        "calculate",
+        lambda bars: {
+            "price": 6.22,
+            "selected_vwap": 6.60,
+            "vwap": 6.60,
+            "ema20": 6.40,
+            "bar_timestamp": float(bars[-1]["timestamp"]),
+        },
+    )
+    monkeypatch.setattr(
+        bot.entry_engine,
+        "check_entry",
+        lambda symbol, indicators, bar_index, runtime: {
+            "action": "BUY",
+            "ticker": symbol,
+            "path": "P4_BURST",
+            "price": indicators["price"],
+            "score": 5,
+            "score_details": "test",
+        },
+    )
+    monkeypatch.setattr(
+        bot.entry_engine,
+        "pop_last_decision",
+        lambda _symbol: {"status": "signal", "reason": "P4_BURST", "path": "P4_BURST", "score": "5"},
+    )
+
+    intents = bot._evaluate_completed_bar("UGRO")
+
+    assert len(intents) == 1
+    assert intents[0].payload.reason == "ENTRY_P4_BURST"
+    assert bot.lifecycle_states["UGRO"].state == "active"
+    assert "UGRO" not in bot.entry_blocked_symbols
+
+
+def test_cooldown_allows_non_p4_after_structure_reclaim(monkeypatch: pytest.MonkeyPatch) -> None:
+    state = StrategyEngineState(now_provider=fixed_now)
+    state.restore_confirmed_runtime_view([{"ticker": "UGRO"}])
+    bot = state.bots["macd_30s"]
+    retained = bot.lifecycle_states["UGRO"]
+    retained.state = "cooldown"
+    retained.cooldown_started_at = fixed_now()
+    retained.state_changed_at = fixed_now()
+    bot._sync_watchlist_from_lifecycle()
+    state.seed_bars("macd_30s", "UGRO", seed_trending_bars())
+    bot.latest_quotes["UGRO"] = {"ask": 6.98}
+
+    monkeypatch.setattr(
+        bot.indicator_engine,
+        "calculate",
+        lambda bars: {
+            "price": 6.98,
+            "selected_vwap": 6.82,
+            "vwap": 6.82,
+            "ema20": 6.79,
+            "bar_timestamp": float(bars[-1]["timestamp"]),
+        },
+    )
+    monkeypatch.setattr(
+        bot.entry_engine,
+        "check_entry",
+        lambda symbol, indicators, bar_index, runtime: {
+            "action": "BUY",
+            "ticker": symbol,
+            "path": "P2_VWAP",
+            "price": indicators["price"],
+            "score": 5,
+            "score_details": "test",
+        },
+    )
+    monkeypatch.setattr(
+        bot.entry_engine,
+        "pop_last_decision",
+        lambda _symbol: {"status": "signal", "reason": "P2_VWAP", "path": "P2_VWAP", "score": "5"},
+    )
+
+    intents = bot._evaluate_completed_bar("UGRO")
+
+    assert len(intents) == 1
+    assert intents[0].payload.reason == "ENTRY_P2_VWAP"
+    assert bot.lifecycle_states["UGRO"].state == "active"
+    assert "UGRO" not in bot.entry_blocked_symbols
 
 
 def test_snapshot_batch_applies_reclaim_specific_excluded_symbols(monkeypatch) -> None:
@@ -830,7 +1117,7 @@ def test_snapshot_batch_releases_removed_symbols_from_all_bot_watchlists(monkeyp
         },
     )
 
-    for code in ("macd_30s", "macd_1m", "tos", "runner"):
+    for code in ("macd_30s", "macd_1m", "tos"):
         assert state.bots[code].watchlist == {"ELAB", "UGRO"}
 
     current_all["value"] = list(second_confirmed)
@@ -841,7 +1128,7 @@ def test_snapshot_batch_releases_removed_symbols_from_all_bot_watchlists(monkeyp
         {"ELAB": ReferenceData(shares_outstanding=541_500, avg_daily_volume=600_000)},
     )
 
-    for code in ("macd_30s", "macd_1m", "tos", "runner"):
+    for code in ("macd_30s", "macd_1m", "tos"):
         assert state.bots[code].watchlist == {"ELAB", "UGRO"}
     assert state.bots["runner"]._candidates == {"ELAB": second_confirmed[0]}
 
@@ -859,7 +1146,7 @@ def test_snapshot_batch_keeps_low_score_confirmed_visible_but_out_of_watchlist(m
         "process_alerts",
         lambda alerts, reference_data, snapshot_lookup: [],
     )
-    monkeypatch.setattr(state.confirmed_scanner, "get_ranked_confirmed", lambda **kwargs: list(low_score_confirmed))
+    monkeypatch.setattr(state.confirmed_scanner, "get_all_confirmed", lambda: list(low_score_confirmed))
     monkeypatch.setattr(state.confirmed_scanner, "get_top_n", lambda *args, **kwargs: [])
 
     summary = state.process_snapshot_batch(
@@ -876,8 +1163,95 @@ def test_snapshot_batch_keeps_low_score_confirmed_visible_but_out_of_watchlist(m
     assert [item["ticker"] for item in summary["all_confirmed"]] == ["RENX", "BCG"]
     assert summary["watchlist"] == []
     assert summary["top_confirmed"] == []
-    for code in ("macd_30s", "macd_1m", "tos", "runner"):
+    for code in ("macd_30s", "macd_1m", "tos"):
         assert state.bots[code].watchlist == set()
+
+
+def test_global_manual_stop_blocks_handoff_to_all_bots(monkeypatch) -> None:
+    state = StrategyEngineState(now_provider=fixed_now)
+    state.apply_global_manual_stop_symbols({"ELAB"})
+    confirmed = [
+        {"ticker": "ELAB", "rank_score": 80.0, "change_pct": 40.0, "confirmed_at": "09:45:00 AM ET"},
+        {"ticker": "UGRO", "rank_score": 70.0, "change_pct": 32.0, "confirmed_at": "09:50:00 AM ET"},
+    ]
+
+    monkeypatch.setattr(state.alert_engine, "check_alerts", lambda snapshots, reference_data: [])
+    monkeypatch.setattr(
+        state.confirmed_scanner,
+        "process_alerts",
+        lambda alerts, reference_data, snapshot_lookup: [],
+    )
+    monkeypatch.setattr(
+        state.confirmed_scanner,
+        "get_all_confirmed",
+        lambda: list(confirmed),
+    )
+    monkeypatch.setattr(
+        state.confirmed_scanner,
+        "get_top_n",
+        lambda *args, **kwargs: list(confirmed),
+    )
+
+    summary = state.process_snapshot_batch(
+        [
+            snapshot_from_payload(make_snapshot_payload(symbol="ELAB", price=2.78, volume=7_200_000)),
+            snapshot_from_payload(make_snapshot_payload(symbol="UGRO", price=2.40, volume=900_000)),
+        ],
+        {
+            "ELAB": ReferenceData(shares_outstanding=541_500, avg_daily_volume=600_000),
+            "UGRO": ReferenceData(shares_outstanding=50_000, avg_daily_volume=390_000),
+        },
+    )
+
+    assert [item["ticker"] for item in summary["all_confirmed"]] == ["UGRO"]
+    assert summary["watchlist"] == ["UGRO"]
+    for code in ("macd_30s", "macd_1m", "tos"):
+        assert state.bots[code].watchlist == {"UGRO"}
+        assert "ELAB" in state.bots[code].manual_stop_symbols
+
+
+def test_scanner_session_roll_clears_manual_stop_state() -> None:
+    clock = {
+        "now": datetime(2026, 4, 21, 3, 59, tzinfo=UTC),
+    }
+    state = StrategyEngineState(now_provider=lambda: clock["now"])
+    state.apply_global_manual_stop_symbols({"ELAB"})
+    state.apply_manual_stop_symbols({"macd_30s": {"UGRO"}, "tos": {"QNRX"}})
+
+    assert state.global_manual_stop_symbols == {"ELAB"}
+    assert state.manual_stop_symbols_by_strategy["macd_30s"] == {"UGRO"}
+    assert state.bots["macd_30s"].manual_stop_symbols == {"ELAB", "UGRO"}
+
+    clock["now"] = datetime(2026, 4, 21, 8, 1, tzinfo=UTC)
+    state._roll_scanner_session_if_needed()
+
+    assert state.global_manual_stop_symbols == set()
+    assert state.manual_stop_symbols_by_strategy == {}
+    for code in ("macd_30s", "macd_1m", "tos"):
+        assert state.bots[code].manual_stop_symbols == set()
+
+
+def test_state_ignores_order_updates_for_unknown_strategy_code() -> None:
+    state = StrategyEngineState(now_provider=fixed_now)
+
+    state.apply_order_status(
+        strategy_code="macd_30s_reclaim",
+        symbol="UGRO",
+        intent_type="open",
+        status="filled",
+    )
+    state.apply_execution_fill(
+        strategy_code="macd_30s_reclaim",
+        client_order_id="abc123",
+        symbol="UGRO",
+        intent_type="open",
+        status="filled",
+        side="buy",
+        quantity=10,
+        price=2.5,
+    )
+
+    assert "UGRO" not in state.bots["macd_30s"].positions.get_all_positions()
 
 
 def test_snapshot_batch_keeps_faded_confirmed_symbols_in_bot_watchlists_for_session_continuity() -> None:
@@ -1006,6 +1380,95 @@ def test_bot_runtime_preserves_strategy_close_reason_on_filled_close() -> None:
     assert closed[0]["path"] == "PRETRIGGER_RECLAIM"
 
 
+def test_bot_runtime_finalizes_trade_when_scale_fill_arrives_after_partial_close() -> None:
+    state = StrategyEngineState(now_provider=fixed_now)
+    bot = state.bots["macd_30s"]
+    bot.positions.reset()
+    bot.positions.open_position("LOCL", 2.97, quantity=10, path="P1_CROSS")
+    bot.pending_close_symbols.add("LOCL")
+    bot.pending_scale_levels.add(("LOCL", "PCT1"))
+
+    bot.apply_execution_fill(
+        client_order_id="macd_30s-LOCL-close-1",
+        symbol="LOCL",
+        intent_type="close",
+        status="partially_filled",
+        side="sell",
+        quantity=Decimal("8"),
+        price=Decimal("2.91"),
+        reason="HARD_STOP",
+    )
+
+    assert bot.positions.get_position("LOCL") is not None
+    assert bot.positions.get_position("LOCL").quantity == 2
+
+    bot.apply_execution_fill(
+        client_order_id="macd_30s-LOCL-scale-1",
+        symbol="LOCL",
+        intent_type="scale",
+        status="filled",
+        side="sell",
+        quantity=Decimal("2"),
+        price=Decimal("2.99"),
+        level="PCT1",
+        reason="SCALE_PCT1",
+    )
+
+    assert bot.positions.get_position("LOCL") is None
+    assert "LOCL" not in bot.pending_close_symbols
+    assert ("LOCL", "PCT1") not in bot.pending_scale_levels
+    closed = bot.positions.get_closed_today()
+    assert len(closed) == 1
+    assert closed[0]["ticker"] == "LOCL"
+    assert closed[0]["reason"] == "SCALE_PCT1"
+    assert bot.entry_engine._last_exit_bar["LOCL"] == 0
+
+
+def test_bot_runtime_snapshots_degraded_scale_profile_on_open_fill() -> None:
+    state = StrategyEngineState(now_provider=fixed_now)
+    bot = state.bots["macd_30s"]
+    bot.set_watchlist(["ENVB"])
+    object.__setattr__(bot.lifecycle_policy.config, "degraded_enabled", True)
+    bot.lifecycle_states["ENVB"].degraded_mode = True
+
+    bot.apply_execution_fill(
+        client_order_id="macd_30s-ENVB-open-1",
+        symbol="ENVB",
+        intent_type="open",
+        status="filled",
+        side="buy",
+        quantity=Decimal("10"),
+        price=Decimal("4.12"),
+        path="P3_MACD_SURGE",
+    )
+
+    position = bot.positions.get_position("ENVB")
+    assert position is not None
+    assert position.scale_profile == "DEGRADED"
+
+
+def test_bot_runtime_uses_normal_scale_profile_when_degraded_disabled() -> None:
+    state = StrategyEngineState(now_provider=fixed_now)
+    bot = state.bots["macd_30s"]
+    bot.set_watchlist(["ENVB"])
+    bot.lifecycle_states["ENVB"].degraded_mode = True
+
+    bot.apply_execution_fill(
+        client_order_id="macd_30s-ENVB-open-1",
+        symbol="ENVB",
+        intent_type="open",
+        status="filled",
+        side="buy",
+        quantity=Decimal("10"),
+        price=Decimal("4.12"),
+        path="P3_MACD_SURGE",
+    )
+
+    position = bot.positions.get_position("ENVB")
+    assert position is not None
+    assert position.scale_profile == "NORMAL"
+
+
 def test_trade_tick_generates_open_intent_for_confirmed_watchlist(monkeypatch) -> None:
     state = StrategyEngineState(
         settings=Settings(strategy_macd_30s_live_aggregate_bars_enabled=False),
@@ -1013,6 +1476,7 @@ def test_trade_tick_generates_open_intent_for_confirmed_watchlist(monkeypatch) -
     )
     bot = state.bots["macd_30s"]
     bot.set_watchlist(["UGRO"])
+    bot.latest_quotes["UGRO"] = {"bid": 2.79, "ask": 2.80}
     state.seed_bars(
         "macd_30s",
         "UGRO",
@@ -1094,9 +1558,7 @@ def test_trade_tick_records_blocked_decision_reason(monkeypatch) -> None:
     )
 
     assert intents == []
-    recent_decision = bot.summary()["recent_decisions"][0]
-    assert recent_decision["status"] == "idle"
-    assert recent_decision["reason"] == "no entry path matched"
+    assert bot.summary()["recent_decisions"] == []
 
 
 def test_trade_tick_can_emit_intrabar_scale_intent() -> None:
@@ -1112,6 +1574,7 @@ def test_trade_tick_can_emit_intrabar_scale_intent() -> None:
         now_provider=lambda: datetime(2026, 4, 18, 10, 0, tzinfo=UTC),
     )
     runtime.positions.open_position("ELAB", 1.00, quantity=10, path="P1")
+    runtime.latest_quotes["ELAB"] = {"bid": 1.02, "ask": 1.03}
 
     intents = runtime.handle_trade_tick(
         symbol="ELAB",
@@ -1124,6 +1587,34 @@ def test_trade_tick_can_emit_intrabar_scale_intent() -> None:
     assert len(scale_intents) == 1
     assert scale_intents[0].payload.reason == "SCALE_PCT2"
     assert ("ELAB", "PCT2") in runtime.pending_scale_levels
+
+
+def test_trade_tick_does_not_stack_second_scale_while_first_scale_pending() -> None:
+    runtime = StrategyBotRuntime(
+        StrategyDefinition(
+            code="macd_30s",
+            display_name="30s",
+            account_name="paper:test",
+            interval_secs=30,
+            trading_config=TradingConfig(),
+            indicator_config=IndicatorConfig(),
+        ),
+        now_provider=lambda: datetime(2026, 4, 18, 10, 0, tzinfo=UTC),
+    )
+    runtime.positions.open_position("SST", 2.8899, quantity=10, path="P3")
+    runtime.pending_scale_levels.add(("SST", "PCT2"))
+    runtime.latest_quotes["SST"] = {"bid": 3.03, "ask": 3.04}
+
+    intents = runtime.handle_trade_tick(
+        symbol="SST",
+        price=3.035,
+        size=100,
+        timestamp_ns=1_700_001_501_000_000_000,
+    )
+
+    scale_intents = [intent for intent in intents if intent.payload.intent_type == "scale"]
+    assert scale_intents == []
+    assert runtime.pending_scale_levels == {("SST", "PCT2")}
 
 
 def test_trade_tick_can_emit_intrabar_floor_breach_close() -> None:
@@ -1144,6 +1635,7 @@ def test_trade_tick_can_emit_intrabar_floor_breach_close() -> None:
         now_provider=lambda: datetime(2026, 4, 18, 10, 0, tzinfo=UTC),
     )
     runtime.positions.open_position("ELAB", 1.00, quantity=10, path="P1")
+    runtime.latest_quotes["ELAB"] = {"bid": 1.014, "ask": 1.015}
 
     warmup_intents = runtime.handle_trade_tick(
         symbol="ELAB",
@@ -1200,7 +1692,7 @@ def test_trade_tick_uses_monotonic_bar_count_after_history_trim(monkeypatch) -> 
     state.handle_trade_tick(symbol="UGRO", price=2.8, size=200, timestamp_ns=first_tick)
     state.handle_trade_tick(symbol="UGRO", price=2.81, size=200, timestamp_ns=second_tick)
 
-    assert bar_indices == [2_001, 2_002]
+    assert bar_indices == [2_001, 2_001, 2_002]
 
 
 def test_trimmed_history_does_not_lock_out_new_open_after_cancel(monkeypatch) -> None:
@@ -1295,8 +1787,10 @@ def test_flush_completed_bars_evaluates_due_bar_without_waiting_for_next_trade(m
         "UGRO",
         seed_trending_bars(start_timestamp=current.timestamp() - 49 * 30, interval_secs=30),
     )
+    bot.latest_quotes["UGRO"] = {"bid": 2.79, "ask": 2.80}
     bot.definition.trading_config.confirm_bars = 0
     bot.definition.trading_config.min_score = 0
+    bot.definition.trading_config.entry_intrabar_enabled = False
 
     monkeypatch.setattr(
         bot.entry_engine,
@@ -1379,7 +1873,7 @@ def test_live_second_bars_can_generate_open_intent_for_30s_bot(monkeypatch) -> N
     assert open_intents[0].payload.symbol == "UGRO"
 
 
-def test_bot_runtime_prunes_symbol_state_when_watchlist_shrinks() -> None:
+def test_bot_runtime_prunes_symbol_state_when_symbol_is_dropped_from_bot_lifecycle() -> None:
     state = StrategyEngineState(now_provider=fixed_now)
     bot = state.bots["macd_30s"]
     bot.set_watchlist(["UGRO", "BFRG"])
@@ -1400,7 +1894,9 @@ def test_bot_runtime_prunes_symbol_state_when_watchlist_shrinks() -> None:
     bot.entry_engine._recent_bars["UGRO"] = [{"price": 2.5, "high": 2.5, "volume": 1.0, "ema9": 2.4, "ema20": 2.3, "vwap": 2.4}]
     bot.entry_engine._recent_bars["BFRG"] = [{"price": 3.5, "high": 3.5, "volume": 1.0, "ema9": 3.4, "ema20": 3.3, "vwap": 3.4}]
 
-    bot.set_watchlist(["UGRO"])
+    bot.lifecycle_states.pop("BFRG", None)
+    bot._sync_watchlist_from_lifecycle()
+    bot._prune_runtime_state()
 
     assert "UGRO" in bot.builder_manager.get_all_tickers()
     assert "BFRG" not in bot.builder_manager.get_all_tickers()
@@ -1644,6 +2140,154 @@ def test_live_aggregate_30s_falls_back_to_trade_ticks_when_stream_is_missing(mon
     assert [intent.payload.intent_type for intent in intents] == ["open"]
 
 
+def test_live_aggregate_30s_still_emits_intrabar_open_from_trade_tick_when_stream_is_fresh(monkeypatch) -> None:
+    state = StrategyEngineState(
+        settings=Settings(
+            strategy_macd_30s_live_aggregate_bars_enabled=True,
+            strategy_macd_30s_live_aggregate_stale_after_seconds=60,
+        ),
+        now_provider=fixed_now,
+    )
+    bot = state.bots["macd_30s"]
+    bot.set_watchlist(["UGRO"])
+    state.seed_bars(
+        "macd_30s",
+        "UGRO",
+        seed_trending_bars(start_timestamp=1_700_000_000.0, interval_secs=30),
+    )
+    bot.latest_quotes["UGRO"] = {"bid": 2.79, "ask": 2.80}
+    bot.handle_live_bar(
+        symbol="UGRO",
+        open_price=2.78,
+        high_price=2.79,
+        low_price=2.77,
+        close_price=2.79,
+        volume=2_000,
+        timestamp=1_700_001_500.0,
+        trade_count=10,
+    )
+
+    captured: dict[str, float | int] = {}
+
+    assert bot._should_fallback_to_trade_ticks("UGRO") is True
+
+    def fake_calculate(bars):
+        captured["last_bar_timestamp"] = float(bars[-1]["timestamp"])
+        captured["last_bar_close"] = float(bars[-1]["close"])
+        return {
+            "price": float(bars[-1]["close"]),
+            "bar_timestamp": float(bars[-1]["timestamp"]),
+        }
+
+    def fake_check_entry(symbol, indicators, bar_index, position_tracker):
+        del position_tracker
+        captured["bar_index"] = bar_index
+        return {
+            "action": "BUY",
+            "ticker": symbol,
+            "path": "P1_CROSS",
+            "price": indicators["price"],
+            "score": 6,
+            "score_details": "intrabar",
+        }
+
+    monkeypatch.setattr(bot.indicator_engine, "calculate", fake_calculate)
+    monkeypatch.setattr(bot.entry_engine, "check_entry", fake_check_entry)
+    monkeypatch.setattr(
+        bot.entry_engine,
+        "pop_last_decision",
+        lambda _symbol: {"status": "signal", "reason": "P1_CROSS", "path": "P1_CROSS", "score": "6"},
+    )
+
+    intents = state.handle_trade_tick(
+        symbol="UGRO",
+        price=2.81,
+        size=200,
+        timestamp_ns=1_700_001_505_000_000_000,
+    )
+
+    assert bot.use_live_aggregate_bars is True
+    assert [intent.payload.intent_type for intent in intents] == ["open"]
+    assert captured["last_bar_timestamp"] == 1_700_001_480.0
+    assert captured["last_bar_close"] == 2.81
+    assert captured["bar_index"] == bot.builder_manager.get_builder("UGRO").get_bar_count() + 1
+
+
+def test_live_aggregate_30s_falls_back_to_trade_ticks_when_bar_progress_stalls(monkeypatch) -> None:
+    current = datetime.fromtimestamp(1_700_001_505.0, UTC)
+
+    def now_provider() -> datetime:
+        return current
+
+    state = StrategyEngineState(
+        settings=Settings(
+            strategy_macd_30s_live_aggregate_bars_enabled=True,
+            strategy_macd_30s_live_aggregate_stale_after_seconds=60,
+        ),
+        now_provider=now_provider,
+    )
+    bot = state.bots["macd_30s"]
+    bot.set_watchlist(["UGRO"])
+    state.seed_bars(
+        "macd_30s",
+        "UGRO",
+        seed_trending_bars(start_timestamp=1_700_000_000.0, interval_secs=30),
+    )
+    bot.latest_quotes["UGRO"] = {"bid": 2.79, "ask": 2.80}
+    bot.handle_live_bar(
+        symbol="UGRO",
+        open_price=2.78,
+        high_price=2.79,
+        low_price=2.77,
+        close_price=2.79,
+        volume=2_000,
+        timestamp=1_700_001_470.0,
+        trade_count=10,
+    )
+
+    captured: dict[str, float | int] = {}
+
+    def fake_calculate(bars):
+        captured["last_bar_timestamp"] = float(bars[-1]["timestamp"])
+        captured["last_bar_close"] = float(bars[-1]["close"])
+        return {
+            "price": float(bars[-1]["close"]),
+            "bar_timestamp": float(bars[-1]["timestamp"]),
+        }
+
+    def fake_check_entry(symbol, indicators, bar_index, position_tracker):
+        del position_tracker
+        captured["bar_index"] = bar_index
+        return {
+            "action": "BUY",
+            "ticker": symbol,
+            "path": "P1_CROSS",
+            "price": indicators["price"],
+            "score": 6,
+            "score_details": "intrabar",
+        }
+
+    monkeypatch.setattr(bot.indicator_engine, "calculate", fake_calculate)
+    monkeypatch.setattr(bot.entry_engine, "check_entry", fake_check_entry)
+    monkeypatch.setattr(
+        bot.entry_engine,
+        "pop_last_decision",
+        lambda _symbol: {"status": "signal", "reason": "P1_CROSS", "path": "P1_CROSS", "score": "6"},
+    )
+
+    intents = state.handle_trade_tick(
+        symbol="UGRO",
+        price=2.81,
+        size=200,
+        timestamp_ns=1_700_001_505_000_000_000,
+    )
+
+    assert bot.use_live_aggregate_bars is True
+    assert [intent.payload.intent_type for intent in intents] == ["open"]
+    assert bot.builder_manager.get_builder("UGRO").get_bars_with_current_as_dicts()[-1]["timestamp"] == 1_700_001_480.0
+    assert bot.builder_manager.get_builder("UGRO").get_bars_with_current_as_dicts()[-1]["close"] == 2.81
+
+
 def test_reclaim_runtime_checks_pretrigger_logic_while_position_is_open(monkeypatch) -> None:
     state = StrategyEngineState(
         settings=Settings(
@@ -1704,7 +2348,8 @@ def test_macd_1m_massive_provider_remains_available_as_fallback() -> None:
 
 
 def test_strategy_summary_includes_taapi_indicator_fields_for_1m(monkeypatch) -> None:
-    state = StrategyEngineState(now_provider=fixed_now)
+    now_box = {"value": fixed_now()}
+    state = StrategyEngineState(now_provider=lambda: now_box["value"])
     bot = state.bots["macd_1m"]
     bot.set_watchlist(["UGRO"])
     state.seed_bars(
@@ -1787,6 +2432,8 @@ def test_strategy_summary_includes_taapi_indicator_fields_for_1m(monkeypatch) ->
         size=200,
         timestamp_ns=1_700_003_000_000_000_000,
     )
+    now_box["value"] = fixed_now() + timedelta(seconds=61)
+    state.flush_completed_bars()
 
     summary = state.summary()
     indicator_snapshots = summary["bots"]["macd_1m"]["indicator_snapshots"]
@@ -1804,12 +2451,13 @@ def test_strategy_summary_includes_taapi_indicator_fields_for_1m(monkeypatch) ->
 
 
 def test_strategy_summary_includes_massive_aggregate_fields_for_30s(monkeypatch) -> None:
+    now_box = {"value": fixed_now()}
     state = StrategyEngineState(
         settings=Settings(
             massive_api_key="test-key",
             strategy_macd_30s_live_aggregate_bars_enabled=True,
         ),
-        now_provider=fixed_now,
+        now_provider=lambda: now_box["value"],
     )
     bot = state.bots["macd_30s"]
     bot.set_watchlist(["UGRO"])
@@ -1873,6 +2521,8 @@ def test_strategy_summary_includes_massive_aggregate_fields_for_30s(monkeypatch)
         volume=200,
         timestamp=datetime(2026, 3, 28, 14, 0, tzinfo=UTC).timestamp(),
     )
+    now_box["value"] = fixed_now() + timedelta(seconds=31)
+    state.flush_completed_bars()
 
     summary = state.summary()
     indicator_snapshots = summary["bots"]["macd_30s"]["indicator_snapshots"]
@@ -1881,7 +2531,7 @@ def test_strategy_summary_includes_massive_aggregate_fields_for_30s(monkeypatch)
     assert indicator_snapshots[0]["provider_status"] == "ready"
     assert indicator_snapshots[0]["provider_close"] == pytest.approx(2.48)
     assert indicator_snapshots[0]["provider_volume"] == pytest.approx(22000)
-    assert indicator_snapshots[0]["provider_close_diff"] == pytest.approx(0.01)
+    assert indicator_snapshots[0]["provider_close_diff"] == pytest.approx(0.32)
     assert indicator_snapshots[0]["provider_vwap_diff"] == pytest.approx(0.01)
 
 
@@ -1967,7 +2617,8 @@ def test_massive_overlay_does_not_change_30s_trading_inputs(monkeypatch) -> None
 
 
 def test_taapi_source_changes_1m_trading_inputs(monkeypatch) -> None:
-    state = StrategyEngineState(now_provider=fixed_now)
+    now_box = {"value": fixed_now()}
+    state = StrategyEngineState(now_provider=lambda: now_box["value"])
     bot = state.bots["macd_1m"]
     bot.set_watchlist(["UGRO"])
     state.seed_bars(
@@ -2054,6 +2705,8 @@ def test_taapi_source_changes_1m_trading_inputs(monkeypatch) -> None:
         size=200,
         timestamp_ns=1_700_003_000_000_000_000,
     )
+    now_box["value"] = fixed_now() + timedelta(seconds=61)
+    state.flush_completed_bars()
 
     assert captured["macd"] == pytest.approx(-9.0)
     assert captured["signal"] == pytest.approx(-8.0)
@@ -2377,6 +3030,96 @@ def test_market_data_symbols_exclude_schwab_native_macd_30s() -> None:
     assert state.schwab_stream_symbols() == ["ELAB"]
 
 
+@pytest.mark.asyncio
+async def test_sync_subscription_targets_includes_schwab_symbols_when_stream_fallback_is_active() -> None:
+    redis = FakeRedis()
+    service = StrategyEngineService(
+        settings=Settings(
+            redis_stream_prefix="test",
+            dashboard_snapshot_persistence_enabled=False,
+            strategy_macd_30s_broker_provider="schwab",
+        ),
+        redis_client=redis,
+    )
+    service.state.bots["macd_30s"].set_watchlist(["ELAB"])
+    service.state.bots["macd_1m"].set_watchlist([])
+    service.state.bots["tos"].set_watchlist([])
+    service.state.bots["runner"].set_watchlist([])
+
+    class FakeStreamClient:
+        connected = False
+        connection_failures = 1
+
+        async def sync_subscriptions(self, symbols):
+            self.symbols = symbols
+
+    service._schwab_stream_client = FakeStreamClient()
+
+    await service._sync_subscription_targets()
+
+    stream_entries = [data for stream, data in redis.entries if stream == "test:market-data-subscriptions"]
+    assert stream_entries
+    payload = json.loads(stream_entries[-1])
+    assert payload["payload"]["symbols"] == ["ELAB"]
+
+
+@pytest.mark.asyncio
+async def test_trade_tick_stream_routes_to_schwab_native_macd_30s_when_stream_fallback_is_active(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    redis = FakeRedis()
+    service = StrategyEngineService(
+        settings=Settings(
+            redis_stream_prefix="test",
+            dashboard_snapshot_persistence_enabled=False,
+            strategy_history_persistence_enabled=False,
+            strategy_macd_30s_broker_provider="schwab",
+            strategy_macd_30s_live_aggregate_bars_enabled=False,
+        ),
+        redis_client=redis,
+    )
+
+    class FakeStreamClient:
+        connected = False
+        connection_failures = 1
+
+    service._schwab_stream_client = FakeStreamClient()
+    captured: dict[str, object] = {}
+
+    def fake_handle_trade_tick(*, symbol, price, size, timestamp_ns=None, cumulative_volume=None, strategy_codes=None, exclude_codes=None):
+        captured.update(
+            {
+                "symbol": symbol,
+                "price": price,
+                "size": size,
+                "timestamp_ns": timestamp_ns,
+                "cumulative_volume": cumulative_volume,
+                "strategy_codes": tuple(strategy_codes or ()),
+                "exclude_codes": exclude_codes,
+            }
+        )
+        return []
+
+    monkeypatch.setattr(service.state, "handle_trade_tick", fake_handle_trade_tick)
+
+    event = TradeTickEvent(
+        source_service="market-data-gateway",
+        payload=TradeTickPayload(
+            symbol="UGRO",
+            price=Decimal("2.80"),
+            size=200,
+            timestamp_ns=1_700_001_500_000_000_000,
+            cumulative_volume=40_000,
+        ),
+    )
+
+    await service._handle_stream_message("test:market-data", {"data": event.model_dump_json()})
+
+    assert captured["symbol"] == "UGRO"
+    assert "macd_30s" in captured["strategy_codes"]
+    assert captured["exclude_codes"] is None
+
+
 def test_market_data_symbols_exclude_schwab_backed_tos() -> None:
     state = StrategyEngineState(
         settings=Settings(strategy_tos_broker_provider="schwab"),
@@ -2441,6 +3184,67 @@ def test_gateway_quote_tick_can_exclude_schwab_backed_tos() -> None:
     )
 
     assert "ELAB" not in state.bots["tos"].latest_quotes
+
+
+@pytest.mark.asyncio
+async def test_service_uses_fallback_quotes_for_stale_schwab_open_positions() -> None:
+    settings = Settings(
+        strategy_macd_30s_broker_provider="schwab",
+        redis_stream_prefix="test",
+        dashboard_snapshot_persistence_enabled=False,
+        strategy_history_persistence_enabled=False,
+        schwab_stream_symbol_stale_after_seconds=1.0,
+        schwab_stream_symbol_quote_poll_interval_seconds=0.5,
+        schwab_stream_symbol_resubscribe_interval_seconds=1.0,
+    )
+    service = StrategyEngineService(settings=settings, redis_client=FakeRedis())
+    runtime = service.state.bots["macd_30s"]
+    runtime.positions.open_position("ENVB", 4.0, quantity=10, path="ENTRY")
+    old = datetime.now(UTC) - timedelta(seconds=10)
+    service._schwab_symbol_last_stream_trade_at["ENVB"] = old
+    service._schwab_symbol_last_stream_quote_at["ENVB"] = old
+
+    published: list[TradeIntent] = []
+
+    class FakeStreamClient:
+        def __init__(self) -> None:
+            self.force_resubscribe_calls = 0
+
+        async def force_resubscribe(self) -> None:
+            self.force_resubscribe_calls += 1
+
+    class FakeQuotePollAdapter:
+        async def fetch_quotes(self, symbols):
+            assert symbols == ["ENVB"]
+            return {
+                "ENVB": {
+                    "bid_price": 4.20,
+                    "ask_price": 4.22,
+                    "last_price": 4.21,
+                    "bid_size": 1000.0,
+                    "ask_size": 900.0,
+                }
+            }
+
+    fake_stream_client = FakeStreamClient()
+    service._schwab_stream_client = fake_stream_client
+    service._schwab_quote_poll_adapter = FakeQuotePollAdapter()
+
+    async def fake_publish_intent(intent):
+        published.append(intent)
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(service, "_publish_intent", fake_publish_intent)
+    try:
+        intent_count = await service._monitor_schwab_symbol_health()
+    finally:
+        monkeypatch.undo()
+
+    assert intent_count == 1
+    assert fake_stream_client.force_resubscribe_calls == 1
+    assert runtime.latest_quotes["ENVB"] == {"bid": 4.2, "ask": 4.22}
+    assert published[0].payload.intent_type == "scale"
+    assert published[0].payload.symbol == "ENVB"
 
 
 def test_snapshot_batch_does_not_push_polygon_quotes_into_schwab_native_macd_30s(monkeypatch) -> None:
@@ -2740,10 +3544,10 @@ def test_seeded_confirmed_candidates_are_revalidated_into_fresh_top_confirmed(mo
     service._seed_confirmed_candidates_from_dashboard_snapshot()
 
     assert [item["ticker"] for item in service.state.all_confirmed] == ["ELAB", "UGRO"]
-    assert [item["ticker"] for item in service.state.current_confirmed] == ["ELAB"]
+    assert [item["ticker"] for item in service.state.current_confirmed] == ["ELAB", "UGRO"]
     for code in ("macd_30s", "macd_1m", "tos", "runner"):
-        assert service.state.bots[code].watchlist == {"ELAB"}
-    assert set(service.state.market_data_symbols()) == {"ELAB"}
+        assert service.state.bots[code].watchlist == {"ELAB", "UGRO"}
+    assert set(service.state.market_data_symbols()) == {"ELAB", "UGRO"}
 
     summary = service.state.process_snapshot_batch(
         [
@@ -2758,8 +3562,8 @@ def test_seeded_confirmed_candidates_are_revalidated_into_fresh_top_confirmed(mo
 
     assert service.state._seeded_confirmed_pending_revalidation is False
     assert [item["ticker"] for item in service.state.confirmed_scanner.get_all_confirmed()] == ["UGRO", "ELAB"]
-    assert [item["ticker"] for item in summary["all_confirmed"]] == ["ELAB", "UGRO"]
-    assert summary["watchlist"] == ["ELAB"]
+    assert [item["ticker"] for item in summary["all_confirmed"]] == ["UGRO", "ELAB"]
+    assert summary["watchlist"] == ["ELAB", "UGRO"]
     assert [item["ticker"] for item in summary["top_confirmed"]] == ["ELAB"]
     assert summary["top_confirmed"][0]["price"] == 3.90
     assert service.state.confirmed_scanner.get_all_confirmed()[0]["volume"] == 1_100_000
@@ -2812,6 +3616,59 @@ def test_seeded_confirmed_candidates_drop_when_missing_from_fresh_snapshots() ->
     assert service.state._seeded_confirmed_pending_revalidation is False
     assert summary["watchlist"] == []
     assert summary["top_confirmed"] == []
+
+
+def test_seeded_confirmed_candidates_restore_watchlist_from_all_confirmed_when_top_confirmed_empty() -> None:
+    session_factory = build_test_session_factory()
+    with session_factory() as session:
+        session.add(
+            DashboardSnapshot(
+                snapshot_type="scanner_confirmed_last_nonempty",
+                payload={
+                    "persisted_at": datetime(2026, 3, 30, 10, 5, tzinfo=UTC).isoformat(),
+                    "all_confirmed_candidates": [
+                        {
+                            "ticker": "BIYA",
+                            "rank_score": 0.0,
+                            "confirmed_at": "10:00:00 AM ET",
+                            "entry_price": 2.25,
+                            "price": 2.40,
+                            "change_pct": 12.5,
+                            "volume": 900_000,
+                            "rvol": 6.2,
+                            "shares_outstanding": 50_000,
+                            "bid": 2.39,
+                            "ask": 2.40,
+                            "spread": 0.01,
+                            "spread_pct": 0.42,
+                            "squeeze_count": 2,
+                            "confirmation_path": "PATH_B_2SQ",
+                        }
+                    ],
+                    "top_confirmed": [],
+                },
+            )
+        )
+        session.commit()
+
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr(
+            "project_mai_tai.services.strategy_engine_app.utcnow",
+            lambda: datetime(2026, 3, 30, 14, 0, tzinfo=UTC),
+        )
+
+        service = StrategyEngineService(
+            settings=Settings(redis_stream_prefix="test", dashboard_snapshot_persistence_enabled=True),
+            redis_client=FakeRedis(),
+            session_factory=session_factory,
+        )
+
+        service._seed_confirmed_candidates_from_dashboard_snapshot()
+
+        assert [item["ticker"] for item in service.state.all_confirmed] == ["BIYA"]
+        assert [item["ticker"] for item in service.state.current_confirmed] == ["BIYA"]
+        for code in ("macd_30s", "macd_1m", "tos", "runner"):
+            assert service.state.bots[code].watchlist == {"BIYA"}
 
 
 def test_seeded_confirmed_candidates_skip_prior_session_snapshot(monkeypatch) -> None:
@@ -3325,12 +4182,131 @@ def test_restore_runtime_state_reseeds_schwab_bar_history_for_midday_restart() -
 
     assert macd_builder.get_current_price() == pytest.approx(2.49)
     assert tos_builder.get_current_price() == pytest.approx(3.34)
+    assert macd_builder._current_bar is None
+    assert tos_builder._current_bar is None
 
-    macd_bars = macd_builder.get_bars_as_dicts() + [macd_builder._current_bar.as_dict()]
-    tos_bars = tos_builder.get_bars_as_dicts() + [tos_builder._current_bar.as_dict()]
+    macd_bars = macd_builder.get_bars_as_dicts()
+    tos_bars = tos_builder.get_bars_as_dicts()
 
     assert macd_runtime.indicator_engine.calculate(macd_bars) is not None
     assert tos_runtime.indicator_engine.calculate(tos_bars) is not None
+
+
+def test_restore_runtime_state_reseeds_full_30s_session_history_for_session_aware_vwap() -> None:
+    session_factory = build_test_session_factory()
+    start_30s = datetime(2026, 3, 28, 8, 0, tzinfo=UTC)
+
+    with session_factory() as session:
+        for index in range(120):
+            close = Decimal(str(2.00 + index * 0.01))
+            session.add(
+                StrategyBarHistory(
+                    strategy_code="macd_30s",
+                    symbol="UGRO",
+                    interval_secs=30,
+                    bar_time=start_30s + timedelta(seconds=index * 30),
+                    open_price=close - Decimal("0.01"),
+                    high_price=close + Decimal("0.02"),
+                    low_price=close - Decimal("0.02"),
+                    close_price=close,
+                    volume=20_000 + index * 100,
+                    trade_count=10,
+                )
+            )
+        session.commit()
+
+    service = StrategyEngineService(
+        settings=Settings(
+            redis_stream_prefix="test",
+            dashboard_snapshot_persistence_enabled=True,
+            strategy_macd_30s_broker_provider="schwab",
+        ),
+        redis_client=FakeRedis(),
+        session_factory=session_factory,
+    )
+    service.state.alert_engine.now_provider = fixed_now
+    service.state.restore_confirmed_runtime_view([{"ticker": "UGRO"}])
+
+    service._restore_runtime_state_from_database()
+
+    macd_runtime = service.state.bots["macd_30s"]
+    macd_builder = macd_runtime.builder_manager.get_builder("UGRO")
+
+    assert macd_builder is not None
+    assert macd_builder._current_bar is None
+    assert len(macd_builder.get_bars_as_dicts()) == 120
+    assert macd_builder.get_current_price() == pytest.approx(3.19)
+
+
+def test_seed_bars_populates_last_indicator_snapshot() -> None:
+    service = StrategyEngineService(
+        settings=Settings(
+            redis_stream_prefix="test",
+            strategy_macd_30s_broker_provider="schwab",
+        ),
+        redis_client=FakeRedis(),
+    )
+    runtime = service.state.bots["macd_30s"]
+
+    runtime.seed_bars(
+        "UGRO",
+        seed_trending_bars(
+            count=60,
+            start_timestamp=datetime(2026, 3, 28, 13, 0, tzinfo=UTC).timestamp(),
+            interval_secs=30,
+        ),
+    )
+
+    snapshot = runtime.last_indicators.get("UGRO")
+    assert snapshot is not None
+    assert snapshot["price"] == pytest.approx(2.59)
+    assert snapshot["bar_timestamp"] == pytest.approx(
+        datetime(2026, 3, 28, 13, 29, 30, tzinfo=UTC).timestamp()
+    )
+
+
+def test_lazy_history_seed_rehydrates_session_bars_after_restart() -> None:
+    session_factory = build_test_session_factory()
+    start_30s = datetime(2026, 3, 28, 13, 0, tzinfo=UTC)
+
+    with session_factory() as session:
+        for index in range(60):
+            close = Decimal(str(2.00 + index * 0.01))
+            session.add(
+                StrategyBarHistory(
+                    strategy_code="macd_30s",
+                    symbol="UGRO",
+                    interval_secs=30,
+                    bar_time=start_30s + timedelta(seconds=index * 30),
+                    open_price=close - Decimal("0.01"),
+                    high_price=close + Decimal("0.02"),
+                    low_price=close - Decimal("0.02"),
+                    close_price=close,
+                    volume=20_000 + index * 100,
+                    trade_count=10,
+                )
+            )
+        session.commit()
+
+    service = StrategyEngineService(
+        settings=Settings(
+            redis_stream_prefix="test",
+            strategy_macd_30s_broker_provider="schwab",
+        ),
+        redis_client=FakeRedis(),
+        session_factory=session_factory,
+    )
+    runtime = service.state.bots["macd_30s"]
+    runtime.now_provider = fixed_now
+
+    builder = runtime.builder_manager.get_or_create("UGRO")
+    assert builder.get_bar_count() == 0
+    assert runtime.last_indicators.get("UGRO") is None
+
+    runtime._ensure_history_seeded("UGRO")
+
+    assert builder.get_bar_count() == 60
+    assert runtime.last_indicators["UGRO"]["price"] == pytest.approx(2.59)
 
 
 def test_strategy_bot_runtime_loads_closed_trades_for_daily_pnl(monkeypatch) -> None:
@@ -3496,3 +4472,119 @@ def test_strategy_bot_runtime_uses_eastern_bar_timestamps() -> None:
 
     assert summary["recent_decisions"][0]["last_bar_at"].endswith("-04:00")
     assert summary["indicator_snapshots"][0]["last_bar_at"].endswith("-04:00")
+
+
+def test_tos_runtime_emits_intrabar_open_on_current_bar(monkeypatch) -> None:
+    service = StrategyEngineService(
+        settings=Settings(
+            redis_stream_prefix="test",
+            strategy_tos_broker_provider="schwab",
+        ),
+        redis_client=FakeRedis(),
+        now_provider=fixed_now,
+    )
+    runtime = service.state.bots["tos"]
+    runtime.set_watchlist(["CMND"])
+    runtime.seed_bars("CMND", seed_trending_bars(count=40, interval_secs=60))
+
+    captured: dict[str, int] = {}
+
+    def fake_calculate(_bars):
+        return {
+            "price": 2.80,
+            "bar_timestamp": 1_700_002_340.0,
+        }
+
+    def fake_check_entry(symbol, indicators, bar_index, position_tracker):
+        del position_tracker
+        captured["bar_index"] = bar_index
+        captured["price"] = indicators["price"]
+        return {
+            "action": "BUY",
+            "ticker": symbol,
+            "path": "P2_VWAP_BREAKOUT",
+            "price": indicators["price"],
+            "score": 0,
+            "score_details": "intrabar",
+        }
+
+    monkeypatch.setattr(runtime.indicator_engine, "calculate", fake_calculate)
+    monkeypatch.setattr(runtime.entry_engine, "check_entry", fake_check_entry)
+    monkeypatch.setattr(
+        runtime.entry_engine,
+        "pop_last_decision",
+        lambda _symbol: {"status": "signal", "reason": "P2_VWAP_BREAKOUT", "path": "P2_VWAP_BREAKOUT"},
+    )
+
+    intents = runtime.handle_trade_tick(
+        "CMND",
+        price=2.81,
+        size=100,
+        timestamp_ns=1_700_002_401_000_000_000,
+    )
+
+    assert len(intents) == 1
+    assert captured["bar_index"] == 41
+    assert intents[0].payload.symbol == "CMND"
+    assert intents[0].payload.reason == "ENTRY_P2_VWAP_BREAKOUT"
+    assert "CMND" in runtime.pending_open_symbols
+    assert runtime.recent_decisions[0]["last_bar_at"].endswith("+00:00") is False
+
+
+def test_schwab_native_30s_runtime_emits_intrabar_open_on_current_bar(monkeypatch) -> None:
+    service = StrategyEngineService(
+        settings=Settings(
+            redis_stream_prefix="test",
+            strategy_macd_30s_broker_provider="schwab",
+        ),
+        redis_client=FakeRedis(),
+        now_provider=fixed_now,
+    )
+    runtime = service.state.bots["macd_30s"]
+    runtime.set_watchlist(["CMND"])
+    runtime.seed_bars("CMND", seed_trending_bars(count=55, interval_secs=30))
+
+    captured: dict[str, int] = {}
+
+    def fake_calculate(_bars):
+        return {
+            "price": 1.35,
+            "bar_timestamp": 1_700_001_620.0,
+        }
+
+    def fake_check_entry(symbol, indicators, bar_index, position_tracker):
+        del position_tracker
+        captured["bar_index"] = bar_index
+        captured["price"] = indicators["price"]
+        return {
+            "action": "BUY",
+            "ticker": symbol,
+            "path": "P3_SURGE",
+            "price": indicators["price"],
+            "score": 5,
+            "score_details": "intrabar",
+        }
+
+    monkeypatch.setattr(runtime.indicator_engine, "calculate", fake_calculate)
+    monkeypatch.setattr(runtime.entry_engine, "check_entry", fake_check_entry)
+    monkeypatch.setattr(
+        runtime.entry_engine,
+        "pop_last_decision",
+        lambda _symbol: {"status": "signal", "reason": "P3_SURGE", "path": "P3_SURGE", "score": "5"},
+    )
+
+    intents = runtime.handle_trade_tick(
+        "CMND",
+        price=1.36,
+        size=100,
+        timestamp_ns=1_700_001_651_000_000_000,
+        cumulative_volume=50_000,
+    )
+
+    assert len(intents) == 1
+    assert captured["bar_index"] == 56
+    assert intents[0].payload.symbol == "CMND"
+    assert intents[0].payload.reason == "ENTRY_P3_SURGE"
+    assert "CMND" in runtime.pending_open_symbols
+    assert runtime.definition.trading_config.confirm_bars == 0
+    assert runtime.definition.trading_config.schwab_native_use_confirmation is False

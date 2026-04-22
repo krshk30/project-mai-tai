@@ -172,6 +172,7 @@ class StrategyBotStatePayload(BaseModel):
     strategy_code: str
     account_name: str
     watchlist: list[str] = Field(default_factory=list)
+    retention_states: list[dict[str, Any]] = Field(default_factory=list)
     positions: list[dict[str, Any]] = Field(default_factory=list)
     pending_open_symbols: list[str] = Field(default_factory=list)
     pending_close_symbols: list[str] = Field(default_factory=list)
@@ -180,6 +181,8 @@ class StrategyBotStatePayload(BaseModel):
     closed_today: list[dict[str, Any]] = Field(default_factory=list)
     recent_decisions: list[dict[str, Any]] = Field(default_factory=list)
     indicator_snapshots: list[dict[str, Any]] = Field(default_factory=list)
+    bar_counts: dict[str, int] = Field(default_factory=dict)
+    last_tick_at: dict[str, str] = Field(default_factory=dict)
 
 
 class StrategyStateSnapshotPayload(BaseModel):
