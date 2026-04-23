@@ -3945,6 +3945,65 @@ async def test_service_default_stale_threshold_tolerates_brief_quiet_gap() -> No
     assert runtime.data_health_summary()["halted_symbols"] == []
 
 
+@pytest.mark.asyncio
+async def test_service_brief_schwab_stream_disconnect_stays_inside_data_halt_grace_window() -> None:
+    settings = Settings(
+        strategy_macd_30s_broker_provider="schwab",
+        redis_stream_prefix="test",
+        dashboard_snapshot_persistence_enabled=False,
+        strategy_history_persistence_enabled=False,
+        schwab_stream_symbol_stale_after_seconds=1.0,
+    )
+    service = StrategyEngineService(settings=settings, redis_client=FakeRedis())
+    runtime = service.state.bots["macd_30s"]
+    runtime.set_watchlist(["FTFT"])
+
+    class FakeStreamClient:
+        connected = False
+
+    service._schwab_stream_client = FakeStreamClient()
+
+    activity_count = await service._monitor_schwab_symbol_health()
+
+    assert activity_count == 0
+    assert service._schwab_stream_disconnected_since is not None
+    assert service._schwab_stale_symbols == set()
+    assert runtime.data_health_summary()["status"] == "healthy"
+    assert runtime.data_health_summary()["halted_symbols"] == []
+
+
+@pytest.mark.asyncio
+async def test_service_persistent_schwab_stream_disconnect_halts_symbols_after_grace_window() -> None:
+    settings = Settings(
+        strategy_macd_30s_broker_provider="schwab",
+        redis_stream_prefix="test",
+        dashboard_snapshot_persistence_enabled=False,
+        strategy_history_persistence_enabled=False,
+        schwab_stream_symbol_stale_after_seconds=1.0,
+        schwab_stream_symbol_resubscribe_interval_seconds=1.0,
+    )
+    service = StrategyEngineService(settings=settings, redis_client=FakeRedis())
+    runtime = service.state.bots["macd_30s"]
+    runtime.set_watchlist(["FTFT"])
+    service._schwab_symbol_active_first_seen_at["FTFT"] = datetime.now(UTC) - timedelta(seconds=40)
+    service._schwab_stream_disconnected_since = datetime.now(UTC) - timedelta(seconds=40)
+
+    class FakeStreamClient:
+        connected = False
+
+        async def force_resubscribe(self) -> None:
+            return None
+
+    service._schwab_stream_client = FakeStreamClient()
+
+    activity_count = await service._monitor_schwab_symbol_health()
+
+    assert activity_count == 1
+    assert service._schwab_stale_symbols == {"FTFT"}
+    assert runtime.data_health_summary()["status"] == "critical"
+    assert runtime.data_health_summary()["halted_symbols"] == ["FTFT"]
+
+
 def test_generic_market_data_never_targets_schwab_native_bot_when_stream_is_stale() -> None:
     settings = Settings(
         strategy_macd_30s_broker_provider="schwab",

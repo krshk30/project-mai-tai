@@ -3685,11 +3685,14 @@ def _build_bot_listening_status(
 
     if data_health_status in {"critical", "degraded", "error"}:
         state = "DATA HALT"
-        detail = (
-            "Schwab stream stale/disconnected; entries are blocked and open positions are being closed."
-            if halted_symbols
-            else "Schwab data health is degraded."
-        )
+        if halted_symbols:
+            detail = (
+                "Schwab stream stale/disconnected; entries are blocked and any open positions are eligible for emergency close."
+                if position_count > 0
+                else "Schwab stream stale/disconnected; entries are blocked, but there are no open positions to emergency close."
+            )
+        else:
+            detail = "Schwab data health is degraded."
         color = "#ff6b6b"
     elif service_status in {"stopping", "stopped", "inactive"} or service_raw_status in {"stopping", "stopped", "inactive"}:
         state = "STOPPED"
@@ -4392,12 +4395,17 @@ def _render_bot_detail_page(data: dict[str, Any], strategy_code: str) -> str:
             f"{symbol} since {data_health_since.get(symbol, '-')}"
             for symbol in halted_symbols
         )
+        data_health_sub = (
+            "Trading is blocked for halted symbols; any open positions are eligible for emergency close using Schwab quotes only."
+            if listening_status["position_count"] > 0
+            else "Trading is blocked for halted symbols; there are no open positions currently exposed to the emergency-close path."
+        )
         data_health_panel = f"""
             <section class="panel full critical-panel">
                 <div class="panel-header">
                     <div>
                         <h2>Schwab Data Halt</h2>
-                        <div class="sub">Trading is blocked for halted symbols; open positions are routed for emergency close using Schwab quotes only.</div>
+                        <div class="sub">{escape(data_health_sub)}</div>
                     </div>
                     <span class="count danger">{escape(data_health_status.upper())}</span>
                 </div>
