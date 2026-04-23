@@ -1748,8 +1748,8 @@ Root cause:
 Fix:
 
 - prewarm-only bars still build from Schwab trade ticks in memory
-- prewarm-only bars still update `last_indicators` so a later confirmed handoff
-  can use the warmed state
+- prewarm-only bars do not calculate indicators; a later confirmed handoff uses
+  the warmed bar builder and calculates indicators on the active/tradable path
 - prewarm-only bars no longer write `StrategyBarHistory` rows or Decision Tape
   rows
 - active/watchlist/open-position bars still persist normally after confirmation
@@ -1758,5 +1758,14 @@ Fix:
 
 Regression coverage added:
 
-- prewarm-only Schwab trade ticks build bars and update indicators without entry
-  checks and without calling `_persist_bar_history`
+- prewarm-only Schwab trade ticks build bars without entry checks, indicator
+  calculation, or `_persist_bar_history`
+
+Follow-up live finding:
+
+- after the first fix, the process survived the 7:30 AM ET alert burst but
+  stalled again after the 7:31 AM ET ELAB burst
+- second root cause was the remaining prewarm-only indicator calculation:
+  `builder.get_bars_as_dicts()` plus full indicator recalculation on every
+  completed prewarm-only 30-second bar across roughly 40 Schwab stream symbols
+- prewarm is now strictly bar accumulation only until a symbol becomes active
