@@ -1736,6 +1736,34 @@ Live symptom:
 - strategy log stopped immediately after the `07:17 AM ET` raw momentum-alert
   burst
 
+## 2026-04-23 Live Readiness Heartbeat Follow-Up
+
+Heartbeat check at `2026-04-23 09:33 AM ET` found the Schwab-backed
+`macd_30s` bot healthy and listening, with no Schwab stale symbols and no
+generic fallback active.
+
+Operational cleanup performed on the VPS:
+
+- disabled and stopped stale `project-mai-tai-tv-alerts.service`
+  - current `main` no longer ships the `mai-tai-tv-alerts` executable
+  - systemd was crash-looping with `status=203/EXEC`
+  - this was an obsolete service-unit/runtime mismatch, not a Schwab bot issue
+- manually stopped `YCBD` for `macd_30s` after a rapid scale sequence created a
+  temporary reconciler mismatch
+  - broker/virtual reconciliation cleared after the fills settled
+  - `YCBD` was removed from the live `macd_30s` watchlist
+
+Current post-cleanup state:
+
+- `project-mai-tai-strategy.service`, control, market-data, OMS, and reconciler
+  are active
+- only Schwab-backed `macd_30s` is active in `/api/bots`
+- bot `data_health` is healthy
+- strategy heartbeat reports no stale Schwab symbols
+- public HTTPS still returns the expected Basic Auth `401`
+- `/health` remains degraded only from reconciler history/open incidents, not
+  from strategy/Schwab data health
+
 Root cause:
 
 - raw-alert Schwab prewarm correctly subscribed many symbols before confirmation
@@ -1873,3 +1901,35 @@ Validation:
   - `.venv\Scripts\python.exe -m pytest tests/unit/test_strategy_engine_service.py tests/unit/test_control_plane.py -q`
   - this hung until the local desktop timeout and did not produce a useful
     failure; do not count it as a pass
+
+## 2026-04-23 AUUD Data-Halt Ghost State Follow-Up
+
+Live heartbeat finding:
+
+- AUUD entered a Schwab data halt and the emergency close was submitted at
+  09:39:35 AM ET
+- Schwab eventually filled the close at 09:43:44 AM ET for 10 shares at 9.44
+- AUUD was manually stopped, removed from the live watchlist, and had no open
+  bot position afterward
+- the bot `data_health` panel still showed AUUD as halted because the runtime
+  only cleared data-halt flags for still-active symbols that recovered; symbols
+  removed from the active/open set could leave a stale red UI state behind
+
+Fix branch:
+
+- `codex/clear-stale-data-halt-on-symbol-removal`
+
+Code change:
+
+- `StrategyEngineService._monitor_schwab_symbol_health` now clears Schwab
+  runtime data-halt flags for symbols that are no longer active or open
+- this keeps manual-stopped/closed symbols from leaving ghost `DATA HALT`
+  labels after the safety close has completed
+
+Regression coverage added:
+
+- stale Schwab watchlist symbol enters data halt
+- symbol is then removed from the active watchlist while another Schwab symbol
+  remains active
+- subsequent Schwab health monitor pass clears the old halted symbol and returns
+  bot `data_health` to healthy
