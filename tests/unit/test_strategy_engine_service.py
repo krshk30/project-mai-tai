@@ -3358,6 +3358,13 @@ def test_schwab_prewarm_trade_ticks_build_bars_without_entry_checks(monkeypatch:
         raise AssertionError("prewarm-only symbols must not evaluate entries")
 
     monkeypatch.setattr(runtime.entry_engine, "check_entry", fail_entry_check)
+    monkeypatch.setattr(runtime.indicator_engine, "calculate", lambda bars: {"price": bars[-1]["close"]})
+    persisted: list[str] = []
+    monkeypatch.setattr(
+        runtime,
+        "_persist_bar_history",
+        lambda **kwargs: persisted.append(str(kwargs.get("symbol", ""))),
+    )
 
     first_tick = 1_700_000_000_000_000_000
     second_tick = first_tick + 31_000_000_000
@@ -3369,6 +3376,8 @@ def test_schwab_prewarm_trade_ticks_build_bars_without_entry_checks(monkeypatch:
     assert second_intents == []
     assert runtime.watchlist == set()
     assert runtime.builder_manager.get_builder("UGRO").get_bar_count() == 1
+    assert runtime.last_indicators["UGRO"]["price"] == pytest.approx(2.70)
+    assert persisted == []
     assert runtime.stream_symbols() == {"UGRO"}
 
 
