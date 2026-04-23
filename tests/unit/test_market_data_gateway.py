@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import pytest
 
 from project_mai_tai.events import MarketDataSubscriptionEvent, MarketDataSubscriptionPayload
+from project_mai_tai.market_data.massive_provider import MassiveTradeStream
 from project_mai_tai.market_data.gateway import MarketDataGatewayService
 from project_mai_tai.market_data.models import HistoricalBarRecord, SnapshotRecord
 from project_mai_tai.settings import Settings
@@ -65,8 +67,8 @@ class FakeTradeStream:
     def __init__(self) -> None:
         self.synced: list[list[str]] = []
 
-    async def start(self, on_trade, on_quote=None) -> None:
-        del on_trade, on_quote
+    async def start(self, on_trade, on_quote=None, on_agg=None) -> None:
+        del on_trade, on_quote, on_agg
         return None
 
     async def stop(self) -> None:
@@ -194,3 +196,34 @@ async def test_apply_subscription_event_replace_replays_warmup_when_symbols_unch
     ]
     assert len(warmup_events) == 2
     assert {event["payload"]["interval_secs"] for event in warmup_events} == {30, 60}
+
+
+def test_massive_trade_stream_accepts_and_normalizes_aggregate_callback() -> None:
+    bars = []
+    stream = MassiveTradeStream(api_key="test")
+    stream._subscriptions = {"UGRO"}
+    stream._on_agg = bars.append
+
+    stream._handle_messages(
+        [
+            SimpleNamespace(
+                ev="A",
+                symbol="UGRO",
+                o=2.0,
+                h=2.1,
+                l=1.9,
+                c=2.05,
+                v=1200,
+                s=1_700_000_000_000,
+                z=8,
+            )
+        ]
+    )
+
+    assert len(bars) == 1
+    assert bars[0].symbol == "UGRO"
+    assert bars[0].interval_secs == 1
+    assert bars[0].open == 2.0
+    assert bars[0].close == 2.05
+    assert bars[0].volume == 1200
+    assert bars[0].timestamp == 1_700_000_000.0

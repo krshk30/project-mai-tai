@@ -1500,3 +1500,61 @@ Operational intent:
   - broken public HTTP routing
   - bot enablement drift
   - scanner handoff drift
+
+## 2026-04-23 Morning Readiness Fixes From 4 AM Automation
+
+The first morning validation heartbeat found two real blockers:
+
+- market-data gateway was crash-looping before it could stream live data
+- scanner/bot state still showed prior-session symbols after the 4 AM reset
+
+Root cause:
+
+- the market-data gateway had started passing an aggregate-bar callback named
+  `on_agg` into the trade stream provider
+- `MassiveTradeStream.start()` and the `TradeStreamProvider` protocol had not
+  been updated for that callback, so the market-data service crashed with:
+  - `TypeError: MassiveTradeStream.start() got an unexpected keyword argument 'on_agg'`
+- the scanner session reset still depended on `process_snapshot_batch()`
+  receiving a fresh market-data snapshot
+- because market-data was crash-looping, no fresh snapshot arrived after 4 AM,
+  so stale prior-day scanner/watchlist state could remain visible
+- persisted `scanner_confirmed_last_nonempty` snapshots also did not include a
+  scanner-session marker, so old snapshots were too easy to trust during
+  restart/restore
+
+Fix implemented:
+
+- [protocols.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/src/project_mai_tai/market_data/protocols.py)
+  - `TradeStreamProvider.start()` now accepts optional `on_agg`
+- [massive_provider.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/src/project_mai_tai/market_data/massive_provider.py)
+  - `MassiveTradeStream.start()` now accepts optional `on_agg`
+  - Massive aggregate channels (`A.SYMBOL`) are subscribed/unsubscribed when an
+    aggregate callback is active
+  - Massive aggregate messages are normalized into `LiveBarRecord`
+- [strategy_engine_app.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/src/project_mai_tai/services/strategy_engine_app.py)
+  - scanner/runtime session rollover now runs from the heartbeat loop, so the
+    4 AM reset no longer depends on a fresh scanner snapshot
+  - scanner rollover clears confirmed scanner state, current/all confirmed
+    rows, retained watchlist, recent alerts, feed-retention state, manual stops,
+    bot watchlists, and recent decision rows for the new session
+  - persisted non-empty scanner snapshots now include
+    `scanner_session_start_utc`
+  - restart seeding now skips unmarked, invalid, or prior-session confirmed
+    scanner snapshots
+
+Regression coverage added:
+
+- [test_market_data_gateway.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/tests/unit/test_market_data_gateway.py)
+  - verifies the Massive stream accepts and normalizes aggregate callbacks
+- [test_strategy_engine_service.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/tests/unit/test_strategy_engine_service.py)
+  - verifies the scanner session can roll cleanly without any new snapshot batch
+  - verifies unmarked old scanner snapshots do not reseed stale symbols
+
+Operational prevention:
+
+- keep the `4AM Mai Tai Check` heartbeat active
+- future provider callback/signature changes must include contract coverage
+- scanner reset must stay heartbeat-driven, not market-data-snapshot-driven
+- old scanner restore data must remain tied to a concrete scanner session before
+  it is trusted
