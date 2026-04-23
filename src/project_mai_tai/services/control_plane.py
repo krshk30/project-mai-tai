@@ -1070,6 +1070,27 @@ class ControlPlaneRepository:
                 for item in list(runtime_bot.get("retention_states", []))
                 if not self._is_ui_hidden_symbol(account_name, item.get("ticker") or item.get("symbol"))
             ]
+            data_health = dict(runtime_bot.get("data_health", {}) or {})
+            halted_symbols = [
+                str(symbol).upper()
+                for symbol in list(data_health.get("halted_symbols", []) or [])
+                if str(symbol).strip() and not self._is_ui_hidden_symbol(account_name, symbol)
+            ]
+            raw_reasons = dict(data_health.get("reasons", {}) or {})
+            raw_since = dict(data_health.get("since", {}) or {})
+            data_health = {
+                **data_health,
+                "status": str(data_health.get("status", "healthy") or "healthy"),
+                "halted_symbols": halted_symbols,
+                "reasons": {
+                    str(symbol).upper(): str(raw_reasons.get(symbol) or raw_reasons.get(str(symbol).upper()) or "")
+                    for symbol in halted_symbols
+                },
+                "since": {
+                    str(symbol).upper(): str(raw_since.get(symbol) or raw_since.get(str(symbol).upper()) or "")
+                    for symbol in halted_symbols
+                },
+            }
             tos_parity = self._build_tos_parity_view(
                 strategy_code=code,
                 indicator_snapshots=indicator_snapshots,
@@ -1107,6 +1128,7 @@ class ControlPlaneRepository:
                     "legacy_present": bool(legacy_bot),
                     "watchlist": watchlist,
                     "watchlist_count": len(watchlist),
+                    "data_health": data_health,
                     "manual_stop_symbols": manual_stop_symbols,
                     "retention_states": retention_states,
                     "positions": positions,
@@ -2490,6 +2512,7 @@ def _render_dashboard(data: dict[str, Any]) -> str:
           <div class="bot-lines">
             <p><strong>Execution:</strong> {escape(bot["execution_mode"])} via {escape(bot["provider"])}</p>
             <p><strong>Account:</strong> {escape(bot["account_display_name"] or "-")}</p>
+            <p><strong>Data Health:</strong> {escape(str(bot.get("data_health", {}).get("status", "healthy")).upper())}</p>
             <p><strong>Live Symbols:</strong> {escape(", ".join(bot["watchlist"][:5]) or "None")}</p>
             <p><strong>Positions:</strong> {escape(_position_preview(bot["positions"]))}</p>
             <p><strong>Recent Intents:</strong> {escape(_intent_preview(bot["recent_intents"]))}</p>
@@ -3581,6 +3604,9 @@ def _build_bot_listening_status(
     watchlist_count = len(bot.get("watchlist", []))
     position_count = len(bot.get("positions", []))
     active_session = _is_regular_session_now()
+    data_health = dict(bot.get("data_health", {}) or {})
+    data_health_status = str(data_health.get("status", "healthy") or "healthy").lower()
+    halted_symbols = [str(symbol).upper() for symbol in list(data_health.get("halted_symbols", []) or [])]
 
     state = "LISTENING"
     detail = "Bot is actively evaluating bars."
@@ -3591,7 +3617,15 @@ def _build_bot_listening_status(
         or (indicator_age_seconds is not None and indicator_age_seconds <= 120)
     )
 
-    if service_status in {"stopping", "stopped", "inactive"} or service_raw_status in {"stopping", "stopped", "inactive"}:
+    if data_health_status in {"critical", "degraded", "error"}:
+        state = "DATA HALT"
+        detail = (
+            "Schwab stream stale/disconnected; entries are blocked and open positions are being closed."
+            if halted_symbols
+            else "Schwab data health is degraded."
+        )
+        color = "#ff6b6b"
+    elif service_status in {"stopping", "stopped", "inactive"} or service_raw_status in {"stopping", "stopped", "inactive"}:
         state = "STOPPED"
         detail = "Strategy engine is not running."
         color = "#ff6b6b"
@@ -3633,6 +3667,7 @@ def _build_bot_listening_status(
         "watchlist_count": watchlist_count,
         "position_count": position_count,
         "tracked_bar_count": sum(int(value or 0) for value in dict(bot.get("bar_counts", {}) or {}).values()),
+        "data_health": data_health,
     }
 
 
@@ -3658,6 +3693,7 @@ def _build_bot_api_payload(data: dict[str, Any], strategy_code: str) -> dict[str
         "indicator_snapshots": bot["indicator_snapshots"],
         "bar_counts": bot.get("bar_counts", {}),
         "last_tick_at": bot.get("last_tick_at", {}),
+        "data_health": bot.get("data_health", {}),
         "tos_parity": bot["tos_parity"],
         "account_summary": _build_bot_account_summary(data, bot),
         "trade_log": _build_bot_decision_entries(recent_decisions),
@@ -4197,6 +4233,19 @@ def _render_bot_detail_page(data: dict[str, Any], strategy_code: str) -> str:
         redirect_to=meta["path"],
     )
     retention_html = _build_retention_status_html(retention_rows, tracked_symbols=set(active_symbols))
+    data_health = dict(bot.get("data_health", {}) or {})
+    data_health_status = str(data_health.get("status", "healthy") or "healthy").lower()
+    halted_symbols = [str(symbol).upper() for symbol in list(data_health.get("halted_symbols", []) or [])]
+    data_health_reasons = dict(data_health.get("reasons", {}) or {})
+    data_health_since = dict(data_health.get("since", {}) or {})
+    data_health_detail = "Schwab data path healthy."
+    data_health_color = "#ff6b6b" if data_health_status != "healthy" else "#5fff8d"
+    if halted_symbols:
+        reason_parts = [
+            f"{symbol}: {data_health_reasons.get(symbol, 'Schwab stream stale/disconnected')}"
+            for symbol in halted_symbols
+        ]
+        data_health_detail = " | ".join(reason_parts)
     current_position = bot["positions"][0] if strategy_code == "runner" and bot["positions"] else None
     available_codes = [str(item["strategy_code"]) for item in data.get("bots", [])]
     runner_status_panel = ""
@@ -4266,8 +4315,27 @@ def _render_bot_detail_page(data: dict[str, Any], strategy_code: str) -> str:
                     <div class="hero-card"><span>Last Bot Tick</span><strong>{escape(listening_status["latest_bot_tick_at"] or "-")}</strong><small>Latest tick that reached this bot</small></div>
                     <div class="hero-card"><span>Last Market Data</span><strong>{escape(listening_status["latest_market_data_at"] or "-")}</strong><small>Snapshot / subscription freshness</small></div>
                     <div class="hero-card"><span>Last Strategy Heartbeat</span><strong>{escape(listening_status["latest_heartbeat_at"] or "-")}</strong><small>strategy-engine heartbeat</small></div>
+                    <div class="hero-card"><span>Schwab Data Health</span><strong style="color:{data_health_color}">{escape(data_health_status.upper())}</strong><small>{escape(", ".join(halted_symbols) or "no halted symbols")}</small></div>
                     <div class="hero-card"><span>Tracked Symbols</span><strong>{listening_status["watchlist_count"]}</strong><small>Open positions: {listening_status["position_count"]} · Bars cached: {listening_status["tracked_bar_count"]}</small></div>
                 </div>
+            </section>"""
+
+    data_health_panel = ""
+    if data_health_status != "healthy":
+        halted_since = ", ".join(
+            f"{symbol} since {data_health_since.get(symbol, '-')}"
+            for symbol in halted_symbols
+        )
+        data_health_panel = f"""
+            <section class="panel full critical-panel">
+                <div class="panel-header">
+                    <div>
+                        <h2>Schwab Data Halt</h2>
+                        <div class="sub">Trading is blocked for halted symbols; open positions are routed for emergency close using Schwab quotes only.</div>
+                    </div>
+                    <span class="count danger">{escape(data_health_status.upper())}</span>
+                </div>
+                <div class="panel-copy"><strong>Symbols:</strong> {escape(", ".join(halted_symbols) or "-")}<br><strong>Since:</strong> {escape(halted_since or "-")}<br><strong>Reason:</strong> {escape(data_health_detail)}</div>
             </section>"""
 
     return f"""<!DOCTYPE html>
@@ -4442,6 +4510,10 @@ def _render_bot_detail_page(data: dict[str, Any], strategy_code: str) -> str:
             border-color: color-mix(in srgb, var(--accent) 52%, rgba(121,146,193,0.28));
             box-shadow: 0 18px 42px rgba(0, 0, 0, 0.24), 0 0 0 1px color-mix(in srgb, var(--accent) 22%, transparent);
         }}
+        .critical-panel {{
+            border-color: rgba(255,107,107,0.74);
+            box-shadow: 0 18px 42px rgba(0, 0, 0, 0.24), 0 0 0 1px rgba(255,107,107,0.30);
+        }}
         .panel-header {{
             display: flex;
             justify-content: space-between;
@@ -4474,6 +4546,7 @@ def _render_bot_detail_page(data: dict[str, Any], strategy_code: str) -> str:
             color: color-mix(in srgb, var(--accent) 75%, white 25%);
         }}
         .count.pink {{ background: rgba(208,91,255,0.12); color: #f1b3ff; }}
+        .count.danger {{ background: rgba(255,107,107,0.14); color: var(--red); }}
         .panel-copy {{
             padding: 14px 16px;
             color: var(--muted);
@@ -4645,6 +4718,7 @@ def _render_bot_detail_page(data: dict[str, Any], strategy_code: str) -> str:
             </section>
 
             {listening_panel}
+            {data_health_panel}
             {runner_status_panel}
 
             <section class="panel full">

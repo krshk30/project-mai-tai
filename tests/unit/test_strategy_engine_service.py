@@ -3696,11 +3696,14 @@ async def test_service_uses_fallback_quotes_for_stale_schwab_open_positions() ->
     finally:
         monkeypatch.undo()
 
-    assert intent_count == 1
+    assert intent_count == 2
     assert fake_stream_client.force_resubscribe_calls == 1
     assert runtime.latest_quotes["ENVB"] == {"bid": 4.2, "ask": 4.22}
-    assert published[0].payload.intent_type == "scale"
+    assert runtime.data_health_summary()["status"] == "critical"
+    assert runtime.data_health_summary()["halted_symbols"] == ["ENVB"]
+    assert published[0].payload.intent_type == "close"
     assert published[0].payload.symbol == "ENVB"
+    assert published[0].payload.reason == "SCHWAB_DATA_STALE_EMERGENCY_CLOSE"
 
 
 @pytest.mark.asyncio
@@ -3730,7 +3733,63 @@ async def test_service_skips_stale_quote_poll_when_adapter_lacks_fetch_quotes() 
 
     intent_count = await service._monitor_schwab_symbol_health()
 
-    assert intent_count == 0
+    assert intent_count == 1
+    assert runtime.data_health_summary()["status"] == "critical"
+    assert runtime.data_health_summary()["halted_symbols"] == ["ENVB"]
+
+
+@pytest.mark.asyncio
+async def test_service_halts_stale_schwab_watchlist_symbol_without_open_position() -> None:
+    settings = Settings(
+        strategy_macd_30s_broker_provider="schwab",
+        redis_stream_prefix="test",
+        dashboard_snapshot_persistence_enabled=False,
+        strategy_history_persistence_enabled=False,
+        schwab_stream_symbol_stale_after_seconds=1.0,
+        schwab_stream_symbol_quote_poll_interval_seconds=0.5,
+        schwab_stream_symbol_resubscribe_interval_seconds=1.0,
+    )
+    service = StrategyEngineService(settings=settings, redis_client=FakeRedis())
+    runtime = service.state.bots["macd_30s"]
+    runtime.set_watchlist(["ENVB"])
+    old = datetime.now(UTC) - timedelta(seconds=10)
+    service._schwab_symbol_last_stream_trade_at["ENVB"] = old
+    service._schwab_symbol_last_stream_quote_at["ENVB"] = old
+
+    class FakeStreamClient:
+        async def force_resubscribe(self) -> None:
+            return None
+
+    service._schwab_stream_client = FakeStreamClient()
+
+    activity_count = await service._monitor_schwab_symbol_health()
+
+    assert activity_count == 1
+    assert service._schwab_stale_symbols == {"ENVB"}
+    assert runtime.data_health_summary()["status"] == "critical"
+    assert "ENVB" in runtime.data_halt_symbols
+
+    service._record_schwab_stream_activity("ENVB", activity_kind="trade")
+
+    assert "ENVB" not in service._schwab_stale_symbols
+    assert runtime.data_health_summary()["status"] == "healthy"
+
+
+def test_generic_market_data_never_targets_schwab_native_bot_when_stream_is_stale() -> None:
+    settings = Settings(
+        strategy_macd_30s_broker_provider="schwab",
+        strategy_macd_1m_enabled=True,
+        redis_stream_prefix="test",
+        dashboard_snapshot_persistence_enabled=False,
+        strategy_history_persistence_enabled=False,
+        schwab_stream_symbol_stale_after_seconds=1.0,
+    )
+    service = StrategyEngineService(settings=settings, redis_client=FakeRedis())
+    old = datetime.now(UTC) - timedelta(seconds=10)
+    service._schwab_symbol_last_stream_trade_at["ENVB"] = old
+    service._schwab_symbol_last_stream_quote_at["ENVB"] = old
+
+    assert "macd_30s" not in service._generic_market_data_strategy_codes("ENVB")
 
 
 def test_snapshot_batch_does_not_push_polygon_quotes_into_schwab_native_macd_30s(monkeypatch) -> None:
