@@ -1668,3 +1668,26 @@ Validation:
   - `python -m pytest tests/unit/test_strategy_core.py tests/unit/test_runner_strategy.py`
 - attempted full `python -m pytest tests/unit`, but it exceeded the 5-minute
   local desktop timeout; do not treat that as a pass
+
+## 2026-04-23 Schwab Prewarm Deploy Follow-Up
+
+Live deploy note:
+
+- PR #16 initially expanded Schwab stream targets to include raw-alert prewarm
+  symbols as intended
+- on VPS restart, the strategy process stayed active but kept reporting
+  `starting`
+- cause found in runtime loop, not Schwab auth:
+  - prewarm increased Schwab stream targets to 18 symbols
+  - `_drain_schwab_stream_queues()` drained quote/trade queues with
+    `while not queue.empty()`
+  - in a busy premarket stream, the queue can keep refilling faster than the
+    loop can finish, starving heartbeat/scanner/runtime work
+- hotfix:
+  - bound each Schwab stream drain pass with `_schwab_stream_drain_max_events`
+  - default cap is 1000 events per loop pass
+  - remaining queued ticks are processed on the next loop pass, allowing
+    heartbeat, scanner batches, state snapshots, and subscription sync to run
+- regression coverage added:
+  - Schwab queue drain processes only the configured max events and leaves the
+    remainder queued for the next pass

@@ -33,6 +33,7 @@ from project_mai_tai.services.strategy_engine_app import (
 )
 from project_mai_tai.settings import Settings
 from project_mai_tai.market_data.massive_indicator_provider import MassiveIndicatorProvider
+from project_mai_tai.market_data.models import QuoteTickRecord
 from project_mai_tai.market_data.taapi_indicator_provider import TaapiIndicatorProvider
 from project_mai_tai.strategy_core import IndicatorConfig, OHLCVBar, ReferenceData, TradingConfig
 from project_mai_tai.strategy_core.exit import ExitEngine
@@ -3473,6 +3474,35 @@ async def test_trade_tick_stream_routes_to_schwab_native_macd_30s_when_stream_fa
     assert captured["symbol"] == "UGRO"
     assert "macd_30s" in captured["strategy_codes"]
     assert captured["exclude_codes"] is None
+
+
+@pytest.mark.asyncio
+async def test_schwab_stream_queue_drain_is_bounded() -> None:
+    service = StrategyEngineService(
+        settings=Settings(
+            redis_stream_prefix="test",
+            dashboard_snapshot_persistence_enabled=False,
+            strategy_history_persistence_enabled=False,
+            strategy_macd_30s_broker_provider="schwab",
+        ),
+        redis_client=FakeRedis(),
+    )
+    service._schwab_stream_drain_max_events = 3
+
+    for index in range(5):
+        service._enqueue_schwab_quote_tick(
+            QuoteTickRecord(
+                symbol=f"Q{index}",
+                bid_price=1.01 + index,
+                ask_price=1.02 + index,
+            )
+        )
+
+    intent_count, event_count = await service._drain_schwab_stream_queues()
+
+    assert intent_count == 0
+    assert event_count == 3
+    assert service._schwab_quote_queue.qsize() == 2
 
 
 def test_market_data_symbols_exclude_schwab_backed_tos() -> None:

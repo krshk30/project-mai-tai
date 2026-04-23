@@ -3448,6 +3448,7 @@ class StrategyEngineService:
         self._historical_hydration_attempts = 5
         self._historical_hydration_poll_delay_secs = 0.2
         self._runtime_db_reconcile_interval_secs = 5
+        self._schwab_stream_drain_max_events = 1000
         self._schwab_trade_queue: asyncio.Queue[TradeTickRecord] = asyncio.Queue()
         self._schwab_quote_queue: asyncio.Queue[QuoteTickRecord] = asyncio.Queue()
         self._schwab_stream_client = self._build_schwab_stream_client()
@@ -4086,8 +4087,9 @@ class StrategyEngineService:
     async def _drain_schwab_stream_queues(self) -> tuple[int, int]:
         intent_count = 0
         event_count = 0
+        max_events = max(1, int(self._schwab_stream_drain_max_events))
 
-        while not self._schwab_quote_queue.empty():
+        while event_count < max_events and not self._schwab_quote_queue.empty():
             quote = await self._schwab_quote_queue.get()
             event_count += 1
             self._record_schwab_stream_activity(quote.symbol, activity_kind="quote")
@@ -4100,7 +4102,7 @@ class StrategyEngineService:
                 strategy_codes=self.state.schwab_stream_strategy_codes(),
             )
 
-        while not self._schwab_trade_queue.empty():
+        while event_count < max_events and not self._schwab_trade_queue.empty():
             trade = await self._schwab_trade_queue.get()
             event_count += 1
             self._record_schwab_stream_activity(trade.symbol, activity_kind="trade")
