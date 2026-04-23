@@ -1705,3 +1705,23 @@ Live deploy note:
     watchlist promotion
   - generic fallback receives active Schwab symbols only, not prewarm-only
     symbols
+
+Final deployment state:
+
+- PR #16 merged raw-alert Schwab prewarm
+- PR #17 merged bounded Schwab stream queue draining
+- PR #18 merged quote-drop behavior for prewarm-only symbols
+- PR #19 merged generic-fallback exclusion for prewarm-only symbols
+- final runtime code deployed to VPS:
+  - `b1b4efd9bc2770de8ec471ec2b5a1f4076edd9eb`
+- VPS runtime refreshed with migrations disabled and strategy service restarted
+- final live verification:
+  - `project-mai-tai-strategy.service` active
+  - strategy heartbeat healthy
+  - only `macd_30s` bot active
+  - Schwab stream symbols were populated from raw-alert prewarm/current active
+    symbols
+  - market-data fallback active symbol count returned to `0`, confirming
+    prewarm-only symbols are no longer being routed through generic fallback
+  - overall `/health` still degraded only because the known reconciler findings
+    bucket reports two critical findings
