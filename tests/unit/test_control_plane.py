@@ -963,6 +963,7 @@ def test_control_plane_marks_schwab_data_halt_red_on_bot_page() -> None:
         },
         "since": {"UGRO": "2026-03-28 10:00:00 AM ET"},
     }
+    strategy_state_event.payload.bots[0].positions = []
     strategy_state_stream[0][1]["data"] = strategy_state_event.model_dump_json()
     redis = FakeRedis(streams)
 
@@ -981,11 +982,14 @@ def test_control_plane_marks_schwab_data_halt_red_on_bot_page() -> None:
         bot_30s_status = client.get("/bot")
         assert bot_30s_status.status_code == 200
         assert bot_30s_status.json()["listening_status"]["state"] == "DATA HALT"
+        assert "no open positions to emergency close" in bot_30s_status.json()["listening_status"]["detail"]
 
         bot_30s_page = client.get("/bot/30s")
         assert bot_30s_page.status_code == 200
         assert "Schwab Data Halt" in bot_30s_page.text
         assert "DATA HALT" in bot_30s_page.text
+        assert "there are no open positions currently exposed to the emergency-close path" in bot_30s_page.text
+        assert "open positions are being closed" not in bot_30s_page.text
 
 
 def test_bot_page_renders_simple_trade_summary_table() -> None:

@@ -3709,6 +3709,7 @@ class StrategyEngineService:
         self._schwab_symbol_last_quote_poll_at: dict[str, datetime] = {}
         self._schwab_symbol_active_first_seen_at: dict[str, datetime] = {}
         self._schwab_stale_symbols: set[str] = set()
+        self._schwab_stream_disconnected_since: datetime | None = None
 
     async def run(self) -> None:
         stop_event = asyncio.Event()
@@ -4524,6 +4525,16 @@ class StrategyEngineService:
         client = self._schwab_stream_client
         return client is not None and not getattr(client, "connected", False)
 
+    def _schwab_stream_disconnect_has_exceeded_grace(self, now: datetime) -> bool:
+        if not self._is_schwab_stream_disconnected():
+            self._schwab_stream_disconnected_since = None
+            return False
+        if self._schwab_stream_disconnected_since is None:
+            self._schwab_stream_disconnected_since = now
+            return False
+        stale_after = self._schwab_data_halt_stale_after_seconds()
+        return (now - self._schwab_stream_disconnected_since).total_seconds() >= stale_after
+
     def _schwab_data_halt_stale_after_seconds(self) -> float:
         return max(30.0, float(self.settings.schwab_stream_symbol_stale_after_seconds))
 
@@ -4555,7 +4566,7 @@ class StrategyEngineService:
             if symbol in active_set
         }
         self._clear_inactive_schwab_runtime_data_halts(active_set | set(open_symbols))
-        stream_disconnected = self._is_schwab_stream_disconnected()
+        stream_disconnected = self._schwab_stream_disconnect_has_exceeded_grace(now)
         stale_symbols = {
             symbol: codes
             for symbol, codes in active_symbols.items()

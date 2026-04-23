@@ -2201,3 +2201,45 @@ Validation:
     - `src/project_mai_tai/oms/service.py`
     - `src/project_mai_tai/settings.py`
     - `tests/unit/test_oms_risk_service.py`
+
+## 2026-04-23 Schwab Disconnect Debounce + Safer DATA HALT Copy
+
+Root cause:
+
+- a brief Schwab websocket disconnect was being treated as an immediate
+  stale-symbol halt for every active Schwab-backed symbol
+- the runtime already had a 30-second minimum stale grace window for
+  per-symbol quiet periods, but `_monitor_schwab_symbol_health()` bypassed that
+  grace entirely whenever the streamer reported `connected = false`
+- the bot page copy then always said open positions were being routed for
+  emergency close, even when the bot had zero open positions
+
+Code fix:
+
+- added a streamer disconnect grace timer in
+  `src/project_mai_tai/services/strategy_engine_app.py`
+- short Schwab reconnect blips now wait through the same data-halt grace window
+  before escalating active symbols into runtime `DATA HALT`
+- persistent disconnects still escalate into symbol halts and still preserve the
+  emergency-close behavior for real open positions
+- updated the bot listening-status detail and `Schwab Data Halt` panel copy in
+  `src/project_mai_tai/services/control_plane.py`
+  - if the bot has no open positions, the page now says there are no open
+    positions exposed to the emergency-close path
+  - if the bot does have open positions, the page still warns that those names
+    are eligible for emergency close using Schwab quotes
+
+Regression coverage added:
+
+- brief Schwab stream disconnect stays inside the data-halt grace window and
+  does not mark active symbols stale immediately
+- persistent Schwab stream disconnect still halts symbols after the grace window
+- control-plane bot page and `/bot` listening-status copy now reflect the
+  no-open-position case correctly
+
+Validation:
+
+- passed:
+  - `.venv\Scripts\python.exe -m pytest tests/unit/test_strategy_engine_service.py -k "brief_schwab_stream_disconnect or persistent_schwab_stream_disconnect or stale_schwab_watchlist_symbol_without_open_position or default_stale_threshold_tolerates_brief_quiet_gap"`
+  - `.venv\Scripts\python.exe -m pytest tests/unit/test_control_plane.py -k "schwab_data_halt_red_on_bot_page"`
+  - `.venv\Scripts\python.exe -m py_compile src/project_mai_tai/services/strategy_engine_app.py src/project_mai_tai/services/control_plane.py tests/unit/test_strategy_engine_service.py tests/unit/test_control_plane.py`
