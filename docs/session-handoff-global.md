@@ -1688,6 +1688,14 @@ Live deploy note:
   - default cap is 1000 events per loop pass
   - remaining queued ticks are processed on the next loop pass, allowing
     heartbeat, scanner batches, state snapshots, and subscription sync to run
+- additional live-load guard:
+  - Schwab quote ticks are now ignored for prewarm-only symbols
+  - prewarm still processes Schwab trade ticks, which are what build 30-second
+    OHLCV bars
+  - quotes are kept once a symbol is in an active watchlist/open-position path
+    because routing still needs bid/ask there
 - regression coverage added:
   - Schwab queue drain processes only the configured max events and leaves the
     remainder queued for the next pass
+  - Schwab quote enqueue skips prewarm-only symbols but keeps quotes after
+    watchlist promotion
