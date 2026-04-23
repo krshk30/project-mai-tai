@@ -1741,6 +1741,7 @@ class ControlPlaneRepository:
             "top_gainer_changes": [],
             "alert_warmup": {},
             "cycle_count": 0,
+            "schwab_prewarm_symbols": [],
             "bots": {},
         }
 
@@ -1803,6 +1804,7 @@ class ControlPlaneRepository:
                     "top_gainer_changes": event.payload.top_gainer_changes,
                     "alert_warmup": event.payload.alert_warmup,
                     "cycle_count": event.payload.cycle_count,
+                    "schwab_prewarm_symbols": event.payload.schwab_prewarm_symbols,
                     "bots": {
                         bot.strategy_code: bot.model_dump()
                         for bot in event.payload.bots

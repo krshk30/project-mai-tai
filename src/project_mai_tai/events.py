@@ -172,6 +172,7 @@ class StrategyBotStatePayload(BaseModel):
     strategy_code: str
     account_name: str
     watchlist: list[str] = Field(default_factory=list)
+    prewarm_symbols: list[str] = Field(default_factory=list)
     retention_states: list[dict[str, Any]] = Field(default_factory=list)
     positions: list[dict[str, Any]] = Field(default_factory=list)
     pending_open_symbols: list[str] = Field(default_factory=list)
@@ -195,6 +196,7 @@ class StrategyStateSnapshotPayload(BaseModel):
     top_gainer_changes: list[dict[str, Any]] = Field(default_factory=list)
     alert_warmup: dict[str, Any] = Field(default_factory=dict)
     cycle_count: int = 0
+    schwab_prewarm_symbols: list[str] = Field(default_factory=list)
     bots: list[StrategyBotStatePayload] = Field(default_factory=list)
 
 

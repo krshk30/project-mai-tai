@@ -1598,3 +1598,73 @@ Deployment and verification:
 - overall `/health` remains `degraded` only because the known reconciler
   findings bucket is still reporting two findings; strategy, market-data, OMS,
   and control-plane functionality are healthy
+
+## 2026-04-23 Schwab Raw-Alert Prewarm Patch
+
+Decision:
+
+- temporary safe warm-up path for the Schwab-native 30-second bot
+- do not use Polygon/Massive historical 30-second bars for the Schwab-native
+  trading bot
+- start Schwab streaming earlier for raw momentum-alert symbols, before they
+  become confirmed scanner handoff symbols
+- prewarm symbols must not trade early; they only build Schwab-derived 30-second
+  bars
+
+Implemented behavior:
+
+- when the momentum alert engine emits a raw alert, the ticker is added to
+  `schwab_prewarm_symbols`
+- `schwab_stream_symbols()` now includes:
+  - active Schwab bot symbols
+  - open-position symbols
+  - raw-alert prewarm symbols
+- manual stops still win:
+  - global/manual-stopped names are removed from the prewarm list and Schwab
+    stream subscription set
+- the `macd_30s` runtime keeps prewarm symbols separate from the live watchlist
+- prewarm-only Schwab trade ticks build 30-second bars and persist bar history
+  with decision status `prewarm` / reason `Schwab prewarm only`
+- prewarm-only symbols do not evaluate completed-bar entries or intrabar entries
+- if live aggregate bars are enabled, prewarm-only Schwab trade ticks still build
+  bars from the Schwab tick stream instead of returning early
+- scanner/session rollover clears the prewarm list for the new day
+- strategy-state events and control-plane runtime snapshots now expose:
+  - per-bot `prewarm_symbols`
+  - state-level `schwab_prewarm_symbols`
+
+Operational meaning:
+
+- flow is now:
+  - squeeze/momentum raw alert appears
+  - strategy subscribes Schwab stream for that ticker immediately
+  - Schwab ticks start building 30-second bars
+  - confirmed scanner handoff later promotes the ticker into the `macd_30s`
+    watchlist
+  - only after watchlist promotion can the bot evaluate entries/trade
+- this should improve same-morning warm-up without mixing data providers
+- it is still a temporary bridge; the more solid future solution is a true
+  Schwab-native historical 30-second warm-up source if Schwab exposes one or if
+  we build durable session-wide Schwab tick/bar capture
+
+Regression coverage added:
+
+- raw momentum alert adds a Schwab prewarm symbol without adding it to the bot
+  watchlist
+- prewarm-only Schwab trade ticks build bars while skipping all entry checks
+- global manual stop removes a symbol from Schwab prewarm and stream targets
+- existing Schwab stream subscription tests were adjusted for the intended
+  one-active-bot posture where disabled bots do not exist in runtime state
+- manual-stop preload now compares persisted stop snapshots against the
+  service/runtime clock instead of the real wall clock, keeping restart safety
+  tests and injected-clock service runs consistent
+
+Validation:
+
+- passed:
+  - `python -m py_compile src/project_mai_tai/events.py src/project_mai_tai/services/control_plane.py src/project_mai_tai/services/strategy_engine_app.py`
+  - `python -m ruff check src/project_mai_tai/events.py src/project_mai_tai/services/control_plane.py src/project_mai_tai/services/strategy_engine_app.py tests/unit/test_runner_strategy.py tests/unit/test_strategy_core.py tests/unit/test_strategy_engine_service.py`
+  - `python -m pytest tests/unit/test_strategy_engine_service.py -k "prewarm or schwab_stream or schwab_native or manual_stop or scanner_session"`
+  - `python -m pytest tests/unit/test_strategy_core.py tests/unit/test_runner_strategy.py`
+- attempted full `python -m pytest tests/unit`, but it exceeded the 5-minute
+  local desktop timeout; do not treat that as a pass
