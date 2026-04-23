@@ -1565,3 +1565,36 @@ Operational prevention:
 - scanner reset must stay heartbeat-driven, not market-data-snapshot-driven
 - old scanner restore data must remain tied to a concrete scanner session before
   it is trusted
+
+Deployment and verification:
+
+- PR [#14](https://github.com/krshk30/project-mai-tai/pull/14) merged the
+  Massive aggregate callback and heartbeat-driven scanner reset fix
+- PR [#15](https://github.com/krshk30/project-mai-tai/pull/15) merged the
+  follow-up stale scanner restore hardening
+- final deployed `main` SHA:
+  - `e6eaee2e04499dce17c89910c15ee56826958da0`
+- VPS checkout was fast-forwarded to that SHA
+- one-time cleanup removed bad persisted scanner dashboard snapshots that were
+  written while the stale restore path was still active:
+  - `scanner_confirmed_last_nonempty`
+  - `scanner_alert_engine_state`
+  - `scanner_cycle_history`
+- restarted targeted services only:
+  - `project-mai-tai-market-data.service`
+  - `project-mai-tai-strategy.service`
+  - `project-mai-tai-control.service`
+- final live verification:
+  - public HTTPS returns `401`, expected Basic Auth challenge
+  - market-data gateway healthy with no `on_agg` / unexpected-keyword crash
+  - strategy engine healthy with `bot_count=1`
+  - only Schwab-backed `macd_30s` appears in `/api/bots`
+  - `/api/scanner` is clean for the new session:
+    - `status=idle`
+    - `cycle_count=0`
+    - `watchlist_count=0`
+    - `all_confirmed_count=0`
+    - `bot_handoff_count=0`
+- overall `/health` remains `degraded` only because the known reconciler
+  findings bucket is still reporting two findings; strategy, market-data, OMS,
+  and control-plane functionality are healthy
