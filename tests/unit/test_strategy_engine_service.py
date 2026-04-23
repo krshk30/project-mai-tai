@@ -3776,6 +3776,50 @@ async def test_service_halts_stale_schwab_watchlist_symbol_without_open_position
 
 
 @pytest.mark.asyncio
+async def test_service_clears_data_halt_when_stale_symbol_leaves_active_set() -> None:
+    settings = Settings(
+        strategy_macd_30s_broker_provider="schwab",
+        redis_stream_prefix="test",
+        dashboard_snapshot_persistence_enabled=False,
+        strategy_history_persistence_enabled=False,
+        schwab_stream_symbol_stale_after_seconds=1.0,
+        schwab_stream_symbol_resubscribe_interval_seconds=1.0,
+    )
+    service = StrategyEngineService(settings=settings, redis_client=FakeRedis())
+    runtime = service.state.bots["macd_30s"]
+    runtime.set_watchlist(["ENVB"])
+    old = datetime.now(UTC) - timedelta(seconds=40)
+    service._schwab_symbol_last_stream_trade_at["ENVB"] = old
+    service._schwab_symbol_last_stream_quote_at["ENVB"] = old
+
+    class FakeStreamClient:
+        connected = True
+
+        async def force_resubscribe(self) -> None:
+            return None
+
+    service._schwab_stream_client = FakeStreamClient()
+
+    activity_count = await service._monitor_schwab_symbol_health()
+
+    assert activity_count == 1
+    assert runtime.data_health_summary()["halted_symbols"] == ["ENVB"]
+
+    runtime.set_manual_stop_symbols(["ENVB"])
+    runtime.set_watchlist(["ELAB"])
+    recent = datetime.now(UTC)
+    service._schwab_symbol_last_stream_trade_at["ELAB"] = recent
+    service._schwab_symbol_last_stream_quote_at["ELAB"] = recent
+
+    activity_count = await service._monitor_schwab_symbol_health()
+
+    assert activity_count == 1
+    assert service._schwab_stale_symbols == set()
+    assert runtime.data_health_summary()["status"] == "healthy"
+    assert runtime.data_health_summary()["halted_symbols"] == []
+
+
+@pytest.mark.asyncio
 async def test_service_does_not_halt_quiet_schwab_symbol_inside_grace_window() -> None:
     settings = Settings(
         strategy_macd_30s_broker_provider="schwab",

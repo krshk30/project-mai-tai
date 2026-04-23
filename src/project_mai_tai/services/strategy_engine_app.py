@@ -4332,6 +4332,15 @@ class StrategyEngineService:
             for symbol in list(runtime.data_halt_symbols):
                 runtime.clear_data_halt(symbol)
 
+    def _clear_inactive_schwab_runtime_data_halts(self, active_symbols: set[str]) -> None:
+        for code in self.state.schwab_stream_strategy_codes():
+            runtime = self.state.bots.get(code)
+            if not isinstance(runtime, StrategyBotRuntime):
+                continue
+            for symbol in list(runtime.data_halt_symbols):
+                if symbol not in active_symbols:
+                    runtime.clear_data_halt(symbol)
+
     def _schwab_last_stream_update_at(self, symbol: str) -> datetime | None:
         normalized = str(symbol).upper()
         candidates = [
@@ -4385,6 +4394,7 @@ class StrategyEngineService:
             for symbol, first_seen in self._schwab_symbol_active_first_seen_at.items()
             if symbol in active_set
         }
+        self._clear_inactive_schwab_runtime_data_halts(active_set | set(open_symbols))
         stream_disconnected = self._is_schwab_stream_disconnected()
         stale_symbols = {
             symbol: codes
