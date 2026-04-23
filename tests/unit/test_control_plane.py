@@ -782,6 +782,43 @@ def test_control_plane_decision_tape_shows_only_live_symbols() -> None:
         assert bot_30s["recent_decisions"][0]["reason"] == "entry evaluated; no setup matched this bar"
 
 
+def test_control_plane_decision_tape_includes_live_symbol_waiting_for_evaluation() -> None:
+    settings = Settings(redis_stream_prefix="test", oms_adapter="alpaca_paper")
+    session_factory = build_test_session_factory()
+    seed_database(session_factory)
+    streams = make_streams(settings.redis_stream_prefix)
+    strategy_state_stream = streams[f"{settings.redis_stream_prefix}:strategy-state"]
+    strategy_state_event = StrategyStateSnapshotEvent.model_validate_json(
+        strategy_state_stream[0][1]["data"]
+    )
+    runtime_bot = strategy_state_event.payload.bots[0]
+    runtime_bot.watchlist = ["AUUD"]
+    runtime_bot.positions = []
+    runtime_bot.recent_decisions = []
+    runtime_bot.bar_counts = {"AUUD": 27}
+    runtime_bot.last_tick_at = {"AUUD": "2026-04-23 10:48:17 AM ET"}
+    strategy_state_stream[0][1]["data"] = strategy_state_event.model_dump_json()
+    redis = FakeRedis(streams)
+
+    app = build_app(
+        settings=settings,
+        session_factory=session_factory,
+        redis_client=redis,
+        legacy_client=FakeLegacyClient(),
+    )
+
+    with TestClient(app) as client:
+        bots = client.get("/api/bots")
+        assert bots.status_code == 200
+        bot_30s = next(item for item in bots.json()["bots"] if item["strategy_code"] == "macd_30s")
+        assert [item["symbol"] for item in bot_30s["recent_decisions"]] == ["AUUD"]
+        assert bot_30s["recent_decisions"][0]["status"] == "pending"
+        assert (
+            bot_30s["recent_decisions"][0]["reason"]
+            == "live in bot; waiting for next completed 30s trade bar to evaluate"
+        )
+
+
 def test_control_plane_overview_and_dashboard_render() -> None:
     settings = Settings(
         redis_stream_prefix="test",

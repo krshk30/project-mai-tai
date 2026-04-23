@@ -1933,3 +1933,37 @@ Regression coverage added:
   remains active
 - subsequent Schwab health monitor pass clears the old halted symbol and returns
   bot `data_health` to healthy
+
+## 2026-04-23 Live Decision Tape Placeholder Follow-Up
+
+Live UI issue:
+
+- AUUD could appear in the bot live-symbol list with fresh Schwab activity while
+  the Decision Tape showed only other symbols
+- this was not a handoff-cap bug; the control plane only rendered persisted
+  decision rows, so a live symbol with fresh ticks but no recent completed
+  evaluable 30-second bar could disappear from the table entirely
+- this created the impression that the bot was not listening even when the
+  symbol was active in the watchlist
+
+Fix:
+
+- the control plane now injects a placeholder Decision Tape row for live bot
+  symbols that have no current decision event
+- placeholder rows show `pending` with an explicit reason such as:
+  - `live in bot; waiting for next completed 30s trade bar to evaluate`
+  - `live in bot; receiving Schwab ticks, waiting for first completed 30s trade bar`
+- this makes live/watchlist state and Decision Tape state line up for symbols
+  like AUUD without changing trading behavior
+
+Regression coverage added:
+
+- control plane still filters the Decision Tape to live symbols only
+- a live watchlist symbol with fresh ticks and bar history but no recent
+  decision row now appears in `/api/bots` with the placeholder pending reason
+
+Validation:
+
+- passed:
+  - `.venv\Scripts\python.exe -m pytest -p no:cacheprovider tests/unit/test_control_plane.py::test_control_plane_decision_tape_shows_only_live_symbols tests/unit/test_control_plane.py::test_control_plane_decision_tape_includes_live_symbol_waiting_for_evaluation -q`
+  - `.venv\Scripts\python.exe -c "from pathlib import Path; import ast; ast.parse(Path(r'src/project_mai_tai/services/control_plane.py').read_text(encoding='utf-8')); ast.parse(Path(r'tests/unit/test_control_plane.py').read_text(encoding='utf-8')); print('syntax ok')"`
