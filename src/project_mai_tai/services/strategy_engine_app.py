@@ -3045,6 +3045,9 @@ class StrategyEngineState:
             return False
 
         self.confirmed_scanner.reset()
+        self.alert_engine.reset()
+        self.alert_warmup = self.alert_engine.get_warmup_status()
+        self.top_gainers_tracker.reset()
         self.all_confirmed = []
         self.current_confirmed = []
         self.retained_watchlist = []
@@ -4198,6 +4201,7 @@ class StrategyEngineService:
 
         alert_state = self.state.alert_engine.export_state()
         alert_state["cycle_count"] = int(summary.get("cycle_count", 0) or 0)
+        alert_state["scanner_session_start_utc"] = scanner_session_start
         alert_state["recent_alerts"] = list(self.state.recent_alerts[-100:])
         alert_state["top_gainer_changes"] = list(self.state.top_gainer_changes[-100:])
         alert_state["first_seen_by_ticker"] = dict(self.state._first_seen_by_ticker)
@@ -4246,6 +4250,27 @@ class StrategyEngineService:
             persisted_at = persisted_at.replace(tzinfo=UTC)
 
         session_start = current_scanner_session_start_utc(utcnow())
+        persisted_session_start_raw = snapshot.payload.get("scanner_session_start_utc")
+        if not isinstance(persisted_session_start_raw, str):
+            self.logger.info("skipping alert-engine restore: scanner session marker missing")
+            return
+        try:
+            persisted_session_start = datetime.fromisoformat(persisted_session_start_raw)
+        except ValueError:
+            self.logger.info(
+                "skipping alert-engine restore: invalid scanner_session_start_utc=%s",
+                persisted_session_start_raw,
+            )
+            return
+        if persisted_session_start.tzinfo is None:
+            persisted_session_start = persisted_session_start.replace(tzinfo=UTC)
+        if persisted_session_start.astimezone(UTC) != session_start:
+            self.logger.info(
+                "skipping alert-engine restore from mismatched scanner session: persisted_session=%s session_start=%s",
+                persisted_session_start.isoformat(),
+                session_start.isoformat(),
+            )
+            return
         if persisted_at.astimezone(UTC) < session_start:
             self.logger.info(
                 "skipping alert-engine restore from prior session: persisted_at=%s session_start=%s",
@@ -4402,6 +4427,17 @@ class StrategyEngineService:
             persisted_at = persisted_at.replace(tzinfo=UTC)
 
         session_start = current_scanner_session_start_utc(utcnow())
+        persisted_session_start_raw = payload.get("scanner_session_start_utc")
+        if not isinstance(persisted_session_start_raw, str):
+            return
+        try:
+            persisted_session_start = datetime.fromisoformat(persisted_session_start_raw)
+        except ValueError:
+            return
+        if persisted_session_start.tzinfo is None:
+            persisted_session_start = persisted_session_start.replace(tzinfo=UTC)
+        if persisted_session_start.astimezone(UTC) != session_start:
+            return
         if persisted_at.astimezone(UTC) < session_start:
             return
 
@@ -4894,7 +4930,7 @@ class StrategyEngineService:
 
         return {
             "persisted_at": persisted_at,
-            "scanner_session_start_utc": current_scanner_session_start_utc().isoformat(),
+            "scanner_session_start_utc": current_scanner_session_start_utc(utcnow()).isoformat(),
             "cycle_count": int(summary.get("cycle_count", 0) or 0),
             "watchlist": [str(symbol).upper() for symbol in summary.get("watchlist", []) if str(symbol).strip()],
             "all_confirmed": all_confirmed,

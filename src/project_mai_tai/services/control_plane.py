@@ -630,8 +630,21 @@ class ControlPlaneRepository:
             restored_top_rows = snapshot_payload.get("top_confirmed", [])
             restored_watchlist = snapshot_payload.get("watchlist", [])
             restored_at = str(snapshot_payload.get("persisted_at", "") or "")
+            restored_session_start = str(snapshot_payload.get("scanner_session_start_utc", "") or "")
             restored_at_is_current = False
-            if restored_at:
+            restored_session_is_current = False
+            if restored_session_start:
+                try:
+                    restored_session_dt = datetime.fromisoformat(restored_session_start)
+                except ValueError:
+                    restored_session_dt = None
+                if restored_session_dt is not None:
+                    if restored_session_dt.tzinfo is None:
+                        restored_session_dt = restored_session_dt.replace(tzinfo=UTC)
+                    restored_session_is_current = (
+                        restored_session_dt.astimezone(UTC) == current_scanner_session_start_utc()
+                    )
+            if restored_at and restored_session_is_current:
                 try:
                     restored_at_dt = datetime.fromisoformat(restored_at)
                 except ValueError:
@@ -1617,10 +1630,24 @@ class ControlPlaneRepository:
                     .order_by(desc(DashboardSnapshot.created_at))
                 )
                 if confirmed_snapshot is not None:
-                    dashboard_snapshots["scanner_confirmed_last_nonempty"] = {
-                        **confirmed_snapshot.payload,
-                        "created_at": _datetime_str(confirmed_snapshot.created_at),
-                    }
+                    scanner_session_start = current_scanner_session_start_utc(now)
+                    payload = confirmed_snapshot.payload if isinstance(confirmed_snapshot.payload, dict) else {}
+                    marker_raw = payload.get("scanner_session_start_utc")
+                    marker_matches = False
+                    if isinstance(marker_raw, str):
+                        try:
+                            marker_dt = datetime.fromisoformat(marker_raw)
+                        except ValueError:
+                            marker_dt = None
+                        if marker_dt is not None:
+                            if marker_dt.tzinfo is None:
+                                marker_dt = marker_dt.replace(tzinfo=UTC)
+                            marker_matches = marker_dt.astimezone(UTC) == scanner_session_start
+                    if marker_matches:
+                        dashboard_snapshots["scanner_confirmed_last_nonempty"] = {
+                            **payload,
+                            "created_at": _datetime_str(confirmed_snapshot.created_at),
+                        }
                 session_start = current_scanner_session_start_utc(now)
                 manual_stop_snapshot = session.scalar(
                     select(DashboardSnapshot)

@@ -447,6 +447,15 @@ def test_scanner_session_roll_clears_state_without_snapshot_batch() -> None:
     state.current_confirmed = [{"ticker": "GNLN"}]
     state.retained_watchlist = ["GNLN"]
     state.recent_alerts = [{"ticker": "GNLN"}]
+    state.alert_engine.record_snapshot(
+        [snapshot_from_payload(make_snapshot_payload(symbol="GNLN", price=5.0, volume=500_000))]
+    )
+    state.alert_engine._volume_spike_tickers.add("GNLN")
+    state.top_gainers_tracker.update(
+        [snapshot_from_payload(make_snapshot_payload(symbol="GNLN", price=5.0, volume=500_000))],
+        {"GNLN": ReferenceData(avg_daily_volume=50_000)},
+        now=now_box["value"],
+    )
     state.feed_retention_states["GNLN"] = state.feed_retention_policy.promote("GNLN", now_box["value"], None)
     state.bots["macd_30s"].set_watchlist(["GNLN"])
     state.bots["macd_30s"].recent_decisions = [{"symbol": "GNLN", "status": "blocked"}]
@@ -459,6 +468,9 @@ def test_scanner_session_roll_clears_state_without_snapshot_batch() -> None:
     assert state.current_confirmed == []
     assert state.retained_watchlist == []
     assert state.recent_alerts == []
+    assert state.alert_engine.get_warmup_status()["history_cycles"] == 0
+    assert state.alert_engine._volume_spike_tickers == set()
+    assert state.top_gainers_tracker.update([], {}, now=now_box["value"])[0] == []
     assert state.feed_retention_states == {}
     assert state.bots["macd_30s"].watchlist == set()
     assert state.bots["macd_30s"].recent_decisions == []
@@ -952,6 +964,14 @@ def test_alert_engine_state_persists_and_restores_from_dashboard_snapshot() -> N
                 "cycle_count": 1,
             }
         )
+        with session_factory() as session:
+            snapshot = session.scalar(
+                select(DashboardSnapshot).where(
+                    DashboardSnapshot.snapshot_type == "scanner_alert_engine_state"
+                )
+            )
+            assert snapshot is not None
+            assert snapshot.payload["scanner_session_start_utc"] == "2026-04-01T08:00:00+00:00"
 
         restored = StrategyEngineService(
             settings=Settings(),
@@ -1082,6 +1102,41 @@ def test_alert_engine_restore_skips_prior_session_alert_tape() -> None:
         assert restored.state.recent_alerts == []
         assert restored.state.top_gainer_changes == []
         assert restored.state._first_seen_by_ticker == {}
+
+
+def test_alert_engine_restore_skips_unmarked_snapshot_even_if_recent(monkeypatch) -> None:
+    session_factory = build_test_session_factory()
+    with session_factory() as session:
+        session.add(
+            DashboardSnapshot(
+                snapshot_type="scanner_alert_engine_state",
+                payload={
+                    "persisted_at": datetime(2026, 4, 1, 10, 5, tzinfo=UTC).isoformat(),
+                    "history": [{"MASK": [2.5, 200_000]}],
+                    "recent_alerts": [{"ticker": "MASK", "type": "VOLUME_SPIKE"}],
+                },
+            )
+        )
+        session.commit()
+
+    monkeypatch.setattr(
+        "project_mai_tai.services.strategy_engine_app.utcnow",
+        lambda: datetime(2026, 4, 1, 10, 10, tzinfo=UTC),
+    )
+    monkeypatch.setattr(
+        "project_mai_tai.services.strategy_engine_app.current_scanner_session_start_utc",
+        lambda now=None: datetime(2026, 4, 1, 8, 0, tzinfo=UTC),
+    )
+
+    restored = StrategyEngineService(
+        settings=Settings(),
+        redis_client=FakeRedis(),
+        session_factory=session_factory,
+    )
+    restored._restore_alert_engine_state_from_dashboard_snapshot()
+
+    assert restored.state.alert_engine.get_warmup_status()["history_cycles"] == 0
+    assert restored.state.recent_alerts == []
 
 
 def test_snapshot_batch_keeps_runner_aligned_to_visible_confirmed_names(monkeypatch) -> None:
