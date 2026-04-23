@@ -4963,6 +4963,7 @@ def test_strategy_bot_runtime_uses_eastern_bar_timestamps() -> None:
         ),
         now_provider=fixed_now,
     )
+    runtime.set_watchlist(["UGRO"])
 
     runtime.seed_bars(
         "UGRO",
@@ -5000,13 +5001,22 @@ def test_strategy_bot_runtime_uses_eastern_bar_timestamps() -> None:
     }
     runtime._record_decision(
         symbol="UGRO",
-        status="pending",
-        reason="testing eastern time",
+        status="idle",
+        reason="no entry path matched",
         indicators=runtime.last_indicators["UGRO"],
+    )
+    runtime._record_decision(
+        symbol="PREWARM",
+        status="idle",
+        reason="no entry path matched",
+        indicators={"price": 1.23},
     )
 
     summary = runtime.summary()
 
+    assert [item["symbol"] for item in summary["recent_decisions"]] == ["UGRO"]
+    assert summary["recent_decisions"][0]["status"] == "evaluated"
+    assert summary["recent_decisions"][0]["reason"] == "entry evaluated; no setup matched this bar"
     assert summary["recent_decisions"][0]["last_bar_at"].endswith("-04:00")
     assert summary["indicator_snapshots"][0]["last_bar_at"].endswith("-04:00")
 

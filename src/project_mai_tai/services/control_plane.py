@@ -1020,17 +1020,34 @@ class ControlPlaneRepository:
                     and not self._is_ui_hidden_symbol(account_name, item.get("symbol"))
                 }
             )
+            live_decision_symbols = {
+                str(symbol).upper()
+                for symbol in watchlist + pending_open + pending_close
+                if str(symbol).strip()
+            }
+            live_decision_symbols.update(
+                str(item).split(":", 1)[0].upper()
+                for item in pending_scale
+                if str(item).strip()
+            )
+            live_decision_symbols.update(
+                str(item.get("ticker") or item.get("symbol") or "").upper()
+                for item in positions
+                if str(item.get("ticker") or item.get("symbol") or "").strip()
+            )
             recent_decisions = [
-                item
+                self._decision_display_row(item)
                 for item in list(runtime_bot.get("recent_decisions", []))
                 if not self._is_ui_hidden_symbol(account_name, item.get("ticker") or item.get("symbol"))
+                and str(item.get("ticker") or item.get("symbol") or "").upper() in live_decision_symbols
             ]
             if not recent_decisions:
                 recent_decisions = [
-                    item
+                    self._decision_display_row(item)
                     for item in recent_bar_decisions
                     if item.get("strategy_code") == code
                     and not self._is_ui_hidden_symbol(account_name, item.get("symbol"))
+                    and str(item.get("symbol") or "").upper() in live_decision_symbols
                 ]
             recent_decisions = _dedupe_decision_events(recent_decisions)
             indicator_snapshots = [
@@ -1126,6 +1143,16 @@ class ControlPlaneRepository:
                 }
             )
         return bot_views
+
+    @staticmethod
+    def _decision_display_row(item: dict[str, Any]) -> dict[str, Any]:
+        row = dict(item)
+        status = str(row.get("status", "")).lower()
+        reason = str(row.get("reason", "")).lower()
+        if status == "idle" and reason == "no entry path matched":
+            row["status"] = "evaluated"
+            row["reason"] = "entry evaluated; no setup matched this bar"
+        return row
 
     def _build_tos_parity_view(
         self,

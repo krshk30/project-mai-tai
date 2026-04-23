@@ -863,7 +863,7 @@ class StrategyBotRuntime:
             "pending_scale_levels": sorted(f"{symbol}:{level}" for symbol, level in self.pending_scale_levels),
             "daily_pnl": self.positions.get_daily_pnl(),
             "closed_today": self.positions.get_closed_today(),
-            "recent_decisions": list(self.recent_decisions),
+            "recent_decisions": self._live_decision_rows(),
             "indicator_snapshots": self._indicator_snapshots(),
             "bar_counts": self._bar_counts(),
             "last_tick_at": self._last_tick_summary(),
@@ -1478,6 +1478,26 @@ class StrategyBotRuntime:
         self.recent_decisions.insert(0, entry)
         self.recent_decisions = self.recent_decisions[:50]
         return entry
+
+    def _live_decision_rows(self) -> list[dict[str, str]]:
+        live_symbols = self.active_symbols()
+        if not live_symbols:
+            return []
+        return [
+            self._decision_display_row(item)
+            for item in self.recent_decisions
+            if str(item.get("symbol", "")).upper() in live_symbols
+        ]
+
+    @staticmethod
+    def _decision_display_row(item: dict[str, str]) -> dict[str, str]:
+        row = dict(item)
+        status = str(row.get("status", "")).lower()
+        reason = str(row.get("reason", "")).lower()
+        if status == "idle" and reason == "no entry path matched":
+            row["status"] = "evaluated"
+            row["reason"] = "entry evaluated; no setup matched this bar"
+        return row
 
     def _bar_counts(self) -> dict[str, int]:
         counts: dict[str, int] = {}
