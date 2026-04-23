@@ -1798,3 +1798,58 @@ Regression coverage added:
   Decision Tape
 - control-plane `/api/bots` filters Decision Tape rows to the live watchlist and
   normalizes the no-entry wording
+
+## 2026-04-23 Schwab Data Halt Circuit Breaker
+
+Implementation branch:
+
+- `codex/schwab-data-halt-circuit-breaker`
+
+Critical safety change:
+
+- Schwab-backed bot symbols now enter a `critical` data halt when the Schwab
+  stream is stale/disconnected
+- halted Schwab symbols block new entries inside the 30-second runtime
+- stale Schwab symbols are surfaced through bot `data_health`
+- control-plane bot pages show red `DATA HALT` / `Schwab Data Halt` state when
+  the halt is active
+- strategy heartbeats become `critical` while Schwab stale symbols exist and
+  include `schwab_stale_symbols`
+
+Emergency close behavior:
+
+- if a halted Schwab symbol has an open position, the strategy service attempts
+  a close intent with reason `SCHWAB_DATA_STALE_EMERGENCY_CLOSE`
+- emergency close routing uses Schwab quote polling/bid data only
+- if Schwab quotes are unavailable, entries remain halted and the UI stays red;
+  the bot records that emergency close is waiting for a sellable quote
+
+Fallback policy change:
+
+- generic market-data / Polygon fallback no longer targets Schwab-native bot
+  strategy codes, even when the Schwab stream is disconnected or stale
+- this keeps 30-second bot decisions/trading strictly on the Schwab-native data
+  path; fallback can still be diagnostic/subscription noise, not a trading input
+
+Regression coverage added:
+
+- stale Schwab open position creates a `critical` halt and emergency close
+  intent
+- stale Schwab watchlist symbol without an open position halts entries and
+  clears on live Schwab stream recovery
+- missing Schwab quote-poll support does not restart the strategy service; it
+  leaves the halt visible/critical instead
+- generic market data never routes stale/disconnected symbols into the Schwab
+  native bot
+- control plane exposes the red data-halt state in API/page rendering
+
+Validation:
+
+- passed:
+  - `.venv\Scripts\python.exe -m py_compile src/project_mai_tai/events.py src/project_mai_tai/services/strategy_engine_app.py src/project_mai_tai/services/control_plane.py tests/unit/test_strategy_engine_service.py tests/unit/test_control_plane.py`
+  - `.venv\Scripts\python.exe -m pytest tests/unit/test_strategy_engine_service.py::test_service_uses_fallback_quotes_for_stale_schwab_open_positions tests/unit/test_strategy_engine_service.py::test_service_skips_stale_quote_poll_when_adapter_lacks_fetch_quotes tests/unit/test_strategy_engine_service.py::test_service_halts_stale_schwab_watchlist_symbol_without_open_position tests/unit/test_strategy_engine_service.py::test_generic_market_data_never_targets_schwab_native_bot_when_stream_is_stale tests/unit/test_control_plane.py::test_control_plane_marks_schwab_data_halt_red_on_bot_page -q`
+  - `.venv\Scripts\python.exe -m pytest tests/unit/test_control_plane.py::test_control_plane_surfaces_probe_and_reclaim_bot_pages_when_enabled tests/unit/test_control_plane.py::test_bot_page_renders_simple_trade_summary_table -q`
+- attempted broader:
+  - `.venv\Scripts\python.exe -m pytest tests/unit/test_strategy_engine_service.py tests/unit/test_control_plane.py -q`
+  - this hung until the local desktop timeout and did not produce a useful
+    failure; do not count it as a pass

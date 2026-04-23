@@ -173,6 +173,7 @@ class StrategyBotStatePayload(BaseModel):
     account_name: str
     watchlist: list[str] = Field(default_factory=list)
     prewarm_symbols: list[str] = Field(default_factory=list)
+    data_health: dict[str, Any] = Field(default_factory=dict)
     retention_states: list[dict[str, Any]] = Field(default_factory=list)
     positions: list[dict[str, Any]] = Field(default_factory=list)
     pending_open_symbols: list[str] = Field(default_factory=list)

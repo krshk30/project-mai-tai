@@ -230,6 +230,8 @@ class StrategyBotRuntime:
         self._applied_fill_quantity_by_order: dict[str, Decimal] = {}
         self.recent_decisions: list[dict[str, str]] = []
         self._last_tick_at: dict[str, datetime] = {}
+        self.data_halt_symbols: dict[str, str] = {}
+        self.data_halt_since: dict[str, datetime] = {}
         self.session_factory = session_factory
         self.use_live_aggregate_bars = use_live_aggregate_bars
         self.live_aggregate_fallback_enabled = live_aggregate_fallback_enabled
@@ -363,9 +365,73 @@ class StrategyBotRuntime:
         if quote:
             self.latest_quotes[symbol.upper()] = quote
 
+    def apply_data_halt(
+        self,
+        symbol: str,
+        *,
+        reason: str,
+        observed_at: datetime | None = None,
+    ) -> None:
+        normalized_symbol = str(symbol).upper()
+        if not normalized_symbol:
+            return
+        self.data_halt_symbols[normalized_symbol] = str(reason)
+        self.data_halt_since.setdefault(
+            normalized_symbol,
+            self._normalize_now(observed_at or self.now_provider()),
+        )
+
+    def clear_data_halt(self, symbol: str) -> None:
+        normalized_symbol = str(symbol).upper()
+        self.data_halt_symbols.pop(normalized_symbol, None)
+        self.data_halt_since.pop(normalized_symbol, None)
+
+    def _is_data_halted(self, symbol: str) -> bool:
+        return str(symbol).upper() in self.data_halt_symbols
+
+    def _data_halt_reason(self, symbol: str) -> str:
+        return self.data_halt_symbols.get(str(symbol).upper(), "Schwab stream data halt active")
+
+    def data_health_summary(self) -> dict[str, object]:
+        halted_symbols = sorted(self.data_halt_symbols)
+        return {
+            "status": "critical" if halted_symbols else "healthy",
+            "halted_symbols": halted_symbols,
+            "reasons": dict(sorted(self.data_halt_symbols.items())),
+            "since": {
+                symbol: _datetime_str(observed_at)
+                for symbol, observed_at in sorted(self.data_halt_since.items())
+            },
+        }
+
     def evaluate_position_price(self, symbol: str, price: float) -> list[TradeIntentEvent]:
         self._roll_day_if_needed()
         return self._evaluate_position_price_intents(symbol, price)
+
+    def emergency_close_for_data_halt(self, symbol: str, price: float | None = None) -> TradeIntentEvent | None:
+        self._roll_day_if_needed()
+        normalized_symbol = str(symbol).upper()
+        position = self.positions.get_position(normalized_symbol)
+        if position is None or normalized_symbol in self.pending_close_symbols:
+            return None
+
+        close_price = float(price or position.current_price or position.entry_price or 0)
+        signal = {
+            "ticker": normalized_symbol,
+            "action": "SELL",
+            "reason": "SCHWAB_DATA_STALE_EMERGENCY_CLOSE",
+            "price": close_price,
+        }
+        try:
+            return self._emit_close_intent(signal)
+        except RuntimeError as exc:
+            self._record_decision(
+                symbol=normalized_symbol,
+                status="critical",
+                reason=f"Schwab data halt; emergency close waiting for sellable quote ({exc})",
+                indicators={"price": close_price},
+            )
+            return None
 
     def _evaluate_position_price_intents(self, symbol: str, price: float) -> list[TradeIntentEvent]:
         intents: list[TradeIntentEvent] = []
@@ -854,6 +920,7 @@ class StrategyBotRuntime:
             "interval_secs": self.definition.interval_secs,
             "watchlist": sorted(self.watchlist),
             "prewarm_symbols": sorted(self.prewarm_symbols),
+            "data_health": self.data_health_summary(),
             "entry_blocked_symbols": sorted(self.entry_blocked_symbols),
             "retention_states": self._lifecycle_state_summary(),
             "manual_stop_symbols": sorted(self.manual_stop_symbols),
@@ -879,6 +946,8 @@ class StrategyBotRuntime:
         self.last_indicators.clear()
         self.latest_quotes.clear()
         self.entry_blocked_symbols.clear()
+        self.data_halt_symbols.clear()
+        self.data_halt_since.clear()
         self.lifecycle_states.clear()
         self.watchlist.clear()
         self.prewarm_symbols.clear()
@@ -1004,6 +1073,15 @@ class StrategyBotRuntime:
                 ),
             )
 
+        if self._is_data_halted(symbol):
+            decision = self._record_decision(
+                symbol=symbol,
+                status="critical",
+                reason=self._data_halt_reason(symbol),
+                indicators=indicators,
+            )
+            return self._finalize_completed_bar(symbol, indicators, [], decision=decision)
+
         can_open, _reason = self.positions.can_open_position(symbol)
         if not can_open:
             decision = self._record_decision(
@@ -1085,6 +1163,14 @@ class StrategyBotRuntime:
 
         indicators = self._decorate_indicators(symbol, local_indicators)
         metrics = self._build_lifecycle_metrics(symbol, indicators, self.builder_manager)
+        if self._is_data_halted(symbol):
+            self._record_decision(
+                symbol=symbol,
+                status="critical",
+                reason=self._data_halt_reason(symbol),
+                indicators=indicators,
+            )
+            return []
         can_open, _reason = self.positions.can_open_position(symbol)
         if not can_open:
             self.entry_engine.pop_last_decision(symbol)
@@ -1167,6 +1253,14 @@ class StrategyBotRuntime:
 
         indicators = self._decorate_indicators(symbol, local_indicators)
         metrics = self._build_lifecycle_metrics(symbol, indicators, self.builder_manager)
+        if self._is_data_halted(symbol):
+            self._record_decision(
+                symbol=symbol,
+                status="critical",
+                reason=self._data_halt_reason(symbol),
+                indicators=indicators,
+            )
+            return []
         can_open, _reason = self.positions.can_open_position(symbol)
         if not can_open:
             self.entry_engine.pop_last_decision(symbol)
@@ -3849,18 +3943,28 @@ class StrategyEngineService:
             approximate=True,
         )
 
+    def _strategy_health_status(self, status: str) -> str:
+        if self._schwab_stale_symbols:
+            return "critical"
+        return status
+
     async def _publish_heartbeat(self, status: str) -> None:
+        effective_status = self._strategy_health_status(status)
         stream = stream_name(self.settings.redis_stream_prefix, "heartbeats")
         event = HeartbeatEvent(
             source_service=SERVICE_NAME,
             payload=HeartbeatPayload(
                 service_name=SERVICE_NAME,
                 instance_name=self.instance_name,
-                status=status,
+                status=effective_status,
                 details={
                     "watchlist_size": str(len(self.state.retained_watchlist)),
                     "bot_count": str(len(self.state.bots)),
                     "schwab_stream_symbols": str(len(self.state.schwab_stream_symbols())),
+                    "schwab_stale_symbols": ",".join(sorted(self._schwab_stale_symbols)),
+                    "schwab_generic_fallback_active": str(
+                        self._should_use_generic_market_data_fallback_for_schwab()
+                    ).lower(),
                 },
             ),
         )
@@ -3880,6 +3984,7 @@ class StrategyEngineService:
                 account_name=str(bot["account_name"]),
                 watchlist=[str(symbol) for symbol in bot["watchlist"]],
                 prewarm_symbols=[str(symbol) for symbol in bot.get("prewarm_symbols", [])],
+                data_health=dict(bot.get("data_health", {}) or {}),
                 retention_states=list(bot.get("retention_states", [])),
                 positions=list(bot["positions"]),
                 pending_open_symbols=[str(symbol) for symbol in bot["pending_open_symbols"]],
@@ -3993,14 +4098,11 @@ class StrategyEngineService:
         return not getattr(client, "connected", False)
 
     def _generic_market_data_strategy_codes(self, symbol: str) -> tuple[str, ...]:
+        del symbol
         schwab_codes = set(self.state.schwab_stream_strategy_codes())
-        include_schwab = self._should_use_generic_market_data_fallback_for_schwab() or self._is_schwab_symbol_stale(
-            symbol,
-            utcnow(),
-        )
         selected: list[str] = []
         for code in self.state.bots:
-            if code in schwab_codes and not include_schwab:
+            if code in schwab_codes:
                 continue
             selected.append(code)
         return tuple(selected)
@@ -4167,6 +4269,22 @@ class StrategyEngineService:
                 normalized,
                 activity_kind,
             )
+        self._clear_schwab_runtime_data_halt(normalized)
+
+    def _schwab_active_strategy_codes_by_symbol(self) -> dict[str, tuple[str, ...]]:
+        symbol_codes: dict[str, set[str]] = {}
+        for code in self.state.schwab_stream_strategy_codes():
+            runtime = self.state.bots.get(code)
+            if not isinstance(runtime, StrategyBotRuntime):
+                continue
+            for symbol in runtime.active_symbols():
+                normalized = str(symbol).upper()
+                if normalized:
+                    symbol_codes.setdefault(normalized, set()).add(code)
+        return {
+            symbol: tuple(sorted(codes))
+            for symbol, codes in symbol_codes.items()
+        }
 
     def _schwab_open_position_strategy_codes_by_symbol(self) -> dict[str, tuple[str, ...]]:
         symbol_codes: dict[str, set[str]] = {}
@@ -4184,6 +4302,34 @@ class StrategyEngineService:
             symbol: tuple(sorted(codes))
             for symbol, codes in symbol_codes.items()
         }
+
+    def _apply_schwab_runtime_data_halt(
+        self,
+        symbol: str,
+        codes: Sequence[str],
+        *,
+        reason: str,
+        observed_at: datetime,
+    ) -> None:
+        for code in codes:
+            runtime = self.state.bots.get(code)
+            if isinstance(runtime, StrategyBotRuntime):
+                runtime.apply_data_halt(symbol, reason=reason, observed_at=observed_at)
+
+    def _clear_schwab_runtime_data_halt(self, symbol: str) -> None:
+        normalized = str(symbol).upper()
+        for code in self.state.schwab_stream_strategy_codes():
+            runtime = self.state.bots.get(code)
+            if isinstance(runtime, StrategyBotRuntime):
+                runtime.clear_data_halt(normalized)
+
+    def _clear_all_schwab_runtime_data_halts(self) -> None:
+        for code in self.state.schwab_stream_strategy_codes():
+            runtime = self.state.bots.get(code)
+            if not isinstance(runtime, StrategyBotRuntime):
+                continue
+            for symbol in list(runtime.data_halt_symbols):
+                runtime.clear_data_halt(symbol)
 
     def _schwab_last_stream_update_at(self, symbol: str) -> datetime | None:
         normalized = str(symbol).upper()
@@ -4205,32 +4351,55 @@ class StrategyEngineService:
         ).total_seconds() >= float(self.settings.schwab_stream_symbol_stale_after_seconds)
 
     async def _monitor_schwab_symbol_health(self) -> int:
+        active_symbols = self._schwab_active_strategy_codes_by_symbol()
         open_symbols = self._schwab_open_position_strategy_codes_by_symbol()
-        if not open_symbols:
-            self._schwab_stale_symbols.clear()
+        if not active_symbols:
+            if self._schwab_stale_symbols:
+                self._schwab_stale_symbols.clear()
+            self._clear_all_schwab_runtime_data_halts()
             return 0
 
         now = utcnow()
         stale_symbols = {
             symbol: codes
-            for symbol, codes in open_symbols.items()
+            for symbol, codes in active_symbols.items()
             if self._is_schwab_symbol_stale(symbol, now)
         }
+        stale_set_before = set(self._schwab_stale_symbols)
+        healthy_symbols = set(active_symbols) - set(stale_symbols)
+        for symbol in healthy_symbols:
+            if symbol in self._schwab_stale_symbols:
+                self._schwab_stale_symbols.discard(symbol)
+            self._clear_schwab_runtime_data_halt(symbol)
+
         for symbol, codes in stale_symbols.items():
             if symbol in self._schwab_stale_symbols:
+                self._apply_schwab_runtime_data_halt(
+                    symbol,
+                    codes,
+                    reason="Schwab stream stale/disconnected; trading halted until live Schwab ticks recover",
+                    observed_at=now,
+                )
                 continue
             last_trade_at = self._schwab_symbol_last_stream_trade_at.get(symbol)
             last_quote_at = self._schwab_symbol_last_stream_quote_at.get(symbol)
             self.logger.warning(
-                "Schwab stream stale for %s with open positions on %s | last_trade_at=%s last_quote_at=%s",
+                "Schwab stream stale for %s on %s | last_trade_at=%s last_quote_at=%s",
                 symbol,
                 ",".join(codes),
                 last_trade_at.isoformat() if last_trade_at is not None else "never",
                 last_quote_at.isoformat() if last_quote_at is not None else "never",
             )
+            self._apply_schwab_runtime_data_halt(
+                symbol,
+                codes,
+                reason="Schwab stream stale/disconnected; trading halted until live Schwab ticks recover",
+                observed_at=now,
+            )
         self._schwab_stale_symbols = set(stale_symbols)
+        state_changed = stale_set_before != self._schwab_stale_symbols
         if not stale_symbols:
-            return 0
+            return 1 if state_changed else 0
 
         resubscribe_interval = max(
             1.0,
@@ -4250,11 +4419,19 @@ class StrategyEngineService:
                     for symbol in stale_symbols:
                         self._schwab_symbol_last_resubscribe_at[symbol] = now
                     self.logger.warning(
-                        "forced Schwab stream resubscribe for stale open-position symbols: %s",
+                        "forced Schwab stream resubscribe for stale Schwab symbols: %s",
                         ",".join(sorted(stale_symbols)),
                     )
                 except Exception:
                     self.logger.exception("failed forcing Schwab stream resubscribe")
+
+        stale_open_symbols = {
+            symbol: codes
+            for symbol, codes in open_symbols.items()
+            if symbol in stale_symbols
+        }
+        if not stale_open_symbols:
+            return 1 if state_changed else 0
 
         poll_interval = max(
             0.5,
@@ -4262,22 +4439,22 @@ class StrategyEngineService:
         )
         poll_symbols = [
             symbol
-            for symbol in sorted(stale_symbols)
+            for symbol in sorted(stale_open_symbols)
             if (
                 now - self._schwab_symbol_last_quote_poll_at.get(symbol, datetime.min.replace(tzinfo=UTC))
             ).total_seconds()
             >= poll_interval
         ]
         if not poll_symbols:
-            return 0
+            return 1 if state_changed else 0
 
         fetch_quotes = getattr(self._schwab_quote_poll_adapter, "fetch_quotes", None)
         if not callable(fetch_quotes):
             self.logger.error(
-                "Schwab quote poll adapter %s does not support fetch_quotes; skipping stale-symbol fallback",
+                "Schwab quote poll adapter %s does not support fetch_quotes; entries halted but emergency close cannot route",
                 type(self._schwab_quote_poll_adapter).__name__,
             )
-            return 0
+            return 1 if state_changed else 0
 
         quotes = await fetch_quotes(poll_symbols)
         intent_count = 0
@@ -4286,7 +4463,7 @@ class StrategyEngineService:
             quote = quotes.get(symbol)
             if quote is None:
                 self.logger.warning(
-                    "no fallback Schwab quote available for stale open-position symbol %s",
+                    "no Schwab REST quote available for stale open-position symbol %s",
                     symbol,
                 )
                 continue
@@ -4304,23 +4481,23 @@ class StrategyEngineService:
             if executable_price is None:
                 continue
 
-            for code in stale_symbols.get(symbol, ()):
+            for code in stale_open_symbols.get(symbol, ()):
                 runtime = self.state.bots.get(code)
                 if not isinstance(runtime, StrategyBotRuntime):
                     continue
-                intents = runtime.evaluate_position_price(symbol, executable_price)
-                for intent in intents:
+                intent = runtime.emergency_close_for_data_halt(symbol, executable_price)
+                if intent is not None:
                     await self._publish_intent(intent)
-                intent_count += len(intents)
+                    intent_count += 1
 
             if intent_count:
                 self.logger.warning(
-                    "generated %s fallback intents from polled Schwab quote for %s",
+                    "generated %s emergency close intents from polled Schwab quote for %s",
                     intent_count,
                     symbol,
                 )
 
-        return intent_count
+        return intent_count + (1 if state_changed else 0)
 
     def _persist_scanner_snapshots(self, summary: dict[str, object]) -> None:
         if self.session_factory is None:
