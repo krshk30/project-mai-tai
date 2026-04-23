@@ -2019,3 +2019,47 @@ Validation:
 - passed:
   - `.venv\Scripts\python.exe -m pytest -p no:cacheprovider tests/unit/test_strategy_engine_service.py::test_service_clears_data_halt_when_stale_symbol_leaves_active_set tests/unit/test_strategy_engine_service.py::test_service_reactivated_symbol_gets_fresh_schwab_stale_grace_window tests/unit/test_strategy_engine_service.py::test_service_does_not_halt_quiet_schwab_symbol_inside_grace_window -q`
   - `.venv\Scripts\python.exe -m py_compile src/project_mai_tai/services/strategy_engine_app.py tests/unit/test_strategy_engine_service.py`
+
+## 2026-04-23 FTFT Repeating Schwab Stale/Re-subscribe Flap
+
+Live finding:
+
+- after the noisy intraday heartbeat was reduced, the control plane still showed
+  intermittent red `DATA HALT` states for `FTFT`; this was not caused by the
+  automation change
+- live strategy logs showed a repeating pattern where `FTFT` would go stale,
+  trigger forced Schwab resubscribe, then recover a few seconds later
+- the stale monitor was using an aggressive default of only `3.0` seconds for
+  per-symbol Schwab stream freshness
+- that threshold was too tight for quiet but still-valid Schwab symbols and
+  produced transient halts on names like `FTFT` even when the broader stream
+  was healthy
+
+Code fix:
+
+- raised the default `schwab_stream_symbol_stale_after_seconds` from `3.0` to
+  `8.0` in `Settings`
+- kept the halt behavior itself unchanged:
+  - a stale symbol still enters `DATA HALT`
+  - entries are still blocked for halted symbols
+  - open positions still retain emergency-close protection
+
+Why this matters:
+
+- the runtime was correctly auto-recovering these symbols after forced
+  resubscribe, but the `3.0` second threshold created unnecessary red flaps and
+  temporary entry blocks on otherwise recoverable symbols
+- moving to `8.0` seconds preserves safety while tolerating short quiet gaps in
+  Schwab updates, which better matches what was observed live on `FTFT`
+
+Regression coverage added:
+
+- default Schwab settings now tolerate a brief `5` second quiet period without
+  flagging a symbol as stale
+
+Expected live behavior after deploy:
+
+- brief FTFT-style quiet gaps under `8` seconds should no longer trigger
+  transient `DATA HALT`
+- if a symbol truly stops updating for longer than that window, the existing
+  halt and forced-resubscribe logic still engages
