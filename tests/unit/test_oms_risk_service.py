@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 import json
 from decimal import Decimal
 
@@ -295,6 +296,85 @@ class FakeAcceptedOnlyBrokerAdapter:
     async def fetch_order_update(self, request):
         del request
         return None
+
+    async def list_account_positions(self, broker_account_name: str):
+        del broker_account_name
+        return []
+
+
+class FakeWorkingOrderRefreshBrokerAdapter:
+    def __init__(
+        self,
+        *,
+        fetch_event_type: str = "accepted",
+        filled_quantity: Decimal = Decimal("0"),
+        fill_price: Decimal | None = None,
+        ask_price: float = 1.23,
+        bid_price: float = 1.21,
+    ) -> None:
+        self.fetch_event_type = fetch_event_type
+        self.filled_quantity = filled_quantity
+        self.fill_price = fill_price
+        self.ask_price = ask_price
+        self.bid_price = bid_price
+        self.submit_requests = []
+
+    async def submit_order(self, request):
+        self.submit_requests.append(request)
+        if request.intent_type == "cancel":
+            return [
+                ExecutionReport(
+                    event_type="cancelled",
+                    client_order_id=request.client_order_id,
+                    broker_order_id=str(request.metadata.get("broker_order_id", "ord-123")),
+                    symbol=request.symbol,
+                    side=request.side,
+                    intent_type="cancel",
+                    quantity=request.quantity,
+                    reason=request.reason,
+                    metadata=dict(request.metadata),
+                )
+            ]
+
+        broker_order_id = f"ord-{len([item for item in self.submit_requests if item.intent_type != 'cancel'])}"
+        return [
+            ExecutionReport(
+                event_type="accepted",
+                client_order_id=request.client_order_id,
+                broker_order_id=broker_order_id,
+                symbol=request.symbol,
+                side=request.side,
+                intent_type=request.intent_type,
+                quantity=request.quantity,
+                reason=request.reason,
+                metadata=dict(request.metadata),
+            )
+        ]
+
+    async def fetch_order_update(self, request):
+        return ExecutionReport(
+            event_type=self.fetch_event_type,  # type: ignore[arg-type]
+            client_order_id=request.client_order_id,
+            broker_order_id=str(request.metadata.get("broker_order_id", "ord-123")),
+            symbol=request.symbol,
+            side=request.side,
+            intent_type=request.intent_type,
+            quantity=request.quantity,
+            filled_quantity=self.filled_quantity,
+            fill_price=self.fill_price,
+            reason=request.reason,
+            metadata=dict(request.metadata),
+        )
+
+    async def fetch_quotes(self, symbols):
+        return {
+            str(symbol).upper(): {
+                "ask_price": self.ask_price,
+                "bid_price": self.bid_price,
+                "last_price": (self.ask_price + self.bid_price) / 2,
+            }
+            for symbol in symbols
+        }
 
     async def list_account_positions(self, broker_account_name: str):
         del broker_account_name
@@ -903,6 +983,172 @@ async def test_oms_service_sync_skips_duplicate_partial_without_new_fill_progres
     assert second_summary == {"orders": 0, "terminal_orders": 0}
     order_events = [payload for stream, payload in redis.entries if stream == "test:order-events"]
     assert [item["payload"]["status"] for item in order_events] == ["accepted", "partially_filled"]
+
+
+@pytest.mark.asyncio
+async def test_oms_service_refreshes_stale_working_limit_buy_order() -> None:
+    redis = FakeRedis()
+    session_factory = build_test_session_factory()
+    adapter = FakeWorkingOrderRefreshBrokerAdapter()
+    service = OmsRiskService(
+        settings=Settings(
+            redis_stream_prefix="test",
+            oms_adapter="simulated",
+            oms_working_order_refresh_seconds=5,
+        ),
+        redis_client=redis,
+        session_factory=session_factory,
+        broker_adapter=adapter,
+    )
+    service.sync_broker_state = _noop_sync_broker_state  # type: ignore[method-assign]
+
+    await service.process_trade_intent(
+        TradeIntentEvent(
+            source_service="strategy-engine",
+            payload=TradeIntentPayload(
+                strategy_code="macd_1m",
+                broker_account_name="paper:macd_1m",
+                symbol="BFRG",
+                side="buy",
+                quantity=Decimal("100"),
+                intent_type="open",
+                reason="ENTRY_P3_MACD_SURGE",
+                metadata={
+                    "order_type": "limit",
+                    "time_in_force": "day",
+                    "limit_price": "1.15",
+                    "reference_price": "1.15",
+                    "price_source": "ask",
+                },
+            ),
+        )
+    )
+
+    with session_factory() as session:
+        stored_order = session.scalar(select(BrokerOrder).where(BrokerOrder.client_order_id.like("macd_1m-BFRG-open-%")))
+        assert stored_order is not None
+        stale_time = datetime.now(UTC) - timedelta(seconds=10)
+        stored_order.updated_at = stale_time
+        stored_order.submitted_at = stale_time
+        session.commit()
+
+    summary = await service.sync_broker_orders(account_names=["paper:macd_1m"])
+    assert summary == {"orders": 1, "terminal_orders": 1}
+
+    with session_factory() as session:
+        orders = session.scalars(
+            select(BrokerOrder).where(BrokerOrder.symbol == "BFRG").order_by(BrokerOrder.client_order_id)
+        ).all()
+        stored_intent = session.scalar(select(TradeIntent).where(TradeIntent.symbol == "BFRG"))
+
+        assert len(orders) == 2
+        assert orders[0].status == "cancelled"
+        assert orders[1].status == "accepted"
+        assert orders[1].payload["limit_price"] == "1.23"
+        assert orders[1].payload["watchdog_replaces_client_order_id"] == orders[0].client_order_id
+        assert stored_intent is not None
+        assert stored_intent.status == "submitted"
+
+    order_events = [payload for stream, payload in redis.entries if stream == "test:order-events"]
+    assert [item["payload"]["status"] for item in order_events] == ["accepted", "accepted"]
+    assert all(item["payload"]["status"] != "cancelled" for item in order_events)
+    assert [request.intent_type for request in adapter.submit_requests] == ["open", "cancel", "open"]
+
+
+@pytest.mark.asyncio
+async def test_oms_service_refreshes_remaining_quantity_for_stale_sell_order() -> None:
+    redis = FakeRedis()
+    session_factory = build_test_session_factory()
+    adapter = FakeWorkingOrderRefreshBrokerAdapter(
+        fetch_event_type="partially_filled",
+        filled_quantity=Decimal("4"),
+        fill_price=Decimal("2.50"),
+        bid_price=2.41,
+    )
+    service = OmsRiskService(
+        settings=Settings(
+            redis_stream_prefix="test",
+            oms_adapter="simulated",
+            oms_working_order_refresh_seconds=5,
+        ),
+        redis_client=redis,
+        session_factory=session_factory,
+        broker_adapter=adapter,
+    )
+
+    store = OmsStore()
+    with session_factory() as session:
+        strategy = store.ensure_strategy(session, "macd_30s", name="MACD 30s", execution_mode="paper", metadata_json={})
+        account = store.ensure_broker_account(
+            session,
+            "paper:macd_30s",
+            provider="schwab",
+            environment="development",
+        )
+        intent = TradeIntent(
+            strategy_id=strategy.id,
+            broker_account_id=account.id,
+            symbol="UGRO",
+            side="sell",
+            intent_type="close",
+            quantity=Decimal("10"),
+            reason="HARD_STOP",
+            status="submitted",
+            payload={"metadata": {"order_type": "limit"}},
+        )
+        session.add(intent)
+        session.flush()
+        stale_time = datetime.now(UTC) - timedelta(seconds=10)
+        session.add(
+            BrokerOrder(
+                intent_id=intent.id,
+                strategy_id=strategy.id,
+                broker_account_id=account.id,
+                client_order_id="macd_30s-UGRO-close-abc123",
+                broker_order_id="ord-123",
+                symbol="UGRO",
+                side="sell",
+                order_type="limit",
+                time_in_force="day",
+                quantity=Decimal("10"),
+                status="accepted",
+                payload={
+                    "order_type": "limit",
+                    "time_in_force": "day",
+                    "limit_price": "2.40",
+                    "reference_price": "2.40",
+                    "price_source": "bid",
+                },
+                submitted_at=stale_time,
+                updated_at=stale_time,
+            )
+        )
+        session.commit()
+
+    summary = await service.sync_broker_orders(account_names=["paper:macd_30s"])
+    assert summary == {"orders": 2, "terminal_orders": 1}
+
+    with session_factory() as session:
+        orders = session.scalars(
+            select(BrokerOrder).where(BrokerOrder.symbol == "UGRO").order_by(BrokerOrder.client_order_id)
+        ).all()
+        fills = session.scalars(select(Fill).where(Fill.symbol == "UGRO")).all()
+        stored_intent = session.scalar(select(TradeIntent).where(TradeIntent.symbol == "UGRO"))
+
+        assert len(orders) == 2
+        assert orders[0].status == "cancelled"
+        assert orders[1].status == "accepted"
+        assert orders[1].quantity == Decimal("6")
+        assert orders[1].payload["limit_price"] == "2.41"
+        assert len(fills) == 1
+        assert fills[0].quantity == Decimal("4")
+        assert stored_intent is not None
+        assert stored_intent.status == "submitted"
+
+    order_events = [payload for stream, payload in redis.entries if stream == "test:order-events"]
+    assert [item["payload"]["status"] for item in order_events] == ["partially_filled", "accepted"]
+    assert all(item["payload"]["status"] != "cancelled" for item in order_events)
+    assert [request.intent_type for request in adapter.submit_requests] == ["cancel", "close"]
 
 
 @pytest.mark.asyncio

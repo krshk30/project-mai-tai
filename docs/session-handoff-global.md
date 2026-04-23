@@ -2136,3 +2136,68 @@ Known validation note:
 - a full `tests/unit/test_strategy_engine_service.py` run exceeded the local
   command timeout window here, so validation was done with the targeted restart,
   stop/resume, and snapshot persistence slices above
+
+## 2026-04-23 OMS Working-Order Watchdog Refresh
+
+Root cause:
+
+- OMS was syncing broker order status, but it was not actively managing working
+  orders after submission
+- if a buy, close, or scale order stayed open while price moved away, Mai Tai
+  could leave that order hanging for many minutes
+- the strategy runtime then kept the symbol in pending state waiting for that
+  old order to resolve, which is why names like `SKLZ` could sit with stale
+  sell limits instead of chasing the market
+
+Code fix:
+
+- added an OMS working-order refresh watchdog in
+  `src/project_mai_tai/oms/service.py`
+- every broker sync pass now checks open working orders and, once a working
+  order has had no progress for `5` seconds, OMS:
+  - fetches the latest broker status
+  - keeps any partial-fill progress already reported
+  - cancels the stale working order internally
+  - submits a replacement order for the remaining quantity
+- limit orders are repriced from fresh live broker quotes before resubmission
+  - buys refresh from the ask
+  - sells refresh from the bid
+- market orders are also watched every `5` seconds and can be resubmitted if
+  they somehow remain working
+- internal watchdog cancels are persisted in OMS order history, but they are not
+  published back to the strategy runtime as terminal `cancelled` events
+  - this avoids falsely clearing bot pending-open / pending-close / pending-scale
+    state during an in-flight cancel-and-replace cycle
+
+Settings change:
+
+- `oms_broker_sync_interval_seconds`: `15` -> `5`
+- new setting: `oms_working_order_refresh_seconds = 5`
+
+Additional correctness fix:
+
+- OMS order rows now persist the original request `order_type` and
+  `time_in_force` instead of silently defaulting every stored order to `market`
+  / `day`
+- that keeps later broker sync and watchdog replacement logic aligned with the
+  real order semantics
+
+Regression coverage added:
+
+- stale working limit buy order is cancelled and replaced with a fresh ask-based
+  price
+- stale partially-filled sell order is cancelled and replaced only for the
+  remaining quantity using a fresh bid-based price
+- internal watchdog cancel is intentionally hidden from runtime order-event
+  publication so strategy pending state stays intact
+- adjacent OMS sync tests for cancel / partial-fill / terminal event publishing
+  still pass
+
+Validation:
+
+- passed:
+  - `.venv\Scripts\python.exe -m pytest tests/unit/test_oms_risk_service.py -k "refreshes_stale_working_limit_buy_order or refreshes_remaining_quantity_for_stale_sell_order or syncs_open_order_status_from_broker or sync_publishes_terminal_order_event_for_strategy_runtime or sync_skips_duplicate_partial_without_new_fill_progress"`
+  - compile check for:
+    - `src/project_mai_tai/oms/service.py`
+    - `src/project_mai_tai/settings.py`
+    - `tests/unit/test_oms_risk_service.py`
