@@ -3896,6 +3896,34 @@ async def test_service_does_not_halt_quiet_schwab_symbol_inside_grace_window() -
     assert runtime.data_health_summary()["status"] == "healthy"
 
 
+@pytest.mark.asyncio
+async def test_service_default_stale_threshold_tolerates_brief_quiet_gap() -> None:
+    settings = Settings(
+        strategy_macd_30s_broker_provider="schwab",
+        redis_stream_prefix="test",
+        dashboard_snapshot_persistence_enabled=False,
+        strategy_history_persistence_enabled=False,
+    )
+    service = StrategyEngineService(settings=settings, redis_client=FakeRedis())
+    runtime = service.state.bots["macd_30s"]
+    runtime.set_watchlist(["FTFT"])
+    recent = datetime.now(UTC) - timedelta(seconds=5)
+    service._schwab_symbol_last_stream_trade_at["FTFT"] = recent
+    service._schwab_symbol_last_stream_quote_at["FTFT"] = recent
+
+    class FakeStreamClient:
+        connected = True
+
+    service._schwab_stream_client = FakeStreamClient()
+
+    activity_count = await service._monitor_schwab_symbol_health()
+
+    assert activity_count == 0
+    assert service._schwab_stale_symbols == set()
+    assert runtime.data_health_summary()["status"] == "healthy"
+    assert runtime.data_health_summary()["halted_symbols"] == []
+
+
 def test_generic_market_data_never_targets_schwab_native_bot_when_stream_is_stale() -> None:
     settings = Settings(
         strategy_macd_30s_broker_provider="schwab",

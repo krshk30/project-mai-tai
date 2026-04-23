@@ -174,7 +174,7 @@ class Settings(BaseSettings):
     schwab_tos_runner_account_hash: str | None = None
     schwab_tick_archive_enabled: bool = False
     schwab_tick_archive_root: str = "data/recordings/schwab_ticks"
-    schwab_stream_symbol_stale_after_seconds: float = 3.0
+    schwab_stream_symbol_stale_after_seconds: float = 8.0
     schwab_stream_symbol_quote_poll_interval_seconds: float = 2.0
     schwab_stream_symbol_resubscribe_interval_seconds: float = 5.0
     oms_broker_sync_interval_seconds: int = 15
