@@ -4082,7 +4082,18 @@ class StrategyEngineService:
         self._schwab_trade_queue.put_nowait(record)
 
     def _enqueue_schwab_quote_tick(self, record: QuoteTickRecord) -> None:
+        if not self._should_keep_schwab_quote_tick(record.symbol):
+            return
         self._schwab_quote_queue.put_nowait(record)
+
+    def _should_keep_schwab_quote_tick(self, symbol: str) -> bool:
+        normalized = str(symbol).upper()
+        for code in self.state.schwab_stream_strategy_codes():
+            runtime = self.state.bots.get(code)
+            active_symbols = getattr(runtime, "active_symbols", None)
+            if callable(active_symbols) and normalized in active_symbols():
+                return True
+        return False
 
     async def _drain_schwab_stream_queues(self) -> tuple[int, int]:
         intent_count = 0
