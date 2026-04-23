@@ -2329,6 +2329,8 @@ class StrategyEngineState:
         self.feed_retention_states: dict[str, RetainedSymbolState] = {}
         self.global_manual_stop_symbols: set[str] = set()
         self.manual_stop_symbols_by_strategy: dict[str, set[str]] = {}
+        self.bot_handoff_symbols_by_strategy: dict[str, set[str]] = {}
+        self.bot_handoff_history_by_strategy: dict[str, set[str]] = {}
         self._schwab_stream_bot_codes = self._resolve_schwab_stream_bot_codes()
         self.reclaim_excluded_symbols = set(
             self.settings.strategy_macd_30s_reclaim_excluded_symbol_list
@@ -2493,6 +2495,7 @@ class StrategyEngineState:
                 indicator_overlay_provider=macd_30s_indicator_overlay_provider,
                 retention_config=macd_30s_retention,
             )
+        self._ensure_bot_handoff_state()
 
     def _resolve_30s_trading_config(
         self,
@@ -2663,6 +2666,7 @@ class StrategyEngineState:
             filtered_reference_data,
             snapshot_lookup,
         )
+        self._record_bot_handoff_symbols(newly_confirmed)
         self.confirmed_scanner.update_live_prices(snapshot_lookup)
         self.confirmed_scanner.prune_faded_candidates()
 
@@ -2671,6 +2675,7 @@ class StrategyEngineState:
             for stock in self.confirmed_scanner.get_all_confirmed()
             if str(stock.get("ticker", "")).upper() not in blocked
         ]
+        self._record_bot_handoff_symbols(self.all_confirmed)
         self.current_confirmed = self._ranked_scanner_confirmed_view(limit=5)
         tracked_snapshot_symbols = {
             str(stock.get("ticker", "")).upper()
@@ -2678,7 +2683,7 @@ class StrategyEngineState:
             if str(stock.get("ticker", "")).strip()
         }
         for code, bot in self.bots.items():
-            bot_watchlist = self._watchlist_for_bot(code, self.all_confirmed)
+            bot_watchlist = self._watchlist_for_bot(code, self._bot_handoff_symbols_for_bot(code))
             if code == "runner":
                 bot.update_market_snapshots(filtered_snapshots)
                 bot.set_watchlist(bot_watchlist)
@@ -2921,6 +2926,14 @@ class StrategyEngineState:
             "watchlist": list(self.retained_watchlist),
             "top_confirmed": self.current_confirmed,
             "global_manual_stop_symbols": sorted(self.global_manual_stop_symbols),
+            "bot_handoff_symbols_by_strategy": {
+                code: sorted(symbols)
+                for code, symbols in self.bot_handoff_symbols_by_strategy.items()
+            },
+            "bot_handoff_history_by_strategy": {
+                code: sorted(symbols)
+                for code, symbols in self.bot_handoff_history_by_strategy.items()
+            },
             "five_pillars": self.five_pillars,
             "top_gainers": self.top_gainers,
             "recent_alerts": self.recent_alerts,
@@ -2941,6 +2954,8 @@ class StrategyEngineState:
         visible_confirmed: Sequence[dict[str, object]],
         *,
         all_confirmed: Sequence[dict[str, object]] | None = None,
+        bot_handoff_symbols_by_strategy: dict[str, Sequence[object]] | None = None,
+        bot_handoff_history_by_strategy: dict[str, Sequence[object]] | None = None,
     ) -> None:
         self.current_confirmed = [
             {**dict(item), "ticker": str(item.get("ticker", "")).upper()}
@@ -2955,6 +2970,13 @@ class StrategyEngineState:
             if str(item.get("ticker", "")).strip()
             and str(item.get("ticker", "")).upper() not in self.global_manual_stop_symbols
         ]
+        if bot_handoff_symbols_by_strategy is not None or bot_handoff_history_by_strategy is not None:
+            self._restore_bot_handoff_state(
+                active_by_strategy=bot_handoff_symbols_by_strategy,
+                history_by_strategy=bot_handoff_history_by_strategy,
+            )
+        else:
+            self._seed_bot_handoff_state(self.all_confirmed or self.current_confirmed)
         self._resync_bot_watchlists_from_current_confirmed()
 
     def _ranked_scanner_confirmed_view(self, *, limit: int = 5) -> list[dict[str, object]]:
@@ -2970,13 +2992,19 @@ class StrategyEngineState:
         return ranked_confirmed[:limit]
 
     def apply_global_manual_stop_symbols(self, symbols: Iterable[str] | None) -> None:
-        self.global_manual_stop_symbols = {
+        normalized_symbols = {
             str(symbol).upper() for symbol in (symbols or []) if str(symbol).strip()
         }
+        stopped_now = normalized_symbols - self.global_manual_stop_symbols
+        self.global_manual_stop_symbols = normalized_symbols
+        if stopped_now:
+            self._discard_bot_handoff_symbols(stopped_now)
         for code, bot in self.bots.items():
             set_manual_stops = getattr(bot, "set_manual_stop_symbols", None)
             if set_manual_stops is not None:
                 set_manual_stops(self._manual_stop_symbols_for_bot(code))
+        self._sync_schwab_prewarm_symbols()
+        self._resync_bot_watchlists_from_current_confirmed()
 
     def apply_manual_stop_symbols(self, symbols_by_strategy: dict[str, set[str]] | None) -> None:
         normalized: dict[str, set[str]] = {}
@@ -3004,8 +3032,10 @@ class StrategyEngineState:
         if scope == "global":
             if action == "stop":
                 self.global_manual_stop_symbols.add(normalized_symbol)
+                self._discard_bot_handoff_symbols([normalized_symbol])
             else:
                 self.global_manual_stop_symbols.discard(normalized_symbol)
+                self._restore_bot_handoff_symbols([normalized_symbol])
             self._sync_schwab_prewarm_symbols()
             self._resync_bot_watchlists_from_current_confirmed()
             return
@@ -3032,11 +3062,10 @@ class StrategyEngineState:
         *,
         strategy_codes: Sequence[str] | None = None,
     ) -> None:
-        confirmed_candidates = self._confirmed_handoff_candidates()
         for code, bot in self._iter_target_bots(strategy_codes=strategy_codes):
             if hasattr(bot, "set_manual_stop_symbols"):
                 bot.set_manual_stop_symbols(self._manual_stop_symbols_for_bot(code))
-            bot.set_watchlist(self._watchlist_for_bot(code, confirmed_candidates))
+            bot.set_watchlist(self._watchlist_for_bot(code, self._bot_handoff_symbols_for_bot(code)))
             if hasattr(bot, "set_entry_blocked_symbols"):
                 bot.set_entry_blocked_symbols(())
             if code == "runner":
@@ -3053,6 +3082,113 @@ class StrategyEngineState:
             }
         )
         self.feed_retention_states = self._aggregate_bot_retention_states()
+
+    def _ensure_bot_handoff_state(self) -> None:
+        for code in self.bots:
+            self.bot_handoff_symbols_by_strategy.setdefault(code, set())
+            self.bot_handoff_history_by_strategy.setdefault(code, set())
+
+    @staticmethod
+    def _normalize_symbol_items(items: Iterable[object] | None) -> list[str]:
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for item in items or ():
+            if isinstance(item, dict):
+                symbol = str(item.get("ticker", "")).upper()
+            else:
+                symbol = str(item).upper()
+            if not symbol or symbol in seen:
+                continue
+            seen.add(symbol)
+            normalized.append(symbol)
+        return normalized
+
+    def _seed_bot_handoff_state(
+        self,
+        items: Sequence[object],
+        *,
+        strategy_codes: Sequence[str] | None = None,
+    ) -> None:
+        symbols = self._normalize_symbol_items(items)
+        self._ensure_bot_handoff_state()
+        target_codes = [code for code, _ in self._iter_target_bots(strategy_codes=strategy_codes)]
+        target_code_set = set(target_codes)
+        for code in self.bots:
+            if code in target_code_set:
+                seeded = set(symbols)
+                self.bot_handoff_symbols_by_strategy[code] = set(seeded)
+                self.bot_handoff_history_by_strategy[code] = set(seeded)
+            else:
+                self.bot_handoff_symbols_by_strategy.setdefault(code, set())
+                self.bot_handoff_history_by_strategy.setdefault(code, set())
+
+    def _record_bot_handoff_symbols(
+        self,
+        items: Sequence[object],
+        *,
+        strategy_codes: Sequence[str] | None = None,
+    ) -> None:
+        symbols = self._normalize_symbol_items(items)
+        if not symbols:
+            return
+        self._ensure_bot_handoff_state()
+        for code, _ in self._iter_target_bots(strategy_codes=strategy_codes):
+            self.bot_handoff_symbols_by_strategy.setdefault(code, set()).update(symbols)
+            self.bot_handoff_history_by_strategy.setdefault(code, set()).update(symbols)
+
+    def _discard_bot_handoff_symbols(
+        self,
+        items: Iterable[object],
+        *,
+        strategy_codes: Sequence[str] | None = None,
+    ) -> None:
+        symbols = set(self._normalize_symbol_items(items))
+        if not symbols:
+            return
+        self._ensure_bot_handoff_state()
+        for code, _ in self._iter_target_bots(strategy_codes=strategy_codes):
+            self.bot_handoff_symbols_by_strategy.setdefault(code, set()).difference_update(symbols)
+
+    def _restore_bot_handoff_symbols(
+        self,
+        items: Iterable[object],
+        *,
+        strategy_codes: Sequence[str] | None = None,
+    ) -> None:
+        symbols = set(self._normalize_symbol_items(items))
+        if not symbols:
+            return
+        self._ensure_bot_handoff_state()
+        for code, _ in self._iter_target_bots(strategy_codes=strategy_codes):
+            history = self.bot_handoff_history_by_strategy.setdefault(code, set())
+            self.bot_handoff_symbols_by_strategy.setdefault(code, set()).update(history & symbols)
+
+    def _restore_bot_handoff_state(
+        self,
+        *,
+        active_by_strategy: dict[str, Sequence[object]] | None = None,
+        history_by_strategy: dict[str, Sequence[object]] | None = None,
+    ) -> None:
+        self._ensure_bot_handoff_state()
+        restored_active: dict[str, set[str]] = {}
+        restored_history: dict[str, set[str]] = {}
+        for code in self.bots:
+            active_symbols = set(
+                self._normalize_symbol_items((active_by_strategy or {}).get(code, ()))
+            )
+            history_symbols = set(
+                self._normalize_symbol_items((history_by_strategy or {}).get(code, ()))
+            )
+            if not history_symbols:
+                history_symbols = set(active_symbols)
+            restored_active[code] = active_symbols
+            restored_history[code] = history_symbols | active_symbols
+        self.bot_handoff_symbols_by_strategy = restored_active
+        self.bot_handoff_history_by_strategy = restored_history
+
+    def _bot_handoff_symbols_for_bot(self, code: str) -> list[str]:
+        self._ensure_bot_handoff_state()
+        return sorted(self.bot_handoff_symbols_by_strategy.get(code, set()))
 
     def _confirmed_handoff_candidates(self) -> list[dict[str, object]]:
         if self.all_confirmed:
@@ -3269,6 +3405,8 @@ class StrategyEngineState:
         self.current_confirmed = []
         self.retained_watchlist = []
         self.schwab_prewarm_symbols = []
+        self.bot_handoff_symbols_by_strategy = {code: set() for code in self.bots}
+        self.bot_handoff_history_by_strategy = {code: set() for code in self.bots}
         self.five_pillars = []
         self.top_gainers = []
         self.top_gainer_changes = []
@@ -4565,11 +4703,23 @@ class StrategyEngineService:
         scanner_session_start = current_scanner_session_start_utc(utcnow()).isoformat()
         top_confirmed = list(summary.get("top_confirmed", []))
         all_confirmed_candidates = list(self.state.confirmed_scanner.get_all_confirmed())
-        if top_confirmed or all_confirmed_candidates:
+        bot_handoff_symbols_by_strategy = {
+            code: sorted(symbols)
+            for code, symbols in self.state.bot_handoff_symbols_by_strategy.items()
+            if symbols
+        }
+        bot_handoff_history_by_strategy = {
+            code: sorted(symbols)
+            for code, symbols in self.state.bot_handoff_history_by_strategy.items()
+            if symbols
+        }
+        if top_confirmed or all_confirmed_candidates or bot_handoff_symbols_by_strategy:
             payload = {
                 "top_confirmed": top_confirmed,
                 "all_confirmed_candidates": all_confirmed_candidates,
                 "watchlist": list(summary.get("watchlist", [])),
+                "bot_handoff_symbols_by_strategy": bot_handoff_symbols_by_strategy,
+                "bot_handoff_history_by_strategy": bot_handoff_history_by_strategy,
                 "cycle_count": int(summary.get("cycle_count", 0) or 0),
                 "persisted_at": persisted_at,
                 "scanner_session_start_utc": scanner_session_start,
@@ -4772,6 +4922,16 @@ class StrategyEngineService:
         self.state.restore_confirmed_runtime_view(
             [dict(item) for item in visible_confirmed if isinstance(item, dict)],
             all_confirmed=[dict(item) for item in self.state.all_confirmed if isinstance(item, dict)],
+            bot_handoff_symbols_by_strategy=(
+                snapshot.payload.get("bot_handoff_symbols_by_strategy")
+                if isinstance(snapshot.payload.get("bot_handoff_symbols_by_strategy"), dict)
+                else None
+            ),
+            bot_handoff_history_by_strategy=(
+                snapshot.payload.get("bot_handoff_history_by_strategy")
+                if isinstance(snapshot.payload.get("bot_handoff_history_by_strategy"), dict)
+                else None
+            ),
         )
         self.logger.info("seeded %s confirmed candidates for fresh restart revalidation", len(seeded))
 
@@ -4822,7 +4982,29 @@ class StrategyEngineService:
             return
 
         watchlist = payload.get("watchlist")
+        active_handoff = (
+            payload.get("bot_handoff_symbols_by_strategy")
+            if isinstance(payload.get("bot_handoff_symbols_by_strategy"), dict)
+            else None
+        )
+        history_handoff = (
+            payload.get("bot_handoff_history_by_strategy")
+            if isinstance(payload.get("bot_handoff_history_by_strategy"), dict)
+            else None
+        )
         if not isinstance(watchlist, list) or not watchlist:
+            if not active_handoff:
+                return
+            watchlist = sorted(
+                {
+                    str(symbol).upper()
+                    for symbols in active_handoff.values()
+                    if isinstance(symbols, list)
+                    for symbol in symbols
+                    if str(symbol).strip()
+                }
+            )
+        if not watchlist:
             return
 
         visible_confirmed = [
@@ -4833,7 +5015,11 @@ class StrategyEngineService:
         if not visible_confirmed:
             return
 
-        self.state.restore_confirmed_runtime_view(visible_confirmed)
+        self.state.restore_confirmed_runtime_view(
+            visible_confirmed,
+            bot_handoff_symbols_by_strategy=active_handoff,
+            bot_handoff_history_by_strategy=history_handoff,
+        )
         self.logger.info(
             "restored %s symbols from scanner cycle-history watchlist fallback",
             len(visible_confirmed),
@@ -5313,6 +5499,16 @@ class StrategyEngineService:
             "scanner_session_start_utc": current_scanner_session_start_utc(utcnow()).isoformat(),
             "cycle_count": int(summary.get("cycle_count", 0) or 0),
             "watchlist": [str(symbol).upper() for symbol in summary.get("watchlist", []) if str(symbol).strip()],
+            "bot_handoff_symbols_by_strategy": {
+                code: sorted(symbols)
+                for code, symbols in self.state.bot_handoff_symbols_by_strategy.items()
+                if symbols
+            },
+            "bot_handoff_history_by_strategy": {
+                code: sorted(symbols)
+                for code, symbols in self.state.bot_handoff_history_by_strategy.items()
+                if symbols
+            },
             "all_confirmed": all_confirmed,
             "all_confirmed_tickers": [item["ticker"] for item in all_confirmed],
             "top_confirmed": top_confirmed,

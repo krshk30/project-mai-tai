@@ -2063,3 +2063,76 @@ Expected live behavior after deploy:
   transient `DATA HALT`
 - if a symbol truly stops updating for longer than that window, the existing
   halt and forced-resubscribe logic still engages
+
+## 2026-04-23 Scanner-To-Bot One-Way Handoff Ownership
+
+Root cause:
+
+- the runtime was still re-syncing bot watchlists from the scanner confirmed
+  list on every scanner cycle
+- that meant scanner state still controlled bot membership after handoff
+- a global scanner `Stop` correctly removed the symbol everywhere, but a later
+  `Resume` only re-added it if the scanner still owned it in current confirmed
+- that is why names like `SST` could come back in momentum/scanner while never
+  being restored into the 30s bot
+
+Code fix:
+
+- added durable bot-owned handoff state in `StrategyEngineState`
+  - `bot_handoff_symbols_by_strategy`
+  - `bot_handoff_history_by_strategy`
+- newly confirmed symbols are now added into the bot-owned handoff set
+- bot watchlists now resync from that bot-owned handoff set, not from the
+  scanner confirmed list
+- global scanner `Stop` now removes the symbol from active bot handoff state
+  while preserving session history
+- global scanner `Resume` now restores the symbol back into the bot handoff set
+  if it had already been handed off earlier in the same session
+- 4:00 AM scanner-session reset now clears the bot-owned handoff state for the
+  new day
+
+Restart persistence:
+
+- persisted scanner snapshots now save:
+  - `bot_handoff_symbols_by_strategy`
+  - `bot_handoff_history_by_strategy`
+- restart restore now prefers that persisted bot-owned handoff state so the bot
+  does not lose ownership midday just because scanner confirmed visibility
+  changed
+- cycle-history fallback also restores bot handoff ownership if needed
+
+Behavior after this fix:
+
+- scanner can still:
+  - detect alerts
+  - confirm symbols
+  - show rankings / score / momentum views
+  - globally stop a symbol everywhere
+- but scanner no longer removes a previously handed-off symbol from the bot just
+  because scanner confirmed membership changes later
+- after handoff, the bot owns the symbol until:
+  - global scanner stop
+  - bot/manual stop rules
+  - daily 4:00 AM reset
+
+Regression coverage added:
+
+- global stop then resume restores a previously handed-off symbol into the bot
+- persisted bot handoff state restores correctly into bot watchlists
+- scanner-cycle snapshot persistence now includes bot handoff ownership
+- adjacent restart/manual-stop regressions still pass
+
+Validation:
+
+- passed:
+  - `.venv\Scripts\python.exe -m pytest tests/unit/test_strategy_engine_service.py -k "global_stop_resume_restores_previously_handed_off_symbol_to_bot_watchlist or restore_confirmed_runtime_view_prefers_persisted_bot_handoff_state or publish_strategy_state_persists_scanner_cycle_history_snapshot or seeded_confirmed_candidates_restore_watchlist_from_all_confirmed_when_top_confirmed_empty or manual_stop_resume_readds_symbol_to_live_watchlist_immediately or snapshot_batch_keeps_faded_confirmed_symbols_in_bot_watchlists_for_session_continuity"`
+  - `.venv\Scripts\python.exe -m pytest tests/unit/test_strategy_engine_service.py -k "service_preloads_manual_stops_before_post_restart_trading or seeded_confirmed_candidates_are_revalidated_into_fresh_top_confirmed or global_manual_stop_removes_schwab_prewarm_symbol"`
+  - AST parse check for:
+    - `src/project_mai_tai/services/strategy_engine_app.py`
+    - `tests/unit/test_strategy_engine_service.py`
+
+Known validation note:
+
+- a full `tests/unit/test_strategy_engine_service.py` run exceeded the local
+  command timeout window here, so validation was done with the targeted restart,
+  stop/resume, and snapshot persistence slices above

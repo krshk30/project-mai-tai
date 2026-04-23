@@ -3401,6 +3401,27 @@ def test_global_manual_stop_removes_schwab_prewarm_symbol() -> None:
     assert state.schwab_stream_symbols() == []
 
 
+def test_global_stop_resume_restores_previously_handed_off_symbol_to_bot_watchlist() -> None:
+    state = StrategyEngineState(now_provider=fixed_now)
+    state.restore_confirmed_runtime_view(
+        [
+            {"ticker": "SST", "rank_score": 80.0, "change_pct": 40.0, "confirmed_at": "09:45:00 AM ET"},
+        ]
+    )
+
+    state.apply_manual_stop_update(scope="global", action="stop", symbol="SST")
+
+    assert "SST" not in state.bots["macd_30s"].watchlist
+    assert "SST" not in state.bot_handoff_symbols_by_strategy["macd_30s"]
+
+    state.current_confirmed = []
+    state.all_confirmed = []
+    state.apply_manual_stop_update(scope="global", action="resume", symbol="SST")
+
+    assert "SST" in state.bot_handoff_symbols_by_strategy["macd_30s"]
+    assert "SST" in state.bots["macd_30s"].watchlist
+
+
 @pytest.mark.asyncio
 async def test_sync_subscription_targets_includes_schwab_symbols_when_stream_fallback_is_active() -> None:
     redis = FakeRedis()
@@ -4386,6 +4407,38 @@ def test_seeded_confirmed_candidates_restore_watchlist_from_all_confirmed_when_t
             assert service.state.bots[code].watchlist == {"BIYA"}
 
 
+def test_restore_confirmed_runtime_view_prefers_persisted_bot_handoff_state() -> None:
+    state = StrategyEngineState(
+        settings=Settings(
+            strategy_macd_1m_enabled=True,
+            strategy_tos_enabled=True,
+            strategy_runner_enabled=True,
+        ),
+        now_provider=fixed_now,
+    )
+
+    state.restore_confirmed_runtime_view(
+        [{"ticker": "SST"}],
+        bot_handoff_symbols_by_strategy={
+            "macd_30s": ["SST", "ELAB"],
+            "macd_1m": ["SST"],
+            "tos": ["SST"],
+            "runner": ["SST"],
+        },
+        bot_handoff_history_by_strategy={
+            "macd_30s": ["SST", "ELAB"],
+            "macd_1m": ["SST"],
+            "tos": ["SST"],
+            "runner": ["SST"],
+        },
+    )
+
+    assert state.bots["macd_30s"].watchlist == {"SST", "ELAB"}
+    assert state.bots["macd_1m"].watchlist == {"SST"}
+    assert state.bots["tos"].watchlist == {"SST"}
+    assert state.bots["runner"].watchlist == {"SST"}
+
+
 def test_seeded_confirmed_candidates_skip_prior_session_snapshot(monkeypatch) -> None:
     session_factory = build_test_session_factory()
     with session_factory() as session:
@@ -4504,9 +4557,7 @@ def test_publish_strategy_state_persists_scanner_cycle_history_snapshot() -> Non
             "data_age_secs": 0,
         }
     ]
-    service.state.retained_watchlist = ["ELAB"]
-    for bot in service.state.bots.values():
-        bot.set_watchlist(["ELAB"])
+    service.state.restore_confirmed_runtime_view(list(service.state.current_confirmed))
 
     awaitable = service._publish_strategy_state_snapshot()
     import asyncio
@@ -4522,6 +4573,7 @@ def test_publish_strategy_state_persists_scanner_cycle_history_snapshot() -> Non
     assert len(snapshots) == 1
     payload = snapshots[0].payload
     assert payload["watchlist"] == ["ELAB"]
+    assert payload["bot_handoff_symbols_by_strategy"]["macd_30s"] == ["ELAB"]
     assert payload["all_confirmed_tickers"] == ["ELAB"]
     assert payload["top_confirmed_tickers"] == ["ELAB"]
     assert payload["five_pillars_tickers"] == ["ELAB"]
