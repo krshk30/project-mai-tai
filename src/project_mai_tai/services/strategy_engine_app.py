@@ -1065,16 +1065,6 @@ class StrategyBotRuntime:
 
         indicators = self._decorate_indicators(symbol, local_indicators)
         self.last_indicators[str(symbol).upper()] = indicators
-        self._persist_bar_history(
-            symbol=str(symbol).upper(),
-            indicators=indicators,
-            decision=self._build_persisted_decision(
-                symbol=str(symbol).upper(),
-                status="prewarm",
-                reason="Schwab prewarm only",
-                indicators=indicators,
-            ),
-        )
 
     def _evaluate_intrabar_entry(self, symbol: str) -> list[TradeIntentEvent]:
         if not bool(getattr(self.definition.trading_config, "entry_intrabar_enabled", False)):
@@ -3463,7 +3453,7 @@ class StrategyEngineService:
         self._historical_hydration_attempts = 5
         self._historical_hydration_poll_delay_secs = 0.2
         self._runtime_db_reconcile_interval_secs = 5
-        self._schwab_stream_drain_max_events = 1000
+        self._schwab_stream_drain_max_events = 100
         self._schwab_trade_queue: asyncio.Queue[TradeTickRecord] = asyncio.Queue()
         self._schwab_quote_queue: asyncio.Queue[QuoteTickRecord] = asyncio.Queue()
         self._schwab_stream_client = self._build_schwab_stream_client()

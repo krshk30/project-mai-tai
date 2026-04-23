@@ -1725,3 +1725,38 @@ Final deployment state:
     prewarm-only symbols are no longer being routed through generic fallback
   - overall `/health` still degraded only because the known reconciler findings
     bucket reports two critical findings
+
+## 2026-04-23 Critical Prewarm Loop Stall Fix
+
+Live symptom:
+
+- Decision Tape stopped advancing around `2026-04-23 07:16:30 AM ET`
+- strategy service process stayed systemd-active, but strategy heartbeat dropped
+  out of `/health`
+- strategy log stopped immediately after the `07:17 AM ET` raw momentum-alert
+  burst
+
+Root cause:
+
+- raw-alert Schwab prewarm correctly subscribed many symbols before confirmation
+- prewarm-only completed 30-second bars were also being persisted to
+  `strategy_bar_history`
+- during a live alert burst, that created per-bar database writes for symbols
+  that were not yet tradable/watchlisted, pinning the strategy loop enough to
+  starve heartbeat, scanner handoff, state snapshots, and fresh decisions
+
+Fix:
+
+- prewarm-only bars still build from Schwab trade ticks in memory
+- prewarm-only bars still update `last_indicators` so a later confirmed handoff
+  can use the warmed state
+- prewarm-only bars no longer write `StrategyBarHistory` rows or Decision Tape
+  rows
+- active/watchlist/open-position bars still persist normally after confirmation
+- Schwab stream queue drain cap reduced from `1000` to `100` events per loop
+  pass so heartbeat/scanner/control-plane work keeps getting time under bursts
+
+Regression coverage added:
+
+- prewarm-only Schwab trade ticks build bars and update indicators without entry
+  checks and without calling `_persist_bar_history`
