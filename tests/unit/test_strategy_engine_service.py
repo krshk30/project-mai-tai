@@ -3656,7 +3656,7 @@ async def test_service_uses_fallback_quotes_for_stale_schwab_open_positions() ->
     service = StrategyEngineService(settings=settings, redis_client=FakeRedis())
     runtime = service.state.bots["macd_30s"]
     runtime.positions.open_position("ENVB", 4.0, quantity=10, path="ENTRY")
-    old = datetime.now(UTC) - timedelta(seconds=10)
+    old = datetime.now(UTC) - timedelta(seconds=40)
     service._schwab_symbol_last_stream_trade_at["ENVB"] = old
     service._schwab_symbol_last_stream_quote_at["ENVB"] = old
 
@@ -3720,7 +3720,7 @@ async def test_service_skips_stale_quote_poll_when_adapter_lacks_fetch_quotes() 
     service = StrategyEngineService(settings=settings, redis_client=FakeRedis())
     runtime = service.state.bots["macd_30s"]
     runtime.positions.open_position("ENVB", 4.0, quantity=10, path="ENTRY")
-    old = datetime.now(UTC) - timedelta(seconds=10)
+    old = datetime.now(UTC) - timedelta(seconds=40)
     service._schwab_symbol_last_stream_trade_at["ENVB"] = old
     service._schwab_symbol_last_stream_quote_at["ENVB"] = old
 
@@ -3752,7 +3752,7 @@ async def test_service_halts_stale_schwab_watchlist_symbol_without_open_position
     service = StrategyEngineService(settings=settings, redis_client=FakeRedis())
     runtime = service.state.bots["macd_30s"]
     runtime.set_watchlist(["ENVB"])
-    old = datetime.now(UTC) - timedelta(seconds=10)
+    old = datetime.now(UTC) - timedelta(seconds=40)
     service._schwab_symbol_last_stream_trade_at["ENVB"] = old
     service._schwab_symbol_last_stream_quote_at["ENVB"] = old
 
@@ -3775,6 +3775,34 @@ async def test_service_halts_stale_schwab_watchlist_symbol_without_open_position
     assert runtime.data_health_summary()["status"] == "healthy"
 
 
+@pytest.mark.asyncio
+async def test_service_does_not_halt_quiet_schwab_symbol_inside_grace_window() -> None:
+    settings = Settings(
+        strategy_macd_30s_broker_provider="schwab",
+        redis_stream_prefix="test",
+        dashboard_snapshot_persistence_enabled=False,
+        strategy_history_persistence_enabled=False,
+        schwab_stream_symbol_stale_after_seconds=1.0,
+    )
+    service = StrategyEngineService(settings=settings, redis_client=FakeRedis())
+    runtime = service.state.bots["macd_30s"]
+    runtime.set_watchlist(["ELAB"])
+    recent = datetime.now(UTC) - timedelta(seconds=5)
+    service._schwab_symbol_last_stream_trade_at["ELAB"] = recent
+    service._schwab_symbol_last_stream_quote_at["ELAB"] = recent
+
+    class FakeStreamClient:
+        connected = True
+
+    service._schwab_stream_client = FakeStreamClient()
+
+    activity_count = await service._monitor_schwab_symbol_health()
+
+    assert activity_count == 0
+    assert service._schwab_stale_symbols == set()
+    assert runtime.data_health_summary()["status"] == "healthy"
+
+
 def test_generic_market_data_never_targets_schwab_native_bot_when_stream_is_stale() -> None:
     settings = Settings(
         strategy_macd_30s_broker_provider="schwab",
@@ -3785,7 +3813,7 @@ def test_generic_market_data_never_targets_schwab_native_bot_when_stream_is_stal
         schwab_stream_symbol_stale_after_seconds=1.0,
     )
     service = StrategyEngineService(settings=settings, redis_client=FakeRedis())
-    old = datetime.now(UTC) - timedelta(seconds=10)
+    old = datetime.now(UTC) - timedelta(seconds=40)
     service._schwab_symbol_last_stream_trade_at["ENVB"] = old
     service._schwab_symbol_last_stream_quote_at["ENVB"] = old
 

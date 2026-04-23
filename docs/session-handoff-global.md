@@ -1826,6 +1826,16 @@ Hotfix after first deploy:
 - heartbeat status now uses `degraded` for Schwab data halt, while bot
   `data_health.status` remains `critical` for the red bot UI
 
+Second safety tuning:
+
+- the first monitor pass used the old 3-second per-symbol stale threshold for
+  all active watchlist symbols
+- that was too aggressive for normal sparse Schwab quotes and caused repeated
+  ELAB halt/recover/resubscribe loops while the stream was connected
+- the data-halt circuit now halts immediately when the Schwab stream client is
+  disconnected, but connected per-symbol quietness must exceed at least 30
+  seconds before it blocks/closes
+
 Emergency close behavior:
 
 - if a halted Schwab symbol has an open position, the strategy service attempts

@@ -3569,6 +3569,7 @@ class StrategyEngineService:
         self._schwab_symbol_last_stream_quote_at: dict[str, datetime] = {}
         self._schwab_symbol_last_resubscribe_at: dict[str, datetime] = {}
         self._schwab_symbol_last_quote_poll_at: dict[str, datetime] = {}
+        self._schwab_symbol_active_first_seen_at: dict[str, datetime] = {}
         self._schwab_stale_symbols: set[str] = set()
 
     async def run(self) -> None:
@@ -4350,20 +4351,45 @@ class StrategyEngineService:
             now - last_update
         ).total_seconds() >= float(self.settings.schwab_stream_symbol_stale_after_seconds)
 
+    def _is_schwab_stream_disconnected(self) -> bool:
+        client = self._schwab_stream_client
+        return client is not None and not getattr(client, "connected", False)
+
+    def _schwab_data_halt_stale_after_seconds(self) -> float:
+        return max(30.0, float(self.settings.schwab_stream_symbol_stale_after_seconds))
+
+    def _is_schwab_symbol_data_halt_stale(self, symbol: str, now: datetime) -> bool:
+        last_update = self._schwab_last_stream_update_at(symbol)
+        stale_after = self._schwab_data_halt_stale_after_seconds()
+        if last_update is None:
+            first_seen = self._schwab_symbol_active_first_seen_at.get(str(symbol).upper(), now)
+            return (now - first_seen).total_seconds() >= stale_after
+        return (now - last_update).total_seconds() >= stale_after
+
     async def _monitor_schwab_symbol_health(self) -> int:
         active_symbols = self._schwab_active_strategy_codes_by_symbol()
         open_symbols = self._schwab_open_position_strategy_codes_by_symbol()
         if not active_symbols:
             if self._schwab_stale_symbols:
                 self._schwab_stale_symbols.clear()
+            self._schwab_symbol_active_first_seen_at.clear()
             self._clear_all_schwab_runtime_data_halts()
             return 0
 
         now = utcnow()
+        active_set = set(active_symbols)
+        for symbol in active_set:
+            self._schwab_symbol_active_first_seen_at.setdefault(symbol, now)
+        self._schwab_symbol_active_first_seen_at = {
+            symbol: first_seen
+            for symbol, first_seen in self._schwab_symbol_active_first_seen_at.items()
+            if symbol in active_set
+        }
+        stream_disconnected = self._is_schwab_stream_disconnected()
         stale_symbols = {
             symbol: codes
             for symbol, codes in active_symbols.items()
-            if self._is_schwab_symbol_stale(symbol, now)
+            if stream_disconnected or self._is_schwab_symbol_data_halt_stale(symbol, now)
         }
         stale_set_before = set(self._schwab_stale_symbols)
         healthy_symbols = set(active_symbols) - set(stale_symbols)
