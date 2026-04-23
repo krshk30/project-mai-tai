@@ -1051,20 +1051,8 @@ class StrategyBotRuntime:
         return self._finalize_completed_bar(symbol, indicators, intents, decision=decision)
 
     def _finalize_prewarm_completed_bar(self, symbol: str) -> None:
-        builder = self.builder_manager.get_builder(symbol)
-        if builder is None:
-            return
-
-        bars = builder.get_bars_as_dicts()
-        if not bars:
-            return
-
-        local_indicators = self.indicator_engine.calculate(bars)
-        if local_indicators is None:
-            return
-
-        indicators = self._decorate_indicators(symbol, local_indicators)
-        self.last_indicators[str(symbol).upper()] = indicators
+        del symbol
+        return
 
     def _evaluate_intrabar_entry(self, symbol: str) -> list[TradeIntentEvent]:
         if not bool(getattr(self.definition.trading_config, "entry_intrabar_enabled", False)):
