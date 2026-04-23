@@ -3420,6 +3420,42 @@ async def test_sync_subscription_targets_includes_schwab_symbols_when_stream_fal
 
 
 @pytest.mark.asyncio
+async def test_sync_subscription_targets_excludes_prewarm_from_generic_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = StrategyEngineService(
+        settings=Settings(
+            redis_stream_prefix="test",
+            dashboard_snapshot_persistence_enabled=False,
+            strategy_history_persistence_enabled=False,
+            strategy_macd_30s_broker_provider="schwab",
+        ),
+        redis_client=FakeRedis(),
+    )
+    service.state._add_schwab_prewarm_symbols(["UGRO"])
+    captured: dict[str, list[str]] = {}
+
+    class FakeStreamClient:
+        connected = False
+        connection_failures = 1
+
+    async def fake_market_data_subscriptions(symbols):
+        captured["market_data"] = list(symbols)
+
+    async def fake_schwab_subscriptions(symbols):
+        captured["schwab"] = list(symbols)
+
+    service._schwab_stream_client = FakeStreamClient()
+    monkeypatch.setattr(service, "_sync_market_data_subscriptions", fake_market_data_subscriptions)
+    monkeypatch.setattr(service, "_sync_schwab_stream_subscriptions", fake_schwab_subscriptions)
+
+    await service._sync_subscription_targets()
+
+    assert captured["market_data"] == []
+    assert captured["schwab"] == ["UGRO"]
+
+
+@pytest.mark.asyncio
 async def test_trade_tick_stream_routes_to_schwab_native_macd_30s_when_stream_fallback_is_active(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -1694,8 +1694,14 @@ Live deploy note:
     OHLCV bars
   - quotes are kept once a symbol is in an active watchlist/open-position path
     because routing still needs bid/ask there
+  - generic market-data fallback now excludes prewarm-only Schwab symbols; the
+    fallback can still cover active/watchlist/open-position Schwab symbols, but
+    raw-alert prewarm must stay Schwab-native and must not trigger generic
+    historical hydration/replay
 - regression coverage added:
   - Schwab queue drain processes only the configured max events and leaves the
     remainder queued for the next pass
   - Schwab quote enqueue skips prewarm-only symbols but keeps quotes after
     watchlist promotion
+  - generic fallback receives active Schwab symbols only, not prewarm-only
+    symbols
