@@ -4,11 +4,19 @@ from datetime import UTC, datetime
 from decimal import Decimal
 
 from project_mai_tai.services.strategy_engine_app import StrategyEngineState
+from project_mai_tai.settings import Settings
 from project_mai_tai.strategy_core.runner import RunnerConfig, RunnerPosition, order_routing_metadata
 
 
 def fixed_now() -> datetime:
     return datetime(2026, 3, 28, 10, 0)
+
+
+def make_runner_state(*, now_provider) -> StrategyEngineState:
+    return StrategyEngineState(
+        settings=Settings(strategy_runner_enabled=True),
+        now_provider=now_provider,
+    )
 
 
 def seed_runner_bars(
@@ -34,7 +42,7 @@ def seed_runner_bars(
 
 
 def test_runner_generates_open_intent_for_eligible_candidate() -> None:
-    state = StrategyEngineState(now_provider=fixed_now)
+    state = make_runner_state(now_provider=fixed_now)
     runner = state.bots["runner"]
     candidate = {
         "ticker": "UGRO",
@@ -66,7 +74,7 @@ def test_runner_generates_open_intent_for_eligible_candidate() -> None:
 
 
 def test_runner_trailing_stop_emits_close_intent() -> None:
-    state = StrategyEngineState(now_provider=fixed_now)
+    state = make_runner_state(now_provider=fixed_now)
     runner = state.bots["runner"]
     runner.apply_execution_fill(
         client_order_id="runner-UGRO-open-1",
@@ -100,7 +108,7 @@ def test_runner_trailing_stop_emits_close_intent() -> None:
 
 
 def test_runner_apply_execution_fill_uses_incremental_quantity_for_cumulative_reports() -> None:
-    state = StrategyEngineState(now_provider=fixed_now)
+    state = make_runner_state(now_provider=fixed_now)
     runner = state.bots["runner"]
 
     runner.apply_execution_fill(
@@ -128,7 +136,7 @@ def test_runner_apply_execution_fill_uses_incremental_quantity_for_cumulative_re
 
 
 def test_runner_clears_ghost_position_on_no_strategy_position_reject() -> None:
-    state = StrategyEngineState(now_provider=fixed_now)
+    state = make_runner_state(now_provider=fixed_now)
     runner = state.bots["runner"]
     runner.apply_execution_fill(
         client_order_id="runner-MASK-open-1",
@@ -152,7 +160,7 @@ def test_runner_clears_ghost_position_on_no_strategy_position_reject() -> None:
 
 
 def test_runner_requires_same_min_change_without_news_discount() -> None:
-    state = StrategyEngineState(now_provider=fixed_now)
+    state = make_runner_state(now_provider=fixed_now)
     runner = state.bots["runner"]
     candidate = {
         "ticker": "UGRO",
@@ -196,7 +204,7 @@ def test_runner_rolls_daily_pnl_and_closed_trades_at_new_session_after_eight_pm_
         lambda *_args, **_kwargs: active_day["value"],
     )
 
-    state = StrategyEngineState(now_provider=fixed_now)
+    state = make_runner_state(now_provider=fixed_now)
     runner = state.bots["runner"]
     runner._daily_pnl = 25.0
     runner._closed_today = [{"ticker": "MASK"}]
@@ -212,7 +220,7 @@ def test_runner_rolls_daily_pnl_and_closed_trades_at_new_session_after_eight_pm_
 
 
 def test_runner_does_not_reenter_same_symbol_after_first_filled_trade() -> None:
-    state = StrategyEngineState(now_provider=fixed_now)
+    state = make_runner_state(now_provider=fixed_now)
     runner = state.bots["runner"]
     candidate = {
         "ticker": "UGRO",
@@ -268,7 +276,7 @@ def test_runner_does_not_reenter_same_symbol_after_first_filled_trade() -> None:
 
 
 def test_runner_can_hold_multiple_symbols_at_once() -> None:
-    state = StrategyEngineState(now_provider=fixed_now)
+    state = make_runner_state(now_provider=fixed_now)
     runner = state.bots["runner"]
     ugro = {
         "ticker": "UGRO",
@@ -350,7 +358,7 @@ def test_runner_order_routing_metadata_uses_extended_hours_limit_in_premarket() 
 
 
 def test_runner_uses_quote_anchored_limit_prices_in_extended_hours() -> None:
-    state = StrategyEngineState(now_provider=lambda: datetime(2026, 3, 31, 11, 0, tzinfo=UTC))
+    state = make_runner_state(now_provider=lambda: datetime(2026, 3, 31, 11, 0, tzinfo=UTC))
     runner = state.bots["runner"]
     runner.update_market_snapshots(
         [
@@ -376,7 +384,7 @@ def test_runner_uses_quote_anchored_limit_prices_in_extended_hours() -> None:
 
 
 def test_runner_blocks_close_retries_after_duplicate_exit_reject() -> None:
-    state = StrategyEngineState(now_provider=lambda: datetime(2026, 3, 31, 14, 0, tzinfo=UTC))
+    state = make_runner_state(now_provider=lambda: datetime(2026, 3, 31, 14, 0, tzinfo=UTC))
     runner = state.bots["runner"]
     runner._positions["UGRO"] = RunnerPosition("UGRO", entry_price=2.0, quantity=100)
     runner._pending_close_symbols.add("UGRO")

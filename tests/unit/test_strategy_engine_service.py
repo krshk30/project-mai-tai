@@ -1360,7 +1360,7 @@ def test_global_manual_stop_blocks_handoff_to_all_bots(monkeypatch) -> None:
 
     assert [item["ticker"] for item in summary["all_confirmed"]] == ["UGRO"]
     assert summary["watchlist"] == ["UGRO"]
-    for code in ("macd_30s", "macd_1m", "tos"):
+    for code in state.bots:
         assert state.bots[code].watchlist == {"UGRO"}
         assert "ELAB" in state.bots[code].manual_stop_symbols
 
@@ -1382,7 +1382,7 @@ def test_scanner_session_roll_clears_manual_stop_state() -> None:
 
     assert state.global_manual_stop_symbols == set()
     assert state.manual_stop_symbols_by_strategy == {}
-    for code in ("macd_30s", "macd_1m", "tos"):
+    for code in state.bots:
         assert state.bots[code].manual_stop_symbols == set()
 
 
@@ -3295,12 +3295,97 @@ def test_market_data_symbols_exclude_schwab_native_macd_30s() -> None:
     )
 
     state.bots["macd_30s"].set_watchlist(["ELAB"])
-    state.bots["macd_1m"].set_watchlist([])
-    state.bots["tos"].set_watchlist([])
-    state.bots["runner"].set_watchlist([])
 
     assert state.market_data_symbols() == []
     assert state.schwab_stream_symbols() == ["ELAB"]
+
+
+def test_raw_momentum_alert_adds_schwab_prewarm_without_bot_watchlist(monkeypatch: pytest.MonkeyPatch) -> None:
+    state = StrategyEngineState(
+        settings=Settings(
+            strategy_macd_30s_enabled=True,
+            strategy_macd_30s_broker_provider="schwab",
+        ),
+        now_provider=fixed_now,
+    )
+
+    monkeypatch.setattr(
+        state.alert_engine,
+        "check_alerts",
+        lambda snapshots, reference_data: [
+            {
+                "ticker": "UGRO",
+                "type": "VOLUME_SPIKE",
+                "price": 2.70,
+                "volume": 900_000,
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        state.confirmed_scanner,
+        "process_alerts",
+        lambda alerts, reference_data, snapshot_lookup: [],
+    )
+
+    summary = state.process_snapshot_batch(
+        [snapshot_from_payload(make_snapshot_payload(symbol="UGRO", price=2.7, volume=900_000))],
+        {"UGRO": ReferenceData(shares_outstanding=50_000, avg_daily_volume=390_000)},
+    )
+
+    assert summary["watchlist"] == []
+    assert summary["schwab_prewarm_symbols"] == ["UGRO"]
+    assert state.bots["macd_30s"].watchlist == set()
+    assert state.bots["macd_30s"].prewarm_symbols == {"UGRO"}
+    assert state.schwab_stream_symbols() == ["UGRO"]
+
+
+def test_schwab_prewarm_trade_ticks_build_bars_without_entry_checks(monkeypatch: pytest.MonkeyPatch) -> None:
+    service = StrategyEngineService(
+        settings=Settings(
+            redis_stream_prefix="test",
+            strategy_history_persistence_enabled=False,
+            strategy_macd_30s_broker_provider="schwab",
+            strategy_macd_30s_live_aggregate_bars_enabled=True,
+        ),
+        redis_client=FakeRedis(),
+        now_provider=fixed_now,
+    )
+    runtime = service.state.bots["macd_30s"]
+    runtime.set_prewarm_symbols(["UGRO"])
+
+    def fail_entry_check(*_args, **_kwargs):
+        raise AssertionError("prewarm-only symbols must not evaluate entries")
+
+    monkeypatch.setattr(runtime.entry_engine, "check_entry", fail_entry_check)
+
+    first_tick = 1_700_000_000_000_000_000
+    second_tick = first_tick + 31_000_000_000
+
+    first_intents = runtime.handle_trade_tick("UGRO", price=2.70, size=100, timestamp_ns=first_tick)
+    second_intents = runtime.handle_trade_tick("UGRO", price=2.73, size=150, timestamp_ns=second_tick)
+
+    assert first_intents == []
+    assert second_intents == []
+    assert runtime.watchlist == set()
+    assert runtime.builder_manager.get_builder("UGRO").get_bar_count() == 1
+    assert runtime.stream_symbols() == {"UGRO"}
+
+
+def test_global_manual_stop_removes_schwab_prewarm_symbol() -> None:
+    state = StrategyEngineState(
+        settings=Settings(
+            strategy_macd_30s_enabled=True,
+            strategy_macd_30s_broker_provider="schwab",
+        ),
+        now_provider=fixed_now,
+    )
+
+    state._add_schwab_prewarm_symbols(["UGRO"])
+    state.apply_manual_stop_update(scope="global", action="stop", symbol="UGRO")
+
+    assert state.schwab_prewarm_symbols == []
+    assert state.bots["macd_30s"].prewarm_symbols == set()
+    assert state.schwab_stream_symbols() == []
 
 
 @pytest.mark.asyncio
@@ -3315,9 +3400,6 @@ async def test_sync_subscription_targets_includes_schwab_symbols_when_stream_fal
         redis_client=redis,
     )
     service.state.bots["macd_30s"].set_watchlist(["ELAB"])
-    service.state.bots["macd_1m"].set_watchlist([])
-    service.state.bots["tos"].set_watchlist([])
-    service.state.bots["runner"].set_watchlist([])
 
     class FakeStreamClient:
         connected = False
@@ -4885,7 +4967,7 @@ def test_tos_runtime_emits_intrabar_open_on_current_bar(monkeypatch) -> None:
     assert runtime.recent_decisions[0]["last_bar_at"].endswith("+00:00") is False
 
 
-def test_schwab_native_30s_runtime_emits_intrabar_open_on_current_bar(monkeypatch) -> None:
+def test_schwab_native_30s_runtime_does_not_emit_intrabar_open_when_intrabar_disabled(monkeypatch) -> None:
     service = StrategyEngineService(
         settings=Settings(
             redis_stream_prefix="test",
@@ -4935,10 +5017,9 @@ def test_schwab_native_30s_runtime_emits_intrabar_open_on_current_bar(monkeypatc
         cumulative_volume=50_000,
     )
 
-    assert len(intents) == 1
-    assert captured["bar_index"] == 56
-    assert intents[0].payload.symbol == "CMND"
-    assert intents[0].payload.reason == "ENTRY_P3_SURGE"
-    assert "CMND" in runtime.pending_open_symbols
+    assert intents == []
+    assert captured == {}
+    assert "CMND" not in runtime.pending_open_symbols
     assert runtime.definition.trading_config.confirm_bars == 0
-    assert runtime.definition.trading_config.schwab_native_use_confirmation is False
+    assert runtime.definition.trading_config.entry_intrabar_enabled is False
+    assert runtime.definition.trading_config.schwab_native_use_confirmation is True

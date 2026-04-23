@@ -4,6 +4,7 @@ import csv
 from datetime import UTC, datetime
 
 from project_mai_tai.services.strategy_engine_app import StrategyEngineState
+from project_mai_tai.settings import Settings
 from project_mai_tai.strategy_core.bar_builder import BarBuilder
 from project_mai_tai.strategy_core.config import (
     IndicatorConfig,
@@ -129,7 +130,7 @@ def test_strategy_bots_use_eastern_clock_for_trading_hours(monkeypatch) -> None:
         lambda: fixed_et,
     )
 
-    state = StrategyEngineState()
+    state = StrategyEngineState(settings=Settings(strategy_tos_enabled=True))
     tos = state.bots["tos"]
 
     gate = tos.entry_engine._check_hard_gates(

@@ -215,6 +215,7 @@ class StrategyBotRuntime:
         self.positions.load_closed_trades()
         self._active_day = session_day_eastern_str(self.now_provider())
         self.watchlist: set[str] = set()
+        self.prewarm_symbols: set[str] = set()
         self.last_indicators: dict[str, dict[str, object]] = {}
         self.latest_quotes: dict[str, dict[str, float]] = {}
         self.entry_blocked_symbols: set[str] = set()
@@ -268,6 +269,14 @@ class StrategyBotRuntime:
         self._sync_watchlist_from_lifecycle()
         self._prune_runtime_state()
 
+    def set_prewarm_symbols(self, symbols: Iterable[str]) -> None:
+        self.prewarm_symbols = {
+            str(symbol).upper()
+            for symbol in symbols
+            if str(symbol).strip() and str(symbol).upper() not in self.manual_stop_symbols
+        }
+        self._prune_runtime_state()
+
     def set_entry_blocked_symbols(self, symbols: Iterable[str]) -> None:
         del symbols
         if not self.lifecycle_policy.config.enabled:
@@ -279,6 +288,7 @@ class StrategyBotRuntime:
         self.manual_stop_symbols = {
             str(symbol).upper() for symbol in symbols if str(symbol).strip()
         }
+        self.prewarm_symbols.difference_update(self.manual_stop_symbols)
         if not self.lifecycle_policy.config.enabled:
             self.watchlist = {
                 symbol
@@ -531,17 +541,19 @@ class StrategyBotRuntime:
         cumulative_volume: int | None = None,
     ) -> list[TradeIntentEvent]:
         self._roll_day_if_needed()
-        self._last_tick_at[str(symbol).upper()] = self._normalize_now(self.now_provider())
+        normalized_symbol = str(symbol).upper()
+        self._last_tick_at[normalized_symbol] = self._normalize_now(self.now_provider())
         intents = self._evaluate_position_price_intents(symbol, price)
 
         position = self.positions.get_position(symbol)
+        prewarm_only = normalized_symbol in self.prewarm_symbols and normalized_symbol not in self.watchlist
 
-        if symbol not in self.watchlist and position is None:
+        if normalized_symbol not in self.watchlist and position is None and not prewarm_only:
             return intents
 
         self._ensure_history_seeded(symbol)
 
-        if self.use_live_aggregate_bars and not self._should_fallback_to_trade_ticks(symbol):
+        if self.use_live_aggregate_bars and not prewarm_only and not self._should_fallback_to_trade_ticks(symbol):
             intents.extend(
                 self._evaluate_intrabar_entry_from_trade_tick(
                     symbol,
@@ -560,8 +572,12 @@ class StrategyBotRuntime:
             cumulative_volume,
         )
         for _bar in completed_bars:
-            intents.extend(self._evaluate_completed_bar(symbol))
-        intents.extend(self._evaluate_intrabar_entry(symbol))
+            if prewarm_only:
+                self._finalize_prewarm_completed_bar(symbol)
+            else:
+                intents.extend(self._evaluate_completed_bar(symbol))
+        if not prewarm_only:
+            intents.extend(self._evaluate_intrabar_entry(symbol))
 
         return intents
 
@@ -578,14 +594,16 @@ class StrategyBotRuntime:
         trade_count: int = 1,
     ) -> list[TradeIntentEvent]:
         self._roll_day_if_needed()
-        self._last_tick_at[str(symbol).upper()] = self._normalize_now(self.now_provider())
+        normalized_symbol = str(symbol).upper()
+        self._last_tick_at[normalized_symbol] = self._normalize_now(self.now_provider())
         intents: list[TradeIntentEvent] = []
 
         position = self.positions.get_position(symbol)
         if position is not None:
             position.update_price(close_price)
+        prewarm_only = normalized_symbol in self.prewarm_symbols and normalized_symbol not in self.watchlist
 
-        if symbol not in self.watchlist and position is None:
+        if normalized_symbol not in self.watchlist and position is None and not prewarm_only:
             return intents
 
         self._ensure_history_seeded(symbol)
@@ -608,8 +626,12 @@ class StrategyBotRuntime:
             ),
         )
         for _bar in completed_bars:
-            intents.extend(self._evaluate_completed_bar(symbol))
-        intents.extend(self._evaluate_intrabar_entry(symbol))
+            if prewarm_only:
+                self._finalize_prewarm_completed_bar(symbol)
+            else:
+                intents.extend(self._evaluate_completed_bar(symbol))
+        if not prewarm_only:
+            intents.extend(self._evaluate_intrabar_entry(symbol))
 
         return intents
 
@@ -831,6 +853,7 @@ class StrategyBotRuntime:
             "account_name": self.definition.account_name,
             "interval_secs": self.definition.interval_secs,
             "watchlist": sorted(self.watchlist),
+            "prewarm_symbols": sorted(self.prewarm_symbols),
             "entry_blocked_symbols": sorted(self.entry_blocked_symbols),
             "retention_states": self._lifecycle_state_summary(),
             "manual_stop_symbols": sorted(self.manual_stop_symbols),
@@ -858,6 +881,7 @@ class StrategyBotRuntime:
         self.entry_blocked_symbols.clear()
         self.lifecycle_states.clear()
         self.watchlist.clear()
+        self.prewarm_symbols.clear()
         self.recent_decisions.clear()
         self.builder_manager.reset()
         self._applied_fill_quantity_by_order.clear()
@@ -875,6 +899,11 @@ class StrategyBotRuntime:
         active.update(self.pending_close_symbols)
         active.update(symbol for symbol, _level in self.pending_scale_levels)
         active.update(position["ticker"] for position in self.positions.get_all_positions())
+        return active
+
+    def stream_symbols(self) -> set[str]:
+        active = self.active_symbols()
+        active.update(self.prewarm_symbols)
         return active
 
     def _evaluate_completed_bar(self, symbol: str) -> list[TradeIntentEvent]:
@@ -1020,6 +1049,32 @@ class StrategyBotRuntime:
                 indicators=indicators,
             )
         return self._finalize_completed_bar(symbol, indicators, intents, decision=decision)
+
+    def _finalize_prewarm_completed_bar(self, symbol: str) -> None:
+        builder = self.builder_manager.get_builder(symbol)
+        if builder is None:
+            return
+
+        bars = builder.get_bars_as_dicts()
+        if not bars:
+            return
+
+        local_indicators = self.indicator_engine.calculate(bars)
+        if local_indicators is None:
+            return
+
+        indicators = self._decorate_indicators(symbol, local_indicators)
+        self.last_indicators[str(symbol).upper()] = indicators
+        self._persist_bar_history(
+            symbol=str(symbol).upper(),
+            indicators=indicators,
+            decision=self._build_persisted_decision(
+                symbol=str(symbol).upper(),
+                status="prewarm",
+                reason="Schwab prewarm only",
+                indicators=indicators,
+            ),
+        )
 
     def _evaluate_intrabar_entry(self, symbol: str) -> list[TradeIntentEvent]:
         if not bool(getattr(self.definition.trading_config, "entry_intrabar_enabled", False)):
@@ -1856,6 +1911,7 @@ class StrategyBotRuntime:
         keep.update(self.pending_close_symbols)
         keep.update(symbol for symbol, _level in self.pending_scale_levels)
         keep.update(position["ticker"] for position in self.positions.get_all_positions())
+        keep.update(self.prewarm_symbols)
         self.last_indicators = {
             symbol: indicators
             for symbol, indicators in self.last_indicators.items()
@@ -2131,6 +2187,8 @@ class StrategyEngineState:
         self.current_confirmed: list[dict[str, object]] = []
         self.all_confirmed: list[dict[str, object]] = []
         self.retained_watchlist: list[str] = []
+        self.schwab_prewarm_symbols: list[str] = []
+        self.schwab_prewarm_max_symbols = 40
         self.five_pillars: list[dict[str, object]] = []
         self.top_gainers: list[dict[str, object]] = []
         self.top_gainer_changes: list[dict[str, object]] = []
@@ -2495,6 +2553,7 @@ class StrategyEngineState:
             if catalyst_tickers:
                 self.catalyst_engine.get_catalysts_batch(sorted(catalyst_tickers))
         self._record_recent_alerts(alerts)
+        self._add_schwab_prewarm_symbols(alert.get("ticker", "") for alert in alerts)
         self.alert_warmup = self.alert_engine.get_warmup_status()
         snapshot_lookup = {snapshot.ticker: snapshot for snapshot in filtered_snapshots}
         if self._seeded_confirmed_pending_revalidation:
@@ -2572,6 +2631,7 @@ class StrategyEngineState:
             "retention_states": self.retention_summary(),
             "market_data_symbols": self.market_data_symbols(),
             "schwab_stream_symbols": self.schwab_stream_symbols(),
+            "schwab_prewarm_symbols": list(self.schwab_prewarm_symbols),
         }
 
     def handle_trade_tick(
@@ -2776,6 +2836,7 @@ class StrategyEngineState:
             "alert_warmup": self.alert_warmup,
             "cycle_count": self.cycle_count,
             "retention_states": self.retention_summary(),
+            "schwab_prewarm_symbols": list(self.schwab_prewarm_symbols),
             "bots": {code: bot.summary() for code, bot in self.bots.items()},
         }
 
@@ -2853,6 +2914,7 @@ class StrategyEngineState:
                 self.global_manual_stop_symbols.add(normalized_symbol)
             else:
                 self.global_manual_stop_symbols.discard(normalized_symbol)
+            self._sync_schwab_prewarm_symbols()
             self._resync_bot_watchlists_from_current_confirmed()
             return
 
@@ -2865,6 +2927,7 @@ class StrategyEngineState:
         else:
             current.discard(normalized_symbol)
         self.manual_stop_symbols_by_strategy[code] = current
+        self._sync_schwab_prewarm_symbols()
         self._resync_bot_watchlists_from_current_confirmed(strategy_codes=[code])
 
     def _manual_stop_symbols_for_bot(self, strategy_code: str) -> set[str]:
@@ -2955,12 +3018,23 @@ class StrategyEngineState:
         return pairs
 
     def schwab_stream_symbols(self) -> list[str]:
+        if not self._schwab_stream_bot_codes:
+            return []
         symbols: set[str] = set()
         for code in self._schwab_stream_bot_codes:
             bot = self.bots.get(code)
             if bot is None:
                 continue
-            symbols.update(bot.active_symbols())
+            stream_symbols = getattr(bot, "stream_symbols", None)
+            if callable(stream_symbols):
+                symbols.update(stream_symbols())
+            else:
+                symbols.update(bot.active_symbols())
+        symbols.update(self.schwab_prewarm_symbols)
+        blocked = set(self.global_manual_stop_symbols)
+        for manual_symbols in self.manual_stop_symbols_by_strategy.values():
+            blocked.update(manual_symbols)
+        symbols.difference_update(blocked)
         return sorted(symbols)
 
     def schwab_stream_strategy_codes(self) -> tuple[str, ...]:
@@ -3012,6 +3086,42 @@ class StrategyEngineState:
         self.recent_alerts.extend(normalized)
         self.recent_alerts = self.recent_alerts[-100:]
 
+    def _add_schwab_prewarm_symbols(self, symbols: Iterable[object]) -> None:
+        if not self._schwab_stream_bot_codes:
+            return
+        blocked = set(self.global_manual_stop_symbols)
+        for manual_symbols in self.manual_stop_symbols_by_strategy.values():
+            blocked.update(manual_symbols)
+        existing = set(self.schwab_prewarm_symbols)
+        for symbol in symbols:
+            normalized = str(symbol).upper().strip()
+            if not normalized or normalized in blocked or normalized in existing:
+                continue
+            self.schwab_prewarm_symbols.append(normalized)
+            existing.add(normalized)
+
+        if len(self.schwab_prewarm_symbols) > self.schwab_prewarm_max_symbols:
+            self.schwab_prewarm_symbols = self.schwab_prewarm_symbols[-self.schwab_prewarm_max_symbols :]
+        self._sync_schwab_prewarm_symbols()
+
+    def _sync_schwab_prewarm_symbols(self) -> None:
+        blocked = set(self.global_manual_stop_symbols)
+        for manual_symbols in self.manual_stop_symbols_by_strategy.values():
+            blocked.update(manual_symbols)
+        clean = [
+            symbol
+            for symbol in self.schwab_prewarm_symbols
+            if symbol not in blocked
+        ]
+        if clean != self.schwab_prewarm_symbols:
+            self.schwab_prewarm_symbols = clean
+        prewarm_set = set(self.schwab_prewarm_symbols)
+        for code in self._schwab_stream_bot_codes:
+            bot = self.bots.get(code)
+            set_prewarm_symbols = getattr(bot, "set_prewarm_symbols", None)
+            if set_prewarm_symbols is not None:
+                set_prewarm_symbols(prewarm_set)
+
     def _watchlist_for_bot(self, code: str, watchlist: Sequence[object]) -> list[str]:
         normalized: list[str] = []
         for item in watchlist:
@@ -3051,6 +3161,7 @@ class StrategyEngineState:
         self.all_confirmed = []
         self.current_confirmed = []
         self.retained_watchlist = []
+        self.schwab_prewarm_symbols = []
         self.five_pillars = []
         self.top_gainers = []
         self.top_gainer_changes = []
@@ -3062,6 +3173,7 @@ class StrategyEngineState:
         self._pending_recent_alert_replay = False
         self.apply_global_manual_stop_symbols(set())
         self.apply_manual_stop_symbols({})
+        self._sync_schwab_prewarm_symbols()
         for bot in self.bots.values():
             roll_day = getattr(bot, "_roll_day_if_needed", None)
             if roll_day is not None:
@@ -3537,6 +3649,7 @@ class StrategyEngineService:
 
         if rebuilt_alerts:
             self.state.recent_alerts = rebuilt_alerts[-100:]
+            self.state._add_schwab_prewarm_symbols(alert.get("ticker", "") for alert in self.state.recent_alerts)
         if rebuilt_first_seen:
             self.state._first_seen_by_ticker.update(rebuilt_first_seen)
 
@@ -3752,6 +3865,7 @@ class StrategyEngineService:
                 strategy_code=str(bot["strategy"]),
                 account_name=str(bot["account_name"]),
                 watchlist=[str(symbol) for symbol in bot["watchlist"]],
+                prewarm_symbols=[str(symbol) for symbol in bot.get("prewarm_symbols", [])],
                 retention_states=list(bot.get("retention_states", [])),
                 positions=list(bot["positions"]),
                 pending_open_symbols=[str(symbol) for symbol in bot["pending_open_symbols"]],
@@ -3784,6 +3898,7 @@ class StrategyEngineService:
                 top_gainer_changes=list(summary["top_gainer_changes"]),
                 alert_warmup=dict(summary["alert_warmup"]),
                 cycle_count=int(summary["cycle_count"]),
+                schwab_prewarm_symbols=[str(symbol) for symbol in summary.get("schwab_prewarm_symbols", [])],
                 bots=bots,
             ),
         )
@@ -4289,6 +4404,9 @@ class StrategyEngineService:
                     if isinstance(item, dict)
                 ]
                 self.state._pending_recent_alert_replay = bool(self.state.recent_alerts)
+                self.state._add_schwab_prewarm_symbols(
+                    item.get("ticker", "") for item in self.state.recent_alerts
+                )
 
             restored_changes = snapshot.payload.get("top_gainer_changes")
             if isinstance(restored_changes, list):
@@ -4978,7 +5096,7 @@ class StrategyEngineService:
             snapshot is None
             or not isinstance(snapshot.payload, dict)
             or snapshot.created_at is None
-            or snapshot.created_at.astimezone(UTC) < current_scanner_session_start_utc()
+            or snapshot.created_at.astimezone(UTC) < self._current_strategy_session_start_utc()
         ):
             return {}
 
@@ -5014,7 +5132,7 @@ class StrategyEngineService:
             snapshot is None
             or not isinstance(snapshot.payload, dict)
             or snapshot.created_at is None
-            or snapshot.created_at.astimezone(UTC) < current_scanner_session_start_utc()
+            or snapshot.created_at.astimezone(UTC) < self._current_strategy_session_start_utc()
         ):
             return set()
 
