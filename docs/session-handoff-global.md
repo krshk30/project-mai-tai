@@ -1813,8 +1813,18 @@ Critical safety change:
 - stale Schwab symbols are surfaced through bot `data_health`
 - control-plane bot pages show red `DATA HALT` / `Schwab Data Halt` state when
   the halt is active
-- strategy heartbeats become `critical` while Schwab stale symbols exist and
+- strategy heartbeats become `degraded` while Schwab stale symbols exist and
   include `schwab_stale_symbols`
+
+Hotfix after first deploy:
+
+- `HeartbeatPayload.status` only allows `starting`, `healthy`, `degraded`, or
+  `stopping`
+- the first circuit-breaker deploy incorrectly emitted heartbeat status
+  `critical`, causing the strategy service to restart when Schwab symbols became
+  stale
+- heartbeat status now uses `degraded` for Schwab data halt, while bot
+  `data_health.status` remains `critical` for the red bot UI
 
 Emergency close behavior:
 
