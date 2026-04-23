@@ -3037,6 +3037,21 @@ class StrategyEngineState:
         symbols.difference_update(blocked)
         return sorted(symbols)
 
+    def schwab_active_symbols(self) -> list[str]:
+        if not self._schwab_stream_bot_codes:
+            return []
+        symbols: set[str] = set()
+        for code in self._schwab_stream_bot_codes:
+            bot = self.bots.get(code)
+            if bot is None:
+                continue
+            symbols.update(bot.active_symbols())
+        blocked = set(self.global_manual_stop_symbols)
+        for manual_symbols in self.manual_stop_symbols_by_strategy.values():
+            blocked.update(manual_symbols)
+        symbols.difference_update(blocked)
+        return sorted(symbols)
+
     def schwab_stream_strategy_codes(self) -> tuple[str, ...]:
         return self._schwab_stream_bot_codes
 
@@ -3959,9 +3974,10 @@ class StrategyEngineService:
             self.state.schwab_stream_symbols() if schwab_stream_symbols is None else list(schwab_stream_symbols)
         )
         if self._should_use_generic_market_data_fallback_for_schwab():
+            fallback_schwab_symbols = self.state.schwab_active_symbols()
             effective_market_data_symbols = sorted(
                 {str(symbol).upper() for symbol in effective_market_data_symbols}
-                | {str(symbol).upper() for symbol in effective_schwab_symbols}
+                | {str(symbol).upper() for symbol in fallback_schwab_symbols}
             )
         await self._sync_market_data_subscriptions(
             effective_market_data_symbols
