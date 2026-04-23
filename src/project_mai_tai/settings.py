@@ -177,7 +177,8 @@ class Settings(BaseSettings):
     schwab_stream_symbol_stale_after_seconds: float = 8.0
     schwab_stream_symbol_quote_poll_interval_seconds: float = 2.0
     schwab_stream_symbol_resubscribe_interval_seconds: float = 5.0
-    oms_broker_sync_interval_seconds: int = 15
+    oms_broker_sync_interval_seconds: int = 5
+    oms_working_order_refresh_seconds: int = 5
 
     dashboard_refresh_seconds: int = 5
     dashboard_snapshot_persistence_enabled: bool = True

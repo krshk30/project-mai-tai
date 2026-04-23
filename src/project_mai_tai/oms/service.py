@@ -6,7 +6,7 @@ import logging
 import socket
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from uuid import UUID
+from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
 from redis.asyncio import Redis
@@ -326,6 +326,8 @@ class OmsRiskService:
                 quantity=request_quantity,
                 reason=event.payload.reason,
                 metadata=dict(event.payload.metadata),
+                order_type=str(event.payload.metadata.get("order_type", "market")),
+                time_in_force=str(event.payload.metadata.get("time_in_force", "day")),
             )
             reports = await self.broker_adapter.submit_order(request)
             published_events = await self._record_order_reports(
@@ -399,6 +401,8 @@ class OmsRiskService:
             quantity=target_order.quantity,
             reason=event.payload.reason,
             metadata=metadata,
+            order_type=target_order.order_type,
+            time_in_force=target_order.time_in_force,
         )
         reports = await self.broker_adapter.submit_order(request)
         published_events: list[OrderEventEvent] = []
@@ -514,8 +518,8 @@ class OmsRiskService:
                     quantity=order.quantity,
                     reason=intent.reason,
                     metadata={**{str(k): str(v) for k, v in (order.payload or {}).items()}, "broker_order_id": order.broker_order_id},
-                    order_type=order.order_type,
-                    time_in_force=order.time_in_force,
+                    order_type=str((order.payload or {}).get("order_type", order.order_type)),
+                    time_in_force=str((order.payload or {}).get("time_in_force", order.time_in_force)),
                 )
                 report = await self.broker_adapter.fetch_order_update(request)
                 if report is None:
@@ -538,58 +542,76 @@ class OmsRiskService:
                     payload=payload,
                 )
                 status_changed = report.event_type != previous_status
-                if not status_changed and fill is None:
-                    continue
-
-                synced_orders += 1
-                self.store.update_order_from_report(
-                    order,
-                    report=report,
-                    metadata=dict(report.metadata),
+                should_refresh = (
+                    report.event_type in self.store.OPEN_ORDER_STATUSES
+                    and self._should_refresh_working_order(order)
                 )
-                self.store.append_order_event(session, order=order, report=report, payload=payload)
-                if fill is not None:
-                    self.store.apply_fill_to_positions(
-                        session,
-                        strategy_id=order.strategy_id,
-                        broker_account_id=order.broker_account_id,
-                        symbol=order.symbol,
-                        side=order.side,
-                        quantity=fill.quantity,
-                        price=fill.price,
-                        reported_at=fill.filled_at,
-                    )
 
-                intent_status = report.event_type
-                if report.event_type == "accepted":
-                    intent_status = "submitted"
-                self.store.mark_intent_status(intent, intent_status)
-                if previous_status in self.store.OPEN_ORDER_STATUSES and report.event_type in {"filled", "cancelled", "rejected"}:
-                    terminal_orders += 1
-                published_events.append(
-                    self._build_order_event(
-                        intent_event=TradeIntentEvent(
-                            source_service=SERVICE_NAME,
-                            payload=TradeIntentPayload(
-                                strategy_code=strategy.code if strategy is not None else "",
-                                broker_account_name=account.name,
-                                symbol=order.symbol,
-                                side=order.side,  # type: ignore[arg-type]
-                                quantity=order.quantity,
-                                intent_type=intent.intent_type,  # type: ignore[arg-type]
-                                reason=intent.reason,
-                                metadata={**{str(k): str(v) for k, v in (order.payload or {}).items()}},
-                            ),
-                        ),
-                        intent_db_id=intent.id,
-                        order_db_id=order.id,
+                if status_changed or fill is not None:
+                    synced_orders += 1
+                    self.store.update_order_from_report(
+                        order,
                         report=report,
-                        client_order_id=order.client_order_id,
-                        symbol=order.symbol,
-                        side=order.side,
-                        quantity=order.quantity,
+                        metadata=dict(report.metadata),
                     )
-                )
+                    self.store.append_order_event(session, order=order, report=report, payload=payload)
+                    if fill is not None:
+                        self.store.apply_fill_to_positions(
+                            session,
+                            strategy_id=order.strategy_id,
+                            broker_account_id=order.broker_account_id,
+                            symbol=order.symbol,
+                            side=order.side,
+                            quantity=fill.quantity,
+                            price=fill.price,
+                            reported_at=fill.filled_at,
+                        )
+
+                    intent_status = report.event_type
+                    if report.event_type == "accepted":
+                        intent_status = "submitted"
+                    self.store.mark_intent_status(intent, intent_status)
+                    if previous_status in self.store.OPEN_ORDER_STATUSES and report.event_type in {"filled", "cancelled", "rejected"}:
+                        terminal_orders += 1
+                    published_events.append(
+                        self._build_order_event(
+                            intent_event=TradeIntentEvent(
+                                source_service=SERVICE_NAME,
+                                payload=TradeIntentPayload(
+                                    strategy_code=strategy.code if strategy is not None else "",
+                                    broker_account_name=account.name,
+                                    symbol=order.symbol,
+                                    side=order.side,  # type: ignore[arg-type]
+                                    quantity=order.quantity,
+                                    intent_type=intent.intent_type,  # type: ignore[arg-type]
+                                    reason=intent.reason,
+                                    metadata={**{str(k): str(v) for k, v in (order.payload or {}).items()}},
+                                ),
+                            ),
+                            intent_db_id=intent.id,
+                            order_db_id=order.id,
+                            report=report,
+                            client_order_id=order.client_order_id,
+                            symbol=order.symbol,
+                            side=order.side,
+                            quantity=order.quantity,
+                        )
+                    )
+
+                if should_refresh:
+                    refresh_result = await self._refresh_working_order(
+                        session=session,
+                        order=order,
+                        intent=intent,
+                        strategy_code=strategy.code if strategy is not None else "",
+                        broker_account_name=account.name,
+                        report=report,
+                    )
+                    synced_orders += refresh_result["orders"]
+                    terminal_orders += refresh_result["terminal_orders"]
+                    published_events.extend(refresh_result["published_events"])
+                elif not status_changed and fill is None:
+                    continue
 
             session.commit()
 
@@ -841,6 +863,8 @@ class OmsRiskService:
                 metadata=dict(request.metadata),
                 broker_order_id=report.broker_order_id,
                 status=report.event_type,
+                order_type=request.order_type,
+                time_in_force=request.time_in_force,
             )
             payload = {
                 "client_order_id": report.client_order_id,
@@ -894,6 +918,183 @@ class OmsRiskService:
                 )
             )
         return published_events
+
+    def _should_refresh_working_order(self, order: BrokerOrder) -> bool:
+        refresh_after = max(1, int(self.settings.oms_working_order_refresh_seconds))
+        last_activity = order.updated_at or order.submitted_at
+        if last_activity is None:
+            return True
+        if last_activity.tzinfo is None:
+            last_activity = last_activity.replace(tzinfo=UTC)
+        return (utcnow() - last_activity).total_seconds() >= refresh_after
+
+    async def _refresh_working_order(
+        self,
+        *,
+        session: Session,
+        order: BrokerOrder,
+        intent: TradeIntent,
+        strategy_code: str,
+        broker_account_name: str,
+        report: ExecutionReport,
+    ) -> dict[str, object]:
+        remaining_quantity = max(Decimal("0"), order.quantity - report.filled_quantity)
+        if remaining_quantity <= 0:
+            return {"orders": 0, "terminal_orders": 0, "published_events": []}
+
+        refreshed_metadata = await self._build_refreshed_order_metadata(
+            broker_account_name=broker_account_name,
+            order=order,
+        )
+        if refreshed_metadata is None:
+            return {"orders": 0, "terminal_orders": 0, "published_events": []}
+
+        existing_metadata = {str(k): str(v) for k, v in (order.payload or {}).items()}
+        cancel_request = OrderRequest(
+            client_order_id=order.client_order_id,
+            broker_account_name=broker_account_name,
+            strategy_code=strategy_code,
+            symbol=order.symbol,
+            side=order.side,  # type: ignore[arg-type]
+            intent_type="cancel",
+            quantity=remaining_quantity,
+            reason="WORKING_ORDER_REFRESH",
+            metadata={
+                **existing_metadata,
+                "broker_order_id": order.broker_order_id or "",
+                "target_client_order_id": order.client_order_id,
+                "watchdog_refresh": "true",
+            },
+            order_type=order.order_type,
+            time_in_force=order.time_in_force,
+        )
+        cancel_reports = await self.broker_adapter.submit_order(cancel_request)
+        cancelled_report = next((item for item in cancel_reports if item.event_type == "cancelled"), None)
+        if cancelled_report is None:
+            return {"orders": 0, "terminal_orders": 0, "published_events": []}
+
+        cancel_metadata = {
+            **existing_metadata,
+            **{str(k): str(v) for k, v in cancelled_report.metadata.items()},
+            "watchdog_refresh": "true",
+        }
+        self.store.update_order_from_report(
+            order,
+            report=cancelled_report,
+            metadata=cancel_metadata,
+        )
+        self.store.append_order_event(
+            session,
+            order=order,
+            report=cancelled_report,
+            payload={
+                "client_order_id": cancelled_report.client_order_id,
+                "broker_order_id": cancelled_report.broker_order_id,
+                "broker_fill_id": cancelled_report.broker_fill_id,
+                "metadata": dict(cancelled_report.metadata),
+                "reason": cancelled_report.reason,
+                "internal": "watchdog_refresh",
+            },
+        )
+
+        replacement_request = OrderRequest(
+            client_order_id=self._replacement_client_order_id(order.client_order_id),
+            broker_account_name=broker_account_name,
+            strategy_code=strategy_code,
+            symbol=order.symbol,
+            side=order.side,  # type: ignore[arg-type]
+            intent_type=intent.intent_type,  # type: ignore[arg-type]
+            quantity=remaining_quantity,
+            reason=intent.reason,
+            metadata=refreshed_metadata,
+            order_type=str(refreshed_metadata.get("order_type", order.order_type)),
+            time_in_force=str(refreshed_metadata.get("time_in_force", order.time_in_force)),
+        )
+        replacement_reports = await self.broker_adapter.submit_order(replacement_request)
+        replacement_event = TradeIntentEvent(
+            source_service=SERVICE_NAME,
+            payload=TradeIntentPayload(
+                strategy_code=strategy_code,
+                broker_account_name=broker_account_name,
+                symbol=order.symbol,
+                side=order.side,  # type: ignore[arg-type]
+                quantity=remaining_quantity,
+                intent_type=intent.intent_type,  # type: ignore[arg-type]
+                reason=intent.reason,
+                metadata=dict(refreshed_metadata),
+            ),
+        )
+        published_events = await self._record_order_reports(
+            session=session,
+            intent=intent,
+            strategy_id=order.strategy_id,
+            broker_account_id=order.broker_account_id,
+            intent_event=replacement_event,
+            request=replacement_request,
+            reports=replacement_reports,
+        )
+        return {
+            "orders": len(replacement_reports),
+            "terminal_orders": 1,
+            "published_events": published_events,
+        }
+
+    async def _build_refreshed_order_metadata(
+        self,
+        *,
+        broker_account_name: str,
+        order: BrokerOrder,
+    ) -> dict[str, str] | None:
+        metadata = {str(k): str(v) for k, v in (order.payload or {}).items()}
+        metadata["watchdog_refresh"] = "true"
+        metadata["watchdog_replaces_client_order_id"] = order.client_order_id
+        metadata["watchdog_replaced_at"] = utcnow().isoformat()
+
+        order_type = str(metadata.get("order_type", order.order_type or "market")).lower()
+        if order_type != "limit":
+            return metadata
+
+        quote = await self._fetch_quote_for_order(
+            broker_account_name=broker_account_name,
+            symbol=order.symbol,
+        )
+        if not quote:
+            return None
+        price_source = str(
+            metadata.get("price_source")
+            or ("ask" if str(order.side).lower() == "buy" else "bid")
+        ).lower()
+        quote_field = "ask_price" if price_source == "ask" else "bid_price"
+        refreshed_price = quote.get(quote_field) or quote.get("last_price")
+        if refreshed_price is None:
+            return None
+        price_text = format(Decimal(str(refreshed_price)).quantize(Decimal("0.01")), "f")
+        metadata["limit_price"] = price_text
+        metadata["reference_price"] = price_text
+        return metadata
+
+    async def _fetch_quote_for_order(
+        self,
+        *,
+        broker_account_name: str,
+        symbol: str,
+    ) -> dict[str, float | None]:
+        fetcher = getattr(self.broker_adapter, "fetch_quotes", None)
+        if callable(fetcher):
+            quotes = await fetcher([symbol])
+            return dict(quotes.get(symbol.upper(), {}))
+        if isinstance(self.broker_adapter, RoutingBrokerAdapter):
+            adapter = self.broker_adapter._adapter_for_account(broker_account_name)
+            fetcher = getattr(adapter, "fetch_quotes", None)
+            if callable(fetcher):
+                quotes = await fetcher([symbol])
+                return dict(quotes.get(symbol.upper(), {}))
+        return {}
+
+    @staticmethod
+    def _replacement_client_order_id(client_order_id: str) -> str:
+        base = str(client_order_id).strip()[:110]
+        return f"{base}-r{uuid4().hex[:8]}"
 
     def _stop_reject_reason(
         self,
