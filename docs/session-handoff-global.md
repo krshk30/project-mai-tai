@@ -1769,3 +1769,32 @@ Follow-up live finding:
   `builder.get_bars_as_dicts()` plus full indicator recalculation on every
   completed prewarm-only 30-second bar across roughly 40 Schwab stream symbols
 - prewarm is now strictly bar accumulation only until a symbol becomes active
+
+## 2026-04-23 Decision Tape Live-Symbol Cleanup
+
+Observed after the prewarm fixes:
+
+- `/api/bots` and the Decision Tape could still show old/runtime diagnostic
+  decision rows for Schwab stream/prewarm symbols that were not in the live bot
+  watchlist
+- the left rail correctly showed live symbols such as `AUUD` and `ELAB`, but the
+  table was noisy because it displayed every recent runtime decision row
+
+Fix:
+
+- bot runtime summaries now expose Decision Tape rows only for live symbols:
+  watchlist, open positions, and pending order symbols
+- control-plane `/api/bots` applies the same live-symbol filter, including when
+  it falls back to persisted bar-history decisions
+- user-facing `idle / no entry path matched` is normalized to:
+  - status: `evaluated`
+  - reason: `entry evaluated; no setup matched this bar`
+- meaning: the symbol had enough warm-up to calculate indicators and was checked
+  on that completed bar; no configured entry path fired on that bar
+
+Regression coverage added:
+
+- runtime summary filters prewarm/non-live decision rows out of the displayed
+  Decision Tape
+- control-plane `/api/bots` filters Decision Tape rows to the live watchlist and
+  normalizes the no-entry wording
