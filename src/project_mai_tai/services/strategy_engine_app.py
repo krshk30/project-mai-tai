@@ -4333,13 +4333,35 @@ class StrategyEngineService:
                 runtime.clear_data_halt(symbol)
 
     def _clear_inactive_schwab_runtime_data_halts(self, active_symbols: set[str]) -> None:
+        normalized_active = {str(symbol).upper() for symbol in active_symbols if str(symbol).strip()}
         for code in self.state.schwab_stream_strategy_codes():
             runtime = self.state.bots.get(code)
             if not isinstance(runtime, StrategyBotRuntime):
                 continue
             for symbol in list(runtime.data_halt_symbols):
-                if symbol not in active_symbols:
+                if symbol not in normalized_active:
                     runtime.clear_data_halt(symbol)
+        self._schwab_symbol_last_stream_trade_at = {
+            symbol: observed_at
+            for symbol, observed_at in self._schwab_symbol_last_stream_trade_at.items()
+            if symbol in normalized_active
+        }
+        self._schwab_symbol_last_stream_quote_at = {
+            symbol: observed_at
+            for symbol, observed_at in self._schwab_symbol_last_stream_quote_at.items()
+            if symbol in normalized_active
+        }
+        self._schwab_symbol_last_resubscribe_at = {
+            symbol: observed_at
+            for symbol, observed_at in self._schwab_symbol_last_resubscribe_at.items()
+            if symbol in normalized_active
+        }
+        self._schwab_symbol_last_quote_poll_at = {
+            symbol: observed_at
+            for symbol, observed_at in self._schwab_symbol_last_quote_poll_at.items()
+            if symbol in normalized_active
+        }
+        self._schwab_stale_symbols.intersection_update(normalized_active)
 
     def _schwab_last_stream_update_at(self, symbol: str) -> datetime | None:
         normalized = str(symbol).upper()
@@ -4382,7 +4404,7 @@ class StrategyEngineService:
             if self._schwab_stale_symbols:
                 self._schwab_stale_symbols.clear()
             self._schwab_symbol_active_first_seen_at.clear()
-            self._clear_all_schwab_runtime_data_halts()
+            self._clear_inactive_schwab_runtime_data_halts(set())
             return 0
 
         now = utcnow()

@@ -1967,3 +1967,55 @@ Validation:
 - passed:
   - `.venv\Scripts\python.exe -m pytest -p no:cacheprovider tests/unit/test_control_plane.py::test_control_plane_decision_tape_shows_only_live_symbols tests/unit/test_control_plane.py::test_control_plane_decision_tape_includes_live_symbol_waiting_for_evaluation -q`
   - `.venv\Scripts\python.exe -c "from pathlib import Path; import ast; ast.parse(Path(r'src/project_mai_tai/services/control_plane.py').read_text(encoding='utf-8')); ast.parse(Path(r'tests/unit/test_control_plane.py').read_text(encoding='utf-8')); print('syntax ok')"`
+
+## 2026-04-23 SKLZ Schwab Data-Halt Root Cause
+
+Live finding:
+
+- the red `DATA HALT` panel on `SKLZ` was a real runtime halt, not a control-plane
+  freshness/rendering bug
+- live strategy logs showed repeated `SKLZ` stale/recover cycles where Schwab
+  stream activity went quiet long enough to trigger the stale-symbol monitor and
+  then recovered a few seconds later
+- the critical bug was that a symbol could leave the active Schwab set and later
+  re-enter while still carrying old `last_trade_at` / `last_quote_at` timestamps
+- when that happened, the next reactivation inherited stale age from the
+  symbol's previous active period and could trip `DATA HALT` almost immediately
+  after handoff/re-confirm instead of receiving a fresh grace window
+
+Code fix:
+
+- `StrategyEngineService._clear_inactive_schwab_runtime_data_halts` now prunes
+  inactive per-symbol Schwab freshness trackers as soon as a symbol leaves the
+  active set
+- cleared inactive state now includes:
+  - `_schwab_symbol_last_stream_trade_at`
+  - `_schwab_symbol_last_stream_quote_at`
+  - `_schwab_symbol_last_resubscribe_at`
+  - `_schwab_symbol_last_quote_poll_at`
+  - inactive entries in `_schwab_stale_symbols`
+- the no-active-symbols branch now uses the same cleanup path, so a symbol that
+  fully leaves the bot cannot carry stale freshness timestamps into a future
+  reactivation
+
+Why this matters:
+
+- without this cleanup, names like `SKLZ` could be re-confirmed or resumed into
+  the 30s Schwab bot and inherit an old freshness timestamp from a prior active
+  period
+- that made the runtime treat the symbol as already 30s+ stale even though it had
+  just re-entered the bot, which is the root-cause bug behind the near-immediate
+  red-halt behavior
+
+Regression coverage added:
+
+- stale symbol leaves the active set and the bot health returns cleanly
+- manually stopped / removed symbol drops old Schwab freshness timestamps
+- the same symbol can then be resumed/reactivated without inheriting an immediate
+  stale halt
+
+Validation:
+
+- passed:
+  - `.venv\Scripts\python.exe -m pytest -p no:cacheprovider tests/unit/test_strategy_engine_service.py::test_service_clears_data_halt_when_stale_symbol_leaves_active_set tests/unit/test_strategy_engine_service.py::test_service_reactivated_symbol_gets_fresh_schwab_stale_grace_window tests/unit/test_strategy_engine_service.py::test_service_does_not_halt_quiet_schwab_symbol_inside_grace_window -q`
+  - `.venv\Scripts\python.exe -m py_compile src/project_mai_tai/services/strategy_engine_app.py tests/unit/test_strategy_engine_service.py`
