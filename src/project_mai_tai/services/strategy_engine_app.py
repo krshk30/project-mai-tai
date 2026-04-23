@@ -3945,7 +3945,7 @@ class StrategyEngineService:
 
     def _strategy_health_status(self, status: str) -> str:
         if self._schwab_stale_symbols:
-            return "critical"
+            return "degraded"
         return status
 
     async def _publish_heartbeat(self, status: str) -> None:
