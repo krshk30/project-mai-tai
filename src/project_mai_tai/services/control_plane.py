@@ -1091,6 +1091,13 @@ class ControlPlaneRepository:
                     for symbol in halted_symbols
                 },
             }
+            recent_decisions = self._live_decision_placeholder_rows(
+                live_symbols=live_decision_symbols,
+                recent_decisions=recent_decisions,
+                bar_counts=bar_counts,
+                last_tick_at=last_tick_at,
+                data_health=data_health,
+            ) + recent_decisions
             tos_parity = self._build_tos_parity_view(
                 strategy_code=code,
                 indicator_snapshots=indicator_snapshots,
@@ -1175,6 +1182,65 @@ class ControlPlaneRepository:
             row["status"] = "evaluated"
             row["reason"] = "entry evaluated; no setup matched this bar"
         return row
+
+    def _live_decision_placeholder_rows(
+        self,
+        *,
+        live_symbols: set[str],
+        recent_decisions: list[dict[str, Any]],
+        bar_counts: dict[str, int],
+        last_tick_at: dict[str, str],
+        data_health: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        seen_symbols = {
+            str(item.get("symbol") or item.get("ticker") or "").upper()
+            for item in recent_decisions
+            if str(item.get("symbol") or item.get("ticker") or "").strip()
+        }
+        halted_symbols = {
+            str(symbol).upper()
+            for symbol in list(data_health.get("halted_symbols", []) or [])
+            if str(symbol).strip()
+        }
+        halt_reasons = {
+            str(symbol).upper(): str(reason or "")
+            for symbol, reason in dict(data_health.get("reasons", {}) or {}).items()
+            if str(symbol).strip()
+        }
+
+        placeholders: list[dict[str, Any]] = []
+        for symbol in sorted(live_symbols):
+            if symbol in seen_symbols:
+                continue
+
+            last_tick_label = str(last_tick_at.get(symbol, "") or "")
+            bar_count = int(bar_counts.get(symbol, 0) or 0)
+            status = "pending"
+            if symbol in halted_symbols:
+                status = "critical"
+                reason = halt_reasons.get(symbol) or "Schwab stream data halt active"
+            elif last_tick_label and bar_count > 0:
+                reason = "live in bot; waiting for next completed 30s trade bar to evaluate"
+            elif last_tick_label:
+                reason = "live in bot; receiving Schwab ticks, waiting for first completed 30s trade bar"
+            elif bar_count > 0:
+                reason = "live in bot; historical warmup loaded, waiting for fresh Schwab ticks"
+            else:
+                reason = "live in bot; waiting for Schwab market data"
+
+            placeholders.append(
+                {
+                    "symbol": symbol,
+                    "status": status,
+                    "reason": reason,
+                    "path": "",
+                    "score": "",
+                    "price": "",
+                    "last_bar_at": last_tick_label,
+                }
+            )
+
+        return placeholders
 
     def _build_tos_parity_view(
         self,
