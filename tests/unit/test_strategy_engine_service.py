@@ -36,6 +36,7 @@ from project_mai_tai.market_data.massive_indicator_provider import MassiveIndica
 from project_mai_tai.market_data.taapi_indicator_provider import TaapiIndicatorProvider
 from project_mai_tai.strategy_core import IndicatorConfig, OHLCVBar, ReferenceData, TradingConfig
 from project_mai_tai.strategy_core.exit import ExitEngine
+from project_mai_tai.strategy_core.time_utils import EASTERN_TZ
 
 
 def fixed_now() -> datetime:
@@ -436,6 +437,31 @@ def test_bot_watchlist_includes_all_confirmed_symbols_without_top5_cap() -> None
         "SBET",
     }
     assert state.retained_watchlist == ["AGPU", "AKAN", "GNLN", "MASK", "RENX", "SBET"]
+
+
+def test_scanner_session_roll_clears_state_without_snapshot_batch() -> None:
+    now_box = {"value": datetime(2026, 4, 23, 3, 59, tzinfo=EASTERN_TZ)}
+    state = StrategyEngineState(now_provider=lambda: now_box["value"])
+    state.confirmed_scanner.seed_confirmed_candidates([{"ticker": "GNLN"}])
+    state.all_confirmed = [{"ticker": "GNLN"}]
+    state.current_confirmed = [{"ticker": "GNLN"}]
+    state.retained_watchlist = ["GNLN"]
+    state.recent_alerts = [{"ticker": "GNLN"}]
+    state.feed_retention_states["GNLN"] = state.feed_retention_policy.promote("GNLN", now_box["value"], None)
+    state.bots["macd_30s"].set_watchlist(["GNLN"])
+    state.bots["macd_30s"].recent_decisions = [{"symbol": "GNLN", "status": "blocked"}]
+
+    now_box["value"] = datetime(2026, 4, 23, 4, 1, tzinfo=EASTERN_TZ)
+
+    assert state._roll_scanner_session_if_needed() is True
+    assert state.confirmed_scanner.get_all_confirmed() == []
+    assert state.all_confirmed == []
+    assert state.current_confirmed == []
+    assert state.retained_watchlist == []
+    assert state.recent_alerts == []
+    assert state.feed_retention_states == {}
+    assert state.bots["macd_30s"].watchlist == set()
+    assert state.bots["macd_30s"].recent_decisions == []
 
 
 def test_retention_cooldown_keeps_feed_alive_but_blocks_entries(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -3686,6 +3712,7 @@ async def test_strategy_state_snapshot_persists_last_nonempty_confirmed_snapshot
     assert snapshot is not None
     assert snapshot.payload["top_confirmed"][0]["ticker"] == "UGRO"
     assert len(snapshot.payload["all_confirmed_candidates"]) == 2
+    assert snapshot.payload["scanner_session_start_utc"]
     assert snapshot.payload["top_confirmed"][0]["headline"] == "Quantum Biopharma Wins Hospital Supply Agreement"
     assert snapshot.payload["top_confirmed"][0]["path_a_eligible"] is True
 
@@ -3698,6 +3725,7 @@ def test_seeded_confirmed_candidates_are_revalidated_into_fresh_top_confirmed(mo
                 snapshot_type="scanner_confirmed_last_nonempty",
                 payload={
                     "persisted_at": datetime(2026, 3, 30, 10, 5, tzinfo=UTC).isoformat(),
+                    "scanner_session_start_utc": datetime(2026, 3, 30, 8, 0, tzinfo=UTC).isoformat(),
                     "all_confirmed_candidates": [
                         {
                             "ticker": "UGRO",
@@ -3810,6 +3838,7 @@ def test_seeded_confirmed_candidates_drop_when_missing_from_fresh_snapshots() ->
                 snapshot_type="scanner_confirmed_last_nonempty",
                 payload={
                     "persisted_at": datetime(2026, 3, 30, 10, 5, tzinfo=UTC).isoformat(),
+                    "scanner_session_start_utc": datetime(2026, 3, 30, 8, 0, tzinfo=UTC).isoformat(),
                     "top_confirmed": [
                         {
                             "ticker": "UGRO",
@@ -3859,6 +3888,7 @@ def test_seeded_confirmed_candidates_restore_watchlist_from_all_confirmed_when_t
                 snapshot_type="scanner_confirmed_last_nonempty",
                 payload={
                     "persisted_at": datetime(2026, 3, 30, 10, 5, tzinfo=UTC).isoformat(),
+                    "scanner_session_start_utc": datetime(2026, 3, 30, 8, 0, tzinfo=UTC).isoformat(),
                     "all_confirmed_candidates": [
                         {
                             "ticker": "BIYA",
@@ -3948,6 +3978,36 @@ def test_seeded_confirmed_candidates_skip_prior_session_snapshot(monkeypatch) ->
 
     assert service.state.confirmed_scanner.get_all_confirmed() == []
     assert service.state._seeded_confirmed_pending_revalidation is False
+
+
+def test_seeded_confirmed_candidates_skip_unmarked_snapshot_even_if_recent(monkeypatch) -> None:
+    session_factory = build_test_session_factory()
+    with session_factory() as session:
+        session.add(
+            DashboardSnapshot(
+                snapshot_type="scanner_confirmed_last_nonempty",
+                payload={
+                    "persisted_at": datetime(2026, 3, 30, 10, 5, tzinfo=UTC).isoformat(),
+                    "all_confirmed_candidates": [{"ticker": "GNLN"}],
+                },
+            )
+        )
+        session.commit()
+
+    monkeypatch.setattr(
+        "project_mai_tai.services.strategy_engine_app.utcnow",
+        lambda: datetime(2026, 3, 30, 10, 10, tzinfo=UTC),
+    )
+
+    service = StrategyEngineService(
+        settings=Settings(redis_stream_prefix="test", dashboard_snapshot_persistence_enabled=True),
+        redis_client=FakeRedis(),
+        session_factory=session_factory,
+    )
+    service._seed_confirmed_candidates_from_dashboard_snapshot()
+
+    assert service.state.confirmed_scanner.get_all_confirmed() == []
+    assert service.state.bots["macd_30s"].watchlist == set()
 
 
 def test_publish_strategy_state_persists_scanner_cycle_history_snapshot() -> None:

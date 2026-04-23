@@ -846,10 +846,10 @@ class StrategyBotRuntime:
             "last_tick_at": self._last_tick_summary(),
         }
 
-    def _roll_day_if_needed(self) -> None:
+    def _roll_day_if_needed(self) -> bool:
         current_day = session_day_eastern_str(self.now_provider())
         if current_day == self._active_day:
-            return
+            return False
         self.positions.reset()
         self.positions.load_closed_trades()
         self.entry_engine.reset()
@@ -858,11 +858,13 @@ class StrategyBotRuntime:
         self.entry_blocked_symbols.clear()
         self.lifecycle_states.clear()
         self.watchlist.clear()
+        self.recent_decisions.clear()
         self.builder_manager.reset()
         self._applied_fill_quantity_by_order.clear()
         self._last_live_bar_received_at.clear()
         self._history_seed_attempted.clear()
         self._active_day = current_day
+        return True
 
     def has_position(self, ticker: str) -> bool:
         return self.positions.has_position(ticker) or ticker in self.pending_open_symbols
@@ -3037,10 +3039,10 @@ class StrategyEngineState:
             deduped.append(symbol)
         return deduped
 
-    def _roll_scanner_session_if_needed(self) -> None:
+    def _roll_scanner_session_if_needed(self) -> bool:
         current_session_start = current_scanner_session_start_utc(self.alert_engine.now_provider())
         if current_session_start == self._active_scanner_session_start:
-            return
+            return False
 
         self.confirmed_scanner.reset()
         self.all_confirmed = []
@@ -3057,7 +3059,13 @@ class StrategyEngineState:
         self._pending_recent_alert_replay = False
         self.apply_global_manual_stop_symbols(set())
         self.apply_manual_stop_symbols({})
+        for bot in self.bots.values():
+            roll_day = getattr(bot, "_roll_day_if_needed", None)
+            if roll_day is not None:
+                roll_day()
+        self._resync_bot_watchlists_from_current_confirmed()
         self._active_scanner_session_start = current_session_start
+        return True
 
     def retention_summary(self) -> list[dict[str, object]]:
         rows: list[dict[str, object]] = []
@@ -3419,6 +3427,13 @@ class StrategyEngineService:
                 last_runtime_db_reconcile_at = utcnow()
 
             if (utcnow() - last_heartbeat_at).total_seconds() >= heartbeat_interval_secs:
+                if self.state._roll_scanner_session_if_needed():
+                    self.logger.info(
+                        "rolled scanner/runtime session at %s",
+                        self.state._active_scanner_session_start.isoformat(),
+                    )
+                    await self._sync_subscription_targets()
+                    await self._publish_strategy_state_snapshot()
                 await self._publish_heartbeat("healthy")
                 last_heartbeat_at = utcnow()
 
@@ -4167,6 +4182,7 @@ class StrategyEngineService:
             return
 
         persisted_at = utcnow().isoformat()
+        scanner_session_start = current_scanner_session_start_utc(utcnow()).isoformat()
         top_confirmed = list(summary.get("top_confirmed", []))
         all_confirmed_candidates = list(self.state.confirmed_scanner.get_all_confirmed())
         if top_confirmed or all_confirmed_candidates:
@@ -4176,6 +4192,7 @@ class StrategyEngineService:
                 "watchlist": list(summary.get("watchlist", [])),
                 "cycle_count": int(summary.get("cycle_count", 0) or 0),
                 "persisted_at": persisted_at,
+                "scanner_session_start_utc": scanner_session_start,
             }
             self._replace_dashboard_snapshot("scanner_confirmed_last_nonempty", payload)
 
@@ -4228,7 +4245,7 @@ class StrategyEngineService:
         if persisted_at.tzinfo is None:
             persisted_at = persisted_at.replace(tzinfo=UTC)
 
-        session_start = current_scanner_session_start_utc()
+        session_start = current_scanner_session_start_utc(utcnow())
         if persisted_at.astimezone(UTC) < session_start:
             self.logger.info(
                 "skipping alert-engine restore from prior session: persisted_at=%s session_start=%s",
@@ -4300,7 +4317,28 @@ class StrategyEngineService:
         if persisted_at.tzinfo is None:
             persisted_at = persisted_at.replace(tzinfo=UTC)
 
-        session_start = current_scanner_session_start_utc()
+        session_start = current_scanner_session_start_utc(utcnow())
+        persisted_session_start_raw = snapshot.payload.get("scanner_session_start_utc")
+        if not isinstance(persisted_session_start_raw, str):
+            self.logger.info("skipping confirmed-candidate seed: scanner session marker missing")
+            return
+        try:
+            persisted_session_start = datetime.fromisoformat(persisted_session_start_raw)
+        except ValueError:
+            self.logger.info(
+                "skipping confirmed-candidate seed: invalid scanner_session_start_utc=%s",
+                persisted_session_start_raw,
+            )
+            return
+        if persisted_session_start.tzinfo is None:
+            persisted_session_start = persisted_session_start.replace(tzinfo=UTC)
+        if persisted_session_start.astimezone(UTC) != session_start:
+            self.logger.info(
+                "skipping confirmed-candidate seed from mismatched scanner session: persisted_session=%s session_start=%s",
+                persisted_session_start.isoformat(),
+                session_start.isoformat(),
+            )
+            return
         if persisted_at.astimezone(UTC) < session_start:
             self.logger.info(
                 "skipping confirmed-candidate seed from prior session: persisted_at=%s session_start=%s",
@@ -4363,7 +4401,7 @@ class StrategyEngineService:
         if persisted_at.tzinfo is None:
             persisted_at = persisted_at.replace(tzinfo=UTC)
 
-        session_start = current_scanner_session_start_utc()
+        session_start = current_scanner_session_start_utc(utcnow())
         if persisted_at.astimezone(UTC) < session_start:
             return
 

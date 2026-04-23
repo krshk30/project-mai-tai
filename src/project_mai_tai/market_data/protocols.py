@@ -5,6 +5,7 @@ from typing import Protocol
 
 from project_mai_tai.market_data.models import (
     HistoricalBarRecord,
+    LiveBarRecord,
     QuoteTickRecord,
     SnapshotRecord,
     TradeTickRecord,
@@ -42,6 +43,7 @@ class TradeStreamProvider(Protocol):
         self,
         on_trade: Callable[[TradeTickRecord], None],
         on_quote: Callable[[QuoteTickRecord], None] | None = None,
+        on_agg: Callable[[LiveBarRecord], None] | None = None,
     ) -> None:
         """Start the underlying real-time stream."""
 

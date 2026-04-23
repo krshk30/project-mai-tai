@@ -11,6 +11,7 @@ from project_mai_tai.market_data.models import (
     QuoteTickRecord,
     SnapshotRecord,
     TradeTickRecord,
+    LiveBarRecord,
 )
 
 logger = logging.getLogger(__name__)
@@ -32,6 +33,17 @@ def _to_int(value) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _to_timestamp_seconds(value) -> float | None:
+    timestamp = _to_int(value)
+    if timestamp is None:
+        return None
+    if timestamp > 1_000_000_000_000_000:
+        return timestamp / 1_000_000_000
+    if timestamp > 1_000_000_000_000:
+        return timestamp / 1_000
+    return float(timestamp)
 
 
 class MassiveSnapshotProvider:
@@ -208,14 +220,17 @@ class MassiveTradeStream:
         self._subscriptions: set[str] = set()
         self._on_trade: Callable[[TradeTickRecord], None] | None = None
         self._on_quote: Callable[[QuoteTickRecord], None] | None = None
+        self._on_agg: Callable[[LiveBarRecord], None] | None = None
 
     async def start(
         self,
         on_trade: Callable[[TradeTickRecord], None],
         on_quote: Callable[[QuoteTickRecord], None] | None = None,
+        on_agg: Callable[[LiveBarRecord], None] | None = None,
     ) -> None:
         self._on_trade = on_trade
         self._on_quote = on_quote
+        self._on_agg = on_agg
         self._running = True
         self._task = asyncio.create_task(self._run_loop())
 
@@ -246,9 +261,13 @@ class MassiveTradeStream:
         if to_remove:
             self._ws.unsubscribe(*[f"T.{symbol}" for symbol in sorted(to_remove)])
             self._ws.unsubscribe(*[f"Q.{symbol}" for symbol in sorted(to_remove)])
+            if self._on_agg is not None:
+                self._ws.unsubscribe(*[f"A.{symbol}" for symbol in sorted(to_remove)])
         if to_add:
             self._ws.subscribe(*[f"T.{symbol}" for symbol in sorted(to_add)])
             self._ws.subscribe(*[f"Q.{symbol}" for symbol in sorted(to_add)])
+            if self._on_agg is not None:
+                self._ws.subscribe(*[f"A.{symbol}" for symbol in sorted(to_add)])
 
     async def _run_loop(self) -> None:
         while self._running:
@@ -258,6 +277,8 @@ class MassiveTradeStream:
                 if self._subscriptions:
                     ws.subscribe(*[f"T.{symbol}" for symbol in sorted(self._subscriptions)])
                     ws.subscribe(*[f"Q.{symbol}" for symbol in sorted(self._subscriptions)])
+                    if self._on_agg is not None:
+                        ws.subscribe(*[f"A.{symbol}" for symbol in sorted(self._subscriptions)])
                 self._connected = True
                 await asyncio.to_thread(ws.run, self._handle_messages)
             except asyncio.CancelledError:
@@ -315,5 +336,67 @@ class MassiveTradeStream:
                             ask_size=_to_int(getattr(message, "ask_size", None)),
                         )
                     )
+                elif event_type == "A" and self._on_agg is not None:
+                    bar = self._normalize_aggregate_bar(message, symbol)
+                    if bar is not None:
+                        self._on_agg(bar)
             except Exception:
                 logger.exception("Failed to normalize Massive stream message")
+
+    def _normalize_aggregate_bar(self, message, symbol: str) -> LiveBarRecord | None:
+        open_price = _to_float(
+            getattr(message, "open", None)
+            or getattr(message, "o", None)
+            or getattr(message, "open_price", None)
+        )
+        high_price = _to_float(
+            getattr(message, "high", None)
+            or getattr(message, "h", None)
+            or getattr(message, "high_price", None)
+        )
+        low_price = _to_float(
+            getattr(message, "low", None)
+            or getattr(message, "l", None)
+            or getattr(message, "low_price", None)
+        )
+        close_price = _to_float(
+            getattr(message, "close", None)
+            or getattr(message, "c", None)
+            or getattr(message, "close_price", None)
+        )
+        volume = _to_int(
+            getattr(message, "volume", None)
+            or getattr(message, "v", None)
+            or getattr(message, "accumulated_volume", None)
+        )
+        timestamp_raw = (
+            getattr(message, "start_timestamp", None)
+            or getattr(message, "s", None)
+            or getattr(message, "timestamp", None)
+            or getattr(message, "t", None)
+        )
+        timestamp = _to_timestamp_seconds(timestamp_raw)
+        if (
+            open_price is None
+            or high_price is None
+            or low_price is None
+            or close_price is None
+            or timestamp is None
+        ):
+            return None
+        return LiveBarRecord(
+            symbol=symbol,
+            interval_secs=1,
+            open=open_price,
+            high=high_price,
+            low=low_price,
+            close=close_price,
+            volume=volume or 0,
+            timestamp=timestamp,
+            trade_count=_to_int(
+                getattr(message, "aggregate_vwap_trades", None)
+                or getattr(message, "transactions", None)
+                or getattr(message, "z", None)
+            )
+            or 1,
+        )
