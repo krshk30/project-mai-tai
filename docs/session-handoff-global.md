@@ -1536,12 +1536,18 @@ Fix implemented:
   - scanner/runtime session rollover now runs from the heartbeat loop, so the
     4 AM reset no longer depends on a fresh scanner snapshot
   - scanner rollover clears confirmed scanner state, current/all confirmed
-    rows, retained watchlist, recent alerts, feed-retention state, manual stops,
-    bot watchlists, and recent decision rows for the new session
+    rows, retained watchlist, momentum-alert engine state, top-gainer tracker
+    state, recent alerts, feed-retention state, manual stops, bot watchlists,
+    and recent decision rows for the new session
   - persisted non-empty scanner snapshots now include
     `scanner_session_start_utc`
+  - persisted momentum-alert warmup snapshots now include
+    `scanner_session_start_utc`
   - restart seeding now skips unmarked, invalid, or prior-session confirmed
-    scanner snapshots
+    scanner and momentum-alert snapshots
+- [control_plane.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/src/project_mai_tai/services/control_plane.py)
+  - scanner UI fallback data now requires a matching scanner-session marker
+    before it can render a last-nonempty confirmed snapshot
 
 Regression coverage added:
 
@@ -1550,6 +1556,7 @@ Regression coverage added:
 - [test_strategy_engine_service.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/tests/unit/test_strategy_engine_service.py)
   - verifies the scanner session can roll cleanly without any new snapshot batch
   - verifies unmarked old scanner snapshots do not reseed stale symbols
+  - verifies unmarked old momentum-alert snapshots do not replay stale alerts
 
 Operational prevention:
 

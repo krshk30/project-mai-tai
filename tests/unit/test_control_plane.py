@@ -364,6 +364,7 @@ def seed_database(session_factory: sessionmaker[Session]) -> None:
                 "watchlist": ["UGRO"],
                 "cycle_count": 42,
                 "persisted_at": "2026-03-28T14:00:00+00:00",
+                "scanner_session_start_utc": "2026-03-28T13:00:00+00:00",
             },
         )
         session.add_all(
