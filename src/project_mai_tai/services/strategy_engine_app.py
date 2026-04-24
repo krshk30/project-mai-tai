@@ -2280,7 +2280,9 @@ class StrategyEngineState:
         self.all_confirmed: list[dict[str, object]] = []
         self.retained_watchlist: list[str] = []
         self.schwab_prewarm_symbols: list[str] = []
-        self.schwab_prewarm_max_symbols = 40
+        self._schwab_prewarm_added_at: dict[str, datetime] = {}
+        self.schwab_prewarm_max_symbols = 12
+        self.schwab_prewarm_ttl = timedelta(minutes=10)
         self.five_pillars: list[dict[str, object]] = []
         self.top_gainers: list[dict[str, object]] = []
         self.top_gainer_changes: list[dict[str, object]] = []
@@ -3379,32 +3381,59 @@ class StrategyEngineState:
     def _add_schwab_prewarm_symbols(self, symbols: Iterable[object]) -> None:
         if not self._schwab_stream_bot_codes:
             return
+        observed_at = utcnow()
         blocked = set(self.global_manual_stop_symbols)
         for manual_symbols in self.manual_stop_symbols_by_strategy.values():
             blocked.update(manual_symbols)
         existing = set(self.schwab_prewarm_symbols)
         for symbol in symbols:
             normalized = str(symbol).upper().strip()
-            if not normalized or normalized in blocked or normalized in existing:
+            if not normalized or normalized in blocked:
+                continue
+            if normalized in existing:
+                self._schwab_prewarm_added_at[normalized] = observed_at
+                self.schwab_prewarm_symbols = [
+                    item for item in self.schwab_prewarm_symbols if item != normalized
+                ]
+                self.schwab_prewarm_symbols.append(normalized)
                 continue
             self.schwab_prewarm_symbols.append(normalized)
             existing.add(normalized)
+            self._schwab_prewarm_added_at[normalized] = observed_at
 
         if len(self.schwab_prewarm_symbols) > self.schwab_prewarm_max_symbols:
             self.schwab_prewarm_symbols = self.schwab_prewarm_symbols[-self.schwab_prewarm_max_symbols :]
+        keep = set(self.schwab_prewarm_symbols)
+        self._schwab_prewarm_added_at = {
+            symbol: seen_at
+            for symbol, seen_at in self._schwab_prewarm_added_at.items()
+            if symbol in keep
+        }
         self._sync_schwab_prewarm_symbols()
 
     def _sync_schwab_prewarm_symbols(self) -> None:
+        observed_at = utcnow()
         blocked = set(self.global_manual_stop_symbols)
         for manual_symbols in self.manual_stop_symbols_by_strategy.values():
             blocked.update(manual_symbols)
         clean = [
             symbol
             for symbol in self.schwab_prewarm_symbols
-            if symbol not in blocked
+            if (
+                symbol not in blocked
+                and (
+                    observed_at - self._schwab_prewarm_added_at.get(symbol, observed_at)
+                ) < self.schwab_prewarm_ttl
+            )
         ]
         if clean != self.schwab_prewarm_symbols:
             self.schwab_prewarm_symbols = clean
+        keep = set(self.schwab_prewarm_symbols)
+        self._schwab_prewarm_added_at = {
+            symbol: seen_at
+            for symbol, seen_at in self._schwab_prewarm_added_at.items()
+            if symbol in keep
+        }
         prewarm_set = set(self.schwab_prewarm_symbols)
         for code in self._schwab_stream_bot_codes:
             bot = self.bots.get(code)
@@ -3452,6 +3481,7 @@ class StrategyEngineState:
         self.current_confirmed = []
         self.retained_watchlist = []
         self.schwab_prewarm_symbols = []
+        self._schwab_prewarm_added_at.clear()
         self.bot_handoff_symbols_by_strategy = {code: set() for code in self.bots}
         self.bot_handoff_history_by_strategy = {code: set() for code in self.bots}
         self.session_handoff_active = False
@@ -3947,7 +3977,6 @@ class StrategyEngineService:
 
         if rebuilt_alerts:
             self.state.recent_alerts = rebuilt_alerts[-100:]
-            self.state._add_schwab_prewarm_symbols(alert.get("ticker", "") for alert in self.state.recent_alerts)
         if rebuilt_first_seen:
             self.state._first_seen_by_ticker.update(rebuilt_first_seen)
 
@@ -4887,9 +4916,6 @@ class StrategyEngineService:
                     if isinstance(item, dict)
                 ]
                 self.state._pending_recent_alert_replay = bool(self.state.recent_alerts)
-                self.state._add_schwab_prewarm_symbols(
-                    item.get("ticker", "") for item in self.state.recent_alerts
-                )
 
             restored_changes = snapshot.payload.get("top_gainer_changes")
             if isinstance(restored_changes, list):

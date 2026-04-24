@@ -38,6 +38,40 @@ Expected result:
 - tomorrow morning the old stop list should auto-clear instead of being revived
   by a fresh timestamp
 
+## 2026-04-24 Schwab Stream Prewarm Load Mitigation
+
+After the manual-stop cleanup, the Schwab bot still briefly flashed `DATA HALT`
+in the morning. Live investigation showed:
+
+- active Schwab 30-second watchlist was only about `5` symbols
+- but the strategy heartbeat was still carrying about `43` Schwab stream
+  subscriptions
+- those extra subscriptions were coming from the raw-alert `schwab_prewarm`
+  path, which was:
+  - restored from old `recent_alerts` on restart
+  - allowed to accumulate across the session without aging out
+
+Likely effect:
+
+- the real live names could get caught in short Schwab stream stalls even though
+  only a handful were actually on the bot watchlist
+
+Mitigation applied:
+
+- do **not** repopulate Schwab prewarm from restored/rebuilt historical
+  `recent_alerts`
+- only real-time raw alerts can add fresh Schwab prewarm symbols
+- Schwab prewarm symbols now expire automatically after `10` minutes unless they
+  are refreshed by a new alert
+- Schwab prewarm list is capped more conservatively at `12` symbols instead of
+  `40`
+
+Intent:
+
+- keep the early warmup behavior for genuinely fresh raw alerts
+- stop the Schwab stream from carrying dozens of stale prewarm-only symbols that
+  are no longer relevant to the live 30-second bot
+
 ## 2026-04-24 Schwab OAuth Callback Recovery
 
 Morning live checks found the remaining `Schwab 30 Sec Bot` red state was not a
