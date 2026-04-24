@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from html import escape
 import json
+from pathlib import Path
 from typing import Any
-from urllib.parse import quote
+from urllib.error import HTTPError
+from urllib.parse import quote, urlencode
+from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI
@@ -58,6 +62,7 @@ from project_mai_tai.strategy_core import (
 
 SERVICE_NAME = "control-plane"
 EASTERN_TZ = ZoneInfo("America/New_York")
+SCHWAB_OAUTH_REDIRECT_URI = "https://hook.project-mai-tai.live/auth/callback"
 
 
 def utcnow() -> datetime:
@@ -70,6 +75,78 @@ def current_eastern_day_start_utc(now: datetime | None = None) -> datetime:
 
 def current_eastern_day_end_utc(now: datetime | None = None) -> datetime:
     return current_eastern_day_start_utc(now) + timedelta(days=1)
+
+
+def _schwab_authorize_url(settings: Settings) -> str:
+    client_id = (settings.schwab_client_id or "").strip()
+    if not client_id:
+        raise RuntimeError("Schwab client ID is not configured on the VPS")
+    query = urlencode(
+        {
+            "client_id": client_id,
+            "redirect_uri": SCHWAB_OAUTH_REDIRECT_URI,
+            "response_type": "code",
+            "scope": "api",
+        }
+    )
+    return f"{settings.schwab_base_url.rstrip('/')}/v1/oauth/authorize?{query}"
+
+
+def _exchange_schwab_authorization_code(settings: Settings, code: str) -> dict[str, Any]:
+    client_id = (settings.schwab_client_id or "").strip()
+    client_secret = (settings.schwab_client_secret or "").strip()
+    if not client_id or not client_secret:
+        raise RuntimeError("Schwab OAuth credentials are not configured on the VPS")
+    body = urlencode(
+        {
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": SCHWAB_OAUTH_REDIRECT_URI,
+        }
+    ).encode("utf-8")
+    basic = base64.b64encode(f"{client_id}:{client_secret}".encode("utf-8")).decode("ascii")
+    request = Request(
+        settings.schwab_token_url,
+        data=body,
+        headers={
+            "Authorization": f"Basic {basic}",
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Accept": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=settings.schwab_request_timeout_seconds) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace").strip()
+        raise RuntimeError(f"Schwab auth-code exchange failed: {detail or exc}") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError("Schwab auth-code exchange returned an invalid payload")
+    access_token = str(payload.get("access_token", "")).strip()
+    refresh_token = str(payload.get("refresh_token", "")).strip()
+    if not access_token or not refresh_token:
+        raise RuntimeError(f"Schwab auth-code exchange returned no tokens: {payload}")
+    return payload
+
+
+def _persist_schwab_token_store(settings: Settings, payload: dict[str, Any]) -> None:
+    token_store_path = (settings.schwab_token_store_path or "").strip()
+    if not token_store_path:
+        raise RuntimeError("MAI_TAI_SCHWAB_TOKEN_STORE_PATH is not configured on the VPS")
+    expires_in_raw = payload.get("expires_in")
+    expires_in = int(expires_in_raw) if expires_in_raw not in {None, ""} else 1800
+    document = {
+        "access_token": str(payload.get("access_token", "")).strip(),
+        "refresh_token": str(payload.get("refresh_token", "")).strip(),
+        "expires_at": (datetime.now(UTC) + timedelta(seconds=max(expires_in - 30, 0))).isoformat(),
+        "token_type": payload.get("token_type"),
+        "scope": payload.get("scope"),
+        "updated_at": datetime.now(UTC).isoformat(),
+    }
+    path = Path(token_store_path).expanduser()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(document, indent=2, sort_keys=True), encoding="utf-8")
 
 
 def _within_current_eastern_day(timestamp: datetime | None, now: datetime | None = None) -> bool:
@@ -2252,6 +2329,56 @@ def build_app(
     @app.get("/health")
     async def health() -> dict[str, Any]:
         return await app.state.repository.load_health()
+
+    @app.get("/auth/schwab/start")
+    async def schwab_auth_start() -> RedirectResponse:
+        return RedirectResponse(url=_schwab_authorize_url(active_settings), status_code=303)
+
+    @app.get("/auth/callback", response_class=HTMLResponse)
+    async def schwab_auth_callback(code: str | None = None, error: str | None = None) -> HTMLResponse:
+        if error:
+            return HTMLResponse(
+                content=(
+                    "<html><body><h1>Schwab OAuth Failed</h1>"
+                    f"<p>{escape(error)}</p>"
+                    "<p>You can close this window and retry the authorization flow.</p>"
+                    "</body></html>"
+                ),
+                status_code=400,
+            )
+        if not code:
+            return HTMLResponse(
+                content=(
+                    "<html><body><h1>Schwab OAuth Failed</h1>"
+                    "<p>Missing authorization code.</p>"
+                    "<p>You can close this window and retry the authorization flow.</p>"
+                    "</body></html>"
+                ),
+                status_code=400,
+            )
+        try:
+            payload = await asyncio.to_thread(_exchange_schwab_authorization_code, active_settings, code)
+            await asyncio.to_thread(_persist_schwab_token_store, active_settings, payload)
+            await app.state.repository.invalidate_overview_cache()
+        except Exception as exc:
+            return HTMLResponse(
+                content=(
+                    "<html><body><h1>Schwab OAuth Failed</h1>"
+                    f"<p>{escape(str(exc))}</p>"
+                    "<p>You can close this window and retry the authorization flow.</p>"
+                    "</body></html>"
+                ),
+                status_code=500,
+            )
+        return HTMLResponse(
+            content=(
+                "<html><body><h1>Schwab OAuth Updated</h1>"
+                "<p>The Schwab token store on the VPS was refreshed successfully.</p>"
+                "<p>You can close this window and return to Mai Tai.</p>"
+                "</body></html>"
+            ),
+            status_code=200,
+        )
 
     @app.get("/meta")
     async def meta() -> dict[str, Any]:
