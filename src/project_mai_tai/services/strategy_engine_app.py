@@ -3799,6 +3799,8 @@ class StrategyEngineService:
         self._schwab_symbol_active_first_seen_at: dict[str, datetime] = {}
         self._schwab_stale_symbols: set[str] = set()
         self._schwab_stream_disconnected_since: datetime | None = None
+        self._last_generic_bot_activity_snapshot_at: datetime | None = None
+        self._generic_bot_activity_snapshot_interval_secs = 5
 
     async def run(self) -> None:
         stop_event = asyncio.Event()
@@ -4041,19 +4043,22 @@ class StrategyEngineService:
 
         if event_type == "trade_tick":
             event = TradeTickEvent.model_validate(payload)
+            strategy_codes = self._generic_market_data_strategy_codes(event.payload.symbol)
             intents = self.state.handle_trade_tick(
                 symbol=event.payload.symbol,
                 price=float(event.payload.price),
                 size=event.payload.size,
                 timestamp_ns=event.payload.timestamp_ns,
                 cumulative_volume=event.payload.cumulative_volume,
-                strategy_codes=self._generic_market_data_strategy_codes(event.payload.symbol),
+                strategy_codes=strategy_codes,
             )
             for intent in intents:
                 await self._publish_intent(intent)
             if intents:
                 await self._sync_subscription_targets()
                 await self._publish_strategy_state_snapshot()
+            elif strategy_codes:
+                await self._publish_strategy_state_snapshot_for_generic_bot_activity()
             if intents:
                 self.logger.info(
                     "generated %s intents from %s trade tick",
@@ -4074,6 +4079,7 @@ class StrategyEngineService:
 
         if event_type == "live_bar":
             event = LiveBarEvent.model_validate(payload)
+            strategy_codes = self._generic_market_data_strategy_codes(event.payload.symbol)
             intents = self.state.handle_live_bar(
                 symbol=event.payload.symbol,
                 interval_secs=int(event.payload.interval_secs),
@@ -4084,7 +4090,7 @@ class StrategyEngineService:
                 volume=int(event.payload.volume),
                 timestamp=float(event.payload.timestamp),
                 trade_count=int(event.payload.trade_count),
-                strategy_codes=self._generic_market_data_strategy_codes(event.payload.symbol),
+                strategy_codes=strategy_codes,
             )
             for intent in intents:
                 await self._publish_intent(intent)
@@ -4096,6 +4102,8 @@ class StrategyEngineService:
                     len(intents),
                     event.payload.symbol,
                 )
+            elif strategy_codes:
+                await self._publish_strategy_state_snapshot_for_generic_bot_activity()
             return
 
         if event_type == "historical_bars":
@@ -4263,6 +4271,17 @@ class StrategyEngineService:
             approximate=True,
         )
         self._persist_scanner_snapshots(summary)
+
+    async def _publish_strategy_state_snapshot_for_generic_bot_activity(self) -> None:
+        now = utcnow()
+        last = self._last_generic_bot_activity_snapshot_at
+        if (
+            last is not None
+            and (now - last).total_seconds() < self._generic_bot_activity_snapshot_interval_secs
+        ):
+            return
+        await self._publish_strategy_state_snapshot()
+        self._last_generic_bot_activity_snapshot_at = now
 
     async def _sync_market_data_subscriptions(self, symbols: Sequence[str]) -> None:
         normalized = {symbol.upper() for symbol in symbols if symbol}

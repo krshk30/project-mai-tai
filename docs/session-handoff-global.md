@@ -2945,3 +2945,54 @@ API note:
   - `GET /botwebull` for `webull_30s`
 - there is no separate `/api/botwebull` route in the current control plane
 
+## 2026-04-24 Webull Last Bot Tick Snapshot Fix
+
+Context:
+
+- Webull 30 Sec Bot page showed:
+  - `Listening`
+  - fresh `Last Market Data`
+  - fresh `Last Decision`
+  - but empty `Last Bot Tick`
+- live VPS payload confirmed the exact gap:
+  - `macd_30s.last_tick_at` contained many symbol timestamps
+  - `webull_30s.last_tick_at` was `{}` in `/api/bots`
+
+Root cause:
+
+- control-plane renders `Last Bot Tick` from the bot snapshot field `last_tick_at`
+- Schwab updates that field visibly because the Schwab queue drain republishes
+  strategy-state snapshots whenever stream events are seen
+- the generic market-data path used by Webull only republished strategy-state
+  snapshots when:
+  - intents were generated, or
+  - completed bars were flushed later
+- result:
+  - Webull runtime could be actively handling Polygon trade/live-bar events and
+    updating in-memory `_last_tick_at`
+  - but control-plane never saw those timestamps if no new intents happened
+
+Code fix:
+
+- updated `src/project_mai_tai/services/strategy_engine_app.py`
+  - added a throttled helper that republishes `strategy-state` snapshots for
+    generic bot activity at most every 5 seconds
+  - wired generic `trade_tick` and `live_bar` handling to use that helper when
+    non-Schwab bots are targeted but no intents are generated
+
+Operator meaning:
+
+- Webull `Last Bot Tick` now reflects real Polygon bot activity instead of
+  staying blank until an intent happens
+- this is a control-plane visibility fix, not a strategy-behavior change
+
+Validation:
+
+- passed:
+  - `.venv\Scripts\python.exe -m pytest tests/unit/test_strategy_engine_service.py -k "live_bar_publishes_strategy_snapshot_for_generic_bot_activity_without_intents" -q`
+  - `.venv\Scripts\python.exe -m py_compile src/project_mai_tai/services/strategy_engine_app.py tests/unit/test_strategy_engine_service.py`
+- note:
+  - an older fallback-routing test in `tests/unit/test_strategy_engine_service.py`
+    remains out of sync with current generic-market-data selection logic and
+    was not used as a blocker for this targeted visibility fix
+
