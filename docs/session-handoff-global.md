@@ -3024,9 +3024,9 @@ Code fix:
   - in `StrategyBotRuntime.flush_completed_bars()`, each symbol whose bar is
     force-closed now records `last_tick_at` with the current normalized runtime
     clock before `_evaluate_completed_bar(...)`
-- updated `tests/unit/test_strategy_engine_service.py`
-  - extended the forced bar-close regression test to assert the flushed symbol
-    now appears in `bot.summary()["last_tick_at"]`
+- added `tests/unit/test_webull_last_bot_tick.py`
+  - dedicated regression test proving a Webull symbol evaluated through
+    `flush_completed_bars()` now appears in `bot.summary()["last_tick_at"]`
 
 Operator meaning:
 
