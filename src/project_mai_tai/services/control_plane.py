@@ -3,9 +3,11 @@ from __future__ import annotations
 import asyncio
 import base64
 from contextlib import asynccontextmanager
+import csv
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from html import escape
+from io import StringIO
 import json
 from pathlib import Path
 from typing import Any
@@ -15,7 +17,7 @@ from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from redis.asyncio import Redis
 from sqlalchemy import case, desc, func, select, text
 from sqlalchemy.orm import Session, sessionmaker
@@ -880,6 +882,33 @@ class ControlPlaneRepository:
             str(symbol).upper()
             for symbol in legacy_shadow.get("scanner", {}).get("confirmed_symbols", [])
         ]
+        alert_snapshot = (
+            persisted_snapshots.get("scanner_alert_engine_state", {})
+            if isinstance(persisted_snapshots, dict)
+            else {}
+        )
+        today_alerts = [
+            item
+            for item in (
+                alert_snapshot.get("today_alerts", [])
+                if isinstance(alert_snapshot, dict)
+                else []
+            )
+            if isinstance(item, dict)
+            and str(item.get("ticker", "")).upper() not in blacklisted_symbols
+            and str(item.get("ticker", "")).upper() not in global_manual_stop_symbols
+        ]
+        alert_diagnostics = [
+            item
+            for item in (
+                alert_snapshot.get("recent_rejections", [])
+                if isinstance(alert_snapshot, dict)
+                else []
+            )
+            if isinstance(item, dict)
+            and str(item.get("ticker", "")).upper() not in blacklisted_symbols
+            and str(item.get("ticker", "")).upper() not in global_manual_stop_symbols
+        ]
         return {
             "status": "active" if all_confirmed else "idle",
             "cycle_count": int(strategy_runtime.get("cycle_count", 0) or 0),
@@ -929,6 +958,10 @@ class ControlPlaneRepository:
                     if str(item.get("ticker", "")).upper() not in blacklisted_symbols
                 ]
             ),
+            "today_alerts": today_alerts,
+            "today_alerts_count": len(today_alerts),
+            "alert_diagnostics": alert_diagnostics,
+            "alert_diagnostics_count": len(alert_diagnostics),
             "top_gainer_changes": [
                 item
                 for item in strategy_runtime.get("top_gainer_changes", [])
@@ -1931,6 +1964,20 @@ class ControlPlaneRepository:
                             **payload,
                             "created_at": _datetime_str(confirmed_snapshot.created_at),
                         }
+                alert_snapshot = session.scalar(
+                    select(DashboardSnapshot)
+                    .where(DashboardSnapshot.snapshot_type == "scanner_alert_engine_state")
+                    .order_by(desc(DashboardSnapshot.created_at))
+                )
+                if self._snapshot_matches_current_scanner_session(
+                    alert_snapshot,
+                    session_start=current_scanner_session_start_utc(now),
+                    require_session_marker=True,
+                ):
+                    dashboard_snapshots["scanner_alert_engine_state"] = {
+                        **alert_snapshot.payload,
+                        "created_at": _datetime_str(alert_snapshot.created_at),
+                    }
                 session_start = current_scanner_session_start_utc(now)
                 manual_stop_snapshot = session.scalar(
                     select(DashboardSnapshot)
@@ -2629,8 +2676,51 @@ def build_app(
         return {
             "alerts": data["scanner"]["recent_alerts"],
             "count": data["scanner"]["recent_alerts_count"],
+            "today_alerts_count": data["scanner"]["today_alerts_count"],
+            "diagnostics": data["scanner"]["alert_diagnostics"],
             "warmup": data["scanner"]["alert_warmup"],
         }
+
+    @app.get("/scanner/alerts/export.csv")
+    async def scanner_alerts_export_csv() -> Response:
+        data = await app.state.repository.load_dashboard_data()
+        output = StringIO()
+        writer = csv.DictWriter(
+            output,
+            fieldnames=[
+                "time",
+                "type",
+                "ticker",
+                "price",
+                "bid",
+                "ask",
+                "volume",
+                "float",
+                "details_json",
+            ],
+        )
+        writer.writeheader()
+        for alert in data["scanner"].get("today_alerts", []):
+            details = alert.get("details", {})
+            writer.writerow(
+                {
+                    "time": str(alert.get("time", "") or ""),
+                    "type": str(alert.get("type", "") or ""),
+                    "ticker": str(alert.get("ticker", "") or "").upper(),
+                    "price": _as_float(alert.get("price")),
+                    "bid": _as_float(alert.get("bid")),
+                    "ask": _as_float(alert.get("ask")),
+                    "volume": int(alert.get("volume", 0) or 0),
+                    "float": int(alert.get("float", 0) or 0),
+                    "details_json": json.dumps(details if isinstance(details, dict) else details),
+                }
+            )
+        filename = f"mai-tai-alerts-{utcnow().astimezone(EASTERN_TZ).strftime('%Y-%m-%d')}.csv"
+        return Response(
+            content=output.getvalue(),
+            media_type="text/csv",
+            headers={"Content-Disposition": f'attachment; filename=\"{filename}\"'},
+        )
 
     @app.get("/scanner/dashboard", response_class=HTMLResponse)
     async def scanner_dashboard() -> str:
@@ -4456,15 +4546,34 @@ def _render_scanner_dashboard(data: dict[str, Any]) -> str:
                 <div class="panel-header">
                     <div>
                         <h3>Momentum Alerts</h3>
-                        <div class="sub">Latest alert tape with simple color-coded momentum events.</div>
+                        <div class="sub">Latest alert tape with simple color-coded momentum events. Export includes the full current-day alert ledger.</div>
                     </div>
-                    <span class="count amber">{scanner["recent_alerts_count"]}</span>
+                    <div style="display:flex;gap:12px;align-items:center;">
+                        <a href="/scanner/alerts/export.csv" style="color:#4fc3f7;text-decoration:none;font-size:12px;border:1px solid #4fc3f7;padding:6px 10px;border-radius:8px;">Export Today CSV ({scanner["today_alerts_count"]})</a>
+                        <span class="count amber">{scanner["recent_alerts_count"]}</span>
+                    </div>
                 </div>
                 <div class="panel-copy">Warmup: {"Ready" if warmup.get("fully_ready") else "History building"} | 5m ready: {"yes" if warmup.get("squeeze_5min_ready") else "no"} | 10m ready: {"yes" if warmup.get("squeeze_10min_ready") else "no"}</div>
                 <div class="table-wrap table-wrap-alerts">
                     <table>
                         <thead><tr><th>Time</th><th>Type</th><th>Ticker</th><th style="text-align:right">Price</th><th style="text-align:right">Volume</th><th>Details</th></tr></thead>
                         <tbody>{alert_rows}</tbody>
+                    </table>
+                </div>
+            </section>
+
+            <section class="panel full">
+                <div class="panel-header">
+                    <div>
+                        <h3>Recent Alert Rejections</h3>
+                        <div class="sub">Near-candidates seen by the alert engine that did not fire, with the current blocking reasons attached.</div>
+                    </div>
+                    <span class="count amber">{scanner["alert_diagnostics_count"]}</span>
+                </div>
+                <div class="table-wrap table-wrap-alerts">
+                    <table>
+                        <thead><tr><th>Time</th><th>Ticker</th><th style="text-align:right">Price</th><th style="text-align:right">Volume</th><th>Reasons</th><th>Metrics</th></tr></thead>
+                        <tbody>{_render_alert_diagnostic_rows(scanner.get("alert_diagnostics", []))}</tbody>
                     </table>
                 </div>
             </section>
@@ -6614,6 +6723,44 @@ def _render_alert_rows(alerts: list[dict[str, Any]]) -> str:
             <td style="text-align:right">{_fmt_money(_as_float(alert.get("price")))}</td>
             <td style="text-align:right">{_short_volume(alert.get("volume"))}</td>
             <td>{escape(details_str)}</td>
+        </tr>"""
+        )
+    return "".join(rendered)
+
+
+def _render_alert_diagnostic_rows(diagnostics: list[dict[str, Any]]) -> str:
+    if not diagnostics:
+        return '<tr><td colspan="6" style="text-align:center;color:#888;padding:20px;">No blocked alert candidates recorded yet</td></tr>'
+    rendered = []
+    for item in reversed(diagnostics[-25:]):
+        reasons = [
+            str(reason)
+            for reason in item.get("reasons", [])
+            if str(reason).strip()
+        ]
+        reasons_html = escape(", ".join(reasons[:4]) if reasons else "candidate_seen_but_no_alert_fired")
+        metrics: list[str] = []
+        squeeze_5 = item.get("squeeze_5min_pct")
+        squeeze_10 = item.get("squeeze_10min_pct")
+        if squeeze_5 is not None:
+            metrics.append(f"5m={float(squeeze_5):+.1f}%")
+        if squeeze_10 is not None:
+            metrics.append(f"10m={float(squeeze_10):+.1f}%")
+        vol_5min = int(item.get("vol_5min", 0) or 0)
+        expected_5min = int(item.get("expected_5min", 0) or 0)
+        if vol_5min > 0 or expected_5min > 0:
+            metrics.append(f"5m vol {_short_volume(vol_5min)}/{_short_volume(expected_5min)}")
+        if item.get("volume_gate_open"):
+            metrics.append("gate=open")
+        metrics_html = escape(" | ".join(metrics) if metrics else "-")
+        rendered.append(
+            f"""<tr>
+            <td>{escape(str(item.get("time", "")))}</td>
+            <td><strong>{escape(str(item.get("ticker", "")))}</strong></td>
+            <td style="text-align:right">{_fmt_money(_as_float(item.get("price")))}</td>
+            <td style="text-align:right">{_short_volume(item.get("volume"))}</td>
+            <td>{reasons_html}</td>
+            <td>{metrics_html}</td>
         </tr>"""
         )
     return "".join(rendered)
