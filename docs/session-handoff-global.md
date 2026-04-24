@@ -1,5 +1,94 @@
 # Session Handoff - Global
 
+## 2026-04-24 Trade Coach Foundation (In Progress On Branch)
+
+Current branch:
+
+- `codex/trade-coach-foundation`
+
+Important state:
+
+- this work is local branch work only right now
+- not merged to `main`
+- not deployed to the VPS
+- current scope is the first trade-coach foundation pass for the two 30-second
+  bots only:
+  - `macd_30s`
+  - `webull_30s`
+
+What was added:
+
+- detailed implementation checklist document:
+  - [trade-coach-implementation-plan.md](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/docs/trade-coach-implementation-plan.md)
+- shared completed-trade reconstruction module:
+  - [trade_episodes.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/src/project_mai_tai/trade_episodes.py)
+- control-plane completed-position rendering now reuses that shared
+  fill-first/filled-order-fallback cycle reconstruction instead of carrying a
+  separate inline copy
+- trade coach package scaffold:
+  - [models.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/src/project_mai_tai/ai_trade_coach/models.py)
+  - [repository.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/src/project_mai_tai/ai_trade_coach/repository.py)
+  - [service.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/src/project_mai_tai/ai_trade_coach/service.py)
+- new AI review persistence model and migration:
+  - `ai_trade_reviews`
+  - [20260424_0004_ai_trade_reviews.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/sql/migrations/versions/20260424_0004_ai_trade_reviews.py)
+- trade coach service wiring:
+  - [trade_coach_app.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/src/project_mai_tai/services/trade_coach_app.py)
+  - [trade_coach.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/src/project_mai_tai/services/trade_coach.py)
+  - [services/trade-coach/main.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/services/trade-coach/main.py)
+  - new console script:
+    - `mai-tai-trade-coach`
+- settings added under the existing AI config pattern:
+  - `trade_coach_*`
+- control-plane data load now includes recent persisted trade coach reviews and
+  per-bot review slices in `/api/bots`
+- trade coach review selection now sorts globally across both configured
+  strategy/account pairs before applying the review limit
+- trade coach Responses client now explicitly forces the
+  `submit_trade_review` function path and keeps strict structured parsing
+
+Intentional design choices from this pass:
+
+- do **not** rebuild flat-to-flat trade pairing separately inside the AI coach
+- keep trade-coach review cycles keyed by:
+  - `strategy_code`
+  - `broker_account_name`
+  - `symbol`
+  - flat-to-flat cycle key
+- keep the first version post-trade only
+- do **not** place any AI network call inline inside:
+  - `strategy_engine_app.py`
+  - `oms/service.py`
+- use the OpenAI Responses API path in the coach client instead of the older
+  Chat Completions style used by the earlier catalyst helper
+
+Validation completed:
+
+- passed:
+  - `.venv\Scripts\python.exe -m pytest tests/unit/test_trade_episodes.py tests/unit/test_trade_coach_service.py tests/unit/test_trade_coach_repository.py tests/unit/test_control_plane.py -q`
+  - `.venv\Scripts\python.exe -m py_compile src/project_mai_tai/trade_episodes.py src/project_mai_tai/ai_trade_coach/models.py src/project_mai_tai/ai_trade_coach/repository.py src/project_mai_tai/ai_trade_coach/service.py src/project_mai_tai/services/trade_coach_app.py src/project_mai_tai/services/trade_coach.py src/project_mai_tai/services/control_plane.py src/project_mai_tai/db/models.py`
+
+Latest validation snapshot:
+
+- targeted trade-coach/control-plane suite passed locally:
+  - `32 passed`
+- branch confirmed:
+  - `codex/trade-coach-foundation`
+
+Known non-blocking note from local verification:
+
+- `tests/unit/test_oms_risk_service.py` still showed pre-existing routing/runtime
+  expectation failures unrelated to the trade-coach files touched here and was
+  not used as a blocker for this foundation pass
+
+What is still not done:
+
+- no merge to `main` yet
+- no VPS deploy yet
+- no dedicated trade coach dashboard UI yet
+- no live shadow advice path yet
+- no OMS advisory gate yet
+
 ## 2026-04-24 Manual Stop Session Cleanup
 
 Morning follow-up found stale bot manual stops still leaking into the current

@@ -135,6 +135,19 @@ class Settings(BaseSettings):
     news_ai_request_timeout_seconds: int = 8
     news_ai_max_articles: int = 3
     news_ai_max_summary_chars: int = 280
+    trade_coach_enabled: bool = False
+    trade_coach_shadow_enabled: bool = False
+    trade_coach_promote_enabled: bool = False
+    trade_coach_provider: str = "openai"
+    trade_coach_api_key: str | None = None
+    trade_coach_model: str = "gpt-4.1-mini"
+    trade_coach_base_url: str = "https://api.openai.com/v1"
+    trade_coach_request_timeout_seconds: int = 8
+    trade_coach_context_bars: int = 20
+    trade_coach_review_bars_after_exit: int = 20
+    trade_coach_max_similar_trades: int = 5
+    trade_coach_review_poll_seconds: int = 60
+    trade_coach_review_limit: int = 25
 
     broker_default_provider: str = "alpaca"
     oms_adapter: str = "simulated"

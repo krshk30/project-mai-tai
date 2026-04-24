@@ -25,6 +25,7 @@ import uvicorn
 
 from project_mai_tai.db.models import (
     AccountPosition,
+    AiTradeReview,
     BrokerAccount,
     BrokerOrder,
     BrokerOrderEvent,
@@ -60,6 +61,9 @@ from project_mai_tai.strategy_core import (
     MomentumConfirmedConfig,
     TopGainersConfig,
 )
+from project_mai_tai.trade_episodes import collect_completed_trade_cycles
+from project_mai_tai.trade_episodes import display_order_path
+from project_mai_tai.trade_episodes import looks_like_broker_payload_text
 
 
 SERVICE_NAME = "control-plane"
@@ -551,6 +555,7 @@ class ControlPlaneRepository:
             recent_intents=db_state["recent_intents"],
             recent_orders=db_state["recent_orders"],
             recent_fills=db_state["recent_fills"],
+            recent_trade_coach_reviews=db_state["recent_trade_coach_reviews"],
             recent_bar_decisions=db_state["recent_bar_decisions"],
             open_orders=db_state["open_orders"],
             persisted_snapshots=db_state["dashboard_snapshots"],
@@ -613,6 +618,7 @@ class ControlPlaneRepository:
             "recent_intents": db_state["recent_intents"],
             "recent_orders": db_state["recent_orders"],
             "recent_fills": db_state["recent_fills"],
+            "recent_trade_coach_reviews": db_state["recent_trade_coach_reviews"],
             "recent_bar_decisions": db_state["recent_bar_decisions"],
             "virtual_positions": db_state["virtual_positions"],
             "account_positions": db_state["account_positions"],
@@ -635,6 +641,7 @@ class ControlPlaneRepository:
             recent_intents=db_state["recent_intents"],
             recent_orders=db_state["recent_orders"],
             recent_fills=db_state["recent_fills"],
+            recent_trade_coach_reviews=db_state["recent_trade_coach_reviews"],
             recent_bar_decisions=db_state["recent_bar_decisions"],
             open_orders=db_state["open_orders"],
             persisted_snapshots=db_state["dashboard_snapshots"],
@@ -661,6 +668,7 @@ class ControlPlaneRepository:
             "recent_intents": db_state["recent_intents"],
             "recent_orders": db_state["recent_orders"],
             "recent_fills": db_state["recent_fills"],
+            "recent_trade_coach_reviews": db_state["recent_trade_coach_reviews"],
             "recent_bar_decisions": db_state["recent_bar_decisions"],
             "virtual_positions": db_state["virtual_positions"],
             "account_positions": db_state["account_positions"],
@@ -1109,6 +1117,7 @@ class ControlPlaneRepository:
         recent_intents: list[dict[str, Any]],
         recent_orders: list[dict[str, Any]],
         recent_fills: list[dict[str, Any]],
+        recent_trade_coach_reviews: list[dict[str, Any]],
         recent_bar_decisions: list[dict[str, Any]],
         open_orders: list[dict[str, Any]],
         persisted_snapshots: dict[str, Any],
@@ -1355,6 +1364,13 @@ class ControlPlaneRepository:
                         if item.get("strategy_code") == code
                         and not self._is_ui_hidden_symbol(account_name, item.get("symbol"))
                     ][:100],
+                    "recent_trade_coach_reviews": [
+                        item
+                        for item in recent_trade_coach_reviews
+                        if item.get("strategy_code") == code
+                        and item.get("broker_account_name") == account_name
+                        and not self._is_ui_hidden_symbol(account_name, item.get("symbol"))
+                    ][:25],
                 }
             )
         return bot_views
@@ -1557,6 +1573,7 @@ class ControlPlaneRepository:
         recent_intents: list[dict[str, Any]] = []
         recent_orders: list[dict[str, Any]] = []
         recent_fills: list[dict[str, Any]] = []
+        recent_trade_coach_reviews: list[dict[str, Any]] = []
         recent_bar_decisions: list[dict[str, Any]] = []
         open_orders: list[dict[str, Any]] = []
         virtual_positions: list[dict[str, Any]] = []
@@ -1722,6 +1739,7 @@ class ControlPlaneRepository:
                             "side": order.side,
                             "intent_type": intent.intent_type if intent is not None else "",
                             "quantity": _decimal_str(order.quantity),
+                            "price": _decimal_str(latest_event_payload.get("fill_price")),
                             "status": order.status,
                             "reason": str(latest_event_payload.get("reason") or (intent.reason if intent else "")),
                             "path": str(intent_metadata.get("path") or ""),
@@ -1780,6 +1798,30 @@ class ControlPlaneRepository:
                             "quantity": _decimal_str(fill.quantity),
                             "price": _decimal_str(fill.price),
                             "filled_at": _datetime_str(fill.filled_at),
+                        }
+                    )
+
+                for review in session.scalars(
+                    select(AiTradeReview)
+                    .where(
+                        AiTradeReview.created_at >= session_start,
+                        AiTradeReview.created_at < session_end,
+                    )
+                    .order_by(desc(AiTradeReview.created_at))
+                    .limit(250)
+                ).all():
+                    recent_trade_coach_reviews.append(
+                        {
+                            "strategy_code": review.strategy_code,
+                            "broker_account_name": review.broker_account_name,
+                            "symbol": review.symbol,
+                            "review_type": review.review_type,
+                            "cycle_key": review.cycle_key,
+                            "verdict": review.verdict,
+                            "action": review.action,
+                            "confidence": _decimal_str(review.confidence),
+                            "summary": review.summary,
+                            "created_at": _datetime_str(review.created_at),
                         }
                     )
 
@@ -2028,6 +2070,7 @@ class ControlPlaneRepository:
         recent_intents = self._filter_symbol_rows(recent_intents)
         recent_orders = self._filter_symbol_rows(recent_orders)
         recent_fills = self._filter_symbol_rows(recent_fills)
+        recent_trade_coach_reviews = self._filter_symbol_rows(recent_trade_coach_reviews)
         open_orders = self._filter_symbol_rows(open_orders)
         virtual_positions = self._filter_symbol_rows(virtual_positions)
         account_positions = self._filter_symbol_rows(account_positions)
@@ -2039,6 +2082,7 @@ class ControlPlaneRepository:
             "recent_intents": recent_intents,
             "recent_orders": recent_orders,
             "recent_fills": recent_fills,
+            "recent_trade_coach_reviews": recent_trade_coach_reviews,
             "recent_bar_decisions": recent_bar_decisions,
             "open_orders": open_orders,
             "virtual_positions": virtual_positions,
@@ -5562,216 +5606,32 @@ def _collect_completed_position_rows(
     recent_orders: list[dict[str, Any]],
     recent_fills: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    completed_rows: list[dict[str, Any]] = []
-    existing_keys: set[tuple[str, str]] = set()
-
-    open_trades_by_symbol: dict[str, list[dict[str, Any]]] = {}
-
-    def _append_completed_trade(trade: dict[str, Any]) -> None:
-        initial_qty = max(float(trade["initial_qty"]), 0.0001)
-        entry_price = float(trade["entry_price"])
-        blended_exit = trade["exit_value"] / initial_qty if initial_qty > 0 else 0.0
-        total_pnl = trade["exit_value"] - (entry_price * initial_qty)
-        pnl_pct = (blended_exit - entry_price) / entry_price * 100 if entry_price > 0 else 0.0
-        entry_time = str(trade["entry_time"] or "-")
-        existing_keys.add((str(trade["ticker"]).upper(), entry_time))
-        completed_rows.append(
-            {
-                "ticker": str(trade["ticker"]).upper(),
-                "path": str(trade["path"] or "-"),
-                "quantity": _fmt_qty(initial_qty),
-                "entry_time": entry_time,
-                "entry_price": _fmt_money(entry_price),
-                "exit_time": str(trade["exit_time"] or "-"),
-                "exit_price": _fmt_money(blended_exit),
-                "pnl": total_pnl,
-                "pnl_pct": pnl_pct,
-                "summary": _summarize_exit_events(trade["exit_events"], initial_qty),
-                "sort_time": str(trade["exit_time"] or trade["entry_time"]),
-            }
-        )
-
-    def _reconstruct_from_events(
-        events: list[dict[str, Any]],
-        *,
-        timestamp_key: str,
-        price_key: str,
-        source: str,
-    ) -> None:
-        open_trades_by_symbol.clear()
-        for item in sorted(events, key=lambda row: _parse_et_timestamp(str(row.get(timestamp_key, "") or ""))):
-            symbol = str(item.get("symbol", "")).upper()
-            side = str(item.get("side", "")).lower()
-            quantity = _as_float(item.get("quantity"))
-            if not symbol or quantity <= 0:
-                continue
-
-            event_time = str(item.get(timestamp_key, "") or "")
-            event_price = _as_float(item.get(price_key))
-            reason = str(item.get("reason", "") or "").strip()
-            path = _display_order_path(item)
-
-            intent_type = str(item.get("intent_type", "") or "").lower()
-            if not intent_type:
-                if side == "buy":
-                    intent_type = "open"
-                elif reason.upper().startswith("SCALE_"):
-                    intent_type = "scale"
-                else:
-                    intent_type = "close"
-
-            if intent_type == "open" and side == "buy":
-                open_trades_by_symbol.setdefault(symbol, []).append(
-                    {
-                        "ticker": symbol,
-                        "path": path,
-                        "entry_time": event_time,
-                        "entry_price": event_price,
-                        "initial_qty": quantity,
-                        "remaining_qty": quantity,
-                        "exit_value": 0.0,
-                        "exit_time": "",
-                        "exit_events": [],
-                        "source": source,
-                    }
-                )
-                continue
-
-            if side != "sell" or intent_type not in {"scale", "close"}:
-                continue
-
-            remaining_to_apply = quantity
-            open_queue = open_trades_by_symbol.get(symbol, [])
-            # Pair exits with the most recent unmatched open for this symbol.
-            # The runtime should only have one active position per symbol, so
-            # newest-open matching keeps late orphaned buys from shifting all
-            # later completed rows onto the wrong entry.
-            for trade in reversed(open_queue):
-                if remaining_to_apply <= 0:
-                    break
-                trade_remaining = float(trade["remaining_qty"])
-                if trade_remaining <= 0:
-                    continue
-                applied_qty = min(remaining_to_apply, trade_remaining)
-                if applied_qty <= 0:
-                    continue
-                trade["remaining_qty"] -= applied_qty
-                trade["exit_value"] += applied_qty * event_price
-                trade["exit_time"] = event_time
-                trade["exit_events"].append(
-                    {
-                        "qty": applied_qty,
-                        "price": event_price,
-                        "reason": reason.upper() or intent_type.upper(),
-                        "intent_type": intent_type,
-                    }
-                )
-                remaining_to_apply -= applied_qty
-                if trade["remaining_qty"] <= 0:
-                    _append_completed_trade(trade)
-
-    # Use fills as the authoritative source for completed-cycle accounting.
-    _reconstruct_from_events(
-        recent_fills,
-        timestamp_key="filled_at",
-        price_key="price",
-        source="fills",
+    strategy_code = str(bot.get("strategy_code", "") or "")
+    account_name = str(bot.get("account_name", "") or "")
+    cycles = collect_completed_trade_cycles(
+        strategy_code=strategy_code,
+        broker_account_name=account_name,
+        recent_orders=recent_orders,
+        recent_fills=recent_fills,
+        closed_today=bot.get("closed_today", []),
     )
-
-    # Fall back to filled broker orders only when a cycle was not already reconstructed from fills.
-    _reconstruct_from_events(
-        [
-            item
-            for item in recent_orders
-            if str(item.get("status", "")).lower() == "filled"
-        ],
-        timestamp_key="updated_at",
-        price_key="price",
-        source="orders",
-    )
-
-    for item in bot.get("closed_today", []):
-        ticker = str(item.get("ticker", "") or "").upper()
-        entry_time = str(item.get("entry_time", "") or "")
-        raw_reason = str(item.get("reason", "") or item.get("exit_reason", "") or "").strip()
-        if not ticker or not entry_time or _looks_like_broker_payload_text(raw_reason):
-            continue
-        if (ticker, entry_time) in existing_keys:
-            continue
-        path = str(item.get("path", "") or item.get("entry_path", "") or "-").strip() or "-"
-        if path.upper() == "DB_RECONCILE":
-            path = "-"
-        pnl = _as_float(item.get("pnl"))
-        quantity = item.get("original_quantity", item.get("original_qty", item.get("quantity", item.get("qty", "-"))))
-        completed_rows.append(
-            {
-                "ticker": ticker,
-                "path": path,
-                "quantity": str(quantity),
-                "entry_time": entry_time,
-                "entry_price": _fmt_money(_as_float(item.get("entry_price"))),
-                "exit_time": str(item.get("exit_time", "") or "-"),
-                "exit_price": _fmt_money(_as_float(item.get("exit_price"))),
-                "pnl": pnl,
-                "pnl_pct": _as_float(item.get("pnl_pct")),
-                "summary": _summarize_closed_today_reason(item),
-                "sort_time": str(item.get("exit_time", "") or item.get("closed_at", "") or entry_time),
-            }
-        )
-    return _coalesce_completed_position_rows(completed_rows)
-
-
-def _coalesce_completed_position_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    def _parse_time(value: Any) -> datetime:
-        return _parse_et_timestamp(str(value or ""))
-
-    def _is_generic_summary(value: str) -> bool:
-        normalized = str(value or "").strip().lower()
-        return normalized in {"close", "final close", "completed", "-"}
-
-    def _merge_row(primary: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
-        merged = dict(primary)
-        if (str(merged.get("path", "") or "-") in {"", "-"}) and str(incoming.get("path", "") or "-") not in {"", "-"}:
-            merged["path"] = incoming.get("path")
-        if str(merged.get("entry_price", "") or "-") == "-" and str(incoming.get("entry_price", "") or "-") != "-":
-            merged["entry_price"] = incoming.get("entry_price")
-        if str(merged.get("exit_price", "") or "-") == "-" and str(incoming.get("exit_price", "") or "-") != "-":
-            merged["exit_price"] = incoming.get("exit_price")
-        if _as_float(merged.get("pnl")) == 0 and abs(_as_float(incoming.get("pnl"))) > 0:
-            merged["pnl"] = incoming.get("pnl")
-            merged["pnl_pct"] = incoming.get("pnl_pct")
-        if _is_generic_summary(str(merged.get("summary", "") or "")) and not _is_generic_summary(
-            str(incoming.get("summary", "") or "")
-        ):
-            merged["summary"] = incoming.get("summary")
-        if _parse_time(merged.get("sort_time")) < _parse_time(incoming.get("sort_time")):
-            merged["sort_time"] = incoming.get("sort_time")
-        if _parse_time(merged.get("exit_time")) < _parse_time(incoming.get("exit_time")):
-            merged["exit_time"] = incoming.get("exit_time")
-        return merged
-
-    merged_rows: list[dict[str, Any]] = []
-    for row in sorted(rows, key=lambda item: (_parse_time(item.get("entry_time")), _parse_time(item.get("exit_time")))):
-        ticker = str(row.get("ticker", "") or "").upper()
-        quantity = str(row.get("quantity", "") or "")
-        entry_dt = _parse_time(row.get("entry_time"))
-        exit_dt = _parse_time(row.get("exit_time"))
-        match_index: int | None = None
-        for index, existing in enumerate(merged_rows):
-            if str(existing.get("ticker", "") or "").upper() != ticker:
-                continue
-            if str(existing.get("quantity", "") or "") != quantity:
-                continue
-            existing_entry = _parse_time(existing.get("entry_time"))
-            existing_exit = _parse_time(existing.get("exit_time"))
-            if abs((existing_entry - entry_dt).total_seconds()) <= 2 and abs((existing_exit - exit_dt).total_seconds()) <= 2:
-                match_index = index
-                break
-        if match_index is None:
-            merged_rows.append(dict(row))
-        else:
-            merged_rows[match_index] = _merge_row(merged_rows[match_index], row)
-    return merged_rows
+    return [
+        {
+            "ticker": cycle.symbol,
+            "path": cycle.path,
+            "quantity": _fmt_qty(cycle.quantity),
+            "entry_time": cycle.entry_time,
+            "entry_price": _fmt_money(cycle.entry_price),
+            "exit_time": cycle.exit_time,
+            "exit_price": _fmt_money(cycle.exit_price),
+            "pnl": cycle.pnl,
+            "pnl_pct": cycle.pnl_pct,
+            "summary": cycle.summary,
+            "sort_time": cycle.sort_time,
+            "cycle_key": cycle.cycle_key,
+        }
+        for cycle in cycles
+    ]
 
 
 def _dedupe_decision_events(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -5794,72 +5654,17 @@ def _dedupe_decision_events(items: list[dict[str, Any]]) -> list[dict[str, Any]]
     return deduped
 
 
-def _summarize_closed_today_reason(item: dict[str, Any]) -> str:
-    reason = str(item.get("reason", "") or item.get("exit_reason", "") or "").strip()
-    scales_done = [str(scale).strip().upper() for scale in (item.get("scales_done", []) or []) if str(scale).strip()]
-    if reason and not _looks_like_broker_payload_text(reason):
-        clean = reason.replace("_", " ").title()
-        if scales_done:
-            return f'Scaled first ({", ".join(scales_done)}), then {clean}'
-        return clean
-    if scales_done:
-        return f'Scaled first ({", ".join(scales_done)}), then final close'
-    return "Final close"
-
-
 def _display_order_reason(item: dict[str, Any]) -> str:
     reason = str(item.get("reason", "") or "").strip()
-    if reason and not _looks_like_broker_payload_text(reason):
+    if reason and not looks_like_broker_payload_text(reason):
         return reason
     intent_type = str(item.get("intent_type", "") or "").strip().upper()
     if intent_type == "OPEN":
-        path = _display_order_path(item)
+        path = display_order_path(item)
         return f"ENTRY_{path}" if path and path != "-" else "ENTRY"
     if intent_type:
         return intent_type
     return "-"
-
-
-def _display_order_path(item: dict[str, Any]) -> str:
-    path = str(item.get("path", "") or "").strip()
-    if path:
-        return path
-    reason = str(item.get("reason", "") or "").strip()
-    if reason.startswith("ENTRY_"):
-        return reason.removeprefix("ENTRY_")
-    return "-"
-
-
-def _looks_like_broker_payload_text(value: Any) -> bool:
-    text = str(value or "").strip()
-    if not text.startswith("{"):
-        return False
-    broker_markers = (
-        "orderLegCollection",
-        "executionLegs",
-        "orderStrategyType",
-        "instrumentId",
-        "requestedDestination",
-        "'session':",
-    )
-    return any(marker in text for marker in broker_markers)
-
-
-def _summarize_exit_events(exit_events: list[dict[str, Any]], initial_qty: float) -> str:
-    if not exit_events:
-        return "Completed"
-    scale_qty = sum(_as_float(event.get("qty")) for event in exit_events if event.get("intent_type") == "scale")
-    close_events = [event for event in exit_events if event.get("intent_type") == "close"]
-    close_qty = sum(_as_float(event.get("qty")) for event in close_events)
-    if close_events and scale_qty > 0:
-        close_reason = str(close_events[-1].get("reason", "") or "final close").replace("_", " ").title()
-        return f"Scaled out {_fmt_qty(scale_qty)}, then closed {_fmt_qty(close_qty)} on {close_reason}"
-    if close_events:
-        close_reason = str(close_events[-1].get("reason", "") or "final close").replace("_", " ").title()
-        return close_reason
-    if scale_qty >= initial_qty - 0.0001:
-        return f"Fully scaled out in {len(exit_events)} fills"
-    return f"Scaled out {_fmt_qty(scale_qty)}"
 
 
 def _build_retention_status_html(retention_rows: list[dict[str, Any]], *, tracked_symbols: set[str]) -> str:

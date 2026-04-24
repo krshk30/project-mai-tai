@@ -191,6 +191,37 @@ class Fill(Base):
     payload: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
 
 
+class AiTradeReview(Base):
+    __tablename__ = "ai_trade_reviews"
+    __table_args__ = (
+        UniqueConstraint(
+            "review_type",
+            "cycle_key",
+            name="uq_ai_trade_reviews_review_type_cycle_key",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(), primary_key=True, default=uuid4)
+    intent_id: Mapped[UUID | None] = mapped_column(ForeignKey("trade_intents.id"), index=True)
+    strategy_code: Mapped[str] = mapped_column(String(64), index=True)
+    broker_account_name: Mapped[str] = mapped_column(String(64), index=True)
+    symbol: Mapped[str] = mapped_column(String(16), index=True)
+    review_type: Mapped[str] = mapped_column(String(32), index=True)
+    cycle_key: Mapped[str] = mapped_column(String(255), index=True)
+    provider: Mapped[str] = mapped_column(String(32), default="")
+    model: Mapped[str] = mapped_column(String(128), default="")
+    verdict: Mapped[str] = mapped_column(String(32), default="")
+    action: Mapped[str] = mapped_column(String(32), default="")
+    confidence: Mapped[Decimal | None] = mapped_column(Numeric(8, 6))
+    summary: Mapped[str] = mapped_column(Text, default="")
+    payload: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow,
+        server_default=func.now(),
+    )
+
+
 class VirtualPosition(Base):
     __tablename__ = "virtual_positions"
     __table_args__ = (
