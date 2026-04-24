@@ -1,5 +1,43 @@
 # Session Handoff - Global
 
+## 2026-04-24 Manual Stop Session Cleanup
+
+Morning follow-up found stale bot manual stops still leaking into the current
+session even after the broader live-symbol/session cleanup work. The live
+smoking gun on the VPS was:
+
+- latest `bot_manual_stop_symbols` snapshot was created on `2026-04-24
+  06:53 AM ET`
+- payload still contained yesterday's `macd_30s` stop list
+- snapshot had **no** `scanner_session_start_utc` marker
+
+Why it leaked:
+
+- manual-stop restore logic was still falling back to `created_at >= session
+  start` when the session marker was missing
+- that meant a markerless row written after `4:00 AM ET` could be treated as a
+  valid current-session stop list even if its contents were stale
+- control-plane manual stop writes were also willing to merge from the latest
+  snapshot without first proving it belonged to the current scanner session
+
+Fix applied:
+
+- manual-stop snapshots are now treated more strictly than generic scanner
+  snapshots
+- both control plane and strategy-engine now require a valid
+  `scanner_session_start_utc` marker before trusting persisted bot/global
+  manual-stop snapshots
+- manual-stop write paths no longer merge with stale or markerless snapshots
+- strategy startup now purges stale/markerless manual-stop snapshots before
+  preloading live runtime state
+
+Expected result:
+
+- stale manual stops from yesterday should no longer reappear on `Schwab 30 Sec
+  Bot` or `Webull 30 Sec Bot`
+- tomorrow morning the old stop list should auto-clear instead of being revived
+  by a fresh timestamp
+
 ## 2026-04-24 Schwab OAuth Callback Recovery
 
 Morning live checks found the remaining `Schwab 30 Sec Bot` red state was not a

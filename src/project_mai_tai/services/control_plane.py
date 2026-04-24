@@ -211,6 +211,7 @@ class ControlPlaneRepository:
         snapshot: DashboardSnapshot | None,
         *,
         session_start: datetime,
+        require_session_marker: bool = False,
     ) -> bool:
         if snapshot is None or snapshot.created_at is None:
             return False
@@ -224,6 +225,8 @@ class ControlPlaneRepository:
             if marker_dt.tzinfo is None:
                 marker_dt = marker_dt.replace(tzinfo=UTC)
             return marker_dt.astimezone(UTC) == session_start
+        if require_session_marker:
+            return False
         return snapshot.created_at.astimezone(UTC) >= session_start
 
     def _is_ui_hidden_symbol(self, account_name: str | None, symbol: str | None) -> bool:
@@ -327,6 +330,7 @@ class ControlPlaneRepository:
         if not normalized_code or not normalized_symbol:
             return False
         session_marker = current_scanner_session_start_utc().isoformat()
+        session_start = current_scanner_session_start_utc()
 
         with self.session_factory() as session:
             snapshot = session.scalar(
@@ -334,7 +338,16 @@ class ControlPlaneRepository:
                 .where(DashboardSnapshot.snapshot_type == "bot_manual_stop_symbols")
                 .order_by(desc(DashboardSnapshot.created_at))
             )
-            payload = dict(snapshot.payload) if snapshot is not None and isinstance(snapshot.payload, dict) else {}
+            payload = (
+                dict(snapshot.payload)
+                if self._snapshot_matches_current_scanner_session(
+                    snapshot,
+                    session_start=session_start,
+                    require_session_marker=True,
+                )
+                and isinstance(snapshot.payload, dict)
+                else {}
+            )
             bots_payload = payload.get("bots", {})
             if not isinstance(bots_payload, dict):
                 bots_payload = {}
@@ -364,6 +377,7 @@ class ControlPlaneRepository:
         if not normalized_symbol:
             return False
         session_marker = current_scanner_session_start_utc().isoformat()
+        session_start = current_scanner_session_start_utc()
 
         with self.session_factory() as session:
             snapshot = session.scalar(
@@ -371,7 +385,16 @@ class ControlPlaneRepository:
                 .where(DashboardSnapshot.snapshot_type == "global_manual_stop_symbols")
                 .order_by(desc(DashboardSnapshot.created_at))
             )
-            payload = dict(snapshot.payload) if snapshot is not None and isinstance(snapshot.payload, dict) else {}
+            payload = (
+                dict(snapshot.payload)
+                if self._snapshot_matches_current_scanner_session(
+                    snapshot,
+                    session_start=session_start,
+                    require_session_marker=True,
+                )
+                and isinstance(snapshot.payload, dict)
+                else {}
+            )
             symbols = {
                 str(item).upper() for item in payload.get("symbols", []) if str(item).strip()
             }
@@ -395,6 +418,7 @@ class ControlPlaneRepository:
         if not normalized_symbol:
             return False
         session_marker = current_scanner_session_start_utc().isoformat()
+        session_start = current_scanner_session_start_utc()
 
         with self.session_factory() as session:
             snapshot = session.scalar(
@@ -402,7 +426,16 @@ class ControlPlaneRepository:
                 .where(DashboardSnapshot.snapshot_type == "global_manual_stop_symbols")
                 .order_by(desc(DashboardSnapshot.created_at))
             )
-            payload = dict(snapshot.payload) if snapshot is not None and isinstance(snapshot.payload, dict) else {}
+            payload = (
+                dict(snapshot.payload)
+                if self._snapshot_matches_current_scanner_session(
+                    snapshot,
+                    session_start=session_start,
+                    require_session_marker=True,
+                )
+                and isinstance(snapshot.payload, dict)
+                else {}
+            )
             symbols = {
                 str(item).upper() for item in payload.get("symbols", []) if str(item).strip()
             }
@@ -429,6 +462,7 @@ class ControlPlaneRepository:
         if not normalized_code or not normalized_symbol:
             return False
         session_marker = current_scanner_session_start_utc().isoformat()
+        session_start = current_scanner_session_start_utc()
 
         with self.session_factory() as session:
             snapshot = session.scalar(
@@ -436,7 +470,16 @@ class ControlPlaneRepository:
                 .where(DashboardSnapshot.snapshot_type == "bot_manual_stop_symbols")
                 .order_by(desc(DashboardSnapshot.created_at))
             )
-            payload = dict(snapshot.payload) if snapshot is not None and isinstance(snapshot.payload, dict) else {}
+            payload = (
+                dict(snapshot.payload)
+                if self._snapshot_matches_current_scanner_session(
+                    snapshot,
+                    session_start=session_start,
+                    require_session_marker=True,
+                )
+                and isinstance(snapshot.payload, dict)
+                else {}
+            )
             bots_payload = payload.get("bots", {})
             if not isinstance(bots_payload, dict):
                 return False
@@ -1897,6 +1940,7 @@ class ControlPlaneRepository:
                 if self._snapshot_matches_current_scanner_session(
                     manual_stop_snapshot,
                     session_start=session_start,
+                    require_session_marker=True,
                 ):
                     dashboard_snapshots["bot_manual_stop_symbols"] = {
                         **manual_stop_snapshot.payload,
@@ -1910,6 +1954,7 @@ class ControlPlaneRepository:
                 if self._snapshot_matches_current_scanner_session(
                     global_manual_stop_snapshot,
                     session_start=session_start,
+                    require_session_marker=True,
                 ):
                     dashboard_snapshots["global_manual_stop_symbols"] = {
                         **global_manual_stop_snapshot.payload,
