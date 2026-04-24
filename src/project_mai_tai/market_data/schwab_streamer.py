@@ -68,6 +68,7 @@ class SchwabStreamerClient:
         self._task: asyncio.Task[None] | None = None
         self._connected = False
         self._connection_failures = 0
+        self._last_error = ""
 
     @property
     def connected(self) -> bool:
@@ -76,6 +77,10 @@ class SchwabStreamerClient:
     @property
     def connection_failures(self) -> int:
         return self._connection_failures
+
+    @property
+    def last_error(self) -> str:
+        return self._last_error
 
     async def start(
         self,
@@ -105,6 +110,7 @@ class SchwabStreamerClient:
             self._task = None
         self._credentials = None
         self._subscribed_symbols.clear()
+        self._last_error = ""
 
     async def sync_subscriptions(self, symbols: Sequence[str]) -> None:
         self._desired_symbols = {str(symbol).upper() for symbol in symbols if str(symbol).strip()}
@@ -245,6 +251,7 @@ class SchwabStreamerClient:
                     logger.info("Schwab streamer connected")
                 self._connected = True
                 self._connection_failures = 0
+                self._last_error = ""
                 await self._apply_subscription_delta(force_resubscribe=True)
 
                 while not self._stop_event.is_set():
@@ -252,9 +259,10 @@ class SchwabStreamerClient:
                     await self._handle_message(raw_message)
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except Exception as exc:
                 self._connected = False
                 self._connection_failures += 1
+                self._last_error = str(exc)
                 if not self._stop_event.is_set():
                     if self._connection_failures <= 5:
                         logger.warning(

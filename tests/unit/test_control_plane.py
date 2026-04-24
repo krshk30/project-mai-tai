@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -35,6 +35,7 @@ from project_mai_tai.events import (
     StrategyStateSnapshotPayload,
 )
 from project_mai_tai.services.control_plane import _render_confirmed_catalyst_cell, build_app
+from project_mai_tai.services.strategy_engine_app import current_scanner_session_start_utc
 from project_mai_tai.settings import Settings
 
 
@@ -1163,7 +1164,8 @@ def test_bot_page_can_render_and_update_manual_stop_symbols() -> None:
             .order_by(DashboardSnapshot.created_at.desc())
         )
         assert snapshot is not None
-        assert snapshot.payload == {"bots": {"macd_30s": ["SBET", "UGRO"]}}
+        assert snapshot.payload["bots"] == {"macd_30s": ["SBET", "UGRO"]}
+        assert "scanner_session_start_utc" in snapshot.payload
 
 
 def test_scanner_page_can_render_and_update_global_manual_stop_symbols() -> None:
@@ -1203,7 +1205,41 @@ def test_scanner_page_can_render_and_update_global_manual_stop_symbols() -> None
             .order_by(DashboardSnapshot.created_at.desc())
         )
         assert snapshot is not None
-        assert snapshot.payload == {"symbols": ["SBET", "UGRO"]}
+        assert snapshot.payload["symbols"] == ["SBET", "UGRO"]
+        assert "scanner_session_start_utc" in snapshot.payload
+
+
+def test_control_plane_ignores_manual_stop_snapshot_from_wrong_session_marker() -> None:
+    settings = Settings(redis_stream_prefix="test", oms_adapter="alpaca_paper")
+    session_factory = build_test_session_factory()
+    seed_database(session_factory)
+    current_session_start = current_scanner_session_start_utc()
+    with session_factory() as session:
+        session.add(
+            DashboardSnapshot(
+                snapshot_type="bot_manual_stop_symbols",
+                payload={
+                    "bots": {"macd_30s": ["SBET"]},
+                    "scanner_session_start_utc": (current_session_start - timedelta(days=1)).isoformat(),
+                },
+                created_at=datetime.now(UTC),
+            )
+        )
+        session.commit()
+    redis = FakeRedis(make_streams(settings.redis_stream_prefix))
+
+    app = build_app(
+        settings=settings,
+        session_factory=session_factory,
+        redis_client=redis,
+        legacy_client=FakeLegacyClient(),
+    )
+
+    with TestClient(app) as client:
+        bots = client.get("/api/bots")
+        assert bots.status_code == 200
+        macd_bot = next(item for item in bots.json()["bots"] if item["strategy_code"] == "macd_30s")
+        assert macd_bot["manual_stop_symbols"] == []
 
 
 def test_control_plane_treats_fresh_market_data_as_live_when_heartbeat_lags() -> None:

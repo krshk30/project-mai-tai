@@ -129,6 +129,26 @@ class ControlPlaneRepository:
         self._overview_cache_at: datetime | None = None
         self._overview_cache_lock = asyncio.Lock()
 
+    @staticmethod
+    def _snapshot_matches_current_scanner_session(
+        snapshot: DashboardSnapshot | None,
+        *,
+        session_start: datetime,
+    ) -> bool:
+        if snapshot is None or snapshot.created_at is None:
+            return False
+        payload = snapshot.payload if isinstance(snapshot.payload, dict) else {}
+        marker_raw = payload.get("scanner_session_start_utc")
+        if isinstance(marker_raw, str) and marker_raw.strip():
+            try:
+                marker_dt = datetime.fromisoformat(marker_raw)
+            except ValueError:
+                return False
+            if marker_dt.tzinfo is None:
+                marker_dt = marker_dt.replace(tzinfo=UTC)
+            return marker_dt.astimezone(UTC) == session_start
+        return snapshot.created_at.astimezone(UTC) >= session_start
+
     def _is_ui_hidden_symbol(self, account_name: str | None, symbol: str | None) -> bool:
         normalized_account = str(account_name or "").strip()
         normalized_symbol = str(symbol or "").strip().upper()
@@ -229,6 +249,7 @@ class ControlPlaneRepository:
         normalized_symbol = symbol.strip().upper()
         if not normalized_code or not normalized_symbol:
             return False
+        session_marker = current_scanner_session_start_utc().isoformat()
 
         with self.session_factory() as session:
             snapshot = session.scalar(
@@ -248,6 +269,7 @@ class ControlPlaneRepository:
             symbols.add(normalized_symbol)
             bots_payload[normalized_code] = sorted(symbols)
             payload["bots"] = bots_payload
+            payload["scanner_session_start_utc"] = session_marker
             session.execute(
                 text("DELETE FROM dashboard_snapshots WHERE snapshot_type = 'bot_manual_stop_symbols'")
             )
@@ -264,6 +286,7 @@ class ControlPlaneRepository:
         normalized_symbol = symbol.strip().upper()
         if not normalized_symbol:
             return False
+        session_marker = current_scanner_session_start_utc().isoformat()
 
         with self.session_factory() as session:
             snapshot = session.scalar(
@@ -277,6 +300,7 @@ class ControlPlaneRepository:
             }
             symbols.add(normalized_symbol)
             payload["symbols"] = sorted(symbols)
+            payload["scanner_session_start_utc"] = session_marker
             session.execute(
                 text("DELETE FROM dashboard_snapshots WHERE snapshot_type = 'global_manual_stop_symbols'")
             )
@@ -293,6 +317,7 @@ class ControlPlaneRepository:
         normalized_symbol = symbol.strip().upper()
         if not normalized_symbol:
             return False
+        session_marker = current_scanner_session_start_utc().isoformat()
 
         with self.session_factory() as session:
             snapshot = session.scalar(
@@ -308,6 +333,7 @@ class ControlPlaneRepository:
                 return False
             symbols.discard(normalized_symbol)
             payload["symbols"] = sorted(symbols)
+            payload["scanner_session_start_utc"] = session_marker
             session.execute(
                 text("DELETE FROM dashboard_snapshots WHERE snapshot_type = 'global_manual_stop_symbols'")
             )
@@ -325,6 +351,7 @@ class ControlPlaneRepository:
         normalized_symbol = symbol.strip().upper()
         if not normalized_code or not normalized_symbol:
             return False
+        session_marker = current_scanner_session_start_utc().isoformat()
 
         with self.session_factory() as session:
             snapshot = session.scalar(
@@ -349,6 +376,7 @@ class ControlPlaneRepository:
             else:
                 bots_payload.pop(normalized_code, None)
             payload["bots"] = bots_payload
+            payload["scanner_session_start_utc"] = session_marker
             session.execute(
                 text("DELETE FROM dashboard_snapshots WHERE snapshot_type = 'bot_manual_stop_symbols'")
             )
@@ -1789,10 +1817,9 @@ class ControlPlaneRepository:
                     .where(DashboardSnapshot.snapshot_type == "bot_manual_stop_symbols")
                     .order_by(desc(DashboardSnapshot.created_at))
                 )
-                if (
-                    manual_stop_snapshot is not None
-                    and manual_stop_snapshot.created_at is not None
-                    and manual_stop_snapshot.created_at.astimezone(UTC) >= session_start
+                if self._snapshot_matches_current_scanner_session(
+                    manual_stop_snapshot,
+                    session_start=session_start,
                 ):
                     dashboard_snapshots["bot_manual_stop_symbols"] = {
                         **manual_stop_snapshot.payload,
@@ -1803,10 +1830,9 @@ class ControlPlaneRepository:
                     .where(DashboardSnapshot.snapshot_type == "global_manual_stop_symbols")
                     .order_by(desc(DashboardSnapshot.created_at))
                 )
-                if (
-                    global_manual_stop_snapshot is not None
-                    and global_manual_stop_snapshot.created_at is not None
-                    and global_manual_stop_snapshot.created_at.astimezone(UTC) >= session_start
+                if self._snapshot_matches_current_scanner_session(
+                    global_manual_stop_snapshot,
+                    session_start=session_start,
                 ):
                     dashboard_snapshots["global_manual_stop_symbols"] = {
                         **global_manual_stop_snapshot.payload,
