@@ -4139,6 +4139,7 @@ class StrategyEngineService:
 
     async def _publish_heartbeat(self, status: str) -> None:
         effective_status = self._strategy_health_status(status)
+        stream_client = self._schwab_stream_client
         stream = stream_name(self.settings.redis_stream_prefix, "heartbeats")
         event = HeartbeatEvent(
             source_service=SERVICE_NAME,
@@ -4154,6 +4155,10 @@ class StrategyEngineService:
                     "schwab_generic_fallback_active": str(
                         self._should_use_generic_market_data_fallback_for_schwab()
                     ).lower(),
+                    "schwab_stream_connected": str(
+                        bool(stream_client is not None and getattr(stream_client, "connected", False))
+                    ).lower(),
+                    "schwab_stream_last_error": str(getattr(stream_client, "last_error", "") or ""),
                 },
             ),
         )
@@ -4616,6 +4621,10 @@ class StrategyEngineService:
         }
         self._clear_inactive_schwab_runtime_data_halts(active_set | set(open_symbols))
         stream_disconnected = self._schwab_stream_disconnect_has_exceeded_grace(now)
+        halt_reason = (
+            self._schwab_stream_failure_reason()
+            or "Schwab stream stale/disconnected; trading halted until live Schwab ticks recover"
+        )
         stale_symbols = {
             symbol: codes
             for symbol, codes in active_symbols.items()
@@ -4633,7 +4642,7 @@ class StrategyEngineService:
                 self._apply_schwab_runtime_data_halt(
                     symbol,
                     codes,
-                    reason="Schwab stream stale/disconnected; trading halted until live Schwab ticks recover",
+                    reason=halt_reason,
                     observed_at=now,
                 )
                 continue
@@ -4649,7 +4658,7 @@ class StrategyEngineService:
             self._apply_schwab_runtime_data_halt(
                 symbol,
                 codes,
-                reason="Schwab stream stale/disconnected; trading halted until live Schwab ticks recover",
+                reason=halt_reason,
                 observed_at=now,
             )
         self._schwab_stale_symbols = set(stale_symbols)
@@ -4662,6 +4671,7 @@ class StrategyEngineService:
             float(self.settings.schwab_stream_symbol_resubscribe_interval_seconds),
         )
         if self._schwab_stream_client is not None:
+            auth_failure = bool(self._schwab_stream_failure_reason())
             should_resubscribe = any(
                 (
                     now - self._schwab_symbol_last_resubscribe_at.get(symbol, datetime.min.replace(tzinfo=UTC))
@@ -4669,7 +4679,7 @@ class StrategyEngineService:
                 >= resubscribe_interval
                 for symbol in stale_symbols
             )
-            if should_resubscribe:
+            if should_resubscribe and not auth_failure:
                 try:
                     await self._schwab_stream_client.force_resubscribe()
                     for symbol in stale_symbols:
@@ -5164,6 +5174,34 @@ class StrategyEngineService:
     def _current_strategy_session_start_utc(self) -> datetime:
         return current_scanner_session_start_utc(self.state.alert_engine.now_provider())
 
+    def _snapshot_matches_current_strategy_session(
+        self,
+        snapshot: DashboardSnapshot | None,
+    ) -> bool:
+        session_start = self._current_strategy_session_start_utc()
+        if snapshot is None or snapshot.created_at is None:
+            return False
+        payload = snapshot.payload if isinstance(snapshot.payload, dict) else {}
+        marker_raw = payload.get("scanner_session_start_utc")
+        if isinstance(marker_raw, str) and marker_raw.strip():
+            try:
+                marker_dt = datetime.fromisoformat(marker_raw)
+            except ValueError:
+                return False
+            if marker_dt.tzinfo is None:
+                marker_dt = marker_dt.replace(tzinfo=UTC)
+            return marker_dt.astimezone(UTC) == session_start
+        return snapshot.created_at.astimezone(UTC) >= session_start
+
+    def _schwab_stream_failure_reason(self) -> str:
+        client = self._schwab_stream_client
+        last_error = str(getattr(client, "last_error", "") or "").lower()
+        if "refresh_token_authentication_error" in last_error or "unsupported_token_type" in last_error:
+            return "Schwab OAuth refresh failed on the VPS; reauthorize Schwab tokens before trading"
+        if "failed refreshing schwab token" in last_error:
+            return "Schwab OAuth refresh failed on the VPS; reauthorize Schwab tokens before trading"
+        return ""
+
     def _reconcile_runtime_state_from_database(self, *, log_when_changed: bool) -> bool:
         if self.session_factory is None:
             return False
@@ -5614,12 +5652,9 @@ class StrategyEngineService:
             self.logger.exception("failed to load manual bot stop symbols")
             return {}
 
-        if (
-            snapshot is None
-            or not isinstance(snapshot.payload, dict)
-            or snapshot.created_at is None
-            or snapshot.created_at.astimezone(UTC) < self._current_strategy_session_start_utc()
-        ):
+        if snapshot is None or not isinstance(snapshot.payload, dict):
+            return {}
+        if not self._snapshot_matches_current_strategy_session(snapshot):
             return {}
 
         bots_payload = snapshot.payload.get("bots", {})
@@ -5650,12 +5685,9 @@ class StrategyEngineService:
             self.logger.exception("failed to load global manual stop symbols")
             return set()
 
-        if (
-            snapshot is None
-            or not isinstance(snapshot.payload, dict)
-            or snapshot.created_at is None
-            or snapshot.created_at.astimezone(UTC) < self._current_strategy_session_start_utc()
-        ):
+        if snapshot is None or not isinstance(snapshot.payload, dict):
+            return set()
+        if not self._snapshot_matches_current_strategy_session(snapshot):
             return set()
 
         payload_symbols = snapshot.payload.get("symbols", [])

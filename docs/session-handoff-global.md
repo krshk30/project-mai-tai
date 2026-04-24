@@ -2479,3 +2479,100 @@ Validation:
   - `.venv\Scripts\python.exe -m py_compile src/project_mai_tai/settings.py src/project_mai_tai/broker_adapters/schwab.py src/project_mai_tai/market_data/schwab_streamer.py src/project_mai_tai/services/strategy_engine_app.py src/project_mai_tai/services/control_plane.py tests/unit/test_control_plane.py tests/unit/test_schwab_prewarm_and_auth.py tests/unit/test_bot_handoff_restore_seed.py`
   - `.venv\Scripts\python.exe -m pytest tests/unit/test_schwab_prewarm_and_auth.py tests/unit/test_control_plane.py -k "schwab_data_halt_red_on_bot_page or webull_bot_page_uses_polygon_data_halt_wording or prewarm or auth_failure"`
   - `.venv\Scripts\python.exe -m pytest tests/unit/test_bot_handoff_restore_seed.py`
+
+## 2026-04-24 Morning Follow-Up: Manual Stop Session Scope + Honest Schwab Auth Halt
+
+Context:
+
+- the user again reported `AUUD` / `CAST` showing on the 30-second bot in the
+  morning and assumed they were stale leftovers from the prior day
+- live VPS verification showed those names were actually current-session
+  confirmations, not literal prior-day carryover:
+  - `CAST` confirmed at `04:06:56 AM ET`
+  - `AUUD` confirmed at `06:18:23 AM ET`
+  - `IQST` later joined and both bots should have carried all three
+- the actual cross-bot mismatch was different:
+  - `Schwab 30 Sec Bot` had `AUUD`, `CAST`, `IQST`
+  - `Webull 30 Sec Bot` initially had only `IQST`
+  - `/api/bots` showed `webull_30s.manual_stop_symbols = ["AUUD", "CAST"]`
+- control-plane access logs confirmed those exact bot-level Webull manual-stop
+  actions existed:
+  - `/bot/symbol/stop?strategy_code=webull_30s&symbol=AUUD`
+  - `/bot/symbol/stop?strategy_code=webull_30s&symbol=CAST`
+
+Root cause:
+
+- per-bot and global manual-stop snapshots were only session-filtered by
+  `created_at >= current_scanner_session_start_utc()`
+- that timestamp-only rule is fragile during messy morning recovery because an
+  old payload can be rewritten in the new session and then incorrectly survive
+  restart/preload as if it belongs to the current trading day
+- separately, the Schwab halt issue was confirmed again as broker auth failure,
+  not symbol-count pressure:
+  - live `strategy.log` repeated
+    `refresh_token_authentication_error` / `unsupported_token_type`
+  - the Schwab stream therefore never authenticated cleanly, so the red halt
+    state was real but its displayed reason was still too generic
+
+Code fix:
+
+- updated `src/project_mai_tai/services/control_plane.py`
+  - bot/global manual-stop snapshots now persist
+    `scanner_session_start_utc`
+  - snapshot restore/load now prefers exact session-marker match; it only falls
+    back to `created_at` for older legacy snapshots that do not yet carry a
+    marker
+- updated `src/project_mai_tai/services/strategy_engine_app.py`
+  - manual-stop preload now uses the same exact session-marker check, so stale
+    per-bot stop payloads no longer leak into a new morning session just because
+    they were rewritten after 4 AM
+  - Schwab halt monitoring now derives a specific auth-failure reason from the
+    streamer client error state
+  - stale-symbol halts now use that auth-specific reason when appropriate
+  - forced Schwab resubscribe attempts are skipped when the root problem is
+    failed OAuth refresh, preventing noisy retry loops against dead credentials
+  - heartbeat details now include Schwab stream connectivity plus the last
+    stream error for easier morning diagnosis
+- updated `src/project_mai_tai/market_data/schwab_streamer.py`
+  - streamer now tracks `last_error`, clearing it on successful connect and
+    recording the latest connection/auth failure
+
+Live remediation applied immediately:
+
+- resumed `AUUD` and `CAST` on `Webull 30 Sec Bot` so the bot immediately
+  rejoined the current-session handoff without waiting for another deploy
+- after resume, live `/api/bots` showed:
+  - `macd_30s.watchlist = ["AUUD", "CAST", "IQST"]`
+  - `webull_30s.watchlist = ["AUUD", "CAST", "IQST"]`
+  - `webull_30s.manual_stop_symbols = []`
+
+Operator meaning:
+
+- the morning “leftover” symptom was a mix of two things:
+  - current-day confirmed symbols that were legitimately present
+  - stale bot-manual-stop state that incorrectly kept Webull from receiving the
+    same current-day handoff after restart
+- the Schwab red halt is still a real blocker until Schwab OAuth is reauthorized
+  on the VPS; this patch makes that cause explicit instead of pretending the
+  issue is generic stale ticks
+- current evidence does **not** support “too many symbols caused the halt”; the
+  live blocker is Schwab token/auth failure
+
+Regression coverage added:
+
+- `tests/unit/test_manual_stop_session_scope.py`
+  - wrong-session `bot_manual_stop_symbols` markers are ignored by strategy
+    preload
+  - Schwab auth failure surfaces the OAuth-specific halt reason and skips
+    forced resubscribe
+- `tests/unit/test_control_plane.py`
+  - persisted manual-stop snapshots now include `scanner_session_start_utc`
+  - control-plane ignores manual-stop snapshots whose explicit session marker
+    does not match the current scanner day
+
+Validation:
+
+- passed:
+  - `.venv\Scripts\python.exe -m pytest tests/unit/test_control_plane.py -k "manual_stop_symbols or wrong_session_marker"`
+  - `.venv\Scripts\python.exe -m pytest tests/unit/test_manual_stop_session_scope.py`
+  - `.venv\Scripts\python.exe -m py_compile src/project_mai_tai/market_data/schwab_streamer.py src/project_mai_tai/services/strategy_engine_app.py src/project_mai_tai/services/control_plane.py tests/unit/test_control_plane.py tests/unit/test_manual_stop_session_scope.py`

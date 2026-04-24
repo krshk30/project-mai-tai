@@ -111,6 +111,7 @@ class SchwabStreamerClient:
             self._task = None
         self._credentials = None
         self._subscribed_symbols.clear()
+        self._last_error = None
 
     async def sync_subscriptions(self, symbols: Sequence[str]) -> None:
         self._desired_symbols = {str(symbol).upper() for symbol in symbols if str(symbol).strip()}
@@ -259,7 +260,7 @@ class SchwabStreamerClient:
                     await self._handle_message(raw_message)
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except Exception as exc:
                 self._connected = False
                 self._connection_failures += 1
                 self._last_error = traceback.format_exc(limit=1).strip().splitlines()[-1]
