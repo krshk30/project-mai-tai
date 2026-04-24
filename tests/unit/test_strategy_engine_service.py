@@ -3839,6 +3839,7 @@ async def test_service_clears_data_halt_when_stale_symbol_leaves_active_set() ->
         dashboard_snapshot_persistence_enabled=False,
         strategy_history_persistence_enabled=False,
         schwab_stream_symbol_stale_after_seconds=1.0,
+        schwab_stream_symbol_stale_after_seconds_without_position=30.0,
         schwab_stream_symbol_resubscribe_interval_seconds=1.0,
     )
     service = StrategyEngineService(settings=settings, redis_client=FakeRedis())
@@ -3883,6 +3884,7 @@ async def test_service_reactivated_symbol_gets_fresh_schwab_stale_grace_window()
         dashboard_snapshot_persistence_enabled=False,
         strategy_history_persistence_enabled=False,
         schwab_stream_symbol_stale_after_seconds=1.0,
+        schwab_stream_symbol_stale_after_seconds_without_position=30.0,
         schwab_stream_symbol_resubscribe_interval_seconds=1.0,
     )
     service = StrategyEngineService(settings=settings, redis_client=FakeRedis())
@@ -4015,6 +4017,7 @@ async def test_service_persistent_schwab_stream_disconnect_halts_symbols_after_g
         dashboard_snapshot_persistence_enabled=False,
         strategy_history_persistence_enabled=False,
         schwab_stream_symbol_stale_after_seconds=1.0,
+        schwab_stream_symbol_stale_after_seconds_without_position=30.0,
         schwab_stream_symbol_resubscribe_interval_seconds=1.0,
     )
     service = StrategyEngineService(settings=settings, redis_client=FakeRedis())

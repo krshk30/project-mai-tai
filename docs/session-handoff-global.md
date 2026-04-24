@@ -2854,3 +2854,15 @@ Validation:
 - passed:
   - `.venv\Scripts\python.exe -m pytest tests/unit/test_strategy_engine_service.py -k "stale_schwab_watchlist_symbol_without_open_position or gives_flat_schwab_watchlist_symbol_extended_stale_window or uses_fallback_quotes_for_stale_schwab_open_positions"`
   - `.venv\Scripts\python.exe -m py_compile src/project_mai_tai/settings.py src/project_mai_tai/services/strategy_engine_app.py tests/unit/test_strategy_engine_service.py`
+
+Follow-up hotfix:
+
+- first VPS deploy exposed one missed helper call site:
+  - `_schwab_stream_disconnect_has_exceeded_grace()` still called the
+    position-aware stale helper without the new keyword argument
+  - result: the strategy service restarted once on deploy with a `TypeError`,
+    then systemd brought it back
+- hotfix updated the disconnect-grace helper signature and caller so the
+  position-aware stale window is applied consistently for both:
+  - symbol-specific stale checks
+  - stream-disconnect grace checks

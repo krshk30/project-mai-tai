@@ -4615,14 +4615,21 @@ class StrategyEngineService:
         client = self._schwab_stream_client
         return client is not None and not getattr(client, "connected", False)
 
-    def _schwab_stream_disconnect_has_exceeded_grace(self, now: datetime) -> bool:
+    def _schwab_stream_disconnect_has_exceeded_grace(
+        self,
+        now: datetime,
+        *,
+        has_open_position: bool = False,
+    ) -> bool:
         if not self._is_schwab_stream_disconnected():
             self._schwab_stream_disconnected_since = None
             return False
         if self._schwab_stream_disconnected_since is None:
             self._schwab_stream_disconnected_since = now
             return False
-        stale_after = self._schwab_data_halt_stale_after_seconds()
+        stale_after = self._schwab_data_halt_stale_after_seconds(
+            has_open_position=has_open_position
+        )
         return (now - self._schwab_stream_disconnected_since).total_seconds() >= stale_after
 
     def _schwab_data_halt_stale_after_seconds(self, *, has_open_position: bool) -> float:
@@ -4670,7 +4677,10 @@ class StrategyEngineService:
             if symbol in active_set
         }
         self._clear_inactive_schwab_runtime_data_halts(active_set | set(open_symbols))
-        stream_disconnected = self._schwab_stream_disconnect_has_exceeded_grace(now)
+        stream_disconnected = self._schwab_stream_disconnect_has_exceeded_grace(
+            now,
+            has_open_position=bool(open_symbols),
+        )
         halt_reason = (
             self._schwab_stream_failure_reason()
             or "Schwab stream stale/disconnected; trading halted until live Schwab ticks recover"
