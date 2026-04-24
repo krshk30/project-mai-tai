@@ -67,16 +67,36 @@ Validation completed locally before deploy:
   - strategy-engine routing
   - OMS provider construction
   - control-plane metadata / renamed Schwab bot / Webull bot shell
+- restart-state protection added before final deploy:
+  - when an older persisted handoff snapshot does not contain `webull_30s`
+    yet, restore now seeds the new bot from current confirmed names instead of
+    leaving it empty until a future confirmation cycle
 
-Pending final release steps from this point:
+Release state after deploy:
 
-1. branch / commit / PR / merge
-2. deploy to VPS
-3. enable the new bot on VPS env
-4. restart control / strategy / OMS services
-5. verify both 30-second bots render correctly
-6. verify Webull orders reject with the expected explicit message until the App
-   Key is available
+- PR `#34` merged into `main`
+- follow-up restore seeding patch applied locally and prepared for deploy
+- local / GitHub / VPS baseline commit for the initial Webull scaffold:
+  - `ba4a733323b4da29e6dda41b2933d863df7f5f1d`
+- VPS env updated with:
+  - `MAI_TAI_STRATEGY_WEBULL_30S_ENABLED=true`
+- control-plane routes confirmed live:
+  - `/bot/30s`
+  - `/bot/30s-webull`
+- `/api/bots` confirms both bot identities:
+  - `macd_30s -> Schwab 30 Sec Bot`
+  - `webull_30s -> Webull 30 Sec Bot`
+
+Operational expectation until Webull keys arrive:
+
+- the Webull bot should warm up, listen, receive handoff, and evaluate on
+  Polygon/Massive data
+- OMS recognizes the `webull` provider
+- order attempts reject explicitly and safely until:
+  - `MAI_TAI_WEBULL_APP_KEY`
+  - `MAI_TAI_WEBULL_APP_SECRET`
+  - `MAI_TAI_WEBULL_ACCOUNT_ID`
+  are configured and real order submission is implemented
 
 ## Use This File First
 

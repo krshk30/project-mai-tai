@@ -107,3 +107,25 @@ def test_control_plane_meta_includes_webull_and_renamed_schwab_bot() -> None:
     assert BOT_PAGE_META["macd_30s"]["title"] == "Schwab 30 Sec Bot"
     assert BOT_PAGE_META["webull_30s"]["title"] == "Webull 30 Sec Bot"
     assert BOT_PAGE_META["webull_30s"]["path"] == "/bot/30s-webull"
+
+
+def test_restore_confirmed_runtime_view_seeds_new_webull_bot_from_confirmed_state() -> None:
+    state = StrategyEngineState(
+        settings=Settings(
+            strategy_macd_30s_broker_provider="schwab",
+            strategy_webull_30s_enabled=True,
+            scanner_feed_retention_enabled=False,
+        ),
+        now_provider=fixed_now,
+    )
+
+    confirmed = [{"ticker": "UGRO", "score": 7}]
+    state.restore_confirmed_runtime_view(
+        confirmed,
+        all_confirmed=confirmed,
+        bot_handoff_symbols_by_strategy={"macd_30s": ["UGRO"]},
+        bot_handoff_history_by_strategy={"macd_30s": ["UGRO"]},
+    )
+
+    assert "UGRO" in state.bots["macd_30s"].watchlist
+    assert "UGRO" in state.bots["webull_30s"].watchlist

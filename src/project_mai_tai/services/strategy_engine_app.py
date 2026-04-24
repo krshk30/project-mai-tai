@@ -3205,13 +3205,15 @@ class StrategyEngineState:
         self._ensure_bot_handoff_state()
         restored_active: dict[str, set[str]] = {}
         restored_history: dict[str, set[str]] = {}
+        active_map = active_by_strategy or {}
+        history_map = history_by_strategy or {}
+        fallback_symbols = set(self._normalize_symbol_items(self._confirmed_handoff_candidates()))
         for code in self.bots:
-            active_symbols = set(
-                self._normalize_symbol_items((active_by_strategy or {}).get(code, ()))
-            )
-            history_symbols = set(
-                self._normalize_symbol_items((history_by_strategy or {}).get(code, ()))
-            )
+            active_symbols = set(self._normalize_symbol_items(active_map.get(code, ())))
+            history_symbols = set(self._normalize_symbol_items(history_map.get(code, ())))
+            if code not in active_map and code not in history_map:
+                active_symbols = set(fallback_symbols)
+                history_symbols = set(fallback_symbols)
             if not history_symbols:
                 history_symbols = set(active_symbols)
             restored_active[code] = active_symbols
