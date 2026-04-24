@@ -2424,6 +2424,11 @@ def build_app(
         data = await app.state.repository.load_bot_dashboard_data()
         return _build_bot_api_payload(data, "macd_30s")
 
+    @app.get("/botwebull")
+    async def bot_webull_status() -> dict[str, Any]:
+        data = await app.state.repository.load_bot_dashboard_data()
+        return _build_bot_api_payload(data, "webull_30s")
+
     @app.get("/bot1m")
     async def bot_1m_status() -> dict[str, Any]:
         data = await app.state.repository.load_bot_dashboard_data()
@@ -2453,6 +2458,11 @@ def build_app(
     async def bot_30s_page() -> str:
         data = await app.state.repository.load_bot_dashboard_data()
         return _render_bot_detail_page(data, "macd_30s")
+
+    @app.get("/bot/30s-webull", response_class=HTMLResponse)
+    async def bot_webull_30s_page() -> str:
+        data = await app.state.repository.load_bot_dashboard_data()
+        return _render_bot_detail_page(data, "webull_30s")
 
     @app.get("/bot/30s-probe", response_class=HTMLResponse)
     async def bot_30s_probe_page() -> str:
@@ -3507,11 +3517,18 @@ def _render_dashboard(data: dict[str, Any]) -> str:
 
 BOT_PAGE_META = {
     "macd_30s": {
-        "title": "Mai Tai 30-Second MACD Bot",
-        "nav_title": "Mai Tai 30s Core",
+        "title": "Schwab 30 Sec Bot",
+        "nav_title": "Schwab 30s",
         "badge": "30",
         "color": "#2979ff",
         "path": "/bot/30s",
+    },
+    "webull_30s": {
+        "title": "Webull 30 Sec Bot",
+        "nav_title": "Webull 30s",
+        "badge": "WB",
+        "color": "#ff8f00",
+        "path": "/bot/30s-webull",
     },
     "macd_30s_probe": {
         "title": "Mai Tai 30-Second Probe Bot",

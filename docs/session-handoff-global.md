@@ -1,5 +1,83 @@
 # Session Handoff - Global
 
+## Current Live Focus - 2026-04-23
+
+This handoff is now superseded by the current 30-second live-trading work from
+`2026-04-23`.
+
+Current operating model:
+
+- only the 30-second bot family is actively in focus
+- the existing Schwab-backed bot is now labeled:
+  - `Schwab 30 Sec Bot`
+- a second 30-second bot has been scaffolded locally:
+  - `Webull 30 Sec Bot`
+
+Important current implementation state:
+
+- `Schwab 30 Sec Bot`
+  - broker provider: `schwab`
+  - market data: live Schwab native tick/quote path
+  - trading window: existing Schwab 30-second window
+- `Webull 30 Sec Bot`
+  - broker provider: `webull`
+  - market data: Polygon/Massive tick and historical path
+  - trading window: `4:00 AM -> 6:00 PM ET`
+  - strategy logic: same 30-second entry/indicator stack as the Schwab bot
+  - current broker execution status:
+    - scaffolded only
+    - listens, warms up, evaluates, handoff works
+    - OMS routes orders to a Webull adapter stub
+    - orders intentionally reject cleanly until official Webull OpenAPI
+      credentials are available
+
+Why this was done:
+
+- user wants to compare a second 30-second bot using Polygon data and Webull
+  execution
+- official Webull App Key / Secret approval is still pending
+- the safe interim state is:
+  - bot runs
+  - UI/control-plane visibility works
+  - intents and OMS flow can be validated
+  - broker execution rejects safely instead of silently failing
+
+Local code changes prepared in this session:
+
+- new broker adapter scaffold:
+  - [webull.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/src/project_mai_tai/broker_adapters/webull.py)
+- runtime registration + naming updates:
+  - [runtime_registry.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/src/project_mai_tai/runtime_registry.py)
+- settings for Webull provider / account / enable flag:
+  - [settings.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/src/project_mai_tai/settings.py)
+- strategy-engine runtime wiring for `webull_30s`:
+  - [strategy_engine_app.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/src/project_mai_tai/services/strategy_engine_app.py)
+- control-plane page and metadata:
+  - [control_plane.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/src/project_mai_tai/services/control_plane.py)
+- 30-second Webull config variant:
+  - [trading_config.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/src/project_mai_tai/strategy_core/trading_config.py)
+- focused unit coverage:
+  - [test_webull_30s_bot.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/tests/unit/test_webull_30s_bot.py)
+
+Validation completed locally before deploy:
+
+- UTF-8 compile pass on touched files
+- targeted unit tests passed for:
+  - runtime registration
+  - strategy-engine routing
+  - OMS provider construction
+  - control-plane metadata / renamed Schwab bot / Webull bot shell
+
+Pending final release steps from this point:
+
+1. branch / commit / PR / merge
+2. deploy to VPS
+3. enable the new bot on VPS env
+4. restart control / strategy / OMS services
+5. verify both 30-second bots render correctly
+6. verify Webull orders reject with the expected explicit message until the App
+   Key is available
+
 ## Use This File First
 
 This is the single global handoff file for active agent context.

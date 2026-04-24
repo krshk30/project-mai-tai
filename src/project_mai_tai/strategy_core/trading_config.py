@@ -365,6 +365,26 @@ class TradingConfig:
         )
         return TradingConfig(**fields)
 
+    def make_30s_webull_variant(
+        self,
+        *,
+        quantity: int = 100,
+        dry_run: bool | None = None,
+    ) -> "TradingConfig":
+        fields = asdict(
+            self.make_30s_schwab_native_variant(
+                quantity=quantity,
+                dry_run=dry_run,
+            )
+        )
+        fields.update(
+            {
+                "trading_start_hour": 4,
+                "trading_end_hour": 18,
+            }
+        )
+        return TradingConfig(**fields)
+
     def make_30s_pretrigger_variant(
         self,
         *,
