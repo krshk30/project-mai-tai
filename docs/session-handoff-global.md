@@ -3112,3 +3112,37 @@ Operator meaning:
 - this does not change bot behavior or handoff logic; it only fixes the control
   plane view so operators can trust the displayed live list
 
+## 2026-04-24 - 30s completed-bar wait escalation and watchdog
+
+Context:
+
+- operators flagged the Decision Tape placeholder
+  `live in bot; waiting for next completed 30s trade bar to evaluate`
+  as too vague for live trading
+- the old placeholder did not distinguish:
+  - a normal between-bar wait on an actively ticking symbol
+  - a dangerous case where a live symbol had gone too long without producing a
+    completed 30-second trade bar
+
+Fix:
+
+- updated `src/project_mai_tai/services/control_plane.py`
+  - normal waiting now shows elapsed time since the last live tick, e.g.
+    `waiting for next completed 30s trade bar to evaluate (18s since last Schwab tick)`
+  - if the wait stretches past 45 seconds, the reason now escalates to a
+    clearer warning
+  - if the wait stretches past 90 seconds, the placeholder escalates to
+    `critical` with:
+    `no completed 30s trade bar for ... after the last live ... tick - verify tape/bar flow now`
+- added targeted coverage in `tests/unit/test_control_plane.py` for:
+  - the normal elapsed-time placeholder
+  - the stalled/critical completed-bar wait path
+
+Operator meaning:
+
+- a plain `pending` completed-bar wait is now easier to read and less scary
+- a long wait is now explicitly visible as a possible bar-flow problem instead
+  of looking like a harmless placeholder
+- this is a control-plane observability fix; it does not change trading logic,
+  entry rules, or how bars are built
+
