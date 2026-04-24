@@ -32,7 +32,7 @@ def configured_strategy_registrations(settings: Settings) -> tuple[StrategyRegis
         registrations.append(
             StrategyRegistration(
                 code="macd_30s",
-                display_name="MACD Bot",
+                display_name="Schwab 30 Sec Bot",
                 account_name=settings.strategy_macd_30s_account_name,
                 interval_secs=30,
                 runtime_kind="macd",
@@ -45,6 +45,28 @@ def configured_strategy_registrations(settings: Settings) -> tuple[StrategyRegis
                     "interval_secs": 30,
                     "runtime_kind": "macd",
                     "provider": settings.provider_for_strategy("macd_30s"),
+                },
+            )
+        )
+    if settings.strategy_webull_30s_enabled:
+        registrations.append(
+            StrategyRegistration(
+                code="webull_30s",
+                display_name="Webull 30 Sec Bot",
+                account_name=settings.strategy_webull_30s_account_name,
+                interval_secs=30,
+                runtime_kind="macd",
+                execution_mode=settings.execution_mode_for_provider(
+                    settings.provider_for_strategy("webull_30s")
+                ),
+                metadata={
+                    "account_name": settings.strategy_webull_30s_account_name,
+                    "account_display_name": settings.display_account_name(
+                        settings.strategy_webull_30s_account_name
+                    ),
+                    "interval_secs": 30,
+                    "runtime_kind": "macd",
+                    "provider": settings.provider_for_strategy("webull_30s"),
                 },
             )
         )

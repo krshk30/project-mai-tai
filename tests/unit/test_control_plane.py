@@ -885,7 +885,7 @@ def test_control_plane_overview_and_dashboard_render() -> None:
         bots_body = bots.json()
         bot_30s = next(item for item in bots_body["bots"] if item["strategy_code"] == "macd_30s")
         bot_1m = next(item for item in bots_body["bots"] if item["strategy_code"] == "macd_1m")
-        assert bot_30s["display_name"] == "MACD Bot"
+        assert bot_30s["display_name"] == "Schwab 30 Sec Bot"
         assert bot_30s["recent_intents"][0]["symbol"] == "UGRO"
         assert bot_30s["legacy_status"] == "not_available"
         assert bot_30s["daily_pnl"] == 125.5
@@ -929,7 +929,7 @@ def test_control_plane_overview_and_dashboard_render() -> None:
 
         bot_30s_page = client.get("/bot/30s")
         assert bot_30s_page.status_code == 200
-        assert "30-Second MACD Bot" in bot_30s_page.text
+        assert "Schwab 30 Sec Bot" in bot_30s_page.text
         assert "Execution Workspace" in bot_30s_page.text
         assert "Open Positions" in bot_30s_page.text
         assert "Completed Positions" in bot_30s_page.text
@@ -1179,7 +1179,7 @@ def test_control_plane_treats_fresh_market_data_as_live_when_heartbeat_lags() ->
         assert "Bot Deck" in dashboard.text
         assert "Active strategy runtimes configured in this environment." in dashboard.text
         assert "UGRO" in dashboard.text
-        assert "MACD Bot" in dashboard.text
+        assert "Schwab 30 Sec Bot" in dashboard.text
         assert "paper/alpaca" in dashboard.text
         assert "TOS Parity" in dashboard.text
         assert "thinkorswim_1m" in dashboard.text

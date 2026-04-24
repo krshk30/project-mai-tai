@@ -2357,6 +2357,7 @@ class StrategyEngineState:
 
         base_trading = base_trading_config or TradingConfig()
         macd_30s_trading = self._resolve_30s_trading_config(base_trading, variant="regular")
+        webull_30s_trading = self._resolve_30s_trading_config(base_trading, variant="webull")
         macd_30s_probe_trading = self._resolve_30s_trading_config(base_trading, variant="probe")
         macd_30s_reclaim_trading = self._resolve_30s_trading_config(base_trading, variant="reclaim")
         macd_30s_retest_trading = self._resolve_30s_trading_config(base_trading, variant="retest")
@@ -2441,6 +2442,32 @@ class StrategyEngineState:
                 ),
                 retention_config=macd_30s_retention,
             )
+        if self.settings.strategy_webull_30s_enabled and "webull_30s" in registrations:
+            self.bots["webull_30s"] = StrategyBotRuntime(
+                StrategyDefinition(
+                    code="webull_30s",
+                    display_name=registrations["webull_30s"].display_name,
+                    account_name=registrations["webull_30s"].account_name,
+                    interval_secs=30,
+                    trading_config=webull_30s_trading,
+                    indicator_config=default_indicator_config,
+                ),
+                now_provider=now_provider,
+                session_factory=session_factory if self.settings.strategy_history_persistence_enabled else None,
+                use_live_aggregate_bars=False,
+                live_aggregate_fallback_enabled=False,
+                builder_manager=SchwabNativeBarBuilderManager(
+                    interval_secs=30,
+                    time_provider=lambda: resolved_now_provider().timestamp(),
+                ),
+                indicator_engine=SchwabNativeIndicatorEngine(default_indicator_config),
+                entry_engine=SchwabNativeEntryEngine(
+                    webull_30s_trading,
+                    name=registrations["webull_30s"].display_name,
+                    now_provider=resolved_now_provider,
+                ),
+                retention_config=macd_30s_retention,
+            )
         if self.settings.strategy_macd_30s_probe_enabled and "macd_30s_probe" in registrations:
             self.bots["macd_30s_probe"] = StrategyBotRuntime(
                 StrategyDefinition(
@@ -2509,6 +2536,12 @@ class StrategyEngineState:
             )
             raw_overrides = self.settings.strategy_macd_30s_config_overrides_json
             scope = "strategy_macd_30s_config_overrides_json"
+        elif variant == "webull":
+            config = base_trading.make_30s_webull_variant(
+                quantity=self.settings.strategy_webull_30s_default_quantity
+            )
+            raw_overrides = self.settings.strategy_webull_30s_config_overrides_json
+            scope = "strategy_webull_30s_config_overrides_json"
         elif variant == "probe":
             config = base_trading.make_30s_pretrigger_variant(quantity=100)
             raw_overrides = self.settings.strategy_macd_30s_probe_config_overrides_json
@@ -2559,7 +2592,7 @@ class StrategyEngineState:
 
     def _resolve_schwab_stream_bot_codes(self) -> tuple[str, ...]:
         codes: list[str] = []
-        for code in ("macd_30s", "tos"):
+        for code in ("macd_30s", "webull_30s", "tos"):
             if self.settings.provider_for_strategy(code) == "schwab":
                 codes.append(code)
         return tuple(codes)
@@ -3720,8 +3753,9 @@ class StrategyEngineService:
 
         self.logger.info("%s starting", SERVICE_NAME)
         self.logger.info(
-            "strategy bot config | macd_30s=%s reclaim=%s macd_1m=%s tos=%s runner=%s qty=%s bots=%s",
+            "strategy bot config | schwab_30s=%s webull_30s=%s reclaim=%s macd_1m=%s tos=%s runner=%s qty=%s bots=%s",
             self.settings.strategy_macd_30s_enabled,
+            self.settings.strategy_webull_30s_enabled,
             self.settings.strategy_macd_30s_reclaim_enabled,
             self.settings.strategy_macd_1m_enabled,
             self.settings.strategy_tos_enabled,
@@ -5103,7 +5137,7 @@ class StrategyEngineService:
     def _runtime_bar_history_restore_limit(self, runtime: StrategyBotRuntime) -> int | None:
         trading_config = runtime.definition.trading_config
         indicator_config = runtime.definition.indicator_config
-        if runtime.definition.code == "macd_30s" and runtime.definition.interval_secs == 30:
+        if runtime.definition.code in {"macd_30s", "webull_30s"} and runtime.definition.interval_secs == 30:
             return None
         indicator_min_bars = int(indicator_config.macd_slow + indicator_config.macd_signal)
         strategy_min_bars = int(getattr(trading_config, "schwab_native_warmup_bars_required", 0) or 0)

@@ -81,6 +81,7 @@ class Settings(BaseSettings):
     market_data_warmup_bar_limit: int = 50_000
     market_data_live_aggregate_stream_enabled: bool = False
     strategy_macd_30s_enabled: bool = True
+    strategy_webull_30s_enabled: bool = False
     strategy_macd_30s_live_aggregate_bars_enabled: bool = False
     strategy_macd_30s_live_aggregate_fallback_enabled: bool = True
     strategy_macd_30s_live_aggregate_stale_after_seconds: int = 3
@@ -89,6 +90,7 @@ class Settings(BaseSettings):
     strategy_macd_30s_reclaim_enabled: bool = False
     strategy_macd_30s_retest_enabled: bool = False
     strategy_macd_30s_default_quantity: int = 100
+    strategy_webull_30s_default_quantity: int = 100
     strategy_macd_30s_reclaim_excluded_symbols: str = "JEM,CYCN,BFRG,UCAR,BBGI"
     scanner_feed_retention_enabled: bool = True
     scanner_feed_retention_structure_bars: int = 10
@@ -109,6 +111,7 @@ class Settings(BaseSettings):
     strategy_macd_1m_taapi_indicator_source_enabled: bool = False
     strategy_macd_30s_common_config_overrides_json: str = ""
     strategy_macd_30s_config_overrides_json: str = ""
+    strategy_webull_30s_config_overrides_json: str = ""
     strategy_macd_30s_probe_config_overrides_json: str = ""
     strategy_macd_30s_reclaim_config_overrides_json: str = ""
     strategy_macd_30s_retest_config_overrides_json: str = ""
@@ -142,6 +145,8 @@ class Settings(BaseSettings):
     alpaca_cancel_confirm_timeout_seconds: float = 5.0
     strategy_macd_30s_account_name: str = "paper:macd_30s"
     strategy_macd_30s_broker_provider: str | None = None
+    strategy_webull_30s_account_name: str = "live:webull_30s"
+    strategy_webull_30s_broker_provider: str | None = "webull"
     strategy_macd_30s_probe_account_name: str = "paper:macd_30s_probe"
     strategy_macd_30s_reclaim_account_name: str = "paper:macd_30s_reclaim"
     strategy_macd_30s_retest_account_name: str = "paper:macd_30s_retest"
@@ -177,6 +182,12 @@ class Settings(BaseSettings):
     schwab_stream_symbol_stale_after_seconds: float = 8.0
     schwab_stream_symbol_quote_poll_interval_seconds: float = 2.0
     schwab_stream_symbol_resubscribe_interval_seconds: float = 5.0
+    webull_base_url: str = "https://api.webull.com"
+    webull_region_id: str = "us"
+    webull_request_timeout_seconds: int = 10
+    webull_app_key: str | None = None
+    webull_app_secret: str | None = None
+    webull_account_id: str | None = None
     oms_broker_sync_interval_seconds: int = 5
     oms_working_order_refresh_seconds: int = 5
 
@@ -280,6 +291,8 @@ class Settings(BaseSettings):
         normalized = self._normalize_provider_name(provider) or self.resolved_broker_provider
         if normalized == "schwab":
             return "live"
+        if normalized == "webull":
+            return "live"
         if normalized == "alpaca":
             return "paper"
         return "shadow"
@@ -288,6 +301,10 @@ class Settings(BaseSettings):
         normalized_code = str(strategy_code).strip().lower()
         if normalized_code == "macd_30s":
             override = self._normalize_provider_name(self.strategy_macd_30s_broker_provider)
+            if override is not None:
+                return override
+        if normalized_code == "webull_30s":
+            override = self._normalize_provider_name(self.strategy_webull_30s_broker_provider)
             if override is not None:
                 return override
         if normalized_code == "tos":
@@ -300,6 +317,8 @@ class Settings(BaseSettings):
         normalized_account = str(account_name).strip()
         if normalized_account == self.strategy_macd_30s_account_name:
             return self.provider_for_strategy("macd_30s")
+        if normalized_account == self.strategy_webull_30s_account_name:
+            return self.provider_for_strategy("webull_30s")
         if normalized_account == self.strategy_tos_account_name:
             return self.provider_for_strategy("tos")
         return self.resolved_broker_provider
@@ -319,6 +338,10 @@ class Settings(BaseSettings):
         providers = {self.resolved_broker_provider}
         if self.strategy_macd_30s_enabled:
             override = self._normalize_provider_name(self.strategy_macd_30s_broker_provider)
+            if override is not None:
+                providers.add(override)
+        if self.strategy_webull_30s_enabled:
+            override = self._normalize_provider_name(self.strategy_webull_30s_broker_provider)
             if override is not None:
                 providers.add(override)
         if self.strategy_tos_enabled:

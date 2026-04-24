@@ -18,8 +18,9 @@ from project_mai_tai.broker_adapters.protocols import BrokerAdapter, ExecutionRe
 from project_mai_tai.broker_adapters.routing import RoutingBrokerAdapter
 from project_mai_tai.broker_adapters.schwab import SchwabBrokerAdapter
 from project_mai_tai.broker_adapters.simulated import SimulatedBrokerAdapter
+from project_mai_tai.broker_adapters.webull import WebullBrokerAdapter
 from project_mai_tai.db.session import build_session_factory
-from project_mai_tai.db.models import Strategy, TradeIntent
+from project_mai_tai.db.models import BrokerOrder, Strategy, TradeIntent
 from project_mai_tai.events import (
     HeartbeatEvent,
     HeartbeatPayload,
@@ -677,6 +678,8 @@ class OmsRiskService:
             return AlpacaPaperBrokerAdapter(self.settings)
         if normalized == "schwab":
             return SchwabBrokerAdapter(self.settings)
+        if normalized == "webull":
+            return WebullBrokerAdapter(self.settings)
         raise RuntimeError(f"Unsupported broker provider: {provider}")
 
     def seed_runtime_metadata(self) -> dict[str, int]:
