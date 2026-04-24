@@ -2858,11 +2858,64 @@ Validation:
 Follow-up hotfix:
 
 - first VPS deploy exposed one missed helper call site:
-  - `_schwab_stream_disconnect_has_exceeded_grace()` still called the
+  - _schwab_stream_disconnect_has_exceeded_grace() still called the
     position-aware stale helper without the new keyword argument
-  - result: the strategy service restarted once on deploy with a `TypeError`,
+  - result: the strategy service restarted once on deploy with a TypeError,
     then systemd brought it back
 - hotfix updated the disconnect-grace helper signature and caller so the
   position-aware stale window is applied consistently for both:
   - symbol-specific stale checks
   - stream-disconnect grace checks
+
+## 2026-04-24 Webull 30s Aggregate-Bar Wiring Fix
+
+Context:
+
+- live Webull 30 Sec Bot under-traded badly versus both the market and an
+  on-demand Polygon replay
+- live bot had only 2 order attempts today while a replay on the same
+  watchlist produced 37 simulated trades
+- code review showed the Webull runtime was not actually wired like the replay:
+  - webull_30s hardcoded use_live_aggregate_bars=False
+  - webull_30s hardcoded live_aggregate_fallback_enabled=False
+  - market-data gateway only enabled Massive live aggregate streaming for the
+    global flag or the Schwab 30s aggregate flag
+
+Root cause:
+
+- the Webull bot was running on the generic Polygon tick path, but not on the
+  Polygon live aggregate-bar path that best matches the replayed 30s engine
+- that meant the live Webull runtime and the replay were not actually exercising
+  the same bar-ingestion path
+
+Code fix:
+
+- updated src/project_mai_tai/settings.py
+  - added Webull-specific live aggregate settings:
+    - strategy_webull_30s_live_aggregate_bars_enabled
+    - strategy_webull_30s_live_aggregate_fallback_enabled
+    - strategy_webull_30s_live_aggregate_stale_after_seconds
+  - defaulted Webull aggregate bars/fallback to enabled with a 3s stale window
+- updated src/project_mai_tai/market_data/gateway.py
+  - Massive live aggregate subscription is now enabled when Webull 30s aggregate
+    bars are enabled, not just for the old global/Schwab path
+- updated src/project_mai_tai/services/strategy_engine_app.py
+  - webull_30s now uses live aggregate bars and aggregate-to-tick fallback
+    through its own settings instead of being hardcoded off
+- updated 	ests/unit/test_webull_30s_bot.py
+  - added regression coverage that Webull 30s defaults to live aggregate bars
+    with fallback
+  - added regression coverage that the market-data gateway enables the Massive
+    aggregate stream when only Webull 30s requires it
+
+Operator meaning:
+
+- live Webull 30s now consumes the Polygon live bar path the replay was using,
+  while still falling back to trade ticks if live aggregates stall
+- this closes the biggest runtime wiring gap between Polygon replay trades
+  and live Webull does almost nothing
+
+Validation:
+
+- pending live deploy validation in this session
+

@@ -2373,6 +2373,10 @@ class StrategyEngineState:
             self.settings.strategy_macd_30s_live_aggregate_bars_enabled
             or self.settings.market_data_live_aggregate_stream_enabled
         )
+        webull_use_live_aggregate_bars = (
+            self.settings.strategy_webull_30s_live_aggregate_bars_enabled
+            or self.settings.market_data_live_aggregate_stream_enabled
+        )
         self.bots: dict[str, StrategyRuntime] = {}
         if self.settings.strategy_macd_1m_enabled and "macd_1m" in registrations:
             self.bots["macd_1m"] = StrategyBotRuntime(
@@ -2458,8 +2462,9 @@ class StrategyEngineState:
                 ),
                 now_provider=now_provider,
                 session_factory=session_factory if self.settings.strategy_history_persistence_enabled else None,
-                use_live_aggregate_bars=False,
-                live_aggregate_fallback_enabled=False,
+                use_live_aggregate_bars=webull_use_live_aggregate_bars,
+                live_aggregate_fallback_enabled=self.settings.strategy_webull_30s_live_aggregate_fallback_enabled,
+                live_aggregate_stale_after_seconds=self.settings.strategy_webull_30s_live_aggregate_stale_after_seconds,
                 builder_manager=SchwabNativeBarBuilderManager(
                     interval_secs=30,
                     time_provider=lambda: resolved_now_provider().timestamp(),

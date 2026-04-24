@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from unittest.mock import Mock
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -9,6 +10,7 @@ from sqlalchemy.pool import StaticPool
 from project_mai_tai.broker_adapters.routing import RoutingBrokerAdapter
 from project_mai_tai.broker_adapters.webull import WebullBrokerAdapter
 from project_mai_tai.db.base import Base
+from project_mai_tai.market_data.gateway import MarketDataGatewayService
 from project_mai_tai.oms.service import OmsRiskService
 from project_mai_tai.runtime_registry import (
     configured_broker_account_registrations,
@@ -85,6 +87,38 @@ def test_strategy_state_routes_webull_30s_through_polygon_market_data_path() -> 
     assert "UGRO" in state.bots["webull_30s"].watchlist
     assert "UGRO" in state.market_data_symbols()
     assert "UGRO" not in state.schwab_stream_symbols()
+
+
+def test_webull_30s_defaults_to_live_aggregate_bars_with_fallback() -> None:
+    state = StrategyEngineState(
+        settings=Settings(
+            strategy_macd_30s_broker_provider="schwab",
+            strategy_webull_30s_enabled=True,
+            scanner_feed_retention_enabled=False,
+        ),
+        now_provider=fixed_now,
+    )
+
+    webull_bot = state.bots["webull_30s"]
+
+    assert webull_bot.use_live_aggregate_bars is True
+    assert webull_bot.live_aggregate_fallback_enabled is True
+    assert webull_bot.live_aggregate_stale_after_seconds == 3
+
+
+def test_market_data_gateway_enables_live_aggregate_stream_for_webull_30s() -> None:
+    service = MarketDataGatewayService(
+        settings=Settings(
+            strategy_webull_30s_enabled=True,
+            scanner_feed_retention_enabled=False,
+        ),
+        redis_client=Mock(),
+        snapshot_provider=Mock(),
+        trade_stream=Mock(),
+        reference_cache=Mock(),
+    )
+
+    assert service._live_aggregate_stream_enabled is True
 
 
 def test_oms_service_builds_webull_provider_inside_mixed_router() -> None:
