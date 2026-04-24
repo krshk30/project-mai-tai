@@ -3767,6 +3767,7 @@ async def test_service_halts_stale_schwab_watchlist_symbol_without_open_position
         dashboard_snapshot_persistence_enabled=False,
         strategy_history_persistence_enabled=False,
         schwab_stream_symbol_stale_after_seconds=1.0,
+        schwab_stream_symbol_stale_after_seconds_without_position=30.0,
         schwab_stream_symbol_quote_poll_interval_seconds=0.5,
         schwab_stream_symbol_resubscribe_interval_seconds=1.0,
     )
@@ -3794,6 +3795,40 @@ async def test_service_halts_stale_schwab_watchlist_symbol_without_open_position
 
     assert "ENVB" not in service._schwab_stale_symbols
     assert runtime.data_health_summary()["status"] == "healthy"
+
+
+@pytest.mark.asyncio
+async def test_service_gives_flat_schwab_watchlist_symbol_extended_stale_window() -> None:
+    settings = Settings(
+        strategy_macd_30s_broker_provider="schwab",
+        redis_stream_prefix="test",
+        dashboard_snapshot_persistence_enabled=False,
+        strategy_history_persistence_enabled=False,
+        schwab_stream_symbol_stale_after_seconds=8.0,
+        schwab_stream_symbol_stale_after_seconds_without_position=90.0,
+        schwab_stream_symbol_resubscribe_interval_seconds=1.0,
+    )
+    service = StrategyEngineService(settings=settings, redis_client=FakeRedis())
+    runtime = service.state.bots["macd_30s"]
+    runtime.set_watchlist(["APLZ"])
+    old = datetime.now(UTC) - timedelta(seconds=40)
+    service._schwab_symbol_last_stream_trade_at["APLZ"] = old
+    service._schwab_symbol_last_stream_quote_at["APLZ"] = old
+
+    class FakeStreamClient:
+        connected = True
+
+        async def force_resubscribe(self) -> None:
+            return None
+
+    service._schwab_stream_client = FakeStreamClient()
+
+    activity_count = await service._monitor_schwab_symbol_health()
+
+    assert activity_count == 0
+    assert service._schwab_stale_symbols == set()
+    assert runtime.data_health_summary()["status"] == "healthy"
+    assert runtime.data_health_summary()["halted_symbols"] == []
 
 
 @pytest.mark.asyncio
