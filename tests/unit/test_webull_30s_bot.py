@@ -129,3 +129,24 @@ def test_restore_confirmed_runtime_view_seeds_new_webull_bot_from_confirmed_stat
 
     assert "UGRO" in state.bots["macd_30s"].watchlist
     assert "UGRO" in state.bots["webull_30s"].watchlist
+
+
+def test_restore_confirmed_runtime_view_seeds_new_webull_bot_from_existing_handoff_history() -> None:
+    state = StrategyEngineState(
+        settings=Settings(
+            strategy_macd_30s_broker_provider="schwab",
+            strategy_webull_30s_enabled=True,
+            scanner_feed_retention_enabled=False,
+        ),
+        now_provider=fixed_now,
+    )
+
+    state.restore_confirmed_runtime_view(
+        [],
+        all_confirmed=[],
+        bot_handoff_symbols_by_strategy={"macd_30s": ["UGRO"]},
+        bot_handoff_history_by_strategy={"macd_30s": ["UGRO"]},
+    )
+
+    assert "UGRO" in state.bots["macd_30s"].watchlist
+    assert "UGRO" in state.bots["webull_30s"].watchlist

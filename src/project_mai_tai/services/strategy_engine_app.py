@@ -3208,6 +3208,11 @@ class StrategyEngineState:
         active_map = active_by_strategy or {}
         history_map = history_by_strategy or {}
         fallback_symbols = set(self._normalize_symbol_items(self._confirmed_handoff_candidates()))
+        if not fallback_symbols:
+            for items in active_map.values():
+                fallback_symbols.update(self._normalize_symbol_items(items))
+            for items in history_map.values():
+                fallback_symbols.update(self._normalize_symbol_items(items))
         for code in self.bots:
             active_symbols = set(self._normalize_symbol_items(active_map.get(code, ())))
             history_symbols = set(self._normalize_symbol_items(history_map.get(code, ())))
