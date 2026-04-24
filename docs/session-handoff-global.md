@@ -3036,3 +3036,48 @@ Operator meaning:
 - this is a visibility/state correctness fix only; it does not change any
   entry or exit logic
 
+## 2026-04-24 Webull Tick-Built Parity Revert
+
+Context:
+
+- live trading review showed `Schwab 30 Sec Bot` remained active while
+  `Webull 30 Sec Bot` stayed unusually quiet after the early morning
+- code review confirmed an important runtime asymmetry:
+  - `macd_30s` defaults to `strategy_macd_30s_live_aggregate_bars_enabled = false`
+  - `webull_30s` had been changed to default
+    `strategy_webull_30s_live_aggregate_bars_enabled = true`
+  - the 30-second entry config still has `entry_intrabar_enabled = false`
+- result:
+  - Schwab built and aged its 30-second structure directly from tick flow
+  - Webull skipped `on_trade()` for most live ticks whenever aggregate bars were
+    healthy, relying instead on the aggregate-bar path plus fallback
+
+Why this mattered:
+
+- the intended comparison was “same 30-second strategy stack, different broker
+  and data source”
+- the aggregate-first Webull default violated that expectation by changing the
+  bar-building path itself, not just the source of ticks
+- that made Webull behave less like “Polygon tick-built 30s” and more like
+  “Massive aggregate bars with occasional tick fallback”
+
+Code fix:
+
+- updated `src/project_mai_tai/settings.py`
+  - reverted the default for
+    `strategy_webull_30s_live_aggregate_bars_enabled` back to `false`
+- updated `tests/unit/test_webull_30s_bot.py`
+  - Webull now asserts tick-built 30-second parity by default
+  - the aggregate-stream gateway test now explicitly enables the Webull
+    aggregate setting when it wants to prove that optional path
+
+Operator meaning:
+
+- Webull now matches Schwab much more closely in bar construction:
+  - Polygon trade ticks build the 30-second series directly by default
+  - live aggregate bars remain available as an explicit opt-in path later if
+    needed
+- if Webull still under-trades after this parity revert, the next root-cause
+  layer is more likely real strategy/data behavior rather than a hidden bar-path
+  mismatch
+

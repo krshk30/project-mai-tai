@@ -89,7 +89,7 @@ def test_strategy_state_routes_webull_30s_through_polygon_market_data_path() -> 
     assert "UGRO" not in state.schwab_stream_symbols()
 
 
-def test_webull_30s_defaults_to_live_aggregate_bars_with_fallback() -> None:
+def test_webull_30s_defaults_to_tick_built_30s_with_fallback_available() -> None:
     state = StrategyEngineState(
         settings=Settings(
             strategy_macd_30s_broker_provider="schwab",
@@ -101,7 +101,7 @@ def test_webull_30s_defaults_to_live_aggregate_bars_with_fallback() -> None:
 
     webull_bot = state.bots["webull_30s"]
 
-    assert webull_bot.use_live_aggregate_bars is True
+    assert webull_bot.use_live_aggregate_bars is False
     assert webull_bot.live_aggregate_fallback_enabled is True
     assert webull_bot.live_aggregate_stale_after_seconds == 3
 
@@ -110,6 +110,7 @@ def test_market_data_gateway_enables_live_aggregate_stream_for_webull_30s() -> N
     service = MarketDataGatewayService(
         settings=Settings(
             strategy_webull_30s_enabled=True,
+            strategy_webull_30s_live_aggregate_bars_enabled=True,
             scanner_feed_retention_enabled=False,
         ),
         redis_client=Mock(),
