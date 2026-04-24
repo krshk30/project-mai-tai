@@ -6,6 +6,11 @@ Current branch:
 
 - `codex/trade-coach-foundation`
 
+Open PR:
+
+- `#52`
+- [Add trade coach foundation service](https://github.com/krshk30/project-mai-tai/pull/52)
+
 Important state:
 
 - this work is local branch work only right now
@@ -67,11 +72,15 @@ Validation completed:
 - passed:
   - `.venv\Scripts\python.exe -m pytest tests/unit/test_trade_episodes.py tests/unit/test_trade_coach_service.py tests/unit/test_trade_coach_repository.py tests/unit/test_control_plane.py -q`
   - `.venv\Scripts\python.exe -m py_compile src/project_mai_tai/trade_episodes.py src/project_mai_tai/ai_trade_coach/models.py src/project_mai_tai/ai_trade_coach/repository.py src/project_mai_tai/ai_trade_coach/service.py src/project_mai_tai/services/trade_coach_app.py src/project_mai_tai/services/trade_coach.py src/project_mai_tai/services/control_plane.py src/project_mai_tai/db/models.py`
+  - `.venv\Scripts\python.exe -m project_mai_tai.services.trade_coach`
 
 Latest validation snapshot:
 
 - targeted trade-coach/control-plane suite passed locally:
   - `32 passed`
+- disabled-mode smoke pass:
+  - trade coach process exited cleanly with default `trade_coach_enabled = false`
+  - no API key configured, so no AI request path was exercised yet
 - branch confirmed:
   - `codex/trade-coach-foundation`
 
