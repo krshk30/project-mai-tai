@@ -15,6 +15,8 @@ from project_mai_tai.events import (
     HistoricalBarPayload,
     HistoricalBarsEvent,
     HistoricalBarsPayload,
+    LiveBarEvent,
+    LiveBarPayload,
     MarketSnapshotPayload,
     OrderEventEvent,
     OrderEventPayload,
@@ -3543,6 +3545,53 @@ async def test_trade_tick_stream_routes_to_schwab_native_macd_30s_when_stream_fa
     assert captured["symbol"] == "UGRO"
     assert "macd_30s" in captured["strategy_codes"]
     assert captured["exclude_codes"] is None
+
+
+@pytest.mark.asyncio
+async def test_live_bar_publishes_strategy_snapshot_for_generic_bot_activity_without_intents(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    redis = FakeRedis()
+    service = StrategyEngineService(
+        settings=Settings(
+            redis_stream_prefix="test",
+            dashboard_snapshot_persistence_enabled=False,
+            strategy_history_persistence_enabled=False,
+            scanner_feed_retention_enabled=False,
+            strategy_macd_30s_broker_provider="schwab",
+            strategy_webull_30s_enabled=True,
+            strategy_webull_30s_broker_provider="webull",
+        ),
+        redis_client=redis,
+    )
+    captured: dict[str, object] = {}
+
+    def fake_handle_live_bar(**kwargs):
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr(service.state, "handle_live_bar", fake_handle_live_bar)
+
+    event = LiveBarEvent(
+        source_service="market-data-gateway",
+        payload=LiveBarPayload(
+            symbol="UGRO",
+            interval_secs=30,
+            open=Decimal("2.75"),
+            high=Decimal("2.84"),
+            low=Decimal("2.70"),
+            close=Decimal("2.80"),
+            volume=5000,
+            timestamp=1_700_001_530.0,
+            trade_count=25,
+        ),
+    )
+
+    await service._handle_stream_message("test:market-data", {"data": event.model_dump_json()})
+
+    assert captured["symbol"] == "UGRO"
+    assert captured["strategy_codes"] == ("webull_30s",)
+    assert any(stream.endswith("strategy-state") for stream, _ in redis.entries)
 
 
 @pytest.mark.asyncio
