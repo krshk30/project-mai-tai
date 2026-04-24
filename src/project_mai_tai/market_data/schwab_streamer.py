@@ -146,6 +146,7 @@ class SchwabStreamerClient:
                 self._normalize_socket_url(credentials.socket_url),
                 ping_interval=20,
                 ping_timeout=20,
+                open_timeout=30,
             )
             await self._login(websocket, credentials)
             login_succeeded = True
@@ -240,6 +241,7 @@ class SchwabStreamerClient:
                     self._normalize_socket_url(self._credentials.socket_url),
                     ping_interval=20,
                     ping_timeout=20,
+                    open_timeout=30,
                 )
                 self._ws = websocket
                 await self._login(websocket, self._credentials)
