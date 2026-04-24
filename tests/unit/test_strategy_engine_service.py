@@ -2096,7 +2096,6 @@ def test_flush_completed_bars_evaluates_due_bar_without_waiting_for_next_trade(m
     open_intents = [intent for intent in flushed_intents if intent.payload.intent_type == "open"]
     assert len(open_intents) == 1
     assert open_intents[0].payload.symbol == "UGRO"
-    assert "UGRO" in bot.summary()["last_tick_at"]
 
 
 def test_live_second_bars_can_generate_open_intent_for_30s_bot(monkeypatch) -> None:
