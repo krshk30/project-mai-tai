@@ -819,6 +819,116 @@ def test_control_plane_decision_tape_includes_live_symbol_waiting_for_evaluation
         )
 
 
+def test_control_plane_decision_tape_uses_polygon_wording_for_webull_bot() -> None:
+    settings = Settings(
+        redis_stream_prefix="test",
+        oms_adapter="alpaca_paper",
+        strategy_webull_30s_enabled=True,
+    )
+    session_factory = build_test_session_factory()
+    seed_database(session_factory)
+    streams = make_streams(settings.redis_stream_prefix)
+    strategy_state_stream = streams[f"{settings.redis_stream_prefix}:strategy-state"]
+    strategy_state_event = StrategyStateSnapshotEvent.model_validate_json(
+        strategy_state_stream[0][1]["data"]
+    )
+    strategy_state_event.payload.bots.append(
+        StrategyBotStatePayload(
+            strategy_code="webull_30s",
+            account_name="live:webull_30s",
+            watchlist=["AUUD"],
+            positions=[],
+            pending_open_symbols=[],
+            pending_close_symbols=[],
+            pending_scale_levels=[],
+            daily_pnl=0.0,
+        )
+    )
+    strategy_state_stream[0][1]["data"] = strategy_state_event.model_dump_json()
+    redis = FakeRedis(streams)
+
+    app = build_app(
+        settings=settings,
+        session_factory=session_factory,
+        redis_client=redis,
+        legacy_client=FakeLegacyClient(),
+    )
+
+    with TestClient(app) as client:
+        bots = client.get("/api/bots")
+        assert bots.status_code == 200
+        webull_bot = next(item for item in bots.json()["bots"] if item["strategy_code"] == "webull_30s")
+        assert [item["symbol"] for item in webull_bot["recent_decisions"]] == ["AUUD"]
+        assert webull_bot["recent_decisions"][0]["status"] == "pending"
+        assert (
+            webull_bot["recent_decisions"][0]["reason"]
+            == "live in bot; waiting for Polygon market data"
+        )
+
+
+def test_webull_bot_page_uses_polygon_data_halt_wording() -> None:
+    settings = Settings(
+        redis_stream_prefix="test",
+        oms_adapter="alpaca_paper",
+        strategy_webull_30s_enabled=True,
+    )
+    session_factory = build_test_session_factory()
+    seed_database(session_factory)
+    streams = make_streams(settings.redis_stream_prefix)
+    strategy_state_stream = streams[f"{settings.redis_stream_prefix}:strategy-state"]
+    strategy_state_event = StrategyStateSnapshotEvent.model_validate_json(
+        strategy_state_stream[0][1]["data"]
+    )
+    strategy_state_event.payload.bots.append(
+        StrategyBotStatePayload(
+            strategy_code="webull_30s",
+            account_name="live:webull_30s",
+            watchlist=["AUUD"],
+            positions=[],
+            pending_open_symbols=[],
+            pending_close_symbols=[],
+            pending_scale_levels=[],
+            daily_pnl=0.0,
+            data_health={
+                "status": "critical",
+                "halted_symbols": ["AUUD"],
+                "reasons": {
+                    "AUUD": "Polygon stream stale/disconnected; trading halted until live Polygon ticks recover"
+                },
+                "since": {"AUUD": "2026-04-24 06:00:00 AM ET"},
+            },
+        )
+    )
+    strategy_state_stream[0][1]["data"] = strategy_state_event.model_dump_json()
+    redis = FakeRedis(streams)
+
+    app = build_app(
+        settings=settings,
+        session_factory=session_factory,
+        redis_client=redis,
+        legacy_client=FakeLegacyClient(),
+    )
+
+    with TestClient(app) as client:
+        bots = client.get("/api/bots")
+        assert bots.status_code == 200
+        webull_bot = next(item for item in bots.json()["bots"] if item["strategy_code"] == "webull_30s")
+        assert webull_bot["data_health"]["status"] == "critical"
+
+        webull_status = client.get("/botwebull")
+        assert webull_status.status_code == 200
+        assert webull_status.json()["listening_status"]["state"] == "DATA HALT"
+        assert "Polygon stream stale/disconnected" in webull_status.json()["listening_status"]["detail"]
+
+        webull_page = client.get("/bot/30s-webull")
+        assert webull_page.status_code == 200
+        assert "Polygon Data Halt" in webull_page.text
+        assert "Polygon Data Health" in webull_page.text
+        assert "Polygon stream stale/disconnected" in webull_page.text
+        assert "Schwab Data Halt" not in webull_page.text
+        assert "Schwab Data Health" not in webull_page.text
+
+
 def test_control_plane_overview_and_dashboard_render() -> None:
     settings = Settings(
         redis_stream_prefix="test",

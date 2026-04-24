@@ -2341,3 +2341,57 @@ Validation:
   - `.venv\Scripts\python.exe -m pytest tests/unit/test_strategy_engine_service.py -k "brief_schwab_stream_disconnect or persistent_schwab_stream_disconnect or stale_schwab_watchlist_symbol_without_open_position or default_stale_threshold_tolerates_brief_quiet_gap"`
   - `.venv\Scripts\python.exe -m pytest tests/unit/test_control_plane.py -k "schwab_data_halt_red_on_bot_page"`
   - `.venv\Scripts\python.exe -m py_compile src/project_mai_tai/services/strategy_engine_app.py src/project_mai_tai/services/control_plane.py tests/unit/test_strategy_engine_service.py tests/unit/test_control_plane.py`
+
+## 2026-04-24 Overnight Validation Gaps + Session Restore Guard
+
+Root causes found during the 6:00 AM ET live-readiness check:
+
+- the validator caught the Schwab OAuth refresh-token failure, but the prompt did
+  not explicitly force inspection of bot listening status plus stale live symbols
+  / feed-state carryover on both 30-second bots
+- the new `Webull 30 Sec Bot` reused several hard-coded Schwab UI labels on the
+  bot page and in placeholder decision rows, which made Polygon-backed waiting /
+  halt states look like Schwab wiring errors
+- scanner cycle-history restore could repopulate watchlist / bot-handoff symbols
+  from a prior snapshot even when the new session had not yet produced a real
+  current-session handoff; that made both Schwab and Webull appear to wake up
+  with yesterday-style live symbols / feed states already attached
+
+Code fix:
+
+- updated `src/project_mai_tai/services/control_plane.py`
+  - bot listening-status detail now uses the runtime provider name
+  - `Schwab Data Health` / `Schwab Data Halt` page labels are now provider-aware
+    and render as `Polygon ...` on the Webull 30-second bot
+  - placeholder Decision Tape rows for Webull now say `Polygon market data` /
+    `Polygon ticks` instead of `Schwab ...`
+- updated `src/project_mai_tai/services/strategy_engine_app.py`
+  - added a persisted `session_handoff_active` marker
+  - scanner cycle-history watchlist fallback now restores only after a real
+    current-session handoff has been recorded
+  - overnight / fresh-session snapshots without that marker no longer repopulate
+    stale live symbols or feed states into `macd_30s` or `webull_30s`
+
+Operational note:
+
+- the 6:00 AM ET check also confirmed a separate live Schwab auth issue on the
+  VPS: refresh token exchange was failing with
+  `refresh_token_authentication_error` / `unsupported_token_type`
+- that OAuth problem is independent from the session-restore/UI fix above and
+  still requires Schwab reauthorization on the VPS
+
+Regression coverage added:
+
+- Webull Decision Tape placeholders use Polygon wording
+- Webull bot page halt cards and listening detail use Polygon wording
+- scanner cycle-history restore skips watchlist-only snapshots that do not carry
+  the new `session_handoff_active` marker
+- scanner cycle-history restore still works when a real current-session handoff
+  snapshot includes the marker
+
+Validation:
+
+- passed:
+  - `.venv\Scripts\python.exe -m pytest tests/unit/test_control_plane.py -k "decision_tape or webull_bot_page_uses_polygon_data_halt_wording"`
+  - `.venv\Scripts\python.exe -m pytest tests/unit/test_scanner_cycle_history_restore.py`
+  - `.venv\Scripts\python.exe -m py_compile src/project_mai_tai/services/control_plane.py src/project_mai_tai/services/strategy_engine_app.py tests/unit/test_control_plane.py tests/unit/test_scanner_cycle_history_restore.py`
