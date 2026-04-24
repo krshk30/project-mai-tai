@@ -234,6 +234,7 @@ class SchwabStreamerClient:
     async def _connection_loop(self) -> None:
         while not self._stop_event.is_set():
             websocket = None
+            reconnect_delay = self.reconnect_delay_seconds
             try:
                 self._credentials = await self._fetch_streamer_credentials()
                 websocket = await websockets.connect(
@@ -261,6 +262,12 @@ class SchwabStreamerClient:
                     await self._handle_message(raw_message)
             except asyncio.CancelledError:
                 raise
+            except websockets.exceptions.ConnectionClosedOK:
+                self._connected = False
+                self._last_error = ""
+                reconnect_delay = 0.5
+                if not self._stop_event.is_set():
+                    logger.info("Schwab streamer socket closed cleanly; reconnecting")
             except Exception as exc:
                 self._connected = False
                 self._connection_failures += 1
@@ -288,7 +295,7 @@ class SchwabStreamerClient:
                         logger.debug("error closing Schwab streamer websocket", exc_info=True)
 
             if not self._stop_event.is_set():
-                await asyncio.sleep(self.reconnect_delay_seconds)
+                await asyncio.sleep(reconnect_delay)
 
     async def _fetch_streamer_credentials(self) -> SchwabStreamerCredentials:
         status_code, _headers, payload = await self.auth_adapter._authorized_request_json(

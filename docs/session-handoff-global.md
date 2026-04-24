@@ -89,6 +89,23 @@ Additional mitigation:
 - intent is to tolerate slow Schwab websocket opens instead of treating them as
   immediate stream failure
 
+Further live finding:
+
+- direct isolated streamer probe succeeded on the VPS and delivered live trades
+  and quotes
+- an isolated long-running streamer also connected and received data, but Schwab
+  then closed the socket with `1000 OK`
+- our client was treating that normal close like a real failure, which could
+  poison health and cascade into later stale/data-halt behavior during the
+  reconnect cycle
+
+Streamer reconnect fix:
+
+- treat `websockets.exceptions.ConnectionClosedOK` as a normal Schwab socket
+  rotation, not as a hard failure
+- clear `last_error` for that path
+- reconnect quickly (`0.5s`) instead of waiting the full normal reconnect delay
+
 ## 2026-04-24 Schwab OAuth Callback Recovery
 
 Morning live checks found the remaining `Schwab 30 Sec Bot` red state was not a
