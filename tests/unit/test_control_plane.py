@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
@@ -941,6 +942,58 @@ def test_control_plane_overview_and_dashboard_render() -> None:
     )
     session_factory = build_test_session_factory()
     seed_database(session_factory)
+    session_marker = current_scanner_session_start_utc().isoformat()
+    with session_factory() as session:
+        session.add(
+            DashboardSnapshot(
+                snapshot_type="scanner_alert_engine_state",
+                payload={
+                    "scanner_session_start_utc": session_marker,
+                    "persisted_at": datetime.now(UTC).isoformat(),
+                    "today_alerts": [
+                        {
+                            "type": "VOLUME_SPIKE",
+                            "ticker": "UGRO",
+                            "price": 2.55,
+                            "bid": 2.54,
+                            "ask": 2.55,
+                            "volume": 900_000,
+                            "float": 50_000,
+                            "time": "09:55:00 AM ET",
+                            "details": {"spike_mult": 5.2},
+                        },
+                        {
+                            "type": "SQUEEZE_5MIN",
+                            "ticker": "SBET",
+                            "price": 3.10,
+                            "bid": 3.09,
+                            "ask": 3.10,
+                            "volume": 1_200_000,
+                            "float": 80_000,
+                            "time": "09:56:30 AM ET",
+                            "details": {"change_pct": 7.1, "price_5min_ago": 2.89},
+                        },
+                    ],
+                    "recent_rejections": [
+                        {
+                            "ticker": "NTIP",
+                            "price": 1.89,
+                            "volume": 706_765,
+                            "time": "08:33:10 AM ET",
+                            "reasons": [
+                                "volume_spike_gate_not_met",
+                                "volume_gate_closed",
+                                "squeeze_10min_waiting_for_volume_gate",
+                            ],
+                            "squeeze_5min_pct": 4.7,
+                            "vol_5min": 49_000,
+                            "expected_5min": 60_000,
+                        }
+                    ],
+                },
+            )
+        )
+        session.commit()
     redis = FakeRedis(make_streams(settings.redis_stream_prefix))
 
     app = build_app(
@@ -1016,6 +1069,9 @@ def test_control_plane_overview_and_dashboard_render() -> None:
         assert "5 Pillars Scanner" in legacy_scanner.text
         assert "Top Gainers" in legacy_scanner.text
         assert "Momentum Alerts" in legacy_scanner.text
+        assert "Export Today CSV (2)" in legacy_scanner.text
+        assert "Recent Alert Rejections" in legacy_scanner.text
+        assert "NTIP" in legacy_scanner.text
         assert "Top Gainer Changes" in legacy_scanner.text
         assert "Catalyst" in legacy_scanner.text
         assert "Entry Price" in legacy_scanner.text
@@ -1037,6 +1093,14 @@ def test_control_plane_overview_and_dashboard_render() -> None:
         scanner_alerts = client.get("/scanner/alerts")
         assert scanner_alerts.status_code == 200
         assert scanner_alerts.json()["count"] == 1
+        assert scanner_alerts.json()["today_alerts_count"] == 2
+        assert scanner_alerts.json()["diagnostics"][0]["ticker"] == "NTIP"
+
+        scanner_alert_export = client.get("/scanner/alerts/export.csv")
+        assert scanner_alert_export.status_code == 200
+        assert "text/csv" in scanner_alert_export.headers["content-type"]
+        csv_rows = list(csv.DictReader(scanner_alert_export.text.splitlines()))
+        assert [row["ticker"] for row in csv_rows] == ["UGRO", "SBET"]
 
         bot_30s_page = client.get("/bot/30s")
         assert bot_30s_page.status_code == 200

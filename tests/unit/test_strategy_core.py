@@ -249,6 +249,45 @@ def test_alert_engine_backfills_missed_spike_when_late_squeeze_is_obvious() -> N
     assert alerts[1]["ticker"] == "EFOI"
 
 
+def test_alert_engine_records_recent_rejection_reasons_for_near_candidates() -> None:
+    times = iter(
+        [
+            datetime(2026, 4, 24, 8, 30),
+            datetime(2026, 4, 24, 8, 32, 30),
+            datetime(2026, 4, 24, 8, 32, 35),
+        ]
+    )
+    alert_engine = MomentumAlertEngine(
+        MomentumAlertConfig(
+            min_price=1.0,
+            max_price=10.0,
+            min_momentum_volume=1_000,
+            squeeze_5min_pct=5.0,
+            squeeze_10min_pct=10.0,
+            volume_spike_mult=2.0,
+            alert_cooldown_mins=0,
+        ),
+        scan_interval_secs=150,
+        now_provider=lambda: next(times),
+    )
+    ref = {"UGRO": ReferenceData(shares_outstanding=50_000, avg_daily_volume=390_000)}
+
+    cycle1 = [snapshot(ticker="UGRO", price=2.00, volume=1_000)]
+    alert_engine.record_snapshot(cycle1)
+    assert alert_engine.check_alerts(cycle1, ref) == []
+
+    cycle2 = [snapshot(ticker="UGRO", price=2.08, volume=2_000)]
+    alert_engine.record_snapshot(cycle2)
+    assert alert_engine.check_alerts(cycle2, ref) == []
+
+    exported = alert_engine.export_state()
+    rejection = exported["recent_rejections"][-1]
+    assert rejection["ticker"] == "UGRO"
+    assert "volume_spike_gate_not_met" in rejection["reasons"]
+    assert "volume_gate_closed" in rejection["reasons"]
+    assert "waiting_for_10min_history" in rejection["reasons"]
+
+
 def test_alert_engine_history_is_compact_and_backwards_compatible() -> None:
     alert_engine = MomentumAlertEngine(
         MomentumAlertConfig(

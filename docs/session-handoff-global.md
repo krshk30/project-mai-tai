@@ -2713,3 +2713,87 @@ Validation:
   - `.venv\Scripts\python.exe -m pytest tests/unit/test_control_plane.py -k "manual_stop_symbols or wrong_session_marker"`
   - `.venv\Scripts\python.exe -m pytest tests/unit/test_manual_stop_session_scope.py`
   - `.venv\Scripts\python.exe -m py_compile src/project_mai_tai/market_data/schwab_streamer.py src/project_mai_tai/services/strategy_engine_app.py src/project_mai_tai/services/control_plane.py tests/unit/test_control_plane.py tests/unit/test_manual_stop_session_scope.py`
+
+## 2026-04-24 Alert Observability + Full-Day Alert CSV Export
+
+Context:
+
+- user flagged a real scanner observability gap while debugging `NTIP`
+- live investigation had already proven:
+  - `NTIP` was visible to Mai Tai in `top_gainers` by `08:32:09 AM ET`
+  - `NTIP` was visible in `five_pillars` by `08:33:10 AM ET`
+  - the first alert still did not fire until `08:37:20 AM ET`
+  - the live alert carried `catchup_seed=True`, proving the alert engine
+    backfilled a missed earlier seed instead of catching the move on time
+- user asked for two things:
+  - durable code-side observability so the next missed symbol is explainable
+  - scanner alert export to CSV for the full current-day alert ledger, not just
+    the visible table rows
+
+Root cause / product gap:
+
+- the alert engine did not persist any structured “candidate seen but blocked”
+  diagnostics
+- once an alert failed to fire on time, Mai Tai could only prove that the
+  symbol existed in scanner universes, not which alert predicate blocked it on
+  each cycle
+- the scanner page only exposed `recent_alerts`, which is a short in-memory
+  tape, so the operator could not export the full day’s alert history from the
+  UI
+
+Code fix:
+
+- updated `src/project_mai_tai/strategy_core/momentum_alerts.py`
+  - added `recent_rejections` tracking for near-candidate symbols that were
+    seen by the alert engine but did not fire
+  - each rejection now captures:
+    - ticker / time / price / volume
+    - blocking reasons
+    - 5m / 10m squeeze metrics
+    - 5m volume vs expected volume
+    - whether the volume gate was open
+  - rejection diagnostics persist through alert-engine snapshot export/restore
+  - reset now clears the rejection ledger at the start of a new scanner session
+- updated `src/project_mai_tai/services/strategy_engine_app.py`
+  - added a `today_alerts` ledger that records the full current-session alert
+    stream separately from the short `recent_alerts` UI tape
+  - `today_alerts` persists in the `scanner_alert_engine_state` dashboard
+    snapshot and restores across same-session restarts
+  - new scanner sessions clear `today_alerts` automatically
+- updated `src/project_mai_tai/services/control_plane.py`
+  - loads the current-session `scanner_alert_engine_state` snapshot from the DB
+  - scanner dashboard now exposes:
+    - `today_alerts_count`
+    - `alert_diagnostics`
+    - `alert_diagnostics_count`
+  - added `/scanner/alerts/export.csv`
+    - exports the full current-day alert ledger, not just visible rows
+  - scanner dashboard “Momentum Alerts” panel now includes an `Export Today CSV`
+    button
+  - added a new “Recent Alert Rejections” table so blocked candidates are
+    visible directly in the scanner UI
+
+Operator meaning:
+
+- the scanner can now prove more than “this symbol was present but did not
+  alert”
+- for the next `NTIP`-type miss, Mai Tai will retain the recent blocking
+  reasons instead of forcing a purely inferential postmortem
+- alert CSV export is now suitable for same-day review in Excel because it
+  includes the whole current-session alert ledger
+
+Regression coverage added:
+
+- `tests/unit/test_strategy_core.py`
+  - near-threshold candidates now record recent rejection reasons
+- `tests/unit/test_control_plane.py`
+  - scanner dashboard renders the full-day alert export affordance
+  - scanner alerts API exposes today-count + diagnostics
+  - `/scanner/alerts/export.csv` returns the full persisted current-day alert
+    ledger
+
+Validation:
+
+- passed:
+  - `.venv\Scripts\python.exe -m pytest tests/unit/test_strategy_core.py -k "alert_engine_records_recent_rejection_reasons_for_near_candidates or alert_engine_backfills_missed_spike_when_late_squeeze_is_obvious or alert_engine_history_is_compact_and_backwards_compatible"`
+  - `.venv\Scripts\python.exe -m pytest tests/unit/test_control_plane.py -k "control_plane_overview_and_dashboard_render or decision_tape_uses_polygon_wording_for_webull_bot"`

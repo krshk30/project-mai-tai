@@ -2287,6 +2287,7 @@ class StrategyEngineState:
         self.top_gainers: list[dict[str, object]] = []
         self.top_gainer_changes: list[dict[str, object]] = []
         self.recent_alerts: list[dict[str, object]] = []
+        self.today_alerts: list[dict[str, object]] = []
         self.alert_warmup: dict[str, object] = self.alert_engine.get_warmup_status()
         self.cycle_count = 0
         self.latest_snapshots: dict[str, MarketSnapshot] = {}
@@ -2760,6 +2761,7 @@ class StrategyEngineState:
             "five_pillars": self.five_pillars,
             "top_gainers": self.top_gainers,
             "recent_alerts": self.recent_alerts,
+            "today_alerts": self.today_alerts,
             "watchlist": watchlist,
             "retention_states": self.retention_summary(),
             "market_data_symbols": self.market_data_symbols(),
@@ -2973,6 +2975,7 @@ class StrategyEngineState:
             "five_pillars": self.five_pillars,
             "top_gainers": self.top_gainers,
             "recent_alerts": self.recent_alerts,
+            "today_alerts": self.today_alerts,
             "top_gainer_changes": self.top_gainer_changes,
             "alert_warmup": self.alert_warmup,
             "cycle_count": self.cycle_count,
@@ -3377,6 +3380,8 @@ class StrategyEngineState:
         ]
         self.recent_alerts.extend(normalized)
         self.recent_alerts = self.recent_alerts[-100:]
+        self.today_alerts.extend(normalized)
+        self.today_alerts = self.today_alerts[-5000:]
 
     def _add_schwab_prewarm_symbols(self, symbols: Iterable[object]) -> None:
         if not self._schwab_stream_bot_codes:
@@ -3489,6 +3494,7 @@ class StrategyEngineState:
         self.top_gainers = []
         self.top_gainer_changes = []
         self.recent_alerts = []
+        self.today_alerts = []
         self.latest_snapshots = {}
         self._first_seen_by_ticker.clear()
         self.feed_retention_states.clear()
@@ -4830,6 +4836,7 @@ class StrategyEngineService:
         alert_state["cycle_count"] = int(summary.get("cycle_count", 0) or 0)
         alert_state["scanner_session_start_utc"] = scanner_session_start
         alert_state["recent_alerts"] = list(self.state.recent_alerts[-100:])
+        alert_state["today_alerts"] = list(self.state.today_alerts[-5000:])
         alert_state["top_gainer_changes"] = list(self.state.top_gainer_changes[-100:])
         alert_state["first_seen_by_ticker"] = dict(self.state._first_seen_by_ticker)
         self._replace_dashboard_snapshot("scanner_alert_engine_state", alert_state)
@@ -4916,6 +4923,14 @@ class StrategyEngineService:
                     if isinstance(item, dict)
                 ]
                 self.state._pending_recent_alert_replay = bool(self.state.recent_alerts)
+
+            restored_today_alerts = snapshot.payload.get("today_alerts")
+            if isinstance(restored_today_alerts, list):
+                self.state.today_alerts = [
+                    {**item, "ticker": str(item.get("ticker", "")).upper()}
+                    for item in restored_today_alerts[-5000:]
+                    if isinstance(item, dict)
+                ]
 
             restored_changes = snapshot.payload.get("top_gainer_changes")
             if isinstance(restored_changes, list):
