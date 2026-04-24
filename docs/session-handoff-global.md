@@ -3210,3 +3210,44 @@ Operator meaning:
 - this does not change bot behavior or handoff logic; it only fixes the control
   plane view so operators can trust the displayed live list
 
+## 2026-04-24 - Suppress after-hours flat Schwab stale halts
+
+Context:
+
+- the Schwab 30 Sec Bot could still flip into a red `DATA HALT` after the
+  strategy trading window had already ended, even with no open positions
+- this created scary false alerts such as:
+  - stale/disconnected symbols at `6:20 PM ET`
+  - recent decision rows already saying `outside trading hours`
+  - no emergency-close exposure because the bot was flat
+- operator also observed that this could be mistaken for a missed-bar or
+  in-session failure when it was actually an after-hours quiet-tape condition
+
+Root cause:
+
+- `_monitor_schwab_symbol_health()` enforced Schwab stale/data-halt escalation
+  for active watchlist symbols regardless of whether their owning runtime was
+  still inside its configured trading hours
+- for `macd_30s`, that meant flat symbols could still become `critical` after
+  `6:00 PM ET` purely from quiet/noisy after-hours tape behavior
+
+Fix:
+
+- updated `src/project_mai_tai/services/strategy_engine_app.py`
+  - added `_schwab_symbol_should_enforce_data_halt(...)`
+  - flat symbols now only enforce Schwab stale/data-halt escalation while at
+    least one owning Schwab runtime is still inside its configured trading
+    window
+  - open positions still always enforce stale protection, regardless of clock
+- added test coverage in `tests/unit/test_strategy_engine_service.py` for:
+  - in-session flat-symbol stale halt still occurs
+  - persistent disconnect still halts in-session
+  - after-hours flat symbols do not escalate into `DATA HALT`
+
+Operator meaning:
+
+- after the Schwab 30s trading window ends, quiet flat symbols should no longer
+  poison the whole bot page red just because their tape stops printing
+- real protection remains in place for open positions and in-session stale
+  failures
+
