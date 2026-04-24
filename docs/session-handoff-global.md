@@ -2797,3 +2797,60 @@ Validation:
 - passed:
   - `.venv\Scripts\python.exe -m pytest tests/unit/test_strategy_core.py -k "alert_engine_records_recent_rejection_reasons_for_near_candidates or alert_engine_backfills_missed_spike_when_late_squeeze_is_obvious or alert_engine_history_is_compact_and_backwards_compatible"`
   - `.venv\Scripts\python.exe -m pytest tests/unit/test_control_plane.py -k "control_plane_overview_and_dashboard_render or decision_tape_uses_polygon_wording_for_webull_bot"`
+
+## 2026-04-24 Schwab Quiet-Symbol False Data Halt
+
+Context:
+
+- user reported another `DATA HALT` on the Schwab 30s bot around `11:06 AM ET`
+- UI showed halted symbols `APLZ` and `PBM`
+- live VPS checks showed:
+  - top-level strategy heartbeat stayed `healthy`
+  - `schwab_stream_connected=true`
+  - other Schwab symbols continued receiving updates
+  - no open positions existed during the halt
+- strategy log showed the exact sequence:
+  - `11:05:15 AM ET` `APLZ` went stale and recovered
+  - `11:06:05 AM ET` `APLZ` + `PBM` were marked stale again
+  - `11:06:17 AM ET` both recovered after forced resubscribe
+
+Root cause:
+
+- this was not a full Schwab auth outage or websocket-wide disconnect
+- it was a symbol-specific false positive in the stale-health logic
+- Mai Tai treated a flat watchlist symbol as hard-stale after about `30s`
+  without a fresh Schwab trade/quote update
+- for quieter names like `APLZ` / `PBM`, a `30-40s` silent window can happen
+  naturally even while the broader Schwab stream is healthy
+- because no-position symbols used the same halt threshold as open positions,
+  the bot page went red for normal quiet tape
+
+Code fix:
+
+- updated `src/project_mai_tai/settings.py`
+  - added `schwab_stream_symbol_stale_after_seconds_without_position`
+  - defaulted to `90.0`
+- updated `src/project_mai_tai/services/strategy_engine_app.py`
+  - `_schwab_data_halt_stale_after_seconds()` is now position-aware
+  - open positions still use the stricter existing protection
+  - flat watchlist symbols now require the longer no-position stale window
+    before entering runtime `DATA HALT`
+- updated `tests/unit/test_strategy_engine_service.py`
+  - existing stale-watchlist test now pins the no-position threshold low when
+    it wants to prove a halt
+  - added regression coverage that a flat Schwab watchlist symbol with a
+    `~40s` quiet gap no longer trips `DATA HALT` under the new defaults
+
+Operator meaning:
+
+- true protection is preserved for live open positions
+- quiet Schwab names that are merely not printing for `30-40s` should no
+  longer flash the whole Schwab 30s bot red
+- if a flat symbol really goes dark for longer than the extended window, the
+  halt still happens
+
+Validation:
+
+- passed:
+  - `.venv\Scripts\python.exe -m pytest tests/unit/test_strategy_engine_service.py -k "stale_schwab_watchlist_symbol_without_open_position or gives_flat_schwab_watchlist_symbol_extended_stale_window or uses_fallback_quotes_for_stale_schwab_open_positions"`
+  - `.venv\Scripts\python.exe -m py_compile src/project_mai_tai/settings.py src/project_mai_tai/services/strategy_engine_app.py tests/unit/test_strategy_engine_service.py`

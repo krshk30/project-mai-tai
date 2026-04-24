@@ -4625,12 +4625,26 @@ class StrategyEngineService:
         stale_after = self._schwab_data_halt_stale_after_seconds()
         return (now - self._schwab_stream_disconnected_since).total_seconds() >= stale_after
 
-    def _schwab_data_halt_stale_after_seconds(self) -> float:
-        return max(30.0, float(self.settings.schwab_stream_symbol_stale_after_seconds))
+    def _schwab_data_halt_stale_after_seconds(self, *, has_open_position: bool) -> float:
+        base_stale_after = max(30.0, float(self.settings.schwab_stream_symbol_stale_after_seconds))
+        if has_open_position:
+            return base_stale_after
+        return max(
+            base_stale_after,
+            float(self.settings.schwab_stream_symbol_stale_after_seconds_without_position),
+        )
 
-    def _is_schwab_symbol_data_halt_stale(self, symbol: str, now: datetime) -> bool:
+    def _is_schwab_symbol_data_halt_stale(
+        self,
+        symbol: str,
+        now: datetime,
+        *,
+        has_open_position: bool,
+    ) -> bool:
         last_update = self._schwab_last_stream_update_at(symbol)
-        stale_after = self._schwab_data_halt_stale_after_seconds()
+        stale_after = self._schwab_data_halt_stale_after_seconds(
+            has_open_position=has_open_position
+        )
         if last_update is None:
             first_seen = self._schwab_symbol_active_first_seen_at.get(str(symbol).upper(), now)
             return (now - first_seen).total_seconds() >= stale_after
@@ -4661,10 +4675,16 @@ class StrategyEngineService:
             self._schwab_stream_failure_reason()
             or "Schwab stream stale/disconnected; trading halted until live Schwab ticks recover"
         )
+        open_symbol_set = set(open_symbols)
         stale_symbols = {
             symbol: codes
             for symbol, codes in active_symbols.items()
-            if stream_disconnected or self._is_schwab_symbol_data_halt_stale(symbol, now)
+            if stream_disconnected
+            or self._is_schwab_symbol_data_halt_stale(
+                symbol,
+                now,
+                has_open_position=symbol in open_symbol_set,
+            )
         }
         stale_set_before = set(self._schwab_stale_symbols)
         healthy_symbols = set(active_symbols) - set(stale_symbols)
