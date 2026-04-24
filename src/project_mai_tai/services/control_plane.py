@@ -4632,7 +4632,7 @@ def _render_bot_detail_page(data: dict[str, Any], strategy_code: str) -> str:
         for symbol in bot.get("manual_stop_symbols", [])
         if str(symbol).strip()
     ]
-    for symbol in bot["watchlist"][:10]:
+    for symbol in bot["watchlist"]:
         normalized = str(symbol).upper()
         if normalized and normalized not in active_symbols and normalized not in manual_stop_symbols:
             active_symbols.append(normalized)
