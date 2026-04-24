@@ -1131,11 +1131,15 @@ def test_bot_page_can_render_and_update_manual_stop_symbols() -> None:
     settings = Settings(redis_stream_prefix="test", oms_adapter="alpaca_paper")
     session_factory = build_test_session_factory()
     seed_database(session_factory)
+    current_session_start = current_scanner_session_start_utc()
     with session_factory() as session:
         session.add(
             DashboardSnapshot(
                 snapshot_type="bot_manual_stop_symbols",
-                payload={"bots": {"macd_30s": ["SBET"]}},
+                payload={
+                    "bots": {"macd_30s": ["SBET"]},
+                    "scanner_session_start_utc": current_session_start.isoformat(),
+                },
             )
         )
         session.commit()
@@ -1172,11 +1176,15 @@ def test_scanner_page_can_render_and_update_global_manual_stop_symbols() -> None
     settings = Settings(redis_stream_prefix="test", oms_adapter="alpaca_paper")
     session_factory = build_test_session_factory()
     seed_database(session_factory)
+    current_session_start = current_scanner_session_start_utc()
     with session_factory() as session:
         session.add(
             DashboardSnapshot(
                 snapshot_type="global_manual_stop_symbols",
-                payload={"symbols": ["SBET"]},
+                payload={
+                    "symbols": ["SBET"],
+                    "scanner_session_start_utc": current_session_start.isoformat(),
+                },
             )
         )
         session.commit()
@@ -1240,6 +1248,74 @@ def test_control_plane_ignores_manual_stop_snapshot_from_wrong_session_marker() 
         assert bots.status_code == 200
         macd_bot = next(item for item in bots.json()["bots"] if item["strategy_code"] == "macd_30s")
         assert macd_bot["manual_stop_symbols"] == []
+
+
+def test_control_plane_ignores_markerless_manual_stop_snapshot_even_if_created_this_session() -> None:
+    settings = Settings(redis_stream_prefix="test", oms_adapter="alpaca_paper")
+    session_factory = build_test_session_factory()
+    seed_database(session_factory)
+    current_session_start = current_scanner_session_start_utc()
+    with session_factory() as session:
+        session.add(
+            DashboardSnapshot(
+                snapshot_type="bot_manual_stop_symbols",
+                payload={"bots": {"macd_30s": ["SBET"]}},
+                created_at=current_session_start + timedelta(hours=2),
+            )
+        )
+        session.commit()
+    redis = FakeRedis(make_streams(settings.redis_stream_prefix))
+
+    app = build_app(
+        settings=settings,
+        session_factory=session_factory,
+        redis_client=redis,
+        legacy_client=FakeLegacyClient(),
+    )
+
+    with TestClient(app) as client:
+        bots = client.get("/api/bots")
+        assert bots.status_code == 200
+        macd_bot = next(item for item in bots.json()["bots"] if item["strategy_code"] == "macd_30s")
+        assert macd_bot["manual_stop_symbols"] == []
+
+
+def test_setting_bot_manual_stop_symbol_does_not_merge_markerless_snapshot() -> None:
+    settings = Settings(redis_stream_prefix="test", oms_adapter="alpaca_paper")
+    session_factory = build_test_session_factory()
+    seed_database(session_factory)
+    current_session_start = current_scanner_session_start_utc()
+    with session_factory() as session:
+        session.add(
+            DashboardSnapshot(
+                snapshot_type="bot_manual_stop_symbols",
+                payload={"bots": {"macd_30s": ["SBET"]}},
+                created_at=current_session_start + timedelta(hours=2),
+            )
+        )
+        session.commit()
+    redis = FakeRedis(make_streams(settings.redis_stream_prefix))
+
+    app = build_app(
+        settings=settings,
+        session_factory=session_factory,
+        redis_client=redis,
+        legacy_client=FakeLegacyClient(),
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/bot/symbol/stop?strategy_code=macd_30s&symbol=UGRO&redirect_to=/bot/30s")
+        assert response.status_code == 200
+
+    with session_factory() as session:
+        snapshot = session.scalar(
+            select(DashboardSnapshot)
+            .where(DashboardSnapshot.snapshot_type == "bot_manual_stop_symbols")
+            .order_by(DashboardSnapshot.created_at.desc())
+        )
+        assert snapshot is not None
+        assert snapshot.payload["bots"] == {"macd_30s": ["UGRO"]}
+        assert snapshot.payload["scanner_session_start_utc"] == current_session_start.isoformat()
 
 
 def test_control_plane_treats_fresh_market_data_as_live_when_heartbeat_lags() -> None:

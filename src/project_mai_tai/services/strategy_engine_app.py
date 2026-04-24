@@ -3781,6 +3781,7 @@ class StrategyEngineService:
         self._restore_alert_engine_state_from_dashboard_snapshot()
         self._seed_confirmed_candidates_from_dashboard_snapshot()
         self._restore_runtime_state_from_database()
+        self._purge_stale_manual_stop_snapshots()
         self._preload_manual_stop_state()
         await self._prefill_alert_history_from_snapshot_batches()
         if self._schwab_stream_client is not None:
@@ -5177,6 +5178,8 @@ class StrategyEngineService:
     def _snapshot_matches_current_strategy_session(
         self,
         snapshot: DashboardSnapshot | None,
+        *,
+        require_session_marker: bool = False,
     ) -> bool:
         session_start = self._current_strategy_session_start_utc()
         if snapshot is None or snapshot.created_at is None:
@@ -5191,7 +5194,37 @@ class StrategyEngineService:
             if marker_dt.tzinfo is None:
                 marker_dt = marker_dt.replace(tzinfo=UTC)
             return marker_dt.astimezone(UTC) == session_start
+        if require_session_marker:
+            return False
         return snapshot.created_at.astimezone(UTC) >= session_start
+
+    def _purge_stale_manual_stop_snapshots(self) -> None:
+        if self.session_factory is None:
+            return
+
+        stale_snapshot_ids: list[object] = []
+        try:
+            with self.session_factory() as session:
+                for snapshot_type in ("bot_manual_stop_symbols", "global_manual_stop_symbols"):
+                    snapshot = session.scalar(
+                        select(DashboardSnapshot)
+                        .where(DashboardSnapshot.snapshot_type == snapshot_type)
+                        .order_by(desc(DashboardSnapshot.created_at))
+                    )
+                    if self._snapshot_matches_current_strategy_session(
+                        snapshot,
+                        require_session_marker=True,
+                    ):
+                        continue
+                    if snapshot is not None:
+                        stale_snapshot_ids.append(snapshot.id)
+                if stale_snapshot_ids:
+                    session.execute(
+                        delete(DashboardSnapshot).where(DashboardSnapshot.id.in_(stale_snapshot_ids))
+                    )
+                    session.commit()
+        except Exception:
+            self.logger.exception("failed purging stale manual stop snapshots")
 
     def _schwab_stream_failure_reason(self) -> str:
         client = self._schwab_stream_client
@@ -5654,7 +5687,10 @@ class StrategyEngineService:
 
         if snapshot is None or not isinstance(snapshot.payload, dict):
             return {}
-        if not self._snapshot_matches_current_strategy_session(snapshot):
+        if not self._snapshot_matches_current_strategy_session(
+            snapshot,
+            require_session_marker=True,
+        ):
             return {}
 
         bots_payload = snapshot.payload.get("bots", {})
@@ -5687,7 +5723,10 @@ class StrategyEngineService:
 
         if snapshot is None or not isinstance(snapshot.payload, dict):
             return set()
-        if not self._snapshot_matches_current_strategy_session(snapshot):
+        if not self._snapshot_matches_current_strategy_session(
+            snapshot,
+            require_session_marker=True,
+        ):
             return set()
 
         payload_symbols = snapshot.payload.get("symbols", [])
