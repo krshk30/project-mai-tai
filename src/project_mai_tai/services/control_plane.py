@@ -3711,6 +3711,13 @@ def _build_bot_listening_status(
     data_health = dict(bot.get("data_health", {}) or {})
     data_health_status = str(data_health.get("status", "healthy") or "healthy").lower()
     halted_symbols = [str(symbol).upper() for symbol in list(data_health.get("halted_symbols", []) or [])]
+    raw_reasons = dict(data_health.get("reasons", {}) or {})
+    unique_reasons = [
+        str(reason).strip()
+        for reason in dict.fromkeys(raw_reasons.values())
+        if str(reason).strip()
+    ]
+    representative_reason = unique_reasons[0] if len(unique_reasons) == 1 else ""
 
     state = "LISTENING"
     detail = "Bot is actively evaluating bars."
@@ -3724,11 +3731,14 @@ def _build_bot_listening_status(
     if data_health_status in {"critical", "degraded", "error"}:
         state = "DATA HALT"
         if halted_symbols:
-            detail = (
-                f"{market_data_source} stream stale/disconnected; entries are blocked and any open positions are eligible for emergency close."
-                if position_count > 0
-                else f"{market_data_source} stream stale/disconnected; entries are blocked, but there are no open positions to emergency close."
-            )
+            if representative_reason:
+                detail = representative_reason
+            else:
+                detail = (
+                    f"{market_data_source} stream stale/disconnected; entries are blocked and any open positions are eligible for emergency close."
+                    if position_count > 0
+                    else f"{market_data_source} stream stale/disconnected; entries are blocked, but there are no open positions to emergency close."
+                )
         else:
             detail = f"{market_data_source} data health is degraded."
         color = "#ff6b6b"

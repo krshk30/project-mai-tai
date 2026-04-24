@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import gzip
 import json
 import logging
 from dataclasses import dataclass
@@ -575,11 +576,13 @@ class SchwabBrokerAdapter:
         request = urllib.request.Request(url, data=data, headers=headers, method=method)
         try:
             with urllib.request.urlopen(request, timeout=self.request_timeout_seconds) as response:
-                raw = response.read().decode("utf-8")
-                return response.getcode(), dict(response.headers.items()), self._decode_json(raw)
+                response_headers = dict(response.headers.items())
+                raw = self._decode_http_body(response.read(), response_headers)
+                return response.getcode(), response_headers, self._decode_json(raw)
         except urllib.error.HTTPError as exc:
-            raw = exc.read().decode("utf-8") if exc.fp else ""
-            return exc.code, dict(exc.headers.items()), self._decode_json(raw)
+            response_headers = dict(exc.headers.items())
+            raw = self._decode_http_body(exc.read() if exc.fp else b"", response_headers)
+            return exc.code, response_headers, self._decode_json(raw)
         except Exception as exc:  # pragma: no cover - exercised via rejection fallback
             return 599, {}, {"message": str(exc)}
 
@@ -791,7 +794,11 @@ class SchwabBrokerAdapter:
 
     def _extract_error_reason(self, payload: object) -> str:
         if isinstance(payload, dict):
-            for key in ("message", "error", "statusDescription", "description"):
+            error = str(payload.get("error", "") or "").strip()
+            error_description = str(payload.get("error_description", "") or "").strip()
+            if error and error_description:
+                return f"{error}: {error_description}"
+            for key in ("message", "error", "error_description", "statusDescription", "description"):
                 value = payload.get(key)
                 if value:
                     return str(value)
@@ -836,3 +843,14 @@ class SchwabBrokerAdapter:
             return json.loads(raw)
         except json.JSONDecodeError:
             return {"message": raw}
+
+    def _decode_http_body(self, raw: bytes, headers: dict[str, str]) -> str:
+        if not raw:
+            return ""
+        encoding = str(headers.get("Content-Encoding", "") or "").strip().lower()
+        if encoding == "gzip" or raw[:2] == b"\x1f\x8b":
+            try:
+                raw = gzip.decompress(raw)
+            except OSError:
+                pass
+        return raw.decode("utf-8", errors="replace")
