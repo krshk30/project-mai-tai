@@ -2996,3 +2996,43 @@ Validation:
     remains out of sync with current generic-market-data selection logic and
     was not used as a blocker for this targeted visibility fix
 
+## 2026-04-24 Webull Last Bot Tick Forced-Bar-Close Fix
+
+Context:
+
+- After the snapshot publish fix above, the raw live `strategy-state` payload
+  still showed:
+  - `webull_30s.recent_decisions` updating with fresh current-session bar times
+  - but `webull_30s.last_tick_at` remained empty
+- `Schwab 30 Sec Bot` did not show the same problem because its runtime also
+  receives direct Schwab tick timestamps continuously.
+
+Root cause:
+
+- Webull/Polygon was producing many of its current 30-second decisions through
+  the runtime `flush_completed_bars()` path
+- that path closes due bars on schedule and evaluates them, but it did not
+  stamp `last_tick_at` for the symbol before persisting the strategy snapshot
+- result:
+  - fresh decisions and bar counts were visible
+  - `Last Bot Tick` still rendered as blank because the backing snapshot field
+    stayed `{}` for `webull_30s`
+
+Code fix:
+
+- updated `src/project_mai_tai/services/strategy_engine_app.py`
+  - in `StrategyBotRuntime.flush_completed_bars()`, each symbol whose bar is
+    force-closed now records `last_tick_at` with the current normalized runtime
+    clock before `_evaluate_completed_bar(...)`
+- added `tests/unit/test_webull_last_bot_tick.py`
+  - dedicated regression test proving a Webull symbol evaluated through
+    `flush_completed_bars()` now appears in `bot.summary()["last_tick_at"]`
+
+Operator meaning:
+
+- `Last Bot Tick` for Webull no longer stays blank just because the bot is
+  evaluating through timed 30-second bar closes instead of direct intent-
+  generating ticks
+- this is a visibility/state correctness fix only; it does not change any
+  entry or exit logic
+

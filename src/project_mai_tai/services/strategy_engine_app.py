@@ -750,6 +750,8 @@ class StrategyBotRuntime:
         intents: list[TradeIntentEvent] = []
         completed = self.builder_manager.check_all_bar_closes()
         for symbol, _bar in completed:
+            normalized_symbol = str(symbol).upper()
+            self._last_tick_at[normalized_symbol] = self._normalize_now(self.now_provider())
             intents.extend(self._evaluate_completed_bar(symbol))
         return intents, len(completed)
 
