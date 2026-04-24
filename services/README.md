@@ -16,6 +16,8 @@ Mapping:
   - wrapper for `project_mai_tai.services.oms_risk`
 - `reconciler/`
   - wrapper for `project_mai_tai.services.reconciler`
+- `trade-coach/`
+  - wrapper for `project_mai_tai.services.trade_coach`
 
 Use this directory when you want:
 

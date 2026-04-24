@@ -1,0 +1,146 @@
+from __future__ import annotations
+
+from project_mai_tai.trade_episodes import collect_completed_trade_cycles
+
+
+def test_collect_completed_trade_cycles_prefers_fills() -> None:
+    cycles = collect_completed_trade_cycles(
+        strategy_code="macd_30s",
+        broker_account_name="paper:macd_30s",
+        recent_orders=[
+            {
+                "symbol": "IONZ",
+                "side": "buy",
+                "intent_type": "open",
+                "quantity": "100",
+                "price": "1.00",
+                "status": "filled",
+                "reason": "ENTRY_P1_CROSS",
+                "path": "P1_CROSS",
+                "updated_at": "2026-04-24 09:35:00 AM ET",
+            },
+            {
+                "symbol": "IONZ",
+                "side": "sell",
+                "intent_type": "close",
+                "quantity": "100",
+                "price": "1.05",
+                "status": "filled",
+                "reason": "STOP_LOSS",
+                "path": "",
+                "updated_at": "2026-04-24 09:40:00 AM ET",
+            },
+        ],
+        recent_fills=[
+            {
+                "symbol": "IONZ",
+                "side": "buy",
+                "quantity": "100",
+                "price": "1.00",
+                "filled_at": "2026-04-24 09:35:00 AM ET",
+            },
+            {
+                "symbol": "IONZ",
+                "side": "sell",
+                "quantity": "100",
+                "price": "1.20",
+                "filled_at": "2026-04-24 09:40:00 AM ET",
+            },
+        ],
+        closed_today=[],
+    )
+
+    assert len(cycles) == 1
+    assert cycles[0].symbol == "IONZ"
+    assert cycles[0].path == "P1_CROSS"
+    assert cycles[0].entry_price == 1.0
+    assert cycles[0].exit_price == 1.2
+    assert round(cycles[0].pnl, 2) == 20.0
+
+
+def test_collect_completed_trade_cycles_separates_account_and_strategy_keys() -> None:
+    cycle_a = collect_completed_trade_cycles(
+        strategy_code="macd_30s",
+        broker_account_name="paper:macd_30s",
+        recent_orders=[],
+        recent_fills=[
+            {
+                "symbol": "SMX",
+                "side": "buy",
+                "quantity": "10",
+                "price": "2.00",
+                "filled_at": "2026-04-24 10:00:00 AM ET",
+            },
+            {
+                "symbol": "SMX",
+                "side": "sell",
+                "quantity": "10",
+                "price": "2.20",
+                "filled_at": "2026-04-24 10:05:00 AM ET",
+            },
+        ],
+        closed_today=[],
+    )[0]
+    cycle_b = collect_completed_trade_cycles(
+        strategy_code="webull_30s",
+        broker_account_name="live:webull_30s",
+        recent_orders=[],
+        recent_fills=[
+            {
+                "symbol": "SMX",
+                "side": "buy",
+                "quantity": "10",
+                "price": "2.00",
+                "filled_at": "2026-04-24 10:00:00 AM ET",
+            },
+            {
+                "symbol": "SMX",
+                "side": "sell",
+                "quantity": "10",
+                "price": "2.20",
+                "filled_at": "2026-04-24 10:05:00 AM ET",
+            },
+        ],
+        closed_today=[],
+    )[0]
+
+    assert cycle_a.symbol == cycle_b.symbol
+    assert cycle_a.cycle_key != cycle_b.cycle_key
+
+
+def test_collect_completed_trade_cycles_falls_back_to_filled_orders_when_needed() -> None:
+    cycles = collect_completed_trade_cycles(
+        strategy_code="webull_30s",
+        broker_account_name="live:webull_30s",
+        recent_orders=[
+            {
+                "symbol": "CAST",
+                "side": "buy",
+                "intent_type": "open",
+                "quantity": "100",
+                "price": "1.50",
+                "status": "filled",
+                "reason": "ENTRY_P1_CROSS",
+                "path": "P1_CROSS",
+                "updated_at": "2026-04-24 11:00:00 AM ET",
+            },
+            {
+                "symbol": "CAST",
+                "side": "sell",
+                "intent_type": "close",
+                "quantity": "100",
+                "price": "1.65",
+                "status": "filled",
+                "reason": "TAKE_PROFIT",
+                "path": "",
+                "updated_at": "2026-04-24 11:06:00 AM ET",
+            },
+        ],
+        recent_fills=[],
+        closed_today=[],
+    )
+
+    assert len(cycles) == 1
+    assert cycles[0].symbol == "CAST"
+    assert cycles[0].entry_price == 1.5
+    assert cycles[0].exit_price == 1.65
