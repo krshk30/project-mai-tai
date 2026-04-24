@@ -67,6 +67,7 @@ class MarketDataGatewayService:
         self._live_aggregate_stream_enabled = (
             self.settings.market_data_live_aggregate_stream_enabled
             or self.settings.strategy_macd_30s_live_aggregate_bars_enabled
+            or self.settings.strategy_webull_30s_live_aggregate_bars_enabled
         )
         self._desired_symbols_by_consumer: dict[str, set[str]] = {
             "static": set(self.settings.market_data_static_symbol_list),
