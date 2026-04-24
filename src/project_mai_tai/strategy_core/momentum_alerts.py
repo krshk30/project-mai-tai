@@ -40,6 +40,7 @@ class MomentumAlertEngine:
         self._volume_spike_tickers: set[str] = set()
         self._snaps_per_5min = max(1, 300 // scan_interval_secs)
         self._snaps_per_10min = max(1, 600 // scan_interval_secs)
+        self._recent_rejections: list[dict[str, object]] = []
 
     def prefill_history(self, entries: Sequence[HistoryEntry | Sequence[MarketSnapshot]]) -> None:
         self._history.clear()
@@ -62,6 +63,7 @@ class MomentumAlertEngine:
             ],
             "last_spike_volume": dict(self._last_spike_volume),
             "volume_spike_tickers": sorted(self._volume_spike_tickers),
+            "recent_rejections": list(self._recent_rejections[-250:]),
             "persisted_at": self.now_provider().astimezone(UTC).isoformat(),
         }
 
@@ -125,6 +127,23 @@ class MomentumAlertEngine:
             self._volume_spike_tickers = {
                 str(ticker).upper() for ticker in volume_spike_tickers if str(ticker).strip()
             }
+
+        recent_rejections = payload.get("recent_rejections")
+        self._recent_rejections = []
+        if isinstance(recent_rejections, Sequence) and not isinstance(recent_rejections, (str, bytes)):
+            self._recent_rejections = [
+                {
+                    **item,
+                    "ticker": str(item.get("ticker", "")).upper(),
+                    "reasons": [
+                        str(reason)
+                        for reason in item.get("reasons", [])
+                        if str(reason).strip()
+                    ],
+                }
+                for item in recent_rejections[-250:]
+                if isinstance(item, dict)
+            ]
 
         logger.info(
             "Momentum alert engine restored | history_cycles=%s spike_tickers=%s cooldowns=%s",
@@ -230,6 +249,7 @@ class MomentumAlertEngine:
             )
 
             emitted_volume_spike = False
+            volume_spike_on_cooldown = self._on_cooldown(ticker, "VOLUME_SPIKE", now)
             if relative_spike or absolute_spike:
                 last_spike_volume = self._last_spike_volume.get(ticker, 0)
                 should_fire = False
@@ -242,7 +262,7 @@ class MomentumAlertEngine:
                     # backfill the spike so squeeze alerts can still be emitted.
                     should_fire = True
 
-                if should_fire and not self._on_cooldown(ticker, "VOLUME_SPIKE", now):
+                if should_fire and not volume_spike_on_cooldown:
                     spike_type = "relative" if relative_spike else "absolute"
                     details = {
                         "vol_5min": int(vol_5min),
@@ -267,13 +287,11 @@ class MomentumAlertEngine:
 
             volume_gate_open = ticker in self._volume_spike_tickers or emitted_volume_spike
 
+            emitted_squeeze_5min = False
+            squeeze_5min_on_cooldown = self._on_cooldown(ticker, "SQUEEZE_5MIN", now)
             if volume_gate_open and squeeze_5min_pct is not None and old_5min:
                 old_price, _old_volume = old_5min
-                if squeeze_5min_pct >= self.config.squeeze_5min_pct and not self._on_cooldown(
-                    ticker,
-                    "SQUEEZE_5MIN",
-                    now,
-                ):
+                if squeeze_5min_pct >= self.config.squeeze_5min_pct and not squeeze_5min_on_cooldown:
                     alerts.append(
                         {
                             **base,
@@ -285,14 +303,13 @@ class MomentumAlertEngine:
                         }
                     )
                     self._set_cooldown(ticker, "SQUEEZE_5MIN", now)
+                    emitted_squeeze_5min = True
 
+            emitted_squeeze_10min = False
+            squeeze_10min_on_cooldown = self._on_cooldown(ticker, "SQUEEZE_10MIN", now)
             if volume_gate_open and squeeze_10min_pct is not None and old_10min:
                 old_price, _old_volume = old_10min
-                if squeeze_10min_pct >= self.config.squeeze_10min_pct and not self._on_cooldown(
-                    ticker,
-                    "SQUEEZE_10MIN",
-                    now,
-                ):
+                if squeeze_10min_pct >= self.config.squeeze_10min_pct and not squeeze_10min_on_cooldown:
                     alerts.append(
                         {
                             **base,
@@ -304,6 +321,75 @@ class MomentumAlertEngine:
                         }
                     )
                     self._set_cooldown(ticker, "SQUEEZE_10MIN", now)
+                    emitted_squeeze_10min = True
+
+            near_5min_threshold = max(1.0, self.config.squeeze_5min_pct * 0.5)
+            near_10min_threshold = max(2.0, self.config.squeeze_10min_pct * 0.5)
+            interesting_candidate = (
+                ticker in self._volume_spike_tickers
+                or relative_spike
+                or absolute_spike
+                or (squeeze_5min_pct is not None and squeeze_5min_pct >= near_5min_threshold)
+                or (squeeze_10min_pct is not None and squeeze_10min_pct >= near_10min_threshold)
+            )
+            if interesting_candidate and not (
+                emitted_volume_spike or emitted_squeeze_5min or emitted_squeeze_10min
+            ):
+                reasons: list[str] = []
+                if history_len < self._snaps_per_5min:
+                    reasons.append("waiting_for_5min_history")
+                elif old_5min is None:
+                    reasons.append("missing_5min_baseline")
+
+                if not (relative_spike or absolute_spike):
+                    reasons.append("volume_spike_gate_not_met")
+                elif volume_spike_on_cooldown:
+                    reasons.append("volume_spike_on_cooldown")
+
+                if not volume_gate_open:
+                    reasons.append("volume_gate_closed")
+                elif squeeze_5min_pct is None:
+                    reasons.append("squeeze_5min_unavailable")
+                elif squeeze_5min_pct < self.config.squeeze_5min_pct:
+                    reasons.append("squeeze_5min_below_threshold")
+                elif squeeze_5min_on_cooldown:
+                    reasons.append("squeeze_5min_on_cooldown")
+
+                if history_len < self._snaps_per_10min:
+                    reasons.append("waiting_for_10min_history")
+                elif old_10min is None:
+                    reasons.append("missing_10min_baseline")
+                elif not volume_gate_open:
+                    reasons.append("squeeze_10min_waiting_for_volume_gate")
+                elif squeeze_10min_pct is None:
+                    reasons.append("squeeze_10min_unavailable")
+                elif squeeze_10min_pct < self.config.squeeze_10min_pct:
+                    reasons.append("squeeze_10min_below_threshold")
+                elif squeeze_10min_on_cooldown:
+                    reasons.append("squeeze_10min_on_cooldown")
+
+                if not reasons:
+                    reasons.append("candidate_seen_but_no_alert_fired")
+
+                self._recent_rejections.append(
+                    {
+                        **base,
+                        "history_cycles": history_len,
+                        "reasons": reasons,
+                        "vol_5min": int(vol_5min),
+                        "expected_5min": int(expected_5min),
+                        "relative_spike": bool(relative_spike),
+                        "absolute_spike": bool(absolute_spike),
+                        "volume_gate_open": bool(volume_gate_open),
+                        "squeeze_5min_pct": round(squeeze_5min_pct, 2)
+                        if squeeze_5min_pct is not None
+                        else None,
+                        "squeeze_10min_pct": round(squeeze_10min_pct, 2)
+                        if squeeze_10min_pct is not None
+                        else None,
+                    }
+                )
+                self._recent_rejections = self._recent_rejections[-250:]
 
         for alert in alerts:
             logger.info("[ALERT] [%s] %s @ $%.2f | %s", alert["type"], alert["ticker"], alert["price"], alert["details"])
@@ -331,6 +417,7 @@ class MomentumAlertEngine:
         self._cooldowns.clear()
         self._last_spike_volume.clear()
         self._volume_spike_tickers.clear()
+        self._recent_rejections.clear()
         logger.info("Momentum alert engine reset")
 
     @property
