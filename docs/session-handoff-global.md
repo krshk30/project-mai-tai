@@ -2917,5 +2917,31 @@ Operator meaning:
 
 Validation:
 
-- pending live deploy validation in this session
+- local:
+  - passed:
+    - `.venv\Scripts\python.exe -m pytest tests/unit/test_webull_30s_bot.py -q`
+    - `.venv\Scripts\python.exe -m py_compile src/project_mai_tai/settings.py src/project_mai_tai/market_data/gateway.py src/project_mai_tai/services/strategy_engine_app.py tests/unit/test_webull_30s_bot.py`
+  - note:
+    - two older aggregate-focused tests in `tests/unit/test_strategy_engine_service.py`
+      were already red in the worktree and were not introduced by this patch
+- VPS deploy:
+  - PR `#45` merged to `main`
+  - VPS pulled `main` and restarted:
+    - `project-mai-tai-market-data.service`
+    - `project-mai-tai-strategy.service`
+  - post-deploy verification:
+    - `/health` returned `healthy`
+    - `market-data-gateway` healthy with `active_symbols=17`
+    - `strategy-engine` healthy with `watchlist_size=17`, `bot_count=2`,
+      `schwab_stream_connected=true`, and no stale Schwab symbols
+    - both `Schwab 30 Sec Bot` and `Webull 30 Sec Bot` came back on the same
+      17-symbol live watchlist with healthy `data_health`
+
+API note:
+
+- the shared multi-bot JSON endpoint remains `GET /api/bots`
+- per-bot JSON endpoints are:
+  - `GET /bot` for `macd_30s`
+  - `GET /botwebull` for `webull_30s`
+- there is no separate `/api/botwebull` route in the current control plane
 
