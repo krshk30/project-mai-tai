@@ -72,6 +72,23 @@ Intent:
 - stop the Schwab stream from carrying dozens of stale prewarm-only symbols that
   are no longer relevant to the live 30-second bot
 
+Follow-up after deploy:
+
+- stream load dropped from about `43` Schwab subscriptions down to the actual
+  live set (`4`)
+- this removed the prewarm overload, but the live Schwab stream still exposed a
+  second blocker:
+  - `TimeoutError: timed out during opening handshake`
+  - TLS connectivity to Schwab still succeeded from the VPS, so the remaining
+    failure point is the websocket opening handshake itself
+
+Additional mitigation:
+
+- increased Schwab websocket `open_timeout` from the library default to `30`
+  seconds in both the live connection loop and the probe path
+- intent is to tolerate slow Schwab websocket opens instead of treating them as
+  immediate stream failure
+
 ## 2026-04-24 Schwab OAuth Callback Recovery
 
 Morning live checks found the remaining `Schwab 30 Sec Bot` red state was not a
