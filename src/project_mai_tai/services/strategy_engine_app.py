@@ -4683,6 +4683,25 @@ class StrategyEngineService:
             return (now - first_seen).total_seconds() >= stale_after
         return (now - last_update).total_seconds() >= stale_after
 
+    def _schwab_symbol_should_enforce_data_halt(
+        self,
+        *,
+        strategy_codes: Iterable[str],
+        now: datetime,
+        has_open_position: bool,
+    ) -> bool:
+        if has_open_position:
+            return True
+        current_et = now.astimezone(EASTERN_TZ)
+        for code in strategy_codes:
+            runtime = self.state.bots.get(code)
+            if not isinstance(runtime, StrategyBotRuntime):
+                continue
+            config = runtime.definition.trading_config
+            if config.trading_start_hour <= current_et.hour < config.trading_end_hour:
+                return True
+        return False
+
     async def _monitor_schwab_symbol_health(self) -> int:
         active_symbols = self._schwab_active_strategy_codes_by_symbol()
         open_symbols = self._schwab_open_position_strategy_codes_by_symbol()
@@ -4712,16 +4731,21 @@ class StrategyEngineService:
             or "Schwab stream stale/disconnected; trading halted until live Schwab ticks recover"
         )
         open_symbol_set = set(open_symbols)
-        stale_symbols = {
-            symbol: codes
-            for symbol, codes in active_symbols.items()
-            if stream_disconnected
-            or self._is_schwab_symbol_data_halt_stale(
+        stale_symbols: dict[str, tuple[str, ...]] = {}
+        for symbol, codes in active_symbols.items():
+            has_open_position = symbol in open_symbol_set
+            if not self._schwab_symbol_should_enforce_data_halt(
+                strategy_codes=codes,
+                now=now,
+                has_open_position=has_open_position,
+            ):
+                continue
+            if stream_disconnected or self._is_schwab_symbol_data_halt_stale(
                 symbol,
                 now,
-                has_open_position=symbol in open_symbol_set,
-            )
-        }
+                has_open_position=has_open_position,
+            ):
+                stale_symbols[symbol] = codes
         stale_set_before = set(self._schwab_stale_symbols)
         healthy_symbols = set(active_symbols) - set(stale_symbols)
         for symbol in healthy_symbols:
