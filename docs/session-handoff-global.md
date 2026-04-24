@@ -2395,3 +2395,82 @@ Validation:
   - `.venv\Scripts\python.exe -m pytest tests/unit/test_control_plane.py -k "decision_tape or webull_bot_page_uses_polygon_data_halt_wording"`
   - `.venv\Scripts\python.exe -m pytest tests/unit/test_scanner_cycle_history_restore.py`
   - `.venv\Scripts\python.exe -m py_compile src/project_mai_tai/services/control_plane.py src/project_mai_tai/services/strategy_engine_app.py tests/unit/test_control_plane.py tests/unit/test_scanner_cycle_history_restore.py`
+
+## 2026-04-24 Morning Follow-Up: Schwab Hidden Prewarm Load + Auth-Failure Visibility
+
+Live investigation:
+
+- the user-reported `AUUD` / `CAST` morning symbols were not literally stale
+  carryover from 2026-04-23; they were freshly confirmed on 2026-04-24:
+  - `CAST` confirmed at `04:06:56 AM ET`
+  - `AUUD` confirmed at `06:18:23 AM ET`
+- however, the live Schwab strategy heartbeat showed a larger hidden stream load:
+  - visible bot watchlist size: `2`
+  - hidden `schwab_stream_symbols`: `32`
+- root cause: Schwab prewarm symbols were session-long and only capped by count;
+  they did not age out intraday, so momentum alerts could accumulate a large
+  hidden Schwab stream subscription set even after symbols never handed off
+- the separate Schwab halt problem was confirmed as an OAuth/auth issue, not a
+  symbol-count issue:
+  - `strategy.log` showed repeated Schwab streamer connection failures while
+    refreshing the token / fetching streamer credentials
+  - prior manual token probe already confirmed
+    `refresh_token_authentication_error` / `unsupported_token_type`
+  - because the stream failed before login, the 2-symbol visible watchlist was
+    not the cause of the halt
+
+Code fix:
+
+- added `schwab_prewarm_symbol_ttl_seconds` in `src/project_mai_tai/settings.py`
+  with a default of `900` seconds (`15` minutes)
+- updated `src/project_mai_tai/services/strategy_engine_app.py`
+  - Schwab prewarm symbols now track `added_at`
+  - prewarm symbols are pruned when they age past the TTL or once they become
+    real active bot symbols
+  - bot/runtime prewarm sets are kept in sync after pruning so expired prewarm
+    names really leave the hidden Schwab stream target set
+  - heartbeat details now publish:
+    - `schwab_prewarm_symbols`
+    - `schwab_stream_connected`
+    - `schwab_stream_failures`
+    - `schwab_stream_last_error`
+  - Schwab data-halt reasons now distinguish auth failure from ordinary stale
+    stream disconnects
+  - forced resubscribe attempts are skipped when the Schwab stream client is
+    explicitly disconnected, avoiding misleading fake resubscribe noise
+- updated `src/project_mai_tai/broker_adapters/schwab.py`
+  - HTTP error bodies now decode safely even when gzip-compressed
+  - Schwab OAuth errors now preserve both `error` and `error_description`
+    instead of collapsing to the shorter token
+- updated `src/project_mai_tai/market_data/schwab_streamer.py`
+  - streamer client now tracks `last_error` so auth failures can be surfaced in
+    health/state output
+- updated `src/project_mai_tai/services/control_plane.py`
+  - listening-status detail now shows the exact data-halt reason when all halted
+    symbols share one cause, so Schwab auth failures render clearly on the bot
+    page instead of looking like a generic stale-feed issue
+
+Operator meaning:
+
+- if Schwab tokens are invalid, the live fix is still to reauthorize Schwab on
+  the VPS; this patch does not bypass broker auth
+- what this patch does is:
+  - remove unnecessary hidden Schwab prewarm load
+  - make the morning halt reason honest and actionable
+  - prevent the UI from implying the bot is just randomly stale when the real
+    problem is Schwab OAuth
+
+Regression coverage added:
+
+- expired Schwab prewarm symbols are pruned from the stream target set
+- Schwab auth failures surface the OAuth-specific halt reason and do not trigger
+  fake resubscribe attempts
+- existing stale-open-position fallback quote behavior still works
+- control-plane halt cards still render correctly for both Schwab and Webull
+
+Validation:
+
+- passed:
+  - `.venv\Scripts\python.exe -m py_compile src/project_mai_tai/settings.py src/project_mai_tai/broker_adapters/schwab.py src/project_mai_tai/market_data/schwab_streamer.py src/project_mai_tai/services/strategy_engine_app.py src/project_mai_tai/services/control_plane.py tests/unit/test_strategy_engine_service.py`
+  - `.venv\Scripts\python.exe -m pytest tests/unit/test_strategy_engine_service.py -k "expired_schwab_prewarm_symbol_is_pruned or service_surfaces_schwab_auth_failure_reason_without_fake_resubscribe or service_uses_fallback_quotes_for_stale_schwab_open_positions"`
+  - `.venv\Scripts\python.exe -m pytest tests/unit/test_control_plane.py -k "schwab_data_halt_red_on_bot_page or webull_bot_page_uses_polygon_data_halt_wording"`

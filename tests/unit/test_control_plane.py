@@ -1057,7 +1057,11 @@ def test_control_plane_overview_and_dashboard_render() -> None:
 
 
 def test_control_plane_marks_schwab_data_halt_red_on_bot_page() -> None:
-    settings = Settings(redis_stream_prefix="test", oms_adapter="alpaca_paper")
+    settings = Settings(
+        redis_stream_prefix="test",
+        oms_adapter="alpaca_paper",
+        strategy_macd_30s_broker_provider="schwab",
+    )
     session_factory = build_test_session_factory()
     seed_database(session_factory)
     streams = make_streams(settings.redis_stream_prefix)
@@ -1092,7 +1096,10 @@ def test_control_plane_marks_schwab_data_halt_red_on_bot_page() -> None:
         bot_30s_status = client.get("/bot")
         assert bot_30s_status.status_code == 200
         assert bot_30s_status.json()["listening_status"]["state"] == "DATA HALT"
-        assert "no open positions to emergency close" in bot_30s_status.json()["listening_status"]["detail"]
+        assert (
+            bot_30s_status.json()["listening_status"]["detail"]
+            == "Schwab stream stale/disconnected; trading halted until live Schwab ticks recover"
+        )
 
         bot_30s_page = client.get("/bot/30s")
         assert bot_30s_page.status_code == 200

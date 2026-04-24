@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import traceback
 from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass
 
@@ -68,6 +69,7 @@ class SchwabStreamerClient:
         self._task: asyncio.Task[None] | None = None
         self._connected = False
         self._connection_failures = 0
+        self._last_error: str | None = None
 
     @property
     def connected(self) -> bool:
@@ -76,6 +78,10 @@ class SchwabStreamerClient:
     @property
     def connection_failures(self) -> int:
         return self._connection_failures
+
+    @property
+    def last_error(self) -> str | None:
+        return self._last_error
 
     async def start(
         self,
@@ -245,6 +251,7 @@ class SchwabStreamerClient:
                     logger.info("Schwab streamer connected")
                 self._connected = True
                 self._connection_failures = 0
+                self._last_error = None
                 await self._apply_subscription_delta(force_resubscribe=True)
 
                 while not self._stop_event.is_set():
@@ -255,6 +262,7 @@ class SchwabStreamerClient:
             except Exception:
                 self._connected = False
                 self._connection_failures += 1
+                self._last_error = traceback.format_exc(limit=1).strip().splitlines()[-1]
                 if not self._stop_event.is_set():
                     if self._connection_failures <= 5:
                         logger.warning(
