@@ -80,7 +80,12 @@ Latest validation snapshot:
   - `32 passed`
 - disabled-mode smoke pass:
   - trade coach process exited cleanly with default `trade_coach_enabled = false`
-  - no API key configured, so no AI request path was exercised yet
+  - no API request path was exercised yet because the service remains disabled
+- local dev secret state:
+  - local development environment now has `MAI_TAI_TRADE_COACH_API_KEY`
+    configured outside the repo
+  - do **not** commit secrets into `.env`, repo files, or handoff notes
+  - VPS / production trade coach secret still not configured from this branch
 - branch confirmed:
   - `codex/trade-coach-foundation`
 
