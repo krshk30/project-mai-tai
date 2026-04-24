@@ -3223,6 +3223,9 @@ class StrategyEngineState:
             if code not in active_map and code not in history_map:
                 active_symbols = set(fallback_symbols)
                 history_symbols = set(fallback_symbols)
+            elif code in {"macd_30s", "webull_30s"} and not active_symbols and not history_symbols and fallback_symbols:
+                active_symbols = set(fallback_symbols)
+                history_symbols = set(fallback_symbols)
             if not history_symbols:
                 history_symbols = set(active_symbols)
             restored_active[code] = active_symbols
