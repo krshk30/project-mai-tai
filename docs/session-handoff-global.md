@@ -1,5 +1,36 @@
 # Session Handoff - Global
 
+## 2026-04-24 Schwab OAuth Callback Recovery
+
+Morning live checks found the remaining `Schwab 30 Sec Bot` red state was not a
+cleanup bug. The live blocker was:
+
+- Schwab refresh-token auth on the VPS was failing with
+  `refresh_token_authentication_error` / `unsupported_token_type`
+- the public callback host `https://hook.project-mai-tai.live/auth/callback`
+  was also broken because nginx still proxied `/auth/*` to the obsolete
+  `tv-alerts` sidecar on port `3000`
+- that sidecar no longer ships in current `main`, so the callback host returned
+  `502` and prevented a clean re-consent flow
+
+Recovery change:
+
+- [control_plane.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/src/project_mai_tai/services/control_plane.py)
+  now exposes:
+  - `/auth/schwab/start`
+  - `/auth/callback`
+- the control plane can now:
+  - redirect into the Schwab authorize URL
+  - exchange the returned authorization code for fresh tokens
+  - persist the refreshed token store directly to the configured VPS token path
+
+Operational fix:
+
+- nginx `/auth/*` on `hook.project-mai-tai.live` should point to the live control
+  plane instead of the dead `tv-alerts` sidecar
+- after browser consent completes, restart `project-mai-tai-strategy.service`
+  and verify the Schwab bot leaves `DATA HALT`
+
 ## Current Live Focus - 2026-04-23
 
 This handoff is now superseded by the current 30-second live-trading work from
