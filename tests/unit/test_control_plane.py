@@ -1243,6 +1243,50 @@ def test_bot_page_can_render_and_update_manual_stop_symbols() -> None:
         assert "scanner_session_start_utc" in snapshot.payload
 
 
+def test_bot_page_renders_full_live_watchlist_without_ten_symbol_cap() -> None:
+    settings = Settings(redis_stream_prefix="test", oms_adapter="alpaca_paper")
+    session_factory = build_test_session_factory()
+    seed_database(session_factory)
+    streams = make_streams(settings.redis_stream_prefix)
+    strategy_state_stream = streams[f"{settings.redis_stream_prefix}:strategy-state"]
+    strategy_state_event = StrategyStateSnapshotEvent.model_validate_json(
+        strategy_state_stream[0][1]["data"]
+    )
+    full_watchlist = [
+        "APLZ",
+        "ATOM",
+        "AUUD",
+        "CAST",
+        "ENVB",
+        "HKIT",
+        "IONZ",
+        "IQST",
+        "LIDR",
+        "NBIZ",
+        "NTIP",
+        "PBM",
+    ]
+    strategy_state_event.payload.bots[0].watchlist = full_watchlist
+    strategy_state_event.payload.bots[0].positions = []
+    strategy_state_event.payload.bots[0].pending_open_symbols = []
+    strategy_state_event.payload.bots[0].pending_close_symbols = []
+    strategy_state_stream[0][1]["data"] = strategy_state_event.model_dump_json()
+    redis = FakeRedis(streams)
+
+    app = build_app(
+        settings=settings,
+        session_factory=session_factory,
+        redis_client=redis,
+        legacy_client=FakeLegacyClient(),
+    )
+
+    with TestClient(app) as client:
+        bot_page = client.get("/bot/30s")
+        assert bot_page.status_code == 200
+        for symbol in full_watchlist:
+            assert symbol in bot_page.text
+
+
 def test_scanner_page_can_render_and_update_global_manual_stop_symbols() -> None:
     settings = Settings(redis_stream_prefix="test", oms_adapter="alpaca_paper")
     session_factory = build_test_session_factory()

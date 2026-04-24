@@ -3081,3 +3081,34 @@ Operator meaning:
   layer is more likely real strategy/data behavior rather than a hidden bar-path
   mismatch
 
+## 2026-04-24 - Bot page live-symbol UI cap fix
+
+Context:
+
+- both `Schwab 30 Sec Bot` and `Webull 30 Sec Bot` could be tracking more live
+  symbols than the sidebar actually showed
+- operator saw only 10 symbols in `Live Symbols` even when the runtime watchlist
+  count was 18
+
+Root cause:
+
+- the shared control-plane bot-page renderer was slicing the watchlist before it
+  built the sidebar live-symbol list:
+  - `for symbol in bot["watchlist"][:10]:`
+- this was a UI-only cap in `src/project_mai_tai/services/control_plane.py`,
+  affecting both 30-second bot pages equally
+
+Fix:
+
+- removed the hard `[:10]` slice so the sidebar now renders the full live
+  watchlist for each bot
+- added a regression test in `tests/unit/test_control_plane.py` that seeds a
+  12-symbol watchlist and verifies all symbols render on `/bot/30s`
+
+Operator meaning:
+
+- `Live Symbols` on both bot pages should now reflect the actual current bot
+  watchlist instead of silently truncating at 10
+- this does not change bot behavior or handoff logic; it only fixes the control
+  plane view so operators can trust the displayed live list
+
