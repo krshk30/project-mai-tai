@@ -2429,6 +2429,10 @@ Code fix:
     real active bot symbols
   - bot/runtime prewarm sets are kept in sync after pruning so expired prewarm
     names really leave the hidden Schwab stream target set
+  - restore now re-seeds both `macd_30s` and `webull_30s` from current
+    confirmed fallback symbols when an older snapshot explicitly contains an
+    empty Webull handoff map; that prevents restart from clearing Webull while
+    Schwab still receives the same current-session confirmed names
   - heartbeat details now publish:
     - `schwab_prewarm_symbols`
     - `schwab_stream_connected`
@@ -2463,14 +2467,15 @@ Operator meaning:
 Regression coverage added:
 
 - expired Schwab prewarm symbols are pruned from the stream target set
+- restart restore seeds Webull from current confirmed symbols even if an older
+  snapshot stores `webull_30s: []`
 - Schwab auth failures surface the OAuth-specific halt reason and do not trigger
   fake resubscribe attempts
-- existing stale-open-position fallback quote behavior still works
 - control-plane halt cards still render correctly for both Schwab and Webull
 
 Validation:
 
 - passed:
-  - `.venv\Scripts\python.exe -m py_compile src/project_mai_tai/settings.py src/project_mai_tai/broker_adapters/schwab.py src/project_mai_tai/market_data/schwab_streamer.py src/project_mai_tai/services/strategy_engine_app.py src/project_mai_tai/services/control_plane.py tests/unit/test_strategy_engine_service.py`
-  - `.venv\Scripts\python.exe -m pytest tests/unit/test_strategy_engine_service.py -k "expired_schwab_prewarm_symbol_is_pruned or service_surfaces_schwab_auth_failure_reason_without_fake_resubscribe or service_uses_fallback_quotes_for_stale_schwab_open_positions"`
-  - `.venv\Scripts\python.exe -m pytest tests/unit/test_control_plane.py -k "schwab_data_halt_red_on_bot_page or webull_bot_page_uses_polygon_data_halt_wording"`
+  - `.venv\Scripts\python.exe -m py_compile src/project_mai_tai/settings.py src/project_mai_tai/broker_adapters/schwab.py src/project_mai_tai/market_data/schwab_streamer.py src/project_mai_tai/services/strategy_engine_app.py src/project_mai_tai/services/control_plane.py tests/unit/test_control_plane.py tests/unit/test_schwab_prewarm_and_auth.py tests/unit/test_bot_handoff_restore_seed.py`
+  - `.venv\Scripts\python.exe -m pytest tests/unit/test_schwab_prewarm_and_auth.py tests/unit/test_control_plane.py -k "schwab_data_halt_red_on_bot_page or webull_bot_page_uses_polygon_data_halt_wording or prewarm or auth_failure"`
+  - `.venv\Scripts\python.exe -m pytest tests/unit/test_bot_handoff_restore_seed.py`

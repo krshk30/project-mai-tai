@@ -2280,7 +2280,6 @@ class StrategyEngineState:
         self.all_confirmed: list[dict[str, object]] = []
         self.retained_watchlist: list[str] = []
         self.schwab_prewarm_symbols: list[str] = []
-        self._schwab_prewarm_added_at: dict[str, datetime] = {}
         self.schwab_prewarm_max_symbols = 40
         self.five_pillars: list[dict[str, object]] = []
         self.top_gainers: list[dict[str, object]] = []
@@ -3224,6 +3223,9 @@ class StrategyEngineState:
             if code not in active_map and code not in history_map:
                 active_symbols = set(fallback_symbols)
                 history_symbols = set(fallback_symbols)
+            elif code in {"macd_30s", "webull_30s"} and not active_symbols and not history_symbols and fallback_symbols:
+                active_symbols = set(fallback_symbols)
+                history_symbols = set(fallback_symbols)
             if not history_symbols:
                 history_symbols = set(active_symbols)
             restored_active[code] = active_symbols
@@ -3293,7 +3295,6 @@ class StrategyEngineState:
     def schwab_stream_symbols(self) -> list[str]:
         if not self._schwab_stream_bot_codes:
             return []
-        self._prune_schwab_prewarm_symbols()
         symbols: set[str] = set()
         for code in self._schwab_stream_bot_codes:
             bot = self.bots.get(code)
@@ -3378,31 +3379,22 @@ class StrategyEngineState:
     def _add_schwab_prewarm_symbols(self, symbols: Iterable[object]) -> None:
         if not self._schwab_stream_bot_codes:
             return
-        self._prune_schwab_prewarm_symbols()
         blocked = set(self.global_manual_stop_symbols)
         for manual_symbols in self.manual_stop_symbols_by_strategy.values():
             blocked.update(manual_symbols)
         existing = set(self.schwab_prewarm_symbols)
-        now = utcnow()
         for symbol in symbols:
             normalized = str(symbol).upper().strip()
             if not normalized or normalized in blocked or normalized in existing:
                 continue
             self.schwab_prewarm_symbols.append(normalized)
-            self._schwab_prewarm_added_at[normalized] = now
             existing.add(normalized)
 
         if len(self.schwab_prewarm_symbols) > self.schwab_prewarm_max_symbols:
             self.schwab_prewarm_symbols = self.schwab_prewarm_symbols[-self.schwab_prewarm_max_symbols :]
-        self._schwab_prewarm_added_at = {
-            symbol: added_at
-            for symbol, added_at in self._schwab_prewarm_added_at.items()
-            if symbol in set(self.schwab_prewarm_symbols)
-        }
         self._sync_schwab_prewarm_symbols()
 
     def _sync_schwab_prewarm_symbols(self) -> None:
-        self._prune_schwab_prewarm_symbols()
         blocked = set(self.global_manual_stop_symbols)
         for manual_symbols in self.manual_stop_symbols_by_strategy.values():
             blocked.update(manual_symbols)
@@ -3413,34 +3405,6 @@ class StrategyEngineState:
         ]
         if clean != self.schwab_prewarm_symbols:
             self.schwab_prewarm_symbols = clean
-        prewarm_set = set(self.schwab_prewarm_symbols)
-        for code in self._schwab_stream_bot_codes:
-            bot = self.bots.get(code)
-            set_prewarm_symbols = getattr(bot, "set_prewarm_symbols", None)
-            if set_prewarm_symbols is not None:
-                set_prewarm_symbols(prewarm_set)
-
-    def _prune_schwab_prewarm_symbols(self) -> None:
-        if not self.schwab_prewarm_symbols and not self._schwab_prewarm_added_at:
-            return
-        ttl_seconds = max(0.0, float(self.settings.schwab_prewarm_symbol_ttl_seconds))
-        now = utcnow()
-        active_symbols = set(self.schwab_active_symbols())
-        clean: list[str] = []
-        for symbol in self.schwab_prewarm_symbols:
-            added_at = self._schwab_prewarm_added_at.get(symbol, now)
-            age_seconds = (now - added_at).total_seconds()
-            if symbol in active_symbols:
-                continue
-            if ttl_seconds > 0 and age_seconds > ttl_seconds:
-                continue
-            clean.append(symbol)
-        if clean != self.schwab_prewarm_symbols:
-            self.schwab_prewarm_symbols = clean
-        self._schwab_prewarm_added_at = {
-            symbol: self._schwab_prewarm_added_at.get(symbol, now)
-            for symbol in self.schwab_prewarm_symbols
-        }
         prewarm_set = set(self.schwab_prewarm_symbols)
         for code in self._schwab_stream_bot_codes:
             bot = self.bots.get(code)
@@ -3488,7 +3452,6 @@ class StrategyEngineState:
         self.current_confirmed = []
         self.retained_watchlist = []
         self.schwab_prewarm_symbols = []
-        self._schwab_prewarm_added_at = {}
         self.bot_handoff_symbols_by_strategy = {code: set() for code in self.bots}
         self.bot_handoff_history_by_strategy = {code: set() for code in self.bots}
         self.session_handoff_active = False
@@ -4174,24 +4137,9 @@ class StrategyEngineService:
             return "degraded"
         return status
 
-    def _schwab_stream_failure_reason(self) -> str:
-        client = self._schwab_stream_client
-        last_error = str(getattr(client, "last_error", "") or "").strip()
-        if not last_error:
-            return "Schwab stream stale/disconnected; trading halted until live Schwab ticks recover"
-        normalized = last_error.lower()
-        if "refresh_token_authentication_error" in normalized or "unsupported_token_type" in normalized:
-            return "Schwab OAuth refresh failed on the VPS; reauthorize Schwab tokens before trading"
-        if "failed refreshing schwab token" in normalized:
-            return "Schwab OAuth refresh failed on the VPS; reauthorize Schwab tokens before trading"
-        if "userpreference" in normalized:
-            return "Schwab streamer credentials request failed; reauthorize Schwab tokens before trading"
-        return f"Schwab stream unavailable: {last_error}"
-
     async def _publish_heartbeat(self, status: str) -> None:
         effective_status = self._strategy_health_status(status)
         stream = stream_name(self.settings.redis_stream_prefix, "heartbeats")
-        client = self._schwab_stream_client
         event = HeartbeatEvent(
             source_service=SERVICE_NAME,
             payload=HeartbeatPayload(
@@ -4202,16 +4150,10 @@ class StrategyEngineService:
                     "watchlist_size": str(len(self.state.retained_watchlist)),
                     "bot_count": str(len(self.state.bots)),
                     "schwab_stream_symbols": str(len(self.state.schwab_stream_symbols())),
-                    "schwab_prewarm_symbols": str(len(self.state.schwab_prewarm_symbols)),
                     "schwab_stale_symbols": ",".join(sorted(self._schwab_stale_symbols)),
                     "schwab_generic_fallback_active": str(
                         self._should_use_generic_market_data_fallback_for_schwab()
                     ).lower(),
-                    "schwab_stream_connected": str(
-                        bool(getattr(client, "connected", False))
-                    ).lower(),
-                    "schwab_stream_failures": str(int(getattr(client, "connection_failures", 0) or 0)),
-                    "schwab_stream_last_error": str(getattr(client, "last_error", "") or ""),
                 },
             ),
         )
@@ -4674,7 +4616,6 @@ class StrategyEngineService:
         }
         self._clear_inactive_schwab_runtime_data_halts(active_set | set(open_symbols))
         stream_disconnected = self._schwab_stream_disconnect_has_exceeded_grace(now)
-        halt_reason = self._schwab_stream_failure_reason()
         stale_symbols = {
             symbol: codes
             for symbol, codes in active_symbols.items()
@@ -4692,7 +4633,7 @@ class StrategyEngineService:
                 self._apply_schwab_runtime_data_halt(
                     symbol,
                     codes,
-                    reason=halt_reason,
+                    reason="Schwab stream stale/disconnected; trading halted until live Schwab ticks recover",
                     observed_at=now,
                 )
                 continue
@@ -4708,7 +4649,7 @@ class StrategyEngineService:
             self._apply_schwab_runtime_data_halt(
                 symbol,
                 codes,
-                reason=halt_reason,
+                reason="Schwab stream stale/disconnected; trading halted until live Schwab ticks recover",
                 observed_at=now,
             )
         self._schwab_stale_symbols = set(stale_symbols)
@@ -4720,7 +4661,7 @@ class StrategyEngineService:
             1.0,
             float(self.settings.schwab_stream_symbol_resubscribe_interval_seconds),
         )
-        if self._schwab_stream_client is not None and bool(getattr(self._schwab_stream_client, "connected", True)):
+        if self._schwab_stream_client is not None:
             should_resubscribe = any(
                 (
                     now - self._schwab_symbol_last_resubscribe_at.get(symbol, datetime.min.replace(tzinfo=UTC))
