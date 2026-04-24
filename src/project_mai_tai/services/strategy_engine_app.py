@@ -2331,6 +2331,7 @@ class StrategyEngineState:
         self.manual_stop_symbols_by_strategy: dict[str, set[str]] = {}
         self.bot_handoff_symbols_by_strategy: dict[str, set[str]] = {}
         self.bot_handoff_history_by_strategy: dict[str, set[str]] = {}
+        self.session_handoff_active = False
         self._schwab_stream_bot_codes = self._resolve_schwab_stream_bot_codes()
         self.reclaim_excluded_symbols = set(
             self.settings.strategy_macd_30s_reclaim_excluded_symbol_list
@@ -3011,6 +3012,8 @@ class StrategyEngineState:
         else:
             self._seed_bot_handoff_state(self.all_confirmed or self.current_confirmed)
         self._resync_bot_watchlists_from_current_confirmed()
+        if self.all_confirmed or self.current_confirmed:
+            self.session_handoff_active = True
 
     def _ranked_scanner_confirmed_view(self, *, limit: int = 5) -> list[dict[str, object]]:
         ranked_confirmed = [
@@ -3165,6 +3168,7 @@ class StrategyEngineState:
         if not symbols:
             return
         self._ensure_bot_handoff_state()
+        self.session_handoff_active = True
         for code, _ in self._iter_target_bots(strategy_codes=strategy_codes):
             self.bot_handoff_symbols_by_strategy.setdefault(code, set()).update(symbols)
             self.bot_handoff_history_by_strategy.setdefault(code, set()).update(symbols)
@@ -3447,6 +3451,7 @@ class StrategyEngineState:
         self.schwab_prewarm_symbols = []
         self.bot_handoff_symbols_by_strategy = {code: set() for code in self.bots}
         self.bot_handoff_history_by_strategy = {code: set() for code in self.bots}
+        self.session_handoff_active = False
         self.five_pillars = []
         self.top_gainers = []
         self.top_gainer_changes = []
@@ -5044,6 +5049,8 @@ class StrategyEngineService:
             if isinstance(payload.get("bot_handoff_history_by_strategy"), dict)
             else None
         )
+        if not bool(payload.get("session_handoff_active", False)):
+            return
         if not isinstance(watchlist, list) or not watchlist:
             if not active_handoff:
                 return
@@ -5072,6 +5079,7 @@ class StrategyEngineService:
             bot_handoff_symbols_by_strategy=active_handoff,
             bot_handoff_history_by_strategy=history_handoff,
         )
+        self.state.session_handoff_active = True
         self.logger.info(
             "restored %s symbols from scanner cycle-history watchlist fallback",
             len(visible_confirmed),
@@ -5561,6 +5569,7 @@ class StrategyEngineService:
                 for code, symbols in self.state.bot_handoff_history_by_strategy.items()
                 if symbols
             },
+            "session_handoff_active": bool(self.state.session_handoff_active),
             "all_confirmed": all_confirmed,
             "all_confirmed_tickers": [item["ticker"] for item in all_confirmed],
             "top_confirmed": top_confirmed,

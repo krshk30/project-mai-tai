@@ -1097,6 +1097,11 @@ class ControlPlaneRepository:
                 bar_counts=bar_counts,
                 last_tick_at=last_tick_at,
                 data_health=data_health,
+                provider=(
+                    self.settings.provider_for_strategy(code)
+                    if registration
+                    else str(runtime_bot.get("provider", "") or "")
+                ),
             ) + recent_decisions
             tos_parity = self._build_tos_parity_view(
                 strategy_code=code,
@@ -1191,6 +1196,7 @@ class ControlPlaneRepository:
         bar_counts: dict[str, int],
         last_tick_at: dict[str, str],
         data_health: dict[str, Any],
+        provider: str,
     ) -> list[dict[str, Any]]:
         seen_symbols = {
             str(item.get("symbol") or item.get("ticker") or "").upper()
@@ -1207,6 +1213,7 @@ class ControlPlaneRepository:
             for symbol, reason in dict(data_health.get("reasons", {}) or {}).items()
             if str(symbol).strip()
         }
+        market_data_source = self._market_data_source_label(provider)
 
         placeholders: list[dict[str, Any]] = []
         for symbol in sorted(live_symbols):
@@ -1218,15 +1225,21 @@ class ControlPlaneRepository:
             status = "pending"
             if symbol in halted_symbols:
                 status = "critical"
-                reason = halt_reasons.get(symbol) or "Schwab stream data halt active"
+                reason = halt_reasons.get(symbol) or f"{market_data_source} market data halt active"
             elif last_tick_label and bar_count > 0:
                 reason = "live in bot; waiting for next completed 30s trade bar to evaluate"
             elif last_tick_label:
-                reason = "live in bot; receiving Schwab ticks, waiting for first completed 30s trade bar"
+                reason = (
+                    f"live in bot; receiving {market_data_source} ticks, "
+                    "waiting for first completed 30s trade bar"
+                )
             elif bar_count > 0:
-                reason = "live in bot; historical warmup loaded, waiting for fresh Schwab ticks"
+                reason = (
+                    f"live in bot; historical warmup loaded, waiting for fresh "
+                    f"{market_data_source} ticks"
+                )
             else:
-                reason = "live in bot; waiting for Schwab market data"
+                reason = f"live in bot; waiting for {market_data_source} market data"
 
             placeholders.append(
                 {
@@ -1241,6 +1254,13 @@ class ControlPlaneRepository:
             )
 
         return placeholders
+
+    @staticmethod
+    def _market_data_source_label(provider: str) -> str:
+        normalized = str(provider or "").strip().lower()
+        if normalized == "schwab":
+            return "Schwab"
+        return "Polygon"
 
     def _build_tos_parity_view(
         self,
@@ -3659,6 +3679,7 @@ def _build_bot_listening_status(
     bot: dict[str, Any],
     recent_decisions: list[dict[str, Any]],
 ) -> dict[str, Any]:
+    market_data_source = ControlPlaneRepository._market_data_source_label(str(bot.get("provider", "") or ""))
     strategy_service = _service_by_name(data, "strategy-engine") or {}
     market_data = data.get("market_data", {})
     latest_snapshot = market_data.get("latest_snapshot_batch") or {}
@@ -3704,12 +3725,12 @@ def _build_bot_listening_status(
         state = "DATA HALT"
         if halted_symbols:
             detail = (
-                "Schwab stream stale/disconnected; entries are blocked and any open positions are eligible for emergency close."
+                f"{market_data_source} stream stale/disconnected; entries are blocked and any open positions are eligible for emergency close."
                 if position_count > 0
-                else "Schwab stream stale/disconnected; entries are blocked, but there are no open positions to emergency close."
+                else f"{market_data_source} stream stale/disconnected; entries are blocked, but there are no open positions to emergency close."
             )
         else:
-            detail = "Schwab data health is degraded."
+            detail = f"{market_data_source} data health is degraded."
         color = "#ff6b6b"
     elif service_status in {"stopping", "stopped", "inactive"} or service_raw_status in {"stopping", "stopped", "inactive"}:
         state = "STOPPED"
@@ -4324,11 +4345,15 @@ def _render_bot_detail_page(data: dict[str, Any], strategy_code: str) -> str:
     halted_symbols = [str(symbol).upper() for symbol in list(data_health.get("halted_symbols", []) or [])]
     data_health_reasons = dict(data_health.get("reasons", {}) or {})
     data_health_since = dict(data_health.get("since", {}) or {})
-    data_health_detail = "Schwab data path healthy."
+    market_data_source = ControlPlaneRepository._market_data_source_label(str(bot.get("provider", "") or ""))
+    data_health_card_label = f"{market_data_source} Data Health"
+    data_health_panel_title = f"{market_data_source} Data Halt"
+    quote_source_label = f"{market_data_source} quotes"
+    data_health_detail = f"{market_data_source} data path healthy."
     data_health_color = "#ff6b6b" if data_health_status != "healthy" else "#5fff8d"
     if halted_symbols:
         reason_parts = [
-            f"{symbol}: {data_health_reasons.get(symbol, 'Schwab stream stale/disconnected')}"
+            f"{symbol}: {data_health_reasons.get(symbol, f'{market_data_source} stream stale/disconnected')}"
             for symbol in halted_symbols
         ]
         data_health_detail = " | ".join(reason_parts)
@@ -4401,7 +4426,7 @@ def _render_bot_detail_page(data: dict[str, Any], strategy_code: str) -> str:
                     <div class="hero-card"><span>Last Bot Tick</span><strong>{escape(listening_status["latest_bot_tick_at"] or "-")}</strong><small>Latest tick that reached this bot</small></div>
                     <div class="hero-card"><span>Last Market Data</span><strong>{escape(listening_status["latest_market_data_at"] or "-")}</strong><small>Snapshot / subscription freshness</small></div>
                     <div class="hero-card"><span>Last Strategy Heartbeat</span><strong>{escape(listening_status["latest_heartbeat_at"] or "-")}</strong><small>strategy-engine heartbeat</small></div>
-                    <div class="hero-card"><span>Schwab Data Health</span><strong style="color:{data_health_color}">{escape(data_health_status.upper())}</strong><small>{escape(", ".join(halted_symbols) or "no halted symbols")}</small></div>
+                    <div class="hero-card"><span>{escape(data_health_card_label)}</span><strong style="color:{data_health_color}">{escape(data_health_status.upper())}</strong><small>{escape(", ".join(halted_symbols) or "no halted symbols")}</small></div>
                     <div class="hero-card"><span>Tracked Symbols</span><strong>{listening_status["watchlist_count"]}</strong><small>Open positions: {listening_status["position_count"]} · Bars cached: {listening_status["tracked_bar_count"]}</small></div>
                 </div>
             </section>"""
@@ -4413,7 +4438,7 @@ def _render_bot_detail_page(data: dict[str, Any], strategy_code: str) -> str:
             for symbol in halted_symbols
         )
         data_health_sub = (
-            "Trading is blocked for halted symbols; any open positions are eligible for emergency close using Schwab quotes only."
+            f"Trading is blocked for halted symbols; any open positions are eligible for emergency close using {quote_source_label} only."
             if listening_status["position_count"] > 0
             else "Trading is blocked for halted symbols; there are no open positions currently exposed to the emergency-close path."
         )
@@ -4421,7 +4446,7 @@ def _render_bot_detail_page(data: dict[str, Any], strategy_code: str) -> str:
             <section class="panel full critical-panel">
                 <div class="panel-header">
                     <div>
-                        <h2>Schwab Data Halt</h2>
+                        <h2>{escape(data_health_panel_title)}</h2>
                         <div class="sub">{escape(data_health_sub)}</div>
                     </div>
                     <span class="count danger">{escape(data_health_status.upper())}</span>
