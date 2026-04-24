@@ -1408,7 +1408,28 @@ class ControlPlaneRepository:
                 status = "critical"
                 reason = halt_reasons.get(symbol) or f"{market_data_source} market data halt active"
             elif last_tick_label and bar_count > 0:
-                reason = "live in bot; waiting for next completed 30s trade bar to evaluate"
+                wait_age_seconds = _seconds_since_eastern_label(last_tick_label)
+                if wait_age_seconds is not None and wait_age_seconds >= 90:
+                    status = "critical"
+                    reason = (
+                        "live in bot; no completed 30s trade bar for "
+                        f"{_format_age(wait_age_seconds)} after the last live "
+                        f"{market_data_source} tick - verify tape/bar flow now"
+                    )
+                elif wait_age_seconds is not None and wait_age_seconds >= 45:
+                    reason = (
+                        "live in bot; still waiting "
+                        f"{_format_age(wait_age_seconds)} for the next completed 30s "
+                        f"trade bar after the last live {market_data_source} tick"
+                    )
+                elif wait_age_seconds is not None:
+                    reason = (
+                        "live in bot; waiting for next completed 30s trade bar to "
+                        f"evaluate ({_format_age(wait_age_seconds)} since last "
+                        f"{market_data_source} tick)"
+                    )
+                else:
+                    reason = "live in bot; waiting for next completed 30s trade bar to evaluate"
             elif last_tick_label:
                 reason = (
                     f"live in bot; receiving {market_data_source} ticks, "
