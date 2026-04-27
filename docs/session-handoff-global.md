@@ -57,8 +57,26 @@ Validation completed:
 
 Deployment note:
 
-- at this handoff point the code scaffold is ready locally
-- next step is to enable `strategy_schwab_1m` in the VPS environment, deploy, and verify the new `/bot/1m-schwab` page and runtime behavior live
+- PR `#58` merged to `main` as commit `aab0ffa45e29e1309f0b419fdac2ca6e8e39070e`
+- VPS repo pulled `main`
+- VPS env enabled:
+  - `MAI_TAI_STRATEGY_SCHWAB_1M_ENABLED=true`
+  - `MAI_TAI_STRATEGY_SCHWAB_1M_ACCOUNT_NAME=paper:schwab_1m`
+  - `MAI_TAI_STRATEGY_SCHWAB_1M_BROKER_PROVIDER=schwab`
+  - `MAI_TAI_STRATEGY_SCHWAB_1M_DEFAULT_QUANTITY=10`
+- restarted:
+  - `project-mai-tai-strategy.service`
+  - `project-mai-tai-control.service`
+  - `project-mai-tai-oms.service`
+- live verification after deploy:
+  - `/botschwab1m` responds and `/bot/1m-schwab` renders
+  - `/api/bots` now includes `schwab_1m`
+  - `Schwab 1 Min Bot` is `LISTENING`
+  - current live watchlist seeded into `schwab_1m`: `AUUD, CAST, ELPW, ENVB, GLND, PAPL, SGMT, UCAR, USEG, VS, YAAS`
+  - live `bar_counts` show fresh 1-minute state seeded around `200` bars per symbol and then advancing on live Schwab ticks
+  - strategy heartbeat now reports `bot_count=3`, `schwab_stream_connected=true`, and no stale Schwab symbols
+- one separate non-bot issue remains on VPS `/health`:
+  - reconciler is currently degraded with `2` critical findings unrelated to the new `schwab_1m` deploy
 
 ## 2026-04-27 Trade Coach Review Center (Control-Plane Phase)
 
