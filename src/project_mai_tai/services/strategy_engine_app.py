@@ -4850,11 +4850,34 @@ class StrategyEngineService:
             float(self.settings.schwab_stream_symbol_stale_after_seconds_without_position),
         )
 
+    def _schwab_symbol_no_first_tick_grace_seconds(
+        self,
+        *,
+        strategy_codes: Iterable[str],
+        has_open_position: bool,
+    ) -> float:
+        base_stale_after = self._schwab_data_halt_stale_after_seconds(
+            has_open_position=has_open_position
+        )
+        if has_open_position:
+            return base_stale_after
+        max_interval_secs = 30
+        for code in strategy_codes:
+            runtime = self.state.bots.get(code)
+            if not isinstance(runtime, StrategyBotRuntime):
+                continue
+            try:
+                max_interval_secs = max(max_interval_secs, int(runtime.definition.interval_secs or 30))
+            except Exception:
+                continue
+        return max(base_stale_after, float(max_interval_secs) * 5.0)
+
     def _is_schwab_symbol_data_halt_stale(
         self,
         symbol: str,
         now: datetime,
         *,
+        strategy_codes: Iterable[str],
         has_open_position: bool,
     ) -> bool:
         last_update = self._schwab_last_stream_update_at(symbol)
@@ -4863,7 +4886,11 @@ class StrategyEngineService:
         )
         if last_update is None:
             first_seen = self._schwab_symbol_active_first_seen_at.get(str(symbol).upper(), now)
-            return (now - first_seen).total_seconds() >= stale_after
+            no_first_tick_grace = self._schwab_symbol_no_first_tick_grace_seconds(
+                strategy_codes=strategy_codes,
+                has_open_position=has_open_position,
+            )
+            return (now - first_seen).total_seconds() >= no_first_tick_grace
         return (now - last_update).total_seconds() >= stale_after
 
     def _schwab_symbol_should_enforce_data_halt(
@@ -4926,6 +4953,7 @@ class StrategyEngineService:
             if stream_disconnected or self._is_schwab_symbol_data_halt_stale(
                 symbol,
                 now,
+                strategy_codes=codes,
                 has_open_position=has_open_position,
             ):
                 stale_symbols[symbol] = codes
