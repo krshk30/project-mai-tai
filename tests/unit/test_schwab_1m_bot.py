@@ -121,6 +121,41 @@ def test_schwab_1m_no_first_tick_does_not_halt_flat_symbol() -> None:
     )
 
 
+def test_flat_symbol_schwab_resubscribe_interval_is_backed_off() -> None:
+    service = StrategyEngineService(
+        settings=Settings(
+            redis_url="redis://localhost:6379/15",
+            strategy_macd_30s_enabled=True,
+            strategy_webull_30s_enabled=False,
+            strategy_macd_1m_enabled=False,
+            strategy_schwab_1m_enabled=False,
+        )
+    )
+
+    assert service._schwab_symbol_resubscribe_interval_seconds(has_open_position=True) == 5.0
+    assert service._schwab_symbol_resubscribe_interval_seconds(has_open_position=False) == 45.0
+
+
+def test_data_health_summary_is_degraded_for_flat_halted_symbol() -> None:
+    state = StrategyEngineState(
+        settings=Settings(
+            strategy_macd_30s_enabled=True,
+            strategy_webull_30s_enabled=False,
+            strategy_macd_1m_enabled=False,
+            strategy_schwab_1m_enabled=False,
+        )
+    )
+
+    runtime = state.bots["macd_30s"]
+    runtime.apply_data_halt("ENVB", reason="quiet symbol")
+
+    summary = runtime.data_health_summary()
+
+    assert summary["status"] == "degraded"
+    assert summary["halted_symbols"] == ["ENVB"]
+    assert summary["open_position_halted_symbols"] == []
+
+
 def test_bot_ui_hides_account_only_positions_from_strategy_views() -> None:
     data = {
         "account_positions": [
