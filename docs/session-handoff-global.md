@@ -86,6 +86,20 @@ Latest validation snapshot:
   - strict function-call parsing path returned a valid structured review payload
   - test used a synthetic completed `macd_30s` episode only; no live or VPS state
     was modified
+- `2026-04-26` historical trade verification for `2026-04-24`:
+  - read-only VPS Postgres reconstruction confirmed real closed `macd_30s`
+    trades existed for `2026-04-24`
+  - distinct reconstructed `macd_30s` completed cycles: `18`
+  - distinct reconstructed `webull_30s` completed cycles: `0`
+  - example `macd_30s` closed names from that day included:
+    - `IMA`
+    - `KITT`
+    - `BMNU`
+    - `PZG`
+    - `SKLZ`
+    - `ENVB`
+    - `IONZ`
+    - `SST`
 - local dry-run blocker on `2026-04-26`:
   - no local Postgres listener on `localhost:5432`
   - because of that, a true DB-backed closed-trade review pass could not run from
