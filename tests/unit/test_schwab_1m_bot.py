@@ -136,7 +136,7 @@ def test_flat_symbol_schwab_resubscribe_interval_is_backed_off() -> None:
     assert service._schwab_symbol_resubscribe_interval_seconds(has_open_position=False) == 45.0
 
 
-def test_data_health_summary_is_degraded_for_flat_halted_symbol() -> None:
+def test_data_health_summary_is_degraded_for_flat_warning_symbol() -> None:
     state = StrategyEngineState(
         settings=Settings(
             strategy_macd_30s_enabled=True,
@@ -147,12 +147,13 @@ def test_data_health_summary_is_degraded_for_flat_halted_symbol() -> None:
     )
 
     runtime = state.bots["macd_30s"]
-    runtime.apply_data_halt("ENVB", reason="quiet symbol")
+    runtime.apply_data_warning("ENVB", reason="quiet symbol")
 
     summary = runtime.data_health_summary()
 
     assert summary["status"] == "degraded"
-    assert summary["halted_symbols"] == ["ENVB"]
+    assert summary["halted_symbols"] == []
+    assert summary["warning_symbols"] == ["ENVB"]
     assert summary["open_position_halted_symbols"] == []
 
 

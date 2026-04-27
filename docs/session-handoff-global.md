@@ -4426,3 +4426,26 @@ Notes:
   per-symbol missing-bar telemetry in the UI and stronger separation between
   “quiet tape” and “stream disconnected”
 
+## 2026-04-27 - Split quiet flat Schwab symbols from true halt state
+
+- Problem:
+  - Frequent Schwab `DATA HALT` noise was still being triggered by thin flat symbols going quiet long enough to trip stale detection during live trading.
+  - That was too severe semantically: one quiet flat symbol was being surfaced almost like a real stream outage or open-position risk event.
+  - The bar builder can already synthesize flat continuation bars, so the right behavior is to keep the bot listening while warning about temporarily sparse live ticks.
+
+- Fix:
+  - Added a separate runtime warning state for quiet flat Schwab symbols in `StrategyBotRuntime`:
+    - `data_warning_symbols`
+    - `warning_reasons`
+    - `warning_since`
+  - Updated `_monitor_schwab_symbol_health()` so:
+    - real stream disconnects or stale symbols with open positions still become true `data_halt_symbols`
+    - stale flat symbols while the overall Schwab stream is still connected become warning symbols instead of halt symbols
+  - Updated control-plane listening/data-health rendering so:
+    - quiet flat-symbol warnings no longer show `DATA HALT`
+    - the bot can stay `LISTENING` while still surfacing the quiet-symbol risk honestly
+    - warning symbols are shown separately from true halted symbols
+
+- Validation:
+  - `python -m pytest tests/unit/test_schwab_after_hours_stale_halt.py tests/unit/test_schwab_1m_bot.py tests/unit/test_control_plane_listening_status.py`
+  - `python -m py_compile src/project_mai_tai/services/strategy_engine_app.py src/project_mai_tai/services/control_plane.py tests/unit/test_schwab_after_hours_stale_halt.py tests/unit/test_schwab_1m_bot.py tests/unit/test_control_plane_listening_status.py`
