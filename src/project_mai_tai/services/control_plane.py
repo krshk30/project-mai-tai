@@ -2609,6 +2609,61 @@ def build_app(
             ]
         }
 
+    @app.get("/api/coach-reviews")
+    async def coach_reviews_api(
+        strategy_code: str | None = None,
+        verdict: str | None = None,
+        coaching_focus: str | None = None,
+        symbol: str | None = None,
+    ) -> dict[str, Any]:
+        data = await app.state.repository.load_bot_dashboard_data()
+        all_reviews = _enrich_trade_coach_reviews(
+            data.get("recent_trade_coach_reviews", []),
+            data.get("bots", []),
+        )
+        filtered_reviews = _filter_trade_coach_reviews(
+            all_reviews,
+            strategy_code=strategy_code,
+            verdict=verdict,
+            coaching_focus=coaching_focus,
+            symbol=symbol,
+        )
+        return {
+            "count": len(filtered_reviews),
+            "returned_count": min(len(filtered_reviews), 100),
+            "filters": {
+                "strategy_code": (strategy_code or "").strip(),
+                "verdict": (verdict or "").strip().lower(),
+                "coaching_focus": (coaching_focus or "").strip().lower(),
+                "symbol": (symbol or "").strip().upper(),
+            },
+            "summary": _trade_coach_review_summary(filtered_reviews),
+            "available_filters": {
+                "strategies": [
+                    {
+                        "strategy_code": str(bot.get("strategy_code", "") or ""),
+                        "display_name": str(bot.get("display_name", "") or ""),
+                    }
+                    for bot in data.get("bots", [])
+                ],
+                "verdicts": sorted(
+                    {
+                        str(item.get("verdict", "") or "").strip().lower()
+                        for item in all_reviews
+                        if str(item.get("verdict", "") or "").strip()
+                    }
+                ),
+                "coaching_focuses": sorted(
+                    {
+                        str(item.get("coaching_focus", "") or "").strip().lower()
+                        for item in all_reviews
+                        if str(item.get("coaching_focus", "") or "").strip()
+                    }
+                ),
+            },
+            "reviews": filtered_reviews[:100],
+        }
+
     @app.get("/api/orders")
     async def orders() -> dict[str, Any]:
         data = await app.state.repository.load_dashboard_data()
@@ -2887,6 +2942,22 @@ def build_app(
     async def bot_runner_page() -> str:
         data = await app.state.repository.load_bot_dashboard_data()
         return _render_bot_detail_page(data, "runner")
+
+    @app.get("/coach/reviews", response_class=HTMLResponse)
+    async def coach_reviews_page(
+        strategy_code: str | None = None,
+        verdict: str | None = None,
+        coaching_focus: str | None = None,
+        symbol: str | None = None,
+    ) -> str:
+        data = await app.state.repository.load_bot_dashboard_data()
+        return _render_trade_coach_review_center(
+            data,
+            strategy_code=strategy_code,
+            verdict=verdict,
+            coaching_focus=coaching_focus,
+            symbol=symbol,
+        )
 
     @app.get("/", response_class=HTMLResponse)
     async def dashboard() -> str:
@@ -3976,6 +4047,7 @@ def _build_bot_nav_html(available_codes: list[str]) -> str:
     links = ["<a href=\"/scanner/dashboard\">Scanner Page</a>"]
     for code, meta in _visible_bot_page_meta(available_codes):
         links.append(f'<a href="{meta["path"]}">{escape(str(meta.get("nav_title", meta["title"])).replace("Mai Tai ", ""))}</a>')
+    links.append('<a href="/coach/reviews">Trade Coach</a>')
     links.extend(
         [
             '<a href="#scanner">Scanner</a>',
@@ -4224,7 +4296,11 @@ def _render_scanner_dashboard(data: dict[str, Any]) -> str:
         "Full confirmed universe for the current session. TOP5 marks the ranked scanner slice; "
         "BOT marks symbols currently handed to active bot watchlists."
     )
-    scanner_nav_links = ['<a href="/scanner/dashboard" class="active">Mai Tai Scanner</a>', '<a href="/">Mai Tai Control Plane</a>']
+    scanner_nav_links = [
+        '<a href="/scanner/dashboard" class="active">Mai Tai Scanner</a>',
+        '<a href="/coach/reviews">Trade Coach</a>',
+        '<a href="/">Mai Tai Control Plane</a>',
+    ]
     for code, meta in _visible_bot_page_meta([str(bot["strategy_code"]) for bot in bot_views]):
         scanner_nav_links.append(
             f'<a href="{meta["path"]}">{escape(str(meta.get("nav_title", meta["title"])))}</a>'
@@ -5363,9 +5439,21 @@ def _render_page_nav(active: str, available_codes: list[str]) -> str:
         '<div class="nav-strip">'
         '<a href="/scanner/dashboard">Mai Tai Scanner</a>'
         + "".join(links)
+        + '<a href="/coach/reviews">Trade Coach</a>'
         + '<a href="/">Mai Tai Control Plane</a>'
         + "</div>"
     )
+
+
+def _render_trade_coach_review_nav(available_codes: list[str]) -> str:
+    links = ['<a href="/scanner/dashboard">Mai Tai Scanner</a>']
+    for _, meta in _visible_bot_page_meta(available_codes):
+        links.append(
+            f'<a href="{meta["path"]}">{escape(str(meta.get("nav_title", meta["title"])).replace(" Bot", ""))}</a>'
+        )
+    links.append('<a href="/coach/reviews" class="active">Trade Coach</a>')
+    links.append('<a href="/">Mai Tai Control Plane</a>')
+    return '<div class="nav-strip">' + "".join(links) + "</div>"
 
 
 def _render_chip_cloud(items: list[str], *, variant: str = "", empty_text: str = "None") -> str:
@@ -5648,6 +5736,84 @@ def _trade_coach_tag_list(items: list[Any]) -> str:
     return " | ".join(values)
 
 
+def _enrich_trade_coach_reviews(
+    reviews: list[dict[str, Any]],
+    bots: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    by_pair: dict[tuple[str, str], dict[str, Any]] = {}
+    by_strategy: dict[str, dict[str, Any]] = {}
+    for bot in bots:
+        strategy = str(bot.get("strategy_code", "") or "")
+        account_name = str(bot.get("account_name", "") or "")
+        if strategy:
+            by_strategy[strategy] = bot
+        if strategy and account_name:
+            by_pair[(strategy, account_name)] = bot
+
+    enriched: list[dict[str, Any]] = []
+    for review in reviews:
+        item = dict(review)
+        strategy = str(item.get("strategy_code", "") or "")
+        account_name = str(item.get("broker_account_name", "") or "")
+        bot = by_pair.get((strategy, account_name)) or by_strategy.get(strategy) or {}
+        item["display_name"] = str(
+            bot.get("display_name", "")
+            or item.get("display_name")
+            or strategy
+            or "-"
+        )
+        item["account_display_name"] = str(
+            bot.get("account_display_name", "")
+            or item.get("account_display_name")
+            or account_name
+            or "-"
+        )
+        enriched.append(item)
+    return enriched
+
+
+def _filter_trade_coach_reviews(
+    reviews: list[dict[str, Any]],
+    *,
+    strategy_code: str | None = None,
+    verdict: str | None = None,
+    coaching_focus: str | None = None,
+    symbol: str | None = None,
+) -> list[dict[str, Any]]:
+    strategy_filter = str(strategy_code or "").strip()
+    verdict_filter = str(verdict or "").strip().lower()
+    focus_filter = str(coaching_focus or "").strip().lower()
+    symbol_filter = str(symbol or "").strip().upper()
+
+    filtered: list[dict[str, Any]] = []
+    for item in reviews:
+        if strategy_filter and str(item.get("strategy_code", "") or "") != strategy_filter:
+            continue
+        if verdict_filter and str(item.get("verdict", "") or "").strip().lower() != verdict_filter:
+            continue
+        if focus_filter and str(item.get("coaching_focus", "") or "").strip().lower() != focus_filter:
+            continue
+        if symbol_filter and str(item.get("symbol", "") or "").strip().upper() != symbol_filter:
+            continue
+        filtered.append(item)
+
+    return sorted(
+        filtered,
+        key=lambda row: _parse_et_timestamp(str(row.get("created_at", "") or "")),
+        reverse=True,
+    )
+
+
+def _trade_coach_review_summary(reviews: list[dict[str, Any]]) -> dict[str, int]:
+    return {
+        "good": sum(1 for item in reviews if str(item.get("verdict", "") or "").strip().lower() == "good"),
+        "mixed": sum(1 for item in reviews if str(item.get("verdict", "") or "").strip().lower() == "mixed"),
+        "bad": sum(1 for item in reviews if str(item.get("verdict", "") or "").strip().lower() == "bad"),
+        "manual_review": sum(1 for item in reviews if bool(item.get("should_review_manually"))),
+        "should_skip": sum(1 for item in reviews if not bool(item.get("should_have_traded"))),
+    }
+
+
 def _build_trade_coach_review_rows(recent_reviews: list[dict[str, Any]]) -> tuple[str, int]:
     if not recent_reviews:
         return (
@@ -5688,6 +5854,372 @@ def _build_trade_coach_review_rows(recent_reviews: list[dict[str, Any]]) -> tupl
         </tr>"""
         )
     return "".join(rendered_rows), len(recent_reviews)
+
+
+def _build_trade_coach_review_rows(
+    recent_reviews: list[dict[str, Any]],
+    *,
+    include_context: bool = False,
+) -> tuple[str, int]:
+    column_count = 7 if include_context else 6
+    if not recent_reviews:
+        return (
+            f'<tr><td colspan="{column_count}" style="text-align:center;color:#888;">No trade coach reviews yet</td></tr>',
+            0,
+        )
+
+    rendered_rows: list[str] = []
+    for item in sorted(
+        recent_reviews,
+        key=lambda row: _parse_et_timestamp(str(row.get("created_at", "") or "")),
+        reverse=True,
+    )[:25]:
+        verdict = str(item.get("verdict", "") or "-").lower()
+        action = str(item.get("action", "") or "-").lower()
+        summary = str(item.get("summary", "") or "").strip() or "-"
+        path = str(item.get("path", "") or "-")
+        pnl_pct = _as_float(item.get("pnl_pct"))
+        execution_timing = str(item.get("execution_timing", "") or "-").replace("_", " ")
+        setup_quality = _as_float(item.get("setup_quality"))
+        execution_quality = _as_float(item.get("execution_quality"))
+        outcome_quality = _as_float(item.get("outcome_quality"))
+        confidence = _as_float(item.get("confidence"))
+        should_have_traded = "yes" if bool(item.get("should_have_traded")) else "no"
+        should_review_manually = bool(item.get("should_review_manually"))
+        coaching_focus = str(item.get("coaching_focus", "") or "-").replace("_", " ")
+        key_reasons = _trade_coach_tag_list(list(item.get("key_reasons", []) or []))
+        rule_violations = _trade_coach_tag_list(list(item.get("rule_violations", []) or []))
+        next_time = _trade_coach_tag_list(list(item.get("next_time", []) or []))
+        context_cell = ""
+        if include_context:
+            context_cell = (
+                f'<td style="white-space:nowrap;"><strong>{escape(str(item.get("display_name", item.get("strategy_code", "")) or "-"))}</strong>'
+                f'<br><span style="color:#98a6c8;">{escape(str(item.get("account_display_name", item.get("broker_account_name", "")) or "-"))}</span></td>'
+            )
+        rendered_rows.append(
+            f"""<tr>
+            <td style="white-space:nowrap;">{escape(str(item.get("created_at", "")) or "-")}</td>
+            {context_cell}
+            <td><strong>{escape(str(item.get("symbol", "")) or "-")}</strong></td>
+            <td style="white-space:nowrap;"><strong>{escape(path)}</strong><br><span style="color:#98a6c8;">P&amp;L {pnl_pct:+.1f}% &middot; timing {escape(execution_timing)} &middot; setup {setup_quality:.2f} &middot; exec {execution_quality:.2f} &middot; outcome {outcome_quality:.2f}</span></td>
+            <td style="color:{_trade_coach_verdict_color(verdict)};font-weight:bold;text-transform:uppercase;">{escape(verdict or "-")}<br><span style="color:#98a6c8;font-weight:normal;">{escape(action or "-")} &middot; {confidence:.2f} &middot; focus {escape(coaching_focus)}</span>{'<br><span style="color:#ffcc5b;font-weight:normal;">manual review</span>' if should_review_manually else ''}</td>
+            <td style="text-transform:uppercase;">{escape(should_have_traded)}</td>
+            <td style="font-size:11px;max-width:620px;"><div>{escape(summary)}</div><div style="margin-top:4px;color:#98a6c8;"><strong>Why:</strong> {escape(key_reasons)}</div><div style="margin-top:4px;color:#98a6c8;"><strong>Violations:</strong> {escape(rule_violations)}</div><div style="margin-top:4px;color:#98a6c8;"><strong>Next:</strong> {escape(next_time)}</div></td>
+        </tr>"""
+        )
+    return "".join(rendered_rows), len(recent_reviews)
+
+
+def _render_trade_coach_review_center(
+    data: dict[str, Any],
+    *,
+    strategy_code: str | None = None,
+    verdict: str | None = None,
+    coaching_focus: str | None = None,
+    symbol: str | None = None,
+) -> str:
+    all_reviews = _enrich_trade_coach_reviews(
+        list(data.get("recent_trade_coach_reviews", [])),
+        list(data.get("bots", [])),
+    )
+    filtered_reviews = _filter_trade_coach_reviews(
+        all_reviews,
+        strategy_code=strategy_code,
+        verdict=verdict,
+        coaching_focus=coaching_focus,
+        symbol=symbol,
+    )
+    review_rows, visible_count = _build_trade_coach_review_rows(filtered_reviews, include_context=True)
+    summary = _trade_coach_review_summary(filtered_reviews)
+    available_codes = [str(item.get("strategy_code", "") or "") for item in data.get("bots", [])]
+    nav_html = _render_trade_coach_review_nav(available_codes)
+    selected_strategy = str(strategy_code or "").strip()
+    selected_verdict = str(verdict or "").strip().lower()
+    selected_focus = str(coaching_focus or "").strip().lower()
+    selected_symbol = str(symbol or "").strip().upper()
+    strategy_options = "".join(
+        f'<option value="{escape(str(bot.get("strategy_code", "") or ""))}"{" selected" if str(bot.get("strategy_code", "") or "") == selected_strategy else ""}>{escape(str(bot.get("display_name", "") or bot.get("strategy_code", "") or "-"))}</option>'
+        for bot in data.get("bots", [])
+    )
+    verdict_options = "".join(
+        f'<option value="{escape(value)}"{" selected" if value == selected_verdict else ""}>{escape(value.upper())}</option>'
+        for value in sorted(
+            {
+                str(item.get("verdict", "") or "").strip().lower()
+                for item in all_reviews
+                if str(item.get("verdict", "") or "").strip()
+            }
+        )
+    )
+    focus_options = "".join(
+        f'<option value="{escape(value)}"{" selected" if value == selected_focus else ""}>{escape(value.replace("_", " "))}</option>'
+        for value in sorted(
+            {
+                str(item.get("coaching_focus", "") or "").strip().lower()
+                for item in all_reviews
+                if str(item.get("coaching_focus", "") or "").strip()
+            }
+        )
+    )
+    return f"""<!DOCTYPE html>
+<html>
+<head>
+    <title>Trade Coach Reviews</title>
+    <meta charset="utf-8">
+    <meta http-equiv="refresh" content="30">
+    <style>
+        :root {{
+            --bg: #131a2b;
+            --panel: #202b46;
+            --panel-alt: #1c2540;
+            --line: rgba(121, 146, 193, 0.28);
+            --ink: #f0f4ff;
+            --muted: #98a6c8;
+            --accent: #59d7ff;
+            --green: #5fff8d;
+            --amber: #ffcc5b;
+            --red: #ff6b6b;
+        }}
+        * {{ box-sizing: border-box; }}
+        body {{
+            margin: 0;
+            background:
+                radial-gradient(circle at top left, rgba(89,215,255,0.08), transparent 28%),
+                linear-gradient(180deg, #0f1525, var(--bg));
+            color: var(--ink);
+            font-family: 'Consolas','Monaco',monospace;
+        }}
+        .shell {{ padding: 18px; display: grid; gap: 16px; }}
+        .panel {{
+            background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02));
+            border: 1px solid var(--line);
+            border-radius: 18px;
+            padding: 18px;
+            box-shadow: 0 18px 44px rgba(0,0,0,0.26);
+        }}
+        .hero {{
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 18px;
+            flex-wrap: wrap;
+        }}
+        .hero h1 {{ margin: 0; font-size: 28px; }}
+        .hero p {{ margin: 8px 0 0; color: var(--muted); max-width: 840px; line-height: 1.5; }}
+        .nav-strip {{
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 12px;
+        }}
+        .nav-strip a {{
+            text-decoration: none;
+            color: var(--ink);
+            background: linear-gradient(180deg, rgba(89,215,255,0.08), rgba(255,255,255,0.02));
+            border: 1px solid var(--line);
+            border-radius: 999px;
+            padding: 8px 12px;
+            font-size: 12px;
+        }}
+        .nav-strip a.active {{
+            border-color: var(--accent);
+            box-shadow: inset 0 0 0 1px rgba(89,215,255,0.35);
+        }}
+        .hero-cards {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 12px;
+            min-width: min(100%, 620px);
+            flex: 1;
+        }}
+        .hero-card {{
+            background: var(--panel-alt);
+            border: 1px solid var(--line);
+            border-radius: 14px;
+            padding: 14px;
+        }}
+        .hero-card span {{
+            display: block;
+            color: var(--muted);
+            font-size: 12px;
+            margin-bottom: 8px;
+        }}
+        .hero-card strong {{ font-size: 24px; }}
+        .filters {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 12px;
+            align-items: end;
+        }}
+        label {{
+            display: grid;
+            gap: 6px;
+            color: var(--muted);
+            font-size: 12px;
+        }}
+        select, input, button {{
+            width: 100%;
+            border-radius: 10px;
+            border: 1px solid var(--line);
+            background: #11192c;
+            color: var(--ink);
+            padding: 10px 12px;
+            font: inherit;
+        }}
+        .filter-actions {{
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            align-items: center;
+        }}
+        .filter-actions button, .button-link {{
+            width: auto;
+            min-height: 40px;
+            cursor: pointer;
+            background: linear-gradient(180deg, rgba(89,215,255,0.16), rgba(255,255,255,0.02));
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }}
+        .button-link {{
+            padding: 0 14px;
+        }}
+        .panel-header {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 12px;
+        }}
+        .panel-header h2, .panel-header h3 {{ margin: 0; font-size: 16px; }}
+        .panel-header .sub {{ color: var(--muted); font-size: 12px; margin-top: 4px; }}
+        .count {{
+            border-radius: 999px;
+            border: 1px solid var(--line);
+            padding: 6px 10px;
+            color: var(--accent);
+            font-weight: bold;
+        }}
+        .table-wrap {{
+            overflow-x: auto;
+            border: 1px solid var(--line);
+            border-radius: 14px;
+        }}
+        table {{
+            width: 100%;
+            border-collapse: collapse;
+            min-width: 1080px;
+        }}
+        thead {{
+            background: rgba(255,255,255,0.04);
+        }}
+        th, td {{
+            padding: 12px 14px;
+            border-bottom: 1px solid var(--line);
+            text-align: left;
+            vertical-align: top;
+            font-size: 12px;
+        }}
+        tbody tr:hover {{ background: rgba(255,255,255,0.03); }}
+        .good {{ color: var(--green); }}
+        .mixed {{ color: var(--amber); }}
+        .bad {{ color: var(--red); }}
+        @media (max-width: 720px) {{
+            .shell {{ padding: 12px; }}
+            .hero h1 {{ font-size: 22px; }}
+        }}
+    </style>
+</head>
+<body>
+    <div class="shell">
+        <section class="panel">
+            <div class="hero">
+                <div>
+                    <h1>Trade Coach Review Center</h1>
+                    <p>Aggregated post-trade AI reviews across Mai Tai bots. Use this page to scan verdicts, isolate a path or symbol, and decide which trades deserve deeper manual review.</p>
+                    {nav_html}
+                </div>
+                <div class="hero-cards">
+                    <div class="hero-card"><span>Visible Reviews</span><strong>{visible_count}</strong></div>
+                    <div class="hero-card"><span>Good</span><strong class="good">{summary["good"]}</strong></div>
+                    <div class="hero-card"><span>Mixed</span><strong class="mixed">{summary["mixed"]}</strong></div>
+                    <div class="hero-card"><span>Bad</span><strong class="bad">{summary["bad"]}</strong></div>
+                    <div class="hero-card"><span>Manual Review</span><strong>{summary["manual_review"]}</strong></div>
+                    <div class="hero-card"><span>Should Skip</span><strong>{summary["should_skip"]}</strong></div>
+                </div>
+            </div>
+        </section>
+
+        <section class="panel">
+            <div class="panel-header">
+                <div>
+                    <h2>Review Filters</h2>
+                    <div class="sub">Filter the persisted coach ledger without changing the live bot pages.</div>
+                </div>
+            </div>
+            <form method="get" action="/coach/reviews" class="filters">
+                <label>
+                    Strategy
+                    <select name="strategy_code">
+                        <option value="">All bots</option>
+                        {strategy_options}
+                    </select>
+                </label>
+                <label>
+                    Verdict
+                    <select name="verdict">
+                        <option value="">All verdicts</option>
+                        {verdict_options}
+                    </select>
+                </label>
+                <label>
+                    Focus
+                    <select name="coaching_focus">
+                        <option value="">All focuses</option>
+                        {focus_options}
+                    </select>
+                </label>
+                <label>
+                    Symbol
+                    <input type="text" name="symbol" value="{escape(selected_symbol)}" placeholder="USEG" />
+                </label>
+                <div class="filter-actions">
+                    <button type="submit">Apply Filters</button>
+                    <a class="button-link" href="/coach/reviews">Clear</a>
+                    <a class="button-link" href="/api/coach-reviews">JSON API</a>
+                </div>
+            </form>
+        </section>
+
+        <section class="panel">
+            <div class="panel-header">
+                <div>
+                    <h3>Recent Coach Reviews</h3>
+                    <div class="sub">Shows up to the latest 100 filtered reviews. Bot pages still show per-bot context, but this page is the fastest place to scan quality patterns.</div>
+                </div>
+                <span class="count">{visible_count}</span>
+            </div>
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Reviewed</th>
+                            <th>Bot</th>
+                            <th>Ticker</th>
+                            <th>Trade Facts</th>
+                            <th>Coach Verdict</th>
+                            <th>Should Trade</th>
+                            <th>Coach Notes</th>
+                        </tr>
+                    </thead>
+                    <tbody>{review_rows}</tbody>
+                </table>
+            </div>
+        </section>
+    </div>
+</body>
+</html>"""
 
 
 def _build_completed_position_rows(

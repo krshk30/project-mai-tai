@@ -1286,7 +1286,41 @@ def test_bot_page_renders_simple_trade_summary_table() -> None:
         assert "Open Positions" in bot_30s_page.text
         assert "Order History" in bot_30s_page.text
         assert "Mai Tai Scanner" in bot_30s_page.text
+        assert "Trade Coach" in bot_30s_page.text
         assert "Mai Tai Control Plane" in bot_30s_page.text
+
+
+def test_trade_coach_review_center_and_api_filters() -> None:
+    settings = Settings(redis_stream_prefix="test", oms_adapter="alpaca_paper")
+    session_factory = build_test_session_factory()
+    seed_database(session_factory)
+    redis = FakeRedis(make_streams(settings.redis_stream_prefix))
+
+    app = build_app(
+        settings=settings,
+        session_factory=session_factory,
+        redis_client=redis,
+        legacy_client=FakeLegacyClient(),
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/api/coach-reviews?strategy_code=macd_30s&verdict=good&coaching_focus=execution")
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["count"] == 1
+        assert payload["summary"]["good"] == 1
+        assert payload["reviews"][0]["display_name"] == "Schwab 30 Sec Bot"
+        assert payload["reviews"][0]["symbol"] == "UGRO"
+        assert payload["reviews"][0]["coaching_focus"] == "execution"
+
+        page = client.get("/coach/reviews?strategy_code=macd_30s")
+        assert page.status_code == 200
+        assert "Trade Coach Review Center" in page.text
+        assert "Review Filters" in page.text
+        assert "Recent Coach Reviews" in page.text
+        assert "Schwab 30 Sec Bot" in page.text
+        assert "Good momentum trade with a valid entry and disciplined exit." in page.text
+        assert "JSON API" in page.text
 
 
 def test_bot_page_can_render_and_update_manual_stop_symbols() -> None:

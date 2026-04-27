@@ -1,5 +1,57 @@
 # Session Handoff - Global
 
+## 2026-04-27 Trade Coach Review Center (Control-Plane Phase)
+
+Current state:
+
+- local `main` now includes a dedicated aggregated trade-coach review surface
+- this phase is control-plane only:
+  - no strategy-engine changes
+  - no OMS changes
+  - no trade-coach prompt/schema changes
+- purpose of this phase:
+  - make it easier to review coach output across trades without opening raw JSON
+  - give an operator-facing place to filter by bot, verdict, focus, and symbol
+
+What was added:
+
+- new aggregated coach API endpoint:
+  - `/api/coach-reviews`
+- new aggregated coach HTML page:
+  - `/coach/reviews`
+- new control-plane navigation link:
+  - `Trade Coach`
+- new review-center filters:
+  - `strategy_code`
+  - `verdict`
+  - `coaching_focus`
+  - `symbol`
+- aggregated review-center summary counts:
+  - visible reviews
+  - `good`
+  - `mixed`
+  - `bad`
+  - `manual_review`
+  - `should_skip`
+
+Implementation notes:
+
+- the new page reuses the existing persisted `recent_trade_coach_reviews` feed
+- no new DB tables or migrations were needed
+- review rows are enriched with bot display context from the existing bot views:
+  - `display_name`
+  - `account_display_name`
+- per-bot pages still keep their local `Trade Coach Reviews` table
+- the new review center is the cross-trade / cross-bot scan surface
+
+Validation completed:
+
+- passed:
+  - `.venv\Scripts\python.exe -m pytest tests/unit/test_control_plane.py -q`
+  - `.venv\Scripts\python.exe -m py_compile src/project_mai_tai/services/control_plane.py`
+- focused control-plane suite result for this phase:
+  - `28 passed`
+
 ## 2026-04-24 Trade Coach Foundation (Merged To Main, Deployed Disabled)
 
 Merged PR:
