@@ -1846,9 +1846,14 @@ class ControlPlaneRepository:
                             "action": review.action,
                             "confidence": _decimal_str(review.confidence),
                             "summary": review.summary,
+                            "schema_version": str(payload.get("schema_version", "") or ""),
+                            "coaching_focus": str(payload.get("coaching_focus", "") or ""),
                             "execution_timing": str(payload.get("execution_timing", "") or ""),
                             "setup_quality": _as_float(payload.get("setup_quality")),
+                            "execution_quality": _as_float(payload.get("execution_quality")),
+                            "outcome_quality": _as_float(payload.get("outcome_quality")),
                             "should_have_traded": bool(payload.get("should_have_traded", False)),
+                            "should_review_manually": bool(payload.get("should_review_manually", False)),
                             "key_reasons": list(payload.get("key_reasons", []) or []),
                             "rule_hits": list(payload.get("rule_hits", []) or []),
                             "rule_violations": list(payload.get("rule_violations", []) or []),
@@ -5661,8 +5666,12 @@ def _build_trade_coach_review_rows(recent_reviews: list[dict[str, Any]]) -> tupl
         pnl_pct = _as_float(item.get("pnl_pct"))
         execution_timing = str(item.get("execution_timing", "") or "-").replace("_", " ")
         setup_quality = _as_float(item.get("setup_quality"))
+        execution_quality = _as_float(item.get("execution_quality"))
+        outcome_quality = _as_float(item.get("outcome_quality"))
         confidence = _as_float(item.get("confidence"))
         should_have_traded = "yes" if bool(item.get("should_have_traded")) else "no"
+        should_review_manually = bool(item.get("should_review_manually"))
+        coaching_focus = str(item.get("coaching_focus", "") or "-").replace("_", " ")
         key_reasons = _trade_coach_tag_list(list(item.get("key_reasons", []) or []))
         rule_violations = _trade_coach_tag_list(list(item.get("rule_violations", []) or []))
         next_time = _trade_coach_tag_list(list(item.get("next_time", []) or []))
@@ -5670,8 +5679,8 @@ def _build_trade_coach_review_rows(recent_reviews: list[dict[str, Any]]) -> tupl
             f"""<tr>
             <td style="white-space:nowrap;">{escape(str(item.get("created_at", "")) or "-")}</td>
             <td><strong>{escape(str(item.get("symbol", "")) or "-")}</strong></td>
-            <td style="white-space:nowrap;"><strong>{escape(path)}</strong><br><span style="color:#98a6c8;">P&amp;L {pnl_pct:+.1f}% · timing {escape(execution_timing)} · setup {setup_quality:.2f}</span></td>
-            <td style="color:{_trade_coach_verdict_color(verdict)};font-weight:bold;text-transform:uppercase;">{escape(verdict or "-")}<br><span style="color:#98a6c8;font-weight:normal;">{escape(action or "-")} · {confidence:.2f}</span></td>
+            <td style="white-space:nowrap;"><strong>{escape(path)}</strong><br><span style="color:#98a6c8;">P&amp;L {pnl_pct:+.1f}% · timing {escape(execution_timing)} · setup {setup_quality:.2f} · exec {execution_quality:.2f} · outcome {outcome_quality:.2f}</span></td>
+            <td style="color:{_trade_coach_verdict_color(verdict)};font-weight:bold;text-transform:uppercase;">{escape(verdict or "-")}<br><span style="color:#98a6c8;font-weight:normal;">{escape(action or "-")} · {confidence:.2f} · focus {escape(coaching_focus)}</span>{'<br><span style="color:#ffcc5b;font-weight:normal;">manual review</span>' if should_review_manually else ''}</td>
             <td style="text-transform:uppercase;">{escape(should_have_traded)}</td>
             <td style="font-size:11px;max-width:620px;"><div>{escape(summary)}</div><div style="margin-top:4px;color:#98a6c8;"><strong>Why:</strong> {escape(key_reasons)}</div><div style="margin-top:4px;color:#98a6c8;"><strong>Violations:</strong> {escape(rule_violations)}</div><div style="margin-top:4px;color:#98a6c8;"><strong>Next:</strong> {escape(next_time)}</div></td>
         </tr>"""

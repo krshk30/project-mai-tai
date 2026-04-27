@@ -12,7 +12,7 @@ def test_trade_coach_client_extracts_function_call_arguments() -> None:
             {
                 "type": "function_call",
                 "name": "submit_trade_review",
-                "arguments": '{"verdict":"good","action":"enter","execution_timing":"on_time","confidence":0.9,"setup_quality":0.8,"should_have_traded":true,"key_reasons":["trend"],"rule_hits":["P1"],"rule_violations":[],"next_time":["size up only with volume"],"concise_summary":"Solid entry."}',
+                "arguments": '{"verdict":"good","action":"enter","coaching_focus":"setup","execution_timing":"on_time","confidence":0.9,"setup_quality":0.8,"execution_quality":0.85,"outcome_quality":0.7,"should_have_traded":true,"should_review_manually":false,"key_reasons":["trend"],"rule_hits":["P1"],"rule_violations":[],"next_time":["size up only with volume"],"concise_summary":"Solid entry."}',
             }
         ]
     }
@@ -31,7 +31,7 @@ def test_trade_coach_client_extracts_nested_function_arguments() -> None:
                 "type": "function_call",
                 "function": {
                     "name": "submit_trade_review",
-                    "arguments": '{"verdict":"mixed","action":"wait","execution_timing":"late","confidence":0.5,"setup_quality":0.6,"should_have_traded":false,"key_reasons":["late extension"],"rule_hits":[],"rule_violations":["chased"],"next_time":["wait for reclaim"],"concise_summary":"Late chase."}',
+                    "arguments": '{"verdict":"mixed","action":"wait","coaching_focus":"execution","execution_timing":"late","confidence":0.5,"setup_quality":0.6,"execution_quality":0.3,"outcome_quality":0.2,"should_have_traded":false,"should_review_manually":true,"key_reasons":["late extension"],"rule_hits":[],"rule_violations":["chased"],"next_time":["wait for reclaim"],"concise_summary":"Late chase."}',
                 },
             }
         ]
@@ -49,10 +49,14 @@ def test_trade_coach_client_normalizes_relaxed_model_payload() -> None:
         {
             "verdict": "win",
             "action": "closed position at profit",
+            "coaching_focus": "timing and execution",
             "execution_timing": "timely and according to plan",
             "confidence": 8,
             "setup_quality": 7,
+            "execution_quality": 9,
+            "outcome_quality": 8,
             "should_have_traded": True,
+            "should_review_manually": False,
             "key_reasons": ["strong momentum"],
             "rule_hits": [],
             "rule_violations": [],
@@ -63,6 +67,9 @@ def test_trade_coach_client_normalizes_relaxed_model_payload() -> None:
 
     assert normalized["verdict"] == "good"
     assert normalized["action"] == "exit"
+    assert normalized["coaching_focus"] == "execution"
     assert normalized["execution_timing"] == "on_time"
     assert normalized["confidence"] == 0.8
     assert normalized["setup_quality"] == 0.7
+    assert normalized["execution_quality"] == 0.9
+    assert normalized["outcome_quality"] == 0.8

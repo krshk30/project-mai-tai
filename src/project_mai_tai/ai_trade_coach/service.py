@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 ALLOWED_VERDICTS = {"good", "bad", "mixed", "skip"}
 ALLOWED_ACTIONS = {"enter", "enter_early", "wait", "skip", "reduce", "exit", "hold"}
+ALLOWED_COACHING_FOCI = {"setup", "execution", "risk", "market_context", "skip"}
 ALLOWED_EXECUTION_TIMINGS = {"early", "on_time", "late", "skip"}
 
 
@@ -33,10 +34,14 @@ class TradeCoachClient:
         "properties": {
             "verdict": {"type": "string", "enum": sorted(ALLOWED_VERDICTS)},
             "action": {"type": "string", "enum": sorted(ALLOWED_ACTIONS)},
+            "coaching_focus": {"type": "string", "enum": sorted(ALLOWED_COACHING_FOCI)},
             "execution_timing": {"type": "string", "enum": sorted(ALLOWED_EXECUTION_TIMINGS)},
             "confidence": {"type": "number", "minimum": 0, "maximum": 1},
             "setup_quality": {"type": "number", "minimum": 0, "maximum": 1},
+            "execution_quality": {"type": "number", "minimum": 0, "maximum": 1},
+            "outcome_quality": {"type": "number", "minimum": 0, "maximum": 1},
             "should_have_traded": {"type": "boolean"},
+            "should_review_manually": {"type": "boolean"},
             "key_reasons": {"type": "array", "items": {"type": "string"}},
             "rule_hits": {"type": "array", "items": {"type": "string"}},
             "rule_violations": {"type": "array", "items": {"type": "string"}},
@@ -46,10 +51,14 @@ class TradeCoachClient:
         "required": [
             "verdict",
             "action",
+            "coaching_focus",
             "execution_timing",
             "confidence",
             "setup_quality",
+            "execution_quality",
+            "outcome_quality",
             "should_have_traded",
+            "should_review_manually",
             "key_reasons",
             "rule_hits",
             "rule_violations",
@@ -79,10 +88,12 @@ class TradeCoachClient:
                         "Always call the submit_trade_review function exactly once. "
                         "Judge the trade against the provided rulebook and the captured episode context. "
                         "Use only the allowed enum values in the function schema. "
-                        "Return confidence and setup_quality as decimals between 0.0 and 1.0. "
+                        "Return confidence, setup_quality, execution_quality, and outcome_quality as decimals between 0.0 and 1.0. "
                         "Do not confuse outcome with quality: a losing trade is not automatically bad and a winning trade is not automatically good. "
                         "Avoid generic praise. Every key_reasons, rule_violations, and next_time item must point to concrete facts from the episode such as path, timing, scale behavior, stop behavior, bar context, or risk handling. "
                         "If the evidence is mixed, use the mixed verdict instead of defaulting to good. "
+                        "Use coaching_focus to identify the single most important improvement area: setup, execution, risk, market_context, or skip. "
+                        "Set should_review_manually=true only when the captured facts are unusually ambiguous or deserve explicit operator follow-up. "
                         "Do not invent facts and do not output prose outside the function call."
                     ),
                 },
@@ -167,10 +178,14 @@ class TradeCoachClient:
         normalized = dict(payload)
         normalized["verdict"] = self._normalize_verdict(payload.get("verdict"))
         normalized["action"] = self._normalize_action(payload.get("action"))
+        normalized["coaching_focus"] = self._normalize_coaching_focus(payload.get("coaching_focus"))
         normalized["execution_timing"] = self._normalize_execution_timing(payload.get("execution_timing"))
         normalized["confidence"] = self._normalize_score(payload.get("confidence"))
         normalized["setup_quality"] = self._normalize_score(payload.get("setup_quality"))
+        normalized["execution_quality"] = self._normalize_score(payload.get("execution_quality"))
+        normalized["outcome_quality"] = self._normalize_score(payload.get("outcome_quality"))
         normalized["should_have_traded"] = bool(payload.get("should_have_traded", False))
+        normalized["should_review_manually"] = bool(payload.get("should_review_manually", False))
         for field in ("key_reasons", "rule_hits", "rule_violations", "next_time"):
             value = payload.get(field, [])
             if isinstance(value, list):
@@ -225,6 +240,21 @@ class TradeCoachClient:
         if "hold" in text:
             return "hold"
         return "wait"
+
+    @staticmethod
+    def _normalize_coaching_focus(value: Any) -> str:
+        text = str(value or "").strip().lower()
+        if text in ALLOWED_COACHING_FOCI:
+            return text
+        if "setup" in text or "entry" in text:
+            return "setup"
+        if "execution" in text or "timing" in text or "scale" in text:
+            return "execution"
+        if "risk" in text or "stop" in text or "size" in text:
+            return "risk"
+        if "market" in text or "context" in text or "tape" in text:
+            return "market_context"
+        return "skip"
 
     @staticmethod
     def _normalize_execution_timing(value: Any) -> str:

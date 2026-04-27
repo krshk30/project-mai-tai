@@ -181,7 +181,27 @@ def test_list_reviewable_cycles_sorts_globally_and_skips_reviewed() -> None:
                 action="enter",
                 confidence=Decimal("0.9"),
                 summary="Already reviewed.",
-                payload={"concise_summary": "Already reviewed."},
+                payload={
+                    "schema_version": config.review_schema_version,
+                    "coaching_focus": "setup",
+                    "execution_timing": "on_time",
+                    "setup_quality": 0.9,
+                    "execution_quality": 0.9,
+                    "outcome_quality": 0.8,
+                    "should_have_traded": True,
+                    "should_review_manually": False,
+                    "key_reasons": ["already reviewed"],
+                    "rule_hits": [],
+                    "rule_violations": [],
+                    "next_time": [],
+                    "concise_summary": "Already reviewed.",
+                    "trade_snapshot": {
+                        "path": "P1_CROSS",
+                        "entry_time": "2026-04-24 09:30:00 AM ET",
+                        "exit_time": "2026-04-24 09:35:00 AM ET",
+                        "pnl_pct": 10.0,
+                    },
+                },
             )
         )
         session.commit()
@@ -245,10 +265,14 @@ def test_save_review_persists_trade_snapshot_and_rich_fields() -> None:
         review_payload={
             "verdict": "mixed",
             "action": "exit",
+            "coaching_focus": "execution",
             "execution_timing": "late",
             "confidence": 0.55,
             "setup_quality": 0.4,
+            "execution_quality": 0.3,
+            "outcome_quality": 0.2,
             "should_have_traded": False,
+            "should_review_manually": True,
             "key_reasons": ["late confirmation", "thin follow-through"],
             "rule_hits": ["P3_SURGE"],
             "rule_violations": ["chased extension"],
@@ -265,10 +289,73 @@ def test_save_review_persists_trade_snapshot_and_rich_fields() -> None:
         assert review is not None
         assert review.summary == "Late chase with weak follow-through."
         assert isinstance(review.payload, dict)
+        assert review.payload["schema_version"] == config.review_schema_version
+        assert review.payload["coaching_focus"] == "execution"
         assert review.payload["execution_timing"] == "late"
         assert review.payload["setup_quality"] == 0.4
+        assert review.payload["execution_quality"] == 0.3
+        assert review.payload["outcome_quality"] == 0.2
+        assert review.payload["should_review_manually"] is True
         assert review.payload["rule_violations"] == ["chased extension"]
         assert review.payload["trade_snapshot"]["path"] == cycle.path
         assert review.payload["trade_snapshot"]["entry_time"] == cycle.entry_time
         assert review.payload["trade_snapshot"]["exit_time"] == cycle.exit_time
         assert review.payload["trade_snapshot"]["pnl_pct"] == cycle.pnl_pct
+
+
+def test_list_reviewable_cycles_refreshes_old_review_payload_versions() -> None:
+    session_factory = _session_factory()
+    config = TradeCoachConfig(max_similar_trades=3)
+    repository = TradeCoachRepository(session_factory=session_factory, config=config)
+
+    session_start = datetime(2026, 4, 24, 4, 0, tzinfo=EASTERN_TZ)
+    session_end = datetime(2026, 4, 25, 4, 0, tzinfo=EASTERN_TZ)
+
+    with session_factory() as session:
+        strategy = Strategy(code="macd_30s", name="Schwab 30 Sec Bot", execution_mode="paper")
+        account = BrokerAccount(
+            name="paper:macd_30s",
+            provider="alpaca",
+            environment="paper",
+            external_account_id="paper-macd-30s",
+        )
+        session.add_all([strategy, account])
+        session.flush()
+
+        reviewed_cycle_key = _seed_cycle(
+            session=session,
+            strategy=strategy,
+            broker_account=account,
+            symbol="REFRESH",
+            entry_time=datetime(2026, 4, 24, 9, 30, tzinfo=EASTERN_TZ),
+            exit_time=datetime(2026, 4, 24, 9, 35, tzinfo=EASTERN_TZ),
+            entry_price="1.00",
+            exit_price="1.10",
+            prefix="refresh",
+        )
+        session.add(
+            AiTradeReview(
+                strategy_code="macd_30s",
+                broker_account_name="paper:macd_30s",
+                symbol="REFRESH",
+                review_type=config.review_type,
+                cycle_key=reviewed_cycle_key,
+                provider="openai",
+                model="gpt-4.1-mini",
+                verdict="good",
+                action="exit",
+                confidence=Decimal("0.9"),
+                summary="Old payload.",
+                payload={"concise_summary": "Old payload."},
+            )
+        )
+        session.commit()
+
+    cycles = repository.list_reviewable_cycles(
+        strategy_accounts=[("macd_30s", "paper:macd_30s")],
+        session_start=session_start,
+        session_end=session_end,
+        review_limit=10,
+    )
+
+    assert [cycle.symbol for cycle in cycles] == ["REFRESH"]

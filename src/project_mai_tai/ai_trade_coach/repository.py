@@ -49,13 +49,14 @@ class TradeCoachRepository:
         review_limit: int,
     ) -> list[CompletedTradeCycle]:
         with self.session_factory() as session:
-            reviewed_cycle_keys = set(
-                session.scalars(
-                    select(AiTradeReview.cycle_key).where(
+            existing_reviews = {
+                review.cycle_key: review
+                for review in session.scalars(
+                    select(AiTradeReview).where(
                         AiTradeReview.review_type == self.config.review_type,
                     )
                 ).all()
-            )
+            }
 
             cycles: list[CompletedTradeCycle] = []
             for strategy_code, broker_account_name in strategy_accounts:
@@ -81,7 +82,8 @@ class TradeCoachRepository:
                     closed_today=[],
                 )
                 for cycle in sorted(pair_cycles, key=lambda item: item.sort_time, reverse=True):
-                    if cycle.cycle_key in reviewed_cycle_keys:
+                    existing_review = existing_reviews.get(cycle.cycle_key)
+                    if existing_review is not None and not self._review_needs_refresh(existing_review):
                         continue
                     cycles.append(cycle)
             cycles.sort(key=lambda item: parse_et_timestamp(item.sort_time), reverse=True)
@@ -307,32 +309,39 @@ class TradeCoachRepository:
     ) -> None:
         persisted_payload = self._build_persisted_review_payload(cycle=cycle, review_payload=review_payload)
         with self.session_factory() as session:
-            session.add(
-                AiTradeReview(
-                    intent_id=UUID(primary_intent_id) if primary_intent_id else None,
-                    strategy_code=cycle.strategy_code,
-                    broker_account_name=cycle.broker_account_name,
-                    symbol=cycle.symbol,
-                    review_type=self.config.review_type,
-                    cycle_key=cycle.cycle_key,
-                    provider=provider,
-                    model=model,
-                    verdict=str(persisted_payload.get("verdict", "") or ""),
-                    action=str(persisted_payload.get("action", "") or ""),
-                    confidence=Decimal(str(persisted_payload.get("confidence", "0") or "0")),
-                    summary=str(persisted_payload.get("concise_summary", "") or ""),
-                    payload=persisted_payload,
+            review = session.scalar(
+                select(AiTradeReview).where(
+                    AiTradeReview.review_type == self.config.review_type,
+                    AiTradeReview.cycle_key == cycle.cycle_key,
                 )
             )
+            if review is None:
+                review = AiTradeReview(
+                    review_type=self.config.review_type,
+                    cycle_key=cycle.cycle_key,
+                )
+                session.add(review)
+            review.intent_id = UUID(primary_intent_id) if primary_intent_id else None
+            review.strategy_code = cycle.strategy_code
+            review.broker_account_name = cycle.broker_account_name
+            review.symbol = cycle.symbol
+            review.provider = provider
+            review.model = model
+            review.verdict = str(persisted_payload.get("verdict", "") or "")
+            review.action = str(persisted_payload.get("action", "") or "")
+            review.confidence = Decimal(str(persisted_payload.get("confidence", "0") or "0"))
+            review.summary = str(persisted_payload.get("concise_summary", "") or "")
+            review.payload = persisted_payload
             session.commit()
 
-    @staticmethod
     def _build_persisted_review_payload(
+        self,
         *,
         cycle: CompletedTradeCycle,
         review_payload: dict[str, Any],
     ) -> dict[str, Any]:
         payload = dict(review_payload)
+        payload["schema_version"] = self.config.review_schema_version
         payload["trade_snapshot"] = {
             "strategy_code": cycle.strategy_code,
             "broker_account_name": cycle.broker_account_name,
@@ -349,6 +358,21 @@ class TradeCoachRepository:
             "exit_summary": cycle.summary,
         }
         return payload
+
+    def _review_needs_refresh(self, review: AiTradeReview) -> bool:
+        payload = review.payload if isinstance(review.payload, dict) else {}
+        if payload.get("schema_version") != self.config.review_schema_version:
+            return True
+        trade_snapshot = payload.get("trade_snapshot")
+        if not isinstance(trade_snapshot, dict):
+            return True
+        required_fields = (
+            "coaching_focus",
+            "execution_quality",
+            "outcome_quality",
+            "should_review_manually",
+        )
+        return any(field not in payload for field in required_fields)
 
     def _load_recent_orders(
         self,

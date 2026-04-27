@@ -19,6 +19,7 @@ class TradeCoachConfig:
     review_bars_after_exit: int = 20
     max_similar_trades: int = 5
     review_type: str = "post_trade"
+    review_schema_version: str = "trade_coach_v2"
 
 
 class EpisodeBarSnapshot(BaseModel):
@@ -70,10 +71,14 @@ class TradeEpisode(BaseModel):
 class TradeCoachReview(BaseModel):
     verdict: Literal["good", "bad", "mixed", "skip"]
     action: Literal["enter", "enter_early", "wait", "skip", "reduce", "exit", "hold"]
+    coaching_focus: Literal["setup", "execution", "risk", "market_context", "skip"]
     execution_timing: Literal["early", "on_time", "late", "skip"]
     confidence: float = Field(ge=0.0, le=1.0)
     setup_quality: float = Field(ge=0.0, le=1.0)
+    execution_quality: float = Field(ge=0.0, le=1.0)
+    outcome_quality: float = Field(ge=0.0, le=1.0)
     should_have_traded: bool
+    should_review_manually: bool = False
     key_reasons: list[str] = Field(default_factory=list)
     rule_hits: list[str] = Field(default_factory=list)
     rule_violations: list[str] = Field(default_factory=list)

@@ -3580,6 +3580,63 @@ Validation:
   - `.venv\\Scripts\\python.exe -m pytest tests\\unit\\test_trade_coach_service.py tests\\unit\\test_trade_coach_repository.py tests\\unit\\test_control_plane.py -q`
   - `.venv\\Scripts\\python.exe -m py_compile src/project_mai_tai/ai_trade_coach/repository.py src/project_mai_tai/ai_trade_coach/service.py src/project_mai_tai/services/trade_coach_app.py src/project_mai_tai/services/control_plane.py tests/unit/test_trade_coach_repository.py tests/unit/test_control_plane.py`
 
+## 2026-04-27 - Trade coach review versioning and refresh
+
+Context:
+
+- after the richer payload launch, older reviews still rendered with missing
+  trade facts because they were created before `trade_snapshot` and the expanded
+  rubric fields existed
+- leaving the system mixed between old and new review shapes would make the bot
+  page inconsistent and block meaningful comparison of newer review quality
+
+Changes:
+
+- updated `src/project_mai_tai/ai_trade_coach/models.py`
+  - trade coach config now carries a review contract version:
+    - `review_schema_version = "trade_coach_v2"`
+  - review payload now requires additional structured critique fields:
+    - `coaching_focus`
+    - `execution_quality`
+    - `outcome_quality`
+    - `should_review_manually`
+- updated `src/project_mai_tai/ai_trade_coach/service.py`
+  - tightened the review schema and model instruction around:
+    - single primary coaching focus
+    - separate setup / execution / outcome scoring
+    - manual-review flag for ambiguous cases
+  - normalization now supports these new fields
+- updated `src/project_mai_tai/ai_trade_coach/repository.py`
+  - persisted payloads now include:
+    - `schema_version`
+  - `save_review(...)` now upserts by:
+    - `review_type`
+    - `cycle_key`
+    instead of always inserting a brand-new row
+  - review selection now refreshes older incomplete reviews automatically when:
+    - schema version is old or missing
+    - `trade_snapshot` is missing
+    - required richer fields are missing
+- updated `src/project_mai_tai/services/control_plane.py`
+  - bot pages and `/api/bots` now surface the new critique fields:
+    - `coaching_focus`
+    - `execution_quality`
+    - `outcome_quality`
+    - `should_review_manually`
+
+Operator meaning:
+
+- restarting the trade coach service on the VPS now allows older same-day
+  reviewed cycles to be refreshed in place with the newer richer contract
+- this avoids needing a schema migration or duplicate review rows
+
+Validation:
+
+- passed:
+  - `.venv\\Scripts\\python.exe -m pytest tests\\unit\\test_trade_coach_service.py tests\\unit\\test_trade_coach_repository.py tests\\unit\\test_control_plane.py -q`
+    - `33 passed`
+  - `.venv\\Scripts\\python.exe -m py_compile src/project_mai_tai/ai_trade_coach/models.py src/project_mai_tai/ai_trade_coach/repository.py src/project_mai_tai/ai_trade_coach/service.py src/project_mai_tai/services/control_plane.py`
+
 ## 2026-04-27 - Shared historical warmup ordering fix for Schwab/Webull 30s
 
 Context:

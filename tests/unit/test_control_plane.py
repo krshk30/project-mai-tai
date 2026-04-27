@@ -384,12 +384,17 @@ def seed_database(session_factory: sessionmaker[Session]) -> None:
             confidence=Decimal("0.90"),
             summary="Good momentum trade with a valid entry and disciplined exit.",
             payload={
+                "schema_version": "trade_coach_v2",
                 "verdict": "good",
                 "action": "exit",
+                "coaching_focus": "execution",
                 "execution_timing": "on_time",
                 "confidence": 0.9,
                 "setup_quality": 0.82,
+                "execution_quality": 0.91,
+                "outcome_quality": 0.72,
                 "should_have_traded": True,
+                "should_review_manually": False,
                 "key_reasons": ["valid P1 setup", "disciplined exit"],
                 "rule_hits": ["P1_CROSS"],
                 "rule_violations": [],
@@ -1275,6 +1280,7 @@ def test_bot_page_renders_simple_trade_summary_table() -> None:
         assert "Good momentum trade with a valid entry and disciplined exit." in bot_30s_page.text
         assert "valid P1 setup" in bot_30s_page.text
         assert "P1_CROSS" in bot_30s_page.text
+        assert "focus execution" in bot_30s_page.text
         assert "Open Positions" in bot_30s_page.text
         assert "Order History" in bot_30s_page.text
         assert "Mai Tai Scanner" in bot_30s_page.text
