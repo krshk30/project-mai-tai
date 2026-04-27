@@ -478,6 +478,10 @@ class StrategyBotRuntime:
         builder = self.builder_manager.get_or_create(symbol)
         builder.reset()
 
+        sorted_bars = sorted(
+            bars,
+            key=lambda bar: float(bar["timestamp"]),
+        )
         hydrated = [
             OHLCVBar(
                 open=float(bar["open"]),
@@ -488,7 +492,7 @@ class StrategyBotRuntime:
                 timestamp=float(bar["timestamp"]),
                 trade_count=int(bar.get("trade_count", 1)),
             )
-            for bar in bars
+            for bar in sorted_bars
         ]
         if not hydrated:
             self.last_indicators.pop(normalized_symbol, None)

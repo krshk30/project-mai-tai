@@ -159,6 +159,7 @@ class MassiveSnapshotProvider:
                     or 1,
                 )
             )
+        bars.sort(key=lambda item: item.timestamp)
         return bars
 
     def _get_rest_client(self):
