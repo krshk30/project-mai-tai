@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC
+from datetime import datetime
 from datetime import timedelta
 
 from project_mai_tai.ai_trade_coach import TradeCoachClient
@@ -89,6 +91,16 @@ class TradeCoachApp:
             review_limit=self.settings.trade_coach_review_limit,
         )
 
+    def _review_window_bounds(self) -> tuple[datetime, datetime]:
+        session_start = current_scanner_session_start_utc()
+        session_end = session_start + timedelta(days=1)
+        lookback_days = max(0, int(self.settings.trade_coach_completed_trade_lookback_days))
+        if lookback_days <= 0:
+            review_start = datetime(2000, 1, 1, tzinfo=UTC)
+        else:
+            review_start = session_start - timedelta(days=max(0, lookback_days - 1))
+        return review_start, session_end
+
     async def run(self) -> None:
         if not self.settings.trade_coach_enabled:
             self.logger.info("trade coach disabled; exiting")
@@ -106,8 +118,7 @@ class TradeCoachApp:
         self.logger.info("trade coach starting for %s", ", ".join(code for code, _ in strategy_accounts))
 
         while not stop_event.is_set():
-            session_start = current_scanner_session_start_utc()
-            session_end = session_start + timedelta(days=1)
+            session_start, session_end = self._review_window_bounds()
             try:
                 await self.service.run_review_cycle(
                     strategy_accounts=strategy_accounts,

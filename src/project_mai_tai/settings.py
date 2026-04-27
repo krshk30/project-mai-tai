@@ -148,6 +148,7 @@ class Settings(BaseSettings):
     trade_coach_max_similar_trades: int = 5
     trade_coach_review_poll_seconds: int = 60
     trade_coach_review_limit: int = 25
+    trade_coach_completed_trade_lookback_days: int = 0
 
     broker_default_provider: str = "alpaca"
     oms_adapter: str = "simulated"
