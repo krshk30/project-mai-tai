@@ -2599,11 +2599,13 @@ def build_app(
             "bots": [
                 {
                     **bot,
-                    "recent_decisions": _resolved_bot_recent_decisions(data, bot),
-                    "trade_log": _build_bot_decision_entries(_resolved_bot_recent_decisions(data, bot)),
+                    "recent_decisions": recent_decisions,
+                    "trade_log": _build_bot_decision_entries(recent_decisions),
                     "account_summary": _build_bot_account_summary(data, bot),
+                    "listening_status": _build_bot_listening_status(data, bot, recent_decisions),
                 }
                 for bot in data["bots"]
+                for recent_decisions in [_resolved_bot_recent_decisions(data, bot)]
             ]
         }
 
