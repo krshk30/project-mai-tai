@@ -1,21 +1,18 @@
 # Session Handoff - Global
 
-## 2026-04-24 Trade Coach Foundation (In Progress On Branch)
+## 2026-04-24 Trade Coach Foundation (Merged To Main, Not Deployed)
 
-Current branch:
-
-- `codex/trade-coach-foundation`
-
-Open PR:
+Merged PR:
 
 - `#52`
 - [Add trade coach foundation service](https://github.com/krshk30/project-mai-tai/pull/52)
+- merged into `main` as `93fa397` on `2026-04-27`
 
 Important state:
 
-- this work is local branch work only right now
-- not merged to `main`
+- this work is now merged to `main`
 - not deployed to the VPS
+- production remains disabled by default
 - current scope is the first trade-coach foundation pass for the two 30-second
   bots only:
   - `macd_30s`
@@ -138,9 +135,11 @@ Latest validation snapshot:
   - local development environment now has `MAI_TAI_TRADE_COACH_API_KEY`
     configured outside the repo
   - do **not** commit secrets into `.env`, repo files, or handoff notes
-  - VPS / production trade coach secret still not configured from this branch
-- branch confirmed:
-  - `codex/trade-coach-foundation`
+  - VPS / production trade coach secret still not configured
+- merge/deploy status:
+  - merged to GitHub `main`
+  - local `main` was fast-forwarded to `93fa397`
+  - VPS is still not deployed to the trade coach code
 
 Known non-blocking note from local verification:
 
