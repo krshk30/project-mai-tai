@@ -81,6 +81,15 @@ Latest validation snapshot:
 - disabled-mode smoke pass:
   - trade coach process exited cleanly with default `trade_coach_enabled = false`
   - no API request path was exercised yet because the service remains disabled
+- `2026-04-26` synthetic API smoke pass:
+  - real OpenAI Responses API call succeeded through the trade coach client
+  - strict function-call parsing path returned a valid structured review payload
+  - test used a synthetic completed `macd_30s` episode only; no live or VPS state
+    was modified
+- local dry-run blocker on `2026-04-26`:
+  - no local Postgres listener on `localhost:5432`
+  - because of that, a true DB-backed closed-trade review pass could not run from
+    this shell yet
 - local dev secret state:
   - local development environment now has `MAI_TAI_TRADE_COACH_API_KEY`
     configured outside the repo
