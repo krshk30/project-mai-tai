@@ -3477,3 +3477,41 @@ Live-session service fix and result:
     - summary:
       `Good trade on P5_PULLBACK setup entered and exited on time with hard stop loss management. Setup was good quality with favorable indicators; execution was timely and within rules.`
 
+## 2026-04-27 - Trade coach bot-page visibility
+
+Context:
+
+- operators could verify trade coach output in `/api/bots`
+- but there was still no simple bot-page section showing recent reviews beside
+  completed positions and order history
+
+UI follow-up:
+
+- updated
+  `src/project_mai_tai/services/control_plane.py`
+- bot detail pages now render a dedicated `Trade Coach Reviews` table using the
+  already-persisted `recent_trade_coach_reviews` slice for that bot
+- current columns:
+  - review time
+  - ticker
+  - verdict
+  - action
+  - confidence
+  - concise coach summary
+
+Important scope note:
+
+- this is a visibility-only control-plane improvement
+- no change was made to:
+  - trade pairing
+  - coach prompting
+  - strategy behavior
+  - OMS behavior
+- the page is simply surfacing the reviews that were already being generated
+
+Validation:
+
+- passed:
+  - `.venv\\Scripts\\python.exe -m pytest tests\\unit\\test_control_plane.py -k "bot_page_renders_simple_trade_summary_table or reports_schwab_live_wiring or webull_30s_page_uses_polygon_data_halt_labels" -q`
+  - `.venv\\Scripts\\python.exe -m py_compile src/project_mai_tai/services/control_plane.py tests/unit/test_control_plane.py`
+

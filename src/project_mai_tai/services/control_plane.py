@@ -4669,8 +4669,10 @@ def _render_bot_detail_page(data: dict[str, Any], strategy_code: str) -> str:
     listening_status = _build_bot_listening_status(data, bot, recent_decisions)
     recent_fills = [item for item in data["recent_fills"] if item["strategy_code"] == strategy_code]
     recent_orders = [item for item in data["recent_orders"] if item["strategy_code"] == strategy_code]
+    recent_trade_coach_reviews = list(bot.get("recent_trade_coach_reviews", []))
     position_rows = _build_bot_position_rows(data, bot)
     completed_rows, completed_count, completed_pnl = _build_completed_position_rows(bot, recent_orders, recent_fills)
+    trade_coach_rows, trade_coach_count = _build_trade_coach_review_rows(recent_trade_coach_reviews)
     order_rows, order_count = _build_order_history_rows(recent_orders, recent_fills)
     tos_parity = bot.get("tos_parity", {})
     tos_parity_rows = _build_tos_parity_rows(tos_parity)
@@ -4792,6 +4794,23 @@ def _render_bot_detail_page(data: dict[str, Any], strategy_code: str) -> str:
                 </table>
             </div>
         </section>"""
+
+    trade_coach_panel = f"""
+            <section class="panel full">
+                <div class="panel-header">
+                    <div>
+                        <h3>Trade Coach Reviews</h3>
+                        <div class="sub">Post-trade AI reviews for completed flat-to-flat cycles on this bot.</div>
+                    </div>
+                    <span class="count accent">{trade_coach_count}</span>
+                </div>
+                <div class="table-wrap">
+                    <table>
+                        <thead><tr><th>Reviewed</th><th>Ticker</th><th>Verdict</th><th>Action</th><th style="text-align:right">Conf</th><th>Coach Summary</th></tr></thead>
+                        <tbody>{trade_coach_rows}</tbody>
+                    </table>
+                </div>
+            </section>"""
 
     listening_panel = f"""
             <section class="panel full accent-panel">
@@ -5236,6 +5255,7 @@ def _render_bot_detail_page(data: dict[str, Any], strategy_code: str) -> str:
             </section>
 
             {completed_positions_panel}
+            {trade_coach_panel}
 
             <section class="panel full">
                 <div class="panel-header">
@@ -5582,6 +5602,46 @@ def _build_order_history_rows(recent_orders: list[dict[str, Any]], recent_fills:
         </tr>"""
         )
     return "".join(rows), len(orders)
+
+
+def _trade_coach_verdict_color(verdict: str) -> str:
+    normalized = str(verdict or "").strip().lower()
+    if normalized == "good":
+        return "#00c853"
+    if normalized == "bad":
+        return "#ff5252"
+    if normalized == "mixed":
+        return "#ffcc5b"
+    return "#7b86a4"
+
+
+def _build_trade_coach_review_rows(recent_reviews: list[dict[str, Any]]) -> tuple[str, int]:
+    if not recent_reviews:
+        return (
+            '<tr><td colspan="6" style="text-align:center;color:#888;">No trade coach reviews yet</td></tr>',
+            0,
+        )
+
+    rendered_rows: list[str] = []
+    for item in sorted(
+        recent_reviews,
+        key=lambda row: _parse_et_timestamp(str(row.get("created_at", "") or "")),
+        reverse=True,
+    )[:25]:
+        verdict = str(item.get("verdict", "") or "-").lower()
+        action = str(item.get("action", "") or "-").lower()
+        summary = str(item.get("summary", "") or "").strip() or "-"
+        rendered_rows.append(
+            f"""<tr>
+            <td style="white-space:nowrap;">{escape(str(item.get("created_at", "")) or "-")}</td>
+            <td><strong>{escape(str(item.get("symbol", "")) or "-")}</strong></td>
+            <td style="color:{_trade_coach_verdict_color(verdict)};font-weight:bold;text-transform:uppercase;">{escape(verdict or "-")}</td>
+            <td style="text-transform:uppercase;">{escape(action or "-")}</td>
+            <td style="text-align:right">{_as_float(item.get("confidence")):.2f}</td>
+            <td title="{escape(summary)}" style="font-size:11px;max-width:560px;overflow:hidden;text-overflow:ellipsis;">{escape(summary)}</td>
+        </tr>"""
+        )
+    return "".join(rendered_rows), len(recent_reviews)
 
 
 def _build_completed_position_rows(

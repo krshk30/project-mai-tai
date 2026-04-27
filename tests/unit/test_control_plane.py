@@ -13,6 +13,7 @@ from sqlalchemy.pool import StaticPool
 from project_mai_tai.db.base import Base
 from project_mai_tai.db.models import (
     AccountPosition,
+    AiTradeReview,
     BrokerAccount,
     BrokerOrder,
     DashboardSnapshot,
@@ -369,6 +370,27 @@ def seed_database(session_factory: sessionmaker[Session]) -> None:
                 "scanner_session_start_utc": "2026-03-28T13:00:00+00:00",
             },
         )
+        trade_review = AiTradeReview(
+            intent_id=intent.id,
+            strategy_code="macd_30s",
+            broker_account_name="paper:macd_30s",
+            symbol="UGRO",
+            review_type="post_trade",
+            cycle_key="macd_30s|paper:macd_30s|UGRO|2026-03-28 10:00:00 AM ET|2026-03-28 10:05:00 AM ET",
+            provider="openai",
+            model="gpt-4.1-mini",
+            verdict="good",
+            action="exit",
+            confidence=Decimal("0.90"),
+            summary="Good momentum trade with a valid entry and disciplined exit.",
+            payload={
+                "verdict": "good",
+                "action": "exit",
+                "execution_timing": "on_time",
+                "confidence": 0.9,
+            },
+            created_at=datetime.now(UTC),
+        )
         session.add_all(
             [
                 fill,
@@ -378,6 +400,7 @@ def seed_database(session_factory: sessionmaker[Session]) -> None:
                 reconciliation_finding,
                 incident,
                 dashboard_snapshot,
+                trade_review,
             ]
         )
         session.commit()
@@ -1237,6 +1260,8 @@ def test_bot_page_renders_simple_trade_summary_table() -> None:
         assert bot_30s_page.status_code == 200
         assert "Completed Positions" in bot_30s_page.text
         assert "Completed trade cycles for this bot, including positions that finished by scale-out." in bot_30s_page.text
+        assert "Trade Coach Reviews" in bot_30s_page.text
+        assert "Good momentum trade with a valid entry and disciplined exit." in bot_30s_page.text
         assert "Open Positions" in bot_30s_page.text
         assert "Order History" in bot_30s_page.text
         assert "Mai Tai Scanner" in bot_30s_page.text
