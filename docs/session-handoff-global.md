@@ -1,6 +1,6 @@
 # Session Handoff - Global
 
-## 2026-04-24 Trade Coach Foundation (Merged To Main, Not Deployed)
+## 2026-04-24 Trade Coach Foundation (Merged To Main, Deployed Disabled)
 
 Merged PR:
 
@@ -11,8 +11,16 @@ Merged PR:
 Important state:
 
 - this work is now merged to `main`
-- not deployed to the VPS
+- deployed to the VPS from `main` on `2026-04-26`
+- VPS repo is now on `fcc62b4`
 - production remains disabled by default
+- VPS trade coach secret is configured outside the repo
+- VPS trade coach flags remain disabled:
+  - `MAI_TAI_TRADE_COACH_ENABLED=false`
+  - `MAI_TAI_TRADE_COACH_SHADOW_ENABLED=false`
+  - `MAI_TAI_TRADE_COACH_PROMOTE_ENABLED=false`
+- no dedicated `project-mai-tai-trade-coach` systemd unit is installed or
+  running yet
 - current scope is the first trade-coach foundation pass for the two 30-second
   bots only:
   - `macd_30s`
@@ -135,11 +143,18 @@ Latest validation snapshot:
   - local development environment now has `MAI_TAI_TRADE_COACH_API_KEY`
     configured outside the repo
   - do **not** commit secrets into `.env`, repo files, or handoff notes
-  - VPS / production trade coach secret still not configured
+  - VPS / production now also has the trade coach API key configured outside
+    the repo
 - merge/deploy status:
   - merged to GitHub `main`
-  - local `main` was fast-forwarded to `93fa397`
-  - VPS is still not deployed to the trade coach code
+  - local `main` was fast-forwarded and then updated to `fcc62b4`
+  - VPS deploy completed successfully from `main`
+  - VPS migration `20260424_0004` for `ai_trade_reviews` ran successfully
+  - VPS health check passed at `http://127.0.0.1:8100/health`
+  - deploy also exposed and fixed two legacy env-file quoting issues in
+    `/etc/project-mai-tai/project-mai-tai.env`:
+    - `MAI_TAI_TRADINGVIEW_ALERTS_CONDITION_TEXT`
+    - `MAI_TAI_RECONCILIATION_IGNORED_POSITION_MISMATCHES`
 
 Known non-blocking note from local verification:
 
@@ -149,8 +164,6 @@ Known non-blocking note from local verification:
 
 What is still not done:
 
-- no merge to `main` yet
-- no VPS deploy yet
 - no dedicated trade coach dashboard UI yet
 - no live shadow advice path yet
 - no OMS advisory gate yet
