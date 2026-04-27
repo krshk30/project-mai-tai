@@ -21,10 +21,10 @@ Important state:
   - `MAI_TAI_TRADE_COACH_ENABLED=false`
   - `MAI_TAI_TRADE_COACH_SHADOW_ENABLED=false`
   - `MAI_TAI_TRADE_COACH_PROMOTE_ENABLED=false`
-- no dedicated `project-mai-tai-trade-coach` systemd unit is installed or
-  running yet
-- tomorrow's first live test should use the dedicated runbook and a temporary
-  one-off VPS smoke unit, not a permanent always-on coach service
+- repo now includes a dedicated `project-mai-tai-trade-coach.service`
+  for manual advisory-only runs
+- that service overrides `MAI_TAI_TRADE_COACH_ENABLED=true` only inside the
+  unit while leaving the shared VPS env file disabled by default
 - current scope is the first trade-coach foundation pass for the two 30-second
   bots only:
   - `macd_30s`
@@ -3359,4 +3359,87 @@ Operator meaning:
   poison the whole bot page red just because their tape stops printing
 - real protection remains in place for open positions and in-session stale
   failures
+
+## 2026-04-27 - Pending next fix items from live scanner review
+
+Context:
+
+- operator reviewed `YAAS`, which moved from sub-$1 to above `$1` very quickly
+- live trace showed:
+  - visible in `five_pillars` and `top_gainers` by about `07:01 AM ET`
+  - `VOLUME_SPIKE` at `07:06:49 AM ET`
+  - `SQUEEZE_5MIN` at `07:07:03 AM ET`
+  - no confirm until `07:12:08 AM ET`, when a second squeeze arrived
+- operator also called out that `Decision Tape` remains noisy for manual
+  validation when current confirmed count is zero but historical blocked rows
+  still dominate the table
+
+Pending fix decisions:
+
+- lower `MomentumConfirmedConfig.extreme_mover_min_day_change_pct`
+  - current behavior: `PATH_C_EXTREME_MOVER` requires `>= 50%` day change for a
+    single-squeeze confirm
+  - requested next change: reduce this threshold from `50.0` to `30.0`
+  - reason: a name like `YAAS` already had enough operator-visible momentum by
+    `07:07 AM ET`, but current policy forced it to wait for `PATH_B_2SQ`
+- tighten `Decision Tape` default filtering
+  - target behavior: show current actionable confirmed/live symbols by default
+  - avoid mixing raw historical blocked rows and non-actionable past symbols
+    into the primary operator validation view
+
+Operator meaning:
+
+- this is not a data outage or handoff bug; it is a policy/UI follow-up item
+- next agent should treat both items as active queued fixes, not as open
+  questions
+
+## 2026-04-27 - Trade coach live-session follow-up
+
+Live result:
+
+- operator confirmed a real closed `macd_30s` trade in `USEG`
+- cycle details on control plane:
+  - entry: `2026-04-27 08:01:30 AM ET`
+  - exit: `2026-04-27 08:01:43 AM ET`
+  - path: `P4_BURST`
+  - result: stopped out / losing close
+
+What initially went wrong:
+
+- `recent_trade_coach_reviews` stayed empty even though the trade was fully
+  closed
+- root cause was operational, not pairing logic:
+  - no `project-mai-tai-trade-coach-smoke` unit was running
+  - first manual smoke attempt failed because `trader` could not read
+    `/etc/project-mai-tai/project-mai-tai.env`
+  - that meant the coach started without the API key and exited immediately
+
+What was confirmed:
+
+- rerunning the coach with env sourced under `sudo` successfully backfilled the
+  closed cycle
+- `/api/bots` then showed the persisted review under `macd_30s`:
+  - symbol: `USEG`
+  - verdict: `good`
+  - action: `exit`
+  - confidence: `0.9`
+  - summary:
+    `Good execution on a valid setup conforming to P4_BURST path. Exited on hard stop timely to manage risk.`
+
+Follow-up change prepared:
+
+- repo now includes a dedicated manual-start
+  `ops/systemd/project-mai-tai-trade-coach.service`
+- service behavior:
+  - reads the normal VPS env file as root via systemd
+  - overrides `MAI_TAI_TRADE_COACH_ENABLED=true` only inside the service
+  - leaves shared VPS env flags disabled by default outside that unit
+  - uses a longer request timeout and shorter poll interval for live-session use
+
+Operator meaning:
+
+- future closed trades today should be reviewed automatically once that service
+  is installed on the VPS and started
+- stopping that service returns trade coach to fully disabled behavior without
+  changing the shared env defaults
 

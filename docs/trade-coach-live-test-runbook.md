@@ -11,8 +11,10 @@ Current deployment state:
 - trade coach database migration is deployed
 - trade coach API key is configured on the VPS outside the repo
 - persistent VPS config still keeps trade coach disabled
-- there is still **no** dedicated `project-mai-tai-trade-coach` systemd unit
-- the first live test should therefore be a **manual one-off VPS run**
+- there is now a dedicated `project-mai-tai-trade-coach.service`
+- the service overrides `MAI_TAI_TRADE_COACH_ENABLED=true` only inside its own
+  unit
+- the shared VPS env file remains disabled by default outside that service
 
 Primary goal for the first live test:
 
@@ -99,13 +101,12 @@ If the API shows something unexpected, verify the rows directly:
 ssh mai-tai-vps "sudo bash -lc 'source /etc/project-mai-tai/project-mai-tai.env && psql \"$MAI_TAI_DATABASE_URL\" -c \"select strategy_code, broker_account_name, symbol, review_type, verdict, action, confidence, created_at from ai_trade_reviews order by created_at desc limit 20;\"'"
 ```
 
-4. Manual coach process logs
+4. Coach service logs
 
-For the first test we should use a temporary systemd-run unit so logs are easy
-to follow:
+Live service logs:
 
 ```powershell
-ssh mai-tai-vps "sudo journalctl -u project-mai-tai-trade-coach-smoke -f"
+ssh mai-tai-vps "sudo journalctl -u project-mai-tai-trade-coach.service -f"
 ```
 
 ## Pre-Market Checklist
@@ -117,13 +118,13 @@ ssh mai-tai-vps "sudo journalctl -u project-mai-tai-trade-coach-smoke -f"
 - [ ] Confirm `Webull 30 Sec Bot` is listening normally on
       [https://project-mai-tai.live/bot/30s-webull](https://project-mai-tai.live/bot/30s-webull)
 - [ ] Confirm persistent VPS config is still disabled
-- [ ] Confirm no stale temporary coach unit is already running
+- [ ] Confirm the dedicated coach service is either stopped or in the expected state
 
 Suggested checks:
 
 ```powershell
 ssh mai-tai-vps "sudo bash -lc 'source /etc/project-mai-tai/project-mai-tai.env && printf \"enabled=%s shadow=%s promote=%s\n\" \"$MAI_TAI_TRADE_COACH_ENABLED\" \"$MAI_TAI_TRADE_COACH_SHADOW_ENABLED\" \"$MAI_TAI_TRADE_COACH_PROMOTE_ENABLED\"'"
-ssh mai-tai-vps "systemctl status project-mai-tai-trade-coach-smoke --no-pager || true"
+ssh mai-tai-vps "systemctl status project-mai-tai-trade-coach.service --no-pager || true"
 ```
 
 Expected values:
@@ -136,25 +137,20 @@ Expected values:
 
 Do **not** edit the VPS env file for the first test.
 
-Instead, start the coach with a temporary runtime override so the persistent VPS
-state remains disabled by default.
+Instead, start the dedicated coach service. The unit itself applies the runtime
+override, so the persistent shared env file remains disabled by default.
 
 Start command:
 
 ```powershell
-ssh mai-tai-vps "sudo systemd-run \
-  --unit=project-mai-tai-trade-coach-smoke \
-  --uid=trader \
-  --gid=trader \
-  --property=WorkingDirectory=/home/trader/project-mai-tai \
-  /bin/bash -lc 'set -a; source /etc/project-mai-tai/project-mai-tai.env; export MAI_TAI_TRADE_COACH_ENABLED=true; exec /home/trader/project-mai-tai/.venv/bin/mai-tai-trade-coach'"
+ssh mai-tai-vps "sudo systemctl start project-mai-tai-trade-coach.service"
 ```
 
 Immediate verification:
 
 ```powershell
-ssh mai-tai-vps "systemctl status project-mai-tai-trade-coach-smoke --no-pager"
-ssh mai-tai-vps "sudo journalctl -u project-mai-tai-trade-coach-smoke -n 50 --no-pager"
+ssh mai-tai-vps "systemctl status project-mai-tai-trade-coach.service --no-pager"
+ssh mai-tai-vps "sudo journalctl -u project-mai-tai-trade-coach.service -n 50 --no-pager"
 ```
 
 Healthy early log signs:
@@ -180,7 +176,7 @@ Keep these open:
 3. Coach logs
 
 ```powershell
-ssh mai-tai-vps "sudo journalctl -u project-mai-tai-trade-coach-smoke -f"
+ssh mai-tai-vps "sudo journalctl -u project-mai-tai-trade-coach.service -f"
 ```
 
 What should happen:
@@ -193,7 +189,7 @@ What should happen:
 ## Validation Checklist After First Closed Trade
 
 - [ ] Closed trade came from a real `macd_30s` flat-to-flat cycle
-- [ ] Manual smoke unit is still running
+- [ ] Trade coach service is still running
 - [ ] `ai_trade_reviews` has a new row
 - [ ] `/api/bots` shows the new review under the correct bot
 - [ ] `broker_account_name` matches the real bot account
@@ -221,25 +217,24 @@ The first live test is a success if all of this is true:
 
 ## Stop And Rollback
 
-If anything looks wrong, stop only the temporary smoke unit.
+If anything looks wrong, stop only the trade coach service.
 
 Stop command:
 
 ```powershell
-ssh mai-tai-vps "sudo systemctl stop project-mai-tai-trade-coach-smoke"
+ssh mai-tai-vps "sudo systemctl stop project-mai-tai-trade-coach.service"
 ```
 
 Confirm it stopped:
 
 ```powershell
-ssh mai-tai-vps "systemctl status project-mai-tai-trade-coach-smoke --no-pager || true"
+ssh mai-tai-vps "systemctl status project-mai-tai-trade-coach.service --no-pager || true"
 ```
 
 Why this is safe:
 
 - persistent env file still says `MAI_TAI_TRADE_COACH_ENABLED=false`
-- there is no permanent trade coach systemd unit yet
-- stopping the temporary smoke unit fully disables the coach again
+- stopping the dedicated trade coach service fully disables the coach again
 
 ## Do We Need New UI Tomorrow?
 
