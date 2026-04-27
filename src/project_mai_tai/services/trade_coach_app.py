@@ -24,7 +24,23 @@ def _build_rulebook(settings: Settings) -> dict[str, object]:
             "Post-trade coaching only in this phase.",
             "Do not treat paper and live execution as interchangeable.",
             "Judge setup quality separately from execution quality.",
+            "Do not assume a losing trade is bad or a winning trade is good without evidence from the captured episode.",
+            "Use concrete trade facts from the episode when explaining why a verdict was assigned.",
         ],
+        "rubric": {
+            "verdict_meaning": {
+                "good": "The setup and execution both matched the rulebook well, even if the trade lost.",
+                "mixed": "Some parts were valid, but the setup quality or execution quality was meaningfully weak.",
+                "bad": "The trade should not have been taken as executed, or the execution materially violated the rulebook.",
+                "skip": "No reliable review can be formed from the captured facts.",
+            },
+            "requirements": [
+                "Keep setup quality distinct from trade outcome.",
+                "If a loss is still labeled good, name the specific evidence that makes it good.",
+                "If the trade was avoidable, say so clearly in rule_violations or next_time.",
+                "Avoid generic praise without citing a concrete path, timing, scale, stop, or bar-context fact.",
+            ],
+        },
         "strategy_accounts": [
             {
                 "strategy_code": "macd_30s",

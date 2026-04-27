@@ -1831,6 +1831,10 @@ class ControlPlaneRepository:
                     .order_by(desc(AiTradeReview.created_at))
                     .limit(250)
                 ).all():
+                    payload = review.payload if isinstance(review.payload, dict) else {}
+                    trade_snapshot = payload.get("trade_snapshot", {})
+                    if not isinstance(trade_snapshot, dict):
+                        trade_snapshot = {}
                     recent_trade_coach_reviews.append(
                         {
                             "strategy_code": review.strategy_code,
@@ -1842,6 +1846,21 @@ class ControlPlaneRepository:
                             "action": review.action,
                             "confidence": _decimal_str(review.confidence),
                             "summary": review.summary,
+                            "execution_timing": str(payload.get("execution_timing", "") or ""),
+                            "setup_quality": _as_float(payload.get("setup_quality")),
+                            "should_have_traded": bool(payload.get("should_have_traded", False)),
+                            "key_reasons": list(payload.get("key_reasons", []) or []),
+                            "rule_hits": list(payload.get("rule_hits", []) or []),
+                            "rule_violations": list(payload.get("rule_violations", []) or []),
+                            "next_time": list(payload.get("next_time", []) or []),
+                            "path": str(trade_snapshot.get("path", "") or ""),
+                            "entry_time": str(trade_snapshot.get("entry_time", "") or ""),
+                            "exit_time": str(trade_snapshot.get("exit_time", "") or ""),
+                            "entry_price": str(trade_snapshot.get("entry_price", "") or ""),
+                            "exit_price": str(trade_snapshot.get("exit_price", "") or ""),
+                            "pnl": _as_float(trade_snapshot.get("pnl")),
+                            "pnl_pct": _as_float(trade_snapshot.get("pnl_pct")),
+                            "exit_summary": str(trade_snapshot.get("exit_summary", "") or ""),
                             "created_at": _datetime_str(review.created_at),
                         }
                     )
@@ -4806,7 +4825,7 @@ def _render_bot_detail_page(data: dict[str, Any], strategy_code: str) -> str:
                 </div>
                 <div class="table-wrap">
                     <table>
-                        <thead><tr><th>Reviewed</th><th>Ticker</th><th>Verdict</th><th>Action</th><th style="text-align:right">Conf</th><th>Coach Summary</th></tr></thead>
+                        <thead><tr><th>Reviewed</th><th>Ticker</th><th>Trade Facts</th><th>Coach Verdict</th><th>Should Trade</th><th>Coach Notes</th></tr></thead>
                         <tbody>{trade_coach_rows}</tbody>
                     </table>
                 </div>
@@ -5615,6 +5634,13 @@ def _trade_coach_verdict_color(verdict: str) -> str:
     return "#7b86a4"
 
 
+def _trade_coach_tag_list(items: list[Any]) -> str:
+    values = [str(item).strip() for item in items if str(item).strip()]
+    if not values:
+        return "-"
+    return " | ".join(values)
+
+
 def _build_trade_coach_review_rows(recent_reviews: list[dict[str, Any]]) -> tuple[str, int]:
     if not recent_reviews:
         return (
@@ -5631,14 +5657,23 @@ def _build_trade_coach_review_rows(recent_reviews: list[dict[str, Any]]) -> tupl
         verdict = str(item.get("verdict", "") or "-").lower()
         action = str(item.get("action", "") or "-").lower()
         summary = str(item.get("summary", "") or "").strip() or "-"
+        path = str(item.get("path", "") or "-")
+        pnl_pct = _as_float(item.get("pnl_pct"))
+        execution_timing = str(item.get("execution_timing", "") or "-").replace("_", " ")
+        setup_quality = _as_float(item.get("setup_quality"))
+        confidence = _as_float(item.get("confidence"))
+        should_have_traded = "yes" if bool(item.get("should_have_traded")) else "no"
+        key_reasons = _trade_coach_tag_list(list(item.get("key_reasons", []) or []))
+        rule_violations = _trade_coach_tag_list(list(item.get("rule_violations", []) or []))
+        next_time = _trade_coach_tag_list(list(item.get("next_time", []) or []))
         rendered_rows.append(
             f"""<tr>
             <td style="white-space:nowrap;">{escape(str(item.get("created_at", "")) or "-")}</td>
             <td><strong>{escape(str(item.get("symbol", "")) or "-")}</strong></td>
-            <td style="color:{_trade_coach_verdict_color(verdict)};font-weight:bold;text-transform:uppercase;">{escape(verdict or "-")}</td>
-            <td style="text-transform:uppercase;">{escape(action or "-")}</td>
-            <td style="text-align:right">{_as_float(item.get("confidence")):.2f}</td>
-            <td title="{escape(summary)}" style="font-size:11px;max-width:560px;overflow:hidden;text-overflow:ellipsis;">{escape(summary)}</td>
+            <td style="white-space:nowrap;"><strong>{escape(path)}</strong><br><span style="color:#98a6c8;">P&amp;L {pnl_pct:+.1f}% · timing {escape(execution_timing)} · setup {setup_quality:.2f}</span></td>
+            <td style="color:{_trade_coach_verdict_color(verdict)};font-weight:bold;text-transform:uppercase;">{escape(verdict or "-")}<br><span style="color:#98a6c8;font-weight:normal;">{escape(action or "-")} · {confidence:.2f}</span></td>
+            <td style="text-transform:uppercase;">{escape(should_have_traded)}</td>
+            <td style="font-size:11px;max-width:620px;"><div>{escape(summary)}</div><div style="margin-top:4px;color:#98a6c8;"><strong>Why:</strong> {escape(key_reasons)}</div><div style="margin-top:4px;color:#98a6c8;"><strong>Violations:</strong> {escape(rule_violations)}</div><div style="margin-top:4px;color:#98a6c8;"><strong>Next:</strong> {escape(next_time)}</div></td>
         </tr>"""
         )
     return "".join(rendered_rows), len(recent_reviews)

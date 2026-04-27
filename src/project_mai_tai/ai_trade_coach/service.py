@@ -80,6 +80,9 @@ class TradeCoachClient:
                         "Judge the trade against the provided rulebook and the captured episode context. "
                         "Use only the allowed enum values in the function schema. "
                         "Return confidence and setup_quality as decimals between 0.0 and 1.0. "
+                        "Do not confuse outcome with quality: a losing trade is not automatically bad and a winning trade is not automatically good. "
+                        "Avoid generic praise. Every key_reasons, rule_violations, and next_time item must point to concrete facts from the episode such as path, timing, scale behavior, stop behavior, bar context, or risk handling. "
+                        "If the evidence is mixed, use the mixed verdict instead of defaulting to good. "
                         "Do not invent facts and do not output prose outside the function call."
                     ),
                 },

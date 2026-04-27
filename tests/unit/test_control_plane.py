@@ -388,6 +388,17 @@ def seed_database(session_factory: sessionmaker[Session]) -> None:
                 "action": "exit",
                 "execution_timing": "on_time",
                 "confidence": 0.9,
+                "setup_quality": 0.82,
+                "should_have_traded": True,
+                "key_reasons": ["valid P1 setup", "disciplined exit"],
+                "rule_hits": ["P1_CROSS"],
+                "rule_violations": [],
+                "next_time": ["keep size tied to confirmation quality"],
+                "trade_snapshot": {
+                    "path": "P1_CROSS",
+                    "pnl_pct": 2.4,
+                    "exit_summary": "Scaled winner",
+                },
             },
             created_at=datetime.now(UTC),
         )
@@ -1262,6 +1273,8 @@ def test_bot_page_renders_simple_trade_summary_table() -> None:
         assert "Completed trade cycles for this bot, including positions that finished by scale-out." in bot_30s_page.text
         assert "Trade Coach Reviews" in bot_30s_page.text
         assert "Good momentum trade with a valid entry and disciplined exit." in bot_30s_page.text
+        assert "valid P1 setup" in bot_30s_page.text
+        assert "P1_CROSS" in bot_30s_page.text
         assert "Open Positions" in bot_30s_page.text
         assert "Order History" in bot_30s_page.text
         assert "Mai Tai Scanner" in bot_30s_page.text

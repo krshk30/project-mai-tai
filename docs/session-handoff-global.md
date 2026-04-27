@@ -3515,6 +3515,71 @@ Validation:
   - `.venv\\Scripts\\python.exe -m pytest tests\\unit\\test_control_plane.py -k "bot_page_renders_simple_trade_summary_table or reports_schwab_live_wiring or webull_30s_page_uses_polygon_data_halt_labels" -q`
   - `.venv\\Scripts\\python.exe -m py_compile src/project_mai_tai/services/control_plane.py tests/unit/test_control_plane.py`
 
+## 2026-04-27 - Trade coach payload tightening
+
+Context:
+
+- initial trade coach output proved the live pipeline worked
+- but reviews on the bot page were still mostly a short summary line, which made
+  them feel repetitive and too praise-heavy
+- the persisted AI payload already contained richer critique fields, but the
+  control plane was not surfacing most of them
+
+Changes:
+
+- updated `src/project_mai_tai/ai_trade_coach/repository.py`
+  - persisted review payloads now also include a compact `trade_snapshot`
+  - snapshot fields include:
+    - `path`
+    - `entry_time`
+    - `exit_time`
+    - `entry_price`
+    - `exit_price`
+    - `quantity`
+    - `pnl`
+    - `pnl_pct`
+    - `exit_summary`
+- updated `src/project_mai_tai/ai_trade_coach/service.py`
+  - tightened the model instruction to:
+    - separate outcome from quality
+    - avoid generic praise
+    - use `mixed` more honestly when evidence is mixed
+    - cite concrete path/timing/scale/stop/bar facts in reasons and advice
+- updated `src/project_mai_tai/services/trade_coach_app.py`
+  - expanded the rulebook with an explicit review rubric for:
+    - `good`
+    - `mixed`
+    - `bad`
+    - `skip`
+- updated `src/project_mai_tai/services/control_plane.py`
+  - `/api/bots` and bot pages now surface richer coach fields:
+    - `execution_timing`
+    - `setup_quality`
+    - `should_have_traded`
+    - `key_reasons`
+    - `rule_hits`
+    - `rule_violations`
+    - `next_time`
+    - `trade_snapshot` facts when available
+  - bot-page `Trade Coach Reviews` table now shows:
+    - trade facts
+    - verdict + action + confidence
+    - should-have-traded flag
+    - why / violations / next-time notes
+
+Important scope note:
+
+- no schema migration was required because the richer facts live inside the
+  existing JSON `payload`
+- older reviews may not have the new `trade_snapshot` block, but new reviews
+  will
+
+Validation:
+
+- passed:
+  - `.venv\\Scripts\\python.exe -m pytest tests\\unit\\test_trade_coach_service.py tests\\unit\\test_trade_coach_repository.py tests\\unit\\test_control_plane.py -q`
+  - `.venv\\Scripts\\python.exe -m py_compile src/project_mai_tai/ai_trade_coach/repository.py src/project_mai_tai/ai_trade_coach/service.py src/project_mai_tai/services/trade_coach_app.py src/project_mai_tai/services/control_plane.py tests/unit/test_trade_coach_repository.py tests/unit/test_control_plane.py`
+
 ## 2026-04-27 - Shared historical warmup ordering fix for Schwab/Webull 30s
 
 Context:

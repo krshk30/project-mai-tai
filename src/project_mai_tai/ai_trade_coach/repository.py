@@ -305,6 +305,7 @@ class TradeCoachRepository:
         model: str,
         primary_intent_id: str | None,
     ) -> None:
+        persisted_payload = self._build_persisted_review_payload(cycle=cycle, review_payload=review_payload)
         with self.session_factory() as session:
             session.add(
                 AiTradeReview(
@@ -316,14 +317,38 @@ class TradeCoachRepository:
                     cycle_key=cycle.cycle_key,
                     provider=provider,
                     model=model,
-                    verdict=str(review_payload.get("verdict", "") or ""),
-                    action=str(review_payload.get("action", "") or ""),
-                    confidence=Decimal(str(review_payload.get("confidence", "0") or "0")),
-                    summary=str(review_payload.get("concise_summary", "") or ""),
-                    payload=review_payload,
+                    verdict=str(persisted_payload.get("verdict", "") or ""),
+                    action=str(persisted_payload.get("action", "") or ""),
+                    confidence=Decimal(str(persisted_payload.get("confidence", "0") or "0")),
+                    summary=str(persisted_payload.get("concise_summary", "") or ""),
+                    payload=persisted_payload,
                 )
             )
             session.commit()
+
+    @staticmethod
+    def _build_persisted_review_payload(
+        *,
+        cycle: CompletedTradeCycle,
+        review_payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        payload = dict(review_payload)
+        payload["trade_snapshot"] = {
+            "strategy_code": cycle.strategy_code,
+            "broker_account_name": cycle.broker_account_name,
+            "symbol": cycle.symbol,
+            "cycle_key": cycle.cycle_key,
+            "path": cycle.path,
+            "quantity": cycle.quantity,
+            "entry_time": cycle.entry_time,
+            "entry_price": cycle.entry_price,
+            "exit_time": cycle.exit_time,
+            "exit_price": cycle.exit_price,
+            "pnl": cycle.pnl,
+            "pnl_pct": cycle.pnl_pct,
+            "exit_summary": cycle.summary,
+        }
+        return payload
 
     def _load_recent_orders(
         self,

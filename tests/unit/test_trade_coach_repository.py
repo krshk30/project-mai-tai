@@ -4,6 +4,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from sqlalchemy import create_engine
+from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -197,3 +198,77 @@ def test_list_reviewable_cycles_sorts_globally_and_skips_reviewed() -> None:
 
     assert [cycle.symbol for cycle in cycles] == ["NEW3", "MID2"]
     assert all(cycle.symbol != "OLD1" for cycle in cycles)
+
+
+def test_save_review_persists_trade_snapshot_and_rich_fields() -> None:
+    session_factory = _session_factory()
+    config = TradeCoachConfig(max_similar_trades=3)
+    repository = TradeCoachRepository(session_factory=session_factory, config=config)
+
+    entry_time = datetime(2026, 4, 24, 9, 50, tzinfo=EASTERN_TZ)
+    exit_time = datetime(2026, 4, 24, 9, 57, tzinfo=EASTERN_TZ)
+
+    with session_factory() as session:
+        strategy = Strategy(code="macd_30s", name="Schwab 30 Sec Bot", execution_mode="paper")
+        broker_account = BrokerAccount(
+            name="paper:macd_30s",
+            provider="alpaca",
+            environment="paper",
+            external_account_id="paper-macd-30s",
+        )
+        session.add_all([strategy, broker_account])
+        session.flush()
+
+        cycle_id = _seed_cycle(
+            session=session,
+            strategy=strategy,
+            broker_account=broker_account,
+            symbol="NEW3",
+            entry_time=entry_time,
+            exit_time=exit_time,
+            entry_price="3.00",
+            exit_price="3.25",
+            prefix="save-review",
+        )
+        session.commit()
+
+    cycle = repository.list_reviewable_cycles(
+        strategy_accounts=[("macd_30s", "paper:macd_30s")],
+        session_start=datetime(2026, 4, 24, 4, 0, tzinfo=EASTERN_TZ),
+        session_end=datetime(2026, 4, 25, 4, 0, tzinfo=EASTERN_TZ),
+        review_limit=5,
+    )[0]
+    assert cycle.cycle_key == cycle_id
+
+    repository.save_review(
+        cycle=cycle,
+        review_payload={
+            "verdict": "mixed",
+            "action": "exit",
+            "execution_timing": "late",
+            "confidence": 0.55,
+            "setup_quality": 0.4,
+            "should_have_traded": False,
+            "key_reasons": ["late confirmation", "thin follow-through"],
+            "rule_hits": ["P3_SURGE"],
+            "rule_violations": ["chased extension"],
+            "next_time": ["wait for reclaim"],
+            "concise_summary": "Late chase with weak follow-through.",
+        },
+        provider="openai",
+        model="gpt-4.1-mini",
+        primary_intent_id=None,
+    )
+
+    with session_factory() as session:
+        review = session.scalar(select(AiTradeReview))
+        assert review is not None
+        assert review.summary == "Late chase with weak follow-through."
+        assert isinstance(review.payload, dict)
+        assert review.payload["execution_timing"] == "late"
+        assert review.payload["setup_quality"] == 0.4
+        assert review.payload["rule_violations"] == ["chased extension"]
+        assert review.payload["trade_snapshot"]["path"] == cycle.path
+        assert review.payload["trade_snapshot"]["entry_time"] == cycle.entry_time
+        assert review.payload["trade_snapshot"]["exit_time"] == cycle.exit_time
+        assert review.payload["trade_snapshot"]["pnl_pct"] == cycle.pnl_pct
