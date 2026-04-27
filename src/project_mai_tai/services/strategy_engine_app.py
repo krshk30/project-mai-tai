@@ -52,7 +52,10 @@ from project_mai_tai.services.runtime import _install_signal_handlers
 from project_mai_tai.settings import Settings, get_settings
 from project_mai_tai.market_data.models import QuoteTickRecord, TradeTickRecord
 from project_mai_tai.market_data.massive_indicator_provider import MassiveIndicatorProvider
-from project_mai_tai.market_data.schwab_tick_archive import SchwabTickArchive
+from project_mai_tai.market_data.schwab_tick_archive import (
+    SchwabTickArchive,
+    load_aggregated_trade_bars,
+)
 from project_mai_tai.market_data.schwab_streamer import SchwabStreamerClient
 from project_mai_tai.market_data.taapi_indicator_provider import TaapiIndicatorProvider
 from project_mai_tai.strategy_core import (
@@ -523,6 +526,16 @@ class StrategyBotRuntime:
         indicator_min_bars = int(indicator_config.macd_slow + indicator_config.macd_signal)
         strategy_min_bars = int(getattr(trading_config, "schwab_native_warmup_bars_required", 0) or 0)
         return max(indicator_min_bars, strategy_min_bars, 1)
+
+    def required_history_bars(self) -> int:
+        return self._required_history_bars()
+
+    def needs_history_seed(self, symbol: str) -> bool:
+        normalized_symbol = str(symbol).upper()
+        if normalized_symbol in self._history_seed_attempted:
+            return False
+        builder = self.builder_manager.get_or_create(normalized_symbol)
+        return builder.get_bar_count() < self._required_history_bars()
 
     def _ensure_history_seeded(self, symbol: str) -> None:
         if self.session_factory is None:
@@ -2257,6 +2270,8 @@ class StrategyEngineState:
         session_factory: sessionmaker[Session] | None = None,
     ):
         self.settings = settings or get_settings()
+        self._schwab_stream_bot_codes = self._resolve_schwab_stream_bot_codes()
+        self._schwab_native_history_bot_codes = self._resolve_schwab_native_history_bot_codes()
         resolved_now_provider = now_provider or now_eastern
         default_alert_config = alert_config or MomentumAlertConfig(
             min_price=self.settings.market_data_scan_min_price,
@@ -2342,6 +2357,7 @@ class StrategyEngineState:
         self.bot_handoff_history_by_strategy: dict[str, set[str]] = {}
         self.session_handoff_active = False
         self._schwab_stream_bot_codes = self._resolve_schwab_stream_bot_codes()
+        self._schwab_native_history_bot_codes = self._resolve_schwab_native_history_bot_codes()
         self.reclaim_excluded_symbols = set(
             self.settings.strategy_macd_30s_reclaim_excluded_symbol_list
         )
@@ -2375,6 +2391,7 @@ class StrategyEngineState:
         one_minute_retention = self._build_bot_feed_retention_config(interval_secs=60)
         default_indicator_config = indicator_config or IndicatorConfig()
         runner_trading = base_trading.make_tos_variant(quantity=100, bar_interval_secs=60)
+        schwab_1m_trading = self._resolve_1m_trading_config(base_trading, variant="schwab")
         use_live_aggregate_bars = (
             self.settings.strategy_macd_30s_live_aggregate_bars_enabled
             or self.settings.market_data_live_aggregate_stream_enabled
@@ -2399,6 +2416,32 @@ class StrategyEngineState:
                 use_live_aggregate_bars=False,
                 live_aggregate_fallback_enabled=False,
                 indicator_overlay_provider=macd_1m_indicator_overlay_provider,
+                retention_config=one_minute_retention,
+            )
+        if self.settings.strategy_schwab_1m_enabled and "schwab_1m" in registrations:
+            self.bots["schwab_1m"] = StrategyBotRuntime(
+                StrategyDefinition(
+                    code="schwab_1m",
+                    display_name=registrations["schwab_1m"].display_name,
+                    account_name=registrations["schwab_1m"].account_name,
+                    interval_secs=60,
+                    trading_config=schwab_1m_trading,
+                    indicator_config=default_indicator_config,
+                ),
+                now_provider=now_provider,
+                session_factory=session_factory if self.settings.strategy_history_persistence_enabled else None,
+                use_live_aggregate_bars=False,
+                live_aggregate_fallback_enabled=False,
+                builder_manager=SchwabNativeBarBuilderManager(
+                    interval_secs=60,
+                    time_provider=lambda: resolved_now_provider().timestamp(),
+                ),
+                indicator_engine=SchwabNativeIndicatorEngine(default_indicator_config),
+                entry_engine=SchwabNativeEntryEngine(
+                    schwab_1m_trading,
+                    name=registrations["schwab_1m"].display_name,
+                    now_provider=resolved_now_provider,
+                ),
                 retention_config=one_minute_retention,
             )
         if self.settings.strategy_tos_enabled and "tos" in registrations:
@@ -2583,6 +2626,23 @@ class StrategyEngineState:
             scope=scope,
         )
 
+    def _resolve_1m_trading_config(
+        self,
+        base_trading: TradingConfig,
+        *,
+        variant: str,
+    ) -> TradingConfig:
+        if variant == "schwab":
+            config = base_trading.make_1m_schwab_native_variant(
+                quantity=self.settings.strategy_schwab_1m_default_quantity
+            )
+            return self._apply_trading_config_overrides(
+                config,
+                self.settings.strategy_schwab_1m_config_overrides_json,
+                scope="strategy_schwab_1m_config_overrides_json",
+            )
+        raise ValueError(f"Unsupported 1m variant: {variant}")
+
     def _build_bot_feed_retention_config(self, *, interval_secs: int) -> FeedRetentionConfig:
         base_interval_secs = 30
 
@@ -2607,9 +2667,21 @@ class StrategyEngineState:
 
     def _resolve_schwab_stream_bot_codes(self) -> tuple[str, ...]:
         codes: list[str] = []
-        for code in ("macd_30s", "webull_30s", "tos"):
-            if self.settings.provider_for_strategy(code) == "schwab":
+        enabled_by_code = {
+            "macd_30s": self.settings.strategy_macd_30s_enabled,
+            "webull_30s": self.settings.strategy_webull_30s_enabled,
+            "schwab_1m": self.settings.strategy_schwab_1m_enabled,
+            "tos": self.settings.strategy_tos_enabled,
+        }
+        for code, enabled in enabled_by_code.items():
+            if enabled and self.settings.provider_for_strategy(code) == "schwab":
                 codes.append(code)
+        return tuple(codes)
+
+    def _resolve_schwab_native_history_bot_codes(self) -> tuple[str, ...]:
+        codes: list[str] = []
+        if self.settings.strategy_schwab_1m_enabled:
+            codes.append("schwab_1m")
         return tuple(codes)
 
     def _apply_trading_config_overrides(
@@ -3292,6 +3364,8 @@ class StrategyEngineState:
         )
         pairs: set[tuple[str, int]] = set()
         for code, bot in self.bots.items():
+            if code in self._schwab_native_history_bot_codes:
+                continue
             definition = getattr(bot, "definition", None)
             interval_secs = int(definition.interval_secs) if definition is not None else None
             if interval_secs is None:
@@ -3307,6 +3381,28 @@ class StrategyEngineState:
                     continue
                 pairs.add((normalized_symbol, interval_secs))
         return pairs
+
+    def schwab_native_history_targets(
+        self,
+        symbols: Sequence[str] | None = None,
+    ) -> list[tuple[str, str, int]]:
+        symbol_filter = (
+            {str(symbol).upper() for symbol in symbols if str(symbol).strip()}
+            if symbols is not None
+            else None
+        )
+        targets: list[tuple[str, str, int]] = []
+        for code in self._schwab_native_history_bot_codes:
+            bot = self.bots.get(code)
+            if not isinstance(bot, StrategyBotRuntime):
+                continue
+            interval_secs = int(bot.definition.interval_secs)
+            for symbol in bot.active_symbols():
+                normalized_symbol = str(symbol).upper()
+                if symbol_filter is not None and normalized_symbol not in symbol_filter:
+                    continue
+                targets.append((code, normalized_symbol, interval_secs))
+        return targets
 
     def schwab_stream_symbols(self) -> list[str]:
         if not self._schwab_stream_bot_codes:
@@ -3817,9 +3913,10 @@ class StrategyEngineService:
 
         self.logger.info("%s starting", SERVICE_NAME)
         self.logger.info(
-            "strategy bot config | schwab_30s=%s webull_30s=%s reclaim=%s macd_1m=%s tos=%s runner=%s qty=%s bots=%s",
+            "strategy bot config | schwab_30s=%s webull_30s=%s schwab_1m=%s reclaim=%s macd_1m=%s tos=%s runner=%s qty=%s bots=%s",
             self.settings.strategy_macd_30s_enabled,
             self.settings.strategy_webull_30s_enabled,
+            self.settings.strategy_schwab_1m_enabled,
             self.settings.strategy_macd_30s_reclaim_enabled,
             self.settings.strategy_macd_1m_enabled,
             self.settings.strategy_tos_enabled,
@@ -4348,6 +4445,7 @@ class StrategyEngineService:
         await self._sync_schwab_stream_subscriptions(
             effective_schwab_symbols
         )
+        await self._hydrate_recent_schwab_historical_bars(set(effective_schwab_symbols))
 
     def _should_use_generic_market_data_fallback_for_schwab(self) -> bool:
         if not self.state.schwab_stream_strategy_codes():
@@ -4443,6 +4541,87 @@ class StrategyEngineService:
                     symbol,
                     interval_secs,
                 )
+
+    async def _hydrate_recent_schwab_historical_bars(self, symbols: set[str]) -> None:
+        if not symbols:
+            return
+
+        targets = self.state.schwab_native_history_targets(sorted(symbols))
+        if not targets:
+            return
+
+        hydrated_any = False
+        for code, symbol, interval_secs in targets:
+            runtime = self.state.bots.get(code)
+            if not isinstance(runtime, StrategyBotRuntime):
+                continue
+            if not runtime.needs_history_seed(symbol):
+                continue
+
+            bars = await self._load_schwab_history_bars(
+                symbol=symbol,
+                interval_secs=interval_secs,
+                required_bars=runtime.required_history_bars(),
+            )
+            if not bars:
+                self.logger.info(
+                    "no Schwab-native historical bars available for %s @ %ss during bootstrap",
+                    symbol,
+                    interval_secs,
+                )
+                continue
+
+            hydrated = self.state.hydrate_historical_bars(
+                symbol=symbol,
+                interval_secs=interval_secs,
+                bars=bars,
+                strategy_codes=[code],
+            )
+            if hydrated:
+                hydrated_any = True
+                self.logger.info(
+                    "bootstrapped %s Schwab historical bars for %s @ %ss into %s",
+                    len(bars),
+                    symbol,
+                    interval_secs,
+                    ",".join(hydrated),
+                )
+
+        if hydrated_any:
+            await self._publish_strategy_state_snapshot()
+
+    async def _load_schwab_history_bars(
+        self,
+        *,
+        symbol: str,
+        interval_secs: int,
+        required_bars: int,
+    ) -> list[dict[str, float | int]]:
+        end_at = utcnow()
+        session_start = current_scanner_session_start_utc(end_at)
+        interval_minutes = max(1, interval_secs // 60)
+        bars = await self._schwab_quote_poll_adapter.fetch_historical_bars(
+            symbol,
+            interval_minutes=interval_minutes,
+            start_at=session_start,
+            end_at=end_at,
+            need_extended_hours_data=True,
+        )
+        if bars:
+            return bars[-max(required_bars * 4, required_bars) :]
+
+        if self._schwab_tick_archive is None:
+            return []
+
+        archive_bars = load_aggregated_trade_bars(
+            self.settings.schwab_tick_archive_root,
+            symbol=symbol,
+            day=end_at.astimezone(EASTERN_TZ).strftime("%Y-%m-%d"),
+            interval_secs=interval_secs,
+            start_at_ns=int(session_start.timestamp() * 1_000_000_000),
+            end_at_ns=int(end_at.timestamp() * 1_000_000_000),
+        )
+        return [bar.__dict__ for bar in archive_bars[-max(required_bars * 4, required_bars) :]]
 
     def _build_schwab_stream_client(self) -> SchwabStreamerClient | None:
         if not self.state.schwab_stream_strategy_codes():

@@ -1628,7 +1628,7 @@ class ControlPlaneRepository:
         indicator_snapshots: list[dict[str, Any]],
         watchlist: list[str],
     ) -> dict[str, Any]:
-        enabled = strategy_code in {"macd_1m", "tos"}
+        enabled = strategy_code in {"macd_1m", "schwab_1m", "tos"}
         if not enabled:
             return {
                 "enabled": False,
@@ -2749,6 +2749,7 @@ def build_app(
         pattern_signals = _trade_coach_pattern_signals(filtered_reviews)
         path_patterns = _trade_coach_pattern_scoreboard(filtered_reviews, mode="path")
         regime_patterns = _trade_coach_pattern_scoreboard(filtered_reviews, mode="regime")
+        operator_guidance = _trade_coach_operator_guidance(pattern_signals)
         return {
             "count": len(filtered_reviews),
             "returned_count": min(len(filtered_reviews), 100),
@@ -2765,6 +2766,7 @@ def build_app(
             "pattern_signals": pattern_signals[:8],
             "path_patterns": path_patterns[:8],
             "regime_patterns": regime_patterns[:8],
+            "operator_guidance": operator_guidance,
             "available_filters": {
                 "strategies": [
                     {
@@ -3046,6 +3048,11 @@ def build_app(
         data = await app.state.repository.load_bot_dashboard_data()
         return _build_bot_api_payload(data, "macd_1m")
 
+    @app.get("/botschwab1m")
+    async def bot_schwab_1m_status() -> dict[str, Any]:
+        data = await app.state.repository.load_bot_dashboard_data()
+        return _build_bot_api_payload(data, "schwab_1m")
+
     @app.get("/botprobe")
     async def bot_probe_status() -> dict[str, Any]:
         data = await app.state.repository.load_bot_dashboard_data()
@@ -3090,6 +3097,11 @@ def build_app(
     async def bot_1m_page() -> str:
         data = await app.state.repository.load_bot_dashboard_data()
         return _render_bot_detail_page(data, "macd_1m")
+
+    @app.get("/bot/1m-schwab", response_class=HTMLResponse)
+    async def bot_schwab_1m_page() -> str:
+        data = await app.state.repository.load_bot_dashboard_data()
+        return _render_bot_detail_page(data, "schwab_1m")
 
     @app.get("/bot/tos", response_class=HTMLResponse)
     async def bot_tos_page() -> str:
@@ -4204,6 +4216,13 @@ BOT_PAGE_META = {
         "badge": "1M",
         "color": "#9c27b0",
         "path": "/bot/1m",
+    },
+    "schwab_1m": {
+        "title": "Schwab 1 Min Bot",
+        "nav_title": "Schwab 1m",
+        "badge": "1M",
+        "color": "#1e88e5",
+        "path": "/bot/1m-schwab",
     },
     "tos": {
         "title": "Mai Tai TOS Bot",
@@ -5920,6 +5939,34 @@ def _trade_coach_tag_list(items: list[Any]) -> str:
     return " | ".join(values)
 
 
+def _trade_coach_trade_window_display(review: dict[str, Any]) -> tuple[str, str]:
+    entry_text = str(review.get("entry_time", "") or "").strip()
+    exit_text = str(review.get("exit_time", "") or "").strip()
+    if not entry_text and not exit_text:
+        reviewed_text = str(review.get("created_at", "") or "").strip()
+        return reviewed_text or "-", "reviewed"
+
+    entry_dt = _parse_et_timestamp(entry_text)
+    exit_dt = _parse_et_timestamp(exit_text)
+    valid_entry = entry_dt.year > 1
+    valid_exit = exit_dt.year > 1
+    if valid_entry and valid_exit:
+        if entry_dt.date() == exit_dt.date():
+            return (
+                entry_dt.strftime("%Y-%m-%d"),
+                f"{entry_dt.strftime('%I:%M:%S %p ET')} -> {exit_dt.strftime('%I:%M:%S %p ET')}",
+            )
+        return (
+            entry_dt.strftime("%Y-%m-%d %I:%M:%S %p ET"),
+            exit_dt.strftime("%Y-%m-%d %I:%M:%S %p ET"),
+        )
+    if valid_exit:
+        return exit_dt.strftime("%Y-%m-%d"), f"close {exit_dt.strftime('%I:%M:%S %p ET')}"
+    if valid_entry:
+        return entry_dt.strftime("%Y-%m-%d"), f"open {entry_dt.strftime('%I:%M:%S %p ET')}"
+    return (entry_text or exit_text or "-", exit_text if entry_text and exit_text else "trade window")
+
+
 def _enrich_trade_coach_reviews(
     reviews: list[dict[str, Any]],
     bots: list[dict[str, Any]],
@@ -6363,6 +6410,37 @@ def _trade_coach_pattern_signals(reviews: list[dict[str, Any]], *, limit: int = 
     return caution_signals[:limit] if caution_signals else sorted_signals[:limit]
 
 
+def _trade_coach_operator_guidance(pattern_signals: list[dict[str, Any]], *, limit: int = 4) -> list[dict[str, Any]]:
+    guidance: list[dict[str, Any]] = []
+    for item in pattern_signals:
+        caution = str(item.get("caution_label", "") or "low")
+        pattern_type = str(item.get("pattern_type", "") or "pattern")
+        pattern_key = str(item.get("pattern_key", "") or "unknown")
+        reasons = list(item.get("reasons", []) or [])
+        avg_pnl_pct = float(item.get("avg_pnl_pct", 0.0))
+        if caution == "high":
+            title = f"Be selective with {pattern_type} {pattern_key}"
+            action = "Require tighter confirmation, smaller size, or faster exits until this group improves."
+        elif caution == "medium":
+            title = f"Watch {pattern_type} {pattern_key}"
+            action = "Review tape quality and recent examples before treating this pattern as fully trusted."
+        else:
+            title = f"{pattern_type.title()} {pattern_key} is relatively stable"
+            action = "No special caution signal yet, but keep validating against fresh trades."
+        guidance.append(
+            {
+                "title": title,
+                "pattern_type": pattern_type,
+                "pattern_key": pattern_key,
+                "caution_label": caution,
+                "summary": f"{int(item.get('count', 0))} reviewed trades, avg P&L {avg_pnl_pct:+.1f}%",
+                "action": action,
+                "reasons": reasons[:3],
+            }
+        )
+    return guidance[:limit]
+
+
 def _trade_coach_related_reviews(
     review: dict[str, Any],
     all_reviews: list[dict[str, Any]],
@@ -6558,9 +6636,10 @@ def _build_trade_coach_review_rows(recent_reviews: list[dict[str, Any]]) -> tupl
         key_reasons = _trade_coach_tag_list(list(item.get("key_reasons", []) or []))
         rule_violations = _trade_coach_tag_list(list(item.get("rule_violations", []) or []))
         next_time = _trade_coach_tag_list(list(item.get("next_time", []) or []))
+        trade_day, trade_window = _trade_coach_trade_window_display(item)
         rendered_rows.append(
             f"""<tr>
-            <td style="white-space:nowrap;">{escape(str(item.get("created_at", "")) or "-")}</td>
+            <td style="white-space:nowrap;"><strong>{escape(trade_day)}</strong><br><span style="color:#98a6c8;">{escape(trade_window)}</span></td>
             <td><strong>{escape(str(item.get("symbol", "")) or "-")}</strong></td>
             <td style="white-space:nowrap;"><strong>{escape(path)}</strong><br><span style="color:#98a6c8;">P&amp;L {pnl_pct:+.1f}% · timing {escape(execution_timing)} · setup {setup_quality:.2f} · exec {execution_quality:.2f} · outcome {outcome_quality:.2f}</span></td>
             <td style="color:{_trade_coach_verdict_color(verdict)};font-weight:bold;text-transform:uppercase;">{escape(verdict or "-")}<br><span style="color:#98a6c8;font-weight:normal;">{escape(action or "-")} · {confidence:.2f} · focus {escape(coaching_focus)}</span>{'<br><span style="color:#ffcc5b;font-weight:normal;">manual review</span>' if should_review_manually else ''}</td>
@@ -6922,6 +7001,8 @@ def _render_trade_coach_review_center(
     signal_rows, signal_count = _build_trade_coach_pattern_signal_rows(pattern_signals)
     path_patterns = _trade_coach_pattern_scoreboard(filtered_reviews, mode="path")
     regime_patterns = _trade_coach_pattern_scoreboard(filtered_reviews, mode="regime")
+    operator_guidance = _trade_coach_operator_guidance(pattern_signals)
+    guidance_rows, guidance_count = _build_trade_coach_guidance_rows(operator_guidance)
     path_pattern_rows, path_pattern_count = _build_trade_coach_pattern_rows(path_patterns)
     regime_pattern_rows, regime_pattern_count = _build_trade_coach_pattern_rows(regime_patterns)
     available_codes = [str(item.get("strategy_code", "") or "") for item in data.get("bots", [])]

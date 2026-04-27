@@ -13,6 +13,7 @@ def test_configured_strategy_registrations_default_to_core_30s_only() -> None:
 def test_configured_strategy_registrations_include_optional_runtimes_when_enabled() -> None:
     registrations = configured_strategy_registrations(
         Settings(
+            strategy_schwab_1m_enabled=True,
             strategy_macd_30s_probe_enabled=True,
             strategy_macd_30s_reclaim_enabled=True,
             strategy_macd_30s_retest_enabled=True,
@@ -24,6 +25,7 @@ def test_configured_strategy_registrations_include_optional_runtimes_when_enable
 
     assert [registration.code for registration in registrations] == [
         "macd_30s",
+        "schwab_1m",
         "macd_30s_probe",
         "macd_30s_reclaim",
         "macd_30s_retest",

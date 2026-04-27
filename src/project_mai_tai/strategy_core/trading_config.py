@@ -385,6 +385,25 @@ class TradingConfig:
         )
         return TradingConfig(**fields)
 
+    def make_1m_schwab_native_variant(
+        self,
+        *,
+        quantity: int = 100,
+        dry_run: bool | None = None,
+    ) -> "TradingConfig":
+        fields = asdict(
+            self.make_30s_schwab_native_variant(
+                quantity=quantity,
+                dry_run=dry_run,
+            )
+        )
+        fields.update(
+            {
+                "bar_interval_secs": 60,
+            }
+        )
+        return TradingConfig(**fields)
+
     def make_30s_pretrigger_variant(
         self,
         *,
