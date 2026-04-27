@@ -83,6 +83,25 @@ def current_eastern_day_end_utc(now: datetime | None = None) -> datetime:
     return current_eastern_day_start_utc(now) + timedelta(days=1)
 
 
+def _parse_review_filter_date(value: str | None) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.strptime(text, "%Y-%m-%d")
+    except ValueError:
+        return None
+    return parsed.replace(tzinfo=EASTERN_TZ).astimezone(UTC)
+
+
+def _default_review_filter_dates(now: datetime | None = None) -> tuple[str, str, datetime, datetime]:
+    reference = (now or utcnow()).astimezone(EASTERN_TZ)
+    date_text = reference.strftime("%Y-%m-%d")
+    start = current_eastern_day_start_utc(now)
+    end = current_eastern_day_end_utc(now)
+    return date_text, date_text, start, end
+
+
 def _schwab_authorize_url(settings: Settings) -> str:
     client_id = (settings.schwab_client_id or "").strip()
     if not client_id:
@@ -266,6 +285,69 @@ class ControlPlaneRepository:
             ignored_symbol == normalized_symbol
             for _, ignored_symbol in self.settings.reconciliation_ignored_position_mismatch_pairs
         )
+
+    def _serialize_trade_coach_review(self, review: AiTradeReview) -> dict[str, Any]:
+        payload = review.payload if isinstance(review.payload, dict) else {}
+        trade_snapshot = payload.get("trade_snapshot", {})
+        if not isinstance(trade_snapshot, dict):
+            trade_snapshot = {}
+        return {
+            "strategy_code": review.strategy_code,
+            "broker_account_name": review.broker_account_name,
+            "symbol": review.symbol,
+            "review_type": review.review_type,
+            "cycle_key": review.cycle_key,
+            "verdict": review.verdict,
+            "action": review.action,
+            "confidence": _decimal_str(review.confidence),
+            "summary": review.summary,
+            "schema_version": str(payload.get("schema_version", "") or ""),
+            "coaching_focus": str(payload.get("coaching_focus", "") or ""),
+            "execution_timing": str(payload.get("execution_timing", "") or ""),
+            "setup_quality": _as_float(payload.get("setup_quality")),
+            "execution_quality": _as_float(payload.get("execution_quality")),
+            "outcome_quality": _as_float(payload.get("outcome_quality")),
+            "should_have_traded": bool(payload.get("should_have_traded", False)),
+            "should_review_manually": bool(payload.get("should_review_manually", False)),
+            "key_reasons": list(payload.get("key_reasons", []) or []),
+            "rule_hits": list(payload.get("rule_hits", []) or []),
+            "rule_violations": list(payload.get("rule_violations", []) or []),
+            "next_time": list(payload.get("next_time", []) or []),
+            "path": str(trade_snapshot.get("path", "") or ""),
+            "entry_time": str(trade_snapshot.get("entry_time", "") or ""),
+            "exit_time": str(trade_snapshot.get("exit_time", "") or ""),
+            "entry_price": str(trade_snapshot.get("entry_price", "") or ""),
+            "exit_price": str(trade_snapshot.get("exit_price", "") or ""),
+            "pnl": _as_float(trade_snapshot.get("pnl")),
+            "pnl_pct": _as_float(trade_snapshot.get("pnl_pct")),
+            "exit_summary": str(trade_snapshot.get("exit_summary", "") or ""),
+            "created_at": _datetime_str(review.created_at),
+        }
+
+    def load_trade_coach_review_history(
+        self,
+        *,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        limit: int = 5000,
+    ) -> list[dict[str, Any]]:
+        reviews: list[dict[str, Any]] = []
+        with self.session_factory() as session:
+            query = select(AiTradeReview).order_by(desc(AiTradeReview.created_at))
+            if start is not None:
+                query = query.where(AiTradeReview.created_at >= start)
+            if end is not None:
+                query = query.where(AiTradeReview.created_at < end)
+            query = query.limit(limit)
+            for review in session.scalars(query).all():
+                serialized = self._serialize_trade_coach_review(review)
+                if self._is_ui_hidden_symbol(
+                    serialized.get("broker_account_name"),
+                    serialized.get("symbol"),
+                ):
+                    continue
+                reviews.append(serialized)
+        return reviews
 
     def _incident_symbol(self, title: str | None, payload: dict[str, Any] | None) -> str:
         data = payload if isinstance(payload, dict) else {}
@@ -1831,44 +1913,7 @@ class ControlPlaneRepository:
                     .order_by(desc(AiTradeReview.created_at))
                     .limit(250)
                 ).all():
-                    payload = review.payload if isinstance(review.payload, dict) else {}
-                    trade_snapshot = payload.get("trade_snapshot", {})
-                    if not isinstance(trade_snapshot, dict):
-                        trade_snapshot = {}
-                    recent_trade_coach_reviews.append(
-                        {
-                            "strategy_code": review.strategy_code,
-                            "broker_account_name": review.broker_account_name,
-                            "symbol": review.symbol,
-                            "review_type": review.review_type,
-                            "cycle_key": review.cycle_key,
-                            "verdict": review.verdict,
-                            "action": review.action,
-                            "confidence": _decimal_str(review.confidence),
-                            "summary": review.summary,
-                            "schema_version": str(payload.get("schema_version", "") or ""),
-                            "coaching_focus": str(payload.get("coaching_focus", "") or ""),
-                            "execution_timing": str(payload.get("execution_timing", "") or ""),
-                            "setup_quality": _as_float(payload.get("setup_quality")),
-                            "execution_quality": _as_float(payload.get("execution_quality")),
-                            "outcome_quality": _as_float(payload.get("outcome_quality")),
-                            "should_have_traded": bool(payload.get("should_have_traded", False)),
-                            "should_review_manually": bool(payload.get("should_review_manually", False)),
-                            "key_reasons": list(payload.get("key_reasons", []) or []),
-                            "rule_hits": list(payload.get("rule_hits", []) or []),
-                            "rule_violations": list(payload.get("rule_violations", []) or []),
-                            "next_time": list(payload.get("next_time", []) or []),
-                            "path": str(trade_snapshot.get("path", "") or ""),
-                            "entry_time": str(trade_snapshot.get("entry_time", "") or ""),
-                            "exit_time": str(trade_snapshot.get("exit_time", "") or ""),
-                            "entry_price": str(trade_snapshot.get("entry_price", "") or ""),
-                            "exit_price": str(trade_snapshot.get("exit_price", "") or ""),
-                            "pnl": _as_float(trade_snapshot.get("pnl")),
-                            "pnl_pct": _as_float(trade_snapshot.get("pnl_pct")),
-                            "exit_summary": str(trade_snapshot.get("exit_summary", "") or ""),
-                            "created_at": _datetime_str(review.created_at),
-                        }
-                    )
+                    recent_trade_coach_reviews.append(self._serialize_trade_coach_review(review))
 
                 for bar in session.scalars(
                     select(StrategyBarHistory)
@@ -2615,10 +2660,19 @@ def build_app(
         verdict: str | None = None,
         coaching_focus: str | None = None,
         symbol: str | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
     ) -> dict[str, Any]:
         data = await app.state.repository.load_bot_dashboard_data()
+        default_start_text, default_end_text, default_start, default_end = _default_review_filter_dates()
+        range_start = _parse_review_filter_date(start_date) or default_start
+        range_end_start = _parse_review_filter_date(end_date) or default_end
+        range_end = range_end_start + timedelta(days=1) if (end_date or "").strip() else default_end
         all_reviews = _enrich_trade_coach_reviews(
-            data.get("recent_trade_coach_reviews", []),
+            app.state.repository.load_trade_coach_review_history(
+                start=range_start,
+                end=range_end,
+            ),
             data.get("bots", []),
         )
         filtered_reviews = _filter_trade_coach_reviews(
@@ -2636,6 +2690,8 @@ def build_app(
                 "verdict": (verdict or "").strip().lower(),
                 "coaching_focus": (coaching_focus or "").strip().lower(),
                 "symbol": (symbol or "").strip().upper(),
+                "start_date": (start_date or default_start_text).strip(),
+                "end_date": (end_date or default_end_text).strip(),
             },
             "summary": _trade_coach_review_summary(filtered_reviews),
             "review_queue": _build_trade_coach_review_queue(filtered_reviews)[:10],
@@ -2669,7 +2725,7 @@ def build_app(
     async def coach_review_api(cycle_key: str) -> dict[str, Any]:
         data = await app.state.repository.load_bot_dashboard_data()
         all_reviews = _enrich_trade_coach_reviews(
-            data.get("recent_trade_coach_reviews", []),
+            app.state.repository.load_trade_coach_review_history(),
             data.get("bots", []),
         )
         review = _find_trade_coach_review(all_reviews, cycle_key)
@@ -2972,20 +3028,37 @@ def build_app(
         verdict: str | None = None,
         coaching_focus: str | None = None,
         symbol: str | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
     ) -> str:
         data = await app.state.repository.load_bot_dashboard_data()
+        default_start_text, default_end_text, default_start, default_end = _default_review_filter_dates()
+        range_start = _parse_review_filter_date(start_date) or default_start
+        range_end_start = _parse_review_filter_date(end_date) or default_end
+        range_end = range_end_start + timedelta(days=1) if (end_date or "").strip() else default_end
+        review_history = app.state.repository.load_trade_coach_review_history(
+            start=range_start,
+            end=range_end,
+        )
         return _render_trade_coach_review_center(
             data,
+            review_history=review_history,
             strategy_code=strategy_code,
             verdict=verdict,
             coaching_focus=coaching_focus,
             symbol=symbol,
+            start_date=(start_date or default_start_text).strip(),
+            end_date=(end_date or default_end_text).strip(),
         )
 
     @app.get("/coach/review", response_class=HTMLResponse)
     async def coach_review_detail_page(cycle_key: str) -> str:
         data = await app.state.repository.load_bot_dashboard_data()
-        return _render_trade_coach_review_detail(data, cycle_key=cycle_key)
+        return _render_trade_coach_review_detail(
+            data,
+            review_history=app.state.repository.load_trade_coach_review_history(),
+            cycle_key=cycle_key,
+        )
 
     @app.get("/", response_class=HTMLResponse)
     async def dashboard() -> str:
@@ -5925,13 +5998,12 @@ def _build_trade_coach_review_queue(reviews: list[dict[str, Any]]) -> list[dict[
 
 def _trade_coach_history_summary(reviews: list[dict[str, Any]]) -> dict[str, Any]:
     pnl_values = [_as_float(item.get("pnl_pct")) for item in reviews]
-    pnl_values = [value for value in pnl_values if value != 0.0 or any(item.get("pnl_pct") == 0 for item in reviews)]
     return {
         "count": len(reviews),
         "good": sum(1 for item in reviews if str(item.get("verdict", "") or "").strip().lower() == "good"),
         "mixed": sum(1 for item in reviews if str(item.get("verdict", "") or "").strip().lower() == "mixed"),
         "bad": sum(1 for item in reviews if str(item.get("verdict", "") or "").strip().lower() == "bad"),
-        "avg_pnl_pct": (sum(_as_float(item.get("pnl_pct")) for item in reviews) / len(reviews)) if reviews else 0.0,
+        "avg_pnl_pct": (sum(pnl_values) / len(pnl_values)) if pnl_values else 0.0,
     }
 
 
@@ -6105,9 +6177,14 @@ def _build_trade_coach_queue_rows(queue_reviews: list[dict[str, Any]]) -> tuple[
     return "".join(rendered_rows), len(queue_reviews)
 
 
-def _render_trade_coach_review_detail(data: dict[str, Any], *, cycle_key: str) -> str:
+def _render_trade_coach_review_detail(
+    data: dict[str, Any],
+    *,
+    review_history: list[dict[str, Any]],
+    cycle_key: str,
+) -> str:
     all_reviews = _enrich_trade_coach_reviews(
-        list(data.get("recent_trade_coach_reviews", [])),
+        review_history,
         list(data.get("bots", [])),
     )
     review = _find_trade_coach_review(all_reviews, cycle_key)
@@ -6263,13 +6340,16 @@ def _render_trade_coach_review_detail(data: dict[str, Any], *, cycle_key: str) -
 def _render_trade_coach_review_center(
     data: dict[str, Any],
     *,
+    review_history: list[dict[str, Any]],
     strategy_code: str | None = None,
     verdict: str | None = None,
     coaching_focus: str | None = None,
     symbol: str | None = None,
+    start_date: str = "",
+    end_date: str = "",
 ) -> str:
     all_reviews = _enrich_trade_coach_reviews(
-        list(data.get("recent_trade_coach_reviews", [])),
+        review_history,
         list(data.get("bots", [])),
     )
     filtered_reviews = _filter_trade_coach_reviews(
@@ -6289,6 +6369,8 @@ def _render_trade_coach_review_center(
     selected_verdict = str(verdict or "").strip().lower()
     selected_focus = str(coaching_focus or "").strip().lower()
     selected_symbol = str(symbol or "").strip().upper()
+    selected_start_date = str(start_date or "").strip()
+    selected_end_date = str(end_date or "").strip()
     strategy_options = "".join(
         f'<option value="{escape(str(bot.get("strategy_code", "") or ""))}"{" selected" if str(bot.get("strategy_code", "") or "") == selected_strategy else ""}>{escape(str(bot.get("display_name", "") or bot.get("strategy_code", "") or "-"))}</option>'
         for bot in data.get("bots", [])
@@ -6508,10 +6590,18 @@ def _render_trade_coach_review_center(
             <div class="panel-header">
                 <div>
                     <h2>Review Filters</h2>
-                    <div class="sub">Filter the persisted coach ledger without changing the live bot pages.</div>
+                    <div class="sub">Filter the persisted coach ledger without changing the live bot pages. Date range defaults to today, but you can widen it to prior history here.</div>
                 </div>
             </div>
             <form method="get" action="/coach/reviews" class="filters">
+                <label>
+                    Start Date
+                    <input type="date" name="start_date" value="{escape(selected_start_date)}" />
+                </label>
+                <label>
+                    End Date
+                    <input type="date" name="end_date" value="{escape(selected_end_date)}" />
+                </label>
                 <label>
                     Strategy
                     <select name="strategy_code">

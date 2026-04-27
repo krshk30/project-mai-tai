@@ -165,6 +165,57 @@ Validation completed:
 - focused control-plane suite result for this phase:
   - `28 passed`
 
+### 2026-04-27 Trade Coach History Window (Date Filters + Full Review Memory)
+
+Current state:
+
+- local `main` now separates:
+  - review-center date window
+  - full-history review memory
+- still control-plane only:
+  - no strategy-engine changes
+  - no OMS changes
+  - no trade-coach prompt/schema changes
+
+What changed:
+
+- review center no longer depends on the dashboard’s current-session-only review slice
+- new review-history query path now loads coach reviews directly from `AiTradeReview`
+- review center and `/api/coach-reviews` now support:
+  - `start_date`
+  - `end_date`
+- default review-center range remains:
+  - today only
+- single-review detail and `/api/coach-review` now use:
+  - full persisted review history
+
+Why this matters:
+
+- operators can keep the main review screen focused on today by default
+- pattern memory is no longer trapped inside the current day
+- same-path / same-symbol history can now reach prior reviewed trades
+
+Important limitation still remaining:
+
+- current pattern matching is still based on:
+  - path
+  - symbol
+  - reviewed historical trade outcomes
+- it is **not** yet a true similarity engine based on:
+  - price regime
+  - volume regime
+  - volatility regime
+  - change percentage / intraday behavior
+- that richer similarity layer is still a follow-up phase
+
+Validation completed:
+
+- passed:
+  - `.venv\Scripts\python.exe -m pytest tests/unit/test_control_plane.py -q`
+  - `.venv\Scripts\python.exe -m py_compile src/project_mai_tai/services/control_plane.py tests/unit/test_control_plane.py`
+- focused control-plane suite result for this phase:
+  - `28 passed`
+
 ## 2026-04-24 Trade Coach Foundation (Merged To Main, Deployed Disabled)
 
 Merged PR:

@@ -408,6 +408,43 @@ def seed_database(session_factory: sessionmaker[Session]) -> None:
             },
             created_at=datetime.now(UTC),
         )
+        historical_trade_review = AiTradeReview(
+            intent_id=intent.id,
+            strategy_code="macd_30s",
+            broker_account_name="paper:macd_30s",
+            symbol="UGRO",
+            review_type="post_trade",
+            cycle_key="macd_30s|paper:macd_30s|UGRO|2026-03-21 10:00:00 AM ET|2026-03-21 10:04:30 AM ET",
+            provider="openai",
+            model="gpt-4.1-mini",
+            verdict="mixed",
+            action="exit",
+            confidence=Decimal("0.78"),
+            summary="Earlier reviewed UGRO setup showed weaker follow-through after the initial burst.",
+            payload={
+                "schema_version": "trade_coach_v2",
+                "verdict": "mixed",
+                "action": "exit",
+                "coaching_focus": "setup",
+                "execution_timing": "late",
+                "confidence": 0.78,
+                "setup_quality": 0.68,
+                "execution_quality": 0.74,
+                "outcome_quality": 0.43,
+                "should_have_traded": True,
+                "should_review_manually": True,
+                "key_reasons": ["similar burst lost momentum quickly"],
+                "rule_hits": ["P1_CROSS"],
+                "rule_violations": ["late confirmation"],
+                "next_time": ["be stricter when the burst fades within the first minute"],
+                "trade_snapshot": {
+                    "path": "P1_CROSS",
+                    "pnl_pct": -3.2,
+                    "exit_summary": "Hard stop after fade",
+                },
+            },
+            created_at=datetime.now(UTC) - timedelta(days=7),
+        )
         session.add_all(
             [
                 fill,
@@ -418,6 +455,7 @@ def seed_database(session_factory: sessionmaker[Session]) -> None:
                 incident,
                 dashboard_snapshot,
                 trade_review,
+                historical_trade_review,
             ]
         )
         session.commit()
@@ -1306,6 +1344,8 @@ def test_trade_coach_review_center_and_api_filters() -> None:
 
     with TestClient(app) as client:
         cycle_key = "macd_30s|paper:macd_30s|UGRO|2026-03-28 10:00:00 AM ET|2026-03-28 10:05:00 AM ET"
+        history_start = (datetime.now(UTC) - timedelta(days=10)).strftime("%Y-%m-%d")
+        history_end = datetime.now(UTC).strftime("%Y-%m-%d")
         response = client.get("/api/coach-reviews?strategy_code=macd_30s&verdict=good&coaching_focus=execution")
         assert response.status_code == 200
         payload = response.json()
@@ -1321,8 +1361,15 @@ def test_trade_coach_review_center_and_api_filters() -> None:
         detail_payload = detail_api.json()
         assert detail_payload["found"] is True
         assert detail_payload["review"]["symbol"] == "UGRO"
-        assert detail_payload["same_path_summary"]["count"] == 0
-        assert detail_payload["same_symbol_summary"]["count"] == 0
+        assert detail_payload["same_path_summary"]["count"] == 1
+        assert detail_payload["same_symbol_summary"]["count"] == 1
+
+        history_payload = client.get(
+            f"/api/coach-reviews?strategy_code=macd_30s&start_date={history_start}&end_date={history_end}"
+        ).json()
+        assert history_payload["count"] == 2
+        assert history_payload["filters"]["start_date"] == history_start
+        assert history_payload["filters"]["end_date"] == history_end
 
         page = client.get("/coach/reviews?strategy_code=macd_30s")
         assert page.status_code == 200
@@ -1341,7 +1388,8 @@ def test_trade_coach_review_center_and_api_filters() -> None:
         assert "Trade Facts" in detail.text
         assert "Coach Summary" in detail.text
         assert "Pattern Memory" in detail.text
-        assert "No similar reviewed trades yet" in detail.text
+        assert "Same Path Count" in detail.text
+        assert "Same Symbol Count" in detail.text
         assert "Back to review center" in detail.text
 
 
