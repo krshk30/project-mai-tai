@@ -1491,6 +1491,12 @@ def test_bot_page_renders_simple_trade_summary_table() -> None:
         assert bot_30s_page.status_code == 200
         assert "Completed Positions" in bot_30s_page.text
         assert "Completed trade cycles for this bot, including positions that finished by scale-out." in bot_30s_page.text
+        assert "Trade Coach Live Advisory" in bot_30s_page.text
+        assert "Advisory-only caution for live symbols" in bot_30s_page.text
+        assert "Production preview for the live 30-second coaching experience" in bot_30s_page.text
+        assert "Top Live Cautions" in bot_30s_page.text
+        assert "Live Symbol Matrix" in bot_30s_page.text
+        assert "pre-trade caution layer only" in bot_30s_page.text
         assert "Trade Coach Reviews" in bot_30s_page.text
         assert "Good momentum trade with a valid entry and disciplined exit." in bot_30s_page.text
         assert "valid P1 setup" in bot_30s_page.text
