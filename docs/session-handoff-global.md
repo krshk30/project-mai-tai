@@ -1,5 +1,161 @@
 # Session Handoff - Global
 
+## 2026-04-24 Trade Coach Foundation (In Progress On Branch)
+
+Current branch:
+
+- `codex/trade-coach-foundation`
+
+Open PR:
+
+- `#52`
+- [Add trade coach foundation service](https://github.com/krshk30/project-mai-tai/pull/52)
+
+Important state:
+
+- this work is local branch work only right now
+- not merged to `main`
+- not deployed to the VPS
+- current scope is the first trade-coach foundation pass for the two 30-second
+  bots only:
+  - `macd_30s`
+  - `webull_30s`
+
+What was added:
+
+- detailed implementation checklist document:
+  - [trade-coach-implementation-plan.md](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/docs/trade-coach-implementation-plan.md)
+- shared completed-trade reconstruction module:
+  - [trade_episodes.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/src/project_mai_tai/trade_episodes.py)
+- control-plane completed-position rendering now reuses that shared
+  fill-first/filled-order-fallback cycle reconstruction instead of carrying a
+  separate inline copy
+- trade coach package scaffold:
+  - [models.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/src/project_mai_tai/ai_trade_coach/models.py)
+  - [repository.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/src/project_mai_tai/ai_trade_coach/repository.py)
+  - [service.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/src/project_mai_tai/ai_trade_coach/service.py)
+- new AI review persistence model and migration:
+  - `ai_trade_reviews`
+  - [20260424_0004_ai_trade_reviews.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/sql/migrations/versions/20260424_0004_ai_trade_reviews.py)
+- trade coach service wiring:
+  - [trade_coach_app.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/src/project_mai_tai/services/trade_coach_app.py)
+  - [trade_coach.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/src/project_mai_tai/services/trade_coach.py)
+  - [services/trade-coach/main.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/services/trade-coach/main.py)
+  - new console script:
+    - `mai-tai-trade-coach`
+- settings added under the existing AI config pattern:
+  - `trade_coach_*`
+- control-plane data load now includes recent persisted trade coach reviews and
+  per-bot review slices in `/api/bots`
+- trade coach review selection now sorts globally across both configured
+  strategy/account pairs before applying the review limit
+- trade coach Responses client now explicitly forces the
+  `submit_trade_review` function path and keeps strict structured parsing
+- trade coach client now also normalizes common off-schema model outputs before
+  final validation:
+  - `0-10` score responses are converted to `0.0-1.0`
+  - free-text verdict/action/timing labels are mapped onto the allowed enums
+
+Intentional design choices from this pass:
+
+- do **not** rebuild flat-to-flat trade pairing separately inside the AI coach
+- keep trade-coach review cycles keyed by:
+  - `strategy_code`
+  - `broker_account_name`
+  - `symbol`
+  - flat-to-flat cycle key
+- keep the first version post-trade only
+- do **not** place any AI network call inline inside:
+  - `strategy_engine_app.py`
+  - `oms/service.py`
+- use the OpenAI Responses API path in the coach client instead of the older
+  Chat Completions style used by the earlier catalyst helper
+
+Validation completed:
+
+- passed:
+  - `.venv\Scripts\python.exe -m pytest tests/unit/test_trade_episodes.py tests/unit/test_trade_coach_service.py tests/unit/test_trade_coach_repository.py tests/unit/test_control_plane.py -q`
+  - `.venv\Scripts\python.exe -m py_compile src/project_mai_tai/trade_episodes.py src/project_mai_tai/ai_trade_coach/models.py src/project_mai_tai/ai_trade_coach/repository.py src/project_mai_tai/ai_trade_coach/service.py src/project_mai_tai/services/trade_coach_app.py src/project_mai_tai/services/trade_coach.py src/project_mai_tai/services/control_plane.py src/project_mai_tai/db/models.py`
+  - `.venv\Scripts\python.exe -m project_mai_tai.services.trade_coach`
+  - `.venv\Scripts\python.exe -m pytest tests/unit/test_trade_coach_service.py tests/unit/test_trade_episodes.py tests/unit/test_trade_coach_repository.py -q`
+
+Latest validation snapshot:
+
+- targeted trade-coach/control-plane suite passed locally:
+  - `32 passed`
+- disabled-mode smoke pass:
+  - trade coach process exited cleanly with default `trade_coach_enabled = false`
+  - no API request path was exercised yet because the service remains disabled
+- `2026-04-26` synthetic API smoke pass:
+  - real OpenAI Responses API call succeeded through the trade coach client
+  - strict function-call parsing path returned a valid structured review payload
+  - test used a synthetic completed `macd_30s` episode only; no live or VPS state
+    was modified
+- `2026-04-26` historical trade verification for `2026-04-24`:
+  - read-only VPS Postgres reconstruction confirmed real closed `macd_30s`
+    trades existed for `2026-04-24`
+  - distinct reconstructed `macd_30s` completed cycles: `18`
+  - distinct reconstructed `webull_30s` completed cycles: `0`
+  - example `macd_30s` closed names from that day included:
+    - `IMA`
+    - `KITT`
+    - `BMNU`
+    - `PZG`
+    - `SKLZ`
+    - `ENVB`
+    - `IONZ`
+    - `SST`
+- `2026-04-26` one-off historical AI reviews completed successfully for real
+  `macd_30s` closed trades from `2026-04-24`:
+  - `BMNU`
+    - verdict: `good`
+    - action: `enter`
+    - timing: `on_time`
+    - confidence: `0.85`
+    - setup_quality: `0.90`
+  - `SKLZ`
+    - verdict: `good`
+    - action: `exit`
+    - timing: `on_time`
+    - confidence: `0.80`
+    - setup_quality: `0.90`
+  - `IMA`
+    - verdict: `mixed`
+    - action: `exit`
+    - timing: `on_time`
+    - confidence: `0.40`
+    - setup_quality: `0.60`
+  - these were one-off local AI reviews using read-only VPS historical episode
+    extraction
+  - they were **not** persisted into VPS `ai_trade_reviews` because the branch
+    is not merged/deployed and the local shell still lacks a direct Postgres
+    runtime for the normal service path
+- local dry-run blocker on `2026-04-26`:
+  - no local Postgres listener on `localhost:5432`
+  - because of that, a true DB-backed closed-trade review pass could not run from
+    this shell yet
+- local dev secret state:
+  - local development environment now has `MAI_TAI_TRADE_COACH_API_KEY`
+    configured outside the repo
+  - do **not** commit secrets into `.env`, repo files, or handoff notes
+  - VPS / production trade coach secret still not configured from this branch
+- branch confirmed:
+  - `codex/trade-coach-foundation`
+
+Known non-blocking note from local verification:
+
+- `tests/unit/test_oms_risk_service.py` still showed pre-existing routing/runtime
+  expectation failures unrelated to the trade-coach files touched here and was
+  not used as a blocker for this foundation pass
+
+What is still not done:
+
+- no merge to `main` yet
+- no VPS deploy yet
+- no dedicated trade coach dashboard UI yet
+- no live shadow advice path yet
+- no OMS advisory gate yet
+
 ## 2026-04-24 Manual Stop Session Cleanup
 
 Morning follow-up found stale bot manual stops still leaking into the current
