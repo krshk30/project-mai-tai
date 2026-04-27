@@ -3515,3 +3515,64 @@ Validation:
   - `.venv\\Scripts\\python.exe -m pytest tests\\unit\\test_control_plane.py -k "bot_page_renders_simple_trade_summary_table or reports_schwab_live_wiring or webull_30s_page_uses_polygon_data_halt_labels" -q`
   - `.venv\\Scripts\\python.exe -m py_compile src/project_mai_tai/services/control_plane.py tests/unit/test_control_plane.py`
 
+## 2026-04-27 - Shared historical warmup ordering fix for Schwab/Webull 30s
+
+Context:
+
+- operator flagged that `Webull 30 Sec Bot` again produced only a few early
+  order attempts while `Schwab 30 Sec Bot` continued trading actively
+- live VPS comparison showed this was not just "different data"
+- the two runtimes were carrying materially different internal bar state on the
+  same current symbols:
+  - very different cumulative bar counts
+  - very different VWAP values
+  - very different `active_reference_5m_volume`
+  - different lifecycle states on the same names
+
+Root cause:
+
+- both 30-second bots seed historical warmup bars from the shared
+  `MassiveSnapshotProvider`
+- `fetch_historical_bars()` was trusting provider order and returning bars as
+  received
+- `StrategyBotRuntime.seed_bars()` was also trusting incoming order and seeding
+  the builder directly
+- if historical bars arrive newest-first, the last seeded bar becomes stale /
+  old, and the 30s bar builder can then manufacture long stretches of flat
+  synthetic gap bars before the next live trade
+- that poisons VWAP / short-volume / chop / lifecycle state, especially on the
+  Polygon-driven `webull_30s` runtime, but it can also distort the first
+  bootstrap period on the Schwab bot because Schwab uses the same historical
+  warmup source before live ticks take over
+
+Fix applied:
+
+- updated
+  `src/project_mai_tai/market_data/massive_provider.py`
+  so historical warmup bars are explicitly sorted chronologically by timestamp
+  before returning
+- updated
+  `src/project_mai_tai/services/strategy_engine_app.py`
+  so `StrategyBotRuntime.seed_bars()` also sorts bars defensively before
+  hydrating the bar builder
+- added focused tests in
+  `tests/unit/test_historical_bar_seed_order.py`
+  covering:
+  - chronological sorting in the Massive historical provider
+  - defensive chronological sorting inside runtime seeding even when bars are
+    supplied out of order
+
+Why this matters:
+
+- this is a shared bootstrap-path fix, not just a Webull-only patch
+- expected impact:
+  - Webull 30s should stop carrying polluted / stale-seeded bar history
+  - early-session Schwab warmup should also be cleaner because the shared
+    Polygon/Massive historical seed is no longer allowed to land out of order
+
+Validation:
+
+- passed:
+  - `.venv\\Scripts\\python.exe -m pytest tests\\unit\\test_historical_bar_seed_order.py tests\\unit\\test_market_data_gateway.py tests\\unit\\test_webull_30s_bot.py`
+  - `.venv\\Scripts\\python.exe -m py_compile src/project_mai_tai/market_data/massive_provider.py src/project_mai_tai/services/strategy_engine_app.py tests/unit/test_historical_bar_seed_order.py`
+
