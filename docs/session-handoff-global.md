@@ -3942,3 +3942,33 @@ Why this matters:
 - this reduces false suspicion that one API says "healthy" while the bot page
   says "halted" or vice versa
 
+## 2026-04-27 - Keep completed trades available to Trade Coach without changing UI
+
+Context:
+
+- operator wants completed trades retained in backend history so Trade Coach can
+  read and learn from them across days
+- UI should remain unchanged and continue showing only today's trades
+- raw broker fills/orders are already persisted in the database; the gap was
+  that `trade_coach_app` only reviewed the current scanner session window
+
+Fix applied:
+
+- added `trade_coach_completed_trade_lookback_days` to
+  `src/project_mai_tai/settings.py`
+  - `0` means "use all persisted completed-trade history" for Trade Coach
+- updated `src/project_mai_tai/services/trade_coach_app.py`
+  so the review loop uses `_review_window_bounds()` instead of hard-coding the
+  current session only
+  - UI queries in `control_plane.py` remain day-filtered and unchanged
+- added focused tests in
+  `tests/unit/test_trade_coach_app.py`
+  covering:
+  - default all-history review window
+  - bounded recent-day review window
+
+Why this matters:
+
+- completed trades remain available to Trade Coach across day boundaries
+- operator-facing bot pages and tables still stay "today only"
+
