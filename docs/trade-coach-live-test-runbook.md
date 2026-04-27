@@ -12,8 +12,8 @@ Current deployment state:
 - trade coach API key is configured on the VPS outside the repo
 - persistent VPS config still keeps trade coach disabled
 - there is now a dedicated `project-mai-tai-trade-coach.service`
-- the service overrides `MAI_TAI_TRADE_COACH_ENABLED=true` only inside its own
-  unit
+- the service forces `MAI_TAI_TRADE_COACH_ENABLED=true` only for its own
+  process start
 - the shared VPS env file remains disabled by default outside that service
 
 Primary goal for the first live test:
@@ -137,8 +137,9 @@ Expected values:
 
 Do **not** edit the VPS env file for the first test.
 
-Instead, start the dedicated coach service. The unit itself applies the runtime
-override, so the persistent shared env file remains disabled by default.
+Instead, start the dedicated coach service. The unit forces the runtime enable
+flag in `ExecStart`, so the persistent shared env file remains disabled by
+default.
 
 Start command:
 

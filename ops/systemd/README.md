@@ -25,7 +25,7 @@ Operator note:
 - `deploy_main.sh` is also intended for off-hours by default and blocks ET market-hour deploys unless explicitly overridden
 - `deploy_service.sh` is the manual path for service-scoped deploys and uses lower-risk choreography for `control`, `reconciler`, `strategy`, `oms`, and `market-data`
 - `project-mai-tai-trade-coach.service` is intentionally **not** part of `project-mai-tai.target`
-- the trade coach service overrides `MAI_TAI_TRADE_COACH_ENABLED=true` only inside its own unit while leaving the shared env file disabled by default
+- the trade coach service forces `MAI_TAI_TRADE_COACH_ENABLED=true` only for its own process start while leaving the shared env file disabled by default
 - during an active trading session, use `docs/live-market-restart-runbook.md` instead of a full-stack restart
 - the live-session scripts in this directory follow that runbook and stop for operator confirmation where automation would be unsafe
 - invoke the helper scripts with `bash ops/systemd/<script>.sh` if the executable bit is not present on your checkout

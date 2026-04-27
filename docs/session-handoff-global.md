@@ -23,8 +23,8 @@ Important state:
   - `MAI_TAI_TRADE_COACH_PROMOTE_ENABLED=false`
 - repo now includes a dedicated `project-mai-tai-trade-coach.service`
   for manual advisory-only runs
-- that service overrides `MAI_TAI_TRADE_COACH_ENABLED=true` only inside the
-  unit while leaving the shared VPS env file disabled by default
+- that service now forces `MAI_TAI_TRADE_COACH_ENABLED=true` only for its own
+  process start while leaving the shared VPS env file disabled by default
 - current scope is the first trade-coach foundation pass for the two 30-second
   bots only:
   - `macd_30s`
@@ -3432,7 +3432,7 @@ Follow-up change prepared:
   `ops/systemd/project-mai-tai-trade-coach.service`
 - service behavior:
   - reads the normal VPS env file as root via systemd
-  - overrides `MAI_TAI_TRADE_COACH_ENABLED=true` only inside the service
+  - forces `MAI_TAI_TRADE_COACH_ENABLED=true` only for the service process
   - leaves shared VPS env flags disabled by default outside that unit
   - uses a longer request timeout and shorter poll interval for live-session use
 
