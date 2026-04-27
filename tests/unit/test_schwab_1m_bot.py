@@ -87,7 +87,7 @@ def test_schwab_1m_uses_schwab_history_targets_not_generic_hydration() -> None:
     assert "schwab_1m" in state.schwab_stream_strategy_codes()
 
 
-def test_schwab_1m_no_first_tick_uses_longer_grace_window() -> None:
+def test_schwab_1m_no_first_tick_does_not_halt_flat_symbol() -> None:
     service = StrategyEngineService(
         settings=Settings(
             redis_url="redis://localhost:6379/15",
@@ -99,7 +99,7 @@ def test_schwab_1m_no_first_tick_uses_longer_grace_window() -> None:
     )
 
     now = datetime(2026, 4, 27, 19, 0, 0, tzinfo=UTC)
-    service._schwab_symbol_active_first_seen_at["YAAS"] = now - timedelta(seconds=240)
+    service._schwab_symbol_active_first_seen_at["YAAS"] = now - timedelta(hours=4)
 
     assert (
         service._is_schwab_symbol_data_halt_stale(
