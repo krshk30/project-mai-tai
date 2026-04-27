@@ -235,6 +235,8 @@ class StrategyBotRuntime:
         self._last_tick_at: dict[str, datetime] = {}
         self.data_halt_symbols: dict[str, str] = {}
         self.data_halt_since: dict[str, datetime] = {}
+        self.data_warning_symbols: dict[str, str] = {}
+        self.data_warning_since: dict[str, datetime] = {}
         self.session_factory = session_factory
         self.use_live_aggregate_bars = use_live_aggregate_bars
         self.live_aggregate_fallback_enabled = live_aggregate_fallback_enabled
@@ -389,6 +391,27 @@ class StrategyBotRuntime:
         self.data_halt_symbols.pop(normalized_symbol, None)
         self.data_halt_since.pop(normalized_symbol, None)
 
+    def apply_data_warning(
+        self,
+        symbol: str,
+        *,
+        reason: str,
+        observed_at: datetime | None = None,
+    ) -> None:
+        normalized_symbol = str(symbol).upper()
+        if not normalized_symbol:
+            return
+        self.data_warning_symbols[normalized_symbol] = str(reason)
+        self.data_warning_since.setdefault(
+            normalized_symbol,
+            self._normalize_now(observed_at or self.now_provider()),
+        )
+
+    def clear_data_warning(self, symbol: str) -> None:
+        normalized_symbol = str(symbol).upper()
+        self.data_warning_symbols.pop(normalized_symbol, None)
+        self.data_warning_since.pop(normalized_symbol, None)
+
     def _is_data_halted(self, symbol: str) -> bool:
         return str(symbol).upper() in self.data_halt_symbols
 
@@ -397,6 +420,11 @@ class StrategyBotRuntime:
 
     def data_health_summary(self) -> dict[str, object]:
         halted_symbols = sorted(self.data_halt_symbols)
+        warning_symbols = sorted(
+            symbol
+            for symbol in self.data_warning_symbols
+            if symbol not in self.data_halt_symbols
+        )
         halted_open_position_symbols = sorted(
             symbol
             for symbol in halted_symbols
@@ -406,14 +434,27 @@ class StrategyBotRuntime:
             "status": (
                 "critical"
                 if halted_open_position_symbols
-                else "degraded" if halted_symbols else "healthy"
+                else "degraded" if halted_symbols or warning_symbols else "healthy"
             ),
             "halted_symbols": halted_symbols,
             "open_position_halted_symbols": halted_open_position_symbols,
+            "warning_symbols": warning_symbols,
             "reasons": dict(sorted(self.data_halt_symbols.items())),
+            "warning_reasons": dict(
+                sorted(
+                    (symbol, reason)
+                    for symbol, reason in self.data_warning_symbols.items()
+                    if symbol not in self.data_halt_symbols
+                )
+            ),
             "since": {
                 symbol: _datetime_str(observed_at)
                 for symbol, observed_at in sorted(self.data_halt_since.items())
+            },
+            "warning_since": {
+                symbol: _datetime_str(observed_at)
+                for symbol, observed_at in sorted(self.data_warning_since.items())
+                if symbol not in self.data_halt_symbols
             },
         }
 
@@ -977,6 +1018,8 @@ class StrategyBotRuntime:
         self.entry_blocked_symbols.clear()
         self.data_halt_symbols.clear()
         self.data_halt_since.clear()
+        self.data_warning_symbols.clear()
+        self.data_warning_since.clear()
         self.lifecycle_states.clear()
         self.watchlist.clear()
         self.prewarm_symbols.clear()
@@ -3910,6 +3953,7 @@ class StrategyEngineService:
         self._schwab_symbol_last_quote_poll_at: dict[str, datetime] = {}
         self._schwab_symbol_active_first_seen_at: dict[str, datetime] = {}
         self._schwab_stale_symbols: set[str] = set()
+        self._schwab_warning_symbols: set[str] = set()
         self._schwab_stream_disconnected_since: datetime | None = None
         self._last_generic_bot_activity_snapshot_at: datetime | None = None
         self._generic_bot_activity_snapshot_interval_secs = 5
@@ -4719,6 +4763,7 @@ class StrategyEngineService:
                 activity_kind,
             )
         self._clear_schwab_runtime_data_halt(normalized)
+        self._clear_schwab_runtime_data_warning(normalized)
 
     def _schwab_active_strategy_codes_by_symbol(self) -> dict[str, tuple[str, ...]]:
         symbol_codes: dict[str, set[str]] = {}
@@ -4765,12 +4810,32 @@ class StrategyEngineService:
             if isinstance(runtime, StrategyBotRuntime):
                 runtime.apply_data_halt(symbol, reason=reason, observed_at=observed_at)
 
+    def _apply_schwab_runtime_data_warning(
+        self,
+        symbol: str,
+        codes: Sequence[str],
+        *,
+        reason: str,
+        observed_at: datetime,
+    ) -> None:
+        for code in codes:
+            runtime = self.state.bots.get(code)
+            if isinstance(runtime, StrategyBotRuntime):
+                runtime.apply_data_warning(symbol, reason=reason, observed_at=observed_at)
+
     def _clear_schwab_runtime_data_halt(self, symbol: str) -> None:
         normalized = str(symbol).upper()
         for code in self.state.schwab_stream_strategy_codes():
             runtime = self.state.bots.get(code)
             if isinstance(runtime, StrategyBotRuntime):
                 runtime.clear_data_halt(normalized)
+
+    def _clear_schwab_runtime_data_warning(self, symbol: str) -> None:
+        normalized = str(symbol).upper()
+        for code in self.state.schwab_stream_strategy_codes():
+            runtime = self.state.bots.get(code)
+            if isinstance(runtime, StrategyBotRuntime):
+                runtime.clear_data_warning(normalized)
 
     def _clear_all_schwab_runtime_data_halts(self) -> None:
         for code in self.state.schwab_stream_strategy_codes():
@@ -4779,6 +4844,8 @@ class StrategyEngineService:
                 continue
             for symbol in list(runtime.data_halt_symbols):
                 runtime.clear_data_halt(symbol)
+            for symbol in list(runtime.data_warning_symbols):
+                runtime.clear_data_warning(symbol)
 
     def _clear_inactive_schwab_runtime_data_halts(self, active_symbols: set[str]) -> None:
         normalized_active = {str(symbol).upper() for symbol in active_symbols if str(symbol).strip()}
@@ -4789,6 +4856,9 @@ class StrategyEngineService:
             for symbol in list(runtime.data_halt_symbols):
                 if symbol not in normalized_active:
                     runtime.clear_data_halt(symbol)
+            for symbol in list(runtime.data_warning_symbols):
+                if symbol not in normalized_active:
+                    runtime.clear_data_warning(symbol)
         self._schwab_symbol_last_stream_trade_at = {
             symbol: observed_at
             for symbol, observed_at in self._schwab_symbol_last_stream_trade_at.items()
@@ -4810,6 +4880,7 @@ class StrategyEngineService:
             if symbol in normalized_active
         }
         self._schwab_stale_symbols.intersection_update(normalized_active)
+        self._schwab_warning_symbols.intersection_update(normalized_active)
 
     def _schwab_last_stream_update_at(self, symbol: str) -> datetime | None:
         normalized = str(symbol).upper()
@@ -4945,6 +5016,8 @@ class StrategyEngineService:
         if not active_symbols:
             if self._schwab_stale_symbols:
                 self._schwab_stale_symbols.clear()
+            if self._schwab_warning_symbols:
+                self._schwab_warning_symbols.clear()
             self._schwab_symbol_active_first_seen_at.clear()
             self._clear_inactive_schwab_runtime_data_halts(set())
             return 0
@@ -4967,8 +5040,13 @@ class StrategyEngineService:
             self._schwab_stream_failure_reason()
             or "Schwab stream stale/disconnected; trading halted until live Schwab ticks recover"
         )
+        warning_reason = (
+            "Schwab symbol is quiet on a flat positionless name; synthetic 30s bars can continue, "
+            "but live Schwab ticks are temporarily sparse."
+        )
         open_symbol_set = set(open_symbols)
         stale_symbols: dict[str, tuple[str, ...]] = {}
+        warning_symbols: dict[str, tuple[str, ...]] = {}
         for symbol, codes in active_symbols.items():
             has_open_position = symbol in open_symbol_set
             if not self._schwab_symbol_should_enforce_data_halt(
@@ -4983,15 +5061,21 @@ class StrategyEngineService:
                 strategy_codes=codes,
                 has_open_position=has_open_position,
             ):
-                stale_symbols[symbol] = codes
+                if has_open_position or stream_disconnected:
+                    stale_symbols[symbol] = codes
+                else:
+                    warning_symbols[symbol] = codes
         stale_set_before = set(self._schwab_stale_symbols)
-        healthy_symbols = set(active_symbols) - set(stale_symbols)
+        warning_set_before = set(self._schwab_warning_symbols)
+        healthy_symbols = set(active_symbols) - set(stale_symbols) - set(warning_symbols)
         for symbol in healthy_symbols:
             if symbol in self._schwab_stale_symbols:
                 self._schwab_stale_symbols.discard(symbol)
             self._clear_schwab_runtime_data_halt(symbol)
+            self._clear_schwab_runtime_data_warning(symbol)
 
         for symbol, codes in stale_symbols.items():
+            self._clear_schwab_runtime_data_warning(symbol)
             if symbol in self._schwab_stale_symbols:
                 self._apply_schwab_runtime_data_halt(
                     symbol,
@@ -5015,9 +5099,31 @@ class StrategyEngineService:
                 reason=halt_reason,
                 observed_at=now,
             )
+        for symbol, codes in warning_symbols.items():
+            self._clear_schwab_runtime_data_halt(symbol)
+            if symbol not in warning_set_before:
+                last_trade_at = self._schwab_symbol_last_stream_trade_at.get(symbol)
+                last_quote_at = self._schwab_symbol_last_stream_quote_at.get(symbol)
+                self.logger.warning(
+                    "Schwab symbol quiet for %s on %s | last_trade_at=%s last_quote_at=%s",
+                    symbol,
+                    ",".join(codes),
+                    last_trade_at.isoformat() if last_trade_at is not None else "never",
+                    last_quote_at.isoformat() if last_quote_at is not None else "never",
+                )
+            self._apply_schwab_runtime_data_warning(
+                symbol,
+                codes,
+                reason=warning_reason,
+                observed_at=now,
+            )
         self._schwab_stale_symbols = set(stale_symbols)
-        state_changed = stale_set_before != self._schwab_stale_symbols
-        if not stale_symbols:
+        self._schwab_warning_symbols = set(warning_symbols)
+        state_changed = (
+            stale_set_before != self._schwab_stale_symbols
+            or warning_set_before != self._schwab_warning_symbols
+        )
+        if not stale_symbols and not warning_symbols:
             return 1 if state_changed else 0
 
         if self._schwab_stream_client is not None:
@@ -5029,16 +5135,16 @@ class StrategyEngineService:
                 >= self._schwab_symbol_resubscribe_interval_seconds(
                     has_open_position=symbol in open_symbol_set
                 )
-                for symbol in stale_symbols
+                for symbol in (set(stale_symbols) | set(warning_symbols))
             )
             if should_resubscribe and not auth_failure:
                 try:
                     await self._schwab_stream_client.force_resubscribe()
-                    for symbol in stale_symbols:
+                    for symbol in set(stale_symbols) | set(warning_symbols):
                         self._schwab_symbol_last_resubscribe_at[symbol] = now
                     self.logger.warning(
                         "forced Schwab stream resubscribe for stale Schwab symbols: %s",
-                        ",".join(sorted(stale_symbols)),
+                        ",".join(sorted(set(stale_symbols) | set(warning_symbols))),
                     )
                 except Exception:
                     self.logger.exception("failed forcing Schwab stream resubscribe")

@@ -37,7 +37,7 @@ def make_settings(**kwargs) -> Settings:
 
 
 @pytest.mark.asyncio
-async def test_flat_schwab_symbol_still_halts_during_trading_hours(
+async def test_flat_schwab_symbol_becomes_warning_not_halt_during_trading_hours(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     service = StrategyEngineService(settings=make_settings(), redis_client=FakeRedis())
@@ -60,9 +60,11 @@ async def test_flat_schwab_symbol_still_halts_during_trading_hours(
     activity_count = await service._monitor_schwab_symbol_health()
 
     assert activity_count == 1
-    assert service._schwab_stale_symbols == {"APLZ"}
-    assert runtime.data_health_summary()["status"] == "critical"
-    assert runtime.data_health_summary()["halted_symbols"] == ["APLZ"]
+    assert service._schwab_stale_symbols == set()
+    assert service._schwab_warning_symbols == {"APLZ"}
+    assert runtime.data_health_summary()["status"] == "degraded"
+    assert runtime.data_health_summary()["halted_symbols"] == []
+    assert runtime.data_health_summary()["warning_symbols"] == ["APLZ"]
 
 
 @pytest.mark.asyncio

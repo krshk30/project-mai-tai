@@ -1443,19 +1443,43 @@ class ControlPlaneRepository:
                 for symbol in list(data_health.get("halted_symbols", []) or [])
                 if str(symbol).strip() and not self._is_ui_hidden_symbol(account_name, symbol)
             ]
+            warning_symbols = [
+                str(symbol).upper()
+                for symbol in list(data_health.get("warning_symbols", []) or [])
+                if str(symbol).strip() and not self._is_ui_hidden_symbol(account_name, symbol)
+            ]
             raw_reasons = dict(data_health.get("reasons", {}) or {})
+            raw_warning_reasons = dict(data_health.get("warning_reasons", {}) or {})
             raw_since = dict(data_health.get("since", {}) or {})
+            raw_warning_since = dict(data_health.get("warning_since", {}) or {})
             data_health = {
                 **data_health,
                 "status": str(data_health.get("status", "healthy") or "healthy"),
                 "halted_symbols": halted_symbols,
+                "warning_symbols": warning_symbols,
                 "reasons": {
                     str(symbol).upper(): str(raw_reasons.get(symbol) or raw_reasons.get(str(symbol).upper()) or "")
                     for symbol in halted_symbols
                 },
+                "warning_reasons": {
+                    str(symbol).upper(): str(
+                        raw_warning_reasons.get(symbol)
+                        or raw_warning_reasons.get(str(symbol).upper())
+                        or ""
+                    )
+                    for symbol in warning_symbols
+                },
                 "since": {
                     str(symbol).upper(): str(raw_since.get(symbol) or raw_since.get(str(symbol).upper()) or "")
                     for symbol in halted_symbols
+                },
+                "warning_since": {
+                    str(symbol).upper(): str(
+                        raw_warning_since.get(symbol)
+                        or raw_warning_since.get(str(symbol).upper())
+                        or ""
+                    )
+                    for symbol in warning_symbols
                 },
             }
             recent_decisions = self._live_decision_placeholder_rows(
@@ -1582,9 +1606,19 @@ class ControlPlaneRepository:
             for symbol in list(data_health.get("halted_symbols", []) or [])
             if str(symbol).strip()
         }
+        warning_symbols = {
+            str(symbol).upper()
+            for symbol in list(data_health.get("warning_symbols", []) or [])
+            if str(symbol).strip()
+        }
         halt_reasons = {
             str(symbol).upper(): str(reason or "")
             for symbol, reason in dict(data_health.get("reasons", {}) or {}).items()
+            if str(symbol).strip()
+        }
+        warning_reasons = {
+            str(symbol).upper(): str(reason or "")
+            for symbol, reason in dict(data_health.get("warning_reasons", {}) or {}).items()
             if str(symbol).strip()
         }
         market_data_source = self._market_data_source_label(provider)
@@ -1600,6 +1634,9 @@ class ControlPlaneRepository:
             if symbol in halted_symbols:
                 status = "critical"
                 reason = halt_reasons.get(symbol) or f"{market_data_source} market data halt active"
+            elif symbol in warning_symbols:
+                status = "warning"
+                reason = warning_reasons.get(symbol) or f"{market_data_source} ticks are temporarily quiet on this flat symbol"
             elif last_tick_label and bar_count > 0:
                 wait_age_seconds = _seconds_since_eastern_label(last_tick_label)
                 if wait_age_seconds is not None and wait_age_seconds >= 90:
@@ -4421,13 +4458,23 @@ def _build_bot_listening_status(
     data_health = dict(bot.get("data_health", {}) or {})
     data_health_status = str(data_health.get("status", "healthy") or "healthy").lower()
     halted_symbols = [str(symbol).upper() for symbol in list(data_health.get("halted_symbols", []) or [])]
+    warning_symbols = [str(symbol).upper() for symbol in list(data_health.get("warning_symbols", []) or [])]
     raw_reasons = dict(data_health.get("reasons", {}) or {})
+    raw_warning_reasons = dict(data_health.get("warning_reasons", {}) or {})
     unique_reasons = [
         str(reason).strip()
         for reason in dict.fromkeys(raw_reasons.values())
         if str(reason).strip()
     ]
     representative_reason = unique_reasons[0] if len(unique_reasons) == 1 else ""
+    unique_warning_reasons = [
+        str(reason).strip()
+        for reason in dict.fromkeys(raw_warning_reasons.values())
+        if str(reason).strip()
+    ]
+    representative_warning_reason = (
+        unique_warning_reasons[0] if len(unique_warning_reasons) == 1 else ""
+    )
 
     state = "LISTENING"
     detail = "Bot is actively evaluating bars."
@@ -4453,17 +4500,28 @@ def _build_bot_listening_status(
             detail = f"{market_data_source} data health is degraded."
         color = "#ff6b6b"
     elif data_health_status == "degraded":
-        state = "DEGRADED"
         if halted_symbols:
+            state = "DEGRADED"
             if representative_reason:
                 detail = representative_reason
             else:
                 detail = (
                     f"{market_data_source} data is quiet on some flat symbols; entries on those names stay blocked until ticks recover."
                 )
+            color = "#ffcc5b"
+        elif warning_symbols:
+            state = "LISTENING"
+            if representative_warning_reason:
+                detail = representative_warning_reason
+            else:
+                detail = (
+                    f"{market_data_source} ticks are quiet on some flat symbols, but the overall stream is still live."
+                )
+            color = "#5fff8d"
         else:
+            state = "DEGRADED"
             detail = f"{market_data_source} data health is degraded."
-        color = "#ffcc5b"
+            color = "#ffcc5b"
     elif service_status in {"stopping", "stopped", "inactive"} or service_raw_status in {"stopping", "stopped", "inactive"}:
         state = "STOPPED"
         detail = "Strategy engine is not running."
@@ -5116,8 +5174,11 @@ def _render_bot_detail_page(
     data_health = dict(bot.get("data_health", {}) or {})
     data_health_status = str(data_health.get("status", "healthy") or "healthy").lower()
     halted_symbols = [str(symbol).upper() for symbol in list(data_health.get("halted_symbols", []) or [])]
+    warning_symbols = [str(symbol).upper() for symbol in list(data_health.get("warning_symbols", []) or [])]
     data_health_reasons = dict(data_health.get("reasons", {}) or {})
+    data_warning_reasons = dict(data_health.get("warning_reasons", {}) or {})
     data_health_since = dict(data_health.get("since", {}) or {})
+    data_warning_since = dict(data_health.get("warning_since", {}) or {})
     market_data_source = ControlPlaneRepository._market_data_source_label(str(bot.get("provider", "") or ""))
     data_health_card_label = f"{market_data_source} Data Health"
     data_health_panel_title = (
@@ -5136,6 +5197,12 @@ def _render_bot_detail_page(
         reason_parts = [
             f"{symbol}: {data_health_reasons.get(symbol, f'{market_data_source} stream stale/disconnected')}"
             for symbol in halted_symbols
+        ]
+        data_health_detail = " | ".join(reason_parts)
+    elif warning_symbols:
+        reason_parts = [
+            f"{symbol}: {data_warning_reasons.get(symbol, f'{market_data_source} ticks temporarily quiet on this flat symbol')}"
+            for symbol in warning_symbols
         ]
         data_health_detail = " | ".join(reason_parts)
     current_position = bot["positions"][0] if strategy_code == "runner" and bot["positions"] else None
@@ -5270,20 +5337,21 @@ def _render_bot_detail_page(
                     <div class="hero-card"><span>Last Bot Tick</span><strong>{escape(listening_status["latest_bot_tick_at"] or "-")}</strong><small>Latest tick that reached this bot</small></div>
                     <div class="hero-card"><span>Last Market Data</span><strong>{escape(listening_status["latest_market_data_at"] or "-")}</strong><small>Snapshot / subscription freshness</small></div>
                     <div class="hero-card"><span>Last Strategy Heartbeat</span><strong>{escape(listening_status["latest_heartbeat_at"] or "-")}</strong><small>strategy-engine heartbeat</small></div>
-                    <div class="hero-card"><span>{escape(data_health_card_label)}</span><strong style="color:{data_health_color}">{escape(data_health_status.upper())}</strong><small>{escape(", ".join(halted_symbols) or "no halted symbols")}</small></div>
+                    <div class="hero-card"><span>{escape(data_health_card_label)}</span><strong style="color:{data_health_color}">{escape(data_health_status.upper())}</strong><small>{escape(", ".join(halted_symbols or warning_symbols) or "no halted symbols")}</small></div>
                     <div class="hero-card"><span>Tracked Symbols</span><strong>{listening_status["watchlist_count"]}</strong><small>Open positions: {listening_status["position_count"]} · Bars cached: {listening_status["tracked_bar_count"]}</small></div>
                 </div>
             </section>"""
 
     data_health_panel = ""
     if data_health_status != "healthy":
+        affected_symbols = halted_symbols or warning_symbols
         halted_since = ", ".join(
-            f"{symbol} since {data_health_since.get(symbol, '-')}"
-            for symbol in halted_symbols
+            f"{symbol} since {(data_health_since if halted_symbols else data_warning_since).get(symbol, '-')}"
+            for symbol in affected_symbols
         )
         if data_health_status == "degraded":
             data_health_sub = (
-                "Entries stay blocked only on the quiet flat symbols below while the overall stream remains up."
+                "Some flat symbols have temporarily quiet Schwab ticks. The overall stream remains up and synthetic bar continuation can still run."
             )
         else:
             data_health_sub = (
@@ -5300,7 +5368,7 @@ def _render_bot_detail_page(
                     </div>
                     <span class="count {"danger" if data_health_status in {"critical", "error"} else "accent"}">{escape(data_health_status.upper())}</span>
                 </div>
-                <div class="panel-copy"><strong>Symbols:</strong> {escape(", ".join(halted_symbols) or "-")}<br><strong>Since:</strong> {escape(halted_since or "-")}<br><strong>Reason:</strong> {escape(data_health_detail)}</div>
+                <div class="panel-copy"><strong>Symbols:</strong> {escape(", ".join(affected_symbols) or "-")}<br><strong>Since:</strong> {escape(halted_since or "-")}<br><strong>Reason:</strong> {escape(data_health_detail)}</div>
             </section>"""
 
     return f"""<!DOCTYPE html>
