@@ -3972,3 +3972,56 @@ Why this matters:
 - completed trades remain available to Trade Coach across day boundaries
 - operator-facing bot pages and tables still stay "today only"
 
+## 2026-04-27 - Add history-based Trade Coach regime similarity
+
+Context:
+
+- operator wants Trade Coach pattern memory to look beyond just same-symbol and
+  same-path history
+- desired matching now includes broader trade regime context such as low-priced
+  names, volume behavior, volatility, and momentum shape so a current trade can
+  be compared against older reviewed trades that "look like" it even when the
+  ticker is different
+- review center already supports date filters and full-history review loading;
+  the missing piece was regime-aware similarity on the single-review drilldown
+
+Fix applied:
+
+- updated `src/project_mai_tai/services/control_plane.py`
+  - added repository support to load `StrategyBarHistory` around reviewed trade
+    windows and derive a compact `regime_profile`
+  - profile currently includes:
+    - price band
+    - pre-entry volume band
+    - volatility band
+    - pre-entry momentum band
+    - concrete metrics like avg pre-entry volume, avg bar range, pre-entry
+      change, trade range, duration, and sampled bar count
+  - added similarity scoring across reviewed trades within the same
+    `strategy_code + broker_account_name`
+  - `/api/coach-review` now returns:
+    - `regime_profile`
+    - `similar_regime_summary`
+    - `recent_similar_regime_reviews`
+  - `/coach/review?...` now renders:
+    - `Regime Profile`
+    - `Similar Regime Count`
+    - `Recent Similar-Regime Reviews`
+    - `Regime Metrics`
+- updated `tests/unit/test_control_plane.py`
+  - seeded historical `StrategyBarHistory`
+  - verified a different-symbol historical review can appear in the new
+    regime-similar results
+
+Validation:
+
+- `.venv\\Scripts\\python.exe -m pytest tests/unit/test_control_plane.py -q`
+  - `28 passed`
+- `.venv\\Scripts\\python.exe -m py_compile src/project_mai_tai/services/control_plane.py tests/unit/test_control_plane.py`
+
+Notes:
+
+- this phase is still descriptive and heuristic; it is not live trade gating
+- matching is now materially better than same-symbol/path-only memory, but it is
+  still an early scoring layer, not the final predictive engine
+

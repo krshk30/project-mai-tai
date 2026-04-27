@@ -22,6 +22,7 @@ from project_mai_tai.db.models import (
     ReconciliationFinding,
     ReconciliationRun,
     Strategy,
+    StrategyBarHistory,
     SystemIncident,
     TradeIntent,
     VirtualPosition,
@@ -402,6 +403,10 @@ def seed_database(session_factory: sessionmaker[Session]) -> None:
                 "next_time": ["keep size tied to confirmation quality"],
                 "trade_snapshot": {
                     "path": "P1_CROSS",
+                    "entry_time": "2026-03-28 10:00:00 AM ET",
+                    "exit_time": "2026-03-28 10:05:00 AM ET",
+                    "entry_price": 2.48,
+                    "exit_price": 2.55,
                     "pnl_pct": 2.4,
                     "exit_summary": "Scaled winner",
                 },
@@ -439,12 +444,179 @@ def seed_database(session_factory: sessionmaker[Session]) -> None:
                 "next_time": ["be stricter when the burst fades within the first minute"],
                 "trade_snapshot": {
                     "path": "P1_CROSS",
+                    "entry_time": "2026-03-21 10:00:00 AM ET",
+                    "exit_time": "2026-03-21 10:04:30 AM ET",
+                    "entry_price": 2.39,
+                    "exit_price": 2.31,
                     "pnl_pct": -3.2,
                     "exit_summary": "Hard stop after fade",
                 },
             },
             created_at=datetime.now(UTC) - timedelta(days=7),
         )
+        regime_trade_review = AiTradeReview(
+            intent_id=intent.id,
+            strategy_code="macd_30s",
+            broker_account_name="paper:macd_30s",
+            symbol="QNRX",
+            review_type="post_trade",
+            cycle_key="macd_30s|paper:macd_30s|QNRX|2026-03-24 10:03:00 AM ET|2026-03-24 10:07:00 AM ET",
+            provider="openai",
+            model="gpt-4.1-mini",
+            verdict="mixed",
+            action="exit",
+            confidence=Decimal("0.81"),
+            summary="Earlier QNRX burst lived in a similar low-float, high-velocity regime but lost follow-through.",
+            payload={
+                "schema_version": "trade_coach_v2",
+                "verdict": "mixed",
+                "action": "exit",
+                "coaching_focus": "risk",
+                "execution_timing": "on_time",
+                "confidence": 0.81,
+                "setup_quality": 0.73,
+                "execution_quality": 0.77,
+                "outcome_quality": 0.49,
+                "should_have_traded": True,
+                "should_review_manually": True,
+                "key_reasons": ["similar low-price squeeze regime", "range expanded quickly"],
+                "rule_hits": ["P4_BURST"],
+                "rule_violations": [],
+                "next_time": ["be quicker to cut when the squeeze loses tape support"],
+                "trade_snapshot": {
+                    "path": "P4_BURST",
+                    "entry_time": "2026-03-24 10:03:00 AM ET",
+                    "exit_time": "2026-03-24 10:07:00 AM ET",
+                    "entry_price": 2.28,
+                    "exit_price": 2.19,
+                    "pnl_pct": -1.8,
+                    "exit_summary": "Stopped after failed push",
+                },
+            },
+            created_at=datetime.now(UTC) - timedelta(days=4),
+        )
+        base_trade_bars = [
+            StrategyBarHistory(
+                strategy_code="macd_30s",
+                symbol="UGRO",
+                interval_secs=30,
+                bar_time=datetime(2026, 3, 28, 13, 58, 0, tzinfo=UTC),
+                open_price=Decimal("2.32"),
+                high_price=Decimal("2.36"),
+                low_price=Decimal("2.30"),
+                close_price=Decimal("2.35"),
+                volume=820000,
+                trade_count=150,
+            ),
+            StrategyBarHistory(
+                strategy_code="macd_30s",
+                symbol="UGRO",
+                interval_secs=30,
+                bar_time=datetime(2026, 3, 28, 13, 59, 0, tzinfo=UTC),
+                open_price=Decimal("2.35"),
+                high_price=Decimal("2.41"),
+                low_price=Decimal("2.34"),
+                close_price=Decimal("2.40"),
+                volume=880000,
+                trade_count=172,
+            ),
+            StrategyBarHistory(
+                strategy_code="macd_30s",
+                symbol="UGRO",
+                interval_secs=30,
+                bar_time=datetime(2026, 3, 28, 14, 0, 0, tzinfo=UTC),
+                open_price=Decimal("2.40"),
+                high_price=Decimal("2.50"),
+                low_price=Decimal("2.39"),
+                close_price=Decimal("2.48"),
+                volume=910000,
+                trade_count=190,
+            ),
+            StrategyBarHistory(
+                strategy_code="macd_30s",
+                symbol="UGRO",
+                interval_secs=30,
+                bar_time=datetime(2026, 3, 28, 14, 3, 0, tzinfo=UTC),
+                open_price=Decimal("2.52"),
+                high_price=Decimal("2.60"),
+                low_price=Decimal("2.46"),
+                close_price=Decimal("2.55"),
+                volume=940000,
+                trade_count=201,
+            ),
+            StrategyBarHistory(
+                strategy_code="macd_30s",
+                symbol="UGRO",
+                interval_secs=30,
+                bar_time=datetime(2026, 3, 21, 13, 58, 0, tzinfo=UTC),
+                open_price=Decimal("2.28"),
+                high_price=Decimal("2.34"),
+                low_price=Decimal("2.26"),
+                close_price=Decimal("2.33"),
+                volume=760000,
+                trade_count=142,
+            ),
+            StrategyBarHistory(
+                strategy_code="macd_30s",
+                symbol="UGRO",
+                interval_secs=30,
+                bar_time=datetime(2026, 3, 21, 14, 0, 0, tzinfo=UTC),
+                open_price=Decimal("2.33"),
+                high_price=Decimal("2.42"),
+                low_price=Decimal("2.31"),
+                close_price=Decimal("2.39"),
+                volume=815000,
+                trade_count=169,
+            ),
+            StrategyBarHistory(
+                strategy_code="macd_30s",
+                symbol="UGRO",
+                interval_secs=30,
+                bar_time=datetime(2026, 3, 21, 14, 3, 0, tzinfo=UTC),
+                open_price=Decimal("2.38"),
+                high_price=Decimal("2.44"),
+                low_price=Decimal("2.29"),
+                close_price=Decimal("2.31"),
+                volume=860000,
+                trade_count=175,
+            ),
+            StrategyBarHistory(
+                strategy_code="macd_30s",
+                symbol="QNRX",
+                interval_secs=30,
+                bar_time=datetime(2026, 3, 24, 14, 1, 0, tzinfo=UTC),
+                open_price=Decimal("2.18"),
+                high_price=Decimal("2.24"),
+                low_price=Decimal("2.17"),
+                close_price=Decimal("2.22"),
+                volume=700000,
+                trade_count=138,
+            ),
+            StrategyBarHistory(
+                strategy_code="macd_30s",
+                symbol="QNRX",
+                interval_secs=30,
+                bar_time=datetime(2026, 3, 24, 14, 3, 0, tzinfo=UTC),
+                open_price=Decimal("2.22"),
+                high_price=Decimal("2.31"),
+                low_price=Decimal("2.20"),
+                close_price=Decimal("2.28"),
+                volume=780000,
+                trade_count=162,
+            ),
+            StrategyBarHistory(
+                strategy_code="macd_30s",
+                symbol="QNRX",
+                interval_secs=30,
+                bar_time=datetime(2026, 3, 24, 14, 6, 0, tzinfo=UTC),
+                open_price=Decimal("2.26"),
+                high_price=Decimal("2.33"),
+                low_price=Decimal("2.16"),
+                close_price=Decimal("2.19"),
+                volume=810000,
+                trade_count=171,
+            ),
+        ]
         session.add_all(
             [
                 fill,
@@ -456,6 +628,8 @@ def seed_database(session_factory: sessionmaker[Session]) -> None:
                 dashboard_snapshot,
                 trade_review,
                 historical_trade_review,
+                regime_trade_review,
+                *base_trade_bars,
             ]
         )
         session.commit()
@@ -1363,11 +1537,16 @@ def test_trade_coach_review_center_and_api_filters() -> None:
         assert detail_payload["review"]["symbol"] == "UGRO"
         assert detail_payload["same_path_summary"]["count"] == 1
         assert detail_payload["same_symbol_summary"]["count"] == 1
+        assert detail_payload["regime_profile"]["price_band"] == "$2-$5"
+        assert detail_payload["similar_regime_summary"]["count"] >= 1
+        assert any(
+            item["symbol"] == "QNRX" for item in detail_payload["recent_similar_regime_reviews"]
+        )
 
         history_payload = client.get(
             f"/api/coach-reviews?strategy_code=macd_30s&start_date={history_start}&end_date={history_end}"
         ).json()
-        assert history_payload["count"] == 2
+        assert history_payload["count"] == 3
         assert history_payload["filters"]["start_date"] == history_start
         assert history_payload["filters"]["end_date"] == history_end
 
@@ -1390,6 +1569,9 @@ def test_trade_coach_review_center_and_api_filters() -> None:
         assert "Pattern Memory" in detail.text
         assert "Same Path Count" in detail.text
         assert "Same Symbol Count" in detail.text
+        assert "Recent Similar-Regime Reviews" in detail.text
+        assert "Regime Metrics" in detail.text
+        assert "QNRX" in detail.text
         assert "Back to review center" in detail.text
 
 

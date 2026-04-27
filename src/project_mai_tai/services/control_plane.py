@@ -349,6 +349,65 @@ class ControlPlaneRepository:
                 reviews.append(serialized)
         return reviews
 
+    def load_trade_coach_regime_profiles(
+        self,
+        reviews: list[dict[str, Any]],
+    ) -> dict[str, dict[str, Any]]:
+        grouped_reviews: dict[tuple[str, str, int], list[dict[str, Any]]] = {}
+        for review in reviews:
+            cycle_key = str(review.get("cycle_key", "") or "").strip()
+            strategy_code = str(review.get("strategy_code", "") or "").strip()
+            symbol = str(review.get("symbol", "") or "").strip().upper()
+            if not cycle_key or not strategy_code or not symbol:
+                continue
+            entry_time = _parse_et_timestamp(str(review.get("entry_time", "") or ""))
+            exit_time = _parse_et_timestamp(str(review.get("exit_time", "") or ""))
+            if entry_time.year <= 1 or exit_time.year <= 1:
+                continue
+            interval_secs = _trade_coach_review_interval_secs(review)
+            grouped_reviews.setdefault((strategy_code, symbol, interval_secs), []).append(
+                {
+                    "cycle_key": cycle_key,
+                    "entry_time": entry_time.astimezone(UTC),
+                    "exit_time": exit_time.astimezone(UTC),
+                    "review": review,
+                }
+            )
+
+        profiles: dict[str, dict[str, Any]] = {}
+        if not grouped_reviews:
+            return profiles
+
+        with self.session_factory() as session:
+            for (strategy_code, symbol, interval_secs), windows in grouped_reviews.items():
+                query_start = min(item["entry_time"] for item in windows) - timedelta(minutes=5)
+                query_end = max(item["exit_time"] for item in windows) + timedelta(seconds=max(interval_secs, 30))
+                bars = list(
+                    session.scalars(
+                        select(StrategyBarHistory)
+                        .where(StrategyBarHistory.strategy_code == strategy_code)
+                        .where(StrategyBarHistory.symbol == symbol)
+                        .where(StrategyBarHistory.interval_secs == interval_secs)
+                        .where(StrategyBarHistory.bar_time >= query_start)
+                        .where(StrategyBarHistory.bar_time <= query_end)
+                        .order_by(StrategyBarHistory.bar_time.asc())
+                    ).all()
+                )
+                if not bars:
+                    continue
+                for window in windows:
+                    profile = _build_trade_coach_regime_profile(
+                        window["review"],
+                        bars,
+                        entry_time=window["entry_time"],
+                        exit_time=window["exit_time"],
+                        interval_secs=interval_secs,
+                    )
+                    if profile:
+                        profiles[str(window["cycle_key"])] = profile
+
+        return profiles
+
     def _incident_symbol(self, title: str | None, payload: dict[str, Any] | None) -> str:
         data = payload if isinstance(payload, dict) else {}
         direct_symbol = str(data.get("symbol") or data.get("ticker") or "").strip().upper()
@@ -2724,23 +2783,32 @@ def build_app(
     @app.get("/api/coach-review")
     async def coach_review_api(cycle_key: str) -> dict[str, Any]:
         data = await app.state.repository.load_bot_dashboard_data()
-        all_reviews = _enrich_trade_coach_reviews(
-            app.state.repository.load_trade_coach_review_history(),
-            data.get("bots", []),
+        review_history = app.state.repository.load_trade_coach_review_history()
+        regime_profiles = app.state.repository.load_trade_coach_regime_profiles(review_history)
+        all_reviews = _apply_trade_coach_regime_profiles(
+            _enrich_trade_coach_reviews(
+                review_history,
+                data.get("bots", []),
+            ),
+            regime_profiles,
         )
         review = _find_trade_coach_review(all_reviews, cycle_key)
         if review is None:
             return {"found": False, "cycle_key": cycle_key}
         same_path_reviews = _trade_coach_related_reviews(review, all_reviews, mode="path")
         same_symbol_reviews = _trade_coach_related_reviews(review, all_reviews, mode="symbol")
+        similar_regime_reviews = _trade_coach_similar_regime_reviews(review, all_reviews)
         return {
             "found": True,
             "review": review,
             "priority": _trade_coach_review_priority(review),
+            "regime_profile": dict(review.get("regime_profile", {}) or {}),
             "same_path_summary": _trade_coach_history_summary(same_path_reviews),
             "same_symbol_summary": _trade_coach_history_summary(same_symbol_reviews),
+            "similar_regime_summary": _trade_coach_similarity_summary(similar_regime_reviews),
             "recent_same_path_reviews": same_path_reviews,
             "recent_same_symbol_reviews": same_symbol_reviews,
+            "recent_similar_regime_reviews": similar_regime_reviews,
         }
 
     @app.get("/api/orders")
@@ -3054,10 +3122,12 @@ def build_app(
     @app.get("/coach/review", response_class=HTMLResponse)
     async def coach_review_detail_page(cycle_key: str) -> str:
         data = await app.state.repository.load_bot_dashboard_data()
+        review_history = app.state.repository.load_trade_coach_review_history()
         return _render_trade_coach_review_detail(
             data,
-            review_history=app.state.repository.load_trade_coach_review_history(),
+            review_history=review_history,
             cycle_key=cycle_key,
+            regime_profiles=app.state.repository.load_trade_coach_regime_profiles(review_history),
         )
 
     @app.get("/", response_class=HTMLResponse)
@@ -5873,6 +5943,144 @@ def _enrich_trade_coach_reviews(
     return enriched
 
 
+def _trade_coach_review_interval_secs(review: dict[str, Any]) -> int:
+    strategy_code = str(review.get("strategy_code", "") or "").strip().lower()
+    if "1m" in strategy_code or strategy_code == "tos":
+        return 60
+    return 30
+
+
+def _trade_coach_price_band(value: float) -> str:
+    if value < 1:
+        return "sub-$1"
+    if value < 2:
+        return "$1-$2"
+    if value < 5:
+        return "$2-$5"
+    if value < 10:
+        return "$5-$10"
+    return "$10+"
+
+
+def _trade_coach_volume_band(value: float) -> str:
+    if value < 100_000:
+        return "thin"
+    if value < 500_000:
+        return "light"
+    if value < 1_500_000:
+        return "active"
+    return "heavy"
+
+
+def _trade_coach_volatility_band(value: float) -> str:
+    if value < 1.0:
+        return "calm"
+    if value < 3.0:
+        return "active"
+    if value < 6.0:
+        return "hot"
+    return "explosive"
+
+
+def _trade_coach_momentum_band(value: float) -> str:
+    if value < 0:
+        return "fading"
+    if value < 5:
+        return "steady"
+    if value < 15:
+        return "strong"
+    return "squeeze"
+
+
+def _build_trade_coach_regime_profile(
+    review: dict[str, Any],
+    bars: list[StrategyBarHistory],
+    *,
+    entry_time: datetime,
+    exit_time: datetime,
+    interval_secs: int,
+) -> dict[str, Any]:
+    if not bars:
+        return {}
+    normalized_bars: list[StrategyBarHistory] = []
+    for bar in bars:
+        if bar.bar_time.tzinfo is None:
+            bar.bar_time = bar.bar_time.replace(tzinfo=UTC)
+        normalized_bars.append(bar)
+    pre_start = entry_time - timedelta(minutes=5)
+    trade_end = exit_time + timedelta(seconds=max(interval_secs, 30))
+    pre_bars = [bar for bar in normalized_bars if pre_start <= bar.bar_time < entry_time][-10:]
+    trade_bars = [bar for bar in normalized_bars if entry_time <= bar.bar_time <= trade_end]
+    active_bars = trade_bars or pre_bars[-3:]
+    if not active_bars:
+        return {}
+
+    entry_price = _as_float(review.get("entry_price"))
+    if entry_price <= 0:
+        reference_bar = trade_bars[0] if trade_bars else pre_bars[-1]
+        entry_price = _as_float(reference_bar.open_price or reference_bar.close_price)
+
+    lead_bars = pre_bars if pre_bars else active_bars
+    avg_pre_entry_volume = (
+        sum(max(int(bar.volume or 0), 0) for bar in lead_bars) / len(lead_bars) if lead_bars else 0.0
+    )
+    avg_range_pct = (
+        sum(
+            ((_as_float(bar.high_price) - _as_float(bar.low_price)) / max(_as_float(bar.open_price), 0.01)) * 100.0
+            for bar in active_bars
+        )
+        / len(active_bars)
+        if active_bars
+        else 0.0
+    )
+    earliest_bar = lead_bars[0] if lead_bars else active_bars[0]
+    first_reference_price = max(_as_float(earliest_bar.open_price), 0.01)
+    latest_pretrade_bar = trade_bars[0] if trade_bars else active_bars[-1]
+    pre_entry_change_pct = ((_as_float(latest_pretrade_bar.close_price) - first_reference_price) / first_reference_price) * 100.0
+    high_water = max(_as_float(bar.high_price) for bar in active_bars)
+    low_water = min(_as_float(bar.low_price) for bar in active_bars)
+    trade_range_pct = ((high_water - low_water) / max(entry_price, 0.01)) * 100.0
+    avg_trade_count = (
+        sum(max(int(bar.trade_count or 0), 0) for bar in active_bars) / len(active_bars) if active_bars else 0.0
+    )
+    duration_secs = max(int((exit_time - entry_time).total_seconds()), 0)
+
+    price_band = _trade_coach_price_band(entry_price)
+    volume_band = _trade_coach_volume_band(avg_pre_entry_volume)
+    volatility_band = _trade_coach_volatility_band(avg_range_pct)
+    momentum_band = _trade_coach_momentum_band(pre_entry_change_pct)
+    return {
+        "label": f"{price_band} price | {volume_band} volume | {volatility_band} volatility | {momentum_band} momentum",
+        "price_band": price_band,
+        "volume_band": volume_band,
+        "volatility_band": volatility_band,
+        "momentum_band": momentum_band,
+        "entry_price": round(entry_price, 4),
+        "avg_pre_entry_volume": round(avg_pre_entry_volume, 0),
+        "avg_range_pct": round(avg_range_pct, 2),
+        "pre_entry_change_pct": round(pre_entry_change_pct, 2),
+        "trade_range_pct": round(trade_range_pct, 2),
+        "avg_trade_count": round(avg_trade_count, 0),
+        "duration_secs": duration_secs,
+        "bar_count": len(active_bars),
+    }
+
+
+def _apply_trade_coach_regime_profiles(
+    reviews: list[dict[str, Any]],
+    regime_profiles: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if not regime_profiles:
+        return list(reviews)
+    enriched: list[dict[str, Any]] = []
+    for item in reviews:
+        review = dict(item)
+        cycle_key = str(review.get("cycle_key", "") or "")
+        review["regime_profile"] = dict(regime_profiles.get(cycle_key, {}) or {})
+        enriched.append(review)
+    return enriched
+
+
 def _filter_trade_coach_reviews(
     reviews: list[dict[str, Any]],
     *,
@@ -6007,6 +6215,15 @@ def _trade_coach_history_summary(reviews: list[dict[str, Any]]) -> dict[str, Any
     }
 
 
+def _trade_coach_similarity_summary(reviews: list[dict[str, Any]]) -> dict[str, Any]:
+    summary = _trade_coach_history_summary(reviews)
+    similarity_scores = [int(item.get("regime_similarity_score", 0) or 0) for item in reviews]
+    summary["avg_similarity_score"] = (
+        sum(similarity_scores) / len(similarity_scores) if similarity_scores else 0.0
+    )
+    return summary
+
+
 def _trade_coach_related_reviews(
     review: dict[str, Any],
     all_reviews: list[dict[str, Any]],
@@ -6039,18 +6256,134 @@ def _trade_coach_related_reviews(
     )[:limit]
 
 
-def _build_trade_coach_related_rows(reviews: list[dict[str, Any]]) -> str:
+def _trade_coach_regime_similarity(
+    target_review: dict[str, Any],
+    candidate_review: dict[str, Any],
+) -> dict[str, Any]:
+    target = dict(target_review.get("regime_profile", {}) or {})
+    candidate = dict(candidate_review.get("regime_profile", {}) or {})
+    if not target or not candidate:
+        return {"score": 0, "label": "low", "reasons": []}
+
+    score = 0
+    reasons: list[str] = []
+    for key, weight, label in (
+        ("price_band", 24, "price band"),
+        ("volume_band", 22, "volume regime"),
+        ("volatility_band", 22, "volatility regime"),
+        ("momentum_band", 18, "pre-entry momentum"),
+    ):
+        value = str(target.get(key, "") or "")
+        candidate_value = str(candidate.get(key, "") or "")
+        if value and value == candidate_value:
+            score += weight
+            reasons.append(f"same {label}")
+
+    if str(target_review.get("path", "") or "") and str(target_review.get("path", "") or "") == str(candidate_review.get("path", "") or ""):
+        score += 10
+        reasons.append("same path")
+
+    target_entry_price = max(_as_float(target.get("entry_price")), 0.01)
+    candidate_entry_price = max(_as_float(candidate.get("entry_price")), 0.01)
+    price_gap_pct = abs(candidate_entry_price - target_entry_price) / target_entry_price * 100.0
+    if price_gap_pct <= 10:
+        score += 10
+        reasons.append("entry price within 10%")
+    elif price_gap_pct <= 25:
+        score += 6
+        reasons.append("entry price within 25%")
+
+    target_volume = max(_as_float(target.get("avg_pre_entry_volume")), 0.0)
+    candidate_volume = max(_as_float(candidate.get("avg_pre_entry_volume")), 0.0)
+    if target_volume > 0 and candidate_volume > 0:
+        volume_ratio = max(target_volume, candidate_volume) / max(min(target_volume, candidate_volume), 1.0)
+        if volume_ratio <= 1.5:
+            score += 8
+            reasons.append("similar pre-entry volume")
+        elif volume_ratio <= 2.5:
+            score += 4
+
+    target_range = _as_float(target.get("avg_range_pct"))
+    candidate_range = _as_float(candidate.get("avg_range_pct"))
+    range_gap = abs(target_range - candidate_range)
+    if range_gap <= 1.0:
+        score += 8
+        reasons.append("similar bar range")
+    elif range_gap <= 2.5:
+        score += 4
+
+    label = "high" if score >= 72 else "medium" if score >= 48 else "low"
+    return {"score": score, "label": label, "reasons": reasons[:4]}
+
+
+def _trade_coach_similar_regime_reviews(
+    review: dict[str, Any],
+    all_reviews: list[dict[str, Any]],
+    *,
+    limit: int = 5,
+) -> list[dict[str, Any]]:
+    cycle_key = str(review.get("cycle_key", "") or "")
+    strategy_code = str(review.get("strategy_code", "") or "")
+    account_name = str(review.get("broker_account_name", "") or "")
+    related: list[dict[str, Any]] = []
+    for item in all_reviews:
+        if str(item.get("cycle_key", "") or "") == cycle_key:
+            continue
+        if str(item.get("strategy_code", "") or "") != strategy_code:
+            continue
+        if str(item.get("broker_account_name", "") or "") != account_name:
+            continue
+        similarity = _trade_coach_regime_similarity(review, item)
+        if int(similarity["score"]) < 48:
+            continue
+        related.append(
+            {
+                **item,
+                "regime_similarity_score": int(similarity["score"]),
+                "regime_similarity_label": str(similarity["label"]),
+                "regime_similarity_reasons": list(similarity["reasons"]),
+            }
+        )
+    return sorted(
+        related,
+        key=lambda row: (
+            int(row.get("regime_similarity_score", 0)),
+            _parse_et_timestamp(str(row.get("created_at", "") or "")),
+        ),
+        reverse=True,
+    )[:limit]
+
+
+def _build_trade_coach_related_rows(
+    reviews: list[dict[str, Any]],
+    *,
+    include_similarity: bool = False,
+    include_profile: bool = False,
+) -> str:
     if not reviews:
-        return '<tr><td colspan="5" style="text-align:center;color:#888;">No similar reviewed trades yet</td></tr>'
+        colspan = 5 + (1 if include_similarity else 0) + (1 if include_profile else 0)
+        return f'<tr><td colspan="{colspan}" style="text-align:center;color:#888;">No similar reviewed trades yet</td></tr>'
     rendered: list[str] = []
     for item in reviews:
         review_url = f'/coach/review?cycle_key={quote(str(item.get("cycle_key", "") or ""))}'
+        similarity_html = ""
+        if include_similarity:
+            similarity_html = (
+                f'<td>{int(item.get("regime_similarity_score", 0))}'
+                f' <span style="color:#98a6c8;">({escape(str(item.get("regime_similarity_label", "") or "-"))})</span></td>'
+            )
+        profile_html = ""
+        if include_profile:
+            regime = dict(item.get("regime_profile", {}) or {})
+            profile_html = f'<td>{escape(str(regime.get("label", "") or "-"))}</td>'
         rendered.append(
             f"""<tr>
             <td style="white-space:nowrap;">{escape(str(item.get("created_at", "")) or "-")}</td>
             <td><strong>{escape(str(item.get("symbol", "")) or "-")}</strong></td>
             <td>{escape(str(item.get("path", "")) or "-")}</td>
             <td style="color:{_trade_coach_verdict_color(str(item.get("verdict", "")))};">{escape(str(item.get("verdict", "")) or "-")}</td>
+            {similarity_html}
+            {profile_html}
             <td><a href="{escape(review_url)}" style="color:#59d7ff;text-decoration:none;">Open</a></td>
         </tr>"""
         )
@@ -6182,10 +6515,14 @@ def _render_trade_coach_review_detail(
     *,
     review_history: list[dict[str, Any]],
     cycle_key: str,
+    regime_profiles: dict[str, dict[str, Any]] | None = None,
 ) -> str:
-    all_reviews = _enrich_trade_coach_reviews(
-        review_history,
-        list(data.get("bots", [])),
+    all_reviews = _apply_trade_coach_regime_profiles(
+        _enrich_trade_coach_reviews(
+            review_history,
+            list(data.get("bots", [])),
+        ),
+        regime_profiles or {},
     )
     review = _find_trade_coach_review(all_reviews, cycle_key)
     available_codes = [str(item.get("strategy_code", "") or "") for item in data.get("bots", [])]
@@ -6202,16 +6539,24 @@ def _render_trade_coach_review_detail(
     priority = _trade_coach_review_priority(review)
     same_path_reviews = _trade_coach_related_reviews(review, all_reviews, mode="path")
     same_symbol_reviews = _trade_coach_related_reviews(review, all_reviews, mode="symbol")
+    similar_regime_reviews = _trade_coach_similar_regime_reviews(review, all_reviews)
     same_path_summary = _trade_coach_history_summary(same_path_reviews)
     same_symbol_summary = _trade_coach_history_summary(same_symbol_reviews)
+    similar_regime_summary = _trade_coach_similarity_summary(similar_regime_reviews)
     same_path_rows = _build_trade_coach_related_rows(same_path_reviews)
     same_symbol_rows = _build_trade_coach_related_rows(same_symbol_reviews)
+    similar_regime_rows = _build_trade_coach_related_rows(
+        similar_regime_reviews,
+        include_similarity=True,
+        include_profile=True,
+    )
     verdict = str(review.get("verdict", "") or "-").lower()
     action = str(review.get("action", "") or "-").lower()
     focus = str(review.get("coaching_focus", "") or "-").replace("_", " ")
     entry_time = str(review.get("entry_time", "") or "-")
     exit_time = str(review.get("exit_time", "") or "-")
     exit_summary = str(review.get("exit_summary", "") or "-")
+    regime_profile = dict(review.get("regime_profile", {}) or {})
     pnl = _as_float(review.get("pnl"))
     pnl_pct = _as_float(review.get("pnl_pct"))
     key_reasons = _render_chip_cloud(list(review.get("key_reasons", []) or []), variant="accent", empty_text="None")
@@ -6300,12 +6645,14 @@ def _render_trade_coach_review_detail(
         </section>
         <section class="panel">
             <div class="panel-header"><h2>Pattern Memory</h2></div>
-            <div class="sub">This is the bridge toward live usefulness: compare this trade against recent reviewed trades with the same path and the same symbol.</div>
+            <div class="sub">This is the bridge toward live usefulness: compare this trade against same-path history, same-symbol history, and similar historical regimes built from price, volume, volatility, and momentum context.</div>
             <div class="hero-grid" style="margin-top:14px;">
                 <div class="hero-card"><span>Same Path Count</span><strong>{same_path_summary["count"]}</strong><small style="display:block;color:#98a6c8;margin-top:8px;">avg P&amp;L {same_path_summary["avg_pnl_pct"]:+.1f}%</small></div>
                 <div class="hero-card"><span>Same Path Mix</span><strong style="font-size:16px;">G {same_path_summary["good"]} · M {same_path_summary["mixed"]} · B {same_path_summary["bad"]}</strong><small style="display:block;color:#98a6c8;margin-top:8px;">Path {escape(str(review.get("path", "")) or "-")}</small></div>
                 <div class="hero-card"><span>Same Symbol Count</span><strong>{same_symbol_summary["count"]}</strong><small style="display:block;color:#98a6c8;margin-top:8px;">avg P&amp;L {same_symbol_summary["avg_pnl_pct"]:+.1f}%</small></div>
                 <div class="hero-card"><span>Same Symbol Mix</span><strong style="font-size:16px;">G {same_symbol_summary["good"]} · M {same_symbol_summary["mixed"]} · B {same_symbol_summary["bad"]}</strong><small style="display:block;color:#98a6c8;margin-top:8px;">Symbol {escape(str(review.get("symbol", "")) or "-")}</small></div>
+                <div class="hero-card"><span>Regime Profile</span><strong style="font-size:16px;">{escape(str(regime_profile.get("label", "")) or "-")}</strong><small style="display:block;color:#98a6c8;margin-top:8px;">price {escape(str(regime_profile.get("price_band", "")) or "-")} &middot; volume {escape(str(regime_profile.get("volume_band", "")) or "-")}</small></div>
+                <div class="hero-card"><span>Similar Regime Count</span><strong>{similar_regime_summary["count"]}</strong><small style="display:block;color:#98a6c8;margin-top:8px;">avg similarity {similar_regime_summary["avg_similarity_score"]:.0f} &middot; avg P&amp;L {similar_regime_summary["avg_pnl_pct"]:+.1f}%</small></div>
             </div>
             <div class="section-grid" style="margin-top:14px;">
                 <div class="fact">
@@ -6320,6 +6667,17 @@ def _render_trade_coach_review_detail(
                     </div>
                 </div>
                 <div class="fact">
+                    <div class="label">Recent Similar-Regime Reviews</div>
+                    <div class="value">
+                        <div style="overflow-x:auto;border:1px solid var(--line);border-radius:12px;">
+                            <table style="width:100%;border-collapse:collapse;min-width:640px;">
+                                <thead><tr><th style="padding:10px 12px;text-align:left;border-bottom:1px solid var(--line);">Reviewed</th><th style="padding:10px 12px;text-align:left;border-bottom:1px solid var(--line);">Ticker</th><th style="padding:10px 12px;text-align:left;border-bottom:1px solid var(--line);">Path</th><th style="padding:10px 12px;text-align:left;border-bottom:1px solid var(--line);">Verdict</th><th style="padding:10px 12px;text-align:left;border-bottom:1px solid var(--line);">Similarity</th><th style="padding:10px 12px;text-align:left;border-bottom:1px solid var(--line);">Profile</th><th style="padding:10px 12px;text-align:left;border-bottom:1px solid var(--line);">Open</th></tr></thead>
+                                <tbody>{similar_regime_rows}</tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+                <div class="fact">
                     <div class="label">Recent Same-Symbol Reviews</div>
                     <div class="value">
                         <div style="overflow-x:auto;border:1px solid var(--line);border-radius:12px;">
@@ -6328,6 +6686,17 @@ def _render_trade_coach_review_detail(
                                 <tbody>{same_symbol_rows}</tbody>
                             </table>
                         </div>
+                    </div>
+                </div>
+                <div class="fact">
+                    <div class="label">Regime Metrics</div>
+                    <div class="value">
+                        <div class="pill-chip accent">Pre-entry volume {int(regime_profile.get("avg_pre_entry_volume", 0) or 0):,}</div>
+                        <div class="pill-chip accent">Avg bar range {float(regime_profile.get("avg_range_pct", 0.0) or 0.0):.2f}%</div>
+                        <div class="pill-chip accent">Pre-entry change {float(regime_profile.get("pre_entry_change_pct", 0.0) or 0.0):+.2f}%</div>
+                        <div class="pill-chip accent">Trade range {float(regime_profile.get("trade_range_pct", 0.0) or 0.0):.2f}%</div>
+                        <div class="pill-chip accent">Duration {int(regime_profile.get("duration_secs", 0) or 0)}s</div>
+                        <div class="pill-chip accent">Bars sampled {int(regime_profile.get("bar_count", 0) or 0)}</div>
                     </div>
                 </div>
             </div>
