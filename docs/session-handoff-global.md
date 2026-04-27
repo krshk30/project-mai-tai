@@ -122,6 +122,49 @@ Validation completed:
 - focused control-plane suite result for this phase:
   - `28 passed`
 
+### 2026-04-27 Trade Coach Pattern Memory (Review Context Phase)
+
+Current state:
+
+- local `main` now adds a first pattern-memory layer on top of the review drilldown
+- still control-plane only:
+  - no strategy-engine changes
+  - no OMS changes
+  - no trade-coach prompt/schema changes
+- goal of this phase:
+  - start connecting reviews to prior similar reviewed trades
+  - move the coach closer to “we have seen this kind of setup before”
+
+What was added:
+
+- single-review API now also returns:
+  - `same_path_summary`
+  - `same_symbol_summary`
+  - `recent_same_path_reviews`
+  - `recent_same_symbol_reviews`
+- single-review drilldown page now includes:
+  - `Pattern Memory`
+  - same-path count, verdict mix, and average P&L %
+  - same-symbol count, verdict mix, and average P&L %
+  - recent same-path review links
+  - recent same-symbol review links
+
+Intent of this phase:
+
+- this is the first UI layer that starts to answer:
+  - “how have similar reviewed path setups behaved lately?”
+  - “how has this symbol behaved lately under reviewed trades?”
+- it is still descriptive, not predictive
+- it does not block live trading or alter order flow
+
+Validation completed:
+
+- passed:
+  - `.venv\Scripts\python.exe -m pytest tests/unit/test_control_plane.py -q`
+  - `.venv\Scripts\python.exe -m py_compile src/project_mai_tai/services/control_plane.py tests/unit/test_control_plane.py`
+- focused control-plane suite result for this phase:
+  - `28 passed`
+
 ## 2026-04-24 Trade Coach Foundation (Merged To Main, Deployed Disabled)
 
 Merged PR:

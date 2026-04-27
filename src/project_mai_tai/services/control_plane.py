@@ -2675,10 +2675,16 @@ def build_app(
         review = _find_trade_coach_review(all_reviews, cycle_key)
         if review is None:
             return {"found": False, "cycle_key": cycle_key}
+        same_path_reviews = _trade_coach_related_reviews(review, all_reviews, mode="path")
+        same_symbol_reviews = _trade_coach_related_reviews(review, all_reviews, mode="symbol")
         return {
             "found": True,
             "review": review,
             "priority": _trade_coach_review_priority(review),
+            "same_path_summary": _trade_coach_history_summary(same_path_reviews),
+            "same_symbol_summary": _trade_coach_history_summary(same_symbol_reviews),
+            "recent_same_path_reviews": same_path_reviews,
+            "recent_same_symbol_reviews": same_symbol_reviews,
         }
 
     @app.get("/api/orders")
@@ -5917,6 +5923,68 @@ def _build_trade_coach_review_queue(reviews: list[dict[str, Any]]) -> list[dict[
     )
 
 
+def _trade_coach_history_summary(reviews: list[dict[str, Any]]) -> dict[str, Any]:
+    pnl_values = [_as_float(item.get("pnl_pct")) for item in reviews]
+    pnl_values = [value for value in pnl_values if value != 0.0 or any(item.get("pnl_pct") == 0 for item in reviews)]
+    return {
+        "count": len(reviews),
+        "good": sum(1 for item in reviews if str(item.get("verdict", "") or "").strip().lower() == "good"),
+        "mixed": sum(1 for item in reviews if str(item.get("verdict", "") or "").strip().lower() == "mixed"),
+        "bad": sum(1 for item in reviews if str(item.get("verdict", "") or "").strip().lower() == "bad"),
+        "avg_pnl_pct": (sum(_as_float(item.get("pnl_pct")) for item in reviews) / len(reviews)) if reviews else 0.0,
+    }
+
+
+def _trade_coach_related_reviews(
+    review: dict[str, Any],
+    all_reviews: list[dict[str, Any]],
+    *,
+    mode: str,
+    limit: int = 5,
+) -> list[dict[str, Any]]:
+    cycle_key = str(review.get("cycle_key", "") or "")
+    strategy_code = str(review.get("strategy_code", "") or "")
+    account_name = str(review.get("broker_account_name", "") or "")
+    symbol = str(review.get("symbol", "") or "")
+    path = str(review.get("path", "") or "")
+    related: list[dict[str, Any]] = []
+    for item in all_reviews:
+        if str(item.get("cycle_key", "") or "") == cycle_key:
+            continue
+        if str(item.get("strategy_code", "") or "") != strategy_code:
+            continue
+        if str(item.get("broker_account_name", "") or "") != account_name:
+            continue
+        if mode == "path" and path and str(item.get("path", "") or "") != path:
+            continue
+        if mode == "symbol" and symbol and str(item.get("symbol", "") or "") != symbol:
+            continue
+        related.append(item)
+    return sorted(
+        related,
+        key=lambda row: _parse_et_timestamp(str(row.get("created_at", "") or "")),
+        reverse=True,
+    )[:limit]
+
+
+def _build_trade_coach_related_rows(reviews: list[dict[str, Any]]) -> str:
+    if not reviews:
+        return '<tr><td colspan="5" style="text-align:center;color:#888;">No similar reviewed trades yet</td></tr>'
+    rendered: list[str] = []
+    for item in reviews:
+        review_url = f'/coach/review?cycle_key={quote(str(item.get("cycle_key", "") or ""))}'
+        rendered.append(
+            f"""<tr>
+            <td style="white-space:nowrap;">{escape(str(item.get("created_at", "")) or "-")}</td>
+            <td><strong>{escape(str(item.get("symbol", "")) or "-")}</strong></td>
+            <td>{escape(str(item.get("path", "")) or "-")}</td>
+            <td style="color:{_trade_coach_verdict_color(str(item.get("verdict", "")))};">{escape(str(item.get("verdict", "")) or "-")}</td>
+            <td><a href="{escape(review_url)}" style="color:#59d7ff;text-decoration:none;">Open</a></td>
+        </tr>"""
+        )
+    return "".join(rendered)
+
+
 def _build_trade_coach_review_rows(recent_reviews: list[dict[str, Any]]) -> tuple[str, int]:
     if not recent_reviews:
         return (
@@ -6055,6 +6123,12 @@ def _render_trade_coach_review_detail(data: dict[str, Any], *, cycle_key: str) -
 </body></html>"""
 
     priority = _trade_coach_review_priority(review)
+    same_path_reviews = _trade_coach_related_reviews(review, all_reviews, mode="path")
+    same_symbol_reviews = _trade_coach_related_reviews(review, all_reviews, mode="symbol")
+    same_path_summary = _trade_coach_history_summary(same_path_reviews)
+    same_symbol_summary = _trade_coach_history_summary(same_symbol_reviews)
+    same_path_rows = _build_trade_coach_related_rows(same_path_reviews)
+    same_symbol_rows = _build_trade_coach_related_rows(same_symbol_reviews)
     verdict = str(review.get("verdict", "") or "-").lower()
     action = str(review.get("action", "") or "-").lower()
     focus = str(review.get("coaching_focus", "") or "-").replace("_", " ")
@@ -6145,6 +6219,40 @@ def _render_trade_coach_review_detail(data: dict[str, Any], *, cycle_key: str) -
                 <div class="fact"><div class="label">Rule Violations</div><div class="value">{rule_violations}</div></div>
                 <div class="fact"><div class="label">Next Time</div><div class="value">{next_time}</div></div>
                 <div class="fact"><div class="label">Quality Scores</div><div class="value">setup {_as_float(review.get("setup_quality")):.2f} · execution {_as_float(review.get("execution_quality")):.2f} · outcome {_as_float(review.get("outcome_quality")):.2f}</div></div>
+            </div>
+        </section>
+        <section class="panel">
+            <div class="panel-header"><h2>Pattern Memory</h2></div>
+            <div class="sub">This is the bridge toward live usefulness: compare this trade against recent reviewed trades with the same path and the same symbol.</div>
+            <div class="hero-grid" style="margin-top:14px;">
+                <div class="hero-card"><span>Same Path Count</span><strong>{same_path_summary["count"]}</strong><small style="display:block;color:#98a6c8;margin-top:8px;">avg P&amp;L {same_path_summary["avg_pnl_pct"]:+.1f}%</small></div>
+                <div class="hero-card"><span>Same Path Mix</span><strong style="font-size:16px;">G {same_path_summary["good"]} · M {same_path_summary["mixed"]} · B {same_path_summary["bad"]}</strong><small style="display:block;color:#98a6c8;margin-top:8px;">Path {escape(str(review.get("path", "")) or "-")}</small></div>
+                <div class="hero-card"><span>Same Symbol Count</span><strong>{same_symbol_summary["count"]}</strong><small style="display:block;color:#98a6c8;margin-top:8px;">avg P&amp;L {same_symbol_summary["avg_pnl_pct"]:+.1f}%</small></div>
+                <div class="hero-card"><span>Same Symbol Mix</span><strong style="font-size:16px;">G {same_symbol_summary["good"]} · M {same_symbol_summary["mixed"]} · B {same_symbol_summary["bad"]}</strong><small style="display:block;color:#98a6c8;margin-top:8px;">Symbol {escape(str(review.get("symbol", "")) or "-")}</small></div>
+            </div>
+            <div class="section-grid" style="margin-top:14px;">
+                <div class="fact">
+                    <div class="label">Recent Same-Path Reviews</div>
+                    <div class="value">
+                        <div style="overflow-x:auto;border:1px solid var(--line);border-radius:12px;">
+                            <table style="width:100%;border-collapse:collapse;min-width:420px;">
+                                <thead><tr><th style="padding:10px 12px;text-align:left;border-bottom:1px solid var(--line);">Reviewed</th><th style="padding:10px 12px;text-align:left;border-bottom:1px solid var(--line);">Ticker</th><th style="padding:10px 12px;text-align:left;border-bottom:1px solid var(--line);">Path</th><th style="padding:10px 12px;text-align:left;border-bottom:1px solid var(--line);">Verdict</th><th style="padding:10px 12px;text-align:left;border-bottom:1px solid var(--line);">Open</th></tr></thead>
+                                <tbody>{same_path_rows}</tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+                <div class="fact">
+                    <div class="label">Recent Same-Symbol Reviews</div>
+                    <div class="value">
+                        <div style="overflow-x:auto;border:1px solid var(--line);border-radius:12px;">
+                            <table style="width:100%;border-collapse:collapse;min-width:420px;">
+                                <thead><tr><th style="padding:10px 12px;text-align:left;border-bottom:1px solid var(--line);">Reviewed</th><th style="padding:10px 12px;text-align:left;border-bottom:1px solid var(--line);">Ticker</th><th style="padding:10px 12px;text-align:left;border-bottom:1px solid var(--line);">Path</th><th style="padding:10px 12px;text-align:left;border-bottom:1px solid var(--line);">Verdict</th><th style="padding:10px 12px;text-align:left;border-bottom:1px solid var(--line);">Open</th></tr></thead>
+                                <tbody>{same_symbol_rows}</tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
             </div>
         </section>
     </div>

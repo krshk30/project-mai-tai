@@ -1305,6 +1305,7 @@ def test_trade_coach_review_center_and_api_filters() -> None:
     )
 
     with TestClient(app) as client:
+        cycle_key = "macd_30s|paper:macd_30s|UGRO|2026-03-28 10:00:00 AM ET|2026-03-28 10:05:00 AM ET"
         response = client.get("/api/coach-reviews?strategy_code=macd_30s&verdict=good&coaching_focus=execution")
         assert response.status_code == 200
         payload = response.json()
@@ -1314,6 +1315,14 @@ def test_trade_coach_review_center_and_api_filters() -> None:
         assert payload["reviews"][0]["symbol"] == "UGRO"
         assert payload["reviews"][0]["coaching_focus"] == "execution"
         assert payload["review_queue"][0]["symbol"] == "UGRO"
+
+        detail_api = client.get(f"/api/coach-review?cycle_key={quote(cycle_key)}")
+        assert detail_api.status_code == 200
+        detail_payload = detail_api.json()
+        assert detail_payload["found"] is True
+        assert detail_payload["review"]["symbol"] == "UGRO"
+        assert detail_payload["same_path_summary"]["count"] == 0
+        assert detail_payload["same_symbol_summary"]["count"] == 0
 
         page = client.get("/coach/reviews?strategy_code=macd_30s")
         assert page.status_code == 200
@@ -1326,12 +1335,13 @@ def test_trade_coach_review_center_and_api_filters() -> None:
         assert "open review" in page.text.lower()
         assert "JSON API" in page.text
 
-        cycle_key = "macd_30s|paper:macd_30s|UGRO|2026-03-28 10:00:00 AM ET|2026-03-28 10:05:00 AM ET"
         detail = client.get(f"/coach/review?cycle_key={quote(cycle_key)}")
         assert detail.status_code == 200
         assert "UGRO Review Detail" in detail.text
         assert "Trade Facts" in detail.text
         assert "Coach Summary" in detail.text
+        assert "Pattern Memory" in detail.text
+        assert "No similar reviewed trades yet" in detail.text
         assert "Back to review center" in detail.text
 
 
