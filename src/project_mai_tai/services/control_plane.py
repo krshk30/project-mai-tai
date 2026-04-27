@@ -408,6 +408,42 @@ class ControlPlaneRepository:
 
         return profiles
 
+    def load_live_trade_coach_regime_profiles(
+        self,
+        *,
+        strategy_code: str,
+        symbols: list[str],
+        interval_secs: int,
+        bars_per_symbol: int = 14,
+    ) -> dict[str, dict[str, Any]]:
+        normalized_symbols = sorted({str(symbol or "").strip().upper() for symbol in symbols if str(symbol or "").strip()})
+        if not normalized_symbols:
+            return {}
+
+        profiles: dict[str, dict[str, Any]] = {}
+        with self.session_factory() as session:
+            for symbol in normalized_symbols:
+                bars_desc = list(
+                    session.scalars(
+                        select(StrategyBarHistory)
+                        .where(StrategyBarHistory.strategy_code == strategy_code)
+                        .where(StrategyBarHistory.symbol == symbol)
+                        .where(StrategyBarHistory.interval_secs == interval_secs)
+                        .order_by(desc(StrategyBarHistory.bar_time))
+                        .limit(max(4, bars_per_symbol))
+                    ).all()
+                )
+                if not bars_desc:
+                    continue
+                profile = _build_live_trade_coach_regime_profile(
+                    symbol=symbol,
+                    bars=list(reversed(bars_desc)),
+                    interval_secs=interval_secs,
+                )
+                if profile:
+                    profiles[symbol] = profile
+        return profiles
+
     def _incident_symbol(self, title: str | None, payload: dict[str, Any] | None) -> str:
         data = payload if isinstance(payload, dict) else {}
         direct_symbol = str(data.get("symbol") or data.get("ticker") or "").strip().upper()
@@ -4393,9 +4429,12 @@ def _build_bot_listening_status(
             detail = f"{market_data_source} data health is degraded."
         color = "#ff6b6b"
     elif service_status in {"stopping", "stopped", "inactive"} or service_raw_status in {"stopping", "stopped", "inactive"}:
-        state = "STOPPED"
-        detail = "Strategy engine is not running."
-        color = "#ff6b6b"
+        if has_fresh_bot_activity:
+            detail = "Bot activity is fresh; strategy service status snapshot is lagging."
+        else:
+            state = "STOPPED"
+            detail = "Strategy engine is not running."
+            color = "#ff6b6b"
     elif active_session and market_data_age_seconds is not None and market_data_age_seconds > 90:
         state = "STALE"
         detail = "Market data feed looks stale."
@@ -6148,6 +6187,74 @@ def _apply_trade_coach_regime_profiles(
         review["regime_profile"] = dict(regime_profiles.get(cycle_key, {}) or {})
         enriched.append(review)
     return enriched
+
+
+def _build_live_trade_coach_regime_profile(
+    *,
+    symbol: str,
+    bars: list[StrategyBarHistory],
+    interval_secs: int,
+) -> dict[str, Any]:
+    if not bars:
+        return {}
+    normalized_bars: list[StrategyBarHistory] = []
+    for bar in bars:
+        if bar.bar_time.tzinfo is None:
+            bar.bar_time = bar.bar_time.replace(tzinfo=UTC)
+        normalized_bars.append(bar)
+    active_bars = normalized_bars[-min(len(normalized_bars), 6) :]
+    if not active_bars:
+        return {}
+    lead_bars = normalized_bars[: -len(active_bars)][-10:] if len(normalized_bars) > len(active_bars) else []
+    reference_bar = active_bars[0]
+    entry_price = max(_as_float(reference_bar.open_price or reference_bar.close_price), 0.01)
+    lead_source = lead_bars or active_bars
+    avg_pre_entry_volume = (
+        sum(max(int(bar.volume or 0), 0) for bar in lead_source) / len(lead_source) if lead_source else 0.0
+    )
+    avg_range_pct = (
+        sum(
+            ((_as_float(bar.high_price) - _as_float(bar.low_price)) / max(_as_float(bar.open_price), 0.01)) * 100.0
+            for bar in active_bars
+        )
+        / len(active_bars)
+        if active_bars
+        else 0.0
+    )
+    first_reference_bar = lead_source[0]
+    first_reference_price = max(_as_float(first_reference_bar.open_price), 0.01)
+    latest_pretrade_bar = lead_bars[-1] if lead_bars else active_bars[0]
+    pre_entry_change_pct = (
+        (_as_float(latest_pretrade_bar.close_price) - first_reference_price) / first_reference_price
+    ) * 100.0
+    high_water = max(_as_float(bar.high_price) for bar in active_bars)
+    low_water = min(_as_float(bar.low_price) for bar in active_bars)
+    trade_range_pct = ((high_water - low_water) / max(entry_price, 0.01)) * 100.0
+    avg_trade_count = (
+        sum(max(int(bar.trade_count or 0), 0) for bar in active_bars) / len(active_bars) if active_bars else 0.0
+    )
+    duration_secs = max(int(interval_secs * len(active_bars)), 0)
+    price_band = _trade_coach_price_band(entry_price)
+    volume_band = _trade_coach_volume_band(avg_pre_entry_volume)
+    volatility_band = _trade_coach_volatility_band(avg_range_pct)
+    momentum_band = _trade_coach_momentum_band(pre_entry_change_pct)
+    return {
+        "symbol": symbol,
+        "label": f"{price_band} price | {volume_band} volume | {volatility_band} volatility | {momentum_band} momentum",
+        "price_band": price_band,
+        "volume_band": volume_band,
+        "volatility_band": volatility_band,
+        "momentum_band": momentum_band,
+        "entry_price": round(entry_price, 4),
+        "avg_pre_entry_volume": round(avg_pre_entry_volume, 0),
+        "avg_range_pct": round(avg_range_pct, 2),
+        "pre_entry_change_pct": round(pre_entry_change_pct, 2),
+        "trade_range_pct": round(trade_range_pct, 2),
+        "avg_trade_count": round(avg_trade_count, 0),
+        "duration_secs": duration_secs,
+        "bar_count": len(active_bars),
+        "last_bar_at": _datetime_str(active_bars[-1].bar_time),
+    }
 
 
 def _filter_trade_coach_reviews(
