@@ -4438,7 +4438,7 @@ def _build_bot_listening_status(
         or (indicator_age_seconds is not None and indicator_age_seconds <= 120)
     )
 
-    if data_health_status in {"critical", "degraded", "error"}:
+    if data_health_status in {"critical", "error"}:
         state = "DATA HALT"
         if halted_symbols:
             if representative_reason:
@@ -4452,6 +4452,18 @@ def _build_bot_listening_status(
         else:
             detail = f"{market_data_source} data health is degraded."
         color = "#ff6b6b"
+    elif data_health_status == "degraded":
+        state = "DEGRADED"
+        if halted_symbols:
+            if representative_reason:
+                detail = representative_reason
+            else:
+                detail = (
+                    f"{market_data_source} data is quiet on some flat symbols; entries on those names stay blocked until ticks recover."
+                )
+        else:
+            detail = f"{market_data_source} data health is degraded."
+        color = "#ffcc5b"
     elif service_status in {"stopping", "stopped", "inactive"} or service_raw_status in {"stopping", "stopped", "inactive"}:
         if has_fresh_bot_activity:
             detail = "Bot activity is fresh; strategy service status snapshot is lagging."
@@ -5111,10 +5123,18 @@ def _render_bot_detail_page(
     data_health_since = dict(data_health.get("since", {}) or {})
     market_data_source = ControlPlaneRepository._market_data_source_label(str(bot.get("provider", "") or ""))
     data_health_card_label = f"{market_data_source} Data Health"
-    data_health_panel_title = f"{market_data_source} Data Halt"
+    data_health_panel_title = (
+        f"{market_data_source} Data Warning"
+        if data_health_status == "degraded"
+        else f"{market_data_source} Data Halt"
+    )
     quote_source_label = f"{market_data_source} quotes"
     data_health_detail = f"{market_data_source} data path healthy."
-    data_health_color = "#ff6b6b" if data_health_status != "healthy" else "#5fff8d"
+    data_health_color = (
+        "#ff6b6b"
+        if data_health_status in {"critical", "error"}
+        else "#ffcc5b" if data_health_status == "degraded" else "#5fff8d"
+    )
     if halted_symbols:
         reason_parts = [
             f"{symbol}: {data_health_reasons.get(symbol, f'{market_data_source} stream stale/disconnected')}"
@@ -5264,19 +5284,24 @@ def _render_bot_detail_page(
             f"{symbol} since {data_health_since.get(symbol, '-')}"
             for symbol in halted_symbols
         )
-        data_health_sub = (
-            f"Trading is blocked for halted symbols; any open positions are eligible for emergency close using {quote_source_label} only."
-            if listening_status["position_count"] > 0
-            else "Trading is blocked for halted symbols; there are no open positions currently exposed to the emergency-close path."
-        )
+        if data_health_status == "degraded":
+            data_health_sub = (
+                "Entries stay blocked only on the quiet flat symbols below while the overall stream remains up."
+            )
+        else:
+            data_health_sub = (
+                f"Trading is blocked for halted symbols; any open positions are eligible for emergency close using {quote_source_label} only."
+                if listening_status["position_count"] > 0
+                else "Trading is blocked for halted symbols; there are no open positions currently exposed to the emergency-close path."
+            )
         data_health_panel = f"""
-            <section class="panel full critical-panel">
+            <section class="panel full {"critical-panel" if data_health_status in {"critical", "error"} else "accent-panel"}">
                 <div class="panel-header">
                     <div>
                         <h2>{escape(data_health_panel_title)}</h2>
                         <div class="sub">{escape(data_health_sub)}</div>
                     </div>
-                    <span class="count danger">{escape(data_health_status.upper())}</span>
+                    <span class="count {"danger" if data_health_status in {"critical", "error"} else "accent"}">{escape(data_health_status.upper())}</span>
                 </div>
                 <div class="panel-copy"><strong>Symbols:</strong> {escape(", ".join(halted_symbols) or "-")}<br><strong>Since:</strong> {escape(halted_since or "-")}<br><strong>Reason:</strong> {escape(data_health_detail)}</div>
             </section>"""

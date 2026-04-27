@@ -397,9 +397,19 @@ class StrategyBotRuntime:
 
     def data_health_summary(self) -> dict[str, object]:
         halted_symbols = sorted(self.data_halt_symbols)
+        halted_open_position_symbols = sorted(
+            symbol
+            for symbol in halted_symbols
+            if self.positions.get_position(symbol) is not None
+        )
         return {
-            "status": "critical" if halted_symbols else "healthy",
+            "status": (
+                "critical"
+                if halted_open_position_symbols
+                else "degraded" if halted_symbols else "healthy"
+            ),
             "halted_symbols": halted_symbols,
+            "open_position_halted_symbols": halted_open_position_symbols,
             "reasons": dict(sorted(self.data_halt_symbols.items())),
             "since": {
                 symbol: _datetime_str(observed_at)
@@ -4850,6 +4860,21 @@ class StrategyEngineService:
             float(self.settings.schwab_stream_symbol_stale_after_seconds_without_position),
         )
 
+    def _schwab_symbol_resubscribe_interval_seconds(self, *, has_open_position: bool) -> float:
+        base_interval = max(
+            1.0,
+            float(self.settings.schwab_stream_symbol_resubscribe_interval_seconds),
+        )
+        if has_open_position:
+            return base_interval
+        return max(
+            base_interval,
+            min(
+                60.0,
+                self._schwab_data_halt_stale_after_seconds(has_open_position=False) / 2.0,
+            ),
+        )
+
     def _schwab_symbol_no_first_tick_grace_seconds(
         self,
         *,
@@ -4995,17 +5020,15 @@ class StrategyEngineService:
         if not stale_symbols:
             return 1 if state_changed else 0
 
-        resubscribe_interval = max(
-            1.0,
-            float(self.settings.schwab_stream_symbol_resubscribe_interval_seconds),
-        )
         if self._schwab_stream_client is not None:
             auth_failure = bool(self._schwab_stream_failure_reason())
             should_resubscribe = any(
                 (
                     now - self._schwab_symbol_last_resubscribe_at.get(symbol, datetime.min.replace(tzinfo=UTC))
                 ).total_seconds()
-                >= resubscribe_interval
+                >= self._schwab_symbol_resubscribe_interval_seconds(
+                    has_open_position=symbol in open_symbol_set
+                )
                 for symbol in stale_symbols
             )
             if should_resubscribe and not auth_failure:

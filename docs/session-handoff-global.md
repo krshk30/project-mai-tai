@@ -4360,3 +4360,69 @@ Notes:
 - this pushes the live coach closer to the end-state operator experience by
   linking the live caution back to actual reviewed trade memory
 
+## 2026-04-27 - Reduce flat-symbol Schwab health noise and downgrade non-position stale warnings
+
+Context:
+
+- operator keeps seeing frequent `DATA HALT` on the Schwab 30-second bot and
+  wants a more permanent fix instead of repeated reassurance
+- live measurement on the VPS showed the main recurring issue is not a full
+  Schwab outage; it is flat, thin symbols going quiet for about 90 seconds,
+  tripping the stale watchdog, forcing a resubscribe, then recovering on the
+  next quote
+- raw `strategy_bar_history` also showed a real restart-sized gap around
+  `04:03 PM ET -> 04:10 PM ET`, but after that restart the ongoing misses were
+  mostly single skipped 30-second bars on quiet names rather than a dead stream
+
+Fix applied:
+
+- updated `src/project_mai_tai/services/strategy_engine_app.py`
+  - runtime data health now reports:
+    - `critical` only when a halted symbol has an open position
+    - `degraded` when only flat symbols are quiet/stale
+  - added flat-symbol Schwab resubscribe backoff:
+    - open-position symbols still use the fast configured interval
+    - flat symbols now wait longer before another forced resubscribe
+      (`45s` with current defaults) instead of hammering every `5s`
+- updated `src/project_mai_tai/services/control_plane.py`
+  - bot listening status now shows `DEGRADED` instead of `DATA HALT` for
+    flat-symbol-only stale cases
+  - bot page data-health panel now renders those cases as a warning state
+    instead of the same critical halt copy used for open-position danger
+- updated:
+  - `tests/unit/test_schwab_1m_bot.py`
+  - `tests/unit/test_control_plane_listening_status.py`
+
+Validation:
+
+- `.venv\\Scripts\\python.exe -m py_compile src/project_mai_tai/services/strategy_engine_app.py src/project_mai_tai/services/control_plane.py tests/unit/test_schwab_1m_bot.py tests/unit/test_control_plane_listening_status.py`
+- `.venv\\Scripts\\python.exe -m pytest tests/unit/test_schwab_1m_bot.py tests/unit/test_control_plane_listening_status.py`
+  - `8 passed`
+
+Measured findings:
+
+- current `macd_30s` watchlist at measurement time:
+  - `CAST, ELPW, ENVB, GLND, KIDZ, OCG, PAPL, SGMT, UCAR, USEG, VS`
+- big day-total “missing bar” counts were inflated by:
+  - service restarts
+  - symbols entering/leaving tracking at different times
+- the real active-window view after the last restart was:
+  - `OCG`: `13` missing 30s decisions
+  - `KIDZ`: `5`
+  - `CAST/ENVB/VS`: `3` each
+  - `GLND`: `2`
+  - `ELPW/PAPL/SGMT/UCAR`: `1` each
+  - `USEG`: `0`
+- most ongoing misses after the restart were single `60s` holes, which lines up
+  with thin-symbol quiet periods and stale-watchdog churn rather than a dead
+  strategy engine
+
+Notes:
+
+- this does not remove protection for open positions
+- it is specifically meant to stop flat-symbol quiet tape from poisoning the
+  whole bot page and repeatedly triggering operator alarm
+- if frequent actual gaps continue after this, the next fix should be deeper:
+  per-symbol missing-bar telemetry in the UI and stronger separation between
+  “quiet tape” and “stream disconnected”
+
