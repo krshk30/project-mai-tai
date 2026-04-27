@@ -2727,12 +2727,17 @@ def build_app(
         range_start = _parse_review_filter_date(start_date) or default_start
         range_end_start = _parse_review_filter_date(end_date) or default_end
         range_end = range_end_start + timedelta(days=1) if (end_date or "").strip() else default_end
-        all_reviews = _enrich_trade_coach_reviews(
-            app.state.repository.load_trade_coach_review_history(
-                start=range_start,
-                end=range_end,
+        review_history = app.state.repository.load_trade_coach_review_history(
+            start=range_start,
+            end=range_end,
+        )
+        regime_profiles = app.state.repository.load_trade_coach_regime_profiles(review_history)
+        all_reviews = _apply_trade_coach_regime_profiles(
+            _enrich_trade_coach_reviews(
+                review_history,
+                data.get("bots", []),
             ),
-            data.get("bots", []),
+            regime_profiles,
         )
         filtered_reviews = _filter_trade_coach_reviews(
             all_reviews,
@@ -2741,6 +2746,9 @@ def build_app(
             coaching_focus=coaching_focus,
             symbol=symbol,
         )
+        pattern_signals = _trade_coach_pattern_signals(filtered_reviews)
+        path_patterns = _trade_coach_pattern_scoreboard(filtered_reviews, mode="path")
+        regime_patterns = _trade_coach_pattern_scoreboard(filtered_reviews, mode="regime")
         return {
             "count": len(filtered_reviews),
             "returned_count": min(len(filtered_reviews), 100),
@@ -2754,6 +2762,9 @@ def build_app(
             },
             "summary": _trade_coach_review_summary(filtered_reviews),
             "review_queue": _build_trade_coach_review_queue(filtered_reviews)[:10],
+            "pattern_signals": pattern_signals[:8],
+            "path_patterns": path_patterns[:8],
+            "regime_patterns": regime_patterns[:8],
             "available_filters": {
                 "strategies": [
                     {
@@ -3108,9 +3119,11 @@ def build_app(
             start=range_start,
             end=range_end,
         )
+        regime_profiles = app.state.repository.load_trade_coach_regime_profiles(review_history)
         return _render_trade_coach_review_center(
             data,
             review_history=review_history,
+            regime_profiles=regime_profiles,
             strategy_code=strategy_code,
             verdict=verdict,
             coaching_focus=coaching_focus,
@@ -6224,6 +6237,123 @@ def _trade_coach_similarity_summary(reviews: list[dict[str, Any]]) -> dict[str, 
     return summary
 
 
+def _trade_coach_pattern_key(review: dict[str, Any], *, mode: str) -> str:
+    if mode == "path":
+        return str(review.get("path", "") or "").strip() or "Unlabeled Path"
+    regime = dict(review.get("regime_profile", {}) or {})
+    return str(regime.get("label", "") or "").strip() or "Unknown Regime"
+
+
+def _trade_coach_pattern_type_label(mode: str) -> str:
+    return "path" if mode == "path" else "regime"
+
+
+def _trade_coach_pattern_scoreboard(
+    reviews: list[dict[str, Any]],
+    *,
+    mode: str,
+    limit: int = 8,
+) -> list[dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for item in reviews:
+        key = _trade_coach_pattern_key(item, mode=mode)
+        if not key or key == "Unknown Regime":
+            if mode == "regime":
+                continue
+        grouped.setdefault(key, []).append(item)
+
+    rows: list[dict[str, Any]] = []
+    for key, items in grouped.items():
+        summary = _trade_coach_history_summary(items)
+        avg_setup = sum(_as_float(entry.get("setup_quality")) for entry in items) / len(items)
+        avg_execution = sum(_as_float(entry.get("execution_quality")) for entry in items) / len(items)
+        avg_outcome = sum(_as_float(entry.get("outcome_quality")) for entry in items) / len(items)
+        manual_review_count = sum(1 for entry in items if bool(entry.get("should_review_manually")))
+        should_skip_count = sum(1 for entry in items if not bool(entry.get("should_have_traded", True)))
+        score = (
+            len(items) * 8
+            + max(0.0, -summary["avg_pnl_pct"]) * 4
+            + manual_review_count * 12
+            + should_skip_count * 20
+            + summary["bad"] * 16
+            + summary["mixed"] * 8
+        )
+        if avg_outcome < 0.55:
+            score += 18
+        if avg_execution < 0.72:
+            score += 12
+        caution_label = "high" if score >= 55 else "medium" if score >= 30 else "low"
+        rows.append(
+            {
+                "pattern_type": _trade_coach_pattern_type_label(mode),
+                "pattern_key": key,
+                "count": len(items),
+                "avg_pnl_pct": summary["avg_pnl_pct"],
+                "good": summary["good"],
+                "mixed": summary["mixed"],
+                "bad": summary["bad"],
+                "manual_review_count": manual_review_count,
+                "should_skip_count": should_skip_count,
+                "avg_setup_quality": avg_setup,
+                "avg_execution_quality": avg_execution,
+                "avg_outcome_quality": avg_outcome,
+                "caution_score": round(score, 1),
+                "caution_label": caution_label,
+            }
+        )
+
+    return sorted(
+        rows,
+        key=lambda row: (
+            float(row.get("caution_score", 0.0)),
+            int(row.get("count", 0)),
+        ),
+        reverse=True,
+    )[:limit]
+
+
+def _trade_coach_pattern_signals(reviews: list[dict[str, Any]], *, limit: int = 8) -> list[dict[str, Any]]:
+    path_patterns = _trade_coach_pattern_scoreboard(reviews, mode="path", limit=max(limit, 12))
+    regime_patterns = _trade_coach_pattern_scoreboard(reviews, mode="regime", limit=max(limit, 12))
+    signals: list[dict[str, Any]] = []
+    for item in path_patterns + regime_patterns:
+        reasons: list[str] = []
+        avg_pnl_pct = float(item.get("avg_pnl_pct", 0.0))
+        if avg_pnl_pct < 0:
+            reasons.append(f"avg P&L {avg_pnl_pct:+.1f}%")
+        if int(item.get("should_skip_count", 0)) > 0:
+            reasons.append(f"{int(item.get('should_skip_count', 0))} coach skip flags")
+        if int(item.get("manual_review_count", 0)) > 0:
+            reasons.append(f"{int(item.get('manual_review_count', 0))} manual reviews")
+        if float(item.get("avg_outcome_quality", 0.0)) < 0.55:
+            reasons.append(f"outcome quality {float(item.get('avg_outcome_quality', 0.0)):.2f}")
+        if float(item.get("avg_execution_quality", 0.0)) < 0.72:
+            reasons.append(f"execution quality {float(item.get('avg_execution_quality', 0.0)):.2f}")
+        message = (
+            "Recent reviewed trades in this pattern have been weak; treat new entries with tighter confirmation."
+            if str(item.get("caution_label", "")) == "high"
+            else "Pattern is mixed lately; review context before trusting it."
+            if str(item.get("caution_label", "")) == "medium"
+            else "Pattern is holding up better than the weak groups in this filter window."
+        )
+        signals.append(
+            {
+                **item,
+                "reasons": reasons or ["pattern remains stable in this filter window"],
+                "message": message,
+            }
+        )
+    return sorted(
+        signals,
+        key=lambda row: (
+            2 if str(row.get("caution_label", "")) == "high" else 1 if str(row.get("caution_label", "")) == "medium" else 0,
+            float(row.get("caution_score", 0.0)),
+            int(row.get("count", 0)),
+        ),
+        reverse=True,
+    )[:limit]
+
+
 def _trade_coach_related_reviews(
     review: dict[str, Any],
     all_reviews: list[dict[str, Any]],
@@ -6510,6 +6640,49 @@ def _build_trade_coach_queue_rows(queue_reviews: list[dict[str, Any]]) -> tuple[
     return "".join(rendered_rows), len(queue_reviews)
 
 
+def _build_trade_coach_pattern_signal_rows(pattern_signals: list[dict[str, Any]]) -> tuple[str, int]:
+    if not pattern_signals:
+        return (
+            '<tr><td colspan="5" style="text-align:center;color:#888;">No pattern signals in this filter window</td></tr>',
+            0,
+        )
+
+    rendered_rows: list[str] = []
+    for item in pattern_signals[:8]:
+        rendered_rows.append(
+            f"""<tr>
+            <td style="text-transform:uppercase;color:{_trade_coach_verdict_color(str(item.get("caution_label", "")))};"><strong>{escape(str(item.get("caution_label", "low")))} ({float(item.get("caution_score", 0.0)):.0f})</strong></td>
+            <td><strong>{escape(str(item.get("pattern_type", "") or "-").upper())}</strong><br><span style="color:#98a6c8;">{escape(str(item.get("pattern_key", "") or "-"))}</span></td>
+            <td>{int(item.get("count", 0))}<br><span style="color:#98a6c8;">avg P&amp;L {float(item.get("avg_pnl_pct", 0.0)):+.1f}%</span></td>
+            <td style="font-size:11px;color:#98a6c8;">G {int(item.get("good", 0))} &middot; M {int(item.get("mixed", 0))} &middot; B {int(item.get("bad", 0))}<br>manual {int(item.get("manual_review_count", 0))} &middot; skip {int(item.get("should_skip_count", 0))}</td>
+            <td style="font-size:11px;"><div>{escape(str(item.get("message", "") or "-"))}</div><div style="margin-top:4px;color:#98a6c8;"><strong>Why:</strong> {escape(_trade_coach_tag_list(list(item.get("reasons", []) or [])))}</div></td>
+        </tr>"""
+        )
+    return "".join(rendered_rows), len(pattern_signals)
+
+
+def _build_trade_coach_pattern_rows(patterns: list[dict[str, Any]]) -> tuple[str, int]:
+    if not patterns:
+        return (
+            '<tr><td colspan="6" style="text-align:center;color:#888;">No pattern summaries yet</td></tr>',
+            0,
+        )
+
+    rendered_rows: list[str] = []
+    for item in patterns[:8]:
+        rendered_rows.append(
+            f"""<tr>
+            <td><strong>{escape(str(item.get("pattern_key", "") or "-"))}</strong><br><span style="color:#98a6c8;">{escape(str(item.get("pattern_type", "") or "-").upper())}</span></td>
+            <td>{int(item.get("count", 0))}</td>
+            <td>G {int(item.get("good", 0))} &middot; M {int(item.get("mixed", 0))} &middot; B {int(item.get("bad", 0))}</td>
+            <td>{float(item.get("avg_pnl_pct", 0.0)):+.1f}%<br><span style="color:#98a6c8;">outcome {float(item.get("avg_outcome_quality", 0.0)):.2f}</span></td>
+            <td>setup {float(item.get("avg_setup_quality", 0.0)):.2f}<br><span style="color:#98a6c8;">exec {float(item.get("avg_execution_quality", 0.0)):.2f}</span></td>
+            <td style="text-transform:uppercase;color:{_trade_coach_verdict_color(str(item.get("caution_label", "")))};"><strong>{escape(str(item.get("caution_label", "low")))}</strong><br><span style="color:#98a6c8;">score {float(item.get("caution_score", 0.0)):.0f}</span></td>
+        </tr>"""
+        )
+    return "".join(rendered_rows), len(patterns)
+
+
 def _render_trade_coach_review_detail(
     data: dict[str, Any],
     *,
@@ -6710,6 +6883,7 @@ def _render_trade_coach_review_center(
     data: dict[str, Any],
     *,
     review_history: list[dict[str, Any]],
+    regime_profiles: dict[str, dict[str, Any]] | None = None,
     strategy_code: str | None = None,
     verdict: str | None = None,
     coaching_focus: str | None = None,
@@ -6717,9 +6891,12 @@ def _render_trade_coach_review_center(
     start_date: str = "",
     end_date: str = "",
 ) -> str:
-    all_reviews = _enrich_trade_coach_reviews(
-        review_history,
-        list(data.get("bots", [])),
+    all_reviews = _apply_trade_coach_regime_profiles(
+        _enrich_trade_coach_reviews(
+            review_history,
+            list(data.get("bots", [])),
+        ),
+        regime_profiles or {},
     )
     filtered_reviews = _filter_trade_coach_reviews(
         all_reviews,
@@ -6732,6 +6909,12 @@ def _render_trade_coach_review_center(
     summary = _trade_coach_review_summary(filtered_reviews)
     queue_reviews = _build_trade_coach_review_queue(filtered_reviews)
     queue_rows, queue_count = _build_trade_coach_queue_rows(queue_reviews)
+    pattern_signals = _trade_coach_pattern_signals(filtered_reviews)
+    signal_rows, signal_count = _build_trade_coach_pattern_signal_rows(pattern_signals)
+    path_patterns = _trade_coach_pattern_scoreboard(filtered_reviews, mode="path")
+    regime_patterns = _trade_coach_pattern_scoreboard(filtered_reviews, mode="regime")
+    path_pattern_rows, path_pattern_count = _build_trade_coach_pattern_rows(path_patterns)
+    regime_pattern_rows, regime_pattern_count = _build_trade_coach_pattern_rows(regime_patterns)
     available_codes = [str(item.get("strategy_code", "") or "") for item in data.get("bots", [])]
     nav_html = _render_trade_coach_review_nav(available_codes)
     selected_strategy = str(strategy_code or "").strip()
@@ -6951,6 +7134,7 @@ def _render_trade_coach_review_center(
                     <div class="hero-card"><span>Manual Review</span><strong>{summary["manual_review"]}</strong></div>
                     <div class="hero-card"><span>Should Skip</span><strong>{summary["should_skip"]}</strong></div>
                     <div class="hero-card"><span>Priority Queue</span><strong>{queue_count}</strong></div>
+                    <div class="hero-card"><span>Pattern Signals</span><strong>{signal_count}</strong></div>
                 </div>
             </div>
         </section>
@@ -7002,6 +7186,80 @@ def _render_trade_coach_review_center(
                     <a class="button-link" href="/api/coach-reviews">JSON API</a>
                 </div>
             </form>
+        </section>
+
+        <section class="panel">
+            <div class="panel-header">
+                <div>
+                    <h3>Pattern Signals</h3>
+                    <div class="sub">This is the first operator-facing bridge toward live caution logic: recent path and regime groups that have been weak, mixed, or coach-flagged in the selected history window.</div>
+                </div>
+                <span class="count">{signal_count}</span>
+            </div>
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Signal</th>
+                            <th>Pattern</th>
+                            <th>Trades</th>
+                            <th>Mix</th>
+                            <th>Coach Take</th>
+                        </tr>
+                    </thead>
+                    <tbody>{signal_rows}</tbody>
+                </table>
+            </div>
+        </section>
+
+        <section class="panel">
+            <div class="panel-header">
+                <div>
+                    <h3>Path Scoreboard</h3>
+                    <div class="sub">How reviewed paths have behaved in this filter window. This helps us see whether a setup type has been paying, fading, or needing tighter confirmation.</div>
+                </div>
+                <span class="count">{path_pattern_count}</span>
+            </div>
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Path</th>
+                            <th>Trades</th>
+                            <th>Verdict Mix</th>
+                            <th>Avg Result</th>
+                            <th>Avg Quality</th>
+                            <th>Caution</th>
+                        </tr>
+                    </thead>
+                    <tbody>{path_pattern_rows}</tbody>
+                </table>
+            </div>
+        </section>
+
+        <section class="panel">
+            <div class="panel-header">
+                <div>
+                    <h3>Regime Scoreboard</h3>
+                    <div class="sub">Trade regimes grouped by price, volume, volatility, and momentum context. This is where we start seeing whether a broader market pattern has been strong or fragile lately.</div>
+                </div>
+                <span class="count">{regime_pattern_count}</span>
+            </div>
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Regime</th>
+                            <th>Trades</th>
+                            <th>Verdict Mix</th>
+                            <th>Avg Result</th>
+                            <th>Avg Quality</th>
+                            <th>Caution</th>
+                        </tr>
+                    </thead>
+                    <tbody>{regime_pattern_rows}</tbody>
+                </table>
+            </div>
         </section>
 
         <section class="panel">

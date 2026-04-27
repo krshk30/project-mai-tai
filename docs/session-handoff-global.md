@@ -4025,3 +4025,54 @@ Notes:
 - matching is now materially better than same-symbol/path-only memory, but it is
   still an early scoring layer, not the final predictive engine
 
+## 2026-04-27 - Add Trade Coach pattern signals and scoreboards
+
+Context:
+
+- operator wants the coach to become useful for live trading decisions, not just
+  isolated post-trade narration
+- after adding same-path, same-symbol, and regime-based similarity, the next
+  missing layer was a center-level summary that answers:
+  - which paths have been acting weak lately?
+  - which broader regimes have been paying or failing?
+  - what should an operator be more cautious about right now?
+
+Fix applied:
+
+- updated `src/project_mai_tai/services/control_plane.py`
+  - `/api/coach-reviews` now enriches reviews with regime profiles before
+    filtering and returns:
+    - `pattern_signals`
+    - `path_patterns`
+    - `regime_patterns`
+  - added scoring helpers to summarize reviewed trade groups by:
+    - path
+    - regime label
+  - added a first caution heuristic using:
+    - average P&L
+    - mixed/bad verdict counts
+    - manual-review counts
+    - coach skip flags
+    - average execution/outcome quality
+  - `/coach/reviews` now renders:
+    - `Pattern Signals`
+    - `Path Scoreboard`
+    - `Regime Scoreboard`
+- updated `tests/unit/test_control_plane.py`
+  - verifies the new API pattern sections are present
+  - verifies the review-center page renders the new scoreboard sections
+
+Validation:
+
+- `.venv\\Scripts\\python.exe -m pytest tests/unit/test_control_plane.py -q`
+  - `28 passed`
+- `.venv\\Scripts\\python.exe -m py_compile src/project_mai_tai/services/control_plane.py tests/unit/test_control_plane.py`
+
+Notes:
+
+- this is still descriptive, not trade gating
+- the new scoreboards are meant to show where we are trending toward live
+  caution logic
+- next likely step is to turn the strongest caution signals into clearer
+  operator guidance or a future strategy-side advisory layer
+

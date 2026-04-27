@@ -1529,6 +1529,9 @@ def test_trade_coach_review_center_and_api_filters() -> None:
         assert payload["reviews"][0]["symbol"] == "UGRO"
         assert payload["reviews"][0]["coaching_focus"] == "execution"
         assert payload["review_queue"][0]["symbol"] == "UGRO"
+        assert payload["pattern_signals"]
+        assert payload["path_patterns"]
+        assert payload["regime_patterns"]
 
         detail_api = client.get(f"/api/coach-review?cycle_key={quote(cycle_key)}")
         assert detail_api.status_code == 200
@@ -1549,10 +1552,15 @@ def test_trade_coach_review_center_and_api_filters() -> None:
         assert history_payload["count"] == 3
         assert history_payload["filters"]["start_date"] == history_start
         assert history_payload["filters"]["end_date"] == history_end
+        assert any(item["pattern_type"] == "path" for item in history_payload["pattern_signals"])
+        assert any(item["pattern_type"] == "regime" for item in history_payload["pattern_signals"])
 
         page = client.get("/coach/reviews?strategy_code=macd_30s")
         assert page.status_code == 200
         assert "Trade Coach Review Center" in page.text
+        assert "Pattern Signals" in page.text
+        assert "Path Scoreboard" in page.text
+        assert "Regime Scoreboard" in page.text
         assert "Priority Review Queue" in page.text
         assert "Review Filters" in page.text
         assert "Recent Coach Reviews" in page.text
