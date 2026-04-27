@@ -6685,6 +6685,7 @@ def _build_trade_coach_review_rows(
         rule_violations = _trade_coach_tag_list(list(item.get("rule_violations", []) or []))
         next_time = _trade_coach_tag_list(list(item.get("next_time", []) or []))
         review_url = f'/coach/review?cycle_key={quote(str(item.get("cycle_key", "") or ""))}'
+        trade_day, trade_window = _trade_coach_trade_window_display(item)
         context_cell = ""
         if include_context:
             context_cell = (
@@ -6693,7 +6694,7 @@ def _build_trade_coach_review_rows(
             )
         rendered_rows.append(
             f"""<tr>
-            <td style="white-space:nowrap;">{escape(str(item.get("created_at", "")) or "-")}</td>
+            <td style="white-space:nowrap;"><strong>{escape(trade_day)}</strong><br><span style="color:#98a6c8;">{escape(trade_window)}</span></td>
             {context_cell}
             <td><strong>{escape(str(item.get("symbol", "")) or "-")}</strong><br><a href="{escape(review_url)}" style="color:#59d7ff;text-decoration:none;">open review</a></td>
             <td style="white-space:nowrap;"><strong>{escape(path)}</strong><br><span style="color:#98a6c8;">P&amp;L {pnl_pct:+.1f}% &middot; timing {escape(execution_timing)} &middot; setup {setup_quality:.2f} &middot; exec {execution_quality:.2f} &middot; outcome {outcome_quality:.2f}</span></td>
@@ -6715,10 +6716,11 @@ def _build_trade_coach_queue_rows(queue_reviews: list[dict[str, Any]]) -> tuple[
     rendered_rows: list[str] = []
     for item in queue_reviews[:10]:
         review_url = f'/coach/review?cycle_key={quote(str(item.get("cycle_key", "") or ""))}'
+        trade_day, trade_window = _trade_coach_trade_window_display(item)
         rendered_rows.append(
             f"""<tr>
             <td style="text-transform:uppercase;color:{_trade_coach_verdict_color(str(item.get("verdict", "")))};"><strong>{escape(str(item.get("priority_label", "low")))} ({int(item.get("priority_score", 0))})</strong></td>
-            <td style="white-space:nowrap;">{escape(str(item.get("created_at", "")) or "-")}</td>
+            <td style="white-space:nowrap;"><strong>{escape(trade_day)}</strong><br><span style="color:#98a6c8;">{escape(trade_window)}</span></td>
             <td><strong>{escape(str(item.get("display_name", item.get("strategy_code", "")) or "-"))}</strong><br><span style="color:#98a6c8;">{escape(str(item.get("account_display_name", item.get("broker_account_name", "")) or "-"))}</span></td>
             <td><strong>{escape(str(item.get("symbol", "")) or "-")}</strong><br><span style="color:#98a6c8;">{escape(str(item.get("path", "") or "-"))}</span></td>
             <td style="font-size:11px;color:#98a6c8;">{escape(_trade_coach_tag_list(list(item.get("priority_reasons", []) or [])))}</td>
@@ -6769,6 +6771,26 @@ def _build_trade_coach_pattern_rows(patterns: list[dict[str, Any]]) -> tuple[str
         </tr>"""
         )
     return "".join(rendered_rows), len(patterns)
+
+
+def _build_trade_coach_guidance_rows(operator_guidance: list[dict[str, Any]]) -> tuple[str, int]:
+    if not operator_guidance:
+        return (
+            '<tr><td colspan="4" style="text-align:center;color:#888;">No operator guidance in this filter window</td></tr>',
+            0,
+        )
+
+    rendered_rows: list[str] = []
+    for item in operator_guidance[:4]:
+        rendered_rows.append(
+            f"""<tr>
+            <td style="text-transform:uppercase;color:{_trade_coach_verdict_color(str(item.get("caution_label", "")))};"><strong>{escape(str(item.get("caution_label", "low")))}</strong></td>
+            <td><strong>{escape(str(item.get("title", "") or "-"))}</strong><br><span style="color:#98a6c8;">{escape(str(item.get("summary", "") or "-"))}</span></td>
+            <td style="font-size:11px;color:#98a6c8;">{escape(_trade_coach_tag_list(list(item.get("reasons", []) or [])))}</td>
+            <td style="font-size:11px;">{escape(str(item.get("action", "") or "-"))}</td>
+        </tr>"""
+        )
+    return "".join(rendered_rows), len(operator_guidance)
 
 
 def _render_trade_coach_review_detail(
@@ -7281,6 +7303,29 @@ def _render_trade_coach_review_center(
         <section class="panel">
             <div class="panel-header">
                 <div>
+                    <h3>Operator Guidance</h3>
+                    <div class="sub">Direct takeaways from the current caution signals. This is the first step toward the eventual "we have seen this before, be careful" workflow.</div>
+                </div>
+                <span class="count">{guidance_count}</span>
+            </div>
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Level</th>
+                            <th>Guidance</th>
+                            <th>Why</th>
+                            <th>What To Do</th>
+                        </tr>
+                    </thead>
+                    <tbody>{guidance_rows}</tbody>
+                </table>
+            </div>
+        </section>
+
+        <section class="panel">
+            <div class="panel-header">
+                <div>
                     <h3>Pattern Signals</h3>
                     <div class="sub">This is the first operator-facing bridge toward live caution logic: recent path and regime groups that have been weak, mixed, or coach-flagged in the selected history window.</div>
                 </div>
@@ -7365,7 +7410,7 @@ def _render_trade_coach_review_center(
                     <thead>
                         <tr>
                             <th>Priority</th>
-                            <th>Reviewed</th>
+                            <th>Trade Window</th>
                             <th>Bot</th>
                             <th>Ticker</th>
                             <th>Why Surfaced</th>
@@ -7389,7 +7434,7 @@ def _render_trade_coach_review_center(
                 <table>
                     <thead>
                         <tr>
-                            <th>Reviewed</th>
+                            <th>Trade Window</th>
                             <th>Bot</th>
                             <th>Ticker</th>
                             <th>Trade Facts</th>

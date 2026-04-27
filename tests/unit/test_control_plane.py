@@ -1532,6 +1532,7 @@ def test_trade_coach_review_center_and_api_filters() -> None:
         assert payload["pattern_signals"]
         assert payload["path_patterns"]
         assert payload["regime_patterns"]
+        assert payload["operator_guidance"]
 
         detail_api = client.get(f"/api/coach-review?cycle_key={quote(cycle_key)}")
         assert detail_api.status_code == 200
@@ -1558,12 +1559,14 @@ def test_trade_coach_review_center_and_api_filters() -> None:
         page = client.get("/coach/reviews?strategy_code=macd_30s")
         assert page.status_code == 200
         assert "Trade Coach Review Center" in page.text
+        assert "Operator Guidance" in page.text
         assert "Pattern Signals" in page.text
         assert "Path Scoreboard" in page.text
         assert "Regime Scoreboard" in page.text
         assert "Priority Review Queue" in page.text
         assert "Review Filters" in page.text
         assert "Recent Coach Reviews" in page.text
+        assert "Trade Window" in page.text
         assert "Schwab 30 Sec Bot" in page.text
         assert "Good momentum trade with a valid entry and disciplined exit." in page.text
         assert "open review" in page.text.lower()

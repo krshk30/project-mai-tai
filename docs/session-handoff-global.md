@@ -4138,3 +4138,46 @@ Notes:
 - next likely step is to turn the strongest caution signals into clearer
   operator guidance or a future strategy-side advisory layer
 
+## 2026-04-27 - Switch review-center dates to trade window and add operator guidance
+
+Context:
+
+- operator called out that the review center queue was showing the coach review
+  timestamp, which is technically correct but not the most useful date for
+  reading trading history
+- because the page is already filtered by date, the more useful display is the
+  trade's own entry/exit window rather than another review-created timestamp
+- operator also wants the page to move beyond raw caution surfacing and start
+  giving direct next-step guidance
+
+Fix applied:
+
+- updated `src/project_mai_tai/services/control_plane.py`
+  - review-center queue and recent-review tables now show `Trade Window`
+    instead of `Reviewed`
+  - trade-window cells now prefer:
+    - trade day
+    - entry/exit time range
+  - added `operator_guidance` to `/api/coach-reviews`
+  - added an `Operator Guidance` section to `/coach/reviews`
+    summarizing:
+    - caution level
+    - the weak pattern/regime
+    - why it is being surfaced
+    - what the operator should do next
+- updated `tests/unit/test_control_plane.py`
+  - verifies `operator_guidance` exists in the API
+  - verifies the page renders `Operator Guidance` and `Trade Window`
+
+Validation:
+
+- `.venv\\Scripts\\python.exe -m pytest tests/unit/test_control_plane.py -q`
+  - `28 passed`
+- `.venv\\Scripts\\python.exe -m py_compile src/project_mai_tai/services/control_plane.py tests/unit/test_control_plane.py`
+
+Notes:
+
+- review detail pages still keep `Reviewed` for audit context
+- the review center itself now prioritizes trade timing first, which should feel
+  more natural when scanning filtered trading history
+
