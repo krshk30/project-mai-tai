@@ -14,7 +14,7 @@ Important state:
 - deployed to the VPS from `main` on `2026-04-26`
 - local and GitHub `main` now include the follow-up handoff update commit
   `8ccfa59`
-- VPS trade coach code deployment is on `fcc62b4`
+- VPS trade coach code deployment is on `1ec069d`
 - production remains disabled by default
 - VPS trade coach secret is configured outside the repo
 - VPS trade coach flags remain disabled:
@@ -3442,4 +3442,38 @@ Operator meaning:
   is installed on the VPS and started
 - stopping that service returns trade coach to fully disabled behavior without
   changing the shared env defaults
+
+Live-session service fix and result:
+
+- initial dedicated service start still exited immediately with repeated:
+  - `trade coach disabled; exiting`
+- root cause:
+  - shared VPS env file still contained `MAI_TAI_TRADE_COACH_ENABLED=false`
+  - for this unit, the shared env file value still beat the inline
+    `Environment=MAI_TAI_TRADE_COACH_ENABLED=true` attempt
+- fix:
+  - updated
+    `ops/systemd/project-mai-tai-trade-coach.service`
+  - service now forces:
+    `MAI_TAI_TRADE_COACH_ENABLED=true`
+    directly in `ExecStart`
+  - restart policy was also tightened from `Restart=always` to
+    `Restart=on-failure`
+- VPS deployment / verification:
+  - local / GitHub / VPS `main` advanced to `1ec069d`
+  - service now stays running normally on VPS:
+    - `project-mai-tai-trade-coach.service`
+  - service log showed:
+    - `trade coach starting for macd_30s, webull_30s`
+    - `trade coach reviewed 1 completed trade cycles`
+- live result after the fix:
+  - `/api/bots` now shows two persisted `macd_30s` coach reviews for `USEG`
+  - the newly auto-reviewed cycle was:
+    - entry: `2026-04-27 08:08:32 AM ET`
+    - exit: `2026-04-27 08:08:41 AM ET`
+    - verdict: `good`
+    - action: `exit`
+    - confidence: `0.9`
+    - summary:
+      `Good trade on P5_PULLBACK setup entered and exited on time with hard stop loss management. Setup was good quality with favorable indicators; execution was timely and within rules.`
 
