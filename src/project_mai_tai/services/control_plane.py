@@ -2638,6 +2638,7 @@ def build_app(
                 "symbol": (symbol or "").strip().upper(),
             },
             "summary": _trade_coach_review_summary(filtered_reviews),
+            "review_queue": _build_trade_coach_review_queue(filtered_reviews)[:10],
             "available_filters": {
                 "strategies": [
                     {
@@ -2662,6 +2663,22 @@ def build_app(
                 ),
             },
             "reviews": filtered_reviews[:100],
+        }
+
+    @app.get("/api/coach-review")
+    async def coach_review_api(cycle_key: str) -> dict[str, Any]:
+        data = await app.state.repository.load_bot_dashboard_data()
+        all_reviews = _enrich_trade_coach_reviews(
+            data.get("recent_trade_coach_reviews", []),
+            data.get("bots", []),
+        )
+        review = _find_trade_coach_review(all_reviews, cycle_key)
+        if review is None:
+            return {"found": False, "cycle_key": cycle_key}
+        return {
+            "found": True,
+            "review": review,
+            "priority": _trade_coach_review_priority(review),
         }
 
     @app.get("/api/orders")
@@ -2958,6 +2975,11 @@ def build_app(
             coaching_focus=coaching_focus,
             symbol=symbol,
         )
+
+    @app.get("/coach/review", response_class=HTMLResponse)
+    async def coach_review_detail_page(cycle_key: str) -> str:
+        data = await app.state.repository.load_bot_dashboard_data()
+        return _render_trade_coach_review_detail(data, cycle_key=cycle_key)
 
     @app.get("/", response_class=HTMLResponse)
     async def dashboard() -> str:
@@ -5814,6 +5836,87 @@ def _trade_coach_review_summary(reviews: list[dict[str, Any]]) -> dict[str, int]
     }
 
 
+def _find_trade_coach_review(reviews: list[dict[str, Any]], cycle_key: str) -> dict[str, Any] | None:
+    target = str(cycle_key or "").strip()
+    if not target:
+        return None
+    return next(
+        (
+            item
+            for item in reviews
+            if str(item.get("cycle_key", "") or "").strip() == target
+        ),
+        None,
+    )
+
+
+def _trade_coach_review_priority(review: dict[str, Any]) -> dict[str, Any]:
+    reasons: list[str] = []
+    score = 0
+    verdict = str(review.get("verdict", "") or "").strip().lower()
+    if verdict == "bad":
+        score += 90
+        reasons.append("coach marked this trade bad")
+    elif verdict == "mixed":
+        score += 55
+        reasons.append("coach marked this trade mixed")
+    if bool(review.get("should_review_manually")):
+        score += 80
+        reasons.append("coach explicitly requested manual review")
+    if not bool(review.get("should_have_traded", True)):
+        score += 75
+        reasons.append("coach says this trade should have been skipped")
+
+    for field_name, label, threshold, weight in (
+        ("setup_quality", "setup quality is weak", 0.75, 24),
+        ("execution_quality", "execution quality is weak", 0.78, 28),
+        ("outcome_quality", "outcome quality is weak", 0.65, 18),
+    ):
+        value = _as_float(review.get(field_name))
+        if value and value < threshold:
+            score += weight
+            reasons.append(f"{label} ({value:.2f})")
+
+    if list(review.get("rule_violations", []) or []):
+        score += 32
+        reasons.append("rule violations were recorded")
+
+    pnl_pct = _as_float(review.get("pnl_pct"))
+    if pnl_pct < 0:
+        score += 12
+        reasons.append(f"closed red at {pnl_pct:+.1f}%")
+
+    return {
+        "score": score,
+        "reasons": reasons or ["healthy review with no urgent follow-up"],
+        "label": "high" if score >= 90 else "medium" if score >= 45 else "low",
+    }
+
+
+def _build_trade_coach_review_queue(reviews: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    queued: list[dict[str, Any]] = []
+    for item in reviews:
+        priority = _trade_coach_review_priority(item)
+        if priority["score"] <= 0:
+            continue
+        queued.append(
+            {
+                **item,
+                "priority_score": int(priority["score"]),
+                "priority_label": str(priority["label"]),
+                "priority_reasons": list(priority["reasons"]),
+            }
+        )
+    return sorted(
+        queued,
+        key=lambda row: (
+            int(row.get("priority_score", 0)),
+            _parse_et_timestamp(str(row.get("created_at", "") or "")),
+        ),
+        reverse=True,
+    )
+
+
 def _build_trade_coach_review_rows(recent_reviews: list[dict[str, Any]]) -> tuple[str, int]:
     if not recent_reviews:
         return (
@@ -5890,6 +5993,7 @@ def _build_trade_coach_review_rows(
         key_reasons = _trade_coach_tag_list(list(item.get("key_reasons", []) or []))
         rule_violations = _trade_coach_tag_list(list(item.get("rule_violations", []) or []))
         next_time = _trade_coach_tag_list(list(item.get("next_time", []) or []))
+        review_url = f'/coach/review?cycle_key={quote(str(item.get("cycle_key", "") or ""))}'
         context_cell = ""
         if include_context:
             context_cell = (
@@ -5900,14 +6004,152 @@ def _build_trade_coach_review_rows(
             f"""<tr>
             <td style="white-space:nowrap;">{escape(str(item.get("created_at", "")) or "-")}</td>
             {context_cell}
-            <td><strong>{escape(str(item.get("symbol", "")) or "-")}</strong></td>
+            <td><strong>{escape(str(item.get("symbol", "")) or "-")}</strong><br><a href="{escape(review_url)}" style="color:#59d7ff;text-decoration:none;">open review</a></td>
             <td style="white-space:nowrap;"><strong>{escape(path)}</strong><br><span style="color:#98a6c8;">P&amp;L {pnl_pct:+.1f}% &middot; timing {escape(execution_timing)} &middot; setup {setup_quality:.2f} &middot; exec {execution_quality:.2f} &middot; outcome {outcome_quality:.2f}</span></td>
             <td style="color:{_trade_coach_verdict_color(verdict)};font-weight:bold;text-transform:uppercase;">{escape(verdict or "-")}<br><span style="color:#98a6c8;font-weight:normal;">{escape(action or "-")} &middot; {confidence:.2f} &middot; focus {escape(coaching_focus)}</span>{'<br><span style="color:#ffcc5b;font-weight:normal;">manual review</span>' if should_review_manually else ''}</td>
             <td style="text-transform:uppercase;">{escape(should_have_traded)}</td>
-            <td style="font-size:11px;max-width:620px;"><div>{escape(summary)}</div><div style="margin-top:4px;color:#98a6c8;"><strong>Why:</strong> {escape(key_reasons)}</div><div style="margin-top:4px;color:#98a6c8;"><strong>Violations:</strong> {escape(rule_violations)}</div><div style="margin-top:4px;color:#98a6c8;"><strong>Next:</strong> {escape(next_time)}</div></td>
+            <td style="font-size:11px;max-width:620px;"><div>{escape(summary)}</div><div style="margin-top:4px;color:#98a6c8;"><strong>Why:</strong> {escape(key_reasons)}</div><div style="margin-top:4px;color:#98a6c8;"><strong>Violations:</strong> {escape(rule_violations)}</div><div style="margin-top:4px;color:#98a6c8;"><strong>Next:</strong> {escape(next_time)}</div><div style="margin-top:6px;"><a href="{escape(review_url)}" style="color:#59d7ff;text-decoration:none;">Open full review</a></div></td>
         </tr>"""
         )
     return "".join(rendered_rows), len(recent_reviews)
+
+
+def _build_trade_coach_queue_rows(queue_reviews: list[dict[str, Any]]) -> tuple[str, int]:
+    if not queue_reviews:
+        return (
+            '<tr><td colspan="6" style="text-align:center;color:#888;">No priority reviews right now</td></tr>',
+            0,
+        )
+
+    rendered_rows: list[str] = []
+    for item in queue_reviews[:10]:
+        review_url = f'/coach/review?cycle_key={quote(str(item.get("cycle_key", "") or ""))}'
+        rendered_rows.append(
+            f"""<tr>
+            <td style="text-transform:uppercase;color:{_trade_coach_verdict_color(str(item.get("verdict", "")))};"><strong>{escape(str(item.get("priority_label", "low")))} ({int(item.get("priority_score", 0))})</strong></td>
+            <td style="white-space:nowrap;">{escape(str(item.get("created_at", "")) or "-")}</td>
+            <td><strong>{escape(str(item.get("display_name", item.get("strategy_code", "")) or "-"))}</strong><br><span style="color:#98a6c8;">{escape(str(item.get("account_display_name", item.get("broker_account_name", "")) or "-"))}</span></td>
+            <td><strong>{escape(str(item.get("symbol", "")) or "-")}</strong><br><span style="color:#98a6c8;">{escape(str(item.get("path", "") or "-"))}</span></td>
+            <td style="font-size:11px;color:#98a6c8;">{escape(_trade_coach_tag_list(list(item.get("priority_reasons", []) or [])))}</td>
+            <td><a href="{escape(review_url)}" style="color:#59d7ff;text-decoration:none;">Open review</a></td>
+        </tr>"""
+        )
+    return "".join(rendered_rows), len(queue_reviews)
+
+
+def _render_trade_coach_review_detail(data: dict[str, Any], *, cycle_key: str) -> str:
+    all_reviews = _enrich_trade_coach_reviews(
+        list(data.get("recent_trade_coach_reviews", [])),
+        list(data.get("bots", [])),
+    )
+    review = _find_trade_coach_review(all_reviews, cycle_key)
+    available_codes = [str(item.get("strategy_code", "") or "") for item in data.get("bots", [])]
+    nav_html = _render_trade_coach_review_nav(available_codes)
+    if review is None:
+        return f"""<!DOCTYPE html>
+<html><head><title>Trade Coach Review Not Found</title><meta charset="utf-8"></head>
+<body style="background:#131a2b;color:#f0f4ff;font-family:Consolas,Monaco,monospace;padding:24px;">
+<h1>Trade Coach Review Not Found</h1>
+<p>The requested cycle key was not found in the current coach review window.</p>
+<div>{nav_html}</div>
+</body></html>"""
+
+    priority = _trade_coach_review_priority(review)
+    verdict = str(review.get("verdict", "") or "-").lower()
+    action = str(review.get("action", "") or "-").lower()
+    focus = str(review.get("coaching_focus", "") or "-").replace("_", " ")
+    entry_time = str(review.get("entry_time", "") or "-")
+    exit_time = str(review.get("exit_time", "") or "-")
+    exit_summary = str(review.get("exit_summary", "") or "-")
+    pnl = _as_float(review.get("pnl"))
+    pnl_pct = _as_float(review.get("pnl_pct"))
+    key_reasons = _render_chip_cloud(list(review.get("key_reasons", []) or []), variant="accent", empty_text="None")
+    rule_hits = _render_chip_cloud(list(review.get("rule_hits", []) or []), variant="", empty_text="None")
+    rule_violations = _render_chip_cloud(list(review.get("rule_violations", []) or []), variant="warning", empty_text="None")
+    next_time = _render_chip_cloud(list(review.get("next_time", []) or []), variant="accent", empty_text="None")
+    back_url = "/coach/reviews"
+    return f"""<!DOCTYPE html>
+<html>
+<head>
+    <title>Trade Coach Review Detail</title>
+    <meta charset="utf-8">
+    <meta http-equiv="refresh" content="30">
+    <style>
+        :root {{
+            --bg: #131a2b; --panel: #202b46; --panel-alt: #1c2540; --line: rgba(121,146,193,0.28);
+            --ink: #f0f4ff; --muted: #98a6c8; --accent: #59d7ff; --green: #5fff8d; --amber: #ffcc5b; --red: #ff6b6b;
+        }}
+        * {{ box-sizing:border-box; }}
+        body {{ margin:0; background:radial-gradient(circle at top left, rgba(89,215,255,0.08), transparent 28%), linear-gradient(180deg, #0f1525, var(--bg)); color:var(--ink); font-family:'Consolas','Monaco',monospace; }}
+        .shell {{ padding:18px; display:grid; gap:16px; }}
+        .panel {{ background:linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02)); border:1px solid var(--line); border-radius:18px; padding:18px; box-shadow:0 18px 44px rgba(0,0,0,0.26); }}
+        .hero-grid, .fact-grid {{ display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:12px; }}
+        .hero-card {{ background:var(--panel-alt); border:1px solid var(--line); border-radius:14px; padding:14px; }}
+        .hero-card span {{ display:block; color:var(--muted); font-size:12px; margin-bottom:8px; }}
+        .hero-card strong {{ font-size:22px; }}
+        .nav-strip {{ display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; }}
+        .nav-strip a, .back-link {{ text-decoration:none; color:var(--ink); background:linear-gradient(180deg, rgba(89,215,255,0.08), rgba(255,255,255,0.02)); border:1px solid var(--line); border-radius:999px; padding:8px 12px; font-size:12px; }}
+        .nav-strip a.active {{ border-color:var(--accent); box-shadow:inset 0 0 0 1px rgba(89,215,255,0.35); }}
+        .panel-header h2, .panel-header h3 {{ margin:0; }}
+        .sub {{ color:var(--muted); font-size:12px; margin-top:6px; }}
+        .facts {{ display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:12px; }}
+        .fact {{ background:var(--panel-alt); border:1px solid var(--line); border-radius:14px; padding:14px; }}
+        .fact .label {{ color:var(--muted); font-size:12px; margin-bottom:6px; }}
+        .fact .value {{ font-size:14px; word-break:break-word; }}
+        .section-grid {{ display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:16px; }}
+        .pill-chip {{ display:inline-flex; align-items:center; margin:4px 6px 0 0; padding:4px 10px; border-radius:999px; border:1px solid var(--line); background:rgba(255,255,255,0.04); font-size:12px; }}
+        .pill-chip.accent {{ border-color:rgba(89,215,255,0.36); color:#aeeeff; }}
+        .pill-chip.warning {{ border-color:rgba(255,204,91,0.45); color:#ffe3a3; }}
+    </style>
+</head>
+<body>
+    <div class="shell">
+        <section class="panel">
+            <a class="back-link" href="{back_url}">Back to review center</a>
+            <div style="margin-top:14px;">
+                <h1 style="margin:0;font-size:28px;">{escape(str(review.get("symbol", "")) or "-")} Review Detail</h1>
+                <div class="sub">{escape(str(review.get("display_name", review.get("strategy_code", "")) or "-"))} · {escape(str(review.get("account_display_name", review.get("broker_account_name", "")) or "-"))}</div>
+                {nav_html}
+            </div>
+        </section>
+        <section class="panel">
+            <div class="hero-grid">
+                <div class="hero-card"><span>Verdict</span><strong style="color:{_trade_coach_verdict_color(verdict)};">{escape(verdict.upper())}</strong></div>
+                <div class="hero-card"><span>Action</span><strong>{escape(action.upper())}</strong></div>
+                <div class="hero-card"><span>Focus</span><strong>{escape(focus)}</strong></div>
+                <div class="hero-card"><span>Confidence</span><strong>{_as_float(review.get("confidence")):.2f}</strong></div>
+                <div class="hero-card"><span>Priority</span><strong>{escape(str(priority["label"]).upper())} ({int(priority["score"])})</strong></div>
+                <div class="hero-card"><span>Reviewed</span><strong style="font-size:16px;">{escape(str(review.get("created_at", "")) or "-")}</strong></div>
+            </div>
+        </section>
+        <section class="panel">
+            <div class="panel-header"><h2>Trade Facts</h2></div>
+            <div class="facts">
+                <div class="fact"><div class="label">Path</div><div class="value">{escape(str(review.get("path", "")) or "-")}</div></div>
+                <div class="fact"><div class="label">Entry Time</div><div class="value">{escape(entry_time)}</div></div>
+                <div class="fact"><div class="label">Exit Time</div><div class="value">{escape(exit_time)}</div></div>
+                <div class="fact"><div class="label">Entry Price</div><div class="value">{escape(str(review.get("entry_price", "")) or "-")}</div></div>
+                <div class="fact"><div class="label">Exit Price</div><div class="value">{escape(str(review.get("exit_price", "")) or "-")}</div></div>
+                <div class="fact"><div class="label">P&amp;L</div><div class="value">{pnl:+.2f} / {pnl_pct:+.1f}%</div></div>
+                <div class="fact"><div class="label">Exit Summary</div><div class="value">{escape(exit_summary)}</div></div>
+                <div class="fact"><div class="label">Cycle Key</div><div class="value">{escape(str(review.get("cycle_key", "")) or "-")}</div></div>
+            </div>
+        </section>
+        <section class="panel">
+            <div class="panel-header"><h2>Coach Summary</h2></div>
+            <div class="sub">{escape(str(review.get("summary", "")) or "-")}</div>
+            <div class="section-grid" style="margin-top:14px;">
+                <div class="fact"><div class="label">Priority Reasons</div><div class="value">{_render_chip_cloud(list(priority["reasons"]), variant="warning", empty_text="None")}</div></div>
+                <div class="fact"><div class="label">Key Reasons</div><div class="value">{key_reasons}</div></div>
+                <div class="fact"><div class="label">Rule Hits</div><div class="value">{rule_hits}</div></div>
+                <div class="fact"><div class="label">Rule Violations</div><div class="value">{rule_violations}</div></div>
+                <div class="fact"><div class="label">Next Time</div><div class="value">{next_time}</div></div>
+                <div class="fact"><div class="label">Quality Scores</div><div class="value">setup {_as_float(review.get("setup_quality")):.2f} · execution {_as_float(review.get("execution_quality")):.2f} · outcome {_as_float(review.get("outcome_quality")):.2f}</div></div>
+            </div>
+        </section>
+    </div>
+</body>
+</html>"""
 
 
 def _render_trade_coach_review_center(
@@ -5931,6 +6173,8 @@ def _render_trade_coach_review_center(
     )
     review_rows, visible_count = _build_trade_coach_review_rows(filtered_reviews, include_context=True)
     summary = _trade_coach_review_summary(filtered_reviews)
+    queue_reviews = _build_trade_coach_review_queue(filtered_reviews)
+    queue_rows, queue_count = _build_trade_coach_queue_rows(queue_reviews)
     available_codes = [str(item.get("strategy_code", "") or "") for item in data.get("bots", [])]
     nav_html = _render_trade_coach_review_nav(available_codes)
     selected_strategy = str(strategy_code or "").strip()
@@ -6147,6 +6391,7 @@ def _render_trade_coach_review_center(
                     <div class="hero-card"><span>Bad</span><strong class="bad">{summary["bad"]}</strong></div>
                     <div class="hero-card"><span>Manual Review</span><strong>{summary["manual_review"]}</strong></div>
                     <div class="hero-card"><span>Should Skip</span><strong>{summary["should_skip"]}</strong></div>
+                    <div class="hero-card"><span>Priority Queue</span><strong>{queue_count}</strong></div>
                 </div>
             </div>
         </section>
@@ -6190,6 +6435,31 @@ def _render_trade_coach_review_center(
                     <a class="button-link" href="/api/coach-reviews">JSON API</a>
                 </div>
             </form>
+        </section>
+
+        <section class="panel">
+            <div class="panel-header">
+                <div>
+                    <h3>Priority Review Queue</h3>
+                    <div class="sub">Trades that deserve the next operator look based on verdict severity, manual-review flags, weak quality scores, or red closes.</div>
+                </div>
+                <span class="count">{queue_count}</span>
+            </div>
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Priority</th>
+                            <th>Reviewed</th>
+                            <th>Bot</th>
+                            <th>Ticker</th>
+                            <th>Why Surfaced</th>
+                            <th>Open</th>
+                        </tr>
+                    </thead>
+                    <tbody>{queue_rows}</tbody>
+                </table>
+            </div>
         </section>
 
         <section class="panel">

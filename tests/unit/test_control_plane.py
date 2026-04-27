@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from urllib.parse import quote
 
 import pytest
 from fastapi.testclient import TestClient
@@ -392,7 +393,7 @@ def seed_database(session_factory: sessionmaker[Session]) -> None:
                 "confidence": 0.9,
                 "setup_quality": 0.82,
                 "execution_quality": 0.91,
-                "outcome_quality": 0.72,
+                "outcome_quality": 0.62,
                 "should_have_traded": True,
                 "should_review_manually": False,
                 "key_reasons": ["valid P1 setup", "disciplined exit"],
@@ -1312,15 +1313,26 @@ def test_trade_coach_review_center_and_api_filters() -> None:
         assert payload["reviews"][0]["display_name"] == "Schwab 30 Sec Bot"
         assert payload["reviews"][0]["symbol"] == "UGRO"
         assert payload["reviews"][0]["coaching_focus"] == "execution"
+        assert payload["review_queue"][0]["symbol"] == "UGRO"
 
         page = client.get("/coach/reviews?strategy_code=macd_30s")
         assert page.status_code == 200
         assert "Trade Coach Review Center" in page.text
+        assert "Priority Review Queue" in page.text
         assert "Review Filters" in page.text
         assert "Recent Coach Reviews" in page.text
         assert "Schwab 30 Sec Bot" in page.text
         assert "Good momentum trade with a valid entry and disciplined exit." in page.text
+        assert "open review" in page.text.lower()
         assert "JSON API" in page.text
+
+        cycle_key = "macd_30s|paper:macd_30s|UGRO|2026-03-28 10:00:00 AM ET|2026-03-28 10:05:00 AM ET"
+        detail = client.get(f"/coach/review?cycle_key={quote(cycle_key)}")
+        assert detail.status_code == 200
+        assert "UGRO Review Detail" in detail.text
+        assert "Trade Facts" in detail.text
+        assert "Coach Summary" in detail.text
+        assert "Back to review center" in detail.text
 
 
 def test_bot_page_can_render_and_update_manual_stop_symbols() -> None:

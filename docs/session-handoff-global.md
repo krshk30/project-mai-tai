@@ -52,6 +52,76 @@ Validation completed:
 - focused control-plane suite result for this phase:
   - `28 passed`
 
+### 2026-04-27 Trade Coach Operator Workflow (Queue + Drilldown)
+
+Current state:
+
+- local `main` now extends the review center with an operator workflow layer
+- still control-plane only:
+  - no strategy-engine changes
+  - no OMS changes
+  - no coach prompt/schema changes
+- goal of this phase:
+  - make the coach actionable after scan-level review
+  - let an operator decide which trade to inspect next
+
+What was added:
+
+- aggregated coach API now also returns:
+  - `review_queue`
+- new single-review API endpoint:
+  - `/api/coach-review?cycle_key=...`
+- new single-review HTML page:
+  - `/coach/review?cycle_key=...`
+- new review-center features:
+  - `Priority Review Queue`
+  - `Open review` links from aggregated review rows
+  - full single-trade drilldown page
+
+Priority queue rules:
+
+- queue score increases when:
+  - coach verdict is `bad`
+  - coach verdict is `mixed`
+  - `should_review_manually = true`
+  - `should_have_traded = false`
+  - quality scores are weak
+  - rule violations exist
+  - trade closed red
+- queue labels:
+  - `high`
+  - `medium`
+  - `low`
+
+Review detail page includes:
+
+- trade facts:
+  - path
+  - entry/exit times
+  - entry/exit prices
+  - P&L and P&L %
+  - exit summary
+  - cycle key
+- coach breakdown:
+  - verdict
+  - action
+  - focus
+  - confidence
+  - priority reasons
+  - key reasons
+  - rule hits
+  - rule violations
+  - next-time notes
+  - quality scores
+
+Validation completed:
+
+- passed:
+  - `.venv\Scripts\python.exe -m pytest tests/unit/test_control_plane.py -q`
+  - `.venv\Scripts\python.exe -m py_compile src/project_mai_tai/services/control_plane.py tests/unit/test_control_plane.py`
+- focused control-plane suite result for this phase:
+  - `28 passed`
+
 ## 2026-04-24 Trade Coach Foundation (Merged To Main, Deployed Disabled)
 
 Merged PR:
