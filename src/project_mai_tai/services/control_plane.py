@@ -408,6 +408,42 @@ class ControlPlaneRepository:
 
         return profiles
 
+    def load_live_trade_coach_regime_profiles(
+        self,
+        *,
+        strategy_code: str,
+        symbols: list[str],
+        interval_secs: int,
+        bars_per_symbol: int = 14,
+    ) -> dict[str, dict[str, Any]]:
+        normalized_symbols = sorted({str(symbol or "").strip().upper() for symbol in symbols if str(symbol or "").strip()})
+        if not normalized_symbols:
+            return {}
+
+        profiles: dict[str, dict[str, Any]] = {}
+        with self.session_factory() as session:
+            for symbol in normalized_symbols:
+                bars_desc = list(
+                    session.scalars(
+                        select(StrategyBarHistory)
+                        .where(StrategyBarHistory.strategy_code == strategy_code)
+                        .where(StrategyBarHistory.symbol == symbol)
+                        .where(StrategyBarHistory.interval_secs == interval_secs)
+                        .order_by(desc(StrategyBarHistory.bar_time))
+                        .limit(max(4, bars_per_symbol))
+                    ).all()
+                )
+                if not bars_desc:
+                    continue
+                profile = _build_live_trade_coach_regime_profile(
+                    symbol=symbol,
+                    bars=list(reversed(bars_desc)),
+                    interval_secs=interval_secs,
+                )
+                if profile:
+                    profiles[symbol] = profile
+        return profiles
+
     def _incident_symbol(self, title: str | None, payload: dict[str, Any] | None) -> str:
         data = payload if isinstance(payload, dict) else {}
         direct_symbol = str(data.get("symbol") or data.get("ticker") or "").strip().upper()
@@ -3072,45 +3108,69 @@ def build_app(
         data = await app.state.repository.load_bot_dashboard_data()
         return _build_bot_api_payload(data, "runner")
 
+    async def _render_bot_page_with_trade_coach(strategy_code: str) -> str:
+        data = await app.state.repository.load_bot_dashboard_data()
+        bot = _find_bot_view(data, strategy_code)
+        if bot is None:
+            return _render_bot_detail_page(data, strategy_code)
+
+        review_history = app.state.repository.load_trade_coach_review_history()
+        regime_profiles = app.state.repository.load_trade_coach_regime_profiles(review_history)
+        all_reviews = _apply_trade_coach_regime_profiles(
+            _enrich_trade_coach_reviews(review_history, list(data.get("bots", []))),
+            regime_profiles,
+        )
+        live_regime_profiles = app.state.repository.load_live_trade_coach_regime_profiles(
+            strategy_code=strategy_code,
+            symbols=_trade_coach_live_advisory_symbols(
+                bot,
+                _resolved_bot_recent_decisions(data, bot),
+            ),
+            interval_secs=int(bot.get("interval_secs", 30) or 30),
+        )
+        advisories = _build_trade_coach_live_advisories(
+            bot=bot,
+            recent_decisions=_resolved_bot_recent_decisions(data, bot),
+            all_reviews=all_reviews,
+            live_regime_profiles=live_regime_profiles,
+        )
+        return _render_bot_detail_page(
+            data,
+            strategy_code,
+            trade_coach_live_advisories=advisories,
+        )
+
     @app.get("/bot/30s", response_class=HTMLResponse)
     async def bot_30s_page() -> str:
-        data = await app.state.repository.load_bot_dashboard_data()
-        return _render_bot_detail_page(data, "macd_30s")
+        return await _render_bot_page_with_trade_coach("macd_30s")
 
     @app.get("/bot/30s-webull", response_class=HTMLResponse)
     async def bot_webull_30s_page() -> str:
-        data = await app.state.repository.load_bot_dashboard_data()
-        return _render_bot_detail_page(data, "webull_30s")
+        return await _render_bot_page_with_trade_coach("webull_30s")
 
     @app.get("/bot/30s-probe", response_class=HTMLResponse)
     async def bot_30s_probe_page() -> str:
-        data = await app.state.repository.load_bot_dashboard_data()
-        return _render_bot_detail_page(data, "macd_30s_probe")
+        return await _render_bot_page_with_trade_coach("macd_30s_probe")
 
     @app.get("/bot/30s-reclaim", response_class=HTMLResponse)
     async def bot_30s_reclaim_page() -> str:
-        data = await app.state.repository.load_bot_dashboard_data()
-        return _render_bot_detail_page(data, "macd_30s_reclaim")
+        return await _render_bot_page_with_trade_coach("macd_30s_reclaim")
 
     @app.get("/bot/1m", response_class=HTMLResponse)
     async def bot_1m_page() -> str:
-        data = await app.state.repository.load_bot_dashboard_data()
-        return _render_bot_detail_page(data, "macd_1m")
+        return await _render_bot_page_with_trade_coach("macd_1m")
 
     @app.get("/bot/1m-schwab", response_class=HTMLResponse)
     async def bot_schwab_1m_page() -> str:
-        data = await app.state.repository.load_bot_dashboard_data()
-        return _render_bot_detail_page(data, "schwab_1m")
+        return await _render_bot_page_with_trade_coach("schwab_1m")
 
     @app.get("/bot/tos", response_class=HTMLResponse)
     async def bot_tos_page() -> str:
-        data = await app.state.repository.load_bot_dashboard_data()
-        return _render_bot_detail_page(data, "tos")
+        return await _render_bot_page_with_trade_coach("tos")
 
     @app.get("/bot/runner", response_class=HTMLResponse)
     async def bot_runner_page() -> str:
-        data = await app.state.repository.load_bot_dashboard_data()
-        return _render_bot_detail_page(data, "runner")
+        return await _render_bot_page_with_trade_coach("runner")
 
     @app.get("/coach/reviews", response_class=HTMLResponse)
     async def coach_reviews_page(
@@ -4959,7 +5019,12 @@ def _render_scanner_dashboard(data: dict[str, Any]) -> str:
 </html>"""
 
 
-def _render_bot_detail_page(data: dict[str, Any], strategy_code: str) -> str:
+def _render_bot_detail_page(
+    data: dict[str, Any],
+    strategy_code: str,
+    *,
+    trade_coach_live_advisories: list[dict[str, Any]] | None = None,
+) -> str:
     bot = _find_bot_view(data, strategy_code)
     if bot is None:
         return "<h1>Bot not initialized</h1>"
@@ -4971,9 +5036,20 @@ def _render_bot_detail_page(data: dict[str, Any], strategy_code: str) -> str:
     recent_fills = [item for item in data["recent_fills"] if item["strategy_code"] == strategy_code]
     recent_orders = [item for item in data["recent_orders"] if item["strategy_code"] == strategy_code]
     recent_trade_coach_reviews = list(bot.get("recent_trade_coach_reviews", []))
+    live_trade_coach_advisories = list(trade_coach_live_advisories or [])
     position_rows = _build_bot_position_rows(data, bot)
     completed_rows, completed_count, completed_pnl = _build_completed_position_rows(bot, recent_orders, recent_fills)
     trade_coach_rows, trade_coach_count = _build_trade_coach_review_rows(recent_trade_coach_reviews)
+    live_trade_coach_rows, live_trade_coach_count = _build_trade_coach_live_advisory_rows(
+        live_trade_coach_advisories
+    )
+    live_trade_coach_summary_cards = _build_trade_coach_live_advisory_summary_cards(
+        live_trade_coach_advisories,
+        reviewed_count=trade_coach_count,
+    )
+    live_trade_coach_spotlights = _build_trade_coach_live_advisory_spotlight_cards(
+        live_trade_coach_advisories
+    )
     order_rows, order_count = _build_order_history_rows(recent_orders, recent_fills)
     tos_parity = bot.get("tos_parity", {})
     tos_parity_rows = _build_tos_parity_rows(tos_parity)
@@ -5044,6 +5120,12 @@ def _render_bot_detail_page(data: dict[str, Any], strategy_code: str) -> str:
         data_health_detail = " | ".join(reason_parts)
     current_position = bot["positions"][0] if strategy_code == "runner" and bot["positions"] else None
     available_codes = [str(item["strategy_code"]) for item in data.get("bots", [])]
+    production_preview = int(bot.get("interval_secs") or 0) == 30 and strategy_code in {
+        "macd_30s",
+        "webull_30s",
+        "probe_30s",
+        "reclaim_30s",
+    }
     runner_status_panel = ""
     if strategy_code == "runner":
         if current_position:
@@ -5095,6 +5177,46 @@ def _render_bot_detail_page(data: dict[str, Any], strategy_code: str) -> str:
                 </table>
             </div>
         </section>"""
+
+    live_trade_coach_panel = f"""
+            <section class="panel full accent-panel coach-advisory-panel">
+                <div class="panel-header">
+                    <div>
+                        <h3>Trade Coach Live Advisory</h3>
+                        <div class="sub">Advisory-only caution for live symbols, grounded in reviewed history and similar regimes. This does not gate trading.</div>
+                    </div>
+                    <span class="count accent">Live preview · {live_trade_coach_count}</span>
+                </div>
+                <div class="panel-copy">{
+                    "Production preview for the live 30-second coaching experience. It shows what the operator would see in real time, but it never changes trading behavior."
+                    if production_preview
+                    else "Read-only live caution layer for this bot. The coach can surface context here without changing any execution behavior."
+                }</div>
+                {live_trade_coach_summary_cards}
+                <div class="panel-header coach-subheader">
+                    <div>
+                        <h3>Top Live Cautions</h3>
+                        <div class="sub">The strongest symbol-level cautions the coach can see right now from path, regime, and symbol memory.</div>
+                    </div>
+                    <span class="count">{min(live_trade_coach_count, 3)}</span>
+                </div>
+                <div class="panel-copy coach-subcopy">This is the pre-trade view only. It is intentionally informational, so we can see the end-state workflow without introducing any trading controls.</div>
+                {live_trade_coach_spotlights}
+                <div class="panel-header coach-subheader">
+                    <div>
+                        <h3>Live Symbol Matrix</h3>
+                        <div class="sub">Every visible symbol with current context, matched trade memory, caution score, and what to watch next.</div>
+                    </div>
+                    <span class="count">{live_trade_coach_count}</span>
+                </div>
+                <div class="table-wrap">
+                    <table>
+                        <thead><tr><th>Symbol</th><th>Live Context</th><th>History Match</th><th>Caution</th><th>What To Watch</th></tr></thead>
+                        <tbody>{live_trade_coach_rows}</tbody>
+                    </table>
+                </div>
+                <div class="panel-copy">Use this as a pre-trade caution layer only. The review center remains the source of truth for the full post-trade breakdown and operator follow-up.</div>
+            </section>"""
 
     trade_coach_panel = f"""
             <section class="panel full">
@@ -5377,6 +5499,90 @@ def _render_bot_detail_page(data: dict[str, Any], strategy_code: str) -> str:
             gap: 12px;
             padding: 0 16px 16px 16px;
         }}
+        .coach-advisory-panel {{
+            background:
+                radial-gradient(circle at top right, color-mix(in srgb, var(--accent) 16%, transparent), transparent 28%),
+                rgba(24, 32, 54, 0.96);
+        }}
+        .coach-advisory-hero-grid {{
+            padding-top: 2px;
+        }}
+        .coach-hero-card {{
+            background: linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02));
+        }}
+        .coach-subheader {{
+            margin: 0 16px;
+            border: 1px solid rgba(121, 146, 193, 0.16);
+            border-radius: 16px;
+            padding-left: 0;
+            padding-right: 0;
+            background: rgba(255,255,255,0.02);
+        }}
+        .coach-subcopy {{
+            padding-top: 10px;
+            padding-bottom: 10px;
+        }}
+        .coach-spotlight-grid {{
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 12px;
+            padding: 0 16px 16px 16px;
+        }}
+        .coach-spotlight-card {{
+            background: linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02));
+            border: 1px solid rgba(121, 146, 193, 0.24);
+            border-radius: 16px;
+            padding: 14px;
+            display: grid;
+            gap: 12px;
+            min-width: 0;
+        }}
+        .coach-spotlight-empty {{
+            grid-column: 1 / -1;
+        }}
+        .coach-spotlight-topline {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 10px;
+            color: var(--muted);
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }}
+        .coach-spotlight-card h4 {{
+            margin: 0;
+            font-size: 15px;
+            line-height: 1.45;
+        }}
+        .coach-spotlight-card p {{
+            margin: 0;
+            color: var(--muted);
+            font-size: 12px;
+            line-height: 1.5;
+        }}
+        .coach-spotlight-facts {{
+            display: grid;
+            gap: 8px;
+        }}
+        .coach-spotlight-facts div {{
+            display: grid;
+            gap: 4px;
+        }}
+        .coach-spotlight-facts strong {{
+            color: var(--ink);
+            font-size: 12px;
+        }}
+        .coach-spotlight-facts span {{
+            color: var(--muted);
+            font-size: 11px;
+            line-height: 1.4;
+        }}
+        .coach-chip-row {{
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+        }}
         .summary-grid {{
             display: grid;
             grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -5451,12 +5657,14 @@ def _render_bot_detail_page(data: dict[str, Any], strategy_code: str) -> str:
             .shell {{ grid-template-columns: 1fr; }}
             .sidebar {{ position: static; }}
             .hero-grid {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
+            .coach-spotlight-grid {{ grid-template-columns: 1fr; }}
         }}
         @media (max-width: 900px) {{
             .workspace {{ grid-template-columns: 1fr; }}
             .panel.full {{ grid-column: auto; }}
             .hero-grid {{ grid-template-columns: 1fr; }}
             .summary-grid {{ grid-template-columns: 1fr; }}
+            .coach-subheader {{ margin: 0 12px; }}
         }}
     </style>
 </head>
@@ -5556,6 +5764,7 @@ def _render_bot_detail_page(data: dict[str, Any], strategy_code: str) -> str:
             </section>
 
             {completed_positions_panel}
+            {live_trade_coach_panel}
             {trade_coach_panel}
 
             <section class="panel full">
@@ -6135,6 +6344,74 @@ def _build_trade_coach_regime_profile(
     }
 
 
+def _build_live_trade_coach_regime_profile(
+    *,
+    symbol: str,
+    bars: list[StrategyBarHistory],
+    interval_secs: int,
+) -> dict[str, Any]:
+    if not bars:
+        return {}
+    normalized_bars: list[StrategyBarHistory] = []
+    for bar in bars:
+        if bar.bar_time.tzinfo is None:
+            bar.bar_time = bar.bar_time.replace(tzinfo=UTC)
+        normalized_bars.append(bar)
+    active_bars = normalized_bars[-min(len(normalized_bars), 6) :]
+    if not active_bars:
+        return {}
+    lead_bars = normalized_bars[: -len(active_bars)][-10:] if len(normalized_bars) > len(active_bars) else []
+    reference_bar = active_bars[0]
+    entry_price = max(_as_float(reference_bar.open_price or reference_bar.close_price), 0.01)
+    lead_source = lead_bars or active_bars
+    avg_pre_entry_volume = (
+        sum(max(_as_float(bar.volume), 0.0) for bar in lead_source) / max(len(lead_source), 1)
+    )
+    avg_range_pct = (
+        sum(
+            max(
+                (_as_float(bar.high_price) - _as_float(bar.low_price))
+                / max(_as_float(bar.close_price or bar.open_price), 0.01)
+                * 100.0,
+                0.0,
+            )
+            for bar in active_bars
+        )
+        / max(len(active_bars), 1)
+    )
+    first_close = max(_as_float(active_bars[0].close_price or active_bars[0].open_price), 0.01)
+    last_close = max(_as_float(active_bars[-1].close_price or active_bars[-1].open_price), 0.01)
+    pre_entry_change_pct = ((last_close - first_close) / first_close) * 100.0
+    trade_range_pct = (
+        (max(_as_float(bar.high_price) for bar in active_bars) - min(_as_float(bar.low_price) for bar in active_bars))
+        / entry_price
+    ) * 100.0
+    avg_trade_count = (
+        sum(max(_as_float(bar.trade_count), 0.0) for bar in active_bars) / max(len(active_bars), 1)
+    )
+    duration_secs = max(len(active_bars), 1) * max(interval_secs, 1)
+    price_band = _trade_coach_price_band(entry_price)
+    volume_band = _trade_coach_volume_band(avg_pre_entry_volume)
+    volatility_band = _trade_coach_volatility_band(avg_range_pct)
+    momentum_band = _trade_coach_momentum_band(pre_entry_change_pct)
+    return {
+        "symbol": symbol,
+        "label": f"{price_band} price | {volume_band} volume | {volatility_band} volatility | {momentum_band} momentum",
+        "price_band": price_band,
+        "volume_band": volume_band,
+        "volatility_band": volatility_band,
+        "momentum_band": momentum_band,
+        "entry_price": round(entry_price, 4),
+        "avg_pre_entry_volume": round(avg_pre_entry_volume, 0),
+        "avg_range_pct": round(avg_range_pct, 2),
+        "pre_entry_change_pct": round(pre_entry_change_pct, 2),
+        "trade_range_pct": round(trade_range_pct, 2),
+        "avg_trade_count": round(avg_trade_count, 0),
+        "duration_secs": duration_secs,
+        "bar_count": len(active_bars),
+    }
+
+
 def _apply_trade_coach_regime_profiles(
     reviews: list[dict[str, Any]],
     regime_profiles: dict[str, dict[str, Any]],
@@ -6187,6 +6464,210 @@ def _filter_trade_coach_reviews(
         key=_trade_coach_trade_timestamp,
         reverse=True,
     )
+
+
+def _trade_coach_live_advisory_symbols(
+    bot: dict[str, Any],
+    recent_decisions: list[dict[str, Any]],
+) -> list[str]:
+    ordered: list[str] = []
+
+    def add(symbol: object) -> None:
+        normalized = str(symbol or "").strip().upper()
+        if normalized and normalized not in ordered:
+            ordered.append(normalized)
+
+    for item in bot.get("positions", []):
+        add(item.get("ticker") or item.get("symbol"))
+    for symbol in bot.get("pending_open_symbols", []):
+        add(symbol)
+    for symbol in bot.get("pending_close_symbols", []):
+        add(symbol)
+    for item in recent_decisions:
+        add(item.get("symbol"))
+    for symbol in bot.get("watchlist", []):
+        add(symbol)
+    return ordered[:10]
+
+
+def _trade_coach_current_path_for_symbol(
+    bot: dict[str, Any],
+    symbol: str,
+    recent_decisions: list[dict[str, Any]],
+) -> str:
+    normalized_symbol = str(symbol or "").strip().upper()
+    for item in recent_decisions:
+        if str(item.get("symbol", "") or "").strip().upper() != normalized_symbol:
+            continue
+        path = str(item.get("path", "") or "").strip().upper()
+        if path:
+            return path
+    for item in bot.get("positions", []):
+        if str(item.get("ticker") or item.get("symbol") or "").strip().upper() != normalized_symbol:
+            continue
+        path = str(item.get("path", "") or "").strip().upper()
+        if path:
+            return path
+    for item in bot.get("recent_orders", []):
+        if str(item.get("symbol", "") or "").strip().upper() != normalized_symbol:
+            continue
+        path = str(item.get("path", "") or "").strip().upper()
+        if path:
+            return path
+    return ""
+
+
+def _trade_coach_live_advisory_for_symbol(
+    *,
+    bot: dict[str, Any],
+    symbol: str,
+    recent_decisions: list[dict[str, Any]],
+    bot_reviews: list[dict[str, Any]],
+    live_regime_profiles: dict[str, dict[str, Any]],
+    path_patterns: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    normalized_symbol = str(symbol or "").strip().upper()
+    latest_decision = next(
+        (
+            item
+            for item in recent_decisions
+            if str(item.get("symbol", "") or "").strip().upper() == normalized_symbol
+        ),
+        {},
+    )
+    current_path = _trade_coach_current_path_for_symbol(bot, normalized_symbol, recent_decisions)
+    same_symbol_reviews = [
+        item
+        for item in bot_reviews
+        if str(item.get("symbol", "") or "").strip().upper() == normalized_symbol
+    ]
+    same_symbol_summary = _trade_coach_history_summary(same_symbol_reviews)
+    live_regime = dict(live_regime_profiles.get(normalized_symbol, {}) or {})
+    target_review = {
+        "strategy_code": bot.get("strategy_code", ""),
+        "broker_account_name": bot.get("account_name", ""),
+        "symbol": normalized_symbol,
+        "path": current_path,
+        "regime_profile": live_regime,
+    }
+    similar_regime_reviews = (
+        _trade_coach_similar_regime_reviews(target_review, bot_reviews, limit=4) if live_regime else []
+    )
+    similar_regime_summary = _trade_coach_similarity_summary(similar_regime_reviews)
+    path_signal = dict(path_patterns.get(current_path, {}) or {}) if current_path else {}
+
+    score = float(path_signal.get("caution_score", 0.0))
+    reasons: list[str] = []
+    if path_signal:
+        reasons.append(
+            f"path {current_path} has {path_signal.get('caution_label', 'low')} caution "
+            f"({int(path_signal.get('count', 0))} reviewed trades, avg {float(path_signal.get('avg_pnl_pct', 0.0)):+.1f}%)"
+        )
+    if similar_regime_summary["count"] >= 2:
+        avg_similarity = float(similar_regime_summary["avg_similarity_score"])
+        avg_regime_pnl = float(similar_regime_summary["avg_pnl_pct"])
+        if avg_regime_pnl < 0:
+            score += min(abs(avg_regime_pnl) * 8.0, 24.0)
+        if similar_regime_summary["bad"]:
+            score += min(similar_regime_summary["bad"] * 12.0, 24.0)
+        if similar_regime_summary["mixed"] >= max(similar_regime_summary["good"], 1):
+            score += 8.0
+        reasons.append(
+            f"similar regime {similar_regime_summary['count']} reviews, avg similarity {avg_similarity:.0f}, avg {avg_regime_pnl:+.1f}%"
+        )
+    if same_symbol_summary["count"] >= 2 and float(same_symbol_summary["avg_pnl_pct"]) < 0:
+        score += min(abs(float(same_symbol_summary["avg_pnl_pct"])) * 5.0, 15.0)
+        reasons.append(
+            f"{normalized_symbol} history avg {float(same_symbol_summary['avg_pnl_pct']):+.1f}% across {same_symbol_summary['count']} reviews"
+        )
+
+    caution_label = "high" if score >= 55 else "medium" if score >= 28 else "low"
+    if caution_label == "high":
+        message = (
+            f"{current_path or normalized_symbol} has struggled in reviewed history like this; require tighter confirmation before trusting it."
+        )
+        action = "Wait for cleaner confirmation, smaller size, or faster exits."
+    elif caution_label == "medium":
+        message = (
+            f"Reviewed history is mixed for {current_path or normalized_symbol}; verify tape quality before treating it as a clean go."
+        )
+        action = "Check spread, follow-through, and first pullback quality before committing."
+    else:
+        message = (
+            f"No strong caution signal is standing out for {normalized_symbol} from reviewed history yet."
+        )
+        action = "Use the live setup rules normally and keep validating it against fresh examples."
+
+    live_status = str(latest_decision.get("status", "") or "watching").strip().lower() or "watching"
+    live_reason = str(latest_decision.get("reason", "") or "live in bot; waiting for a clearer setup").strip()
+    live_timestamp = str(latest_decision.get("last_bar_at") or bot.get("last_tick_at", {}).get(normalized_symbol) or "").strip()
+    return {
+        "symbol": normalized_symbol,
+        "current_path": current_path or "-",
+        "live_status": live_status,
+        "live_reason": live_reason or "-",
+        "live_timestamp": live_timestamp or "-",
+        "same_symbol_summary": same_symbol_summary,
+        "similar_regime_summary": similar_regime_summary,
+        "regime_profile": live_regime,
+        "path_signal": path_signal,
+        "caution_score": round(score, 1),
+        "caution_label": caution_label,
+        "message": message,
+        "action": action,
+        "reasons": reasons[:3],
+    }
+
+
+def _build_trade_coach_live_advisories(
+    *,
+    bot: dict[str, Any],
+    recent_decisions: list[dict[str, Any]],
+    all_reviews: list[dict[str, Any]],
+    live_regime_profiles: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    strategy_code = str(bot.get("strategy_code", "") or "")
+    account_name = str(bot.get("account_name", "") or "")
+    bot_reviews = [
+        item
+        for item in all_reviews
+        if str(item.get("strategy_code", "") or "") == strategy_code
+        and str(item.get("broker_account_name", "") or "") == account_name
+    ]
+    if not bot_reviews:
+        return []
+    path_patterns = {
+        str(item.get("pattern_key", "") or ""): item
+        for item in _trade_coach_pattern_scoreboard(bot_reviews, mode="path", limit=50)
+        if str(item.get("pattern_key", "") or "").strip()
+    }
+    advisories = [
+        _trade_coach_live_advisory_for_symbol(
+            bot=bot,
+            symbol=symbol,
+            recent_decisions=recent_decisions,
+            bot_reviews=bot_reviews,
+            live_regime_profiles=live_regime_profiles,
+            path_patterns=path_patterns,
+        )
+        for symbol in _trade_coach_live_advisory_symbols(bot, recent_decisions)
+    ]
+    advisories = [
+        item
+        for item in advisories
+        if item["current_path"] != "-"
+        or item["same_symbol_summary"]["count"] > 0
+        or item["similar_regime_summary"]["count"] > 0
+    ]
+    return sorted(
+        advisories,
+        key=lambda item: (
+            2 if item["caution_label"] == "high" else 1 if item["caution_label"] == "medium" else 0,
+            float(item.get("caution_score", 0.0)),
+            _parse_et_timestamp(str(item.get("live_timestamp", "") or "")),
+        ),
+        reverse=True,
+    )[:8]
 
 
 def _trade_coach_review_summary(reviews: list[dict[str, Any]]) -> dict[str, int]:
@@ -6807,6 +7288,123 @@ def _build_trade_coach_guidance_rows(operator_guidance: list[dict[str, Any]]) ->
         </tr>"""
         )
     return "".join(rendered_rows), len(operator_guidance)
+
+
+def _build_trade_coach_live_advisory_summary_cards(
+    advisories: list[dict[str, Any]],
+    *,
+    reviewed_count: int,
+) -> str:
+    high_count = sum(1 for item in advisories if str(item.get("caution_label", "") or "").lower() == "high")
+    medium_count = sum(1 for item in advisories if str(item.get("caution_label", "") or "").lower() == "medium")
+    low_count = sum(1 for item in advisories if str(item.get("caution_label", "") or "").lower() == "low")
+    strongest = advisories[0] if advisories else {}
+    strongest_symbol = str(strongest.get("symbol", "") or "-")
+    strongest_path = str(strongest.get("current_path", "") or "-")
+    strongest_score = float(strongest.get("caution_score", 0.0))
+    strongest_label = str(strongest.get("caution_label", "low") or "low").upper()
+    avg_regime_matches = (
+        sum(int(dict(item.get("similar_regime_summary", {}) or {}).get("count", 0)) for item in advisories) / len(advisories)
+        if advisories
+        else 0.0
+    )
+    return f"""
+                <div class="hero-grid coach-advisory-hero-grid">
+                    <div class="hero-card coach-hero-card">
+                        <span>Mode</span>
+                        <strong>READ-ONLY</strong>
+                        <small>Production preview only. No gates, no order changes, no OMS influence.</small>
+                    </div>
+                    <div class="hero-card coach-hero-card">
+                        <span>Live Symbols</span>
+                        <strong>{len(advisories)}</strong>
+                        <small>Symbols with current 30-second context and coach memory attached.</small>
+                    </div>
+                    <div class="hero-card coach-hero-card">
+                        <span>Caution Mix</span>
+                        <strong>{high_count} high / {medium_count} med</strong>
+                        <small>{low_count} low caution symbols remain visible for context.</small>
+                    </div>
+                    <div class="hero-card coach-hero-card">
+                        <span>Reviewed History</span>
+                        <strong>{reviewed_count}</strong>
+                        <small>Completed 30-second trades already scored by the coach for this bot.</small>
+                    </div>
+                    <div class="hero-card coach-hero-card">
+                        <span>Strongest Live Signal</span>
+                        <strong>{escape(strongest_symbol)}</strong>
+                        <small>{escape(strongest_path)} · {strongest_label} caution ({strongest_score:.0f}) · avg {avg_regime_matches:.1f} similar-regime matches</small>
+                    </div>
+                </div>"""
+
+
+def _build_trade_coach_live_advisory_spotlight_cards(advisories: list[dict[str, Any]]) -> str:
+    if not advisories:
+        return """
+                <div class="coach-spotlight-grid">
+                    <article class="coach-spotlight-card coach-spotlight-empty">
+                        <div class="coach-spotlight-topline">No live caution matches yet</div>
+                        <h4>Waiting for a stronger 30-second setup footprint</h4>
+                        <p>The coach will start surfacing symbols here once we have enough live context to compare against reviewed trade memory.</p>
+                    </article>
+                </div>"""
+
+    rendered_cards: list[str] = []
+    for item in advisories[:3]:
+        regime_profile = dict(item.get("regime_profile", {}) or {})
+        same_symbol_summary = dict(item.get("same_symbol_summary", {}) or {})
+        similar_regime_summary = dict(item.get("similar_regime_summary", {}) or {})
+        reasons = list(item.get("reasons", []) or [])
+        reason_html = "".join(
+            f'<span class="pill-chip {("warning" if index == 0 else "accent")}">{escape(str(reason))}</span>'
+            for index, reason in enumerate(reasons[:3])
+        ) or '<span class="pill-chip">No elevated caution reasons yet.</span>'
+        caution_label = str(item.get("caution_label", "low") or "low").lower()
+        caution_style = _trade_coach_verdict_color(caution_label)
+        rendered_cards.append(
+            f"""
+                    <article class="coach-spotlight-card">
+                        <div class="coach-spotlight-topline">
+                            <span>{escape(str(item.get("symbol", "") or "-"))} · {escape(str(item.get("current_path", "") or "-"))}</span>
+                            <span class="count" style="background:rgba(255,255,255,0.05);color:{caution_style};border:1px solid color-mix(in srgb, {caution_style} 40%, rgba(121,146,193,0.24));">{escape(caution_label.upper())} {float(item.get("caution_score", 0.0)):.0f}</span>
+                        </div>
+                        <h4>{escape(str(item.get("message", "") or "-"))}</h4>
+                        <p>{escape(str(item.get("action", "") or "-"))}</p>
+                        <div class="coach-spotlight-facts">
+                            <div><strong>Live context</strong><span>{escape(str(item.get("live_status", "") or "-").upper())} · {escape(str(item.get("live_timestamp", "") or "-"))}</span></div>
+                            <div><strong>Why now</strong><span>{escape(str(item.get("live_reason", "") or "-"))}</span></div>
+                            <div><strong>Regime profile</strong><span>{escape(str(regime_profile.get("label", "") or "-"))}</span></div>
+                            <div><strong>Memory</strong><span>{int(similar_regime_summary.get("count", 0))} similar regime · {int(same_symbol_summary.get("count", 0))} same-symbol</span></div>
+                        </div>
+                        <div class="coach-chip-row">{reason_html}</div>
+                    </article>"""
+        )
+    return f'<div class="coach-spotlight-grid">{"".join(rendered_cards)}</div>'
+
+
+def _build_trade_coach_live_advisory_rows(advisories: list[dict[str, Any]]) -> tuple[str, int]:
+    if not advisories:
+        return (
+            '<tr><td colspan="5" style="text-align:center;color:#888;">No live coach advisory matches yet for this bot.</td></tr>',
+            0,
+        )
+
+    rendered_rows: list[str] = []
+    for item in advisories:
+        same_symbol_summary = dict(item.get("same_symbol_summary", {}) or {})
+        similar_regime_summary = dict(item.get("similar_regime_summary", {}) or {})
+        regime_profile = dict(item.get("regime_profile", {}) or {})
+        path_signal = dict(item.get("path_signal", {}) or {})
+        rendered_rows.append(
+            f"""<tr>
+            <td><strong>{escape(str(item.get("symbol", "")) or "-")}</strong><br><span style="color:#98a6c8;">{escape(str(item.get("current_path", "")) or "-")}</span></td>
+            <td style="white-space:nowrap;"><strong>{escape(str(item.get("live_status", "")) or "-").upper()}</strong><br><span style="color:#98a6c8;">{escape(str(item.get("live_timestamp", "")) or "-")}</span><div style="margin-top:4px;font-size:11px;color:#98a6c8;max-width:220px;">{escape(str(item.get("live_reason", "")) or "-")}</div></td>
+            <td style="font-size:11px;max-width:300px;"><div><strong>Regime:</strong> {escape(str(regime_profile.get("label", "")) or "-")}</div><div style="margin-top:4px;color:#98a6c8;"><strong>Symbol history:</strong> {int(same_symbol_summary.get("count", 0))} reviews &middot; avg {float(same_symbol_summary.get("avg_pnl_pct", 0.0)):+.1f}%</div><div style="margin-top:4px;color:#98a6c8;"><strong>Similar regime:</strong> {int(similar_regime_summary.get("count", 0))} reviews &middot; avg {float(similar_regime_summary.get("avg_pnl_pct", 0.0)):+.1f}%</div><div style="margin-top:4px;color:#98a6c8;"><strong>Path match:</strong> {escape(str(path_signal.get("caution_label", "-")))} {f'&middot; score {float(path_signal.get("caution_score", 0.0)):.0f}' if path_signal else ''}</div></td>
+            <td style="text-transform:uppercase;color:{_trade_coach_verdict_color(str(item.get("caution_label", "")))};"><strong>{escape(str(item.get("caution_label", "low")))} ({float(item.get("caution_score", 0.0)):.0f})</strong><br><span style="color:#98a6c8;font-weight:normal;">{escape(_trade_coach_tag_list(list(item.get("reasons", []) or [])))}</span></td>
+            <td style="font-size:11px;max-width:420px;"><div>{escape(str(item.get("message", "") or "-"))}</div><div style="margin-top:4px;color:#98a6c8;"><strong>What to watch:</strong> {escape(str(item.get("action", "") or "-"))}</div></td>
+        </tr>"""
+        )
+    return "".join(rendered_rows), len(advisories)
 
 
 def _render_trade_coach_review_detail(

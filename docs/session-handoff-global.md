@@ -4268,3 +4268,53 @@ Notes:
 - this is aimed at removing false red status on fresh/quiet watchlist symbols
 - it does not relax stale protection for open positions
 
+## 2026-04-27 - Upgrade 30-second Trade Coach live advisory into a production-style preview
+
+Context:
+
+- operator wants the 30-second coach to move beyond a plain table and start
+  showing the end-state live advisory experience
+- this phase must stay strictly advisory-only:
+  - no strategy gating
+  - no OMS influence
+  - no order actions
+- goal is to preview the final production look and feel while the coach is
+  still learning from post-trade history
+
+Fix applied:
+
+- updated `src/project_mai_tai/services/control_plane.py`
+  - kept the new live-advisory data path for bot pages
+  - upgraded the `/bot/30s` and other 30-second bot pages to render a richer
+    `Trade Coach Live Advisory` panel with:
+    - read-only mode card
+    - live-symbol count
+    - caution mix
+    - reviewed-history count
+    - strongest live signal summary
+    - `Top Live Cautions` spotlight cards
+    - `Live Symbol Matrix`
+  - changed wording from action-oriented copy to `What to watch` language so
+    the surface reads like guidance rather than control
+- updated `tests/unit/test_control_plane.py`
+  - verifies the richer panel sections render:
+    - `Production preview for the live 30-second coaching experience`
+    - `Top Live Cautions`
+    - `Live Symbol Matrix`
+
+Validation:
+
+- `.venv\\Scripts\\python.exe -m py_compile src/project_mai_tai/services/control_plane.py tests/unit/test_control_plane.py`
+- `.venv\\Scripts\\python.exe -m pytest tests/unit/test_control_plane.py -q -k "bot_page_renders_simple_trade_summary_table or trade_coach_review_center_and_api_filters or control_plane_marks_schwab_data_halt_red_on_bot_page"`
+  - `3 passed`
+
+Notes:
+
+- this phase is UI/control-plane only
+- the live advisory remains informational and is still powered by:
+  - reviewed trade history
+  - path memory
+  - similar-regime memory
+- the next likely tightening pass is on advisory wording/selectivity rather than
+  backend wiring
+
