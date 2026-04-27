@@ -4235,3 +4235,36 @@ Notes:
 - this change is specifically for the review-center UI/API screen
 - single-review detail still keeps the coach `Reviewed` timestamp for audit/reference
 
+## 2026-04-27 - Stop false Schwab 1-minute DATA HALT before first live tick
+
+Context:
+
+- the new `Schwab 1 Min Bot` page was showing `DATA HALT` with `YAAS` even when
+  there was no open position and the symbol had never received a first live
+  Schwab stream update in the current runtime
+- this made the bot look broken/red even though the underlying issue was only a
+  no-first-tick symbol on the watchlist
+
+Fix applied:
+
+- updated `src/project_mai_tai/services/strategy_engine_app.py`
+  - changed Schwab stale-halt logic so a flat symbol with no first live Schwab
+    update no longer escalates into `DATA HALT`
+  - open-position protection is unchanged: symbols with an open position can
+    still stale-halt even before a fresh live update
+- updated `tests/unit/test_schwab_1m_bot.py`
+  - verifies a no-first-tick flat symbol stays non-halted even after a long
+    elapsed window
+  - keeps the open-position stale-halt protection assertion
+
+Validation:
+
+- `.venv\\Scripts\\python.exe -m pytest tests/unit/test_schwab_1m_bot.py`
+  - `4 passed`
+- `.venv\\Scripts\\python.exe -m py_compile src/project_mai_tai/services/strategy_engine_app.py tests/unit/test_schwab_1m_bot.py`
+
+Notes:
+
+- this is aimed at removing false red status on fresh/quiet watchlist symbols
+- it does not relax stale protection for open positions
+

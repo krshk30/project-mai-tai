@@ -4885,6 +4885,8 @@ class StrategyEngineService:
             has_open_position=has_open_position
         )
         if last_update is None:
+            if not has_open_position:
+                return False
             first_seen = self._schwab_symbol_active_first_seen_at.get(str(symbol).upper(), now)
             no_first_tick_grace = self._schwab_symbol_no_first_tick_grace_seconds(
                 strategy_codes=strategy_codes,
