@@ -1496,6 +1496,8 @@ def test_bot_page_renders_simple_trade_summary_table() -> None:
         assert "Production preview for the live 30-second coaching experience" in bot_30s_page.text
         assert "Top Live Cautions" in bot_30s_page.text
         assert "Live Symbol Matrix" in bot_30s_page.text
+        assert "Why this surfaced" in bot_30s_page.text
+        assert "Matched reviews:" in bot_30s_page.text
         assert "pre-trade caution layer only" in bot_30s_page.text
         assert "Trade Coach Reviews" in bot_30s_page.text
         assert "Good momentum trade with a valid entry and disciplined exit." in bot_30s_page.text

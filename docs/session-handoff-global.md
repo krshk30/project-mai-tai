@@ -4318,3 +4318,45 @@ Notes:
 - the next likely tightening pass is on advisory wording/selectivity rather than
   backend wiring
 
+## 2026-04-27 - Add explanation links and matched-review context to live advisory
+
+Context:
+
+- operator likes the new 30-second live advisory layout but wants the cards to
+  explain themselves better
+- next advisory-only refinement is to make each caution traceable back to real
+  reviewed examples without adding any buttons or execution controls
+
+Fix applied:
+
+- updated `src/project_mai_tai/services/control_plane.py`
+  - enriched live advisory items with:
+    - same-path review summary
+    - severity caption
+    - matched review references
+  - upgraded `Top Live Cautions` cards to show:
+    - clearer severity styling
+    - `Why this surfaced`
+    - direct matched-review links into `/coach/review?...`
+  - upgraded `Live Symbol Matrix` rows to show:
+    - path history
+    - severity caption
+    - matched-review links
+- updated `tests/unit/test_control_plane.py`
+  - verifies live advisory page content now includes:
+    - `Why this surfaced`
+    - `Matched reviews:`
+
+Validation:
+
+- `.venv\\Scripts\\python.exe -m py_compile src/project_mai_tai/services/control_plane.py tests/unit/test_control_plane.py`
+- `.venv\\Scripts\\python.exe -m pytest tests/unit/test_control_plane.py -q -k "bot_page_renders_simple_trade_summary_table or trade_coach_review_center_and_api_filters or control_plane_marks_schwab_data_halt_red_on_bot_page"`
+  - `3 passed`
+
+Notes:
+
+- still advisory-only
+- no strategy, OMS, or order-control changes
+- this pushes the live coach closer to the end-state operator experience by
+  linking the live caution back to actual reviewed trade memory
+

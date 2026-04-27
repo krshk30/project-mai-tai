@@ -5586,6 +5586,43 @@ def _render_bot_detail_page(
             flex-wrap: wrap;
             gap: 6px;
         }}
+        .coach-spotlight-high {{
+            border-color: rgba(255,107,107,0.42);
+            box-shadow: inset 0 0 0 1px rgba(255,107,107,0.12);
+        }}
+        .coach-spotlight-medium {{
+            border-color: rgba(255,204,91,0.38);
+            box-shadow: inset 0 0 0 1px rgba(255,204,91,0.10);
+        }}
+        .coach-spotlight-low {{
+            border-color: rgba(95,255,141,0.24);
+        }}
+        .coach-details {{
+            border-top: 1px solid rgba(121, 146, 193, 0.16);
+            padding-top: 10px;
+        }}
+        .coach-details summary {{
+            cursor: pointer;
+            color: var(--cyan);
+            font-size: 12px;
+        }}
+        .coach-details-copy {{
+            margin-top: 8px;
+            color: var(--muted);
+            font-size: 11px;
+            line-height: 1.5;
+        }}
+        .coach-inline-link {{
+            display: inline-flex;
+            margin: 4px 8px 0 0;
+            color: var(--cyan);
+            text-decoration: none;
+            font-size: 11px;
+        }}
+        .coach-inline-empty {{
+            color: var(--muted);
+            font-size: 11px;
+        }}
         .summary-grid {{
             display: grid;
             grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -6553,6 +6590,12 @@ def _trade_coach_live_advisory_for_symbol(
         "path": current_path,
         "regime_profile": live_regime,
     }
+    same_path_reviews = (
+        _trade_coach_related_reviews(target_review, bot_reviews, mode="path", limit=4)
+        if current_path
+        else []
+    )
+    same_path_summary = _trade_coach_history_summary(same_path_reviews)
     similar_regime_reviews = (
         _trade_coach_similar_regime_reviews(target_review, bot_reviews, limit=4) if live_regime else []
     )
@@ -6585,6 +6628,13 @@ def _trade_coach_live_advisory_for_symbol(
         )
 
     caution_label = "high" if score >= 55 else "medium" if score >= 28 else "low"
+    severity_caption = (
+        "Coach memory sees repeated weakness in similar reviewed trades."
+        if caution_label == "high"
+        else "Coach memory is mixed enough that the setup needs extra confirmation."
+        if caution_label == "medium"
+        else "Coach memory is mostly neutral here, so treat this as context rather than a green light."
+    )
     if caution_label == "high":
         message = (
             f"{current_path or normalized_symbol} has struggled in reviewed history like this; require tighter confirmation before trusting it."
@@ -6601,6 +6651,32 @@ def _trade_coach_live_advisory_for_symbol(
         )
         action = "Use the live setup rules normally and keep validating it against fresh examples."
 
+    reference_reviews: list[dict[str, Any]] = []
+    seen_cycle_keys: set[str] = set()
+
+    def add_reference(review: dict[str, Any], bucket: str) -> None:
+        cycle_key = str(review.get("cycle_key", "") or "").strip()
+        if not cycle_key or cycle_key in seen_cycle_keys:
+            return
+        seen_cycle_keys.add(cycle_key)
+        reference_reviews.append(
+            {
+                "cycle_key": cycle_key,
+                "bucket": bucket,
+                "symbol": str(review.get("symbol", "") or "-"),
+                "path": str(review.get("path", "") or "-"),
+                "verdict": str(review.get("verdict", "") or "-"),
+                "created_at": str(review.get("created_at", "") or "-"),
+            }
+        )
+
+    for review in similar_regime_reviews[:2]:
+        add_reference(review, "regime match")
+    for review in same_path_reviews[:2]:
+        add_reference(review, "path match")
+    for review in same_symbol_reviews[:2]:
+        add_reference(review, "same symbol")
+
     live_status = str(latest_decision.get("status", "") or "watching").strip().lower() or "watching"
     live_reason = str(latest_decision.get("reason", "") or "live in bot; waiting for a clearer setup").strip()
     live_timestamp = str(latest_decision.get("last_bar_at") or bot.get("last_tick_at", {}).get(normalized_symbol) or "").strip()
@@ -6611,14 +6687,17 @@ def _trade_coach_live_advisory_for_symbol(
         "live_reason": live_reason or "-",
         "live_timestamp": live_timestamp or "-",
         "same_symbol_summary": same_symbol_summary,
+        "same_path_summary": same_path_summary,
         "similar_regime_summary": similar_regime_summary,
         "regime_profile": live_regime,
         "path_signal": path_signal,
         "caution_score": round(score, 1),
         "caution_label": caution_label,
+        "severity_caption": severity_caption,
         "message": message,
         "action": action,
         "reasons": reasons[:3],
+        "reference_reviews": reference_reviews[:3],
     }
 
 
@@ -7341,6 +7420,21 @@ def _build_trade_coach_live_advisory_summary_cards(
                 </div>"""
 
 
+def _build_trade_coach_live_reference_links(references: list[dict[str, Any]]) -> str:
+    if not references:
+        return '<span class="coach-inline-empty">No matched reviewed trades yet.</span>'
+
+    rendered_links: list[str] = []
+    for item in references:
+        review_url = f'/coach/review?cycle_key={quote(str(item.get("cycle_key", "") or ""))}'
+        bucket = str(item.get("bucket", "") or "match").strip().lower()
+        label = f"{bucket}: {str(item.get('symbol', '') or '-')} / {str(item.get('path', '') or '-')}"
+        rendered_links.append(
+            f'<a class="coach-inline-link" href="{escape(review_url)}">{escape(label)}</a>'
+        )
+    return "".join(rendered_links)
+
+
 def _build_trade_coach_live_advisory_spotlight_cards(advisories: list[dict[str, Any]]) -> str:
     if not advisories:
         return """
@@ -7356,30 +7450,41 @@ def _build_trade_coach_live_advisory_spotlight_cards(advisories: list[dict[str, 
     for item in advisories[:3]:
         regime_profile = dict(item.get("regime_profile", {}) or {})
         same_symbol_summary = dict(item.get("same_symbol_summary", {}) or {})
+        same_path_summary = dict(item.get("same_path_summary", {}) or {})
         similar_regime_summary = dict(item.get("similar_regime_summary", {}) or {})
+        references = list(item.get("reference_reviews", []) or [])
         reasons = list(item.get("reasons", []) or [])
         reason_html = "".join(
             f'<span class="pill-chip {("warning" if index == 0 else "accent")}">{escape(str(reason))}</span>'
             for index, reason in enumerate(reasons[:3])
         ) or '<span class="pill-chip">No elevated caution reasons yet.</span>'
+        reference_html = _build_trade_coach_live_reference_links(references)
         caution_label = str(item.get("caution_label", "low") or "low").lower()
         caution_style = _trade_coach_verdict_color(caution_label)
         rendered_cards.append(
             f"""
-                    <article class="coach-spotlight-card">
+                    <article class="coach-spotlight-card coach-spotlight-{escape(caution_label)}">
                         <div class="coach-spotlight-topline">
                             <span>{escape(str(item.get("symbol", "") or "-"))} · {escape(str(item.get("current_path", "") or "-"))}</span>
                             <span class="count" style="background:rgba(255,255,255,0.05);color:{caution_style};border:1px solid color-mix(in srgb, {caution_style} 40%, rgba(121,146,193,0.24));">{escape(caution_label.upper())} {float(item.get("caution_score", 0.0)):.0f}</span>
                         </div>
                         <h4>{escape(str(item.get("message", "") or "-"))}</h4>
-                        <p>{escape(str(item.get("action", "") or "-"))}</p>
+                        <p>{escape(str(item.get("severity_caption", "") or "-"))}</p>
                         <div class="coach-spotlight-facts">
                             <div><strong>Live context</strong><span>{escape(str(item.get("live_status", "") or "-").upper())} · {escape(str(item.get("live_timestamp", "") or "-"))}</span></div>
                             <div><strong>Why now</strong><span>{escape(str(item.get("live_reason", "") or "-"))}</span></div>
                             <div><strong>Regime profile</strong><span>{escape(str(regime_profile.get("label", "") or "-"))}</span></div>
+                            <div><strong>Path memory</strong><span>{int(same_path_summary.get("count", 0))} same-path reviews · avg {float(same_path_summary.get("avg_pnl_pct", 0.0)):+.1f}%</span></div>
                             <div><strong>Memory</strong><span>{int(similar_regime_summary.get("count", 0))} similar regime · {int(same_symbol_summary.get("count", 0))} same-symbol</span></div>
                         </div>
                         <div class="coach-chip-row">{reason_html}</div>
+                        <details class="coach-details">
+                            <summary>Why this surfaced</summary>
+                            <div class="coach-details-copy"><strong>What to watch:</strong> {escape(str(item.get("action", "") or "-"))}</div>
+                            <div class="coach-details-copy"><strong>Path memory:</strong> {int(same_path_summary.get("count", 0))} reviewed trades · avg {float(same_path_summary.get("avg_pnl_pct", 0.0)):+.1f}%</div>
+                            <div class="coach-details-copy"><strong>Similar regime memory:</strong> {int(similar_regime_summary.get("count", 0))} reviewed trades · avg {float(similar_regime_summary.get("avg_pnl_pct", 0.0)):+.1f}%</div>
+                            <div class="coach-details-copy"><strong>Matched reviews:</strong> {reference_html}</div>
+                        </details>
                     </article>"""
         )
     return f'<div class="coach-spotlight-grid">{"".join(rendered_cards)}</div>'
@@ -7395,16 +7500,18 @@ def _build_trade_coach_live_advisory_rows(advisories: list[dict[str, Any]]) -> t
     rendered_rows: list[str] = []
     for item in advisories:
         same_symbol_summary = dict(item.get("same_symbol_summary", {}) or {})
+        same_path_summary = dict(item.get("same_path_summary", {}) or {})
         similar_regime_summary = dict(item.get("similar_regime_summary", {}) or {})
         regime_profile = dict(item.get("regime_profile", {}) or {})
         path_signal = dict(item.get("path_signal", {}) or {})
+        reference_html = _build_trade_coach_live_reference_links(list(item.get("reference_reviews", []) or []))
         rendered_rows.append(
             f"""<tr>
             <td><strong>{escape(str(item.get("symbol", "")) or "-")}</strong><br><span style="color:#98a6c8;">{escape(str(item.get("current_path", "")) or "-")}</span></td>
             <td style="white-space:nowrap;"><strong>{escape(str(item.get("live_status", "")) or "-").upper()}</strong><br><span style="color:#98a6c8;">{escape(str(item.get("live_timestamp", "")) or "-")}</span><div style="margin-top:4px;font-size:11px;color:#98a6c8;max-width:220px;">{escape(str(item.get("live_reason", "")) or "-")}</div></td>
-            <td style="font-size:11px;max-width:300px;"><div><strong>Regime:</strong> {escape(str(regime_profile.get("label", "")) or "-")}</div><div style="margin-top:4px;color:#98a6c8;"><strong>Symbol history:</strong> {int(same_symbol_summary.get("count", 0))} reviews &middot; avg {float(same_symbol_summary.get("avg_pnl_pct", 0.0)):+.1f}%</div><div style="margin-top:4px;color:#98a6c8;"><strong>Similar regime:</strong> {int(similar_regime_summary.get("count", 0))} reviews &middot; avg {float(similar_regime_summary.get("avg_pnl_pct", 0.0)):+.1f}%</div><div style="margin-top:4px;color:#98a6c8;"><strong>Path match:</strong> {escape(str(path_signal.get("caution_label", "-")))} {f'&middot; score {float(path_signal.get("caution_score", 0.0)):.0f}' if path_signal else ''}</div></td>
-            <td style="text-transform:uppercase;color:{_trade_coach_verdict_color(str(item.get("caution_label", "")))};"><strong>{escape(str(item.get("caution_label", "low")))} ({float(item.get("caution_score", 0.0)):.0f})</strong><br><span style="color:#98a6c8;font-weight:normal;">{escape(_trade_coach_tag_list(list(item.get("reasons", []) or [])))}</span></td>
-            <td style="font-size:11px;max-width:420px;"><div>{escape(str(item.get("message", "") or "-"))}</div><div style="margin-top:4px;color:#98a6c8;"><strong>What to watch:</strong> {escape(str(item.get("action", "") or "-"))}</div></td>
+            <td style="font-size:11px;max-width:300px;"><div><strong>Regime:</strong> {escape(str(regime_profile.get("label", "")) or "-")}</div><div style="margin-top:4px;color:#98a6c8;"><strong>Path history:</strong> {int(same_path_summary.get("count", 0))} reviews &middot; avg {float(same_path_summary.get("avg_pnl_pct", 0.0)):+.1f}%</div><div style="margin-top:4px;color:#98a6c8;"><strong>Symbol history:</strong> {int(same_symbol_summary.get("count", 0))} reviews &middot; avg {float(same_symbol_summary.get("avg_pnl_pct", 0.0)):+.1f}%</div><div style="margin-top:4px;color:#98a6c8;"><strong>Similar regime:</strong> {int(similar_regime_summary.get("count", 0))} reviews &middot; avg {float(similar_regime_summary.get("avg_pnl_pct", 0.0)):+.1f}%</div><div style="margin-top:4px;color:#98a6c8;"><strong>Path signal:</strong> {escape(str(path_signal.get("caution_label", "-")))} {f'&middot; score {float(path_signal.get("caution_score", 0.0)):.0f}' if path_signal else ''}</div></td>
+            <td style="text-transform:uppercase;color:{_trade_coach_verdict_color(str(item.get("caution_label", "")))};"><strong>{escape(str(item.get("caution_label", "low")))} ({float(item.get("caution_score", 0.0)):.0f})</strong><br><span style="color:#98a6c8;font-weight:normal;">{escape(str(item.get("severity_caption", "") or "-"))}</span></td>
+            <td style="font-size:11px;max-width:420px;"><div>{escape(str(item.get("message", "") or "-"))}</div><div style="margin-top:4px;color:#98a6c8;"><strong>What to watch:</strong> {escape(str(item.get("action", "") or "-"))}</div><div style="margin-top:4px;color:#98a6c8;"><strong>Matched reviews:</strong> {reference_html}</div></td>
         </tr>"""
         )
     return "".join(rendered_rows), len(advisories)
