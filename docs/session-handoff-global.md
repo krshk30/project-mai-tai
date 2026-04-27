@@ -4268,6 +4268,71 @@ Notes:
 - this is aimed at removing false red status on fresh/quiet watchlist symbols
 - it does not relax stale protection for open positions
 
+## 2026-04-27 - Deploy production-style Trade Coach live advisory preview to VPS
+
+Context:
+
+- operator approved the new 30-second Trade Coach live advisory surface and
+  wants it visible in production now
+- requirement remains strict:
+  - advisory-only
+  - no strategy gating
+  - no OMS influence
+  - no order actions
+
+Deploy applied:
+
+- pushed `main` to GitHub at `55590dc`
+  - `Upgrade live trade coach advisory preview`
+- deployed on VPS from `/home/trader/project-mai-tai`
+  - `git pull --ff-only origin main`
+  - restarted only `project-mai-tai-control.service`
+
+Live validation:
+
+- `project-mai-tai-control.service`
+  - `active`
+- VPS `/health`
+  - control plane loads successfully
+  - overall health was `degraded` during validation because:
+    - `reconciler` was already `degraded`
+  - coach deploy itself did not introduce a strategy or OMS health failure
+- live page checks passed on:
+  - `/bot/30s`
+  - `/bot/30s-webull`
+- both pages now render:
+  - `Trade Coach Live Advisory`
+  - `READ-ONLY`
+  - `Production preview for the live 30-second coaching experience`
+  - `Top Live Cautions`
+  - `Live Symbol Matrix`
+- live `/api/bots` snapshot during validation:
+  - `macd_30s` recent trade coach reviews: `25`
+  - `webull_30s` recent trade coach reviews: `0`
+
+Operator validation path:
+
+- open:
+  - `https://project-mai-tai.live/bot/30s`
+  - `https://project-mai-tai.live/bot/30s-webull`
+- confirm the new top panel appears above `Trade Coach Reviews`
+- confirm the panel reads `READ-ONLY`
+- confirm there are no interactive trade controls or order actions in the panel
+- scan:
+  - `Top Live Cautions`
+  - `Live Symbol Matrix`
+  - existing `Trade Coach Reviews`
+- use `https://project-mai-tai.live/api/bots` as source of truth for:
+  - `recent_trade_coach_reviews`
+  - bot context that feeds the advisory
+
+Notes:
+
+- this deploy is UI/control-plane only
+- no trading services were restarted
+- the live advisory is intentionally observational so we can keep shaping the
+  end-state operator experience without affecting live execution
+
 ## 2026-04-27 - Upgrade 30-second Trade Coach live advisory into a production-style preview
 
 Context:
