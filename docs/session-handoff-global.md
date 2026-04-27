@@ -12,7 +12,9 @@ Important state:
 
 - this work is now merged to `main`
 - deployed to the VPS from `main` on `2026-04-26`
-- VPS repo is now on `fcc62b4`
+- local and GitHub `main` now include the follow-up handoff update commit
+  `8ccfa59`
+- VPS trade coach code deployment is on `fcc62b4`
 - production remains disabled by default
 - VPS trade coach secret is configured outside the repo
 - VPS trade coach flags remain disabled:
@@ -21,6 +23,8 @@ Important state:
   - `MAI_TAI_TRADE_COACH_PROMOTE_ENABLED=false`
 - no dedicated `project-mai-tai-trade-coach` systemd unit is installed or
   running yet
+- tomorrow's first live test should use the dedicated runbook and a temporary
+  one-off VPS smoke unit, not a permanent always-on coach service
 - current scope is the first trade-coach foundation pass for the two 30-second
   bots only:
   - `macd_30s`
@@ -30,6 +34,8 @@ What was added:
 
 - detailed implementation checklist document:
   - [trade-coach-implementation-plan.md](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/docs/trade-coach-implementation-plan.md)
+- live test runbook for first VPS validation:
+  - [trade-coach-live-test-runbook.md](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/docs/trade-coach-live-test-runbook.md)
 - shared completed-trade reconstruction module:
   - [trade_episodes.py](C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai/src/project_mai_tai/trade_episodes.py)
 - control-plane completed-position rendering now reuses that shared
