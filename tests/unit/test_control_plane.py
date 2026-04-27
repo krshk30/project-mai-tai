@@ -1518,9 +1518,15 @@ def test_trade_coach_review_center_and_api_filters() -> None:
 
     with TestClient(app) as client:
         cycle_key = "macd_30s|paper:macd_30s|UGRO|2026-03-28 10:00:00 AM ET|2026-03-28 10:05:00 AM ET"
-        history_start = (datetime.now(UTC) - timedelta(days=10)).strftime("%Y-%m-%d")
-        history_end = datetime.now(UTC).strftime("%Y-%m-%d")
-        response = client.get("/api/coach-reviews?strategy_code=macd_30s&verdict=good&coaching_focus=execution")
+        today_payload = client.get("/api/coach-reviews?strategy_code=macd_30s").json()
+        assert today_payload["count"] == 0
+
+        trade_day = "2026-03-28"
+        history_start = "2026-03-20"
+        history_end = "2026-03-28"
+        response = client.get(
+            f"/api/coach-reviews?strategy_code=macd_30s&verdict=good&coaching_focus=execution&start_date={trade_day}&end_date={trade_day}"
+        )
         assert response.status_code == 200
         payload = response.json()
         assert payload["count"] == 1
@@ -1556,7 +1562,7 @@ def test_trade_coach_review_center_and_api_filters() -> None:
         assert any(item["pattern_type"] == "path" for item in history_payload["pattern_signals"])
         assert any(item["pattern_type"] == "regime" for item in history_payload["pattern_signals"])
 
-        page = client.get("/coach/reviews?strategy_code=macd_30s")
+        page = client.get(f"/coach/reviews?strategy_code=macd_30s&start_date={trade_day}&end_date={trade_day}")
         assert page.status_code == 200
         assert "Trade Coach Review Center" in page.text
         assert "Operator Guidance" in page.text

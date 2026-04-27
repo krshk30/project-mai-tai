@@ -2727,10 +2727,7 @@ def build_app(
         range_start = _parse_review_filter_date(start_date) or default_start
         range_end_start = _parse_review_filter_date(end_date) or default_end
         range_end = range_end_start + timedelta(days=1) if (end_date or "").strip() else default_end
-        review_history = app.state.repository.load_trade_coach_review_history(
-            start=range_start,
-            end=range_end,
-        )
+        review_history = app.state.repository.load_trade_coach_review_history()
         regime_profiles = app.state.repository.load_trade_coach_regime_profiles(review_history)
         all_reviews = _apply_trade_coach_regime_profiles(
             _enrich_trade_coach_reviews(
@@ -2745,6 +2742,8 @@ def build_app(
             verdict=verdict,
             coaching_focus=coaching_focus,
             symbol=symbol,
+            start=range_start,
+            end=range_end,
         )
         pattern_signals = _trade_coach_pattern_signals(filtered_reviews)
         path_patterns = _trade_coach_pattern_scoreboard(filtered_reviews, mode="path")
@@ -3127,10 +3126,7 @@ def build_app(
         range_start = _parse_review_filter_date(start_date) or default_start
         range_end_start = _parse_review_filter_date(end_date) or default_end
         range_end = range_end_start + timedelta(days=1) if (end_date or "").strip() else default_end
-        review_history = app.state.repository.load_trade_coach_review_history(
-            start=range_start,
-            end=range_end,
-        )
+        review_history = app.state.repository.load_trade_coach_review_history()
         regime_profiles = app.state.repository.load_trade_coach_regime_profiles(review_history)
         return _render_trade_coach_review_center(
             data,
@@ -5967,6 +5963,19 @@ def _trade_coach_trade_window_display(review: dict[str, Any]) -> tuple[str, str]
     return (entry_text or exit_text or "-", exit_text if entry_text and exit_text else "trade window")
 
 
+def _trade_coach_trade_timestamp(review: dict[str, Any]) -> datetime:
+    exit_dt = _parse_et_timestamp(str(review.get("exit_time", "") or ""))
+    if exit_dt.year > 1:
+        return exit_dt.astimezone(UTC)
+    entry_dt = _parse_et_timestamp(str(review.get("entry_time", "") or ""))
+    if entry_dt.year > 1:
+        return entry_dt.astimezone(UTC)
+    created_dt = _parse_et_timestamp(str(review.get("created_at", "") or ""))
+    if created_dt.year > 1:
+        return created_dt.astimezone(UTC)
+    return datetime.min.replace(tzinfo=UTC)
+
+
 def _enrich_trade_coach_reviews(
     reviews: list[dict[str, Any]],
     bots: list[dict[str, Any]],
@@ -6148,6 +6157,8 @@ def _filter_trade_coach_reviews(
     verdict: str | None = None,
     coaching_focus: str | None = None,
     symbol: str | None = None,
+    start: datetime | None = None,
+    end: datetime | None = None,
 ) -> list[dict[str, Any]]:
     strategy_filter = str(strategy_code or "").strip()
     verdict_filter = str(verdict or "").strip().lower()
@@ -6164,11 +6175,16 @@ def _filter_trade_coach_reviews(
             continue
         if symbol_filter and str(item.get("symbol", "") or "").strip().upper() != symbol_filter:
             continue
+        trade_timestamp = _trade_coach_trade_timestamp(item)
+        if start is not None and trade_timestamp < start:
+            continue
+        if end is not None and trade_timestamp >= end:
+            continue
         filtered.append(item)
 
     return sorted(
         filtered,
-        key=lambda row: _parse_et_timestamp(str(row.get("created_at", "") or "")),
+        key=_trade_coach_trade_timestamp,
         reverse=True,
     )
 
@@ -6258,7 +6274,7 @@ def _build_trade_coach_review_queue(reviews: list[dict[str, Any]]) -> list[dict[
         queued,
         key=lambda row: (
             int(row.get("priority_score", 0)),
-            _parse_et_timestamp(str(row.get("created_at", "") or "")),
+            _trade_coach_trade_timestamp(row),
         ),
         reverse=True,
     )
@@ -7014,6 +7030,12 @@ def _render_trade_coach_review_center(
         verdict=verdict,
         coaching_focus=coaching_focus,
         symbol=symbol,
+        start=_parse_review_filter_date(start_date),
+        end=(
+            (_parse_review_filter_date(end_date) + timedelta(days=1))
+            if str(end_date or "").strip()
+            else None
+        ),
     )
     review_rows, visible_count = _build_trade_coach_review_rows(filtered_reviews, include_context=True)
     summary = _trade_coach_review_summary(filtered_reviews)

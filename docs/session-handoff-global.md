@@ -4199,3 +4199,39 @@ Notes:
 - the review center itself now prioritizes trade timing first, which should feel
   more natural when scanning filtered trading history
 
+## 2026-04-27 - Make Trade Coach date filters follow trade window everywhere
+
+Context:
+
+- operator noticed the review-center tiles and tables were still leaking older
+  trades into "today" because the backend filter was using coach review creation
+  time instead of the trade's own entry/exit window
+- that made the visible counts and queue feel inconsistent with the selected
+  date filter
+
+Fix applied:
+
+- updated `src/project_mai_tai/services/control_plane.py`
+  - added trade-timestamp helpers based on `exit_time`, then `entry_time`, then
+    review timestamp as last fallback
+  - `/api/coach-reviews` and `/coach/reviews` now load the review ledger first
+    and apply date filtering using the trade window, not `AiTradeReview.created_at`
+  - review-center filtered lists and queue ordering now sort by trade timing
+    instead of coach-row creation time
+- updated `tests/unit/test_control_plane.py`
+  - verifies default "today" filtering can return `0` for seeded historical
+    trades
+  - verifies explicit historical date windows still return the expected review
+    rows and page content
+
+Validation:
+
+- `.venv\\Scripts\\python.exe -m pytest tests/unit/test_control_plane.py -q`
+  - `28 passed`
+- `.venv\\Scripts\\python.exe -m py_compile src/project_mai_tai/services/control_plane.py tests/unit/test_control_plane.py`
+
+Notes:
+
+- this change is specifically for the review-center UI/API screen
+- single-review detail still keeps the coach `Reviewed` timestamp for audit/reference
+
