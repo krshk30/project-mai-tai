@@ -41,6 +41,7 @@ def configured_schwab_accounts(settings: Settings) -> dict[str, SchwabAccountCon
         configured[account_name] = SchwabAccountConfig(account_hash=resolved)
 
     add(settings.strategy_macd_30s_account_name, settings.schwab_macd_30s_account_hash)
+    add(settings.strategy_schwab_1m_account_name, settings.schwab_schwab_1m_account_hash)
     add(settings.strategy_macd_1m_account_name, settings.schwab_macd_1m_account_hash)
     add(settings.strategy_tos_account_name, shared_tos_runner_hash)
     add(settings.strategy_runner_account_name, shared_tos_runner_hash)
@@ -310,6 +311,77 @@ class SchwabBrokerAdapter:
                 "last_price": last_price,
             }
         return quotes
+
+    async def fetch_historical_bars(
+        self,
+        symbol: str,
+        *,
+        interval_minutes: int,
+        start_at: datetime,
+        end_at: datetime,
+        need_extended_hours_data: bool = True,
+    ) -> list[dict[str, float | int]]:
+        normalized_symbol = str(symbol).upper().strip()
+        if not normalized_symbol:
+            return []
+
+        start_ms = int(start_at.astimezone(UTC).timestamp() * 1000)
+        end_ms = int(end_at.astimezone(UTC).timestamp() * 1000)
+        if end_ms <= start_ms:
+            return []
+
+        query = urlencode(
+            {
+                "symbol": normalized_symbol,
+                "frequencyType": "minute",
+                "frequency": max(1, int(interval_minutes)),
+                "startDate": start_ms,
+                "endDate": end_ms,
+                "needExtendedHoursData": str(bool(need_extended_hours_data)).lower(),
+            }
+        )
+        try:
+            status_code, _headers, response = await self._authorized_request_json(
+                "GET",
+                f"/marketdata/v1/pricehistory?{query}",
+            )
+        except RuntimeError:
+            logger.exception("failed fetching Schwab historical bars for %s", normalized_symbol)
+            return []
+
+        if status_code >= 400 or not isinstance(response, dict):
+            logger.warning(
+                "failed fetching Schwab historical bars for %s: %s",
+                normalized_symbol,
+                self._extract_error_reason(response),
+            )
+            return []
+
+        bars: list[dict[str, float | int]] = []
+        for candle in response.get("candles", []) or []:
+            if not isinstance(candle, dict):
+                continue
+            timestamp_ms = candle.get("datetime")
+            try:
+                timestamp = float(timestamp_ms) / 1000.0
+            except (TypeError, ValueError):
+                continue
+            try:
+                bars.append(
+                    {
+                        "open": float(candle.get("open", 0) or 0),
+                        "high": float(candle.get("high", 0) or 0),
+                        "low": float(candle.get("low", 0) or 0),
+                        "close": float(candle.get("close", 0) or 0),
+                        "volume": int(candle.get("volume", 0) or 0),
+                        "timestamp": timestamp,
+                        "trade_count": int(candle.get("tradeCount", 1) or 1),
+                    }
+                )
+            except (TypeError, ValueError):
+                continue
+        bars.sort(key=lambda bar: float(bar["timestamp"]))
+        return bars
 
     async def fetch_order_update(self, request: OrderRequest) -> ExecutionReport | None:
         account = self.accounts_by_name.get(request.broker_account_name)

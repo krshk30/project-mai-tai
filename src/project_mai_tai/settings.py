@@ -82,6 +82,7 @@ class Settings(BaseSettings):
     market_data_live_aggregate_stream_enabled: bool = False
     strategy_macd_30s_enabled: bool = True
     strategy_webull_30s_enabled: bool = False
+    strategy_schwab_1m_enabled: bool = False
     strategy_macd_30s_live_aggregate_bars_enabled: bool = False
     strategy_macd_30s_live_aggregate_fallback_enabled: bool = True
     strategy_macd_30s_live_aggregate_stale_after_seconds: int = 3
@@ -94,6 +95,7 @@ class Settings(BaseSettings):
     strategy_macd_30s_retest_enabled: bool = False
     strategy_macd_30s_default_quantity: int = 100
     strategy_webull_30s_default_quantity: int = 100
+    strategy_schwab_1m_default_quantity: int = 100
     strategy_macd_30s_reclaim_excluded_symbols: str = "JEM,CYCN,BFRG,UCAR,BBGI"
     scanner_feed_retention_enabled: bool = True
     scanner_feed_retention_structure_bars: int = 10
@@ -115,6 +117,7 @@ class Settings(BaseSettings):
     strategy_macd_30s_common_config_overrides_json: str = ""
     strategy_macd_30s_config_overrides_json: str = ""
     strategy_webull_30s_config_overrides_json: str = ""
+    strategy_schwab_1m_config_overrides_json: str = ""
     strategy_macd_30s_probe_config_overrides_json: str = ""
     strategy_macd_30s_reclaim_config_overrides_json: str = ""
     strategy_macd_30s_retest_config_overrides_json: str = ""
@@ -164,6 +167,8 @@ class Settings(BaseSettings):
     strategy_macd_30s_broker_provider: str | None = None
     strategy_webull_30s_account_name: str = "live:webull_30s"
     strategy_webull_30s_broker_provider: str | None = "webull"
+    strategy_schwab_1m_account_name: str = "live:schwab_1m"
+    strategy_schwab_1m_broker_provider: str | None = "schwab"
     strategy_macd_30s_probe_account_name: str = "paper:macd_30s_probe"
     strategy_macd_30s_reclaim_account_name: str = "paper:macd_30s_reclaim"
     strategy_macd_30s_retest_account_name: str = "paper:macd_30s_retest"
@@ -192,6 +197,7 @@ class Settings(BaseSettings):
     schwab_token_store_path: str | None = None
     schwab_account_hash: str | None = None
     schwab_macd_30s_account_hash: str | None = None
+    schwab_schwab_1m_account_hash: str | None = None
     schwab_macd_1m_account_hash: str | None = None
     schwab_tos_runner_account_hash: str | None = None
     schwab_tick_archive_enabled: bool = False
@@ -326,6 +332,10 @@ class Settings(BaseSettings):
             override = self._normalize_provider_name(self.strategy_webull_30s_broker_provider)
             if override is not None:
                 return override
+        if normalized_code == "schwab_1m":
+            override = self._normalize_provider_name(self.strategy_schwab_1m_broker_provider)
+            if override is not None:
+                return override
         if normalized_code == "tos":
             override = self._normalize_provider_name(self.strategy_tos_broker_provider)
             if override is not None:
@@ -338,6 +348,8 @@ class Settings(BaseSettings):
             return self.provider_for_strategy("macd_30s")
         if normalized_account == self.strategy_webull_30s_account_name:
             return self.provider_for_strategy("webull_30s")
+        if normalized_account == self.strategy_schwab_1m_account_name:
+            return self.provider_for_strategy("schwab_1m")
         if normalized_account == self.strategy_tos_account_name:
             return self.provider_for_strategy("tos")
         return self.resolved_broker_provider
@@ -361,6 +373,10 @@ class Settings(BaseSettings):
                 providers.add(override)
         if self.strategy_webull_30s_enabled:
             override = self._normalize_provider_name(self.strategy_webull_30s_broker_provider)
+            if override is not None:
+                providers.add(override)
+        if self.strategy_schwab_1m_enabled:
+            override = self._normalize_provider_name(self.strategy_schwab_1m_broker_provider)
             if override is not None:
                 providers.add(override)
         if self.strategy_tos_enabled:

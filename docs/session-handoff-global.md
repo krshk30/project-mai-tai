@@ -1,5 +1,65 @@
 # Session Handoff - Global
 
+## 2026-04-27 New Schwab 1-Minute Bot Scaffold
+
+Current state:
+
+- local `codex/schwab-1m-bot` now adds a brand-new `schwab_1m` runtime
+- the old `macd_1m` path was left intact and untouched for live use
+- goal of this phase:
+  - clone the live Schwab 30-second bot architecture into a separate Schwab-native 1-minute bot
+  - keep the new bot off shared Polygon/Massive warmup history
+  - bootstrap warmup from Schwab sources instead
+
+What changed:
+
+- added new settings:
+  - `strategy_schwab_1m_enabled`
+  - `strategy_schwab_1m_account_name`
+  - `strategy_schwab_1m_broker_provider`
+  - `strategy_schwab_1m_default_quantity`
+  - `strategy_schwab_1m_config_overrides_json`
+  - `schwab_schwab_1m_account_hash`
+- added runtime registration:
+  - `schwab_1m`
+  - display name `Schwab 1 Min Bot`
+- added control-plane endpoints:
+  - JSON: `/botschwab1m`
+  - HTML: `/bot/1m-schwab`
+- added `BOT_PAGE_META` entry so the new bot appears in shared bot navigation when enabled
+- added `TradingConfig.make_1m_schwab_native_variant(...)`
+- `schwab_1m` now uses:
+  - `SchwabNativeBarBuilderManager(interval_secs=60)`
+  - `SchwabNativeIndicatorEngine`
+  - `SchwabNativeEntryEngine`
+  - no live aggregate bars
+  - no shared Polygon live-bar path
+
+Warmup design:
+
+- new Schwab REST minute-history fetch was added in `SchwabBrokerAdapter.fetch_historical_bars(...)`
+- the new bot gets a dedicated Schwab-native bootstrap pass during subscription sync
+- if Schwab REST history is unavailable, it falls back to aggregating the local Schwab tick archive into 60s bars
+- generic shared historical warmup replay now explicitly skips `schwab_1m`
+- this prevents the new bot from being seeded by shared Polygon/Massive historical bars
+
+Why this was necessary:
+
+- a pure tick-archive-only warmup would not help on a first-time symbol until after subscription started
+- a pure shared historical replay would violate the requirement to keep the new 1-minute bot Schwab-sourced
+- the new hybrid boot path keeps warmup Schwab-native first, with local Schwab archive as backup
+
+Validation completed:
+
+- passed:
+  - `.venv\Scripts\python.exe -m pytest tests/unit/test_runtime_registry.py tests/unit/test_schwab_1m_bot.py`
+  - `.venv\Scripts\python.exe -m py_compile src/project_mai_tai/settings.py src/project_mai_tai/runtime_registry.py src/project_mai_tai/broker_adapters/schwab.py src/project_mai_tai/market_data/schwab_tick_archive.py src/project_mai_tai/strategy_core/trading_config.py src/project_mai_tai/services/strategy_engine_app.py src/project_mai_tai/services/control_plane.py tests/unit/test_runtime_registry.py tests/unit/test_schwab_1m_bot.py`
+
+Deployment note:
+
+- at this handoff point the code scaffold is ready locally
+- next step is to enable `strategy_schwab_1m` in the VPS environment, deploy, and verify the new `/bot/1m-schwab` page and runtime behavior live
+
 ## 2026-04-27 Trade Coach Review Center (Control-Plane Phase)
 
 Current state:
