@@ -1000,6 +1000,8 @@ def test_webull_bot_page_uses_polygon_data_halt_wording() -> None:
         assert bots.status_code == 200
         webull_bot = next(item for item in bots.json()["bots"] if item["strategy_code"] == "webull_30s")
         assert webull_bot["data_health"]["status"] == "critical"
+        assert webull_bot["listening_status"]["state"] == "DATA HALT"
+        assert "Polygon stream stale/disconnected" in webull_bot["listening_status"]["detail"]
 
         webull_status = client.get("/botwebull")
         assert webull_status.status_code == 200

@@ -3698,3 +3698,31 @@ Validation:
   - `.venv\\Scripts\\python.exe -m pytest tests\\unit\\test_historical_bar_seed_order.py tests\\unit\\test_market_data_gateway.py tests\\unit\\test_webull_30s_bot.py`
   - `.venv\\Scripts\\python.exe -m py_compile src/project_mai_tai/market_data/massive_provider.py src/project_mai_tai/services/strategy_engine_app.py tests/unit/test_historical_bar_seed_order.py`
 
+## 2026-04-27 - Expose listening_status in shared /api/bots payload
+
+Context:
+
+- operator saw a transient red `DATA HALT` bot-page screenshot during a restart
+  window, then later healthy bot pages
+- follow-up verification showed `/bot` and `/botwebull` already carried correct
+  `listening_status`, but `/api/bots` did not expose the same top-card status
+  block
+- that made shared payload checks look thinner than the live per-bot pages and
+  increased confusion during validation
+
+Fix applied:
+
+- updated `src/project_mai_tai/services/control_plane.py` so `/api/bots`
+  attaches `listening_status` using the same `_build_bot_listening_status(...)`
+  helper as `/bot` and `/botwebull`
+- updated `tests/unit/test_control_plane.py` to assert that the Webull bot in
+  `/api/bots` now includes the same `DATA HALT` listening status already proven
+  on `/botwebull`
+
+Why this matters:
+
+- multi-bot monitors and direct payload checks now see the same top-card
+  listening state as the rendered per-bot pages
+- this reduces false suspicion that one API says "healthy" while the bot page
+  says "halted" or vice versa
+
