@@ -6270,18 +6270,25 @@ def _trade_coach_pattern_scoreboard(
         avg_outcome = sum(_as_float(entry.get("outcome_quality")) for entry in items) / len(items)
         manual_review_count = sum(1 for entry in items if bool(entry.get("should_review_manually")))
         should_skip_count = sum(1 for entry in items if not bool(entry.get("should_have_traded", True)))
-        score = (
-            len(items) * 8
-            + max(0.0, -summary["avg_pnl_pct"]) * 4
-            + manual_review_count * 12
-            + should_skip_count * 20
-            + summary["bad"] * 16
-            + summary["mixed"] * 8
-        )
+        score = 0.0
+        if len(items) >= 2 and summary["avg_pnl_pct"] < 0:
+            score += min(abs(summary["avg_pnl_pct"]) * 8, 28)
+        if should_skip_count:
+            score += min(should_skip_count * 25, 40)
+        if manual_review_count:
+            score += min(manual_review_count * 10, 24)
+        if summary["bad"]:
+            score += min(summary["bad"] * 18, 36)
+        if summary["mixed"] and summary["mixed"] >= max(summary["good"], 1):
+            score += 12
+        elif summary["mixed"]:
+            score += min(summary["mixed"] * 5, 10)
         if avg_outcome < 0.55:
             score += 18
         if avg_execution < 0.72:
             score += 12
+        if avg_setup < 0.75:
+            score += 10
         caution_label = "high" if score >= 55 else "medium" if score >= 30 else "low"
         rows.append(
             {
@@ -6343,7 +6350,7 @@ def _trade_coach_pattern_signals(reviews: list[dict[str, Any]], *, limit: int = 
                 "message": message,
             }
         )
-    return sorted(
+    sorted_signals = sorted(
         signals,
         key=lambda row: (
             2 if str(row.get("caution_label", "")) == "high" else 1 if str(row.get("caution_label", "")) == "medium" else 0,
@@ -6351,7 +6358,9 @@ def _trade_coach_pattern_signals(reviews: list[dict[str, Any]], *, limit: int = 
             int(row.get("count", 0)),
         ),
         reverse=True,
-    )[:limit]
+    )
+    caution_signals = [row for row in sorted_signals if str(row.get("caution_label", "")) != "low"]
+    return caution_signals[:limit] if caution_signals else sorted_signals[:limit]
 
 
 def _trade_coach_related_reviews(

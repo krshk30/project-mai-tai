@@ -4073,6 +4073,8 @@ Notes:
 - this is still descriptive, not trade gating
 - the new scoreboards are meant to show where we are trending toward live
   caution logic
+- caution scoring was tightened so common healthy patterns do not get promoted
+  just because they have a lot of reviewed trades
 - next likely step is to turn the strongest caution signals into clearer
   operator guidance or a future strategy-side advisory layer
 
