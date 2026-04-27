@@ -1,9 +1,15 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from project_mai_tai.services.control_plane import (
+    _build_bot_account_rows,
+    _build_bot_account_summary,
+    _build_bot_position_rows,
+)
+from project_mai_tai.services.strategy_engine_app import StrategyEngineService
 from project_mai_tai.market_data.schwab_tick_archive import load_aggregated_trade_bars
 from project_mai_tai.services.strategy_engine_app import StrategyEngineState
 from project_mai_tai.settings import Settings
@@ -79,3 +85,67 @@ def test_schwab_1m_uses_schwab_history_targets_not_generic_hydration() -> None:
     assert state.market_data_hydration_pairs(["YAAS"]) == set()
     assert state.schwab_native_history_targets(["YAAS"]) == [("schwab_1m", "YAAS", 60)]
     assert "schwab_1m" in state.schwab_stream_strategy_codes()
+
+
+def test_schwab_1m_no_first_tick_uses_longer_grace_window() -> None:
+    service = StrategyEngineService(
+        settings=Settings(
+            redis_url="redis://localhost:6379/15",
+            strategy_macd_30s_enabled=False,
+            strategy_webull_30s_enabled=False,
+            strategy_macd_1m_enabled=False,
+            strategy_schwab_1m_enabled=True,
+        )
+    )
+
+    now = datetime(2026, 4, 27, 19, 0, 0, tzinfo=UTC)
+    service._schwab_symbol_active_first_seen_at["YAAS"] = now - timedelta(seconds=240)
+
+    assert (
+        service._is_schwab_symbol_data_halt_stale(
+            "YAAS",
+            now,
+            strategy_codes=("schwab_1m",),
+            has_open_position=False,
+        )
+        is False
+    )
+    assert (
+        service._is_schwab_symbol_data_halt_stale(
+            "YAAS",
+            now,
+            strategy_codes=("schwab_1m",),
+            has_open_position=True,
+        )
+        is True
+    )
+
+
+def test_bot_ui_hides_account_only_positions_from_strategy_views() -> None:
+    data = {
+        "account_positions": [
+            {
+                "broker_account_name": "paper:schwab_1m",
+                "symbol": "CANF",
+                "quantity": "100",
+                "average_price": "2.50",
+                "market_value": "250.00",
+                "updated_at": "2026-04-27 03:47:09 PM ET",
+            }
+        ],
+        "virtual_positions": [],
+    }
+    bot = {
+        "strategy_code": "schwab_1m",
+        "account_name": "paper:schwab_1m",
+        "positions": [],
+        "runtime_kind": "macd",
+    }
+
+    summary = _build_bot_account_summary(data, bot)
+    assert summary["account_position_count"] == 0
+    assert summary["non_strategy_symbol_count"] == 1
+    assert summary["non_strategy_symbols"] == ["CANF"]
+
+    assert "No broker-account positions" in _build_bot_account_rows(data, bot)
+    assert "No open positions" in _build_bot_position_rows(data, bot)

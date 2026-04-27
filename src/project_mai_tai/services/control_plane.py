@@ -7694,10 +7694,15 @@ def _build_bot_account_summary(data: dict[str, Any], bot: dict[str, Any]) -> dic
     strategy_symbols = {str(item.get("symbol", "")).upper() for item in virtual_rows if item.get("symbol")}
     account_symbols = {str(item.get("symbol", "")).upper() for item in account_rows if item.get("symbol")}
     other_symbols = sorted(account_symbols - strategy_symbols)
-    gross_market_value = sum(_as_float(item.get("market_value")) for item in account_rows)
+    strategy_account_rows = [
+        item
+        for item in account_rows
+        if str(item.get("symbol", "")).upper() in strategy_symbols
+    ]
+    gross_market_value = sum(_as_float(item.get("market_value")) for item in strategy_account_rows)
     latest_updated_at = max((str(item.get("updated_at", "")) for item in account_rows), default="")
     return {
-        "account_position_count": len(account_rows),
+        "account_position_count": len(strategy_account_rows),
         "strategy_symbol_count": len(strategy_symbols),
         "non_strategy_symbol_count": len(other_symbols),
         "non_strategy_symbols": other_symbols,
@@ -7707,8 +7712,14 @@ def _build_bot_account_summary(data: dict[str, Any], bot: dict[str, Any]) -> dic
 
 
 def _build_bot_account_rows(data: dict[str, Any], bot: dict[str, Any]) -> str:
+    strategy_symbols = {
+        str(item.get("symbol", "")).upper()
+        for item in data["virtual_positions"]
+        if item.get("strategy_code") == bot["strategy_code"] and item.get("symbol")
+    }
     rows = [
         item for item in data["account_positions"] if item.get("broker_account_name") == bot["account_name"]
+        and str(item.get("symbol", "")).upper() in strategy_symbols
     ]
     if not rows:
         return '<tr><td colspan="6" style="text-align:center;color:#7b86a4;padding:15px;">No broker-account positions</td></tr>'
@@ -7747,6 +7758,10 @@ def _build_bot_position_rows(data: dict[str, Any], bot: dict[str, Any]) -> str:
         str(item.get("symbol", "")).upper(): item
         for item in data["account_positions"]
         if item.get("broker_account_name") == account_name
+        and (
+            str(item.get("symbol", "")).upper() in runtime_positions
+            or str(item.get("symbol", "")).upper() in virtual_positions
+        )
     }
 
     def _symbol_sort_key(symbol: str) -> str:
