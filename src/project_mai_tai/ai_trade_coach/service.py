@@ -15,6 +15,10 @@ from project_mai_tai.ai_trade_coach.repository import TradeCoachRepository
 
 logger = logging.getLogger(__name__)
 
+ALLOWED_VERDICTS = {"good", "bad", "mixed", "skip"}
+ALLOWED_ACTIONS = {"enter", "enter_early", "wait", "skip", "reduce", "exit", "hold"}
+ALLOWED_EXECUTION_TIMINGS = {"early", "on_time", "late", "skip"}
+
 
 def _json_default(value: Any) -> Any:
     if hasattr(value, "isoformat"):
@@ -27,11 +31,11 @@ class TradeCoachClient:
     REVIEW_SCHEMA: dict[str, Any] = {
         "type": "object",
         "properties": {
-            "verdict": {"type": "string"},
-            "action": {"type": "string"},
-            "execution_timing": {"type": "string"},
-            "confidence": {"type": "number"},
-            "setup_quality": {"type": "number"},
+            "verdict": {"type": "string", "enum": sorted(ALLOWED_VERDICTS)},
+            "action": {"type": "string", "enum": sorted(ALLOWED_ACTIONS)},
+            "execution_timing": {"type": "string", "enum": sorted(ALLOWED_EXECUTION_TIMINGS)},
+            "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+            "setup_quality": {"type": "number", "minimum": 0, "maximum": 1},
             "should_have_traded": {"type": "boolean"},
             "key_reasons": {"type": "array", "items": {"type": "string"}},
             "rule_hits": {"type": "array", "items": {"type": "string"}},
@@ -74,6 +78,8 @@ class TradeCoachClient:
                         "You are an expert trade review coach for a deterministic momentum trading engine. "
                         "Always call the submit_trade_review function exactly once. "
                         "Judge the trade against the provided rulebook and the captured episode context. "
+                        "Use only the allowed enum values in the function schema. "
+                        "Return confidence and setup_quality as decimals between 0.0 and 1.0. "
                         "Do not invent facts and do not output prose outside the function call."
                     ),
                 },
@@ -99,7 +105,7 @@ class TradeCoachClient:
             ],
         }
         data = self._request(payload)
-        return TradeCoachReview.model_validate(data)
+        return TradeCoachReview.model_validate(self._normalize_review_payload(data))
 
     def _request(self, payload: dict[str, Any]) -> dict[str, Any]:
         request = Request(
@@ -153,6 +159,84 @@ class TradeCoachClient:
         if texts:
             return "\n".join(texts)
         raise RuntimeError("Trade coach response contained no review payload")
+
+    def _normalize_review_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
+        normalized = dict(payload)
+        normalized["verdict"] = self._normalize_verdict(payload.get("verdict"))
+        normalized["action"] = self._normalize_action(payload.get("action"))
+        normalized["execution_timing"] = self._normalize_execution_timing(payload.get("execution_timing"))
+        normalized["confidence"] = self._normalize_score(payload.get("confidence"))
+        normalized["setup_quality"] = self._normalize_score(payload.get("setup_quality"))
+        normalized["should_have_traded"] = bool(payload.get("should_have_traded", False))
+        for field in ("key_reasons", "rule_hits", "rule_violations", "next_time"):
+            value = payload.get(field, [])
+            if isinstance(value, list):
+                normalized[field] = [str(item).strip() for item in value if str(item).strip()]
+            elif value in (None, ""):
+                normalized[field] = []
+            else:
+                normalized[field] = [str(value).strip()]
+        normalized["concise_summary"] = str(payload.get("concise_summary", "") or "").strip()
+        return normalized
+
+    @staticmethod
+    def _normalize_score(value: Any) -> float:
+        try:
+            score = float(value)
+        except (TypeError, ValueError):
+            return 0.0
+        if score > 1.0 and score <= 10.0:
+            score = score / 10.0
+        return max(0.0, min(score, 1.0))
+
+    @staticmethod
+    def _normalize_verdict(value: Any) -> str:
+        text = str(value or "").strip().lower()
+        if text in ALLOWED_VERDICTS:
+            return text
+        if any(token in text for token in ("win", "profit", "profitable", "solid", "good")):
+            return "good"
+        if any(token in text for token in ("loss", "loser", "bad", "poor", "failed")):
+            return "bad"
+        if "skip" in text or "no trade" in text:
+            return "skip"
+        return "mixed"
+
+    @staticmethod
+    def _normalize_action(value: Any) -> str:
+        text = str(value or "").strip().lower()
+        if text in ALLOWED_ACTIONS:
+            return text
+        if "enter early" in text or "early entry" in text:
+            return "enter_early"
+        if "enter" in text:
+            return "enter"
+        if "wait" in text:
+            return "wait"
+        if "skip" in text or "no trade" in text:
+            return "skip"
+        if "reduce" in text or "smaller" in text or "trim" in text:
+            return "reduce"
+        if any(token in text for token in ("exit", "close", "profit", "stop")):
+            return "exit"
+        if "hold" in text:
+            return "hold"
+        return "wait"
+
+    @staticmethod
+    def _normalize_execution_timing(value: Any) -> str:
+        text = str(value or "").strip().lower()
+        if text in ALLOWED_EXECUTION_TIMINGS:
+            return text
+        if "early" in text:
+            return "early"
+        if "late" in text:
+            return "late"
+        if "skip" in text or "no trade" in text:
+            return "skip"
+        if any(token in text for token in ("on time", "timely", "according to plan", "as planned")):
+            return "on_time"
+        return "on_time"
 
 
 class TradeCoachService:

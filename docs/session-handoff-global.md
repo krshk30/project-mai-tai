@@ -51,6 +51,10 @@ What was added:
   strategy/account pairs before applying the review limit
 - trade coach Responses client now explicitly forces the
   `submit_trade_review` function path and keeps strict structured parsing
+- trade coach client now also normalizes common off-schema model outputs before
+  final validation:
+  - `0-10` score responses are converted to `0.0-1.0`
+  - free-text verdict/action/timing labels are mapped onto the allowed enums
 
 Intentional design choices from this pass:
 
@@ -73,6 +77,7 @@ Validation completed:
   - `.venv\Scripts\python.exe -m pytest tests/unit/test_trade_episodes.py tests/unit/test_trade_coach_service.py tests/unit/test_trade_coach_repository.py tests/unit/test_control_plane.py -q`
   - `.venv\Scripts\python.exe -m py_compile src/project_mai_tai/trade_episodes.py src/project_mai_tai/ai_trade_coach/models.py src/project_mai_tai/ai_trade_coach/repository.py src/project_mai_tai/ai_trade_coach/service.py src/project_mai_tai/services/trade_coach_app.py src/project_mai_tai/services/trade_coach.py src/project_mai_tai/services/control_plane.py src/project_mai_tai/db/models.py`
   - `.venv\Scripts\python.exe -m project_mai_tai.services.trade_coach`
+  - `.venv\Scripts\python.exe -m pytest tests/unit/test_trade_coach_service.py tests/unit/test_trade_episodes.py tests/unit/test_trade_coach_repository.py -q`
 
 Latest validation snapshot:
 
@@ -100,6 +105,31 @@ Latest validation snapshot:
     - `ENVB`
     - `IONZ`
     - `SST`
+- `2026-04-26` one-off historical AI reviews completed successfully for real
+  `macd_30s` closed trades from `2026-04-24`:
+  - `BMNU`
+    - verdict: `good`
+    - action: `enter`
+    - timing: `on_time`
+    - confidence: `0.85`
+    - setup_quality: `0.90`
+  - `SKLZ`
+    - verdict: `good`
+    - action: `exit`
+    - timing: `on_time`
+    - confidence: `0.80`
+    - setup_quality: `0.90`
+  - `IMA`
+    - verdict: `mixed`
+    - action: `exit`
+    - timing: `on_time`
+    - confidence: `0.40`
+    - setup_quality: `0.60`
+  - these were one-off local AI reviews using read-only VPS historical episode
+    extraction
+  - they were **not** persisted into VPS `ai_trade_reviews` because the branch
+    is not merged/deployed and the local shell still lacks a direct Postgres
+    runtime for the normal service path
 - local dry-run blocker on `2026-04-26`:
   - no local Postgres listener on `localhost:5432`
   - because of that, a true DB-backed closed-trade review pass could not run from

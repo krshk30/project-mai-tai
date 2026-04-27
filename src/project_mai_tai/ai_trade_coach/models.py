@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 from typing import Any
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -67,9 +68,9 @@ class TradeEpisode(BaseModel):
 
 
 class TradeCoachReview(BaseModel):
-    verdict: str = Field(description="good | bad | mixed | skip")
-    action: str = Field(description="enter | enter_early | wait | skip | reduce | exit | hold")
-    execution_timing: str = Field(description="early | on_time | late | skip")
+    verdict: Literal["good", "bad", "mixed", "skip"]
+    action: Literal["enter", "enter_early", "wait", "skip", "reduce", "exit", "hold"]
+    execution_timing: Literal["early", "on_time", "late", "skip"]
     confidence: float = Field(ge=0.0, le=1.0)
     setup_quality: float = Field(ge=0.0, le=1.0)
     should_have_traded: bool
