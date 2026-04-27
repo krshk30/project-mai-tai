@@ -6,7 +6,7 @@ from project_mai_tai.services.control_plane import _build_bot_listening_status
 from project_mai_tai.services.strategy_engine_app import EASTERN_TZ
 
 
-def test_listening_status_surfaces_flat_symbol_staleness_as_degraded_not_data_halt() -> None:
+def test_listening_status_keeps_bot_listening_for_flat_symbol_warning() -> None:
     now = datetime.now(UTC).astimezone(EASTERN_TZ)
     heartbeat_at = (now - timedelta(seconds=15)).strftime("%Y-%m-%d %I:%M:%S %p ET")
     market_data_at = (now - timedelta(seconds=10)).strftime("%Y-%m-%d %I:%M:%S %p ET")
@@ -38,11 +38,14 @@ def test_listening_status_surfaces_flat_symbol_staleness_as_degraded_not_data_ha
         "indicator_snapshots": [],
         "data_health": {
             "status": "degraded",
-            "halted_symbols": ["ENVB"],
-            "reasons": {
-                "ENVB": "Schwab stream stale/disconnected; trading halted until live Schwab ticks recover",
+            "halted_symbols": [],
+            "warning_symbols": ["ENVB"],
+            "reasons": {},
+            "warning_reasons": {
+                "ENVB": "Schwab symbol is quiet on a flat positionless name; synthetic 30s bars can continue, but live Schwab ticks are temporarily sparse.",
             },
-            "since": {
+            "since": {},
+            "warning_since": {
                 "ENVB": tick_at,
             },
         },
@@ -56,5 +59,5 @@ def test_listening_status_surfaces_flat_symbol_staleness_as_degraded_not_data_ha
 
     listening_status = _build_bot_listening_status(data, bot, recent_decisions)
 
-    assert listening_status["state"] == "DEGRADED"
-    assert "trading halted until live Schwab ticks recover" in listening_status["detail"]
+    assert listening_status["state"] == "LISTENING"
+    assert "temporarily sparse" in listening_status["detail"]
