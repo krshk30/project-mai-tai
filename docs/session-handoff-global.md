@@ -4514,3 +4514,26 @@ Notes:
 - Validation:
   - `python -m pytest tests/unit/test_schwab_after_hours_stale_halt.py tests/unit/test_schwab_1m_bot.py tests/unit/test_control_plane_listening_status.py`
   - `python -m py_compile src/project_mai_tai/services/strategy_engine_app.py src/project_mai_tai/services/control_plane.py tests/unit/test_schwab_after_hours_stale_halt.py tests/unit/test_schwab_1m_bot.py tests/unit/test_control_plane_listening_status.py`
+## 2026-04-28 - Bot page Live Symbols now shows current actionable names, not retained feed state
+
+- Problem:
+  - The bot-page sidebar `Live Symbols` was reusing each bot runtime's retained `watchlist`.
+  - That made the sidebar look like the old stale-symbol/session-leak bug had returned, even when the backend state was current-session only.
+  - The same retained-feed concept was already shown separately in `Feed States`, so the page was effectively mixing two different meanings:
+    - current actionable/live bot symbols
+    - retained feed membership / cooldown symbols
+- Fix:
+  - Narrowed the bot-page `Live Symbols` sidebar to only show:
+    - open-position symbols
+    - pending open/close symbols
+    - current confirmed scanner symbols handed to that bot
+  - Left the runtime watchlist / retention logic untouched.
+  - Preserved the broader retained-feed view under `Feed States`.
+  - Added a regression test that keeps an extra retained symbol visible in `Feed States` while hiding it from `Live Symbols`.
+- Files:
+  - `src/project_mai_tai/services/control_plane.py`
+  - `tests/unit/test_control_plane.py`
+- Validation:
+  - `python -m pytest tests/unit/test_control_plane.py -k "live_symbols_only_show_current_confirmed_handoff or renders_simple_trade_summary_table or marks_schwab_data_halt_red_on_bot_page"`
+  - `3 passed`
+  - `python -m py_compile src/project_mai_tai/services/control_plane.py tests/unit/test_control_plane.py`
