@@ -5147,7 +5147,13 @@ def _render_bot_detail_page(
         if str(symbol).strip()
     ]
     bot_watchlist = {str(symbol).upper() for symbol in bot.get("watchlist", []) if str(symbol).strip()}
-    for item in data.get("scanner", {}).get("all_confirmed", []):
+    scanner_state = data.get("scanner", {}) or {}
+    confirmed_live_candidates = list(
+        scanner_state.get("all_confirmed")
+        or scanner_state.get("top_confirmed")
+        or []
+    )
+    for item in confirmed_live_candidates:
         ticker = str(item.get("ticker") or "").upper()
         if not ticker or ticker in active_symbols or ticker in manual_stop_symbols:
             continue
