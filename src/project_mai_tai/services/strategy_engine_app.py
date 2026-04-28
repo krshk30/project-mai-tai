@@ -2848,7 +2848,7 @@ class StrategyEngineState:
             for stock in self.confirmed_scanner.get_all_confirmed()
             if str(stock.get("ticker", "")).upper() not in blocked
         ]
-        self._record_bot_handoff_symbols(self.all_confirmed)
+        self._refresh_bot_handoff_active_symbols(self.all_confirmed)
         self.current_confirmed = self._ranked_scanner_confirmed_view(limit=5)
         tracked_snapshot_symbols = {
             str(stock.get("ticker", "")).upper()
@@ -3312,6 +3312,25 @@ class StrategyEngineState:
         self.session_handoff_active = True
         for code, _ in self._iter_target_bots(strategy_codes=strategy_codes):
             self.bot_handoff_symbols_by_strategy.setdefault(code, set()).update(symbols)
+            self.bot_handoff_history_by_strategy.setdefault(code, set()).update(symbols)
+
+    def _refresh_bot_handoff_active_symbols(
+        self,
+        items: Sequence[object],
+        *,
+        strategy_codes: Sequence[str] | None = None,
+    ) -> None:
+        symbols = set(self._normalize_symbol_items(items))
+        self._ensure_bot_handoff_state()
+        self.session_handoff_active = bool(symbols)
+        target_codes = [code for code, _ in self._iter_target_bots(strategy_codes=strategy_codes)]
+        target_code_set = set(target_codes)
+        for code in self.bots:
+            if code not in target_code_set:
+                self.bot_handoff_symbols_by_strategy.setdefault(code, set())
+                self.bot_handoff_history_by_strategy.setdefault(code, set())
+                continue
+            self.bot_handoff_symbols_by_strategy[code] = set(symbols)
             self.bot_handoff_history_by_strategy.setdefault(code, set()).update(symbols)
 
     def _discard_bot_handoff_symbols(
