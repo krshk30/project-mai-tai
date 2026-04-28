@@ -4499,3 +4499,23 @@ Notes:
   - `python -m pytest tests/unit/test_strategy_core.py tests/unit/test_schwab_gap_recovery_guard.py tests/unit/test_schwab_after_hours_stale_halt.py`
   - `34 passed`
   - `python -m py_compile src/project_mai_tai/strategy_core/schwab_native_30s.py tests/unit/test_strategy_core.py`
+
+## 2026-04-27 - Gap recovery no longer sticks or spams after hours
+
+- Problem:
+  - After the new gap-recovery guard and synthetic-bar indicator skip landed, the `schwab_1m` page could still look broken after `8:00 PM ET`.
+  - Two issues were contributing:
+    - gap recovery was being armed on synthetic after-hours bars for flat symbols that were no longer tradable anyway
+    - `flush_completed_bars()` was not advancing the recovery counter, so once a symbol entered recovery it could keep repeating warning rows without progressing
+- Fix:
+  - Added a trading-window-aware gap-recovery gate in `StrategyBotRuntime`.
+  - Flat symbols outside their trading window no longer arm or retain gap-recovery state.
+  - Open/pending symbols are still protected.
+  - Updated `flush_completed_bars()` to batch bars by symbol and apply the same synthetic-gap / recovery / advance logic as the live tick path.
+- Files:
+  - `src/project_mai_tai/services/strategy_engine_app.py`
+  - `tests/unit/test_schwab_gap_recovery_guard.py`
+- Validation:
+  - `python -m pytest tests/unit/test_schwab_gap_recovery_guard.py tests/unit/test_schwab_after_hours_stale_halt.py tests/unit/test_strategy_core.py -k "gap_recovery or schwab_native_indicator_engine or after_hours"`
+  - `9 passed`
+  - `python -m py_compile src/project_mai_tai/services/strategy_engine_app.py tests/unit/test_schwab_gap_recovery_guard.py`

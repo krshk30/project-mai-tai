@@ -713,9 +713,11 @@ class StrategyBotRuntime:
             if int(getattr(bar, "trade_count", 0) or 0) <= 0 and int(getattr(bar, "volume", 0) or 0) <= 0
         ]
         if synthetic_gap_bars and not prewarm_only:
-            self._arm_gap_recovery(symbol, synthetic_gap_count=len(synthetic_gap_bars))
-            self._finalize_gap_recovery_completed_bar(symbol)
-            return intents
+            if self._should_track_gap_recovery(symbol):
+                self._arm_gap_recovery(symbol, synthetic_gap_count=len(synthetic_gap_bars))
+                self._finalize_gap_recovery_completed_bar(symbol)
+                return intents
+            self._clear_gap_recovery(symbol)
         for _bar in completed_bars:
             if prewarm_only:
                 self._finalize_prewarm_completed_bar(symbol)
@@ -777,9 +779,11 @@ class StrategyBotRuntime:
             if int(getattr(bar, "trade_count", 0) or 0) <= 0 and int(getattr(bar, "volume", 0) or 0) <= 0
         ]
         if synthetic_gap_bars and not prewarm_only:
-            self._arm_gap_recovery(symbol, synthetic_gap_count=len(synthetic_gap_bars))
-            self._finalize_gap_recovery_completed_bar(symbol)
-            return intents
+            if self._should_track_gap_recovery(symbol):
+                self._arm_gap_recovery(symbol, synthetic_gap_count=len(synthetic_gap_bars))
+                self._finalize_gap_recovery_completed_bar(symbol)
+                return intents
+            self._clear_gap_recovery(symbol)
         for _bar in completed_bars:
             if prewarm_only:
                 self._finalize_prewarm_completed_bar(symbol)
@@ -839,10 +843,35 @@ class StrategyBotRuntime:
         self._roll_day_if_needed()
         intents: list[TradeIntentEvent] = []
         completed = self.builder_manager.check_all_bar_closes()
-        for symbol, _bar in completed:
+        completed_by_symbol: dict[str, list[OHLCVBar]] = {}
+        for symbol, bar in completed:
+            completed_by_symbol.setdefault(str(symbol).upper(), []).append(bar)
+
+        for normalized_symbol, symbol_bars in completed_by_symbol.items():
+            symbol = normalized_symbol
             normalized_symbol = str(symbol).upper()
             self._last_tick_at[normalized_symbol] = self._normalize_now(self.now_provider())
-            intents.extend(self._evaluate_completed_bar(symbol))
+            position = self.positions.get_position(symbol)
+            prewarm_only = normalized_symbol in self.prewarm_symbols and normalized_symbol not in self.watchlist
+            if normalized_symbol not in self.watchlist and position is None and not prewarm_only:
+                continue
+            synthetic_gap_bars = [
+                bar
+                for bar in symbol_bars
+                if int(getattr(bar, "trade_count", 0) or 0) <= 0 and int(getattr(bar, "volume", 0) or 0) <= 0
+            ]
+            if synthetic_gap_bars and not prewarm_only:
+                if self._should_track_gap_recovery(symbol):
+                    self._arm_gap_recovery(symbol, synthetic_gap_count=len(synthetic_gap_bars))
+                    self._finalize_gap_recovery_completed_bar(symbol)
+                    continue
+                self._clear_gap_recovery(symbol)
+            for bar in symbol_bars:
+                if prewarm_only:
+                    self._finalize_prewarm_completed_bar(symbol)
+                else:
+                    intents.extend(self._evaluate_completed_bar(symbol))
+                    self._advance_gap_recovery(symbol, bar)
         return intents, len(completed)
 
     def apply_execution_fill(
@@ -1089,6 +1118,9 @@ class StrategyBotRuntime:
         metrics = self._build_lifecycle_metrics(symbol, indicators, self.builder_manager)
         self._update_symbol_lifecycle(symbol, metrics=metrics)
         intents: list[TradeIntentEvent] = []
+
+        if not self._should_track_gap_recovery(symbol):
+            self._clear_gap_recovery(symbol)
 
         position = self.positions.get_position(symbol)
         if position is not None:
@@ -1647,6 +1679,31 @@ class StrategyBotRuntime:
     def _gap_recovery_bars_required(self) -> int:
         interval = max(1, int(self.definition.interval_secs))
         return max(2, int((90 + interval - 1) // interval))
+
+    def _trading_window_open(self) -> bool:
+        current = self.now_provider()
+        config = self.definition.trading_config
+        if current.hour < config.trading_start_hour or current.hour >= config.trading_end_hour:
+            return False
+        time_str = current.strftime("%H:%M")
+        if config.dead_zone_start <= time_str < config.dead_zone_end:
+            return False
+        return True
+
+    def _should_track_gap_recovery(self, symbol: str) -> bool:
+        normalized = str(symbol).upper()
+        if self.positions.get_position(normalized) is not None:
+            return True
+        if normalized in self.pending_open_symbols or normalized in self.pending_close_symbols:
+            return True
+        if any(pending_symbol == normalized for pending_symbol, _level in self.pending_scale_levels):
+            return True
+        return self._trading_window_open()
+
+    def _clear_gap_recovery(self, symbol: str) -> None:
+        normalized = str(symbol).upper()
+        self._gap_recovery_bars_remaining.pop(normalized, None)
+        self._gap_recovery_synthetic_bars.pop(normalized, None)
 
     def _arm_gap_recovery(self, symbol: str, *, synthetic_gap_count: int) -> None:
         normalized = str(symbol).upper()
