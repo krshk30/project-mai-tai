@@ -237,6 +237,8 @@ class StrategyBotRuntime:
         self.data_halt_since: dict[str, datetime] = {}
         self.data_warning_symbols: dict[str, str] = {}
         self.data_warning_since: dict[str, datetime] = {}
+        self._gap_recovery_bars_remaining: dict[str, int] = {}
+        self._gap_recovery_synthetic_bars: dict[str, int] = {}
         self.session_factory = session_factory
         self.use_live_aggregate_bars = use_live_aggregate_bars
         self.live_aggregate_fallback_enabled = live_aggregate_fallback_enabled
@@ -705,11 +707,21 @@ class StrategyBotRuntime:
             timestamp_ns or 0,
             cumulative_volume,
         )
+        synthetic_gap_bars = [
+            bar
+            for bar in completed_bars
+            if int(getattr(bar, "trade_count", 0) or 0) <= 0 and int(getattr(bar, "volume", 0) or 0) <= 0
+        ]
+        if synthetic_gap_bars and not prewarm_only:
+            self._arm_gap_recovery(symbol, synthetic_gap_count=len(synthetic_gap_bars))
+            self._finalize_gap_recovery_completed_bar(symbol)
+            return intents
         for _bar in completed_bars:
             if prewarm_only:
                 self._finalize_prewarm_completed_bar(symbol)
             else:
                 intents.extend(self._evaluate_completed_bar(symbol))
+                self._advance_gap_recovery(symbol, _bar)
         if not prewarm_only:
             intents.extend(self._evaluate_intrabar_entry(symbol))
 
@@ -759,11 +771,21 @@ class StrategyBotRuntime:
                 trade_count=trade_count,
             ),
         )
+        synthetic_gap_bars = [
+            bar
+            for bar in completed_bars
+            if int(getattr(bar, "trade_count", 0) or 0) <= 0 and int(getattr(bar, "volume", 0) or 0) <= 0
+        ]
+        if synthetic_gap_bars and not prewarm_only:
+            self._arm_gap_recovery(symbol, synthetic_gap_count=len(synthetic_gap_bars))
+            self._finalize_gap_recovery_completed_bar(symbol)
+            return intents
         for _bar in completed_bars:
             if prewarm_only:
                 self._finalize_prewarm_completed_bar(symbol)
             else:
                 intents.extend(self._evaluate_completed_bar(symbol))
+                self._advance_gap_recovery(symbol, _bar)
         if not prewarm_only:
             intents.extend(self._evaluate_intrabar_entry(symbol))
 
@@ -1020,6 +1042,8 @@ class StrategyBotRuntime:
         self.data_halt_since.clear()
         self.data_warning_symbols.clear()
         self.data_warning_since.clear()
+        self._gap_recovery_bars_remaining.clear()
+        self._gap_recovery_synthetic_bars.clear()
         self.lifecycle_states.clear()
         self.watchlist.clear()
         self.prewarm_symbols.clear()
@@ -1164,6 +1188,15 @@ class StrategyBotRuntime:
             )
             return self._finalize_completed_bar(symbol, indicators, [], decision=decision)
 
+        if self._is_gap_recovery_active(symbol):
+            decision = self._record_decision(
+                symbol=symbol,
+                status="warning",
+                reason=self._gap_recovery_reason(symbol),
+                indicators=indicators,
+            )
+            return self._finalize_completed_bar(symbol, indicators, [], decision=decision)
+
         signal = self.entry_engine.check_entry(symbol, indicators, builder.get_bar_count(), self)
         decision = self._capture_entry_decision(symbol, indicators)
         if self.lifecycle_policy.config.enabled and symbol in self.entry_blocked_symbols:
@@ -1203,6 +1236,27 @@ class StrategyBotRuntime:
     def _finalize_prewarm_completed_bar(self, symbol: str) -> None:
         del symbol
         return
+
+    def _finalize_gap_recovery_completed_bar(self, symbol: str) -> None:
+        builder = self.builder_manager.get_builder(symbol)
+        if builder is None:
+            return
+        bars = builder.get_bars_as_dicts()
+        if not bars:
+            return
+        local_indicators = self.indicator_engine.calculate(bars)
+        if local_indicators is None:
+            return
+        indicators = self._decorate_indicators(symbol, local_indicators)
+        self.last_indicators[symbol] = indicators
+        position = self.positions.get_position(symbol)
+        decision = self._record_decision(
+            symbol=symbol,
+            status="warning" if position is not None else "blocked",
+            reason=self._gap_recovery_reason(symbol),
+            indicators=indicators,
+        )
+        self._finalize_completed_bar(symbol, indicators, [], decision=decision)
 
     def _evaluate_intrabar_entry(self, symbol: str) -> list[TradeIntentEvent]:
         if not bool(getattr(self.definition.trading_config, "entry_intrabar_enabled", False)):
@@ -1589,6 +1643,53 @@ class StrategyBotRuntime:
     def _is_scale_retry_blocked(self, symbol: str, level: str) -> bool:
         blocked_until = self.scale_retry_blocked_until.get((symbol, level))
         return blocked_until is not None and utcnow() < blocked_until
+
+    def _gap_recovery_bars_required(self) -> int:
+        interval = max(1, int(self.definition.interval_secs))
+        return max(2, int((90 + interval - 1) // interval))
+
+    def _arm_gap_recovery(self, symbol: str, *, synthetic_gap_count: int) -> None:
+        normalized = str(symbol).upper()
+        if not normalized or synthetic_gap_count <= 0:
+            return
+        self._gap_recovery_bars_remaining[normalized] = max(
+            self._gap_recovery_bars_remaining.get(normalized, 0),
+            self._gap_recovery_bars_required(),
+        )
+        self._gap_recovery_synthetic_bars[normalized] = max(
+            self._gap_recovery_synthetic_bars.get(normalized, 0),
+            int(synthetic_gap_count),
+        )
+
+    def _advance_gap_recovery(self, symbol: str, completed_bar: OHLCVBar) -> None:
+        normalized = str(symbol).upper()
+        remaining = self._gap_recovery_bars_remaining.get(normalized)
+        if remaining is None:
+            return
+        is_real_bar = int(getattr(completed_bar, "trade_count", 0) or 0) > 0 or int(
+            getattr(completed_bar, "volume", 0) or 0
+        ) > 0
+        if not is_real_bar:
+            return
+        remaining -= 1
+        if remaining <= 0:
+            self._gap_recovery_bars_remaining.pop(normalized, None)
+            self._gap_recovery_synthetic_bars.pop(normalized, None)
+            return
+        self._gap_recovery_bars_remaining[normalized] = remaining
+
+    def _is_gap_recovery_active(self, symbol: str) -> bool:
+        return self._gap_recovery_bars_remaining.get(str(symbol).upper(), 0) > 0
+
+    def _gap_recovery_reason(self, symbol: str) -> str:
+        normalized = str(symbol).upper()
+        remaining = self._gap_recovery_bars_remaining.get(normalized, 0)
+        synthetic = self._gap_recovery_synthetic_bars.get(normalized, 0)
+        interval = max(1, int(self.definition.interval_secs))
+        return (
+            f"live feed gap recovery active: skipped {synthetic} synthetic {interval}s bar(s); "
+            f"waiting for {remaining} real completed bar(s) before trusting new entries"
+        )
 
     def _has_pending_scale_for_symbol(self, symbol: str) -> bool:
         normalized = symbol.upper()
@@ -2084,6 +2185,16 @@ class StrategyBotRuntime:
         self.latest_quotes = {
             symbol: quote
             for symbol, quote in self.latest_quotes.items()
+            if symbol in keep
+        }
+        self._gap_recovery_bars_remaining = {
+            symbol: remaining
+            for symbol, remaining in self._gap_recovery_bars_remaining.items()
+            if symbol in keep
+        }
+        self._gap_recovery_synthetic_bars = {
+            symbol: synthetic
+            for symbol, synthetic in self._gap_recovery_synthetic_bars.items()
             if symbol in keep
         }
         self.entry_engine.prune_tickers(keep)

@@ -4449,3 +4449,26 @@ Notes:
 - Validation:
   - `python -m pytest tests/unit/test_schwab_after_hours_stale_halt.py tests/unit/test_schwab_1m_bot.py tests/unit/test_control_plane_listening_status.py`
   - `python -m py_compile src/project_mai_tai/services/strategy_engine_app.py src/project_mai_tai/services/control_plane.py tests/unit/test_schwab_after_hours_stale_halt.py tests/unit/test_schwab_1m_bot.py tests/unit/test_control_plane_listening_status.py`
+## 2026-04-27 - Gap recovery guard after synthetic flat bars
+
+- Problem:
+  - The earlier quiet-symbol health fix reduced false `DATA HALT` noise, but it did not fully address calculation integrity after live feed holes.
+  - When a live Schwab symbol skipped one or more `30s` buckets, the bar builder filled the hole with flat synthetic bars (`trade_count=0`, `volume=0`).
+  - Those synthetic bars were then allowed to flow straight into normal entry evaluation, which could contaminate short-horizon EMA/VWAP/MACD state and produce bad or mistimed entries even after the stream recovered.
+- Fix:
+  - Added a per-symbol gap-recovery guard in `StrategyBotRuntime`.
+  - If a live trade/bar batch contains synthetic flat gap bars, the runtime now:
+    - arms a temporary recovery window for that symbol
+    - records a clear gap-recovery decision row
+    - blocks new entries on that symbol until enough real completed bars arrive again
+  - Recovery window scales by interval:
+    - `30s` bots: `3` real completed bars
+    - `1m` bot: `2` real completed bars
+  - Open-position emergency protection remains separate; this change is aimed at preventing contaminated fresh entries rather than hiding stream issues.
+- Files:
+  - `src/project_mai_tai/services/strategy_engine_app.py`
+  - `tests/unit/test_schwab_gap_recovery_guard.py`
+- Validation:
+  - `python -m pytest tests/unit/test_schwab_gap_recovery_guard.py tests/unit/test_schwab_after_hours_stale_halt.py tests/unit/test_schwab_1m_bot.py tests/unit/test_control_plane_listening_status.py`
+  - `12 passed`
+  - `python -m py_compile src/project_mai_tai/services/strategy_engine_app.py tests/unit/test_schwab_gap_recovery_guard.py`
