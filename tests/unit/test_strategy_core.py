@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 from datetime import UTC, datetime
+import pytest
 
 from project_mai_tai.services.strategy_engine_app import StrategyEngineState
 from project_mai_tai.settings import Settings
@@ -18,6 +19,7 @@ from project_mai_tai.strategy_core.models import (
     LastTrade,
     MarketSnapshot,
     MinuteSnapshot,
+    OHLCVBar,
     ReferenceData,
 )
 from project_mai_tai.strategy_core.momentum_alerts import MomentumAlertEngine
@@ -539,6 +541,89 @@ def test_schwab_native_indicator_engine_emits_distance_fields() -> None:
     assert "ema9_dist_pct" in result
     assert "vwap_dist_pct" in result
     assert "bars_below_signal_prev" in result
+
+
+def test_schwab_native_indicator_engine_requires_real_warmup_bars() -> None:
+    bars: list[OHLCVBar] = []
+    for index in range(49):
+        close = 2.0 + index * 0.01
+        bars.append(
+            OHLCVBar(
+                open=close - 0.01,
+                high=close + 0.02,
+                low=close - 0.02,
+                close=close,
+                volume=3_000 + index * 25,
+                timestamp=float(index * 30),
+                trade_count=1,
+            )
+        )
+    for offset in range(49, 52):
+        bars.append(OHLCVBar.flat_fill(bars[-1].close, float(offset * 30)))
+
+    indicator_config = IndicatorConfig()
+    indicator_config.schwab_native_warmup_bars_required = 50  # type: ignore[attr-defined]
+    engine = SchwabNativeIndicatorEngine(indicator_config)
+
+    assert engine.calculate(bars) is None
+
+    close = 2.0 + 49 * 0.01
+    bars.append(
+        OHLCVBar(
+            open=close - 0.01,
+            high=close + 0.02,
+            low=close - 0.02,
+            close=close,
+            volume=3_000 + 49 * 25,
+            timestamp=float(52 * 30),
+            trade_count=1,
+        )
+    )
+
+    assert engine.calculate(bars) is not None
+
+
+def test_schwab_native_indicator_engine_skips_synthetic_bar_math_progression() -> None:
+    real_bars: list[OHLCVBar] = []
+    for index in range(55):
+        close = 2.0 + index * 0.01
+        real_bars.append(
+            OHLCVBar(
+                open=close - 0.01,
+                high=close + 0.02,
+                low=close - 0.02,
+                close=close,
+                volume=3_000 + index * 25,
+                timestamp=float(index * 30),
+                trade_count=1,
+            )
+        )
+
+    synthetic_bars = [
+        OHLCVBar.flat_fill(real_bars[-1].close, float(55 * 30)),
+        OHLCVBar.flat_fill(real_bars[-1].close, float(56 * 30)),
+    ]
+
+    indicator_config = IndicatorConfig()
+    indicator_config.schwab_native_warmup_bars_required = 50  # type: ignore[attr-defined]
+    engine = SchwabNativeIndicatorEngine(indicator_config)
+
+    baseline = engine.calculate(real_bars)
+    with_synthetic = engine.calculate([*real_bars, *synthetic_bars])
+
+    assert baseline is not None
+    assert with_synthetic is not None
+    for field in (
+        "ema9",
+        "ema20",
+        "macd",
+        "signal",
+        "histogram",
+        "vwap",
+        "vol_avg20",
+        "vol_avg5",
+    ):
+        assert with_synthetic[field] == pytest.approx(baseline[field])
 
 
 def test_schwab_native_entry_engine_can_fire_p4_burst() -> None:

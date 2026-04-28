@@ -20,6 +20,20 @@ def _bar_value(bar: OHLCVBar | Mapping[str, float | int], field: str) -> float:
     return float(bar[field])
 
 
+def _bar_int_value(bar: OHLCVBar | Mapping[str, float | int], field: str, default: int = 0) -> int:
+    if isinstance(bar, OHLCVBar):
+        return int(getattr(bar, field, default))
+    value = bar.get(field, default) if isinstance(bar, Mapping) else default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _is_synthetic_bar(bar: OHLCVBar | Mapping[str, float | int]) -> bool:
+    return _bar_int_value(bar, "trade_count", 0) <= 0 and _bar_value(bar, "volume") <= 0.0
+
+
 def _resolve_timestamp(timestamp_ns: int, fallback: Callable[[], float]) -> float:
     if timestamp_ns and timestamp_ns > 1_000_000_000_000_000_000:
         return timestamp_ns / 1_000_000_000
@@ -306,7 +320,9 @@ class SchwabNativeIndicatorEngine:
             self.config.macd_slow + self.config.macd_signal,
             int(getattr(self.config, "schwab_native_warmup_bars_required", 50)),
         )
-        if len(bars) < minimum_bars:
+        synthetic_mask = [_is_synthetic_bar(bar) for bar in bars]
+        real_bars = [bar for bar, synthetic in zip(bars, synthetic_mask, strict=False) if not synthetic]
+        if len(real_bars) < minimum_bars:
             return None
 
         closes = [_bar_value(bar, "close") for bar in bars]
@@ -316,27 +332,44 @@ class SchwabNativeIndicatorEngine:
         volumes = [_bar_value(bar, "volume") for bar in bars]
         timestamps = [_bar_value(bar, "timestamp") for bar in bars]
 
-        macd_data = macd(closes, self.config.macd_fast, self.config.macd_slow, self.config.macd_signal)
-        macd_line = macd_data["macd"]
-        signal_line = macd_data["signal"]
-        histogram = macd_data["histogram"]
-        stoch = stoch_k(highs, lows, closes, self.config.stoch_len, self.config.stoch_smooth_k)
-        stoch_d = sma(stoch, self.config.stoch_smooth_d) if stoch else []
-        ema9 = ema(closes, self.config.ema1_len)
-        ema20 = ema(closes, self.config.ema2_len)
-        vwap_values = vwap(
-            highs,
-            lows,
-            closes,
-            volumes,
-            timestamps,
+        real_closes = [_bar_value(bar, "close") for bar in real_bars]
+        real_highs = [_bar_value(bar, "high") for bar in real_bars]
+        real_lows = [_bar_value(bar, "low") for bar in real_bars]
+        real_volumes = [_bar_value(bar, "volume") for bar in real_bars]
+        real_timestamps = [_bar_value(bar, "timestamp") for bar in real_bars]
+
+        macd_data = macd(real_closes, self.config.macd_fast, self.config.macd_slow, self.config.macd_signal)
+        real_macd_line = macd_data["macd"]
+        real_signal_line = macd_data["signal"]
+        real_histogram = macd_data["histogram"]
+        real_stoch = stoch_k(real_highs, real_lows, real_closes, self.config.stoch_len, self.config.stoch_smooth_k)
+        real_stoch_d = sma(real_stoch, self.config.stoch_smooth_d) if real_stoch else []
+        real_ema9 = ema(real_closes, self.config.ema1_len)
+        real_ema20 = ema(real_closes, self.config.ema2_len)
+        real_vwap_values = vwap(
+            real_highs,
+            real_lows,
+            real_closes,
+            real_volumes,
+            real_timestamps,
             session_start_hour=9,
             session_start_minute=30,
             session_end_hour=16,
             session_end_minute=0,
         )
-        vol_avg20 = sma(volumes, 20)
-        vol_avg5 = sma(volumes, 5)
+        real_vol_avg20 = sma(real_volumes, 20)
+        real_vol_avg5 = sma(real_volumes, 5)
+
+        macd_line = self._expand_real_indicator_series(real_macd_line, synthetic_mask)
+        signal_line = self._expand_real_indicator_series(real_signal_line, synthetic_mask)
+        histogram = self._expand_real_indicator_series(real_histogram, synthetic_mask)
+        stoch = self._expand_real_indicator_series(real_stoch, synthetic_mask, default=50.0)
+        stoch_d = self._expand_real_indicator_series(real_stoch_d, synthetic_mask, default=50.0)
+        ema9 = self._expand_real_indicator_series(real_ema9, synthetic_mask)
+        ema20 = self._expand_real_indicator_series(real_ema20, synthetic_mask)
+        vwap_values = self._expand_real_indicator_series(real_vwap_values, synthetic_mask)
+        vol_avg20 = self._expand_real_indicator_series(real_vol_avg20, synthetic_mask)
+        vol_avg5 = self._expand_real_indicator_series(real_vol_avg5, synthetic_mask)
 
         index = len(closes) - 1
         prev = max(0, index - 1)
@@ -346,16 +379,8 @@ class SchwabNativeIndicatorEngine:
         current_minutes = current_et.hour * 60 + current_et.minute
         in_regular_session = 9 * 60 + 30 <= current_minutes < 16 * 60
 
-        bars_below_signal = 0
-        probe = index
-        while probe >= 0 and macd_line[probe] <= signal_line[probe]:
-            bars_below_signal += 1
-            probe -= 1
-        bars_below_signal_prev = 0
-        probe = prev
-        while probe >= 0 and macd_line[probe] <= signal_line[probe]:
-            bars_below_signal_prev += 1
-            probe -= 1
+        bars_below_signal = self._count_recent_real_bars_below_signal(index, synthetic_mask, macd_line, signal_line)
+        bars_below_signal_prev = self._count_recent_real_bars_below_signal(prev, synthetic_mask, macd_line, signal_line)
 
         ema9_dist_pct = ((closes[index] - ema9[index]) / ema9[index]) * 100 if ema9[index] > 0 else 999.0
         vwap_dist_pct = ((closes[index] - vwap_values[index]) / vwap_values[index]) * 100 if vwap_values[index] > 0 else 999.0
@@ -417,6 +442,51 @@ class SchwabNativeIndicatorEngine:
             "in_regular_session": in_regular_session,
             "bar_index": index + 1,
         }
+
+    @staticmethod
+    def _expand_real_indicator_series(
+        real_values: Sequence[float],
+        synthetic_mask: Sequence[bool],
+        *,
+        default: float | None = None,
+    ) -> list[float]:
+        if not synthetic_mask:
+            return []
+        if not real_values:
+            fallback = 0.0 if default is None else default
+            return [fallback] * len(synthetic_mask)
+        expanded: list[float] = []
+        real_index = 0
+        previous_value = real_values[0]
+        fallback = real_values[0] if default is None else default
+        for synthetic in synthetic_mask:
+            if synthetic:
+                expanded.append(previous_value if expanded else fallback)
+                continue
+            current_value = real_values[min(real_index, len(real_values) - 1)]
+            expanded.append(current_value)
+            previous_value = current_value
+            real_index += 1
+        return expanded
+
+    @staticmethod
+    def _count_recent_real_bars_below_signal(
+        start_index: int,
+        synthetic_mask: Sequence[bool],
+        macd_line: Sequence[float],
+        signal_line: Sequence[float],
+    ) -> int:
+        count = 0
+        probe = start_index
+        while probe >= 0:
+            if synthetic_mask[probe]:
+                probe -= 1
+                continue
+            if macd_line[probe] > signal_line[probe]:
+                break
+            count += 1
+            probe -= 1
+        return count
 
 
 @dataclass

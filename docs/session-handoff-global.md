@@ -4472,3 +4472,30 @@ Notes:
   - `python -m pytest tests/unit/test_schwab_gap_recovery_guard.py tests/unit/test_schwab_after_hours_stale_halt.py tests/unit/test_schwab_1m_bot.py tests/unit/test_control_plane_listening_status.py`
   - `12 passed`
   - `python -m py_compile src/project_mai_tai/services/strategy_engine_app.py tests/unit/test_schwab_gap_recovery_guard.py`
+
+## 2026-04-27 - Synthetic bars no longer advance Schwab-native indicators
+
+- Problem:
+  - The new gap-recovery guard safely blocked entries after synthetic flat bars, but the Schwab-native indicator engine was still advancing EMA, MACD, stochastic, and rolling volume averages across those fake bars.
+  - That meant the bot was safer than before, but the post-gap state could still be slightly biased until enough real bars washed the synthetic bars out of the lookbacks.
+- Fix:
+  - Updated `SchwabNativeIndicatorEngine` to detect synthetic bars using the existing `trade_count=0` and `volume=0` marker.
+  - Synthetic bars no longer count toward warmup readiness.
+  - Indicator math now runs on the real-bar subset and then carries the last real indicator value forward across synthetic bars instead of advancing the calculations with fabricated input.
+  - This applies to:
+    - `EMA9`
+    - `EMA20`
+    - `MACD`
+    - `signal`
+    - `histogram`
+    - `stochastic`
+    - `VWAP`
+    - rolling `vol_avg5` / `vol_avg20`
+  - The gap-recovery guard remains enabled as the second safety layer.
+- Files:
+  - `src/project_mai_tai/strategy_core/schwab_native_30s.py`
+  - `tests/unit/test_strategy_core.py`
+- Validation:
+  - `python -m pytest tests/unit/test_strategy_core.py tests/unit/test_schwab_gap_recovery_guard.py tests/unit/test_schwab_after_hours_stale_halt.py`
+  - `34 passed`
+  - `python -m py_compile src/project_mai_tai/strategy_core/schwab_native_30s.py tests/unit/test_strategy_core.py`
