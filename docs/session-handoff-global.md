@@ -4268,71 +4268,6 @@ Notes:
 - this is aimed at removing false red status on fresh/quiet watchlist symbols
 - it does not relax stale protection for open positions
 
-## 2026-04-27 - Deploy production-style Trade Coach live advisory preview to VPS
-
-Context:
-
-- operator approved the new 30-second Trade Coach live advisory surface and
-  wants it visible in production now
-- requirement remains strict:
-  - advisory-only
-  - no strategy gating
-  - no OMS influence
-  - no order actions
-
-Deploy applied:
-
-- pushed `main` to GitHub at `55590dc`
-  - `Upgrade live trade coach advisory preview`
-- deployed on VPS from `/home/trader/project-mai-tai`
-  - `git pull --ff-only origin main`
-  - restarted only `project-mai-tai-control.service`
-
-Live validation:
-
-- `project-mai-tai-control.service`
-  - `active`
-- VPS `/health`
-  - control plane loads successfully
-  - overall health was `degraded` during validation because:
-    - `reconciler` was already `degraded`
-  - coach deploy itself did not introduce a strategy or OMS health failure
-- live page checks passed on:
-  - `/bot/30s`
-  - `/bot/30s-webull`
-- both pages now render:
-  - `Trade Coach Live Advisory`
-  - `READ-ONLY`
-  - `Production preview for the live 30-second coaching experience`
-  - `Top Live Cautions`
-  - `Live Symbol Matrix`
-- live `/api/bots` snapshot during validation:
-  - `macd_30s` recent trade coach reviews: `25`
-  - `webull_30s` recent trade coach reviews: `0`
-
-Operator validation path:
-
-- open:
-  - `https://project-mai-tai.live/bot/30s`
-  - `https://project-mai-tai.live/bot/30s-webull`
-- confirm the new top panel appears above `Trade Coach Reviews`
-- confirm the panel reads `READ-ONLY`
-- confirm there are no interactive trade controls or order actions in the panel
-- scan:
-  - `Top Live Cautions`
-  - `Live Symbol Matrix`
-  - existing `Trade Coach Reviews`
-- use `https://project-mai-tai.live/api/bots` as source of truth for:
-  - `recent_trade_coach_reviews`
-  - bot context that feeds the advisory
-
-Notes:
-
-- this deploy is UI/control-plane only
-- no trading services were restarted
-- the live advisory is intentionally observational so we can keep shaping the
-  end-state operator experience without affecting live execution
-
 ## 2026-04-27 - Upgrade 30-second Trade Coach live advisory into a production-style preview
 
 Context:
@@ -4491,3 +4426,49 @@ Notes:
   per-symbol missing-bar telemetry in the UI and stronger separation between
   “quiet tape” and “stream disconnected”
 
+## 2026-04-27 - Split quiet flat Schwab symbols from true halt state
+
+- Problem:
+  - Frequent Schwab `DATA HALT` noise was still being triggered by thin flat symbols going quiet long enough to trip stale detection during live trading.
+  - That was too severe semantically: one quiet flat symbol was being surfaced almost like a real stream outage or open-position risk event.
+  - The bar builder can already synthesize flat continuation bars, so the right behavior is to keep the bot listening while warning about temporarily sparse live ticks.
+
+- Fix:
+  - Added a separate runtime warning state for quiet flat Schwab symbols in `StrategyBotRuntime`:
+    - `data_warning_symbols`
+    - `warning_reasons`
+    - `warning_since`
+  - Updated `_monitor_schwab_symbol_health()` so:
+    - real stream disconnects or stale symbols with open positions still become true `data_halt_symbols`
+    - stale flat symbols while the overall Schwab stream is still connected become warning symbols instead of halt symbols
+  - Updated control-plane listening/data-health rendering so:
+    - quiet flat-symbol warnings no longer show `DATA HALT`
+    - the bot can stay `LISTENING` while still surfacing the quiet-symbol risk honestly
+    - warning symbols are shown separately from true halted symbols
+
+- Validation:
+  - `python -m pytest tests/unit/test_schwab_after_hours_stale_halt.py tests/unit/test_schwab_1m_bot.py tests/unit/test_control_plane_listening_status.py`
+  - `python -m py_compile src/project_mai_tai/services/strategy_engine_app.py src/project_mai_tai/services/control_plane.py tests/unit/test_schwab_after_hours_stale_halt.py tests/unit/test_schwab_1m_bot.py tests/unit/test_control_plane_listening_status.py`
+## 2026-04-27 - Gap recovery guard after synthetic flat bars
+
+- Problem:
+  - The earlier quiet-symbol health fix reduced false `DATA HALT` noise, but it did not fully address calculation integrity after live feed holes.
+  - When a live Schwab symbol skipped one or more `30s` buckets, the bar builder filled the hole with flat synthetic bars (`trade_count=0`, `volume=0`).
+  - Those synthetic bars were then allowed to flow straight into normal entry evaluation, which could contaminate short-horizon EMA/VWAP/MACD state and produce bad or mistimed entries even after the stream recovered.
+- Fix:
+  - Added a per-symbol gap-recovery guard in `StrategyBotRuntime`.
+  - If a live trade/bar batch contains synthetic flat gap bars, the runtime now:
+    - arms a temporary recovery window for that symbol
+    - records a clear gap-recovery decision row
+    - blocks new entries on that symbol until enough real completed bars arrive again
+  - Recovery window scales by interval:
+    - `30s` bots: `3` real completed bars
+    - `1m` bot: `2` real completed bars
+  - Open-position emergency protection remains separate; this change is aimed at preventing contaminated fresh entries rather than hiding stream issues.
+- Files:
+  - `src/project_mai_tai/services/strategy_engine_app.py`
+  - `tests/unit/test_schwab_gap_recovery_guard.py`
+- Validation:
+  - `python -m pytest tests/unit/test_schwab_gap_recovery_guard.py tests/unit/test_schwab_after_hours_stale_halt.py tests/unit/test_schwab_1m_bot.py tests/unit/test_control_plane_listening_status.py`
+  - `12 passed`
+  - `python -m py_compile src/project_mai_tai/services/strategy_engine_app.py tests/unit/test_schwab_gap_recovery_guard.py`
