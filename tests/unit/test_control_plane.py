@@ -1511,6 +1511,46 @@ def test_bot_page_renders_simple_trade_summary_table() -> None:
         assert "Mai Tai Control Plane" in bot_30s_page.text
 
 
+def test_bot_page_live_symbols_only_show_current_confirmed_handoff() -> None:
+    settings = Settings(redis_stream_prefix="test", oms_adapter="alpaca_paper")
+    session_factory = build_test_session_factory()
+    seed_database(session_factory)
+    streams = make_streams(settings.redis_stream_prefix)
+    strategy_state_stream = streams[f"{settings.redis_stream_prefix}:strategy-state"]
+    strategy_state_event = StrategyStateSnapshotEvent.model_validate_json(
+        strategy_state_stream[0][1]["data"]
+    )
+    macd_bot = next(bot for bot in strategy_state_event.payload.bots if bot.strategy_code == "macd_30s")
+    macd_bot.watchlist = ["UGRO", "OLD1"]
+    macd_bot.retention_states = [
+        {"ticker": "UGRO", "state": "active"},
+        {"ticker": "OLD1", "state": "cooldown"},
+    ]
+    strategy_state_stream[0][1]["data"] = strategy_state_event.model_dump_json()
+    redis = FakeRedis(streams)
+
+    app = build_app(
+        settings=settings,
+        session_factory=session_factory,
+        redis_client=redis,
+        legacy_client=FakeLegacyClient(),
+    )
+
+    with TestClient(app) as client:
+        bot_page = client.get("/bot/30s")
+        assert bot_page.status_code == 200
+        live_start = bot_page.text.index('<div class="side-label">Live Symbols</div>')
+        manual_start = bot_page.text.index('<div class="side-label">Manual Stops</div>')
+        feed_start = bot_page.text.index('<div class="side-label">Feed States</div>')
+        overview_start = bot_page.text.index('<div class="side-label">Overview</div>')
+        live_section = bot_page.text[live_start:manual_start]
+        feed_section = bot_page.text[feed_start:overview_start]
+
+        assert "UGRO" in live_section
+        assert "OLD1" not in live_section
+        assert "OLD1" in feed_section
+
+
 def test_trade_coach_review_center_and_api_filters() -> None:
     settings = Settings(redis_stream_prefix="test", oms_adapter="alpaca_paper")
     session_factory = build_test_session_factory()

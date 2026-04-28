@@ -5149,16 +5149,32 @@ def _render_bot_detail_page(
         for symbol in bot.get("manual_stop_symbols", [])
         if str(symbol).strip()
     ]
-    for symbol in bot["watchlist"]:
-        normalized = str(symbol).upper()
-        if normalized and normalized not in active_symbols and normalized not in manual_stop_symbols:
-            active_symbols.append(normalized)
+    bot_watchlist = {str(symbol).upper() for symbol in bot.get("watchlist", []) if str(symbol).strip()}
+    for item in data.get("scanner", {}).get("all_confirmed", []):
+        ticker = str(item.get("ticker") or "").upper()
+        if not ticker or ticker in active_symbols or ticker in manual_stop_symbols:
+            continue
+        watched_by_raw = item.get("watched_by", [])
+        watched_by = {
+            str(candidate).strip().lower()
+            for candidate in watched_by_raw
+            if str(candidate).strip()
+        }
+        if watched_by:
+            if strategy_code.lower() in watched_by:
+                active_symbols.append(ticker)
+            continue
+        # Fall back to current bot membership only when scanner rows have not
+        # been annotated with watched_by yet.
+        if ticker in bot_watchlist:
+            active_symbols.append(ticker)
     open_symbols = {
         str(item.get("ticker") or item.get("symbol") or "").upper()
         for item in bot["positions"]
         if item.get("ticker") or item.get("symbol")
     }
     pending_symbols = {str(symbol).upper() for symbol in bot["pending_open_symbols"] + bot["pending_close_symbols"]}
+    tracked_retention_symbols = set(active_symbols) | bot_watchlist | open_symbols | pending_symbols
     live_symbol_html = _build_bot_symbol_action_html(
         strategy_code,
         symbols=active_symbols,
@@ -5166,14 +5182,14 @@ def _render_bot_detail_page(
         open_symbols=open_symbols,
         pending_symbols=pending_symbols,
         redirect_to=meta["path"],
-        empty_text="No live symbols in this bot",
+        empty_text="No current live symbols in this bot",
     )
     manual_stop_html = _build_bot_manual_stop_html(
         strategy_code,
         manual_stop_symbols,
         redirect_to=meta["path"],
     )
-    retention_html = _build_retention_status_html(retention_rows, tracked_symbols=set(active_symbols))
+    retention_html = _build_retention_status_html(retention_rows, tracked_symbols=tracked_retention_symbols)
     data_health = dict(bot.get("data_health", {}) or {})
     data_health_status = str(data_health.get("status", "healthy") or "healthy").lower()
     halted_symbols = [str(symbol).upper() for symbol in list(data_health.get("halted_symbols", []) or [])]
