@@ -4537,3 +4537,24 @@ Notes:
   - `python -m pytest tests/unit/test_control_plane.py -k "live_symbols_only_show_current_confirmed_handoff or renders_simple_trade_summary_table or marks_schwab_data_halt_red_on_bot_page"`
   - `3 passed`
   - `python -m py_compile src/project_mai_tai/services/control_plane.py tests/unit/test_control_plane.py`
+
+## 2026-04-28 - Active bot handoff now shrinks back to the current confirmed set
+
+- Problem:
+  - The earlier sidebar fix only changed presentation.
+  - The real runtime bug remained: active bot handoff symbols were only ever appended via `_record_bot_handoff_symbols(...)`.
+  - That meant old retained/current-session symbols like `AUUD` could stay tradable in `macd_30s`, `webull_30s`, and `schwab_1m` even after they were no longer in the current confirmed scanner set.
+  - This is what allowed a non-current name to reappear and trade from the retention layer.
+- Fix:
+  - Added `_refresh_bot_handoff_active_symbols(...)` in `src/project_mai_tai/services/strategy_engine_app.py`.
+  - The live scan cycle now replaces each target bot's active handoff set from `self.all_confirmed` instead of union-growing it forever.
+  - Historical handoff memory is still preserved in `bot_handoff_history_by_strategy`, but the active tradable watchlist now tracks the current confirmed set only.
+- Validation:
+  - `python -m pytest tests/unit/test_bot_handoff_restore_seed.py`
+  - `2 passed`
+  - `python -m py_compile src/project_mai_tai/services/strategy_engine_app.py tests/unit/test_bot_handoff_restore_seed.py`
+  - VPS live check after strategy restart:
+    - scanner confirmed: `['KIDZ', 'DRCT']`
+    - `macd_30s` watchlist: `['DRCT', 'KIDZ']`
+    - `webull_30s` watchlist: `['DRCT', 'KIDZ']`
+    - `schwab_1m` watchlist: `['DRCT', 'KIDZ']`
