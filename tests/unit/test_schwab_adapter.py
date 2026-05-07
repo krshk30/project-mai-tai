@@ -160,6 +160,72 @@ async def test_schwab_adapter_cancels_order_by_broker_order_id(monkeypatch) -> N
 
 
 @pytest.mark.asyncio
+async def test_schwab_adapter_returns_stop_guard_acceptance_immediately(monkeypatch) -> None:
+    adapter = SchwabBrokerAdapter(
+        Settings(
+            oms_adapter="schwab",
+            schwab_access_token="token-123",
+            schwab_account_hash="hash-123",
+        )
+    )
+
+    async def fake_authorized_request_json(method: str, path: str, *, body=None):
+        assert method == "POST"
+        assert path == "/trader/v1/accounts/hash-123/orders"
+        assert body == {
+            "session": "AM",
+            "duration": "DAY",
+            "orderType": "LIMIT",
+            "price": 8.79,
+            "orderStrategyType": "SINGLE",
+            "orderLegCollection": [
+                {
+                    "instruction": "SELL",
+                    "quantity": 10.0,
+                    "instrument": {"symbol": "CLNN", "assetType": "EQUITY"},
+                }
+            ],
+        }
+        return (
+            201,
+            {
+                "Location": "https://api.schwabapi.com/trader/v1/accounts/hash-123/orders/987654321"
+            },
+            {},
+        )
+
+    async def fail_wait_for_terminal_order(*args, **kwargs):
+        raise AssertionError("stop-guard sell orders should not wait for terminal status")
+
+    monkeypatch.setattr(adapter, "_authorized_request_json", fake_authorized_request_json)
+    monkeypatch.setattr(adapter, "_wait_for_terminal_order", fail_wait_for_terminal_order)
+
+    reports = await adapter.submit_order(
+        OrderRequest(
+            client_order_id="macd_30s-CLNN-close-abc123",
+            broker_account_name="paper:macd_30s",
+            strategy_code="macd_30s",
+            symbol="CLNN",
+            side="sell",
+            intent_type="close",
+            quantity=Decimal("10"),
+            reason="HARD_STOP",
+            metadata={
+                "stop_guard": "true",
+                "session": "AM",
+                "order_type": "limit",
+                "time_in_force": "day",
+                "extended_hours": "true",
+                "limit_price": "8.79",
+            },
+        )
+    )
+
+    assert [report.event_type for report in reports] == ["accepted"]
+    assert reports[0].broker_order_id == "987654321"
+
+
+@pytest.mark.asyncio
 async def test_schwab_adapter_lists_account_positions(monkeypatch) -> None:
     adapter = SchwabBrokerAdapter(
         Settings(

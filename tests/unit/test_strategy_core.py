@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 from datetime import UTC, datetime
+import pytest
 
 from project_mai_tai.services.strategy_engine_app import StrategyEngineState
 from project_mai_tai.settings import Settings
@@ -18,6 +19,7 @@ from project_mai_tai.strategy_core.models import (
     LastTrade,
     MarketSnapshot,
     MinuteSnapshot,
+    OHLCVBar,
     ReferenceData,
 )
 from project_mai_tai.strategy_core.momentum_alerts import MomentumAlertEngine
@@ -25,7 +27,6 @@ from project_mai_tai.strategy_core.momentum_confirmed import MomentumConfirmedSc
 from project_mai_tai.strategy_core.position_tracker import PositionTracker
 from project_mai_tai.strategy_core.schwab_native_30s import (
     SchwabNativeBarBuilder,
-    SchwabNativeBarBuilderManager,
     SchwabNativeEntryEngine,
     SchwabNativeIndicatorEngine,
 )
@@ -65,59 +66,138 @@ def test_bar_builder_keeps_odd_lots_and_does_not_fill_gaps() -> None:
     assert builder.get_current_price() == 3.7
 
 
-def test_schwab_native_bar_builder_close_grace_delays_periodic_close() -> None:
-    """check_bar_closes() should wait close_grace_seconds past bucket end before finalizing.
+def test_bar_builder_ignores_late_same_bucket_trade_after_flush() -> None:
+    clock = {"ts": 1_700_000_030.0}
+    builder = BarBuilder("UGRO", interval_secs=30, time_provider=lambda: clock["ts"])
 
-    With grace=5.0 and a 30s bucket starting at t=0, the bar should remain open at
-    wall-clock 32s (only 2s past bucket end) and only close at 35s (5s past bucket end).
-    Without grace it would close at 30s. This is the live-vs-rebuild asymmetry that
-    drops late LEVELONE trades into the just-closed bucket.
-    """
+    builder.on_trade(price=3.50, size=50)
+    clock["ts"] = 1_700_000_060.0
+    closed = builder.check_bar_close()
 
-    clock = {"now": 0.0}
-    builder = SchwabNativeBarBuilder(
-        "TST",
-        interval_secs=30,
-        time_provider=lambda: clock["now"],
-        close_grace_seconds=5.0,
+    assert closed is not None
+    assert closed.timestamp == 1_700_000_010.0
+
+    late_same_bucket = builder.on_trade(
+        price=3.55,
+        size=25,
+        timestamp_ns=1_700_000_039_000_000_000,
     )
-    builder.on_trade(price=10.0, size=100, timestamp_ns=0)
 
-    clock["now"] = 32.0
-    assert builder.check_bar_closes() == [], "bar should still be open within close_grace window"
-    assert builder._current_bar is not None
-
-    clock["now"] = 35.0
-    closed = builder.check_bar_closes()
-    assert len(closed) == 1
-    assert closed[0].timestamp == 0
+    assert late_same_bucket == []
+    assert builder.get_bar_count() == 1
     assert builder._current_bar is None
 
 
-def test_schwab_native_bar_builder_default_grace_is_zero() -> None:
-    """Behavior without explicit grace is unchanged: bar closes at exactly bucket_end."""
+def test_schwab_native_bar_builder_ignores_late_same_bucket_aggregate_after_flush() -> None:
+    clock = {"ts": 1_700_000_070.0}
+    builder = SchwabNativeBarBuilder("RDAC", interval_secs=30, time_provider=lambda: clock["ts"])
 
-    clock = {"now": 0.0}
-    builder = SchwabNativeBarBuilder(
-        "TST",
-        interval_secs=30,
-        time_provider=lambda: clock["now"],
+    builder.on_bar(
+        OHLCVBar(
+            open=1.20,
+            high=1.21,
+            low=1.19,
+            close=1.20,
+            volume=100,
+            timestamp=1_700_000_050.0,
+            trade_count=2,
+        )
     )
-    builder.on_trade(price=10.0, size=100, timestamp_ns=0)
-
-    clock["now"] = 30.0
+    clock["ts"] = 1_700_000_090.0
     closed = builder.check_bar_closes()
+
     assert len(closed) == 1
+    assert closed[0].timestamp == 1_700_000_040.0
 
-
-def test_schwab_native_bar_builder_manager_propagates_close_grace() -> None:
-    manager = SchwabNativeBarBuilderManager(
-        interval_secs=30,
-        time_provider=lambda: 0.0,
-        close_grace_seconds=5.0,
+    late_same_bucket = builder.on_bar(
+        OHLCVBar(
+            open=1.20,
+            high=1.22,
+            low=1.18,
+            close=1.21,
+            volume=150,
+            timestamp=1_700_000_069.0,
+            trade_count=3,
+        )
     )
-    builder = manager.get_or_create("TST")
-    assert builder.close_grace_seconds == 5.0
+
+    assert late_same_bucket == []
+    assert builder.get_bar_count() == 1
+    assert builder._current_bar is None
+
+
+def test_schwab_native_bar_builder_close_grace_keeps_same_bucket_trade_real() -> None:
+    clock = {"ts": 1_700_000_059.5}
+    builder = SchwabNativeBarBuilder(
+        "RDAC",
+        interval_secs=30,
+        time_provider=lambda: clock["ts"],
+        close_grace_seconds=2.0,
+    )
+
+    builder.on_trade(price=3.50, size=50)
+    clock["ts"] = 1_700_000_070.5
+
+    assert builder.check_bar_closes() == []
+
+    clock["ts"] = 1_700_000_070.8
+    late_trade = builder.on_trade(
+        price=3.55,
+        size=25,
+        timestamp_ns=1_700_000_069_800_000_000,
+    )
+
+    assert late_trade == []
+
+    clock["ts"] = 1_700_000_072.1
+    closed = builder.check_bar_closes()
+
+    assert len(closed) == 1
+    assert closed[0].timestamp == 1_700_000_040.0
+    assert closed[0].close == pytest.approx(3.55)
+    assert closed[0].volume == 75
+    assert closed[0].trade_count == 2
+
+
+def test_schwab_native_bar_builder_late_trade_replaces_synthetic_flat_bar() -> None:
+    clock = {"ts": 1_700_000_101.0}
+    builder = SchwabNativeBarBuilder(
+        "RDAC",
+        interval_secs=30,
+        time_provider=lambda: clock["ts"],
+        fill_gap_bars=True,
+    )
+
+    builder.on_trade(
+        price=3.50,
+        size=50,
+        timestamp_ns=1_700_000_045_000_000_000,
+        cumulative_volume=1_000,
+    )
+    closed = builder.check_bar_closes()
+
+    assert len(closed) == 2
+    assert closed[0].timestamp == 1_700_000_040.0
+    assert closed[1].timestamp == 1_700_000_070.0
+    assert closed[1].volume == 0
+    assert closed[1].trade_count == 0
+
+    late_trade = builder.on_trade(
+        price=3.62,
+        size=25,
+        timestamp_ns=1_700_000_073_500_000_000,
+        cumulative_volume=1_125,
+    )
+
+    assert late_trade == []
+    assert builder.get_bar_count() == 1
+    assert builder.bars[-1].timestamp == 1_700_000_040.0
+    assert builder._current_bar is not None
+    assert builder._current_bar.timestamp == 1_700_000_070.0
+    assert builder._current_bar.open == pytest.approx(3.62)
+    assert builder._current_bar.close == pytest.approx(3.62)
+    assert builder._current_bar.volume == 25
+    assert builder._current_bar.trade_count == 1
 
 
 def test_vwap_resets_on_regular_session_anchor() -> None:
@@ -146,6 +226,37 @@ def test_vwap_resets_on_regular_session_anchor() -> None:
     assert values[0] == 10.0
     assert values[1] == 20.0
     assert values[2] == 25.0
+
+
+def test_extended_vwap_default_covers_postmarket_session() -> None:
+    config = IndicatorConfig()
+
+    timestamps = [
+        datetime(2026, 3, 31, 19, 59, tzinfo=UTC).timestamp(),  # 15:59 ET
+        datetime(2026, 3, 31, 20, 0, tzinfo=UTC).timestamp(),   # 16:00 ET
+        datetime(2026, 3, 31, 20, 1, tzinfo=UTC).timestamp(),   # 16:01 ET
+    ]
+    highs = [10.0, 20.0, 30.0]
+    lows = [10.0, 20.0, 30.0]
+    closes = [10.0, 20.0, 30.0]
+    volumes = [1.0, 1.0, 1.0]
+
+    values = vwap(
+        highs,
+        lows,
+        closes,
+        volumes,
+        timestamps,
+        session_start_hour=config.extended_vwap_session_start_hour,
+        session_start_minute=config.extended_vwap_session_start_minute,
+        session_end_hour=config.extended_vwap_session_end_hour,
+        session_end_minute=config.extended_vwap_session_end_minute,
+    )
+
+    assert config.extended_vwap_session_end_hour == 20
+    assert values[0] == 10.0
+    assert values[1] == 15.0
+    assert values[2] == 20.0
 
 
 def test_indicator_engine_generates_expected_flags() -> None:
@@ -457,6 +568,63 @@ def test_confirmed_scanner_allows_same_cycle_5m_and_10m_squeeze_burst() -> None:
     assert newly_confirmed[0]["confirmation_path"] == "PATH_B_2SQ"
 
 
+def test_confirmed_scanner_path_c_uses_30pct_extreme_mover_threshold() -> None:
+    confirmed_scanner = MomentumConfirmedScanner(
+        MomentumConfirmedConfig(
+            confirmed_min_volume=1_000,
+            confirmed_max_float=50_000_000,
+        )
+    )
+    ref = {"SNAP": ReferenceData(shares_outstanding=5_000_000, avg_daily_volume=390_000)}
+    snap = snapshot(ticker="SNAP", price=2.60, volume=600_000, change_pct=35.0)
+    snap.previous_close = 2.0
+    alerts = [
+        {
+            "ticker": "SNAP",
+            "type": "SQUEEZE_5MIN",
+            "time": "08:00:00 AM ET",
+            "price": 2.60,
+            "volume": 600_000,
+            "float": 5_000_000,
+            "bid": 2.59,
+            "ask": 2.60,
+            "bid_size": 100,
+            "ask_size": 100,
+            "details": {"change_pct": 6.0},
+        }
+    ]
+
+    confirmed = confirmed_scanner.process_alerts(alerts, ref, {"SNAP": snap})
+
+    assert len(confirmed) == 1
+    assert confirmed[0]["confirmation_path"] == "PATH_C_EXTREME_MOVER"
+
+
+def test_confirmed_scanner_uses_tiered_float_turnover_thresholds() -> None:
+    confirmed_scanner = MomentumConfirmedScanner(
+        MomentumConfirmedConfig(
+            confirmed_min_volume=500_000,
+            confirmed_max_float=50_000_000,
+        )
+    )
+
+    passed, reason = confirmed_scanner._check_common_filters({"volume": 900_000}, 9_000_000)
+    assert passed is True
+    assert reason == ""
+
+    passed, reason = confirmed_scanner._check_common_filters({"volume": 1_800_000}, 18_000_000)
+    assert passed is True
+    assert reason == ""
+
+    passed, reason = confirmed_scanner._check_common_filters({"volume": 3_600_000}, 30_000_000)
+    assert passed is True
+    assert reason == ""
+
+    passed, reason = confirmed_scanner._check_common_filters({"volume": 3_300_000}, 33_000_000)
+    assert passed is False
+    assert "need >=12%" in reason
+
+
 def test_top_gainer_changes_use_eastern_time_labels() -> None:
     tracker = TopGainersTracker()
     ref = {"UGRO": ReferenceData(shares_outstanding=50_000, avg_daily_volume=175_000)}
@@ -598,6 +766,89 @@ def test_schwab_native_indicator_engine_emits_distance_fields() -> None:
     assert "bars_below_signal_prev" in result
 
 
+def test_schwab_native_indicator_engine_requires_real_warmup_bars() -> None:
+    bars: list[OHLCVBar] = []
+    for index in range(49):
+        close = 2.0 + index * 0.01
+        bars.append(
+            OHLCVBar(
+                open=close - 0.01,
+                high=close + 0.02,
+                low=close - 0.02,
+                close=close,
+                volume=3_000 + index * 25,
+                timestamp=float(index * 30),
+                trade_count=1,
+            )
+        )
+    for offset in range(49, 52):
+        bars.append(OHLCVBar.flat_fill(bars[-1].close, float(offset * 30)))
+
+    indicator_config = IndicatorConfig()
+    indicator_config.schwab_native_warmup_bars_required = 50  # type: ignore[attr-defined]
+    engine = SchwabNativeIndicatorEngine(indicator_config)
+
+    assert engine.calculate(bars) is None
+
+    close = 2.0 + 49 * 0.01
+    bars.append(
+        OHLCVBar(
+            open=close - 0.01,
+            high=close + 0.02,
+            low=close - 0.02,
+            close=close,
+            volume=3_000 + 49 * 25,
+            timestamp=float(52 * 30),
+            trade_count=1,
+        )
+    )
+
+    assert engine.calculate(bars) is not None
+
+
+def test_schwab_native_indicator_engine_skips_synthetic_bar_math_progression() -> None:
+    real_bars: list[OHLCVBar] = []
+    for index in range(55):
+        close = 2.0 + index * 0.01
+        real_bars.append(
+            OHLCVBar(
+                open=close - 0.01,
+                high=close + 0.02,
+                low=close - 0.02,
+                close=close,
+                volume=3_000 + index * 25,
+                timestamp=float(index * 30),
+                trade_count=1,
+            )
+        )
+
+    synthetic_bars = [
+        OHLCVBar.flat_fill(real_bars[-1].close, float(55 * 30)),
+        OHLCVBar.flat_fill(real_bars[-1].close, float(56 * 30)),
+    ]
+
+    indicator_config = IndicatorConfig()
+    indicator_config.schwab_native_warmup_bars_required = 50  # type: ignore[attr-defined]
+    engine = SchwabNativeIndicatorEngine(indicator_config)
+
+    baseline = engine.calculate(real_bars)
+    with_synthetic = engine.calculate([*real_bars, *synthetic_bars])
+
+    assert baseline is not None
+    assert with_synthetic is not None
+    for field in (
+        "ema9",
+        "ema20",
+        "macd",
+        "signal",
+        "histogram",
+        "vwap",
+        "vol_avg20",
+        "vol_avg5",
+    ):
+        assert with_synthetic[field] == pytest.approx(baseline[field])
+
+
 def test_schwab_native_entry_engine_can_fire_p4_burst() -> None:
     config = TradingConfig().make_30s_schwab_native_variant()
     engine = SchwabNativeEntryEngine(
@@ -668,13 +919,236 @@ def test_schwab_native_entry_engine_can_fire_p4_burst() -> None:
     assert signal["path"] == "P4_BURST"
 
 
+def test_schwab_native_entry_engine_can_fire_p4_burst_from_previous_bar_setup() -> None:
+    config = TradingConfig().make_30s_schwab_native_variant()
+    engine = SchwabNativeEntryEngine(
+        config,
+        now_provider=lambda: datetime(2026, 4, 17, 10, 0),
+    )
+
+    history = []
+    for index in range(53):
+        price = 2.00 + index * 0.002
+        history.append(
+            {
+                "open": price - 0.01,
+                "price": price,
+                "high": price + 0.01,
+                "low": price - 0.015,
+                "volume": 3_000.0,
+                "ema9": price - 0.005,
+                "ema20": price - 0.015,
+                "vwap": price - 0.02,
+                "vol_avg20": 3_000.0,
+                "vol_avg5": 3_000.0,
+            }
+        )
+    history.append(
+        {
+            "open": 2.14,
+            "close": 2.18,
+            "high": 2.19,
+            "low": 2.13,
+            "volume": 4_000.0,
+            "ema9": 2.12,
+            "ema20": 2.08,
+            "vwap": 2.15,
+            "vol_avg20": 3_000.0,
+            "vol_avg5": 3_000.0,
+        }
+    )
+    engine.seed_recent_bars("ELAB", history)
+
+    signal = engine.check_entry(
+        "ELAB",
+        {
+            "open": 2.17,
+            "price": 2.205,
+            "high": 2.215,
+            "low": 2.165,
+            "volume": 3_200.0,
+            "ema9": 2.13,
+            "ema20": 2.09,
+            "vwap": 2.16,
+            "vol_avg20": 3_100.0,
+            "vol_avg5": 3_100.0,
+            "macd": 0.01,
+            "signal": 0.02,
+            "histogram": 0.03,
+            "stoch_k": 70.0,
+            "macd_cross_above": False,
+            "bars_below_signal_prev": 0,
+            "price_cross_above_vwap": False,
+            "macd_above_signal": False,
+            "macd_increasing": False,
+            "macd_delta": 0.0,
+            "macd_delta_prev": 0.01,
+            "hist_value": 0.03,
+            "price_above_ema9": True,
+            "price_above_ema20": True,
+            "price_above_vwap": True,
+            "hist_growing": True,
+            "stoch_k_rising": True,
+            "ema9_dist_pct": 1.5,
+            "vwap_dist_pct": 2.0,
+            "ema9_trend_rising": True,
+            "in_regular_session": True,
+            "stoch_cross_below_exit": False,
+        },
+        bar_index=55,
+        position_tracker=None,
+    )
+
+    assert signal is not None
+    assert signal["path"] == "P4_BURST"
+
+
+def test_schwab_native_entry_engine_blocks_p4_when_ema9_extension_is_too_large() -> None:
+    config = TradingConfig().make_1m_schwab_native_variant()
+    engine = SchwabNativeEntryEngine(
+        config,
+        now_provider=lambda: datetime(2026, 4, 17, 10, 0),
+    )
+
+    history = []
+    for index in range(54):
+        price = 2.00 + index * 0.002
+        history.append(
+            {
+                "open": price - 0.01,
+                "price": price,
+                "high": price + 0.01,
+                "low": price - 0.015,
+                "volume": 3_000.0,
+                "ema9": price - 0.005,
+                "ema20": price - 0.015,
+                "vwap": price - 0.02,
+                "vol_avg20": 3_000.0,
+                "vol_avg5": 3_000.0,
+            }
+        )
+    engine.seed_recent_bars("ELAB", history)
+
+    signal = engine.check_entry(
+        "ELAB",
+        {
+            "open": 2.10,
+            "price": 2.20,
+            "high": 2.22,
+            "low": 2.09,
+            "volume": 12_000.0,
+            "ema9": 2.12,
+            "ema20": 2.05,
+            "vwap": 2.08,
+            "vol_avg20": 3_500.0,
+            "vol_avg5": 3_500.0,
+            "macd": 0.01,
+            "signal": 0.02,
+            "histogram": 0.03,
+            "stoch_k": 70.0,
+            "macd_cross_above": False,
+            "bars_below_signal_prev": 0,
+            "price_cross_above_vwap": False,
+            "macd_above_signal": False,
+            "macd_increasing": False,
+            "macd_delta": 0.0,
+            "macd_delta_prev": 0.01,
+            "hist_value": 0.03,
+            "price_above_ema9": True,
+            "price_above_ema20": True,
+            "price_above_vwap": True,
+            "hist_growing": True,
+            "stoch_k_rising": True,
+            "ema9_dist_pct": 4.0,
+            "vwap_dist_pct": 5.0,
+            "ema9_trend_rising": True,
+            "in_regular_session": True,
+            "stoch_cross_below_exit": False,
+        },
+        bar_index=55,
+        position_tracker=None,
+    )
+
+    assert signal is None
+
+
+def test_schwab_native_entry_engine_respects_disabled_p4_burst_path() -> None:
+    config = TradingConfig().make_1m_schwab_native_variant()
+    config.p4_enabled = False
+    engine = SchwabNativeEntryEngine(
+        config,
+        now_provider=lambda: datetime(2026, 4, 17, 10, 0),
+    )
+
+    history = []
+    for index in range(54):
+        price = 2.00 + index * 0.002
+        history.append(
+            {
+                "open": price - 0.01,
+                "price": price,
+                "high": price + 0.01,
+                "low": price - 0.015,
+                "volume": 3_000.0,
+                "ema9": price - 0.005,
+                "ema20": price - 0.015,
+                "vwap": price - 0.02,
+                "vol_avg20": 3_000.0,
+                "vol_avg5": 3_000.0,
+            }
+        )
+    engine.seed_recent_bars("ELAB", history)
+
+    signal = engine.check_entry(
+        "ELAB",
+        {
+            "open": 2.10,
+            "price": 2.20,
+            "high": 2.22,
+            "low": 2.09,
+            "volume": 12_000.0,
+            "ema9": 2.12,
+            "ema20": 2.05,
+            "vwap": 2.08,
+            "vol_avg20": 3_500.0,
+            "vol_avg5": 3_500.0,
+            "macd": 0.01,
+            "signal": 0.02,
+            "histogram": 0.03,
+            "stoch_k": 70.0,
+            "macd_cross_above": False,
+            "bars_below_signal_prev": 0,
+            "price_cross_above_vwap": False,
+            "macd_above_signal": False,
+            "macd_increasing": False,
+            "macd_delta": 0.0,
+            "macd_delta_prev": 0.01,
+            "hist_value": 0.03,
+            "price_above_ema9": True,
+            "price_above_ema20": True,
+            "price_above_vwap": True,
+            "hist_growing": True,
+            "stoch_k_rising": True,
+            "ema9_dist_pct": 1.5,
+            "vwap_dist_pct": 5.0,
+            "ema9_trend_rising": True,
+            "in_regular_session": True,
+            "stoch_cross_below_exit": False,
+        },
+        bar_index=55,
+        position_tracker=None,
+    )
+
+    assert signal is None
+
+
 def _make_schwab_native_base_indicators() -> dict[str, float | bool]:
     return {
         "open": 2.00,
         "price": 2.05,
         "high": 2.06,
         "low": 1.99,
-        "volume": 6_000.0,
+        "volume": 20_000.0,
         "ema9": 2.01,
         "ema20": 1.98,
         "vwap": 1.99,
@@ -797,8 +1271,8 @@ def test_schwab_native_entry_engine_blocks_p3_when_momentum_override_would_have_
             "ema9_dist_pct": 5.0,
             "stoch_k": 90.0,
             "price_above_vwap": False,
-            "volume": 7_000.0,
-            "vol_avg20": 3_000.0,
+                "volume": 20_000.0,
+                "vol_avg20": 3_000.0,
         }
     )
 
@@ -809,7 +1283,7 @@ def test_schwab_native_entry_engine_blocks_p3_when_momentum_override_would_have_
     assert decision is not None
     assert decision["status"] == "blocked"
     assert decision["path"] == "P3_SURGE"
-    assert "P3 entry stoch_k cap (90.0 >= 85.0)" == decision["reason"]
+    assert "P3 entry stoch_k cap (90.0 >= 80.0)" == decision["reason"]
 
 
 def test_schwab_native_entry_engine_blocks_p3_when_entry_stoch_k_hits_cap() -> None:
@@ -835,7 +1309,7 @@ def test_schwab_native_entry_engine_blocks_p3_when_entry_stoch_k_hits_cap() -> N
     assert decision is not None
     assert decision["status"] == "blocked"
     assert decision["path"] == "P3_SURGE"
-    assert "P3 entry stoch_k cap (88.0 >= 85.0)" == decision["reason"]
+    assert "P3 entry stoch_k cap (88.0 >= 80.0)" == decision["reason"]
 
 
 def test_schwab_native_entry_engine_allows_p3_when_entry_stoch_k_is_below_cap() -> None:
@@ -850,7 +1324,7 @@ def test_schwab_native_entry_engine_allows_p3_when_entry_stoch_k_is_below_cap() 
             "vwap_dist_pct": 20.0,
             "ema9_dist_pct": 1.5,
             "price_above_vwap": False,
-            "stoch_k": 84.0,
+            "stoch_k": 79.0,
         }
     )
 
@@ -860,11 +1334,160 @@ def test_schwab_native_entry_engine_allows_p3_when_entry_stoch_k_is_below_cap() 
     assert signal["path"] == "P3_SURGE"
 
 
+def test_schwab_native_entry_engine_blocks_p3_when_absolute_volume_is_too_low() -> None:
+    config = TradingConfig().make_30s_schwab_native_variant()
+    config.schwab_native_use_confirmation = False
+    engine = SchwabNativeEntryEngine(config, now_provider=lambda: datetime(2026, 4, 17, 10, 0))
+    indicators = _make_schwab_native_base_indicators()
+    indicators.update(
+        {
+            "macd_cross_above": False,
+            "price_cross_above_vwap": False,
+            "stoch_k": 70.0,
+            "volume": 9_500.0,
+            "vol_avg20": 5_000.0,
+        }
+    )
+
+    signal = engine.check_entry("ELAB", indicators, bar_index=60, position_tracker=None)
+
+    assert signal is None
+    decision = engine.pop_last_decision("ELAB")
+    assert decision is not None
+    assert "p3_vol" in decision["score_details"]
+
+
+def test_schwab_native_entry_engine_blocks_p3_when_macd_cross_is_too_old() -> None:
+    config = TradingConfig().make_30s_schwab_native_variant()
+    config.schwab_native_use_confirmation = False
+    engine = SchwabNativeEntryEngine(config, now_provider=lambda: datetime(2026, 4, 17, 10, 0))
+    history: list[dict[str, float | bool]] = []
+    for index in range(52, 60):
+        snapshot = _make_schwab_native_base_indicators()
+        snapshot.update(
+            {
+                "open": 2.00,
+                "price": 2.02,
+                "high": 2.03,
+                "low": 1.99,
+                "volume": 12_500.0,
+                "vol_avg20": 5_000.0,
+                "macd_cross_above": index == 55,
+                "price_cross_above_vwap": False,
+            }
+        )
+        history.append(snapshot)
+    engine.seed_recent_bars("ELAB", history)
+    indicators = _make_schwab_native_base_indicators()
+    indicators.update(
+        {
+            "macd_cross_above": False,
+            "price_cross_above_vwap": False,
+            "stoch_k": 70.0,
+            "volume": 12_500.0,
+            "vol_avg20": 5_000.0,
+        }
+    )
+
+    signal = engine.check_entry("ELAB", indicators, bar_index=60, position_tracker=None)
+
+    assert signal is None
+    decision = engine.pop_last_decision("ELAB")
+    assert decision is not None
+    assert "cross_age" in decision["score_details"]
+
+
+def test_schwab_native_entry_engine_blocks_p3_when_recent_runup_is_too_large() -> None:
+    config = TradingConfig().make_30s_schwab_native_variant()
+    config.schwab_native_use_confirmation = False
+    engine = SchwabNativeEntryEngine(config, now_provider=lambda: datetime(2026, 4, 17, 10, 0))
+    engine._recent_bars["ELAB"] = [
+        {
+            "bar_index": float(index),
+            "open": 2.00 + (index - 52) * 0.02,
+            "close": 2.02 + (index - 52) * 0.02,
+            "high": 2.04 + (index - 52) * 0.03,
+            "low": 1.98 + (index - 52) * 0.01,
+            "volume": 12_500.0,
+            "ema9": 2.00,
+            "ema20": 1.95,
+            "vwap": 1.99,
+            "vol_avg20": 5_000.0,
+            "vol_avg5": 5_000.0,
+            "ema9_prev": 1.99,
+            "hist_value": 0.02,
+            "macd_cross_above": index == 58,
+        }
+        for index in range(52, 60)
+    ]
+    indicators = _make_schwab_native_base_indicators()
+    indicators.update(
+        {
+            "macd_cross_above": False,
+            "price_cross_above_vwap": False,
+            "open": 2.30,
+            "stoch_k": 70.0,
+            "high": 2.28,
+            "low": 2.08,
+            "price": 2.25,
+            "volume": 20_000.0,
+            "vol_avg20": 5_000.0,
+        }
+    )
+
+    signal = engine.check_entry("ELAB", indicators, bar_index=60, position_tracker=None)
+
+    assert signal is None
+    decision = engine.pop_last_decision("ELAB")
+    assert decision is not None
+    assert "runup" in decision["score_details"]
+
+
+def test_schwab_native_entry_engine_p3_hard_stop_pause_blocks_only_p3() -> None:
+    config = TradingConfig().make_30s_schwab_native_variant()
+    config.schwab_native_use_confirmation = False
+    engine = SchwabNativeEntryEngine(config, now_provider=lambda: datetime(2026, 4, 17, 10, 0))
+    engine.record_path_exit("ELAB", path="P3_SURGE", reason="HARD_STOP_NATIVE_BACKUP")
+
+    p3_indicators = _make_schwab_native_base_indicators()
+    p3_indicators.update(
+        {
+            "macd_cross_above": False,
+            "price_cross_above_vwap": False,
+            "stoch_k": 70.0,
+            "volume": 20_000.0,
+            "vol_avg20": 5_000.0,
+        }
+    )
+
+    p3_signal = engine.check_entry("ELAB", p3_indicators, bar_index=60, position_tracker=None)
+
+    assert p3_signal is None
+    decision = engine.pop_last_decision("ELAB")
+    assert decision is not None
+    assert decision["path"] == "P3_SURGE"
+    assert "P3 hard-stop pause active" in decision["reason"]
+
+    p1_indicators = _make_schwab_native_base_indicators()
+    p1_indicators.update(
+        {
+            "volume": 12_500.0,
+            "vol_avg20": 5_000.0,
+        }
+    )
+
+    p1_signal = engine.check_entry("ELAB", p1_indicators, bar_index=61, position_tracker=None)
+
+    assert p1_signal is not None
+    assert p1_signal["path"] == "P1_CROSS"
+
+
 def test_schwab_native_entry_engine_blocks_p1_when_chop_lock_hits_threshold() -> None:
     config = TradingConfig().make_30s_schwab_native_variant()
     config.schwab_native_use_confirmation = False
     engine = SchwabNativeEntryEngine(config, now_provider=lambda: datetime(2026, 4, 17, 10, 0))
     _seed_schwab_native_chop_history(engine, "ELAB")
+    engine._recent_bars["ELAB"][-2]["macd_cross_above"] = True
     indicators = _make_schwab_native_base_indicators()
     indicators.update(
         {
@@ -894,11 +1517,157 @@ def test_schwab_native_entry_engine_blocks_p1_when_chop_lock_hits_threshold() ->
     assert "NO_CLEAN_SIDE" in decision["reason"]
 
 
-def test_schwab_native_entry_engine_allows_p3_extreme_override_during_chop_lock() -> None:
-    config = TradingConfig().make_30s_schwab_native_variant()
+def test_webull_variant_does_not_inherit_schwab_chop_lock_default() -> None:
+    config = TradingConfig().make_30s_webull_variant()
     config.schwab_native_use_confirmation = False
     engine = SchwabNativeEntryEngine(config, now_provider=lambda: datetime(2026, 4, 17, 10, 0))
     _seed_schwab_native_chop_history(engine, "ELAB")
+    indicators = _make_schwab_native_base_indicators()
+    indicators.update(
+        {
+            "price": 2.02,
+            "high": 2.06,
+            "low": 1.98,
+            "ema9": 2.015,
+            "ema20": 2.00,
+            "vwap": 2.01,
+            "vol_avg20": 3_000.0,
+            "vol_avg5": 3_000.0,
+            "ema9_dist_pct": 0.25,
+            "vwap_dist_pct": 0.5,
+        }
+    )
+
+    signal = engine.check_entry("ELAB", indicators, bar_index=60, position_tracker=None)
+
+    assert signal is not None
+    assert signal["path"] == "P1_CROSS"
+
+
+def test_schwab_native_confirm_bars_zero_signals_without_extra_bar_wait() -> None:
+    config = TradingConfig().make_30s_schwab_native_variant()
+    assert config.schwab_native_use_confirmation is True
+    assert config.confirm_bars == 0
+    engine = SchwabNativeEntryEngine(config, now_provider=lambda: datetime(2026, 4, 17, 10, 0))
+    indicators = _make_schwab_native_base_indicators()
+    indicators.update(
+        {
+            "price": 2.02,
+            "high": 2.06,
+            "low": 1.98,
+            "ema9": 2.015,
+            "ema20": 2.00,
+            "vwap": 2.01,
+            "vol_avg20": 3_000.0,
+            "vol_avg5": 3_000.0,
+            "ema9_dist_pct": 0.25,
+            "vwap_dist_pct": 0.5,
+        }
+    )
+
+    signal = engine.check_entry("ELAB", indicators, bar_index=60, position_tracker=None)
+
+    assert signal is not None
+    assert signal["path"] == "P1_CROSS"
+    decision = engine.pop_last_decision("ELAB")
+    assert decision is not None
+    assert decision["status"] == "signal"
+    assert decision["reason"] == "P1_CROSS"
+    assert decision["path"] == "P1_CROSS"
+    assert decision["score"] == "6"
+
+
+def test_schwab_native_p1_cross_blocks_when_relative_volume_is_too_weak() -> None:
+    config = TradingConfig().make_30s_schwab_native_variant()
+    engine = SchwabNativeEntryEngine(config, now_provider=lambda: datetime(2026, 4, 17, 10, 0))
+    indicators = _make_schwab_native_base_indicators()
+    indicators.update(
+        {
+            "price": 2.02,
+            "high": 2.06,
+            "low": 1.98,
+            "volume": 3_000.0,
+            "ema9": 2.015,
+            "ema20": 2.00,
+            "vwap": 2.01,
+            "vol_avg20": 4_000.0,
+            "vol_avg5": 3_500.0,
+            "ema9_dist_pct": 0.25,
+            "vwap_dist_pct": 0.5,
+        }
+    )
+
+    signal = engine.check_entry("ELAB", indicators, bar_index=60, position_tracker=None)
+    _, _, details, _ = engine._evaluate_paths("ELAB", indicators, 60)
+
+    assert signal is None
+    assert "P1:vol20" in details
+
+
+def test_schwab_native_p1_cross_blocks_when_absolute_p1_volume_floor_not_met() -> None:
+    config = TradingConfig().make_30s_schwab_native_variant()
+    config.p1_min_volume_abs = 7_500
+    engine = SchwabNativeEntryEngine(config, now_provider=lambda: datetime(2026, 4, 17, 10, 0))
+    indicators = _make_schwab_native_base_indicators()
+    indicators.update(
+        {
+            "price": 2.02,
+            "high": 2.06,
+            "low": 1.98,
+            "volume": 6_000.0,
+            "ema9": 2.015,
+            "ema20": 2.00,
+            "vwap": 2.01,
+            "vol_avg20": 4_000.0,
+            "vol_avg5": 3_500.0,
+            "ema9_dist_pct": 0.25,
+            "vwap_dist_pct": 0.5,
+        }
+    )
+
+    signal = engine.check_entry("ELAB", indicators, bar_index=60, position_tracker=None)
+    _, _, details, _ = engine._evaluate_paths("ELAB", indicators, 60)
+
+    assert signal is None
+    assert "P1:p1_vol" in details
+
+
+def test_schwab_native_p1_cross_blocks_when_dollar_volume_floor_not_met() -> None:
+    config = TradingConfig().make_30s_schwab_native_variant()
+    config.p1_min_dollar_volume_abs = 25_000
+    engine = SchwabNativeEntryEngine(config, now_provider=lambda: datetime(2026, 4, 17, 10, 0))
+    indicators = _make_schwab_native_base_indicators()
+    indicators.update(
+        {
+            "price": 2.02,
+            "high": 2.06,
+            "low": 1.98,
+            "volume": 8_000.0,
+            "ema9": 2.015,
+            "ema20": 2.00,
+            "vwap": 2.01,
+            "vol_avg20": 4_000.0,
+            "vol_avg5": 3_500.0,
+            "ema9_dist_pct": 0.25,
+            "vwap_dist_pct": 0.5,
+        }
+    )
+
+    signal = engine.check_entry("ELAB", indicators, bar_index=60, position_tracker=None)
+    _, _, details, _ = engine._evaluate_paths("ELAB", indicators, 60)
+
+    assert signal is None
+    assert "P1:p1_dollar" in details
+
+
+def test_schwab_native_entry_engine_allows_p3_extreme_override_during_chop_lock() -> None:
+    config = TradingConfig().make_30s_schwab_native_variant()
+    config.schwab_native_use_confirmation = False
+    config.p3_max_bars_since_macd_cross = None
+    config.p3_max_recent_runup_pct = None
+    engine = SchwabNativeEntryEngine(config, now_provider=lambda: datetime(2026, 4, 17, 10, 0))
+    _seed_schwab_native_chop_history(engine, "ELAB")
+    engine._recent_bars["ELAB"][-2]["macd_cross_above"] = True
     indicators = _make_schwab_native_base_indicators()
     indicators.update(
         {
@@ -906,7 +1675,7 @@ def test_schwab_native_entry_engine_allows_p3_extreme_override_during_chop_lock(
             "price": 2.18,
             "high": 2.23,
             "low": 2.03,
-            "volume": 7_000.0,
+            "volume": 20_000.0,
             "ema9": 2.07,
             "ema20": 2.04,
             "vwap": 2.05,
@@ -1001,6 +1770,282 @@ def test_schwab_native_entry_engine_can_fire_p5_pullback() -> None:
 
     assert signal is not None
     assert signal["path"] == "P5_PULLBACK"
+
+
+def test_webull_variant_restores_polygon_momentum_override_that_schwab_blocks() -> None:
+    schwab_config = TradingConfig().make_30s_schwab_native_variant()
+    schwab_config.schwab_native_use_confirmation = False
+    schwab_config.p3_allow_momentum_override = True
+    schwab_engine = SchwabNativeEntryEngine(schwab_config, now_provider=lambda: datetime(2026, 4, 17, 10, 0))
+
+    webull_config = TradingConfig().make_30s_webull_variant()
+    webull_config.schwab_native_use_confirmation = False
+    webull_engine = SchwabNativeEntryEngine(webull_config, now_provider=lambda: datetime(2026, 4, 17, 10, 0))
+
+    indicators = _make_schwab_native_base_indicators()
+    indicators.update(
+        {
+            "macd_cross_above": False,
+            "price_cross_above_vwap": False,
+            "vwap_dist_pct": 25.0,
+            "ema9_dist_pct": 5.0,
+            "stoch_k": 90.0,
+            "price_above_vwap": False,
+            "volume": 20_000.0,
+            "vol_avg20": 3_000.0,
+        }
+    )
+
+    schwab_signal = schwab_engine.check_entry("ELAB", indicators, bar_index=60, position_tracker=None)
+    assert schwab_signal is None
+    schwab_decision = schwab_engine.pop_last_decision("ELAB")
+    assert schwab_decision is not None
+    assert schwab_decision["status"] == "blocked"
+    assert schwab_decision["path"] == "P3_SURGE"
+    assert schwab_decision["reason"] == "P3 entry stoch_k cap (90.0 >= 80.0)"
+
+    webull_signal = webull_engine.check_entry("ELAB", indicators, bar_index=60, position_tracker=None)
+    assert webull_signal is not None
+    assert webull_signal["path"] == "P3_SURGE"
+
+
+def test_schwab_native_entry_engine_1m_p3_requires_average_volume() -> None:
+    config = TradingConfig().make_1m_schwab_native_variant()
+    config.schwab_native_use_confirmation = False
+    engine = SchwabNativeEntryEngine(config, now_provider=lambda: datetime(2026, 4, 17, 10, 0))
+    indicators = _make_schwab_native_base_indicators()
+    indicators.update(
+        {
+            "macd_cross_above": False,
+            "price_cross_above_vwap": False,
+            "vwap_dist_pct": 5.0,
+            "ema9_dist_pct": 1.0,
+            "stoch_k": 60.0,
+            "volume": 900.0,
+            "vol_avg20": 1000.0,
+        }
+    )
+
+    signal = engine.check_entry("ELAB", indicators, bar_index=60, position_tracker=None)
+
+    assert signal is None
+
+
+def test_schwab_native_entry_engine_1m_p3_blocks_when_ema9_distance_is_too_large() -> None:
+    config = TradingConfig().make_1m_schwab_native_variant()
+    config.schwab_native_use_confirmation = False
+    engine = SchwabNativeEntryEngine(config, now_provider=lambda: datetime(2026, 4, 17, 10, 0))
+    indicators = _make_schwab_native_base_indicators()
+    indicators.update(
+        {
+            "macd_cross_above": False,
+            "price_cross_above_vwap": False,
+            "vwap_dist_pct": 5.0,
+            "ema9_dist_pct": 2.5,
+            "stoch_k": 60.0,
+            "volume": 1500.0,
+            "vol_avg20": 1000.0,
+        }
+    )
+
+    signal = engine.check_entry("ELAB", indicators, bar_index=60, position_tracker=None)
+
+    assert signal is None
+
+
+def test_schwab_native_entry_engine_records_path_diagnostics_on_no_match() -> None:
+    config = TradingConfig().make_30s_webull_variant()
+    config.schwab_native_use_confirmation = False
+    engine = SchwabNativeEntryEngine(config, now_provider=lambda: datetime(2026, 4, 29, 15, 30))
+
+    signal = engine.check_entry(
+        "XTLB",
+        {
+            "open": 3.42,
+            "price": 3.45,
+            "high": 3.46,
+            "low": 3.41,
+            "volume": 6_000.0,
+            "ema9": 3.43,
+            "ema20": 3.36,
+            "vwap": 3.40,
+            "vol_avg20": 5_000.0,
+            "vol_avg5": 5_500.0,
+            "ema9_prev": 3.42,
+            "macd": 0.012,
+            "signal": 0.010,
+            "histogram": 0.002,
+            "hist_value": 0.002,
+            "stoch_k": 68.0,
+            "macd_cross_above": False,
+            "bars_below_signal_prev": 0,
+            "price_cross_above_vwap": False,
+            "macd_above_signal": True,
+            "macd_increasing": True,
+            "macd_delta": 0.0006,
+            "macd_delta_prev": 0.0008,
+            "price_above_ema9": True,
+            "price_above_ema20": True,
+            "price_above_vwap": True,
+            "hist_growing": True,
+            "stoch_k_rising": True,
+            "ema9_dist_pct": 0.6,
+            "vwap_dist_pct": 1.4,
+            "ema9_trend_rising": True,
+            "in_regular_session": True,
+            "stoch_cross_below_exit": False,
+            "macd_cross_below": False,
+        },
+        bar_index=60,
+        position_tracker=None,
+    )
+
+    assert signal is None
+    decision = engine.pop_last_decision("XTLB")
+    assert decision is not None
+    assert decision["status"] == "idle"
+    assert decision["reason"] == "no entry path matched"
+    assert decision["score_details"].startswith("diag: g[")
+    assert "best=P2:vwap_cross" in decision["score_details"]
+    assert "P3:delta|delta_prev|hist" in decision["score_details"]
+    assert "P5:pullback" in decision["score_details"]
+
+
+def test_schwab_native_entry_engine_records_path_diagnostics_on_chop_block() -> None:
+    config = TradingConfig().make_30s_schwab_native_variant()
+    config.schwab_native_use_confirmation = False
+    engine = SchwabNativeEntryEngine(config, now_provider=lambda: datetime(2026, 4, 29, 10, 0))
+    _seed_schwab_native_chop_history(engine, "ELAB")
+    indicators = _make_schwab_native_base_indicators()
+    indicators.update(
+        {
+            "price": 2.02,
+            "high": 2.06,
+            "low": 1.98,
+            "ema9": 2.015,
+            "ema20": 2.00,
+            "vwap": 2.01,
+            "vol_avg20": 3_000.0,
+            "vol_avg5": 3_000.0,
+            "ema9_dist_pct": 0.25,
+            "vwap_dist_pct": 0.5,
+        }
+    )
+
+    signal = engine.check_entry("ELAB", indicators, bar_index=60, position_tracker=None)
+
+    assert signal is None
+    decision = engine.pop_last_decision("ELAB")
+    assert decision is not None
+    assert decision["status"] == "blocked"
+    assert "chop lock active" in decision["reason"]
+    assert decision["score_details"].startswith("diag: g[")
+    assert "chop=4/4:" in decision["score_details"]
+    assert "P1:chop" in decision["score_details"]
+
+
+def test_schwab_native_entry_engine_allows_p4_when_higher_paths_are_only_chop_blocked() -> None:
+    config = TradingConfig().make_30s_schwab_native_variant()
+    config.schwab_native_use_confirmation = False
+    engine = SchwabNativeEntryEngine(config, now_provider=lambda: datetime(2026, 4, 30, 16, 5))
+    _seed_schwab_native_chop_history(engine, "SKLZ")
+
+    signal = engine.check_entry(
+        "SKLZ",
+        {
+            "open": 8.47,
+            "price": 8.7698,
+            "high": 8.8692,
+            "low": 8.43,
+            "volume": 98_910.0,
+            "ema9": 8.3072,
+            "ema20": 8.1924,
+            "vwap": 7.7858,
+            "vol_avg20": 20_000.0,
+            "vol_avg5": 25_000.0,
+            "ema9_prev": 8.20,
+            "macd": 0.1057,
+            "signal": 0.0543,
+            "histogram": 0.0514,
+            "stoch_k": 89.7,
+            "macd_cross_above": False,
+            "bars_below_signal_prev": 0,
+            "price_cross_above_vwap": True,
+            "macd_above_signal": True,
+            "macd_increasing": True,
+            "macd_delta": 0.0010,
+            "macd_delta_prev": 0.0015,
+            "hist_value": 0.0514,
+            "price_above_ema9": True,
+            "price_above_ema20": True,
+            "price_above_vwap": True,
+            "hist_growing": True,
+            "stoch_k_rising": True,
+            "ema9_dist_pct": 5.0,
+            "vwap_dist_pct": 12.0,
+            "ema9_trend_rising": True,
+            "in_regular_session": True,
+            "stoch_cross_below_exit": False,
+            "macd_cross_below": False,
+        },
+        bar_index=60,
+        position_tracker=None,
+    )
+
+    assert signal is not None
+    assert signal["path"] == "P4_BURST"
+
+
+def test_schwab_native_entry_engine_replaces_same_bar_probe_snapshot() -> None:
+    config = TradingConfig().make_30s_schwab_native_variant()
+    engine = SchwabNativeEntryEngine(config, now_provider=lambda: datetime(2026, 4, 28, 10, 0))
+
+    first_snapshot = engine._snapshot_from_indicators(
+        {
+            "open": 3.40,
+            "price": 3.44,
+            "high": 3.45,
+            "low": 3.39,
+            "volume": 10_000.0,
+            "ema9": 3.35,
+            "ema20": 3.30,
+            "vwap": 3.33,
+            "vol_avg20": 8_000.0,
+            "vol_avg5": 9_000.0,
+            "ema9_prev": 3.34,
+            "hist_value": 0.01,
+        },
+        bar_index=56,
+    )
+    second_snapshot = engine._snapshot_from_indicators(
+        {
+            "open": 3.40,
+            "price": 3.51,
+            "high": 3.52,
+            "low": 3.39,
+            "volume": 18_000.0,
+            "ema9": 3.36,
+            "ema20": 3.30,
+            "vwap": 3.35,
+            "vol_avg20": 8_500.0,
+            "vol_avg5": 10_000.0,
+            "ema9_prev": 3.35,
+            "hist_value": 0.02,
+        },
+        bar_index=56,
+    )
+
+    assert first_snapshot is not None
+    assert second_snapshot is not None
+
+    engine._remember_bar("SBLX", first_snapshot)
+    engine._remember_bar("SBLX", second_snapshot)
+
+    remembered = engine._recent_bars["SBLX"]
+    assert len(remembered) == 1
+    assert remembered[0]["close"] == pytest.approx(3.51)
+    assert remembered[0]["high"] == pytest.approx(3.52)
+    assert remembered[0]["volume"] == pytest.approx(18_000.0)
 
 
 def test_position_tracker_loads_closed_trades_from_sibling_data_dir(tmp_path, monkeypatch) -> None:

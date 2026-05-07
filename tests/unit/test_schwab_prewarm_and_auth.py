@@ -91,3 +91,44 @@ async def test_service_surfaces_schwab_auth_failure_reason_without_fake_resubscr
     assert runtime.data_health_summary()["reasons"]["AUUD"] == (
         "Schwab OAuth refresh failed on the VPS; reauthorize Schwab tokens before trading"
     )
+
+
+@pytest.mark.asyncio
+async def test_service_surfaces_quote_poll_auth_failure_immediately_for_active_symbol() -> None:
+    service = StrategyEngineService(
+        settings=Settings(
+            strategy_macd_30s_broker_provider="schwab",
+            redis_stream_prefix="test",
+            dashboard_snapshot_persistence_enabled=False,
+            scanner_feed_retention_enabled=False,
+            strategy_history_persistence_enabled=False,
+            schwab_stream_symbol_stale_after_seconds=300.0,
+            schwab_stream_symbol_resubscribe_interval_seconds=60.0,
+        ),
+        redis_client=FakeRedis(),
+    )
+    runtime = service.state.bots["macd_30s"]
+    runtime.set_watchlist(["LABT"])
+    service._schwab_symbol_active_first_seen_at["LABT"] = datetime.now(UTC)
+    service._schwab_stream_disconnected_since = None
+
+    class FakeHealthyStreamClient:
+        connected = True
+        connection_failures = 0
+        last_error = ""
+
+        async def force_resubscribe(self) -> None:
+            raise AssertionError("force_resubscribe should not be called during auth failure")
+
+    class FakeAuthAdapter:
+        last_error = "RuntimeError: failed refreshing Schwab token: refresh_token_authentication_error: unsupported_token_type"
+
+    service._schwab_stream_client = FakeHealthyStreamClient()
+    service._schwab_quote_poll_adapter = FakeAuthAdapter()
+
+    intent_count = await service._monitor_schwab_symbol_health()
+
+    assert intent_count == 1
+    assert runtime.data_health_summary()["reasons"]["LABT"] == (
+        "Schwab OAuth refresh failed on the VPS; reauthorize Schwab tokens before trading"
+    )

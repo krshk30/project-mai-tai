@@ -25,6 +25,10 @@ class FakeRedis:
 def make_settings(**kwargs) -> Settings:
     return Settings(
         scanner_feed_retention_enabled=False,
+        strategy_macd_30s_enabled=True,
+        strategy_webull_30s_enabled=False,
+        strategy_macd_1m_enabled=False,
+        strategy_schwab_1m_enabled=False,
         strategy_macd_30s_broker_provider="schwab",
         redis_stream_prefix="test",
         dashboard_snapshot_persistence_enabled=False,
