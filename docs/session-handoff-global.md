@@ -1,5 +1,100 @@
 # Session Handoff - Global
 
+## 2026-05-07 LOCAL/VPS/GIT three-way alignment: 11 commits direct-pushed to main, VPS reset to main, dirty-checkout era ended
+
+End-of-day cleanup pass. The repo had been operating with an intentionally dirty VPS git checkout for weeks (deploys via `scp` because `Deploy Main` refused dirty trees). Today consolidated all that drift into 11 themed commits on `main` and reset VPS to track main directly.
+
+### Validation work earlier in the session
+
+**Schwab 30s re-validation** at the post-restart 11:24:05 UTC window: persisted/rebuilt volume ratio 0.94-1.00 across MASK/RMSG/SMX/PMAX/GCTK/SOBR (matches morning baseline of 0.97-1.00). Two big-drift outliers (PMAX 11:24:30 = 2241→25, GCTK 11:26:00 = 1004→6) are the documented "first bar after fresh builder activation" edge case. Match rates 65-100% on the 11-minute sample (lower than the morning's 30-minute sample because exact-equality match is noisy on small N). No regression - 30s fix is holding.
+
+**Schwab 1m drift investigation:** comparison of `schwab_1m` persisted CHART_EQUITY bars vs TIMESALE archive rebuild surfaced three issues. (1) `trade_count=1` on every persisted bar (broken metric). (2) Volume systematically 5-35% below tick rebuild. (3) OHLC precision differences. Cross-checked against Schwab `pricehistory` API for ERNA/SOBR/MASK 11:24-11:40 UTC: persisted CHART matched `pricehistory` exactly on every bar. **Volume drift is inherent to Schwab's 1-min bar product** (CHART and pricehistory both exclude trades that show up in TIMESALE consolidated tape - off-exchange/ATS prints, late-reported trades). Not fixable; we accept persisted volume as canonical for `schwab_1m`. **Only the `trade_count=1` was a real bug** with a fixable cause at `broker_adapters/schwab.py:390` (defaults to 1 when `tradeCount` field is absent, which it always is for 1-minute candles).
+
+### Schwab 1m trade_count accumulator (live-validated)
+
+Added per-symbol per-bucket counter `_live_aggregate_trade_tick_counts` on `StrategyBotRuntime`. `handle_trade_tick` increments before the live-aggregate-vs-builder-fallback branch split (initial deploy missed this and caught only ~5% of ticks because `_should_fallback_to_trade_ticks` returns True for ~57s of every 60s bucket; corrected placement captures 100%). `handle_live_bar` consumes the count and stamps it on the OHLCVBar before `on_final_bar`, falling back to provided trade_count when no ticks arrive. Tests cover happy path + fallback-path regression + no-tick fallback.
+
+**Live validation post 12:41:41 UTC restart (RMSG):**
+- 4/6 exact match, 6/6 within 5%, zero `tc=1` fallback fires
+- 12:42 35→34, 12:43 27→27, 12:44 27→27, 12:45 22→21, 12:46 28→28, 12:47 25→25
+- Before fix: every bar `tc=1`. After: real counts 21-34 with 1-tick-or-less drift.
+
+### LOCAL → GIT alignment (11 commits to main)
+
+Started day at `35e1912`, ended at `22420ae`. Direct-pushed (CI bypassed at user's explicit request) because the schwab_1m bundle depended on infrastructure not yet on main.
+
+**Morning surgical PRs (3 commits):**
+- `0582fc4` — fix/await-massive-websocket-close
+- `44dfe94` — fix/macd-30s-close-grace (close_grace + cum_vol baseline preservation, settings.py conflict resolved by keeping both new fields)
+- `c389eb2` — fix/macd-30s-trade-stream-service-default
+
+**schwab_1m bundle (1 commit, 4230+ insertions):**
+- `e7ffa07` — full live-aggregate-final infrastructure (`live_aggregate_bars_are_final`, `on_final_bar` builder method) + trade_count accumulator + schwab_tick_archive recorder + `runtime_registry`/`broker_adapters/schwab.py`/`models.py` wiring + 3 new schwab_1m tests
+
+**Workstream-grouped WIP cleanup (6 commits):**
+- `713ccd9` — bar_builder same-bucket guard (`<` → `<=`) + LiveBarPayload `coverage_started_at` field
+- `edaeb78` — Polygon market-data: aggregate `z`-as-trade_count fix, replay-storm fix on subscription replace, live-bar publisher plumbing
+- `1df42f1` — momentum/scanner: float-tier turnover gate (small=7%, mid=10%, large=12% replacing flat 20%), stop-guard flags, configurable P1 thresholds, episode reason cleanup
+- `685c478` — OMS native stop-guard plumbing, control-plane reconciliation visibility split (UI-hidden vs reconciliation-hidden), listening-status surfacing
+- `18d0fce` — strategy engine + Schwab adapter test coverage (~2200 lines covering live-aggregate paths, restart restore, intrabar entry, broker adapter)
+- `e54685a` — docs/session-handoff/runbook/env example/.gitignore sync
+
+**Final follow-up (1 commit):**
+- `22420ae` — Completed Positions metadata fix (path display normalization, reconciliation tuple tightening to (qty, avg_price, broker_account_name), generic-path/summary recovery in trade_episodes for reconcile-origin rows). Detail in next entry.
+
+### VPS alignment
+
+`git reset --hard origin/main` aligned VPS tracked files to `22420ae`. Services kept running through the reset (Python had already loaded the modules); the bar_builder.py change (`<` → `<=`) picks up on next strategy restart - small/safe behavioural change. All five services (`strategy`, `oms`, `market-data`, `control`, `reconciler`) confirmed `active` after reset.
+
+### Result
+
+- LOCAL working tree: drift = 0 vs `origin/main`
+- VPS: drift = 0 vs `origin/main` (HEAD = 22420ae)
+- GitHub `main` tip: 22420ae
+
+The "intentionally dirty VPS checkout" era is over. Going forward, the standard `Deploy Main` flow should work cleanly.
+
+## 2026-05-07 Completed Positions metadata fix: shared path / exit-summary recovery for reconcile-built cycles
+
+This fix targets the user-facing `Completed Positions` table issue where many completed rows showed `Path = -` and `Exit Summary = Close` even though the bot often knew the setup path at entry time.
+
+### What was happening
+
+- This is a shared issue across bots because the table is built through common code in `src/project_mai_tai/trade_episodes.py` and `src/project_mai_tai/services/control_plane.py`.
+- Live/reconciled positions restored through `StrategyEngineService._restore_runtime_position(...)` were being stamped with `path="DB_RECONCILE"`.
+- Later, `collect_completed_trade_cycles(...)` intentionally hid `DB_RECONCILE` as `-`, and generic reconstructed close reasons collapsed to `Close` / `Final close`.
+- Result: the UI looked like the bot did not know the path, when in many cases the path was known originally but lost during restart/reconcile/reconstruction.
+
+### Fix applied locally
+
+- `src/project_mai_tai/trade_episodes.py`
+  - Added generic-path / generic-summary helpers so reconcile-origin rows are treated consistently.
+  - `display_order_path(...)` now also recovers path from `metadata.path`, `metadata.confirmation_path`, `metadata.decision_path`, and nested `payload.metadata.*`, not just top-level `path`.
+  - `collect_completed_trade_cycles(...)` now tries to enrich `closed_today` reconcile rows from matching completed order/fill cycles before rendering them.
+  - If a row is still reconcile-only after that enrichment, it now shows `Path = RECONCILED` and `Exit Summary = Reconciled close` instead of a bare `-` / `Close`.
+- `src/project_mai_tai/services/control_plane.py`
+  - Recent filled-order rows now use `display_order_path(...)` so `confirmation_path`-style bots can feed better path metadata into completed-cycle reconstruction.
+- `src/project_mai_tai/services/strategy_engine_app.py`
+  - Runtime DB reconcile now tries to restore the real entry path from the latest matching open `TradeIntent` metadata (`path`, `confirmation_path`, `decision_path`, or `ENTRY_*` reason) before falling back to `DB_RECONCILE`.
+  - This should reduce future path-loss on positions that survive a restart and close later.
+
+### Validation
+
+- `python -m pytest tests/unit/test_trade_episodes.py -q` -> `7 passed`
+- `python -m pytest tests/unit/test_strategy_engine_service.py::test_strategy_service_reconcile_restores_missing_runtime_position_from_virtual_state tests/unit/test_strategy_engine_service.py::test_strategy_service_reconcile_restores_runtime_position_path_from_latest_open_intent -q` -> `2 passed`
+- `py_compile` passed on:
+  - `src/project_mai_tai/trade_episodes.py`
+  - `src/project_mai_tai/services/control_plane.py`
+  - `src/project_mai_tai/services/strategy_engine_app.py`
+  - `tests/unit/test_trade_episodes.py`
+  - `tests/unit/test_strategy_engine_service.py`
+
+### Deployment status
+
+- Deployed to VPS via `git reset --hard origin/main` at the end-of-day alignment pass (commit `22420ae`).
+- Services kept running through the reset; behavioural change picks up on next strategy restart.
+- One older targeted service test, `test_strategy_service_restores_runtime_positions_and_pending_from_database`, still failed when run in isolation because of an unrelated existing `runner` fixture/setup assumption (`service.state.bots["runner"]` missing under that narrow invocation). The new reconcile-path test added for this fix passed.
+
 ## 2026-05-07 Schwab 1m `trade_count` accumulator from TIMESALE/LEVELONE ticks: deployed and live-validated 67% exact / 100% within 5%
 
 `schwab_1m` ingests Schwab CHART_EQUITY 1-minute aggregate bars. CHART_EQUITY has no per-bar trade count, so `_extract_chart_bar_record` in `market_data/schwab_streamer.py` hard-codes `trade_count=1`, and the `pricehistory` adapter at `broker_adapters/schwab.py:390` defaults to `1` when the JSON `tradeCount` field is absent (it always is for 1-minute candles). Every persisted `schwab_1m` bar therefore had `trade_count=1`.
