@@ -398,8 +398,12 @@ class MomentumConfirmedScanner:
 
         if float_shares > 0 and volume > 0:
             vol_float_ratio = volume / float_shares
-            if vol_float_ratio < 0.20:
-                return False, f"volume/float ratio too low: {vol_float_ratio:.1%} (need ≥20%)"
+            required_ratio = self._required_float_turnover_ratio(float_shares)
+            if vol_float_ratio < required_ratio:
+                return False, (
+                    f"volume/float ratio too low: {vol_float_ratio:.1%} "
+                    f"(need >={required_ratio:.0%})"
+                )
 
         if float_shares > 0 and float_shares > self.config.confirmed_max_float:
             return False, f"float too large: {float_shares:,}"
@@ -444,6 +448,13 @@ class MomentumConfirmedScanner:
 
     def _qualifies_path_c_extreme_mover(self, day_change_pct: float) -> bool:
         return day_change_pct >= self.config.extreme_mover_min_day_change_pct
+
+    def _required_float_turnover_ratio(self, float_shares: int) -> float:
+        if float_shares <= 10_000_000:
+            return float(self.config.confirmed_min_float_turnover_small)
+        if float_shares <= 30_000_000:
+            return float(self.config.confirmed_min_float_turnover_mid)
+        return float(self.config.confirmed_min_float_turnover_large)
 
     def _confirm_ticker(
         self,

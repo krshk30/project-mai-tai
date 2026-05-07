@@ -119,7 +119,7 @@ def test_list_reviewable_cycles_sorts_globally_and_skips_reviewed() -> None:
 
     with session_factory() as session:
         macd = Strategy(code="macd_30s", name="Schwab 30 Sec Bot", execution_mode="paper")
-        webull = Strategy(code="webull_30s", name="Webull 30 Sec Bot", execution_mode="live")
+        webull = Strategy(code="webull_30s", name="Polygon 30 Sec Bot", execution_mode="live")
         paper = BrokerAccount(
             name="paper:macd_30s",
             provider="alpaca",

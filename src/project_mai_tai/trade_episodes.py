@@ -105,6 +105,14 @@ def collect_completed_trade_cycles(
                 else:
                     intent_type = "close"
 
+            if looks_like_broker_payload_text(reason):
+                if intent_type == "close":
+                    reason = "FINAL_CLOSE"
+                elif intent_type == "scale":
+                    reason = "SCALE"
+                else:
+                    reason = ""
+
             if intent_type == "open" and side == "buy":
                 open_trades_by_symbol.setdefault(symbol, []).append(
                     {
@@ -222,11 +230,21 @@ def coalesce_completed_trade_cycles(rows: list[dict[str, Any]]) -> list[dict[str
         normalized = str(value or "").strip().lower()
         return normalized in {"close", "final close", "completed", "-"}
 
+    def is_shadow_row(row: dict[str, Any]) -> bool:
+        path = str(row.get("path", "") or "-").strip().upper()
+        summary = str(row.get("summary", "") or "").strip()
+        return path in {"", "-", "DB_RECONCILE"} or is_generic_summary(summary)
+
     def merge_row(primary: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
         merged = dict(primary)
-        if (str(merged.get("path", "") or "-") in {"", "-"}) and str(incoming.get("path", "") or "-") not in {
+        merged_shadow = is_shadow_row(merged)
+        incoming_shadow = is_shadow_row(incoming)
+        if merged_shadow and not incoming_shadow:
+            merged["quantity"] = incoming.get("quantity", merged.get("quantity"))
+        if (str(merged.get("path", "") or "-") in {"", "-", "DB_RECONCILE"}) and str(incoming.get("path", "") or "-") not in {
             "",
             "-",
+            "DB_RECONCILE",
         }:
             merged["path"] = incoming.get("path")
         if as_float(merged.get("entry_price")) <= 0 and as_float(incoming.get("entry_price")) > 0:
@@ -257,13 +275,16 @@ def coalesce_completed_trade_cycles(rows: list[dict[str, Any]]) -> list[dict[str
                 continue
             if str(existing.get("symbol", "") or "").upper() != str(row.get("symbol", "") or "").upper():
                 continue
-            if abs(as_float(existing.get("quantity")) - as_float(row.get("quantity"))) > 0.0001:
-                continue
             existing_entry = parse_time(existing.get("entry_time"))
             existing_exit = parse_time(existing.get("exit_time"))
             row_entry = parse_time(row.get("entry_time"))
             row_exit = parse_time(row.get("exit_time"))
-            if abs((existing_entry - row_entry).total_seconds()) <= 2 and abs((existing_exit - row_exit).total_seconds()) <= 2:
+            quantity_matches = abs(as_float(existing.get("quantity")) - as_float(row.get("quantity"))) <= 0.0001
+            shadow_merge = is_shadow_row(existing) or is_shadow_row(row)
+            if abs((existing_entry - row_entry).total_seconds()) <= 2 and quantity_matches and abs((existing_exit - row_exit).total_seconds()) <= 2:
+                match_index = index
+                break
+            if shadow_merge and abs((existing_entry - row_entry).total_seconds()) <= 5:
                 match_index = index
                 break
         if match_index is None:
@@ -319,15 +340,16 @@ def looks_like_broker_payload_text(value: Any) -> bool:
     text = str(value or "").strip()
     if not text.startswith("{"):
         return False
+    lower_text = text.lower()
     broker_markers = (
-        "orderLegCollection",
-        "executionLegs",
-        "orderStrategyType",
-        "instrumentId",
-        "requestedDestination",
+        "orderlegcollection",
+        "executionlegs",
+        "orderstrategytype",
+        "instrumentid",
+        "requesteddestination",
         "'session':",
     )
-    return any(marker in text for marker in broker_markers)
+    return any(marker in lower_text for marker in broker_markers)
 
 
 def summarize_exit_events(exit_events: list[dict[str, Any]], initial_qty: float) -> str:
@@ -337,10 +359,16 @@ def summarize_exit_events(exit_events: list[dict[str, Any]], initial_qty: float)
     close_events = [event for event in exit_events if event.get("intent_type") == "close"]
     close_qty = sum(as_float(event.get("qty")) for event in close_events)
     if close_events and scale_qty > 0:
-        close_reason = str(close_events[-1].get("reason", "") or "final close").replace("_", " ").title()
+        close_reason_raw = str(close_events[-1].get("reason", "") or "final close")
+        if looks_like_broker_payload_text(close_reason_raw):
+            close_reason_raw = "final close"
+        close_reason = close_reason_raw.replace("_", " ").title()
         return f"Scaled out {format_qty(scale_qty)}, then closed {format_qty(close_qty)} on {close_reason}"
     if close_events:
-        close_reason = str(close_events[-1].get("reason", "") or "final close").replace("_", " ").title()
+        close_reason_raw = str(close_events[-1].get("reason", "") or "final close")
+        if looks_like_broker_payload_text(close_reason_raw):
+            close_reason_raw = "final close"
+        close_reason = close_reason_raw.replace("_", " ").title()
         return close_reason
     if scale_qty >= initial_qty - 0.0001:
         return f"Fully scaled out in {len(exit_events)} fills"

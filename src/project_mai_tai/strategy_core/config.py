@@ -20,7 +20,7 @@ class IndicatorConfig:
     vwap_session_end_minute: int = 0
     extended_vwap_session_start_hour: int = 4
     extended_vwap_session_start_minute: int = 0
-    extended_vwap_session_end_hour: int = 16
+    extended_vwap_session_end_hour: int = 20
     extended_vwap_session_end_minute: int = 0
 
 
@@ -42,4 +42,7 @@ class MomentumConfirmedConfig:
     confirmed_max_float: int = 50_000_000
     rank_min_score: float = 50.0
     live_min_change_pct: float = 20.0
-    extreme_mover_min_day_change_pct: float = 50.0
+    extreme_mover_min_day_change_pct: float = 30.0
+    confirmed_min_float_turnover_small: float = 0.07
+    confirmed_min_float_turnover_mid: float = 0.10
+    confirmed_min_float_turnover_large: float = 0.12
