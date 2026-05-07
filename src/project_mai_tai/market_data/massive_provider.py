@@ -239,7 +239,9 @@ class MassiveTradeStream:
         self._running = False
         if self._ws is not None:
             try:
-                self._ws.close()
+                close_result = self._ws.close()
+                if asyncio.iscoroutine(close_result):
+                    await close_result
             except Exception:
                 logger.exception("Failed to close Massive websocket cleanly")
         if self._task is not None:
