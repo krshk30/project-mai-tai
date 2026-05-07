@@ -24,6 +24,8 @@ from project_mai_tai.strategy_core.momentum_alerts import MomentumAlertEngine
 from project_mai_tai.strategy_core.momentum_confirmed import MomentumConfirmedScanner
 from project_mai_tai.strategy_core.position_tracker import PositionTracker
 from project_mai_tai.strategy_core.schwab_native_30s import (
+    SchwabNativeBarBuilder,
+    SchwabNativeBarBuilderManager,
     SchwabNativeEntryEngine,
     SchwabNativeIndicatorEngine,
 )
@@ -61,6 +63,61 @@ def test_bar_builder_keeps_odd_lots_and_does_not_fill_gaps() -> None:
     assert completed[0].timestamp % 30 == 0
     assert completed[0].volume == 50
     assert builder.get_current_price() == 3.7
+
+
+def test_schwab_native_bar_builder_close_grace_delays_periodic_close() -> None:
+    """check_bar_closes() should wait close_grace_seconds past bucket end before finalizing.
+
+    With grace=5.0 and a 30s bucket starting at t=0, the bar should remain open at
+    wall-clock 32s (only 2s past bucket end) and only close at 35s (5s past bucket end).
+    Without grace it would close at 30s. This is the live-vs-rebuild asymmetry that
+    drops late LEVELONE trades into the just-closed bucket.
+    """
+
+    clock = {"now": 0.0}
+    builder = SchwabNativeBarBuilder(
+        "TST",
+        interval_secs=30,
+        time_provider=lambda: clock["now"],
+        close_grace_seconds=5.0,
+    )
+    builder.on_trade(price=10.0, size=100, timestamp_ns=0)
+
+    clock["now"] = 32.0
+    assert builder.check_bar_closes() == [], "bar should still be open within close_grace window"
+    assert builder._current_bar is not None
+
+    clock["now"] = 35.0
+    closed = builder.check_bar_closes()
+    assert len(closed) == 1
+    assert closed[0].timestamp == 0
+    assert builder._current_bar is None
+
+
+def test_schwab_native_bar_builder_default_grace_is_zero() -> None:
+    """Behavior without explicit grace is unchanged: bar closes at exactly bucket_end."""
+
+    clock = {"now": 0.0}
+    builder = SchwabNativeBarBuilder(
+        "TST",
+        interval_secs=30,
+        time_provider=lambda: clock["now"],
+    )
+    builder.on_trade(price=10.0, size=100, timestamp_ns=0)
+
+    clock["now"] = 30.0
+    closed = builder.check_bar_closes()
+    assert len(closed) == 1
+
+
+def test_schwab_native_bar_builder_manager_propagates_close_grace() -> None:
+    manager = SchwabNativeBarBuilderManager(
+        interval_secs=30,
+        time_provider=lambda: 0.0,
+        close_grace_seconds=5.0,
+    )
+    builder = manager.get_or_create("TST")
+    assert builder.close_grace_seconds == 5.0
 
 
 def test_vwap_resets_on_regular_session_anchor() -> None:
