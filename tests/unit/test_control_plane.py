@@ -2912,6 +2912,109 @@ def test_legacy_divergence_uses_new_confirmed_not_watchlist() -> None:
         assert divergence["confirmed_only_in_new"] == []
 
 
+def test_recent_orders_keeps_filled_when_cancelled_orders_flood_the_limit() -> None:
+    """A runaway scanner can produce hundreds of cancelled BrokerOrder rows in a
+    single session. If recent_orders simply ORDERed BY updated_at DESC LIMIT 1000,
+    those cancelled rows would push the morning's filled orders out of the result,
+    starving _collect_completed_position_rows of the data it needs to attach
+    real path metadata to completed cycles. Regression test for the Completed
+    Positions UI showing Path="-" on morning trades after a cancelled-buy flood.
+    """
+    settings = Settings(redis_stream_prefix="test", oms_adapter="alpaca_paper")
+    session_factory = build_test_session_factory()
+    seed_database(session_factory)
+
+    with session_factory() as session:
+        strategy = session.scalar(select(Strategy).where(Strategy.code == "macd_30s"))
+        account = session.scalar(select(BrokerAccount).where(BrokerAccount.name == "paper:macd_30s"))
+        assert strategy is not None and account is not None
+
+        # Morning filled trade with real path metadata. updated_at is intentionally
+        # OLDER than the upcoming flood so that a naive ORDER BY updated_at DESC
+        # would push it out of the LIMIT.
+        morning_intent = TradeIntent(
+            strategy_id=strategy.id,
+            broker_account_id=account.id,
+            symbol="AAA",
+            side="buy",
+            intent_type="open",
+            quantity=Decimal("10"),
+            reason="ENTRY_P1_CROSS",
+            status="filled",
+            payload={"metadata": {"path": "P1_CROSS"}},
+        )
+        session.add(morning_intent)
+        session.flush()
+
+        morning_buy = BrokerOrder(
+            intent_id=morning_intent.id,
+            strategy_id=strategy.id,
+            broker_account_id=account.id,
+            client_order_id="macd_30s-AAA-open-morning",
+            broker_order_id="aaa-buy-morning",
+            symbol="AAA",
+            side="buy",
+            order_type="market",
+            time_in_force="day",
+            quantity=Decimal("10"),
+            status="filled",
+            payload={},
+            submitted_at=datetime.now(UTC) - timedelta(hours=8),
+            updated_at=datetime.now(UTC) - timedelta(hours=8),
+        )
+        session.add(morning_buy)
+        session.flush()
+
+        # Now flood the same symbol with 1500 cancelled buys (more than the
+        # query LIMIT). All have updated_at MORE RECENT than the morning buy.
+        flood_orders = [
+            BrokerOrder(
+                strategy_id=strategy.id,
+                broker_account_id=account.id,
+                client_order_id=f"macd_30s-AAA-open-flood-{i}",
+                broker_order_id=f"aaa-buy-flood-{i}",
+                symbol="AAA",
+                side="buy",
+                order_type="market",
+                time_in_force="day",
+                quantity=Decimal("10"),
+                status="cancelled",
+                payload={},
+                submitted_at=datetime.now(UTC) - timedelta(minutes=1),
+                updated_at=datetime.now(UTC) - timedelta(seconds=i % 600),
+            )
+            for i in range(1500)
+        ]
+        session.add_all(flood_orders)
+        session.flush()
+        session.commit()
+
+    redis = FakeRedis(make_streams(settings.redis_stream_prefix))
+    app = build_app(
+        settings=settings,
+        session_factory=session_factory,
+        redis_client=redis,
+        legacy_client=FakeLegacyClient(),
+    )
+
+    with TestClient(app) as client:
+        overview = client.get("/api/overview")
+        assert overview.status_code == 200
+        body = overview.json()
+        recent_orders = body.get("recent_orders", [])
+        # The filled morning buy must still be in recent_orders despite the
+        # 1500-cancelled flood. Without the prioritisation fix, it would be
+        # pushed out by ORDER BY updated_at DESC LIMIT 1000.
+        morning_filled = [
+            r for r in recent_orders if r.get("symbol") == "AAA" and r.get("status") == "filled"
+        ]
+        assert len(morning_filled) == 1, (
+            f"morning filled AAA buy should be in recent_orders despite flood; "
+            f"got {len(morning_filled)} filled rows for AAA out of {len(recent_orders)} total"
+        )
+        assert morning_filled[0].get("path") == "P1_CROSS"
+
+
 def test_control_plane_recovers_after_transient_redis_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     settings = Settings(redis_stream_prefix="test", oms_adapter="alpaca_paper")
     session_factory = build_test_session_factory()

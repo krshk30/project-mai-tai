@@ -2148,11 +2148,20 @@ class ControlPlaneRepository:
                 ).all():
                     latest_order_event_by_order.setdefault(entry.order_id, entry)
 
+                # Filled orders feed completed-cycle reconstruction, so they must
+                # never be pushed out of this result by a flood of cancelled or
+                # rejected orders (e.g. a runaway scanner producing hundreds of
+                # cancelled buys for the same symbol). Order by status-priority
+                # first so filled rows are guaranteed to be loaded before the
+                # LIMIT cuts off the long tail.
                 for order in session.scalars(
                     select(BrokerOrder)
                     .where(BrokerOrder.updated_at >= session_start, BrokerOrder.updated_at < session_end)
-                    .order_by(desc(BrokerOrder.updated_at))
-                    .limit(1000)
+                    .order_by(
+                        case((BrokerOrder.status == "filled", 0), else_=1),
+                        desc(BrokerOrder.updated_at),
+                    )
+                    .limit(2000)
                 ).all():
                     strategy = strategy_lookup.get(order.strategy_id)
                     account = account_lookup.get(order.broker_account_id)
