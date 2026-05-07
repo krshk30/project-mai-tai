@@ -13,7 +13,14 @@ from project_mai_tai.broker_adapters.routing import RoutingBrokerAdapter
 from project_mai_tai.broker_adapters.protocols import BrokerPositionSnapshot, ExecutionReport
 from project_mai_tai.db.base import Base
 from project_mai_tai.db.models import AccountPosition, BrokerAccount, BrokerOrder, Fill, Strategy, TradeIntent, VirtualPosition
-from project_mai_tai.events import TradeIntentEvent, TradeIntentPayload
+from project_mai_tai.events import (
+    QuoteTickEvent,
+    QuoteTickPayload,
+    TradeIntentEvent,
+    TradeIntentPayload,
+    TradeTickEvent,
+    TradeTickPayload,
+)
 from project_mai_tai.oms.service import OmsRiskService
 from project_mai_tai.oms.store import OmsStore
 from project_mai_tai.runtime_registry import configured_broker_account_registrations, strategy_registration_map
@@ -379,6 +386,189 @@ class FakeWorkingOrderRefreshBrokerAdapter:
     async def list_account_positions(self, broker_account_name: str):
         del broker_account_name
         return []
+
+
+class FakeTickDrivenHardStopBrokerAdapter:
+    def __init__(self, *, open_fill_price: Decimal = Decimal("4.00")) -> None:
+        self.open_fill_price = open_fill_price
+        self.submit_requests = []
+        self.position_quantity = Decimal("0")
+
+    async def submit_order(self, request):
+        self.submit_requests.append(request)
+        if request.intent_type == "open":
+            self.position_quantity += request.quantity
+            return [
+                ExecutionReport(
+                    event_type="accepted",
+                    client_order_id=request.client_order_id,
+                    broker_order_id="ord-open",
+                    symbol=request.symbol,
+                    side=request.side,
+                    intent_type=request.intent_type,
+                    quantity=request.quantity,
+                    reason=request.reason,
+                    metadata=dict(request.metadata),
+                ),
+                ExecutionReport(
+                    event_type="filled",
+                    client_order_id=request.client_order_id,
+                    broker_order_id="ord-open",
+                    broker_fill_id="fill-open",
+                    symbol=request.symbol,
+                    side=request.side,
+                    intent_type=request.intent_type,
+                    quantity=request.quantity,
+                    filled_quantity=request.quantity,
+                    fill_price=self.open_fill_price,
+                    reason=request.reason,
+                    metadata=dict(request.metadata),
+                ),
+            ]
+        return [
+            ExecutionReport(
+                event_type="accepted",
+                client_order_id=request.client_order_id,
+                broker_order_id="ord-close",
+                symbol=request.symbol,
+                side=request.side,
+                intent_type=request.intent_type,
+                quantity=request.quantity,
+                reason=request.reason,
+                metadata=dict(request.metadata),
+            )
+        ]
+
+    async def fetch_order_update(self, request):
+        del request
+        return None
+
+    async def list_account_positions(self, broker_account_name: str):
+        if self.position_quantity <= 0:
+            return []
+        return [
+            BrokerPositionSnapshot(
+                broker_account_name=broker_account_name,
+                symbol="UGRO",
+                quantity=self.position_quantity,
+                average_price=self.open_fill_price,
+                market_value=None,
+                as_of=None,
+            )
+        ]
+
+
+class FakeNativeStopGuardBrokerAdapter:
+    def __init__(self, *, open_fill_price: Decimal = Decimal("4.00")) -> None:
+        self.open_fill_price = open_fill_price
+        self.submit_requests = []
+        self.position_quantity = Decimal("0")
+
+    async def submit_order(self, request):
+        self.submit_requests.append(request)
+        if request.intent_type == "open":
+            self.position_quantity += request.quantity
+            return [
+                ExecutionReport(
+                    event_type="accepted",
+                    client_order_id=request.client_order_id,
+                    broker_order_id="ord-open",
+                    symbol=request.symbol,
+                    side=request.side,
+                    intent_type=request.intent_type,
+                    quantity=request.quantity,
+                    reason=request.reason,
+                    metadata=dict(request.metadata),
+                ),
+                ExecutionReport(
+                    event_type="filled",
+                    client_order_id=request.client_order_id,
+                    broker_order_id="ord-open",
+                    broker_fill_id="fill-open",
+                    symbol=request.symbol,
+                    side=request.side,
+                    intent_type=request.intent_type,
+                    quantity=request.quantity,
+                    filled_quantity=request.quantity,
+                    fill_price=self.open_fill_price,
+                    reason=request.reason,
+                    metadata=dict(request.metadata),
+                ),
+            ]
+        if request.intent_type == "cancel":
+            return [
+                ExecutionReport(
+                    event_type="cancelled",
+                    client_order_id=request.client_order_id,
+                    broker_order_id=str(request.metadata.get("broker_order_id", "ord-stop")),
+                    symbol=request.symbol,
+                    side=request.side,
+                    intent_type="cancel",
+                    quantity=request.quantity,
+                    reason=request.reason,
+                    metadata=dict(request.metadata),
+                )
+            ]
+        if str(request.metadata.get("native_stop_guard", "")).lower() == "true":
+            return [
+                ExecutionReport(
+                    event_type="accepted",
+                    client_order_id=request.client_order_id,
+                    broker_order_id=f"ord-stop-{len(self.submit_requests)}",
+                    symbol=request.symbol,
+                    side=request.side,
+                    intent_type=request.intent_type,
+                    quantity=request.quantity,
+                    reason=request.reason,
+                    metadata=dict(request.metadata),
+                )
+            ]
+        self.position_quantity = max(Decimal("0"), self.position_quantity - request.quantity)
+        return [
+            ExecutionReport(
+                event_type="accepted",
+                client_order_id=request.client_order_id,
+                broker_order_id=f"ord-sell-{len(self.submit_requests)}",
+                symbol=request.symbol,
+                side=request.side,
+                intent_type=request.intent_type,
+                quantity=request.quantity,
+                reason=request.reason,
+                metadata=dict(request.metadata),
+            ),
+            ExecutionReport(
+                event_type="filled",
+                client_order_id=request.client_order_id,
+                broker_order_id=f"ord-sell-{len(self.submit_requests)}",
+                broker_fill_id=f"fill-sell-{len(self.submit_requests)}",
+                symbol=request.symbol,
+                side=request.side,
+                intent_type=request.intent_type,
+                quantity=request.quantity,
+                filled_quantity=request.quantity,
+                fill_price=Decimal("4.20"),
+                reason=request.reason,
+                metadata=dict(request.metadata),
+            ),
+        ]
+
+    async def fetch_order_update(self, request):
+        del request
+        return None
+
+    async def list_account_positions(self, broker_account_name: str):
+        if self.position_quantity <= 0:
+            return []
+        return [
+            BrokerPositionSnapshot(
+                broker_account_name=broker_account_name,
+                symbol="UGRO",
+                quantity=self.position_quantity,
+                average_price=self.open_fill_price,
+                market_value=None,
+                as_of=None,
+            )
+        ]
 
 
 async def _noop_sync_broker_state(*, account_names=None):
@@ -1149,6 +1339,572 @@ async def test_oms_service_refreshes_remaining_quantity_for_stale_sell_order() -
     assert [item["payload"]["status"] for item in order_events] == ["partially_filled", "accepted"]
     assert all(item["payload"]["status"] != "cancelled" for item in order_events)
     assert [request.intent_type for request in adapter.submit_requests] == ["cancel", "close"]
+
+
+@pytest.mark.asyncio
+async def test_oms_service_refreshes_stop_guard_sell_order_with_wider_panic_limit() -> None:
+    redis = FakeRedis()
+    session_factory = build_test_session_factory()
+    adapter = FakeWorkingOrderRefreshBrokerAdapter(
+        fetch_event_type="accepted",
+        bid_price=2.41,
+    )
+    service = OmsRiskService(
+        settings=Settings(
+            redis_stream_prefix="test",
+            oms_adapter="simulated",
+            oms_working_order_refresh_seconds=5,
+            oms_stop_guard_refresh_stage_1_seconds=0.5,
+            oms_stop_guard_refresh_stage_2_seconds=1.0,
+            oms_stop_guard_refresh_stage_3_seconds=2.0,
+            oms_stop_guard_refresh_stage_1_buffer_pct=3.0,
+            oms_stop_guard_refresh_stage_2_buffer_pct=5.0,
+        ),
+        redis_client=redis,
+        session_factory=session_factory,
+        broker_adapter=adapter,
+    )
+
+    store = OmsStore()
+    with session_factory() as session:
+        strategy = store.ensure_strategy(session, "macd_30s", name="MACD 30s", execution_mode="paper", metadata_json={})
+        account = store.ensure_broker_account(
+            session,
+            "paper:macd_30s",
+            provider="schwab",
+            environment="development",
+        )
+        intent = TradeIntent(
+            strategy_id=strategy.id,
+            broker_account_id=account.id,
+            symbol="UGRO",
+            side="sell",
+            intent_type="close",
+            quantity=Decimal("10"),
+            reason="HARD_STOP",
+            status="submitted",
+            payload={"metadata": {"order_type": "limit"}},
+        )
+        session.add(intent)
+        session.flush()
+        stale_time = datetime.now(UTC) - timedelta(seconds=10)
+        session.add(
+            BrokerOrder(
+                intent_id=intent.id,
+                strategy_id=strategy.id,
+                broker_account_id=account.id,
+                client_order_id="macd_30s-UGRO-close-stop0",
+                broker_order_id="ord-stop0",
+                symbol="UGRO",
+                side="sell",
+                order_type="limit",
+                time_in_force="day",
+                quantity=Decimal("10"),
+                status="accepted",
+                payload={
+                    "order_type": "limit",
+                    "time_in_force": "day",
+                    "limit_price": "2.35",
+                    "reference_price": "2.35",
+                    "price_source": "bid",
+                    "stop_guard": "true",
+                    "panic_buffer_pct": "1.5",
+                },
+                submitted_at=stale_time,
+                updated_at=stale_time,
+            )
+        )
+        session.commit()
+
+    summary = await service.sync_broker_orders(account_names=["paper:macd_30s"])
+    assert summary == {"orders": 1, "terminal_orders": 1}
+
+    with session_factory() as session:
+        orders = session.scalars(
+            select(BrokerOrder).where(BrokerOrder.symbol == "UGRO").order_by(BrokerOrder.client_order_id)
+        ).all()
+
+        assert len(orders) == 2
+        assert orders[0].status == "cancelled"
+        assert orders[1].status == "accepted"
+        assert orders[1].payload["limit_price"] == "2.34"
+        assert orders[1].payload["panic_buffer_pct"] == "3.0"
+        assert orders[1].payload["stop_guard_refresh_stage"] == "1"
+
+
+@pytest.mark.asyncio
+async def test_oms_service_builds_second_stage_stop_guard_refresh_with_five_percent_buffer() -> None:
+    adapter = FakeWorkingOrderRefreshBrokerAdapter(bid_price=2.41)
+    service = OmsRiskService(
+        settings=Settings(
+            redis_stream_prefix="test",
+            oms_adapter="simulated",
+            oms_stop_guard_refresh_stage_1_buffer_pct=3.0,
+            oms_stop_guard_refresh_stage_2_buffer_pct=5.0,
+        ),
+        redis_client=FakeRedis(),
+        session_factory=build_test_session_factory(),
+        broker_adapter=adapter,
+    )
+
+    order = BrokerOrder(
+        strategy_id=None,  # type: ignore[arg-type]
+        broker_account_id=None,  # type: ignore[arg-type]
+        client_order_id="macd_30s-UGRO-close-stop1",
+        broker_order_id="ord-stop1",
+        symbol="UGRO",
+        side="sell",
+        order_type="limit",
+        time_in_force="day",
+        quantity=Decimal("10"),
+        status="accepted",
+        payload={
+            "order_type": "limit",
+            "time_in_force": "day",
+            "limit_price": "2.34",
+            "reference_price": "2.34",
+            "price_source": "bid",
+            "stop_guard": "true",
+            "panic_buffer_pct": "3.0",
+            "stop_guard_refresh_stage": "1",
+        },
+    )
+
+    refreshed = await service._build_refreshed_order_metadata(
+        broker_account_name="paper:macd_30s",
+        order=order,
+    )
+
+    assert refreshed is not None
+    assert refreshed["limit_price"] == "2.29"
+    assert refreshed["panic_buffer_pct"] == "5.0"
+    assert refreshed["stop_guard_refresh_stage"] == "2"
+
+
+@pytest.mark.asyncio
+async def test_oms_service_uses_catastrophic_after_hours_stop_guard_refresh_when_quote_is_far_below_stop() -> None:
+    adapter = FakeWorkingOrderRefreshBrokerAdapter(bid_price=2.10, ask_price=2.12)
+    service = OmsRiskService(
+        settings=Settings(
+            redis_stream_prefix="test",
+            oms_adapter="simulated",
+            oms_after_hours_stop_guard_catastrophic_gap_pct=1.5,
+            oms_after_hours_stop_guard_catastrophic_panic_buffer_pct=8.0,
+        ),
+        redis_client=FakeRedis(),
+        session_factory=build_test_session_factory(),
+        broker_adapter=adapter,
+    )
+
+    order = BrokerOrder(
+        strategy_id=None,  # type: ignore[arg-type]
+        broker_account_id=None,  # type: ignore[arg-type]
+        client_order_id="macd_30s-UGRO-close-stop-cat",
+        broker_order_id="ord-stop-cat",
+        symbol="UGRO",
+        side="sell",
+        order_type="limit",
+        time_in_force="day",
+        quantity=Decimal("10"),
+        status="accepted",
+        payload={
+            "order_type": "limit",
+            "time_in_force": "day",
+            "limit_price": "2.29",
+            "reference_price": "2.29",
+            "price_source": "bid",
+            "stop_guard": "true",
+            "panic_buffer_pct": "1.0",
+            "stop_price": "2.35",
+            "session": "AM",
+            "extended_hours": "true",
+        },
+    )
+
+    refreshed = await service._build_refreshed_order_metadata(
+        broker_account_name="paper:macd_30s",
+        order=order,
+    )
+
+    assert refreshed is not None
+    assert refreshed["limit_price"] == "1.93"
+    assert refreshed["reference_price"] == "1.93"
+    assert refreshed["panic_buffer_pct"] == "8.0"
+    assert refreshed["catastrophic_stop_guard"] == "true"
+    assert refreshed["stop_guard_refresh_stage"] == "2"
+    assert refreshed["watchdog_refresh_reason"] == "catastrophic_gap"
+
+
+@pytest.mark.asyncio
+async def test_oms_service_uses_fast_broker_sync_interval_when_stop_guard_order_is_active() -> None:
+    session_factory = build_test_session_factory()
+    service = OmsRiskService(
+        settings=Settings(
+            redis_stream_prefix="test",
+            oms_adapter="simulated",
+            oms_broker_sync_interval_seconds=5,
+            oms_stop_guard_refresh_stage_1_seconds=0.5,
+        ),
+        redis_client=FakeRedis(),
+        session_factory=session_factory,
+    )
+
+    store = OmsStore()
+    with session_factory() as session:
+        strategy = store.ensure_strategy(session, "macd_30s", name="MACD 30s", execution_mode="paper", metadata_json={})
+        account = store.ensure_broker_account(
+            session,
+            "paper:macd_30s",
+            provider="schwab",
+            environment="development",
+        )
+        session.add(
+            BrokerOrder(
+                strategy_id=strategy.id,
+                broker_account_id=account.id,
+                client_order_id="macd_30s-UGRO-close-live",
+                broker_order_id="ord-live",
+                symbol="UGRO",
+                side="sell",
+                order_type="limit",
+                time_in_force="day",
+                quantity=Decimal("10"),
+                status="accepted",
+                payload={
+                    "order_type": "limit",
+                    "stop_guard": "true",
+                    "panic_buffer_pct": "1.5",
+                },
+                submitted_at=datetime.now(UTC),
+            )
+        )
+        session.commit()
+
+    assert await service._broker_sync_interval_seconds() == 0.5
+
+
+@pytest.mark.asyncio
+async def test_oms_service_applies_after_hours_stop_guard_overrides_when_arming_stop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "project_mai_tai.oms.service.utcnow",
+        lambda: datetime(2026, 5, 1, 21, 0, tzinfo=UTC),
+    )
+    service = OmsRiskService(
+        settings=Settings(
+            redis_stream_prefix="test",
+            oms_adapter="simulated",
+            oms_after_hours_stop_guard_quote_max_age_ms=1000,
+            oms_after_hours_stop_guard_initial_panic_buffer_pct=1.0,
+        ),
+        redis_client=FakeRedis(),
+        session_factory=build_test_session_factory(),
+        broker_adapter=FakeAcceptedOnlyBrokerAdapter(),
+    )
+
+    service._update_hard_stop_registry_from_fill(
+        strategy_code="schwab_1m",
+        broker_account_name="live:schwab_1m",
+        symbol="UGRO",
+        side="buy",
+        intent_type="open",
+        quantity=Decimal("10"),
+        price=Decimal("4.00"),
+        metadata={
+            "stop_guard_enabled": "true",
+            "stop_loss_pct": "1.5",
+            "stop_guard_quote_max_age_ms": "2000",
+            "stop_guard_initial_panic_buffer_pct": "0.5",
+            "session": "PM",
+            "extended_hours": "true",
+        },
+    )
+
+    stop = service._armed_hard_stops[("schwab_1m", "live:schwab_1m", "UGRO")]
+    assert stop.quote_max_age_ms == 1000
+    assert stop.initial_panic_buffer_pct == 1.0
+
+
+@pytest.mark.asyncio
+async def test_oms_service_arms_hard_stop_from_open_fill_and_triggers_close_on_quote_tick(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "project_mai_tai.oms.service.utcnow",
+        lambda: datetime(2026, 3, 31, 11, 0, tzinfo=UTC),
+    )
+    redis = FakeRedis()
+    session_factory = build_test_session_factory()
+    adapter = FakeTickDrivenHardStopBrokerAdapter(open_fill_price=Decimal("4.00"))
+    service = OmsRiskService(
+        settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
+        redis_client=redis,
+        session_factory=session_factory,
+        broker_adapter=adapter,
+    )
+
+    await service.process_trade_intent(
+        TradeIntentEvent(
+            source_service="strategy-engine",
+            payload=TradeIntentPayload(
+                strategy_code="macd_30s",
+                broker_account_name="paper:macd_30s",
+                symbol="UGRO",
+                side="buy",
+                quantity=Decimal("10"),
+                intent_type="open",
+                reason="ENTRY_P1_MACD_CROSS",
+                metadata={
+                    "reference_price": "4.00",
+                    "stop_guard_enabled": "true",
+                    "stop_loss_pct": "1.5",
+                    "stop_guard_quote_max_age_ms": "2000",
+                    "stop_guard_initial_panic_buffer_pct": "0.5",
+                },
+            ),
+        )
+    )
+
+    key = ("macd_30s", "paper:macd_30s", "UGRO")
+    assert key in service._armed_hard_stops
+    assert service._armed_hard_stops[key].stop_price == Decimal("3.940")
+
+    await service._handle_stream_message(
+        {
+            "data": QuoteTickEvent(
+                source_service="market-data",
+                payload=QuoteTickPayload(
+                    symbol="UGRO",
+                    bid_price=Decimal("3.93"),
+                    ask_price=Decimal("3.95"),
+                ),
+            ).model_dump_json()
+        }
+    )
+
+    assert [request.intent_type for request in adapter.submit_requests] == ["open", "close"]
+    close_request = adapter.submit_requests[-1]
+    assert close_request.reason == "HARD_STOP"
+    assert close_request.metadata["stop_guard"] == "true"
+    assert close_request.metadata["stop_trigger_source"] == "bid"
+    assert close_request.metadata["limit_price"] == "3.91"
+    assert close_request.metadata["price_source"] == "bid"
+    assert service._armed_hard_stops[key].close_in_flight is True
+
+
+@pytest.mark.asyncio
+async def test_oms_service_uses_trade_trigger_when_fresh_bid_has_not_breached_stop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixed_now = datetime(2026, 3, 31, 11, 0, tzinfo=UTC)
+    monkeypatch.setattr("project_mai_tai.oms.service.utcnow", lambda: fixed_now)
+    redis = FakeRedis()
+    session_factory = build_test_session_factory()
+    adapter = FakeTickDrivenHardStopBrokerAdapter(open_fill_price=Decimal("4.00"))
+    service = OmsRiskService(
+        settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
+        redis_client=redis,
+        session_factory=session_factory,
+        broker_adapter=adapter,
+    )
+
+    await service.process_trade_intent(
+        TradeIntentEvent(
+            source_service="strategy-engine",
+            payload=TradeIntentPayload(
+                strategy_code="macd_30s",
+                broker_account_name="paper:macd_30s",
+                symbol="UGRO",
+                side="buy",
+                quantity=Decimal("10"),
+                intent_type="open",
+                reason="ENTRY_P1_MACD_CROSS",
+                metadata={
+                    "reference_price": "4.00",
+                    "stop_guard_enabled": "true",
+                    "stop_loss_pct": "1.5",
+                    "stop_guard_quote_max_age_ms": "2000",
+                    "stop_guard_initial_panic_buffer_pct": "0.5",
+                },
+            ),
+        )
+    )
+
+    key = ("macd_30s", "paper:macd_30s", "UGRO")
+    assert key in service._armed_hard_stops
+
+    await service._handle_stream_message(
+        {
+            "data": QuoteTickEvent(
+                source_service="market-data",
+                payload=QuoteTickPayload(
+                    symbol="UGRO",
+                    bid_price=Decimal("3.95"),
+                    ask_price=Decimal("3.97"),
+                ),
+            ).model_dump_json()
+        }
+    )
+
+    await service._handle_stream_message(
+        {
+            "data": TradeTickEvent(
+                source_service="market-data",
+                payload=TradeTickPayload(
+                    symbol="UGRO",
+                    price=Decimal("3.93"),
+                    size=100,
+                ),
+            ).model_dump_json()
+        }
+    )
+
+    assert [request.intent_type for request in adapter.submit_requests] == ["open", "close"]
+    close_request = adapter.submit_requests[-1]
+    assert close_request.reason == "HARD_STOP"
+    assert close_request.metadata["stop_trigger_source"] == "last"
+    assert close_request.metadata["stop_trigger_price"] == "3.93"
+    assert close_request.metadata["price_source"] == "last"
+    assert service._armed_hard_stops[key].close_in_flight is True
+
+
+@pytest.mark.asyncio
+async def test_oms_service_arms_native_stop_guard_in_regular_hours(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "project_mai_tai.oms.service.utcnow",
+        lambda: datetime(2026, 3, 31, 14, 0, tzinfo=UTC),
+    )
+    redis = FakeRedis()
+    session_factory = build_test_session_factory()
+    adapter = FakeNativeStopGuardBrokerAdapter(open_fill_price=Decimal("4.00"))
+    service = OmsRiskService(
+        settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
+        redis_client=redis,
+        session_factory=session_factory,
+        broker_adapter=adapter,
+    )
+
+    await service.process_trade_intent(
+        TradeIntentEvent(
+            source_service="strategy-engine",
+            payload=TradeIntentPayload(
+                strategy_code="macd_30s",
+                broker_account_name="paper:macd_30s",
+                symbol="UGRO",
+                side="buy",
+                quantity=Decimal("10"),
+                intent_type="open",
+                reason="ENTRY_P1_MACD_CROSS",
+                metadata={
+                    "reference_price": "4.00",
+                    "stop_guard_enabled": "true",
+                    "stop_loss_pct": "1.5",
+                    "stop_guard_quote_max_age_ms": "2000",
+                    "stop_guard_initial_panic_buffer_pct": "0.5",
+                },
+            ),
+        )
+    )
+
+    assert [request.intent_type for request in adapter.submit_requests] == ["open", "close"]
+    native_stop_request = adapter.submit_requests[-1]
+    assert native_stop_request.reason == service.NATIVE_STOP_GUARD_REASON
+    assert native_stop_request.metadata["native_stop_guard"] == "true"
+    assert native_stop_request.metadata["order_type"] == "STOP"
+    assert native_stop_request.metadata["stop_price"] == "3.94"
+
+    await service._handle_stream_message(
+        {
+            "data": QuoteTickEvent(
+                source_service="market-data",
+                payload=QuoteTickPayload(
+                    symbol="UGRO",
+                    bid_price=Decimal("3.93"),
+                    ask_price=Decimal("3.95"),
+                ),
+            ).model_dump_json()
+        }
+    )
+
+    assert [request.intent_type for request in adapter.submit_requests] == ["open", "close"]
+
+
+@pytest.mark.asyncio
+async def test_oms_service_cancels_and_rearms_native_stop_guard_around_regular_hours_scale(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "project_mai_tai.oms.service.utcnow",
+        lambda: datetime(2026, 3, 31, 14, 0, tzinfo=UTC),
+    )
+    redis = FakeRedis()
+    session_factory = build_test_session_factory()
+    adapter = FakeNativeStopGuardBrokerAdapter(open_fill_price=Decimal("4.00"))
+    service = OmsRiskService(
+        settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
+        redis_client=redis,
+        session_factory=session_factory,
+        broker_adapter=adapter,
+    )
+
+    await service.process_trade_intent(
+        TradeIntentEvent(
+            source_service="strategy-engine",
+            payload=TradeIntentPayload(
+                strategy_code="macd_30s",
+                broker_account_name="paper:macd_30s",
+                symbol="UGRO",
+                side="buy",
+                quantity=Decimal("10"),
+                intent_type="open",
+                reason="ENTRY_P1_MACD_CROSS",
+                metadata={
+                    "reference_price": "4.00",
+                    "stop_guard_enabled": "true",
+                    "stop_loss_pct": "1.5",
+                    "stop_guard_quote_max_age_ms": "2000",
+                    "stop_guard_initial_panic_buffer_pct": "0.5",
+                },
+            ),
+        )
+    )
+
+    sell_events = await service.process_trade_intent(
+        TradeIntentEvent(
+            source_service="strategy-engine",
+            payload=TradeIntentPayload(
+                strategy_code="macd_30s",
+                broker_account_name="paper:macd_30s",
+                symbol="UGRO",
+                side="sell",
+                quantity=Decimal("4"),
+                intent_type="scale",
+                reason="SCALE_1",
+                metadata={"reference_price": "4.20"},
+            ),
+        )
+    )
+
+    request_flow = [(request.intent_type, request.reason) for request in adapter.submit_requests]
+    assert request_flow == [
+        ("open", "ENTRY_P1_MACD_CROSS"),
+        ("close", service.NATIVE_STOP_GUARD_REASON),
+        ("cancel", "NATIVE_STOP_GUARD_CANCEL"),
+        ("scale", "SCALE_1"),
+        ("close", service.NATIVE_STOP_GUARD_REASON),
+    ]
+    rearmed_stop_request = adapter.submit_requests[-1]
+    assert rearmed_stop_request.metadata["native_stop_guard"] == "true"
+    assert rearmed_stop_request.quantity == Decimal("6")
+    assert any(event.payload.reason == "NATIVE_STOP_GUARD_CANCEL" for event in sell_events)
+
+    with session_factory() as session:
+        account_position = session.scalar(select(AccountPosition).where(AccountPosition.symbol == "UGRO"))
+        assert account_position is not None
+        assert account_position.quantity == Decimal("6")
 
 
 @pytest.mark.asyncio

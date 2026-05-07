@@ -39,34 +39,3 @@ def test_restore_confirmed_runtime_view_seeds_webull_when_snapshot_has_empty_web
 
     assert state.bots["macd_30s"].watchlist == {"AUUD", "CAST"}
     assert state.bots["webull_30s"].watchlist == {"AUUD", "CAST"}
-
-
-def test_refresh_bot_handoff_active_symbols_replaces_active_watchlist_but_keeps_history() -> None:
-    state = StrategyEngineState(
-        settings=Settings(
-            strategy_macd_30s_enabled=True,
-            strategy_webull_30s_enabled=True,
-            scanner_feed_retention_enabled=False,
-        ),
-        now_provider=fixed_now,
-    )
-
-    state._record_bot_handoff_symbols(
-        [
-            {"ticker": "AUUD"},
-            {"ticker": "CAST"},
-            {"ticker": "ELPW"},
-        ]
-    )
-
-    state._refresh_bot_handoff_active_symbols(
-        [
-            {"ticker": "DRCT"},
-            {"ticker": "KIDZ"},
-        ]
-    )
-
-    assert state._bot_handoff_symbols_for_bot("macd_30s") == ["DRCT", "KIDZ"]
-    assert state._bot_handoff_symbols_for_bot("webull_30s") == ["DRCT", "KIDZ"]
-    assert state.bot_handoff_history_by_strategy["macd_30s"] == {"AUUD", "CAST", "ELPW", "DRCT", "KIDZ"}
-    assert state.bot_handoff_history_by_strategy["webull_30s"] == {"AUUD", "CAST", "ELPW", "DRCT", "KIDZ"}

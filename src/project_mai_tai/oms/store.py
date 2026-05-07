@@ -96,6 +96,7 @@ class OmsStore:
         *,
         broker_account_id: UUID,
         symbol: str,
+        include_native_stop_guard: bool = True,
     ) -> Decimal:
         orders = session.scalars(
             select(BrokerOrder).where(
@@ -107,6 +108,9 @@ class OmsStore:
         ).all()
         total = Decimal("0")
         for order in orders:
+            payload = order.payload or {}
+            if not include_native_stop_guard and str(payload.get("native_stop_guard", "")).strip().lower() == "true":
+                continue
             total += order.quantity
         return total
 
@@ -117,8 +121,9 @@ class OmsStore:
         strategy_id: UUID,
         broker_account_id: UUID,
         symbol: str,
+        include_native_stop_guard: bool = True,
     ) -> BrokerOrder | None:
-        return session.scalar(
+        orders = session.scalars(
             select(BrokerOrder)
             .where(
                 BrokerOrder.strategy_id == strategy_id,
@@ -128,7 +133,38 @@ class OmsStore:
                 BrokerOrder.status.in_(self.OPEN_ORDER_STATUSES),
             )
             .order_by(desc(BrokerOrder.updated_at))
-        )
+        ).all()
+        for order in orders:
+            payload = order.payload or {}
+            if not include_native_stop_guard and str(payload.get("native_stop_guard", "")).strip().lower() == "true":
+                continue
+            return order
+        return None
+
+    def find_open_native_stop_guard_order(
+        self,
+        session: Session,
+        *,
+        strategy_id: UUID,
+        broker_account_id: UUID,
+        symbol: str,
+    ) -> BrokerOrder | None:
+        orders = session.scalars(
+            select(BrokerOrder)
+            .where(
+                BrokerOrder.strategy_id == strategy_id,
+                BrokerOrder.broker_account_id == broker_account_id,
+                BrokerOrder.symbol == symbol,
+                BrokerOrder.side == "sell",
+                BrokerOrder.status.in_(self.OPEN_ORDER_STATUSES),
+            )
+            .order_by(desc(BrokerOrder.updated_at))
+        ).all()
+        for order in orders:
+            payload = order.payload or {}
+            if str(payload.get("native_stop_guard", "")).strip().lower() == "true":
+                return order
+        return None
 
     def ensure_strategy(
         self,
