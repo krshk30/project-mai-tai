@@ -1,5 +1,79 @@
 # Session Handoff - Global
 
+## 2026-05-07 30s bot assessment split: Polygon is the active clean-up path, Schwab is improved but still needs follow-up
+
+This is the current high-level assessment after the latest documented live validations.
+
+### Schwab 30s (`macd_30s`) assessment
+
+Status:
+
+- materially improved from the earlier severe drift state
+- not in the old broken `TIMESALE_EQUITY` failure mode anymore
+- still not fully closed as a bar-integrity workstream
+
+What looks good now:
+
+- current safe live source remains:
+  - `LEVELONE_EQUITIES`
+  - `close_grace = 5.0s`
+- no new `TIMESALE` warnings after the later restarts documented in this file
+- several live names looked strong in the latest rechecks:
+  - `RMSG`
+  - `SMX`
+- earlier broad volume-collapse behavior was clearly reduced by the `cum_vol baseline + close_grace` fixes
+
+What is still not clean enough to call fully done:
+
+- live Schwab validation still showed a few remaining edge-case misses rather than broad failure
+- the latest documented examples were:
+  - `ATRA`: one severe single-bar miss
+  - `VEEE`: not clean in a small live sample
+- the remaining Schwab risk is now narrow and sporadic, not the earlier system-wide 30s bar corruption
+
+Bottom line:
+
+- Schwab 30s is much healthier, but not a final closed workstream yet.
+- This is a reasonable handoff target for the other agent: focus on the remaining live edge cases instead of reopening the old architecture debate.
+
+### Polygon 30s (`webull_30s` / user-facing `Polygon 30 Sec Bot`) assessment
+
+Status:
+
+- this is now the better 30s path
+- the major structural bar-building bugs appear fixed
+- remaining mismatch class is tiny enough that the workstream is now about cleanup and confirmation, not major surgery
+
+What is fixed:
+
+- replay-storm / restart-gap behavior
+- restart-tail persistence gap
+- wall-clock force-close truncation on live aggregate bars
+- bad live aggregate `trade_count` normalization from Polygon/Massive fields
+
+Latest live read from the documented morning validations:
+
+- active live names such as:
+  - `GCTK`
+  - `MASK`
+  - `PMAX`
+  - `RMSG`
+  stayed clean on shared buckets
+- no broad `OHLC` drift returned
+- no broad `volume` drift returned
+- remaining visible drift was reduced to a tiny `trade_count` delta on one `RMSG` bucket
+- a few `provider_only` tail buckets still looked like lag/timing, not bar corruption
+
+Bottom line:
+
+- Polygon 30s is now the active path worth pushing forward.
+- It looks close to operationally trustworthy, pending continued live-session validation and any small cleanup that still shows up.
+
+### Ownership split going forward
+
+- Polygon 30s: active owner should continue validation and cleanup here first.
+- Schwab 30s: secondary owner can investigate the remaining live edge cases (`ATRA`, `VEEE`, and similar single-bucket misses) without blocking Polygon progress.
+
 ## 2026-05-07 LOCAL/VPS/GIT three-way alignment: 11 commits direct-pushed to main, VPS reset to main, dirty-checkout era ended
 
 End-of-day cleanup pass. The repo had been operating with an intentionally dirty VPS git checkout for weeks (deploys via `scp` because `Deploy Main` refused dirty trees). Today consolidated all that drift into 11 themed commits on `main` and reset VPS to track main directly.
