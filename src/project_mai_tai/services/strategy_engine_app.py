@@ -2543,6 +2543,7 @@ class StrategyEngineState:
                 builder_manager=SchwabNativeBarBuilderManager(
                     interval_secs=30,
                     time_provider=lambda: resolved_now_provider().timestamp(),
+                    close_grace_seconds=self.settings.strategy_macd_30s_tick_bar_close_grace_seconds,
                 ),
                 indicator_engine=SchwabNativeIndicatorEngine(default_indicator_config),
                 entry_engine=SchwabNativeEntryEngine(
@@ -2570,6 +2571,7 @@ class StrategyEngineState:
                 builder_manager=SchwabNativeBarBuilderManager(
                     interval_secs=30,
                     time_provider=lambda: resolved_now_provider().timestamp(),
+                    close_grace_seconds=self.settings.strategy_webull_30s_tick_bar_close_grace_seconds,
                 ),
                 indicator_engine=SchwabNativeIndicatorEngine(default_indicator_config),
                 entry_engine=SchwabNativeEntryEngine(

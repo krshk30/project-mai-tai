@@ -939,7 +939,7 @@ def test_alert_engine_state_persists_and_restores_from_dashboard_snapshot() -> N
         )
 
         service = StrategyEngineService(
-            settings=Settings(),
+            settings=Settings(strategy_macd_30s_tick_bar_close_grace_seconds=0.0),
             redis_client=FakeRedis(),
             session_factory=session_factory,
         )
@@ -977,7 +977,7 @@ def test_alert_engine_state_persists_and_restores_from_dashboard_snapshot() -> N
             assert snapshot.payload["scanner_session_start_utc"] == "2026-04-01T08:00:00+00:00"
 
         restored = StrategyEngineService(
-            settings=Settings(),
+            settings=Settings(strategy_macd_30s_tick_bar_close_grace_seconds=0.0),
             redis_client=FakeRedis(),
             session_factory=session_factory,
         )
@@ -1077,7 +1077,7 @@ def test_alert_engine_restore_skips_prior_session_alert_tape() -> None:
         )
 
         service = StrategyEngineService(
-            settings=Settings(),
+            settings=Settings(strategy_macd_30s_tick_bar_close_grace_seconds=0.0),
             redis_client=FakeRedis(),
             session_factory=session_factory,
         )
@@ -1095,7 +1095,7 @@ def test_alert_engine_restore_skips_prior_session_alert_tape() -> None:
         )
 
         restored = StrategyEngineService(
-            settings=Settings(),
+            settings=Settings(strategy_macd_30s_tick_bar_close_grace_seconds=0.0),
             redis_client=FakeRedis(),
             session_factory=session_factory,
         )
@@ -1132,7 +1132,7 @@ def test_alert_engine_restore_skips_unmarked_snapshot_even_if_recent(monkeypatch
     )
 
     restored = StrategyEngineService(
-        settings=Settings(),
+        settings=Settings(strategy_macd_30s_tick_bar_close_grace_seconds=0.0),
         redis_client=FakeRedis(),
         session_factory=session_factory,
     )
@@ -1747,7 +1747,7 @@ def test_bot_runtime_uses_normal_scale_profile_when_degraded_disabled() -> None:
 
 def test_trade_tick_generates_open_intent_for_confirmed_watchlist(monkeypatch) -> None:
     state = StrategyEngineState(
-        settings=Settings(strategy_macd_30s_live_aggregate_bars_enabled=False),
+        settings=Settings(strategy_macd_30s_live_aggregate_bars_enabled=False, strategy_macd_30s_tick_bar_close_grace_seconds=0.0),
         now_provider=fixed_now,
     )
     bot = state.bots["macd_30s"]
@@ -1789,7 +1789,7 @@ def test_trade_tick_generates_open_intent_for_confirmed_watchlist(monkeypatch) -
 
 def test_trade_tick_records_blocked_decision_reason(monkeypatch) -> None:
     state = StrategyEngineState(
-        settings=Settings(strategy_macd_30s_live_aggregate_bars_enabled=False),
+        settings=Settings(strategy_macd_30s_live_aggregate_bars_enabled=False, strategy_macd_30s_tick_bar_close_grace_seconds=0.0),
         now_provider=fixed_now,
     )
     bot = state.bots["macd_30s"]
@@ -1936,7 +1936,7 @@ def test_trade_tick_can_emit_intrabar_floor_breach_close() -> None:
 
 def test_trade_tick_uses_monotonic_bar_count_after_history_trim(monkeypatch) -> None:
     state = StrategyEngineState(
-        settings=Settings(strategy_macd_30s_live_aggregate_bars_enabled=False),
+        settings=Settings(strategy_macd_30s_live_aggregate_bars_enabled=False, strategy_macd_30s_tick_bar_close_grace_seconds=0.0),
         now_provider=fixed_now,
     )
     bot = state.bots["macd_30s"]
@@ -1973,7 +1973,7 @@ def test_trade_tick_uses_monotonic_bar_count_after_history_trim(monkeypatch) -> 
 
 def test_trimmed_history_does_not_lock_out_new_open_after_cancel(monkeypatch) -> None:
     state = StrategyEngineState(
-        settings=Settings(strategy_macd_30s_live_aggregate_bars_enabled=False),
+        settings=Settings(strategy_macd_30s_live_aggregate_bars_enabled=False, strategy_macd_30s_tick_bar_close_grace_seconds=0.0),
         now_provider=fixed_now,
     )
     bot = state.bots["macd_30s"]
@@ -2053,7 +2053,7 @@ def test_flush_completed_bars_evaluates_due_bar_without_waiting_for_next_trade(m
         return current
 
     state = StrategyEngineState(
-        settings=Settings(strategy_macd_30s_live_aggregate_bars_enabled=False),
+        settings=Settings(strategy_macd_30s_live_aggregate_bars_enabled=False, strategy_macd_30s_tick_bar_close_grace_seconds=0.0),
         now_provider=now_provider,
     )
     bot = state.bots["macd_30s"]
@@ -2100,7 +2100,7 @@ def test_flush_completed_bars_evaluates_due_bar_without_waiting_for_next_trade(m
 
 def test_live_second_bars_can_generate_open_intent_for_30s_bot(monkeypatch) -> None:
     state = StrategyEngineState(
-        settings=Settings(strategy_macd_30s_live_aggregate_bars_enabled=True),
+        settings=Settings(strategy_macd_30s_live_aggregate_bars_enabled=True, strategy_macd_30s_tick_bar_close_grace_seconds=0.0),
         now_provider=fixed_now,
     )
     bot = state.bots["macd_30s"]

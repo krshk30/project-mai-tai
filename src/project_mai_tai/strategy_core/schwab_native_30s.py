@@ -62,11 +62,13 @@ class SchwabNativeBarBuilder:
         interval_secs: int = 30,
         max_bars: int = 2000,
         time_provider: Callable[[], float] | None = None,
+        close_grace_seconds: float = 0.0,
     ) -> None:
         self.ticker = ticker
         self.interval_secs = interval_secs
         self.max_bars = max_bars
         self.time_provider = time_provider or time.time
+        self.close_grace_seconds = max(0.0, float(close_grace_seconds))
         self.bars: list[OHLCVBar] = []
         self._current_bar: OHLCVBar | None = None
         self._current_bar_start = 0.0
@@ -152,13 +154,20 @@ class SchwabNativeBarBuilder:
     def check_bar_closes(self) -> list[OHLCVBar]:
         completed: list[OHLCVBar] = []
         now_ts = self.time_provider()
-        now_bucket = (now_ts // self.interval_secs) * self.interval_secs
+        effective_now_ts = max(0.0, now_ts - self.close_grace_seconds)
+        now_bucket = (effective_now_ts // self.interval_secs) * self.interval_secs
 
-        if self._current_bar is not None and now_ts >= self._current_bar_start + self.interval_secs:
+        if (
+            self._current_bar is not None
+            and effective_now_ts >= self._current_bar_start + self.interval_secs
+        ):
             completed.append(self._close_current_bar())
             completed.extend(self._fill_gap_bars(self._current_bar_start + self.interval_secs, now_bucket))
             self._current_bar = None
-            self._current_bar_last_cum_volume = None
+            # Keep _current_bar_last_cum_volume so the next trade computes a real
+            # cumulative-volume delta. Resetting it here forces _resolve_volume_delta
+            # to fall back to last_size for the first trade of every periodically-
+            # closed bucket, which under-counts volume by 20-50% on Schwab LEVELONE.
             return completed
 
         if self._current_bar is None:
@@ -245,9 +254,11 @@ class SchwabNativeBarBuilderManager:
         self,
         interval_secs: int = 30,
         time_provider: Callable[[], float] | None = None,
+        close_grace_seconds: float = 0.0,
     ) -> None:
         self.interval_secs = interval_secs
         self.time_provider = time_provider or time.time
+        self.close_grace_seconds = max(0.0, float(close_grace_seconds))
         self._builders: dict[str, SchwabNativeBarBuilder] = {}
 
     def get_or_create(self, ticker: str) -> SchwabNativeBarBuilder:
@@ -256,6 +267,7 @@ class SchwabNativeBarBuilderManager:
                 ticker=ticker,
                 interval_secs=self.interval_secs,
                 time_provider=self.time_provider,
+                close_grace_seconds=self.close_grace_seconds,
             )
         return self._builders[ticker]
 
