@@ -57,7 +57,7 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
     redis_stream_prefix: str = "mai_tai"
     redis_snapshot_batch_stream_maxlen: int = 180
-    redis_market_data_stream_maxlen: int = 10_000
+    redis_market_data_stream_maxlen: int = 100_000
     redis_market_data_subscription_stream_maxlen: int = 250
     redis_strategy_intent_stream_maxlen: int = 2_000
     redis_order_event_stream_maxlen: int = 2_000
@@ -88,11 +88,11 @@ class Settings(BaseSettings):
     strategy_macd_30s_live_aggregate_stale_after_seconds: int = 3
     strategy_macd_30s_tick_bar_close_grace_seconds: float = 5.0
     strategy_macd_30s_trade_stream_service: str = "LEVELONE_EQUITIES"
-    strategy_webull_30s_live_aggregate_bars_enabled: bool = False
-    strategy_webull_30s_live_aggregate_fallback_enabled: bool = True
+    strategy_webull_30s_live_aggregate_bars_enabled: bool = True
+    strategy_webull_30s_live_aggregate_fallback_enabled: bool = False
     strategy_webull_30s_live_aggregate_stale_after_seconds: int = 3
     strategy_webull_30s_tick_bar_close_grace_seconds: float = 2.0
-    strategy_webull_30s_trade_stream_service: str = "LEVELONE_EQUITIES"
+    strategy_webull_30s_trade_stream_service: str = "TIMESALE_EQUITY"
     strategy_macd_30s_massive_indicator_overlay_enabled: bool = True
     strategy_macd_30s_probe_enabled: bool = False
     strategy_macd_30s_reclaim_enabled: bool = False
@@ -113,6 +113,9 @@ class Settings(BaseSettings):
     scanner_feed_retention_drop_cooldown_minutes: int = 30
     scanner_feed_retention_drop_max_5m_range_pct: float = 1.0
     scanner_feed_retention_drop_max_5m_volume_abs: float = 75_000.0
+    market_data_archive_retention_enabled: bool = True
+    market_data_archive_retention_minutes: int = 120
+    market_data_archive_retention_max_symbols: int = 50
     strategy_macd_1m_enabled: bool = False
     strategy_tos_enabled: bool = False
     strategy_runner_enabled: bool = False
@@ -219,6 +222,15 @@ class Settings(BaseSettings):
     webull_account_id: str | None = None
     oms_broker_sync_interval_seconds: int = 5
     oms_working_order_refresh_seconds: int = 5
+    oms_stop_guard_refresh_stage_1_seconds: float = 1.0
+    oms_stop_guard_refresh_stage_2_seconds: float = 2.0
+    oms_stop_guard_refresh_stage_3_seconds: float = 3.0
+    oms_stop_guard_refresh_stage_1_buffer_pct: float = 3.0
+    oms_stop_guard_refresh_stage_2_buffer_pct: float = 5.0
+    oms_after_hours_stop_guard_quote_max_age_ms: int = 1000
+    oms_after_hours_stop_guard_initial_panic_buffer_pct: float = 1.0
+    oms_after_hours_stop_guard_catastrophic_gap_pct: float = 1.5
+    oms_after_hours_stop_guard_catastrophic_panic_buffer_pct: float = 8.0
 
     dashboard_refresh_seconds: int = 5
     dashboard_snapshot_persistence_enabled: bool = True
@@ -332,7 +344,7 @@ class Settings(BaseSettings):
             override = self._normalize_provider_name(self.strategy_macd_30s_broker_provider)
             if override is not None:
                 return override
-        if normalized_code == "webull_30s":
+        if normalized_code in {"webull_30s", "polygon_30s"}:
             override = self._normalize_provider_name(self.strategy_webull_30s_broker_provider)
             if override is not None:
                 return override
@@ -396,6 +408,20 @@ class Settings(BaseSettings):
         if len(providers) == 1:
             return providers[0]
         return f"mixed ({', '.join(providers)})"
+
+    def market_data_provider_for_strategy(self, strategy_code: str) -> str:
+        normalized_code = str(strategy_code).strip().lower()
+        if normalized_code in {
+            "macd_30s",
+            "macd_30s_probe",
+            "macd_30s_reclaim",
+            "macd_30s_retest",
+            "schwab_1m",
+        }:
+            return "schwab"
+        if normalized_code in {"webull_30s", "polygon_30s"}:
+            return "polygon"
+        return "polygon"
 
     @computed_field
     @property

@@ -52,7 +52,7 @@ def configured_strategy_registrations(settings: Settings) -> tuple[StrategyRegis
         registrations.append(
             StrategyRegistration(
                 code="webull_30s",
-                display_name="Webull 30 Sec Bot",
+                display_name="Polygon 30 Sec Bot",
                 account_name=settings.strategy_webull_30s_account_name,
                 interval_secs=30,
                 runtime_kind="macd",
@@ -67,6 +67,7 @@ def configured_strategy_registrations(settings: Settings) -> tuple[StrategyRegis
                     "interval_secs": 30,
                     "runtime_kind": "macd",
                     "provider": settings.provider_for_strategy("webull_30s"),
+                    "market_data_provider": settings.market_data_provider_for_strategy("webull_30s"),
                 },
             )
         )

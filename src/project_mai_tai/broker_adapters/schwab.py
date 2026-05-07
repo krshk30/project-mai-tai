@@ -95,6 +95,7 @@ class SchwabBrokerAdapter:
         self._access_token = settings.schwab_access_token
         self._access_token_expires_at = self._parse_datetime(settings.schwab_access_token_expires_at)
         self._refresh_token = settings.schwab_refresh_token
+        self.last_error = ""
         self._load_token_store()
 
     async def submit_order(self, request: OrderRequest) -> list[ExecutionReport]:
@@ -165,6 +166,9 @@ class SchwabBrokerAdapter:
             )
         ]
 
+        if self._should_return_accepted_immediately(request):
+            return reports
+
         final_order = await self._wait_for_terminal_order(account, broker_order_id)
         if final_order is None:
             return reports
@@ -182,6 +186,14 @@ class SchwabBrokerAdapter:
             )
         )
         return reports
+
+    @staticmethod
+    def _should_return_accepted_immediately(request: OrderRequest) -> bool:
+        if request.side != "sell":
+            return False
+        if request.intent_type not in {"close", "scale"}:
+            return False
+        return str(request.metadata.get("stop_guard", "")).strip().lower() == "true"
 
     async def list_account_positions(self, broker_account_name: str) -> list[BrokerPositionSnapshot]:
         account = self.accounts_by_name.get(broker_account_name)
@@ -548,6 +560,8 @@ class SchwabBrokerAdapter:
                 access_token=token,
                 body=body,
             )
+        if status_code < 400:
+            self.last_error = ""
         return status_code, headers, payload
 
     async def _get_access_token(self, *, force_refresh: bool = False) -> str:
@@ -558,7 +572,9 @@ class SchwabBrokerAdapter:
             if not self.client_id or not self.client_secret or not self._refresh_token:
                 if self._access_token and not force_refresh:
                     return self._access_token
-                raise RuntimeError("missing Schwab OAuth credentials or refresh token")
+                message = "missing Schwab OAuth credentials or refresh token"
+                self.last_error = message
+                raise RuntimeError(message)
 
             status_code, _headers, payload = await self._token_request_json(
                 form_data={
@@ -567,11 +583,15 @@ class SchwabBrokerAdapter:
                 }
             )
             if status_code >= 400 or not isinstance(payload, dict):
-                raise RuntimeError(f"failed refreshing Schwab token: {self._extract_error_reason(payload)}")
+                message = f"failed refreshing Schwab token: {self._extract_error_reason(payload)}"
+                self.last_error = message
+                raise RuntimeError(message)
 
             access_token = str(payload.get("access_token", "")).strip()
             if not access_token:
-                raise RuntimeError("Schwab token refresh returned no access_token")
+                message = "Schwab token refresh returned no access_token"
+                self.last_error = message
+                raise RuntimeError(message)
 
             self._access_token = access_token
             refreshed_token = str(payload.get("refresh_token", "")).strip()
@@ -583,6 +603,7 @@ class SchwabBrokerAdapter:
             else:
                 self._access_token_expires_at = None
             self._save_token_store(payload)
+            self.last_error = ""
             return access_token
 
     def _access_token_needs_refresh(self) -> bool:

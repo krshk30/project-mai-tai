@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 import logging
 import time
 
@@ -18,6 +18,20 @@ def _bar_value(bar: OHLCVBar | Mapping[str, float | int], field: str) -> float:
     if isinstance(bar, OHLCVBar):
         return float(getattr(bar, field))
     return float(bar[field])
+
+
+def _bar_int_value(bar: OHLCVBar | Mapping[str, float | int], field: str, default: int = 0) -> int:
+    if isinstance(bar, OHLCVBar):
+        return int(getattr(bar, field, default))
+    value = bar.get(field, default) if isinstance(bar, Mapping) else default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _is_synthetic_bar(bar: OHLCVBar | Mapping[str, float | int]) -> bool:
+    return _bar_int_value(bar, "trade_count", 0) <= 0 and _bar_value(bar, "volume") <= 0.0
 
 
 def _resolve_timestamp(timestamp_ns: int, fallback: Callable[[], float]) -> float:
@@ -63,12 +77,14 @@ class SchwabNativeBarBuilder:
         max_bars: int = 2000,
         time_provider: Callable[[], float] | None = None,
         close_grace_seconds: float = 0.0,
+        fill_gap_bars: bool = True,
     ) -> None:
         self.ticker = ticker
         self.interval_secs = interval_secs
         self.max_bars = max_bars
         self.time_provider = time_provider or time.time
         self.close_grace_seconds = max(0.0, float(close_grace_seconds))
+        self.fill_gap_bars = bool(fill_gap_bars)
         self.bars: list[OHLCVBar] = []
         self._current_bar: OHLCVBar | None = None
         self._current_bar_start = 0.0
@@ -90,8 +106,24 @@ class SchwabNativeBarBuilder:
         completed: list[OHLCVBar] = []
         delta_volume = self._resolve_volume_delta(size, cumulative_volume)
 
+        if self._current_bar is None and self.bars and bucket_start <= self.bars[-1].timestamp:
+            if bucket_start == self.bars[-1].timestamp and _is_synthetic_bar(self.bars[-1]):
+                self._pop_last_closed_bar()
+                self._current_bar = OHLCVBar.from_trade(price, max(0, delta_volume), bucket_start)
+                self._current_bar_start = bucket_start
+                self._current_bar_last_cum_volume = cumulative_volume
+                return completed
+            logger.debug(
+                "[SCHWAB30] Ignoring stale trade for %s at %.3f (<= last closed %.3f)",
+                self.ticker,
+                bucket_start,
+                self.bars[-1].timestamp,
+            )
+            return completed
+
         if self._current_bar is None:
-            completed.extend(self._fill_missing_gaps_until(bucket_start))
+            if self.fill_gap_bars:
+                completed.extend(self._fill_missing_gaps_until(bucket_start))
             self._current_bar = OHLCVBar.from_trade(price, max(0, delta_volume), bucket_start)
             self._current_bar_start = bucket_start
             self._current_bar_last_cum_volume = cumulative_volume
@@ -108,7 +140,8 @@ class SchwabNativeBarBuilder:
 
         if bucket_start > self._current_bar_start:
             completed.append(self._close_current_bar())
-            completed.extend(self._fill_gap_bars(self._current_bar_start + self.interval_secs, bucket_start))
+            if self.fill_gap_bars:
+                completed.extend(self._fill_gap_bars(self._current_bar_start + self.interval_secs, bucket_start))
             self._current_bar = OHLCVBar.from_trade(price, max(0, delta_volume), bucket_start)
             self._current_bar_start = bucket_start
             self._current_bar_last_cum_volume = cumulative_volume
@@ -125,6 +158,15 @@ class SchwabNativeBarBuilder:
         bar_start = (bar.timestamp // self.interval_secs) * self.interval_secs
         completed: list[OHLCVBar] = []
         aligned_bar = OHLCVBar.from_bar(bar, timestamp=bar_start)
+
+        if self._current_bar is None and self.bars and bar_start <= self.bars[-1].timestamp:
+            logger.debug(
+                "[SCHWAB30] Ignoring stale aggregate bar for %s at %.3f (<= last closed %.3f)",
+                self.ticker,
+                bar_start,
+                self.bars[-1].timestamp,
+            )
+            return completed
 
         if self._current_bar is None:
             self._current_bar = aligned_bar
@@ -151,18 +193,55 @@ class SchwabNativeBarBuilder:
         self._current_bar.merge_bar(aligned_bar)
         return completed
 
+    def on_final_bar(self, bar: OHLCVBar) -> list[OHLCVBar]:
+        if bar.close <= 0:
+            return []
+
+        bar_start = (bar.timestamp // self.interval_secs) * self.interval_secs
+        aligned_bar = OHLCVBar.from_bar(bar, timestamp=bar_start)
+
+        if self._current_bar is not None and bar_start <= self._current_bar_start:
+            if bar_start < self._current_bar_start:
+                logger.debug(
+                    "[SCHWAB30] Ignoring stale final aggregate bar for %s at %.3f (< current %.3f)",
+                    self.ticker,
+                    bar_start,
+                    self._current_bar_start,
+                )
+                return []
+            self._current_bar = None
+            self._current_bar_start = 0.0
+            self._current_bar_last_cum_volume = None
+
+        if self.bars:
+            last_bar_start = self.bars[-1].timestamp
+            if bar_start < last_bar_start:
+                logger.debug(
+                    "[SCHWAB30] Ignoring stale final aggregate bar for %s at %.3f (< last %.3f)",
+                    self.ticker,
+                    bar_start,
+                    last_bar_start,
+                )
+                return []
+            if bar_start == last_bar_start:
+                self.bars[-1] = aligned_bar
+                return []
+
+        self.bars.append(aligned_bar)
+        self._bar_count += 1
+        self._trim_history()
+        return [aligned_bar]
+
     def check_bar_closes(self) -> list[OHLCVBar]:
         completed: list[OHLCVBar] = []
         now_ts = self.time_provider()
         effective_now_ts = max(0.0, now_ts - self.close_grace_seconds)
         now_bucket = (effective_now_ts // self.interval_secs) * self.interval_secs
 
-        if (
-            self._current_bar is not None
-            and effective_now_ts >= self._current_bar_start + self.interval_secs
-        ):
+        if self._current_bar is not None and effective_now_ts >= self._current_bar_start + self.interval_secs:
             completed.append(self._close_current_bar())
-            completed.extend(self._fill_gap_bars(self._current_bar_start + self.interval_secs, now_bucket))
+            if self.fill_gap_bars:
+                completed.extend(self._fill_gap_bars(self._current_bar_start + self.interval_secs, now_bucket))
             self._current_bar = None
             # Keep _current_bar_last_cum_volume so the next trade computes a real
             # cumulative-volume delta. Resetting it here forces _resolve_volume_delta
@@ -170,7 +249,7 @@ class SchwabNativeBarBuilder:
             # closed bucket, which under-counts volume by 20-50% on Schwab LEVELONE.
             return completed
 
-        if self._current_bar is None:
+        if self._current_bar is None and self.fill_gap_bars:
             completed.extend(self._fill_missing_gaps_until(now_bucket))
         return completed
 
@@ -216,6 +295,13 @@ class SchwabNativeBarBuilder:
         self._trim_history()
         return bar
 
+    def _pop_last_closed_bar(self) -> OHLCVBar | None:
+        if not self.bars:
+            return None
+        bar = self.bars.pop()
+        self._bar_count = max(0, self._bar_count - 1)
+        return bar
+
     def _append_flat_bar(self, start: float) -> OHLCVBar | None:
         last_price = self.get_current_price()
         if last_price is None:
@@ -255,10 +341,12 @@ class SchwabNativeBarBuilderManager:
         interval_secs: int = 30,
         time_provider: Callable[[], float] | None = None,
         close_grace_seconds: float = 0.0,
+        fill_gap_bars: bool = True,
     ) -> None:
         self.interval_secs = interval_secs
         self.time_provider = time_provider or time.time
         self.close_grace_seconds = max(0.0, float(close_grace_seconds))
+        self.fill_gap_bars = bool(fill_gap_bars)
         self._builders: dict[str, SchwabNativeBarBuilder] = {}
 
     def get_or_create(self, ticker: str) -> SchwabNativeBarBuilder:
@@ -268,6 +356,7 @@ class SchwabNativeBarBuilderManager:
                 interval_secs=self.interval_secs,
                 time_provider=self.time_provider,
                 close_grace_seconds=self.close_grace_seconds,
+                fill_gap_bars=self.fill_gap_bars,
             )
         return self._builders[ticker]
 
@@ -290,6 +379,9 @@ class SchwabNativeBarBuilderManager:
 
     def on_bar(self, ticker: str, bar: OHLCVBar) -> list[OHLCVBar]:
         return self.get_or_create(ticker).on_bar(bar)
+
+    def on_final_bar(self, ticker: str, bar: OHLCVBar) -> list[OHLCVBar]:
+        return self.get_or_create(ticker).on_final_bar(bar)
 
     def check_all_bar_closes(self) -> list[tuple[str, OHLCVBar]]:
         completed: list[tuple[str, OHLCVBar]] = []
@@ -318,7 +410,9 @@ class SchwabNativeIndicatorEngine:
             self.config.macd_slow + self.config.macd_signal,
             int(getattr(self.config, "schwab_native_warmup_bars_required", 50)),
         )
-        if len(bars) < minimum_bars:
+        synthetic_mask = [_is_synthetic_bar(bar) for bar in bars]
+        real_bars = [bar for bar, synthetic in zip(bars, synthetic_mask, strict=False) if not synthetic]
+        if len(real_bars) < minimum_bars:
             return None
 
         closes = [_bar_value(bar, "close") for bar in bars]
@@ -328,27 +422,44 @@ class SchwabNativeIndicatorEngine:
         volumes = [_bar_value(bar, "volume") for bar in bars]
         timestamps = [_bar_value(bar, "timestamp") for bar in bars]
 
-        macd_data = macd(closes, self.config.macd_fast, self.config.macd_slow, self.config.macd_signal)
-        macd_line = macd_data["macd"]
-        signal_line = macd_data["signal"]
-        histogram = macd_data["histogram"]
-        stoch = stoch_k(highs, lows, closes, self.config.stoch_len, self.config.stoch_smooth_k)
-        stoch_d = sma(stoch, self.config.stoch_smooth_d) if stoch else []
-        ema9 = ema(closes, self.config.ema1_len)
-        ema20 = ema(closes, self.config.ema2_len)
-        vwap_values = vwap(
-            highs,
-            lows,
-            closes,
-            volumes,
-            timestamps,
+        real_closes = [_bar_value(bar, "close") for bar in real_bars]
+        real_highs = [_bar_value(bar, "high") for bar in real_bars]
+        real_lows = [_bar_value(bar, "low") for bar in real_bars]
+        real_volumes = [_bar_value(bar, "volume") for bar in real_bars]
+        real_timestamps = [_bar_value(bar, "timestamp") for bar in real_bars]
+
+        macd_data = macd(real_closes, self.config.macd_fast, self.config.macd_slow, self.config.macd_signal)
+        real_macd_line = macd_data["macd"]
+        real_signal_line = macd_data["signal"]
+        real_histogram = macd_data["histogram"]
+        real_stoch = stoch_k(real_highs, real_lows, real_closes, self.config.stoch_len, self.config.stoch_smooth_k)
+        real_stoch_d = sma(real_stoch, self.config.stoch_smooth_d) if real_stoch else []
+        real_ema9 = ema(real_closes, self.config.ema1_len)
+        real_ema20 = ema(real_closes, self.config.ema2_len)
+        real_vwap_values = vwap(
+            real_highs,
+            real_lows,
+            real_closes,
+            real_volumes,
+            real_timestamps,
             session_start_hour=9,
             session_start_minute=30,
             session_end_hour=16,
             session_end_minute=0,
         )
-        vol_avg20 = sma(volumes, 20)
-        vol_avg5 = sma(volumes, 5)
+        real_vol_avg20 = sma(real_volumes, 20)
+        real_vol_avg5 = sma(real_volumes, 5)
+
+        macd_line = self._expand_real_indicator_series(real_macd_line, synthetic_mask)
+        signal_line = self._expand_real_indicator_series(real_signal_line, synthetic_mask)
+        histogram = self._expand_real_indicator_series(real_histogram, synthetic_mask)
+        stoch = self._expand_real_indicator_series(real_stoch, synthetic_mask, default=50.0)
+        stoch_d = self._expand_real_indicator_series(real_stoch_d, synthetic_mask, default=50.0)
+        ema9 = self._expand_real_indicator_series(real_ema9, synthetic_mask)
+        ema20 = self._expand_real_indicator_series(real_ema20, synthetic_mask)
+        vwap_values = self._expand_real_indicator_series(real_vwap_values, synthetic_mask)
+        vol_avg20 = self._expand_real_indicator_series(real_vol_avg20, synthetic_mask)
+        vol_avg5 = self._expand_real_indicator_series(real_vol_avg5, synthetic_mask)
 
         index = len(closes) - 1
         prev = max(0, index - 1)
@@ -358,16 +469,8 @@ class SchwabNativeIndicatorEngine:
         current_minutes = current_et.hour * 60 + current_et.minute
         in_regular_session = 9 * 60 + 30 <= current_minutes < 16 * 60
 
-        bars_below_signal = 0
-        probe = index
-        while probe >= 0 and macd_line[probe] <= signal_line[probe]:
-            bars_below_signal += 1
-            probe -= 1
-        bars_below_signal_prev = 0
-        probe = prev
-        while probe >= 0 and macd_line[probe] <= signal_line[probe]:
-            bars_below_signal_prev += 1
-            probe -= 1
+        bars_below_signal = self._count_recent_real_bars_below_signal(index, synthetic_mask, macd_line, signal_line)
+        bars_below_signal_prev = self._count_recent_real_bars_below_signal(prev, synthetic_mask, macd_line, signal_line)
 
         ema9_dist_pct = ((closes[index] - ema9[index]) / ema9[index]) * 100 if ema9[index] > 0 else 999.0
         vwap_dist_pct = ((closes[index] - vwap_values[index]) / vwap_values[index]) * 100 if vwap_values[index] > 0 else 999.0
@@ -430,6 +533,51 @@ class SchwabNativeIndicatorEngine:
             "bar_index": index + 1,
         }
 
+    @staticmethod
+    def _expand_real_indicator_series(
+        real_values: Sequence[float],
+        synthetic_mask: Sequence[bool],
+        *,
+        default: float | None = None,
+    ) -> list[float]:
+        if not synthetic_mask:
+            return []
+        if not real_values:
+            fallback = 0.0 if default is None else default
+            return [fallback] * len(synthetic_mask)
+        expanded: list[float] = []
+        real_index = 0
+        previous_value = real_values[0]
+        fallback = real_values[0] if default is None else default
+        for synthetic in synthetic_mask:
+            if synthetic:
+                expanded.append(previous_value if expanded else fallback)
+                continue
+            current_value = real_values[min(real_index, len(real_values) - 1)]
+            expanded.append(current_value)
+            previous_value = current_value
+            real_index += 1
+        return expanded
+
+    @staticmethod
+    def _count_recent_real_bars_below_signal(
+        start_index: int,
+        synthetic_mask: Sequence[bool],
+        macd_line: Sequence[float],
+        signal_line: Sequence[float],
+    ) -> int:
+        count = 0
+        probe = start_index
+        while probe >= 0:
+            if synthetic_mask[probe]:
+                probe -= 1
+                continue
+            if macd_line[probe] > signal_line[probe]:
+                break
+            count += 1
+            probe -= 1
+        return count
+
 
 @dataclass
 class _PendingConfirmation:
@@ -466,12 +614,14 @@ class SchwabNativeEntryEngine:
         self._recent_bars: dict[str, list[dict[str, float]]] = {}
         self._last_buy_bar: dict[str, int] = {}
         self._last_exit_bar: dict[str, int] = {}
+        self._rejected_open_until_bar: dict[str, int] = {}
         self._last_decision: dict[str, dict[str, str]] = {}
         self._session_highs: dict[str, float] = {}
         self._spike_anchor_bar: dict[str, int] = {}
         self._spike_anchor_high: dict[str, float] = {}
         self._active_day_by_ticker: dict[str, str] = {}
         self._chop_lock_active: dict[str, bool] = {}
+        self._p3_hard_stop_pause_until: dict[str, datetime] = {}
 
     def seed_recent_bars(
         self,
@@ -510,6 +660,22 @@ class SchwabNativeEntryEngine:
         self._last_exit_bar[ticker] = bar_index
         self._pending.pop(ticker, None)
 
+    def record_path_exit(self, ticker: str, *, path: str, reason: str) -> None:
+        pause_minutes = int(getattr(self.config, "p3_hard_stop_pause_minutes", 0) or 0)
+        if path != "P3_SURGE" or pause_minutes <= 0:
+            return
+        if "HARD_STOP" not in str(reason or "").upper():
+            return
+        self._p3_hard_stop_pause_until[ticker] = self.now_provider() + timedelta(minutes=pause_minutes)
+        self._pending.pop(ticker, None)
+
+    def record_rejected_open(self, ticker: str, bar_index: int, cooldown_bars: int) -> None:
+        if cooldown_bars <= 0:
+            self._pending.pop(ticker, None)
+            return
+        self._rejected_open_until_bar[ticker] = bar_index + cooldown_bars
+        self._pending.pop(ticker, None)
+
     def cancel_pending(self, ticker: str) -> None:
         self._pending.pop(ticker, None)
 
@@ -521,24 +687,28 @@ class SchwabNativeEntryEngine:
         self._recent_bars.clear()
         self._last_buy_bar.clear()
         self._last_exit_bar.clear()
+        self._rejected_open_until_bar.clear()
         self._last_decision.clear()
         self._session_highs.clear()
         self._spike_anchor_bar.clear()
         self._spike_anchor_high.clear()
         self._active_day_by_ticker.clear()
         self._chop_lock_active.clear()
+        self._p3_hard_stop_pause_until.clear()
 
     def prune_tickers(self, keep: set[str]) -> None:
         for mapping in (
             self._pending,
             self._recent_bars,
             self._last_buy_bar,
+            self._rejected_open_until_bar,
             self._last_decision,
             self._session_highs,
             self._spike_anchor_bar,
             self._spike_anchor_high,
             self._active_day_by_ticker,
             self._chop_lock_active,
+            self._p3_hard_stop_pause_until,
         ):
             stale = [ticker for ticker in mapping if ticker not in keep]
             for ticker in stale:
@@ -574,9 +744,29 @@ class SchwabNativeEntryEngine:
         path, score, score_details, chop = self._evaluate_paths(ticker, indicators, bar_index)
         if path is None:
             if chop.active:
-                self._record_decision(ticker, status="blocked", reason=self._format_chop_reason(chop))
+                self._record_decision(
+                    ticker,
+                    status="blocked",
+                    reason=self._format_chop_reason(chop),
+                    score_details=score_details,
+                )
             else:
-                self._record_decision(ticker, status="idle", reason="no entry path matched")
+                self._record_decision(
+                    ticker,
+                    status="idle",
+                    reason="no entry path matched",
+                    score_details=score_details,
+                )
+            return None
+
+        p3_pause_reason = self._p3_pause_reason(ticker) if path == "P3_SURGE" else None
+        if p3_pause_reason:
+            self._record_decision(
+                ticker,
+                status="blocked",
+                reason=p3_pause_reason,
+                path="P3_SURGE",
+            )
             return None
 
         if path == "P3_SURGE" and self.config.p3_entry_stoch_k_cap is not None:
@@ -593,7 +783,11 @@ class SchwabNativeEntryEngine:
                 )
                 return None
 
-        if path in {"P4_BURST", "P5_PULLBACK"} or not self.config.schwab_native_use_confirmation:
+        if (
+            path in {"P4_BURST", "P5_PULLBACK"}
+            or not self.config.schwab_native_use_confirmation
+            or self.config.confirm_bars <= 0
+        ):
             self._last_buy_bar[ticker] = bar_index
             self._record_decision(ticker, status="signal", reason=path, path=path, score=score, score_details=score_details)
             return self._build_buy_signal(ticker, path, indicators, score, score_details)
@@ -676,7 +870,7 @@ class SchwabNativeEntryEngine:
         recent = self._recent_bars.get(ticker, [])
         current = self._snapshot_from_indicators(indicators, bar_index=bar_index)
         if current is None:
-            return None, 0, "", _ChopEvaluation(False, False, 0, [], False, False, False)
+            return None, 0, "diag: g[current=missing]", _ChopEvaluation(False, False, 0, [], False, False, False)
         previous = recent[-1] if recent else None
         chop = self._evaluate_chop_lock(ticker, indicators, current, recent)
 
@@ -685,9 +879,45 @@ class SchwabNativeEntryEngine:
             and int(indicators.get("bars_below_signal_prev", 0) or 0) >= self.config.p1_min_bars_below_signal
             and bool(common["p1p2_ok"])
         )
-        if raw_p1 and vol_ok and time_allowed:
+        p1_vol_ratio_ok = (
+            self.config.p1_min_vol_ratio is None
+            or current["vol_avg20"] <= 0
+            or current["volume"] >= current["vol_avg20"] * self.config.p1_min_vol_ratio
+        )
+        p1_abs_vol_ok = (
+            self.config.p1_min_volume_abs is None
+            or current["volume"] >= self.config.p1_min_volume_abs
+        )
+        p1_dollar_vol_ok = (
+            self.config.p1_min_dollar_volume_abs is None
+            or (current["close"] * current["volume"]) >= self.config.p1_min_dollar_volume_abs
+        )
+        p1_available = (
+            raw_p1
+            and vol_ok
+            and time_allowed
+            and p1_vol_ratio_ok
+            and p1_abs_vol_ok
+            and p1_dollar_vol_ok
+            and not chop.blocks_p1p2
+        )
+        if raw_p1 and vol_ok and time_allowed and p1_vol_ratio_ok and p1_abs_vol_ok and p1_dollar_vol_ok:
             if chop.blocks_p1p2:
-                return None, 0, "", chop
+                return None, 0, self._build_path_diagnostics(
+                    ticker=ticker,
+                    indicators=indicators,
+                    common=common,
+                    time_allowed=time_allowed,
+                    chop=chop,
+                    raw_p1=raw_p1,
+                    raw_p2=False,
+                    raw_p3=False,
+                    raw_p4=False,
+                    raw_p5=False,
+                    current=current,
+                    previous=previous,
+                    recent=recent,
+                ), chop
             score, details = self._quality_score(indicators)
             return "P1_CROSS", score, details, chop
 
@@ -697,9 +927,24 @@ class SchwabNativeEntryEngine:
             and bool(indicators.get("macd_increasing", False))
             and bool(common["p1p2_ok"])
         )
+        p2_available = raw_p2 and vol_ok and time_allowed and not chop.blocks_p1p2
         if raw_p2 and vol_ok and time_allowed:
             if chop.blocks_p1p2:
-                return None, 0, "", chop
+                return None, 0, self._build_path_diagnostics(
+                    ticker=ticker,
+                    indicators=indicators,
+                    common=common,
+                    time_allowed=time_allowed,
+                    chop=chop,
+                    raw_p1=raw_p1,
+                    raw_p2=raw_p2,
+                    raw_p3=False,
+                    raw_p4=False,
+                    raw_p5=False,
+                    current=current,
+                    previous=previous,
+                    recent=recent,
+                ), chop
             score, details = self._quality_score(indicators)
             return "P2_VWAP", score, details, chop
 
@@ -710,15 +955,50 @@ class SchwabNativeEntryEngine:
             and float(indicators.get("macd_delta", 0) or 0) > float(indicators.get("macd_delta_prev", 0) or 0)
             and float(indicators.get("hist_value", 0) or 0) >= self.config.p3_histogram_floor
             and bool(indicators.get("price_above_ema9", False))
+            and (
+                self.config.p3_min_volume_abs is None
+                or current["volume"] >= self.config.p3_min_volume_abs
+            )
+            and (
+                self.config.p3_min_dollar_volume_abs is None
+                or (current["close"] * current["volume"]) >= self.config.p3_min_dollar_volume_abs
+            )
+            and (
+                self.config.p3_min_vol_ratio is None
+                or float(indicators.get("volume", 0) or 0)
+                >= float(indicators.get("vol_avg20", 0) or 0) * self.config.p3_min_vol_ratio
+            )
+            and (
+                self.config.p3_max_ema9_dist_pct is None
+                or float(indicators.get("ema9_dist_pct", 0) or 0) < self.config.p3_max_ema9_dist_pct
+            )
+            and self._p3_cross_age_ok(ticker)
+            and self._p3_recent_runup_ok(current, recent)
             and bool(common["p3_ok"])
         )
+        p3_available = raw_p3 and vol_ok and time_allowed and not chop.blocks_p3
         if raw_p3 and vol_ok and time_allowed:
             if chop.blocks_p3:
-                return None, 0, "", chop
+                return None, 0, self._build_path_diagnostics(
+                    ticker=ticker,
+                    indicators=indicators,
+                    common=common,
+                    time_allowed=time_allowed,
+                    chop=chop,
+                    raw_p1=raw_p1,
+                    raw_p2=raw_p2,
+                    raw_p3=raw_p3,
+                    raw_p4=False,
+                    raw_p5=False,
+                    current=current,
+                    previous=previous,
+                    recent=recent,
+                ), chop
             score, details = self._quality_score(indicators)
             return "P3_SURGE", score, details, chop
 
-        if previous is not None:
+        raw_p4 = False
+        if self.config.p4_enabled and previous is not None:
             p4_body_pct = ((current["close"] - current["open"]) / current["open"]) * 100 if current["open"] > 0 else 0.0
             p4_range_pct = ((current["high"] - current["low"]) / current["open"]) * 100 if current["open"] > 0 else 0.0
             p4_close_near_high = (
@@ -727,27 +1007,60 @@ class SchwabNativeEntryEngine:
                 else True
             )
             recent_high = max(bar["high"] for bar in recent[-self.config.p4_breakout_lookback :]) if recent else 0.0
-            raw_p4 = (
-                not raw_p1
-                and not raw_p2
-                and not raw_p3
+            p4_ema9_dist_ok = (
+                self.config.p4_max_ema9_dist_pct is None
+                or float(indicators.get("ema9_dist_pct", 0.0) or 0.0) < self.config.p4_max_ema9_dist_pct
+            )
+            raw_p4_classic = (
+                not p1_available
+                and not p2_available
+                and not p3_available
                 and current["close"] > current["open"]
                 and (p4_body_pct >= self.config.p4_body_pct or p4_range_pct >= self.config.p4_range_pct)
                 and p4_close_near_high
                 and current["volume"] >= current["vol_avg20"] * self.config.p4_vol_mult20
                 and current["high"] > recent_high
                 and (not self.config.p4_require_close_above_ema9 or current["close"] > current["ema9"])
+                and p4_ema9_dist_ok
                 and time_allowed
             )
+            raw_p4_prev_bar = (
+                not p1_available
+                and not p2_available
+                and not p3_available
+                and time_allowed
+                and self._p4_prev_bar_entry_ok(previous, current)
+            )
+            raw_p4 = (raw_p4_classic and current["high"] > recent_high) or raw_p4_prev_bar
             if raw_p4:
                 score, details = self._quality_score(indicators)
                 return "P4_BURST", score, details, chop
 
-        if self._is_pullback_entry_ready(ticker, current, recent) and time_allowed:
+        raw_p5 = self._is_pullback_entry_ready(ticker, current, recent)
+        if raw_p5 and time_allowed:
             score, details = self._quality_score(indicators)
             return "P5_PULLBACK", score, details, chop
 
-        return None, 0, "", chop
+        return (
+            None,
+            0,
+            self._build_path_diagnostics(
+                ticker=ticker,
+                indicators=indicators,
+                common=common,
+                time_allowed=time_allowed,
+                chop=chop,
+                raw_p1=raw_p1,
+                raw_p2=raw_p2,
+                raw_p3=raw_p3,
+                raw_p4=raw_p4,
+                raw_p5=raw_p5,
+                current=current,
+                previous=previous,
+                recent=recent,
+            ),
+            chop,
+        )
 
     def _is_pullback_entry_ready(
         self,
@@ -1023,6 +1336,212 @@ class SchwabNativeEntryEngine:
                 parts.append(f"{label}-")
         return score, " ".join(parts)
 
+    @staticmethod
+    def _compact_failures(labels: list[str], *, max_labels: int = 4) -> str:
+        if not labels:
+            return "hit"
+        if len(labels) <= max_labels:
+            return "|".join(labels)
+        shown = labels[:max_labels]
+        shown.append(f"+{len(labels) - max_labels}")
+        return "|".join(shown)
+
+    def _build_path_diagnostics(
+        self,
+        *,
+        ticker: str,
+        indicators: dict[str, float | bool],
+        common: dict[str, bool],
+        time_allowed: bool,
+        chop: _ChopEvaluation,
+        raw_p1: bool,
+        raw_p2: bool,
+        raw_p3: bool,
+        raw_p4: bool,
+        raw_p5: bool,
+        current: dict[str, float],
+        previous: dict[str, float] | None,
+        recent: list[dict[str, float]],
+    ) -> str:
+        vol_ok = bool(common["vol_ok"])
+        p1p2_ok = bool(common["p1p2_ok"])
+        p3_ok = bool(common["p3_ok"])
+        p4_body_pct = ((current["close"] - current["open"]) / current["open"]) * 100 if current["open"] > 0 else 0.0
+        p4_range_pct = ((current["high"] - current["low"]) / current["open"]) * 100 if current["open"] > 0 else 0.0
+        p4_close_near_high = (
+            current["close"] >= current["low"] + (current["high"] - current["low"]) * (1 - self.config.p4_close_top_pct / 100.0)
+            if current["high"] > current["low"]
+            else True
+        )
+        recent_high = max((bar["high"] for bar in recent[-self.config.p4_breakout_lookback :]), default=0.0)
+        p4_volume_ok = current["volume"] >= current["vol_avg20"] * self.config.p4_vol_mult20
+        p4_breakout_ok = current["high"] > recent_high
+        p4_ema9_ok = (not self.config.p4_require_close_above_ema9) or current["close"] > current["ema9"]
+        p4_ema9_dist_ok = (
+            self.config.p4_max_ema9_dist_pct is None
+            or float(indicators.get("ema9_dist_pct", 0.0) or 0.0) < self.config.p4_max_ema9_dist_pct
+        )
+        p1_vol_ratio_ok = (
+            self.config.p1_min_vol_ratio is None
+            or current["vol_avg20"] <= 0
+            or current["volume"] >= current["vol_avg20"] * self.config.p1_min_vol_ratio
+        )
+        p1_abs_vol_ok = (
+            self.config.p1_min_volume_abs is None
+            or current["volume"] >= self.config.p1_min_volume_abs
+        )
+        p1_dollar_vol_ok = (
+            self.config.p1_min_dollar_volume_abs is None
+            or (current["close"] * current["volume"]) >= self.config.p1_min_dollar_volume_abs
+        )
+        p5_ready = raw_p5
+        chop_text = "off"
+        if chop.active:
+            reasons = "|".join(chop.reasons[:2]) if chop.reasons else "gated"
+            if len(chop.reasons) > 2:
+                reasons += f"|+{len(chop.reasons) - 2}"
+            chop_text = f"{chop.hit_count}/4:{reasons}"
+
+        p1_failures = []
+        if not bool(indicators.get("macd_cross_above", False)):
+            p1_failures.append("cross")
+        if int(indicators.get("bars_below_signal_prev", 0) or 0) < self.config.p1_min_bars_below_signal:
+            p1_failures.append("below_sig")
+        if not p1p2_ok:
+            p1_failures.append("p12_gate")
+        if not vol_ok:
+            p1_failures.append("vol")
+        if not p1_vol_ratio_ok:
+            p1_failures.append("vol20")
+        if not p1_abs_vol_ok:
+            p1_failures.append("p1_vol")
+        if not p1_dollar_vol_ok:
+            p1_failures.append("p1_dollar")
+        if not time_allowed:
+            p1_failures.append("time")
+        if raw_p1 and vol_ok and time_allowed and p1_vol_ratio_ok and p1_abs_vol_ok and p1_dollar_vol_ok and chop.blocks_p1p2:
+            p1_failures = ["chop"]
+
+        p2_failures = []
+        if not bool(indicators.get("price_cross_above_vwap", False)):
+            p2_failures.append("vwap_cross")
+        if not bool(indicators.get("macd_above_signal", False)):
+            p2_failures.append("macd_above")
+        if not bool(indicators.get("macd_increasing", False)):
+            p2_failures.append("macd_up")
+        if not p1p2_ok:
+            p2_failures.append("p12_gate")
+        if not vol_ok:
+            p2_failures.append("vol")
+        if not time_allowed:
+            p2_failures.append("time")
+        if raw_p2 and vol_ok and time_allowed and chop.blocks_p1p2:
+            p2_failures = ["chop"]
+
+        p3_failures = []
+        if not bool(indicators.get("macd_above_signal", False)):
+            p3_failures.append("macd_above")
+        if bool(indicators.get("macd_cross_above", False)):
+            p3_failures.append("fresh_cross")
+        if float(indicators.get("macd_delta", 0) or 0) < self.config.surge_rate:
+            p3_failures.append("delta")
+        if float(indicators.get("macd_delta", 0) or 0) <= float(indicators.get("macd_delta_prev", 0) or 0):
+            p3_failures.append("delta_prev")
+        if float(indicators.get("hist_value", 0) or 0) < self.config.p3_histogram_floor:
+            p3_failures.append("hist")
+        if not bool(indicators.get("price_above_ema9", False)):
+            p3_failures.append("ema9")
+        if self.config.p3_min_volume_abs is not None and current["volume"] < self.config.p3_min_volume_abs:
+            p3_failures.append("p3_vol")
+        if (
+            self.config.p3_min_dollar_volume_abs is not None
+            and (current["close"] * current["volume"]) < self.config.p3_min_dollar_volume_abs
+        ):
+            p3_failures.append("p3_dollar")
+        if (
+            self.config.p3_min_vol_ratio is not None
+            and current["vol_avg20"] > 0
+            and current["volume"] < current["vol_avg20"] * self.config.p3_min_vol_ratio
+        ):
+            p3_failures.append("vol20")
+        if not p3_ok:
+            p3_failures.append("p3_gate")
+        if not self._p3_cross_age_ok(ticker):
+            p3_failures.append("cross_age")
+        if not self._p3_recent_runup_ok(current, recent):
+            p3_failures.append("runup")
+        if not vol_ok:
+            p3_failures.append("vol")
+        if not time_allowed:
+            p3_failures.append("time")
+        if raw_p3 and vol_ok and time_allowed and chop.blocks_p3:
+            p3_failures = ["chop"]
+        p1_available = (
+            raw_p1
+            and vol_ok
+            and time_allowed
+            and p1_vol_ratio_ok
+            and p1_abs_vol_ok
+            and p1_dollar_vol_ok
+            and not chop.blocks_p1p2
+        )
+        p2_available = raw_p2 and vol_ok and time_allowed and not chop.blocks_p1p2
+        p3_available = raw_p3 and vol_ok and time_allowed and not chop.blocks_p3
+
+        if not self.config.p4_enabled:
+            p4_failures = ["disabled"]
+        elif previous is None:
+            p4_failures = ["history"]
+        else:
+            p4_failures = []
+            if p1_available or p2_available or p3_available:
+                p4_failures.append("higher_path")
+            if current["close"] <= current["open"]:
+                p4_failures.append("green")
+            if p4_body_pct < self.config.p4_body_pct and p4_range_pct < self.config.p4_range_pct:
+                p4_failures.append("body_range")
+            if not p4_close_near_high:
+                p4_failures.append("close_high")
+            if not p4_volume_ok:
+                p4_failures.append("vol20")
+            if not p4_breakout_ok:
+                p4_failures.append("breakout")
+            if not p4_ema9_ok:
+                p4_failures.append("ema9")
+            if not p4_ema9_dist_ok:
+                p4_failures.append("ema9_ext")
+            if not time_allowed:
+                p4_failures.append("time")
+            if raw_p4:
+                p4_failures = ["hit"]
+
+        p5_failures = []
+        if not p5_ready:
+            p5_failures.append("pullback")
+        if not time_allowed:
+            p5_failures.append("time")
+
+        path_failures = {
+            "P1": p1_failures,
+            "P2": p2_failures,
+            "P3": p3_failures,
+            "P4": p4_failures,
+            "P5": p5_failures,
+        }
+        best_path = min(path_failures.items(), key=lambda item: len([label for label in item[1] if label != "hit"]))
+        best_detail = self._compact_failures([label for label in best_path[1] if label != "hit"])
+        return (
+            "diag: "
+            f"g[t={'Y' if time_allowed else 'N'} vol={'Y' if vol_ok else 'N'} "
+            f"p12={'Y' if p1p2_ok else 'N'} p3={'Y' if p3_ok else 'N'} chop={chop_text}] "
+            f"best={best_path[0]}:{best_detail} "
+            f"P1:{self._compact_failures([label for label in p1_failures if label != 'hit'])} "
+            f"P2:{self._compact_failures([label for label in p2_failures if label != 'hit'])} "
+            f"P3:{self._compact_failures([label for label in p3_failures if label != 'hit'])} "
+            f"P4:{self._compact_failures([label for label in p4_failures if label != 'hit'])} "
+            f"P5:{self._compact_failures([label for label in p5_failures if label != 'hit'])}"
+        )
+
     def _snapshot_from_indicators(
         self,
         indicators: dict[str, float | bool],
@@ -1046,11 +1565,20 @@ class SchwabNativeEntryEngine:
             "vol_avg5": float(indicators["vol_avg5"]),
             "ema9_prev": float(indicators.get("ema9_prev", indicators["ema9"]) or indicators["ema9"]),
             "hist_value": float(indicators.get("hist_value", indicators.get("histogram", 0.0)) or 0.0),
+            "macd_cross_above": bool(indicators.get("macd_cross_above", False)),
         }
 
     def _remember_bar(self, ticker: str, snapshot: dict[str, float]) -> None:
         recent = self._recent_bars.setdefault(ticker, [])
-        recent.append(snapshot)
+        snapshot_bar_index = int(snapshot.get("bar_index", 0) or 0)
+        if recent:
+            recent_bar_index = int(recent[-1].get("bar_index", 0) or 0)
+            if snapshot_bar_index > 0 and recent_bar_index == snapshot_bar_index:
+                recent[-1] = snapshot
+            else:
+                recent.append(snapshot)
+        else:
+            recent.append(snapshot)
         if len(recent) > 100:
             del recent[:-100]
         self._session_highs[ticker] = max(self._session_highs.get(ticker, snapshot["high"]), snapshot["high"])
@@ -1074,6 +1602,13 @@ class SchwabNativeEntryEngine:
         last_exit = self._last_exit_bar.get(ticker, -999)
         if last_exit >= 0 and bar_index - last_exit < self.config.cooldown_bars:
             return {"passed": False, "reason": f"cooldown ({bar_index - last_exit}/{self.config.cooldown_bars} bars)"}
+        rejected_open_until = self._rejected_open_until_bar.get(ticker, -1)
+        if rejected_open_until > bar_index:
+            bars_remaining = rejected_open_until - bar_index
+            return {
+                "passed": False,
+                "reason": f"open rejection cooldown ({bars_remaining} bars remaining)",
+            }
         if not self._time_allowed():
             return {"passed": False, "reason": "outside trading hours"}
         return {"passed": True, "reason": ""}
@@ -1150,3 +1685,96 @@ class SchwabNativeEntryEngine:
         self._spike_anchor_bar.pop(ticker, None)
         self._spike_anchor_high.pop(ticker, None)
         self._chop_lock_active.pop(ticker, None)
+        self._p3_hard_stop_pause_until.pop(ticker, None)
+
+    def _p3_pause_reason(self, ticker: str) -> str | None:
+        pause_until = self._p3_hard_stop_pause_until.get(ticker)
+        if pause_until is None:
+            return None
+        now = self.now_provider()
+        if pause_until <= now:
+            self._p3_hard_stop_pause_until.pop(ticker, None)
+            return None
+        remaining_minutes = max(1, int((pause_until - now).total_seconds() // 60) + 1)
+        return f"P3 hard-stop pause active ({remaining_minutes} min remaining)"
+
+    def _p3_cross_age_ok(self, ticker: str) -> bool:
+        max_bars_since_cross = self.config.p3_max_bars_since_macd_cross
+        if max_bars_since_cross is None or max_bars_since_cross <= 0:
+            return True
+        recent = self._recent_bars.get(ticker, [])
+        if not recent:
+            return True
+        bars_since_cross = 1
+        for bar in reversed(recent):
+            if bool(bar.get("macd_cross_above", False)):
+                return bars_since_cross <= max_bars_since_cross
+            bars_since_cross += 1
+        return False
+
+    def _p3_recent_runup_ok(self, current: dict[str, float], recent: list[dict[str, float]]) -> bool:
+        max_recent_runup_pct = self.config.p3_max_recent_runup_pct
+        lookback_bars = int(self.config.p3_recent_runup_lookback_bars or 0)
+        if max_recent_runup_pct is None or lookback_bars <= 0:
+            return True
+        window = list(recent[-max(0, lookback_bars - 1) :])
+        window.append(current)
+        lows = [float(bar.get("low", 0.0) or 0.0) for bar in window if float(bar.get("low", 0.0) or 0.0) > 0]
+        highs = [float(bar.get("high", 0.0) or 0.0) for bar in window]
+        if not lows or not highs:
+            return True
+        recent_low = min(lows)
+        recent_high = max(highs)
+        if recent_low <= 0:
+            return True
+        runup_pct = ((recent_high - recent_low) / recent_low) * 100.0
+        return runup_pct <= max_recent_runup_pct
+
+    def _p4_prev_bar_entry_ok(
+        self,
+        previous: dict[str, float] | None,
+        current: dict[str, float],
+    ) -> bool:
+        if not bool(getattr(self.config, "p4_prev_bar_entry_enabled", False)):
+            return False
+        if previous is None:
+            return False
+
+        previous_close = float(previous.get("close", 0.0) or 0.0)
+        previous_open = float(previous.get("open", previous_close) or previous_close)
+        previous_vwap = float(previous.get("vwap", 0.0) or 0.0)
+        current_open = float(current.get("open", 0.0) or 0.0)
+        current_close = float(current.get("close", 0.0) or 0.0)
+        current_high = float(current.get("high", 0.0) or 0.0)
+        current_low = float(current.get("low", current_close) or current_close)
+
+        if previous_close <= 0 or current_open <= 0:
+            return False
+
+        if bool(getattr(self.config, "p4_prev_bar_require_prev_above_vwap_or_green", False)):
+            previous_green = previous_close > previous_open
+            previous_above_vwap = previous_vwap > 0 and previous_close > previous_vwap
+            if not (previous_green or previous_above_vwap):
+                return False
+
+        max_breakdown_pct = getattr(self.config, "p4_prev_bar_next_open_max_breakdown_pct", None)
+        if max_breakdown_pct is not None:
+            min_allowed_open = previous_close * (1.0 - (float(max_breakdown_pct) / 100.0))
+            if current_open < min_allowed_open:
+                return False
+
+        if bool(getattr(self.config, "p4_prev_bar_require_break_prev_high", False)):
+            if current_high <= float(previous.get("high", 0.0) or 0.0):
+                return False
+
+        if bool(getattr(self.config, "p4_prev_bar_require_close_above_prev_close", False)):
+            if current_close <= previous_close:
+                return False
+
+        close_top_pct = getattr(self.config, "p4_prev_bar_confirm_close_top_pct", None)
+        if close_top_pct is not None and current_high > current_low:
+            min_close_for_band = current_low + (current_high - current_low) * (1.0 - (float(close_top_pct) / 100.0))
+            if current_close < min_close_for_band:
+                return False
+
+        return True

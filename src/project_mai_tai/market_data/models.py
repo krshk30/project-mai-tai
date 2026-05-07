@@ -143,6 +143,7 @@ class LiveBarRecord:
     volume: int
     timestamp: float
     trade_count: int = 1
+    coverage_started_at: float | None = None
 
     def to_payload(self) -> LiveBarPayload:
         return LiveBarPayload(
@@ -155,4 +156,5 @@ class LiveBarRecord:
             volume=self.volume,
             timestamp=self.timestamp,
             trade_count=self.trade_count,
+            coverage_started_at=self.coverage_started_at,
         )
