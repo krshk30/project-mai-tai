@@ -164,7 +164,10 @@ class SchwabNativeBarBuilder:
             completed.append(self._close_current_bar())
             completed.extend(self._fill_gap_bars(self._current_bar_start + self.interval_secs, now_bucket))
             self._current_bar = None
-            self._current_bar_last_cum_volume = None
+            # Keep _current_bar_last_cum_volume so the next trade computes a real
+            # cumulative-volume delta. Resetting it here forces _resolve_volume_delta
+            # to fall back to last_size for the first trade of every periodically-
+            # closed bucket, which under-counts volume by 20-50% on Schwab LEVELONE.
             return completed
 
         if self._current_bar is None:
