@@ -1,5 +1,2111 @@
 # Session Handoff - Global
 
+## 2026-05-07 Schwab 1m `trade_count` accumulator from TIMESALE/LEVELONE ticks: deployed and live-validated 67% exact / 100% within 5%
+
+`schwab_1m` ingests Schwab CHART_EQUITY 1-minute aggregate bars. CHART_EQUITY has no per-bar trade count, so `_extract_chart_bar_record` in `market_data/schwab_streamer.py` hard-codes `trade_count=1`, and the `pricehistory` adapter at `broker_adapters/schwab.py:390` defaults to `1` when the JSON `tradeCount` field is absent (it always is for 1-minute candles). Every persisted `schwab_1m` bar therefore had `trade_count=1`.
+
+Volume parity was separately confirmed against Schwab `pricehistory` and ruled NOT fixable on our side: Schwab's 1m bar product (CHART_EQUITY and `pricehistory`) systematically excludes some prints that show up in TIMESALE/LEVELONE consolidated tape. Persisted CHART matches `pricehistory` exactly on every bar tested (ERNA, SOBR, MASK 11:24-11:40 UTC), so the persisted volume is canonical for `schwab_1m`. We accept the 0.77-0.97 ratio vs tick rebuild as a Schwab-product-side filtering choice.
+
+### Fix applied
+
+`src/project_mai_tai/services/strategy_engine_app.py` (`StrategyBotRuntime`):
+
+- New per-symbol per-bucket counter `self._live_aggregate_trade_tick_counts: dict[str, dict[float, int]]`.
+- `handle_trade_tick()` now calls `_record_live_aggregate_trade_tick(symbol, timestamp_ns)` for any tick on a `live_aggregate_bars_are_final` runtime, **before** the live-aggregate-vs-tick-builder branch split. Initial deploy put the increment inside the live-aggregate short-circuit; live data showed only ~5% capture because `_should_fallback_to_trade_ticks` returns True for ~57s of every 60s bucket (`live_aggregate_stale_after_seconds=3` is much shorter than the 60s CHART cadence). Moving the increment to before the branch split captures every tick regardless of which path handles bar building.
+- `handle_live_bar()` (final-bar branch) now calls `_effective_live_aggregate_trade_count(symbol, timestamp=..., provided_trade_count=...)` which consumes the accumulated count for the matching bucket and falls back to `provided_trade_count` (preserving the synthetic-gap-bar sentinel when no ticks arrived).
+- Counter is cleared on `seed_bars()` per symbol, on `_roll_day_if_needed()` reset, and stale buckets are purged on consume.
+
+### Live validation (post `2026-05-07 12:41:41 UTC` restart)
+
+Pre-market sample, RMSG only (other watchlist symbols rotated off):
+
+| bucket | rebuilt_tc (TIMESALE archive) | persisted_tc | delta |
+| --- | --- | --- | --- |
+| 12:42:00 | 35 | 34 | -1 |
+| 12:43:00 | 27 | 27 | 0 |
+| 12:44:00 | 27 | 27 | 0 |
+| 12:45:00 | 22 | 21 | -1 |
+| 12:46:00 | 28 | 28 | 0 |
+| 12:47:00 | 25 | 25 | 0 |
+
+- exact match: 4/6 (67%)
+- within 5%: 6/6 (100%)
+- zero `persisted_tc==1` fallback fires
+- zero `persisted_tc==0` sentinel issues
+
+Before the fix: every bar `persisted_tc=1` regardless of activity. After: counts vary 21-34 with 1-tick-or-less drift from the TIMESALE rebuild.
+
+### Test coverage
+
+`tests/unit/test_schwab_1m_bot.py`:
+- `test_schwab_1m_final_live_bar_uses_accumulated_trade_tick_count` - happy path: ticks via live-aggregate short-circuit get accumulated and stamped on the final bar.
+- `test_schwab_1m_trade_tick_count_is_recorded_even_when_fallback_path_handles_tick` - regression test for the placement bug; ticks routed via the native-builder fallback path still increment the counter.
+- `test_schwab_1m_final_live_bar_falls_back_when_no_ticks_seen` - when no ticks arrive in a bucket, `provided_trade_count` (default 1 from the streamer) is preserved.
+
+### Files touched
+
+- `src/project_mai_tai/services/strategy_engine_app.py`
+- `tests/unit/test_schwab_1m_bot.py`
+
+### Not on `origin/main`
+
+Deployed directly via `scp` to VPS, same pattern as the morning's other WIP changes. Backport to a branch + PR is pending.
+
+### Out of scope (deliberate)
+
+- The `trade_count=1` default at `broker_adapters/schwab.py:390` for `pricehistory` historical bars is unchanged. That path seeds warmup bars from REST history; the Schwab API doesn't return `tradeCount` for 1-minute candles. Persisted historical bars will still show `trade_count=1`, but live bars (the ones the strategy actually decides on) now show real counts. Fix at the historical-seed level would require a parallel TIMESALE backfill, which doesn't seem worth it given live bars are correct.
+- `webull_30s` (Polygon) trade_count was already fixed in a separate session; this change does not affect it.
+- `macd_30s` builds bars from per-trade ingestion via `SchwabNativeBarBuilder`, so its trade_count was already correct. Unaffected.
+
+## 2026-05-07 Schwab 30s follow-up validation after later strategy restart: fix still clearly improved parity, but not all live names are equally clean
+
+This is a read-only validation follow-up after the later `2026-05-07 11:24:05 UTC` strategy restart that happened during the Polygon deploy. No Schwab runtime code changed in this pass.
+
+### Context
+
+The earlier handoff entry already documented the successful pre-market validation of the Schwab `cum_vol baseline + close_grace` fix from the original `2026-05-07 10:35:42 UTC` deploy.
+
+Because the strategy service was restarted later at `2026-05-07 11:24:05 UTC`, I re-checked whether the currently running Schwab bot still looks healthy on:
+
+- the original morning validation set, and
+- the actual live Schwab watchlist reported by `/api/bots`
+
+### Timesale state
+
+- `0` new `TIMESALE` warnings were present in `strategy.log` after the `2026-05-07 11:24:05 UTC` restart.
+- Current live config still reflects the intended safer path:
+  - `strategy_macd_30s_trade_stream_service = LEVELONE_EQUITIES`
+  - `strategy_macd_30s_tick_bar_close_grace_seconds = 5.0`
+
+### Re-check of the original morning validation window
+
+Re-running the same script from the handoff against the original fix boundary `2026-05-07 10:35:42 UTC` still broadly supports the earlier conclusion:
+
+- `IONZ`: ratio `0.987`
+- `AHMA`: ratio `0.974`
+- `STFS`: ratio `0.978`
+- `RDWU`: ratio `1.000`
+- `MASK`: ratio `0.952`
+- `ONEG`: still dominated by the known first post-restart outlier (`14849 -> 15`) and stayed at `0.608`
+
+Interpretation:
+
+- the fix is still real
+- the broad "persisted volume collapses to last_size / 1-share-like bars everywhere" failure is clearly not the dominant live state anymore
+- the known first-trade-after-fresh-builder edge case still exists
+
+### Current live Schwab watchlist validation
+
+Current live `macd_30s` watchlist from `/api/bots`:
+
+- `ATRA`
+- `ERNA`
+- `RMSG`
+- `SMX`
+- `VEEE`
+
+Post-`2026-05-07 11:24:05 UTC` rebuild-vs-persisted results:
+
+- `RMSG`
+  - overlap bars: `93`
+  - persisted/rebuilt ratio: `1.000`
+- `SMX`
+  - overlap bars: `80`
+  - persisted/rebuilt ratio: `1.000`
+- `ATRA`
+  - overlap bars: `5`
+  - persisted/rebuilt ratio: `0.990`
+  - but one severe outlier remained:
+    - `2026-05-07T12:09:00+00:00`: rebuilt `224722` -> persisted `5`
+- `VEEE`
+  - overlap bars: `9`
+  - persisted/rebuilt ratio: `0.777`
+- `ERNA`
+  - no overlap yet in this sample
+
+### Current Schwab verdict
+
+The Schwab fix should still be considered a major improvement, but I would **not** call the current live Schwab path universally closed yet:
+
+- `RMSG` and `SMX` looked strong on the current live sample
+- `ATRA` still showed a bad single-bar miss
+- `VEEE` was not clean in its small sample
+
+So the honest current state is:
+
+- the earlier fix absolutely helped and removed the old broad baseline failure
+- but the user was right to want a second look before treating all Schwab `30s` behavior as fully settled
+- keeping Schwab as the lower-priority workstream behind Polygon is still the right operational call
+
+## 2026-05-07 Polygon/Webull live re-validation on the current watchlist: runtime now looks effectively healthy, with remaining drift reduced to tiny trade_count deltas
+
+This is a fresh live validation on the actual current `webull_30s` watchlist after the Polygon `no-force-close` and `average_size trade_count` fixes.
+
+### Current live Webull/Polygon watchlist
+
+From `/api/bots`:
+
+- `ATRA`
+- `ERNA`
+- `RMSG`
+- `SMX`
+- `VEEE`
+
+### Important audit caveat
+
+The temporary packet-audit tool compares:
+
+- live `30s` rebuilt from Redis `1s` Polygon `live_bar`
+- persisted `webull_30s` `StrategyBarHistory`
+- provider historical Polygon `30s`
+
+When the window reaches back before a symbol had full live `1s` presence in the retained Redis stream, `provider_only` counts can be inflated by stream-retention / coverage timing. So the most trustworthy signal is:
+
+- shared-bucket parity
+- whether mismatches are broad `OHLC` / `volume` drift
+- or only tiny `trade_count` differences
+
+### Fresh live validation result
+
+Window sampled:
+
+- approximately `2026-05-07 12:00:30-12:15:30 UTC`
+- `08:00:30-08:15:30 ET`
+
+Observed shared-bucket behavior:
+
+- `RMSG`
+  - shared buckets present and healthy
+  - mismatches were very small `trade_count` diffs only
+  - example:
+    - `08:01:00 ET`: persisted/live `903` vs provider `902`
+- `ATRA`
+  - shared buckets present
+  - mismatches were `trade_count`-only in the inspected shared buckets
+  - `OHLC` and `volume` matched exactly on the sampled mismatches
+- `VEEE`
+  - shared buckets present
+  - mismatches were again tiny `trade_count`-only in the sampled shared buckets
+  - `OHLC` and `volume` matched exactly
+- `SMX`
+  - one mismatch appeared at `08:00:30 ET`, but that was an audit artifact:
+    - persisted/provider matched exactly
+    - live `1s -> 30s` rebuild was lower only because Redis no longer retained the earlier `1s` components for that bucket
+  - that is **not** evidence of a current runtime persistence bug
+- `ERNA`
+  - no useful shared sample yet in this specific window
+
+### Current Polygon/Webull verdict
+
+The current live Webull/Polygon path now looks effectively healthy:
+
+- no broad `OHLC` drift reappeared
+- no broad `volume` drift reappeared
+- no shared-bucket structural failure like the earlier prefix/undercount bug reappeared
+- the remaining visible mismatch class is tiny `trade_count` deltas on some buckets
+
+Those tiny residual deltas are consistent with the current provider semantics:
+
+- live aggregate websocket gives us rounded `average_size`
+- we derive `trade_count` from `round(volume / average_size)` when no direct transaction-count field is present
+- that can still miss by a few counts on very large active bars
+
+### Practical conclusion
+
+For live trading / indicator integrity, Polygon `30s` now appears to be in the "good enough and structurally healthy" state we were trying to reach:
+
+- shared-bucket `OHLC` is clean
+- shared-bucket `volume` is clean
+- remaining `trade_count` deltas are tiny and do not look like a bar-construction failure
+
+At this point, I do **not** see a new concrete Webull/Polygon runtime bug to patch immediately. The current remaining issue looks like a provider-field precision ceiling rather than another logic defect.
+
+## 2026-05-07 Polygon 30s no-force-close fix deployed at 11:15 UTC: shared-bar volume/OHLC undercount resolved, remaining issue narrowed to live trade_count normalization
+
+This session isolated a concrete runtime bug on the `webull_30s` / `Polygon 30 Sec Bot` path and deployed a fix to `src/project_mai_tai/services/strategy_engine_app.py`.
+
+### Root cause
+
+For Polygon live aggregates, the strategy runtime builds canonical `30s` bars from streamed `1s` `live_bar` events. The previous `StrategyBotRuntime.flush_completed_bars()` path could wall-clock close a `30s` bucket before the strategy consumer had drained all already-published `1s` bars for that same bucket from Redis.
+
+That created the earlier "prefix bar" pattern:
+
+- persisted `30s` volume matched only an early subset of the bucket's `1s` components
+- provider historical `30s` volume was much larger
+- OHLC could also freeze too early on active names like `PMAX` and `RMSG`
+
+### Change applied
+
+`src/project_mai_tai/services/strategy_engine_app.py`
+
+- For the Polygon live-aggregate path (`webull_30s` / `polygon_30s` with `use_live_aggregate_bars=True`), `flush_completed_bars()` no longer force-closes the builder on wall clock.
+- Instead, the prior `30s` bucket closes only when the next observed bucket arrives.
+
+This preserves all in-stream `1s` components for the bucket before the `30s` bar is finalized and persisted.
+
+### Focused local validation
+
+Passed locally:
+
+- `pytest tests/unit/test_webull_30s_bot.py -q`
+  - `20 passed`
+- `pytest tests/unit/test_strategy_engine_service.py -k "webull_30s and not flush_completed_bars_evaluates_due_bar_without_waiting_for_next_trade" -q`
+  - `1 passed`
+- `py_compile`
+  - `src/project_mai_tai/services/strategy_engine_app.py`
+  - `tests/unit/test_webull_30s_bot.py`
+
+### VPS deploy
+
+Deployed:
+
+- `src/project_mai_tai/services/strategy_engine_app.py`
+
+Restarted:
+
+- `project-mai-tai-strategy.service`
+
+Service restart time:
+
+- `2026-05-07 11:15:23 UTC`
+
+### Strict post-restart audit result
+
+Audit window:
+
+- `2026-05-07 11:15:00-11:19:00 UTC`
+- symbols: `PMAX`, `RMSG`
+- compare:
+  - live `30s` rebuilt from Redis `1s` Polygon `live_bar`
+  - persisted `StrategyBarHistory` `webull_30s` `30s`
+  - provider historical Polygon `30s`
+
+Key result:
+
+- persisted `30s` bars matched the live `1s -> 30s` rebuild exactly on shared buckets
+- the earlier large shared-bar volume/OHLC undercount pattern disappeared
+
+Examples:
+
+- `PMAX 07:16:30 ET`
+  - live rebuilt: `open=4.0313 high=4.04 low=4.03 close=4.04 volume=1660 trade_count=5`
+  - persisted: exactly the same
+  - provider: same OHLC/volume, but `trade_count=9`
+- `RMSG 07:17:30 ET`
+  - live rebuilt: `open=1.7 high=1.72 low=1.69 close=1.72 volume=205962 trade_count=30`
+  - persisted: exactly the same
+  - provider: same OHLC/volume, but `trade_count=581`
+
+That narrowed the remaining mismatch sharply: after this deploy, shared-bar `volume`/`OHLC` parity was largely fixed, but `trade_count` was still collapsing to roughly the count of populated seconds rather than the true provider transaction count.
+
+## 2026-05-07 Polygon 30s live trade_count fix deployed at 11:24 UTC: Massive websocket sends `average_size`, not only `z`
+
+After the 11:15 UTC strategy deploy, a direct raw Massive websocket probe on live `A.<symbol>` messages for `RMSG` exposed the next concrete bug.
+
+### Raw provider finding
+
+Live aggregate messages were arriving with fields like:
+
+- `volume`
+- `average_size`
+- `aggregate_vwap`
+- `start_timestamp`
+- `end_timestamp`
+
+Example raw samples from the live probe:
+
+- `volume=1517 average_size=303`
+- `volume=247 average_size=82`
+- `volume=1139 average_size=569`
+
+Our normalization helper in `src/project_mai_tai/market_data/massive_provider.py` was already treating `z` as average trade size instead of trade count, but it **did not read `average_size`**. Because many live messages carried `average_size` rather than `average_trade_size` / `avg_trade_size` / `z`, the helper fell through to the default `trade_count=1` on most `1s` bars.
+
+That exactly matched the post-11:15 audit pattern where `RMSG` `30s` bars had:
+
+- correct OHLC
+- correct volume
+- `trade_count` approximately equal to the number of populated seconds in the bucket
+
+### Change applied
+
+`src/project_mai_tai/market_data/massive_provider.py`
+
+- `_normalize_aggregate_trade_count(...)` now also checks `average_size`
+- fallback order is now:
+  - direct count fields: `aggregate_vwap_trades`, `transactions`, `trade_count`
+  - otherwise derive `round(volume / average_trade_size)` using:
+    - `average_trade_size`
+    - `average_size`
+    - `avg_trade_size`
+    - `z`
+
+### Focused local validation
+
+Passed locally:
+
+- `pytest tests/unit/test_market_data_gateway.py -q`
+  - `10 passed`
+- `pytest tests/unit/test_webull_30s_bot.py -q`
+  - `20 passed`
+- `py_compile`
+  - `src/project_mai_tai/market_data/massive_provider.py`
+  - `src/project_mai_tai/services/strategy_engine_app.py`
+  - `tests/unit/test_market_data_gateway.py`
+  - `tests/unit/test_webull_30s_bot.py`
+
+New regression coverage:
+
+- aggregate trade_count is correctly derived from `average_size`
+
+### VPS deploy
+
+Deployed:
+
+- `src/project_mai_tai/market_data/massive_provider.py`
+
+Restarted in live-safe order:
+
+- stop `project-mai-tai-strategy.service`
+- restart `project-mai-tai-market-data.service`
+- start `project-mai-tai-strategy.service`
+
+Service restart time:
+
+- `2026-05-07 11:24:05 UTC`
+
+### Live validation after warmup
+
+The first recheck right after restart was still too early because startup hydration was in progress:
+
+- strict audit `11:24:00-11:28:00 UTC`
+  - `PMAX`: `live_30s_from_1s=5`, `persisted_30s=0`, `provider_30s=5`
+  - `RMSG`: `live_30s_from_1s=8`, `persisted_30s=0`, `provider_30s=8`
+
+At the same time, strategy logs showed Polygon warmup still replaying after restart:
+
+- `hydrated 2666 bars for ERNA @ 30s into webull_30s`
+- `hydrated 7181 bars for GCTK @ 30s into webull_30s`
+
+Once warmup cleared, the strict post-`2026-05-07 11:24:05 UTC` audit turned clean on shared buckets:
+
+- audit `11:24:00-11:29:30 UTC`
+  - `PMAX`: `live_30s_from_1s=7`, `persisted_30s=4`, `provider_30s=7`, `shared_buckets=4`, `mismatch_buckets=0`
+  - `RMSG`: `live_30s_from_1s=11`, `persisted_30s=7`, `provider_30s=11`, `shared_buckets=7`, `mismatch_buckets=0`
+- audit `11:24:00-11:31:00 UTC`
+  - `PMAX`: `live_30s_from_1s=10`, `persisted_30s=10`, `provider_30s=10`, `shared_buckets=10`, `mismatch_buckets=0`
+  - `RMSG`: `live_30s_from_1s=14`, `persisted_30s=13`, `provider_30s=14`, `shared_buckets=13`, `mismatch_buckets=0`
+
+Interpretation:
+
+- the `average_size` fix materially corrected live `trade_count`
+- the earlier no-force-close fix kept shared-bucket `volume` / `OHLC` clean
+- `PMAX` fully matched provider and persistence across the validated post-restart window
+- `RMSG` also matched perfectly on every shared bucket, with only one remaining `provider_only` tail bucket in the last sample
+
+Broader four-symbol audit after the same restart (`11:24:00-11:32:30 UTC`):
+
+- `GCTK`
+  - `live_30s_from_1s=14`, `persisted_30s=13`, `provider_30s=14`
+  - `shared_buckets=13`, `mismatch_buckets=0`
+- `MASK`
+  - `live_30s_from_1s=17`, `persisted_30s=16`, `provider_30s=17`
+  - `shared_buckets=16`, `mismatch_buckets=3`
+  - all 3 mismatches were tiny `trade_count` diffs only:
+    - `07:26:00 ET` `225` vs provider `224`
+    - `07:26:30 ET` `619` vs provider `617`
+    - `07:27:00 ET` `809` vs provider `807`
+  - `OHLC` and `volume` were exact on those buckets
+- `PMAX`
+  - `live_30s_from_1s=13`, `persisted_30s=13`, `provider_30s=13`
+  - `shared_buckets=13`, `mismatch_buckets=0`
+- `RMSG`
+  - `live_30s_from_1s=17`, `persisted_30s=16`, `provider_30s=17`
+  - `shared_buckets=16`, `mismatch_buckets=0`
+
+That suggests the Polygon bar-integrity path is now largely healthy on active morning names. The remaining visible drift in this sample is no longer broad structural failure; it is a very small residual `trade_count` approximation gap on `MASK`.
+
+### Required next Polygon validation
+
+1. Re-run the same strict audit on the next active names that were not in this pass:
+   - `AHMA`
+   - `IONZ`
+   - `STFS`
+2. Confirm whether the remaining `provider_only` buckets on names like `RMSG` are just tail lag rather than a true persistence gap.
+3. Decide whether tiny residual `trade_count` diffs like `MASK` (`+1` to `+2` on very large counts) are acceptable for canonical Polygon `30s`, or whether another refinement is still worth it.
+4. If the broader morning set stays at this level, Polygon `30s` can likely move from active bar-integrity repair to broader acceptance validation.
+
+## 2026-05-07 Schwab 30s cum_vol baseline fix: validation passed, drift dropped from 35-50% of bars to 0-9%
+
+Pre-market re-validation at `~11:04 UTC` (`07:04 ET`) on the cum_vol baseline fix from this morning's `10:35:42 UTC` deploy. Result: **the fix worked**.
+
+| symbol | match rate (was → now) | persisted/rebuilt vol ratio (was → now) | persisted_vol == 1 (was → now) |
+| --- | --- | --- | --- |
+| IONZ | 50% → 96% | 0.78 → 0.987 | 7 → 1 |
+| ONEG | 64% → 91% | 0.80 → 0.608 ⓘ | 15 → 0 |
+| AHMA | 56% → 93% | 0.47 → 0.974 | 15 → 0 |
+| STFS | 42% → 92% | 0.50 → 0.978 | 18 → 2 |
+| MASK | 61% → **100%** | 0.70 → **1.000** | 9 → 2 |
+| RDWU | 57% → **100%** | 0.52 → **1.000** | 9 → 1 |
+| GOVX | n/a (no trades this window) | n/a | 0 → 0 |
+
+ⓘ ONEG's `0.608` ratio is a single-bar outlier in the very first post-restart bucket (`10:36:30 UTC`, 48s after restart): rebuilt 14849 vs persisted 15. That one bar represents 39% of total volume in a 35-bar sample. The "first ever trade after a fresh builder" case still falls back to `size` because there's no prior cum_vol baseline to delta from — that's a fundamental edge case (the rebuild has the same property; both rebuild and live use `size` for their first trade). Same pattern in IONZ's lone outlier (276 → 1 at `10:36:30`). On a longer post-restart sample the proportion of "first trades" approaches zero, so the volume ratio rises towards 1.0.
+
+Pass criteria from the morning's validation plan (all met):
+
+- ✅ `persisted_vol == 1` count dropped from 7-18 per symbol to 0-2.
+- ✅ `persisted ≤ 5% of rebuilt` count dropped to 0-1 per symbol.
+- ✅ Total persisted/rebuilt volume ratio rose from `0.47-0.80` baseline to `0.97-1.00` for active symbols (ignoring ONEG outlier).
+- ✅ OHLC drift remains zero across all symbols.
+- ✅ Bar-finalization latency: `close_grace=5.0s` adds 3s vs prior 2s. Acceptable for 30s bars.
+
+The Schwab 30s persisted bars now match the archive rebuild within ~1% on most symbols. Schwab 30s investigation can be considered closed for the bar-integrity workstream until further data suggests otherwise.
+
+### GitHub PRs in flight (this morning's work)
+
+- `fix/macd-30s-close-grace` — close_grace bump (`1b51ef0`) + cum_vol baseline preservation (`951e7bf`) + 4 regression tests. Both bar-builder fixes from this morning.
+- `fix/macd-30s-trade-stream-service-default` (`48baf66`) — LEVELONE_EQUITIES default + TIMESALE_EQUITY/CHART_EQUITY plumbing on `schwab_streamer.py` + `trade_tick_service` wiring + 4 unit tests.
+- `fix/await-massive-websocket-close` (`7feb866`) — pre-existing coroutine-not-awaited warning in `MassiveTradeStream.stop()`.
+
+All three target `origin/main`. They can land independently. After they merge, `main` reflects the bar-builder integrity work that's been running on VPS since yesterday and this morning.
+
+### Re-run validation script (kept for future use)
+
+```
+ssh mai-tai-vps "cd /home/trader/project-mai-tai && .venv/bin/python /tmp/bar_drift_analyze.py \
+    --archive-dir /var/lib/project-mai-tai/schwab_ticks/2026-05-07 \
+    --date 2026-05-07 \
+    --restart-iso 2026-05-07T10:35:42+00:00 \
+    --symbols IONZ ONEG AHMA STFS MASK RDWU GOVX"
+```
+
+## 2026-05-07 Polygon 30s live fix: market-data gateway no longer replays full historical warmup on every identical `replace` subscription event
+
+This session fixed a concrete live cause of Polygon `30s` lag on the `webull_30s` / `Polygon 30 Sec Bot` path.
+
+### Root cause
+
+The market-data gateway was republishing full provider `historical_bars` warmup on **every** `market-data-subscriptions` `replace` event, even when:
+
+- the symbol set was unchanged, or
+- only one new symbol had been added
+
+That behavior lived in:
+
+- `src/project_mai_tai/market_data/gateway.py::MarketDataGatewayService.apply_subscription_event()`
+
+Before the fix:
+
+- unchanged `replace` triggered warmup for the full set again
+- additive `replace` triggered warmup for the entire updated set, not just the new symbol
+
+In live production this created a replay storm on the strategy side. After the `2026-05-07 10:35:44 UTC` strategy restart, the strategy log showed large Polygon replays/hydrations for the same symbols over and over:
+
+- `AHMA 2761`
+- `GCTK 7125`
+- `IONZ 13653`
+- `MASK 4397`
+- `ONEG 4277`
+- `RDWU 5609`
+- `PMAX 2580`
+
+During that replay wave, fresh live Polygon `1s` aggregate packets were already flowing into Redis, but persisted `webull_30s` `StrategyBarHistory` lagged badly because the strategy was busy hydrating huge historical payloads instead of staying current on the live stream.
+
+### Change applied
+
+`src/project_mai_tai/market_data/gateway.py`
+
+- Keep startup warmup for genuinely active symbols restored from Redis on gateway boot
+- Keep warmup for genuinely **newly added** symbols
+- Stop replaying warmup when a `replace` event does not actually add symbols
+
+Behavior now:
+
+- unchanged `replace` => no new `historical_bars`
+- additive `replace` => warm only the newly added symbols
+- initial startup from empty active set => still warms all active symbols once
+
+### Focused local validation
+
+Passed locally:
+
+- `pytest tests/unit/test_market_data_gateway.py -q`
+  - `9 passed`
+- `pytest tests/unit/test_webull_30s_bot.py -q`
+  - `20 passed`
+- `py_compile`
+  - `src/project_mai_tai/market_data/gateway.py`
+  - `tests/unit/test_market_data_gateway.py`
+
+New/updated regression coverage:
+
+- unchanged `replace` does **not** replay warmup
+- additive `replace` warms only newly added symbols
+
+### VPS deploy
+
+Deployed:
+
+- `src/project_mai_tai/market_data/gateway.py`
+
+Restarted:
+
+- `project-mai-tai-market-data.service`
+
+Service status after deploy:
+
+- active since `2026-05-07 10:49:50 UTC`
+
+### Live proof on VPS
+
+After deploy, I published an **identical** `strategy-engine` `replace` event with the current Polygon watchlist:
+
+- `AHMA`
+- `GCTK`
+- `GOVX`
+- `IONZ`
+- `MASK`
+- `ONEG`
+- `PMAX`
+- `RDWU`
+- `STFS`
+
+Result from Redis stream inspection:
+
+- `historical_bars_after_replace = 0`
+- `live_bars_after_replace = 0`
+
+That is the direct proof that the gateway no longer republishes warmup on an unchanged `replace`.
+
+### Live Polygon state after fix
+
+This did **not** eliminate the one-time startup warmup after a gateway restart. The strategy log still showed a one-pass hydration wave after the `10:49:50 UTC` market-data restart, which is expected and acceptable.
+
+But after the fix, fresh persisted Polygon `30s` bars resumed advancing beyond the earlier stall boundary:
+
+- `AHMA` max persisted bar advanced to `2026-05-07 10:48:30 UTC`
+- `GCTK` to `10:48:30 UTC`
+- `IONZ` to `10:48:30 UTC`
+- `MASK` to `10:49:00 UTC`
+- `ONEG` to `10:48:30 UTC`
+- `PMAX` to `10:49:00 UTC`
+- `RDWU` to `10:48:00 UTC`
+
+Previously these were stuck much earlier around the replay/warmup boundary.
+
+Current control-plane evidence:
+
+- `Polygon 30 Sec Bot` `latest_market_data_at` reached `2026-05-07 06:51:05 AM ET`
+- `PMAX` and `MASK` were again producing normal evaluated-bar decisions with `last_bar_at` at `06:48:30-06:49:00 AM ET`
+
+### What remains
+
+Polygon is improved but not fully finished.
+
+Still open:
+
+- startup warmup is still expensive on full service restart because initial boot from empty active set correctly warms all active symbols once
+- thin names like `GOVX` and `STFS` were still stale in this validation window
+- Massive websocket lifecycle is still rough:
+  - direct raw probe proved live `A.<symbol>` aggregates work
+  - but also showed `max_connections` status and the service still has the known unawaited-close weakness in `massive_provider.py`
+
+### Required next Polygon work
+
+1. Revalidate provider-vs-persisted drift on active names now that the replay storm is reduced.
+   Focus first on:
+   - `AHMA`
+   - `GCTK`
+   - `IONZ`
+   - `MASK`
+   - `PMAX`
+
+2. If staleness persists on thinner names, inspect whether the remaining issue is simply sparse-tape behavior or still a reconnect/coverage reset problem.
+
+3. Next likely infrastructure fix after this one:
+   - clean up `MassiveTradeStream.stop()` / reconnect lifecycle in `src/project_mai_tai/market_data/massive_provider.py`
+   - avoid unawaited websocket close and reduce connection-slot churn / `max_connections` side effects
+
+4. Only after fresh morning parity looks cleaner should broader `polygon_30s` tuning resume.
+
+## 2026-05-07 Polygon live aggregate `trade_count` normalization deployed earlier (00:55 UTC) — documenting after the fact
+
+This entry backfills documentation for a fix that was deployed to VPS at `2026-05-07 00:55:01 UTC` (`2026-05-06 20:55 ET`) — `src/project_mai_tai/market_data/massive_provider.py` mtime — but was not captured in the handoff before the session ended. Per the mandatory rule, recording it here so future agents see it.
+
+### Bug
+
+Polygon/Massive websocket aggregate (`A.<symbol>`) channel includes a field `z` that is documented as **average trade size**, not trade count. The earlier code path was reading `z` as a fallback for `trade_count` when both `aggregate_vwap_trades` and `transactions` were missing — which produced wildly wrong (small) trade-count numbers on bars from this channel. `webull_30s` consumes these aggregates as final live bars, so its persisted `trade_count` was systematically misreported.
+
+### Fix
+
+`src/project_mai_tai/market_data/massive_provider.py` adds a `_normalize_aggregate_trade_count(message, volume)` helper:
+
+1. Prefer a direct count field: `aggregate_vwap_trades`, `transactions`, or `trade_count` (in that order).
+2. If no direct count is available, derive: `count = max(1, round(volume / average_trade_size))`, reading `average_trade_size`, `avg_trade_size`, or `z` (now correctly understood as average size).
+3. If neither path produces a usable number, return `1`.
+
+The aggregate ingestion site that previously fell back to `z` as a count was updated to call this helper:
+
+```python
+trade_count=_normalize_aggregate_trade_count(message, volume or 0)
+```
+
+### Scope
+
+This fix only affects the live-aggregate path (Polygon `A.<symbol>` → `LiveBarRecord.trade_count`). The Schwab `LEVELONE_EQUITIES` trade-tick path is unrelated and unaffected. So this fix targets `webull_30s` parity, not `macd_30s` (which gets its trade_count from the per-trade ingestion path in `SchwabNativeBarBuilder`).
+
+### Status
+
+- Already deployed to VPS as of `2026-05-07 00:55:33 UTC` strategy + market-data restart.
+- **Not yet on `origin/main` or in any open PR.** Sits in WIP-only state on the VPS, same as the close_grace and TIMESALE plumbing did before they were backported. Suggest folding this into the same separate "Polygon ingestion backport" PR alongside the LEVELONE_EQUITIES default + TIMESALE plumbing follow-up that's still pending. Doable in one sitting after the close_grace PR merges.
+
+## 2026-05-07 Schwab 30s validation: close_grace alone wasn't enough; fixed cum_vol baseline reset in `check_bar_closes()` and re-deployed
+
+Pre-market validation at `~10:25 UTC` (`06:25 ET`) on the close_grace bump from last night confirmed it helped but didn't fully fix the drift. **Found a separate, larger bug** in the bar builder and applied a fix. Re-validation pending ~30 min after restart at `10:35:42 UTC`.
+
+### First validation result (close_grace = 5.0)
+
+For active `macd_30s` symbols, post-restart-only window after `2026-05-07 02:01:34 UTC`:
+
+| symbol | overlap bars | match (≤5%) | drift bars | persisted/rebuilt vol ratio | persisted_vol == 1 cases |
+| --- | --- | --- | --- | --- | --- |
+| IONZ | 241 | 121 (50.2%) | 120 (49.8%) | 0.78 | 7 |
+| ONEG | 209 | 134 (64.1%) | 75 (35.9%) | 0.80 | 15 |
+| AHMA | 174 | 98 (56.3%) | 76 (43.7%) | 0.47 | 15 |
+| STFS | 127 | 53 (41.7%) | 74 (58.3%) | 0.50 | 18 |
+| MASK | 129 | 79 (61.3%) | 50 (38.7%) | 0.70 | 9 |
+| RDWU | 95 | 54 (56.8%) | 41 (43.2%) | 0.52 | 9 |
+| GOVX | 4 | 1 (25.0%) | 3 (75.0%) | 0.47 | 0 |
+
+OHLC drift: **zero across all symbols.** Trade-count drift in worst rows: matches. So the fix moved bar-finalization timing closer to the rebuild path, but volume is still being lost on the periodic-close path.
+
+### The actual bug
+
+`SchwabNativeBarBuilder.check_bar_closes()` was resetting `_current_bar_last_cum_volume = None` after closing a bar. The next trade for the next bucket then called `_resolve_volume_delta(size, cum_vol)` with no baseline, fell back to `last_size` (LEVELONE field 9 — typically a single-print size), and under-counted that bar's volume by the entire cum-volume delta that should have flowed in.
+
+The natural-close path (bucket transition via `on_trade`) does NOT have this bug — it preserves `_current_bar_last_cum_volume` until the very end of the transition block. Rebuild only ever uses the natural-close path (no periodic close), which is why rebuild matches and persistence drifts.
+
+The `persisted_vol == 1` cases scattered across symbols (7-18 per symbol) are this bug at its worst: single-trade quiet bars where `last_size = 0` triggers the `max(1, last_size or 0)` floor in the trade extractor. The `persisted ≤ 5% of rebuilt` category catches the next tier (24-25 bars per active symbol).
+
+### Fix applied
+
+`src/project_mai_tai/strategy_core/schwab_native_30s.py::SchwabNativeBarBuilder.check_bar_closes()`:
+
+- **Before:** after closing the bar, reset both `self._current_bar = None` and `self._current_bar_last_cum_volume = None`.
+- **After:** keep `self._current_bar_last_cum_volume` so the next trade computes a real cum-volume delta. Drop only `self._current_bar = None`.
+
+Side effect to acknowledge: if a stretch is genuinely quiet for many minutes, the next trade's delta will include all the off-screen volume, attributed to the bucket of the first new trade. That's the **same overcount** the natural-close path already has — not a regression.
+
+Regression test added at `tests/unit/test_strategy_core_cum_vol_fix.py`. All 5 close_grace + cum_vol tests pass locally.
+
+### GitHub status
+
+Pushed as second commit on the existing PR branch:
+
+- Commit `951e7bf` "Preserve cum_vol baseline across check_bar_closes() periodic close"
+- Branch `fix/macd-30s-close-grace` now has commits `1b51ef0` (close_grace) + `951e7bf` (cum_vol baseline)
+- PR-create URL: https://github.com/krshk30/project-mai-tai/pull/new/fix/macd-30s-close-grace
+
+### Deploy log
+
+- Preflight at `10:35 UTC`: `virtual_positions=0`, `pending_intents=0`, `recon_findings=0`, market in pre-market session.
+- File copied to VPS: `src/project_mai_tai/strategy_core/schwab_native_30s.py`.
+- Restarted: `sudo systemctl restart project-mai-tai-strategy.service`. Active since `Thu 2026-05-07 10:35:42 UTC` (`06:35:42 ET`), PID `1040448`.
+- Hydration in progress at write time. Re-validation pending fresh bar accumulation.
+
+### Required next validation
+
+After ~30-40 min of fresh post-restart bars (target `~11:10 UTC` / `07:10 ET`), re-run the same comparison only on bars after `2026-05-07 10:35:42 UTC`:
+
+```
+ssh mai-tai-vps "cd /home/trader/project-mai-tai && .venv/bin/python /tmp/bar_drift_analyze.py \
+    --archive-dir /var/lib/project-mai-tai/schwab_ticks/2026-05-07 \
+    --date 2026-05-07 \
+    --restart-iso 2026-05-07T10:35:42+00:00 \
+    --symbols IONZ ONEG AHMA STFS MASK RDWU GOVX"
+```
+
+Pass criteria:
+
+- `persisted_vol == 1` count drops to near zero (it was the smoking gun for the cum_vol baseline reset).
+- `persisted ≤ 5% of rebuilt` count drops to near zero (likewise).
+- Total persisted/rebuilt volume ratio rises from `0.47-0.80` baseline to `>0.95` for active symbols.
+- OHLC drift remains at zero (no regression).
+- If ratios still under 0.9, that's a separate issue — likely true LEVELONE-vs-tape gaps that the architecture proposal §4 predicted, and should be accepted as quote-derived drift rather than chased further.
+
+
+
+User asked to resume the Schwab 30s investigation despite the earlier "pause Schwab 30s" priority note (kept below for chronology). The driver was the post-rollback validation pass on `2026-05-06`: `macd_30s` bars were persisting again with no TIMESALE warnings, but persisted-vs-rebuilt parity in the `19:13:30 - 19:58:30 ET` window still showed broad drift, dominated by **volume** mismatches:
+
+| symbol | rebuilt | persisted | missing | OHLC drift | volume drift | trade-count drift |
+| --- | --- | --- | --- | --- | --- | --- |
+| AHMA | 83 | 81 | 2 | 2 | 40 | 2 |
+| GCTK | 69 | 68 | 1 | 2 | 39 | 2 |
+| GOVX | 10 | 10 | 0 | 0 | 2 | 1 |
+| IONZ | 79 | 78 | 1 | 1 | 35 | 1 |
+| MASK | 43 | 41 | 2 | 0 | 22 | 0 |
+| ONEG | 33 | 32 | 1 | 0 | 16 | 0 |
+| RDWU | 46 | 46 | 0 | 0 | 24 | 1 |
+| STFS | 51 | 49 | 2 | 0 | 20 | 0 |
+
+### Root cause: live closes bars `close_grace` seconds before the rebuild does
+
+The live runtime and the rebuild script (`scripts/check_bar_build_runtime.py`) both feed the **same** `SchwabNativeBarBuilder` from the **same** Schwab tick archive. Identical inputs should produce identical bars. The asymmetry is in **bar finalization timing**:
+
+- `src/project_mai_tai/strategy_core/schwab_native_30s.py::SchwabNativeBarBuilder.check_bar_closes()` runs periodically in the live runtime (every snapshot batch). It force-closes the current bar once `now_ts - close_grace_seconds >= current_bar_start + 30`.
+- With `close_grace_seconds = 2.0` for `macd_30s`, a 19:13:30 bucket is closed at wall-clock 19:14:02 — even before any 19:14:00-bucket trade has arrived.
+- Late-arriving LEVELONE updates whose field 35 (`TRADE_TIME_MILLIS`) still falls inside the just-closed bucket are then rejected by the stale-trade guard at the top of `on_trade()` (with `fill_gap_bars=False`, the closed bar is never synthetic, so the late trade is silently dropped).
+- The rebuild script never calls `check_bar_closes()`. Its `current_bar` stays open until the **first trade for the next bucket** arrives. Late trades for the previous bucket land cleanly.
+
+LEVELONE field 35 routinely lags wall-clock arrival by 0-5+ seconds during active periods, so this asymmetry chops the last 0-2 seconds of trade volume off most active bars in the live persisted series. That matches the drift pattern exactly: ~40-50% of bars show volume drift, but only 0-2 OHLC drifts per symbol (late trades rarely set new high/low) and 0-2 trade-count drifts (only a handful of trades dropped per bar).
+
+The LEVELONE rollback from earlier today fixed the "no bars at all" problem (TIMESALE silent-failure) but never targeted this drift; this entry addresses the drift specifically.
+
+### Change applied
+
+- `src/project_mai_tai/settings.py` line 89:
+  - `strategy_macd_30s_tick_bar_close_grace_seconds` default: `2.0` → `5.0`
+- `strategy_webull_30s_tick_bar_close_grace_seconds` (line 94) was deliberately **left at 2.0** — Polygon trade timestamps don't have the same lag and the Polygon workstream has its own active drift investigation.
+- No code changes. The grace setting is consumed at `services/strategy_engine_app.py:3200` when constructing the `SchwabNativeBarBuilderManager` for `macd_30s`.
+
+### Deploy log
+
+- Preflight (post-market, off-hours) before restart:
+  - `/health`: market-data, strategy, oms-risk healthy. Reconciler shows `cutover_confidence=0` and 30 stale findings (carry-over backlog), `/api/reconciliation` reports 0 current findings.
+  - `virtual_positions=0`, `account_positions=2` (broker positions not strategy-attributed; carry-over).
+  - 9 pending/submitted intents (stale, same backlog context as the earlier `23:11:31 UTC` restart).
+- File copied to VPS: `src/project_mai_tai/settings.py`.
+- Restarted: `sudo systemctl restart project-mai-tai-strategy.service` (strategy-only restart per `docs/live-market-restart-runbook.md`; market-data and OMS untouched).
+- Service active since `Thu 2026-05-07 02:01:34 UTC` (`Wed 2026-05-06 22:01:34 ET`), PID `1029741`.
+- Post-restart logs:
+  - `strategy bot config | schwab_30s=True webull_30s=True schwab_1m=True ... bots=['macd_30s', 'schwab_1m', 'webull_30s']`
+  - `Momentum alert engine restored | history_cycles=91 spike_tickers=1226 cooldowns=0`
+  - `seeded 8 confirmed candidates for fresh restart revalidation`
+- Runtime probe under the production env confirmed:
+  - `macd_30s_close_grace = 5.0`
+  - `webull_30s_close_grace = 2.0`
+  - `macd_30s_trade_stream = LEVELONE_EQUITIES`
+- Verified `/etc/project-mai-tai/project-mai-tai.env` does **not** override `MAI_TAI_STRATEGY_MACD_30S_TICK_BAR_CLOSE_GRACE_SECONDS`, so the new settings.py default is what the running service uses.
+
+### GitHub sync status
+
+The `close_grace_seconds` feature has now been backported to a clean branch off `origin/main`:
+
+- Branch: `fix/macd-30s-close-grace` (HEAD: `1b51ef0`)
+- PR-create URL: https://github.com/krshk30/project-mai-tai/pull/new/fix/macd-30s-close-grace
+- Diff scope: 5 files, +83 / -13. `settings.py` (2 new settings), `strategy_core/schwab_native_30s.py` (constructor param + `check_bar_closes()` honors grace), `services/strategy_engine_app.py` (passes settings to the manager construction sites for `macd_30s` and `webull_30s`), `tests/unit/test_strategy_core.py` (3 new regression tests), `tests/unit/test_strategy_engine_service.py` (existing `Settings(...)` construction sites pinned to `close_grace=0.0` so timing-sensitive tests stay deterministic regardless of the new default).
+- The 3 new regression tests pass locally. A broader pre-existing failure in `test_strategy_engine_service.py` was reproduced on a pristine `origin/main` checkout in the same local venv before any of this branch's changes were applied — those failures are not introduced by this PR. CI on the PR is the source of truth.
+
+**Once that PR merges to `main`**, the VPS and `main` are in sync for this setting and the surrounding bar-builder grace logic. The `LEVELONE_EQUITIES` default for `strategy_macd_30s_trade_stream_service` and the TIMESALE plumbing are still WIP-only on the VPS — they were intentionally left out of this PR to keep it surgical and reviewable.
+
+Suggested follow-up (separate task) to close the remaining sync gap:
+
+- Backport `strategy_macd_30s_trade_stream_service` default + the LEVELONE/TIMESALE dedupe logic in `schwab_streamer.py` as a separate PR. Smaller scope than the close_grace feature; doable in one sitting once the user is ready.
+
+### Required next validation (next active session — pre-market is fine)
+
+Validation can start as soon as there is roughly an hour of fresh post-restart bar history on at least one active `macd_30s` symbol. Mai Tai is live from `4 AM ET`, so the first reasonable check window is `~6 AM ET` (pre-market) onward — no need to wait for the regular-session open at `9:30 ET`. Compare provider-rebuild vs persisted `StrategyBarHistory` for `macd_30s` symbols active after the `02:01:34 UTC` restart, **only** within fresh post-restart windows. Pass criteria for this fix:
+
+- Volume-drift bar count drops materially from the `35-50%` baseline observed today. Target: under `10%`.
+- OHLC drift stays at or below today's baseline (it should — close-grace doesn't alter price extremes meaningfully).
+- Trade-count drift stays at or below today's baseline.
+- Bar-finalization latency (clock time between bucket end and bar persistence) increases by ~3s — acceptable for a 30s bar.
+
+If the fix works, the dominant remaining drift category for Schwab 30s bars should switch from "volume" to "fundamental LEVELONE quote-vs-tape" gaps that match what the architecture proposal predicted at `docs/30s-bar-architecture-proposal.md` §4. If volume drift is still ~40% of bars, the close_grace bump didn't help and the next move is option 2 from tonight's investigation: have `check_bar_closes()` not preemptively close at all for tick-built builders (close only on the first trade of the next bucket).
+
+
+
+Current priority decision:
+
+- Put the `Schwab 30 Sec Bot` deep-dive on hold for now.
+- The latest post-restart `macd_30s` recheck still showed broad persisted-vs-rebuilt drift dominated by volume differences, even though there were no new `TIMESALE` warnings after the rollback to `LEVELONE_EQUITIES`.
+- Resume Schwab `30s` work only after the Polygon `30s` path is cleaner and easier to use as the primary sub-minute reference bot.
+
+What this means operationally:
+
+- Do not spend the next session cycling more Schwab `30s` source changes first.
+- Keep the current Schwab-side safety state:
+  - default `LEVELONE_EQUITIES`
+  - no new `TIMESALE` warning activity after the `2026-05-06 23:11:31 UTC` restart
+- Treat Polygon `30s` as the active bar-integrity workstream until its remaining shared-bar drift is better understood.
+
+## 2026-05-06 Polygon 30s follow-up: replayed historical warmup bars now persist into StrategyBarHistory, which cleared the remaining restart-tail missing bars
+
+This session fixed the next concrete hole that was still preventing a clean Polygon `30s` restart verdict.
+
+Root cause:
+
+- After the prior restart-gap mitigation, the market-data gateway was successfully replaying provider `historical_bars` back into the strategy runtime.
+- But in `src/project_mai_tai/services/strategy_engine_app.py`, that replay path only hydrated runtime memory.
+- It did **not** persist the same replayed provider bars into `StrategyBarHistory`.
+- Result:
+  - restart-time tail buckets like `19:59:00 ET` / `19:59:30 ET` could still remain `provider_only`
+  - even though the strategy had already seen those bars during warmup replay
+
+Fix applied:
+
+- `src/project_mai_tai/services/strategy_engine_app.py`
+  - in `_hydrate_recent_historical_bars(...)`, when `historical_bars` replay hydrates a generic live-aggregate bot, it now also calls `_persist_generic_provider_history_bars(...)`
+  - replay log lines now include `| persisted=N` just like the direct-provider fallback path
+- `tests/unit/test_strategy_engine_service.py`
+  - added a focused regression proving that replayed `historical_bars` for `webull_30s` are persisted into `StrategyBarHistory`
+
+Focused local validation passed:
+
+- `pytest tests/unit/test_strategy_engine_service.py -k "subscription_sync_persists_replayed_polygon_historical_bars or hydrate_generic_history_from_provider_seeds_webull_when_replay_is_missing" -q`
+  - `2 passed`
+- `pytest tests/unit/test_webull_30s_bot.py -q`
+  - `20 passed`
+- `pytest tests/unit/test_market_data_gateway.py -q`
+  - `7 passed`
+- `py_compile` passed on:
+  - `src/project_mai_tai/services/strategy_engine_app.py`
+  - `tests/unit/test_strategy_engine_service.py`
+
+Deployment completed on VPS:
+
+- copied:
+  - `src/project_mai_tai/services/strategy_engine_app.py`
+- restarted:
+  - `project-mai-tai-strategy.service`
+- service reported active with:
+  - `ActiveEnterTimestamp=Thu 2026-05-07 00:18:22 UTC`
+  - ET `2026-05-06 20:18:22`
+
+Live validation after deploy:
+
+- Startup replay logs now explicitly show replayed Polygon warmup bars persisting into history, for example:
+  - `AHMA @ 30s ... | persisted=7`
+  - `STFS @ 30s ... | persisted=3`
+  - `RDWU @ 30s ... | persisted=1`
+  - `ONEG @ 30s ... | persisted=3`
+  - `MASK @ 30s ... | persisted=6`
+  - `IONZ @ 30s ... | persisted=3`
+  - `GOVX @ 30s ... | persisted=1`
+  - `GCTK @ 30s ... | persisted=5`
+
+Most important live result:
+
+- The previously remaining `provider_only` restart-tail bars are now gone on the validated end-of-session overlap window starting `2026-05-06 23:30:00 UTC`.
+- Current provider-vs-persisted counts:
+  - `IONZ`
+    - provider `44`
+    - persisted `44`
+    - provider-only `0`
+  - `AHMA`
+    - provider `44`
+    - persisted `44`
+    - provider-only `0`
+  - `GCTK`
+    - provider `39`
+    - persisted `39`
+    - provider-only `0`
+  - `RDWU`
+    - provider `18`
+    - persisted `18`
+    - provider-only `0`
+  - `GOVX`
+    - provider `3`
+    - persisted `3`
+    - provider-only `0`
+  - `MASK`
+    - provider `25`
+    - persisted `25`
+    - provider-only `0`
+  - `ONEG`
+    - provider `12`
+    - persisted `12`
+    - provider-only `0`
+  - `STFS`
+    - provider `16`
+    - persisted `16`
+    - provider-only `0`
+
+Meaning:
+
+- The Polygon restart-tail **missing-bar** problem appears fixed by this replay persistence patch.
+- The remaining Polygon issue is now much narrower:
+  - shared-bar value drift still exists even when counts line up
+  - the dominant mismatch category is still `trade_count`
+  - some names also still show smaller `volume` / limited `OHLC` drift
+
+Current mismatch examples from the same validated window:
+
+- `IONZ`
+  - `mismatches=23`
+  - `ohlc_bars=7`
+  - `volume_bars=8`
+  - `trade_count_bars=23`
+- `AHMA`
+  - `mismatches=23`
+  - `ohlc_bars=4`
+  - `volume_bars=5`
+  - `trade_count_bars=23`
+- `GCTK`
+  - `mismatches=14`
+  - `ohlc_bars=1`
+  - `volume_bars=1`
+  - `trade_count_bars=14`
+- `MASK`
+  - `mismatches=7`
+  - all remaining drift is trade-count only
+- `STFS`
+  - `mismatches=7`
+  - all remaining drift is trade-count only
+
+Bottom line:
+
+- Restart-gap / restart-tail persistence integrity for Polygon looks materially fixed.
+- Polygon `30s` is still **not fully validated clean overall** because shared-bar drift remains.
+- The next workstream should stop chasing missing bars and focus specifically on:
+  - why live-built shared bars undercount `trade_count`
+  - whether that is a provider semantic mismatch, our aggregate interpretation, or a builder policy issue
+
+## 2026-05-06 Polygon 30s restart-gap mitigation deployed: live stream publish no longer blocks on warmup, startup now restores subscriptions first, provider history backfills persisted bars, and Redis market-data retention increased
+
+This session implemented the next direct fix for the `webull_30s` / user-facing `Polygon 30 Sec Bot` restart-hole problem that had been showing up as long `provider_only` gaps after market-data or strategy restarts.
+
+What changed:
+
+- `src/project_mai_tai/market_data/gateway.py`
+  - startup now restores the latest `market-data-subscriptions` state from Redis before the Polygon websocket is started
+  - startup no longer blocks live `trade_tick` / `quote_tick` / `live_bar` publishing on historical warmup
+  - historical warmup for the active symbol set now runs as a background task after the live publish loops start
+- `src/project_mai_tai/services/strategy_engine_app.py`
+  - direct provider hydration for generic live-aggregate bots now also backfills `StrategyBarHistory`
+  - the new persistence helper replays an overlap window and upserts recent provider bars into persisted canonical history instead of only seeding runtime memory
+- `src/project_mai_tai/settings.py`
+  - `redis_market_data_stream_maxlen` increased:
+    - from `10_000`
+    - to `100_000`
+- tests updated:
+  - `tests/unit/test_market_data_gateway.py`
+  - `tests/unit/test_strategy_engine_service.py`
+
+Why this was changed:
+
+- Live diagnosis strongly suggested the earlier huge Polygon restart gap was not a ticker-specific provider limitation.
+- The bigger issue was our own startup path:
+  - market-data could spend too long in warmup before publishing fresh live bars
+  - strategy hydration from direct provider history seeded runtime memory but did not canonically persist the startup window
+  - Redis `market-data` retention at `10_000` entries was too shallow for restart/recovery validation and made backlog loss more likely during busy periods
+
+Focused local validation passed:
+
+- `pytest tests/unit/test_market_data_gateway.py -q`
+  - `7 passed`
+- `pytest tests/unit/test_strategy_engine_service.py -k "hydrate_generic_history_from_provider or initialize_stream_offsets" -q`
+  - `2 passed`
+- `pytest tests/unit/test_webull_30s_bot.py -q`
+  - `20 passed`
+- `pytest tests/unit/test_historical_bar_seed_order.py -q`
+  - `3 passed`
+- `py_compile` passed on:
+  - `src/project_mai_tai/market_data/gateway.py`
+  - `src/project_mai_tai/services/strategy_engine_app.py`
+  - `src/project_mai_tai/settings.py`
+  - `tests/unit/test_market_data_gateway.py`
+  - `tests/unit/test_strategy_engine_service.py`
+
+Deployment completed on VPS:
+
+- copied:
+  - `src/project_mai_tai/market_data/gateway.py`
+  - `src/project_mai_tai/services/strategy_engine_app.py`
+  - `src/project_mai_tai/settings.py`
+- restarted in runbook order:
+  - stopped `project-mai-tai-strategy.service`
+  - restarted `project-mai-tai-market-data.service`
+  - started `project-mai-tai-strategy.service`
+- both services reported active with:
+  - `ActiveEnterTimestamp=Wed 2026-05-06 23:59:44 UTC`
+  - ET `2026-05-06 19:59:44`
+
+Live validation after deploy:
+
+- `/api/overview` showed the restarted market-data gateway healthy again with:
+  - `active_symbols = 8`
+  - active subscription symbols:
+    - `AHMA`
+    - `GCTK`
+    - `GOVX`
+    - `IONZ`
+    - `MASK`
+    - `ONEG`
+    - `RDWU`
+    - `STFS`
+- VPS runtime probe confirmed the deployed setting value:
+  - `redis_market_data_stream_maxlen = 100000`
+
+Most important result:
+
+- The earlier giant multi-minute post-restart Polygon hole appears materially smaller after this fix.
+- In the end-of-session validation window `2026-05-06 23:30:00 UTC` through the close:
+  - `IONZ`
+    - provider `44`
+    - persisted `43`
+    - provider-only missing `1`
+    - tail missing bucket `19:59:00 ET`
+  - `AHMA`
+    - provider `44`
+    - persisted `42`
+    - provider-only missing `2`
+    - tail missing buckets `19:59:00 ET`, `19:59:30 ET`
+  - `GCTK`
+    - provider `39`
+    - persisted `37`
+    - provider-only missing `2`
+    - tail missing buckets `19:59:00 ET`, `19:59:30 ET`
+  - `MASK`
+    - provider `25`
+    - persisted `23`
+    - provider-only missing `2`
+    - tail missing buckets `19:59:00 ET`, `19:59:30 ET`
+  - `ONEG`
+    - provider `12`
+    - persisted `11`
+    - provider-only missing `1`
+    - tail missing bucket `19:59:30 ET`
+  - `STFS`
+    - provider `16`
+    - persisted `14`
+    - provider-only missing `2`
+    - tail missing buckets `19:59:00 ET`, `19:59:30 ET`
+  - `RDWU`
+    - provider `18`
+    - persisted `18`
+    - provider-only missing `0`
+  - `GOVX`
+    - provider `3`
+    - persisted `3`
+    - provider-only missing `0`
+
+Interpretation:
+
+- This is a real improvement versus the earlier long restart hole where names like `IONZ`, `AHMA`, and `GCTK` lost large blocks of bars after restart.
+- The deployed fix appears to have reduced the failure mode down to the final `1-2` provider bars near the `19:59 ET` close on several names rather than a prolonged missing block.
+- However, Polygon 30s persistence is still **not fully clean**:
+  - steady-state shared-bar drift remains, especially `trade_count`
+  - examples from the same `23:30 UTC` validation window:
+    - `IONZ`: `mismatches=23`, `ohlc_bars=7`, `volume_bars=8`, `trade_count_bars=23`
+    - `AHMA`: `mismatches=27`, `ohlc_bars=5`, `volume_bars=7`, `trade_count_bars=27`
+    - `GCTK`: `mismatches=16`, `ohlc_bars=1`, `volume_bars=1`, `trade_count_bars=16`
+    - `RDWU`: `mismatches=14`, all `trade_count` only
+
+Important caveat:
+
+- Because this restart happened at `19:59:44 ET`, there was almost no post-restart live session left.
+- Immediate “bars strictly after restart timestamp” checks returned zero fresh persisted `webull_30s` rows, so the best live proof available in this session was the end-of-session overlap comparison above, not a longer morning-style post-restart window.
+
+Best next step:
+
+- Re-run the same provider-vs-persisted validation on the next active morning session after a mid-session Polygon restart.
+- Focus on whether:
+  - the old multi-minute restart hole is fully gone
+  - only a tiny tail loss remains
+  - or morning activity still exposes a broader persistence gap
+- After that, separate remaining work into:
+  - restart-hole integrity
+  - shared-bar `trade_count` drift
+  - any residual OHLC or volume drift
+
+## 2026-05-06 Schwab 30s deploy follow-up: default trade stream reverted to LEVELONE_EQUITIES while keeping TIMESALE fallback guard code in place
+
+This session applied and deployed the immediate Schwab-side safety rollback that had been recommended in the research handoff.
+
+What changed:
+
+- `src/project_mai_tai/settings.py`
+  - `strategy_macd_30s_trade_stream_service` default changed:
+    - from `TIMESALE_EQUITY`
+    - to `LEVELONE_EQUITIES`
+- `tests/unit/test_strategy_engine_service.py`
+  - updated the focused expectation so the default `macd_30s` runtime now asserts `trade_tick_service == "LEVELONE_EQUITIES"`
+
+Important scope note:
+
+- This session intentionally changed only the Schwab 30s default.
+- `webull_30s` / user-facing `Polygon 30 Sec Bot` was **not** changed here, because it is already routed through Polygon market data rather than the Schwab stream bot set.
+- The existing TIMESALE fallback / disable plumbing in `src/project_mai_tai/market_data/schwab_streamer.py` was left in place exactly as requested.
+
+Focused local validation passed:
+
+- `pytest tests/unit/test_strategy_engine_service.py -k "macd_30s_uses_configured_tick_bar_close_grace or sync_subscription_targets_includes_schwab_symbols_when_stream_fallback_is_active" -q`
+  - `2 passed`
+- `python -m pytest tests/unit/test_schwab_1m_bot.py -k "timesale or sync_subscriptions_swallows_clean_socket_close or chart_equity" -q`
+  - `8 passed`
+- `py_compile` passed on:
+  - `src/project_mai_tai/settings.py`
+  - `src/project_mai_tai/market_data/schwab_streamer.py`
+  - `tests/unit/test_strategy_engine_service.py`
+  - `tests/unit/test_schwab_1m_bot.py`
+
+Deployment completed on VPS:
+
+- copied:
+  - `src/project_mai_tai/settings.py`
+- restarted:
+  - `project-mai-tai-strategy.service`
+- service reported active with:
+  - `ActiveEnterTimestamp=Wed 2026-05-06 23:11:31 UTC`
+  - ET `2026-05-06 19:11:31`
+
+Live validation completed after deploy:
+
+- Production runtime probe under the VPS service env showed:
+  - `settings_trade_stream LEVELONE_EQUITIES`
+  - `runtime_trade_stream LEVELONE_EQUITIES`
+  - `schwab_timesale_symbols []`
+  - `schwab_stream_symbols ['ELAB']`
+- That confirms the deployed Schwab 30s runtime now:
+  - still subscribes Schwab symbols normally
+  - does **not** place active `macd_30s` symbols into the TIMESALE set by default
+
+Additional live evidence:
+
+- The latest `TIMESALE` warnings in `/var/log/project-mai-tai/strategy.log` are still from:
+  - `2026-05-06 23:09:04 UTC`
+- Those are pre-restart lines from the old timesale-default runtime.
+- No newer `TIMESALE_EQUITY` warning lines were present after the `23:11:31 UTC` restart in this session.
+
+Current post-restart bar status:
+
+- As of the immediate follow-up check, fresh persisted `macd_30s` rows at or after:
+  - `2026-05-06 23:11:31 UTC`
+  were still:
+  - `0`
+- So this session **did** validate the deployed config/runtime source path,
+- but it did **not yet** get a new post-restart bar overlap window to judge persisted-vs-rebuilt Schwab 30s integrity.
+
+Operational notes:
+
+- Preflight before restart showed:
+  - `virtual_positions = 0`
+  - `submitted_intents = 29`
+  - `submitted_orders = 0`
+- This was still treated as acceptable for the strategy-only restart because the restart target was the paper/live-mixed strategy runtime state rather than an OMS/broker-side order mutation, but the stale submitted-intent backlog remains a known context item.
+
+Required next validation:
+
+- On the next active Schwab `macd_30s` window after this restart baseline, compare only rows after:
+  - `2026-05-06 23:11:31 UTC`
+- Focus on:
+  - whether persisted `macd_30s` bars now appear again without any TIMESALE fallback event
+  - whether zero-volume synthetic persisted bars remain gone
+  - whether OHLC still stays aligned with rebuilt archived Schwab ticks
+  - how much volume drift remains now that the bot is back on the intended quote-derived level-one path by default
+
+## 2026-05-06 Schwab 30s bar building: revert default trade-tick source to LEVELONE_EQUITIES (TIMESALE_EQUITY is not a real Schwab service)
+
+This session was research-only. **No code was changed.** The recommendation below is for the next agent to apply, deploy, and validate.
+
+### Symptom that prompted this
+
+- `macd_30s` (Schwab 30s bot) is not building bars as expected.
+- A prior session attempted to switch the canonical trade-tick source to `TIMESALE_EQUITY`. After the switch, the streamer "doesn't connect at all" — the 30s bot has been effectively unusable.
+
+### Root cause
+
+`TIMESALE_EQUITY` is **not** a working stream on Schwab's modern Trader API. It is a TD Ameritrade legacy service that was never carried forward. When subscribed, Schwab either silently delivers nothing or returns "service unavailable", and our streamer's local subscription state still suppresses LEVELONE trades for those symbols, so trades flow from neither source and the bar builder receives nothing.
+
+Specifically, in `src/project_mai_tai/market_data/schwab_streamer.py`:
+
+1. `_apply_subscription_delta()` sets `self._subscribed_timesale_symbols = desired_timesale` immediately after sending the SUBS, **before** Schwab confirms the service is available.
+2. `_extract_records()` suppresses LEVELONE trade extraction for any symbol present in `_subscribed_timesale_symbols`:
+   ```
+   if symbol in normalized_timesale_symbols:
+       continue
+   ```
+3. `_disable_timesale_service()` only fires on a non-zero error code in a `response` payload. If Schwab silently accepts the SUBS but never delivers data (the actual behavior for unsupported services), the suppression set never clears.
+4. There is no liveness watchdog ("no TIMESALE messages received in N seconds, fall back to LEVELONE").
+
+Net effect: trades for active 30s symbols are dropped from BOTH sources → bar builder gets nothing → no `macd_30s` / `webull_30s` bars persisted.
+
+### Evidence that TIMESALE_EQUITY is not a real Schwab service
+
+- Direct fetch of `schwab/streaming.py` and `docs/streaming.rst` from `alexgolec/schwab-py` `main` shows **zero references to TIMESALE** anywhere — neither in the source nor the docs.
+- `schwab-py`'s "Stream Statuses" lists confirmed-working streams as: Charts, Level One, Level Two, Screener, Account Activity. No TIMESALE for equities.
+- The schwab-py streaming docs explicitly warn: *"some streams may have been carried over which don't actually work. What's more, some streams never worked, even in tda-api, but were only implemented because some old, now-defunct documentation referred to them."* `FOREX_BOOK`, `FUTURES_BOOK`, `FUTURES_OPTIONS_BOOK` are explicitly excluded for that reason — `TIMESALE_EQUITY` is in the same category.
+- `TIMESALE_OPTIONS` (for options) does exist; that is why "TIMESALE" appears in some Schwab marketing material. It does not help equity 30s bars.
+
+Sources:
+
+- https://schwab-py.readthedocs.io/en/latest/streaming.html
+- https://github.com/alexgolec/schwab-py/blob/main/schwab/streaming.py
+- https://github.com/alexgolec/schwab-py/blob/main/docs/streaming.rst
+
+### Required next change (minimum, surgical)
+
+`src/project_mai_tai/settings.py`:
+
+- line 90: `strategy_macd_30s_trade_stream_service: str = "LEVELONE_EQUITIES"` (was `"TIMESALE_EQUITY"`)
+- line 95: `strategy_webull_30s_trade_stream_service: str = "LEVELONE_EQUITIES"` (was `"TIMESALE_EQUITY"`)
+
+This is a defaults change only. The TIMESALE plumbing in `schwab_streamer.py` and `services/strategy_engine_app.py` can remain in place but unused — when `trade_tick_service != "TIMESALE_EQUITY"`, `schwab_timesale_symbols()` returns empty and no TIMESALE SUBS is sent, so the silent-failure trap above never engages.
+
+### Optional follow-up (separate PR)
+
+Either remove TIMESALE wiring entirely (Phase 2 of `docs/30s-bar-architecture-proposal.md` is now answered: skip TIMESALE), **or** keep it behind the env override and add the safety nets so a future re-attempt cannot silently drop trades:
+
+- Do not add a symbol to `_subscribed_timesale_symbols` until at least one TIMESALE data message has arrived for the connection.
+- Add a watchdog: if TIMESALE has been "subscribed" for N seconds with zero TIMESALE data while LEVELONE is delivering, call `_disable_timesale_service(reason="no data")`.
+
+### Deploy and validation plan for the next agent
+
+1. Apply the `settings.py` change above on a fresh branch off `origin/main` (do not pile onto `codex/schwab-health-noise-backoff` — it has unrelated WIP).
+2. Push, open PR, let `validate` run. PR auto-merges per `README.md` deploy model (no `manual-merge` label needed unless requested).
+3. Run focused tests on the VPS or locally:
+   - `pytest tests/unit/test_schwab_streamer.py tests/unit/test_strategy_engine_service.py tests/unit/test_strategy_core.py -q`
+4. The change touches only strategy-engine consumption of settings. Use `Deploy Service` with `service=strategy` in GitHub Actions, following `docs/live-market-restart-runbook.md`. A full `Deploy Main` is not required.
+5. Validate live during the next morning session for the first active `macd_30s` symbol after the restart timestamp:
+   - Persisted `StrategyBarHistory` rows exist for every 30s bucket during regular session.
+   - No persisted bars with `volume = 0` and `trade_count = 0` for buckets that have real archived ticks.
+   - OHLC drift between persisted and rebuilt-from-archive is small (close prices should match exactly when the same trade tape produced both).
+   - The first persisted bucket after symbol activation is not a partial / `trade_count=1` bucket (the existing skip-first-mid-bucket logic should already handle that).
+   - Do **not** judge this deploy against pre-restart rows.
+
+### Existing 30s integrity fixes are independent of this change
+
+The earlier deployed bar-integrity fixes still stand:
+
+- archive-retention layer keeps confirmed symbols subscribed longer for raw data capture.
+- when `use_live_aggregate_bars = False`, `live_bar` packets no longer mutate tick-built builders.
+- synthetic quiet-bar replacement: a later real trade in the same bucket replaces the synthetic close.
+- Polygon `fetch_historical_bars()` filters out the trailing in-progress bar.
+- runtime skips first mid-bucket live aggregate bucket per symbol.
+
+The recommendation here is purely about the trade-tick **source**: stay on `LEVELONE_EQUITIES`. The persisted Schwab 30s series is therefore quote-derived, per `docs/30s-bar-architecture-proposal.md` Phase 1 — accept that volume/trade_count parity with a true trade tape is approximate.
+
+## 2026-05-06 Polygon 30s deploy follow-up: partial-bucket guard is now coverage-aware instead of first-aggregate-timestamp-based
+
+This session fixed the most likely root cause behind the remaining `webull_30s` / user-facing `Polygon 30 Sec Bot` underbuilding on thinner names.
+
+Docs / best-practice takeaway that drove the change:
+
+- Polygon / Massive aggregate streams are trade-derived.
+- A missing earlier per-second aggregate does **not** necessarily mean we lacked subscription coverage for that second.
+- On thin symbols, the first valid aggregate for a `30s` bucket can arrive several seconds into the bucket simply because there were no earlier eligible trades.
+- Our prior guard treated that pattern as a guaranteed partial bucket and skipped it, which likely caused us to throw away legitimate sparse bars.
+
+New root cause addressed:
+
+1. Coverage was inferred from first aggregate arrival time instead of actual provider coverage start.
+- The old guard said: if the first live aggregate for a symbol arrived after bucket start, skip the whole `30s` bucket.
+- That was too blunt for sparse names and matched the live failure pattern:
+  - many repeated `skipping partial live aggregate bucket` logs
+  - symbols like `IONZ`, `GCTK`, `AHMA`, `RDWU`, `STFS` underbuilding even when the provider likely had valid sparse coverage
+- The correct question is not "when did the first aggregate print arrive?"
+- The correct question is "when did provider coverage for this symbol begin on this websocket session?"
+
+What changed locally:
+
+- `src/project_mai_tai/market_data/massive_provider.py`
+  - `MassiveTradeStream` now tracks per-symbol live coverage start timestamps.
+  - Coverage timestamps are set:
+    - when a symbol is first subscribed on an active connection
+    - when the websocket reconnects and resubscribes the full symbol set
+  - `LiveBarRecord` aggregate callbacks now carry `coverage_started_at`.
+- `src/project_mai_tai/events.py`
+  - `LiveBarPayload` now includes optional `coverage_started_at`.
+- `src/project_mai_tai/market_data/models.py`
+  - `LiveBarRecord` now includes optional `coverage_started_at` and serializes it into the live-bar payload.
+- `src/project_mai_tai/services/strategy_engine_app.py`
+  - `handle_live_bar(...)` now accepts `coverage_started_at`.
+  - `_should_skip_partial_live_aggregate_bucket(...)` is now coverage-aware:
+    - if `coverage_started_at <= bucket_start`, keep the bucket even if the first aggregate arrives later inside the bucket
+    - if `coverage_started_at > bucket_start`, skip the bucket as truly partial
+  - if coverage metadata is ever missing, the old first-aggregate timestamp heuristic remains as a fallback
+
+Why this is safer:
+
+- It preserves the intended protection against:
+  - true mid-bucket symbol activation
+  - true websocket reconnect mid-bucket
+- It stops conflating those cases with:
+  - legitimate sparse buckets where the first eligible trade simply occurred later
+
+Focused local validation passed:
+
+- `pytest tests/unit/test_webull_30s_bot.py -q`
+  - `20 passed`
+- `pytest tests/unit/test_strategy_engine_service.py -k "live_bar_event_routes_generic_market_data_bots or live_bar_event_forwards_provider_coverage_timestamp or live_second_bars_can_generate_open_intent_for_webull_30s_bot" -q`
+  - `2 passed`
+- `pytest tests/unit/test_market_data_gateway.py -q`
+  - `6 passed`
+- `python -m pytest tests/unit/test_schwab_1m_bot.py -k "webull_30s or polygon_30s or chart_equity" -q`
+  - `3 passed`
+- `py_compile` passed on:
+  - `src/project_mai_tai/events.py`
+  - `src/project_mai_tai/market_data/models.py`
+  - `src/project_mai_tai/market_data/massive_provider.py`
+  - `src/project_mai_tai/services/strategy_engine_app.py`
+  - updated focused tests
+
+Deployment completed on VPS:
+
+- copied:
+  - `src/project_mai_tai/events.py`
+  - `src/project_mai_tai/market_data/models.py`
+  - `src/project_mai_tai/market_data/massive_provider.py`
+  - `src/project_mai_tai/services/strategy_engine_app.py`
+- restarted in active-session safe order from the runbook:
+  - stopped `project-mai-tai-strategy.service`
+  - restarted `project-mai-tai-market-data.service`
+  - started `project-mai-tai-strategy.service`
+- both services reported active with:
+  - `ActiveEnterTimestamp=Wed 2026-05-06 22:52:26 UTC`
+  - ET `2026-05-06 18:52:26`
+
+Live preflight before restart:
+
+- `virtual_positions` count with nonzero quantity was `0`
+- nonzero `account_positions` still existed only on paper accounts:
+  - `paper:macd_30s`
+  - `paper:schwab_1m`
+- several old `submitted` close intents were still present in the DB, also tied to paper flows
+- this deploy was therefore still treated as a strategy/market-data restart, but not as a live-money broker-risk restart
+
+Immediate live status after deploy:
+
+- Both services came back healthy.
+- Strategy restart restore took a while:
+  - `22:53:36 UTC` restored runtime bar history from DB
+  - `22:54:28 UTC` and later replayed large historical `30s` batches for:
+    - `AHMA`
+    - `STFS`
+    - `RDWU`
+    - `ONEG`
+- As of the first post-deploy check in this session, there were still `0` fresh persisted `webull_30s` rows at or after:
+  - `2026-05-06 22:52:26 UTC`
+- That means the first true post-deploy provider-vs-persisted overlap verdict is still pending.
+
+What to validate next:
+
+- As soon as the first fresh post-restart `webull_30s` rows land, compare only the overlap window after:
+  - `2026-05-06 22:52:26 UTC`
+- Focus on:
+  - whether the repeated partial-bucket skips drop materially on sparse names
+  - whether `provider_only` missing persisted bars shrink for:
+    - `IONZ`
+    - `GCTK`
+    - `AHMA`
+    - `STFS`
+    - `RDWU`
+    - `ONEG`
+  - whether OHLC/trade-count drift improves once sparse but fully covered buckets stop getting discarded
+
+## 2026-05-06 Polygon 30s deploy follow-up: canonical history now drops in-progress provider bars and skips first mid-bucket live buckets
+
+This session made and deployed a focused Polygon 30s integrity fix aimed at the remaining `webull_30s` / user-facing `Polygon 30 Sec Bot` drift.
+
+New root causes addressed:
+
+1. Provider history seeding could include the current in-progress Polygon `30s` bar.
+- That meant runtime hydration could seed a partial bucket as if it were already closed.
+- Later live `A.` second-bars for that same bucket were then treated like stale overlap, which can underbuild or flatten the first persisted live bucket after activation/restart.
+
+2. A symbol that became active mid-bucket could persist a truncated first live `30s` bar.
+- If the first live aggregate update for a symbol arrived at `:05`, `:12`, or `:27` inside a `30s` bucket, we were willing to start a canonical bar from that point forward.
+- That is structurally incomplete coverage for a canonical persisted `30s` bar.
+
+What changed locally:
+
+- `src/project_mai_tai/market_data/massive_provider.py`
+  - `MassiveSnapshotProvider.fetch_historical_bars(...)` now filters out the trailing in-progress bar and returns only completed historical bars for the requested interval.
+- `src/project_mai_tai/services/strategy_engine_app.py`
+  - `StrategyBotRuntime` now tracks skipped live aggregate buckets per symbol.
+  - For non-final live aggregate runtimes like `webull_30s`, if the first live bar for a symbol arrives after the bucket start, that first partial bucket is skipped instead of being persisted as canonical history.
+  - The skip state is cleared on reseed/day roll/prune.
+
+Focused local validation passed:
+
+- `pytest tests/unit/test_historical_bar_seed_order.py tests/unit/test_webull_30s_bot.py -q`
+  - `22 passed`
+- `pytest tests/unit/test_strategy_engine_service.py -k "hydrate_generic_history_from_provider or live_bar_publishes_strategy_snapshot_for_generic_bot_activity_without_intents or live_second_bars_can_generate_open_intent_for_webull_30s_bot" -q`
+  - `4 passed`
+- `pytest tests/unit/test_market_data_gateway.py -q`
+  - `6 passed`
+- `py_compile` passed on:
+  - `src/project_mai_tai/market_data/massive_provider.py`
+  - `src/project_mai_tai/services/strategy_engine_app.py`
+  - updated focused tests
+
+Deployment completed on VPS:
+
+- copied:
+  - `src/project_mai_tai/market_data/massive_provider.py`
+  - `src/project_mai_tai/services/strategy_engine_app.py`
+- restarted in safe order from the runbook:
+  - stopped `project-mai-tai-strategy.service`
+  - restarted `project-mai-tai-market-data.service`
+  - started `project-mai-tai-strategy.service`
+- both services reported active with:
+  - `ActiveEnterTimestamp=Wed 2026-05-06 22:08:55 UTC`
+  - ET `2026-05-06 18:08:55`
+
+Important live validation status:
+
+- Immediate post-deploy validation was **not yet conclusive**.
+- As of the follow-up check roughly `2026-05-06 22:11 UTC` / `18:11 ET`, there were:
+  - `0` fresh persisted `webull_30s` `30s` bars at or after the restart timestamp
+- The latest persisted `webull_30s` rows were still pre-restart, around:
+  - `2026-05-06 21:53 UTC`
+  - ET `17:53`
+- So there was not yet a fresh post-restart Polygon overlap window to compare:
+  - provider historical `30s`
+  - vs persisted `StrategyBarHistory`
+
+What this means:
+
+- The fix is deployed.
+- The targeted local tests are clean.
+- But the first real live verdict on Polygon canonical bar integrity is still pending the first fresh post-restart `webull_30s` completed bars.
+
+Required next validation:
+
+- As soon as the first post-restart `webull_30s` bars exist, compare only the fresh overlap window after:
+  - `2026-05-06 22:08:55 UTC`
+  - ET `18:08:55`
+- Do not compare against earlier pre-restart rows when judging this deploy.
+- Focus on:
+  - whether the first persisted bucket after symbol activation is still partial
+  - whether overlap-window OHLC drift drops
+  - whether overlap-window volume/trade_count drift drops
+  - whether post-restart bars stop showing the earlier `trade_count=1` / flattened OHLC pattern
+
+## 2026-05-06 CRITICAL: 30s Bar Integrity / Persisted-Bar Drift Must Be Resolved Before Path Tuning
+
+This is a top-priority handoff item.
+
+Do **not** keep tuning `P1` to `P5` blindly until the 30-second bar pipeline is revalidated on live morning data.
+
+### Mandatory next-session rule
+
+- The next agent must read the project and existing bug/session handoff notes first.
+- The next agent must treat the 30s bar-integrity bug as a critical workstream.
+- After **every real fix**, the session handoff must be updated before stopping.
+- Do not end a session with material runtime changes undocumented.
+
+### What was proven
+
+- This is **not only** a `CLRB` problem. `CLRB` was just the clearest victim.
+- TradingView comparisons and raw archived Schwab ticks showed real parity concerns.
+- More importantly, we proved that **persisted `StrategyBarHistory` bars could differ from our own raw tick rebuild**.
+- On `2026-05-06`, active `macd_30s` names such as:
+  - `GCTK`
+  - `EZGO`
+  - `PN`
+  - `VMAR`
+  - `SKK`
+  showed persisted 30s bars with `volume = 0` and `trade_count = 0` even though archived raw Schwab ticks had real trades later in that same 30-second bucket.
+
+### Root causes identified
+
+1. Coverage/subscription continuity problem
+- Symbols were dropping out of raw archive continuity too early when live subscription/watchlist state shrank.
+- Fix already deployed:
+  - archive-retention layer keeps confirmed symbols subscribed longer for raw data capture.
+
+2. Runtime source-mixing problem
+- Tick-built 30s runtimes could still accept `live_bar` packets and merge them into the same builder.
+- That meant persisted bars could become hybrids of:
+  - raw trade ticks
+  - plus fallback bar packets
+- Fix already deployed:
+  - when `use_live_aggregate_bars = False`, `live_bar` packets no longer mutate tick-built 30s builders.
+
+3. Synthetic quiet-bar replacement bug
+- The runtime could close a 30s bucket as a synthetic quiet bar at the boundary,
+- then drop real trades that arrived a few seconds later in that same bucket as "stale".
+- Fix already deployed:
+  - if the last closed bar for that same bucket is synthetic, a later real trade now replaces it instead of being ignored.
+
+### Important files changed for this work
+
+- [C:\Users\kkvkr\OneDrive\Documents\GitHub\project-mai-tai\src\project_mai_tai\services\strategy_engine_app.py](C:\Users\kkvkr\OneDrive\Documents\GitHub\project-mai-tai\src\project_mai_tai\services\strategy_engine_app.py)
+- [C:\Users\kkvkr\OneDrive\Documents\GitHub\project-mai-tai\src\project_mai_tai\strategy_core\schwab_native_30s.py](C:\Users\kkvkr\OneDrive\Documents\GitHub\project-mai-tai\src\project_mai_tai\strategy_core\schwab_native_30s.py)
+- [C:\Users\kkvkr\OneDrive\Documents\GitHub\project-mai-tai\src\project_mai_tai\settings.py](C:\Users\kkvkr\OneDrive\Documents\GitHub\project-mai-tai\src\project_mai_tai\settings.py)
+- [C:\Users\kkvkr\OneDrive\Documents\GitHub\project-mai-tai\tests\unit\test_strategy_engine_service.py](C:\Users\kkvkr\OneDrive\Documents\GitHub\project-mai-tai\tests\unit\test_strategy_engine_service.py)
+- [C:\Users\kkvkr\OneDrive\Documents\GitHub\project-mai-tai\tests\unit\test_strategy_core.py](C:\Users\kkvkr\OneDrive\Documents\GitHub\project-mai-tai\tests\unit\test_strategy_core.py)
+- [C:\Users\kkvkr\OneDrive\Documents\GitHub\project-mai-tai\scripts\compare_tradingview_30s.py](C:\Users\kkvkr\OneDrive\Documents\GitHub\project-mai-tai\scripts\compare_tradingview_30s.py)
+- [C:\Users\kkvkr\OneDrive\Documents\GitHub\project-mai-tai\scripts\check_bar_build_runtime.py](C:\Users\kkvkr\OneDrive\Documents\GitHub\project-mai-tai\scripts\check_bar_build_runtime.py)
+
+### Deployment state
+
+- All above data-integrity fixes were deployed to `mai-tai-vps`.
+- `project-mai-tai-strategy.service` restarted successfully after the changes.
+- Focused local and VPS tests passed for the runtime/source-mixing and synthetic-bar replacement fixes.
+
+### Strategy implication
+
+- The bad prev-bar `P4` experiment was still a real strategy mistake and remains reverted.
+- But current path behavior should **not** be treated as fully trustworthy until the corrected 30s bar pipeline is validated on the next live morning session.
+- Bar integrity comes before further `P1` to `P5` tuning.
+
+### Required next validation
+
+On the next live morning session, compare for active names:
+
+1. TradingView 30s export
+2. Rebuilt bars from archived raw Schwab ticks
+3. Persisted `StrategyBarHistory`
+
+Focus on:
+
+- missing bars
+- zero-volume synthetic bars
+- OHLC drift
+- volume drift
+- any persisted-vs-rebuilt mismatch after the new fixes
+
+Only after that should path-quality tuning resume.
+
+### 2026-05-06 Local architecture change: Schwab 30s canonical trade path now prefers `TIMESALE_EQUITY`
+
+This session made a local architecture change aimed at the deeper 30s parity problem, not just the boundary bugs:
+
+- Schwab 30s bots now prefer `TIMESALE_EQUITY` as their canonical live trade-tick source.
+- We still keep `LEVELONE_EQUITIES` for quote updates.
+- We still keep `CHART_EQUITY` for official 1-minute live bars where needed.
+
+What changed locally:
+
+- `src/project_mai_tai/market_data/schwab_streamer.py`
+  - added `TIMESALE_EQUITY` subscription support with fields `0,1,2,3,4`
+  - added `TIMESALE_EQUITY` trade parsing:
+    - `1` trade time millis
+    - `2` last price
+    - `3` last size
+    - `4` last sequence
+  - when a symbol is subscribed to `TIMESALE_EQUITY`, the client now still accepts `LEVELONE_EQUITIES` quotes for that symbol but suppresses `LEVELONE_EQUITIES` trade extraction to avoid double-counting or source-mixing in the same builder
+- `src/project_mai_tai/services/strategy_engine_app.py`
+  - `StrategyBotRuntime` now carries a `trade_tick_service`
+  - Schwab-backed 30s runtimes now default to `TIMESALE_EQUITY`:
+    - `macd_30s`
+    - `webull_30s`
+    - `macd_30s_probe`
+    - `macd_30s_reclaim`
+    - `macd_30s_retest`
+  - added `schwab_timesale_symbols()` so subscription sync can request:
+    - `LEVELONE_EQUITIES` for quotes
+    - `TIMESALE_EQUITY` for canonical 30s trade ticks
+    - `CHART_EQUITY` for official minute bars
+- `src/project_mai_tai/settings.py`
+  - added:
+    - `strategy_macd_30s_trade_stream_service`
+    - `strategy_webull_30s_trade_stream_service`
+  - both default to `TIMESALE_EQUITY`
+- `ops/env/project-mai-tai.env.example`
+  - documented the new env vars
+- `docs/30s-bar-architecture-proposal.md`
+  - added design note explaining the canonical-vs-derived bar split and why `TIMESALE_EQUITY` is the preferred upstream source for strict 30s parity
+
+Local validation for this architecture change:
+
+- passed:
+  - `pytest tests/unit/test_schwab_1m_bot.py -k "timesale or extracts_chart_equity_bar or initial_chart_equity_subscription or sync_subscriptions_swallows_clean_socket_close"`
+    - `6 passed`
+  - `pytest tests/unit/test_strategy_engine_service.py -k "macd_30s_uses_configured_tick_bar_close_grace or sync_subscription_targets_includes_schwab_symbols_when_stream_fallback_is_active"`
+    - `2 passed`
+  - `py_compile` on:
+    - `src/project_mai_tai/market_data/schwab_streamer.py`
+    - `src/project_mai_tai/services/strategy_engine_app.py`
+    - `src/project_mai_tai/settings.py`
+    - updated test files
+
+Important status:
+
+- This architecture change is **local only** at the end of this session.
+- It is **not deployed** to `mai-tai-vps` yet in this pass.
+- There is still **no live post-deploy validation** proving that `TIMESALE_EQUITY` removes the remaining persisted-vs-rebuilt drift on active morning names.
+
+Required next action before declaring success:
+
+- deploy the `TIMESALE_EQUITY` architecture change to the VPS strategy service
+- restart the Schwab strategy runtime while flat
+- compare fresh live morning names using:
+  - TradingView 30s export
+  - rebuilt bars from archived raw Schwab ticks
+  - persisted `StrategyBarHistory`
+- specifically check whether the earlier broad mismatch pattern drops, especially:
+  - volume drift
+  - trade-count drift
+  - late same-bucket undercount
+  - missing persisted rows
+
+### 2026-05-06 Premarket follow-up: validation tooling tightened, post-fix live verdict still pending
+
+Current state:
+
+- As of `2026-05-06` **before** the next live U.S. morning session, there is still no post-deploy live morning dataset that can prove the three runtime fixes worked end to end.
+- Do **not** treat the `2026-05-05` ET archive as the final pass/fail check for the newly deployed fixes.
+  - That dataset is still the historical bug baseline.
+  - It is useful for reproducing the old drift, not for declaring the new runtime clean.
+
+What changed locally in validation tooling:
+
+- `scripts/compare_tradingview_30s.py`
+  - now compares over an explicit **ET session window** instead of loosely relying on a full UTC date bucket
+  - now optionally loads persisted `StrategyBarHistory` bars via `--dsn`
+  - now reports three-way comparison output for:
+    - TradingView CSV
+    - rebuilt raw Schwab tick bars
+    - persisted `StrategyBarHistory`
+  - now highlights `zero_persisted_vs_rebuilt` buckets directly
+- `scripts/check_bar_build_runtime.py`
+  - now treats `--day` / `--date` as an **ET session day**
+  - now filters both rebuilt raw ticks and persisted bars by explicit ET start/end hours
+  - now reports `zero_persisted_vs_real` in the summary
+
+Validation:
+
+- passed:
+  - `.venv\Scripts\python.exe -m py_compile scripts\compare_tradingview_30s.py scripts\check_bar_build_runtime.py`
+  - both scripts also returned clean `--help` output after the change
+
+Important note:
+
+- These script updates are **local workspace changes only** in this session.
+- They were **not** deployed to `mai-tai-vps` in this pass.
+- If the next agent wants to use the ET-windowed versions directly on the VPS, they must first sync the repo state there or run the scripts locally against copied archive files plus DB access.
+
+Premarket historical re-check done against VPS data for `2026-05-05` ET `04:00-12:00`:
+
+- The old baseline still shows heavy persisted-vs-rebuilt drift on names including:
+  - `SKK`
+  - `CLRB`
+  - `CYAB`
+  - `ELPW`
+  - `ATER`
+  - `VBIO`
+- Concrete baseline examples from the re-check:
+  - `SKK`
+    - `rebuilt_bars=546`
+    - `persisted_bars=542`
+    - `mismatches=431`
+    - `zero_persisted_vs_real=4`
+  - `CLRB`
+    - `rebuilt_bars=170`
+    - `persisted_bars=167`
+    - `mismatches=146`
+    - `zero_persisted_vs_real=2`
+  - `CYAB`
+    - `rebuilt_bars=393`
+    - `persisted_bars=381`
+    - `mismatches=328`
+    - `zero_persisted_vs_real=2`
+  - `ELPW`
+    - `rebuilt_bars=238`
+    - `persisted_bars=236`
+    - `mismatches=164`
+    - `zero_persisted_vs_real=6`
+  - `ATER`
+    - `rebuilt_bars=103`
+    - `persisted_bars=541`
+    - `mismatches=68`
+    - `zero_persisted_vs_real=7`
+- Interpretation:
+  - this re-check reconfirms the **severity of the pre-fix persisted-bar bug**
+  - it does **not** yet tell us whether the `2026-05-06` deployed runtime stays aligned on the next live morning
+
+Required next-session action remains unchanged:
+
+- wait for the next live morning session after the deployed fixes
+- for active names, run the ET-windowed three-way compare:
+  1. TradingView `30s` export
+  2. rebuilt bars from archived raw Schwab ticks
+  3. persisted `StrategyBarHistory`
+- do not resume `P1` to `P5` path tuning until those live post-fix comparisons are reviewed
+  - especially for:
+    - missing bars
+    - zero-volume synthetic persisted bars
+    - OHLC drift
+    - volume drift
+    - persisted-vs-rebuilt mismatches
+    - any TradingView-vs-rebuilt parity break
+  - use exact absolute day/window notes in the handoff when reporting results
+  - do not summarize the next result as simply “fixed” or “not fixed” without naming the symbols and concrete mismatch counts
+  - if the post-fix live morning still shows persisted-vs-rebuilt drift, return immediately to runtime bug work before any strategy path tuning
+  - if the post-fix live morning is clean, then and only then resume path-quality tuning
+  - keep this item at the top of the handoff until that live validation is complete
+  - if TradingView CSV exports are missing at session time, still run the rebuilt-vs-persisted ET-window check first and document that TradingView parity remains pending
+  - do not fall back to full UTC-date comparisons for this validation because they can mix in irrelevant overnight buckets
+  - prefer ET `04:00-12:00` for the first morning pass unless the user asks for a different explicit window
+
+### 2026-05-06 Live follow-up: active 20-minute check still found live 30s drift on Schwab macd_30s
+
+Context:
+
+- During the live `2026-05-06` morning session, a focused read-only check was run directly against:
+  - VPS archived raw Schwab ticks
+  - VPS persisted `strategy_bar_history`
+  - current `macd_30s` live watchlist from `/api/bots`
+- Validation window used:
+  - ET `06:58:00` -> `07:18:00`
+- Active `macd_30s` symbols at check time:
+  - `EZGO`
+  - `GCTK`
+  - `MASK`
+  - `OCG`
+  - `SKK`
+
+Live findings:
+
+- `macd_30s` runtime was alive:
+  - `/api/bots` showed `LISTENING`
+  - data health was `healthy`
+  - no open positions
+  - no pending opens/closes
+- But live bar integrity was **still not clean** in that 20-minute window.
+
+Concrete rebuilt-vs-persisted results from the live ET window:
+
+- `EZGO`
+  - `rebuilt=40`
+  - `persisted=38`
+  - `mismatches=33`
+  - `zero_persisted_vs_real=0`
+  - worst example:
+    - `07:17:30 ET`
+    - rebuilt `high=3.07 close=3.0203 volume=212163 trades=25`
+    - persisted `high=2.92 close=2.9001 volume=7547 trades=9`
+- `GCTK`
+  - `rebuilt=40`
+  - `persisted=38`
+  - `mismatches=35`
+  - `zero_persisted_vs_real=0`
+  - worst example:
+    - `07:09:30 ET`
+    - rebuilt `close=1.0393 volume=168263 trades=13`
+    - persisted `close=1.05 volume=5544 trades=3`
+- `SKK`
+  - `rebuilt=40`
+  - `persisted=38`
+  - `mismatches=35`
+  - `zero_persisted_vs_real=0`
+  - worst example:
+    - `07:08:30 ET`
+    - rebuilt `high=6.329 close=6.3 volume=41880 trades=26`
+    - persisted `high=6.1981 close=6.1695 volume=4612 trades=5`
+- `MASK`
+  - `rebuilt=23`
+  - `persisted=18`
+  - `mismatches=16`
+  - `zero_persisted_vs_real=0`
+  - note:
+    - persisted still showed a synthetic zero-volume `07:08:30 ET` row
+    - raw archive had no trades in that exact bucket, so that one by itself is not proof of the late-trade bug
+  - but post-promotion buckets still drifted materially after `07:09`
+- `OCG`
+  - `rebuilt=12`
+  - `persisted=1`
+  - `mismatches=1`
+  - `zero_persisted_vs_real=1`
+  - concrete bad row:
+    - `07:17:30 ET`
+    - raw archive had a real trade at `07:17:59.798 ET`
+    - rebuilt bar `2.41 / 2.41 / 2.41 / 2.41 volume=283966 trades=1`
+    - persisted bar remained synthetic `2.28 / 2.28 / 2.28 / 2.28 volume=0 trades=0`
+
+Important interpretation:
+
+- This means the original live 30s integrity problem is **not yet resolved** for `macd_30s`.
+- The strongest live examples are:
+  - same-bucket late prints still not making it into persisted bars
+  - minute-boundary buckets missing entirely on active names
+  - persisted bars capturing only an early subset of the raw trades in the bucket
+
+Likely new root cause found:
+
+- `webull_30s` already instantiates `SchwabNativeBarBuilderManager` with:
+  - `close_grace_seconds=2.0`
+- `macd_30s` was still instantiating the Schwab-native 30s builder with:
+  - `close_grace_seconds=0.0`
+- This fits the live failure pattern:
+  - active 30s buckets appear to be closing too aggressively at the boundary
+  - later same-bucket prints arriving in the final second or two are then missing from the persisted bar
+  - synthetic same-bucket replacement fix only helps when the already-closed bar is synthetic; it does not protect a prematurely closed **real** bar from undercounting later prints in that same bucket
+
+Local fix made in this session:
+
+- added new setting:
+  - `strategy_macd_30s_tick_bar_close_grace_seconds`
+  - default `2.0`
+- wired `macd_30s` runtime builder creation to pass that grace into:
+  - `SchwabNativeBarBuilderManager(close_grace_seconds=...)`
+- updated env example:
+  - `MAI_TAI_STRATEGY_MACD_30S_TICK_BAR_CLOSE_GRACE_SECONDS=2.0`
+- added focused regression test:
+  - `test_macd_30s_uses_configured_tick_bar_close_grace`
+
+Files changed for this fix:
+
+- `src/project_mai_tai/settings.py`
+- `src/project_mai_tai/services/strategy_engine_app.py`
+- `ops/env/project-mai-tai.env.example`
+- `tests/unit/test_strategy_engine_service.py`
+
+Validation for the local fix:
+
+- passed:
+  - `.venv\Scripts\python.exe -m pytest tests\unit\test_strategy_engine_service.py -k "macd_30s_uses_configured_tick_bar_close_grace or tick_built_macd_30s_ignores_live_bar_packets" -q`
+  - result:
+    - `2 passed`
+  - `.venv\Scripts\python.exe -m py_compile src\project_mai_tai\settings.py src\project_mai_tai\services\strategy_engine_app.py tests\unit\test_strategy_engine_service.py`
+
+Deployment state for this specific fix:
+
+- this close-grace fix is **local only** at the end of this session
+- it was **not deployed** to `mai-tai-vps` yet in this pass
+
+Next recommended action:
+
+- deploy the close-grace fix to VPS `strategy-engine`
+- because the live `macd_30s` bot was flat at check time:
+  - `position_count=0`
+  - `pending_count=0`
+  - restart risk was materially lower than during an open position
+- after deploy, rerun the same ET-window rebuilt-vs-persisted check immediately on active names
+- specifically verify whether:
+  - `07:17:30`-style late-print undercounts disappear
+  - exact minute-boundary missing buckets disappear
+  - `OCG`-style zero-volume persisted-vs-real same-bucket failures stop appearing
+
+Do not resume path tuning yet:
+
+- as of this live check, bar integrity for `macd_30s` is still not trustworthy
+- the next agent should treat the close-grace deploy and post-deploy revalidation as top priority before any more strategy-path work
+
+### 2026-05-06 Live deploy follow-up: close-grace improved bar closure, gap-fill disable removed synthetic quiet bars, but `OCG` persistence is still unresolved
+
+Runtime changes deployed to VPS during this session:
+
+- First deploy:
+  - copied updated `src/project_mai_tai/settings.py`
+  - copied updated `src/project_mai_tai/services/strategy_engine_app.py`
+  - restarted `project-mai-tai-strategy.service`
+  - service came back at `2026-05-06 07:27:58 ET`
+- Second deploy:
+  - changed `macd_30s` Schwab-native builder to `fill_gap_bars=False` so it no longer fabricates synthetic zero-volume quiet bars
+  - local regression validation passed:
+    - `pytest tests/unit/test_strategy_engine_service.py -k "macd_30s_uses_configured_tick_bar_close_grace or tick_built_macd_30s_ignores_live_bar_packets"`
+    - `py_compile` on the edited files
+  - copied updated `src/project_mai_tai/services/strategy_engine_app.py`
+  - restarted `project-mai-tai-strategy.service`
+  - service came back at `2026-05-06 07:40:40 ET`
+
+Important validation lesson from this session:
+
+- For post-restart Schwab 30s validation, raw-tick rebuilds must:
+  - reset builder state at the actual service restart boundary
+  - use the same Schwab `cumulative_volume` delta semantics as the live runtime
+- If you replay the whole day straight through without resetting at restart, the first post-restart bucket can show fake volume drift because the live service lost its prior cumulative-volume baseline when it restarted.
+- Existing `hydrate_historical_bars(...)` only seeds runtime memory via `seed_bars(...)`; it does **not** rebuild or repersist `strategy_bar_history`.
+
+Post-first-deploy findings:
+
+- The close-grace deploy materially improved the structure of completed bars.
+- When rebuilt from archived trades using the same runtime-style builder reset, `OHLC` and `trade_count` started lining up on the freshly completed buckets.
+- Remaining problems after the first deploy:
+  - `macd_30s` was still producing synthetic zero-volume quiet bars because its builder was still configured with `fill_gap_bars=True`
+  - `OCG` stopped writing new `macd_30s` `StrategyBarHistory` rows after `07:27:00 ET` even though `webull_30s` kept persisting `OCG`
+
+Post-second-deploy findings:
+
+- Fresh post-restart compare on completed bars after the `07:40:40 ET` restart:
+  - validated window `07:41:00 ET`
+    - `AHMA`: rebuilt `1`, persisted `1`, mismatches `0`
+    - `EZGO`: rebuilt `1`, persisted `1`, mismatches `0`
+    - `GCTK`: rebuilt `1`, persisted `1`, mismatches `0`
+    - `MASK`: rebuilt `1`, persisted `1`, mismatches `0`
+    - `SKK`: rebuilt `1`, persisted `1`, mismatches `0`
+  - follow-up validated window `07:41:30 -> 07:42:00 ET`
+    - `AHMA`: rebuilt `2`, persisted `2`, mismatches `0`
+    - `EZGO`: rebuilt `2`, persisted `2`, mismatches `0`
+    - `GCTK`: rebuilt `2`, persisted `2`, mismatches `0`
+    - `MASK`: rebuilt `2`, persisted `2`, mismatches `0`
+    - `SKK`: rebuilt `2`, persisted `2`, mismatches `0`
+- Result:
+  - the synthetic quiet-bar problem appears fixed for the validated completed buckets
+  - the close-grace plus no-gap-fill configuration is materially cleaner for active morning names
+
+Remaining critical unresolved issue:
+
+- `OCG` is still not clean in `macd_30s` persisted history after the second deploy.
+- Evidence:
+  - `/api/bots` shows `OCG` still in the active `macd_30s` watchlist with `keeps_feed=true`
+  - the live bot can show `OCG` as pending/live in runtime state
+  - archived raw Schwab ticks after the second restart rebuild into real completed `OCG` 30s bars
+  - but persisted `strategy_bar_history` for `strategy_code='macd_30s'` still showed no new `OCG` rows in the post-second-restart validation window, while `webull_30s` continued writing `OCG` rows normally
+- Concrete post-second-restart mismatch:
+  - validated against restart-reset raw replay through `07:42:30 ET`
+  - `OCG`
+    - `07:41:30 ET`: rebuilt `2.06 / 2.07 / 2.06 / 2.06 volume=454 trades=6`, persisted missing
+    - `07:42:00 ET`: rebuilt `2.0595 / 2.0599 / 2.05 / 2.05 volume=3123 trades=4`, persisted missing
+
+Required next-session action:
+
+- Do **not** declare full `macd_30s` 30s bar integrity complete yet.
+- Treat the next work item as:
+  - debug why `OCG` can remain live in `macd_30s` runtime state but fail to write new persisted `StrategyBarHistory` rows after restart
+  - confirm whether this is symbol-specific persistence, completed-bar, or routing/subscription behavior
+- Only after `OCG`-style missing persisted rows are resolved should broader path tuning resume.
+
+### 2026-05-06 Live deploy follow-up: `TIMESALE_EQUITY` is not available on this Schwab setup, fallback to `LEVELONE_EQUITIES` was deployed
+
+Critical live finding:
+
+- The earlier local architecture change that preferred `TIMESALE_EQUITY` for canonical Schwab 30s trade ticks was deployed to `mai-tai-vps`.
+- Live runtime immediately proved that this Schwab account/environment does **not** currently support that service.
+- Strategy log showed repeated live response errors after the first deploy:
+  - `service=TIMESALE_EQUITY`
+  - `code=11`
+  - `message=Service not available or temporary down.`
+- Effect of that first deploy:
+  - `LEVELONE_EQUITIES` trade extraction was suppressed for symbols that were marked as timesale-backed
+  - but `TIMESALE_EQUITY` never came through
+  - so post-restart active names kept receiving quotes and `live_bar` updates while fresh archived `trade` ticks stopped
+  - that made the fresh 30s canonical tick path unusable on live data
+
+Live proof from VPS after the first timesale deploy:
+
+- For active `macd_30s` names `AHMA`, `GCTK`, `MASK`, `STFS`:
+  - fresh `quote` and `live_bar` rows continued
+  - last archived `trade` ticks remained stuck just before the restart window
+- Strategy log captured the actual Schwab rejection:
+  - `2026-05-06 17:21:32 UTC`
+  - `Schwab streamer response error | service=TIMESALE_EQUITY command=SUBS code=11 message=Service not available or temporary down.`
+
+Real fix made after that live finding:
+
+- Updated `src/project_mai_tai/market_data/schwab_streamer.py` so that when Schwab rejects `TIMESALE_EQUITY`:
+  - the client immediately disables timesale use for that connection
+  - clears active timesale suppression
+  - falls back to `LEVELONE_EQUITIES` trade extraction for those symbols
+  - stops treating those symbols as timesale-backed during record extraction
+- Added focused regression coverage in `tests/unit/test_schwab_1m_bot.py` for:
+  - falling back to `LEVELONE_EQUITIES` trades when `TIMESALE_EQUITY` returns an error
+  - skipping future timesale subscription attempts on that connection once the service is marked unavailable
+
+Local validation for the fallback patch:
+
+- passed:
+  - `.venv\Scripts\python.exe -m pytest tests\unit\test_schwab_1m_bot.py -k "timesale or initial_chart_equity_subscription or sync_subscriptions_swallows_clean_socket_close" -q`
+  - result:
+    - `7 passed`
+  - `.venv\Scripts\python.exe -m py_compile src\project_mai_tai\market_data\schwab_streamer.py tests\unit\test_schwab_1m_bot.py`
+
+Deployment details:
+
+- Deployed updated `src/project_mai_tai/market_data/schwab_streamer.py` to `mai-tai-vps`
+- Restarted `project-mai-tai-strategy.service`
+- Service came back at:
+  - `2026-05-06 17:29:27 UTC`
+  - `2026-05-06 13:29:27 ET`
+- First reconnect attempt timed out during websocket handshake, then recovered:
+  - `2026-05-06 17:32:05 UTC`
+  - `Schwab streamer connected after 1 consecutive failure(s)`
+- Fallback then engaged exactly as intended:
+  - `2026-05-06 17:32:06 UTC`
+  - `Schwab TIMESALE_EQUITY unavailable; falling back to LEVELONE_EQUITIES trades | symbols=AHMA,CLOV,GCTK,MASK,MERC,MSW,STFS,TGB,TWG,VRCA reason=Service not available or temporary down.`
+
+Live result after the fallback deploy:
+
+- Archived `trade` ticks resumed for active `macd_30s` names after fallback engaged:
+  - `AHMA`
+    - `trade_after_restart=16`
+  - `GCTK`
+    - `trade_after_restart=15`
+  - `MASK`
+    - `trade_after_restart=5`
+  - `STFS`
+    - `trade_after_restart=25`
+- So the runtime is no longer stuck in the broken post-timesale-deploy state where only quotes / minute bars continued.
+
+First fresh post-fallback rebuilt-vs-persisted check:
+
+- Validation window:
+  - `2026-05-06 13:32:00 ET -> 13:33:30 ET`
+- Compared:
+  - rebuilt 30s bars from fresh archived Schwab `trade` ticks
+  - persisted `strategy_bar_history` rows for `macd_30s`
+- Results:
+  - `AHMA`
+    - `trade_rows=28`
+    - `rebuilt=3`
+    - `persisted=3`
+    - `mismatches=2`
+    - all observed mismatches were `volume` only
+  - `GCTK`
+    - `trade_rows=25`
+    - `rebuilt=3`
+    - `persisted=3`
+    - `mismatches=1`
+    - mismatch was `volume` only
+  - `MASK`
+    - `trade_rows=10`
+    - `rebuilt=3`
+    - `persisted=3`
+    - `mismatches=2`
+    - all observed mismatches were `volume` only
+  - `STFS`
+    - `trade_rows=37`
+    - `rebuilt=3`
+    - `persisted=3`
+    - `mismatches=2`
+    - all observed mismatches were `volume` only
+
+Important interpretation:
+
+- This fallback deploy materially improved live structural integrity:
+  - no missing persisted bars in that fresh window
+  - no zero-volume synthetic persisted bars in that fresh window
+  - no observed OHLC drift in that fresh window
+  - no observed trade-count drift in that fresh window
+- Remaining drift in the first clean post-fallback sample is still `volume` drift.
+- Example:
+  - `STFS` at `2026-05-06 13:33:00 ET`
+    - rebuilt `volume=11157`
+    - persisted `volume=5933`
+
+Current conclusion:
+
+- `TIMESALE_EQUITY` should **not** be treated as available for this live Schwab deployment unless Schwab access changes and is re-proven live.
+- The deployed runtime now safely falls back to `LEVELONE_EQUITIES` trades instead of silently starving the 30s builder.
+- 30s bar integrity is better after the fallback, but it is **still not fully validated clean** because real persisted-vs-rebuilt `volume` drift remains.
+- Do **not** resume broader `P1` to `P5` path tuning yet.
+- Next validation should continue on fresh active windows with focus on why volume still undercounts even when OHLC / count structure looks stable again.
+
+## 2026-04-28 Momentum Confirmed Threshold Tuning
+
+Current state:
+
+- local `main` now tunes the confirm-stage momentum thresholds to promote strong movers earlier without adding a new path
+- cumulative intraday volume logic remains unchanged
+  - confirm still uses snapshot/day volume at the moment of the squeeze, not only the initial spike bar
+
+What changed:
+
+- `MomentumConfirmedConfig.extreme_mover_min_day_change_pct`
+  - lowered from `50.0` to `30.0`
+- confirm-stage float-turnover gate in `MomentumConfirmedScanner._check_common_filters(...)`
+  - removed flat `>= 20%`
+  - replaced with float-tiered thresholds:
+    - `<= 10M` float: `>= 7%`
+    - `10M - 30M` float: `>= 10%`
+    - `> 30M` float: `>= 12%`
+
+Why this was necessary:
+
+- several current-session names were alerting on time but confirming too late under the old rules
+- the clearest delay pattern was `PATH_B_2SQ` names waiting for a second squeeze after much of the move had already matured
+- user examples included:
+  - `YAAS`
+  - `SEGG`
+  - `SNBR`
+- review showed the volume source was already correct
+  - confirm was already using cumulative snapshot/day volume
+  - the real bottleneck was the old hard `20%` float-turnover gate and `50%` extreme-mover gate
+
 ## 2026-04-27 New Schwab 1-Minute Bot Scaffold
 
 Current state:
@@ -4268,71 +6374,6 @@ Notes:
 - this is aimed at removing false red status on fresh/quiet watchlist symbols
 - it does not relax stale protection for open positions
 
-## 2026-04-27 - Deploy production-style Trade Coach live advisory preview to VPS
-
-Context:
-
-- operator approved the new 30-second Trade Coach live advisory surface and
-  wants it visible in production now
-- requirement remains strict:
-  - advisory-only
-  - no strategy gating
-  - no OMS influence
-  - no order actions
-
-Deploy applied:
-
-- pushed `main` to GitHub at `55590dc`
-  - `Upgrade live trade coach advisory preview`
-- deployed on VPS from `/home/trader/project-mai-tai`
-  - `git pull --ff-only origin main`
-  - restarted only `project-mai-tai-control.service`
-
-Live validation:
-
-- `project-mai-tai-control.service`
-  - `active`
-- VPS `/health`
-  - control plane loads successfully
-  - overall health was `degraded` during validation because:
-    - `reconciler` was already `degraded`
-  - coach deploy itself did not introduce a strategy or OMS health failure
-- live page checks passed on:
-  - `/bot/30s`
-  - `/bot/30s-webull`
-- both pages now render:
-  - `Trade Coach Live Advisory`
-  - `READ-ONLY`
-  - `Production preview for the live 30-second coaching experience`
-  - `Top Live Cautions`
-  - `Live Symbol Matrix`
-- live `/api/bots` snapshot during validation:
-  - `macd_30s` recent trade coach reviews: `25`
-  - `webull_30s` recent trade coach reviews: `0`
-
-Operator validation path:
-
-- open:
-  - `https://project-mai-tai.live/bot/30s`
-  - `https://project-mai-tai.live/bot/30s-webull`
-- confirm the new top panel appears above `Trade Coach Reviews`
-- confirm the panel reads `READ-ONLY`
-- confirm there are no interactive trade controls or order actions in the panel
-- scan:
-  - `Top Live Cautions`
-  - `Live Symbol Matrix`
-  - existing `Trade Coach Reviews`
-- use `https://project-mai-tai.live/api/bots` as source of truth for:
-  - `recent_trade_coach_reviews`
-  - bot context that feeds the advisory
-
-Notes:
-
-- this deploy is UI/control-plane only
-- no trading services were restarted
-- the live advisory is intentionally observational so we can keep shaping the
-  end-state operator experience without affecting live execution
-
 ## 2026-04-27 - Upgrade 30-second Trade Coach live advisory into a production-style preview
 
 Context:
@@ -4514,6 +6555,77 @@ Notes:
 - Validation:
   - `python -m pytest tests/unit/test_schwab_after_hours_stale_halt.py tests/unit/test_schwab_1m_bot.py tests/unit/test_control_plane_listening_status.py`
   - `python -m py_compile src/project_mai_tai/services/strategy_engine_app.py src/project_mai_tai/services/control_plane.py tests/unit/test_schwab_after_hours_stale_halt.py tests/unit/test_schwab_1m_bot.py tests/unit/test_control_plane_listening_status.py`
+## 2026-04-27 - Gap recovery guard after synthetic flat bars
+
+- Problem:
+  - The earlier quiet-symbol health fix reduced false `DATA HALT` noise, but it did not fully address calculation integrity after live feed holes.
+  - When a live Schwab symbol skipped one or more `30s` buckets, the bar builder filled the hole with flat synthetic bars (`trade_count=0`, `volume=0`).
+  - Those synthetic bars were then allowed to flow straight into normal entry evaluation, which could contaminate short-horizon EMA/VWAP/MACD state and produce bad or mistimed entries even after the stream recovered.
+- Fix:
+  - Added a per-symbol gap-recovery guard in `StrategyBotRuntime`.
+  - If a live trade/bar batch contains synthetic flat gap bars, the runtime now:
+    - arms a temporary recovery window for that symbol
+    - records a clear gap-recovery decision row
+    - blocks new entries on that symbol until enough real completed bars arrive again
+  - Recovery window scales by interval:
+    - `30s` bots: `3` real completed bars
+    - `1m` bot: `2` real completed bars
+  - Open-position emergency protection remains separate; this change is aimed at preventing contaminated fresh entries rather than hiding stream issues.
+- Files:
+  - `src/project_mai_tai/services/strategy_engine_app.py`
+  - `tests/unit/test_schwab_gap_recovery_guard.py`
+- Validation:
+  - `python -m pytest tests/unit/test_schwab_gap_recovery_guard.py tests/unit/test_schwab_after_hours_stale_halt.py tests/unit/test_schwab_1m_bot.py tests/unit/test_control_plane_listening_status.py`
+  - `12 passed`
+  - `python -m py_compile src/project_mai_tai/services/strategy_engine_app.py tests/unit/test_schwab_gap_recovery_guard.py`
+
+## 2026-04-27 - Synthetic bars no longer advance Schwab-native indicators
+
+- Problem:
+  - The new gap-recovery guard safely blocked entries after synthetic flat bars, but the Schwab-native indicator engine was still advancing EMA, MACD, stochastic, and rolling volume averages across those fake bars.
+  - That meant the bot was safer than before, but the post-gap state could still be slightly biased until enough real bars washed the synthetic bars out of the lookbacks.
+- Fix:
+  - Updated `SchwabNativeIndicatorEngine` to detect synthetic bars using the existing `trade_count=0` and `volume=0` marker.
+  - Synthetic bars no longer count toward warmup readiness.
+  - Indicator math now runs on the real-bar subset and then carries the last real indicator value forward across synthetic bars instead of advancing the calculations with fabricated input.
+  - This applies to:
+    - `EMA9`
+    - `EMA20`
+    - `MACD`
+    - `signal`
+    - `histogram`
+    - `stochastic`
+    - `VWAP`
+    - rolling `vol_avg5` / `vol_avg20`
+  - The gap-recovery guard remains enabled as the second safety layer.
+- Files:
+  - `src/project_mai_tai/strategy_core/schwab_native_30s.py`
+  - `tests/unit/test_strategy_core.py`
+- Validation:
+  - `python -m pytest tests/unit/test_strategy_core.py tests/unit/test_schwab_gap_recovery_guard.py tests/unit/test_schwab_after_hours_stale_halt.py`
+  - `34 passed`
+  - `python -m py_compile src/project_mai_tai/strategy_core/schwab_native_30s.py tests/unit/test_strategy_core.py`
+
+## 2026-04-27 - Gap recovery no longer sticks or spams after hours
+
+- Problem:
+  - After the new gap-recovery guard and synthetic-bar indicator skip landed, the `schwab_1m` page could still look broken after `8:00 PM ET`.
+  - Two issues were contributing:
+    - gap recovery was being armed on synthetic after-hours bars for flat symbols that were no longer tradable anyway
+    - `flush_completed_bars()` was not advancing the recovery counter, so once a symbol entered recovery it could keep repeating warning rows without progressing
+- Fix:
+  - Added a trading-window-aware gap-recovery gate in `StrategyBotRuntime`.
+  - Flat symbols outside their trading window no longer arm or retain gap-recovery state.
+  - Open/pending symbols are still protected.
+  - Updated `flush_completed_bars()` to batch bars by symbol and apply the same synthetic-gap / recovery / advance logic as the live tick path.
+- Files:
+  - `src/project_mai_tai/services/strategy_engine_app.py`
+  - `tests/unit/test_schwab_gap_recovery_guard.py`
+- Validation:
+  - `python -m pytest tests/unit/test_schwab_gap_recovery_guard.py tests/unit/test_schwab_after_hours_stale_halt.py tests/unit/test_strategy_core.py -k "gap_recovery or schwab_native_indicator_engine or after_hours"`
+  - `9 passed`
+  - `python -m py_compile src/project_mai_tai/services/strategy_engine_app.py tests/unit/test_schwab_gap_recovery_guard.py`
+
 ## 2026-04-28 - Bot page Live Symbols now shows current actionable names, not retained feed state
 
 - Problem:
@@ -4538,23 +6650,300 @@ Notes:
   - `3 passed`
   - `python -m py_compile src/project_mai_tai/services/control_plane.py tests/unit/test_control_plane.py`
 
-## 2026-04-28 - Active bot handoff now shrinks back to the current confirmed set
+## 2026-04-28 - Decision Tape no longer treats live ticks as completed bar timestamps
 
 - Problem:
-  - The earlier sidebar fix only changed presentation.
-  - The real runtime bug remained: active bot handoff symbols were only ever appended via `_record_bot_handoff_symbols(...)`.
-  - That meant old retained/current-session symbols like `AUUD` could stay tradable in `macd_30s`, `webull_30s`, and `schwab_1m` even after they were no longer in the current confirmed scanner set.
-  - This is what allowed a non-current name to reappear and trade from the retention layer.
+  - Control-plane placeholder `pending` rows were writing `last_tick_at` into `last_bar_at`.
+  - That made the Decision Tape and `Last Decision` card look like a fresh completed 30s bar existed when the bot had only seen a live tick and was still waiting for the next completed bar.
 - Fix:
-  - Added `_refresh_bot_handoff_active_symbols(...)` in `src/project_mai_tai/services/strategy_engine_app.py`.
-  - The live scan cycle now replaces each target bot's active handoff set from `self.all_confirmed` instead of union-growing it forever.
-  - Historical handoff memory is still preserved in `bot_handoff_history_by_strategy`, but the active tradable watchlist now tracks the current confirmed set only.
+  - Placeholder rows now keep `last_bar_at` blank.
+  - Placeholder rows carry `last_tick_at` separately and mark `is_placeholder=true`.
+  - `Last Decision` now ignores placeholder rows and uses the newest real completed-bar decision timestamp.
+  - Decision log text labels placeholders as `LIVE TICK` instead of `BAR`.
+- Files:
+  - `src/project_mai_tai/services/control_plane.py`
+  - `tests/unit/test_control_plane.py`
 - Validation:
-  - `python -m pytest tests/unit/test_bot_handoff_restore_seed.py`
-  - `2 passed`
-  - `python -m py_compile src/project_mai_tai/services/strategy_engine_app.py tests/unit/test_bot_handoff_restore_seed.py`
-  - VPS live check after strategy restart:
-    - scanner confirmed: `['KIDZ', 'DRCT']`
-    - `macd_30s` watchlist: `['DRCT', 'KIDZ']`
-    - `webull_30s` watchlist: `['DRCT', 'KIDZ']`
-    - `schwab_1m` watchlist: `['DRCT', 'KIDZ']`
+  - `python -m pytest tests/unit/test_control_plane.py -k "decision_tape or last_decision_ignores_pending_tick_placeholders"`
+  - `5 passed`
+  - `python -m py_compile src/project_mai_tai/services/control_plane.py tests/unit/test_control_plane.py`
+
+## 2026-04-28 - Decision Tape restored to full recent strategy history
+
+## 2026-04-28 - Webull 30s afternoon signal drought traced to wrong bar-construction mode
+
+- Problem:
+  - `Webull 30 Sec Bot` looked alive all afternoon:
+    - fresh `Polygon` quote ticks
+    - healthy listening status
+    - ongoing decision rows
+  - but it stopped producing real `signal` rows after the morning burst.
+  - The root cause was not OMS auth, not a dead bot, and not just “quiet market.”
+  - `webull_30s` was still building its `30s` bars primarily from trade ticks while staying fresh on quotes.
+  - On thinner afternoon names, actual trade prints became too sparse, so the bot finalized mostly synthetic zero-trade bars instead of real bars.
+  - That flattened the effective bar state and choked off setups.
+- Evidence:
+  - Since `2026-04-28 11:30 AM ET`, `macd_30s` still recorded `13` `signal` rows while `webull_30s` recorded `0`.
+  - For the same overlapping names, Webull zero-trade bar ratios were extreme:
+    - `SBLX`: `633 / 734`
+    - `BIYA`: `625 / 749`
+    - `DRCT`: `661 / 691`
+    - `KIDZ`: `665 / 693`
+  - Same-time Schwab rows still had real trade-count / volume and continued producing signals.
+- Root cause:
+  - `strategy_webull_30s_live_aggregate_bars_enabled` was `False`, so the bot was left in trade-tick-built mode even though the codebase already had a Polygon live-aggregate path specifically better suited for Webull signal generation.
+  - Quote freshness alone was masking the problem by making the bot look current while bar construction was still degraded.
+- Fix:
+  - Enabled `MAI_TAI_STRATEGY_WEBULL_30S_LIVE_AGGREGATE_BARS_ENABLED=true` on the VPS.
+  - Restarted:
+    - `project-mai-tai-market-data.service`
+    - `project-mai-tai-strategy.service`
+- Important lesson:
+  - When a user reports “bot went silent,” do not stop at service health, fresh ticks, or recent decision timestamps.
+  - Trace the exact bar-construction mode and prove whether the bot is building real bars or mostly synthetic/no-trade bars.
+
+## 2026-04-28 - 1m cooldown normalized and intrabar entry enabled only for Schwab 1m
+
+## 2026-05-06 Local architecture shift: `webull_30s` now behaves as the Polygon canonical 30s bot
+
+- This session made a local-only architecture change to the existing `webull_30s` runtime so it can become the clean Polygon-backed 30s path without breaking existing history, registrations, or broker-account wiring.
+- Important compatibility choice:
+  - internal strategy code remains `webull_30s`
+  - account name remains `live:webull_30s`
+  - user-facing display surfaces now present it as `Polygon 30 Sec Bot`
+  - a full DB/code rename to `polygon_30s` is still pending and should be treated as a separate migration step
+
+- Root problem this addresses:
+  - the prior `webull_30s` runtime was still defaulting to tick-built/fallback behavior even though the repo already had a Polygon live aggregate-bar path
+  - this left the bot vulnerable to the same kind of partial-coverage / partial-bar drift we saw in live comparisons against direct Polygon provider history
+  - it also conflated execution provider with market-data source, which would have broken the intended future architecture of:
+    - Polygon data
+    - Schwab execution
+
+- Local fixes applied:
+  - `src/project_mai_tai/settings.py`
+    - `strategy_webull_30s_live_aggregate_bars_enabled` now defaults to `True`
+    - `strategy_webull_30s_live_aggregate_fallback_enabled` now defaults to `False`
+    - added `market_data_provider_for_strategy(...)`
+    - `market_data_provider_for_strategy("webull_30s")` and `market_data_provider_for_strategy("polygon_30s")` now resolve to `polygon`
+    - `provider_for_strategy("polygon_30s")` aliases to the existing `strategy_webull_30s_*` execution settings for forward compatibility
+  - `src/project_mai_tai/services/strategy_engine_app.py`
+    - `webull_30s` now defaults to canonical live aggregate-bar mode instead of tick-built mode
+    - `webull_30s` no longer borrows Schwab trade-based extended-hours VWAP, which was a source-mixing risk for the Polygon path
+    - `_resolve_schwab_stream_bot_codes()` now uses `market_data_provider_for_strategy(...)` instead of execution provider, so future Schwab execution routing will not accidentally force this bot onto Schwab market-data subscriptions
+  - `src/project_mai_tai/runtime_registry.py`
+    - `webull_30s` display name is now `Polygon 30 Sec Bot`
+    - registration metadata now includes `market_data_provider`
+  - `src/project_mai_tai/services/control_plane.py`
+    - bot meta title/nav now say `Polygon`
+    - added `/bot/30s-polygon` as the new primary route
+    - kept `/bot/30s-webull` as a compatibility alias
+
+- Focused local validation passed:
+  - `pytest tests/unit/test_webull_30s_bot.py`
+  - `pytest tests/unit/test_strategy_engine_service.py -k "webull_30s or generic_market_data_strategy_codes or live_second_bars_can_generate_open_intent_for_webull_30s_bot or live_bar_publishes_strategy_snapshot_for_generic_bot_activity_without_intents"`
+  - `pytest tests/unit/test_schwab_1m_bot.py -k "webull_30s or polygon_30s or extended_vwap"`
+  - `py_compile` passed on:
+    - `src/project_mai_tai/settings.py`
+    - `src/project_mai_tai/runtime_registry.py`
+    - `src/project_mai_tai/services/strategy_engine_app.py`
+    - `src/project_mai_tai/services/control_plane.py`
+    - updated focused test files
+
+- Important status:
+  - this change is local only in the workspace at the end of this session
+  - it is not deployed to the VPS yet
+  - it does not prove Polygon 30s parity clean on live data yet
+
+- Required next validation before trusting the renamed Polygon path:
+  - deploy the local runtime/settings/control-plane changes while flat
+  - confirm `webull_30s` is receiving live Polygon aggregate bars, not silently falling back
+  - compare direct provider Polygon `30s` bars vs persisted `StrategyBarHistory` for active names over the actual overlap window
+  - first names to recheck should include the symbols already known to drift badly on `2026-05-06`:
+    - `GCTK`
+    - `ATOM`
+    - `DAMD`
+  - keep naming the runtime `webull_30s` in the DB/API layer until the full rename migration is planned and executed deliberately
+
+## 2026-04-28 - 1m cooldown normalized and intrabar entry enabled only for Schwab 1m
+- `schwab_1m` now overrides `cooldown_bars` from `10` down to `5` so its wall-clock cooldown is closer to the `macd_30s` bot instead of doubling to ~10 minutes.
+- `entry_intrabar_enabled` remains `False` on the shared Schwab-native 30s variants and is explicitly enabled only in the `schwab_1m` override.
+- Result:
+  - `Schwab 30 Sec Bot` stays bar-close entry only
+  - `Webull 30 Sec Bot` stays bar-close entry only
+  - `Schwab 1 Min Bot` can emit guarded intrabar entry attempts from live Schwab ticks
+- Chop logic was intentionally left unchanged in this pass.
+
+- Problem:
+  - the bot page Decision Tape had become too narrow after the live-symbol filtering changes and could collapse to only ~11 current symbols/placeholder rows.
+- Fix:
+  - keep the live-symbol placeholder rows first
+  - then append the broader recent strategy decision history for that bot before de-duping and truncating to 50 rows
+- Result:
+  - the table again shows a scrollable last-50-style view instead of only the tiny current live subset.
+
+## 2026-04-28 - Schwab 1m now uses native live minute bars, not self-built sparse trade aggregation
+
+- Root cause:
+  - `schwab_1m` was originally copied from the Schwab-native 30s stack but left on raw trade-tick minute aggregation.
+  - That meant the 1m bot was building minute bars from sparse Schwab trades and synthetic flat fills instead of using Schwab's own live minute chart bars.
+  - Result: path logic like `P1_CROSS` could be internally consistent on our stored bars while still disagreeing with the Schwab 1m chart the user was validating against.
+- First fix:
+  - Added live Schwab `CHART_EQUITY` minute-bar subscription support in `src/project_mai_tai/market_data/schwab_streamer.py`.
+  - Routed those final broker-provided 1m bars directly into `schwab_1m` via `src/project_mai_tai/services/strategy_engine_app.py`.
+  - Added `on_final_bar(...)` support in `src/project_mai_tai/strategy_core/schwab_native_30s.py` so final broker bars append immediately with no synthetic continuation.
+  - Configured `schwab_1m` to:
+    - `use_live_aggregate_bars=True`
+    - `live_aggregate_fallback_enabled=False`
+    - `live_aggregate_bars_are_final=True`
+- Second root cause discovered during deployment:
+  - The first live chart-bar subscription still was not flowing because `CHART_EQUITY` was using `ADD` even for the initial subscription.
+  - Schwab needed the first chart-bar subscribe to use `SUBS`; later incremental additions can use `ADD`.
+- Second fix:
+  - In `src/project_mai_tai/market_data/schwab_streamer.py`, initial chart subscription now uses:
+    - `SUBS` when there are no existing chart subscriptions
+    - `ADD` only for incremental symbol additions
+- Validation:
+  - Added regression coverage in `tests/unit/test_schwab_1m_bot.py` for:
+    - chart-equity record extraction
+    - initial chart-equity subscription using `SUBS`
+  - Deployed to VPS and restarted `project-mai-tai-strategy.service`.
+  - Raw live `mai_tai:strategy-state` on the VPS now shows `schwab_1m`:
+    - current after-hours completed 1m bars advancing into `19:41-19:42 ET`
+    - non-empty recent completed decisions again
+    - live `last_tick_at` times advancing after restart
+- Important lesson:
+  - For `schwab_1m`, chart parity depends on broker-native minute bars first and local indicators second.
+  - Do not fall back to sparse trade-tick-built minute bars or synthetic minute continuation for this bot.
+
+## 2026-04-28 - Native Schwab 1m bars are now persisted for replay
+
+- Problem:
+  - We could replay `1m` from recorded trade ticks, but that is not the same as the new live `schwab_1m` path that now consumes broker-native minute bars.
+  - Without storing native minute bars, tomorrow's replay would still fall back to the old tick-built approximation.
+- Fix:
+  - Extended `src/project_mai_tai/market_data/schwab_tick_archive.py` to record `event_type=live_bar` rows using the same per-day Schwab archive root.
+  - Added a `load_recorded_live_bars(...)` loader for future replay use.
+  - Wired `src/project_mai_tai/services/strategy_engine_app.py` to persist each live Schwab chart bar when draining the Schwab bar queue.
+  - Updated `scripts/backtest_30s.py` with a `--use-live-bar-recordings` mode for `1m` replay so tomorrow we can run against broker-native minute bars instead of re-aggregated trades.
+- Validation:
+  - Local targeted tests passed for:
+    - chart-equity extraction
+    - initial `CHART_EQUITY` `SUBS`
+    - recording/loading native live bars
+  - Deployed before the end of the after-hours session.
+- Caveat:
+  - Post-close validation tonight may not show fresh new `live_bar` rows if the chart stream has already gone quiet for the session.
+  - The code path is in place for tomorrow's live session and uses the same active archive root:
+    - `/var/lib/project-mai-tai/schwab_ticks`
+
+## 2026-04-29 - Webull live aggregate publish path and restart resubscription root cause
+
+- User-reported symptom:
+  - `Webull 30 Sec Bot` kept looking alive but went quiet on signals, and `SAGT` showed obviously stale/frozen values like `2.52` while the rest of the market had moved.
+- First concrete root cause:
+  - `src/project_mai_tai/market_data/gateway.py` was correctly queueing Polygon/Massive aggregate `LiveBarRecord`s into `_bar_queue`.
+  - But `src/project_mai_tai/market_data/publisher.py` did not implement `publish_live_bar(...)`.
+  - Result:
+    - the aggregate-bar path never reached Redis
+    - Webull could fall back to stale/synthetic behavior even though aggregate mode was nominally enabled
+- Fix:
+  - Added `publish_live_bar(...)` in `src/project_mai_tai/market_data/publisher.py`.
+  - Added regression coverage in `tests/unit/test_market_data_gateway.py` proving a queued live bar drains through `_stream_publish_loop(...)` and lands on `test:market-data` as `event_type=live_bar`.
+- Second operational root cause discovered during live validation:
+  - Restarting `project-mai-tai-market-data.service` by itself leaves the gateway waiting for fresh `market-data-subscriptions` events.
+  - The service seeds its read offset with `$`, so it does not automatically replay older subscription events after restart.
+  - If strategy is not restarted or otherwise does not emit a fresh `replace` event, market-data can come back with effectively zero live symbols even while the rest of the stack still looks up.
+- Live proof:
+  - After restarting strategy, Redis received a fresh:
+    - `mai_tai:market-data-subscriptions`
+    - `consumer_name=strategy-engine`
+    - `mode=replace`
+  - `mai_tai:market-data` immediately resumed filling with:
+    - `trade_tick`
+    - `quote_tick`
+    - `live_bar`
+  - `botwebull` `SAGT` rows moved off the frozen `2.52` and resumed live values around `2.37-2.39`.
+- Important lesson:
+  - When validating Webull/Polygon signal silence, do not stop at bot heartbeats or quote freshness.
+  - Prove all three layers:
+    - provider stream is producing ticks/bars
+    - market-data gateway is publishing `live_bar` events
+    - strategy has re-emitted current `market-data-subscriptions` after any gateway restart
+## 2026-05-06 - Polygon 30s active workstream; Schwab 30s deeper investigation paused
+
+- Current priority:
+  - keep `Schwab 30 Sec Bot` in its safer rollback state for now
+  - focus active bar-integrity work on the Polygon-backed `webull_30s` / `Polygon 30 Sec Bot`
+- Schwab note:
+  - the `macd_30s` deeper root-cause work is intentionally paused until Polygon `30s` is cleaner
+  - latest Schwab after-hours validation still showed broad volume drift, even though the bad `TIMESALE` default path was avoided
+
+## 2026-05-06 - Polygon 30s restart-gap fix is in; remaining issue narrowed to live aggregate value semantics
+
+- What is now fixed:
+  - the old Polygon restart-gap / restart-tail persistence hole is no longer the main blocker
+  - replayed provider `historical_bars` now persist into `StrategyBarHistory`
+  - in the validated end-of-session window, provider-only missing bars were eliminated for:
+    - `IONZ`
+    - `AHMA`
+    - `GCTK`
+    - `RDWU`
+    - `GOVX`
+    - `MASK`
+    - `ONEG`
+    - `STFS`
+- Remaining issue before this pass:
+  - shared-bar drift still remained, mostly `trade_count`, with some smaller `volume` and limited `OHLC` drift
+
+## 2026-05-06 - Polygon live aggregate `trade_count` normalization fix deployed
+
+- Root cause:
+  - `src/project_mai_tai/market_data/massive_provider.py` was treating Massive/Polygon websocket aggregate field `z` like trade count
+  - current Massive websocket docs define `z` as average trade size, not transaction count
+  - that means our live Polygon `1s` aggregate path could undercount `trade_count` badly before those `1s` bars were merged into canonical persisted `30s` bars
+- Fix:
+  - added `_normalize_aggregate_trade_count(...)` in `src/project_mai_tai/market_data/massive_provider.py`
+  - new behavior:
+    - prefer direct aggregate transaction count fields when present:
+      - `aggregate_vwap_trades`
+      - `transactions`
+      - `trade_count`
+    - otherwise derive estimated transaction count from:
+      - `round(volume / average_trade_size)`
+      - where average trade size is read from `average_trade_size`, `avg_trade_size`, or `z`
+    - do **not** treat `z` as trade count anymore
+- Local validation:
+  - `pytest tests/unit/test_market_data_gateway.py -q` -> `8 passed`
+  - `pytest tests/unit/test_webull_30s_bot.py -q` -> `20 passed`
+  - `py_compile` passed on:
+    - `src/project_mai_tai/market_data/massive_provider.py`
+    - `tests/unit/test_market_data_gateway.py`
+  - added regression coverage in `tests/unit/test_market_data_gateway.py` proving:
+    - `z=8, volume=1200` now normalizes to `trade_count=150`
+    - direct `transactions=58` is preferred over `z`
+- VPS deploy:
+  - copied `src/project_mai_tai/market_data/massive_provider.py` to VPS
+  - restarted in runbook order while after-hours session was already effectively over:
+    - stop `project-mai-tai-strategy.service`
+    - restart `project-mai-tai-market-data.service`
+    - start `project-mai-tai-strategy.service`
+  - latest restart timestamps:
+    - `project-mai-tai-market-data.service` started `2026-05-07 00:55:33 UTC`
+    - `project-mai-tai-strategy.service` started `2026-05-07 00:55:34 UTC`
+  - direct VPS code-path probe after deploy confirmed:
+    - a live aggregate sample with `v=1200, z=8` now produces `trade_count=150`
+- Important limitation at end of session:
+  - there was no active live market left to produce a real post-deploy Polygon overlap window tonight
+  - so this fix is deployed and source-validated, but not yet proven against fresh live morning bars
+- Required next validation at next active session:
+  - compare fresh post-deploy Polygon `30s` bars for active names such as:
+    - `IONZ`
+    - `AHMA`
+    - `GCTK`
+  - measure:
+    - missing bars
+    - OHLC drift
+    - volume drift
+    - trade-count drift
+  - if `trade_count` mismatches collapse materially while missing bars stay clean, this was the main remaining Polygon integrity bug
