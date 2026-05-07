@@ -6192,6 +6192,59 @@ def test_strategy_service_reconcile_restores_missing_runtime_position_from_virtu
     assert restored.entry_price == 2.55
 
 
+def test_strategy_service_reconcile_restores_runtime_position_path_from_latest_open_intent() -> None:
+    session_factory = build_test_session_factory()
+    with session_factory() as session:
+        strategy_macd = Strategy(code="macd_30s_reclaim", name="Reclaim", execution_mode="paper", metadata_json={})
+        account_macd = BrokerAccount(
+            name="paper:macd_30s_reclaim",
+            provider="alpaca",
+            environment="test",
+        )
+        session.add_all([strategy_macd, account_macd])
+        session.flush()
+        session.add(
+            VirtualPosition(
+                strategy_id=strategy_macd.id,
+                broker_account_id=account_macd.id,
+                symbol="UGRO",
+                quantity=Decimal("25"),
+                average_price=Decimal("2.55"),
+            )
+        )
+        session.add(
+            TradeIntent(
+                strategy_id=strategy_macd.id,
+                broker_account_id=account_macd.id,
+                symbol="UGRO",
+                side="buy",
+                intent_type="open",
+                quantity=Decimal("25"),
+                reason="ENTRY_P5_PULLBACK",
+                status="filled",
+                payload={"metadata": {"path": "P5_PULLBACK"}},
+            )
+        )
+        session.commit()
+
+    service = StrategyEngineService(
+        settings=make_test_settings(
+            redis_stream_prefix="test",
+            dashboard_snapshot_persistence_enabled=True,
+            strategy_macd_30s_reclaim_enabled=True,
+        ),
+        redis_client=FakeRedis(),
+        session_factory=session_factory,
+    )
+
+    changed = service._reconcile_runtime_state_from_database(log_when_changed=False)
+
+    assert changed is True
+    restored = service.state.bots["macd_30s_reclaim"].positions.get_position("UGRO")
+    assert restored is not None
+    assert restored.entry_path == "P5_PULLBACK"
+
+
 def test_strategy_service_reconcile_clears_stale_runtime_position_without_virtual_backing() -> None:
     session_factory = build_test_session_factory()
     with session_factory() as session:

@@ -2168,7 +2168,13 @@ class ControlPlaneRepository:
                                 latest_event_payload.get("reason"),
                                 intent_reason,
                             ),
-                            "path": str(intent_metadata.get("path") or ""),
+                            "path": display_order_path(
+                                {
+                                    "path": str(intent_metadata.get("path") or ""),
+                                    "metadata": intent_metadata,
+                                    "reason": intent_reason,
+                                }
+                            ),
                             "client_order_id": order.client_order_id,
                             "broker_order_id": order.broker_order_id or "",
                             "order_type": order.order_type,

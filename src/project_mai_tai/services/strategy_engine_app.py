@@ -8,10 +8,11 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from redis.asyncio import Redis
-from sqlalchemy import delete, desc, select
+from sqlalchemy import delete, desc, not_, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from project_mai_tai.db.models import (
@@ -7521,7 +7522,7 @@ class StrategyEngineService:
             self.logger.exception("failed to reconcile runtime state from database")
             return False
 
-        expected_positions: dict[str, dict[str, tuple[int, float]]] = {
+        expected_positions: dict[str, dict[str, tuple[int, float, str]]] = {
             code: {}
             for code in self.state.bots
         }
@@ -7537,6 +7538,36 @@ class StrategyEngineService:
             code: set()
             for code in self.state.bots
         }
+
+        position_symbols = {str(position.symbol).upper() for position in open_virtual_positions}
+        strategy_ids = {position.strategy_id for position in open_virtual_positions}
+        account_ids = {position.broker_account_id for position in open_virtual_positions}
+        latest_open_paths: dict[tuple[UUID, UUID, str], str] = {}
+        if position_symbols and strategy_ids and account_ids:
+            open_intents = session.scalars(
+                select(TradeIntent)
+                .where(
+                    TradeIntent.intent_type == "open",
+                    TradeIntent.side == "buy",
+                    TradeIntent.strategy_id.in_(list(strategy_ids)),
+                    TradeIntent.broker_account_id.in_(list(account_ids)),
+                    TradeIntent.symbol.in_(list(position_symbols)),
+                    not_(TradeIntent.status.in_(("rejected", "cancelled"))),
+                )
+                .order_by(TradeIntent.created_at.asc())
+            ).all()
+            for intent in open_intents:
+                payload = intent.payload if isinstance(intent.payload, dict) else {}
+                metadata = payload.get("metadata", {}) if isinstance(payload.get("metadata", {}), dict) else {}
+                path = str(
+                    metadata.get("path")
+                    or metadata.get("confirmation_path")
+                    or metadata.get("decision_path")
+                    or ""
+                ).strip()
+                if not path and str(intent.reason or "").startswith("ENTRY_"):
+                    path = str(intent.reason).removeprefix("ENTRY_").strip()
+                latest_open_paths[(intent.strategy_id, intent.broker_account_id, str(intent.symbol).upper())] = path
 
         for virtual_position in open_virtual_positions:
             strategy = strategies.get(virtual_position.strategy_id)
@@ -7555,6 +7586,7 @@ class StrategyEngineService:
             expected_positions.setdefault(strategy.code, {})[symbol] = (
                 int(virtual_position.quantity),
                 float(virtual_position.average_price),
+                latest_open_paths.get((strategy.id, account.id, symbol), ""),
             )
 
         for order in open_orders:
@@ -7599,7 +7631,7 @@ class StrategyEngineService:
             expected_runtime_positions = expected_positions.get(code, {})
             runtime_positions = self._runtime_positions_by_symbol(runtime)
 
-            for symbol, (quantity, average_price) in expected_runtime_positions.items():
+            for symbol, (quantity, average_price, path) in expected_runtime_positions.items():
                 runtime_position = runtime_positions.get(symbol)
                 runtime_quantity = int(float(runtime_position.get("quantity", 0) or 0)) if runtime_position else 0
                 runtime_average = (
@@ -7615,6 +7647,7 @@ class StrategyEngineService:
                     symbol=symbol,
                     quantity=quantity,
                     average_price=average_price,
+                    path=path,
                 )
                 restored_positions += 1
 
@@ -7697,6 +7730,7 @@ class StrategyEngineService:
         symbol: str,
         quantity: int,
         average_price: float,
+        path: str = "",
     ) -> None:
         restore_position = getattr(runtime, "restore_position", None)
         if restore_position is None:
@@ -7705,7 +7739,7 @@ class StrategyEngineService:
             symbol=symbol,
             quantity=quantity,
             average_price=average_price,
-            path="DB_RECONCILE",
+            path=path or "DB_RECONCILE",
         )
 
     def _drop_runtime_position(self, runtime: StrategyRuntime, symbol: str) -> None:

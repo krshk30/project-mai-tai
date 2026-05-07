@@ -184,6 +184,84 @@ def test_collect_completed_trade_cycles_sanitizes_broker_payload_close_reason() 
     assert cycles[0].summary == "Final Close"
 
 
+def test_collect_completed_trade_cycles_recovers_reconciled_path_and_summary_from_matching_orders() -> None:
+    cycles = collect_completed_trade_cycles(
+        strategy_code="macd_30s",
+        broker_account_name="paper:macd_30s",
+        recent_orders=[
+            {
+                "symbol": "ATRA",
+                "side": "buy",
+                "intent_type": "open",
+                "quantity": "10",
+                "price": "7.65",
+                "status": "filled",
+                "reason": "ENTRY_P3_SURGE",
+                "path": "",
+                "metadata": {"path": "P3_SURGE"},
+                "updated_at": "2026-05-07 10:39:37 AM ET",
+            },
+            {
+                "symbol": "ATRA",
+                "side": "sell",
+                "intent_type": "close",
+                "quantity": "10",
+                "price": "7.54",
+                "status": "filled",
+                "reason": "HARD_STOP_NATIVE_BACKUP",
+                "path": "",
+                "updated_at": "2026-05-07 10:40:56 AM ET",
+            },
+        ],
+        recent_fills=[],
+        closed_today=[
+            {
+                "ticker": "ATRA",
+                "path": "DB_RECONCILE",
+                "quantity": 10,
+                "entry_time": "2026-05-07 10:39:37 AM ET",
+                "entry_price": 7.65,
+                "exit_time": "2026-05-07 10:40:56 AM ET",
+                "exit_price": 7.54,
+                "pnl": -1.10,
+                "pnl_pct": -1.4,
+                "reason": "close",
+            }
+        ],
+    )
+
+    assert len(cycles) == 1
+    assert cycles[0].path == "P3_SURGE"
+    assert cycles[0].summary == "Hard Stop Native Backup"
+
+
+def test_collect_completed_trade_cycles_marks_reconciled_rows_when_no_better_path_exists() -> None:
+    cycles = collect_completed_trade_cycles(
+        strategy_code="runner",
+        broker_account_name="paper:runner",
+        recent_orders=[],
+        recent_fills=[],
+        closed_today=[
+            {
+                "ticker": "RMSG",
+                "path": "DB_RECONCILE",
+                "quantity": 10,
+                "entry_time": "2026-05-07 09:13:31 AM ET",
+                "entry_price": 1.68,
+                "exit_time": "2026-05-07 09:16:17 AM ET",
+                "exit_price": 1.65,
+                "pnl": -0.25,
+                "pnl_pct": -1.5,
+                "reason": "close",
+            }
+        ],
+    )
+
+    assert len(cycles) == 1
+    assert cycles[0].path == "RECONCILED"
+    assert cycles[0].summary == "Reconciled close"
+
+
 def test_coalesce_completed_trade_cycles_merges_shadow_close_row_into_real_cycle() -> None:
     rows = [
         {
