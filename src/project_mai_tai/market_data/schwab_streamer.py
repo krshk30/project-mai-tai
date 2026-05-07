@@ -4,13 +4,13 @@ import asyncio
 import json
 import logging
 import traceback
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Sequence
 from dataclasses import asdict, dataclass
 
 import websockets
 
 from project_mai_tai.broker_adapters.schwab import SchwabBrokerAdapter
-from project_mai_tai.market_data.models import QuoteTickRecord, TradeTickRecord
+from project_mai_tai.market_data.models import LiveBarRecord, QuoteTickRecord, TradeTickRecord
 from project_mai_tai.settings import Settings
 
 logger = logging.getLogger(__name__)
@@ -43,6 +43,8 @@ class SchwabStreamerProbeResult:
 
 class SchwabStreamerClient:
     LEVELONE_EQUITIES_FIELDS = "0,1,2,3,4,5,8,9,35"
+    CHART_EQUITY_FIELDS = "0,1,2,3,4,5,6,7,8"
+    TIMESALE_EQUITY_FIELDS = "0,1,2,3,4"
 
     def __init__(
         self,
@@ -59,8 +61,14 @@ class SchwabStreamerClient:
 
         self._on_trade: Callable[[TradeTickRecord], None] | None = None
         self._on_quote: Callable[[QuoteTickRecord], None] | None = None
+        self._on_bar: Callable[[LiveBarRecord], None] | None = None
         self._desired_symbols: set[str] = set()
+        self._desired_chart_symbols: set[str] = set()
+        self._desired_timesale_symbols: set[str] = set()
         self._subscribed_symbols: set[str] = set()
+        self._subscribed_chart_symbols: set[str] = set()
+        self._subscribed_timesale_symbols: set[str] = set()
+        self._timesale_service_available = True
         self._request_id = 1
         self._credentials: SchwabStreamerCredentials | None = None
         self._ws: object | None = None
@@ -88,9 +96,11 @@ class SchwabStreamerClient:
         *,
         on_trade: Callable[[TradeTickRecord], None],
         on_quote: Callable[[QuoteTickRecord], None],
+        on_bar: Callable[[LiveBarRecord], None] | None = None,
     ) -> None:
         self._on_trade = on_trade
         self._on_quote = on_quote
+        self._on_bar = on_bar
         self._stop_event.clear()
         if self._task is not None and not self._task.done():
             return
@@ -111,14 +121,39 @@ class SchwabStreamerClient:
             self._task = None
         self._credentials = None
         self._subscribed_symbols.clear()
+        self._subscribed_chart_symbols.clear()
+        self._subscribed_timesale_symbols.clear()
+        self._timesale_service_available = True
         self._last_error = None
 
-    async def sync_subscriptions(self, symbols: Sequence[str]) -> None:
+    async def sync_subscriptions(
+        self,
+        symbols: Sequence[str],
+        *,
+        chart_symbols: Sequence[str] | None = None,
+        timesale_symbols: Sequence[str] | None = None,
+    ) -> None:
         self._desired_symbols = {str(symbol).upper() for symbol in symbols if str(symbol).strip()}
-        await self._apply_subscription_delta()
+        self._desired_chart_symbols = (
+            {str(symbol).upper() for symbol in chart_symbols if str(symbol).strip()}
+            if chart_symbols is not None
+            else set()
+        )
+        self._desired_timesale_symbols = (
+            {str(symbol).upper() for symbol in timesale_symbols if str(symbol).strip()}
+            if timesale_symbols is not None
+            else set()
+        )
+        try:
+            await self._apply_subscription_delta()
+        except websockets.exceptions.ConnectionClosed:
+            self._handle_subscription_sync_connection_closed()
 
     async def force_resubscribe(self) -> None:
-        await self._apply_subscription_delta(force_resubscribe=True)
+        try:
+            await self._apply_subscription_delta(force_resubscribe=True)
+        except websockets.exceptions.ConnectionClosed:
+            self._handle_subscription_sync_connection_closed()
 
     async def probe(
         self,
@@ -153,6 +188,7 @@ class SchwabStreamerClient:
             await self._send_subscription_command(
                 websocket,
                 credentials,
+                service="LEVELONE_EQUITIES",
                 command="ADD",
                 symbols=normalized_symbols,
             )
@@ -166,7 +202,7 @@ class SchwabStreamerClient:
                     continue
                 raw_messages_seen += 1
                 payload = self._decode_message(raw_message)
-                quotes, trades = self._extract_records(payload)
+                quotes, trades, _bars = self._extract_records(payload)
                 quote_count += len(quotes)
                 trade_count += len(trades)
                 for quote in quotes:
@@ -222,6 +258,7 @@ class SchwabStreamerClient:
                     await self._send_subscription_command(
                         websocket,
                         credentials,
+                        service="LEVELONE_EQUITIES",
                         command="UNSUBS",
                         symbols=normalized_symbols,
                     )
@@ -256,6 +293,7 @@ class SchwabStreamerClient:
                 self._connected = True
                 self._connection_failures = 0
                 self._last_error = None
+                self._timesale_service_available = True
                 await self._apply_subscription_delta(force_resubscribe=True)
 
                 while not self._stop_event.is_set():
@@ -289,6 +327,8 @@ class SchwabStreamerClient:
                 self._ws = None
                 self._connected = False
                 self._subscribed_symbols.clear()
+                self._subscribed_chart_symbols.clear()
+                self._subscribed_timesale_symbols.clear()
                 if websocket is not None:
                     try:
                         await websocket.close()
@@ -361,17 +401,28 @@ class SchwabStreamerClient:
             return
 
         desired = set(self._desired_symbols)
+        desired_chart = set(self._desired_chart_symbols)
+        desired_timesale = set(self._desired_timesale_symbols) if self._timesale_service_available else set()
         if force_resubscribe:
             to_remove = set(self._subscribed_symbols)
             to_add = desired
+            chart_to_remove = set(self._subscribed_chart_symbols)
+            chart_to_add = desired_chart
+            timesale_to_remove = set(self._subscribed_timesale_symbols)
+            timesale_to_add = desired_timesale
         else:
             to_remove = self._subscribed_symbols - desired
             to_add = desired - self._subscribed_symbols
+            chart_to_remove = self._subscribed_chart_symbols - desired_chart
+            chart_to_add = desired_chart - self._subscribed_chart_symbols
+            timesale_to_remove = self._subscribed_timesale_symbols - desired_timesale
+            timesale_to_add = desired_timesale - self._subscribed_timesale_symbols
 
         if to_remove:
             await self._send_subscription_command(
                 websocket,
                 credentials,
+                service="LEVELONE_EQUITIES",
                 command="UNSUBS",
                 symbols=sorted(to_remove),
             )
@@ -379,16 +430,54 @@ class SchwabStreamerClient:
             await self._send_subscription_command(
                 websocket,
                 credentials,
+                service="LEVELONE_EQUITIES",
                 command="ADD",
                 symbols=sorted(to_add),
             )
+        if chart_to_remove:
+            await self._send_subscription_command(
+                websocket,
+                credentials,
+                service="CHART_EQUITY",
+                command="UNSUBS",
+                symbols=sorted(chart_to_remove),
+            )
+        if chart_to_add:
+            chart_command = "ADD" if self._subscribed_chart_symbols else "SUBS"
+            await self._send_subscription_command(
+                websocket,
+                credentials,
+                service="CHART_EQUITY",
+                command=chart_command,
+                symbols=sorted(chart_to_add),
+            )
+        if timesale_to_remove:
+            await self._send_subscription_command(
+                websocket,
+                credentials,
+                service="TIMESALE_EQUITY",
+                command="UNSUBS",
+                symbols=sorted(timesale_to_remove),
+            )
+        if timesale_to_add:
+            timesale_command = "ADD" if self._subscribed_timesale_symbols else "SUBS"
+            await self._send_subscription_command(
+                websocket,
+                credentials,
+                service="TIMESALE_EQUITY",
+                command=timesale_command,
+                symbols=sorted(timesale_to_add),
+            )
         self._subscribed_symbols = desired
+        self._subscribed_chart_symbols = desired_chart
+        self._subscribed_timesale_symbols = desired_timesale
 
     async def _send_subscription_command(
         self,
         websocket: object,
         credentials: SchwabStreamerCredentials,
         *,
+        service: str,
         command: str,
         symbols: Sequence[str],
     ) -> None:
@@ -397,11 +486,32 @@ class SchwabStreamerClient:
 
         request = self._build_subscription_request(
             credentials=credentials,
+            service=service,
             command=command,
             symbols=symbols,
         )
         async with self._send_lock:
             await websocket.send(json.dumps(request))
+
+    def _handle_subscription_sync_connection_closed(self) -> None:
+        self._connected = False
+        self._last_error = ""
+        if not self._stop_event.is_set():
+            logger.info("Schwab streamer subscription sync saw closed socket; waiting for reconnect")
+
+    def _disable_timesale_service(self, *, reason: str) -> None:
+        if not self._timesale_service_available and not self._subscribed_timesale_symbols:
+            return
+        fallback_symbols = sorted(self._subscribed_timesale_symbols or self._desired_timesale_symbols)
+        self._timesale_service_available = False
+        self._subscribed_timesale_symbols.clear()
+        if fallback_symbols:
+            logger.warning(
+                "Schwab TIMESALE_EQUITY unavailable; falling back to LEVELONE_EQUITIES trades | "
+                "symbols=%s reason=%s",
+                ",".join(fallback_symbols),
+                reason,
+            )
 
     async def _handle_message(self, raw_message: str | bytes) -> None:
         payload = self._decode_message(raw_message)
@@ -418,6 +528,8 @@ class SchwabStreamerClient:
             code = str(content.get("code", "")).strip()
             if code and code != "0":
                 message = str(content.get("msg") or content.get("message") or "unknown response error")
+                if service.upper() == "TIMESALE_EQUITY":
+                    self._disable_timesale_service(reason=message)
                 logger.warning(
                     "Schwab streamer response error | service=%s command=%s code=%s message=%s",
                     service,
@@ -425,35 +537,57 @@ class SchwabStreamerClient:
                     code,
                     message,
                 )
-        quotes, trades = self._extract_records(payload)
+        quotes, trades, bars = self._extract_records(payload, timesale_symbols=self._subscribed_timesale_symbols)
         if self._on_quote is not None:
             for quote in quotes:
                 self._on_quote(quote)
         if self._on_trade is not None:
             for trade in trades:
                 self._on_trade(trade)
+        if self._on_bar is not None:
+            for bar in bars:
+                self._on_bar(bar)
 
     @classmethod
     def _extract_records(
         cls,
         payload: dict[str, object],
-    ) -> tuple[list[QuoteTickRecord], list[TradeTickRecord]]:
+        *,
+        timesale_symbols: Collection[str] | None = None,
+    ) -> tuple[list[QuoteTickRecord], list[TradeTickRecord], list[LiveBarRecord]]:
         quotes: list[QuoteTickRecord] = []
         trades: list[TradeTickRecord] = []
+        bars: list[LiveBarRecord] = []
+        normalized_timesale_symbols = {
+            str(symbol).upper() for symbol in (timesale_symbols or ()) if str(symbol).strip()
+        }
         for item in payload.get("data", []):
-            if item.get("service") != "LEVELONE_EQUITIES":
-                continue
+            service = str(item.get("service", "")).strip().upper()
             for content in item.get("content", []):
                 if not isinstance(content, dict):
                     continue
-                quote = cls._extract_quote_record(content)
-                if quote is not None:
-                    quotes.append(quote)
+                if service == "LEVELONE_EQUITIES":
+                    quote = cls._extract_quote_record(content)
+                    if quote is not None:
+                        quotes.append(quote)
 
-                trade = cls._extract_trade_record(content)
-                if trade is not None:
-                    trades.append(trade)
-        return quotes, trades
+                    symbol = str(content.get("key") or content.get("0") or "").upper()
+                    if symbol in normalized_timesale_symbols:
+                        continue
+                    trade = cls._extract_trade_record(content)
+                    if trade is not None:
+                        trades.append(trade)
+                    continue
+                if service == "CHART_EQUITY":
+                    bar = cls._extract_chart_bar_record(content)
+                    if bar is not None:
+                        bars.append(bar)
+                    continue
+                if service == "TIMESALE_EQUITY":
+                    trade = cls._extract_timesale_trade_record(content)
+                    if trade is not None:
+                        trades.append(trade)
+        return quotes, trades, bars
 
     def _build_login_request(
         self,
@@ -482,13 +616,14 @@ class SchwabStreamerClient:
         self,
         *,
         credentials: SchwabStreamerCredentials,
+        service: str,
         command: str,
         symbols: Sequence[str],
     ) -> dict[str, object]:
         request: dict[str, object] = {
             "requests": [
                 {
-                    "service": "LEVELONE_EQUITIES",
+                    "service": service,
                     "requestid": str(self._next_request_id()),
                     "command": command,
                     "SchwabClientCustomerId": credentials.customer_id,
@@ -500,7 +635,13 @@ class SchwabStreamerClient:
             ]
         }
         if command != "UNSUBS":
-            request["requests"][0]["parameters"]["fields"] = self.LEVELONE_EQUITIES_FIELDS
+            if service == "LEVELONE_EQUITIES":
+                fields = self.LEVELONE_EQUITIES_FIELDS
+            elif service == "CHART_EQUITY":
+                fields = self.CHART_EQUITY_FIELDS
+            else:
+                fields = self.TIMESALE_EQUITY_FIELDS
+            request["requests"][0]["parameters"]["fields"] = fields
         return request
 
     @classmethod
@@ -543,6 +684,60 @@ class SchwabStreamerClient:
             size=max(1, last_size or 0),
             timestamp_ns=(trade_time_ms * 1_000_000) if trade_time_ms is not None else None,
             cumulative_volume=cumulative_volume,
+        )
+
+    @classmethod
+    def _extract_timesale_trade_record(cls, content: dict[str, object]) -> TradeTickRecord | None:
+        symbol = str(content.get("key") or content.get("0") or "").upper()
+        if not symbol:
+            return None
+
+        last_price = cls._float_or_none(content.get("2"))
+        if last_price is None or last_price <= 0:
+            return None
+
+        trade_time_ms = cls._int_or_none(content.get("1"))
+        last_size = cls._int_or_none(content.get("3"))
+
+        return TradeTickRecord(
+            symbol=symbol,
+            price=last_price,
+            size=max(1, last_size or 0),
+            timestamp_ns=(trade_time_ms * 1_000_000) if trade_time_ms is not None else None,
+        )
+
+    @classmethod
+    def _extract_chart_bar_record(cls, content: dict[str, object]) -> LiveBarRecord | None:
+        symbol = str(content.get("key") or content.get("0") or "").upper()
+        if not symbol:
+            return None
+
+        open_price = cls._float_or_none(content.get("2"))
+        high_price = cls._float_or_none(content.get("3"))
+        low_price = cls._float_or_none(content.get("4"))
+        close_price = cls._float_or_none(content.get("5"))
+        volume = cls._int_or_none(content.get("6"))
+        chart_time_ms = cls._int_or_none(content.get("7"))
+        if (
+            open_price is None
+            or high_price is None
+            or low_price is None
+            or close_price is None
+            or chart_time_ms is None
+            or close_price <= 0
+        ):
+            return None
+
+        return LiveBarRecord(
+            symbol=symbol,
+            interval_secs=60,
+            open=open_price,
+            high=high_price,
+            low=low_price,
+            close=close_price,
+            volume=max(0, volume or 0),
+            timestamp=chart_time_ms / 1000.0,
+            trade_count=1,
         )
 
     @staticmethod

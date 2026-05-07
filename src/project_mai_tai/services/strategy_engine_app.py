@@ -189,6 +189,7 @@ class StrategyBotRuntime:
         now_provider: Callable[[], datetime] | None = None,
         session_factory: sessionmaker[Session] | None = None,
         use_live_aggregate_bars: bool = False,
+        trade_tick_service: str = "LEVELONE_EQUITIES",
         live_aggregate_fallback_enabled: bool = True,
         live_aggregate_stale_after_seconds: int = 3,
         indicator_overlay_provider: MassiveIndicatorProvider | TaapiIndicatorProvider | None = None,
@@ -239,6 +240,10 @@ class StrategyBotRuntime:
         self.data_warning_since: dict[str, datetime] = {}
         self.session_factory = session_factory
         self.use_live_aggregate_bars = use_live_aggregate_bars
+        self.trade_tick_service = (
+            str(trade_tick_service or "LEVELONE_EQUITIES").strip().upper()
+            or "LEVELONE_EQUITIES"
+        )
         self.live_aggregate_fallback_enabled = live_aggregate_fallback_enabled
         self.live_aggregate_stale_after_seconds = max(0, int(live_aggregate_stale_after_seconds))
         self.indicator_overlay_provider = indicator_overlay_provider
@@ -2537,6 +2542,7 @@ class StrategyEngineState:
                 now_provider=now_provider,
                 session_factory=session_factory if self.settings.strategy_history_persistence_enabled else None,
                 use_live_aggregate_bars=use_live_aggregate_bars,
+                trade_tick_service=self.settings.strategy_macd_30s_trade_stream_service,
                 live_aggregate_fallback_enabled=self.settings.strategy_macd_30s_live_aggregate_fallback_enabled,
                 live_aggregate_stale_after_seconds=self.settings.strategy_macd_30s_live_aggregate_stale_after_seconds,
                 indicator_overlay_provider=macd_30s_indicator_overlay_provider,
@@ -2566,6 +2572,7 @@ class StrategyEngineState:
                 now_provider=now_provider,
                 session_factory=session_factory if self.settings.strategy_history_persistence_enabled else None,
                 use_live_aggregate_bars=webull_use_live_aggregate_bars,
+                trade_tick_service=self.settings.strategy_webull_30s_trade_stream_service,
                 live_aggregate_fallback_enabled=self.settings.strategy_webull_30s_live_aggregate_fallback_enabled,
                 live_aggregate_stale_after_seconds=self.settings.strategy_webull_30s_live_aggregate_stale_after_seconds,
                 builder_manager=SchwabNativeBarBuilderManager(
@@ -3498,6 +3505,25 @@ class StrategyEngineState:
         symbols.difference_update(blocked)
         return sorted(symbols)
 
+    def schwab_timesale_symbols(self) -> list[str]:
+        symbols: set[str] = set()
+        for code in self._schwab_stream_bot_codes:
+            bot = self.bots.get(code)
+            if not isinstance(bot, StrategyBotRuntime):
+                continue
+            if getattr(bot, "trade_tick_service", "LEVELONE_EQUITIES") != "TIMESALE_EQUITY":
+                continue
+            stream_symbols = getattr(bot, "stream_symbols", None)
+            if callable(stream_symbols):
+                symbols.update(stream_symbols())
+            else:
+                symbols.update(bot.active_symbols())
+        blocked = set(self.global_manual_stop_symbols)
+        for manual_symbols in self.manual_stop_symbols_by_strategy.values():
+            blocked.update(manual_symbols)
+        symbols.difference_update(blocked)
+        return sorted(symbols)
+
     def schwab_active_symbols(self) -> list[str]:
         if not self._schwab_stream_bot_codes:
             return []
@@ -3954,6 +3980,7 @@ class StrategyEngineService:
         }
         self._last_market_data_symbols: set[str] = set()
         self._last_schwab_stream_symbols: set[str] = set()
+        self._last_schwab_timesale_symbols: set[str] = set()
         self._last_scanner_history_signature: str | None = None
         self._historical_hydration_attempts = 5
         self._historical_hydration_poll_delay_secs = 0.2
@@ -4486,15 +4513,27 @@ class StrategyEngineService:
 
     async def _sync_schwab_stream_subscriptions(self, symbols: Sequence[str]) -> None:
         normalized = {symbol.upper() for symbol in symbols if symbol}
-        if normalized == self._last_schwab_stream_symbols:
+        timesale_symbols = set(self.state.schwab_timesale_symbols())
+        if (
+            normalized == self._last_schwab_stream_symbols
+            and timesale_symbols == self._last_schwab_timesale_symbols
+        ):
             return
 
         self._last_schwab_stream_symbols = normalized
+        self._last_schwab_timesale_symbols = timesale_symbols
         if self._schwab_tick_archive is not None:
             self._schwab_tick_archive.record_subscription_snapshot(sorted(normalized))
         if self._schwab_stream_client is None:
             return
-        await self._schwab_stream_client.sync_subscriptions(sorted(normalized))
+        try:
+            await self._schwab_stream_client.sync_subscriptions(
+                sorted(normalized),
+                timesale_symbols=sorted(timesale_symbols),
+            )
+        except TypeError:
+            # streamer may not yet support timesale_symbols kwarg
+            await self._schwab_stream_client.sync_subscriptions(sorted(normalized))
 
     async def _sync_subscription_targets(
         self,
