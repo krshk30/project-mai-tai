@@ -86,9 +86,11 @@ class Settings(BaseSettings):
     strategy_macd_30s_live_aggregate_bars_enabled: bool = False
     strategy_macd_30s_live_aggregate_fallback_enabled: bool = True
     strategy_macd_30s_live_aggregate_stale_after_seconds: int = 3
+    strategy_macd_30s_trade_stream_service: str = "LEVELONE_EQUITIES"
     strategy_webull_30s_live_aggregate_bars_enabled: bool = False
     strategy_webull_30s_live_aggregate_fallback_enabled: bool = True
     strategy_webull_30s_live_aggregate_stale_after_seconds: int = 3
+    strategy_webull_30s_trade_stream_service: str = "LEVELONE_EQUITIES"
     strategy_macd_30s_massive_indicator_overlay_enabled: bool = True
     strategy_macd_30s_probe_enabled: bool = False
     strategy_macd_30s_reclaim_enabled: bool = False
