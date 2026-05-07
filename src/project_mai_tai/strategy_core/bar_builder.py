@@ -46,9 +46,9 @@ class BarBuilder:
         bar_start = (now // self.interval_secs) * self.interval_secs
         completed: list[OHLCVBar] = []
 
-        if self._current_bar is None and self.bars and bar_start < self.bars[-1].timestamp:
+        if self._current_bar is None and self.bars and bar_start <= self.bars[-1].timestamp:
             logger.debug(
-                "[BAR] Ignoring stale trade for %s at %.3f (< last closed %.3f)",
+                "[BAR] Ignoring stale trade for %s at %.3f (<= last closed %.3f)",
                 self.ticker,
                 bar_start,
                 self.bars[-1].timestamp,
@@ -88,9 +88,9 @@ class BarBuilder:
         bar_start = (bar.timestamp // self.interval_secs) * self.interval_secs
         completed: list[OHLCVBar] = []
 
-        if self._current_bar is None and self.bars and bar_start < self.bars[-1].timestamp:
+        if self._current_bar is None and self.bars and bar_start <= self.bars[-1].timestamp:
             logger.debug(
-                "[BAR] Ignoring stale aggregate bar for %s at %.3f (< last closed %.3f)",
+                "[BAR] Ignoring stale aggregate bar for %s at %.3f (<= last closed %.3f)",
                 self.ticker,
                 bar_start,
                 self.bars[-1].timestamp,

@@ -84,6 +84,7 @@ class LiveBarPayload(BaseModel):
     volume: int
     timestamp: float
     trade_count: int = 1
+    coverage_started_at: float | None = None
 
 
 class LiveBarEvent(EventEnvelope):
