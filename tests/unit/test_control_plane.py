@@ -1621,6 +1621,65 @@ def test_polygon_bot_page_uses_polygon_data_halt_wording() -> None:
         assert "Schwab Data Health" not in polygon_page.text
 
 
+def test_polygon_bot_legacy_webull_routes_remain_compatible() -> None:
+    settings = Settings(
+        redis_stream_prefix="test",
+        oms_adapter="alpaca_paper",
+        strategy_polygon_30s_enabled=True,
+    )
+    session_factory = build_test_session_factory()
+    seed_database(session_factory)
+    streams = make_streams(settings.redis_stream_prefix)
+    strategy_state_stream = streams[f"{settings.redis_stream_prefix}:strategy-state"]
+    strategy_state_event = StrategyStateSnapshotEvent.model_validate_json(
+        strategy_state_stream[0][1]["data"]
+    )
+    strategy_state_event.payload.bots.append(
+        StrategyBotStatePayload(
+            strategy_code="polygon_30s",
+            account_name="live:polygon_30s",
+            watchlist=["AUUD"],
+            positions=[],
+            pending_open_symbols=[],
+            pending_close_symbols=[],
+            pending_scale_levels=[],
+            daily_pnl=0.0,
+            recent_decisions=[
+                {
+                    "symbol": "AUUD",
+                    "status": "evaluated",
+                    "reason": "entry evaluated; no setup matched this bar",
+                    "path": "",
+                    "score": "",
+                    "score_details": "",
+                    "price": "1.23",
+                    "last_bar_at": "2026-05-08T08:47:00-04:00",
+                }
+            ],
+        )
+    )
+    strategy_state_stream[0][1]["data"] = strategy_state_event.model_dump_json()
+    redis = FakeRedis(streams)
+
+    app = build_app(
+        settings=settings,
+        session_factory=session_factory,
+        redis_client=redis,
+        legacy_client=FakeLegacyClient(),
+    )
+
+    with TestClient(app) as client:
+        legacy_status = client.get("/botwebull")
+        assert legacy_status.status_code == 200
+        assert legacy_status.json()["status"] == "live/webull"
+        assert legacy_status.json()["watched_tickers"] == ["AUUD"]
+
+        legacy_page = client.get("/bot/30s-webull")
+        assert legacy_page.status_code == 200
+        assert "Polygon 30 Sec Bot" in legacy_page.text
+        assert "AUUD" in legacy_page.text
+
+
 def test_control_plane_overview_and_dashboard_render() -> None:
     settings = Settings(
         redis_stream_prefix="test",

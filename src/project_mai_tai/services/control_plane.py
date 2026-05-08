@@ -3333,6 +3333,11 @@ def build_app(
         data = await app.state.repository.load_bot_dashboard_data()
         return _build_bot_api_payload(data, "polygon_30s")
 
+    @app.get("/botwebull")
+    async def bot_webull_status_alias() -> dict[str, Any]:
+        data = await app.state.repository.load_bot_dashboard_data()
+        return _build_bot_api_payload(data, "polygon_30s")
+
     @app.get("/bot1m")
     async def bot_1m_status() -> dict[str, Any]:
         data = await app.state.repository.load_bot_dashboard_data()
@@ -3401,6 +3406,10 @@ def build_app(
 
     @app.get("/bot/30s-polygon", response_class=HTMLResponse)
     async def bot_polygon_30s_page() -> str:
+        return await _render_bot_page_with_trade_coach("polygon_30s")
+
+    @app.get("/bot/30s-webull", response_class=HTMLResponse)
+    async def bot_webull_30s_page_alias() -> str:
         return await _render_bot_page_with_trade_coach("polygon_30s")
 
     @app.get("/bot/30s-probe", response_class=HTMLResponse)

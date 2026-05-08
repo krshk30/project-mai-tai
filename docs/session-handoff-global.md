@@ -7988,3 +7988,24 @@ Notes:
   - prefer the versioned backups under:
     - `/etc/project-mai-tai/`
   - when strategy suddenly comes up with zero bots after a restart, check the env file before chasing code or Redis
+
+## 2026-05-08 - Polygon bot page cleanup missed legacy aliases; restored compatibility
+
+- User-reported symptom:
+  - Polygon bot looked "not loading" after the rename cleanup
+- Root cause:
+  - the new primary Polygon routes were live:
+    - `/botpolygon` for JSON
+    - `/bot/30s-polygon` for HTML
+  - but the legacy compatibility aliases were accidentally missing from the deployed control plane:
+    - `/botwebull`
+    - `/bot/30s-webull`
+  - those old endpoints were returning `404`, which broke saved bookmarks and any still-older navigation surfaces
+- Fix:
+  - restored both legacy aliases in `src/project_mai_tai/services/control_plane.py`
+  - both aliases now resolve to the `polygon_30s` bot payload/page while keeping Polygon as the primary runtime name
+- Regression coverage:
+  - added `test_polygon_bot_legacy_webull_routes_remain_compatible` in `tests/unit/test_control_plane.py`
+  - focused validation:
+    - `python -m pytest tests/unit/test_control_plane.py -k "polygon_bot_page_uses_polygon_data_halt_wording or polygon_bot_legacy_webull_routes_remain_compatible" -q`
+    - `python -m py_compile src/project_mai_tai/services/control_plane.py tests/unit/test_control_plane.py`
