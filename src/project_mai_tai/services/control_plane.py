@@ -247,6 +247,9 @@ class ControlPlaneRepository:
         self._overview_cache: dict[str, Any] | None = None
         self._overview_cache_at: datetime | None = None
         self._overview_cache_lock = asyncio.Lock()
+        self._bot_dashboard_cache: dict[str, Any] | None = None
+        self._bot_dashboard_cache_at: datetime | None = None
+        self._bot_dashboard_cache_lock = asyncio.Lock()
 
     @staticmethod
     def _snapshot_matches_current_scanner_session(
@@ -714,7 +717,11 @@ class ControlPlaneRepository:
         return True
 
     async def load_dashboard_data(self) -> dict[str, Any]:
-        cache_ttl_seconds = 2.0
+        # The browser dashboard auto-refreshes every 5 seconds (see
+        # refresh_seconds at the bottom of _render_dashboard_page). A 4-second
+        # cache TTL means most refreshes hit cache, freeing CPU for the
+        # actual scheduled refresh that does the heavy work.
+        cache_ttl_seconds = 4.0
         async with self._overview_cache_lock:
             cache_age = None
             if self._overview_cache_at is not None:
@@ -829,6 +836,35 @@ class ControlPlaneRepository:
         }
 
     async def load_bot_dashboard_data(self) -> dict[str, Any]:
+        # Bot detail pages are heavy to render (DB queries, redis stream
+        # loading, per-bot view assembly) and the dashboard polls /bot/* AND
+        # multiple /api/* endpoints concurrently every 5 seconds. Without a
+        # cache the prior request can still be running when the next refresh
+        # arrives, saturating CPU. A short TTL is enough to absorb the burst
+        # without making the UI feel stale.
+        cache_ttl_seconds = 4.0
+        async with self._bot_dashboard_cache_lock:
+            cache_age = None
+            if self._bot_dashboard_cache_at is not None:
+                cache_age = (utcnow() - self._bot_dashboard_cache_at).total_seconds()
+            if (
+                self._bot_dashboard_cache is not None
+                and cache_age is not None
+                and cache_age < cache_ttl_seconds
+            ):
+                return self._bot_dashboard_cache
+
+            data = await self._load_bot_dashboard_data_uncached()
+            self._bot_dashboard_cache = data
+            self._bot_dashboard_cache_at = utcnow()
+            return data
+
+    async def invalidate_bot_dashboard_cache(self) -> None:
+        async with self._bot_dashboard_cache_lock:
+            self._bot_dashboard_cache = None
+            self._bot_dashboard_cache_at = None
+
+    async def _load_bot_dashboard_data_uncached(self) -> dict[str, Any]:
         db_state = self._load_database_state(lightweight=True)
         stream_state = await self._load_stream_state()
         normalized_strategy_runtime = self._normalize_strategy_runtime(stream_state["strategy_runtime"])
