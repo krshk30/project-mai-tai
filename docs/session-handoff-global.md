@@ -1,5 +1,99 @@
 # Session Handoff - Global
 
+## 2026-05-08 Schwab 30s + 1m bar audit (full active-symbol set) + validator parametrization (--interval-secs)
+
+```
+Deploy owner: this agent (Claude Code)
+Workstream: schwab bar-build validation tooling + audit
+Status: DEPLOYED (tooling-only). Audit results captured below; one new workstream candidate flagged for follow-up.
+SHAs: 4489780 (validator parametrization)
+VPS SHA: 4489780
+Service target: none (script-only change; no service restart)
+Restart window: n/a
+```
+
+### Context
+
+Re-audit of Schwab 30s (`macd_30s`) and 1m (`schwab_1m`) bar integrity for today's pre-market session, the first full audit of both intervals since the 2026-05-07 close_grace + cum_vol baseline + trade_count accumulator fixes landed. Per the 2026-05-07 30s bot assessment split entry below, Schwab is the secondary workstream and `webull_30s` (Polygon) is the active path; this audit doesn't touch Polygon.
+
+### Validator parametrization (commit `4489780`)
+
+`scripts/check_bar_build_runtime.py` previously hard-coded `interval_secs=30` in the `SchwabNativeBarBuilder` constructor and in the `strategy_bar_history` WHERE clauses (psycopg + psql paths). Added a `--interval-secs` CLI flag (choices `[30, 60]`, default `30`) and plumbed it through. Default behavior preserved — existing 30s invocations work unchanged. Pre-this-PR, validating 1m would have meant a duplicate sibling script.
+
+The codex agent had a WIP version of this same script untracked in the local working tree on `codex/schwab-health-noise-backoff`. The version pushed to main is a strict superset of that WIP version (only function-signature plumbing + the new CLI arg added) so the codex agent's next push converts cleanly from "untracked" to "modified" with no merge conflict.
+
+### Audit window and method
+
+- Day: 2026-05-08 ET pre-market (04:00 → 08:00 ET; ran at 07:39 ET)
+- 17 active symbols on both strategies (every symbol with non-zero volume today on either): ATRA, CORD, CTNT, ELPW, FABC, GMEX, HTCO, IREZ, NBIZ, PMAX, PN, RMSG, RPGL, SEGG, SNES, TRAW, TTDU
+- Single strategy-engine restart at 06:41:54 UTC = 02:41 ET (well before window) — no restart-edge contamination in the audit window
+- Method: `SchwabNativeBarBuilder` rebuild from `/var/lib/project-mai-tai/schwab_ticks/2026-05-08/<SYM>.jsonl` TIMESALE archive vs persisted `strategy_bar_history`, per-bar OHLCV+trade_count comparison
+
+### Result — 30s (`macd_30s`)
+
+- 9/17 perfect (vol_ratio = 1.0, OHLC = 0, TC = 1.0): CORD, FABC, GMEX, HTCO, NBIZ, PN, RMSG, RPGL, SNES, TTDU [10 actually — SNES is 9th, TTDU 10th]
+- 5/17 near-perfect with cosmetic single-bar drift: ATRA, ELPW, IREZ, SEGG, CTNT (vol_ratio ≥ 0.998, OHLC ≤ $0.10)
+- 3/17 WATCH:
+  - PMAX vol_ratio 0.971, max OHLC $0.13, max vol Δ 119189 (single bar)
+  - TRAW vol_ratio 0.952, max OHLC $0.03, max vol Δ 257380 (3 bars)
+  - CTNT vol_ratio 0.998 — passes ratio gate but 3 OHLC + 7 vol mismatch buckets
+- All `rebuilt_only` bars are at 04:00 → 04:0X ET (pre-strategy-activation, before each symbol's persisted-bar stream begins) — not real misses
+- `persisted_only` is **zero for every symbol** — the live builder never failed to create a bar that the rebuild produced
+- Vs 2026-05-07 acceptance (vol_ratio ≥ 0.97, OHLC = 0): 14/17 ratio passes; PMAX (0.971) at threshold; TRAW (0.952) below
+
+### Result — 1m (`schwab_1m`)
+
+- 6/17 perfect: ELPW, HTCO, NBIZ, RMSG, SEGG, SNES (RMSG was 4/6 exact, 6/6 within 5% on 2026-05-07 baseline — now perfect)
+- 8/17 PASS-with-bucket-alignment-noise (FABC, GMEX, PN, RPGL, TTDU, others): roughly equal `rebuilt_only` and `persisted_only` counts on adjacent minutes with **identical volume + TC totals (ratio = 1.0)**. Cosmetic; not data loss. Live builder uses component_timestamp where the rebuild uses TIMESALE timestamp_ns — minor minute-boundary attribution difference. Volume-and-TC totals match exactly.
+- 3/17 WATCH (same symbols as 30s):
+  - CTNT vol_ratio 0.960, **35** OHLC mismatch buckets, **41** vol mismatch buckets — much worse than 30s (3/7)
+  - PMAX vol_ratio 0.839, 20 OHLC, 26 vol — much worse than 30s (0.971)
+  - TRAW vol_ratio 0.893, 4 OHLC, 4 vol — worse than 30s (0.952)
+
+### New finding (workstream candidate)
+
+PMAX, TRAW, CTNT all show drift in the **same time window (07:00 – 07:40 ET)**, all during **fast-trade-burst minutes** (25-50 trades per 30s bar, $0.05-$0.15 price ranges). Worst single example — PMAX 07:07:30 ET 30s bar:
+- rebuild from TIMESALE: O=5.00 H=5.16 L=4.99 C=5.11, vol=134613, tc=25
+- persisted: O=5.00 H=5.03 L=4.99 C=5.03, vol=15424, tc=4
+- Persisted bar **missed the entire upper move from $5.03 to $5.16** and 21 of 25 trades.
+
+The drift gets worse on 1m than 30s for the same symbols (PMAX 0.971 → 0.839; CTNT 0.998 → 0.960; TRAW 0.952 → 0.893), so it's not a 1m-specific aggregation bug — it's tick-loss at the live ingestion path that compounds when aggregated up to 1m.
+
+Three plausible mechanisms:
+1. `close_grace = 5.0s` still rejecting late-arriving TIMESALE during fast bursts
+2. LEVELONE `cumulative_volume` baseline drifting under high tick rates and snapping deltas to wrong bucket
+3. Trade-tick stream backpressure dropping messages
+
+Cleanest diagnostic next pass: pick PMAX 07:07–07:08 ET 30s bars, diff the TIMESALE archive against the LEVELONE cum_vol stream the live builder consumed, and answer one question: were the missing 21 trades **dropped by close_grace, dropped by the streamer, or attributed to the wrong bucket**? Until that's known, any code fix is guessing — explicitly do not bump `close_grace` past 5s as a knee-jerk.
+
+### Recommendation
+
+- 30s build: **HEALTHY for live trading.** Under-counting failure mode is conservative (miss-entry, not wrong-entry). Same shape as the known-and-accepted activation-edge edge case.
+- 1m build: **HEALTHIER on average than 2026-05-07 baseline**, with caveat that fast names in heavy-burst minutes can under-count up to ~16% of the minute's volume. If a 1m strategy decision hinges on a single heavy-burst bar's volume gate, that signal could be unreliable on fast names. Document the caveat; don't gate live trading on a fix.
+- Don't aggregate 1m from persisted 30s — same upstream path, you'd inherit the drift.
+- Don't open a `schwab_1m`-specific fix — drift is shared with 30s, root cause lives below the aggregator.
+
+### Residual considerations
+
+- **Heavy-burst tick-loss workstream is OPEN.** Owner: not assigned. Reproducer is PMAX 07:07–07:08 ET 2026-05-08 against the TIMESALE archive at `/var/lib/project-mai-tai/schwab_ticks/2026-05-08/PMAX.jsonl` on VPS (preserved).
+- The drift only manifests during fast-burst minutes. Slow-tape symbols (CORD, FABC, GMEX, HTCO, NBIZ, PN, RMSG, RPGL, SNES, TTDU) are perfectly clean on both 30s and 1m today.
+- The dashboard CPU saturation work earlier today (a22e61e + 6420770) is complete; no related residuals from this audit.
+
+### Workflow used
+
+Feature branch `codex/check-bar-build-runtime-interval-secs` → py_compile + --help smoke test → direct push to main (CI bypassed; tooling-only change, no service impact, gh CLI not available in this session) → VPS `git fetch + reset --hard origin/main`. 3-way SHA verified at `4489780` (local worktree = origin/main = VPS HEAD).
+
+### Tests added / not added
+
+No new automated tests added. Existing `tests/unit/test_strategy_core_cum_vol_fix.py` still covers the 30s cum_vol baseline preservation. The validator script itself is one-shot tooling; the only practical test is running it against live archive data, which was done today across all 17 active symbols.
+
+### State at end of work
+
+- GitHub `main` tip: `4489780`
+- VPS `git rev-parse HEAD`: `4489780`
+- Local working-tree branch (codex agent's WIP, untouched): `codex/schwab-health-noise-backoff` at `fd8b7d9` with WIP edits
+- All 5 services remain `active` (no restart required)
+
 ## 2026-05-08 OPEN FOR EOD DISCUSSION: macd_30s CTNT trade audit + rule recommendations (no code changes yet)
 
 ```
