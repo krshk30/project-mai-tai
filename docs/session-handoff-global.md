@@ -8176,3 +8176,51 @@ Notes:
     - `python -m pytest tests/unit/test_polygon_30s_bot.py tests/unit/test_polygon_last_bot_tick.py -q`
     - `python -m pytest tests/unit/test_strategy_engine_service.py -k "live_second_bars_can_generate_open_intent_for_polygon_30s_bot or polygon_tick_built_sparse_ticks_do_not_synthesize_gap_bars" -q`
     - `python -m py_compile src/project_mai_tai/settings.py src/project_mai_tai/market_data/gateway.py src/project_mai_tai/services/strategy_engine_app.py src/project_mai_tai/services/trade_coach_app.py`
+
+## 2026-05-08 - Polygon stale listening status root cause found in 30s close policy
+
+- Symptom observed live on VPS:
+  - `polygon_30s` kept showing `STALE`
+  - `last_tick_at` for active names such as `AEHL`, `AIIO`, `CODX`, and `TRAW` stayed fresh
+  - but `recent_decisions` and `indicator_snapshots.last_bar_at` for those same symbols were frozen around `2026-05-08 01:58:30 PM ET`
+- Important live evidence:
+  - Redis `mai_tai:market-data` still contained fresh Polygon `live_bar` events for those names
+  - example live stream samples near `2026-05-08 02:40 PM ET` showed fresh:
+    - `AEHL` `live_bar`
+    - `AIIO` `live_bar`
+    - `TRAW` `live_bar`
+    - plus fresh `trade_tick` traffic
+  - Redis `mai_tai:strategy-state` still showed `polygon_30s` closed-bar / decision timestamps stuck at `~01:58:30 PM ET`
+- Root cause:
+  - we had previously hard-disabled `flush_completed_bars()` for `polygon_30s`
+  - that meant Polygon `30s` bars could only close when the *next* bucket's `1s` aggregate arrived
+  - for sparse names, the runtime could keep receiving fresh trade ticks and occasional fresh `1s` live bars, but still have no new *closed* `30s` bar for a long time
+  - the control plane stale badge was therefore reporting a real runtime condition, not just a UI bug
+- Why the earlier policy became wrong:
+  - the no-flush bypass had been added to avoid premature close before late `1s` components arrived
+  - but we now already support late same-bucket revision of the most recent closed Polygon bar
+  - keeping the no-flush bypass after adding late revision left sparse buckets open indefinitely and buried the decision stream
+- Code fix:
+  - removed the Polygon-specific early return in:
+    - `src/project_mai_tai/services/strategy_engine_app.py`
+  - result:
+    - Polygon `30s` can close due buckets on wall clock again
+    - late same-bucket `1s` bars can still revise the last closed canonical bar without re-running the trade decision
+- Test updates:
+  - updated Polygon runtime tests in:
+    - `tests/unit/test_polygon_30s_bot.py`
+  - the updated expectations now prove:
+    - sparse live-aggregate buckets can close on flush
+    - the first mid-bucket partial coverage case is still skipped
+    - a late same-bucket Polygon second revises the just-closed bar without adding another decision row
+- Local validation:
+  - `python -m pytest tests/unit/test_polygon_30s_bot.py -k "late_same_bucket or revises_last_closed_bar or skips_first_mid_bucket or keeps_sparse_bucket" -q`
+    - `4 passed`
+  - `python -m pytest tests/unit/test_polygon_last_bot_tick.py -q`
+    - `1 passed`
+  - `python -m pytest tests/unit/test_strategy_engine_service.py -k "polygon_late_live_second_revises_persisted_closed_bar_without_redecision or live_second_bars_can_generate_open_intent_for_polygon_30s_bot or polygon_tick_built_sparse_ticks_do_not_synthesize_gap_bars" -q`
+    - `3 passed`
+  - `python -m py_compile src/project_mai_tai/services/strategy_engine_app.py tests/unit/test_polygon_30s_bot.py tests/unit/test_polygon_last_bot_tick.py`
+- Deployment state:
+  - fixed locally in repo
+  - not deployed to VPS yet in this session
