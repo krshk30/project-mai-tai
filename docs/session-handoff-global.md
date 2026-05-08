@@ -8419,13 +8419,31 @@ Notes:
     - live-aggregate trade-count bucketing
     - intrabar entry evaluation
     - native builder `on_trade()` fallback bar construction
+- Final root cause found after another live regression:
+  - even after the timestamp-unit fix, live Polygon `1s` bars could resume after a sparse stretch while `polygon_30s` still stayed `STALE`
+  - direct VPS checks around `2026-05-08 04:41 PM ET` showed:
+    - fresh `trade_tick`
+    - fresh `live_bar`
+    - fresh heartbeat
+    - but completed `30s` decisions frozen around `04:35-04:36 PM ET`
+  - the underlying runtime reason was:
+    - `Polygon30sBarBuilder.on_bar()` did not backfill missing gap bars when live bars resumed and `_current_bar` was empty
+    - and the actual live `polygon_30s` runtime was being constructed with `fill_gap_bars=False`
+  - that combination meant the bot could receive resumed live bars, open a new current bucket, and still leave the missing closed `30s` buckets un-emitted, which is exactly how the control plane could keep showing `STALE` with otherwise-fresh feed timestamps
+- Final durable fix:
+  - enabled `fill_gap_bars=True` for the live `polygon_30s` runtime wiring in `src/project_mai_tai/services/strategy_engine_app.py`
+  - updated `src/project_mai_tai/strategy_core/polygon_30s.py` so `on_bar()` backfills missing `30s` gap bars before opening the resumed current bucket
+  - this keeps the Polygon bot’s completed-bar cadence aligned with resumed live coverage instead of leaving silent holes until a later bucket boundary
 - Follow-up regression coverage:
   - added a Polygon-specific regression proving fallback works when the incoming tick uses the same epoch-millisecond shape observed on the VPS
+  - added a resumed-live-bar regression proving the runtime backfills missed `30s` buckets and advances `recent_decisions` when live bars return after a sparse gap
 - Local validation:
   - `python -m pytest tests/unit/test_polygon_30s_bot.py -k "defaults_to_canonical_polygon_live_bars or force_live_bar_only_mode or trade_ticks_keep_bot_alive_when_live_bars_starve or uses_real_live_bar_fallback_when_tick_builder_lags or late_same_bucket or revises_last_closed_bar or keeps_sparse_bucket or skips_first_mid_bucket" -q`
     - `8 passed`
   - `python -m pytest tests/unit/test_polygon_30s_bot.py -k "trade_ticks_keep_bot_alive_when_live_bars_starve or trade_tick_fallback_accepts_epoch_millisecond_timestamps" -q`
     - `2 passed`
+  - `python -m pytest tests/unit/test_polygon_30s_bot.py -k "live_bar_resume_backfills_missing_gap_bars" -q`
+    - `1 passed`
   - `python -m py_compile src/project_mai_tai/settings.py src/project_mai_tai/services/strategy_engine_app.py tests/unit/test_polygon_30s_bot.py`
 - Deployment state:
   - fixed locally in clean `main` worktree

@@ -3396,7 +3396,7 @@ class StrategyEngineState:
                     interval_secs=30,
                     time_provider=lambda: resolved_now_provider().timestamp(),
                     close_grace_seconds=self.settings.strategy_polygon_30s_tick_bar_close_grace_seconds,
-                    fill_gap_bars=False,
+                    fill_gap_bars=True,
                 ),
                 indicator_engine=Polygon30sIndicatorEngine(default_indicator_config),
                 entry_engine=Polygon30sEntryEngine(

@@ -671,6 +671,56 @@ def test_polygon_30s_keeps_sparse_bucket_when_provider_coverage_predates_bucket(
     assert builder.bars[-1].timestamp == bucket_start
 
 
+def test_polygon_30s_live_bar_resume_backfills_missing_gap_bars() -> None:
+    clock = {"now": datetime(2026, 4, 23, 15, 30, 5, tzinfo=UTC)}
+    state = StrategyEngineState(
+        settings=Settings(
+            strategy_macd_30s_broker_provider="schwab",
+            strategy_polygon_30s_enabled=True,
+            strategy_polygon_30s_tick_bar_close_grace_seconds=0.0,
+            scanner_feed_retention_enabled=False,
+        ),
+        now_provider=lambda: clock["now"],
+    )
+    bot = state.bots["polygon_30s"]
+    bot.set_watchlist(["IONZ"])
+    last_closed_at = datetime(2026, 4, 23, 15, 26, 30, tzinfo=UTC).timestamp()
+    seed_start = last_closed_at - (54 * 30)
+    bot.seed_bars(
+        "IONZ",
+        [
+            {
+                "open": 5.00 + index * 0.01,
+                "high": 5.02 + index * 0.01,
+                "low": 4.99 + index * 0.01,
+                "close": 5.01 + index * 0.01,
+                "volume": 20_000 + index * 100,
+                "timestamp": seed_start + index * 30,
+                "trade_count": 10 + index,
+            }
+            for index in range(55)
+        ],
+    )
+
+    bot.handle_live_bar(
+        symbol="IONZ",
+        open_price=5.10,
+        high_price=5.12,
+        low_price=5.09,
+        close_price=5.11,
+        volume=1_800,
+        timestamp=datetime(2026, 4, 23, 15, 30, 5, tzinfo=UTC).timestamp(),
+        trade_count=3,
+        coverage_started_at=datetime(2026, 4, 23, 15, 0, 0, tzinfo=UTC).timestamp(),
+    )
+
+    builder = bot.builder_manager.get_builder("IONZ")
+    assert builder is not None
+    assert builder.bars[-1].timestamp == datetime(2026, 4, 23, 15, 29, 30, tzinfo=UTC).timestamp()
+    assert builder._current_bar_start == datetime(2026, 4, 23, 15, 30, 0, tzinfo=UTC).timestamp()
+    assert bot.recent_decisions[0]["last_bar_at"] == "2026-04-23T11:29:30-04:00"
+
+
 def test_polygon_30s_uses_real_live_bar_fallback_when_tick_builder_lags() -> None:
     clock = {"now": datetime(2026, 4, 23, 15, 11, 0, tzinfo=UTC)}
     state = StrategyEngineState(

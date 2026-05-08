@@ -175,6 +175,8 @@ class Polygon30sBarBuilder:
             return completed
 
         if self._current_bar is None:
+            if self.fill_gap_bars:
+                completed.extend(self._fill_missing_gaps_until(bar_start))
             self._current_bar_components = {
                 component_timestamp: OHLCVBar.from_bar(bar, timestamp=component_timestamp)
             }
