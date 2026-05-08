@@ -2959,8 +2959,12 @@ def test_recent_orders_keeps_filled_when_cancelled_orders_flood_the_limit() -> N
             quantity=Decimal("10"),
             status="filled",
             payload={},
-            submitted_at=datetime.now(UTC) - timedelta(hours=8),
-            updated_at=datetime.now(UTC) - timedelta(hours=8),
+            # Stay safely within today's ET session window. (Earlier wider
+            # offsets fell before session_start when this test ran in the
+            # pre-market window.) The case-based ordering puts filled first
+            # regardless of how recent updated_at is.
+            submitted_at=datetime.now(UTC) - timedelta(seconds=900),
+            updated_at=datetime.now(UTC) - timedelta(seconds=900),
         )
         session.add(morning_buy)
         session.flush()
@@ -3013,6 +3017,96 @@ def test_recent_orders_keeps_filled_when_cancelled_orders_flood_the_limit() -> N
             f"got {len(morning_filled)} filled rows for AAA out of {len(recent_orders)} total"
         )
         assert morning_filled[0].get("path") == "P1_CROSS"
+
+
+def test_load_bot_dashboard_data_avoids_n_plus_one_intent_lookups() -> None:
+    """Recent_orders/open_orders construction must NOT issue one TradeIntent
+    lookup per BrokerOrder. With a runaway flood of cancelled orders the prior
+    pattern (session.get(TradeIntent, ...)) caused ~1200+ extra round-trips
+    per request, taking 12-20s per dashboard render. This regression test seeds
+    300 BrokerOrders linked to TradeIntents and asserts the total SELECT count
+    against TradeIntent stays bounded (a single bulk-load), not proportional
+    to the number of orders.
+    """
+    from sqlalchemy import event
+
+    settings = Settings(redis_stream_prefix="test", oms_adapter="alpaca_paper")
+    session_factory = build_test_session_factory()
+    seed_database(session_factory)
+
+    with session_factory() as session:
+        strategy = session.scalar(select(Strategy).where(Strategy.code == "macd_30s"))
+        account = session.scalar(select(BrokerAccount).where(BrokerAccount.name == "paper:macd_30s"))
+        assert strategy is not None and account is not None
+
+        bulk_intents = []
+        bulk_orders = []
+        for i in range(300):
+            intent = TradeIntent(
+                strategy_id=strategy.id,
+                broker_account_id=account.id,
+                symbol="ZZZ",
+                side="buy",
+                intent_type="open",
+                quantity=Decimal("10"),
+                reason=f"ENTRY_TEST_{i}",
+                status="cancelled",
+                payload={"metadata": {"path": "P1_CROSS"}},
+            )
+            bulk_intents.append(intent)
+        session.add_all(bulk_intents)
+        session.flush()
+
+        for i, intent in enumerate(bulk_intents):
+            order = BrokerOrder(
+                intent_id=intent.id,
+                strategy_id=strategy.id,
+                broker_account_id=account.id,
+                client_order_id=f"macd_30s-ZZZ-bulk-{i}",
+                broker_order_id=f"zzz-bulk-{i}",
+                symbol="ZZZ",
+                side="buy",
+                order_type="market",
+                time_in_force="day",
+                quantity=Decimal("10"),
+                status="cancelled",
+                payload={},
+                submitted_at=datetime.now(UTC),
+                updated_at=datetime.now(UTC) - timedelta(seconds=i % 600),
+            )
+            bulk_orders.append(order)
+        session.add_all(bulk_orders)
+        session.flush()
+        session.commit()
+
+    # Count SELECTs against trade_intents during the API request.
+    intent_selects: list[str] = []
+
+    @event.listens_for(session_factory().bind, "before_cursor_execute")
+    def capture(conn, cursor, statement, parameters, context, executemany):  # type: ignore[no-untyped-def]
+        del conn, cursor, parameters, context, executemany
+        if "FROM trade_intents" in statement:
+            intent_selects.append(statement)
+
+    redis = FakeRedis(make_streams(settings.redis_stream_prefix))
+    app = build_app(
+        settings=settings,
+        session_factory=session_factory,
+        redis_client=redis,
+        legacy_client=FakeLegacyClient(),
+    )
+
+    with TestClient(app) as client:
+        overview = client.get("/api/overview")
+        assert overview.status_code == 200
+
+    # Without the fix this would be ~300+. With the bulk-load fix it should be
+    # 1 (recent_intents loop) + 1 (intent bulk-load for orders) + small change
+    # for unrelated reads. Allow up to 10 to absorb future minor refactors.
+    assert len(intent_selects) <= 10, (
+        f"trade_intents was selected {len(intent_selects)} times during one /api/overview "
+        f"request; expected <=10 (bulk-load pattern). Per-order session.get() regressed?"
+    )
 
 
 def test_control_plane_recovers_after_transient_redis_failure(monkeypatch: pytest.MonkeyPatch) -> None:
