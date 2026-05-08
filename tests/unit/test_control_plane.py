@@ -40,12 +40,14 @@ from project_mai_tai.events import (
 )
 from project_mai_tai.services.control_plane import (
     _build_bot_decision_rows,
+    _build_bot_listening_status,
     _dedupe_decision_events,
     _normalize_closed_today_rows,
     _render_confirmed_catalyst_cell,
     _select_filled_order_reason,
     build_app,
 )
+from project_mai_tai.services import control_plane as control_plane_module
 from project_mai_tai.services.strategy_engine_app import current_scanner_session_start_utc
 from project_mai_tai.settings import Settings
 
@@ -2933,3 +2935,127 @@ def test_control_plane_recovers_after_transient_redis_failure(monkeypatch: pytes
         assert response.status_code == 200
         body = response.json()
         assert body["redis_connected"] is True
+
+
+def _make_listening_data(
+    *,
+    engine_started_iso: str | None,
+    decision_age_seconds: float | None = None,
+) -> tuple[dict, dict, list[dict]]:
+    """Build a minimal /api/overview-shaped payload exercising the
+    decision-tape staleness branch in _build_bot_listening_status."""
+    now_et = datetime(2026, 5, 8, 13, 0, 0, tzinfo=UTC).astimezone(
+        control_plane_module.EASTERN_TZ
+    )
+    if decision_age_seconds is not None:
+        latest_decision_at = (
+            now_et - timedelta(seconds=decision_age_seconds)
+        ).strftime("%Y-%m-%d %I:%M:%S %p ET")
+    else:
+        latest_decision_at = ""
+
+    details: dict[str, str] = {}
+    if engine_started_iso is not None:
+        details["engine_started_at"] = engine_started_iso
+
+    data = {
+        "services": [
+            {
+                "service_name": "strategy-engine",
+                "status": "healthy",
+                "effective_status": "healthy",
+                "observed_at": now_et.strftime("%Y-%m-%d %I:%M:%S %p ET"),
+                "details": details,
+            }
+        ],
+        "market_data": {
+            "latest_subscription_observed_at_raw": now_et.isoformat(),
+            "latest_snapshot_batch": {
+                "completed_at": now_et.strftime("%Y-%m-%d %I:%M:%S %p ET"),
+            },
+        },
+    }
+    bot = {
+        "watchlist": ["BCDA", "MASK", "TRAW"],
+        "positions": [],
+        "data_health": {"status": "healthy"},
+        "last_tick_at": {},
+        "indicator_snapshots": [],
+        "provider": "schwab",
+    }
+    recent_decisions = (
+        [
+            {
+                "last_bar_at": (
+                    now_et - timedelta(seconds=decision_age_seconds or 0)
+                ).strftime("%Y-%m-%d %I:%M:%S %p ET"),
+                "is_placeholder": False,
+            }
+        ]
+        if decision_age_seconds is not None
+        else []
+    )
+    return data, bot, recent_decisions
+
+
+def test_listening_status_post_restart_grace_suppresses_stale_when_decisions_empty(
+    monkeypatch,
+) -> None:
+    fixed_now = datetime(2026, 5, 8, 13, 0, 0, tzinfo=UTC)
+    monkeypatch.setattr(control_plane_module, "utcnow", lambda: fixed_now)
+    monkeypatch.setattr(control_plane_module, "_is_regular_session_now", lambda: True)
+
+    # Engine just restarted 30 seconds ago -> within 180s grace window.
+    engine_started = (fixed_now - timedelta(seconds=30)).isoformat()
+    data, bot, recent_decisions = _make_listening_data(
+        engine_started_iso=engine_started, decision_age_seconds=None
+    )
+    result = _build_bot_listening_status(data, bot, recent_decisions)
+    assert result["state"] == "LISTENING", result
+    assert "Strategy just restarted" in result["detail"], result
+
+
+def test_listening_status_outside_grace_still_flags_stale_decisions(
+    monkeypatch,
+) -> None:
+    fixed_now = datetime(2026, 5, 8, 13, 0, 0, tzinfo=UTC)
+    monkeypatch.setattr(control_plane_module, "utcnow", lambda: fixed_now)
+    monkeypatch.setattr(control_plane_module, "_is_regular_session_now", lambda: True)
+
+    # Engine has been up for an hour -> outside the 180s grace window.
+    engine_started = (fixed_now - timedelta(seconds=3600)).isoformat()
+    data, bot, recent_decisions = _make_listening_data(
+        engine_started_iso=engine_started, decision_age_seconds=None
+    )
+    result = _build_bot_listening_status(data, bot, recent_decisions)
+    assert result["state"] == "STALE", result
+    assert "No decision rows are available" in result["detail"], result
+
+
+def test_listening_status_grace_suppresses_stale_with_old_decisions(monkeypatch) -> None:
+    """Branch where decisions exist but are >120s old; engine still in grace."""
+    fixed_now = datetime(2026, 5, 8, 13, 0, 0, tzinfo=UTC)
+    monkeypatch.setattr(control_plane_module, "utcnow", lambda: fixed_now)
+    monkeypatch.setattr(control_plane_module, "_is_regular_session_now", lambda: True)
+
+    engine_started = (fixed_now - timedelta(seconds=60)).isoformat()
+    data, bot, recent_decisions = _make_listening_data(
+        engine_started_iso=engine_started, decision_age_seconds=200
+    )
+    result = _build_bot_listening_status(data, bot, recent_decisions)
+    assert result["state"] == "LISTENING", result
+    assert "Strategy just restarted" in result["detail"], result
+
+
+def test_listening_status_missing_engine_started_falls_back_to_stale(monkeypatch) -> None:
+    """If the heartbeat payload doesn't carry engine_started_at (older engine),
+    the staleness logic must fall back to its prior behavior."""
+    fixed_now = datetime(2026, 5, 8, 13, 0, 0, tzinfo=UTC)
+    monkeypatch.setattr(control_plane_module, "utcnow", lambda: fixed_now)
+    monkeypatch.setattr(control_plane_module, "_is_regular_session_now", lambda: True)
+
+    data, bot, recent_decisions = _make_listening_data(
+        engine_started_iso=None, decision_age_seconds=None
+    )
+    result = _build_bot_listening_status(data, bot, recent_decisions)
+    assert result["state"] == "STALE", result

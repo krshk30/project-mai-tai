@@ -4929,6 +4929,10 @@ class StrategyEngineService:
         )
         self.logger = configure_logging(SERVICE_NAME, self.settings.log_level)
         self.instance_name = socket.gethostname()
+        # Stamped on every heartbeat so the dashboard can suppress STALE states
+        # during the first few minutes after a strategy restart, when the
+        # in-memory decision tape is empty until the first bar evaluates.
+        self._started_at = utcnow()
         self._market_data_stream = stream_name(self.settings.redis_stream_prefix, "market-data")
         self._priority_streams = [
             stream_name(self.settings.redis_stream_prefix, "order-events"),
@@ -5429,6 +5433,7 @@ class StrategyEngineService:
                         bool(stream_client is not None and getattr(stream_client, "connected", False))
                     ).lower(),
                     "schwab_stream_last_error": str(getattr(stream_client, "last_error", "") or ""),
+                    "engine_started_at": self._started_at.isoformat(),
                 },
             ),
         )
