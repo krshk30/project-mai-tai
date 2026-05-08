@@ -2801,6 +2801,7 @@ def test_polygon_tick_built_sparse_ticks_do_not_synthesize_gap_bars(monkeypatch)
             strategy_macd_30s_enabled=False,
             strategy_polygon_30s_enabled=True,
             strategy_polygon_30s_live_aggregate_bars_enabled=False,
+            strategy_polygon_30s_force_tick_built_mode=True,
         ),
         now_provider=lambda: datetime.fromtimestamp(1_700_001_900.0, UTC),
     )

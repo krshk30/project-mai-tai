@@ -39,6 +39,7 @@ def test_flush_completed_bars_records_last_tick_at_for_due_symbol(monkeypatch) -
         settings=Settings(
             strategy_polygon_30s_enabled=True,
             strategy_polygon_30s_live_aggregate_bars_enabled=False,
+            strategy_polygon_30s_force_tick_built_mode=True,
             strategy_polygon_30s_tick_bar_close_grace_seconds=0.0,
         ),
         now_provider=now_provider,

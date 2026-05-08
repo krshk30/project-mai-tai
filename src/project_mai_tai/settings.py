@@ -110,6 +110,11 @@ class Settings(BaseSettings):
         "strategy_polygon_30s_live_aggregate_bars_enabled",
         "strategy_webull_30s_live_aggregate_bars_enabled",
     )
+    strategy_polygon_30s_force_tick_built_mode: bool = _legacy_strategy_alias_field(
+        False,
+        "strategy_polygon_30s_force_tick_built_mode",
+        "strategy_webull_30s_force_tick_built_mode",
+    )
     strategy_polygon_30s_live_aggregate_fallback_enabled: bool = _legacy_strategy_alias_field(
         False,
         "strategy_polygon_30s_live_aggregate_fallback_enabled",
@@ -351,6 +356,11 @@ class Settings(BaseSettings):
                 if normalized_symbol:
                     ignored.add((normalized_account, normalized_symbol))
         return ignored
+
+    @computed_field
+    @property
+    def strategy_polygon_30s_runtime_uses_live_aggregate_bars(self) -> bool:
+        return not bool(self.strategy_polygon_30s_force_tick_built_mode)
 
     @computed_field
     @property

@@ -8142,3 +8142,37 @@ Notes:
   - focused validation:
     - `python -m pytest tests/unit/test_control_plane.py -k "polygon_bot_page_uses_polygon_data_halt_wording or polygon_bot_legacy_webull_routes_remain_compatible" -q`
     - `python -m py_compile src/project_mai_tai/services/control_plane.py tests/unit/test_control_plane.py`
+
+## 2026-05-08 - Recurring Polygon "STALE" state traced to env drift back into deprecated tick-built mode
+
+- User-facing symptom:
+  - Polygon bot page repeatedly looked active but then flipped back to `STALE`
+  - fresh ticks and healthy Polygon data were visible, but completed `30s` bars stopped advancing
+- Root cause:
+  - after the VPS env restore, `MAI_TAI_STRATEGY_POLYGON_30S_LIVE_AGGREGATE_BARS_ENABLED` had been left at `false`
+  - that silently pushed `polygon_30s` back onto the old trade-tick-built path
+  - meanwhile the runtime still received fresh Polygon live-bar packets, so freshness signals looked alive even while canonical completed `30s` bars stopped advancing
+  - live proof at the time of investigation:
+    - watchlist symbols `AEHL`, `AIIO`, `CODX`, `TRAW` still had fresh tick timestamps around `12:57 PM ET`
+    - but all four symbols had their last completed bar stuck at `12:54:00 PM ET`
+- Durable fix:
+  - corrected the live VPS env:
+    - `MAI_TAI_STRATEGY_POLYGON_30S_LIVE_AGGREGATE_BARS_ENABLED=true`
+    - `MAI_TAI_STRATEGY_POLYGON_30S_LIVE_AGGREGATE_FALLBACK_ENABLED=false`
+  - updated the backup env used during recovery so future restores do not reintroduce the old mode:
+    - `/etc/project-mai-tai/project-mai-tai.env.bak-codex-20260506-polygon30s`
+  - added a code-level guardrail so a stale env restore cannot silently disable Polygon canonical live bars anymore:
+    - new setting: `strategy_polygon_30s_force_tick_built_mode`
+    - canonical behavior now stays on live aggregate bars by default
+    - old `...live_aggregate_bars_enabled=false` is treated as deprecated for Polygon unless the explicit force-tick-built override is enabled
+- Code touched:
+  - `src/project_mai_tai/settings.py`
+  - `src/project_mai_tai/market_data/gateway.py`
+  - `src/project_mai_tai/services/strategy_engine_app.py`
+  - `src/project_mai_tai/services/trade_coach_app.py`
+- Regression coverage:
+  - added coverage proving the deprecated Polygon disable flag no longer turns off canonical live bars unless the explicit tick-built override is used
+  - focused validation:
+    - `python -m pytest tests/unit/test_polygon_30s_bot.py tests/unit/test_polygon_last_bot_tick.py -q`
+    - `python -m pytest tests/unit/test_strategy_engine_service.py -k "live_second_bars_can_generate_open_intent_for_polygon_30s_bot or polygon_tick_built_sparse_ticks_do_not_synthesize_gap_bars" -q`
+    - `python -m py_compile src/project_mai_tai/settings.py src/project_mai_tai/market_data/gateway.py src/project_mai_tai/services/strategy_engine_app.py src/project_mai_tai/services/trade_coach_app.py`

@@ -132,6 +132,7 @@ def test_polygon_30s_does_not_inherit_global_live_aggregate_stream_toggle() -> N
             scanner_feed_retention_enabled=False,
             market_data_live_aggregate_stream_enabled=True,
             strategy_polygon_30s_live_aggregate_bars_enabled=False,
+            strategy_polygon_30s_force_tick_built_mode=True,
         ),
         now_provider=fixed_now,
     )
@@ -199,7 +200,6 @@ def test_market_data_gateway_enables_live_aggregate_stream_for_polygon_30s() -> 
     service = MarketDataGatewayService(
         settings=Settings(
             strategy_polygon_30s_enabled=True,
-            strategy_polygon_30s_live_aggregate_bars_enabled=True,
             scanner_feed_retention_enabled=False,
         ),
         redis_client=Mock(),
@@ -209,6 +209,19 @@ def test_market_data_gateway_enables_live_aggregate_stream_for_polygon_30s() -> 
     )
 
     assert service._live_aggregate_stream_enabled is True
+
+
+def test_polygon_30s_deprecated_disable_flag_does_not_turn_off_canonical_live_bars() -> None:
+    state = StrategyEngineState(
+        settings=Settings(
+            strategy_polygon_30s_enabled=True,
+            strategy_polygon_30s_live_aggregate_bars_enabled=False,
+            scanner_feed_retention_enabled=False,
+        ),
+        now_provider=fixed_now,
+    )
+
+    assert state.bots["polygon_30s"].use_live_aggregate_bars is True
 
 
 def test_oms_service_builds_webull_provider_inside_mixed_router() -> None:

@@ -58,7 +58,7 @@ def _build_rulebook(settings: Settings) -> dict[str, object]:
                 "execution_mode": settings.execution_mode_for_provider(
                     settings.provider_for_strategy("polygon_30s")
                 ),
-                "live_aggregate_bars_enabled": settings.strategy_polygon_30s_live_aggregate_bars_enabled,
+                "live_aggregate_bars_enabled": settings.strategy_polygon_30s_runtime_uses_live_aggregate_bars,
             },
         ],
     }

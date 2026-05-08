@@ -3254,7 +3254,16 @@ class StrategyEngineState:
             self.settings.strategy_macd_30s_live_aggregate_bars_enabled
             or self.settings.market_data_live_aggregate_stream_enabled
         )
-        polygon_use_live_aggregate_bars = self.settings.strategy_polygon_30s_live_aggregate_bars_enabled
+        polygon_use_live_aggregate_bars = self.settings.strategy_polygon_30s_runtime_uses_live_aggregate_bars
+        if (
+            self.settings.strategy_polygon_30s_enabled
+            and not self.settings.strategy_polygon_30s_live_aggregate_bars_enabled
+            and polygon_use_live_aggregate_bars
+        ):
+            logger.warning(
+                "polygon_30s ignoring deprecated live-aggregate disable flag; canonical live aggregate mode remains enabled. "
+                "Use strategy_polygon_30s_force_tick_built_mode=true only for emergency rollback."
+            )
         self.bots: dict[str, StrategyRuntime] = {}
         if self.settings.strategy_macd_1m_enabled and "macd_1m" in registrations:
             self.bots["macd_1m"] = StrategyBotRuntime(
