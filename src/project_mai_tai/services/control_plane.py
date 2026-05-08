@@ -16,7 +16,7 @@ from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from redis.asyncio import Redis
 from sqlalchemy import case, desc, func, select, text
@@ -98,6 +98,11 @@ def _strategy_code_variants(strategy_code: str | None) -> tuple[str, ...]:
 
 def current_eastern_day_end_utc(now: datetime | None = None) -> datetime:
     return current_eastern_day_start_utc(now) + timedelta(days=1)
+
+
+def _should_disable_cache_for_response(content_type: str | None) -> bool:
+    normalized = str(content_type or "").split(";", 1)[0].strip().lower()
+    return normalized in {"application/json", "text/html", "text/csv"}
 
 
 def _parse_review_filter_date(value: str | None) -> datetime | None:
@@ -2971,6 +2976,17 @@ def build_app(
         version="0.1.0",
         lifespan=lifespan,
     )
+
+    @app.middleware("http")
+    async def disable_dynamic_response_caching(request: Request, call_next):
+        response = await call_next(request)
+        if request.method.upper() in {"GET", "HEAD"} and _should_disable_cache_for_response(
+            response.headers.get("content-type")
+        ):
+            response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
+        return response
 
     @app.get("/health")
     async def health() -> dict[str, Any]:

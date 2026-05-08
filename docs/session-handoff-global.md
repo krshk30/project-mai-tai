@@ -36,6 +36,32 @@ A `git diff` review against the last 10 commits is the kind of check that's hard
 - VPS `git rev-parse HEAD`: same (sync after merge)
 - Doc-only change; no service restart.
 
+## 2026-05-08 Polygon stale confidence follow-up: add no-store headers to live control-plane pages
+
+### Why this mattered
+- After the Polygon 30s runtime fixes, the live VPS could already be back to `LISTENING` while the operator browser still showed an older `STALE` snapshot.
+- Direct live checks on `2026-05-08 04:05 PM ET` showed `polygon_30s` healthy again:
+  - `latest_decision_at = 2026-05-08 04:04:00 PM ET`
+  - `latest_bot_tick_at = 2026-05-08 04:05:21 PM ET`
+  - `latest_market_data_at = 2026-05-08 04:05:17 PM ET`
+  - `latest_heartbeat_at = 2026-05-08 04:05:11 PM ET`
+- But the control-plane responses had **no `Cache-Control` headers at all**, which meant a browser or proxy could keep serving an older stale bot page or `/api/bots` payload even after the backend had recovered.
+
+### Durable fix
+- Added control-plane middleware in `src/project_mai_tai/services/control_plane.py` that marks dynamic HTML/JSON/CSV responses as:
+  - `Cache-Control: no-store, no-cache, must-revalidate, max-age=0`
+  - `Pragma: no-cache`
+  - `Expires: 0`
+- This applies to the live bot pages and API responses so operator pages always fetch current bot state instead of replaying a cached stale snapshot.
+
+### Validation
+- `python -m pytest tests/unit/test_control_plane.py -k "dynamic_pages_disable_caching" -q`
+- `python -m py_compile src/project_mai_tai/services/control_plane.py tests/unit/test_control_plane.py`
+- Direct VPS header check before the fix showed both `/bot/30s-polygon` and `/api/bots` returning `200` without any cache headers.
+
+### Note
+- A broader targeted run also hit one unrelated existing failure in `test_control_plane_overview_and_dashboard_render` (`account_position_count` drifted from `2` to `1` in the seeded fixture). That was not changed in this fix.
+
 ## 2026-05-08 PM: PR #77 cum-vol-delta fix + PR #78 d5ac600 regression restore (path-empty + dashboard CPU)
 
 ```
