@@ -1,5 +1,88 @@
 # Session Handoff - Global
 
+## 2026-05-08 OPEN FOR EOD DISCUSSION: macd_30s CTNT trade audit + rule recommendations (no code changes yet)
+
+```
+Audit owner: this agent (Claude Code)
+Workstream: macd_30s entry path scoring rules
+Status: AUDIT COMPLETE, recommendations pending user review at EOD
+Service target: none yet (no deploy)
+Trade: CTNT 10@2.79 → 10@2.76 = -1.0% on 3-minute hold
+```
+
+### Trade summary
+
+`macd_30s` entered CTNT at **2026-05-08 11:07:04 UTC (7:07 AM ET)** at $2.79, qty 10, path `P5_PULLBACK` score=4 (`hist- stK+ vwap- vol+ macd+ emas+`). Exited at 11:10:02 UTC (7:10 ET) at $2.76 with reason `MACD_BEAR_T1`. **User flagged the entry on sight as predictable losing trade.**
+
+### Bar-by-bar reconstruction (UTC, ET = UTC-4)
+
+| Time UTC | Time ET | Price | Vol | Status | Notes |
+|---|---|---|---|---|---|
+| 10:55:00 | 6:55 | 2.73→2.66 | 40,478 | blocked | Big dump bar |
+| 10:55:30 | 6:55:30 | 2.65→2.62 | 38,032 | blocked | Trough |
+| 10:57-10:59 | 6:57-6:59 | 2.65→2.69 | 4-10k | blocked | "outside trading hours" |
+| 10:59:30 | 6:59:30 | 2.67 | 5,646 | idle | First eligible bar |
+| 11:00-11:06 | 7:00-7:06 | 2.66→2.78 | varies | idle | 6 minutes "no entry path matched" |
+| 11:02:00 | 7:02 | spike to 2.83 | 45,667 | idle | Recovery surge bar |
+| 11:02:34 | 7:02:34 | 2.78 | - | **P3_SURGE score=4 REJECTED** | `hist+ stK- vwap- vol+ macd+ emas+` |
+| 11:06:30 | 7:06:30 | 2.78 | 8,042 | **signal P5_PULLBACK score=4** | `hist- stK+ vwap- vol+ macd+ emas+` |
+| 11:07:04 | 7:07:04 | 2.79 | - | FILLED | $2.79 entry |
+| 11:09:00 | 7:09 | 2.78→2.76 | 9,121 | position_open | Drop |
+| 11:10:02 | 7:10:02 | 2.76 | - | EXIT MACD_BEAR_T1 | -1.0% loss |
+
+### Findings
+
+**1. Why P5 instead of P1?**
+Zero P1_CROSS evaluations recorded for CTNT today. Three explanations:
+- The MACD-cross indicator visible on TOS at ~6:59:30 ET happened on a bar that was still status=`blocked` ("outside trading hours" until 10:59:30 UTC). By the time the bot was eligible at 10:59:30, the cross bar was in the past — P1_CROSS requires the cross bar itself to be eligible.
+- Our 30s-timeframe MACD cross may not align with TOS's 1-min MACD cross.
+- P1_CROSS may have additional path-specific gates not satisfied on the cross bar.
+
+**2. Why P5 score=4 filled while P3 score=4 rejected 5 minutes earlier?**
+Same numerical score, opposite gating decisions. The only delta in component flags: `stK-` → `stK+`. This means **path scoring rules differ across paths and the only difference between rejection and entry was a tick in stochastic K** (47.5 per TOS, slowly rising). On its own that's not a trade thesis.
+
+**3. Volume `vol+` flag fired on declining volume.**
+Bars before the trigger: 4191, 3933, 2635, 1350, 8042 (declining 4 bars then a small pop). The `vol+` gate fired anyway because (likely) it's an absolute threshold check, not a relative-to-recent-bars check. Real momentum should expand volume.
+
+**4. Entry below VWAP.**
+TOS shows VWAP=2.77 with "BELOW" label. The metadata flagged `vwap-`. Going long below VWAP fights the day's weighted-average sellers. P5_PULLBACK assumes pullback *within* a trend — but you can't be in a trend if you're below VWAP.
+
+**5. No real trend existed.**
+Price went 2.73 → 2.61 → 2.79 in 12 minutes. P5_PULLBACK's premise is "price pulls back within an established uptrend then resumes." Here there was a sharp V-bottom recovery off a flush, not a trend with a pullback. The path matched anyway because the system has no "regime detection" to distinguish trend continuation from V-bottom bounce.
+
+**6. Bar building is NOT the cause.**
+Reviewed 30s bars across 10:50-11:15 UTC: OHLCs sane, volumes track price action, no `vol==1`/zero-volume sentinel bars. The entry-trigger bar at 11:06:30 had volume 8,042 — higher than the prior 4 declining bars but much lower than the 11:02 surge (45,667). Fake-breakout volume profile, not a builder bug.
+
+### Recommended rule changes (priority order, for EOD discussion)
+
+1. **Add path-rejection-reason logging to `trade_intents` payload.** Currently rejection reasons are not captured, so audits like this require guesswork. **Foundational** for any other rule iteration.
+2. **Promote VWAP-below to a hard veto for longs.** One-line change in entry engine. Today's `vwap-` was a feature flag worth -1; should be a veto worth ∞.
+3. **Add post-flush blackout filter.** Skip N bars after a >X% move (e.g., 5 bars after a >2% swing in either direction). Today's 2.73→2.61 was a 4% flush — the next 6-10 minutes were noise.
+4. **Make `vol+` relative, not absolute.** Require current bar volume > median(last 5 bars) × 1.5× (or similar). Today's 8,042 wouldn't beat the trailing 5-bar median.
+5. **Raise P5_PULLBACK score threshold to 5** (same as P3_SURGE) OR add trend-of-trend confirmation (e.g., 5-bar EMA-stack stable, EMA20 > EMA50 for last N bars). Score=4 is too noisy when the only positive flag is `stK+`.
+6. **Investigate P1_CROSS miss on trading-hours-boundary edge case.** If the cross was at 10:59:30 UTC (right at gate release), check whether the path can accept a "fresh cross within last 30-60s" allowance.
+
+### Structural gaps still open
+
+- **No regime detection.** Bot doesn't distinguish "established trend" from "V-bottom recovery" from "ranging chop" from "post-news spike." Every entry path treats every bar the same.
+- **No relative-volume context.** `vol+` should be relative to recent activity, not absolute.
+- **VWAP is a label, not a gate.** Should be a hard veto for longs below it during entry evaluation.
+- **No cross-path consistency.** Same score=4 fires P5 but rejects P3, with no logged reason.
+
+### State at end of audit (no deploy)
+
+- GitHub `main`: `a22e61e` (this entry adds to it)
+- VPS: `a22e61e`
+- No code changes, no service restart, no deploy
+- Pure audit + recommendations for EOD review
+
+### Open questions for EOD discussion
+
+- Which of the 6 recommendations to implement first?
+- Acceptable trade-offs: tightening VWAP veto / vol gate may cause some "would-have-been-winners" to miss too. Do we want stricter rules (fewer trades, higher win rate) or looser (more trades, current win rate)?
+- Is the P1_CROSS-on-trading-hours-boundary worth fixing, or rare enough to ignore?
+- Should we instrument logged rejection reasons across all paths now, before iterating rules?
+
 ## 2026-05-08 Dashboard performance: 3 commits to fix CPU saturation under 5s auto-refresh polling
 
 ```
