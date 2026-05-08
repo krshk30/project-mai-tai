@@ -1,5 +1,221 @@
 # Session Handoff - Global
 
+## 2026-05-08 Dashboard performance: 3 commits to fix CPU saturation under 5s auto-refresh polling
+
+```
+Deploy owner: this agent (Claude Code)
+Workstream: control-plane dashboard latency
+Status: DEPLOYED, partially fixed
+SHAs: 4f3c989, b24873e, 6420770 (all on main)
+VPS SHA: 6420770
+Service target: control
+Restart window: 2026-05-08 10:56:02 UTC
+```
+
+### Symptom
+
+User reported the Mai Tai dashboard is "really slow". Confirmed live: `/bot/1m-schwab` was taking 16-20s, `/api/overview` 12s, `/api/orders` 8-29s, `/health` 7-9s. The dashboard auto-refreshes every 5 seconds (line 3510 of control_plane.py), so requests piled up faster than they completed and saturated the 2-vcpu host (load average 2.13).
+
+### Three root causes, fixed in three commits
+
+**1. N+1 TradeIntent lookup (`4f3c989`)** - `load_bot_dashboard_data()` iterated 1268 BrokerOrder rows and called `session.get(TradeIntent, order.intent_id)` per iteration. Replaced with a single bulk SELECT WHERE id IN (...) keyed off pre-collected intent_ids; same dict-lookup pattern as the existing `latest_order_event_by_order` prefetch. Test: `test_load_bot_dashboard_data_avoids_n_plus_one_intent_lookups` asserts trade_intents SELECTs stay <= 10 (was ~301 with 300 seeded orders). Verified: FAILS on prior code, PASSES with fix.
+
+**2. Cached `load_bot_dashboard_data` + bumped overview cache TTL (`b24873e`)** - `load_dashboard_data` already had a 2s cache; `load_bot_dashboard_data` had none. Added a parallel cache with 4s TTL and bumped overview to 4s as well. With dashboard auto-refresh at 5s, most refreshes within the same TTL window share a single computation.
+
+**3. asyncio.to_thread for heavy DB load (`6420770`)** - control-plane runs as a single uvicorn worker, so synchronous `_load_database_state()` work blocked the asyncio event loop and made every other in-flight request (including `/health` and `/api/positions`) wait behind it. Wrapped both call sites in `await asyncio.to_thread(self._load_database_state, ...)`. The expensive work consumes the same total CPU but the event loop stays responsive.
+
+### Result (steady-state, browser still polling at 5s)
+
+| Endpoint | Before | After |
+|---|---|---|
+| `/health` | 7-9s | **0.17s** |
+| `/api/positions` | 12-17s | 4-12s (still under DB lock contention but no longer blocked by event loop) |
+| `/api/overview` | 12-29s | 4-12s |
+| `/bot/1m-schwab` | 16-20s | 8-16s (cache hits on repeat refreshes) |
+
+### Residual considerations
+
+- Cold-render endpoints (`/api/overview`, `/bot/1m-schwab`) still take 5-15s. Profiling the actual per-request work would identify further optimisations - the `_render_bot_detail_page` HTML construction is heavy.
+- Today's 1262 cancelled BrokerOrder rows from the runaway scanner is the underlying data inflation that triggered the slowness. A separate workstream should investigate the scanner emitting so many rapid cancellations (RMSG had 952 cancelled buys today on a non-trading day).
+- DB connection pool may be a bottleneck during concurrent renders; if `/api/positions` continuing at 4-12s is unacceptable, increasing pool size is the next lever.
+
+### Tests added
+
+- `test_load_bot_dashboard_data_avoids_n_plus_one_intent_lookups` - trade_intents SELECT count must stay bounded under 300+ orders (regression test for N+1)
+- Existing flood test `test_recent_orders_keeps_filled_when_cancelled_orders_flood_the_limit` setup tightened to be robust under pre-market test runs
+
+### State at end of work
+
+- GitHub `main`: `6420770`
+- VPS `git rev-parse HEAD`: `6420770`
+- All 5 services active
+
+## 2026-05-08 Polygon 30s assessment: CTNT day audit is mostly clean, but not perfect
+
+### Scope
+- Audited one live-fed Polygon symbol only: `CTNT`
+- Comparison:
+  - Polygon provider historical `30s`
+  - persisted `StrategyBarHistory` for `webull_30s`
+- Window:
+  - `2026-05-08 04:00:00 AM ET` through `06:55:12 AM ET`
+
+### Results
+- `provider_count = 295`
+- `persisted_count = 294`
+- `shared_count = 294`
+- `provider_only = 1`
+- `persisted_only = 0`
+- `mismatch_buckets = 29`
+- mismatch types:
+  - `trade_count = 29`
+  - `volume = 2`
+  - `open = 1`
+  - `low = 1`
+
+### Important interpretation
+- Most of the `29` mismatches were tiny `trade_count` noise only.
+- There were only `2` buckets with non-trade-count drift:
+
+1. `2026-05-08 05:49:30 AM ET`
+   - provider: `o=3.21 h=3.25 l=3.2032 c=3.23 v=15660 tc=201`
+   - persisted: `o=3.21 h=3.25 l=3.2032 c=3.23 v=14122 tc=171`
+   - This is a real volume/trade-count miss and does **not** line up with a restart boundary.
+
+2. `2026-05-08 06:41:30 AM ET`
+   - provider: `o=2.80 h=2.84 l=2.80 c=2.84 v=6278 tc=48`
+   - persisted: `o=2.84 h=2.84 l=2.84 c=2.84 v=621 tc=4`
+   - This is the ugly bar in the sample, but it aligns closely with the strategy restart at:
+     - `2026-05-08 10:41:54 UTC`
+     - `2026-05-08 06:41:54 AM ET`
+   - Treat this as **restart-boundary contamination**, not evidence of normal steady-state drift.
+
+### Missing provider-only bucket
+- Missing persisted bucket:
+  - `2026-05-08 05:33:30 AM ET`
+- This does **not** line up with the later `06:41` restart.
+- It does line up with CTNT first becoming active in the Polygon bot:
+  - `CTNT` confirmed at about `05:33:34 AM ET`
+  - direct provider history fetch logged at `05:33:58 AM ET`
+  - partial-bucket skip logs followed immediately after activation
+- Treat this one as an **activation / mid-bucket handoff edge**, not a random steady-state midday miss.
+
+### Bottom line
+- If we exclude:
+  - the activation-boundary bucket at `05:33:30 AM ET`
+  - the restart-boundary bucket at `06:41:30 AM ET`
+- then CTNT looked largely healthy today.
+- The remaining clear non-boundary concern in this audit is:
+  - `05:49:30 AM ET` volume/trade-count drift
+
+### Assessment
+- Polygon 30s remains much healthier than the earlier broken state.
+- Today’s one-symbol audit does **not** show broad continuous OHLC/volume corruption.
+- The remaining error classes appear to be:
+  - transition-edge behavior at activation/restart boundaries
+  - at least one smaller steady-state volume/trade-count miss
+
+### Next-step plan
+1. Separate transition-edge bars from steady-state bars in validation reporting.
+   - We should stop mixing activation/restart buckets with normal-flow parity results.
+
+2. Add a focused trace for the `05:49:30 AM ET` CTNT bucket.
+   - This is the best current candidate for a true non-boundary Polygon bar-build bug.
+
+3. Keep using one-symbol day audits as a confidence check.
+   - Best next pass:
+     - one symbol with no restart during the sampled window
+     - one symbol with a cleaner continuous active period after confirmation
+
+4. Do not reopen broad Polygon architecture changes unless the non-boundary misses start to cluster.
+   - Current evidence does not support calling Polygon 30s broadly broken again.
+
+## 2026-05-08 LIVE FIX: scanner/feed bloat root cause found and patched
+
+### Symptom
+- Live scanner had only `1` confirmed symbol (`CTNT`), but the strategy/runtime was still feeding `15` names across the bots.
+- This was visible in live state before the fix:
+  - `scanner.all_confirmed_count = 1`
+  - `scanner.watchlist_count = 15`
+  - `market_data.active_subscription_symbols = 15`
+  - `strategy heartbeat schwab_stream_symbols = 15`
+- User called out that this has happened repeatedly this month.
+
+### Root cause
+- This was a real runtime retention leak, not just a control-plane display problem.
+- The key bug was in `StrategyBotRuntime.refresh_lifecycle()`:
+  - it only evaluated lifecycle retention for symbols that already had `last_indicators`
+  - symbols promoted into a bot watchlist but never building indicators were skipped entirely
+  - skipped symbols kept their old lifecycle state, so `keeps_feed=True` could persist indefinitely
+  - those stuck lifecycle states kept inflating bot `active_symbols()`, which in turn inflated:
+    - scanner/global watchlist
+    - Schwab stream subscriptions
+    - market-data subscription footprint
+- The policy layer also reinforced the leak:
+  - `FeedRetentionPolicy.evaluate(...)` returned the current state unchanged when `metrics is None` or `metrics.price is None`
+  - so even if refresh touched the symbol, no-data symbols had no path to cool down or drop
+
+### Why this matched the live symptom
+- I verified the live strategy snapshot before the fix:
+  - `all_confirmed_count = 1`
+  - bot/watchlist state still held 15 names
+- That means the handoff/confirmed set had already shrunk correctly.
+- The extra symbols were being kept alive by lifecycle retention, not by the scanner still believing they were confirmed.
+
+### Fix implemented
+- File: `src/project_mai_tai/services/strategy_engine_app.py`
+  - `StrategyBotRuntime.refresh_lifecycle()` now evaluates lifecycle for every retained symbol, not only symbols with built indicators.
+- File: `src/project_mai_tai/strategy_core/feed_retention.py`
+  - added a no-metrics aging path:
+    - `active` symbols with no data age into `cooldown` after `no_activity_minutes`
+    - `cooldown` / `resume_probe` symbols with no data age into `dropped` after `drop_cooldown_minutes`
+- This is intentionally narrow:
+  - current confirmed symbols are still protected by `_desired_watchlist_symbols`
+  - pending orders / positions are still protected by `_symbol_requires_feed(...)`
+  - so the change targets stale non-confirmed symbols that were leaking forever
+
+### Local validation
+- `pytest tests/unit/test_strategy_engine_service.py -k "retention" -q` -> `5 passed`
+- `pytest tests/unit/test_feed_retention.py -q` -> `3 passed`
+- `pytest tests/unit/test_control_plane.py -k "all_confirmed_count or scanner" -q` -> `3 passed`
+- `py_compile` passed on:
+  - `src/project_mai_tai/strategy_core/feed_retention.py`
+  - `src/project_mai_tai/services/strategy_engine_app.py`
+  - `tests/unit/test_strategy_engine_service.py`
+
+### Deploy
+- Copied to VPS:
+  - `src/project_mai_tai/strategy_core/feed_retention.py`
+  - `src/project_mai_tai/services/strategy_engine_app.py`
+- Restarted:
+  - `project-mai-tai-strategy.service`
+- Restart timestamp:
+  - `2026-05-08 10:41:54 UTC`
+
+### Live validation after deploy
+- Fresh strategy-state snapshot after restart:
+  - `all_confirmed_count = 1`
+  - `watchlist_count = 1`
+  - `watchlist = ['CTNT']`
+- Per-bot live state:
+  - `schwab_1m watchlist = ['CTNT']`
+  - `macd_30s watchlist = ['CTNT']`
+  - `webull_30s watchlist = ['CTNT']`
+  - each bot retention summary only had `CTNT active keeps_feed=True`
+- Fresh subscription evidence:
+  - latest `market-data-subscriptions` replace event from `strategy-engine` = `['CTNT']`
+  - latest strategy heartbeat details:
+    - `watchlist_size = 1`
+    - `schwab_stream_symbols = 1`
+    - `schwab_stream_connected = true`
+
+### Assessment
+- This appears to be the real fix for the repeated “1 scanner symbol but 15 live-fed names” issue.
+- The mismatch collapsed in both runtime state and actual subscription output immediately after deploy.
+- Residual risk:
+  - watch for future cases where symbols remain live because of legitimate positions/pending orders/prewarm, since those are intentionally still protected
+  - but the stale no-indicator retention leak itself is now patched
+
 ## 2026-05-07 RESOLVED: Completed Positions Path="-" bug — fixed by prioritising filled orders in recent_orders SQL query (commit b6fb7b2)
 
 ```
