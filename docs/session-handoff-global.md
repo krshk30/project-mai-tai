@@ -8222,5 +8222,30 @@ Notes:
     - `3 passed`
   - `python -m py_compile src/project_mai_tai/services/strategy_engine_app.py tests/unit/test_polygon_30s_bot.py tests/unit/test_polygon_last_bot_tick.py`
 - Deployment state:
-  - fixed locally in repo
-  - not deployed to VPS yet in this session
+  - merged to `main` as `35d9ef5` (`Fix polygon 30s stale bar closure`)
+  - deployed safely to VPS by fast-forwarding `/home/trader/project-mai-tai` from `58094d3` to `35d9ef5`
+  - rollout scope stayed strategy-only:
+    - stopped `project-mai-tai-strategy.service`
+    - `git pull --ff-only origin main`
+    - started `project-mai-tai-strategy.service`
+- Post-deploy live verification:
+  - `project-mai-tai-strategy.service` returned `active`
+  - direct control-plane `/health` on `127.0.0.1:8100` reported:
+    - overall `degraded` only because reconciler still had pre-existing findings
+    - `strategy-engine=healthy`
+    - `market-data-gateway=healthy`
+    - `oms-risk=healthy`
+  - direct control-plane `/api/bots` on `127.0.0.1:8100` showed `polygon_30s` recovered from stale:
+    - `state=LISTENING`
+    - `latest_decision_at=2026-05-08 02:55:30 PM ET`
+    - `latest_bot_tick_at=2026-05-08 02:56:47 PM ET`
+    - `latest_market_data_at=2026-05-08 02:56:43 PM ET`
+    - `latest_heartbeat_at=2026-05-08 02:56:45 PM ET`
+    - `watchlist_count=5`
+    - `tracked_bar_count=1772`
+  - Polygon watchlist after restart remained:
+    - `AEHL`
+    - `AIIO`
+    - `CODX`
+    - `MNTS`
+    - `TRAW`
