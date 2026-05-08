@@ -247,6 +247,9 @@ class ControlPlaneRepository:
         self._overview_cache: dict[str, Any] | None = None
         self._overview_cache_at: datetime | None = None
         self._overview_cache_lock = asyncio.Lock()
+        self._bot_dashboard_cache: dict[str, Any] | None = None
+        self._bot_dashboard_cache_at: datetime | None = None
+        self._bot_dashboard_cache_lock = asyncio.Lock()
 
     @staticmethod
     def _snapshot_matches_current_scanner_session(
@@ -714,7 +717,11 @@ class ControlPlaneRepository:
         return True
 
     async def load_dashboard_data(self) -> dict[str, Any]:
-        cache_ttl_seconds = 2.0
+        # The browser dashboard auto-refreshes every 5 seconds (see
+        # refresh_seconds at the bottom of _render_dashboard_page). A 4-second
+        # cache TTL means most refreshes hit cache, freeing CPU for the
+        # actual scheduled refresh that does the heavy work.
+        cache_ttl_seconds = 4.0
         async with self._overview_cache_lock:
             cache_age = None
             if self._overview_cache_at is not None:
@@ -733,7 +740,10 @@ class ControlPlaneRepository:
             self._overview_cache_at = None
 
     async def _load_dashboard_data_uncached(self) -> dict[str, Any]:
-        db_state = self._load_database_state()
+        # Run the heavy synchronous DB aggregation in a worker thread so the
+        # asyncio event loop stays responsive to other requests (e.g.
+        # /api/positions, /health) while this expensive scan completes.
+        db_state = await asyncio.to_thread(self._load_database_state)
         stream_state = await self._load_stream_state()
         normalized_strategy_runtime = self._normalize_strategy_runtime(stream_state["strategy_runtime"])
         legacy_shadow = await self._load_legacy_shadow_data(
@@ -829,7 +839,39 @@ class ControlPlaneRepository:
         }
 
     async def load_bot_dashboard_data(self) -> dict[str, Any]:
-        db_state = self._load_database_state(lightweight=True)
+        # Bot detail pages are heavy to render (DB queries, redis stream
+        # loading, per-bot view assembly) and the dashboard polls /bot/* AND
+        # multiple /api/* endpoints concurrently every 5 seconds. Without a
+        # cache the prior request can still be running when the next refresh
+        # arrives, saturating CPU. A short TTL is enough to absorb the burst
+        # without making the UI feel stale.
+        cache_ttl_seconds = 4.0
+        async with self._bot_dashboard_cache_lock:
+            cache_age = None
+            if self._bot_dashboard_cache_at is not None:
+                cache_age = (utcnow() - self._bot_dashboard_cache_at).total_seconds()
+            if (
+                self._bot_dashboard_cache is not None
+                and cache_age is not None
+                and cache_age < cache_ttl_seconds
+            ):
+                return self._bot_dashboard_cache
+
+            data = await self._load_bot_dashboard_data_uncached()
+            self._bot_dashboard_cache = data
+            self._bot_dashboard_cache_at = utcnow()
+            return data
+
+    async def invalidate_bot_dashboard_cache(self) -> None:
+        async with self._bot_dashboard_cache_lock:
+            self._bot_dashboard_cache = None
+            self._bot_dashboard_cache_at = None
+
+    async def _load_bot_dashboard_data_uncached(self) -> dict[str, Any]:
+        # Run the heavy synchronous DB aggregation in a worker thread so the
+        # asyncio event loop stays responsive to other requests while this
+        # expensive scan completes.
+        db_state = await asyncio.to_thread(self._load_database_state, lightweight=True)
         stream_state = await self._load_stream_state()
         normalized_strategy_runtime = self._normalize_strategy_runtime(stream_state["strategy_runtime"])
         legacy_shadow = self._empty_legacy_shadow_data()
@@ -2148,15 +2190,57 @@ class ControlPlaneRepository:
                 ).all():
                     latest_order_event_by_order.setdefault(entry.order_id, entry)
 
-                for order in session.scalars(
-                    select(BrokerOrder)
-                    .where(BrokerOrder.updated_at >= session_start, BrokerOrder.updated_at < session_end)
-                    .order_by(desc(BrokerOrder.updated_at))
-                    .limit(1000)
-                ).all():
+                # Filled orders feed completed-cycle reconstruction, so they must
+                # never be pushed out of this result by a flood of cancelled or
+                # rejected orders (e.g. a runaway scanner producing hundreds of
+                # cancelled buys for the same symbol). Order by status-priority
+                # first so filled rows are guaranteed to be loaded before the
+                # LIMIT cuts off the long tail.
+                recent_order_rows = list(
+                    session.scalars(
+                        select(BrokerOrder)
+                        .where(BrokerOrder.updated_at >= session_start, BrokerOrder.updated_at < session_end)
+                        .order_by(
+                            case((BrokerOrder.status == "filled", 0), else_=1),
+                            desc(BrokerOrder.updated_at),
+                        )
+                        .limit(2000)
+                    ).all()
+                )
+                open_order_rows = list(
+                    session.scalars(
+                        select(BrokerOrder)
+                        .where(
+                            BrokerOrder.status.in_(["pending", "submitted", "accepted", "partially_filled"]),
+                            BrokerOrder.updated_at >= session_start,
+                            BrokerOrder.updated_at < session_end,
+                        )
+                        .order_by(desc(BrokerOrder.updated_at))
+                        .limit(500)
+                    ).all()
+                )
+
+                # Bulk-load every TradeIntent referenced by the orders we are
+                # about to render. Without this, each order does a separate
+                # session.get(TradeIntent, ...) round-trip - which produced
+                # 1200+ Postgres queries per page load on days with a runaway
+                # cancelled-order flood, taking 12-20s per render.
+                referenced_intent_ids: set[Any] = set()
+                for source in (recent_order_rows, open_order_rows):
+                    for order in source:
+                        if order.intent_id is not None:
+                            referenced_intent_ids.add(order.intent_id)
+                intent_lookup: dict[Any, TradeIntent] = {}
+                if referenced_intent_ids:
+                    for intent in session.scalars(
+                        select(TradeIntent).where(TradeIntent.id.in_(referenced_intent_ids))
+                    ).all():
+                        intent_lookup[intent.id] = intent
+
+                for order in recent_order_rows:
                     strategy = strategy_lookup.get(order.strategy_id)
                     account = account_lookup.get(order.broker_account_id)
-                    intent = session.get(TradeIntent, order.intent_id) if order.intent_id else None
+                    intent = intent_lookup.get(order.intent_id) if order.intent_id else None
                     latest_event = latest_order_event_by_order.get(order.id)
                     latest_event_payload = (
                         latest_event.payload
@@ -2202,19 +2286,10 @@ class ControlPlaneRepository:
                         }
                     )
 
-                for order in session.scalars(
-                    select(BrokerOrder)
-                    .where(
-                        BrokerOrder.status.in_(["pending", "submitted", "accepted", "partially_filled"]),
-                        BrokerOrder.updated_at >= session_start,
-                        BrokerOrder.updated_at < session_end,
-                    )
-                    .order_by(desc(BrokerOrder.updated_at))
-                    .limit(500)
-                ).all():
+                for order in open_order_rows:
                     strategy = strategy_lookup.get(order.strategy_id)
                     account = account_lookup.get(order.broker_account_id)
-                    intent = session.get(TradeIntent, order.intent_id) if order.intent_id else None
+                    intent = intent_lookup.get(order.intent_id) if order.intent_id else None
                     payload = order.payload if isinstance(order.payload, dict) else {}
                     open_orders.append(
                         {
