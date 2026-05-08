@@ -90,6 +90,11 @@ class SchwabNativeBarBuilder:
         self._current_bar_start = 0.0
         self._current_bar_last_cum_volume: int | None = None
         self._bar_count = 0
+        # Snapshot of the most-recently-revised closed bar (set when a late
+        # trade-tick lands in an already-closed bucket). The engine's
+        # handle_trade_tick consumes this via consume_recent_revised_closed_bar
+        # and re-persists strategy_bar_history with the revised values.
+        self._recent_revised_closed_bar: OHLCVBar | None = None
 
     def on_trade(
         self,
@@ -113,6 +118,9 @@ class SchwabNativeBarBuilder:
                 self._current_bar_start = bucket_start
                 self._current_bar_last_cum_volume = cumulative_volume
                 return completed
+            if bucket_start == self.bars[-1].timestamp:
+                self._revise_last_closed_bar_from_trade(price, size, cumulative_volume)
+                return completed
             logger.debug(
                 "[SCHWAB30] Ignoring stale trade for %s at %.3f (<= last closed %.3f)",
                 self.ticker,
@@ -130,6 +138,9 @@ class SchwabNativeBarBuilder:
             return completed
 
         if bucket_start < self._current_bar_start:
+            if self.bars and bucket_start == self.bars[-1].timestamp and not _is_synthetic_bar(self.bars[-1]):
+                self._revise_last_closed_bar_from_trade(price, size, cumulative_volume)
+                return completed
             logger.debug(
                 "[SCHWAB30] Ignoring stale trade for %s at %.3f (< current %.3f)",
                 self.ticker,
@@ -278,6 +289,52 @@ class SchwabNativeBarBuilder:
         self._current_bar_start = 0.0
         self._current_bar_last_cum_volume = None
         self._bar_count = 0
+        self._recent_revised_closed_bar = None
+
+    def consume_recent_revised_closed_bar(self) -> OHLCVBar | None:
+        revised = self._recent_revised_closed_bar
+        self._recent_revised_closed_bar = None
+        return revised
+
+    def _revise_last_closed_bar_from_trade(
+        self,
+        price: float,
+        size: int,
+        cumulative_volume: int | None,
+    ) -> None:
+        """Apply a late-arriving trade tick to the most-recently-closed bar.
+
+        The Schwab WebSocket can stall and flush buffered trades 30-60s late.
+        By the time those trades reach on_trade, the engine's periodic
+        check_bar_closes has force-closed the bucket they belong to. Without
+        revision the trades are silently dropped, and the cum_vol baseline
+        drift attributes their volume to the *next* bar instead.
+
+        Volume contribution uses the trade's own size (not a cum-volume delta)
+        because late trades arrive with non-monotonic cum_vol relative to the
+        in-progress baseline; computing a delta would clamp to zero or worse.
+
+        We DO drag _current_bar_last_cum_volume up to max(current, late.cv) so
+        that when a fresh new-bar trade arrives next, its delta math correctly
+        excludes the volume already credited back to the closed bar.
+        """
+        if not self.bars:
+            return
+        last_closed = self.bars[-1]
+        # OHLCVBar.update extends high/low if applicable and updates close.
+        # Open is left at the original first-arrival trade's price; reordering
+        # late trades to update open would require per-trade timestamp tracking
+        # we don't carry, and the open mismatch is small in practice.
+        last_closed.update(price, max(0, int(size)))
+        if cumulative_volume is not None:
+            if (
+                self._current_bar_last_cum_volume is None
+                or cumulative_volume > self._current_bar_last_cum_volume
+            ):
+                self._current_bar_last_cum_volume = cumulative_volume
+        self._recent_revised_closed_bar = OHLCVBar.from_bar(
+            last_closed, timestamp=last_closed.timestamp
+        )
 
     def _resolve_volume_delta(self, size: int, cumulative_volume: int | None) -> int:
         if cumulative_volume is None:
@@ -366,6 +423,12 @@ class SchwabNativeBarBuilderManager:
     def get_bars(self, ticker: str) -> list[dict[str, float | int]]:
         builder = self._builders.get(ticker)
         return builder.get_bars_as_dicts() if builder else []
+
+    def consume_recent_revised_closed_bar(self, ticker: str) -> OHLCVBar | None:
+        builder = self._builders.get(ticker)
+        if builder is None:
+            return None
+        return builder.consume_recent_revised_closed_bar()
 
     def on_trade(
         self,

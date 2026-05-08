@@ -898,6 +898,16 @@ class StrategyBotRuntime:
             timestamp_ns or 0,
             cumulative_volume,
         )
+        # When a late-arriving trade tick lands in an already-closed bucket,
+        # the SchwabNativeBarBuilder revises the closed bar in-place and stamps
+        # _recent_revised_closed_bar. Pull it here and persist so the DB record
+        # reflects the corrected volume/OHLC. Mirrors the same hook in
+        # handle_live_bar (line ~1006) for the on_bar revision path.
+        consume_revised = getattr(self.builder_manager, "consume_recent_revised_closed_bar", None)
+        if callable(consume_revised):
+            revised_closed_bar = consume_revised(symbol)
+            if revised_closed_bar is not None and not prewarm_only:
+                self._persist_revised_closed_bar(symbol=symbol, bar=revised_closed_bar)
         synthetic_gap_bars = [
             bar
             for bar in completed_bars
