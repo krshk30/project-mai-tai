@@ -131,7 +131,13 @@ def test_late_trade_for_bar_more_than_one_step_back_still_drops() -> None:
 
 def test_late_trade_during_open_current_bar_revises_immediately_prior_closed_bar() -> None:
     """When current_bar is open (bar 1's trades arrived first), late trades
-    for bar 0 (bucket < current_bar_start) must still revise bar 0."""
+    for bar 0 (bucket < current_bar_start) must still revise bar 0.
+
+    The volume delta uses the bar's frozen baseline (_last_closed_bar_cum_volume
+    snapshot at close = 1000) -- NOT the running _current_bar_last_cum_volume
+    which has been dragged forward to 1100 by bar 1's first trade.
+    Late trade cv=1080 -> delta = 1080-1000 = 80, bar 0 volume 100 -> 180.
+    """
     builder, clock = _make_builder()
     builder.on_trade(price=10.0, size=100, timestamp_ns=t_ns(0), cumulative_volume=1000)
     builder.on_trade(price=10.5, size=50, timestamp_ns=t_ns(31), cumulative_volume=1100)
@@ -139,10 +145,11 @@ def test_late_trade_during_open_current_bar_revises_immediately_prior_closed_bar
     assert builder.bars[0].volume == 100
     assert builder._current_bar is not None
     assert builder._current_bar_start == float(BASE_S + 30)
+    assert builder._last_closed_bar_cum_volume == 1000
 
     builder.on_trade(price=10.2, size=25, timestamp_ns=t_ns(20), cumulative_volume=1080)
 
-    assert builder.bars[0].volume == 125, "late trade size must add to bar 0"
+    assert builder.bars[0].volume == 180, "late trade cum_vol delta (1080-1000=80) must add to bar 0"
     assert builder.bars[0].trade_count == 2
     revised = builder.consume_recent_revised_closed_bar()
     assert revised is not None and revised.timestamp == float(BASE_S)
@@ -159,6 +166,43 @@ def test_consume_recent_revised_closed_bar_is_one_shot() -> None:
     assert first is not None
     second = builder.consume_recent_revised_closed_bar()
     assert second is None, "consume must clear the stamp"
+
+
+def test_late_trade_uses_cum_vol_delta_not_size_for_volume_contribution() -> None:
+    """LEVELONE_EQUITIES events aggregate multiple ticks. event.size is
+    `last_size` (the size of the LAST tick only) while
+    cum_vol delta represents the actual volume since the prior update.
+    The revision must use the delta, not size, or it dramatically
+    undercounts on heavy-burst LEVELONE updates.
+    """
+    builder, clock = _make_builder()
+    builder.on_trade(price=10.0, size=10, timestamp_ns=t_ns(0), cumulative_volume=1000)
+    clock["now"] = float(BASE_S + 35)
+    builder.check_bar_closes()
+    assert builder.bars[-1].volume == 10
+
+    # Late LEVELONE event: 50 ticks aggregated, last_size=5 but cum_vol jumped 500.
+    # Old (size-based) fix: bar.vol += 5  -> 15  (catastrophic undercount)
+    # New (cum_vol-delta) fix: bar.vol += (1500 - 1000) = 500 -> 510  (correct)
+    builder.on_trade(price=10.1, size=5, timestamp_ns=t_ns(15), cumulative_volume=1500)
+    assert builder.bars[-1].volume == 510, (
+        "late-trade revision must use cum_vol delta (=500) against the bar's "
+        "frozen baseline (=1000), not the event's last_size (=5)"
+    )
+
+
+def test_late_trade_with_no_cum_volume_falls_back_to_size() -> None:
+    """When cumulative_volume is None (e.g., source is TIMESALE-only without
+    cum_vol field, or the bar's frozen baseline was never set), fall back to
+    using size. Same as _resolve_volume_delta's fallback for in-progress trades."""
+    builder, clock = _make_builder()
+    builder.on_trade(price=10.0, size=100, timestamp_ns=t_ns(0), cumulative_volume=1000)
+    clock["now"] = float(BASE_S + 35)
+    builder.check_bar_closes()
+
+    # Late trade with cumulative_volume=None -> falls back to size=25.
+    builder.on_trade(price=10.05, size=25, timestamp_ns=t_ns(15), cumulative_volume=None)
+    assert builder.bars[-1].volume == 125, "with no cv context, late-trade revision falls back to size"
 
 
 def test_no_revision_signal_when_trade_lands_in_a_fresh_bucket() -> None:

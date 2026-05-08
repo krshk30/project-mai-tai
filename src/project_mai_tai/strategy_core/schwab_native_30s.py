@@ -95,6 +95,13 @@ class SchwabNativeBarBuilder:
         # handle_trade_tick consumes this via consume_recent_revised_closed_bar
         # and re-persists strategy_bar_history with the revised values.
         self._recent_revised_closed_bar: OHLCVBar | None = None
+        # Snapshot of `_current_bar_last_cum_volume` at the moment the most
+        # recently-closed real bar was closed. Used as the baseline for
+        # cum-volume-delta math on late-arriving trade ticks that revise
+        # bars[-1]; it's NOT the same as the running builder-level
+        # _current_bar_last_cum_volume which gets dragged forward by trades
+        # in subsequent bars.
+        self._last_closed_bar_cum_volume: int | None = None
 
     def on_trade(
         self,
@@ -290,6 +297,7 @@ class SchwabNativeBarBuilder:
         self._current_bar_last_cum_volume = None
         self._bar_count = 0
         self._recent_revised_closed_bar = None
+        self._last_closed_bar_cum_volume = None
 
     def consume_recent_revised_closed_bar(self) -> OHLCVBar | None:
         revised = self._recent_revised_closed_bar
@@ -304,34 +312,67 @@ class SchwabNativeBarBuilder:
     ) -> None:
         """Apply a late-arriving trade tick to the most-recently-closed bar.
 
-        The Schwab WebSocket can stall and flush buffered trades 30-60s late.
-        By the time those trades reach on_trade, the engine's periodic
-        check_bar_closes has force-closed the bucket they belong to. Without
-        revision the trades are silently dropped, and the cum_vol baseline
-        drift attributes their volume to the *next* bar instead.
+        Background: the Schwab WebSocket can stall and flush buffered trades
+        30-60s late. By the time those trades reach on_trade, the engine's
+        periodic check_bar_closes has force-closed the bucket they belong to.
+        Without revision the trades are silently dropped, AND the cum-volume
+        baseline preservation (the 2026-05-07 fix) attributes their volume to
+        the *next* bar's first delta -- the original PMAX 07:07 root cause.
 
-        Volume contribution uses the trade's own size (not a cum-volume delta)
-        because late trades arrive with non-monotonic cum_vol relative to the
-        in-progress baseline; computing a delta would clamp to zero or worse.
+        Volume contribution: the trade tap is LEVELONE_EQUITIES (per
+        strategy_macd_30s_trade_stream_service), where each event aggregates
+        multiple underlying ticks. The event's `size` is just `last_size` --
+        the size of the LAST tick in the update -- which dramatically
+        undercounts the actual volume the event represents. The correct
+        primitive is `cumulative_volume - <bar's prior last_cum_volume>`,
+        same math the live builder uses for in-progress trades.
 
-        We DO drag _current_bar_last_cum_volume up to max(current, late.cv) so
-        that when a fresh new-bar trade arrives next, its delta math correctly
-        excludes the volume already credited back to the closed bar.
+        We track _last_closed_bar_cum_volume separately from the running
+        _current_bar_last_cum_volume because the latter has been dragged
+        forward by trades in subsequent bars; the former is frozen at the
+        bar's close so late-trade deltas always compute against the bar's
+        own baseline.
+
+        We also drag _current_bar_last_cum_volume forward to max(current,
+        late.cv) so the next NEW-bar trade's delta correctly excludes the
+        volume we just credited back to the closed bar.
         """
         if not self.bars:
             return
         last_closed = self.bars[-1]
+
+        # Compute volume contribution. Prefer cum-vol delta against the bar's
+        # own frozen baseline; fall back to size only when we have no cv
+        # context (first-trade-of-session or non-LEVELONE source).
+        if cumulative_volume is None or self._last_closed_bar_cum_volume is None:
+            volume_contrib = max(0, int(size))
+        else:
+            volume_contrib = max(0, int(cumulative_volume - self._last_closed_bar_cum_volume))
+
         # OHLCVBar.update extends high/low if applicable and updates close.
         # Open is left at the original first-arrival trade's price; reordering
         # late trades to update open would require per-trade timestamp tracking
         # we don't carry, and the open mismatch is small in practice.
-        last_closed.update(price, max(0, int(size)))
+        last_closed.update(price, volume_contrib)
+
         if cumulative_volume is not None:
+            # Drag the bar's frozen baseline up so the NEXT late trade for this
+            # bar computes its delta from this trade's cv, not from the
+            # original close cv.
+            if (
+                self._last_closed_bar_cum_volume is None
+                or cumulative_volume > self._last_closed_bar_cum_volume
+            ):
+                self._last_closed_bar_cum_volume = cumulative_volume
+            # Drag the running builder-level baseline up so the next NEW-bar
+            # trade's delta correctly excludes the volume we just credited
+            # back to the closed bar.
             if (
                 self._current_bar_last_cum_volume is None
                 or cumulative_volume > self._current_bar_last_cum_volume
             ):
                 self._current_bar_last_cum_volume = cumulative_volume
+
         self._recent_revised_closed_bar = OHLCVBar.from_bar(
             last_closed, timestamp=last_closed.timestamp
         )
@@ -350,6 +391,10 @@ class SchwabNativeBarBuilder:
         self.bars.append(bar)
         self._bar_count += 1
         self._trim_history()
+        # Freeze the cum-volume baseline of this bar at close. Late-arriving
+        # trades that revise this bar will compute their volume contribution
+        # from this snapshot via _revise_last_closed_bar_from_trade.
+        self._last_closed_bar_cum_volume = self._current_bar_last_cum_volume
         return bar
 
     def _pop_last_closed_bar(self) -> OHLCVBar | None:
