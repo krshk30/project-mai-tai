@@ -1,5 +1,62 @@
 # Session Handoff - Global
 
+## 2026-05-08 EOD: Schwab token rollover + dashboard STALE grace + PMAX heavy-burst diagnostic
+
+```
+Deploy owner: this agent (Claude Code)
+Local code owner: this agent (Claude Code)
+Active workstream: schwab token re-auth, dashboard STALE UX, schwab heavy-burst tick-loss diagnostic
+Status: DEPLOYED (token + grace window). PMAX diagnostic OPEN as next workstream.
+SHAs: dfa170a (PR #73 merge) on top of 9f9c15a
+VPS SHA: dfa170a
+Workflow: token rollover via /auth/schwab/start + manual systemctl restart; grace fix via PR #73 admin-merged (pre-existing test on main was failing CI)
+Service target: control + strategy (and earlier oms for the token rollover)
+Restart window: 2026-05-08 13:15:35 UTC (oms), 13:15:38 UTC (strategy 1st), 16:25:54 UTC (control), 16:26:01 UTC (strategy 2nd)
+Market hours at deploy: yes (post 09:30 ET market open for the second restart cycle)
+Account flat at deploy: yes (verified 0 positions before each restart)
+Post-deploy validator: this agent (Claude Code)
+```
+
+### Three workstreams covered in this entry
+
+1. **Schwab refresh-token rollover (DEPLOYED, healthy).** User noticed the dashboard at "DEGRADED" mid-morning. Strategy + OMS logs were spamming `RuntimeError: failed refreshing Schwab token: unsupported_token_type ... refresh_token_authentication_error` with `tokenDigest=kKCRsPSMOZbjaRZr9xHRGn84oJefsnYcQ8lnYYKewLo=` — the Schwab refresh token had expired (~7-day TTL). User re-authorized via `/auth/schwab/start` at 13:07:37 UTC; new tokens (refresh prefix `1mkr4xRsY4H7...`) landed in `/var/lib/macd-webhook-server/data/schwab_tokens.json`. **An earlier 12:29 UTC restart had pre-loaded the OLD token into memory, so a SECOND restart (stop strategy → restart oms → start strategy) was needed at 13:15:30-:38 UTC** to actually pick up the new credentials. After that: `schwab_stream_connected=true`, `schwab_stale_symbols` empty, both Schwab bots `data_health=healthy`. **Workflow gotcha worth remembering:** when rotating Schwab tokens, restart strategy + oms AFTER the token store mtime updates (`/var/lib/macd-webhook-server/data/schwab_tokens.json`), not before — the token store mtime is the canary.
+
+2. **Dashboard STALE-after-restart grace fix (PR #73, DEPLOYED).** The in-memory `recent_decisions` ring on each `StrategyBotRuntime` is empty for a few minutes after every strategy restart, until the first bar evaluates and `_record_decision` populates it. The dashboard's listening-status check at `control_plane.py:_build_bot_listening_status` was reading that empty ring and firing a harsh "STALE / Bot has symbols, but no fresh decision rows are being recorded" banner during the post-restart grace period — exactly when the user is most likely to be checking the dashboard. **Fix:** strategy stamps `engine_started_at` (ISO 8601 UTC) on every heartbeat detail dict; control_plane reads it, computes `engine_uptime_seconds`, and within the first 180s replaces the harsh STALE detail with "Strategy just restarted; decisions will appear once the next bar evaluates." Only the two decision-tape STALE branches are softened — market-data staleness and heartbeat staleness still surface (those are real issues even right after restart). 4 new tests added in `test_control_plane.py`; all pass. **Verified post-deploy at 16:26:02 UTC**: heartbeat carries `engine_started_at`, `engine_uptime_seconds=78.5`, `within_post_restart_grace=True`, all three bots showing LISTENING (not STALE).
+
+3. **PMAX heavy-burst tick-loss diagnostic (OPEN, no code change yet).** Followed up on the 2026-05-08 morning audit's flagged drift on PMAX/TRAW/CTNT during fast-trade-burst minutes. Reconstructed PMAX 07:07-07:09 ET tick-by-tick from `/var/lib/project-mai-tai/schwab_ticks/2026-05-08/PMAX.jsonl`. **Root cause is NOT close_grace tuning and NOT streamer message drop — it is a streamer STALL combined with `on_trade`'s missing late-trade revision path.** Sequence: Schwab WebSocket buffered for ~50 seconds (07:07:10 → 07:08:05 ET), then flushed in two batches at 07:08:05 and 07:08:37. By the time the 07:07:00 bar's late-arriving trades reached `on_trade()`, `flush_completed_bars` (running at ~1Hz from `strategy_engine_app.py:5005` `await asyncio.sleep(1)`) had already force-closed the bar at wall-clock 07:07:35 (`effective_now = wall - close_grace = 07:07:30 ≥ bar_start + 30`). Late trades for the closed bar then hit `schwab_native_30s.py:112-125` which silently drops them unless the closed bar is synthetic (it wasn't — had real trades 0-8 in it). Worse: the `_current_bar_last_cum_volume` baseline preservation (the 2026-05-07 fix) means trade #25's `cumulative_volume - last_cv` delta includes the entire dropped-trades 9-24 cum-vol gap, attributing it all to the WRONG bar (07:07:30 instead of 07:07:00). Then a 1m CHART_EQUITY live_bar arrives at 07:08:05 and partially overwrites the 07:07:00 30s bar via `_revise_last_closed_bar` — but the 1m bar covers 60s while the 30s bar covers 30s, so the revision is asymmetric and produces the under-counted persisted bar visible in the morning audit (07:07:00 persisted vol=57330 vs rebuild 158001).
+
+### Tests added
+
+- `test_control_plane.py::test_listening_status_post_restart_grace_suppresses_stale_when_decisions_empty`
+- `test_control_plane.py::test_listening_status_outside_grace_still_flags_stale_decisions`
+- `test_control_plane.py::test_listening_status_grace_suppresses_stale_with_old_decisions`
+- `test_control_plane.py::test_listening_status_missing_engine_started_falls_back_to_stale`
+
+### Result
+
+- **Schwab bots healthy.** macd_30s + schwab_1m both `data_health=healthy`, watchlist of 17 symbols flowing.
+- **Dashboard rollup is still `degraded` for an unrelated reason** — the reconciler service has been showing `status=degraded run_status=completed` since 2026-04-28 (10 days no restart). Not Schwab-related; flagged as a follow-up below.
+- **Dashboard listening status confirmed cleared post-fix.** `engine_started_at` plumbed end-to-end. Within the 180s grace window the dashboard now suppresses the harsh STALE banner.
+
+### Residual considerations (priority-ordered)
+
+1. **Heavy-burst tick-loss workstream is OPEN.** Recommended fix #1: add late-trade revision to `schwab_native_30s.py::on_trade` (mirror `on_bar`'s `_revise_last_closed_bar`). When a trade arrives for an already-closed bar AND the bar isn't synthetic, reopen the closed bar's volume by `delta = cum_vol - last_known_cv_at_close`. ~50 lines + tests. Cleanest reproducer: PMAX 07:07-07:08 ET 2026-05-08 against `/var/lib/project-mai-tai/schwab_ticks/2026-05-08/PMAX.jsonl` (preserved on VPS). Diagnostic scripts left at `/tmp/diag_pmax_burst.py` and `/tmp/diag_pmax_quotes.py` on VPS — clean those up after the fix lands.
+2. **Reconciler degraded since 2026-04-28.** `run_status=completed` permanently in the heartbeat; service hasn't been restarted in 10 days. This is what's keeping the overall dashboard rollup at "degraded" right now. ~20 min investigation + restart should resolve. Worth a separate PR.
+3. **Pre-existing CI breakage on main.** `tests/unit/test_control_plane.py::test_control_plane_overview_and_dashboard_render` fails on `origin/main` (asserts `account_position_count==2`, gets `1`). This is poisoning every PR's Validate workflow — PR #73 had to be admin-merged because of it. The failure was flagged in the 2026-05-07 b6fb7b2 entry as "20 pre-existing test_control_plane.py failures remain unchanged"; appears most have been fixed but at least this one remains. Should fix before the next PR or admin-merge will become standard practice again.
+4. **Token rotation cadence unmonitored.** The Schwab refresh token's ~7-day TTL has no warning runway — the dashboard only flagged degraded AFTER the token expired and trading was already blocked. A `token_expires_at` field on the heartbeat (read from `schwab_tokens.json`) plus a dashboard banner "Schwab token expires in X hours, re-authorize at /auth/schwab/start" would give a 24-hour warning window.
+5. **Decision-tape persistence still in-memory only.** Today's grace fix addresses the UI symptom; the underlying gap (no historical decision-tape ground-truth, signal-bearing decisions only persist via `broker_orders.decision_*` columns) is unaddressed. Lower priority than #1.
+
+### State at end of work
+
+- GitHub `main` tip: `dfa170a`
+- VPS `git rev-parse HEAD`: `dfa170a`
+- All 5 services active (control + strategy restarted at 16:26 UTC; oms + market-data still on the morning's restart timestamps; reconciler unchanged from 2026-04-28)
+- Account flat (0 positions verified before each restart)
+
+### Next owner
+
+This agent (Claude Code) is parking the diagnostic and waiting for user direction. Proposed next session: pick up residual #1 (PMAX `on_trade` late-trade revision) and residual #3 (fix the pre-existing test_control_plane breakage) so future PRs aren't poisoned by it.
+
 ## 2026-05-08 Architecture rename: `polygon_30s` is now the primary Polygon bot identity
 
 ### Naming truth going forward
