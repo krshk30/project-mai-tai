@@ -36,15 +36,19 @@ def test_flush_completed_bars_records_last_tick_at_for_due_symbol(monkeypatch) -
         return current
 
     state = StrategyEngineState(
-        settings=Settings(strategy_webull_30s_enabled=True),
+        settings=Settings(
+            strategy_polygon_30s_enabled=True,
+            strategy_polygon_30s_live_aggregate_bars_enabled=False,
+            strategy_polygon_30s_tick_bar_close_grace_seconds=0.0,
+        ),
         now_provider=now_provider,
     )
-    bot = state.bots["webull_30s"]
+    bot = state.bots["polygon_30s"]
     bot.set_watchlist(["UGRO"])
     state.seed_bars(
-        "webull_30s",
+        "polygon_30s",
         "UGRO",
-        seed_trending_bars(start_timestamp=current.timestamp() - 49 * 30, interval_secs=30),
+        seed_trending_bars(start_timestamp=current.timestamp() - 50 * 30, interval_secs=30),
     )
     bot.latest_quotes["UGRO"] = {"bid": 2.79, "ask": 2.80}
     bot.definition.trading_config.confirm_bars = 0
@@ -69,7 +73,7 @@ def test_flush_completed_bars_records_last_tick_at_for_due_symbol(monkeypatch) -
         price=2.80,
         size=200,
         timestamp_ns=tick_timestamp_ns,
-        strategy_codes=["webull_30s"],
+        strategy_codes=["polygon_30s"],
     )
     assert initial_intents == []
 

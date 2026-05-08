@@ -6,7 +6,7 @@ This repository is not a UI mock or a scaffold anymore. The current codebase con
 
 - a FastAPI control plane
 - a market-data gateway for Massive/Polygon snapshots, warmup, trades, and quotes
-- a strategy engine for scanner surfaces plus `macd_30s`, `macd_1m`, `tos`, and `runner`
+- a strategy engine for scanner surfaces plus `macd_30s`, `polygon_30s`, `macd_1m`, `tos`, and `runner`
 - an OMS/risk service with `simulated`, `alpaca_paper`, and `schwab` broker adapters
 - a reconciler that checks OMS truth against broker/account truth
 - Postgres-backed execution state and Redis Streams fanout
@@ -96,6 +96,13 @@ Runtime registration and strategy/account seeding live in:
 - `src/project_mai_tai/runtime_registry.py`
 - `src/project_mai_tai/runtime_seed.py`
 
+Naming note:
+
+- `polygon_30s` is the primary strategy/runtime name for the Polygon-backed 30-second bot
+- `webull` is broker terminology and should stay confined to OMS or broker-adapter routing concerns
+- older handoff notes may still mention `webull_30s`; those references mean the same Polygon 30s strategy before the rename
+- remaining `webull_30s` strings in source are transition-only compatibility aliases for old env vars, persisted history, or operator links, not the primary runtime identity
+
 ## Repo Map
 
 Use these docs to orient quickly:
@@ -103,6 +110,7 @@ Use these docs to orient quickly:
 - [Docs Index](./docs/README.md)
 - [Chat Summary 2026-03-29](./docs/chat-summary-2026-03-29.md)
 - [Architecture](./docs/architecture.md)
+- [Session Handoff Global](./docs/session-handoff-global.md)
 - [Session Handoff 2026-03-29](./docs/session-handoff-2026-03-29.md)
 - [Live Market Restart Runbook](./docs/live-market-restart-runbook.md)
 - [Active Market Verification Todo](./docs/active-market-verification-todo.md)
@@ -404,4 +412,5 @@ If a future change materially alters service ownership, broker modes, stream usa
 
 - this file
 - [docs/architecture.md](./docs/architecture.md)
+- [docs/session-handoff-global.md](./docs/session-handoff-global.md)
 - the closest folder-level README to the changed code

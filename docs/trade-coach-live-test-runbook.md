@@ -25,7 +25,7 @@ Primary goal for the first live test:
 
 Secondary goal:
 
-- confirm `webull_30s` stays logically separate if it produces any completed
+- confirm `polygon_30s` stays logically separate if it produces any completed
   cycles
 
 ## Scope
@@ -33,7 +33,7 @@ Secondary goal:
 Tomorrow's test should stay narrow:
 
 - `Schwab 30 Sec Bot` first
-- `Webull 30 Sec Bot` observed second
+- `Polygon 30 Sec Bot` observed second
 - post-trade coaching only
 - no OMS gating
 - no strategy gating
@@ -50,7 +50,7 @@ Use these surfaces in this order.
 - Schwab 30-second bot page:
   - [https://project-mai-tai.live/bot/30s](https://project-mai-tai.live/bot/30s)
 - Webull 30-second bot page:
-  - [https://project-mai-tai.live/bot/30s-webull](https://project-mai-tai.live/bot/30s-webull)
+  - [https://project-mai-tai.live/bot/30s-polygon](https://project-mai-tai.live/bot/30s-polygon)
 
 These pages are useful for live bot context, fills, and whether the bots are
 behaving normally.
@@ -115,8 +115,8 @@ ssh mai-tai-vps "sudo journalctl -u project-mai-tai-trade-coach.service -f"
       `https://project-mai-tai.live/` is healthy
 - [ ] Confirm `Schwab 30 Sec Bot` is listening normally on
       [https://project-mai-tai.live/bot/30s](https://project-mai-tai.live/bot/30s)
-- [ ] Confirm `Webull 30 Sec Bot` is listening normally on
-      [https://project-mai-tai.live/bot/30s-webull](https://project-mai-tai.live/bot/30s-webull)
+- [ ] Confirm `Polygon 30 Sec Bot` is listening normally on
+      [https://project-mai-tai.live/bot/30s-polygon](https://project-mai-tai.live/bot/30s-polygon)
 - [ ] Confirm persistent VPS config is still disabled
 - [ ] Confirm the dedicated coach service is either stopped or in the expected state
 
@@ -168,7 +168,7 @@ Keep these open:
 1. Bot behavior
 
 - [https://project-mai-tai.live/bot/30s](https://project-mai-tai.live/bot/30s)
-- [https://project-mai-tai.live/bot/30s-webull](https://project-mai-tai.live/bot/30s-webull)
+- [https://project-mai-tai.live/bot/30s-polygon](https://project-mai-tai.live/bot/30s-polygon)
 
 2. Coach API output
 

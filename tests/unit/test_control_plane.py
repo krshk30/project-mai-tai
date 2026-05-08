@@ -38,7 +38,14 @@ from project_mai_tai.events import (
     StrategyStateSnapshotEvent,
     StrategyStateSnapshotPayload,
 )
-from project_mai_tai.services.control_plane import _render_confirmed_catalyst_cell, build_app
+from project_mai_tai.services.control_plane import (
+    _build_bot_decision_rows,
+    _dedupe_decision_events,
+    _normalize_closed_today_rows,
+    _render_confirmed_catalyst_cell,
+    _select_filled_order_reason,
+    build_app,
+)
 from project_mai_tai.services.strategy_engine_app import current_scanner_session_start_utc
 from project_mai_tai.settings import Settings
 
@@ -53,6 +60,7 @@ class FakeRedis:
         if self.fail_next:
             self.fail_next = False
             raise RuntimeError("temporary redis failure")
+
         entries = self.streams.get(stream, [])
         if count is not None:
             entries = entries[:count]
@@ -60,6 +68,35 @@ class FakeRedis:
 
     async def aclose(self) -> None:
         return None
+
+
+def test_normalize_closed_today_rows_replaces_raw_broker_payload_reason() -> None:
+    rows = _normalize_closed_today_rows(
+        [
+            {
+                "ticker": "SST",
+                "path": "P4_BURST",
+                "entry_time": "2026-05-01 07:05:00 AM ET",
+                "exit_time": "2026-05-01 07:05:45 AM ET",
+                "reason": "{'Session': 'Am', 'Duration': 'Day', 'Ordertype': 'Limit', 'Orderlegcollection': []}",
+                "exit_reason": "{'Session': 'Am', 'Duration': 'Day', 'Ordertype': 'Limit', 'Orderlegcollection': []}",
+            }
+        ]
+    )
+
+    assert rows[0]["exit_summary"] == "Final close"
+    assert rows[0]["reason"] == "Final close"
+    assert rows[0]["exit_reason"] == "Final close"
+
+
+def test_select_filled_order_reason_prefers_intent_reason_over_broker_payload() -> None:
+    assert (
+        _select_filled_order_reason(
+            "{'Session': 'Am', 'Duration': 'Day', 'Ordertype': 'Limit', 'Orderlegcollection': []}",
+            "FLOOR_BREACH",
+        )
+        == "FLOOR_BREACH"
+    )
 
 
 class FakeLegacyClient:
@@ -1036,6 +1073,121 @@ def test_control_plane_decision_tape_shows_only_live_symbols() -> None:
         assert bot_30s["recent_decisions"][0]["reason"] == "entry evaluated; no setup matched this bar"
 
 
+def test_dedupe_decision_events_ignores_hidden_field_differences() -> None:
+    rows = [
+        {
+            "symbol": "RDAC",
+            "status": "evaluated",
+            "reason": "entry evaluated; no setup matched this bar",
+            "last_bar_at": "2026-04-23 11:26:30 AM ET",
+            "price": "1.2700",
+            "score": "",
+            "path": "",
+        },
+        {
+            "symbol": "RDAC",
+            "status": "evaluated",
+            "reason": "entry evaluated; no setup matched this bar",
+            "last_bar_at": "2026-04-23 11:26:30 AM ET",
+            "price": "1.27",
+            "score": "0.62",
+            "path": "P1_CROSS",
+        },
+    ]
+
+    deduped = _dedupe_decision_events(rows)
+
+    assert deduped == [rows[0]]
+
+
+def test_control_plane_prefers_runtime_decision_for_same_symbol_and_bar(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = Settings(redis_stream_prefix="test", oms_adapter="alpaca_paper")
+    session_factory = build_test_session_factory()
+    seed_database(session_factory)
+    fixed_now = datetime(2026, 4, 23, 15, 27, 0, tzinfo=UTC)
+    monkeypatch.setattr("project_mai_tai.services.control_plane.utcnow", lambda: fixed_now)
+
+    with session_factory() as session:
+        session.add(
+            StrategyBarHistory(
+                strategy_code="macd_30s",
+                symbol="RDAC",
+                interval_secs=30,
+                bar_time=datetime(2026, 4, 23, 15, 26, 30, tzinfo=UTC),
+                open_price=Decimal("1.24"),
+                high_price=Decimal("1.29"),
+                low_price=Decimal("1.22"),
+                close_price=Decimal("1.27"),
+                volume=120000,
+                trade_count=41,
+                decision_status="blocked",
+                decision_reason="chop lock active (current 1/4): NO_CLEAN_SIDE; P1/P2/P3 gated",
+                decision_path="",
+                decision_score="",
+                decision_score_details="",
+            )
+        )
+        session.commit()
+
+    streams = make_streams(settings.redis_stream_prefix)
+    strategy_state_stream = streams[f"{settings.redis_stream_prefix}:strategy-state"]
+    strategy_state_event = StrategyStateSnapshotEvent.model_validate_json(
+        strategy_state_stream[0][1]["data"]
+    )
+    runtime_bot = strategy_state_event.payload.bots[0]
+    runtime_bot.watchlist = ["RDAC"]
+    runtime_bot.positions = []
+    runtime_bot.recent_decisions = [
+        {
+            "symbol": "RDAC",
+            "status": "idle",
+            "reason": "no entry path matched",
+            "price": "1.2700",
+            "last_bar_at": "2026-04-23T11:26:30-04:00",
+        }
+    ]
+    strategy_state_stream[0][1]["data"] = strategy_state_event.model_dump_json()
+    redis = FakeRedis(streams)
+
+    app = build_app(
+        settings=settings,
+        session_factory=session_factory,
+        redis_client=redis,
+        legacy_client=FakeLegacyClient(),
+    )
+
+    with TestClient(app) as client:
+        bots = client.get("/api/bots")
+        assert bots.status_code == 200
+        bot_30s = next(item for item in bots.json()["bots"] if item["strategy_code"] == "macd_30s")
+        rdac_rows = [item for item in bot_30s["recent_decisions"] if item["symbol"] == "RDAC"]
+        assert len(rdac_rows) == 1
+        assert rdac_rows[0]["status"] == "evaluated"
+        assert rdac_rows[0]["reason"] == "entry evaluated; no setup matched this bar"
+
+
+def test_decision_rows_append_path_diagnostics_to_reason() -> None:
+    rows = _build_bot_decision_rows(
+        [
+            {
+                "symbol": "XTLB",
+                "status": "evaluated",
+                "reason": "entry evaluated; no setup matched this bar",
+                "score_details": "diag: g[t=Y vol=Y p12=Y p3=Y chop=off] best=P2:vwap_cross P1:cross P2:vwap_cross P3:delta P4:history P5:pullback",
+                "last_bar_at": "2026-04-29 03:30:00 PM ET",
+                "path": "",
+                "score": "",
+                "price": "3.4500",
+            }
+        ]
+    )
+
+    assert "entry evaluated; no setup matched this bar | diag: g[t=Y vol=Y p12=Y p3=Y chop=off]" in rows
+    assert "best=P2:vwap_cross" in rows
+
+
 def test_control_plane_decision_tape_includes_live_symbol_waiting_for_evaluation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1071,10 +1223,99 @@ def test_control_plane_decision_tape_includes_live_symbol_waiting_for_evaluation
         bot_30s = next(item for item in bots.json()["bots"] if item["strategy_code"] == "macd_30s")
         assert [item["symbol"] for item in bot_30s["recent_decisions"]] == ["AUUD"]
         assert bot_30s["recent_decisions"][0]["status"] == "pending"
+        assert bot_30s["recent_decisions"][0]["last_bar_at"] == ""
         assert (
             bot_30s["recent_decisions"][0]["reason"]
             == "live in bot; waiting for next completed 30s trade bar to evaluate (18s since last Polygon tick)"
         )
+
+
+def test_control_plane_last_decision_ignores_pending_tick_placeholders(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = Settings(redis_stream_prefix="test", oms_adapter="alpaca_paper")
+    session_factory = build_test_session_factory()
+    seed_database(session_factory)
+    streams = make_streams(settings.redis_stream_prefix)
+    strategy_state_stream = streams[f"{settings.redis_stream_prefix}:strategy-state"]
+    strategy_state_event = StrategyStateSnapshotEvent.model_validate_json(
+        strategy_state_stream[0][1]["data"]
+    )
+    runtime_bot = strategy_state_event.payload.bots[0]
+    runtime_bot.watchlist = ["AUUD", "SNBR"]
+    runtime_bot.positions = []
+    runtime_bot.bar_counts = {"AUUD": 27}
+    runtime_bot.last_tick_at = {"AUUD": "2026-04-23 10:48:17 AM ET"}
+    runtime_bot.recent_decisions = [
+        {
+            "symbol": "SNBR",
+            "status": "blocked",
+            "reason": "chop lock active (current 1/4): EMA20_FLAT; P1/P2/P3 gated",
+            "last_bar_at": "2026-04-23T10:26:30-04:00",
+        }
+    ]
+    strategy_state_stream[0][1]["data"] = strategy_state_event.model_dump_json()
+    redis = FakeRedis(streams)
+    fixed_now = datetime(2026, 4, 23, 14, 48, 35, tzinfo=UTC)
+    monkeypatch.setattr("project_mai_tai.services.control_plane.utcnow", lambda: fixed_now)
+
+    app = build_app(
+        settings=settings,
+        session_factory=session_factory,
+        redis_client=redis,
+        legacy_client=FakeLegacyClient(),
+    )
+
+    with TestClient(app) as client:
+        payload = client.get("/bot").json()
+        assert payload["recent_decisions"][0]["status"] == "pending"
+        assert payload["recent_decisions"][0]["symbol"] == "AUUD"
+        assert payload["recent_decisions"][0]["last_bar_at"] == ""
+        assert payload["listening_status"]["latest_decision_at"] == "2026-04-23 10:26:30 AM ET"
+
+
+def test_api_bots_exposes_latest_timestamps_at_top_level(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = Settings(redis_stream_prefix="test", oms_adapter="alpaca_paper")
+    session_factory = build_test_session_factory()
+    seed_database(session_factory)
+    streams = make_streams(settings.redis_stream_prefix)
+    strategy_state_stream = streams[f"{settings.redis_stream_prefix}:strategy-state"]
+    strategy_state_event = StrategyStateSnapshotEvent.model_validate_json(
+        strategy_state_stream[0][1]["data"]
+    )
+    runtime_bot = strategy_state_event.payload.bots[0]
+    runtime_bot.watchlist = ["AUUD"]
+    runtime_bot.positions = []
+    runtime_bot.recent_decisions = [
+        {
+            "symbol": "AUUD",
+            "status": "evaluated",
+            "reason": "entry evaluated; no setup matched this bar",
+            "last_bar_at": "2026-04-23T10:26:30-04:00",
+        }
+    ]
+    runtime_bot.last_tick_at = {"AUUD": "2026-04-23 10:28:17 AM ET"}
+    strategy_state_stream[0][1]["data"] = strategy_state_event.model_dump_json()
+    redis = FakeRedis(streams)
+    fixed_now = datetime(2026, 4, 23, 14, 28, 35, tzinfo=UTC)
+    monkeypatch.setattr("project_mai_tai.services.control_plane.utcnow", lambda: fixed_now)
+
+    app = build_app(
+        settings=settings,
+        session_factory=session_factory,
+        redis_client=redis,
+        legacy_client=FakeLegacyClient(),
+    )
+
+    with TestClient(app) as client:
+        bots = client.get("/api/bots")
+        assert bots.status_code == 200
+        bot_30s = next(item for item in bots.json()["bots"] if item["strategy_code"] == "macd_30s")
+        assert bot_30s["latest_decision_at"] == "2026-04-23 10:26:30 AM ET"
+        assert bot_30s["latest_bot_tick_at"] == "2026-04-23 10:28:17 AM ET"
+        assert bot_30s["latest_market_data_at"]
 
 
 def test_control_plane_decision_tape_escalates_stalled_completed_bar_wait(
@@ -1118,11 +1359,13 @@ def test_control_plane_decision_tape_escalates_stalled_completed_bar_wait(
         )
 
 
-def test_control_plane_decision_tape_uses_polygon_wording_for_webull_bot() -> None:
+def test_control_plane_schwab_1m_placeholder_uses_completed_bar_freshness(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     settings = Settings(
         redis_stream_prefix="test",
         oms_adapter="alpaca_paper",
-        strategy_webull_30s_enabled=True,
+        strategy_schwab_1m_enabled=True,
     )
     session_factory = build_test_session_factory()
     seed_database(session_factory)
@@ -1133,8 +1376,80 @@ def test_control_plane_decision_tape_uses_polygon_wording_for_webull_bot() -> No
     )
     strategy_state_event.payload.bots.append(
         StrategyBotStatePayload(
-            strategy_code="webull_30s",
-            account_name="live:webull_30s",
+            strategy_code="schwab_1m",
+            account_name="paper:schwab_1m",
+            watchlist=["AUUD"],
+            positions=[],
+            pending_open_symbols=[],
+            pending_close_symbols=[],
+            pending_scale_levels=[],
+            recent_decisions=[],
+            bar_counts={"AUUD": 128},
+            last_tick_at={"AUUD": "2026-04-23 10:48:17 AM ET"},
+            indicator_snapshots=[
+                {
+                    "symbol": "AUUD",
+                    "interval_secs": 60,
+                    "bar_count": 128,
+                    "last_bar_at": "2026-04-23 10:45:00 AM ET",
+                    "close": 2.55,
+                    "ema9": 2.53,
+                    "ema20": 2.50,
+                    "macd": 0.07650,
+                    "signal": 0.07432,
+                    "histogram": 0.00218,
+                    "vwap": 2.51,
+                    "macd_above_signal": True,
+                    "price_above_vwap": True,
+                    "price_above_ema9": True,
+                    "price_above_ema20": True,
+                }
+            ],
+            daily_pnl=0.0,
+        )
+    )
+    strategy_state_stream[0][1]["data"] = strategy_state_event.model_dump_json()
+    redis = FakeRedis(streams)
+    fixed_now = datetime(2026, 4, 23, 14, 48, 35, tzinfo=UTC)
+    monkeypatch.setattr("project_mai_tai.services.control_plane.utcnow", lambda: fixed_now)
+
+    app = build_app(
+        settings=settings,
+        session_factory=session_factory,
+        redis_client=redis,
+        legacy_client=FakeLegacyClient(),
+    )
+
+    with TestClient(app) as client:
+        bots = client.get("/api/bots")
+        assert bots.status_code == 200
+        bot_1m = next(item for item in bots.json()["bots"] if item["strategy_code"] == "schwab_1m")
+        assert [item["symbol"] for item in bot_1m["recent_decisions"]] == ["AUUD"]
+        assert bot_1m["recent_decisions"][0]["status"] == "critical"
+        assert bot_1m["recent_decisions"][0]["last_bar_at"] == "2026-04-23 10:45:00 AM ET"
+        assert (
+            bot_1m["recent_decisions"][0]["reason"]
+            == "live in bot; fresh Schwab ticks are arriving but the last completed 1m bar is already 3m35s old - verify bar flow now"
+        )
+
+
+def test_control_plane_decision_tape_uses_polygon_wording_for_polygon_bot() -> None:
+    settings = Settings(
+        redis_stream_prefix="test",
+        oms_adapter="alpaca_paper",
+        strategy_polygon_30s_enabled=True,
+    )
+    session_factory = build_test_session_factory()
+    seed_database(session_factory)
+    streams = make_streams(settings.redis_stream_prefix)
+    strategy_state_stream = streams[f"{settings.redis_stream_prefix}:strategy-state"]
+    strategy_state_event = StrategyStateSnapshotEvent.model_validate_json(
+        strategy_state_stream[0][1]["data"]
+    )
+    strategy_state_event.payload.bots.append(
+        StrategyBotStatePayload(
+            strategy_code="polygon_30s",
+            account_name="live:polygon_30s",
             watchlist=["AUUD"],
             positions=[],
             pending_open_symbols=[],
@@ -1156,20 +1471,22 @@ def test_control_plane_decision_tape_uses_polygon_wording_for_webull_bot() -> No
     with TestClient(app) as client:
         bots = client.get("/api/bots")
         assert bots.status_code == 200
-        webull_bot = next(item for item in bots.json()["bots"] if item["strategy_code"] == "webull_30s")
-        assert [item["symbol"] for item in webull_bot["recent_decisions"]] == ["AUUD"]
-        assert webull_bot["recent_decisions"][0]["status"] == "pending"
+        polygon_bot = next(item for item in bots.json()["bots"] if item["strategy_code"] == "polygon_30s")
+        assert [item["symbol"] for item in polygon_bot["recent_decisions"]] == ["AUUD"]
+        assert polygon_bot["recent_decisions"][0]["status"] == "pending"
         assert (
-            webull_bot["recent_decisions"][0]["reason"]
+            polygon_bot["recent_decisions"][0]["reason"]
             == "live in bot; waiting for Polygon market data"
         )
 
 
-def test_webull_bot_page_uses_polygon_data_halt_wording() -> None:
+def test_control_plane_keeps_live_symbol_visible_when_only_stale_row_is_beyond_tape_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     settings = Settings(
         redis_stream_prefix="test",
         oms_adapter="alpaca_paper",
-        strategy_webull_30s_enabled=True,
+        strategy_polygon_30s_enabled=True,
     )
     session_factory = build_test_session_factory()
     seed_database(session_factory)
@@ -1180,8 +1497,82 @@ def test_webull_bot_page_uses_polygon_data_halt_wording() -> None:
     )
     strategy_state_event.payload.bots.append(
         StrategyBotStatePayload(
-            strategy_code="webull_30s",
-            account_name="live:webull_30s",
+            strategy_code="polygon_30s",
+            account_name="live:polygon_30s",
+            watchlist=["GOVX", "LABT", "SOBR"],
+            positions=[],
+            pending_open_symbols=[],
+            pending_close_symbols=[],
+            pending_scale_levels=[],
+            recent_decisions=[
+                *[
+                    {
+                        "symbol": "GOVX" if index % 2 == 0 else "LABT",
+                        "status": "evaluated",
+                        "reason": f"entry evaluated; no setup matched this bar #{index}",
+                        "last_bar_at": f"2026-04-23T10:{(index % 60):02d}:30-04:00",
+                    }
+                    for index in range(50)
+                ],
+                {
+                    "symbol": "SOBR",
+                    "status": "evaluated",
+                    "reason": "entry evaluated; no setup matched this bar",
+                    "last_bar_at": "2026-04-23T09:00:00-04:00",
+                },
+            ],
+            bar_counts={"GOVX": 100, "LABT": 100, "SOBR": 11},
+            last_tick_at={
+                "GOVX": "2026-04-23 10:48:17 AM ET",
+                "LABT": "2026-04-23 10:48:17 AM ET",
+                "SOBR": "2026-04-23 10:48:12 AM ET",
+            },
+            daily_pnl=0.0,
+        )
+    )
+    strategy_state_stream[0][1]["data"] = strategy_state_event.model_dump_json()
+    redis = FakeRedis(streams)
+    fixed_now = datetime(2026, 4, 23, 14, 48, 35, tzinfo=UTC)
+    monkeypatch.setattr("project_mai_tai.services.control_plane.utcnow", lambda: fixed_now)
+
+    app = build_app(
+        settings=settings,
+        session_factory=session_factory,
+        redis_client=redis,
+        legacy_client=FakeLegacyClient(),
+    )
+
+    with TestClient(app) as client:
+        bots = client.get("/api/bots")
+        assert bots.status_code == 200
+        polygon_bot = next(item for item in bots.json()["bots"] if item["strategy_code"] == "polygon_30s")
+        visible_symbols = [item["symbol"] for item in polygon_bot["recent_decisions"][:10]]
+        assert "SOBR" in visible_symbols
+        sobr_row = next(item for item in polygon_bot["recent_decisions"] if item["symbol"] == "SOBR")
+        assert sobr_row["status"] == "pending"
+        assert (
+            sobr_row["reason"]
+            == "live in bot; waiting for next completed 30s trade bar to evaluate (23s since last Polygon tick)"
+        )
+
+
+def test_polygon_bot_page_uses_polygon_data_halt_wording() -> None:
+    settings = Settings(
+        redis_stream_prefix="test",
+        oms_adapter="alpaca_paper",
+        strategy_polygon_30s_enabled=True,
+    )
+    session_factory = build_test_session_factory()
+    seed_database(session_factory)
+    streams = make_streams(settings.redis_stream_prefix)
+    strategy_state_stream = streams[f"{settings.redis_stream_prefix}:strategy-state"]
+    strategy_state_event = StrategyStateSnapshotEvent.model_validate_json(
+        strategy_state_stream[0][1]["data"]
+    )
+    strategy_state_event.payload.bots.append(
+        StrategyBotStatePayload(
+            strategy_code="polygon_30s",
+            account_name="live:polygon_30s",
             watchlist=["AUUD"],
             positions=[],
             pending_open_symbols=[],
@@ -1211,23 +1602,23 @@ def test_webull_bot_page_uses_polygon_data_halt_wording() -> None:
     with TestClient(app) as client:
         bots = client.get("/api/bots")
         assert bots.status_code == 200
-        webull_bot = next(item for item in bots.json()["bots"] if item["strategy_code"] == "webull_30s")
-        assert webull_bot["data_health"]["status"] == "critical"
-        assert webull_bot["listening_status"]["state"] == "DATA HALT"
-        assert "Polygon stream stale/disconnected" in webull_bot["listening_status"]["detail"]
+        polygon_bot = next(item for item in bots.json()["bots"] if item["strategy_code"] == "polygon_30s")
+        assert polygon_bot["data_health"]["status"] == "critical"
+        assert polygon_bot["listening_status"]["state"] == "DATA HALT"
+        assert "Polygon stream stale/disconnected" in polygon_bot["listening_status"]["detail"]
 
-        webull_status = client.get("/botwebull")
-        assert webull_status.status_code == 200
-        assert webull_status.json()["listening_status"]["state"] == "DATA HALT"
-        assert "Polygon stream stale/disconnected" in webull_status.json()["listening_status"]["detail"]
+        polygon_status = client.get("/botpolygon")
+        assert polygon_status.status_code == 200
+        assert polygon_status.json()["listening_status"]["state"] == "DATA HALT"
+        assert "Polygon stream stale/disconnected" in polygon_status.json()["listening_status"]["detail"]
 
-        webull_page = client.get("/bot/30s-webull")
-        assert webull_page.status_code == 200
-        assert "Polygon Data Halt" in webull_page.text
-        assert "Polygon Data Health" in webull_page.text
-        assert "Polygon stream stale/disconnected" in webull_page.text
-        assert "Schwab Data Halt" not in webull_page.text
-        assert "Schwab Data Health" not in webull_page.text
+        polygon_page = client.get("/bot/30s-polygon")
+        assert polygon_page.status_code == 200
+        assert "Polygon Data Halt" in polygon_page.text
+        assert "Polygon Data Health" in polygon_page.text
+        assert "Polygon stream stale/disconnected" in polygon_page.text
+        assert "Schwab Data Halt" not in polygon_page.text
+        assert "Schwab Data Health" not in polygon_page.text
 
 
 def test_control_plane_overview_and_dashboard_render() -> None:
@@ -1549,6 +1940,7 @@ def test_bot_page_live_symbols_only_show_current_confirmed_handoff() -> None:
         assert "UGRO" in live_section
         assert "OLD1" not in live_section
         assert "OLD1" in feed_section
+        assert "/bot/symbol/stop?strategy_code=macd_30s&amp;symbol=OLD1" in feed_section
 
 
 def test_trade_coach_review_center_and_api_filters() -> None:
@@ -2030,7 +2422,7 @@ def test_control_plane_reports_schwab_live_wiring() -> None:
         assert "Account:</strong> live:macd_30s" in bot_page.text
 
 
-def test_control_plane_hides_ignored_mismatch_symbols_from_ui() -> None:
+def test_control_plane_keeps_ignored_mismatch_symbols_visible_in_bot_views() -> None:
     settings = Settings(
         redis_stream_prefix="test",
         oms_adapter="alpaca_paper",
@@ -2212,29 +2604,27 @@ def test_control_plane_hides_ignored_mismatch_symbols_from_ui() -> None:
         body = overview.json()
 
         hidden_symbols = {"CYN", "CANF"}
-        assert body["counts"]["open_virtual_positions"] == 1
-        assert body["counts"]["open_account_positions"] == 2
-        assert all(item["symbol"] not in hidden_symbols for item in body["virtual_positions"])
-        assert all(item["symbol"] not in hidden_symbols for item in body["account_positions"])
-        assert all(item["symbol"] not in hidden_symbols for item in body["recent_orders"])
-        assert all(item["symbol"] not in hidden_symbols for item in body["recent_fills"])
-        assert all(item["symbol"] not in hidden_symbols for item in body["recent_intents"])
+        assert hidden_symbols.issubset({item["symbol"] for item in body["virtual_positions"]})
+        assert hidden_symbols.issubset({item["symbol"] for item in body["account_positions"]})
+        assert hidden_symbols.issubset({item["symbol"] for item in body["recent_orders"]})
+        assert hidden_symbols.issubset({item["symbol"] for item in body["recent_fills"]})
+        assert hidden_symbols.issubset({item["symbol"] for item in body["recent_intents"]})
         assert all("CYN" not in item["title"] and "CANF" not in item["title"] for item in body["incidents"])
 
         bot_30s = next(item for item in body["bots"] if item["strategy_code"] == "macd_30s")
-        assert bot_30s["watchlist"] == ["UGRO"]
-        assert [item["ticker"] for item in bot_30s["positions"]] == ["UGRO"]
+        assert bot_30s["watchlist"] == ["UGRO", "CYN", "CANF"]
+        assert [item["ticker"] for item in bot_30s["positions"]] == ["UGRO", "CYN", "CANF"]
         assert bot_30s["pending_open_symbols"] == []
         assert bot_30s["pending_close_symbols"] == []
-        assert all(item["symbol"] not in hidden_symbols for item in bot_30s["recent_orders"])
-        assert all(item["symbol"] not in hidden_symbols for item in bot_30s["recent_fills"])
-        assert all(item["symbol"] not in hidden_symbols for item in bot_30s["recent_intents"])
+        assert hidden_symbols.issubset({item["symbol"] for item in bot_30s["recent_orders"]})
+        assert hidden_symbols.issubset({item["symbol"] for item in bot_30s["recent_fills"]})
+        assert hidden_symbols.issubset({item["symbol"] for item in bot_30s["recent_intents"]})
 
         bot_page = client.get("/bot/30s")
         assert bot_page.status_code == 200
         assert "UGRO" in bot_page.text
-        assert "CYN" not in bot_page.text
-        assert "CANF" not in bot_page.text
+        assert "CYN" in bot_page.text
+        assert "CANF" in bot_page.text
 
 
 def test_control_plane_filters_recent_orders_and_fills_to_current_eastern_day(monkeypatch) -> None:
@@ -2364,6 +2754,50 @@ def test_control_plane_restores_last_nonempty_confirmed_snapshot() -> None:
             assert dashboard.status_code == 200
             assert "UGRO" in dashboard.text
             assert "Quantum Biopharma Wins Hospital Supply Agreement" in dashboard.text
+
+
+def test_control_plane_prefers_fresh_bot_price_for_confirmed_rows() -> None:
+    settings = Settings(redis_stream_prefix="test", oms_adapter="alpaca_paper")
+    session_factory = build_test_session_factory()
+    seed_database(session_factory)
+    streams = make_streams(settings.redis_stream_prefix, live_price=2.61)
+    strategy_state_stream = streams[f"{settings.redis_stream_prefix}:strategy-state"]
+    strategy_state_event = StrategyStateSnapshotEvent.model_validate_json(
+        strategy_state_stream[0][1]["data"]
+    )
+    strategy_state_event.payload.five_pillars = []
+    strategy_state_event.payload.top_gainers = []
+    strategy_state_event.payload.all_confirmed[0]["prev_close"] = 2.27
+    strategy_state_event.payload.top_confirmed[0]["prev_close"] = 2.27
+    strategy_state_event.payload.bots[0].recent_decisions = [
+        {
+            "symbol": "UGRO",
+            "status": "blocked",
+            "reason": "waiting",
+            "price": "2.31",
+            "last_bar_at": "2026-03-28 10:15:30 AM ET",
+        }
+    ]
+    strategy_state_stream[0] = (
+        strategy_state_stream[0][0],
+        {"data": strategy_state_event.model_dump_json()},
+    )
+    redis = FakeRedis(streams)
+
+    app = build_app(
+        settings=settings,
+        session_factory=session_factory,
+        redis_client=redis,
+        legacy_client=FakeLegacyClient(),
+    )
+
+    with TestClient(app) as client:
+        scanner = client.get("/api/scanner")
+        assert scanner.status_code == 200
+        scanner_body = scanner.json()["scanner"]
+        ugro = next(item for item in scanner_body["all_confirmed"] if item["ticker"] == "UGRO")
+        assert ugro["price"] == pytest.approx(2.31)
+        assert ugro["change_pct"] == pytest.approx(((2.31 - 2.27) / 2.27) * 100)
 
 
 def test_control_plane_skips_restored_confirmed_snapshot_from_prior_scanner_session(

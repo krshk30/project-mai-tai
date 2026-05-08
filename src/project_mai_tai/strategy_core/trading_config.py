@@ -13,6 +13,10 @@ class TradingConfig:
 
     stop_loss_cents: float = 0.02
     stop_loss_pct: float = 1.5
+    stop_guard_enabled: bool = True
+    stop_guard_quote_trigger_enabled: bool = True
+    stop_guard_quote_max_age_ms: int = 2_000
+    stop_guard_initial_panic_buffer_pct: float = 0.5
     profit_floor_lock_at_1pct_peak_pct: float = 0.0
     profit_floor_lock_at_2pct_peak_pct: float = 0.5
     profit_floor_lock_at_3pct_peak_pct: float = 1.5
@@ -164,7 +168,7 @@ class TradingConfig:
     exit_stoch_health_filter_enabled: bool = False
     exit_stoch_min_slope: float = 2.0
     exit_stoch_overbought_level: float = 80.0
-    schwab_native_warmup_bars_required: int = 50
+    schwab_native_warmup_bars_required: int = 35
     schwab_native_use_confirmation: bool = True
     schwab_native_use_chop_regime: bool = False
     require_above_ema20: bool = True
@@ -186,11 +190,22 @@ class TradingConfig:
     chop_restart_breakout_bars: int = 5
     chop_restart_pullback_hold_bars: int = 5
     p1_min_bars_below_signal: int = 3
+    p1_min_vol_ratio: float | None = None
+    p1_min_volume_abs: float | None = None
+    p1_min_dollar_volume_abs: float | None = None
     p3_min_score: int = 5
     p3_allow_high_vwap: bool = True
     p3_high_vwap_max_pct: float = 30.0
     p3_high_vwap_max_ema9_pct: float = 2.0
     p3_entry_stoch_k_cap: float | None = None
+    p3_min_volume_abs: float | None = None
+    p3_min_dollar_volume_abs: float | None = None
+    p3_min_vol_ratio: float | None = None
+    p3_max_ema9_dist_pct: float | None = None
+    p3_hard_stop_pause_minutes: int = 0
+    p3_max_bars_since_macd_cross: int | None = None
+    p3_max_recent_runup_pct: float | None = None
+    p3_recent_runup_lookback_bars: int = 0
     p3_allow_momentum_override: bool = True
     p3_momentum_max_ema9_pct: float = 12.0
     p3_momentum_max_stoch_k: float = 98.0
@@ -207,6 +222,15 @@ class TradingConfig:
     p4_vol_mult20: float = 1.50
     p4_breakout_lookback: int = 3
     p4_require_close_above_ema9: bool = True
+    p4_max_ema9_dist_pct: float | None = None
+    p4_entry_max_breakdown_pct: float | None = 1.5
+    p4_prev_bar_entry_enabled: bool = False
+    p4_prev_bar_require_prev_above_vwap_or_green: bool = True
+    p4_prev_bar_next_open_max_breakdown_pct: float | None = 1.0
+    p4_prev_bar_require_break_prev_high: bool = True
+    p4_prev_bar_require_close_above_prev_close: bool = True
+    p4_prev_bar_confirm_close_top_pct: float | None = 50.0
+    p4_enabled: bool = True
     p5_spike_lookback: int = 15
     p5_spike_ext_pct: float = 2.5
     p5_giveback_pct: float = 2.0
@@ -259,7 +283,7 @@ class TradingConfig:
                 "dead_zone_end": "00:00",
                 "entry_vwap_mode": "session_aware",
                 "entry_logic_mode": "tos_script",
-                "entry_intrabar_enabled": True,
+                "entry_intrabar_enabled": False,
                 "require_vwap_filter": True,
                 "allow_vwap_cross_entry": True,
                 "vol_min": 5_000,
@@ -346,6 +370,9 @@ class TradingConfig:
                 "min_score": 4,
                 "p3_min_score": 5,
                 "vol_min": 2_500,
+                "p1_min_vol_ratio": 1.25,
+                "p1_min_volume_abs": 7_500,
+                "p1_min_dollar_volume_abs": 25_000,
                 "cooldown_bars": 10,
                 "p3_histogram_floor": 0.01,
                 "use_ema_gate": True,
@@ -358,14 +385,27 @@ class TradingConfig:
                 "entry_intrabar_enabled": False,
                 "schwab_native_use_confirmation": True,
                 "schwab_native_use_chop_regime": True,
-                "schwab_native_warmup_bars_required": 50,
+                "schwab_native_warmup_bars_required": 35,
+                "p4_prev_bar_entry_enabled": False,
+                "p4_prev_bar_require_prev_above_vwap_or_green": True,
+                "p4_prev_bar_next_open_max_breakdown_pct": 1.0,
+                "p4_prev_bar_require_break_prev_high": True,
+                "p4_prev_bar_require_close_above_prev_close": True,
+                "p4_prev_bar_confirm_close_top_pct": 50.0,
                 "p3_allow_momentum_override": False,
-                "p3_entry_stoch_k_cap": 85.0,
+                "p3_entry_stoch_k_cap": 80.0,
+                "p3_min_volume_abs": 10_000,
+                "p3_min_dollar_volume_abs": 35_000,
+                "p3_min_vol_ratio": 1.50,
+                "p3_hard_stop_pause_minutes": 30,
+                "p3_max_bars_since_macd_cross": 4,
+                "p3_max_recent_runup_pct": 8.0,
+                "p3_recent_runup_lookback_bars": 8,
             }
         )
         return TradingConfig(**fields)
 
-    def make_30s_webull_variant(
+    def make_30s_polygon_variant(
         self,
         *,
         quantity: int = 100,
@@ -379,8 +419,23 @@ class TradingConfig:
         )
         fields.update(
             {
+                "entry_logic_mode": "polygon_30s",
                 "trading_start_hour": 4,
                 "trading_end_hour": 18,
+                # Keep Polygon on the same 30s engine family, but do not inherit
+                # the later Schwab-live anti-chase tightenings that suppress
+                # Polygon signal discovery on momentum names.
+                "schwab_native_use_chop_regime": False,
+                "p3_allow_momentum_override": True,
+                "p3_entry_stoch_k_cap": None,
+                "p3_min_volume_abs": None,
+                "p3_min_dollar_volume_abs": None,
+                "p3_min_vol_ratio": None,
+                "p3_hard_stop_pause_minutes": 0,
+                "p3_max_bars_since_macd_cross": None,
+                "p3_max_recent_runup_pct": None,
+                "p3_recent_runup_lookback_bars": 0,
+                "p4_prev_bar_entry_enabled": False,
             }
         )
         return TradingConfig(**fields)
@@ -400,6 +455,29 @@ class TradingConfig:
         fields.update(
             {
                 "bar_interval_secs": 60,
+                "cooldown_bars": 5,
+                "entry_intrabar_enabled": False,
+                "p1_min_vol_ratio": 1.25,
+                "p1_min_volume_abs": 7_500,
+                "p1_min_dollar_volume_abs": 25_000,
+                "p3_min_score": 6,
+                "surge_rate": -0.001,
+                "p3_entry_stoch_k_cap": 80.0,
+                "p3_min_volume_abs": 20_000,
+                "p3_min_dollar_volume_abs": 70_000,
+                "p3_min_vol_ratio": 1.50,
+                "p3_max_ema9_dist_pct": 2.0,
+                "p3_hard_stop_pause_minutes": 30,
+                "p3_max_bars_since_macd_cross": 2,
+                "p3_max_recent_runup_pct": 8.0,
+                "p3_recent_runup_lookback_bars": 4,
+                "p4_body_pct": 4.0,
+                "p4_range_pct": 999.0,
+                "p4_close_top_pct": 20.0,
+                "p4_vol_mult20": 2.0,
+                "p4_breakout_lookback": 1,
+                "p4_max_ema9_dist_pct": 3.5,
+                "p4_prev_bar_entry_enabled": False,
             }
         )
         return TradingConfig(**fields)

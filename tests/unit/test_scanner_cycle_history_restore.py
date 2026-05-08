@@ -57,11 +57,11 @@ def test_scanner_cycle_history_restore_skips_watchlist_only_snapshot_without_ses
                     "watchlist": ["AMST"],
                     "bot_handoff_symbols_by_strategy": {
                         "macd_30s": ["AMST"],
-                        "webull_30s": ["AMST"],
+                        "polygon_30s": ["AMST"],
                     },
                     "bot_handoff_history_by_strategy": {
                         "macd_30s": ["AMST"],
-                        "webull_30s": ["AMST"],
+                        "polygon_30s": ["AMST"],
                     },
                 },
             )
@@ -78,7 +78,7 @@ def test_scanner_cycle_history_restore_skips_watchlist_only_snapshot_without_ses
             redis_stream_prefix="test",
             dashboard_snapshot_persistence_enabled=True,
             scanner_feed_retention_enabled=False,
-            strategy_webull_30s_enabled=True,
+            strategy_polygon_30s_enabled=True,
         ),
         redis_client=FakeRedis(),
         session_factory=session_factory,
@@ -86,7 +86,7 @@ def test_scanner_cycle_history_restore_skips_watchlist_only_snapshot_without_ses
     service._restore_watchlist_from_scanner_cycle_history()
 
     assert service.state.bots["macd_30s"].watchlist == set()
-    assert service.state.bots["webull_30s"].watchlist == set()
+    assert service.state.bots["polygon_30s"].watchlist == set()
 
 
 def test_scanner_cycle_history_restore_seeds_watchlist_when_session_handoff_marker_is_true(
@@ -107,11 +107,11 @@ def test_scanner_cycle_history_restore_seeds_watchlist_when_session_handoff_mark
                     "session_handoff_active": True,
                     "bot_handoff_symbols_by_strategy": {
                         "macd_30s": ["AMST"],
-                        "webull_30s": ["AMST"],
+                        "polygon_30s": ["AMST"],
                     },
                     "bot_handoff_history_by_strategy": {
                         "macd_30s": ["AMST"],
-                        "webull_30s": ["AMST"],
+                        "polygon_30s": ["AMST"],
                     },
                 },
             )
@@ -128,7 +128,7 @@ def test_scanner_cycle_history_restore_seeds_watchlist_when_session_handoff_mark
             redis_stream_prefix="test",
             dashboard_snapshot_persistence_enabled=True,
             scanner_feed_retention_enabled=False,
-            strategy_webull_30s_enabled=True,
+            strategy_polygon_30s_enabled=True,
         ),
         redis_client=FakeRedis(),
         session_factory=session_factory,
@@ -136,7 +136,7 @@ def test_scanner_cycle_history_restore_seeds_watchlist_when_session_handoff_mark
     service._restore_watchlist_from_scanner_cycle_history()
 
     assert service.state.bots["macd_30s"].watchlist == {"AMST"}
-    assert service.state.bots["webull_30s"].watchlist == {"AMST"}
+    assert service.state.bots["polygon_30s"].watchlist == {"AMST"}
 
     with session_factory() as session:
         snapshots = session.scalars(

@@ -64,6 +64,7 @@ from project_mai_tai.strategy_core import (
 from project_mai_tai.trade_episodes import collect_completed_trade_cycles
 from project_mai_tai.trade_episodes import display_order_path
 from project_mai_tai.trade_episodes import looks_like_broker_payload_text
+from project_mai_tai.trade_episodes import summarize_closed_today_reason
 
 
 SERVICE_NAME = "control-plane"
@@ -77,6 +78,22 @@ def utcnow() -> datetime:
 
 def current_eastern_day_start_utc(now: datetime | None = None) -> datetime:
     return current_scanner_session_start_utc(now)
+
+
+def _normalize_strategy_code(strategy_code: str | None) -> str:
+    normalized = str(strategy_code or "").strip().lower()
+    if normalized == "webull_30s":
+        return "polygon_30s"
+    return normalized
+
+
+def _strategy_code_variants(strategy_code: str | None) -> tuple[str, ...]:
+    normalized = _normalize_strategy_code(strategy_code)
+    if normalized == "polygon_30s":
+        return ("polygon_30s", "webull_30s")
+    if not normalized:
+        return tuple()
+    return (normalized,)
 
 
 def current_eastern_day_end_utc(now: datetime | None = None) -> datetime:
@@ -255,6 +272,10 @@ class ControlPlaneRepository:
         return snapshot.created_at.astimezone(UTC) >= session_start
 
     def _is_ui_hidden_symbol(self, account_name: str | None, symbol: str | None) -> bool:
+        del account_name, symbol
+        return False
+
+    def _is_reconciliation_hidden_symbol(self, account_name: str | None, symbol: str | None) -> bool:
         normalized_account = str(account_name or "").strip()
         normalized_symbol = str(symbol or "").strip().upper()
         if not normalized_account or not normalized_symbol:
@@ -277,7 +298,7 @@ class ControlPlaneRepository:
             if not self._is_ui_hidden_symbol(item.get(account_key), item.get(symbol_key))
         ]
 
-    def _is_ui_hidden_symbol_any_account(self, symbol: str | None) -> bool:
+    def _is_reconciliation_hidden_symbol_any_account(self, symbol: str | None) -> bool:
         normalized_symbol = str(symbol or "").strip().upper()
         if not normalized_symbol:
             return False
@@ -341,7 +362,7 @@ class ControlPlaneRepository:
             query = query.limit(limit)
             for review in session.scalars(query).all():
                 serialized = self._serialize_trade_coach_review(review)
-                if self._is_ui_hidden_symbol(
+                if self._is_reconciliation_hidden_symbol(
                     serialized.get("broker_account_name"),
                     serialized.get("symbol"),
                 ):
@@ -385,7 +406,7 @@ class ControlPlaneRepository:
                 bars = list(
                     session.scalars(
                         select(StrategyBarHistory)
-                        .where(StrategyBarHistory.strategy_code == strategy_code)
+                        .where(StrategyBarHistory.strategy_code.in_(_strategy_code_variants(strategy_code)))
                         .where(StrategyBarHistory.symbol == symbol)
                         .where(StrategyBarHistory.interval_secs == interval_secs)
                         .where(StrategyBarHistory.bar_time >= query_start)
@@ -426,7 +447,7 @@ class ControlPlaneRepository:
                 bars_desc = list(
                     session.scalars(
                         select(StrategyBarHistory)
-                        .where(StrategyBarHistory.strategy_code == strategy_code)
+                        .where(StrategyBarHistory.strategy_code.in_(_strategy_code_variants(strategy_code)))
                         .where(StrategyBarHistory.symbol == symbol)
                         .where(StrategyBarHistory.interval_secs == interval_secs)
                         .order_by(desc(StrategyBarHistory.bar_time))
@@ -1181,6 +1202,42 @@ class ControlPlaneRepository:
                 item_age = int(item.get("data_age_secs", 10**9) or 10**9)
                 if current is None or item_age <= current_age:
                     lookup[ticker] = item
+        recent_bot_prices: dict[str, tuple[datetime, float]] = {}
+        for bot in strategy_runtime.get("bots", {}).values():
+            if not isinstance(bot, dict):
+                continue
+            for item in bot.get("recent_decisions", []):
+                if not isinstance(item, dict):
+                    continue
+                ticker = str(item.get("symbol", "")).upper()
+                if not ticker:
+                    continue
+                try:
+                    price = float(item.get("price", 0) or 0)
+                except (TypeError, ValueError):
+                    continue
+                if price <= 0:
+                    continue
+                raw_bar_at = str(item.get("last_bar_at", "") or "").strip()
+                if not raw_bar_at:
+                    continue
+                try:
+                    observed_at = datetime.strptime(raw_bar_at, "%Y-%m-%d %I:%M:%S %p ET")
+                except ValueError:
+                    continue
+                current = recent_bot_prices.get(ticker)
+                if current is None or observed_at >= current[0]:
+                    recent_bot_prices[ticker] = (observed_at, price)
+        for ticker, (_, price) in recent_bot_prices.items():
+            current = lookup.get(ticker)
+            merged = dict(current or {})
+            merged["ticker"] = ticker
+            merged["price"] = price
+            prev_close = float(merged.get("prev_close", 0) or 0)
+            if prev_close > 0:
+                merged["change_pct"] = ((price - prev_close) / prev_close) * 100
+            merged["data_age_secs"] = 0
+            lookup[ticker] = merged
         return lookup
 
     def _normalize_confirmed_row(
@@ -1220,6 +1277,11 @@ class ControlPlaneRepository:
             ):
                 if live_market_row.get(field) is not None:
                     merged_item[field] = live_market_row.get(field)
+        if live_market_row and live_market_row.get("price") is not None:
+            price = float(merged_item.get("price", 0) or 0)
+            prev_close = float(merged_item.get("prev_close", 0) or 0)
+            if price > 0 and prev_close > 0:
+                merged_item["change_pct"] = ((price - prev_close) / prev_close) * 100
         bid = float(merged_item.get("bid", 0) or 0)
         ask = float(merged_item.get("ask", 0) or 0)
         spread = float(merged_item.get("spread", 0) or 0)
@@ -1416,6 +1478,26 @@ class ControlPlaneRepository:
                     and not self._is_ui_hidden_symbol(account_name, item.get("symbol"))
                     and str(item.get("symbol") or "").upper() in live_decision_symbols
                 ]
+            runtime_bar_keys = {
+                (
+                    str(item.get("symbol", "") or item.get("ticker", "") or "").upper(),
+                    str(item.get("last_bar_at", "") or ""),
+                )
+                for item in recent_decisions
+                if str(item.get("last_bar_at", "") or "").strip()
+            }
+            additional_recent_decisions = [
+                self._decision_display_row(item)
+                for item in recent_bar_decisions
+                if item.get("strategy_code") == code
+                and not self._is_ui_hidden_symbol(account_name, item.get("symbol"))
+                and (
+                    str(item.get("symbol", "") or item.get("ticker", "") or "").upper(),
+                    str(item.get("last_bar_at", "") or ""),
+                )
+                not in runtime_bar_keys
+            ]
+            recent_decisions.extend(additional_recent_decisions)
             recent_decisions = _dedupe_decision_events(recent_decisions)
             indicator_snapshots = [
                 item
@@ -1483,10 +1565,13 @@ class ControlPlaneRepository:
                 },
             }
             recent_decisions = self._live_decision_placeholder_rows(
+                strategy_code=code,
+                interval_secs=int(runtime_bot.get("interval_secs", 0) or 0),
                 live_symbols=live_decision_symbols,
                 recent_decisions=recent_decisions,
                 bar_counts=bar_counts,
                 last_tick_at=last_tick_at,
+                indicator_snapshots=indicator_snapshots,
                 data_health=data_health,
                 provider=(
                     self.settings.provider_for_strategy(code)
@@ -1494,6 +1579,22 @@ class ControlPlaneRepository:
                     else str(runtime_bot.get("provider", "") or "")
                 ),
             ) + recent_decisions
+            recent_decisions = self._ensure_visible_live_symbol_decision_rows(
+                strategy_code=code,
+                interval_secs=int(runtime_bot.get("interval_secs", 0) or 0),
+                live_symbols=live_decision_symbols,
+                recent_decisions=recent_decisions,
+                bar_counts=bar_counts,
+                last_tick_at=last_tick_at,
+                indicator_snapshots=indicator_snapshots,
+                data_health=data_health,
+                provider=(
+                    self.settings.provider_for_strategy(code)
+                    if registration
+                    else str(runtime_bot.get("provider", "") or "")
+                ),
+                visible_limit=50,
+            )
             tos_parity = self._build_tos_parity_view(
                 strategy_code=code,
                 indicator_snapshots=indicator_snapshots,
@@ -1589,10 +1690,13 @@ class ControlPlaneRepository:
     def _live_decision_placeholder_rows(
         self,
         *,
+        strategy_code: str,
+        interval_secs: int,
         live_symbols: set[str],
         recent_decisions: list[dict[str, Any]],
         bar_counts: dict[str, int],
         last_tick_at: dict[str, str],
+        indicator_snapshots: list[dict[str, Any]],
         data_health: dict[str, Any],
         provider: str,
     ) -> list[dict[str, Any]]:
@@ -1622,6 +1726,18 @@ class ControlPlaneRepository:
             if str(symbol).strip()
         }
         market_data_source = self._market_data_source_label(provider)
+        resolved_interval_secs = self._interval_label_seconds(strategy_code, interval_secs)
+        latest_completed_bar_at = {
+            str(item.get("symbol") or item.get("ticker") or "").upper(): str(item.get("last_bar_at") or "")
+            for item in indicator_snapshots
+            if str(item.get("symbol") or item.get("ticker") or "").strip()
+            and str(item.get("last_bar_at") or "").strip()
+        }
+        bar_label = (
+            "completed 1m bar"
+            if str(strategy_code or "").strip().lower() == "schwab_1m"
+            else f"completed {resolved_interval_secs}s trade bar"
+        )
 
         placeholders: list[dict[str, Any]] = []
         for symbol in sorted(live_symbols):
@@ -1629,6 +1745,7 @@ class ControlPlaneRepository:
                 continue
 
             last_tick_label = str(last_tick_at.get(symbol, "") or "")
+            last_completed_label = str(latest_completed_bar_at.get(symbol, "") or "")
             bar_count = int(bar_counts.get(symbol, 0) or 0)
             status = "pending"
             if symbol in halted_symbols:
@@ -1637,33 +1754,61 @@ class ControlPlaneRepository:
             elif symbol in warning_symbols:
                 status = "warning"
                 reason = warning_reasons.get(symbol) or f"{market_data_source} ticks are temporarily quiet on this flat symbol"
+            elif last_tick_label and last_completed_label:
+                wait_age_seconds = _seconds_since_eastern_label(last_tick_label)
+                completed_age_seconds = _seconds_since_eastern_label(last_completed_label)
+                stale_after_seconds = max(resolved_interval_secs * 2, 120)
+                if completed_age_seconds is not None and completed_age_seconds >= stale_after_seconds:
+                    status = "critical"
+                    reason = (
+                        f"live in bot; fresh {market_data_source} ticks are arriving but the last "
+                        f"{bar_label} is already {_format_age(completed_age_seconds)} old - verify bar flow now"
+                    )
+                elif wait_age_seconds is not None and wait_age_seconds >= 90:
+                    status = "critical"
+                    reason = (
+                        f"live in bot; no {bar_label} for {_format_age(wait_age_seconds)} "
+                        f"after the last live {market_data_source} tick - verify tape/bar flow now"
+                    )
+                elif wait_age_seconds is not None and wait_age_seconds >= 45:
+                    reason = (
+                        f"live in bot; still waiting {_format_age(wait_age_seconds)} for the next "
+                        f"{bar_label} after the last live {market_data_source} tick"
+                    )
+                elif wait_age_seconds is not None:
+                    reason = (
+                        f"live in bot; waiting for next {bar_label} to evaluate "
+                        f"({_format_age(wait_age_seconds)} since last {market_data_source} tick)"
+                    )
+                else:
+                    reason = f"live in bot; waiting for next {bar_label} to evaluate"
             elif last_tick_label and bar_count > 0:
                 wait_age_seconds = _seconds_since_eastern_label(last_tick_label)
                 if wait_age_seconds is not None and wait_age_seconds >= 90:
                     status = "critical"
                     reason = (
-                        "live in bot; no completed 30s trade bar for "
+                        f"live in bot; no {bar_label} for "
                         f"{_format_age(wait_age_seconds)} after the last live "
                         f"{market_data_source} tick - verify tape/bar flow now"
                     )
                 elif wait_age_seconds is not None and wait_age_seconds >= 45:
                     reason = (
                         "live in bot; still waiting "
-                        f"{_format_age(wait_age_seconds)} for the next completed 30s "
-                        f"trade bar after the last live {market_data_source} tick"
+                        f"{_format_age(wait_age_seconds)} for the next "
+                        f"{bar_label} after the last live {market_data_source} tick"
                     )
                 elif wait_age_seconds is not None:
                     reason = (
-                        "live in bot; waiting for next completed 30s trade bar to "
+                        f"live in bot; waiting for next {bar_label} to "
                         f"evaluate ({_format_age(wait_age_seconds)} since last "
                         f"{market_data_source} tick)"
                     )
                 else:
-                    reason = "live in bot; waiting for next completed 30s trade bar to evaluate"
+                    reason = f"live in bot; waiting for next {bar_label} to evaluate"
             elif last_tick_label:
                 reason = (
                     f"live in bot; receiving {market_data_source} ticks, "
-                    "waiting for first completed 30s trade bar"
+                    f"waiting for first {bar_label}"
                 )
             elif bar_count > 0:
                 reason = (
@@ -1681,11 +1826,57 @@ class ControlPlaneRepository:
                     "path": "",
                     "score": "",
                     "price": "",
-                    "last_bar_at": last_tick_label,
+                    "last_bar_at": last_completed_label,
+                    "last_tick_at": last_tick_label,
+                    "is_placeholder": True,
                 }
             )
 
         return placeholders
+
+    def _ensure_visible_live_symbol_decision_rows(
+        self,
+        *,
+        strategy_code: str,
+        interval_secs: int,
+        live_symbols: set[str],
+        recent_decisions: list[dict[str, Any]],
+        bar_counts: dict[str, int],
+        last_tick_at: dict[str, str],
+        indicator_snapshots: list[dict[str, Any]],
+        data_health: dict[str, Any],
+        provider: str,
+        visible_limit: int,
+    ) -> list[dict[str, Any]]:
+        if visible_limit <= 0:
+            return recent_decisions
+        visible_window = list(recent_decisions[:visible_limit])
+        visible_symbols = {
+            str(item.get("symbol") or item.get("ticker") or "").upper()
+            for item in visible_window
+            if str(item.get("symbol") or item.get("ticker") or "").strip()
+        }
+        missing_symbols = {
+            str(symbol).upper()
+            for symbol in live_symbols
+            if str(symbol).strip() and str(symbol).upper() not in visible_symbols
+        }
+        if not missing_symbols:
+            return recent_decisions
+        placeholders = self._live_decision_placeholder_rows(
+            strategy_code=strategy_code,
+            interval_secs=interval_secs,
+            live_symbols=missing_symbols,
+            recent_decisions=visible_window,
+            bar_counts=bar_counts,
+            last_tick_at=last_tick_at,
+            indicator_snapshots=indicator_snapshots,
+            data_health=data_health,
+            provider=provider,
+        )
+        if not placeholders:
+            return recent_decisions
+        return _dedupe_decision_events(placeholders + recent_decisions)
 
     @staticmethod
     def _market_data_source_label(provider: str) -> str:
@@ -1693,6 +1884,18 @@ class ControlPlaneRepository:
         if normalized == "schwab":
             return "Schwab"
         return "Polygon"
+
+    @staticmethod
+    def _interval_label_seconds(strategy_code: str, interval_secs: int) -> int:
+        resolved = int(interval_secs or 0)
+        if resolved > 0:
+            return resolved
+        normalized = str(strategy_code or "").strip().lower()
+        if "1m" in normalized:
+            return 60
+        if "30s" in normalized:
+            return 30
+        return 0
 
     def _build_tos_parity_view(
         self,
@@ -1909,7 +2112,7 @@ class ControlPlaneRepository:
                                     "created_at": _datetime_str(finding.created_at),
                                 }
                                 for finding in latest_finding_rows
-                                if not self._is_ui_hidden_symbol_any_account(finding.symbol)
+                                if not self._is_reconciliation_hidden_symbol_any_account(finding.symbol)
                             ],
                         }
                         counts["latest_reconciliation_findings"] = len(reconciliation["findings"])
@@ -1966,6 +2169,7 @@ class ControlPlaneRepository:
                         if isinstance(intent_payload.get("metadata", {}), dict)
                         else {}
                     )
+                    intent_reason = intent.reason if intent is not None else ""
                     recent_orders.append(
                         {
                             "strategy_code": strategy.code if strategy else str(order.strategy_id),
@@ -1976,8 +2180,17 @@ class ControlPlaneRepository:
                             "quantity": _decimal_str(order.quantity),
                             "price": _decimal_str(latest_event_payload.get("fill_price")),
                             "status": order.status,
-                            "reason": str(latest_event_payload.get("reason") or (intent.reason if intent else "")),
-                            "path": str(intent_metadata.get("path") or ""),
+                            "reason": _select_filled_order_reason(
+                                latest_event_payload.get("reason"),
+                                intent_reason,
+                            ),
+                            "path": display_order_path(
+                                {
+                                    "path": str(intent_metadata.get("path") or ""),
+                                    "metadata": intent_metadata,
+                                    "reason": intent_reason,
+                                }
+                            ),
                             "client_order_id": order.client_order_id,
                             "broker_order_id": order.broker_order_id or "",
                             "order_type": order.order_type,
@@ -2190,9 +2403,9 @@ class ControlPlaneRepository:
                     ).strip()
                     incident_symbol = self._incident_symbol(incident.title, payload)
                     if incident_account_name:
-                        if self._is_ui_hidden_symbol(incident_account_name, incident_symbol):
+                        if self._is_reconciliation_hidden_symbol(incident_account_name, incident_symbol):
                             continue
-                    elif self._is_ui_hidden_symbol_any_account(incident_symbol):
+                    elif self._is_reconciliation_hidden_symbol_any_account(incident_symbol):
                         continue
                     incidents.append(
                         {
@@ -2779,10 +2992,15 @@ def build_app(
                     "recent_decisions": recent_decisions,
                     "trade_log": _build_bot_decision_entries(recent_decisions),
                     "account_summary": _build_bot_account_summary(data, bot),
-                    "listening_status": _build_bot_listening_status(data, bot, recent_decisions),
+                    "listening_status": listening_status,
+                    "latest_decision_at": listening_status.get("latest_decision_at"),
+                    "latest_bot_tick_at": listening_status.get("latest_bot_tick_at"),
+                    "latest_market_data_at": listening_status.get("latest_market_data_at"),
+                    "latest_heartbeat_at": listening_status.get("latest_heartbeat_at"),
                 }
                 for bot in data["bots"]
                 for recent_decisions in [_resolved_bot_recent_decisions(data, bot)]
+                for listening_status in [_build_bot_listening_status(data, bot, recent_decisions)]
             ]
         }
 
@@ -3110,10 +3328,10 @@ def build_app(
         data = await app.state.repository.load_bot_dashboard_data()
         return _build_bot_api_payload(data, "macd_30s")
 
-    @app.get("/botwebull")
-    async def bot_webull_status() -> dict[str, Any]:
+    @app.get("/botpolygon")
+    async def bot_polygon_status() -> dict[str, Any]:
         data = await app.state.repository.load_bot_dashboard_data()
-        return _build_bot_api_payload(data, "webull_30s")
+        return _build_bot_api_payload(data, "polygon_30s")
 
     @app.get("/bot1m")
     async def bot_1m_status() -> dict[str, Any]:
@@ -3181,9 +3399,9 @@ def build_app(
     async def bot_30s_page() -> str:
         return await _render_bot_page_with_trade_coach("macd_30s")
 
-    @app.get("/bot/30s-webull", response_class=HTMLResponse)
-    async def bot_webull_30s_page() -> str:
-        return await _render_bot_page_with_trade_coach("webull_30s")
+    @app.get("/bot/30s-polygon", response_class=HTMLResponse)
+    async def bot_polygon_30s_page() -> str:
+        return await _render_bot_page_with_trade_coach("polygon_30s")
 
     @app.get("/bot/30s-probe", response_class=HTMLResponse)
     async def bot_30s_probe_page() -> str:
@@ -4282,12 +4500,12 @@ BOT_PAGE_META = {
         "color": "#2979ff",
         "path": "/bot/30s",
     },
-    "webull_30s": {
-        "title": "Webull 30 Sec Bot",
-        "nav_title": "Webull 30s",
-        "badge": "WB",
+    "polygon_30s": {
+        "title": "Polygon 30 Sec Bot",
+        "nav_title": "Polygon 30s",
+        "badge": "PG",
         "color": "#ff8f00",
-        "path": "/bot/30s-webull",
+        "path": "/bot/30s-polygon",
     },
     "macd_30s_probe": {
         "title": "Mai Tai 30-Second Probe Bot",
@@ -4368,8 +4586,13 @@ def _format_interval_label(interval_secs: object) -> str:
 
 
 def _find_bot_view(data: dict[str, Any], strategy_code: str) -> dict[str, Any] | None:
+    normalized = _normalize_strategy_code(strategy_code)
     return next(
-        (bot for bot in data["bots"] if bot["strategy_code"] == strategy_code),
+        (
+            bot
+            for bot in data["bots"]
+            if _normalize_strategy_code(str(bot.get("strategy_code", ""))) == normalized
+        ),
         None,
     )
 
@@ -4383,11 +4606,12 @@ def _resolved_bot_recent_decisions(data: dict[str, Any], bot: dict[str, Any]) ->
     if runtime_items:
         return runtime_items[:50]
 
-    strategy_code = str(bot.get("strategy_code", "") or "")
+    strategy_code = _normalize_strategy_code(str(bot.get("strategy_code", "") or ""))
     fallback_items = [
         dict(item)
         for item in data.get("recent_bar_decisions", [])
-        if isinstance(item, dict) and str(item.get("strategy_code", "") or "") == strategy_code
+        if isinstance(item, dict)
+        and _normalize_strategy_code(str(item.get("strategy_code", "") or "")) == strategy_code
     ]
     return _dedupe_decision_events(fallback_items)[:50]
 
@@ -4433,7 +4657,8 @@ def _build_bot_listening_status(
     latest_market_data_at = str(latest_snapshot.get("completed_at") or "")
     if not latest_market_data_at:
         latest_market_data_at = _datetime_str(market_data.get("latest_subscription_observed_at_raw"))
-    latest_decision_at = str(recent_decisions[0].get("last_bar_at") or "") if recent_decisions else ""
+    real_decisions = [item for item in recent_decisions if not bool(item.get("is_placeholder"))]
+    latest_decision_at = str(real_decisions[0].get("last_bar_at") or "") if real_decisions else ""
     latest_bot_tick_at = max((str(value or "") for value in dict(bot.get("last_tick_at", {}) or {}).values()), default="")
     indicator_snapshots = list(bot.get("indicator_snapshots", []) or [])
     latest_indicator_at = max(
@@ -4585,7 +4810,7 @@ def _build_bot_api_payload(data: dict[str, Any], strategy_code: str) -> dict[str
         "pending_close_symbols": bot["pending_close_symbols"],
         "pending_scale_levels": bot["pending_scale_levels"],
         "daily_pnl": bot["daily_pnl"],
-        "closed_today": bot["closed_today"],
+        "closed_today": _normalize_closed_today_rows(bot["closed_today"]),
         "recent_decisions": recent_decisions,
         "recent_intents": bot["recent_intents"],
         "recent_orders": bot["recent_orders"],
@@ -5189,7 +5414,13 @@ def _render_bot_detail_page(
         manual_stop_symbols,
         redirect_to=meta["path"],
     )
-    retention_html = _build_retention_status_html(retention_rows, tracked_symbols=tracked_retention_symbols)
+    retention_html = _build_retention_status_html(
+        retention_rows,
+        tracked_symbols=tracked_retention_symbols,
+        strategy_code=strategy_code,
+        redirect_to=meta["path"],
+        manual_stop_symbols=set(manual_stop_symbols),
+    )
     data_health = dict(bot.get("data_health", {}) or {})
     data_health_status = str(data_health.get("status", "healthy") or "healthy").lower()
     halted_symbols = [str(symbol).upper() for symbol in list(data_health.get("halted_symbols", []) or [])]
@@ -5228,7 +5459,7 @@ def _render_bot_detail_page(
     available_codes = [str(item["strategy_code"]) for item in data.get("bots", [])]
     production_preview = int(bot.get("interval_secs") or 0) == 30 and strategy_code in {
         "macd_30s",
-        "webull_30s",
+        "polygon_30s",
         "probe_30s",
         "reclaim_30s",
     }
@@ -8364,16 +8595,13 @@ def _collect_completed_position_rows(
 
 def _dedupe_decision_events(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     deduped: list[dict[str, Any]] = []
-    seen: set[tuple[str, str, str, str, str, str, str]] = set()
+    seen: set[tuple[str, str, str, str]] = set()
     for item in items:
         signature = (
             str(item.get("last_bar_at", "") or ""),
             str(item.get("symbol", "") or item.get("ticker", "") or "").upper(),
             str(item.get("status", "") or "").upper(),
             str(item.get("reason", "") or ""),
-            str(item.get("path", "") or ""),
-            str(item.get("score", "") if item.get("score", "") not in (None, "") else ""),
-            str(item.get("price", "") if item.get("price", "") not in (None, "") else ""),
         )
         if signature in seen:
             continue
@@ -8395,7 +8623,41 @@ def _display_order_reason(item: dict[str, Any]) -> str:
     return "-"
 
 
-def _build_retention_status_html(retention_rows: list[dict[str, Any]], *, tracked_symbols: set[str]) -> str:
+def _select_filled_order_reason(event_reason: Any, intent_reason: Any) -> str:
+    event_text = str(event_reason or "").strip()
+    intent_text = str(intent_reason or "").strip()
+    if event_text and not looks_like_broker_payload_text(event_text):
+        return event_text
+    if intent_text:
+        return intent_text
+    return event_text
+
+
+def _normalize_closed_today_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    for item in rows or []:
+        row = dict(item)
+        summary = str(row.get("summary", "") or row.get("exit_summary", "") or "").strip()
+        if not summary:
+            summary = summarize_closed_today_reason(row)
+        if not summary or looks_like_broker_payload_text(summary):
+            summary = _display_order_reason(row)
+        row["exit_summary"] = summary
+        if looks_like_broker_payload_text(row.get("reason")) or looks_like_broker_payload_text(row.get("exit_reason")):
+            row["reason"] = summary
+            row["exit_reason"] = summary
+        normalized.append(row)
+    return normalized
+
+
+def _build_retention_status_html(
+    retention_rows: list[dict[str, Any]],
+    *,
+    tracked_symbols: set[str],
+    strategy_code: str,
+    redirect_to: str,
+    manual_stop_symbols: set[str],
+) -> str:
     groups: dict[str, list[str]] = {"active": [], "cooldown": [], "resume_probe": [], "dropped": []}
     for item in retention_rows:
         ticker = str(item.get("ticker", "") or "").upper()
@@ -8416,12 +8678,31 @@ def _build_retention_status_html(retention_rows: list[dict[str, Any]], *, tracke
         if not symbols:
             continue
         label, color = labels[state]
-        chips = "".join(
-            f'<span class="pill-chip" style="border-color:{color};color:{color};">{escape(symbol)}</span>'
-            for symbol in symbols
-        )
+        chips: list[str] = []
+        for symbol in symbols:
+            if symbol in manual_stop_symbols:
+                action_url = (
+                    f"/bot/symbol/resume?strategy_code={quote(strategy_code)}"
+                    f"&symbol={quote(symbol)}&redirect_to={quote(redirect_to, safe='/')}"
+                )
+                action_label = "Resume"
+                action_style = "color:#5fff8d;border-color:#5fff8d;"
+            else:
+                action_url = (
+                    f"/bot/symbol/stop?strategy_code={quote(strategy_code)}"
+                    f"&symbol={quote(symbol)}&redirect_to={quote(redirect_to, safe='/')}"
+                )
+                action_label = "Stop"
+                action_style = "color:#ff6b6b;border-color:#ff6b6b;"
+            chips.append(
+                '<span class="pill-chip" '
+                f'style="border-color:{color};color:{color};">{escape(symbol)}</span> '
+                f'<a href="{escape(action_url)}" '
+                f'style="display:inline-block;padding:2px 8px;border:1px solid;'
+                f'border-radius:999px;font-size:11px;text-decoration:none;{action_style}">{action_label}</a>'
+            )
         sections.append(
-            f'<div class="line-item"><strong style="color:{color};">{escape(label)}:</strong> {chips}</div>'
+            f'<div class="line-item"><strong style="color:{color};">{escape(label)}:</strong> {" ".join(chips)}</div>'
         )
     if not sections:
         return '<div class="line-item" style="color:#7b86a4;">No tracked symbols are currently in feed-retention state.</div>'
@@ -8662,10 +8943,12 @@ def _build_bot_decision_entries(decision_items: list[dict[str, Any]]) -> list[di
             color = "#ff9100"
         elif status == "pending":
             color = "#40c4ff"
-        text = (
-            f'{item.get("last_bar_at", "")} BAR {item.get("symbol", "")}'
-            f' | {status.upper()} | {item.get("reason", "")}'
-        )
+        if bool(item.get("is_placeholder")):
+            tick_label = str(item.get("last_tick_at", "") or "").strip()
+            prefix = f"{tick_label} LIVE TICK " if tick_label else "LIVE TICK "
+        else:
+            prefix = f'{item.get("last_bar_at", "")} BAR '
+        text = f'{prefix}{item.get("symbol", "")} | {status.upper()} | {_decision_reason_with_details(item)}'
         if item.get("path"):
             text += f' | {item["path"]}'
         if item.get("score"):
@@ -8695,7 +8978,7 @@ def _build_bot_decision_rows(decision_items: list[dict[str, Any]]) -> str:
             <td>{escape(str(item.get("last_bar_at", "")) or "-")}</td>
             <td><strong>{escape(str(item.get("symbol", "")) or "-")}</strong></td>
             <td style="color:{status_color};font-weight:bold;">{escape(status.upper() or "INFO")}</td>
-            <td>{escape(str(item.get("reason", "")) or "-")}</td>
+            <td>{escape(_decision_reason_with_details(item) or "-")}</td>
             <td>{escape(str(item.get("path", "")) or "-")}</td>
             <td style="text-align:right">{score_text}</td>
             <td style="text-align:right">{price_text}</td>
@@ -8704,6 +8987,16 @@ def _build_bot_decision_rows(decision_items: list[dict[str, Any]]) -> str:
     if not rows:
         return '<tr><td colspan="7" style="text-align:center;color:#888;">No recent decision-tape events in current runtime memory</td></tr>'
     return "".join(rows)
+
+
+def _decision_reason_with_details(item: dict[str, Any]) -> str:
+    reason = str(item.get("reason", "") or "")
+    details = str(item.get("score_details", "") or "").strip()
+    if not details.startswith("diag:"):
+        return reason
+    if not reason:
+        return details
+    return f"{reason} | {details}"
 
 
 def _build_failed_action_rows(bot: dict[str, Any]) -> tuple[str, int]:
@@ -8806,7 +9099,11 @@ def _build_closed_trade_rows_v2(closed_today: list[dict[str, Any]]) -> str:
         color = "#00c853" if pnl >= 0 else "#ff1744"
         qty = item.get("quantity", item.get("qty", ""))
         path = str(item.get("path", "") or item.get("entry_path", "") or "-")
-        reason = str(item.get("reason", "") or item.get("exit_reason", "") or "-")
+        reason = str(item.get("summary", "") or item.get("exit_summary", "") or "").strip()
+        if not reason:
+            reason = summarize_closed_today_reason(item)
+        if not reason or looks_like_broker_payload_text(reason):
+            reason = _display_order_reason(item)
         rows.append(
             f"""<tr>
             <td><strong>{escape(str(item.get("ticker", "")) or "-")}</strong></td>

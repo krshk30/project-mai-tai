@@ -119,7 +119,7 @@ def test_list_reviewable_cycles_sorts_globally_and_skips_reviewed() -> None:
 
     with session_factory() as session:
         macd = Strategy(code="macd_30s", name="Schwab 30 Sec Bot", execution_mode="paper")
-        webull = Strategy(code="webull_30s", name="Webull 30 Sec Bot", execution_mode="live")
+        polygon = Strategy(code="polygon_30s", name="Polygon 30 Sec Bot", execution_mode="live")
         paper = BrokerAccount(
             name="paper:macd_30s",
             provider="alpaca",
@@ -127,12 +127,12 @@ def test_list_reviewable_cycles_sorts_globally_and_skips_reviewed() -> None:
             external_account_id="paper-macd-30s",
         )
         live = BrokerAccount(
-            name="live:webull_30s",
+            name="live:polygon_30s",
             provider="webull",
             environment="live",
             external_account_id="live-webull-30s",
         )
-        session.add_all([macd, webull, paper, live])
+        session.add_all([macd, polygon, paper, live])
         session.flush()
 
         reviewed_cycle_key = _seed_cycle(
@@ -148,7 +148,7 @@ def test_list_reviewable_cycles_sorts_globally_and_skips_reviewed() -> None:
         )
         _seed_cycle(
             session=session,
-            strategy=webull,
+            strategy=polygon,
             broker_account=live,
             symbol="MID2",
             entry_time=datetime(2026, 4, 24, 9, 40, tzinfo=EASTERN_TZ),
@@ -209,7 +209,7 @@ def test_list_reviewable_cycles_sorts_globally_and_skips_reviewed() -> None:
     cycles = repository.list_reviewable_cycles(
         strategy_accounts=[
             ("macd_30s", "paper:macd_30s"),
-            ("webull_30s", "live:webull_30s"),
+            ("polygon_30s", "live:polygon_30s"),
         ],
         session_start=session_start,
         session_end=session_end,

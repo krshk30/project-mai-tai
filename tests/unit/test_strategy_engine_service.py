@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from importlib import import_module
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
@@ -35,11 +36,24 @@ from project_mai_tai.services.strategy_engine_app import (
 )
 from project_mai_tai.settings import Settings
 from project_mai_tai.market_data.massive_indicator_provider import MassiveIndicatorProvider
-from project_mai_tai.market_data.models import QuoteTickRecord, TradeTickRecord
+from project_mai_tai.market_data.models import HistoricalBarRecord, LiveBarRecord, QuoteTickRecord, TradeTickRecord
 from project_mai_tai.market_data.taapi_indicator_provider import TaapiIndicatorProvider
 from project_mai_tai.strategy_core import IndicatorConfig, OHLCVBar, ReferenceData, TradingConfig
 from project_mai_tai.strategy_core.exit import ExitEngine
+from project_mai_tai.strategy_core.feed_retention import FeedRetentionMetrics
 from project_mai_tai.strategy_core.time_utils import EASTERN_TZ
+
+
+def make_test_settings(**kwargs) -> Settings:
+    """Build Settings for unit tests: disable scanner feed retention unless a retention field is set.
+
+    When :func:`scanner_feed_retention` is enabled, :meth:`StrategyBotRuntime.set_watchlist` syncs
+    from lifecycle state; tests that call ``set_watchlist`` directly need retention off.
+    """
+    if not any(str(k).startswith("scanner_feed_retention") for k in kwargs):
+        kwargs = {**kwargs, "scanner_feed_retention_enabled": False}
+    settings_cls = import_module("project_mai_tai.settings").Settings
+    return settings_cls(**kwargs)
 
 
 def fixed_now() -> datetime:
@@ -63,6 +77,37 @@ class FakeRedis:
         if count is not None:
             entries = entries[:count]
         return entries
+
+    async def xread(self, streams: dict[str, str], block: int | None = None, count: int | None = None):
+        del block
+
+        def _message_id_key(value: str) -> tuple[int, int]:
+            major, _, minor = str(value).partition("-")
+            try:
+                return int(major), int(minor or 0)
+            except ValueError:
+                return 0, 0
+
+        results: list[tuple[str, list[tuple[str, dict[str, str]]]]] = []
+        remaining = None if count is None else max(0, int(count))
+        for stream, offset in streams.items():
+            entries = list(reversed(self.stream_entries.get(stream, [])))
+            unread = [
+                (message_id, dict(fields))
+                for message_id, fields in entries
+                if _message_id_key(message_id) > _message_id_key(offset)
+            ]
+            if remaining is not None:
+                unread = unread[:remaining]
+                remaining -= len(unread)
+            if unread:
+                results.append((stream, unread))
+            if remaining == 0:
+                break
+        return results
+
+    async def aclose(self) -> None:
+        return None
 
 
 def build_test_session_factory() -> sessionmaker[Session]:
@@ -113,6 +158,67 @@ def seed_trending_bars(
             }
         )
     return bars
+
+
+@pytest.mark.asyncio
+async def test_initialize_stream_offsets_anchors_to_latest_ids() -> None:
+    settings = make_test_settings()
+    redis = FakeRedis()
+    redis.stream_entries = {
+        "test:market-data": [("11-0", {"data": "m"})],
+        "test:order-events": [("22-0", {"data": "o"})],
+        "test:snapshot-batches": [("33-0", {"data": "s"})],
+        "test:runtime-controls": [],
+    }
+    service = StrategyEngineService(
+        settings=settings.model_copy(update={"redis_stream_prefix": "test"}),
+        redis_client=redis,
+    )
+
+    await service._initialize_stream_offsets()
+
+    assert service._stream_offsets == {
+        "test:market-data": "11-0",
+        "test:order-events": "22-0",
+        "test:snapshot-batches": "33-0",
+        "test:runtime-controls": "0-0",
+    }
+
+
+@pytest.mark.asyncio
+async def test_read_stream_group_reads_priority_stream_without_waiting_on_market_data() -> None:
+    settings = make_test_settings(redis_stream_prefix="test")
+    redis = FakeRedis()
+    redis.stream_entries = {
+        "test:market-data": [
+            ("11-0", {"data": json.dumps({"event_type": "trade_tick", "payload": {}})}),
+            ("10-0", {"data": json.dumps({"event_type": "trade_tick", "payload": {}})}),
+        ],
+        "test:snapshot-batches": [
+            ("21-0", {"data": json.dumps({"event_type": "snapshot_batch", "payload": {}})})
+        ],
+        "test:order-events": [],
+        "test:runtime-controls": [],
+    }
+    service = StrategyEngineService(settings=settings, redis_client=redis)
+    service._stream_offsets = {
+        "test:market-data": "10-0",
+        "test:snapshot-batches": "20-0",
+        "test:order-events": "0-0",
+        "test:runtime-controls": "0-0",
+    }
+    seen: list[tuple[str, dict[str, str]]] = []
+
+    async def fake_handle_stream_message(stream: str, fields: dict[str, str]) -> None:
+        seen.append((stream, dict(fields)))
+
+    service._handle_stream_message = fake_handle_stream_message  # type: ignore[method-assign]
+
+    handled = await service._read_stream_group(["test:snapshot-batches"], block_ms=1)
+
+    assert handled is True
+    assert seen == [("test:snapshot-batches", {"data": json.dumps({"event_type": "snapshot_batch", "payload": {}})})]
+    assert service._stream_offsets["test:snapshot-batches"] == "21-0"
 
 
 def test_order_routing_metadata_uses_extended_hours_limit_in_premarket() -> None:
@@ -218,6 +324,274 @@ def test_macd_runtime_blocks_extended_hours_entry_without_live_ask(monkeypatch: 
         runtime._emit_open_intent(
             {"ticker": "KIDZ", "price": 3.10, "path": "P1_MACD_CROSS", "score": 5, "score_details": "x"}
         )
+
+
+def test_macd_runtime_blocks_p4_entry_when_live_price_breaks_down_after_signal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "project_mai_tai.services.strategy_engine_app.utcnow",
+        lambda: datetime(2026, 5, 4, 17, 56, tzinfo=UTC),
+    )
+    runtime = StrategyBotRuntime(
+        StrategyDefinition(
+            code="macd_30s",
+            display_name="30s",
+            account_name="paper:test",
+            interval_secs=30,
+            trading_config=TradingConfig(),
+            indicator_config=IndicatorConfig(),
+        ),
+        now_provider=lambda: datetime(2026, 5, 4, 17, 56, tzinfo=UTC),
+    )
+    runtime.update_market_snapshots(
+        [
+            snapshot_from_payload(
+                MarketSnapshotPayload(
+                    symbol="DARE",
+                    last_trade_price=Decimal("3.11"),
+                    bid_price=Decimal("3.11"),
+                    ask_price=Decimal("3.12"),
+                )
+            )
+        ]
+    )
+
+    with pytest.raises(RuntimeError, match="P4 follow-through veto"):
+        runtime._emit_open_intent(
+            {"ticker": "DARE", "price": 3.18, "path": "P4_BURST", "score": 6, "score_details": "x"}
+        )
+
+
+def test_macd_runtime_allows_p4_entry_when_live_price_holds_within_breakdown_tolerance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "project_mai_tai.services.strategy_engine_app.utcnow",
+        lambda: datetime(2026, 5, 4, 17, 56, tzinfo=UTC),
+    )
+    runtime = StrategyBotRuntime(
+        StrategyDefinition(
+            code="macd_30s",
+            display_name="30s",
+            account_name="paper:test",
+            interval_secs=30,
+            trading_config=TradingConfig(),
+            indicator_config=IndicatorConfig(),
+        ),
+        now_provider=lambda: datetime(2026, 5, 4, 17, 56, tzinfo=UTC),
+    )
+    runtime.update_market_snapshots(
+        [
+            snapshot_from_payload(
+                MarketSnapshotPayload(
+                    symbol="DARE",
+                    last_trade_price=Decimal("3.13"),
+                    bid_price=Decimal("3.13"),
+                    ask_price=Decimal("3.14"),
+                )
+            )
+        ]
+    )
+
+    open_intent = runtime._emit_open_intent(
+        {"ticker": "DARE", "price": 3.18, "path": "P4_BURST", "score": 6, "score_details": "x"}
+    )
+
+    assert open_intent.payload.symbol == "DARE"
+    assert open_intent.payload.reason == "ENTRY_P4_BURST"
+    assert open_intent.payload.metadata["reference_price"] == "3.18"
+
+
+def test_macd_runtime_does_not_apply_p4_breakdown_veto_to_other_paths(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "project_mai_tai.services.strategy_engine_app.utcnow",
+        lambda: datetime(2026, 5, 4, 17, 56, tzinfo=UTC),
+    )
+    runtime = StrategyBotRuntime(
+        StrategyDefinition(
+            code="macd_30s",
+            display_name="30s",
+            account_name="paper:test",
+            interval_secs=30,
+            trading_config=TradingConfig(),
+            indicator_config=IndicatorConfig(),
+        ),
+        now_provider=lambda: datetime(2026, 5, 4, 17, 56, tzinfo=UTC),
+    )
+    runtime.update_market_snapshots(
+        [
+            snapshot_from_payload(
+                MarketSnapshotPayload(
+                    symbol="KIDZ",
+                    last_trade_price=Decimal("3.11"),
+                    bid_price=Decimal("3.11"),
+                    ask_price=Decimal("3.12"),
+                )
+            )
+        ]
+    )
+
+    open_intent = runtime._emit_open_intent(
+        {"ticker": "KIDZ", "price": 3.18, "path": "P1_MACD_CROSS", "score": 5, "score_details": "x"}
+    )
+
+    assert open_intent.payload.symbol == "KIDZ"
+    assert open_intent.payload.reason == "ENTRY_P1_MACD_CROSS"
+    assert open_intent.payload.metadata["reference_price"] == "3.18"
+
+
+def test_macd_runtime_quote_tick_triggers_panic_priced_hard_stop_in_extended_hours() -> None:
+    runtime = StrategyBotRuntime(
+        StrategyDefinition(
+            code="macd_30s",
+            display_name="30s",
+            account_name="paper:test",
+            interval_secs=30,
+            trading_config=TradingConfig(),
+            indicator_config=IndicatorConfig(),
+        ),
+        now_provider=lambda: datetime(2026, 3, 31, 11, 0, tzinfo=UTC),
+    )
+    runtime.positions.open_position("KIDZ", 4.00, quantity=10, path="P1")
+
+    intents = runtime.handle_quote_tick(
+        "KIDZ",
+        bid_price=3.93,
+        ask_price=3.95,
+    )
+
+    assert len(intents) == 1
+    intent = intents[0]
+    assert intent.payload.intent_type == "close"
+    assert intent.payload.reason == "HARD_STOP"
+    assert intent.payload.metadata["stop_guard"] == "true"
+    assert intent.payload.metadata["stop_trigger_source"] == "bid"
+    assert intent.payload.metadata["price_source"] == "bid"
+    assert intent.payload.metadata["limit_price"] == "3.91"
+    assert intent.payload.metadata["panic_buffer_pct"] == "0.5"
+    assert "KIDZ" in runtime.pending_close_symbols
+
+
+def test_macd_runtime_quote_tick_triggers_limit_hard_stop_in_regular_hours() -> None:
+    runtime = StrategyBotRuntime(
+        StrategyDefinition(
+            code="macd_30s",
+            display_name="30s",
+            account_name="paper:test",
+            interval_secs=30,
+            trading_config=TradingConfig(),
+            indicator_config=IndicatorConfig(),
+        ),
+        now_provider=lambda: datetime(2026, 3, 31, 14, 0, tzinfo=UTC),
+    )
+    runtime.positions.open_position("KIDZ", 4.00, quantity=10, path="P1")
+
+    intents = runtime.handle_quote_tick(
+        "KIDZ",
+        bid_price=3.93,
+        ask_price=3.95,
+    )
+
+    assert len(intents) == 1
+    intent = intents[0]
+    assert intent.payload.reason == "HARD_STOP"
+    assert intent.payload.metadata["order_type"] == "limit"
+    assert intent.payload.metadata["limit_price"] == "3.91"
+    assert intent.payload.metadata["price_source"] == "bid"
+    assert "extended_hours" not in intent.payload.metadata
+    assert "session" not in intent.payload.metadata
+
+
+def test_macd_runtime_hard_stop_uses_last_price_when_bid_quote_is_stale() -> None:
+    current_time = datetime(2026, 3, 31, 11, 0, tzinfo=UTC)
+
+    runtime = StrategyBotRuntime(
+        StrategyDefinition(
+            code="macd_30s",
+            display_name="30s",
+            account_name="paper:test",
+            interval_secs=30,
+            trading_config=TradingConfig(),
+            indicator_config=IndicatorConfig(),
+        ),
+        now_provider=lambda: current_time,
+    )
+    runtime.positions.open_position("KIDZ", 4.00, quantity=10, path="P1")
+    runtime.handle_quote_tick(
+        "KIDZ",
+        bid_price=3.96,
+        ask_price=3.98,
+    )
+    current_time = current_time + timedelta(seconds=3)
+
+    close_intent = runtime._emit_close_intent(
+        {
+            "ticker": "KIDZ",
+            "price": 3.93,
+            "reason": "HARD_STOP",
+            "stop_guard": "true",
+            "stop_trigger_source": "last",
+            "stop_trigger_price": 3.93,
+            "stop_price": 3.94,
+            "panic_buffer_pct": 0.5,
+        }
+    )
+
+    assert close_intent.payload.metadata["limit_price"] == "3.91"
+    assert close_intent.payload.metadata["price_source"] == "last"
+
+
+def test_macd_runtime_trade_tick_triggers_extended_hours_scale_without_fresh_quote() -> None:
+    runtime = StrategyBotRuntime(
+        StrategyDefinition(
+            code="macd_30s",
+            display_name="30s",
+            account_name="paper:test",
+            interval_secs=30,
+            trading_config=TradingConfig(),
+            indicator_config=IndicatorConfig(),
+        ),
+        now_provider=lambda: datetime(2026, 3, 31, 11, 0, tzinfo=UTC),
+    )
+    runtime.positions.open_position("KIDZ", 4.00, quantity=10, path="P5")
+
+    intents = runtime.handle_trade_tick("KIDZ", 4.20, size=10)
+
+    assert len(intents) == 1
+    intent = intents[0]
+    assert intent.payload.intent_type == "scale"
+    assert intent.payload.reason == "SCALE_FAST4"
+    assert intent.payload.metadata["limit_price"] == "4.20"
+    assert intent.payload.metadata["price_source"] == "reference"
+
+
+def test_macd_runtime_trade_tick_triggers_extended_hours_close_without_fresh_quote() -> None:
+    runtime = StrategyBotRuntime(
+        StrategyDefinition(
+            code="macd_30s",
+            display_name="30s",
+            account_name="paper:test",
+            interval_secs=30,
+            trading_config=TradingConfig(),
+            indicator_config=IndicatorConfig(),
+        ),
+        now_provider=lambda: datetime(2026, 3, 31, 11, 0, tzinfo=UTC),
+    )
+    runtime.positions.open_position("KIDZ", 4.00, quantity=10, path="P5")
+    position = runtime.positions.get_position("KIDZ")
+    assert position is not None
+    position.floor_pct = 5.0
+    position.floor_price = 4.18
+
+    intents = runtime.handle_trade_tick("KIDZ", 4.15, size=10)
+
+    assert len(intents) == 1
+    intent = intents[0]
+    assert intent.payload.intent_type == "close"
+    assert intent.payload.reason == "FLOOR_BREACH"
+    assert intent.payload.metadata["limit_price"] == "4.15"
+    assert intent.payload.metadata["price_source"] == "reference"
 
 
 def test_runtime_blocks_close_retries_after_duplicate_exit_reject() -> None:
@@ -405,6 +779,7 @@ def test_bot_watchlist_backfills_next_confirmed_symbol_after_manual_stop_filter(
         {"ticker": "WBUY"},
     ]
 
+    state._seed_bot_handoff_state(state.all_confirmed, strategy_codes=["macd_30s"])
     state.apply_manual_stop_symbols({"macd_30s": {"ELPW", "TORO", "WBUY"}})
     state._resync_bot_watchlists_from_current_confirmed(strategy_codes=["macd_30s"])
 
@@ -429,6 +804,7 @@ def test_bot_watchlist_includes_all_confirmed_symbols_without_top5_cap() -> None
         {"ticker": "RENX"},
     ]
 
+    state._seed_bot_handoff_state(state.all_confirmed, strategy_codes=["macd_30s"])
     state._resync_bot_watchlists_from_current_confirmed(strategy_codes=["macd_30s"])
 
     assert state.bots["macd_30s"].watchlist == {
@@ -439,17 +815,28 @@ def test_bot_watchlist_includes_all_confirmed_symbols_without_top5_cap() -> None
         "RENX",
         "SBET",
     }
-    assert state.retained_watchlist == ["AGPU", "AKAN", "GNLN", "MASK", "RENX", "SBET"]
+    assert state.retained_watchlist == [
+        "AGPU",
+        "AKAN",
+        "GNLN",
+        "MASK",
+        "RENX",
+        "SBET",
+    ]
 
 
 def test_scanner_session_roll_clears_state_without_snapshot_batch() -> None:
     now_box = {"value": datetime(2026, 4, 23, 3, 59, tzinfo=EASTERN_TZ)}
-    state = StrategyEngineState(now_provider=lambda: now_box["value"])
+    state = StrategyEngineState(
+        settings=make_test_settings(strategy_macd_30s_enabled=True),
+        now_provider=lambda: now_box["value"],
+    )
     state.confirmed_scanner.seed_confirmed_candidates([{"ticker": "GNLN"}])
     state.all_confirmed = [{"ticker": "GNLN"}]
     state.current_confirmed = [{"ticker": "GNLN"}]
     state.retained_watchlist = ["GNLN"]
     state.recent_alerts = [{"ticker": "GNLN"}]
+    state._add_market_data_archive_symbols(["GNLN"])
     state.alert_engine.record_snapshot(
         [snapshot_from_payload(make_snapshot_payload(symbol="GNLN", price=5.0, volume=500_000))]
     )
@@ -470,6 +857,7 @@ def test_scanner_session_roll_clears_state_without_snapshot_batch() -> None:
     assert state.all_confirmed == []
     assert state.current_confirmed == []
     assert state.retained_watchlist == []
+    assert state.market_data_archive_symbols == []
     assert state.recent_alerts == []
     assert state.alert_engine.get_warmup_status()["history_cycles"] == 0
     assert state.alert_engine._volume_spike_tickers == set()
@@ -482,7 +870,7 @@ def test_scanner_session_roll_clears_state_without_snapshot_batch() -> None:
 def test_retention_cooldown_keeps_feed_alive_but_blocks_entries(monkeypatch: pytest.MonkeyPatch) -> None:
     now_box = {"value": datetime(2026, 4, 17, 10, 0)}
     state = StrategyEngineState(
-        settings=Settings(
+        settings=make_test_settings(
             scanner_feed_retention_structure_bars=3,
             scanner_feed_retention_no_activity_minutes=5,
             scanner_feed_retention_cooldown_volume_ratio=0.5,
@@ -561,7 +949,9 @@ def test_retention_cooldown_keeps_feed_alive_but_blocks_entries(monkeypatch: pyt
 def test_retention_resume_unblocks_entries_after_reclaim(monkeypatch: pytest.MonkeyPatch) -> None:
     now_box = {"value": datetime(2026, 4, 17, 10, 0)}
     state = StrategyEngineState(
-        settings=Settings(
+        settings=make_test_settings(
+            strategy_macd_1m_enabled=True,
+            strategy_tos_enabled=True,
             scanner_feed_retention_structure_bars=3,
             scanner_feed_retention_no_activity_minutes=5,
             scanner_feed_retention_cooldown_volume_ratio=0.5,
@@ -615,7 +1005,7 @@ def test_retention_resume_unblocks_entries_after_reclaim(monkeypatch: pytest.Mon
         {"UGRO": ReferenceData(shares_outstanding=50_000, avg_daily_volume=390_000)},
     )
 
-    assert summary["retention_states"][0]["state"] == "resume_probe"
+    assert state.bots["macd_30s"].lifecycle_states["UGRO"].state == "resume_probe"
     assert state.bots["macd_30s"].entry_blocked_symbols == {"UGRO"}
 
     now_box["value"] = datetime(2026, 4, 17, 10, 12, 30)
@@ -641,11 +1031,70 @@ def test_retention_resume_unblocks_entries_after_reclaim(monkeypatch: pytest.Mon
         {"UGRO": ReferenceData(shares_outstanding=50_000, avg_daily_volume=390_000)},
     )
 
-    assert summary["retention_states"][0]["state"] == "active"
+    assert state.bots["macd_30s"].lifecycle_states["UGRO"].state == "active"
     assert state.bots["macd_30s"].entry_blocked_symbols == set()
     assert summary["watchlist"] == ["UGRO"]
     for code in ("macd_30s", "macd_1m", "tos"):
         assert state.bots[code].watchlist == {"UGRO"}
+
+
+def test_retention_drops_symbol_without_indicators_after_inactivity(monkeypatch: pytest.MonkeyPatch) -> None:
+    now_box = {"value": datetime(2026, 4, 17, 10, 0)}
+    state = StrategyEngineState(
+        settings=make_test_settings(
+            scanner_feed_retention_enabled=True,
+            scanner_feed_retention_no_activity_minutes=5,
+            scanner_feed_retention_drop_cooldown_minutes=10,
+        ),
+        now_provider=lambda: now_box["value"],
+    )
+    monkeypatch.setattr(state.alert_engine, "check_alerts", lambda snapshots, reference_data: [])
+    monkeypatch.setattr(
+        state.confirmed_scanner,
+        "process_alerts",
+        lambda alerts, reference_data, snapshot_lookup: [],
+    )
+
+    state.confirmed_scanner._confirmed = [
+        {
+            "ticker": "UGRO",
+            "confirmed_at": "10:00:00 AM ET",
+            "entry_price": 2.25,
+            "price": 2.40,
+            "change_pct": 24.5,
+            "volume": 900_000,
+            "rvol": 6.2,
+            "shares_outstanding": 50_000,
+            "confirmation_path": "PATH_B_2SQ",
+        }
+    ]
+    summary = state.process_snapshot_batch(
+        [snapshot_from_payload(make_snapshot_payload(symbol="UGRO", price=2.40, volume=900_000))],
+        {"UGRO": ReferenceData(shares_outstanding=50_000, avg_daily_volume=390_000)},
+    )
+
+    assert summary["watchlist"] == ["UGRO"]
+    assert state.bots["macd_30s"].watchlist == {"UGRO"}
+    assert "UGRO" not in state.bots["macd_30s"].last_indicators
+
+    state.confirmed_scanner._confirmed = []
+    now_box["value"] = datetime(2026, 4, 17, 10, 6)
+    summary = state.process_snapshot_batch(
+        [snapshot_from_payload(make_snapshot_payload(symbol="SNOA", price=3.10, volume=120_000))],
+        {"SNOA": ReferenceData(shares_outstanding=90_000, avg_daily_volume=80_000)},
+    )
+    assert summary["watchlist"] == ["UGRO"]
+    assert state.bots["macd_30s"].lifecycle_states["UGRO"].state == "cooldown"
+
+    now_box["value"] = datetime(2026, 4, 17, 10, 16)
+    summary = state.process_snapshot_batch(
+        [snapshot_from_payload(make_snapshot_payload(symbol="SNOA", price=3.05, volume=110_000))],
+        {"SNOA": ReferenceData(shares_outstanding=90_000, avg_daily_volume=80_000)},
+    )
+
+    assert summary["watchlist"] == []
+    assert state.bots["macd_30s"].watchlist == set()
+    assert state.bots["macd_30s"].lifecycle_states["UGRO"].state == "dropped"
 
 
 def test_cooldown_blocks_non_p4_signal_below_structure(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -796,7 +1245,7 @@ def test_cooldown_allows_non_p4_after_structure_reclaim(monkeypatch: pytest.Monk
 
 def test_snapshot_batch_applies_reclaim_specific_excluded_symbols(monkeypatch) -> None:
     state = StrategyEngineState(
-        settings=Settings(
+        settings=make_test_settings(
             strategy_macd_30s_reclaim_enabled=True,
             strategy_macd_30s_reclaim_excluded_symbols="UGRO",
         ),
@@ -846,7 +1295,7 @@ def test_snapshot_batch_applies_reclaim_specific_excluded_symbols(monkeypatch) -
 
 def test_snapshot_batch_preserves_low_score_confirmed_without_feeding_bots(monkeypatch) -> None:
     state = StrategyEngineState(
-        settings=Settings(
+        settings=make_test_settings(
             strategy_macd_1m_enabled=True,
             strategy_tos_enabled=True,
             strategy_runner_enabled=True,
@@ -939,7 +1388,7 @@ def test_alert_engine_state_persists_and_restores_from_dashboard_snapshot() -> N
         )
 
         service = StrategyEngineService(
-            settings=Settings(),
+            settings=make_test_settings(),
             redis_client=FakeRedis(),
             session_factory=session_factory,
         )
@@ -977,7 +1426,7 @@ def test_alert_engine_state_persists_and_restores_from_dashboard_snapshot() -> N
             assert snapshot.payload["scanner_session_start_utc"] == "2026-04-01T08:00:00+00:00"
 
         restored = StrategyEngineService(
-            settings=Settings(),
+            settings=make_test_settings(),
             redis_client=FakeRedis(),
             session_factory=session_factory,
         )
@@ -999,7 +1448,7 @@ def test_alert_engine_state_persists_and_restores_from_dashboard_snapshot() -> N
 
 
 def test_snapshot_batch_stream_default_covers_alert_warmup_window() -> None:
-    settings = Settings()
+    settings = make_test_settings()
     state = StrategyEngineState(now_provider=fixed_now)
 
     required_cycles = int(state.alert_engine.get_warmup_status()["squeeze_10min_needs"])
@@ -1077,7 +1526,7 @@ def test_alert_engine_restore_skips_prior_session_alert_tape() -> None:
         )
 
         service = StrategyEngineService(
-            settings=Settings(),
+            settings=make_test_settings(),
             redis_client=FakeRedis(),
             session_factory=session_factory,
         )
@@ -1095,7 +1544,7 @@ def test_alert_engine_restore_skips_prior_session_alert_tape() -> None:
         )
 
         restored = StrategyEngineService(
-            settings=Settings(),
+            settings=make_test_settings(),
             redis_client=FakeRedis(),
             session_factory=session_factory,
         )
@@ -1132,7 +1581,7 @@ def test_alert_engine_restore_skips_unmarked_snapshot_even_if_recent(monkeypatch
     )
 
     restored = StrategyEngineService(
-        settings=Settings(),
+        settings=make_test_settings(),
         redis_client=FakeRedis(),
         session_factory=session_factory,
     )
@@ -1144,7 +1593,7 @@ def test_alert_engine_restore_skips_unmarked_snapshot_even_if_recent(monkeypatch
 
 def test_snapshot_batch_keeps_runner_aligned_to_visible_confirmed_names(monkeypatch) -> None:
     state = StrategyEngineState(
-        settings=Settings(
+        settings=make_test_settings(
             strategy_macd_1m_enabled=True,
             strategy_tos_enabled=True,
             strategy_runner_enabled=True,
@@ -1228,7 +1677,7 @@ def test_snapshot_batch_keeps_runner_aligned_to_visible_confirmed_names(monkeypa
 
 def test_snapshot_batch_retains_removed_symbols_in_bot_watchlists_for_session_continuity(monkeypatch) -> None:
     state = StrategyEngineState(
-        settings=Settings(
+        settings=make_test_settings(
             strategy_macd_1m_enabled=True,
             strategy_tos_enabled=True,
             strategy_runner_enabled=True,
@@ -1287,7 +1736,7 @@ def test_snapshot_batch_retains_removed_symbols_in_bot_watchlists_for_session_co
 
 def test_snapshot_batch_keeps_low_score_confirmed_visible_but_out_of_watchlist(monkeypatch) -> None:
     state = StrategyEngineState(
-        settings=Settings(
+        settings=make_test_settings(
             strategy_macd_1m_enabled=True,
             strategy_tos_enabled=True,
         ),
@@ -1458,18 +1907,22 @@ def test_restore_confirmed_runtime_view_keeps_manual_stops_out_of_watchlist() ->
 
 def test_service_preloads_manual_stops_before_post_restart_trading() -> None:
     session_factory = build_test_session_factory()
+    current_session_start = current_scanner_session_start_utc(datetime(2026, 4, 22, 13, 49, 0, tzinfo=UTC))
     with session_factory() as session:
         session.add(
             DashboardSnapshot(
                 snapshot_type="bot_manual_stop_symbols",
-                payload={"bots": {"macd_30s": ["AGPU"]}},
+                payload={
+                    "bots": {"macd_30s": ["AGPU"]},
+                    "scanner_session_start_utc": current_session_start.isoformat(),
+                },
                 created_at=datetime(2026, 4, 22, 13, 47, 24, tzinfo=UTC),
             )
         )
         session.commit()
 
     service = StrategyEngineService(
-        settings=Settings(
+        settings=make_test_settings(
             redis_url="redis://localhost:6379/0",
             strategy_macd_30s_enabled=True,
             strategy_macd_1m_enabled=False,
@@ -1500,6 +1953,99 @@ def test_service_preloads_manual_stops_before_post_restart_trading() -> None:
     assert "WBUY" in service.state.bots["macd_30s"].watchlist
 
 
+def test_restore_alert_engine_state_does_not_seed_schwab_prewarm_from_old_recent_alerts(monkeypatch) -> None:
+    session_factory = build_test_session_factory()
+    current_session_start = current_scanner_session_start_utc(datetime(2026, 4, 22, 13, 49, 0, tzinfo=UTC))
+    monkeypatch.setattr(
+        "project_mai_tai.services.strategy_engine_app.current_scanner_session_start_utc",
+        lambda now=None: current_session_start,
+    )
+    with session_factory() as session:
+        session.add(
+            DashboardSnapshot(
+                snapshot_type="scanner_alert_engine_state",
+                payload={
+                    "persisted_at": datetime(2026, 4, 22, 13, 47, 24, tzinfo=UTC).isoformat(),
+                    "scanner_session_start_utc": current_session_start.isoformat(),
+                    "recent_alerts": [
+                        {"ticker": "AGPU", "type": "VOLUME_SPIKE", "price": 2.5, "volume": 100000},
+                        {"ticker": "WBUY", "type": "VOLUME_SPIKE", "price": 2.8, "volume": 150000},
+                    ],
+                    "history_cycles": 5,
+                },
+                created_at=datetime(2026, 4, 22, 13, 47, 24, tzinfo=UTC),
+            )
+        )
+        session.commit()
+
+    service = StrategyEngineService(
+        settings=make_test_settings(
+            redis_url="redis://localhost:6379/0",
+            dashboard_snapshot_persistence_enabled=True,
+            strategy_macd_30s_enabled=True,
+            strategy_macd_30s_broker_provider="schwab",
+            strategy_macd_1m_enabled=False,
+            strategy_tos_enabled=False,
+            strategy_runner_enabled=False,
+        ),
+        redis_client=FakeRedis(),
+        session_factory=session_factory,
+        now_provider=lambda: datetime(2026, 4, 22, 13, 49, 0, tzinfo=UTC),
+    )
+
+    monkeypatch.setattr(service.state.alert_engine, "restore_state", lambda payload: True)
+
+    service._restore_alert_engine_state_from_dashboard_snapshot()
+
+    assert [item["ticker"] for item in service.state.recent_alerts] == ["AGPU", "WBUY"]
+    assert service.state.schwab_prewarm_symbols == []
+    assert service.state.bots["macd_30s"].prewarm_symbols == set()
+
+
+def test_service_ignores_and_purges_markerless_manual_stop_snapshot_from_current_session() -> None:
+    session_factory = build_test_session_factory()
+    now = datetime(2026, 4, 22, 13, 49, 0, tzinfo=UTC)
+    current_session_start = current_scanner_session_start_utc(now)
+    with session_factory() as session:
+        session.add(
+            DashboardSnapshot(
+                snapshot_type="bot_manual_stop_symbols",
+                payload={"bots": {"macd_30s": ["AGPU"]}},
+                created_at=current_session_start + timedelta(hours=1),
+            )
+        )
+        session.commit()
+
+    service = StrategyEngineService(
+        settings=make_test_settings(
+            redis_url="redis://localhost:6379/0",
+            strategy_macd_30s_enabled=True,
+            strategy_macd_1m_enabled=False,
+            strategy_tos_enabled=False,
+            strategy_runner_enabled=False,
+            strategy_macd_30s_broker_provider="schwab",
+            strategy_macd_30s_probe_enabled=False,
+            strategy_macd_30s_reclaim_enabled=False,
+            strategy_macd_30s_retest_enabled=False,
+        ),
+        redis_client=FakeRedis(),
+        session_factory=session_factory,
+        now_provider=lambda: now,
+    )
+
+    service._purge_stale_manual_stop_snapshots()
+    service._preload_manual_stop_state()
+
+    assert service.state.bots["macd_30s"].manual_stop_symbols == set()
+    with session_factory() as session:
+        snapshot = session.scalar(
+            select(DashboardSnapshot).where(
+                DashboardSnapshot.snapshot_type == "bot_manual_stop_symbols"
+            )
+        )
+        assert snapshot is None
+
+
 def test_state_ignores_order_updates_for_unknown_strategy_code() -> None:
     state = StrategyEngineState(now_provider=fixed_now)
 
@@ -1525,7 +2071,7 @@ def test_state_ignores_order_updates_for_unknown_strategy_code() -> None:
 
 def test_snapshot_batch_keeps_faded_confirmed_symbols_in_bot_watchlists_for_session_continuity() -> None:
     state = StrategyEngineState(
-        settings=Settings(
+        settings=make_test_settings(
             strategy_macd_1m_enabled=True,
             strategy_tos_enabled=True,
             strategy_runner_enabled=True,
@@ -1633,7 +2179,10 @@ def test_bot_runtime_clears_position_on_final_close_fill_even_if_qty_differs() -
 
 
 def test_bot_runtime_preserves_strategy_close_reason_on_filled_close() -> None:
-    state = StrategyEngineState(now_provider=fixed_now)
+    state = StrategyEngineState(
+        settings=make_test_settings(strategy_macd_30s_reclaim_enabled=True),
+        now_provider=fixed_now,
+    )
     bot = state.bots["macd_30s_reclaim"]
     bot.positions.reset()
     bot.positions.open_position("ROLR", 7.25, quantity=25, path="PRETRIGGER_RECLAIM")
@@ -1747,7 +2296,7 @@ def test_bot_runtime_uses_normal_scale_profile_when_degraded_disabled() -> None:
 
 def test_trade_tick_generates_open_intent_for_confirmed_watchlist(monkeypatch) -> None:
     state = StrategyEngineState(
-        settings=Settings(strategy_macd_30s_live_aggregate_bars_enabled=False),
+        settings=make_test_settings(strategy_macd_30s_live_aggregate_bars_enabled=False),
         now_provider=fixed_now,
     )
     bot = state.bots["macd_30s"]
@@ -1789,7 +2338,7 @@ def test_trade_tick_generates_open_intent_for_confirmed_watchlist(monkeypatch) -
 
 def test_trade_tick_records_blocked_decision_reason(monkeypatch) -> None:
     state = StrategyEngineState(
-        settings=Settings(strategy_macd_30s_live_aggregate_bars_enabled=False),
+        settings=make_test_settings(strategy_macd_30s_live_aggregate_bars_enabled=False),
         now_provider=fixed_now,
     )
     bot = state.bots["macd_30s"]
@@ -1936,7 +2485,7 @@ def test_trade_tick_can_emit_intrabar_floor_breach_close() -> None:
 
 def test_trade_tick_uses_monotonic_bar_count_after_history_trim(monkeypatch) -> None:
     state = StrategyEngineState(
-        settings=Settings(strategy_macd_30s_live_aggregate_bars_enabled=False),
+        settings=make_test_settings(strategy_macd_30s_live_aggregate_bars_enabled=False),
         now_provider=fixed_now,
     )
     bot = state.bots["macd_30s"]
@@ -1973,7 +2522,7 @@ def test_trade_tick_uses_monotonic_bar_count_after_history_trim(monkeypatch) -> 
 
 def test_trimmed_history_does_not_lock_out_new_open_after_cancel(monkeypatch) -> None:
     state = StrategyEngineState(
-        settings=Settings(strategy_macd_30s_live_aggregate_bars_enabled=False),
+        settings=make_test_settings(strategy_macd_30s_live_aggregate_bars_enabled=False),
         now_provider=fixed_now,
     )
     bot = state.bots["macd_30s"]
@@ -2053,7 +2602,7 @@ def test_flush_completed_bars_evaluates_due_bar_without_waiting_for_next_trade(m
         return current
 
     state = StrategyEngineState(
-        settings=Settings(strategy_macd_30s_live_aggregate_bars_enabled=False),
+        settings=make_test_settings(strategy_macd_30s_live_aggregate_bars_enabled=False),
         now_provider=now_provider,
     )
     bot = state.bots["macd_30s"]
@@ -2100,7 +2649,7 @@ def test_flush_completed_bars_evaluates_due_bar_without_waiting_for_next_trade(m
 
 def test_live_second_bars_can_generate_open_intent_for_30s_bot(monkeypatch) -> None:
     state = StrategyEngineState(
-        settings=Settings(strategy_macd_30s_live_aggregate_bars_enabled=True),
+        settings=make_test_settings(strategy_macd_30s_live_aggregate_bars_enabled=True),
         now_provider=fixed_now,
     )
     bot = state.bots["macd_30s"]
@@ -2112,13 +2661,15 @@ def test_live_second_bars_can_generate_open_intent_for_30s_bot(monkeypatch) -> N
         seed_trending_bars(count=49, start_timestamp=1_700_000_000.0, interval_secs=30),
     )
 
-    initial_bar_count = bot.builder_manager.get_or_create("UGRO").get_bar_count()
+    signaled = {"done": False}
 
     def check_entry(symbol, indicators, bar_index, runtime):
-        del runtime
-        if bar_index <= initial_bar_count + 1:
+        del runtime, bar_index
+        if signaled["done"]:
             return None
+        signaled["done"] = True
         return {
+            "action": "BUY",
             "ticker": symbol,
             "price": indicators["price"],
             "path": "P3_MACD_SURGE",
@@ -2149,6 +2700,148 @@ def test_live_second_bars_can_generate_open_intent_for_30s_bot(monkeypatch) -> N
     assert open_intents[0].payload.symbol == "UGRO"
 
 
+def test_live_second_bars_can_generate_open_intent_for_polygon_30s_bot(monkeypatch) -> None:
+    state = StrategyEngineState(
+        settings=make_test_settings(
+            strategy_macd_30s_enabled=False,
+            strategy_polygon_30s_enabled=True,
+            strategy_polygon_30s_live_aggregate_bars_enabled=True,
+        ),
+        now_provider=fixed_now,
+    )
+    bot = state.bots["polygon_30s"]
+    bot.set_watchlist(["UGRO"])
+    bot.definition.trading_config.confirm_bars = 0
+    state.seed_bars(
+        "polygon_30s",
+        "UGRO",
+        seed_trending_bars(count=49, start_timestamp=1_700_000_000.0, interval_secs=30),
+    )
+
+    signaled = {"done": False}
+
+    def check_entry(symbol, indicators, bar_index, runtime):
+        del runtime, bar_index
+        if signaled["done"]:
+            return None
+        signaled["done"] = True
+        return {
+            "action": "BUY",
+            "ticker": symbol,
+            "price": indicators["price"],
+            "path": "P3_MACD_SURGE",
+            "score": 5,
+            "score_details": "test",
+        }
+
+    monkeypatch.setattr(bot.entry_engine, "check_entry", check_entry)
+
+    intents = []
+    for offset in range(31):
+        intents.extend(
+            state.handle_live_bar(
+                symbol="UGRO",
+                interval_secs=1,
+                open_price=2.70 + offset * 0.001,
+                high_price=2.71 + offset * 0.001,
+                low_price=2.69 + offset * 0.001,
+                close_price=2.705 + offset * 0.001,
+                volume=500,
+                timestamp=1_700_001_480.0 + offset,
+                trade_count=10,
+                strategy_codes=["polygon_30s"],
+            )
+        )
+
+    open_intents = [intent for intent in intents if intent.payload.intent_type == "open"]
+    assert len(open_intents) == 1
+    assert open_intents[0].payload.symbol == "UGRO"
+
+
+def test_tick_built_macd_30s_ignores_live_bar_packets() -> None:
+    state = StrategyEngineState(
+        settings=make_test_settings(
+            strategy_macd_30s_enabled=True,
+            strategy_macd_30s_live_aggregate_bars_enabled=False,
+        ),
+        now_provider=fixed_now,
+    )
+    bot = state.bots["macd_30s"]
+    bot.set_watchlist(["UGRO"])
+    state.seed_bars(
+        "macd_30s",
+        "UGRO",
+        seed_trending_bars(count=49, start_timestamp=1_700_000_000.0, interval_secs=30),
+    )
+
+    builder = bot.builder_manager.get_builder("UGRO")
+    assert builder is not None
+    before_bars = [bar.copy() for bar in builder.get_bars_with_current_as_dicts()]
+
+    intents = state.handle_live_bar(
+        symbol="UGRO",
+        interval_secs=30,
+        open_price=2.90,
+        high_price=2.95,
+        low_price=2.85,
+        close_price=2.92,
+        volume=5_000,
+        timestamp=1_700_001_500.0,
+        trade_count=12,
+    )
+
+    after_bars = builder.get_bars_with_current_as_dicts()
+    assert intents == []
+    assert after_bars == before_bars
+
+
+def test_polygon_tick_built_sparse_ticks_do_not_synthesize_gap_bars(monkeypatch) -> None:
+    state = StrategyEngineState(
+        settings=make_test_settings(
+            strategy_macd_30s_enabled=False,
+            strategy_polygon_30s_enabled=True,
+            strategy_polygon_30s_live_aggregate_bars_enabled=False,
+        ),
+        now_provider=lambda: datetime.fromtimestamp(1_700_001_900.0, UTC),
+    )
+    bot = state.bots["polygon_30s"]
+    bot.set_watchlist(["UGRO"])
+    state.seed_bars(
+        "polygon_30s",
+        "UGRO",
+        seed_trending_bars(count=49, start_timestamp=1_700_000_000.0, interval_secs=30),
+    )
+
+    synthetic_quiet_bars: list[str] = []
+    real_completed_bars: list[str] = []
+    monkeypatch.setattr(
+        bot,
+        "_finalize_synthetic_quiet_completed_bar",
+        lambda symbol: synthetic_quiet_bars.append(symbol),
+    )
+    monkeypatch.setattr(
+        bot,
+        "_evaluate_completed_bar",
+        lambda symbol: real_completed_bars.append(symbol) or [],
+    )
+
+    for timestamp_ns in (
+        1_700_001_470_000_000_000,
+        1_700_001_650_000_000_000,
+        1_700_001_830_000_000_000,
+    ):
+        state.handle_trade_tick(
+            symbol="UGRO",
+            price=2.80,
+            size=100,
+            timestamp_ns=timestamp_ns,
+            strategy_codes=["polygon_30s"],
+        )
+
+    assert synthetic_quiet_bars == []
+    assert real_completed_bars
+
+
 def test_bot_runtime_prunes_symbol_state_when_symbol_is_dropped_from_bot_lifecycle() -> None:
     state = StrategyEngineState(now_provider=fixed_now)
     bot = state.bots["macd_30s"]
@@ -2170,6 +2863,7 @@ def test_bot_runtime_prunes_symbol_state_when_symbol_is_dropped_from_bot_lifecyc
     bot.entry_engine._recent_bars["UGRO"] = [{"price": 2.5, "high": 2.5, "volume": 1.0, "ema9": 2.4, "ema20": 2.3, "vwap": 2.4}]
     bot.entry_engine._recent_bars["BFRG"] = [{"price": 3.5, "high": 3.5, "volume": 1.0, "ema9": 3.4, "ema20": 3.3, "vwap": 3.4}]
 
+    bot.set_watchlist(["UGRO"])
     bot.lifecycle_states.pop("BFRG", None)
     bot._sync_watchlist_from_lifecycle()
     bot._prune_runtime_state()
@@ -2182,6 +2876,33 @@ def test_bot_runtime_prunes_symbol_state_when_symbol_is_dropped_from_bot_lifecyc
     assert "BFRG" not in bot.latest_quotes
     assert "UGRO" in bot.entry_engine._recent_bars
     assert "BFRG" not in bot.entry_engine._recent_bars
+
+
+def test_bot_runtime_keeps_handoff_symbol_in_feed_when_lifecycle_wants_to_drop_it() -> None:
+    state = StrategyEngineState(now_provider=fixed_now)
+    state.restore_confirmed_runtime_view([{"ticker": "CANF"}])
+    bot = state.bots["macd_30s"]
+    retained = bot.lifecycle_states["CANF"]
+    retained.state = "cooldown"
+    retained.cooldown_started_at = fixed_now() - timedelta(minutes=31)
+    retained.state_changed_at = fixed_now() - timedelta(minutes=31)
+    retained.active_reference_5m_volume = 200_000.0
+
+    bot._update_symbol_lifecycle(
+        "CANF",
+        metrics=FeedRetentionMetrics(
+            price=1.80,
+            ema20=2.00,
+            vwap=2.05,
+            rolling_5m_volume=10_000.0,
+            rolling_5m_range_pct=0.4,
+            bar_timestamp=1_700_000_000.0,
+        ),
+    )
+
+    assert bot.lifecycle_states["CANF"].state == "cooldown"
+    assert "CANF" in bot.watchlist
+    assert "CANF" in bot.entry_blocked_symbols
 
 
 def test_strategy_summary_includes_indicator_snapshots_for_1m_parity(monkeypatch) -> None:
@@ -2229,7 +2950,7 @@ def test_strategy_summary_includes_indicator_snapshots_for_1m_parity(monkeypatch
 
 def test_macd_1m_taapi_provider_is_enabled_by_setting() -> None:
     state = StrategyEngineState(
-        settings=Settings(
+        settings=make_test_settings(
             taapi_secret="test-secret",
             massive_api_key="polygon-secret",
             strategy_macd_1m_taapi_indicator_source_enabled=True,
@@ -2244,7 +2965,7 @@ def test_macd_1m_taapi_provider_is_enabled_by_setting() -> None:
 
 def test_macd_30s_defaults_to_trade_tick_bars_without_massive_overlay() -> None:
     state = StrategyEngineState(
-        settings=Settings(
+        settings=make_test_settings(
             massive_api_key="test-key",
         ),
         now_provider=fixed_now,
@@ -2256,7 +2977,7 @@ def test_macd_30s_defaults_to_trade_tick_bars_without_massive_overlay() -> None:
 
 def test_macd_30s_probe_reclaim_and_retest_can_be_enabled_as_separate_bots() -> None:
     state = StrategyEngineState(
-        settings=Settings(
+        settings=make_test_settings(
             massive_api_key="test-key",
             strategy_macd_30s_probe_enabled=True,
             strategy_macd_30s_reclaim_enabled=True,
@@ -2284,7 +3005,7 @@ def test_macd_30s_probe_reclaim_and_retest_can_be_enabled_as_separate_bots() -> 
 
 def test_macd_30s_core_can_be_disabled_while_reclaim_remains_enabled() -> None:
     state = StrategyEngineState(
-        settings=Settings(
+        settings=make_test_settings(
             massive_api_key="test-key",
             strategy_macd_30s_enabled=False,
             strategy_macd_30s_reclaim_enabled=True,
@@ -2299,7 +3020,7 @@ def test_macd_30s_core_can_be_disabled_while_reclaim_remains_enabled() -> None:
 
 def test_strategy_state_can_enable_ai_shadow_catalyst_evaluator() -> None:
     state = StrategyEngineState(
-        settings=Settings(
+        settings=make_test_settings(
             alpaca_macd_30s_api_key="alpaca-key",
             alpaca_macd_30s_secret_key="alpaca-secret",
             news_enabled=True,
@@ -2318,7 +3039,7 @@ def test_strategy_state_can_enable_ai_shadow_catalyst_evaluator() -> None:
 
 def test_seed_bars_hydrates_pretrigger_recent_bar_memory() -> None:
     state = StrategyEngineState(
-        settings=Settings(
+        settings=make_test_settings(
             strategy_macd_30s_reclaim_enabled=True,
         ),
         now_provider=fixed_now,
@@ -2340,7 +3061,7 @@ def test_seed_bars_hydrates_pretrigger_recent_bar_memory() -> None:
 
 def test_30s_family_applies_common_and_variant_trading_overrides() -> None:
     state = StrategyEngineState(
-        settings=Settings(
+        settings=make_test_settings(
             strategy_macd_30s_probe_enabled=True,
             strategy_macd_30s_reclaim_enabled=True,
             strategy_macd_30s_retest_enabled=True,
@@ -2378,7 +3099,7 @@ def test_30s_family_applies_common_and_variant_trading_overrides() -> None:
 
 def test_live_aggregate_30s_falls_back_to_trade_ticks_when_stream_is_missing(monkeypatch) -> None:
     state = StrategyEngineState(
-        settings=Settings(
+        settings=make_test_settings(
             strategy_macd_30s_live_aggregate_bars_enabled=True,
             strategy_macd_30s_live_aggregate_stale_after_seconds=3,
         ),
@@ -2418,7 +3139,7 @@ def test_live_aggregate_30s_falls_back_to_trade_ticks_when_stream_is_missing(mon
 
 def test_live_aggregate_30s_still_emits_intrabar_open_from_trade_tick_when_stream_is_fresh(monkeypatch) -> None:
     state = StrategyEngineState(
-        settings=Settings(
+        settings=make_test_settings(
             strategy_macd_30s_live_aggregate_bars_enabled=True,
             strategy_macd_30s_live_aggregate_stale_after_seconds=60,
         ),
@@ -2442,6 +3163,7 @@ def test_live_aggregate_30s_still_emits_intrabar_open_from_trade_tick_when_strea
         timestamp=1_700_001_500.0,
         trade_count=10,
     )
+    bot.pending_open_symbols.clear()
 
     captured: dict[str, float | int] = {}
 
@@ -2461,7 +3183,7 @@ def test_live_aggregate_30s_still_emits_intrabar_open_from_trade_tick_when_strea
         return {
             "action": "BUY",
             "ticker": symbol,
-            "path": "P1_CROSS",
+            "path": "P4_BURST",
             "price": indicators["price"],
             "score": 6,
             "score_details": "intrabar",
@@ -2489,6 +3211,70 @@ def test_live_aggregate_30s_still_emits_intrabar_open_from_trade_tick_when_strea
     assert captured["bar_index"] == bot.builder_manager.get_builder("UGRO").get_bar_count() + 1
 
 
+def test_live_aggregate_30s_prev_bar_intrabar_mode_blocks_non_p4_paths(monkeypatch) -> None:
+    state = StrategyEngineState(
+        settings=make_test_settings(
+            strategy_macd_30s_live_aggregate_bars_enabled=True,
+            strategy_macd_30s_live_aggregate_stale_after_seconds=60,
+        ),
+        now_provider=fixed_now,
+    )
+    bot = state.bots["macd_30s"]
+    bot.set_watchlist(["UGRO"])
+    state.seed_bars(
+        "macd_30s",
+        "UGRO",
+        seed_trending_bars(start_timestamp=1_700_000_000.0, interval_secs=30),
+    )
+    bot.latest_quotes["UGRO"] = {"bid": 2.79, "ask": 2.80}
+    bot.handle_live_bar(
+        symbol="UGRO",
+        open_price=2.78,
+        high_price=2.79,
+        low_price=2.77,
+        close_price=2.79,
+        volume=2_000,
+        timestamp=1_700_001_500.0,
+        trade_count=10,
+    )
+    bot.pending_open_symbols.clear()
+
+    monkeypatch.setattr(
+        bot.indicator_engine,
+        "calculate",
+        lambda bars: {
+            "price": float(bars[-1]["close"]),
+            "bar_timestamp": float(bars[-1]["timestamp"]),
+        },
+    )
+    monkeypatch.setattr(
+        bot.entry_engine,
+        "check_entry",
+        lambda symbol, indicators, bar_index, position_tracker: {
+            "action": "BUY",
+            "ticker": symbol,
+            "path": "P1_CROSS",
+            "price": indicators["price"],
+            "score": 6,
+            "score_details": "intrabar",
+        },
+    )
+    monkeypatch.setattr(
+        bot.entry_engine,
+        "pop_last_decision",
+        lambda _symbol: {"status": "signal", "reason": "P1_CROSS", "path": "P1_CROSS", "score": "6"},
+    )
+
+    intents = state.handle_trade_tick(
+        symbol="UGRO",
+        price=2.81,
+        size=200,
+        timestamp_ns=1_700_001_505_000_000_000,
+    )
+
+    assert intents == []
+
+
 def test_live_aggregate_30s_falls_back_to_trade_ticks_when_bar_progress_stalls(monkeypatch) -> None:
     current = datetime.fromtimestamp(1_700_001_505.0, UTC)
 
@@ -2496,7 +3282,7 @@ def test_live_aggregate_30s_falls_back_to_trade_ticks_when_bar_progress_stalls(m
         return current
 
     state = StrategyEngineState(
-        settings=Settings(
+        settings=make_test_settings(
             strategy_macd_30s_live_aggregate_bars_enabled=True,
             strategy_macd_30s_live_aggregate_stale_after_seconds=60,
         ),
@@ -2537,7 +3323,7 @@ def test_live_aggregate_30s_falls_back_to_trade_ticks_when_bar_progress_stalls(m
         return {
             "action": "BUY",
             "ticker": symbol,
-            "path": "P1_CROSS",
+            "path": "P4_BURST",
             "price": indicators["price"],
             "score": 6,
             "score_details": "intrabar",
@@ -2566,7 +3352,7 @@ def test_live_aggregate_30s_falls_back_to_trade_ticks_when_bar_progress_stalls(m
 
 def test_reclaim_runtime_checks_pretrigger_logic_while_position_is_open(monkeypatch) -> None:
     state = StrategyEngineState(
-        settings=Settings(
+        settings=make_test_settings(
             strategy_macd_30s_reclaim_enabled=True,
             strategy_macd_30s_live_aggregate_bars_enabled=False,
         ),
@@ -2601,7 +3387,7 @@ def test_reclaim_runtime_checks_pretrigger_logic_while_position_is_open(monkeypa
 
 def test_macd_1m_taapi_provider_requires_polygon_secret() -> None:
     state = StrategyEngineState(
-        settings=Settings(
+        settings=make_test_settings(
             taapi_secret="test-secret",
             strategy_macd_1m_taapi_indicator_source_enabled=True,
         ),
@@ -2613,7 +3399,7 @@ def test_macd_1m_taapi_provider_requires_polygon_secret() -> None:
 
 def test_macd_1m_massive_provider_remains_available_as_fallback() -> None:
     state = StrategyEngineState(
-        settings=Settings(
+        settings=make_test_settings(
             massive_api_key="test-key",
             strategy_macd_1m_massive_indicator_overlay_enabled=True,
         ),
@@ -2729,7 +3515,7 @@ def test_strategy_summary_includes_taapi_indicator_fields_for_1m(monkeypatch) ->
 def test_strategy_summary_includes_massive_aggregate_fields_for_30s(monkeypatch) -> None:
     now_box = {"value": fixed_now()}
     state = StrategyEngineState(
-        settings=Settings(
+        settings=make_test_settings(
             massive_api_key="test-key",
             strategy_macd_30s_live_aggregate_bars_enabled=True,
         ),
@@ -2813,7 +3599,7 @@ def test_strategy_summary_includes_massive_aggregate_fields_for_30s(monkeypatch)
 
 def test_massive_overlay_does_not_change_30s_trading_inputs(monkeypatch) -> None:
     state = StrategyEngineState(
-        settings=Settings(
+        settings=make_test_settings(
             massive_api_key="test-key",
             strategy_macd_30s_live_aggregate_bars_enabled=True,
         ),
@@ -2998,7 +3784,7 @@ def test_taapi_source_changes_1m_trading_inputs(monkeypatch) -> None:
 async def test_order_event_fill_opens_position_and_clears_pending_state() -> None:
     redis = FakeRedis()
     service = StrategyEngineService(
-        settings=Settings(redis_stream_prefix="test", dashboard_snapshot_persistence_enabled=False),
+        settings=make_test_settings(redis_stream_prefix="test", dashboard_snapshot_persistence_enabled=False),
         redis_client=redis,
     )
     bot = service.state.bots["macd_30s"]
@@ -3039,7 +3825,7 @@ async def test_order_event_fill_opens_position_and_clears_pending_state() -> Non
 async def test_order_event_fill_uses_incremental_quantity_for_cumulative_reports() -> None:
     redis = FakeRedis()
     service = StrategyEngineService(
-        settings=Settings(redis_stream_prefix="test", dashboard_snapshot_persistence_enabled=False),
+        settings=make_test_settings(redis_stream_prefix="test", dashboard_snapshot_persistence_enabled=False),
         redis_client=redis,
     )
     bot = service.state.bots["macd_30s"]
@@ -3097,7 +3883,7 @@ async def test_order_event_fill_uses_incremental_quantity_for_cumulative_reports
 async def test_historical_bars_hydrate_matching_strategy_intervals() -> None:
     redis = FakeRedis()
     service = StrategyEngineService(
-        settings=Settings(redis_stream_prefix="test", dashboard_snapshot_persistence_enabled=False),
+        settings=make_test_settings(redis_stream_prefix="test", dashboard_snapshot_persistence_enabled=False),
         redis_client=redis,
     )
 
@@ -3165,7 +3951,7 @@ async def test_historical_bars_hydrate_matching_strategy_intervals() -> None:
 async def test_snapshot_batch_history_prefill_restores_alert_warmup() -> None:
     redis = FakeRedis()
     service = StrategyEngineService(
-        settings=Settings(
+        settings=make_test_settings(
             redis_stream_prefix="test",
             dashboard_snapshot_persistence_enabled=False,
             market_data_snapshot_interval_seconds=30,
@@ -3216,7 +4002,7 @@ async def test_snapshot_batch_history_prefill_restores_alert_warmup() -> None:
 async def test_subscription_sync_replays_recent_historical_bars_for_active_symbols() -> None:
     redis = FakeRedis()
     service = StrategyEngineService(
-        settings=Settings(redis_stream_prefix="test", dashboard_snapshot_persistence_enabled=False),
+        settings=make_test_settings(redis_stream_prefix="test", dashboard_snapshot_persistence_enabled=False),
         redis_client=redis,
     )
     service.state.bots["macd_1m"].set_watchlist(["UGRO"])
@@ -3288,9 +4074,322 @@ async def test_subscription_sync_replays_recent_historical_bars_for_active_symbo
     assert len(service.state.bots["runner"].builder_manager.get_bars("UGRO")) == 2
 
 
+@pytest.mark.asyncio
+async def test_subscription_sync_persists_replayed_polygon_historical_bars() -> None:
+    redis = FakeRedis()
+    session_factory = build_test_session_factory()
+    service = StrategyEngineService(
+        settings=make_test_settings(
+            redis_stream_prefix="test",
+            dashboard_snapshot_persistence_enabled=False,
+            strategy_history_persistence_enabled=True,
+            strategy_polygon_30s_enabled=True,
+        ),
+        redis_client=redis,
+        session_factory=session_factory,
+    )
+    service.state.bots["polygon_30s"].set_watchlist(["UGRO"])
+
+    historical_30s = HistoricalBarsEvent(
+        source_service="market-data-gateway",
+        payload=HistoricalBarsPayload(
+            symbol="UGRO",
+            interval_secs=30,
+            bars=[
+                HistoricalBarPayload(
+                    open=Decimal("2.00"),
+                    high=Decimal("2.10"),
+                    low=Decimal("1.99"),
+                    close=Decimal("2.05"),
+                    volume=20_000,
+                    timestamp=1_700_000_000.0,
+                    trade_count=5,
+                ),
+                HistoricalBarPayload(
+                    open=Decimal("2.05"),
+                    high=Decimal("2.15"),
+                    low=Decimal("2.04"),
+                    close=Decimal("2.12"),
+                    volume=22_000,
+                    timestamp=1_700_000_030.0,
+                    trade_count=6,
+                ),
+            ],
+        ),
+    )
+    redis.stream_entries.setdefault("test:market-data", []).extend(
+        [("2-0", {"data": historical_30s.model_dump_json()})]
+    )
+
+    await service._sync_market_data_subscriptions(["UGRO"])
+
+    with session_factory() as session:
+        records = list(
+            session.scalars(
+                select(StrategyBarHistory)
+                .where(
+                    StrategyBarHistory.strategy_code == "polygon_30s",
+                    StrategyBarHistory.symbol == "UGRO",
+                    StrategyBarHistory.interval_secs == 30,
+                )
+                .order_by(StrategyBarHistory.bar_time.asc())
+            )
+        )
+
+    assert len(records) == 2
+    assert records[0].bar_time.replace(tzinfo=UTC) == datetime.fromtimestamp(1_700_000_000.0, UTC)
+    assert records[0].trade_count == 5
+    assert records[1].bar_time.replace(tzinfo=UTC) == datetime.fromtimestamp(1_700_000_030.0, UTC)
+    assert records[1].trade_count == 6
+
+
+def test_polygon_late_live_second_revises_persisted_closed_bar_without_redecision() -> None:
+    session_factory = build_test_session_factory()
+    clock = {"now": datetime(2026, 4, 23, 15, 27, 0, tzinfo=UTC)}
+    state = StrategyEngineState(
+        settings=make_test_settings(
+            dashboard_snapshot_persistence_enabled=False,
+            strategy_history_persistence_enabled=True,
+            strategy_polygon_30s_enabled=True,
+        ),
+        now_provider=lambda: clock["now"],
+        session_factory=session_factory,
+    )
+    polygon_bot = state.bots["polygon_30s"]
+    polygon_bot.set_watchlist(["CTNT"])
+    state.seed_bars(
+        "polygon_30s",
+        "CTNT",
+        seed_trending_bars(count=55, start_timestamp=1_700_000_000.0, interval_secs=30),
+    )
+
+    observed_decision_bars: list[float] = []
+
+    def fake_calculate(bars):
+        last_bar = bars[-1]
+        return {
+            "price": float(last_bar["close"]),
+            "bar_timestamp": float(last_bar["timestamp"]),
+        }
+
+    def fake_check_entry(_symbol, _indicators, _bar_index, _runtime):
+        return None
+
+    def fake_pop_last_decision(_symbol):
+        observed_decision_bars.append(
+            float(polygon_bot.builder_manager.get_builder("CTNT").bars[-1].timestamp)  # type: ignore[union-attr]
+        )
+        return {
+            "status": "idle",
+            "reason": "no entry path matched",
+        }
+
+    polygon_bot.indicator_engine.calculate = fake_calculate
+    polygon_bot.entry_engine.check_entry = fake_check_entry
+    polygon_bot.entry_engine.pop_last_decision = fake_pop_last_decision
+
+    first_bucket_start = datetime(2026, 4, 23, 15, 26, 30, tzinfo=UTC)
+
+    state.handle_live_bar(
+        symbol="CTNT",
+        interval_secs=1,
+        open_price=3.21,
+        high_price=3.25,
+        low_price=3.2032,
+        close_price=3.23,
+        volume=14_122,
+        timestamp=first_bucket_start.timestamp(),
+        trade_count=171,
+        strategy_codes=["polygon_30s"],
+    )
+    state.handle_live_bar(
+        symbol="CTNT",
+        interval_secs=1,
+        open_price=3.23,
+        high_price=3.24,
+        low_price=3.22,
+        close_price=3.23,
+        volume=500,
+        timestamp=datetime(2026, 4, 23, 15, 27, 0, tzinfo=UTC).timestamp(),
+        trade_count=5,
+        strategy_codes=["polygon_30s"],
+    )
+
+    with session_factory() as session:
+        records = list(
+            session.scalars(
+                select(StrategyBarHistory)
+                .where(
+                    StrategyBarHistory.strategy_code == "polygon_30s",
+                    StrategyBarHistory.symbol == "CTNT",
+                    StrategyBarHistory.interval_secs == 30,
+                )
+                .order_by(StrategyBarHistory.bar_time.asc())
+            )
+        )
+
+    assert observed_decision_bars == [first_bucket_start.timestamp()]
+    assert len(records) == 1
+    assert records[0].bar_time.replace(tzinfo=UTC) == first_bucket_start
+    assert records[0].volume == 14_122
+    assert records[0].trade_count == 171
+
+    state.handle_live_bar(
+        symbol="CTNT",
+        interval_secs=1,
+        open_price=3.23,
+        high_price=3.24,
+        low_price=3.21,
+        close_price=3.23,
+        volume=1_538,
+        timestamp=datetime(2026, 4, 23, 15, 26, 59, tzinfo=UTC).timestamp(),
+        trade_count=30,
+        strategy_codes=["polygon_30s"],
+    )
+
+    with session_factory() as session:
+        records = list(
+            session.scalars(
+                select(StrategyBarHistory)
+                .where(
+                    StrategyBarHistory.strategy_code == "polygon_30s",
+                    StrategyBarHistory.symbol == "CTNT",
+                    StrategyBarHistory.interval_secs == 30,
+                )
+                .order_by(StrategyBarHistory.bar_time.asc())
+            )
+        )
+
+    assert observed_decision_bars == [first_bucket_start.timestamp()]
+    assert len(records) == 1
+    assert records[0].volume == 15_660
+    assert records[0].trade_count == 201
+
+
+@pytest.mark.asyncio
+async def test_hydrate_generic_history_from_provider_seeds_polygon_when_replay_is_missing() -> None:
+    session_factory = build_test_session_factory()
+    service = StrategyEngineService(
+        settings=make_test_settings(
+            redis_stream_prefix="test",
+            dashboard_snapshot_persistence_enabled=False,
+            strategy_history_persistence_enabled=True,
+            strategy_polygon_30s_enabled=True,
+            massive_api_key="test-key",
+        ),
+        redis_client=FakeRedis(),
+        session_factory=session_factory,
+    )
+    polygon_bot = service.state.bots["polygon_30s"]
+    polygon_bot.set_watchlist(["UGRO"])
+
+    class _FakeSnapshotProvider:
+        def fetch_historical_bars(
+            self,
+            symbol: str,
+            *,
+            interval_secs: int,
+            lookback_calendar_days: int,
+            limit: int,
+        ) -> list[HistoricalBarRecord]:
+            assert symbol == "UGRO"
+            assert interval_secs == 30
+            assert lookback_calendar_days >= 3
+            assert limit >= 120
+            start = 1_700_000_000.0
+            return [
+                HistoricalBarRecord(
+                    open=2.0 + (index * 0.01),
+                    high=2.02 + (index * 0.01),
+                    low=1.99 + (index * 0.01),
+                    close=2.01 + (index * 0.01),
+                    volume=20_000 + index,
+                    timestamp=start + (index * 30),
+                    trade_count=5,
+                )
+                for index in range(80)
+            ]
+
+    service._massive_snapshot_provider = _FakeSnapshotProvider()
+
+    hydrated = await service._hydrate_generic_history_from_provider({("UGRO", 30)})
+
+    assert hydrated is True
+    builder = polygon_bot.builder_manager.get_builder("UGRO")
+    assert builder is not None
+    assert builder.get_bar_count() == 80
+    assert "UGRO" in polygon_bot.last_indicators
+    with session_factory() as session:
+        records = list(
+            session.scalars(
+                select(StrategyBarHistory)
+                .where(
+                    StrategyBarHistory.strategy_code == "polygon_30s",
+                    StrategyBarHistory.symbol == "UGRO",
+                    StrategyBarHistory.interval_secs == 30,
+                )
+                .order_by(StrategyBarHistory.bar_time)
+            )
+        )
+    assert len(records) == 80
+    assert records[0].bar_time.replace(tzinfo=UTC) == datetime.fromtimestamp(1_700_000_000.0, UTC)
+    assert records[-1].bar_time.replace(tzinfo=UTC) == datetime.fromtimestamp(1_700_000_000.0 + (79 * 30), UTC)
+
+
+def test_restore_runtime_bar_history_from_database_includes_polygon_provider_bot() -> None:
+    session_factory = build_test_session_factory()
+    service = StrategyEngineService(
+        settings=make_test_settings(
+            dashboard_snapshot_persistence_enabled=False,
+            strategy_history_persistence_enabled=False,
+            strategy_polygon_30s_enabled=True,
+            strategy_polygon_30s_broker_provider="webull",
+        ),
+        redis_client=FakeRedis(),
+        session_factory=session_factory,
+    )
+    polygon_bot = service.state.bots["polygon_30s"]
+    polygon_bot.set_watchlist(["UGRO"])
+
+    session_start_utc = current_scanner_session_start_utc(service.state.alert_engine.now_provider())
+    with session_factory() as session:
+        for index in range(80):
+            bar_time = session_start_utc + timedelta(seconds=index * 30)
+            session.add(
+                StrategyBarHistory(
+                    strategy_code="polygon_30s",
+                    symbol="UGRO",
+                    interval_secs=30,
+                    bar_time=bar_time,
+                    open_price=Decimal("2.00") + (Decimal("0.01") * index),
+                    high_price=Decimal("2.02") + (Decimal("0.01") * index),
+                    low_price=Decimal("1.99") + (Decimal("0.01") * index),
+                    close_price=Decimal("2.01") + (Decimal("0.01") * index),
+                    volume=20_000 + index,
+                    trade_count=5,
+                    position_state="flat",
+                    position_quantity=0,
+                    decision_status="idle",
+                    decision_reason="seed",
+                    decision_path="",
+                    decision_score="",
+                    decision_score_details="",
+                    indicators_json={},
+                )
+            )
+        session.commit()
+
+    service._restore_runtime_bar_history_from_database()
+
+    builder = polygon_bot.builder_manager.get_builder("UGRO")
+    assert builder is not None
+    assert builder.get_bar_count() == 80
+    assert "UGRO" in polygon_bot.last_indicators
+
+
 def test_market_data_symbols_exclude_schwab_native_macd_30s() -> None:
     state = StrategyEngineState(
-        settings=Settings(
+        settings=make_test_settings(
             strategy_macd_30s_enabled=True,
             strategy_macd_30s_broker_provider="schwab",
         ),
@@ -3303,9 +4402,77 @@ def test_market_data_symbols_exclude_schwab_native_macd_30s() -> None:
     assert state.schwab_stream_symbols() == ["ELAB"]
 
 
+def test_market_data_archive_retention_keeps_symbols_for_ttl(monkeypatch: pytest.MonkeyPatch) -> None:
+    now_box = {"value": datetime(2026, 5, 5, 13, 0, tzinfo=UTC)}
+    monkeypatch.setattr("project_mai_tai.services.strategy_engine_app.utcnow", lambda: now_box["value"])
+    state = StrategyEngineState(
+        settings=make_test_settings(
+            strategy_macd_30s_enabled=True,
+            strategy_macd_30s_broker_provider="schwab",
+            market_data_archive_retention_enabled=True,
+            market_data_archive_retention_minutes=30,
+            market_data_archive_retention_max_symbols=5,
+        ),
+        now_provider=fixed_now,
+    )
+
+    state._add_market_data_archive_symbols(["UGRO", "WBUY"])
+    assert state.market_data_symbols() == ["UGRO", "WBUY"]
+
+    now_box["value"] = now_box["value"] + timedelta(minutes=31)
+    assert state.market_data_symbols() == []
+
+
+def test_confirmed_schwab_symbol_is_retained_in_market_data_archive(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = StrategyEngineState(
+        settings=make_test_settings(
+            strategy_macd_30s_enabled=True,
+            strategy_macd_30s_broker_provider="schwab",
+            market_data_archive_retention_enabled=True,
+            market_data_archive_retention_minutes=120,
+            market_data_archive_retention_max_symbols=10,
+        ),
+        now_provider=fixed_now,
+    )
+
+    monkeypatch.setattr(
+        state.alert_engine,
+        "check_alerts",
+        lambda snapshots, reference_data: [
+            {
+                "ticker": "UGRO",
+                "type": "VOLUME_SPIKE",
+                "price": 2.70,
+                "volume": 900_000,
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        state.confirmed_scanner,
+        "process_alerts",
+        lambda alerts, reference_data, snapshot_lookup: [{"ticker": "UGRO", "price": 2.70}],
+    )
+    monkeypatch.setattr(
+        state.confirmed_scanner,
+        "get_all_confirmed",
+        lambda: [{"ticker": "UGRO", "price": 2.70}],
+    )
+    monkeypatch.setattr(state.confirmed_scanner, "update_live_prices", lambda snapshot_lookup: None)
+    monkeypatch.setattr(state.confirmed_scanner, "prune_faded_candidates", lambda: None)
+
+    state.process_snapshot_batch(
+        [snapshot_from_payload(make_snapshot_payload(symbol="UGRO", price=2.7, volume=900_000))],
+        {"UGRO": ReferenceData(shares_outstanding=50_000, avg_daily_volume=390_000)},
+    )
+
+    assert state.market_data_symbols() == ["UGRO"]
+
+
 def test_raw_momentum_alert_adds_schwab_prewarm_without_bot_watchlist(monkeypatch: pytest.MonkeyPatch) -> None:
     state = StrategyEngineState(
-        settings=Settings(
+        settings=make_test_settings(
             strategy_macd_30s_enabled=True,
             strategy_macd_30s_broker_provider="schwab",
         ),
@@ -3342,9 +4509,31 @@ def test_raw_momentum_alert_adds_schwab_prewarm_without_bot_watchlist(monkeypatc
     assert state.schwab_stream_symbols() == ["UGRO"]
 
 
+def test_schwab_prewarm_symbols_expire_and_do_not_accumulate_indefinitely(monkeypatch: pytest.MonkeyPatch) -> None:
+    now_box = {"value": datetime(2026, 4, 24, 11, 0, tzinfo=UTC)}
+    monkeypatch.setattr("project_mai_tai.services.strategy_engine_app.utcnow", lambda: now_box["value"])
+    state = StrategyEngineState(
+        settings=make_test_settings(
+            strategy_macd_30s_enabled=True,
+            strategy_macd_30s_broker_provider="schwab",
+        ),
+        now_provider=fixed_now,
+    )
+
+    state._add_schwab_prewarm_symbols(["UGRO", "WBUY"])
+    assert state.schwab_stream_symbols() == ["UGRO", "WBUY"]
+
+    now_box["value"] = now_box["value"] + timedelta(minutes=11)
+    state._sync_schwab_prewarm_symbols()
+
+    assert state.schwab_prewarm_symbols == []
+    assert state.bots["macd_30s"].prewarm_symbols == set()
+    assert state.schwab_stream_symbols() == []
+
+
 def test_schwab_prewarm_trade_ticks_build_bars_without_entry_checks(monkeypatch: pytest.MonkeyPatch) -> None:
     service = StrategyEngineService(
-        settings=Settings(
+        settings=make_test_settings(
             redis_stream_prefix="test",
             strategy_history_persistence_enabled=False,
             strategy_macd_30s_broker_provider="schwab",
@@ -3388,7 +4577,7 @@ def test_schwab_prewarm_trade_ticks_build_bars_without_entry_checks(monkeypatch:
 
 def test_global_manual_stop_removes_schwab_prewarm_symbol() -> None:
     state = StrategyEngineState(
-        settings=Settings(
+        settings=make_test_settings(
             strategy_macd_30s_enabled=True,
             strategy_macd_30s_broker_provider="schwab",
         ),
@@ -3428,7 +4617,7 @@ def test_global_stop_resume_restores_previously_handed_off_symbol_to_bot_watchli
 async def test_sync_subscription_targets_includes_schwab_symbols_when_stream_fallback_is_active() -> None:
     redis = FakeRedis()
     service = StrategyEngineService(
-        settings=Settings(
+        settings=make_test_settings(
             redis_stream_prefix="test",
             dashboard_snapshot_persistence_enabled=False,
             strategy_macd_30s_broker_provider="schwab",
@@ -3441,8 +4630,10 @@ async def test_sync_subscription_targets_includes_schwab_symbols_when_stream_fal
         connected = False
         connection_failures = 1
 
-        async def sync_subscriptions(self, symbols):
+        async def sync_subscriptions(self, symbols, *, chart_symbols=None, timesale_symbols=None):
             self.symbols = symbols
+            self.chart_symbols = chart_symbols
+            self.timesale_symbols = timesale_symbols
 
     service._schwab_stream_client = FakeStreamClient()
 
@@ -3452,6 +4643,7 @@ async def test_sync_subscription_targets_includes_schwab_symbols_when_stream_fal
     assert stream_entries
     payload = json.loads(stream_entries[-1])
     assert payload["payload"]["symbols"] == ["ELAB"]
+    assert service._schwab_stream_client.timesale_symbols == []
 
 
 @pytest.mark.asyncio
@@ -3459,7 +4651,7 @@ async def test_sync_subscription_targets_excludes_prewarm_from_generic_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     service = StrategyEngineService(
-        settings=Settings(
+        settings=make_test_settings(
             redis_stream_prefix="test",
             dashboard_snapshot_persistence_enabled=False,
             strategy_history_persistence_enabled=False,
@@ -3496,7 +4688,7 @@ async def test_trade_tick_stream_routes_to_schwab_native_macd_30s_when_stream_fa
 ) -> None:
     redis = FakeRedis()
     service = StrategyEngineService(
-        settings=Settings(
+        settings=make_test_settings(
             redis_stream_prefix="test",
             dashboard_snapshot_persistence_enabled=False,
             strategy_history_persistence_enabled=False,
@@ -3553,14 +4745,13 @@ async def test_live_bar_publishes_strategy_snapshot_for_generic_bot_activity_wit
 ) -> None:
     redis = FakeRedis()
     service = StrategyEngineService(
-        settings=Settings(
+        settings=make_test_settings(
             redis_stream_prefix="test",
             dashboard_snapshot_persistence_enabled=False,
             strategy_history_persistence_enabled=False,
-            scanner_feed_retention_enabled=False,
             strategy_macd_30s_broker_provider="schwab",
-            strategy_webull_30s_enabled=True,
-            strategy_webull_30s_broker_provider="webull",
+            strategy_polygon_30s_enabled=True,
+            strategy_polygon_30s_broker_provider="webull",
         ),
         redis_client=redis,
     )
@@ -3590,14 +4781,107 @@ async def test_live_bar_publishes_strategy_snapshot_for_generic_bot_activity_wit
     await service._handle_stream_message("test:market-data", {"data": event.model_dump_json()})
 
     assert captured["symbol"] == "UGRO"
-    assert captured["strategy_codes"] == ("webull_30s",)
+    assert captured["strategy_codes"] == ("polygon_30s",)
+    assert captured["coverage_started_at"] is None
+    assert any(stream.endswith("strategy-state") for stream, _ in redis.entries)
+
+
+@pytest.mark.asyncio
+async def test_live_bar_event_forwards_provider_coverage_timestamp(monkeypatch) -> None:
+    redis = FakeRedis()
+    service = StrategyEngineService(
+        settings=make_test_settings(
+            redis_stream_prefix="test",
+            dashboard_snapshot_persistence_enabled=False,
+            strategy_history_persistence_enabled=False,
+            strategy_macd_30s_broker_provider="schwab",
+            strategy_polygon_30s_enabled=True,
+            strategy_polygon_30s_broker_provider="webull",
+        ),
+        redis_client=redis,
+    )
+    captured: dict[str, object] = {}
+
+    def fake_handle_live_bar(**kwargs):
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr(service.state, "handle_live_bar", fake_handle_live_bar)
+
+    event = LiveBarEvent(
+        source_service="market-data-gateway",
+        payload=LiveBarPayload(
+            symbol="IONZ",
+            interval_secs=30,
+            open=Decimal("5.10"),
+            high=Decimal("5.14"),
+            low=Decimal("5.09"),
+            close=Decimal("5.13"),
+            volume=4200,
+            timestamp=1_700_001_590.0,
+            trade_count=5,
+            coverage_started_at=1_700_001_560.0,
+        ),
+    )
+
+    await service._handle_stream_message("test:market-data", {"data": event.model_dump_json()})
+
+    assert captured["symbol"] == "IONZ"
+    assert captured["coverage_started_at"] == 1_700_001_560.0
+
+
+@pytest.mark.asyncio
+async def test_schwab_live_bar_publishes_strategy_snapshot_for_generic_bot_activity_without_intents(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    redis = FakeRedis()
+    service = StrategyEngineService(
+        settings=make_test_settings(
+            redis_stream_prefix="test",
+            dashboard_snapshot_persistence_enabled=False,
+            strategy_history_persistence_enabled=False,
+            strategy_macd_30s_enabled=False,
+            strategy_polygon_30s_enabled=False,
+            strategy_macd_1m_enabled=False,
+            strategy_schwab_1m_enabled=True,
+        ),
+        redis_client=redis,
+    )
+    captured: dict[str, object] = {}
+    service.state.bots["schwab_1m"].set_watchlist(["CNSP"])
+
+    def fake_handle_live_bar(**kwargs):
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr(service.state, "handle_live_bar", fake_handle_live_bar)
+    service._enqueue_schwab_live_bar(
+        LiveBarRecord(
+            symbol="CNSP",
+            interval_secs=60,
+            open=8.10,
+            high=8.30,
+            low=8.05,
+            close=8.20,
+            volume=12_000,
+            timestamp=1_700_001_560.0,
+            trade_count=18,
+        )
+    )
+
+    intent_count, event_count = await service._drain_schwab_stream_queues()
+
+    assert intent_count == 0
+    assert event_count == 1
+    assert captured["symbol"] == "CNSP"
+    assert captured["strategy_codes"] == ("schwab_1m",)
     assert any(stream.endswith("strategy-state") for stream, _ in redis.entries)
 
 
 @pytest.mark.asyncio
 async def test_schwab_stream_queue_drain_is_bounded() -> None:
     service = StrategyEngineService(
-        settings=Settings(
+        settings=make_test_settings(
             redis_stream_prefix="test",
             dashboard_snapshot_persistence_enabled=False,
             strategy_history_persistence_enabled=False,
@@ -3626,7 +4910,7 @@ async def test_schwab_stream_queue_drain_is_bounded() -> None:
 
 def test_schwab_quote_enqueue_skips_prewarm_only_symbols() -> None:
     service = StrategyEngineService(
-        settings=Settings(
+        settings=make_test_settings(
             redis_stream_prefix="test",
             dashboard_snapshot_persistence_enabled=False,
             strategy_history_persistence_enabled=False,
@@ -3648,7 +4932,7 @@ def test_schwab_quote_enqueue_skips_prewarm_only_symbols() -> None:
 
 def test_market_data_symbols_exclude_schwab_backed_tos() -> None:
     state = StrategyEngineState(
-        settings=Settings(strategy_tos_broker_provider="schwab"),
+        settings=make_test_settings(strategy_tos_broker_provider="schwab"),
         now_provider=fixed_now,
     )
 
@@ -3664,7 +4948,7 @@ def test_market_data_symbols_exclude_schwab_backed_tos() -> None:
 
 def test_tos_uses_configured_default_quantity() -> None:
     state = StrategyEngineState(
-        settings=Settings(strategy_tos_default_quantity=10),
+        settings=make_test_settings(strategy_tos_default_quantity=10),
         now_provider=fixed_now,
     )
 
@@ -3696,9 +4980,25 @@ def test_gateway_quote_tick_can_exclude_schwab_native_macd_30s() -> None:
     assert "ELAB" not in state.bots["macd_30s"].latest_quotes
 
 
+def test_macd_30s_uses_configured_tick_bar_close_grace() -> None:
+    state = StrategyEngineState(
+        settings=make_test_settings(
+            strategy_macd_30s_broker_provider="schwab",
+            strategy_macd_30s_tick_bar_close_grace_seconds=2.0,
+        ),
+        now_provider=fixed_now,
+    )
+
+    runtime = state.bots["macd_30s"]
+
+    assert getattr(runtime.builder_manager, "close_grace_seconds", None) == pytest.approx(2.0)
+    assert getattr(runtime.builder_manager, "fill_gap_bars", None) is False
+    assert getattr(runtime, "trade_tick_service", None) == "LEVELONE_EQUITIES"
+
+
 def test_gateway_quote_tick_can_exclude_schwab_backed_tos() -> None:
     state = StrategyEngineState(
-        settings=Settings(strategy_tos_broker_provider="schwab"),
+        settings=make_test_settings(strategy_tos_broker_provider="schwab"),
         now_provider=fixed_now,
     )
 
@@ -3714,7 +5014,7 @@ def test_gateway_quote_tick_can_exclude_schwab_backed_tos() -> None:
 
 @pytest.mark.asyncio
 async def test_service_uses_fallback_quotes_for_stale_schwab_open_positions() -> None:
-    settings = Settings(
+    settings = make_test_settings(
         strategy_macd_30s_broker_provider="schwab",
         redis_stream_prefix="test",
         dashboard_snapshot_persistence_enabled=False,
@@ -3778,7 +5078,7 @@ async def test_service_uses_fallback_quotes_for_stale_schwab_open_positions() ->
 
 @pytest.mark.asyncio
 async def test_service_skips_stale_quote_poll_when_adapter_lacks_fetch_quotes() -> None:
-    settings = Settings(
+    settings = make_test_settings(
         strategy_macd_30s_broker_provider="schwab",
         redis_stream_prefix="test",
         dashboard_snapshot_persistence_enabled=False,
@@ -3809,8 +5109,10 @@ async def test_service_skips_stale_quote_poll_when_adapter_lacks_fetch_quotes() 
 
 
 @pytest.mark.asyncio
-async def test_service_halts_stale_schwab_watchlist_symbol_without_open_position() -> None:
-    settings = Settings(
+async def test_service_halts_stale_schwab_watchlist_symbol_without_open_position(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = make_test_settings(
         strategy_macd_30s_broker_provider="schwab",
         redis_stream_prefix="test",
         dashboard_snapshot_persistence_enabled=False,
@@ -3823,7 +5125,8 @@ async def test_service_halts_stale_schwab_watchlist_symbol_without_open_position
     service = StrategyEngineService(settings=settings, redis_client=FakeRedis())
     runtime = service.state.bots["macd_30s"]
     runtime.set_watchlist(["ENVB"])
-    old = datetime.now(UTC) - timedelta(seconds=40)
+    fixed_now = datetime(2026, 4, 24, 20, 0, 0, tzinfo=UTC)
+    old = fixed_now - timedelta(seconds=40)
     service._schwab_symbol_last_stream_trade_at["ENVB"] = old
     service._schwab_symbol_last_stream_quote_at["ENVB"] = old
 
@@ -3832,6 +5135,7 @@ async def test_service_halts_stale_schwab_watchlist_symbol_without_open_position
             return None
 
     service._schwab_stream_client = FakeStreamClient()
+    monkeypatch.setattr("project_mai_tai.services.strategy_engine_app.utcnow", lambda: fixed_now)
 
     activity_count = await service._monitor_schwab_symbol_health()
 
@@ -3848,7 +5152,7 @@ async def test_service_halts_stale_schwab_watchlist_symbol_without_open_position
 
 @pytest.mark.asyncio
 async def test_service_gives_flat_schwab_watchlist_symbol_extended_stale_window() -> None:
-    settings = Settings(
+    settings = make_test_settings(
         strategy_macd_30s_broker_provider="schwab",
         redis_stream_prefix="test",
         dashboard_snapshot_persistence_enabled=False,
@@ -3881,8 +5185,46 @@ async def test_service_gives_flat_schwab_watchlist_symbol_extended_stale_window(
 
 
 @pytest.mark.asyncio
+async def test_service_does_not_halt_flat_schwab_symbol_outside_trading_hours(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = make_test_settings(
+        strategy_macd_30s_broker_provider="schwab",
+        redis_stream_prefix="test",
+        dashboard_snapshot_persistence_enabled=False,
+        strategy_history_persistence_enabled=False,
+        schwab_stream_symbol_stale_after_seconds=8.0,
+        schwab_stream_symbol_stale_after_seconds_without_position=90.0,
+        schwab_stream_symbol_resubscribe_interval_seconds=1.0,
+    )
+    service = StrategyEngineService(settings=settings, redis_client=FakeRedis())
+    runtime = service.state.bots["macd_30s"]
+    runtime.set_watchlist(["APLZ"])
+    fixed_now = datetime(2026, 4, 24, 22, 20, 43, tzinfo=UTC)
+    old = fixed_now - timedelta(seconds=122)
+    service._schwab_symbol_last_stream_trade_at["APLZ"] = old
+    service._schwab_symbol_last_stream_quote_at["APLZ"] = old
+
+    class FakeStreamClient:
+        connected = True
+
+        async def force_resubscribe(self) -> None:
+            return None
+
+    service._schwab_stream_client = FakeStreamClient()
+    monkeypatch.setattr("project_mai_tai.services.strategy_engine_app.utcnow", lambda: fixed_now)
+
+    activity_count = await service._monitor_schwab_symbol_health()
+
+    assert activity_count == 0
+    assert service._schwab_stale_symbols == set()
+    assert runtime.data_health_summary()["status"] == "healthy"
+    assert runtime.data_health_summary()["halted_symbols"] == []
+
+
+@pytest.mark.asyncio
 async def test_service_clears_data_halt_when_stale_symbol_leaves_active_set() -> None:
-    settings = Settings(
+    settings = make_test_settings(
         strategy_macd_30s_broker_provider="schwab",
         redis_stream_prefix="test",
         dashboard_snapshot_persistence_enabled=False,
@@ -3927,7 +5269,7 @@ async def test_service_clears_data_halt_when_stale_symbol_leaves_active_set() ->
 
 @pytest.mark.asyncio
 async def test_service_reactivated_symbol_gets_fresh_schwab_stale_grace_window() -> None:
-    settings = Settings(
+    settings = make_test_settings(
         strategy_macd_30s_broker_provider="schwab",
         redis_stream_prefix="test",
         dashboard_snapshot_persistence_enabled=False,
@@ -3977,7 +5319,7 @@ async def test_service_reactivated_symbol_gets_fresh_schwab_stale_grace_window()
 
 @pytest.mark.asyncio
 async def test_service_does_not_halt_quiet_schwab_symbol_inside_grace_window() -> None:
-    settings = Settings(
+    settings = make_test_settings(
         strategy_macd_30s_broker_provider="schwab",
         redis_stream_prefix="test",
         dashboard_snapshot_persistence_enabled=False,
@@ -4005,7 +5347,7 @@ async def test_service_does_not_halt_quiet_schwab_symbol_inside_grace_window() -
 
 @pytest.mark.asyncio
 async def test_service_default_stale_threshold_tolerates_brief_quiet_gap() -> None:
-    settings = Settings(
+    settings = make_test_settings(
         strategy_macd_30s_broker_provider="schwab",
         redis_stream_prefix="test",
         dashboard_snapshot_persistence_enabled=False,
@@ -4033,7 +5375,7 @@ async def test_service_default_stale_threshold_tolerates_brief_quiet_gap() -> No
 
 @pytest.mark.asyncio
 async def test_service_brief_schwab_stream_disconnect_stays_inside_data_halt_grace_window() -> None:
-    settings = Settings(
+    settings = make_test_settings(
         strategy_macd_30s_broker_provider="schwab",
         redis_stream_prefix="test",
         dashboard_snapshot_persistence_enabled=False,
@@ -4059,8 +5401,10 @@ async def test_service_brief_schwab_stream_disconnect_stays_inside_data_halt_gra
 
 
 @pytest.mark.asyncio
-async def test_service_persistent_schwab_stream_disconnect_halts_symbols_after_grace_window() -> None:
-    settings = Settings(
+async def test_service_persistent_schwab_stream_disconnect_halts_symbols_after_grace_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = make_test_settings(
         strategy_macd_30s_broker_provider="schwab",
         redis_stream_prefix="test",
         dashboard_snapshot_persistence_enabled=False,
@@ -4072,8 +5416,9 @@ async def test_service_persistent_schwab_stream_disconnect_halts_symbols_after_g
     service = StrategyEngineService(settings=settings, redis_client=FakeRedis())
     runtime = service.state.bots["macd_30s"]
     runtime.set_watchlist(["FTFT"])
-    service._schwab_symbol_active_first_seen_at["FTFT"] = datetime.now(UTC) - timedelta(seconds=40)
-    service._schwab_stream_disconnected_since = datetime.now(UTC) - timedelta(seconds=40)
+    fixed_now = datetime(2026, 4, 24, 20, 0, 0, tzinfo=UTC)
+    service._schwab_symbol_active_first_seen_at["FTFT"] = fixed_now - timedelta(seconds=40)
+    service._schwab_stream_disconnected_since = fixed_now - timedelta(seconds=40)
 
     class FakeStreamClient:
         connected = False
@@ -4082,6 +5427,7 @@ async def test_service_persistent_schwab_stream_disconnect_halts_symbols_after_g
             return None
 
     service._schwab_stream_client = FakeStreamClient()
+    monkeypatch.setattr("project_mai_tai.services.strategy_engine_app.utcnow", lambda: fixed_now)
 
     activity_count = await service._monitor_schwab_symbol_health()
 
@@ -4092,7 +5438,7 @@ async def test_service_persistent_schwab_stream_disconnect_halts_symbols_after_g
 
 
 def test_generic_market_data_never_targets_schwab_native_bot_when_stream_is_stale() -> None:
-    settings = Settings(
+    settings = make_test_settings(
         strategy_macd_30s_broker_provider="schwab",
         strategy_macd_1m_enabled=True,
         redis_stream_prefix="test",
@@ -4110,7 +5456,7 @@ def test_generic_market_data_never_targets_schwab_native_bot_when_stream_is_stal
 
 def test_snapshot_batch_does_not_push_polygon_quotes_into_schwab_native_macd_30s(monkeypatch) -> None:
     state = StrategyEngineState(
-        settings=Settings(
+        settings=make_test_settings(
             strategy_macd_30s_enabled=True,
             strategy_macd_30s_broker_provider="schwab",
             strategy_macd_1m_enabled=True,
@@ -4171,7 +5517,7 @@ def test_snapshot_batch_does_not_push_polygon_quotes_into_schwab_native_macd_30s
 
 def test_snapshot_batch_does_not_push_polygon_quotes_into_schwab_backed_tos(monkeypatch) -> None:
     state = StrategyEngineState(
-        settings=Settings(
+        settings=make_test_settings(
             strategy_macd_1m_enabled=True,
             strategy_tos_enabled=True,
             strategy_tos_broker_provider="schwab",
@@ -4235,7 +5581,7 @@ async def test_strategy_state_snapshot_persists_last_nonempty_confirmed_snapshot
     redis = FakeRedis()
     session_factory = build_test_session_factory()
     service = StrategyEngineService(
-        settings=Settings(redis_stream_prefix="test", dashboard_snapshot_persistence_enabled=True),
+        settings=make_test_settings(redis_stream_prefix="test", dashboard_snapshot_persistence_enabled=True),
         redis_client=redis,
         session_factory=session_factory,
     )
@@ -4405,7 +5751,7 @@ def test_seeded_confirmed_candidates_are_revalidated_into_fresh_top_confirmed(mo
     )
 
     service = StrategyEngineService(
-        settings=Settings(
+        settings=make_test_settings(
             redis_stream_prefix="test",
             dashboard_snapshot_persistence_enabled=True,
             strategy_macd_1m_enabled=True,
@@ -4477,7 +5823,7 @@ def test_seeded_confirmed_candidates_drop_when_missing_from_fresh_snapshots() ->
         session.commit()
 
     service = StrategyEngineService(
-        settings=Settings(redis_stream_prefix="test", dashboard_snapshot_persistence_enabled=True),
+        settings=make_test_settings(redis_stream_prefix="test", dashboard_snapshot_persistence_enabled=True),
         redis_client=FakeRedis(),
         session_factory=session_factory,
     )
@@ -4534,7 +5880,7 @@ def test_seeded_confirmed_candidates_restore_watchlist_from_all_confirmed_when_t
         )
 
         service = StrategyEngineService(
-            settings=Settings(
+            settings=make_test_settings(
                 redis_stream_prefix="test",
                 dashboard_snapshot_persistence_enabled=True,
                 strategy_macd_1m_enabled=True,
@@ -4555,7 +5901,7 @@ def test_seeded_confirmed_candidates_restore_watchlist_from_all_confirmed_when_t
 
 def test_restore_confirmed_runtime_view_prefers_persisted_bot_handoff_state() -> None:
     state = StrategyEngineState(
-        settings=Settings(
+        settings=make_test_settings(
             strategy_macd_1m_enabled=True,
             strategy_tos_enabled=True,
             strategy_runner_enabled=True,
@@ -4615,7 +5961,7 @@ def test_seeded_confirmed_candidates_skip_prior_session_snapshot(monkeypatch) ->
     )
 
     service = StrategyEngineService(
-        settings=Settings(redis_stream_prefix="test", dashboard_snapshot_persistence_enabled=True),
+        settings=make_test_settings(redis_stream_prefix="test", dashboard_snapshot_persistence_enabled=True),
         redis_client=FakeRedis(),
         session_factory=session_factory,
     )
@@ -4645,7 +5991,7 @@ def test_seeded_confirmed_candidates_skip_unmarked_snapshot_even_if_recent(monke
     )
 
     service = StrategyEngineService(
-        settings=Settings(redis_stream_prefix="test", dashboard_snapshot_persistence_enabled=True),
+        settings=make_test_settings(redis_stream_prefix="test", dashboard_snapshot_persistence_enabled=True),
         redis_client=FakeRedis(),
         session_factory=session_factory,
     )
@@ -4658,7 +6004,7 @@ def test_seeded_confirmed_candidates_skip_unmarked_snapshot_even_if_recent(monke
 def test_publish_strategy_state_persists_scanner_cycle_history_snapshot() -> None:
     session_factory = build_test_session_factory()
     service = StrategyEngineService(
-        settings=Settings(
+        settings=make_test_settings(
             redis_stream_prefix="test",
             dashboard_snapshot_persistence_enabled=True,
             dashboard_scanner_history_retention=10,
@@ -4730,7 +6076,7 @@ def test_publish_strategy_state_persists_scanner_cycle_history_snapshot() -> Non
 def test_scanner_cycle_history_retention_and_dedup() -> None:
     session_factory = build_test_session_factory()
     service = StrategyEngineService(
-        settings=Settings(
+        settings=make_test_settings(
             redis_stream_prefix="test",
             dashboard_snapshot_persistence_enabled=True,
             dashboard_scanner_history_retention=2,
@@ -4967,7 +6313,7 @@ def test_strategy_service_restores_runtime_positions_and_pending_from_database()
         session.commit()
 
     service = StrategyEngineService(
-        settings=Settings(redis_stream_prefix="test", dashboard_snapshot_persistence_enabled=True),
+        settings=make_test_settings(redis_stream_prefix="test", dashboard_snapshot_persistence_enabled=True),
         redis_client=FakeRedis(),
         session_factory=session_factory,
     )
@@ -5008,7 +6354,7 @@ def test_strategy_service_reconcile_restores_missing_runtime_position_from_virtu
         session.commit()
 
     service = StrategyEngineService(
-        settings=Settings(
+        settings=make_test_settings(
             redis_stream_prefix="test",
             dashboard_snapshot_persistence_enabled=True,
             strategy_macd_30s_reclaim_enabled=True,
@@ -5028,6 +6374,59 @@ def test_strategy_service_reconcile_restores_missing_runtime_position_from_virtu
     assert restored.entry_price == 2.55
 
 
+def test_strategy_service_reconcile_restores_runtime_position_path_from_latest_open_intent() -> None:
+    session_factory = build_test_session_factory()
+    with session_factory() as session:
+        strategy_macd = Strategy(code="macd_30s_reclaim", name="Reclaim", execution_mode="paper", metadata_json={})
+        account_macd = BrokerAccount(
+            name="paper:macd_30s_reclaim",
+            provider="alpaca",
+            environment="test",
+        )
+        session.add_all([strategy_macd, account_macd])
+        session.flush()
+        session.add(
+            VirtualPosition(
+                strategy_id=strategy_macd.id,
+                broker_account_id=account_macd.id,
+                symbol="UGRO",
+                quantity=Decimal("25"),
+                average_price=Decimal("2.55"),
+            )
+        )
+        session.add(
+            TradeIntent(
+                strategy_id=strategy_macd.id,
+                broker_account_id=account_macd.id,
+                symbol="UGRO",
+                side="buy",
+                intent_type="open",
+                quantity=Decimal("25"),
+                reason="ENTRY_P5_PULLBACK",
+                status="filled",
+                payload={"metadata": {"path": "P5_PULLBACK"}},
+            )
+        )
+        session.commit()
+
+    service = StrategyEngineService(
+        settings=make_test_settings(
+            redis_stream_prefix="test",
+            dashboard_snapshot_persistence_enabled=True,
+            strategy_macd_30s_reclaim_enabled=True,
+        ),
+        redis_client=FakeRedis(),
+        session_factory=session_factory,
+    )
+
+    changed = service._reconcile_runtime_state_from_database(log_when_changed=False)
+
+    assert changed is True
+    restored = service.state.bots["macd_30s_reclaim"].positions.get_position("UGRO")
+    assert restored is not None
+    assert restored.entry_path == "P5_PULLBACK"
+
+
 def test_strategy_service_reconcile_clears_stale_runtime_position_without_virtual_backing() -> None:
     session_factory = build_test_session_factory()
     with session_factory() as session:
@@ -5041,7 +6440,7 @@ def test_strategy_service_reconcile_clears_stale_runtime_position_without_virtua
         session.commit()
 
     service = StrategyEngineService(
-        settings=Settings(
+        settings=make_test_settings(
             redis_stream_prefix="test",
             dashboard_snapshot_persistence_enabled=True,
             strategy_macd_30s_reclaim_enabled=True,
@@ -5101,7 +6500,7 @@ def test_restore_runtime_state_reseeds_schwab_bar_history_for_midday_restart() -
         session.commit()
 
     service = StrategyEngineService(
-        settings=Settings(
+        settings=make_test_settings(
             redis_stream_prefix="test",
             dashboard_snapshot_persistence_enabled=True,
             strategy_macd_30s_broker_provider="schwab",
@@ -5159,7 +6558,7 @@ def test_restore_runtime_state_reseeds_full_30s_session_history_for_session_awar
         session.commit()
 
     service = StrategyEngineService(
-        settings=Settings(
+        settings=make_test_settings(
             redis_stream_prefix="test",
             dashboard_snapshot_persistence_enabled=True,
             strategy_macd_30s_broker_provider="schwab",
@@ -5183,7 +6582,7 @@ def test_restore_runtime_state_reseeds_full_30s_session_history_for_session_awar
 
 def test_seed_bars_populates_last_indicator_snapshot() -> None:
     service = StrategyEngineService(
-        settings=Settings(
+        settings=make_test_settings(
             redis_stream_prefix="test",
             strategy_macd_30s_broker_provider="schwab",
         ),
@@ -5232,7 +6631,7 @@ def test_lazy_history_seed_rehydrates_session_bars_after_restart() -> None:
         session.commit()
 
     service = StrategyEngineService(
-        settings=Settings(
+        settings=make_test_settings(
             redis_stream_prefix="test",
             strategy_macd_30s_broker_provider="schwab",
         ),
@@ -5429,7 +6828,7 @@ def test_strategy_bot_runtime_uses_eastern_bar_timestamps() -> None:
 
 def test_tos_runtime_emits_intrabar_open_on_current_bar(monkeypatch) -> None:
     service = StrategyEngineService(
-        settings=Settings(
+        settings=make_test_settings(
             redis_stream_prefix="test",
             strategy_tos_broker_provider="schwab",
         ),
@@ -5486,7 +6885,7 @@ def test_tos_runtime_emits_intrabar_open_on_current_bar(monkeypatch) -> None:
 
 def test_schwab_native_30s_runtime_does_not_emit_intrabar_open_when_intrabar_disabled(monkeypatch) -> None:
     service = StrategyEngineService(
-        settings=Settings(
+        settings=make_test_settings(
             redis_stream_prefix="test",
             strategy_macd_30s_broker_provider="schwab",
         ),

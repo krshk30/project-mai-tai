@@ -8,10 +8,11 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from redis.asyncio import Redis
-from sqlalchemy import delete, desc, select
+from sqlalchemy import delete, desc, not_, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from project_mai_tai.db.models import (
@@ -50,11 +51,14 @@ from project_mai_tai.log import configure_logging
 from project_mai_tai.runtime_registry import strategy_registration_map
 from project_mai_tai.services.runtime import _install_signal_handlers
 from project_mai_tai.settings import Settings, get_settings
-from project_mai_tai.market_data.models import QuoteTickRecord, TradeTickRecord
+from project_mai_tai.market_data.models import LiveBarRecord, QuoteTickRecord, TradeTickRecord
 from project_mai_tai.market_data.massive_indicator_provider import MassiveIndicatorProvider
+from project_mai_tai.market_data.massive_provider import MassiveSnapshotProvider
 from project_mai_tai.market_data.schwab_tick_archive import (
     SchwabTickArchive,
     load_aggregated_trade_bars,
+    load_recorded_trades,
+    load_recorded_live_bars,
 )
 from project_mai_tai.market_data.schwab_streamer import SchwabStreamerClient
 from project_mai_tai.market_data.taapi_indicator_provider import TaapiIndicatorProvider
@@ -81,6 +85,9 @@ from project_mai_tai.strategy_core import (
     MomentumConfirmedScanner,
     OHLCVBar,
     PositionTracker,
+    Polygon30sBarBuilderManager,
+    Polygon30sEntryEngine,
+    Polygon30sIndicatorEngine,
     QuoteSnapshot,
     ReferenceData,
     RetainedSymbolState,
@@ -101,6 +108,32 @@ logger = logging.getLogger(__name__)
 
 SERVICE_NAME = "strategy-engine"
 EASTERN_TZ = ZoneInfo("America/New_York")
+LEGACY_STRATEGY_CODE_ALIASES = {
+    "webull_30s": "polygon_30s",
+}
+
+
+def normalize_strategy_code(strategy_code: str | None) -> str:
+    normalized = str(strategy_code or "").strip().lower()
+    return LEGACY_STRATEGY_CODE_ALIASES.get(normalized, normalized)
+
+
+def normalize_strategy_code_map(
+    values: dict[str, Sequence[object]] | dict[str, set[str]] | None,
+) -> dict[str, Sequence[object]] | dict[str, set[str]]:
+    normalized: dict[str, Sequence[object]] | dict[str, set[str]] = {}
+    for code, items in (values or {}).items():
+        normalized[normalize_strategy_code(code)] = items
+    return normalized
+
+
+def strategy_code_candidates(strategy_code: str | None) -> tuple[str, ...]:
+    normalized = normalize_strategy_code(strategy_code)
+    if normalized == "polygon_30s":
+        return ("polygon_30s", "webull_30s")
+    if not normalized:
+        return tuple()
+    return (normalized,)
 
 
 def utcnow() -> datetime:
@@ -112,6 +145,19 @@ def _format_limit_price(value: float | str | Decimal | None) -> str | None:
         return None
     try:
         return format(Decimal(str(value)).quantize(Decimal("0.01")), "f")
+    except Exception:
+        return None
+
+
+def _panic_limit_price(value: float | str | Decimal | None, buffer_pct: float) -> str | None:
+    if value is None:
+        return None
+    try:
+        price = Decimal(str(value))
+        if price <= 0:
+            return None
+        buffered = price * (Decimal("1") - (Decimal(str(buffer_pct)) / Decimal("100")))
+        return format(max(buffered, Decimal("0.01")).quantize(Decimal("0.01")), "f")
     except Exception:
         return None
 
@@ -149,6 +195,31 @@ def order_routing_metadata(*, price: str, side: str, now: datetime | None = None
         "reference_price": price,
         "price_source": "ask" if side == "buy" else "bid",
     }
+
+
+def stop_guard_order_routing_metadata(
+    *,
+    price: str,
+    price_source: str,
+    now: datetime | None = None,
+) -> dict[str, str]:
+    metadata = {
+        "order_type": "limit",
+        "time_in_force": "day",
+        "limit_price": price,
+        "reference_price": price,
+        "price_source": price_source,
+    }
+    session = extended_hours_session(now)
+    if session is None:
+        return metadata
+    metadata.update(
+        {
+            "session": session,
+            "extended_hours": "true",
+        }
+    )
+    return metadata
 
 
 def current_scanner_session_start_utc(now: datetime | None = None) -> datetime:
@@ -189,12 +260,15 @@ class StrategyBotRuntime:
         now_provider: Callable[[], datetime] | None = None,
         session_factory: sessionmaker[Session] | None = None,
         use_live_aggregate_bars: bool = False,
+        trade_tick_service: str = "LEVELONE_EQUITIES",
         live_aggregate_fallback_enabled: bool = True,
+        live_aggregate_bars_are_final: bool = False,
         live_aggregate_stale_after_seconds: int = 3,
         indicator_overlay_provider: MassiveIndicatorProvider | TaapiIndicatorProvider | None = None,
-        builder_manager: BarBuilderManager | SchwabNativeBarBuilderManager | None = None,
-        indicator_engine: IndicatorEngine | SchwabNativeIndicatorEngine | None = None,
-        entry_engine: EntryEngine | SchwabNativeEntryEngine | None = None,
+        extended_hours_vwap_provider: Callable[[str, Sequence[float], int], dict[float, float]] | None = None,
+        builder_manager: BarBuilderManager | SchwabNativeBarBuilderManager | Polygon30sBarBuilderManager | None = None,
+        indicator_engine: IndicatorEngine | SchwabNativeIndicatorEngine | Polygon30sIndicatorEngine | None = None,
+        entry_engine: EntryEngine | SchwabNativeEntryEngine | Polygon30sEntryEngine | None = None,
         retention_config: FeedRetentionConfig | None = None,
     ):
         self.definition = definition
@@ -221,9 +295,11 @@ class StrategyBotRuntime:
         self.prewarm_symbols: set[str] = set()
         self.last_indicators: dict[str, dict[str, object]] = {}
         self.latest_quotes: dict[str, dict[str, float]] = {}
+        self._last_quote_received_at: dict[str, datetime] = {}
         self.entry_blocked_symbols: set[str] = set()
         self.lifecycle_policy = FeedRetentionPolicy(retention_config or FeedRetentionConfig())
         self.lifecycle_states: dict[str, RetainedSymbolState] = {}
+        self._desired_watchlist_symbols: set[str] = set()
         self.manual_stop_symbols: set[str] = set()
         self.pending_open_symbols: set[str] = set()
         self.pending_close_symbols: set[str] = set()
@@ -241,10 +317,15 @@ class StrategyBotRuntime:
         self._gap_recovery_synthetic_bars: dict[str, int] = {}
         self.session_factory = session_factory
         self.use_live_aggregate_bars = use_live_aggregate_bars
+        self.trade_tick_service = str(trade_tick_service or "LEVELONE_EQUITIES").strip().upper() or "LEVELONE_EQUITIES"
         self.live_aggregate_fallback_enabled = live_aggregate_fallback_enabled
+        self.live_aggregate_bars_are_final = live_aggregate_bars_are_final
         self.live_aggregate_stale_after_seconds = max(0, int(live_aggregate_stale_after_seconds))
         self.indicator_overlay_provider = indicator_overlay_provider
+        self.extended_hours_vwap_provider = extended_hours_vwap_provider
         self._last_live_bar_received_at: dict[str, datetime] = {}
+        self._live_aggregate_skipped_bucket_start: dict[str, float] = {}
+        self._live_aggregate_trade_tick_counts: dict[str, dict[float, int]] = {}
         self._history_seed_attempted: set[str] = set()
 
     @staticmethod
@@ -258,20 +339,20 @@ class StrategyBotRuntime:
         return strategy_code
 
     def set_watchlist(self, symbols: Iterable[str]) -> None:
+        desired_symbols = {
+            str(symbol).upper()
+            for symbol in symbols
+            if str(symbol).strip() and str(symbol).upper() not in self.manual_stop_symbols
+        }
+        self._desired_watchlist_symbols = set(desired_symbols)
         if not self.lifecycle_policy.config.enabled:
-            self.watchlist = {
-                str(symbol).upper()
-                for symbol in symbols
-                if str(symbol).strip() and str(symbol).upper() not in self.manual_stop_symbols
-            }
+            self.watchlist = set(desired_symbols)
             self.lifecycle_states.clear()
             self.entry_blocked_symbols = set(self.manual_stop_symbols)
             self._prune_runtime_state()
             return
         now = self.now_provider()
-        for symbol in {str(symbol).upper() for symbol in symbols if str(symbol).strip()}:
-            if symbol in self.manual_stop_symbols:
-                continue
+        for symbol in desired_symbols:
             state = self.lifecycle_states.get(symbol)
             if state is None:
                 self.lifecycle_states[symbol] = self.lifecycle_policy.promote(symbol, now, None)
@@ -297,6 +378,7 @@ class StrategyBotRuntime:
         self.manual_stop_symbols = {
             str(symbol).upper() for symbol in symbols if str(symbol).strip()
         }
+        self._desired_watchlist_symbols.difference_update(self.manual_stop_symbols)
         self.prewarm_symbols.difference_update(self.manual_stop_symbols)
         if not self.lifecycle_policy.config.enabled:
             self.watchlist = {
@@ -346,6 +428,7 @@ class StrategyBotRuntime:
         return current.timestamp()
 
     def update_market_snapshots(self, snapshots: Sequence[MarketSnapshot]) -> None:
+        received_at = self._normalize_now(self.now_provider())
         for snapshot in snapshots:
             if snapshot.last_quote is None:
                 continue
@@ -355,7 +438,9 @@ class StrategyBotRuntime:
             if snapshot.last_quote.ask_price is not None and snapshot.last_quote.ask_price > 0:
                 quote["ask"] = float(snapshot.last_quote.ask_price)
             if quote:
-                self.latest_quotes[snapshot.ticker.upper()] = quote
+                normalized_symbol = snapshot.ticker.upper()
+                self.latest_quotes[normalized_symbol] = quote
+                self._last_quote_received_at[normalized_symbol] = received_at
 
     def handle_quote_tick(
         self,
@@ -363,14 +448,21 @@ class StrategyBotRuntime:
         *,
         bid_price: float | None,
         ask_price: float | None,
-    ) -> None:
+    ) -> list[TradeIntentEvent]:
+        normalized_symbol = str(symbol).upper()
         quote: dict[str, float] = {}
         if bid_price is not None and bid_price > 0:
             quote["bid"] = float(bid_price)
         if ask_price is not None and ask_price > 0:
             quote["ask"] = float(ask_price)
         if quote:
-            self.latest_quotes[symbol.upper()] = quote
+            self.latest_quotes[normalized_symbol] = quote
+            self._last_quote_received_at[normalized_symbol] = self._normalize_now(self.now_provider())
+        return self._evaluate_position_quote_intents(
+            normalized_symbol,
+            bid_price=quote.get("bid"),
+            ask_price=quote.get("ask"),
+        )
 
     def apply_data_halt(
         self,
@@ -489,7 +581,13 @@ class StrategyBotRuntime:
             )
             return None
 
-    def _evaluate_position_price_intents(self, symbol: str, price: float) -> list[TradeIntentEvent]:
+    def _evaluate_position_price_intents(
+        self,
+        symbol: str,
+        price: float,
+        *,
+        trigger_source: str = "trade",
+    ) -> list[TradeIntentEvent]:
         intents: list[TradeIntentEvent] = []
         position = self.positions.get_position(symbol)
         if position is None or price <= 0:
@@ -502,6 +600,12 @@ class StrategyBotRuntime:
             and symbol not in self.pending_close_symbols
             and not self._is_exit_retry_blocked(symbol)
         ):
+            hard_stop = self._augment_hard_stop_signal(
+                hard_stop,
+                position=position,
+                trigger_price=price,
+                trigger_source=trigger_source,
+            )
             close_intent = self._safe_emit_close_intent(hard_stop)
             if close_intent is not None:
                 intents.append(close_intent)
@@ -529,10 +633,68 @@ class StrategyBotRuntime:
                 intents.append(close_intent)
         return intents
 
+    def _evaluate_position_quote_intents(
+        self,
+        symbol: str,
+        *,
+        bid_price: float | None,
+        ask_price: float | None,
+    ) -> list[TradeIntentEvent]:
+        del ask_price
+        config = self.definition.trading_config
+        if not config.stop_guard_enabled or not config.stop_guard_quote_trigger_enabled:
+            return []
+
+        position = self.positions.get_position(symbol)
+        if position is None or symbol in self.pending_close_symbols or self._is_exit_retry_blocked(symbol):
+            return []
+
+        if bid_price is not None and self._has_fresh_quote(symbol):
+            return self._evaluate_position_price_intents(symbol, bid_price, trigger_source="bid")
+
+        last_price = float(position.current_price or 0)
+        if last_price > 0:
+            return self._evaluate_position_price_intents(symbol, last_price, trigger_source="last")
+        return []
+
+    def _augment_hard_stop_signal(
+        self,
+        signal: dict[str, float | int | str],
+        *,
+        position: object,
+        trigger_price: float,
+        trigger_source: str,
+    ) -> dict[str, float | int | str]:
+        if str(signal.get("reason", "")).upper() != "HARD_STOP":
+            return signal
+        config = self.definition.trading_config
+        if not config.stop_guard_enabled:
+            return signal
+        stop_price = float(position.entry_price) * (1 - float(config.stop_loss_pct) / 100)
+        enriched = dict(signal)
+        enriched["stop_guard"] = "true"
+        enriched["stop_trigger_source"] = str(trigger_source)
+        enriched["stop_trigger_price"] = float(trigger_price)
+        enriched["stop_price"] = float(stop_price)
+        enriched["panic_buffer_pct"] = float(config.stop_guard_initial_panic_buffer_pct)
+        return enriched
+
+    def _has_fresh_quote(self, symbol: str) -> bool:
+        received_at = self._last_quote_received_at.get(str(symbol).upper())
+        if received_at is None:
+            return False
+        max_age_ms = max(0, int(self.definition.trading_config.stop_guard_quote_max_age_ms))
+        if max_age_ms <= 0:
+            return True
+        current = self._normalize_now(self.now_provider())
+        return (current - received_at).total_seconds() * 1000 <= max_age_ms
+
     def seed_bars(self, symbol: str, bars: Sequence[dict[str, float | int]]) -> None:
         normalized_symbol = str(symbol).upper()
         builder = self.builder_manager.get_or_create(symbol)
         builder.reset()
+        self._live_aggregate_skipped_bucket_start.pop(normalized_symbol, None)
+        self._live_aggregate_trade_tick_counts.pop(normalized_symbol, None)
 
         sorted_bars = sorted(
             bars,
@@ -561,6 +723,15 @@ class StrategyBotRuntime:
         if hasattr(builder, "_current_bar_last_cum_volume"):
             builder._current_bar_last_cum_volume = None
 
+        self.rebuild_indicator_state(normalized_symbol)
+
+    def rebuild_indicator_state(self, symbol: str) -> bool:
+        normalized_symbol = str(symbol).upper()
+        builder = self.builder_manager.get_builder(normalized_symbol)
+        if builder is None or not builder.bars:
+            self.last_indicators.pop(normalized_symbol, None)
+            return False
+
         historical_indicators: list[dict[str, float | bool]] = []
         closed_bars = builder.bars
         for index in range(len(closed_bars)):
@@ -570,8 +741,14 @@ class StrategyBotRuntime:
             historical_indicators.append(indicators)
         self.entry_engine.seed_recent_bars(normalized_symbol, historical_indicators)
         if historical_indicators:
-            self.last_indicators[normalized_symbol] = dict(historical_indicators[-1])
+            self.last_indicators[normalized_symbol] = self._decorate_indicators(
+                normalized_symbol,
+                historical_indicators[-1],
+            )
             self._history_seed_attempted.add(normalized_symbol)
+            return True
+        self.last_indicators.pop(normalized_symbol, None)
+        return False
 
     def _required_history_bars(self) -> int:
         indicator_config = self.definition.indicator_config
@@ -585,27 +762,24 @@ class StrategyBotRuntime:
 
     def needs_history_seed(self, symbol: str) -> bool:
         normalized_symbol = str(symbol).upper()
-        if normalized_symbol in self._history_seed_attempted:
-            return False
         builder = self.builder_manager.get_or_create(normalized_symbol)
-        return builder.get_bar_count() < self._required_history_bars()
+        if builder.get_bar_count() >= self._required_history_bars():
+            self._history_seed_attempted.add(normalized_symbol)
+            return False
+        return True
 
     def _ensure_history_seeded(self, symbol: str) -> None:
         if self.session_factory is None:
             return
 
         normalized_symbol = str(symbol).upper()
-        if normalized_symbol in self._history_seed_attempted:
-            return
-
         builder = self.builder_manager.get_or_create(normalized_symbol)
-        if builder.get_bar_count() >= self._required_history_bars():
+        required_bars = self._required_history_bars()
+        if builder.get_bar_count() >= required_bars:
             self._history_seed_attempted.add(normalized_symbol)
             return
 
-        self._history_seed_attempted.add(normalized_symbol)
         session_start_utc = current_scanner_session_start_utc(self.now_provider())
-        required_bars = self._required_history_bars()
 
         try:
             with self.session_factory() as session:
@@ -613,7 +787,7 @@ class StrategyBotRuntime:
                     session.scalars(
                         select(StrategyBarHistory)
                         .where(
-                            StrategyBarHistory.strategy_code == self.definition.code,
+                            StrategyBarHistory.strategy_code.in_(strategy_code_candidates(self.definition.code)),
                             StrategyBarHistory.symbol == normalized_symbol,
                             StrategyBarHistory.interval_secs == self.definition.interval_secs,
                             StrategyBarHistory.bar_time >= session_start_utc,
@@ -630,7 +804,7 @@ class StrategyBotRuntime:
                                 session.scalars(
                                     select(StrategyBarHistory)
                                     .where(
-                                        StrategyBarHistory.strategy_code == self.definition.code,
+                                        StrategyBarHistory.strategy_code.in_(strategy_code_candidates(self.definition.code)),
                                         StrategyBarHistory.symbol == normalized_symbol,
                                         StrategyBarHistory.interval_secs == self.definition.interval_secs,
                                         StrategyBarHistory.bar_time < session_start_utc,
@@ -667,6 +841,11 @@ class StrategyBotRuntime:
             for record in records
         ]
         self.seed_bars(normalized_symbol, bars)
+        if (
+            self.builder_manager.get_or_create(normalized_symbol).get_bar_count() >= required_bars
+            and normalized_symbol in self.last_indicators
+        ):
+            self._history_seed_attempted.add(normalized_symbol)
 
     def handle_trade_tick(
         self,
@@ -688,6 +867,18 @@ class StrategyBotRuntime:
             return intents
 
         self._ensure_history_seeded(symbol)
+
+        # Count every tick for live-aggregate-final bots (e.g. schwab_1m) so we
+        # can stamp the CHART_EQUITY bar's missing trade_count from the parallel
+        # TIMESALE/LEVELONE stream. Must run before the live/fallback split so
+        # we capture ticks even when _should_fallback_to_trade_ticks routes the
+        # tick to the native builder path inside the same bucket.
+        if (
+            self.use_live_aggregate_bars
+            and self.live_aggregate_bars_are_final
+            and not prewarm_only
+        ):
+            self._record_live_aggregate_trade_tick(normalized_symbol, timestamp_ns)
 
         if self.use_live_aggregate_bars and not prewarm_only and not self._should_fallback_to_trade_ticks(symbol):
             intents.extend(
@@ -722,6 +913,9 @@ class StrategyBotRuntime:
             if prewarm_only:
                 self._finalize_prewarm_completed_bar(symbol)
             else:
+                if int(getattr(_bar, "trade_count", 0) or 0) <= 0 and int(getattr(_bar, "volume", 0) or 0) <= 0:
+                    self._finalize_synthetic_quiet_completed_bar(symbol)
+                    continue
                 intents.extend(self._evaluate_completed_bar(symbol))
                 self._advance_gap_recovery(symbol, _bar)
         if not prewarm_only:
@@ -740,10 +934,12 @@ class StrategyBotRuntime:
         volume: int,
         timestamp: float,
         trade_count: int = 1,
+        coverage_started_at: float | None = None,
     ) -> list[TradeIntentEvent]:
         self._roll_day_if_needed()
         normalized_symbol = str(symbol).upper()
         self._last_tick_at[normalized_symbol] = self._normalize_now(self.now_provider())
+        self._last_live_bar_received_at[normalized_symbol] = self._normalize_now(self.now_provider())
         intents: list[TradeIntentEvent] = []
 
         position = self.positions.get_position(symbol)
@@ -757,9 +953,43 @@ class StrategyBotRuntime:
         self._ensure_history_seeded(symbol)
 
         if not self.use_live_aggregate_bars:
+            # Keep tick-built runtimes on a single source of truth. Mixing live-bar
+            # packets into the same builder drifts persisted bars away from the raw
+            # trade-tick reconstruction we use for validation.
             return intents
 
-        self._last_live_bar_received_at[symbol] = self._normalize_now(self.now_provider())
+        if self.live_aggregate_bars_are_final:
+            effective_trade_count = self._effective_live_aggregate_trade_count(
+                normalized_symbol,
+                timestamp=timestamp,
+                provided_trade_count=trade_count,
+            )
+            completed_bars = self.builder_manager.on_final_bar(
+                symbol,
+                OHLCVBar(
+                    open=open_price,
+                    high=high_price,
+                    low=low_price,
+                    close=close_price,
+                    volume=volume,
+                    timestamp=timestamp,
+                    trade_count=effective_trade_count,
+                ),
+            )
+            for _bar in completed_bars:
+                if prewarm_only:
+                    self._finalize_prewarm_completed_bar(symbol)
+                else:
+                    intents.extend(self._evaluate_completed_bar(symbol))
+                    self._advance_gap_recovery(symbol, _bar)
+            return intents
+
+        if self._should_skip_partial_live_aggregate_bucket(
+            symbol,
+            timestamp=timestamp,
+            coverage_started_at=coverage_started_at,
+        ):
+            return intents
 
         completed_bars = self.builder_manager.on_bar(
             symbol,
@@ -773,6 +1003,9 @@ class StrategyBotRuntime:
                 trade_count=trade_count,
             ),
         )
+        revised_closed_bar = self.builder_manager.consume_recent_revised_closed_bar(symbol)
+        if revised_closed_bar is not None and not prewarm_only:
+            self._persist_revised_closed_bar(symbol=symbol, bar=revised_closed_bar)
         synthetic_gap_bars = [
             bar
             for bar in completed_bars
@@ -788,12 +1021,83 @@ class StrategyBotRuntime:
             if prewarm_only:
                 self._finalize_prewarm_completed_bar(symbol)
             else:
+                if int(getattr(_bar, "trade_count", 0) or 0) <= 0 and int(getattr(_bar, "volume", 0) or 0) <= 0:
+                    self._finalize_synthetic_quiet_completed_bar(symbol)
+                    continue
                 intents.extend(self._evaluate_completed_bar(symbol))
                 self._advance_gap_recovery(symbol, _bar)
         if not prewarm_only:
             intents.extend(self._evaluate_intrabar_entry(symbol))
 
         return intents
+
+    def _should_skip_partial_live_aggregate_bucket(
+        self,
+        symbol: str,
+        *,
+        timestamp: float,
+        coverage_started_at: float | None = None,
+    ) -> bool:
+        if not self.use_live_aggregate_bars or self.live_aggregate_bars_are_final:
+            return False
+
+        interval = max(1, int(self.definition.interval_secs))
+        if interval <= 1:
+            return False
+
+        normalized_symbol = str(symbol).upper()
+        bucket_start = (float(timestamp) // interval) * interval
+        skipped_bucket_start = self._live_aggregate_skipped_bucket_start.get(normalized_symbol)
+        if skipped_bucket_start is not None:
+            if bucket_start == skipped_bucket_start:
+                return True
+            if bucket_start > skipped_bucket_start:
+                self._live_aggregate_skipped_bucket_start.pop(normalized_symbol, None)
+
+        builder = self.builder_manager.get_or_create(normalized_symbol)
+        current_bar = getattr(builder, "_current_bar", None)
+        current_bar_start = float(getattr(builder, "_current_bar_start", 0.0) or 0.0)
+        if current_bar is not None and current_bar_start == bucket_start:
+            return False
+
+        last_closed_bar = builder.bars[-1] if builder.bars else None
+        if last_closed_bar is not None and bucket_start <= float(last_closed_bar.timestamp):
+            return False
+
+        coverage_started_at = float(coverage_started_at) if coverage_started_at is not None else None
+        if coverage_started_at is not None:
+            if coverage_started_at <= bucket_start:
+                return False
+        elif float(timestamp) <= bucket_start:
+            return False
+
+        # Persisted canonical bars should have full live coverage. If a symbol
+        # first becomes active mid-bucket, or provider coverage restarts
+        # mid-bucket, skip that partial bucket and wait for the next aligned
+        # boundary instead of persisting a truncated canonical bar. When
+        # coverage metadata is unavailable, fall back to the older
+        # first-aggregate timestamp heuristic.
+        self._live_aggregate_skipped_bucket_start[normalized_symbol] = bucket_start
+        logger.info(
+            "skipping partial live aggregate bucket for %s on %s at %.3f (bucket %.3f coverage %.3f)",
+            self.definition.code,
+            normalized_symbol,
+            float(timestamp),
+            bucket_start,
+            coverage_started_at if coverage_started_at is not None else float(timestamp),
+        )
+        return True
+
+    def _should_use_live_bar_builder_fallback(self, symbol: str, *, timestamp: float) -> bool:
+        if not self.live_aggregate_fallback_enabled:
+            return False
+
+        latest_bucket_start = self._latest_builder_bucket_start(symbol)
+        if latest_bucket_start is None:
+            return True
+
+        incoming_bucket_start = (float(timestamp) // self.definition.interval_secs) * self.definition.interval_secs
+        return (incoming_bucket_start - latest_bucket_start) >= self.definition.interval_secs
 
     def _should_fallback_to_trade_ticks(self, symbol: str) -> bool:
         if not self.live_aggregate_fallback_enabled:
@@ -839,8 +1143,53 @@ class StrategyBotRuntime:
             return current.replace(tzinfo=EASTERN_TZ)
         return current
 
+    def _record_live_aggregate_trade_tick(self, symbol: str, timestamp_ns: int | None) -> None:
+        if not timestamp_ns:
+            return
+        interval = max(1, int(self.definition.interval_secs))
+        bucket_start = (float(timestamp_ns) / 1_000_000_000.0 // interval) * interval
+        counts = self._live_aggregate_trade_tick_counts.setdefault(symbol, {})
+        counts[bucket_start] = counts.get(bucket_start, 0) + 1
+
+    def _effective_live_aggregate_trade_count(
+        self,
+        symbol: str,
+        *,
+        timestamp: float,
+        provided_trade_count: int,
+    ) -> int:
+        # Schwab CHART_EQUITY bars carry no per-bar trade count, so the streamer
+        # stamps trade_count=1. When the parallel TIMESALE/LEVELONE tick stream
+        # has been routed through handle_trade_tick during this bucket we use
+        # the accumulated count instead. Falling back to the provided value
+        # preserves the synthetic-gap-bar sentinel (trade_count<=0) used by the
+        # builder for symbols that have not yet seen any tick traffic.
+        interval = max(1, int(self.definition.interval_secs))
+        bucket_start = (float(timestamp) // interval) * interval
+        counts = self._live_aggregate_trade_tick_counts.get(symbol)
+        if not counts:
+            return int(provided_trade_count or 0)
+        accumulated = int(counts.pop(bucket_start, 0) or 0)
+        for stale_bucket in [b for b in counts if b < bucket_start]:
+            counts.pop(stale_bucket, None)
+        if not counts:
+            self._live_aggregate_trade_tick_counts.pop(symbol, None)
+        if accumulated > 0:
+            return accumulated
+        return int(provided_trade_count or 0)
+
     def flush_completed_bars(self) -> tuple[list[TradeIntentEvent], int]:
         self._roll_day_if_needed()
+        if self.use_live_aggregate_bars and self.live_aggregate_bars_are_final:
+            return [], 0
+        if self.use_live_aggregate_bars and self.definition.code == "polygon_30s":
+            # Polygon's canonical 30s path is built from streamed 1s aggregate
+            # bars. If the strategy consumer lags the Redis stream during a busy
+            # move, wall-clock force-closing can freeze a 30s bar before the
+            # final in-stream 1s bars for that bucket have been consumed. Let
+            # the next observed bucket close the prior bar instead of forcing a
+            # time-based close locally.
+            return [], 0
         intents: list[TradeIntentEvent] = []
         completed = self.builder_manager.check_all_bar_closes()
         completed_by_symbol: dict[str, list[OHLCVBar]] = {}
@@ -870,6 +1219,9 @@ class StrategyBotRuntime:
                 if prewarm_only:
                     self._finalize_prewarm_completed_bar(symbol)
                 else:
+                    if int(getattr(bar, "trade_count", 0) or 0) <= 0 and int(getattr(bar, "volume", 0) or 0) <= 0:
+                        self._finalize_synthetic_quiet_completed_bar(symbol)
+                        continue
                     intents.extend(self._evaluate_completed_bar(symbol))
                     self._advance_gap_recovery(symbol, bar)
         return intents, len(completed)
@@ -942,6 +1294,8 @@ class StrategyBotRuntime:
                 self._finalize_flattened_position(symbol, fill_price, reason=close_reason)
 
     def _finalize_flattened_position(self, symbol: str, fill_price: float, *, reason: str) -> None:
+        position = self.positions.get_position(symbol)
+        entry_path = str(position.entry_path) if position is not None else ""
         self.pending_open_symbols.discard(symbol)
         self.pending_close_symbols.discard(symbol)
         self.pending_scale_levels = {
@@ -952,6 +1306,12 @@ class StrategyBotRuntime:
         self.positions.close_position(symbol, fill_price, reason=reason)
         bar_index = self.builder_manager.get_or_create(symbol).get_bar_count()
         self.entry_engine.record_exit(symbol, bar_index)
+        record_path_exit = getattr(self.entry_engine, "record_path_exit", None)
+        if callable(record_path_exit) and entry_path:
+            try:
+                record_path_exit(symbol, path=entry_path, reason=reason)
+            except Exception:
+                logger.exception("failed to record path exit for %s", symbol)
 
     def _finalize_missing_broker_position(self, symbol: str, *, reason: str) -> None:
         position = self.positions.get_position(symbol)
@@ -1001,6 +1361,12 @@ class StrategyBotRuntime:
 
         if intent_type == "open":
             self.pending_open_symbols.discard(symbol)
+            if self.definition.code == "polygon_30s":
+                self.entry_engine.record_rejected_open(
+                    symbol,
+                    self.builder_manager.get_or_create(symbol).get_bar_count(),
+                    cooldown_bars=20,
+                )
             self.entry_engine.cancel_pending(symbol)
             return
 
@@ -1066,6 +1432,7 @@ class StrategyBotRuntime:
         self.entry_engine.reset()
         self.last_indicators.clear()
         self.latest_quotes.clear()
+        self._last_quote_received_at.clear()
         self.entry_blocked_symbols.clear()
         self.data_halt_symbols.clear()
         self.data_halt_since.clear()
@@ -1080,6 +1447,8 @@ class StrategyBotRuntime:
         self.builder_manager.reset()
         self._applied_fill_quantity_by_order.clear()
         self._last_live_bar_received_at.clear()
+        self._live_aggregate_skipped_bucket_start.clear()
+        self._live_aggregate_trade_tick_counts.clear()
         self._history_seed_attempted.clear()
         self._active_day = current_day
         return True
@@ -1290,8 +1659,36 @@ class StrategyBotRuntime:
         )
         self._finalize_completed_bar(symbol, indicators, [], decision=decision)
 
+    def _finalize_synthetic_quiet_completed_bar(self, symbol: str) -> None:
+        builder = self.builder_manager.get_builder(symbol)
+        if builder is None:
+            return
+        bars = builder.get_bars_as_dicts()
+        if not bars:
+            return
+        local_indicators = self.indicator_engine.calculate(bars)
+        if local_indicators is None:
+            return
+        indicators = self._decorate_indicators(symbol, local_indicators)
+        self.last_indicators[symbol] = indicators
+        self._finalize_completed_bar(symbol, indicators, [], decision=None)
+
+    def _intrabar_entry_mode_enabled(self) -> bool:
+        trading = self.definition.trading_config
+        return bool(
+            getattr(trading, "entry_intrabar_enabled", False)
+            or getattr(trading, "p4_prev_bar_entry_enabled", False)
+        )
+
+    def _intrabar_entry_is_p4_only(self) -> bool:
+        trading = self.definition.trading_config
+        return bool(
+            getattr(trading, "p4_prev_bar_entry_enabled", False)
+            and not getattr(trading, "entry_intrabar_enabled", False)
+        )
+
     def _evaluate_intrabar_entry(self, symbol: str) -> list[TradeIntentEvent]:
-        if not bool(getattr(self.definition.trading_config, "entry_intrabar_enabled", False)):
+        if not self._intrabar_entry_mode_enabled():
             return []
 
         position = self.positions.get_position(symbol)
@@ -1338,6 +1735,9 @@ class StrategyBotRuntime:
         if signal is None:
             self.entry_engine.pop_last_decision(symbol)
             return []
+        if self._intrabar_entry_is_p4_only() and str(signal.get("path", "")).upper() != "P4_BURST":
+            self.entry_engine.pop_last_decision(symbol)
+            return []
 
         self._capture_entry_decision(symbol, indicators)
         if symbol in self.manual_stop_symbols:
@@ -1361,7 +1761,7 @@ class StrategyBotRuntime:
         size: int,
         timestamp_ns: int | None = None,
     ) -> list[TradeIntentEvent]:
-        if not bool(getattr(self.definition.trading_config, "entry_intrabar_enabled", False)):
+        if not self._intrabar_entry_mode_enabled():
             return []
 
         position = self.positions.get_position(symbol)
@@ -1427,6 +1827,9 @@ class StrategyBotRuntime:
         closed_bar_count = builder.get_bar_count()
         signal = self.entry_engine.check_entry(symbol, indicators, closed_bar_count + 1, self)
         if signal is None:
+            self.entry_engine.pop_last_decision(symbol)
+            return []
+        if self._intrabar_entry_is_p4_only() and str(signal.get("path", "")).upper() != "P4_BURST":
             self.entry_engine.pop_last_decision(symbol)
             return []
 
@@ -1524,7 +1927,7 @@ class StrategyBotRuntime:
         symbol = str(signal["ticker"])
         self.pending_open_symbols.add(symbol)
         reference_price = str(signal["price"])
-        routed_price, routing_block_reason = self._resolve_routed_price(
+        routed_price, routing_block_reason, routed_price_source = self._resolve_routed_price(
             symbol=symbol,
             side="buy",
             reference_price=reference_price,
@@ -1533,6 +1936,14 @@ class StrategyBotRuntime:
         if routed_price is None:
             self.pending_open_symbols.discard(symbol)
             raise RuntimeError(routing_block_reason or f"missing ask quote for extended-hours entry: {symbol}")
+        breakdown_veto_reason = self._p4_entry_breakdown_veto_reason(
+            signal=signal,
+            routed_price=routed_price,
+            routed_price_source=routed_price_source,
+        )
+        if breakdown_veto_reason is not None:
+            self.pending_open_symbols.discard(symbol)
+            raise RuntimeError(breakdown_veto_reason)
         metadata = {
             "path": str(signal["path"]),
             "score": str(signal["score"]),
@@ -1541,7 +1952,20 @@ class StrategyBotRuntime:
             "reference_price": reference_price,
             "entry_stage": str(signal.get("entry_stage", "")),
         }
+        if self.definition.trading_config.stop_guard_enabled:
+            metadata.update(
+                {
+                    "stop_guard_enabled": "true",
+                    "stop_loss_pct": str(self.definition.trading_config.stop_loss_pct),
+                    "stop_guard_quote_max_age_ms": str(self.definition.trading_config.stop_guard_quote_max_age_ms),
+                    "stop_guard_initial_panic_buffer_pct": str(
+                        self.definition.trading_config.stop_guard_initial_panic_buffer_pct
+                    ),
+                }
+            )
         metadata.update(order_routing_metadata(price=routed_price, side="buy"))
+        if routed_price_source:
+            metadata["price_source"] = routed_price_source
         return TradeIntentEvent(
             source_service=SERVICE_NAME,
             payload=TradeIntentPayload(
@@ -1554,6 +1978,33 @@ class StrategyBotRuntime:
                 reason=f"ENTRY_{signal['path']}",
                 metadata=metadata,
             ),
+        )
+
+    def _p4_entry_breakdown_veto_reason(
+        self,
+        *,
+        signal: dict[str, float | int | str],
+        routed_price: str | None,
+        routed_price_source: str | None,
+    ) -> str | None:
+        if str(signal.get("path", "")).upper() != "P4_BURST":
+            return None
+        max_breakdown_pct = getattr(self.definition.trading_config, "p4_entry_max_breakdown_pct", None)
+        if max_breakdown_pct is None:
+            return None
+        reference_value = _coerce_float(signal.get("price"))
+        routed_value = _coerce_float(routed_price)
+        if reference_value is None or routed_value is None or reference_value <= 0:
+            return None
+        min_allowed_price = reference_value * (1.0 - (float(max_breakdown_pct) / 100.0))
+        if routed_value >= min_allowed_price:
+            return None
+        breakdown_pct = ((reference_value - routed_value) / reference_value) * 100.0
+        source = routed_price_source or "reference"
+        return (
+            "P4 follow-through veto "
+            f"({source} {routed_value:.4f} is {breakdown_pct:.2f}% below signal close "
+            f"{reference_value:.4f}; max {float(max_breakdown_pct):.2f}%)"
         )
 
     def _try_emit_open_intent(
@@ -1571,11 +2022,12 @@ class StrategyBotRuntime:
         position = self.positions.get_position(symbol)
         quantity = Decimal(str(position.quantity if position else self.definition.trading_config.default_quantity))
         reference_price = str(signal.get("price", ""))
-        routed_price, routing_block_reason = self._resolve_routed_price(
+        routed_price, routing_block_reason, routed_price_source = self._resolve_routed_price(
             symbol=symbol,
             side="sell",
             reference_price=reference_price,
             intent_label="exit",
+            signal=signal,
         )
         if routed_price is None:
             self.pending_close_symbols.discard(symbol)
@@ -1585,8 +2037,30 @@ class StrategyBotRuntime:
             "profit_pct": str(signal.get("profit_pct", "")),
             "reference_price": reference_price,
         }
+        is_stop_guard = str(signal.get("stop_guard", "")).lower() == "true"
+        if is_stop_guard:
+            metadata.update(
+                {
+                    "stop_guard": "true",
+                    "stop_trigger_source": str(signal.get("stop_trigger_source", "")),
+                    "stop_trigger_price": str(signal.get("stop_trigger_price", "")),
+                    "stop_price": str(signal.get("stop_price", "")),
+                    "panic_buffer_pct": str(signal.get("panic_buffer_pct", "")),
+                }
+            )
         if routed_price:
-            metadata.update(order_routing_metadata(price=routed_price, side="sell"))
+            if is_stop_guard:
+                metadata.update(
+                    stop_guard_order_routing_metadata(
+                        price=routed_price,
+                        price_source=routed_price_source or "reference",
+                        now=self.now_provider(),
+                    )
+                )
+            else:
+                metadata.update(order_routing_metadata(price=routed_price, side="sell"))
+        if routed_price_source:
+            metadata["price_source"] = routed_price_source
         return TradeIntentEvent(
             source_service=SERVICE_NAME,
             payload=TradeIntentPayload(
@@ -1612,7 +2086,7 @@ class StrategyBotRuntime:
         level = str(signal["level"])
         self.pending_scale_levels.add((symbol, level))
         reference_price = str(signal.get("price", ""))
-        routed_price, routing_block_reason = self._resolve_routed_price(
+        routed_price, routing_block_reason, routed_price_source = self._resolve_routed_price(
             symbol=symbol,
             side="sell",
             reference_price=reference_price,
@@ -1629,6 +2103,8 @@ class StrategyBotRuntime:
         }
         if routed_price:
             metadata.update(order_routing_metadata(price=routed_price, side="sell"))
+        if routed_price_source:
+            metadata["price_source"] = routed_price_source
         return TradeIntentEvent(
             source_service=SERVICE_NAME,
             payload=TradeIntentPayload(
@@ -1656,17 +2132,40 @@ class StrategyBotRuntime:
         side: str,
         reference_price: str,
         intent_label: str,
-    ) -> tuple[str | None, str | None]:
-        session = extended_hours_session(self.now_provider())
+        signal: dict[str, float | int | str] | None = None,
+    ) -> tuple[str | None, str | None, str | None]:
         quote = self.latest_quotes.get(symbol.upper(), {})
         quote_field = "ask" if side == "buy" else "bid"
         quote_price = _format_limit_price(quote.get(quote_field))
+        signal = signal or {}
+        is_stop_guard = (
+            side == "sell"
+            and str(signal.get("reason", "")).upper() == "HARD_STOP"
+            and str(signal.get("stop_guard", "")).lower() == "true"
+        )
+        if is_stop_guard:
+            panic_buffer_pct = float(signal.get("panic_buffer_pct", 0) or 0)
+            bid_price = quote.get("bid")
+            if bid_price is not None and self._has_fresh_quote(symbol):
+                routed_price = _panic_limit_price(bid_price, panic_buffer_pct)
+                if routed_price is not None:
+                    return routed_price, None, "bid"
+            routed_price = _panic_limit_price(reference_price, panic_buffer_pct)
+            if routed_price is not None:
+                stop_source = str(signal.get("stop_trigger_source", "")).lower() or "reference"
+                return routed_price, None, "last" if stop_source == "last" else stop_source
+            return None, f"missing {quote_field} quote for extended-hours {intent_label}", None
+        session = extended_hours_session(self.now_provider())
         if session is None:
             routed_price = quote_price or _format_limit_price(reference_price) or reference_price
-            return routed_price, None
+            return routed_price, None, quote_field if quote_price else "reference"
         if quote_price:
-            return quote_price, None
-        return None, f"missing {quote_field} quote for extended-hours {intent_label}"
+            return quote_price, None, quote_field
+        if side == "sell":
+            routed_price = _format_limit_price(reference_price) or reference_price
+            if routed_price:
+                return routed_price, None, "reference"
+        return None, f"missing {quote_field} quote for extended-hours {intent_label}", None
 
     def _is_exit_retry_blocked(self, symbol: str) -> bool:
         blocked_until = self.exit_retry_blocked_until.get(symbol)
@@ -1698,7 +2197,11 @@ class StrategyBotRuntime:
             return True
         if any(pending_symbol == normalized for pending_symbol, _level in self.pending_scale_levels):
             return True
-        return self._trading_window_open()
+        if self._is_data_halted(normalized):
+            return True
+        if normalized in self.data_warning_symbols:
+            return True
+        return False
 
     def _clear_gap_recovery(self, symbol: str) -> None:
         normalized = str(symbol).upper()
@@ -1945,7 +2448,7 @@ class StrategyBotRuntime:
             with self.session_factory() as session:
                 record = session.scalar(
                     select(StrategyBarHistory).where(
-                        StrategyBarHistory.strategy_code == self.definition.code,
+                        StrategyBarHistory.strategy_code.in_(strategy_code_candidates(self.definition.code)),
                         StrategyBarHistory.symbol == symbol,
                         StrategyBarHistory.interval_secs == self.definition.interval_secs,
                         StrategyBarHistory.bar_time == bar_time,
@@ -1984,6 +2487,52 @@ class StrategyBotRuntime:
         except Exception:
             logger.exception(
                 "failed to persist strategy bar history for %s %s",
+                self.definition.code,
+                symbol,
+            )
+
+    def _persist_revised_closed_bar(
+        self,
+        *,
+        symbol: str,
+        bar: OHLCVBar,
+    ) -> None:
+        if self.session_factory is None:
+            return
+
+        bar_time = datetime.fromtimestamp(float(bar.timestamp), UTC)
+        try:
+            with self.session_factory() as session:
+                record = session.scalar(
+                    select(StrategyBarHistory).where(
+                        StrategyBarHistory.strategy_code.in_(strategy_code_candidates(self.definition.code)),
+                        StrategyBarHistory.symbol == symbol,
+                        StrategyBarHistory.interval_secs == self.definition.interval_secs,
+                        StrategyBarHistory.bar_time == bar_time,
+                    )
+                )
+                if record is None:
+                    position_state, position_quantity = self._position_snapshot(symbol)
+                    record = StrategyBarHistory(
+                        strategy_code=self.definition.code,
+                        symbol=symbol,
+                        interval_secs=self.definition.interval_secs,
+                        bar_time=bar_time,
+                        position_state=position_state,
+                        position_quantity=position_quantity,
+                    )
+                    session.add(record)
+
+                record.open_price = Decimal(str(bar.open))
+                record.high_price = Decimal(str(bar.high))
+                record.low_price = Decimal(str(bar.low))
+                record.close_price = Decimal(str(bar.close))
+                record.volume = int(bar.volume)
+                record.trade_count = int(bar.trade_count)
+                session.commit()
+        except Exception:
+            logger.exception(
+                "failed to persist revised strategy bar history for %s %s",
                 self.definition.code,
                 symbol,
             )
@@ -2085,6 +2634,10 @@ class StrategyBotRuntime:
         if self.definition.interval_secs not in {30, 60}:
             return indicators
 
+        builder = self.builder_manager.get_builder(symbol)
+        bar_dicts = builder.get_bars_as_dicts() if builder is not None and builder.bars else []
+        last_bar = builder.bars[-1] if builder is not None and builder.bars else None
+
         provider_source = (
             str(getattr(self.indicator_overlay_provider, "SOURCE", "") or "")
             if self.indicator_overlay_provider is not None
@@ -2105,127 +2658,180 @@ class StrategyBotRuntime:
             }
         )
         if self.indicator_overlay_provider is None:
+            self._apply_extended_hours_vwap_override(symbol, indicators, bar_dicts=bar_dicts)
             return indicators
 
-        builder = self.builder_manager.get_builder(symbol)
-        if builder is None or not builder.bars:
-            return indicators
+        if builder is not None and builder.bars and last_bar is not None:
+            bar_time = datetime.fromtimestamp(last_bar.timestamp, UTC)
+            if self.definition.interval_secs == 30:
+                fetch_overlay = getattr(self.indicator_overlay_provider, "fetch_aggregate_overlay", None)
+                if fetch_overlay is not None:
+                    overlay = fetch_overlay(
+                        symbol,
+                        bar_time=bar_time,
+                        interval_secs=self.definition.interval_secs,
+                    )
+                    indicators.update(overlay)
+            else:
+                overlay = self.indicator_overlay_provider.fetch_minute_indicators(
+                    symbol,
+                    bar_time=bar_time,
+                    indicator_config=self.definition.indicator_config,
+                )
+                indicators.update(overlay)
 
-        last_bar = builder.bars[-1]
-        bar_time = datetime.fromtimestamp(last_bar.timestamp, UTC)
-        if self.definition.interval_secs == 30:
-            fetch_overlay = getattr(self.indicator_overlay_provider, "fetch_aggregate_overlay", None)
-            if fetch_overlay is None:
-                return indicators
-            overlay = fetch_overlay(
-                symbol,
-                bar_time=bar_time,
-                interval_secs=self.definition.interval_secs,
-            )
-        else:
-            overlay = self.indicator_overlay_provider.fetch_minute_indicators(
-                symbol,
-                bar_time=bar_time,
-                indicator_config=self.definition.indicator_config,
-            )
-        indicators.update(overlay)
-
-        for field in ("macd", "signal", "histogram", "ema9", "ema20", "stoch_k", "stoch_d", "vwap"):
-            provider_key = f"provider_{field}"
-            provider_value = indicators.get(provider_key)
-            local_value = trading_indicators.get(field)
-            if provider_value is None or local_value is None:
-                continue
-            try:
-                indicators[f"{provider_key}_diff"] = float(local_value) - float(provider_value)
-            except (TypeError, ValueError):
-                continue
-
-        if self.definition.interval_secs == 30:
-            provider_bar_field_map = (
-                ("provider_open", last_bar.open),
-                ("provider_high", last_bar.high),
-                ("provider_low", last_bar.low),
-                ("provider_close", last_bar.close),
-                ("provider_volume", last_bar.volume),
-            )
-            for provider_key, local_value in provider_bar_field_map:
+            for field in ("macd", "signal", "histogram", "ema9", "ema20", "stoch_k", "stoch_d", "vwap"):
+                provider_key = f"provider_{field}"
                 provider_value = indicators.get(provider_key)
-                if provider_value is None:
+                local_value = trading_indicators.get(field)
+                if provider_value is None or local_value is None:
                     continue
                 try:
                     indicators[f"{provider_key}_diff"] = float(local_value) - float(provider_value)
                 except (TypeError, ValueError):
                     continue
-            return indicators
 
-        if str(indicators.get("provider_status", "")) != "ready":
-            return indicators
+            if self.definition.interval_secs == 30:
+                provider_bar_field_map = (
+                    ("provider_open", last_bar.open),
+                    ("provider_high", last_bar.high),
+                    ("provider_low", last_bar.low),
+                    ("provider_close", last_bar.close),
+                    ("provider_volume", last_bar.volume),
+                )
+                for provider_key, local_value in provider_bar_field_map:
+                    provider_value = indicators.get(provider_key)
+                    if provider_value is None:
+                        continue
+                    try:
+                        indicators[f"{provider_key}_diff"] = float(local_value) - float(provider_value)
+                    except (TypeError, ValueError):
+                        continue
+            elif str(indicators.get("provider_status", "")) == "ready":
+                provider_field_map = (
+                    ("macd", "provider_macd"),
+                    ("macd_prev", "provider_macd_prev"),
+                    ("macd_prev2", "provider_macd_prev2"),
+                    ("signal", "provider_signal"),
+                    ("signal_prev", "provider_signal_prev"),
+                    ("signal_prev2", "provider_signal_prev2"),
+                    ("histogram", "provider_histogram"),
+                    ("histogram_prev", "provider_histogram_prev"),
+                    ("ema9", "provider_ema9"),
+                    ("ema20", "provider_ema20"),
+                    ("stoch_k", "provider_stoch_k"),
+                    ("stoch_k_prev", "provider_stoch_k_prev"),
+                    ("stoch_k_prev2", "provider_stoch_k_prev2"),
+                    ("stoch_d", "provider_stoch_d"),
+                    ("stoch_d_prev", "provider_stoch_d_prev"),
+                    ("vwap", "provider_vwap"),
+                )
+                for field, provider_key in provider_field_map:
+                    provider_value = indicators.get(provider_key)
+                    if provider_value is not None:
+                        indicators[field] = provider_value
 
-        provider_field_map = (
-            ("macd", "provider_macd"),
-            ("macd_prev", "provider_macd_prev"),
-            ("macd_prev2", "provider_macd_prev2"),
-            ("signal", "provider_signal"),
-            ("signal_prev", "provider_signal_prev"),
-            ("signal_prev2", "provider_signal_prev2"),
-            ("histogram", "provider_histogram"),
-            ("histogram_prev", "provider_histogram_prev"),
-            ("ema9", "provider_ema9"),
-            ("ema20", "provider_ema20"),
-            ("stoch_k", "provider_stoch_k"),
-            ("stoch_k_prev", "provider_stoch_k_prev"),
-            ("stoch_k_prev2", "provider_stoch_k_prev2"),
-            ("stoch_d", "provider_stoch_d"),
-            ("stoch_d_prev", "provider_stoch_d_prev"),
-            ("vwap", "provider_vwap"),
-        )
-        for field, provider_key in provider_field_map:
-            provider_value = indicators.get(provider_key)
-            if provider_value is not None:
-                indicators[field] = provider_value
+                macd = float(indicators.get("macd", 0) or 0)
+                macd_prev = float(indicators.get("macd_prev", 0) or 0)
+                macd_prev2 = float(indicators.get("provider_macd_prev2", indicators.get("macd_prev", 0)) or 0)
+                macd_prev3 = float(indicators.get("provider_macd_prev3", indicators.get("provider_macd_prev2", indicators.get("macd_prev", 0))) or 0)
+                signal = float(indicators.get("signal", 0) or 0)
+                signal_prev = float(indicators.get("signal_prev", 0) or 0)
+                signal_prev2 = float(indicators.get("provider_signal_prev2", indicators.get("signal_prev", 0)) or 0)
+                signal_prev3 = float(indicators.get("provider_signal_prev3", indicators.get("provider_signal_prev2", indicators.get("signal_prev", 0))) or 0)
+                histogram = float(indicators.get("histogram", 0) or 0)
+                histogram_prev = float(indicators.get("histogram_prev", 0) or 0)
+                stoch_k = float(indicators.get("stoch_k", 0) or 0)
+                stoch_k_prev = float(indicators.get("stoch_k_prev", 0) or 0)
+                price = float(indicators.get("price", 0) or 0)
+                price_prev = float(indicators.get("price_prev", 0) or 0)
+                ema9 = float(indicators.get("ema9", 0) or 0)
+                ema20 = float(indicators.get("ema20", 0) or 0)
+                vwap = float(indicators.get("vwap", 0) or 0)
+                vwap_prev = indicators.get("provider_vwap_prev")
+                vwap_prev_value = float(vwap_prev or 0) if vwap_prev is not None else vwap
 
-        macd = float(indicators.get("macd", 0) or 0)
-        macd_prev = float(indicators.get("macd_prev", 0) or 0)
-        macd_prev2 = float(indicators.get("provider_macd_prev2", indicators.get("macd_prev", 0)) or 0)
-        macd_prev3 = float(indicators.get("provider_macd_prev3", indicators.get("provider_macd_prev2", indicators.get("macd_prev", 0))) or 0)
-        signal = float(indicators.get("signal", 0) or 0)
-        signal_prev = float(indicators.get("signal_prev", 0) or 0)
-        signal_prev2 = float(indicators.get("provider_signal_prev2", indicators.get("signal_prev", 0)) or 0)
-        signal_prev3 = float(indicators.get("provider_signal_prev3", indicators.get("provider_signal_prev2", indicators.get("signal_prev", 0))) or 0)
-        histogram = float(indicators.get("histogram", 0) or 0)
-        histogram_prev = float(indicators.get("histogram_prev", 0) or 0)
-        stoch_k = float(indicators.get("stoch_k", 0) or 0)
-        stoch_k_prev = float(indicators.get("stoch_k_prev", 0) or 0)
-        price = float(indicators.get("price", 0) or 0)
-        price_prev = float(indicators.get("price_prev", 0) or 0)
-        ema9 = float(indicators.get("ema9", 0) or 0)
-        ema20 = float(indicators.get("ema20", 0) or 0)
-        vwap = float(indicators.get("vwap", 0) or 0)
-        vwap_prev = indicators.get("provider_vwap_prev")
-        vwap_prev_value = float(vwap_prev or 0) if vwap_prev is not None else vwap
+                indicators["macd_above_signal"] = macd > signal
+                indicators["macd_cross_above"] = macd > signal and macd_prev <= signal_prev
+                indicators["macd_cross_below"] = macd < signal and macd_prev >= signal_prev
+                indicators["macd_increasing"] = macd > macd_prev
+                indicators["macd_delta"] = macd - macd_prev
+                indicators["macd_delta_prev"] = macd_prev - macd_prev2
+                indicators["macd_delta_accelerating"] = (macd - macd_prev) > (macd_prev - macd_prev2)
+                indicators["histogram_growing"] = histogram > histogram_prev
+                indicators["stoch_k_rising"] = stoch_k > stoch_k_prev
+                indicators["stoch_k_below_exit"] = stoch_k < self.definition.indicator_config.stoch_exit_level
+                indicators["stoch_k_falling"] = stoch_k < stoch_k_prev
+                indicators["price_above_vwap"] = price > vwap
+                indicators["price_above_ema9"] = price > ema9
+                indicators["price_above_ema20"] = price > ema20
+                indicators["price_above_both_emas"] = price > ema9 and price > ema20
+                indicators["price_cross_above_vwap"] = price > vwap and price_prev <= vwap_prev_value
+                indicators["macd_was_below_3bars"] = (
+                    macd_prev <= signal_prev and macd_prev2 <= signal_prev2 and macd_prev3 <= signal_prev3
+                )
 
-        indicators["macd_above_signal"] = macd > signal
-        indicators["macd_cross_above"] = macd > signal and macd_prev <= signal_prev
-        indicators["macd_cross_below"] = macd < signal and macd_prev >= signal_prev
-        indicators["macd_increasing"] = macd > macd_prev
-        indicators["macd_delta"] = macd - macd_prev
-        indicators["macd_delta_prev"] = macd_prev - macd_prev2
-        indicators["macd_delta_accelerating"] = (macd - macd_prev) > (macd_prev - macd_prev2)
-        indicators["histogram_growing"] = histogram > histogram_prev
-        indicators["stoch_k_rising"] = stoch_k > stoch_k_prev
-        indicators["stoch_k_below_exit"] = stoch_k < self.definition.indicator_config.stoch_exit_level
-        indicators["stoch_k_falling"] = stoch_k < stoch_k_prev
-        indicators["price_above_vwap"] = price > vwap
-        indicators["price_above_ema9"] = price > ema9
-        indicators["price_above_ema20"] = price > ema20
-        indicators["price_above_both_emas"] = price > ema9 and price > ema20
-        indicators["price_cross_above_vwap"] = price > vwap and price_prev <= vwap_prev_value
-        indicators["macd_was_below_3bars"] = (
-            macd_prev <= signal_prev and macd_prev2 <= signal_prev2 and macd_prev3 <= signal_prev3
-        )
-
+        self._apply_extended_hours_vwap_override(symbol, indicators, bar_dicts=bar_dicts)
         return indicators
+
+    def _apply_extended_hours_vwap_override(
+        self,
+        symbol: str,
+        indicators: dict[str, object],
+        *,
+        bar_dicts: Sequence[dict[str, float | int]],
+    ) -> None:
+        base_vwap = float(indicators.get("vwap", 0) or 0)
+        indicators.setdefault("extended_vwap", base_vwap)
+        indicators.setdefault("decision_vwap", base_vwap)
+        indicators.setdefault("selected_vwap", base_vwap)
+
+        if not bar_dicts or self.extended_hours_vwap_provider is None:
+            return
+        if bool(indicators.get("in_regular_session", False)):
+            return
+
+        try:
+            current_timestamp = float(bar_dicts[-1].get("timestamp", 0) or 0)
+        except (TypeError, ValueError):
+            return
+        if current_timestamp <= 0:
+            return
+
+        timestamps = [current_timestamp]
+        previous_timestamp = current_timestamp
+        if len(bar_dicts) > 1:
+            try:
+                previous_timestamp = float(bar_dicts[-2].get("timestamp", 0) or 0)
+            except (TypeError, ValueError):
+                previous_timestamp = current_timestamp
+            if previous_timestamp > 0:
+                timestamps.insert(0, previous_timestamp)
+
+        series = self.extended_hours_vwap_provider(symbol, timestamps, int(self.definition.interval_secs))
+        current_vwap = float(series.get(current_timestamp, 0) or 0)
+        if current_vwap <= 0:
+            return
+
+        previous_vwap = float(series.get(previous_timestamp, current_vwap) or current_vwap)
+        current_price = float(indicators.get("price", bar_dicts[-1].get("close", 0)) or 0)
+        if len(bar_dicts) > 1:
+            previous_price = float(indicators.get("price_prev", bar_dicts[-2].get("close", current_price)) or current_price)
+        else:
+            previous_price = current_price
+
+        indicators["extended_vwap"] = current_vwap
+        indicators["vwap"] = current_vwap
+        indicators["decision_vwap"] = current_vwap
+        indicators["selected_vwap"] = current_vwap
+        indicators["price_above_vwap"] = current_price > current_vwap
+        indicators["price_above_extended_vwap"] = current_price > current_vwap
+        cross_above = current_price > current_vwap and previous_price <= previous_vwap
+        indicators["price_cross_above_vwap"] = cross_above
+        indicators["price_cross_above_extended_vwap"] = cross_above
+        indicators["vwap_dist_pct"] = (
+            ((current_price - current_vwap) / current_vwap) * 100 if current_vwap > 0 else 999.0
+        )
 
     def _prune_runtime_state(self) -> None:
         keep = set(self.watchlist)
@@ -2244,6 +2850,11 @@ class StrategyBotRuntime:
             for symbol, quote in self.latest_quotes.items()
             if symbol in keep
         }
+        self._last_quote_received_at = {
+            symbol: received_at
+            for symbol, received_at in self._last_quote_received_at.items()
+            if symbol in keep
+        }
         self._gap_recovery_bars_remaining = {
             symbol: remaining
             for symbol, remaining in self._gap_recovery_bars_remaining.items()
@@ -2254,17 +2865,23 @@ class StrategyBotRuntime:
             for symbol, synthetic in self._gap_recovery_synthetic_bars.items()
             if symbol in keep
         }
+        self._live_aggregate_skipped_bucket_start = {
+            symbol: bucket_start
+            for symbol, bucket_start in self._live_aggregate_skipped_bucket_start.items()
+            if symbol in keep
+        }
         self.entry_engine.prune_tickers(keep)
         self.builder_manager.remove_tickers(
             {ticker for ticker in self.builder_manager.get_all_tickers() if ticker not in keep}
         )
 
     def _sync_watchlist_from_lifecycle(self) -> None:
-        watchlist = {
+        watchlist = set(self._desired_watchlist_symbols)
+        watchlist.update(
             symbol
             for symbol, state in self.lifecycle_states.items()
             if state.keeps_feed()
-        }
+        )
         watchlist.update(self.pending_open_symbols)
         watchlist.update(self.pending_close_symbols)
         watchlist.update(symbol for symbol, _level in self.pending_scale_levels)
@@ -2293,7 +2910,7 @@ class StrategyBotRuntime:
         self,
         symbol: str,
         indicators: dict[str, float | bool],
-        builder: BarBuilderManager | SchwabNativeBarBuilderManager,
+        builder: BarBuilderManager | SchwabNativeBarBuilderManager | Polygon30sBarBuilderManager,
     ) -> FeedRetentionMetrics | None:
         runtime_builder = builder.get_builder(symbol)
         if runtime_builder is None:
@@ -2402,7 +3019,9 @@ class StrategyBotRuntime:
         )
         if next_state is None:
             return
-        if next_state.state == "dropped" and self._symbol_requires_feed(symbol):
+        if next_state.state == "dropped" and (
+            self._symbol_requires_feed(symbol) or symbol in self._desired_watchlist_symbols
+        ):
             next_state.state = previous_state
         self.lifecycle_states[symbol] = next_state
         self._sync_watchlist_from_lifecycle()
@@ -2469,9 +3088,9 @@ class StrategyBotRuntime:
     def refresh_lifecycle(self) -> None:
         for symbol in list(self.lifecycle_states):
             indicators = self.last_indicators.get(symbol)
-            if not indicators:
-                continue
-            metrics = self._build_lifecycle_metrics(symbol, indicators, self.builder_manager)
+            metrics = None
+            if indicators:
+                metrics = self._build_lifecycle_metrics(symbol, indicators, self.builder_manager)
             self._update_symbol_lifecycle(symbol, metrics=metrics)
 
 
@@ -2521,6 +3140,14 @@ class StrategyEngineState:
         self.current_confirmed: list[dict[str, object]] = []
         self.all_confirmed: list[dict[str, object]] = []
         self.retained_watchlist: list[str] = []
+        self.market_data_archive_symbols: list[str] = []
+        self._market_data_archive_added_at: dict[str, datetime] = {}
+        self.market_data_archive_ttl = timedelta(
+            minutes=max(1, int(self.settings.market_data_archive_retention_minutes))
+        )
+        self.market_data_archive_max_symbols = max(
+            0, int(self.settings.market_data_archive_retention_max_symbols)
+        )
         self.schwab_prewarm_symbols: list[str] = []
         self._schwab_prewarm_added_at: dict[str, datetime] = {}
         self.schwab_prewarm_max_symbols = 12
@@ -2604,7 +3231,7 @@ class StrategyEngineState:
 
         base_trading = base_trading_config or TradingConfig()
         macd_30s_trading = self._resolve_30s_trading_config(base_trading, variant="regular")
-        webull_30s_trading = self._resolve_30s_trading_config(base_trading, variant="webull")
+        polygon_30s_trading = self._resolve_30s_trading_config(base_trading, variant="polygon")
         macd_30s_probe_trading = self._resolve_30s_trading_config(base_trading, variant="probe")
         macd_30s_reclaim_trading = self._resolve_30s_trading_config(base_trading, variant="reclaim")
         macd_30s_retest_trading = self._resolve_30s_trading_config(base_trading, variant="retest")
@@ -2617,10 +3244,7 @@ class StrategyEngineState:
             self.settings.strategy_macd_30s_live_aggregate_bars_enabled
             or self.settings.market_data_live_aggregate_stream_enabled
         )
-        webull_use_live_aggregate_bars = (
-            self.settings.strategy_webull_30s_live_aggregate_bars_enabled
-            or self.settings.market_data_live_aggregate_stream_enabled
-        )
+        polygon_use_live_aggregate_bars = self.settings.strategy_polygon_30s_live_aggregate_bars_enabled
         self.bots: dict[str, StrategyRuntime] = {}
         if self.settings.strategy_macd_1m_enabled and "macd_1m" in registrations:
             self.bots["macd_1m"] = StrategyBotRuntime(
@@ -2651,8 +3275,10 @@ class StrategyEngineState:
                 ),
                 now_provider=now_provider,
                 session_factory=session_factory if self.settings.strategy_history_persistence_enabled else None,
-                use_live_aggregate_bars=False,
-                live_aggregate_fallback_enabled=False,
+                use_live_aggregate_bars=True,
+                live_aggregate_fallback_enabled=True,
+                live_aggregate_bars_are_final=True,
+                extended_hours_vwap_provider=self._load_schwab_trade_extended_vwap_series,
                 builder_manager=SchwabNativeBarBuilderManager(
                     interval_secs=60,
                     time_provider=lambda: resolved_now_provider().timestamp(),
@@ -2705,12 +3331,16 @@ class StrategyEngineState:
                 now_provider=now_provider,
                 session_factory=session_factory if self.settings.strategy_history_persistence_enabled else None,
                 use_live_aggregate_bars=use_live_aggregate_bars,
+                trade_tick_service=self.settings.strategy_macd_30s_trade_stream_service,
                 live_aggregate_fallback_enabled=self.settings.strategy_macd_30s_live_aggregate_fallback_enabled,
                 live_aggregate_stale_after_seconds=self.settings.strategy_macd_30s_live_aggregate_stale_after_seconds,
                 indicator_overlay_provider=macd_30s_indicator_overlay_provider,
+                extended_hours_vwap_provider=self._load_schwab_trade_extended_vwap_series,
                 builder_manager=SchwabNativeBarBuilderManager(
                     interval_secs=30,
                     time_provider=lambda: resolved_now_provider().timestamp(),
+                    close_grace_seconds=self.settings.strategy_macd_30s_tick_bar_close_grace_seconds,
+                    fill_gap_bars=False,
                 ),
                 indicator_engine=SchwabNativeIndicatorEngine(default_indicator_config),
                 entry_engine=SchwabNativeEntryEngine(
@@ -2720,29 +3350,33 @@ class StrategyEngineState:
                 ),
                 retention_config=macd_30s_retention,
             )
-        if self.settings.strategy_webull_30s_enabled and "webull_30s" in registrations:
-            self.bots["webull_30s"] = StrategyBotRuntime(
+        if self.settings.strategy_polygon_30s_enabled and "polygon_30s" in registrations:
+            self.bots["polygon_30s"] = StrategyBotRuntime(
                 StrategyDefinition(
-                    code="webull_30s",
-                    display_name=registrations["webull_30s"].display_name,
-                    account_name=registrations["webull_30s"].account_name,
+                    code="polygon_30s",
+                    display_name=registrations["polygon_30s"].display_name,
+                    account_name=registrations["polygon_30s"].account_name,
                     interval_secs=30,
-                    trading_config=webull_30s_trading,
+                    trading_config=polygon_30s_trading,
                     indicator_config=default_indicator_config,
                 ),
                 now_provider=now_provider,
                 session_factory=session_factory if self.settings.strategy_history_persistence_enabled else None,
-                use_live_aggregate_bars=webull_use_live_aggregate_bars,
-                live_aggregate_fallback_enabled=self.settings.strategy_webull_30s_live_aggregate_fallback_enabled,
-                live_aggregate_stale_after_seconds=self.settings.strategy_webull_30s_live_aggregate_stale_after_seconds,
-                builder_manager=SchwabNativeBarBuilderManager(
+                use_live_aggregate_bars=polygon_use_live_aggregate_bars,
+                trade_tick_service=self.settings.strategy_polygon_30s_trade_stream_service,
+                live_aggregate_fallback_enabled=self.settings.strategy_polygon_30s_live_aggregate_fallback_enabled,
+                live_aggregate_stale_after_seconds=self.settings.strategy_polygon_30s_live_aggregate_stale_after_seconds,
+                live_aggregate_bars_are_final=False,
+                builder_manager=Polygon30sBarBuilderManager(
                     interval_secs=30,
                     time_provider=lambda: resolved_now_provider().timestamp(),
+                    close_grace_seconds=self.settings.strategy_polygon_30s_tick_bar_close_grace_seconds,
+                    fill_gap_bars=False,
                 ),
-                indicator_engine=SchwabNativeIndicatorEngine(default_indicator_config),
-                entry_engine=SchwabNativeEntryEngine(
-                    webull_30s_trading,
-                    name=registrations["webull_30s"].display_name,
+                indicator_engine=Polygon30sIndicatorEngine(default_indicator_config),
+                entry_engine=Polygon30sEntryEngine(
+                    polygon_30s_trading,
+                    name=registrations["polygon_30s"].display_name,
                     now_provider=resolved_now_provider,
                 ),
                 retention_config=macd_30s_retention,
@@ -2760,6 +3394,7 @@ class StrategyEngineState:
                 now_provider=now_provider,
                 session_factory=session_factory if self.settings.strategy_history_persistence_enabled else None,
                 use_live_aggregate_bars=use_live_aggregate_bars,
+                trade_tick_service=self.settings.strategy_macd_30s_trade_stream_service,
                 live_aggregate_fallback_enabled=self.settings.strategy_macd_30s_live_aggregate_fallback_enabled,
                 live_aggregate_stale_after_seconds=self.settings.strategy_macd_30s_live_aggregate_stale_after_seconds,
                 indicator_overlay_provider=macd_30s_indicator_overlay_provider,
@@ -2778,6 +3413,7 @@ class StrategyEngineState:
                 now_provider=now_provider,
                 session_factory=session_factory if self.settings.strategy_history_persistence_enabled else None,
                 use_live_aggregate_bars=use_live_aggregate_bars,
+                trade_tick_service=self.settings.strategy_macd_30s_trade_stream_service,
                 live_aggregate_fallback_enabled=self.settings.strategy_macd_30s_live_aggregate_fallback_enabled,
                 live_aggregate_stale_after_seconds=self.settings.strategy_macd_30s_live_aggregate_stale_after_seconds,
                 indicator_overlay_provider=macd_30s_indicator_overlay_provider,
@@ -2796,6 +3432,7 @@ class StrategyEngineState:
                 now_provider=now_provider,
                 session_factory=session_factory if self.settings.strategy_history_persistence_enabled else None,
                 use_live_aggregate_bars=use_live_aggregate_bars,
+                trade_tick_service=self.settings.strategy_macd_30s_trade_stream_service,
                 live_aggregate_fallback_enabled=self.settings.strategy_macd_30s_live_aggregate_fallback_enabled,
                 live_aggregate_stale_after_seconds=self.settings.strategy_macd_30s_live_aggregate_stale_after_seconds,
                 indicator_overlay_provider=macd_30s_indicator_overlay_provider,
@@ -2815,12 +3452,12 @@ class StrategyEngineState:
             )
             raw_overrides = self.settings.strategy_macd_30s_config_overrides_json
             scope = "strategy_macd_30s_config_overrides_json"
-        elif variant == "webull":
-            config = base_trading.make_30s_webull_variant(
-                quantity=self.settings.strategy_webull_30s_default_quantity
+        elif variant == "polygon":
+            config = base_trading.make_30s_polygon_variant(
+                quantity=self.settings.strategy_polygon_30s_default_quantity
             )
-            raw_overrides = self.settings.strategy_webull_30s_config_overrides_json
-            scope = "strategy_webull_30s_config_overrides_json"
+            raw_overrides = self.settings.strategy_polygon_30s_config_overrides_json
+            scope = "strategy_polygon_30s_config_overrides_json"
         elif variant == "probe":
             config = base_trading.make_30s_pretrigger_variant(quantity=100)
             raw_overrides = self.settings.strategy_macd_30s_probe_config_overrides_json
@@ -2890,12 +3527,12 @@ class StrategyEngineState:
         codes: list[str] = []
         enabled_by_code = {
             "macd_30s": self.settings.strategy_macd_30s_enabled,
-            "webull_30s": self.settings.strategy_webull_30s_enabled,
+            "polygon_30s": self.settings.strategy_polygon_30s_enabled,
             "schwab_1m": self.settings.strategy_schwab_1m_enabled,
             "tos": self.settings.strategy_tos_enabled,
         }
         for code, enabled in enabled_by_code.items():
-            if enabled and self.settings.provider_for_strategy(code) == "schwab":
+            if enabled and self.settings.market_data_provider_for_strategy(code) == "schwab":
                 codes.append(code)
         return tuple(codes)
 
@@ -3016,8 +3653,11 @@ class StrategyEngineState:
             for stock in self.confirmed_scanner.get_all_confirmed()
             if str(stock.get("ticker", "")).upper() not in blocked
         ]
-        self._record_bot_handoff_symbols(self.all_confirmed)
+        self._record_bot_handoff_symbols(self.all_confirmed, replace_active=True)
         self.current_confirmed = self._ranked_scanner_confirmed_view(limit=5)
+        self._add_market_data_archive_symbols(
+            stock.get("ticker", "") for stock in self.all_confirmed
+        )
         tracked_snapshot_symbols = {
             str(stock.get("ticker", "")).upper()
             for stock in self.all_confirmed
@@ -3099,7 +3739,8 @@ class StrategyEngineState:
         ask_price: float | None,
         strategy_codes: Sequence[str] | None = None,
         exclude_codes: Sequence[str] | None = None,
-    ) -> None:
+    ) -> list[TradeIntentEvent]:
+        intents: list[TradeIntentEvent] = []
         for _code, bot in self._iter_target_bots(
             strategy_codes=strategy_codes,
             exclude_codes=exclude_codes,
@@ -3107,11 +3748,14 @@ class StrategyEngineState:
             handle_quote_tick = getattr(bot, "handle_quote_tick", None)
             if handle_quote_tick is None:
                 continue
-            handle_quote_tick(
+            bot_intents = handle_quote_tick(
                 symbol,
                 bid_price=bid_price,
                 ask_price=ask_price,
             )
+            if bot_intents:
+                intents.extend(bot_intents)
+        return intents
 
     def handle_live_bar(
         self,
@@ -3125,6 +3769,7 @@ class StrategyEngineState:
         volume: int,
         timestamp: float,
         trade_count: int = 1,
+        coverage_started_at: float | None = None,
         strategy_codes: Sequence[str] | None = None,
         exclude_codes: Sequence[str] | None = None,
     ) -> list[TradeIntentEvent]:
@@ -3147,6 +3792,7 @@ class StrategyEngineState:
                     volume=volume,
                     timestamp=timestamp,
                     trade_count=trade_count,
+                    coverage_started_at=coverage_started_at,
                 )
             )
         return intents
@@ -3354,7 +4000,7 @@ class StrategyEngineState:
     def apply_manual_stop_symbols(self, symbols_by_strategy: dict[str, set[str]] | None) -> None:
         normalized: dict[str, set[str]] = {}
         for code, symbols in (symbols_by_strategy or {}).items():
-            normalized[str(code)] = {
+            normalized[normalize_strategy_code(code)] = {
                 str(symbol).upper() for symbol in symbols if str(symbol).strip()
             }
         self.manual_stop_symbols_by_strategy = normalized
@@ -3385,7 +4031,7 @@ class StrategyEngineState:
             self._resync_bot_watchlists_from_current_confirmed()
             return
 
-        code = str(strategy_code or "")
+        code = normalize_strategy_code(strategy_code)
         if not code:
             return
         current = set(self.manual_stop_symbols_by_strategy.get(code, set()))
@@ -3399,7 +4045,7 @@ class StrategyEngineState:
 
     def _manual_stop_symbols_for_bot(self, strategy_code: str) -> set[str]:
         return set(self.global_manual_stop_symbols) | set(
-            self.manual_stop_symbols_by_strategy.get(str(strategy_code), set())
+            self.manual_stop_symbols_by_strategy.get(normalize_strategy_code(strategy_code), set())
         )
 
     def _resync_bot_watchlists_from_current_confirmed(
@@ -3432,6 +4078,81 @@ class StrategyEngineState:
         for code in self.bots:
             self.bot_handoff_symbols_by_strategy.setdefault(code, set())
             self.bot_handoff_history_by_strategy.setdefault(code, set())
+
+    def _load_schwab_trade_extended_vwap_series(
+        self,
+        symbol: str,
+        bar_timestamps: Sequence[float],
+        interval_secs: int,
+    ) -> dict[float, float]:
+        if not self.settings.schwab_tick_archive_enabled or not bar_timestamps:
+            return {}
+
+        normalized_symbol = str(symbol).upper().strip()
+        if not normalized_symbol:
+            return {}
+
+        clean_timestamps: list[float] = []
+        for value in bar_timestamps:
+            try:
+                timestamp = float(value)
+            except (TypeError, ValueError):
+                continue
+            if timestamp > 0:
+                clean_timestamps.append(timestamp)
+        if not clean_timestamps:
+            return {}
+
+        latest_timestamp = max(clean_timestamps)
+        session_day = datetime.fromtimestamp(latest_timestamp, UTC).astimezone(EASTERN_TZ).strftime("%Y-%m-%d")
+        session_date = datetime.strptime(session_day, "%Y-%m-%d").replace(tzinfo=EASTERN_TZ)
+        session_start_ns = int(
+            session_date.replace(hour=4, minute=0, second=0, microsecond=0).astimezone(UTC).timestamp()
+            * 1_000_000_000
+        )
+        session_end_ns = int(
+            session_date.replace(hour=20, minute=0, second=0, microsecond=0).astimezone(UTC).timestamp()
+            * 1_000_000_000
+        )
+        fetch_end_ns = min(
+            session_end_ns,
+            int((latest_timestamp + max(1, int(interval_secs))) * 1_000_000_000),
+        )
+        if fetch_end_ns <= session_start_ns:
+            return {}
+
+        trades = load_recorded_trades(
+            self.settings.schwab_tick_archive_root,
+            symbol=normalized_symbol,
+            day=session_day,
+            start_at_ns=session_start_ns,
+            end_at_ns=fetch_end_ns,
+        )
+        if not trades:
+            return {}
+
+        ordered_targets = sorted(set(clean_timestamps))
+        ordered_trades = sorted(trades, key=lambda record: int(record.timestamp_ns or 0))
+        cumulative_price_volume = 0.0
+        cumulative_volume = 0.0
+        trade_index = 0
+        interval_ns = max(1, int(interval_secs)) * 1_000_000_000
+        result: dict[float, float] = {}
+
+        for bar_timestamp in ordered_targets:
+            bar_end_ns = int(bar_timestamp * 1_000_000_000) + interval_ns
+            while trade_index < len(ordered_trades):
+                trade = ordered_trades[trade_index]
+                event_ns = int(trade.timestamp_ns or 0)
+                if event_ns >= bar_end_ns:
+                    break
+                cumulative_price_volume += float(trade.price) * int(trade.size)
+                cumulative_volume += int(trade.size)
+                trade_index += 1
+            if cumulative_volume > 0:
+                result[bar_timestamp] = cumulative_price_volume / cumulative_volume
+
+        return result
 
     @staticmethod
     def _normalize_symbol_items(items: Iterable[object] | None) -> list[str]:
@@ -3472,14 +4193,18 @@ class StrategyEngineState:
         items: Sequence[object],
         *,
         strategy_codes: Sequence[str] | None = None,
+        replace_active: bool = False,
     ) -> None:
         symbols = self._normalize_symbol_items(items)
-        if not symbols:
+        if not symbols and not replace_active:
             return
         self._ensure_bot_handoff_state()
         self.session_handoff_active = True
         for code, _ in self._iter_target_bots(strategy_codes=strategy_codes):
-            self.bot_handoff_symbols_by_strategy.setdefault(code, set()).update(symbols)
+            if replace_active:
+                self.bot_handoff_symbols_by_strategy[code] = set(symbols)
+            else:
+                self.bot_handoff_symbols_by_strategy.setdefault(code, set()).update(symbols)
             self.bot_handoff_history_by_strategy.setdefault(code, set()).update(symbols)
 
     def _discard_bot_handoff_symbols(
@@ -3518,8 +4243,8 @@ class StrategyEngineState:
         self._ensure_bot_handoff_state()
         restored_active: dict[str, set[str]] = {}
         restored_history: dict[str, set[str]] = {}
-        active_map = active_by_strategy or {}
-        history_map = history_by_strategy or {}
+        active_map = normalize_strategy_code_map(active_by_strategy)
+        history_map = normalize_strategy_code_map(history_by_strategy)
         fallback_symbols = set(self._normalize_symbol_items(self._confirmed_handoff_candidates()))
         if not fallback_symbols:
             for items in active_map.values():
@@ -3532,7 +4257,7 @@ class StrategyEngineState:
             if code not in active_map and code not in history_map:
                 active_symbols = set(fallback_symbols)
                 history_symbols = set(fallback_symbols)
-            elif code in {"macd_30s", "webull_30s"} and not active_symbols and not history_symbols and fallback_symbols:
+            elif code in {"macd_30s", "polygon_30s"} and not active_symbols and not history_symbols and fallback_symbols:
                 active_symbols = set(fallback_symbols)
                 history_symbols = set(fallback_symbols)
             if not history_symbols:
@@ -3556,11 +4281,13 @@ class StrategyEngineState:
         ]
 
     def market_data_symbols(self) -> list[str]:
+        self._sync_market_data_archive_symbols()
         symbols: set[str] = set()
         for code, bot in self.bots.items():
             if code in self._schwab_stream_bot_codes:
                 continue
             symbols.update(bot.active_symbols())
+        symbols.update(self.market_data_archive_symbols)
         return sorted(symbols)
 
     def market_data_intervals(self) -> set[int]:
@@ -3645,6 +4372,46 @@ class StrategyEngineState:
         symbols.difference_update(blocked)
         return sorted(symbols)
 
+    def schwab_live_bar_symbols(self, *, interval_secs: int) -> list[str]:
+        symbols: set[str] = set()
+        for code in self._schwab_stream_bot_codes:
+            bot = self.bots.get(code)
+            if not isinstance(bot, StrategyBotRuntime):
+                continue
+            if int(bot.definition.interval_secs) != int(interval_secs):
+                continue
+            if not bot.use_live_aggregate_bars:
+                continue
+            stream_symbols = getattr(bot, "stream_symbols", None)
+            if callable(stream_symbols):
+                symbols.update(stream_symbols())
+            else:
+                symbols.update(bot.active_symbols())
+        blocked = set(self.global_manual_stop_symbols)
+        for manual_symbols in self.manual_stop_symbols_by_strategy.values():
+            blocked.update(manual_symbols)
+        symbols.difference_update(blocked)
+        return sorted(symbols)
+
+    def schwab_timesale_symbols(self) -> list[str]:
+        symbols: set[str] = set()
+        for code in self._schwab_stream_bot_codes:
+            bot = self.bots.get(code)
+            if not isinstance(bot, StrategyBotRuntime):
+                continue
+            if getattr(bot, "trade_tick_service", "LEVELONE_EQUITIES") != "TIMESALE_EQUITY":
+                continue
+            stream_symbols = getattr(bot, "stream_symbols", None)
+            if callable(stream_symbols):
+                symbols.update(stream_symbols())
+            else:
+                symbols.update(bot.active_symbols())
+        blocked = set(self.global_manual_stop_symbols)
+        for manual_symbols in self.manual_stop_symbols_by_strategy.values():
+            blocked.update(manual_symbols)
+        symbols.difference_update(blocked)
+        return sorted(symbols)
+
     def schwab_active_symbols(self) -> list[str]:
         if not self._schwab_stream_bot_codes:
             return []
@@ -3670,11 +4437,11 @@ class StrategyEngineState:
         exclude_codes: Sequence[str] | None = None,
     ) -> list[tuple[str, StrategyRuntime]]:
         include = (
-            {str(code) for code in strategy_codes if str(code).strip()}
+            {normalize_strategy_code(code) for code in strategy_codes if str(code).strip()}
             if strategy_codes is not None
             else None
         )
-        exclude = {str(code) for code in (exclude_codes or ()) if str(code).strip()}
+        exclude = {normalize_strategy_code(code) for code in (exclude_codes or ()) if str(code).strip()}
         return [
             (code, bot)
             for code, bot in self.bots.items()
@@ -3710,6 +4477,74 @@ class StrategyEngineState:
         self.recent_alerts = self.recent_alerts[-100:]
         self.today_alerts.extend(normalized)
         self.today_alerts = self.today_alerts[-5000:]
+
+    def _add_market_data_archive_symbols(self, symbols: Iterable[object]) -> None:
+        if (
+            not self.settings.market_data_archive_retention_enabled
+            or self.market_data_archive_max_symbols <= 0
+        ):
+            self.market_data_archive_symbols = []
+            self._market_data_archive_added_at = {}
+            return
+
+        observed_at = utcnow()
+        existing = set(self.market_data_archive_symbols)
+        for symbol in symbols:
+            normalized = str(symbol).upper().strip()
+            if not normalized:
+                continue
+            if normalized in existing:
+                self._market_data_archive_added_at[normalized] = observed_at
+                self.market_data_archive_symbols = [
+                    item for item in self.market_data_archive_symbols if item != normalized
+                ]
+                self.market_data_archive_symbols.append(normalized)
+                continue
+            self.market_data_archive_symbols.append(normalized)
+            existing.add(normalized)
+            self._market_data_archive_added_at[normalized] = observed_at
+
+        if len(self.market_data_archive_symbols) > self.market_data_archive_max_symbols:
+            self.market_data_archive_symbols = self.market_data_archive_symbols[
+                -self.market_data_archive_max_symbols :
+            ]
+        keep = set(self.market_data_archive_symbols)
+        self._market_data_archive_added_at = {
+            symbol: seen_at
+            for symbol, seen_at in self._market_data_archive_added_at.items()
+            if symbol in keep
+        }
+        self._sync_market_data_archive_symbols()
+
+    def _sync_market_data_archive_symbols(self) -> None:
+        if (
+            not self.settings.market_data_archive_retention_enabled
+            or self.market_data_archive_max_symbols <= 0
+        ):
+            self.market_data_archive_symbols = []
+            self._market_data_archive_added_at = {}
+            return
+
+        observed_at = utcnow()
+        clean = [
+            symbol
+            for symbol in self.market_data_archive_symbols
+            if (
+                observed_at - self._market_data_archive_added_at.get(symbol, observed_at)
+            ) < self.market_data_archive_ttl
+        ]
+        if clean != self.market_data_archive_symbols:
+            self.market_data_archive_symbols = clean
+        keep = set(self.market_data_archive_symbols)
+        self._market_data_archive_added_at = {
+            symbol: seen_at
+            for symbol, seen_at in self._market_data_archive_added_at.items()
+            if symbol in keep
+        }
+
+    def _clear_market_data_archive_symbols(self) -> None:
+        self.market_data_archive_symbols = []
+        self._market_data_archive_added_at = {}
 
     def _add_schwab_prewarm_symbols(self, symbols: Iterable[object]) -> None:
         if not self._schwab_stream_bot_codes:
@@ -3813,6 +4648,7 @@ class StrategyEngineState:
         self.all_confirmed = []
         self.current_confirmed = []
         self.retained_watchlist = []
+        self._clear_market_data_archive_symbols()
         self.schwab_prewarm_symbols = []
         self._schwab_prewarm_added_at.clear()
         self.bot_handoff_symbols_by_strategy = {code: set() for code in self.bots}
@@ -4093,14 +4929,20 @@ class StrategyEngineService:
         )
         self.logger = configure_logging(SERVICE_NAME, self.settings.log_level)
         self.instance_name = socket.gethostname()
+        self._market_data_stream = stream_name(self.settings.redis_stream_prefix, "market-data")
+        self._priority_streams = [
+            stream_name(self.settings.redis_stream_prefix, "order-events"),
+            stream_name(self.settings.redis_stream_prefix, "snapshot-batches"),
+            stream_name(self.settings.redis_stream_prefix, "runtime-controls"),
+        ]
         self._stream_offsets = {
-            stream_name(self.settings.redis_stream_prefix, "market-data"): "$",
-            stream_name(self.settings.redis_stream_prefix, "order-events"): "$",
-            stream_name(self.settings.redis_stream_prefix, "snapshot-batches"): "$",
-            stream_name(self.settings.redis_stream_prefix, "runtime-controls"): "$",
+            self._market_data_stream: "$",
+            **{stream: "$" for stream in self._priority_streams},
         }
         self._last_market_data_symbols: set[str] = set()
         self._last_schwab_stream_symbols: set[str] = set()
+        self._last_schwab_chart_symbols: set[str] = set()
+        self._last_schwab_timesale_symbols: set[str] = set()
         self._last_scanner_history_signature: str | None = None
         self._historical_hydration_attempts = 5
         self._historical_hydration_poll_delay_secs = 0.2
@@ -4108,11 +4950,17 @@ class StrategyEngineService:
         self._schwab_stream_drain_max_events = 100
         self._schwab_trade_queue: asyncio.Queue[TradeTickRecord] = asyncio.Queue()
         self._schwab_quote_queue: asyncio.Queue[QuoteTickRecord] = asyncio.Queue()
+        self._schwab_bar_queue: asyncio.Queue[LiveBarRecord] = asyncio.Queue()
         self._schwab_stream_client = self._build_schwab_stream_client()
         self._schwab_quote_poll_adapter = (
             self._schwab_stream_client.auth_adapter
             if self._schwab_stream_client is not None
             else SchwabBrokerAdapter(self.settings)
+        )
+        self._massive_snapshot_provider = (
+            MassiveSnapshotProvider(self.settings.massive_api_key)
+            if self.settings.massive_api_key
+            else None
         )
         self._schwab_tick_archive = self._build_schwab_tick_archive()
         self._schwab_symbol_last_stream_trade_at: dict[str, datetime] = {}
@@ -4123,8 +4971,48 @@ class StrategyEngineService:
         self._schwab_stale_symbols: set[str] = set()
         self._schwab_warning_symbols: set[str] = set()
         self._schwab_stream_disconnected_since: datetime | None = None
+        self._schwab_1m_last_history_refresh_at: dict[str, datetime] = {}
+        self._schwab_1m_history_refresh_interval_secs = 15
         self._last_generic_bot_activity_snapshot_at: datetime | None = None
         self._generic_bot_activity_snapshot_interval_secs = 5
+
+    async def _initialize_stream_offsets(self) -> None:
+        for stream in list(self._stream_offsets):
+            try:
+                latest = await self.redis.xrevrange(stream, count=1)
+            except Exception:
+                self.logger.exception("failed to initialize stream offset for %s", stream)
+                self._stream_offsets[stream] = "0-0"
+                continue
+            self._stream_offsets[stream] = latest[0][0] if latest else "0-0"
+
+    async def _read_stream_group(self, streams: Sequence[str], *, block_ms: int) -> bool:
+        offsets = {
+            stream: self._stream_offsets[stream]
+            for stream in streams
+            if stream in self._stream_offsets
+        }
+        if not offsets:
+            return False
+        try:
+            messages = await self.redis.xread(
+                offsets,
+                block=block_ms,
+                count=50,
+            )
+        except Exception:
+            self.logger.exception("redis xread failed for streams: %s", ",".join(offsets))
+            await asyncio.sleep(1)
+            return False
+
+        if not messages:
+            return False
+
+        for stream, entries in messages:
+            for message_id, fields in entries:
+                self._stream_offsets[stream] = message_id
+                await self._handle_stream_message(stream, fields)
+        return True
 
     async def run(self) -> None:
         stop_event = asyncio.Event()
@@ -4135,9 +5023,9 @@ class StrategyEngineService:
 
         self.logger.info("%s starting", SERVICE_NAME)
         self.logger.info(
-            "strategy bot config | schwab_30s=%s webull_30s=%s schwab_1m=%s reclaim=%s macd_1m=%s tos=%s runner=%s qty=%s bots=%s",
+            "strategy bot config | schwab_30s=%s polygon_30s=%s schwab_1m=%s reclaim=%s macd_1m=%s tos=%s runner=%s qty=%s bots=%s",
             self.settings.strategy_macd_30s_enabled,
-            self.settings.strategy_webull_30s_enabled,
+            self.settings.strategy_polygon_30s_enabled,
             self.settings.strategy_schwab_1m_enabled,
             self.settings.strategy_macd_30s_reclaim_enabled,
             self.settings.strategy_macd_1m_enabled,
@@ -4146,6 +5034,7 @@ class StrategyEngineService:
             self.settings.strategy_macd_30s_default_quantity,
             sorted(self.state.bots.keys()),
         )
+        await self._initialize_stream_offsets()
         self._restore_alert_engine_state_from_dashboard_snapshot()
         self._seed_confirmed_candidates_from_dashboard_snapshot()
         self._restore_runtime_state_from_database()
@@ -4156,6 +5045,7 @@ class StrategyEngineService:
             await self._schwab_stream_client.start(
                 on_trade=self._enqueue_schwab_trade_tick,
                 on_quote=self._enqueue_schwab_quote_tick,
+                on_bar=self._enqueue_schwab_live_bar,
             )
         await self._sync_subscription_targets()
         await self._publish_strategy_state_snapshot()
@@ -4163,26 +5053,22 @@ class StrategyEngineService:
         last_runtime_db_reconcile_at = utcnow()
 
         while not stop_event.is_set():
-            try:
-                messages = await self.redis.xread(
-                    self._stream_offsets,
-                    block=stream_block_ms,
-                    count=50,
-                )
-            except Exception:
-                self.logger.exception("redis xread failed")
-                await asyncio.sleep(1)
-                continue
-
-            if messages:
-                for stream, entries in messages:
-                    for message_id, fields in entries:
-                        self._stream_offsets[stream] = message_id
-                        await self._handle_stream_message(stream, fields)
+            handled_priority = await self._read_stream_group(self._priority_streams, block_ms=1)
+            await self._read_stream_group(
+                [self._market_data_stream],
+                block_ms=1 if handled_priority else stream_block_ms,
+            )
 
             schwab_intent_count, schwab_event_count = await self._drain_schwab_stream_queues()
             schwab_fallback_intent_count = await self._monitor_schwab_symbol_health()
-            if schwab_event_count or schwab_intent_count or schwab_fallback_intent_count:
+            schwab_1m_history_intent_count, schwab_1m_history_bar_count = await self._refresh_stale_schwab_1m_history()
+            if (
+                schwab_event_count
+                or schwab_intent_count
+                or schwab_fallback_intent_count
+                or schwab_1m_history_intent_count
+                or schwab_1m_history_bar_count
+            ):
                 await self._sync_subscription_targets()
                 await self._publish_strategy_state_snapshot()
 
@@ -4394,12 +5280,17 @@ class StrategyEngineService:
 
         if event_type == "quote_tick":
             event = QuoteTickEvent.model_validate(payload)
-            self.state.handle_quote_tick(
+            intents = self.state.handle_quote_tick(
                 symbol=event.payload.symbol,
                 bid_price=float(event.payload.bid_price) if event.payload.bid_price is not None else None,
                 ask_price=float(event.payload.ask_price) if event.payload.ask_price is not None else None,
                 strategy_codes=self._generic_market_data_strategy_codes(event.payload.symbol),
             )
+            for intent in intents:
+                await self._publish_intent(intent)
+            if intents:
+                await self._sync_subscription_targets()
+                await self._publish_strategy_state_snapshot()
             return
 
         if event_type == "live_bar":
@@ -4415,6 +5306,11 @@ class StrategyEngineService:
                 volume=int(event.payload.volume),
                 timestamp=float(event.payload.timestamp),
                 trade_count=int(event.payload.trade_count),
+                coverage_started_at=(
+                    float(event.payload.coverage_started_at)
+                    if event.payload.coverage_started_at is not None
+                    else None
+                ),
                 strategy_codes=strategy_codes,
             )
             for intent in intents:
@@ -4633,15 +5529,30 @@ class StrategyEngineService:
 
     async def _sync_schwab_stream_subscriptions(self, symbols: Sequence[str]) -> None:
         normalized = {symbol.upper() for symbol in symbols if symbol}
-        if normalized == self._last_schwab_stream_symbols:
+        chart_symbols = set(self.state.schwab_live_bar_symbols(interval_secs=60))
+        timesale_symbols = set(self.state.schwab_timesale_symbols())
+        if (
+            normalized == self._last_schwab_stream_symbols
+            and chart_symbols == self._last_schwab_chart_symbols
+            and timesale_symbols == self._last_schwab_timesale_symbols
+        ):
             return
 
         self._last_schwab_stream_symbols = normalized
+        self._last_schwab_chart_symbols = chart_symbols
+        self._last_schwab_timesale_symbols = timesale_symbols
         if self._schwab_tick_archive is not None:
             self._schwab_tick_archive.record_subscription_snapshot(sorted(normalized))
         if self._schwab_stream_client is None:
             return
-        await self._schwab_stream_client.sync_subscriptions(sorted(normalized))
+        try:
+            await self._schwab_stream_client.sync_subscriptions(
+                sorted(normalized),
+                chart_symbols=sorted(chart_symbols),
+                timesale_symbols=sorted(timesale_symbols),
+            )
+        except TypeError:
+            await self._schwab_stream_client.sync_subscriptions(sorted(normalized))
 
     async def _sync_subscription_targets(
         self,
@@ -4739,13 +5650,24 @@ class StrategyEngineService:
                     bars=bars,
                 )
                 if hydrated:
+                    persisted = self._persist_generic_provider_history_bars(
+                        symbol=event.payload.symbol,
+                        interval_secs=int(event.payload.interval_secs),
+                        bars=bars,
+                        strategy_codes=hydrated,
+                    )
                     hydrated_any = True
                     self.logger.info(
-                        "replayed %s historical bars for %s @ %ss into %s",
+                        "replayed %s historical bars for %s @ %ss into %s%s",
                         len(bars),
                         event.payload.symbol,
                         event.payload.interval_secs,
                         ",".join(hydrated),
+                        (
+                            f" | persisted={persisted}"
+                            if persisted > 0
+                            else ""
+                        ),
                     )
                 pending.discard(pair)
 
@@ -4757,12 +5679,259 @@ class StrategyEngineService:
         if hydrated_any:
             await self._publish_strategy_state_snapshot()
         if pending:
+            direct_hydrated = await self._hydrate_generic_history_from_provider(pending)
+            if direct_hydrated:
+                hydrated_any = True
+                pending = {
+                    pair
+                    for pair in pending
+                    if not self._generic_history_seed_ready(*pair)
+                }
+                await self._publish_strategy_state_snapshot()
+        if pending:
             for symbol, interval_secs in sorted(pending):
                 self.logger.info(
                     "no historical bars available for %s @ %ss during hydration replay",
                     symbol,
                     interval_secs,
                 )
+
+    def _generic_history_seed_ready(self, symbol: str, interval_secs: int) -> bool:
+        normalized_symbol = str(symbol).upper()
+        for code, bot in self.state.bots.items():
+            if code in self.state._schwab_native_history_bot_codes:
+                continue
+            if normalized_symbol not in bot.active_symbols():
+                continue
+            definition = getattr(bot, "definition", None)
+            bot_interval = int(definition.interval_secs) if definition is not None else None
+            if bot_interval != int(interval_secs):
+                continue
+            if normalized_symbol not in bot.last_indicators:
+                bot.rebuild_indicator_state(normalized_symbol)
+            if (
+                bot.builder_manager.get_or_create(normalized_symbol).get_bar_count() >= bot.required_history_bars()
+                and normalized_symbol in bot.last_indicators
+            ):
+                return True
+        return False
+
+    def _generic_history_required_bars(self, symbol: str, interval_secs: int) -> int:
+        normalized_symbol = str(symbol).upper()
+        required = 0
+        for code, bot in self.state.bots.items():
+            if code in self.state._schwab_native_history_bot_codes:
+                continue
+            if normalized_symbol not in bot.active_symbols():
+                continue
+            definition = getattr(bot, "definition", None)
+            bot_interval = int(definition.interval_secs) if definition is not None else None
+            if bot_interval != int(interval_secs):
+                continue
+            required = max(required, bot.required_history_bars())
+        return required
+
+    async def _load_generic_market_history_bars(
+        self,
+        *,
+        symbol: str,
+        interval_secs: int,
+        required_bars: int,
+    ) -> list[dict[str, float | int]]:
+        if self._massive_snapshot_provider is None:
+            return []
+
+        lookback_calendar_days = max(3, min(10, (max(1, required_bars) // 60) + 2))
+        limit = max(required_bars * 4, required_bars, 120)
+        try:
+            records = await asyncio.wait_for(
+                asyncio.to_thread(
+                    self._massive_snapshot_provider.fetch_historical_bars,
+                    symbol,
+                    interval_secs=int(interval_secs),
+                    lookback_calendar_days=lookback_calendar_days,
+                    limit=limit,
+                ),
+                timeout=15,
+            )
+        except asyncio.TimeoutError:
+            self.logger.warning(
+                "generic provider historical fetch timed out for %s @ %ss",
+                symbol,
+                interval_secs,
+            )
+            return []
+        except Exception:
+            self.logger.exception(
+                "generic provider historical fetch failed for %s @ %ss",
+                symbol,
+                interval_secs,
+            )
+            return []
+
+        return [
+            {
+                "open": float(record.open),
+                "high": float(record.high),
+                "low": float(record.low),
+                "close": float(record.close),
+                "volume": int(record.volume),
+                "timestamp": float(record.timestamp),
+                "trade_count": int(record.trade_count),
+            }
+            for record in records
+        ]
+
+    async def _hydrate_generic_history_from_provider(
+        self,
+        pending: set[tuple[str, int]],
+    ) -> bool:
+        if not pending or self._massive_snapshot_provider is None:
+            return False
+
+        hydrated_any = False
+        for symbol, interval_secs in sorted(pending):
+            if self._generic_history_seed_ready(symbol, interval_secs):
+                continue
+            required_bars = self._generic_history_required_bars(symbol, interval_secs)
+            if required_bars <= 0:
+                continue
+            bars = await self._load_generic_market_history_bars(
+                symbol=symbol,
+                interval_secs=interval_secs,
+                required_bars=required_bars,
+            )
+            if not bars:
+                continue
+            hydrated = self.state.hydrate_historical_bars(
+                symbol=symbol,
+                interval_secs=interval_secs,
+                bars=bars,
+            )
+            if hydrated:
+                persisted = self._persist_generic_provider_history_bars(
+                    symbol=symbol,
+                    interval_secs=interval_secs,
+                    bars=bars,
+                    strategy_codes=hydrated,
+                )
+                hydrated_any = True
+                self.logger.info(
+                    "fetched %s direct provider history bars for %s @ %ss into %s%s",
+                    len(bars),
+                    symbol,
+                    interval_secs,
+                    ",".join(hydrated),
+                    (
+                        f" | persisted={persisted}"
+                        if persisted > 0
+                        else ""
+                    ),
+                )
+        return hydrated_any
+
+    def _persist_generic_provider_history_bars(
+        self,
+        *,
+        symbol: str,
+        interval_secs: int,
+        bars: Sequence[dict[str, float | int]],
+        strategy_codes: Sequence[str],
+    ) -> int:
+        if self.session_factory is None or not bars or not strategy_codes:
+            return 0
+
+        normalized_symbol = str(symbol).upper()
+        valid_codes: list[str] = []
+        for code in strategy_codes:
+            runtime = self.state.bots.get(code)
+            if not isinstance(runtime, StrategyBotRuntime):
+                continue
+            if int(runtime.definition.interval_secs) != int(interval_secs):
+                continue
+            if code in self.state._schwab_native_history_bot_codes:
+                continue
+            if not runtime.use_live_aggregate_bars:
+                continue
+            valid_codes.append(code)
+        if not valid_codes:
+            return 0
+
+        overlap_seconds = max(1, int(interval_secs)) * 4
+        persisted_count = 0
+        try:
+            with self.session_factory() as session:
+                latest_by_code: dict[str, datetime | None] = {}
+                for code in valid_codes:
+                    latest_by_code[code] = session.scalar(
+                        select(StrategyBarHistory.bar_time)
+                        .where(
+                            StrategyBarHistory.strategy_code.in_(strategy_code_candidates(code)),
+                            StrategyBarHistory.symbol == normalized_symbol,
+                            StrategyBarHistory.interval_secs == int(interval_secs),
+                        )
+                        .order_by(StrategyBarHistory.bar_time.desc())
+                        .limit(1)
+                    )
+
+                for code in valid_codes:
+                    latest_bar_time = latest_by_code.get(code)
+                    replay_after_ts: float | None = None
+                    if latest_bar_time is not None:
+                        latest_dt = (
+                            latest_bar_time.replace(tzinfo=UTC)
+                            if latest_bar_time.tzinfo is None
+                            else latest_bar_time.astimezone(UTC)
+                        )
+                        replay_after_ts = latest_dt.timestamp() - overlap_seconds
+
+                    for bar in bars:
+                        timestamp = _coerce_float(bar.get("timestamp"))
+                        if timestamp is None or timestamp <= 0:
+                            continue
+                        if replay_after_ts is not None and timestamp < replay_after_ts:
+                            continue
+
+                        bar_time = datetime.fromtimestamp(timestamp, UTC)
+                        record = session.scalar(
+                            select(StrategyBarHistory).where(
+                                StrategyBarHistory.strategy_code.in_(strategy_code_candidates(code)),
+                                StrategyBarHistory.symbol == normalized_symbol,
+                                StrategyBarHistory.interval_secs == int(interval_secs),
+                                StrategyBarHistory.bar_time == bar_time,
+                            )
+                        )
+                        if record is None:
+                            record = StrategyBarHistory(
+                                strategy_code=code,
+                                symbol=normalized_symbol,
+                                interval_secs=int(interval_secs),
+                                bar_time=bar_time,
+                                position_state="flat",
+                                position_quantity=0,
+                            )
+                            session.add(record)
+
+                        record.open_price = Decimal(str(bar["open"]))
+                        record.high_price = Decimal(str(bar["high"]))
+                        record.low_price = Decimal(str(bar["low"]))
+                        record.close_price = Decimal(str(bar["close"]))
+                        record.volume = int(bar["volume"])
+                        record.trade_count = int(bar.get("trade_count", 0) or 0)
+                        persisted_count += 1
+
+                if persisted_count > 0:
+                    session.commit()
+        except Exception:
+            self.logger.exception(
+                "failed persisting generic provider history bars for %s @ %ss into %s",
+                normalized_symbol,
+                interval_secs,
+                ",".join(valid_codes),
+            )
+            return 0
+
+        return persisted_count
 
     async def _hydrate_recent_schwab_historical_bars(self, symbols: set[str]) -> None:
         if not symbols:
@@ -4812,6 +5981,131 @@ class StrategyEngineService:
         if hydrated_any:
             await self._publish_strategy_state_snapshot()
 
+    @staticmethod
+    def _latest_expected_completed_bar_timestamp(
+        *,
+        now: datetime,
+        interval_secs: int,
+    ) -> float | None:
+        interval = max(1, int(interval_secs))
+        current_bucket_start = int(now.timestamp() // interval) * interval
+        latest_completed_bucket_start = float(current_bucket_start - interval)
+        session_start = current_scanner_session_start_utc(now).timestamp()
+        if latest_completed_bucket_start < session_start:
+            return None
+        return latest_completed_bucket_start
+
+    @staticmethod
+    def _latest_runtime_completed_bar_timestamp(
+        runtime: StrategyBotRuntime,
+        symbol: str,
+    ) -> float | None:
+        builder = runtime.builder_manager.get_builder(symbol)
+        if builder is None:
+            return None
+        try:
+            bars = builder.get_bars_as_dicts()
+        except Exception:
+            return None
+        if not bars:
+            return None
+        latest = bars[-1]
+        if not isinstance(latest, dict):
+            return _coerce_float(getattr(latest, "timestamp", None))
+        return _coerce_float(latest.get("timestamp"))
+
+    async def _refresh_stale_schwab_1m_history(self) -> tuple[int, int]:
+        runtime = self.state.bots.get("schwab_1m")
+        if not isinstance(runtime, StrategyBotRuntime):
+            return 0, 0
+        if not runtime.use_live_aggregate_bars or not runtime.live_aggregate_bars_are_final:
+            return 0, 0
+
+        now = utcnow()
+        expected_latest_completed = self._latest_expected_completed_bar_timestamp(
+            now=now,
+            interval_secs=60,
+        )
+        if expected_latest_completed is None:
+            return 0, 0
+        session_start_timestamp = current_scanner_session_start_utc(now).timestamp()
+
+        intent_count = 0
+        refreshed_bar_count = 0
+        refresh_interval = max(1, int(self._schwab_1m_history_refresh_interval_secs))
+        required_bars = max(2, runtime.required_history_bars())
+
+        for symbol in sorted(runtime.active_symbols()):
+            normalized = str(symbol).upper()
+            last_refresh_at = self._schwab_1m_last_history_refresh_at.get(normalized)
+            if (
+                last_refresh_at is not None
+                and (now - last_refresh_at).total_seconds() < refresh_interval
+            ):
+                continue
+
+            latest_runtime_completed = self._latest_runtime_completed_bar_timestamp(runtime, normalized)
+            if (
+                latest_runtime_completed is not None
+                and latest_runtime_completed >= expected_latest_completed
+            ):
+                continue
+
+            self._schwab_1m_last_history_refresh_at[normalized] = now
+            bars = await self._load_schwab_history_bars(
+                symbol=normalized,
+                interval_secs=60,
+                required_bars=required_bars,
+            )
+            if not bars:
+                continue
+
+            fresh_completed_bars = [
+                bar
+                for bar in bars
+                if (
+                    (timestamp := _coerce_float(bar.get("timestamp"))) is not None
+                    and timestamp >= session_start_timestamp
+                    and timestamp <= expected_latest_completed
+                    and (
+                        latest_runtime_completed is None
+                        or timestamp > latest_runtime_completed
+                    )
+                )
+            ]
+            if not fresh_completed_bars:
+                continue
+
+            for bar in fresh_completed_bars:
+                intents = self.state.handle_live_bar(
+                    symbol=normalized,
+                    interval_secs=60,
+                    open_price=float(bar["open"]),
+                    high_price=float(bar["high"]),
+                    low_price=float(bar["low"]),
+                    close_price=float(bar["close"]),
+                    volume=int(bar["volume"]),
+                    timestamp=float(bar["timestamp"]),
+                    trade_count=int(bar.get("trade_count", 1) or 1),
+                    strategy_codes=("schwab_1m",),
+                )
+                for intent in intents:
+                    await self._publish_intent(intent)
+                intent_count += len(intents)
+            refreshed_bar_count += len(fresh_completed_bars)
+            latest_bar_at = datetime.fromtimestamp(
+                float(fresh_completed_bars[-1]["timestamp"]),
+                UTC,
+            ).astimezone(EASTERN_TZ)
+            self.logger.info(
+                "replayed %s fresh Schwab 1m history bars for %s through %s",
+                len(fresh_completed_bars),
+                normalized,
+                latest_bar_at.isoformat(),
+            )
+
+        return intent_count, refreshed_bar_count
+
     async def _load_schwab_history_bars(
         self,
         *,
@@ -4822,6 +6116,7 @@ class StrategyEngineService:
         end_at = utcnow()
         session_start = current_scanner_session_start_utc(end_at)
         interval_minutes = max(1, interval_secs // 60)
+        limit = max(required_bars * 4, required_bars)
         bars = await self._schwab_quote_poll_adapter.fetch_historical_bars(
             symbol,
             interval_minutes=interval_minutes,
@@ -4829,11 +6124,67 @@ class StrategyEngineService:
             end_at=end_at,
             need_extended_hours_data=True,
         )
+        if len(bars) >= required_bars:
+            return bars[-limit:]
+
+        if int(interval_secs) == 60:
+            lookback_days = max(3, min(10, (required_bars // 60) + 2))
+            broader_start = session_start - timedelta(days=lookback_days)
+            broader_bars = await self._schwab_quote_poll_adapter.fetch_historical_bars(
+                symbol,
+                interval_minutes=interval_minutes,
+                start_at=broader_start,
+                end_at=end_at,
+                need_extended_hours_data=True,
+            )
+            if len(broader_bars) > len(bars):
+                bars = broader_bars
+
+        if len(bars) < required_bars:
+            persisted_bars = self._load_persisted_schwab_1m_history_bars(
+                symbol=symbol,
+                limit=limit,
+            )
+            if persisted_bars:
+                bars = self._merge_historical_bar_payloads(persisted_bars, bars)
+
         if bars:
-            return bars[-max(required_bars * 4, required_bars) :]
+            if len(bars) >= required_bars:
+                return bars[-limit:]
 
         if self._schwab_tick_archive is None:
-            return []
+            if bars and len(bars) < required_bars:
+                self.logger.warning(
+                    "short Schwab 1m history for %s: %s bars available, need %s (no archive fallback)",
+                    symbol,
+                    len(bars),
+                    required_bars,
+                )
+            return bars[-limit:] if bars else []
+
+        if len(bars) < required_bars:
+            archived_bars = self._load_recent_archived_schwab_history_bars(
+                symbol=symbol,
+                interval_secs=interval_secs,
+                required_bars=required_bars,
+                end_at=end_at,
+            )
+            if archived_bars:
+                bars = self._merge_historical_bar_payloads(archived_bars, bars)
+                if len(bars) >= required_bars:
+                    return bars[-limit:]
+
+        if int(interval_secs) == 60:
+            archive_live_bars = load_recorded_live_bars(
+                self.settings.schwab_tick_archive_root,
+                symbol=symbol,
+                day=end_at.astimezone(EASTERN_TZ).strftime("%Y-%m-%d"),
+                interval_secs=interval_secs,
+                start_at=session_start.timestamp(),
+                end_at=end_at.timestamp(),
+            )
+            if archive_live_bars:
+                return [bar.__dict__ for bar in archive_live_bars[-limit:]]
 
         archive_bars = load_aggregated_trade_bars(
             self.settings.schwab_tick_archive_root,
@@ -4843,7 +6194,120 @@ class StrategyEngineService:
             start_at_ns=int(session_start.timestamp() * 1_000_000_000),
             end_at_ns=int(end_at.timestamp() * 1_000_000_000),
         )
-        return [bar.__dict__ for bar in archive_bars[-max(required_bars * 4, required_bars) :]]
+        merged = self._merge_historical_bar_payloads(
+            [bar.__dict__ for bar in archive_bars[-limit:]],
+            bars,
+        )
+        if len(merged) < required_bars:
+            self.logger.warning(
+                "short Schwab 1m history for %s after all fallbacks: %s bars available, need %s",
+                symbol,
+                len(merged),
+                required_bars,
+            )
+        return merged[-limit:]
+
+    @staticmethod
+    def _merge_historical_bar_payloads(
+        *sources: Sequence[dict[str, float | int]],
+    ) -> list[dict[str, float | int]]:
+        merged: dict[float, dict[str, float | int]] = {}
+        for source in sources:
+            for bar in source:
+                timestamp = _coerce_float(bar.get("timestamp"))
+                if timestamp is None or timestamp <= 0:
+                    continue
+                merged[timestamp] = {
+                    "open": float(bar["open"]),
+                    "high": float(bar["high"]),
+                    "low": float(bar["low"]),
+                    "close": float(bar["close"]),
+                    "volume": int(bar["volume"]),
+                    "timestamp": float(timestamp),
+                    "trade_count": int(bar.get("trade_count", 1) or 1),
+                }
+        return [merged[key] for key in sorted(merged)]
+
+    def _load_persisted_schwab_1m_history_bars(
+        self,
+        *,
+        symbol: str,
+        limit: int,
+    ) -> list[dict[str, float | int]]:
+        if self.session_factory is None:
+            return []
+        normalized_symbol = str(symbol).upper()
+        try:
+            with self.session_factory() as session:
+                records = list(
+                    session.scalars(
+                        select(StrategyBarHistory)
+                        .where(
+                            StrategyBarHistory.strategy_code == "schwab_1m",
+                            StrategyBarHistory.symbol == normalized_symbol,
+                            StrategyBarHistory.interval_secs == 60,
+                        )
+                        .order_by(StrategyBarHistory.bar_time.desc())
+                        .limit(max(1, int(limit)))
+                    ).all()
+                )
+        except Exception:
+            self.logger.exception("failed loading persisted Schwab 1m history for %s", normalized_symbol)
+            return []
+
+        records.reverse()
+        return [
+            {
+                "open": float(record.open_price),
+                "high": float(record.high_price),
+                "low": float(record.low_price),
+                "close": float(record.close_price),
+                "volume": int(record.volume),
+                "timestamp": record.bar_time.replace(tzinfo=UTC).timestamp()
+                if record.bar_time.tzinfo is None
+                else record.bar_time.astimezone(UTC).timestamp(),
+                "trade_count": int(record.trade_count or 0),
+            }
+            for record in records
+        ]
+
+    def _load_recent_archived_schwab_history_bars(
+        self,
+        *,
+        symbol: str,
+        interval_secs: int,
+        required_bars: int,
+        end_at: datetime,
+    ) -> list[dict[str, float | int]]:
+        root_path = self.settings.schwab_tick_archive_root
+        limit = max(required_bars * 4, required_bars)
+        lookback_days = max(3, min(10, (required_bars // 60) + 2))
+        merged: list[dict[str, float | int]] = []
+        normalized_symbol = str(symbol).upper()
+        for offset in range(lookback_days, -1, -1):
+            day_dt = end_at.astimezone(EASTERN_TZ) - timedelta(days=offset)
+            day = day_dt.strftime("%Y-%m-%d")
+            if int(interval_secs) == 60:
+                live_bars = load_recorded_live_bars(
+                    root_path,
+                    symbol=normalized_symbol,
+                    day=day,
+                    interval_secs=interval_secs,
+                )
+                if live_bars:
+                    merged.extend([bar.__dict__ for bar in live_bars])
+                    continue
+            archive_bars = load_aggregated_trade_bars(
+                root_path,
+                symbol=normalized_symbol,
+                day=day,
+                interval_secs=interval_secs,
+            )
+            if archive_bars:
+                merged.extend([bar.__dict__ for bar in archive_bars])
+        if not merged:
+            return []
+        return self._merge_historical_bar_payloads(merged)[-limit:]
 
     def _build_schwab_stream_client(self) -> SchwabStreamerClient | None:
         if not self.state.schwab_stream_strategy_codes():
@@ -4855,6 +6319,81 @@ class StrategyEngineService:
             return None
         return SchwabTickArchive(self.settings.schwab_tick_archive_root)
 
+    def _load_schwab_trade_extended_vwap_series(
+        self,
+        symbol: str,
+        bar_timestamps: Sequence[float],
+        interval_secs: int,
+    ) -> dict[float, float]:
+        if self._schwab_tick_archive is None or not bar_timestamps:
+            return {}
+
+        normalized_symbol = str(symbol).upper().strip()
+        if not normalized_symbol:
+            return {}
+
+        clean_timestamps: list[float] = []
+        for value in bar_timestamps:
+            try:
+                timestamp = float(value)
+            except (TypeError, ValueError):
+                continue
+            if timestamp > 0:
+                clean_timestamps.append(timestamp)
+        if not clean_timestamps:
+            return {}
+
+        latest_timestamp = max(clean_timestamps)
+        session_day = datetime.fromtimestamp(latest_timestamp, UTC).astimezone(EASTERN_TZ).strftime("%Y-%m-%d")
+        session_date = datetime.strptime(session_day, "%Y-%m-%d").replace(tzinfo=EASTERN_TZ)
+        session_start_ns = int(
+            session_date.replace(hour=4, minute=0, second=0, microsecond=0).astimezone(UTC).timestamp()
+            * 1_000_000_000
+        )
+        session_end_ns = int(
+            session_date.replace(hour=20, minute=0, second=0, microsecond=0).astimezone(UTC).timestamp()
+            * 1_000_000_000
+        )
+        fetch_end_ns = min(
+            session_end_ns,
+            int((latest_timestamp + max(1, int(interval_secs))) * 1_000_000_000),
+        )
+        if fetch_end_ns <= session_start_ns:
+            return {}
+
+        trades = load_recorded_trades(
+            self.settings.schwab_tick_archive_root,
+            symbol=normalized_symbol,
+            day=session_day,
+            start_at_ns=session_start_ns,
+            end_at_ns=fetch_end_ns,
+        )
+        if not trades:
+            return {}
+
+        ordered_targets = sorted(set(clean_timestamps))
+        ordered_trades = sorted(trades, key=lambda record: int(record.timestamp_ns or 0))
+        cumulative_price_volume = 0.0
+        cumulative_volume = 0.0
+        trade_index = 0
+        interval_ns = max(1, int(interval_secs)) * 1_000_000_000
+        result: dict[float, float] = {}
+
+        for bar_timestamp in ordered_targets:
+            bar_end_ns = int(bar_timestamp * 1_000_000_000) + interval_ns
+            while trade_index < len(ordered_trades):
+                trade = ordered_trades[trade_index]
+                event_ns = int(trade.timestamp_ns or 0)
+                if event_ns >= bar_end_ns:
+                    break
+                cumulative_price_volume += float(trade.price) * int(trade.size)
+                cumulative_volume += int(trade.size)
+                trade_index += 1
+            if cumulative_volume > 0:
+                result[bar_timestamp] = cumulative_price_volume / cumulative_volume
+
+        return result
+
     def _enqueue_schwab_trade_tick(self, record: TradeTickRecord) -> None:
         self._schwab_trade_queue.put_nowait(record)
 
@@ -4862,6 +6401,11 @@ class StrategyEngineService:
         if not self._should_keep_schwab_quote_tick(record.symbol):
             return
         self._schwab_quote_queue.put_nowait(record)
+
+    def _enqueue_schwab_live_bar(self, record: LiveBarRecord) -> None:
+        if not self._should_keep_schwab_live_bar(record.symbol, interval_secs=record.interval_secs):
+            return
+        self._schwab_bar_queue.put_nowait(record)
 
     def _should_keep_schwab_quote_tick(self, symbol: str) -> bool:
         normalized = str(symbol).upper()
@@ -4871,6 +6415,25 @@ class StrategyEngineService:
             if callable(active_symbols) and normalized in active_symbols():
                 return True
         return False
+
+    def _should_keep_schwab_live_bar(self, symbol: str, *, interval_secs: int) -> bool:
+        normalized = str(symbol).upper()
+        for code in self._schwab_live_bar_strategy_codes(interval_secs):
+            runtime = self.state.bots.get(code)
+            stream_symbols = getattr(runtime, "stream_symbols", None)
+            if callable(stream_symbols) and normalized in stream_symbols():
+                return True
+        return False
+
+    def _schwab_live_bar_strategy_codes(self, interval_secs: int) -> tuple[str, ...]:
+        if int(interval_secs) != 60:
+            return ()
+        runtime = self.state.bots.get("schwab_1m")
+        if not isinstance(runtime, StrategyBotRuntime):
+            return ()
+        if not runtime.use_live_aggregate_bars:
+            return ()
+        return ("schwab_1m",)
 
     async def _drain_schwab_stream_queues(self) -> tuple[int, int]:
         intent_count = 0
@@ -4883,12 +6446,53 @@ class StrategyEngineService:
             self._record_schwab_stream_activity(quote.symbol, activity_kind="quote")
             if self._schwab_tick_archive is not None:
                 self._schwab_tick_archive.record_quote(quote)
-            self.state.handle_quote_tick(
+            intents = self.state.handle_quote_tick(
                 symbol=quote.symbol,
                 bid_price=quote.bid_price,
                 ask_price=quote.ask_price,
                 strategy_codes=self.state.schwab_stream_strategy_codes(),
             )
+            for intent in intents:
+                await self._publish_intent(intent)
+            if intents:
+                await self._sync_subscription_targets()
+                await self._publish_strategy_state_snapshot()
+
+        while event_count < max_events and not self._schwab_bar_queue.empty():
+            bar = await self._schwab_bar_queue.get()
+            event_count += 1
+            self._record_schwab_stream_activity(bar.symbol, activity_kind="bar")
+            if self._schwab_tick_archive is not None:
+                self._schwab_tick_archive.record_live_bar(bar)
+            strategy_codes = self._schwab_live_bar_strategy_codes(bar.interval_secs)
+            intents = self.state.handle_live_bar(
+                symbol=bar.symbol,
+                interval_secs=bar.interval_secs,
+                open_price=bar.open,
+                high_price=bar.high,
+                low_price=bar.low,
+                close_price=bar.close,
+                volume=bar.volume,
+                timestamp=bar.timestamp,
+                trade_count=bar.trade_count,
+                coverage_started_at=(
+                    float(bar.coverage_started_at)
+                    if bar.coverage_started_at is not None
+                    else None
+                ),
+                strategy_codes=strategy_codes,
+            )
+            for intent in intents:
+                await self._publish_intent(intent)
+            intent_count += len(intents)
+            if intents:
+                self.logger.info(
+                    "generated %s intents from %s Schwab live bar",
+                    len(intents),
+                    bar.symbol,
+                )
+            elif strategy_codes:
+                await self._publish_strategy_state_snapshot_for_generic_bot_activity()
 
         while event_count < max_events and not self._schwab_trade_queue.empty():
             trade = await self._schwab_trade_queue.get()
@@ -4919,7 +6523,7 @@ class StrategyEngineService:
     def _record_schwab_stream_activity(self, symbol: str, *, activity_kind: str) -> None:
         normalized = str(symbol).upper()
         observed_at = utcnow()
-        if activity_kind == "trade":
+        if activity_kind in {"trade", "bar"}:
             self._schwab_symbol_last_stream_trade_at[normalized] = observed_at
         else:
             self._schwab_symbol_last_stream_quote_at[normalized] = observed_at
@@ -5213,6 +6817,7 @@ class StrategyEngineService:
             "but live Schwab ticks are temporarily sparse."
         )
         open_symbol_set = set(open_symbols)
+        auth_failure = bool(self._schwab_stream_failure_reason())
         stale_symbols: dict[str, tuple[str, ...]] = {}
         warning_symbols: dict[str, tuple[str, ...]] = {}
         for symbol, codes in active_symbols.items():
@@ -5222,6 +6827,9 @@ class StrategyEngineService:
                 now=now,
                 has_open_position=has_open_position,
             ):
+                continue
+            if auth_failure:
+                stale_symbols[symbol] = codes
                 continue
             if stream_disconnected or self._is_schwab_symbol_data_halt_stale(
                 symbol,
@@ -5295,7 +6903,6 @@ class StrategyEngineService:
             return 1 if state_changed else 0
 
         if self._schwab_stream_client is not None:
-            auth_failure = bool(self._schwab_stream_failure_reason())
             should_resubscribe = any(
                 (
                     now - self._schwab_symbol_last_resubscribe_at.get(symbol, datetime.min.replace(tzinfo=UTC))
@@ -5362,12 +6969,17 @@ class StrategyEngineService:
 
             bid_price = quote.get("bid_price")
             ask_price = quote.get("ask_price")
-            self.state.handle_quote_tick(
+            intents = self.state.handle_quote_tick(
                 symbol=symbol,
                 bid_price=bid_price,
                 ask_price=ask_price,
                 strategy_codes=self.state.schwab_stream_strategy_codes(),
             )
+            for intent in intents:
+                await self._publish_intent(intent)
+            if intents:
+                await self._sync_subscription_targets()
+                await self._publish_strategy_state_snapshot()
 
             executable_price = bid_price if bid_price is not None and bid_price > 0 else None
             if executable_price is None:
@@ -5743,8 +7355,7 @@ class StrategyEngineService:
 
         try:
             with self.session_factory() as session:
-                for code in self.state.schwab_stream_strategy_codes():
-                    runtime = self.state.bots.get(code)
+                for code, runtime in self.state.bots.items():
                     if not isinstance(runtime, StrategyBotRuntime):
                         continue
 
@@ -5753,35 +7364,16 @@ class StrategyEngineService:
                         continue
 
                     for symbol in symbols:
-                        history_limit = self._runtime_bar_history_restore_limit(runtime)
-                        query = (
-                            select(StrategyBarHistory)
-                            .where(
-                                StrategyBarHistory.strategy_code == code,
-                                StrategyBarHistory.symbol == symbol,
-                                StrategyBarHistory.interval_secs == runtime.definition.interval_secs,
-                                StrategyBarHistory.bar_time >= session_start_utc,
-                            )
-                            .order_by(StrategyBarHistory.bar_time.asc())
+                        bars = self._load_runtime_restore_bars(
+                            session=session,
+                            code=code,
+                            runtime=runtime,
+                            symbol=symbol,
+                            session_start_utc=session_start_utc,
                         )
-                        if history_limit is not None:
-                            query = query.limit(history_limit)
-                        records = list(session.scalars(query).all())
-                        if not records:
+                        if not bars:
                             continue
 
-                        bars = [
-                            {
-                                "open": float(record.open_price),
-                                "high": float(record.high_price),
-                                "low": float(record.low_price),
-                                "close": float(record.close_price),
-                                "volume": int(record.volume),
-                                "timestamp": float(record.bar_time.timestamp()),
-                                "trade_count": int(record.trade_count),
-                            }
-                            for record in records
-                        ]
                         runtime.seed_bars(symbol, bars)
                         restored_pairs += 1
         except Exception:
@@ -5794,10 +7386,109 @@ class StrategyEngineService:
                 restored_pairs,
             )
 
+    def _load_runtime_restore_bars(
+        self,
+        *,
+        session: Session,
+        code: str,
+        runtime: StrategyBotRuntime,
+        symbol: str,
+        session_start_utc: datetime,
+    ) -> list[dict[str, float | int]]:
+        history_limit = self._runtime_bar_history_restore_limit(runtime)
+        if code == "schwab_1m" and int(runtime.definition.interval_secs) == 60:
+            return self._load_schwab_1m_runtime_restore_bars(
+                symbol=symbol,
+                history_limit=history_limit,
+                session=session,
+                session_start_utc=session_start_utc,
+            )
+
+        query = (
+            select(StrategyBarHistory)
+            .where(
+                StrategyBarHistory.strategy_code.in_(strategy_code_candidates(code)),
+                StrategyBarHistory.symbol == symbol,
+                StrategyBarHistory.interval_secs == runtime.definition.interval_secs,
+                StrategyBarHistory.bar_time >= session_start_utc,
+            )
+            .order_by(StrategyBarHistory.bar_time.asc())
+        )
+        if history_limit is not None:
+            query = query.limit(history_limit)
+        records = list(session.scalars(query).all())
+        return self._strategy_bar_history_records_to_payloads(records)
+
+    def _load_schwab_1m_runtime_restore_bars(
+        self,
+        *,
+        symbol: str,
+        history_limit: int | None,
+        session: Session,
+        session_start_utc: datetime,
+    ) -> list[dict[str, float | int]]:
+        required_bars = max(1, int(history_limit or 1))
+        restore_limit = max(required_bars * 4, required_bars)
+
+        persisted_records = list(
+            session.scalars(
+                select(StrategyBarHistory)
+                .where(
+                    StrategyBarHistory.strategy_code == "schwab_1m",
+                    StrategyBarHistory.symbol == symbol,
+                    StrategyBarHistory.interval_secs == 60,
+                )
+                .order_by(StrategyBarHistory.bar_time.desc())
+                .limit(restore_limit)
+            ).all()
+        )
+        persisted_records.reverse()
+        persisted_bars = self._strategy_bar_history_records_to_payloads(persisted_records)
+
+        archived_bars: list[dict[str, float | int]] = []
+        if self._schwab_tick_archive is not None:
+            archived_bars = self._load_recent_archived_schwab_history_bars(
+                symbol=symbol,
+                interval_secs=60,
+                required_bars=required_bars,
+                end_at=self.state.alert_engine.now_provider(),
+            )
+
+        if archived_bars:
+            merged = self._merge_historical_bar_payloads(persisted_bars, archived_bars)
+            current_session_bars = [
+                bar
+                for bar in merged
+                if float(bar["timestamp"]) >= session_start_utc.timestamp()
+            ]
+            if current_session_bars:
+                return merged[-restore_limit:]
+
+        if persisted_bars:
+            return persisted_bars[-restore_limit:]
+        return []
+
+    @staticmethod
+    def _strategy_bar_history_records_to_payloads(
+        records: Sequence[StrategyBarHistory],
+    ) -> list[dict[str, float | int]]:
+        return [
+            {
+                "open": float(record.open_price),
+                "high": float(record.high_price),
+                "low": float(record.low_price),
+                "close": float(record.close_price),
+                "volume": int(record.volume),
+                "timestamp": float(record.bar_time.timestamp()),
+                "trade_count": int(record.trade_count),
+            }
+            for record in records
+        ]
+
     def _runtime_bar_history_restore_limit(self, runtime: StrategyBotRuntime) -> int | None:
         trading_config = runtime.definition.trading_config
         indicator_config = runtime.definition.indicator_config
-        if runtime.definition.code in {"macd_30s", "webull_30s"} and runtime.definition.interval_secs == 30:
+        if runtime.definition.code in {"macd_30s", "polygon_30s"} and runtime.definition.interval_secs == 30:
             return None
         indicator_min_bars = int(indicator_config.macd_slow + indicator_config.macd_signal)
         strategy_min_bars = int(getattr(trading_config, "schwab_native_warmup_bars_required", 0) or 0)
@@ -5858,12 +7549,15 @@ class StrategyEngineService:
             self.logger.exception("failed purging stale manual stop snapshots")
 
     def _schwab_stream_failure_reason(self) -> str:
-        client = self._schwab_stream_client
-        last_error = str(getattr(client, "last_error", "") or "").lower()
-        if "refresh_token_authentication_error" in last_error or "unsupported_token_type" in last_error:
-            return "Schwab OAuth refresh failed on the VPS; reauthorize Schwab tokens before trading"
-        if "failed refreshing schwab token" in last_error:
-            return "Schwab OAuth refresh failed on the VPS; reauthorize Schwab tokens before trading"
+        errors = [
+            str(getattr(self._schwab_stream_client, "last_error", "") or "").lower(),
+            str(getattr(self._schwab_quote_poll_adapter, "last_error", "") or "").lower(),
+        ]
+        for last_error in errors:
+            if "refresh_token_authentication_error" in last_error or "unsupported_token_type" in last_error:
+                return "Schwab OAuth refresh failed on the VPS; reauthorize Schwab tokens before trading"
+            if "failed refreshing schwab token" in last_error:
+                return "Schwab OAuth refresh failed on the VPS; reauthorize Schwab tokens before trading"
         return ""
 
     def _reconcile_runtime_state_from_database(self, *, log_when_changed: bool) -> bool:
@@ -5906,7 +7600,7 @@ class StrategyEngineService:
             self.logger.exception("failed to reconcile runtime state from database")
             return False
 
-        expected_positions: dict[str, dict[str, tuple[int, float]]] = {
+        expected_positions: dict[str, dict[str, tuple[int, float, str]]] = {
             code: {}
             for code in self.state.bots
         }
@@ -5922,6 +7616,36 @@ class StrategyEngineService:
             code: set()
             for code in self.state.bots
         }
+
+        position_symbols = {str(position.symbol).upper() for position in open_virtual_positions}
+        strategy_ids = {position.strategy_id for position in open_virtual_positions}
+        account_ids = {position.broker_account_id for position in open_virtual_positions}
+        latest_open_paths: dict[tuple[UUID, UUID, str], str] = {}
+        if position_symbols and strategy_ids and account_ids:
+            open_intents = session.scalars(
+                select(TradeIntent)
+                .where(
+                    TradeIntent.intent_type == "open",
+                    TradeIntent.side == "buy",
+                    TradeIntent.strategy_id.in_(list(strategy_ids)),
+                    TradeIntent.broker_account_id.in_(list(account_ids)),
+                    TradeIntent.symbol.in_(list(position_symbols)),
+                    not_(TradeIntent.status.in_(("rejected", "cancelled"))),
+                )
+                .order_by(TradeIntent.created_at.asc())
+            ).all()
+            for intent in open_intents:
+                payload = intent.payload if isinstance(intent.payload, dict) else {}
+                metadata = payload.get("metadata", {}) if isinstance(payload.get("metadata", {}), dict) else {}
+                path = str(
+                    metadata.get("path")
+                    or metadata.get("confirmation_path")
+                    or metadata.get("decision_path")
+                    or ""
+                ).strip()
+                if not path and str(intent.reason or "").startswith("ENTRY_"):
+                    path = str(intent.reason).removeprefix("ENTRY_").strip()
+                latest_open_paths[(intent.strategy_id, intent.broker_account_id, str(intent.symbol).upper())] = path
 
         for virtual_position in open_virtual_positions:
             strategy = strategies.get(virtual_position.strategy_id)
@@ -5940,6 +7664,7 @@ class StrategyEngineService:
             expected_positions.setdefault(strategy.code, {})[symbol] = (
                 int(virtual_position.quantity),
                 float(virtual_position.average_price),
+                latest_open_paths.get((strategy.id, account.id, symbol), ""),
             )
 
         for order in open_orders:
@@ -5984,7 +7709,7 @@ class StrategyEngineService:
             expected_runtime_positions = expected_positions.get(code, {})
             runtime_positions = self._runtime_positions_by_symbol(runtime)
 
-            for symbol, (quantity, average_price) in expected_runtime_positions.items():
+            for symbol, (quantity, average_price, path) in expected_runtime_positions.items():
                 runtime_position = runtime_positions.get(symbol)
                 runtime_quantity = int(float(runtime_position.get("quantity", 0) or 0)) if runtime_position else 0
                 runtime_average = (
@@ -6000,6 +7725,7 @@ class StrategyEngineService:
                     symbol=symbol,
                     quantity=quantity,
                     average_price=average_price,
+                    path=path,
                 )
                 restored_positions += 1
 
@@ -6082,6 +7808,7 @@ class StrategyEngineService:
         symbol: str,
         quantity: int,
         average_price: float,
+        path: str = "",
     ) -> None:
         restore_position = getattr(runtime, "restore_position", None)
         if restore_position is None:
@@ -6090,7 +7817,7 @@ class StrategyEngineService:
             symbol=symbol,
             quantity=quantity,
             average_price=average_price,
-            path="DB_RECONCILE",
+            path=path or "DB_RECONCILE",
         )
 
     def _drop_runtime_position(self, runtime: StrategyRuntime, symbol: str) -> None:

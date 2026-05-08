@@ -7,7 +7,7 @@ This plan is for the first Mai Tai AI trade coach foundation.
 The first implementation is intentionally limited to:
 
 - `Schwab 30 Sec Bot` (`macd_30s`)
-- `Webull 30 Sec Bot` (`webull_30s`)
+- `Polygon 30 Sec Bot` (`polygon_30s`)
 - post-trade review first
 - no live trade blocking
 - no direct order submission

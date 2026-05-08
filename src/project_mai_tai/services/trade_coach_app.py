@@ -21,7 +21,7 @@ SERVICE_NAME = "trade-coach"
 
 def _build_rulebook(settings: Settings) -> dict[str, object]:
     return {
-        "scope": ["macd_30s", "webull_30s"],
+        "scope": ["macd_30s", "polygon_30s"],
         "notes": [
             "Post-trade coaching only in this phase.",
             "Do not treat paper and live execution as interchangeable.",
@@ -53,12 +53,12 @@ def _build_rulebook(settings: Settings) -> dict[str, object]:
                 "live_aggregate_bars_enabled": settings.strategy_macd_30s_live_aggregate_bars_enabled,
             },
             {
-                "strategy_code": "webull_30s",
-                "broker_account_name": settings.strategy_webull_30s_account_name,
+                "strategy_code": "polygon_30s",
+                "broker_account_name": settings.strategy_polygon_30s_account_name,
                 "execution_mode": settings.execution_mode_for_provider(
-                    settings.provider_for_strategy("webull_30s")
+                    settings.provider_for_strategy("polygon_30s")
                 ),
-                "live_aggregate_bars_enabled": settings.strategy_webull_30s_live_aggregate_bars_enabled,
+                "live_aggregate_bars_enabled": settings.strategy_polygon_30s_live_aggregate_bars_enabled,
             },
         ],
     }
@@ -113,7 +113,7 @@ class TradeCoachApp:
         _install_signal_handlers(stop_event)
         strategy_accounts = [
             ("macd_30s", self.settings.strategy_macd_30s_account_name),
-            ("webull_30s", self.settings.strategy_webull_30s_account_name),
+            ("polygon_30s", self.settings.strategy_polygon_30s_account_name),
         ]
         self.logger.info("trade coach starting for %s", ", ".join(code for code, _ in strategy_accounts))
 

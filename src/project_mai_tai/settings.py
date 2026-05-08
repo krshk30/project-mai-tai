@@ -3,8 +3,20 @@ from __future__ import annotations
 from functools import lru_cache
 import json
 
-from pydantic import computed_field
+from pydantic import AliasChoices, Field, computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def _legacy_strategy_alias_field(default: object, primary_name: str, legacy_name: str) -> object:
+    return Field(
+        default=default,
+        validation_alias=AliasChoices(
+            primary_name,
+            legacy_name,
+            f"MAI_TAI_{primary_name.upper()}",
+            f"MAI_TAI_{legacy_name.upper()}",
+        ),
+    )
 
 
 class Settings(BaseSettings):
@@ -13,6 +25,7 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
+        populate_by_name=True,
     )
 
     app_name: str = "project-mai-tai"
@@ -57,7 +70,7 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
     redis_stream_prefix: str = "mai_tai"
     redis_snapshot_batch_stream_maxlen: int = 180
-    redis_market_data_stream_maxlen: int = 10_000
+    redis_market_data_stream_maxlen: int = 100_000
     redis_market_data_subscription_stream_maxlen: int = 250
     redis_strategy_intent_stream_maxlen: int = 2_000
     redis_order_event_stream_maxlen: int = 2_000
@@ -81,20 +94,52 @@ class Settings(BaseSettings):
     market_data_warmup_bar_limit: int = 50_000
     market_data_live_aggregate_stream_enabled: bool = False
     strategy_macd_30s_enabled: bool = True
-    strategy_webull_30s_enabled: bool = False
+    strategy_polygon_30s_enabled: bool = _legacy_strategy_alias_field(
+        False,
+        "strategy_polygon_30s_enabled",
+        "strategy_webull_30s_enabled",
+    )
     strategy_schwab_1m_enabled: bool = False
     strategy_macd_30s_live_aggregate_bars_enabled: bool = False
     strategy_macd_30s_live_aggregate_fallback_enabled: bool = True
     strategy_macd_30s_live_aggregate_stale_after_seconds: int = 3
-    strategy_webull_30s_live_aggregate_bars_enabled: bool = False
-    strategy_webull_30s_live_aggregate_fallback_enabled: bool = True
-    strategy_webull_30s_live_aggregate_stale_after_seconds: int = 3
+    strategy_macd_30s_tick_bar_close_grace_seconds: float = 7.5
+    strategy_macd_30s_trade_stream_service: str = "LEVELONE_EQUITIES"
+    strategy_polygon_30s_live_aggregate_bars_enabled: bool = _legacy_strategy_alias_field(
+        True,
+        "strategy_polygon_30s_live_aggregate_bars_enabled",
+        "strategy_webull_30s_live_aggregate_bars_enabled",
+    )
+    strategy_polygon_30s_live_aggregate_fallback_enabled: bool = _legacy_strategy_alias_field(
+        False,
+        "strategy_polygon_30s_live_aggregate_fallback_enabled",
+        "strategy_webull_30s_live_aggregate_fallback_enabled",
+    )
+    strategy_polygon_30s_live_aggregate_stale_after_seconds: int = _legacy_strategy_alias_field(
+        3,
+        "strategy_polygon_30s_live_aggregate_stale_after_seconds",
+        "strategy_webull_30s_live_aggregate_stale_after_seconds",
+    )
+    strategy_polygon_30s_tick_bar_close_grace_seconds: float = _legacy_strategy_alias_field(
+        2.0,
+        "strategy_polygon_30s_tick_bar_close_grace_seconds",
+        "strategy_webull_30s_tick_bar_close_grace_seconds",
+    )
+    strategy_polygon_30s_trade_stream_service: str = _legacy_strategy_alias_field(
+        "TIMESALE_EQUITY",
+        "strategy_polygon_30s_trade_stream_service",
+        "strategy_webull_30s_trade_stream_service",
+    )
     strategy_macd_30s_massive_indicator_overlay_enabled: bool = True
     strategy_macd_30s_probe_enabled: bool = False
     strategy_macd_30s_reclaim_enabled: bool = False
     strategy_macd_30s_retest_enabled: bool = False
     strategy_macd_30s_default_quantity: int = 100
-    strategy_webull_30s_default_quantity: int = 100
+    strategy_polygon_30s_default_quantity: int = _legacy_strategy_alias_field(
+        100,
+        "strategy_polygon_30s_default_quantity",
+        "strategy_webull_30s_default_quantity",
+    )
     strategy_schwab_1m_default_quantity: int = 100
     strategy_macd_30s_reclaim_excluded_symbols: str = "JEM,CYCN,BFRG,UCAR,BBGI"
     scanner_feed_retention_enabled: bool = True
@@ -109,6 +154,9 @@ class Settings(BaseSettings):
     scanner_feed_retention_drop_cooldown_minutes: int = 30
     scanner_feed_retention_drop_max_5m_range_pct: float = 1.0
     scanner_feed_retention_drop_max_5m_volume_abs: float = 75_000.0
+    market_data_archive_retention_enabled: bool = True
+    market_data_archive_retention_minutes: int = 120
+    market_data_archive_retention_max_symbols: int = 50
     strategy_macd_1m_enabled: bool = False
     strategy_tos_enabled: bool = False
     strategy_runner_enabled: bool = False
@@ -116,7 +164,11 @@ class Settings(BaseSettings):
     strategy_macd_1m_taapi_indicator_source_enabled: bool = False
     strategy_macd_30s_common_config_overrides_json: str = ""
     strategy_macd_30s_config_overrides_json: str = ""
-    strategy_webull_30s_config_overrides_json: str = ""
+    strategy_polygon_30s_config_overrides_json: str = _legacy_strategy_alias_field(
+        "",
+        "strategy_polygon_30s_config_overrides_json",
+        "strategy_webull_30s_config_overrides_json",
+    )
     strategy_schwab_1m_config_overrides_json: str = ""
     strategy_macd_30s_probe_config_overrides_json: str = ""
     strategy_macd_30s_reclaim_config_overrides_json: str = ""
@@ -165,8 +217,16 @@ class Settings(BaseSettings):
     alpaca_cancel_confirm_timeout_seconds: float = 5.0
     strategy_macd_30s_account_name: str = "paper:macd_30s"
     strategy_macd_30s_broker_provider: str | None = None
-    strategy_webull_30s_account_name: str = "live:webull_30s"
-    strategy_webull_30s_broker_provider: str | None = "webull"
+    strategy_polygon_30s_account_name: str = _legacy_strategy_alias_field(
+        "live:polygon_30s",
+        "strategy_polygon_30s_account_name",
+        "strategy_webull_30s_account_name",
+    )
+    strategy_polygon_30s_broker_provider: str | None = _legacy_strategy_alias_field(
+        "webull",
+        "strategy_polygon_30s_broker_provider",
+        "strategy_webull_30s_broker_provider",
+    )
     strategy_schwab_1m_account_name: str = "live:schwab_1m"
     strategy_schwab_1m_broker_provider: str | None = "schwab"
     strategy_macd_30s_probe_account_name: str = "paper:macd_30s_probe"
@@ -215,6 +275,15 @@ class Settings(BaseSettings):
     webull_account_id: str | None = None
     oms_broker_sync_interval_seconds: int = 5
     oms_working_order_refresh_seconds: int = 5
+    oms_stop_guard_refresh_stage_1_seconds: float = 1.0
+    oms_stop_guard_refresh_stage_2_seconds: float = 2.0
+    oms_stop_guard_refresh_stage_3_seconds: float = 3.0
+    oms_stop_guard_refresh_stage_1_buffer_pct: float = 3.0
+    oms_stop_guard_refresh_stage_2_buffer_pct: float = 5.0
+    oms_after_hours_stop_guard_quote_max_age_ms: int = 1000
+    oms_after_hours_stop_guard_initial_panic_buffer_pct: float = 1.0
+    oms_after_hours_stop_guard_catastrophic_gap_pct: float = 1.5
+    oms_after_hours_stop_guard_catastrophic_panic_buffer_pct: float = 8.0
 
     dashboard_refresh_seconds: int = 5
     dashboard_snapshot_persistence_enabled: bool = True
@@ -328,8 +397,8 @@ class Settings(BaseSettings):
             override = self._normalize_provider_name(self.strategy_macd_30s_broker_provider)
             if override is not None:
                 return override
-        if normalized_code == "webull_30s":
-            override = self._normalize_provider_name(self.strategy_webull_30s_broker_provider)
+        if normalized_code in {"polygon_30s", "webull_30s"}:
+            override = self._normalize_provider_name(self.strategy_polygon_30s_broker_provider)
             if override is not None:
                 return override
         if normalized_code == "schwab_1m":
@@ -346,8 +415,8 @@ class Settings(BaseSettings):
         normalized_account = str(account_name).strip()
         if normalized_account == self.strategy_macd_30s_account_name:
             return self.provider_for_strategy("macd_30s")
-        if normalized_account == self.strategy_webull_30s_account_name:
-            return self.provider_for_strategy("webull_30s")
+        if normalized_account == self.strategy_polygon_30s_account_name:
+            return self.provider_for_strategy("polygon_30s")
         if normalized_account == self.strategy_schwab_1m_account_name:
             return self.provider_for_strategy("schwab_1m")
         if normalized_account == self.strategy_tos_account_name:
@@ -371,8 +440,8 @@ class Settings(BaseSettings):
             override = self._normalize_provider_name(self.strategy_macd_30s_broker_provider)
             if override is not None:
                 providers.add(override)
-        if self.strategy_webull_30s_enabled:
-            override = self._normalize_provider_name(self.strategy_webull_30s_broker_provider)
+        if self.strategy_polygon_30s_enabled:
+            override = self._normalize_provider_name(self.strategy_polygon_30s_broker_provider)
             if override is not None:
                 providers.add(override)
         if self.strategy_schwab_1m_enabled:
@@ -392,6 +461,20 @@ class Settings(BaseSettings):
         if len(providers) == 1:
             return providers[0]
         return f"mixed ({', '.join(providers)})"
+
+    def market_data_provider_for_strategy(self, strategy_code: str) -> str:
+        normalized_code = str(strategy_code).strip().lower()
+        if normalized_code in {
+            "macd_30s",
+            "macd_30s_probe",
+            "macd_30s_reclaim",
+            "macd_30s_retest",
+            "schwab_1m",
+        }:
+            return "schwab"
+        if normalized_code in {"polygon_30s", "webull_30s"}:
+            return "polygon"
+        return "polygon"
 
     @computed_field
     @property

@@ -67,7 +67,7 @@ class MarketDataGatewayService:
         self._live_aggregate_stream_enabled = (
             self.settings.market_data_live_aggregate_stream_enabled
             or self.settings.strategy_macd_30s_live_aggregate_bars_enabled
-            or self.settings.strategy_webull_30s_live_aggregate_bars_enabled
+            or self.settings.strategy_polygon_30s_live_aggregate_bars_enabled
         )
         self._desired_symbols_by_consumer: dict[str, set[str]] = {
             "static": set(self.settings.market_data_static_symbol_list),
@@ -87,6 +87,7 @@ class MarketDataGatewayService:
             status="starting",
             details={"reference_tickers": str(self.reference_cache.ticker_count())},
         )
+        await self._restore_subscription_state()
 
         loop = asyncio.get_running_loop()
         await self.trade_stream.start(
@@ -99,7 +100,6 @@ class MarketDataGatewayService:
             ),
         )
         await self.trade_stream.sync_subscriptions(self._active_symbols)
-        await self._publish_historical_warmup(self._active_symbols)
 
         tasks = [
             asyncio.create_task(self._snapshot_loop(stop_event)),
@@ -107,6 +107,12 @@ class MarketDataGatewayService:
             asyncio.create_task(self._stream_publish_loop(stop_event)),
             asyncio.create_task(self._heartbeat_loop(stop_event)),
         ]
+        if self._active_symbols and self.settings.market_data_warmup_enabled:
+            tasks.append(
+                asyncio.create_task(
+                    self._publish_historical_warmup(self._active_symbols),
+                )
+            )
 
         try:
             await stop_event.wait()
@@ -144,13 +150,10 @@ class MarketDataGatewayService:
         self._desired_symbols_by_consumer[consumer] = updated
         next_symbols = set().union(*self._desired_symbols_by_consumer.values())
         added_symbols = next_symbols - self._active_symbols
-        refresh_symbols = set(updated) if mode == "replace" and updated else set()
         if next_symbols != self._active_symbols:
             self._active_symbols = next_symbols
             await self.trade_stream.sync_subscriptions(sorted(self._active_symbols))
             await self._publish_historical_warmup(added_symbols)
-        elif refresh_symbols:
-            await self._publish_historical_warmup(refresh_symbols)
         return set(self._active_symbols)
 
     def active_symbols(self) -> set[str]:
@@ -213,6 +216,42 @@ class MarketDataGatewayService:
                         event.payload.consumer_name,
                         len(symbols),
                     )
+
+    async def _restore_subscription_state(self) -> None:
+        stream = stream_name(self.settings.redis_stream_prefix, "market-data-subscriptions")
+        try:
+            entries = await self.redis.xrevrange(stream, count=1)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            self.logger.exception("failed to restore latest market-data subscription state")
+            return
+
+        if not entries:
+            return
+
+        message_id, fields = entries[0]
+        self._subscription_offsets[stream] = message_id
+        data = fields.get("data")
+        if not data:
+            return
+
+        event = MarketDataSubscriptionEvent.model_validate(json.loads(data))
+        symbols = {symbol.upper() for symbol in event.payload.symbols if symbol}
+        current = self._desired_symbols_by_consumer.get(event.payload.consumer_name, set())
+        if event.payload.mode == "replace":
+            updated = symbols
+        elif event.payload.mode == "add":
+            updated = current | symbols
+        else:
+            updated = current - symbols
+
+        self._desired_symbols_by_consumer[event.payload.consumer_name] = updated
+        self._active_symbols = set().union(*self._desired_symbols_by_consumer.values())
+        self.logger.info(
+            "restored market-data subscriptions from stream -> %s symbols",
+            len(self._active_symbols),
+        )
 
     async def _stream_publish_loop(self, stop_event: asyncio.Event) -> None:
         while not stop_event.is_set():

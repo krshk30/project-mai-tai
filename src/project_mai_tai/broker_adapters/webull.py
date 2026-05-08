@@ -24,7 +24,7 @@ def configured_webull_accounts(settings: Settings) -> dict[str, WebullAccountCon
     account_id = (settings.webull_account_id or "").strip()
     if not account_id:
         return configured
-    configured[settings.strategy_webull_30s_account_name] = WebullAccountConfig(account_id=account_id)
+    configured[settings.strategy_polygon_30s_account_name] = WebullAccountConfig(account_id=account_id)
     return configured
 
 

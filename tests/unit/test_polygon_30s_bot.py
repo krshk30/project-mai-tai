@@ -1,0 +1,833 @@
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from unittest.mock import Mock
+
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
+
+from project_mai_tai.broker_adapters.routing import RoutingBrokerAdapter
+from project_mai_tai.broker_adapters.webull import WebullBrokerAdapter
+from project_mai_tai.db.base import Base
+from project_mai_tai.market_data.gateway import MarketDataGatewayService
+from project_mai_tai.oms.service import OmsRiskService
+from project_mai_tai.runtime_registry import (
+    configured_broker_account_registrations,
+    strategy_registration_map,
+)
+from project_mai_tai.services.control_plane import BOT_PAGE_META
+from project_mai_tai.services.strategy_engine_app import StrategyEngineState
+from project_mai_tai.settings import Settings
+
+
+class FakeRedis:
+    async def xadd(self, *_args, **_kwargs):
+        return "1-0"
+
+    async def xread(self, *_args, **_kwargs):
+        return []
+
+    async def ping(self):
+        return True
+
+    async def aclose(self):
+        return None
+
+
+def fixed_now() -> datetime:
+    return datetime(2026, 4, 23, 10, 0)
+
+
+def build_test_session_factory() -> sessionmaker:
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        future=True,
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    return sessionmaker(bind=engine, expire_on_commit=False)
+
+
+def test_runtime_registry_registers_polygon_30s_as_live_polygon_strategy() -> None:
+    settings = Settings(
+        oms_adapter="schwab",
+        strategy_polygon_30s_enabled=True,
+        scanner_feed_retention_enabled=False,
+    )
+
+    registrations = strategy_registration_map(settings)
+    broker_accounts = {item.name: item for item in configured_broker_account_registrations(settings)}
+
+    assert registrations["macd_30s"].display_name == "Schwab 30 Sec Bot"
+    assert registrations["polygon_30s"].display_name == "Polygon 30 Sec Bot"
+    assert registrations["polygon_30s"].execution_mode == "live"
+    assert registrations["polygon_30s"].metadata["provider"] == "webull"
+    assert registrations["polygon_30s"].metadata["market_data_provider"] == "polygon"
+    assert broker_accounts[settings.strategy_polygon_30s_account_name].provider == "webull"
+
+
+def test_strategy_state_routes_polygon_30s_through_polygon_market_data_path() -> None:
+    state = StrategyEngineState(
+        settings=Settings(
+            strategy_macd_30s_broker_provider="schwab",
+            strategy_polygon_30s_enabled=True,
+            scanner_feed_retention_enabled=False,
+        ),
+        now_provider=fixed_now,
+    )
+
+    assert "polygon_30s" in state.bots
+
+
+def test_polygon_30s_uses_tick_bar_close_grace_for_late_polygon_trades() -> None:
+    state = StrategyEngineState(
+        settings=Settings(
+            strategy_macd_30s_broker_provider="schwab",
+            strategy_polygon_30s_enabled=True,
+            scanner_feed_retention_enabled=False,
+            strategy_polygon_30s_tick_bar_close_grace_seconds=2.0,
+        ),
+        now_provider=fixed_now,
+    )
+
+    builder_manager = state.bots["polygon_30s"].builder_manager
+
+    assert builder_manager.close_grace_seconds == 2.0
+    assert state.bots["polygon_30s"].definition.display_name == "Polygon 30 Sec Bot"
+    assert state.schwab_stream_strategy_codes() == ("macd_30s",)
+
+    state._record_bot_handoff_symbols([{"ticker": "UGRO"}], strategy_codes=["polygon_30s"])
+    state._resync_bot_watchlists_from_current_confirmed(strategy_codes=["polygon_30s"])
+
+    assert "UGRO" in state.bots["polygon_30s"].watchlist
+    assert "UGRO" in state.market_data_symbols()
+    assert "UGRO" not in state.schwab_stream_symbols()
+
+
+def test_polygon_30s_defaults_to_canonical_polygon_live_bars() -> None:
+    state = StrategyEngineState(
+        settings=Settings(
+            strategy_macd_30s_broker_provider="schwab",
+            strategy_polygon_30s_enabled=True,
+            scanner_feed_retention_enabled=False,
+        ),
+        now_provider=fixed_now,
+    )
+
+    polygon_bot = state.bots["polygon_30s"]
+
+    assert polygon_bot.use_live_aggregate_bars is True
+    assert polygon_bot.live_aggregate_fallback_enabled is False
+    assert polygon_bot.live_aggregate_bars_are_final is False
+    assert polygon_bot.live_aggregate_stale_after_seconds == 3
+
+
+def test_polygon_30s_does_not_inherit_global_live_aggregate_stream_toggle() -> None:
+    state = StrategyEngineState(
+        settings=Settings(
+            strategy_macd_30s_broker_provider="schwab",
+            strategy_polygon_30s_enabled=True,
+            scanner_feed_retention_enabled=False,
+            market_data_live_aggregate_stream_enabled=True,
+            strategy_polygon_30s_live_aggregate_bars_enabled=False,
+        ),
+        now_provider=fixed_now,
+    )
+
+    polygon_bot = state.bots["polygon_30s"]
+
+    assert polygon_bot.use_live_aggregate_bars is False
+
+
+def test_polygon_30s_keeps_polygon_market_data_when_execution_routes_to_schwab() -> None:
+    state = StrategyEngineState(
+        settings=Settings(
+            strategy_polygon_30s_enabled=True,
+            strategy_polygon_30s_broker_provider="schwab",
+            scanner_feed_retention_enabled=False,
+        ),
+        now_provider=fixed_now,
+    )
+
+    assert state.schwab_stream_strategy_codes() == ("macd_30s",)
+    state._record_bot_handoff_symbols([{"ticker": "UGRO"}], strategy_codes=["polygon_30s"])
+    state._resync_bot_watchlists_from_current_confirmed(strategy_codes=["polygon_30s"])
+    assert "UGRO" in state.market_data_symbols()
+    assert "UGRO" not in state.schwab_stream_symbols()
+
+
+def test_polygon_30s_runtime_uses_polygon_validation_entry_tuning() -> None:
+    state = StrategyEngineState(
+        settings=Settings(
+            strategy_macd_30s_broker_provider="schwab",
+            strategy_polygon_30s_enabled=True,
+            scanner_feed_retention_enabled=False,
+        ),
+        now_provider=fixed_now,
+    )
+
+    trading = state.bots["polygon_30s"].definition.trading_config
+
+    assert trading.entry_logic_mode == "polygon_30s"
+    assert trading.schwab_native_use_chop_regime is False
+    assert trading.p3_allow_momentum_override is True
+    assert trading.p3_entry_stoch_k_cap is None
+
+
+def test_gap_recovery_only_tracks_real_risk_cases_for_flat_symbols() -> None:
+    state = StrategyEngineState(
+        settings=Settings(
+            strategy_macd_30s_broker_provider="schwab",
+            strategy_polygon_30s_enabled=True,
+            scanner_feed_retention_enabled=False,
+        ),
+        now_provider=fixed_now,
+    )
+
+    schwab_bot = state.bots["macd_30s"]
+    schwab_bot.set_watchlist(["UGRO"])
+
+    assert schwab_bot._should_track_gap_recovery("UGRO") is False
+
+    schwab_bot.apply_data_warning("UGRO", reason="quiet tape")
+    assert schwab_bot._should_track_gap_recovery("UGRO") is True
+
+
+def test_market_data_gateway_enables_live_aggregate_stream_for_polygon_30s() -> None:
+    service = MarketDataGatewayService(
+        settings=Settings(
+            strategy_polygon_30s_enabled=True,
+            strategy_polygon_30s_live_aggregate_bars_enabled=True,
+            scanner_feed_retention_enabled=False,
+        ),
+        redis_client=Mock(),
+        snapshot_provider=Mock(),
+        trade_stream=Mock(),
+        reference_cache=Mock(),
+    )
+
+    assert service._live_aggregate_stream_enabled is True
+
+
+def test_oms_service_builds_webull_provider_inside_mixed_router() -> None:
+    service = OmsRiskService(
+        settings=Settings(
+            redis_stream_prefix="test",
+            oms_adapter="schwab",
+            strategy_macd_30s_broker_provider="schwab",
+            strategy_polygon_30s_enabled=True,
+        ),
+        redis_client=FakeRedis(),
+        session_factory=build_test_session_factory(),
+    )
+
+    assert isinstance(service.broker_adapter, RoutingBrokerAdapter)
+    assert isinstance(service._build_provider_adapter("webull"), WebullBrokerAdapter)
+
+
+def test_control_plane_meta_includes_polygon_and_renamed_schwab_bot() -> None:
+    assert BOT_PAGE_META["macd_30s"]["title"] == "Schwab 30 Sec Bot"
+    assert BOT_PAGE_META["polygon_30s"]["title"] == "Polygon 30 Sec Bot"
+    assert BOT_PAGE_META["polygon_30s"]["path"] == "/bot/30s-polygon"
+
+
+def test_restore_confirmed_runtime_view_seeds_new_polygon_bot_from_confirmed_state() -> None:
+    state = StrategyEngineState(
+        settings=Settings(
+            strategy_macd_30s_broker_provider="schwab",
+            strategy_polygon_30s_enabled=True,
+            scanner_feed_retention_enabled=False,
+        ),
+        now_provider=fixed_now,
+    )
+
+    confirmed = [{"ticker": "UGRO", "score": 7}]
+    state.restore_confirmed_runtime_view(
+        confirmed,
+        all_confirmed=confirmed,
+        bot_handoff_symbols_by_strategy={"macd_30s": ["UGRO"]},
+        bot_handoff_history_by_strategy={"macd_30s": ["UGRO"]},
+    )
+
+    assert "UGRO" in state.bots["macd_30s"].watchlist
+    assert "UGRO" in state.bots["polygon_30s"].watchlist
+
+
+def test_restore_confirmed_runtime_view_seeds_new_polygon_bot_from_existing_handoff_history() -> None:
+    state = StrategyEngineState(
+        settings=Settings(
+            strategy_macd_30s_broker_provider="schwab",
+            strategy_polygon_30s_enabled=True,
+            scanner_feed_retention_enabled=False,
+        ),
+        now_provider=fixed_now,
+    )
+
+    state.restore_confirmed_runtime_view(
+        [],
+        all_confirmed=[],
+        bot_handoff_symbols_by_strategy={"macd_30s": ["UGRO"]},
+        bot_handoff_history_by_strategy={"macd_30s": ["UGRO"]},
+    )
+
+    assert "UGRO" in state.bots["macd_30s"].watchlist
+    assert "UGRO" in state.bots["polygon_30s"].watchlist
+
+
+def test_active_bot_handoff_replaces_current_confirmed_set_without_losing_history() -> None:
+    state = StrategyEngineState(
+        settings=Settings(
+            strategy_macd_30s_broker_provider="schwab",
+            strategy_polygon_30s_enabled=True,
+            scanner_feed_retention_enabled=False,
+        ),
+        now_provider=fixed_now,
+    )
+
+    state._record_bot_handoff_symbols(
+        [{"ticker": "UGRO"}, {"ticker": "CAST"}],
+        replace_active=True,
+    )
+    state._resync_bot_watchlists_from_current_confirmed()
+
+    assert state.bots["macd_30s"].watchlist == {"UGRO", "CAST"}
+    assert state.bots["polygon_30s"].watchlist == {"UGRO", "CAST"}
+
+    state._record_bot_handoff_symbols(
+        [{"ticker": "UGRO"}],
+        replace_active=True,
+    )
+    state._resync_bot_watchlists_from_current_confirmed()
+
+    assert state.bots["macd_30s"].watchlist == {"UGRO"}
+    assert state.bots["polygon_30s"].watchlist == {"UGRO"}
+    assert state.bot_handoff_history_by_strategy["macd_30s"] == {"UGRO", "CAST"}
+    assert state.bot_handoff_history_by_strategy["polygon_30s"] == {"UGRO", "CAST"}
+
+
+def test_polygon_30s_does_not_re_evaluate_same_bar_after_late_same_bucket_live_bar() -> None:
+    clock = {"now": datetime(2026, 4, 23, 15, 26, 45, tzinfo=UTC)}
+    state = StrategyEngineState(
+        settings=Settings(
+            strategy_macd_30s_broker_provider="schwab",
+            strategy_polygon_30s_enabled=True,
+            scanner_feed_retention_enabled=False,
+        ),
+        now_provider=lambda: clock["now"],
+    )
+    bot = state.bots["polygon_30s"]
+    bot.set_watchlist(["RDAC"])
+    bot.seed_bars(
+        "RDAC",
+        [
+            {
+                "open": 1.00 + index * 0.01,
+                "high": 1.02 + index * 0.01,
+                "low": 0.99 + index * 0.01,
+                "close": 1.01 + index * 0.01,
+                "volume": 20_000 + index * 100,
+                "timestamp": 1_700_000_000.0 + index * 30,
+                "trade_count": 10 + index,
+            }
+            for index in range(55)
+        ],
+    )
+
+    observed_prices: list[float] = []
+
+    def fake_calculate(bars):
+        last_bar = bars[-1]
+        return {
+            "price": float(last_bar["close"]),
+            "bar_timestamp": float(last_bar["timestamp"]),
+        }
+
+    def fake_check_entry(_symbol, indicators, _bar_index, _runtime):
+        observed_prices.append(float(indicators["price"]))
+        return None
+
+    def fake_pop_last_decision(_symbol):
+        if observed_prices[-1] < 1.205:
+            return {
+                "status": "blocked",
+                "reason": "chop lock active (current 1/4): NO_CLEAN_SIDE; P1/P2/P3 gated",
+            }
+        return {
+            "status": "idle",
+            "reason": "no entry path matched",
+        }
+
+    bot.indicator_engine.calculate = fake_calculate
+    bot.entry_engine.check_entry = fake_check_entry
+    bot.entry_engine.pop_last_decision = fake_pop_last_decision
+
+    bot.handle_live_bar(
+        symbol="RDAC",
+        open_price=1.20,
+        high_price=1.20,
+        low_price=1.20,
+        close_price=1.20,
+        volume=100,
+        timestamp=datetime(2026, 4, 23, 15, 26, 30, tzinfo=UTC).timestamp(),
+        trade_count=1,
+    )
+
+    clock["now"] = datetime(2026, 4, 23, 15, 27, 0, tzinfo=UTC)
+    _intents, completed_count = bot.flush_completed_bars()
+
+    assert completed_count == 0
+    assert len(bot.recent_decisions) == 0
+
+    bot.handle_live_bar(
+        symbol="RDAC",
+        open_price=1.20,
+        high_price=1.22,
+        low_price=1.19,
+        close_price=1.21,
+        volume=150,
+        timestamp=datetime(2026, 4, 23, 15, 26, 59, tzinfo=UTC).timestamp(),
+        trade_count=2,
+    )
+
+    clock["now"] = datetime(2026, 4, 23, 15, 27, 29, tzinfo=UTC)
+    _late_intents, late_completed_count = bot.flush_completed_bars()
+
+    assert late_completed_count == 0
+    assert len(bot.recent_decisions) == 0
+
+    bot.handle_live_bar(
+        symbol="RDAC",
+        open_price=1.21,
+        high_price=1.23,
+        low_price=1.20,
+        close_price=1.22,
+        volume=125,
+        timestamp=datetime(2026, 4, 23, 15, 27, 0, tzinfo=UTC).timestamp(),
+        trade_count=1,
+    )
+
+    assert len(bot.recent_decisions) == 1
+    assert bot.recent_decisions[0]["reason"] == "no entry path matched"
+
+
+def test_polygon_30s_revises_last_closed_bar_when_late_second_arrives() -> None:
+    clock = {"now": datetime(2026, 4, 23, 15, 27, 0, tzinfo=UTC)}
+    state = StrategyEngineState(
+        settings=Settings(
+            strategy_macd_30s_broker_provider="schwab",
+            strategy_polygon_30s_enabled=True,
+            scanner_feed_retention_enabled=False,
+        ),
+        now_provider=lambda: clock["now"],
+    )
+    bot = state.bots["polygon_30s"]
+    bot.set_watchlist(["CTNT"])
+    bot.seed_bars(
+        "CTNT",
+        [
+            {
+                "open": 3.00 + index * 0.01,
+                "high": 3.02 + index * 0.01,
+                "low": 2.99 + index * 0.01,
+                "close": 3.01 + index * 0.01,
+                "volume": 20_000 + index * 100,
+                "timestamp": 1_700_000_000.0 + index * 30,
+                "trade_count": 10 + index,
+            }
+            for index in range(55)
+        ],
+    )
+
+    completed_evaluations: list[str] = []
+
+    def fake_evaluate_completed_bar(symbol: str):
+        completed_evaluations.append(symbol)
+        return []
+
+    bot._evaluate_completed_bar = fake_evaluate_completed_bar  # type: ignore[method-assign]
+
+    bot.handle_live_bar(
+        symbol="CTNT",
+        open_price=3.21,
+        high_price=3.25,
+        low_price=3.2032,
+        close_price=3.23,
+        volume=14_122,
+        timestamp=datetime(2026, 4, 23, 15, 26, 30, tzinfo=UTC).timestamp(),
+        trade_count=171,
+    )
+    bot.handle_live_bar(
+        symbol="CTNT",
+        open_price=3.23,
+        high_price=3.24,
+        low_price=3.22,
+        close_price=3.23,
+        volume=500,
+        timestamp=datetime(2026, 4, 23, 15, 27, 0, tzinfo=UTC).timestamp(),
+        trade_count=5,
+    )
+
+    builder = bot.builder_manager.get_builder("CTNT")
+    assert builder is not None
+    assert completed_evaluations == ["CTNT"]
+    assert builder.bars[-1].timestamp == datetime(2026, 4, 23, 15, 26, 30, tzinfo=UTC).timestamp()
+    assert builder.bars[-1].volume == 14_122
+    assert builder.bars[-1].trade_count == 171
+
+    bot.handle_live_bar(
+        symbol="CTNT",
+        open_price=3.23,
+        high_price=3.24,
+        low_price=3.21,
+        close_price=3.23,
+        volume=1_538,
+        timestamp=datetime(2026, 4, 23, 15, 26, 59, tzinfo=UTC).timestamp(),
+        trade_count=30,
+    )
+
+    assert completed_evaluations == ["CTNT"]
+    assert builder.bars[-1].volume == 15_660
+    assert builder.bars[-1].trade_count == 201
+
+
+def test_polygon_30s_skips_first_mid_bucket_live_aggregate_bar() -> None:
+    clock = {"now": datetime(2026, 4, 23, 15, 26, 35, tzinfo=UTC)}
+    state = StrategyEngineState(
+        settings=Settings(
+            strategy_macd_30s_broker_provider="schwab",
+            strategy_polygon_30s_enabled=True,
+            scanner_feed_retention_enabled=False,
+        ),
+        now_provider=lambda: clock["now"],
+    )
+    bot = state.bots["polygon_30s"]
+    bot.set_watchlist(["CANF"])
+    bot.seed_bars(
+        "CANF",
+        [
+            {
+                "open": 3.00 + index * 0.01,
+                "high": 3.02 + index * 0.01,
+                "low": 2.99 + index * 0.01,
+                "close": 3.01 + index * 0.01,
+                "volume": 20_000 + index * 100,
+                "timestamp": 1_700_000_000.0 + index * 30,
+                "trade_count": 10 + index,
+            }
+            for index in range(55)
+        ],
+    )
+
+    bot.handle_live_bar(
+        symbol="CANF",
+        open_price=4.00,
+        high_price=4.04,
+        low_price=3.99,
+        close_price=4.02,
+        volume=900,
+        timestamp=datetime(2026, 4, 23, 15, 26, 35, tzinfo=UTC).timestamp(),
+        trade_count=6,
+    )
+    bot.handle_live_bar(
+        symbol="CANF",
+        open_price=4.02,
+        high_price=4.05,
+        low_price=4.00,
+        close_price=4.03,
+        volume=1_100,
+        timestamp=datetime(2026, 4, 23, 15, 26, 59, tzinfo=UTC).timestamp(),
+        trade_count=7,
+    )
+
+    clock["now"] = datetime(2026, 4, 23, 15, 27, 29, tzinfo=UTC)
+    skipped_intents, skipped_completed = bot.flush_completed_bars()
+
+    assert skipped_intents == []
+    assert skipped_completed == 0
+
+    bot.handle_live_bar(
+        symbol="CANF",
+        open_price=4.10,
+        high_price=4.12,
+        low_price=4.08,
+        close_price=4.11,
+        volume=1_200,
+        timestamp=datetime(2026, 4, 23, 15, 27, 0, tzinfo=UTC).timestamp(),
+        trade_count=8,
+    )
+    bot.handle_live_bar(
+        symbol="CANF",
+        open_price=4.11,
+        high_price=4.14,
+        low_price=4.09,
+        close_price=4.13,
+        volume=1_500,
+        timestamp=datetime(2026, 4, 23, 15, 27, 29, tzinfo=UTC).timestamp(),
+        trade_count=9,
+    )
+
+    clock["now"] = datetime(2026, 4, 23, 15, 27, 32, tzinfo=UTC)
+    _completed_intents, completed_count = bot.flush_completed_bars()
+    assert completed_count == 0
+
+    bot.handle_live_bar(
+        symbol="CANF",
+        open_price=4.13,
+        high_price=4.16,
+        low_price=4.12,
+        close_price=4.15,
+        volume=1_300,
+        timestamp=datetime(2026, 4, 23, 15, 27, 30, tzinfo=UTC).timestamp(),
+        trade_count=10,
+    )
+    builder = bot.builder_manager.get_builder("CANF")
+
+    assert builder is not None
+    assert builder.bars[-1].timestamp == datetime(2026, 4, 23, 15, 27, 0, tzinfo=UTC).timestamp()
+
+
+def test_polygon_30s_keeps_sparse_bucket_when_provider_coverage_predates_bucket() -> None:
+    clock = {"now": datetime(2026, 4, 23, 15, 26, 35, tzinfo=UTC)}
+    state = StrategyEngineState(
+        settings=Settings(
+            strategy_macd_30s_broker_provider="schwab",
+            strategy_polygon_30s_enabled=True,
+            scanner_feed_retention_enabled=False,
+        ),
+        now_provider=lambda: clock["now"],
+    )
+    bot = state.bots["polygon_30s"]
+    bot.set_watchlist(["IONZ"])
+    bot.seed_bars(
+        "IONZ",
+        [
+            {
+                "open": 5.00 + index * 0.01,
+                "high": 5.02 + index * 0.01,
+                "low": 4.99 + index * 0.01,
+                "close": 5.01 + index * 0.01,
+                "volume": 20_000 + index * 100,
+                "timestamp": 1_700_000_000.0 + index * 30,
+                "trade_count": 10 + index,
+            }
+            for index in range(55)
+        ],
+    )
+
+    bucket_start = datetime(2026, 4, 23, 15, 26, 30, tzinfo=UTC).timestamp()
+    coverage_started_at = datetime(2026, 4, 23, 15, 26, 0, tzinfo=UTC).timestamp()
+
+    bot.handle_live_bar(
+        symbol="IONZ",
+        open_price=5.10,
+        high_price=5.12,
+        low_price=5.09,
+        close_price=5.11,
+        volume=1_800,
+        timestamp=datetime(2026, 4, 23, 15, 26, 35, tzinfo=UTC).timestamp(),
+        trade_count=3,
+        coverage_started_at=coverage_started_at,
+    )
+    bot.handle_live_bar(
+        symbol="IONZ",
+        open_price=5.11,
+        high_price=5.14,
+        low_price=5.10,
+        close_price=5.13,
+        volume=2_400,
+        timestamp=datetime(2026, 4, 23, 15, 26, 59, tzinfo=UTC).timestamp(),
+        trade_count=5,
+        coverage_started_at=coverage_started_at,
+    )
+
+    clock["now"] = datetime(2026, 4, 23, 15, 27, 29, tzinfo=UTC)
+    _completed_intents, completed_count = bot.flush_completed_bars()
+    assert completed_count == 0
+
+    bot.handle_live_bar(
+        symbol="IONZ",
+        open_price=5.15,
+        high_price=5.17,
+        low_price=5.14,
+        close_price=5.16,
+        volume=2_000,
+        timestamp=datetime(2026, 4, 23, 15, 27, 0, tzinfo=UTC).timestamp(),
+        trade_count=4,
+        coverage_started_at=coverage_started_at,
+    )
+    builder = bot.builder_manager.get_builder("IONZ")
+
+    assert builder is not None
+    assert builder.bars[-1].timestamp == bucket_start
+
+
+def test_polygon_30s_uses_real_live_bar_fallback_when_tick_builder_lags() -> None:
+    clock = {"now": datetime(2026, 4, 23, 15, 11, 0, tzinfo=UTC)}
+    state = StrategyEngineState(
+        settings=Settings(
+            strategy_macd_30s_broker_provider="schwab",
+            strategy_polygon_30s_enabled=True,
+            scanner_feed_retention_enabled=False,
+        ),
+        now_provider=lambda: clock["now"],
+    )
+    bot = state.bots["polygon_30s"]
+    bot.set_watchlist(["CANF"])
+    bot.seed_bars(
+        "CANF",
+        [
+            {
+                "open": 3.00 + index * 0.01,
+                "high": 3.02 + index * 0.01,
+                "low": 2.99 + index * 0.01,
+                "close": 3.01 + index * 0.01,
+                "volume": 20_000 + index * 100,
+                "timestamp": 1_700_000_000.0 + index * 30,
+                "trade_count": 10 + index,
+            }
+            for index in range(55)
+        ],
+    )
+
+    observed_timestamps: list[float] = []
+
+    def fake_calculate(bars):
+        last_bar = bars[-1]
+        return {
+            "price": float(last_bar["close"]),
+            "bar_timestamp": float(last_bar["timestamp"]),
+        }
+
+    def fake_check_entry(_symbol, indicators, _bar_index, _runtime):
+        observed_timestamps.append(float(indicators["bar_timestamp"]))
+        return None
+
+    def fake_pop_last_decision(_symbol):
+        return {
+            "status": "idle",
+            "reason": "no entry path matched",
+        }
+
+    bot.indicator_engine.calculate = fake_calculate
+    bot.entry_engine.check_entry = fake_check_entry
+    bot.entry_engine.pop_last_decision = fake_pop_last_decision
+
+    first_live_bar_ts = datetime(2026, 4, 23, 15, 10, 30, tzinfo=UTC).timestamp()
+    second_live_bar_ts = datetime(2026, 4, 23, 15, 11, 0, tzinfo=UTC).timestamp()
+
+    bot.handle_live_bar(
+        symbol="CANF",
+        open_price=4.00,
+        high_price=4.05,
+        low_price=3.98,
+        close_price=4.02,
+        volume=1_000,
+        timestamp=first_live_bar_ts,
+        trade_count=8,
+    )
+
+    assert len(bot.recent_decisions) == 0
+
+    bot.handle_live_bar(
+        symbol="CANF",
+        open_price=4.02,
+        high_price=4.08,
+        low_price=4.01,
+        close_price=4.06,
+        volume=1_200,
+        timestamp=second_live_bar_ts,
+        trade_count=10,
+    )
+
+    assert len(bot.recent_decisions) == 1
+    assert bot.recent_decisions[0]["last_bar_at"] == "2026-04-23T11:10:30-04:00"
+    assert observed_timestamps[-1] == first_live_bar_ts
+
+
+def test_polygon_open_rejection_blocks_same_symbol_for_20_bars() -> None:
+    state = StrategyEngineState(
+        settings=Settings(
+            strategy_macd_30s_broker_provider="schwab",
+            strategy_polygon_30s_enabled=True,
+            scanner_feed_retention_enabled=False,
+        ),
+        now_provider=fixed_now,
+    )
+
+    polygon_bot = state.bots["polygon_30s"]
+    polygon_bot.seed_bars(
+        "UGRO",
+        [
+            {
+                "open": 1.00 + index * 0.01,
+                "high": 1.02 + index * 0.01,
+                "low": 0.99 + index * 0.01,
+                "close": 1.01 + index * 0.01,
+                "volume": 20_000 + index * 100,
+                "timestamp": 1_700_000_000.0 + index * 30,
+                "trade_count": 10 + index,
+            }
+            for index in range(55)
+        ],
+    )
+
+    bar_count = polygon_bot.builder_manager.get_or_create("UGRO").get_bar_count()
+
+    state.apply_order_status(
+        strategy_code="polygon_30s",
+        symbol="UGRO",
+        intent_type="open",
+        status="rejected",
+        reason="adapter scaffold reject",
+    )
+
+    blocked_gate = polygon_bot.entry_engine._check_hard_gates("UGRO", bar_count + 19)
+    allowed_gate = polygon_bot.entry_engine._check_hard_gates("UGRO", bar_count + 20)
+
+    assert blocked_gate == {
+        "passed": False,
+        "reason": "open rejection cooldown (1 bars remaining)",
+    }
+    assert allowed_gate == {"passed": True, "reason": ""}
+
+
+def test_schwab_open_rejection_does_not_add_polygon_rejection_cooldown() -> None:
+    state = StrategyEngineState(
+        settings=Settings(
+            strategy_macd_30s_broker_provider="schwab",
+            strategy_polygon_30s_enabled=True,
+            scanner_feed_retention_enabled=False,
+        ),
+        now_provider=fixed_now,
+    )
+
+    schwab_bot = state.bots["macd_30s"]
+    schwab_bot.seed_bars(
+        "UGRO",
+        [
+            {
+                "open": 1.00 + index * 0.01,
+                "high": 1.02 + index * 0.01,
+                "low": 0.99 + index * 0.01,
+                "close": 1.01 + index * 0.01,
+                "volume": 20_000 + index * 100,
+                "timestamp": 1_700_000_000.0 + index * 30,
+                "trade_count": 10 + index,
+            }
+            for index in range(55)
+        ],
+    )
+
+    bar_count = schwab_bot.builder_manager.get_or_create("UGRO").get_bar_count()
+
+    state.apply_order_status(
+        strategy_code="macd_30s",
+        symbol="UGRO",
+        intent_type="open",
+        status="rejected",
+        reason="temporary broker reject",
+    )
+
+    assert schwab_bot.entry_engine._check_hard_gates("UGRO", bar_count + 1) == {"passed": True, "reason": ""}
