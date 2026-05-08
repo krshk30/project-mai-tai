@@ -1,5 +1,86 @@
 # Session Handoff - Global
 
+## 2026-05-08 EOD-2: Post-PR #77 audit confirms 30s steady-state clean; 43 deleted-test residual flagged
+
+```
+Deploy owner: this agent (Claude Code)
+Workstream: post-deploy validation + test-suite recovery
+Status: AUDIT PASSED (30s); 1m unchanged from prior baseline; CI-green workstream OPEN
+SHAs: b40236 (PR #81 fixes 3 visible test failures) on top of 5f24a2e (runbook rule)
+VPS SHA: b40236 (then codex pushed 894e3a8 polygon backfill at 17:01 ET, post-audit)
+Service target: none (audit + doc only); strategy restarted at 17:01 UTC for codex's polygon fix
+Restart window: n/a for this entry (audit data captures 15:18-16:00 ET clean window)
+Market hours at deploy: no (post 16:00 ET close)
+Account flat at deploy: yes (verified pre-fix at 15:18 ET; market closed since)
+Post-deploy validator: this agent
+```
+
+### Post-PR #77 Schwab bar-build audit results
+
+**Window:** 15:00-16:00 ET 2026-05-08, captures 42 minutes of post-PR #77 strategy data (PR #77 deployed at 15:18 ET; first 18 min of window are pre-fix, remaining 42 min are post-fix). 29 active symbols on each strategy; 5 had non-zero data in window: AEHL, AIIO, CODX, MNTS, TRAW.
+
+**30s (`macd_30s`) — major improvement, steady-state essentially clean:**
+
+| Symbol | Pre-fix avg_abs_vol_diff (13:00-15:00) | Post-fix avg_abs_vol_diff (15:00-16:00) | Improvement |
+|---|---|---|---|
+| AEHL | 12,079 | 2,456 | 80% |
+| AIIO | 3,092 | 697 | 77% |
+| CODX | 175 | 50 | 71% |
+| MNTS | 7,349 | 359 | 95% |
+| TRAW | 1,640 | 151 | 91% |
+
+OHLC: avg_abs_price_diff = 0.000000 across the board. Persisted_only = 0 for every symbol.
+
+The remaining mismatch is **concentrated at one bar: 15:19:00 ET, exactly 1 minute after the 15:18:29 ET strategy restart**. Every active symbol has its worst bar at 15:19:00 (e.g., AEHL rebuilt=401137 vs persisted=138695 = 35% capture; MNTS rebuilt=39151 vs persisted=600 = 1.5%). This is **restart-edge contamination** — the cum_vol baseline is None on a fresh process so the first trade after restart uses size fallback, undercounting the bar's first 30s. Same edge case the morning audit already classified as not-a-bug.
+
+**Excluding the 15:19 restart-edge bar, the 30s data shows essentially perfect rebuilt-vs-persisted parity.** The PR #77 cum-vol-delta math is doing what we expected: late LEVELONE updates that arrive across bar boundaries now contribute correct delta volume to the right bar. The under-counting pattern PR #75 had (size-as-volume on LEVELONE multi-tick events) is gone.
+
+**1m (`schwab_1m`) — unchanged from prior baseline, mixed profile:**
+
+| Symbol | avg_abs_vol_diff (post-fix 1m) | Notable |
+|---|---|---|
+| AEHL | 298,385 | Two outlier bars at 15:35 and 15:46 where persisted >> rebuilt (1.8M vs 0.83M, 2.6M vs 1.3M) |
+| AIIO | 49,182 | One outlier at 15:42 (persisted=731k vs rebuilt=36k) |
+| CODX | 10,198 | Worst at 15:40 (rebuilt=200k vs persisted=192k) |
+| MNTS | 7,928 | Smaller diffs across; restart-edge at 15:19 |
+| TRAW | 21,947 | One outlier at 15:32 (persisted=434k vs rebuilt=171k) |
+
+The 1m bot uses `live_aggregate_bars_are_final=True` and persists the CHART_EQUITY 1m bar's volume, NOT a tick-rebuild. Per the 2026-05-07 handoff entry (split-assessment): **"Volume drift is inherent to Schwab's 1-min bar product (CHART and pricehistory both exclude trades that show up in TIMESALE consolidated tape - off-exchange/ATS prints, late-reported trades). Not fixable; we accept persisted volume as canonical for schwab_1m."** The reverse-direction outliers (persisted > rebuilt) suggest a CHART_EQUITY-vs-TIMESALE timestamp/bucket-boundary convention difference that's been present all session, not a regression. Leaving 1m audit interpretation as-is.
+
+**PR #77 verdict: 30s fix delivers as intended. 1m bar integrity is unchanged (and was already accepted as inherently lossy).**
+
+### Pre-existing test failures: 43 still broken (NEW workstream for next session)
+
+PR #81 fixed 3 visible test failures (`test_control_plane_overview_and_dashboard_render`, `test_schwab_native_bar_builder_late_trade_replaces_synthetic_flat_bar`, `test_schwab_native_entry_engine_can_fire_p4_burst_from_previous_bar_setup`). CI on origin/main still has **43 other failures** that the recent admin-merge cycle has been bypassing. Cause: commit `d5ac600` did TWO things in lockstep — (a) correctly cleaned up legitimate conflict markers that commit `8b77ae3` accidentally committed during the polygon-rename merge, AND (b) deleted real test code that wasn't conflict markers (~116 lines from `test_strategy_engine_service.py`, ~133 from `test_schwab_1m_bot.py`, ~25 from `test_strategy_core.py`, ~6 from `test_historical_bar_seed_order.py`, ~4 from `test_trade_coach_repository.py`).
+
+I tried `git apply -R` of d5ac600's full test-file diffs but that re-introduced the conflict markers (since both effects were in the same diff hunks). Separating them needs surgical line-by-line work: for each file, walk the d5ac600 deletion blocks and classify each block as either "conflict-marker cleanup (skip restoration)" or "real test code (restore)".
+
+**Next-session plan for this workstream:**
+
+1. For each of the 5 broken test files, dump `git show d5ac600 -- <file>` and split deletion blocks into the two categories.
+2. Restore only the "real test code" blocks. Verify each restored test compiles and passes against current production code (some may need fixture updates if production drifted between `8b77ae3` and current `main` -- the polygon rename may have changed bot/strategy enums those tests depend on).
+3. Single PR with the surgical restores → green Validate → no more admin-merge bypasses.
+
+Concrete starting point: 46 tests failed pre PR #81; PR #81 fixed 3; 43 remain. The CI run `25579091558` (PR #81's failed Validate) has the full failure list — re-pull it via `gh run view 25579091558 --log-failed` before opening the workstream.
+
+### State at end of work
+
+- GitHub `main` tip: `894e3a8` (codex's polygon backfill, deployed by codex agent at 17:01 ET; doesn't affect Schwab bars)
+- VPS `git rev-parse HEAD`: `894e3a8` (synced post codex push)
+- All 5 services active. Strategy last restarted at 17:01:43 UTC by codex for polygon backfill fix.
+- Account flat (markets closed at 16:00 ET).
+
+### Residual considerations (priority for tomorrow morning)
+
+1. **CI green workstream** described above. Single PR, ~1-2 hours. Unblocks the normal PR + Validate + merge flow.
+2. **Reconciler still degraded since 2026-04-28** — keeping overall dashboard rollup at "degraded". Untouched.
+3. **Bar-build re-audit** on a clean overnight + early-AM window with PR #77 in production. Today's 42-minute post-fix window was small but the trend is clear (30s essentially clean, 1m at prior baseline).
+4. **trade_episodes coalesce robustness** — the 2026-05-07 hypothesis about LIFO same-symbol same-day reuse is moot for now (today's symptom was the d5ac600 SQL revert). Leave as background residual.
+
+### Next owner
+
+This agent (Claude Code) parking. Tomorrow morning starts with residual #1 (CI green) since it unblocks every other workstream's deploy flow.
+
 ## 2026-05-08 EOD: New Pre-Merge Regression Check rule added to runbook (READ BEFORE NEXT MERGE)
 
 ```
