@@ -8249,3 +8249,47 @@ Notes:
     - `CODX`
     - `MNTS`
     - `TRAW`
+
+## 2026-05-08 - Polygon stale resurfaced: live bars were patchy, fallback was disabled
+
+- Symptom observed live on VPS after the earlier close-policy fix:
+  - as of `2026-05-08 03:49 PM ET`, `polygon_30s` was back to `STALE`
+  - `latest_bot_tick_at`, `latest_market_data_at`, and `latest_heartbeat_at` were all fresh
+  - but `latest_decision_at` was frozen around `03:29-03:32 PM ET`
+- Important narrowing:
+  - `macd_30s` and `schwab_1m` were both still `LISTENING`
+  - the issue was isolated to `polygon_30s`
+  - Redis `mai_tai:market-data` still had fresh Polygon `live_bar`, `trade_tick`, and `quote_tick` events for:
+    - `AEHL`
+    - `AIIO`
+    - `CODX`
+    - `MNTS`
+    - `TRAW`
+  - direct `/api/bots` on `127.0.0.1:8100` showed Polygon per-symbol `last_bar_at` frozen even while market data stayed fresh
+- Root cause:
+  - Polygon canonical `1s` live bars were still the primary bar source
+  - but the live env explicitly had:
+    - `MAI_TAI_STRATEGY_POLYGON_30S_LIVE_AGGREGATE_FALLBACK_ENABLED=false`
+  - when Polygon `1s` live bars go patchy or lag per symbol, the runtime can keep receiving fresh raw trade ticks while closed `30s` bars stop advancing
+  - the strategy code already had a trade-tick fallback path for live-aggregate bots, but Polygon had that recovery path disabled, so the bot could wedge again after any mid-session live-bar starvation event
+- Durable fix:
+  - added a Polygon-specific runtime guardrail in `src/project_mai_tai/settings.py`
+    - new setting: `strategy_polygon_30s_force_live_bar_only_mode`
+    - new computed runtime flag: `strategy_polygon_30s_runtime_live_aggregate_fallback_enabled`
+  - runtime behavior now defaults to:
+    - Polygon stays primary on canonical live `1s` bars
+    - trade-tick recovery is enabled by default if live bars starve
+    - true live-bar-only mode now requires the explicit force setting above
+  - updated `src/project_mai_tai/services/strategy_engine_app.py` to use the new runtime guardrail instead of the raw legacy fallback flag
+- Regression coverage:
+  - updated `tests/unit/test_polygon_30s_bot.py` to prove:
+    - Polygon now defaults to fallback-enabled live aggregate mode
+    - Polygon can still be forced into live-bar-only mode for diagnostics
+    - trade ticks keep the Polygon builder alive when live bars starve
+- Local validation:
+  - `python -m pytest tests/unit/test_polygon_30s_bot.py -k "defaults_to_canonical_polygon_live_bars or force_live_bar_only_mode or trade_ticks_keep_bot_alive_when_live_bars_starve or uses_real_live_bar_fallback_when_tick_builder_lags or late_same_bucket or revises_last_closed_bar or keeps_sparse_bucket or skips_first_mid_bucket" -q`
+    - `8 passed`
+  - `python -m py_compile src/project_mai_tai/settings.py src/project_mai_tai/services/strategy_engine_app.py tests/unit/test_polygon_30s_bot.py`
+- Deployment state:
+  - fixed locally in clean `main` worktree
+  - not yet redeployed at the moment this note was written

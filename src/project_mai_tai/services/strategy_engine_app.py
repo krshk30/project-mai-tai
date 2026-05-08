@@ -3375,7 +3375,7 @@ class StrategyEngineState:
                 session_factory=session_factory if self.settings.strategy_history_persistence_enabled else None,
                 use_live_aggregate_bars=polygon_use_live_aggregate_bars,
                 trade_tick_service=self.settings.strategy_polygon_30s_trade_stream_service,
-                live_aggregate_fallback_enabled=self.settings.strategy_polygon_30s_live_aggregate_fallback_enabled,
+                live_aggregate_fallback_enabled=self.settings.strategy_polygon_30s_runtime_live_aggregate_fallback_enabled,
                 live_aggregate_stale_after_seconds=self.settings.strategy_polygon_30s_live_aggregate_stale_after_seconds,
                 live_aggregate_bars_are_final=False,
                 builder_manager=Polygon30sBarBuilderManager(

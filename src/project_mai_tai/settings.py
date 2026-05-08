@@ -120,6 +120,11 @@ class Settings(BaseSettings):
         "strategy_polygon_30s_live_aggregate_fallback_enabled",
         "strategy_webull_30s_live_aggregate_fallback_enabled",
     )
+    strategy_polygon_30s_force_live_bar_only_mode: bool = _legacy_strategy_alias_field(
+        False,
+        "strategy_polygon_30s_force_live_bar_only_mode",
+        "strategy_webull_30s_force_live_bar_only_mode",
+    )
     strategy_polygon_30s_live_aggregate_stale_after_seconds: int = _legacy_strategy_alias_field(
         3,
         "strategy_polygon_30s_live_aggregate_stale_after_seconds",
@@ -361,6 +366,15 @@ class Settings(BaseSettings):
     @property
     def strategy_polygon_30s_runtime_uses_live_aggregate_bars(self) -> bool:
         return not bool(self.strategy_polygon_30s_force_tick_built_mode)
+
+    @computed_field
+    @property
+    def strategy_polygon_30s_runtime_live_aggregate_fallback_enabled(self) -> bool:
+        # Polygon's canonical 1s aggregate feed can go patchy while raw trade
+        # ticks keep flowing. Keep live bars as the primary path, but default to
+        # allowing trade-tick recovery unless we explicitly force live-bar-only
+        # mode for diagnostics.
+        return not bool(self.strategy_polygon_30s_force_live_bar_only_mode)
 
     @computed_field
     @property
