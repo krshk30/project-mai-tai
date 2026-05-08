@@ -7937,3 +7937,54 @@ Notes:
     - volume drift
     - trade-count drift
   - if `trade_count` mismatches collapse materially while missing bars stay clean, this was the main remaining Polygon integrity bug
+
+## 2026-05-08 - Polygon 30s rename landed on `main`; live deploy hit env regression and was recovered
+
+- Repo state pushed to `main`:
+  - commit `d5ac600` finalized the Polygon-first runtime rename
+  - active strategy/runtime naming is now:
+    - `polygon_30s`
+    - `Polygon 30 Sec Bot`
+  - legacy `webull_30s` remains only as a compatibility alias and broker-facing concept
+- Live deploy incident:
+  - VPS code updated cleanly to `d5ac600`
+  - a runtime/bootstrap step exposed that `/etc/project-mai-tai/project-mai-tai.env` was missing and the quick recovery copied in `/etc/project-mai-tai.env`
+  - that copied file was stale and did **not** contain the active strategy enable block
+  - immediate symptom after restart:
+    - `/health` degraded
+    - strategy came up with `polygon_30s=False`, `schwab_1m=False`, `macd_30s=False`
+    - `/api/bots` returned no active bot registrations
+- Recovery:
+  - restored from:
+    - `/etc/project-mai-tai/project-mai-tai.env.bak-codex-20260506-polygon30s`
+  - normalized the live env keys from:
+    - `MAI_TAI_STRATEGY_WEBULL_30S_*`
+    - to `MAI_TAI_STRATEGY_POLYGON_30S_*`
+  - explicitly kept broker routing separate by leaving:
+    - `MAI_TAI_STRATEGY_POLYGON_30S_BROKER_PROVIDER=webull`
+    - `MAI_TAI_STRATEGY_POLYGON_30S_ACCOUNT_NAME=live:polygon_30s`
+  - restarted:
+    - `project-mai-tai-oms.service`
+    - `project-mai-tai-market-data.service`
+    - `project-mai-tai-control.service`
+    - `project-mai-tai-strategy.service`
+- Post-recovery live checks:
+  - `/api/bots` again showed the expected runtime set:
+    - `macd_30s`
+    - `polygon_30s`
+    - `schwab_1m`
+  - `polygon_30s` was registered as:
+    - display name `Polygon 30 Sec Bot`
+    - provider `webull`
+    - account `live:polygon_30s`
+  - `/bot/30s-polygon` and `/botpolygon` both returned `200`
+  - `/health` recovered to:
+    - `market-data-gateway=healthy`
+    - `oms-risk=healthy`
+    - `reconciler=degraded`
+  - remaining degraded status after recovery was the pre-existing reconciliation backlog, not a zero-bot deploy failure
+- Important deploy lesson:
+  - do **not** recover `/etc/project-mai-tai/project-mai-tai.env` by copying `/etc/project-mai-tai.env` blindly
+  - prefer the versioned backups under:
+    - `/etc/project-mai-tai/`
+  - when strategy suddenly comes up with zero bots after a restart, check the env file before chasing code or Redis
