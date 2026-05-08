@@ -85,6 +85,9 @@ from project_mai_tai.strategy_core import (
     MomentumConfirmedScanner,
     OHLCVBar,
     PositionTracker,
+    Polygon30sBarBuilderManager,
+    Polygon30sEntryEngine,
+    Polygon30sIndicatorEngine,
     QuoteSnapshot,
     ReferenceData,
     RetainedSymbolState,
@@ -105,6 +108,32 @@ logger = logging.getLogger(__name__)
 
 SERVICE_NAME = "strategy-engine"
 EASTERN_TZ = ZoneInfo("America/New_York")
+LEGACY_STRATEGY_CODE_ALIASES = {
+    "webull_30s": "polygon_30s",
+}
+
+
+def normalize_strategy_code(strategy_code: str | None) -> str:
+    normalized = str(strategy_code or "").strip().lower()
+    return LEGACY_STRATEGY_CODE_ALIASES.get(normalized, normalized)
+
+
+def normalize_strategy_code_map(
+    values: dict[str, Sequence[object]] | dict[str, set[str]] | None,
+) -> dict[str, Sequence[object]] | dict[str, set[str]]:
+    normalized: dict[str, Sequence[object]] | dict[str, set[str]] = {}
+    for code, items in (values or {}).items():
+        normalized[normalize_strategy_code(code)] = items
+    return normalized
+
+
+def strategy_code_candidates(strategy_code: str | None) -> tuple[str, ...]:
+    normalized = normalize_strategy_code(strategy_code)
+    if normalized == "polygon_30s":
+        return ("polygon_30s", "webull_30s")
+    if not normalized:
+        return tuple()
+    return (normalized,)
 
 
 def utcnow() -> datetime:
@@ -237,9 +266,15 @@ class StrategyBotRuntime:
         live_aggregate_stale_after_seconds: int = 3,
         indicator_overlay_provider: MassiveIndicatorProvider | TaapiIndicatorProvider | None = None,
         extended_hours_vwap_provider: Callable[[str, Sequence[float], int], dict[float, float]] | None = None,
+<<<<<<< HEAD
         builder_manager: BarBuilderManager | SchwabNativeBarBuilderManager | None = None,
         indicator_engine: IndicatorEngine | SchwabNativeIndicatorEngine | None = None,
         entry_engine: EntryEngine | SchwabNativeEntryEngine | None = None,
+=======
+        builder_manager: BarBuilderManager | SchwabNativeBarBuilderManager | Polygon30sBarBuilderManager | None = None,
+        indicator_engine: IndicatorEngine | SchwabNativeIndicatorEngine | Polygon30sIndicatorEngine | None = None,
+        entry_engine: EntryEngine | SchwabNativeEntryEngine | Polygon30sEntryEngine | None = None,
+>>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
         retention_config: FeedRetentionConfig | None = None,
     ):
         self.definition = definition
@@ -758,7 +793,7 @@ class StrategyBotRuntime:
                     session.scalars(
                         select(StrategyBarHistory)
                         .where(
-                            StrategyBarHistory.strategy_code == self.definition.code,
+                            StrategyBarHistory.strategy_code.in_(strategy_code_candidates(self.definition.code)),
                             StrategyBarHistory.symbol == normalized_symbol,
                             StrategyBarHistory.interval_secs == self.definition.interval_secs,
                             StrategyBarHistory.bar_time >= session_start_utc,
@@ -775,7 +810,7 @@ class StrategyBotRuntime:
                                 session.scalars(
                                     select(StrategyBarHistory)
                                     .where(
-                                        StrategyBarHistory.strategy_code == self.definition.code,
+                                        StrategyBarHistory.strategy_code.in_(strategy_code_candidates(self.definition.code)),
                                         StrategyBarHistory.symbol == normalized_symbol,
                                         StrategyBarHistory.interval_secs == self.definition.interval_secs,
                                         StrategyBarHistory.bar_time < session_start_utc,
@@ -974,6 +1009,9 @@ class StrategyBotRuntime:
                 trade_count=trade_count,
             ),
         )
+        revised_closed_bar = self.builder_manager.consume_recent_revised_closed_bar(symbol)
+        if revised_closed_bar is not None and not prewarm_only:
+            self._persist_revised_closed_bar(symbol=symbol, bar=revised_closed_bar)
         synthetic_gap_bars = [
             bar
             for bar in completed_bars
@@ -1150,7 +1188,11 @@ class StrategyBotRuntime:
         self._roll_day_if_needed()
         if self.use_live_aggregate_bars and self.live_aggregate_bars_are_final:
             return [], 0
+<<<<<<< HEAD
         if self.use_live_aggregate_bars and self.definition.code in {"webull_30s", "polygon_30s"}:
+=======
+        if self.use_live_aggregate_bars and self.definition.code == "polygon_30s":
+>>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
             # Polygon's canonical 30s path is built from streamed 1s aggregate
             # bars. If the strategy consumer lags the Redis stream during a busy
             # move, wall-clock force-closing can freeze a 30s bar before the
@@ -1329,7 +1371,11 @@ class StrategyBotRuntime:
 
         if intent_type == "open":
             self.pending_open_symbols.discard(symbol)
+<<<<<<< HEAD
             if self.definition.code == "webull_30s":
+=======
+            if self.definition.code == "polygon_30s":
+>>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
                 self.entry_engine.record_rejected_open(
                     symbol,
                     self.builder_manager.get_or_create(symbol).get_bar_count(),
@@ -2416,7 +2462,7 @@ class StrategyBotRuntime:
             with self.session_factory() as session:
                 record = session.scalar(
                     select(StrategyBarHistory).where(
-                        StrategyBarHistory.strategy_code == self.definition.code,
+                        StrategyBarHistory.strategy_code.in_(strategy_code_candidates(self.definition.code)),
                         StrategyBarHistory.symbol == symbol,
                         StrategyBarHistory.interval_secs == self.definition.interval_secs,
                         StrategyBarHistory.bar_time == bar_time,
@@ -2455,6 +2501,52 @@ class StrategyBotRuntime:
         except Exception:
             logger.exception(
                 "failed to persist strategy bar history for %s %s",
+                self.definition.code,
+                symbol,
+            )
+
+    def _persist_revised_closed_bar(
+        self,
+        *,
+        symbol: str,
+        bar: OHLCVBar,
+    ) -> None:
+        if self.session_factory is None:
+            return
+
+        bar_time = datetime.fromtimestamp(float(bar.timestamp), UTC)
+        try:
+            with self.session_factory() as session:
+                record = session.scalar(
+                    select(StrategyBarHistory).where(
+                        StrategyBarHistory.strategy_code.in_(strategy_code_candidates(self.definition.code)),
+                        StrategyBarHistory.symbol == symbol,
+                        StrategyBarHistory.interval_secs == self.definition.interval_secs,
+                        StrategyBarHistory.bar_time == bar_time,
+                    )
+                )
+                if record is None:
+                    position_state, position_quantity = self._position_snapshot(symbol)
+                    record = StrategyBarHistory(
+                        strategy_code=self.definition.code,
+                        symbol=symbol,
+                        interval_secs=self.definition.interval_secs,
+                        bar_time=bar_time,
+                        position_state=position_state,
+                        position_quantity=position_quantity,
+                    )
+                    session.add(record)
+
+                record.open_price = Decimal(str(bar.open))
+                record.high_price = Decimal(str(bar.high))
+                record.low_price = Decimal(str(bar.low))
+                record.close_price = Decimal(str(bar.close))
+                record.volume = int(bar.volume)
+                record.trade_count = int(bar.trade_count)
+                session.commit()
+        except Exception:
+            logger.exception(
+                "failed to persist revised strategy bar history for %s %s",
                 self.definition.code,
                 symbol,
             )
@@ -2832,7 +2924,7 @@ class StrategyBotRuntime:
         self,
         symbol: str,
         indicators: dict[str, float | bool],
-        builder: BarBuilderManager | SchwabNativeBarBuilderManager,
+        builder: BarBuilderManager | SchwabNativeBarBuilderManager | Polygon30sBarBuilderManager,
     ) -> FeedRetentionMetrics | None:
         runtime_builder = builder.get_builder(symbol)
         if runtime_builder is None:
@@ -3010,9 +3102,9 @@ class StrategyBotRuntime:
     def refresh_lifecycle(self) -> None:
         for symbol in list(self.lifecycle_states):
             indicators = self.last_indicators.get(symbol)
-            if not indicators:
-                continue
-            metrics = self._build_lifecycle_metrics(symbol, indicators, self.builder_manager)
+            metrics = None
+            if indicators:
+                metrics = self._build_lifecycle_metrics(symbol, indicators, self.builder_manager)
             self._update_symbol_lifecycle(symbol, metrics=metrics)
 
 
@@ -3153,7 +3245,7 @@ class StrategyEngineState:
 
         base_trading = base_trading_config or TradingConfig()
         macd_30s_trading = self._resolve_30s_trading_config(base_trading, variant="regular")
-        webull_30s_trading = self._resolve_30s_trading_config(base_trading, variant="webull")
+        polygon_30s_trading = self._resolve_30s_trading_config(base_trading, variant="polygon")
         macd_30s_probe_trading = self._resolve_30s_trading_config(base_trading, variant="probe")
         macd_30s_reclaim_trading = self._resolve_30s_trading_config(base_trading, variant="reclaim")
         macd_30s_retest_trading = self._resolve_30s_trading_config(base_trading, variant="retest")
@@ -3166,7 +3258,11 @@ class StrategyEngineState:
             self.settings.strategy_macd_30s_live_aggregate_bars_enabled
             or self.settings.market_data_live_aggregate_stream_enabled
         )
+<<<<<<< HEAD
         webull_use_live_aggregate_bars = self.settings.strategy_webull_30s_live_aggregate_bars_enabled
+=======
+        polygon_use_live_aggregate_bars = self.settings.strategy_polygon_30s_live_aggregate_bars_enabled
+>>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
         self.bots: dict[str, StrategyRuntime] = {}
         if self.settings.strategy_macd_1m_enabled and "macd_1m" in registrations:
             self.bots["macd_1m"] = StrategyBotRuntime(
@@ -3272,18 +3368,19 @@ class StrategyEngineState:
                 ),
                 retention_config=macd_30s_retention,
             )
-        if self.settings.strategy_webull_30s_enabled and "webull_30s" in registrations:
-            self.bots["webull_30s"] = StrategyBotRuntime(
+        if self.settings.strategy_polygon_30s_enabled and "polygon_30s" in registrations:
+            self.bots["polygon_30s"] = StrategyBotRuntime(
                 StrategyDefinition(
-                    code="webull_30s",
-                    display_name=registrations["webull_30s"].display_name,
-                    account_name=registrations["webull_30s"].account_name,
+                    code="polygon_30s",
+                    display_name=registrations["polygon_30s"].display_name,
+                    account_name=registrations["polygon_30s"].account_name,
                     interval_secs=30,
-                    trading_config=webull_30s_trading,
+                    trading_config=polygon_30s_trading,
                     indicator_config=default_indicator_config,
                 ),
                 now_provider=now_provider,
                 session_factory=session_factory if self.settings.strategy_history_persistence_enabled else None,
+<<<<<<< HEAD
                 use_live_aggregate_bars=webull_use_live_aggregate_bars,
                 trade_tick_service=self.settings.strategy_webull_30s_trade_stream_service,
                 live_aggregate_fallback_enabled=self.settings.strategy_webull_30s_live_aggregate_fallback_enabled,
@@ -3293,12 +3390,23 @@ class StrategyEngineState:
                     interval_secs=30,
                     time_provider=lambda: resolved_now_provider().timestamp(),
                     close_grace_seconds=self.settings.strategy_webull_30s_tick_bar_close_grace_seconds,
+=======
+                use_live_aggregate_bars=polygon_use_live_aggregate_bars,
+                trade_tick_service=self.settings.strategy_polygon_30s_trade_stream_service,
+                live_aggregate_fallback_enabled=self.settings.strategy_polygon_30s_live_aggregate_fallback_enabled,
+                live_aggregate_stale_after_seconds=self.settings.strategy_polygon_30s_live_aggregate_stale_after_seconds,
+                live_aggregate_bars_are_final=False,
+                builder_manager=Polygon30sBarBuilderManager(
+                    interval_secs=30,
+                    time_provider=lambda: resolved_now_provider().timestamp(),
+                    close_grace_seconds=self.settings.strategy_polygon_30s_tick_bar_close_grace_seconds,
+>>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
                     fill_gap_bars=False,
                 ),
-                indicator_engine=SchwabNativeIndicatorEngine(default_indicator_config),
-                entry_engine=SchwabNativeEntryEngine(
-                    webull_30s_trading,
-                    name=registrations["webull_30s"].display_name,
+                indicator_engine=Polygon30sIndicatorEngine(default_indicator_config),
+                entry_engine=Polygon30sEntryEngine(
+                    polygon_30s_trading,
+                    name=registrations["polygon_30s"].display_name,
                     now_provider=resolved_now_provider,
                 ),
                 retention_config=macd_30s_retention,
@@ -3374,12 +3482,12 @@ class StrategyEngineState:
             )
             raw_overrides = self.settings.strategy_macd_30s_config_overrides_json
             scope = "strategy_macd_30s_config_overrides_json"
-        elif variant == "webull":
-            config = base_trading.make_30s_webull_variant(
-                quantity=self.settings.strategy_webull_30s_default_quantity
+        elif variant == "polygon":
+            config = base_trading.make_30s_polygon_variant(
+                quantity=self.settings.strategy_polygon_30s_default_quantity
             )
-            raw_overrides = self.settings.strategy_webull_30s_config_overrides_json
-            scope = "strategy_webull_30s_config_overrides_json"
+            raw_overrides = self.settings.strategy_polygon_30s_config_overrides_json
+            scope = "strategy_polygon_30s_config_overrides_json"
         elif variant == "probe":
             config = base_trading.make_30s_pretrigger_variant(quantity=100)
             raw_overrides = self.settings.strategy_macd_30s_probe_config_overrides_json
@@ -3449,7 +3557,7 @@ class StrategyEngineState:
         codes: list[str] = []
         enabled_by_code = {
             "macd_30s": self.settings.strategy_macd_30s_enabled,
-            "webull_30s": self.settings.strategy_webull_30s_enabled,
+            "polygon_30s": self.settings.strategy_polygon_30s_enabled,
             "schwab_1m": self.settings.strategy_schwab_1m_enabled,
             "tos": self.settings.strategy_tos_enabled,
         }
@@ -3922,7 +4030,7 @@ class StrategyEngineState:
     def apply_manual_stop_symbols(self, symbols_by_strategy: dict[str, set[str]] | None) -> None:
         normalized: dict[str, set[str]] = {}
         for code, symbols in (symbols_by_strategy or {}).items():
-            normalized[str(code)] = {
+            normalized[normalize_strategy_code(code)] = {
                 str(symbol).upper() for symbol in symbols if str(symbol).strip()
             }
         self.manual_stop_symbols_by_strategy = normalized
@@ -3953,7 +4061,7 @@ class StrategyEngineState:
             self._resync_bot_watchlists_from_current_confirmed()
             return
 
-        code = str(strategy_code or "")
+        code = normalize_strategy_code(strategy_code)
         if not code:
             return
         current = set(self.manual_stop_symbols_by_strategy.get(code, set()))
@@ -3967,7 +4075,7 @@ class StrategyEngineState:
 
     def _manual_stop_symbols_for_bot(self, strategy_code: str) -> set[str]:
         return set(self.global_manual_stop_symbols) | set(
-            self.manual_stop_symbols_by_strategy.get(str(strategy_code), set())
+            self.manual_stop_symbols_by_strategy.get(normalize_strategy_code(strategy_code), set())
         )
 
     def _resync_bot_watchlists_from_current_confirmed(
@@ -4165,8 +4273,8 @@ class StrategyEngineState:
         self._ensure_bot_handoff_state()
         restored_active: dict[str, set[str]] = {}
         restored_history: dict[str, set[str]] = {}
-        active_map = active_by_strategy or {}
-        history_map = history_by_strategy or {}
+        active_map = normalize_strategy_code_map(active_by_strategy)
+        history_map = normalize_strategy_code_map(history_by_strategy)
         fallback_symbols = set(self._normalize_symbol_items(self._confirmed_handoff_candidates()))
         if not fallback_symbols:
             for items in active_map.values():
@@ -4179,7 +4287,7 @@ class StrategyEngineState:
             if code not in active_map and code not in history_map:
                 active_symbols = set(fallback_symbols)
                 history_symbols = set(fallback_symbols)
-            elif code in {"macd_30s", "webull_30s"} and not active_symbols and not history_symbols and fallback_symbols:
+            elif code in {"macd_30s", "polygon_30s"} and not active_symbols and not history_symbols and fallback_symbols:
                 active_symbols = set(fallback_symbols)
                 history_symbols = set(fallback_symbols)
             if not history_symbols:
@@ -4359,11 +4467,11 @@ class StrategyEngineState:
         exclude_codes: Sequence[str] | None = None,
     ) -> list[tuple[str, StrategyRuntime]]:
         include = (
-            {str(code) for code in strategy_codes if str(code).strip()}
+            {normalize_strategy_code(code) for code in strategy_codes if str(code).strip()}
             if strategy_codes is not None
             else None
         )
-        exclude = {str(code) for code in (exclude_codes or ()) if str(code).strip()}
+        exclude = {normalize_strategy_code(code) for code in (exclude_codes or ()) if str(code).strip()}
         return [
             (code, bot)
             for code, bot in self.bots.items()
@@ -4945,9 +5053,9 @@ class StrategyEngineService:
 
         self.logger.info("%s starting", SERVICE_NAME)
         self.logger.info(
-            "strategy bot config | schwab_30s=%s webull_30s=%s schwab_1m=%s reclaim=%s macd_1m=%s tos=%s runner=%s qty=%s bots=%s",
+            "strategy bot config | schwab_30s=%s polygon_30s=%s schwab_1m=%s reclaim=%s macd_1m=%s tos=%s runner=%s qty=%s bots=%s",
             self.settings.strategy_macd_30s_enabled,
-            self.settings.strategy_webull_30s_enabled,
+            self.settings.strategy_polygon_30s_enabled,
             self.settings.strategy_schwab_1m_enabled,
             self.settings.strategy_macd_30s_reclaim_enabled,
             self.settings.strategy_macd_1m_enabled,
@@ -5788,7 +5896,11 @@ class StrategyEngineService:
                     latest_by_code[code] = session.scalar(
                         select(StrategyBarHistory.bar_time)
                         .where(
+<<<<<<< HEAD
                             StrategyBarHistory.strategy_code == code,
+=======
+                            StrategyBarHistory.strategy_code.in_(strategy_code_candidates(code)),
+>>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
                             StrategyBarHistory.symbol == normalized_symbol,
                             StrategyBarHistory.interval_secs == int(interval_secs),
                         )
@@ -5817,7 +5929,11 @@ class StrategyEngineService:
                         bar_time = datetime.fromtimestamp(timestamp, UTC)
                         record = session.scalar(
                             select(StrategyBarHistory).where(
+<<<<<<< HEAD
                                 StrategyBarHistory.strategy_code == code,
+=======
+                                StrategyBarHistory.strategy_code.in_(strategy_code_candidates(code)),
+>>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
                                 StrategyBarHistory.symbol == normalized_symbol,
                                 StrategyBarHistory.interval_secs == int(interval_secs),
                                 StrategyBarHistory.bar_time == bar_time,
@@ -7329,7 +7445,11 @@ class StrategyEngineService:
         query = (
             select(StrategyBarHistory)
             .where(
+<<<<<<< HEAD
                 StrategyBarHistory.strategy_code == code,
+=======
+                StrategyBarHistory.strategy_code.in_(strategy_code_candidates(code)),
+>>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
                 StrategyBarHistory.symbol == symbol,
                 StrategyBarHistory.interval_secs == runtime.definition.interval_secs,
                 StrategyBarHistory.bar_time >= session_start_utc,
@@ -7410,7 +7530,7 @@ class StrategyEngineService:
     def _runtime_bar_history_restore_limit(self, runtime: StrategyBotRuntime) -> int | None:
         trading_config = runtime.definition.trading_config
         indicator_config = runtime.definition.indicator_config
-        if runtime.definition.code in {"macd_30s", "webull_30s"} and runtime.definition.interval_secs == 30:
+        if runtime.definition.code in {"macd_30s", "polygon_30s"} and runtime.definition.interval_secs == 30:
             return None
         indicator_min_bars = int(indicator_config.macd_slow + indicator_config.macd_signal)
         strategy_min_bars = int(getattr(trading_config, "schwab_native_warmup_bars_required", 0) or 0)

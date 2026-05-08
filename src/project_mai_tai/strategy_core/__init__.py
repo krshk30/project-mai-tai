@@ -34,6 +34,12 @@ from project_mai_tai.strategy_core.models import (
 from project_mai_tai.strategy_core.momentum_alerts import MomentumAlertEngine
 from project_mai_tai.strategy_core.momentum_confirmed import MomentumConfirmedScanner
 from project_mai_tai.strategy_core.position_tracker import Position, PositionTracker
+from project_mai_tai.strategy_core.polygon_30s import (
+    Polygon30sBarBuilder,
+    Polygon30sBarBuilderManager,
+    Polygon30sEntryEngine,
+    Polygon30sIndicatorEngine,
+)
 from project_mai_tai.strategy_core.runner import RunnerConfig, RunnerPosition, RunnerStrategyRuntime
 from project_mai_tai.strategy_core.schwab_native_30s import (
     SchwabNativeBarBuilder,
@@ -70,6 +76,10 @@ __all__ = [
     "OHLCVBar",
     "Position",
     "PositionTracker",
+    "Polygon30sBarBuilder",
+    "Polygon30sBarBuilderManager",
+    "Polygon30sEntryEngine",
+    "Polygon30sIndicatorEngine",
     "QuoteSnapshot",
     "ReferenceData",
     "RetainedSymbolState",

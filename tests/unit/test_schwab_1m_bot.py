@@ -125,7 +125,7 @@ def test_schwab_1m_uses_schwab_history_targets_not_generic_hydration() -> None:
     state = StrategyEngineState(
         settings=Settings(
             strategy_macd_30s_enabled=False,
-            strategy_webull_30s_enabled=False,
+            strategy_polygon_30s_enabled=False,
             strategy_macd_1m_enabled=False,
             strategy_schwab_1m_enabled=True,
         )
@@ -143,13 +143,18 @@ def test_schwab_1m_uses_completed_bar_entries_and_shorter_cooldown() -> None:
     state = StrategyEngineState(
         settings=Settings(
             strategy_macd_30s_enabled=True,
+<<<<<<< HEAD
             strategy_webull_30s_enabled=True,
+=======
+            strategy_polygon_30s_enabled=True,
+>>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
             strategy_macd_1m_enabled=False,
             strategy_schwab_1m_enabled=True,
         )
     )
 
     schwab_30s = state.bots["macd_30s"].definition.trading_config
+<<<<<<< HEAD
     webull_30s = state.bots["webull_30s"].definition.trading_config
     schwab_1m = state.bots["schwab_1m"].definition.trading_config
 
@@ -173,6 +178,31 @@ def test_schwab_1m_uses_completed_bar_entries_and_shorter_cooldown() -> None:
     assert schwab_1m.p1_min_volume_abs == 7500
     assert schwab_30s.p1_min_dollar_volume_abs == 25_000
     assert webull_30s.p1_min_dollar_volume_abs == 25_000
+=======
+    polygon_30s = state.bots["polygon_30s"].definition.trading_config
+    schwab_1m = state.bots["schwab_1m"].definition.trading_config
+
+    assert schwab_30s.entry_intrabar_enabled is False
+    assert polygon_30s.entry_intrabar_enabled is False
+    assert schwab_1m.entry_intrabar_enabled is False
+    assert schwab_30s.p4_prev_bar_entry_enabled is False
+    assert polygon_30s.p4_prev_bar_entry_enabled is False
+    assert schwab_1m.p4_prev_bar_entry_enabled is False
+    assert schwab_30s.schwab_native_warmup_bars_required == 35
+    assert polygon_30s.schwab_native_warmup_bars_required == 35
+    assert schwab_1m.schwab_native_warmup_bars_required == 35
+    assert schwab_30s.cooldown_bars == 10
+    assert polygon_30s.cooldown_bars == 10
+    assert schwab_1m.cooldown_bars == 5
+    assert schwab_30s.p1_min_vol_ratio == 1.25
+    assert polygon_30s.p1_min_vol_ratio == 1.25
+    assert schwab_1m.p1_min_vol_ratio == 1.25
+    assert schwab_30s.p1_min_volume_abs == 7500
+    assert polygon_30s.p1_min_volume_abs == 7500
+    assert schwab_1m.p1_min_volume_abs == 7500
+    assert schwab_30s.p1_min_dollar_volume_abs == 25_000
+    assert polygon_30s.p1_min_dollar_volume_abs == 25_000
+>>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
     assert schwab_1m.p1_min_dollar_volume_abs == 25_000
     assert schwab_1m.p4_enabled is True
     assert schwab_1m.p4_body_pct == 4.0
@@ -189,6 +219,7 @@ def test_schwab_1m_uses_completed_bar_entries_and_shorter_cooldown() -> None:
     assert schwab_30s.p3_max_bars_since_macd_cross == 4
     assert schwab_30s.p3_max_recent_runup_pct == 8.0
     assert schwab_30s.p3_recent_runup_lookback_bars == 8
+<<<<<<< HEAD
     assert webull_30s.p3_entry_stoch_k_cap is None
     assert webull_30s.p3_min_volume_abs is None
     assert webull_30s.p3_min_dollar_volume_abs is None
@@ -197,6 +228,16 @@ def test_schwab_1m_uses_completed_bar_entries_and_shorter_cooldown() -> None:
     assert webull_30s.p3_max_bars_since_macd_cross is None
     assert webull_30s.p3_max_recent_runup_pct is None
     assert webull_30s.p3_recent_runup_lookback_bars == 0
+=======
+    assert polygon_30s.p3_entry_stoch_k_cap is None
+    assert polygon_30s.p3_min_volume_abs is None
+    assert polygon_30s.p3_min_dollar_volume_abs is None
+    assert polygon_30s.p3_min_vol_ratio is None
+    assert polygon_30s.p3_hard_stop_pause_minutes == 0
+    assert polygon_30s.p3_max_bars_since_macd_cross is None
+    assert polygon_30s.p3_max_recent_runup_pct is None
+    assert polygon_30s.p3_recent_runup_lookback_bars == 0
+>>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
     assert schwab_1m.p3_min_volume_abs == 20_000
     assert schwab_1m.p3_min_dollar_volume_abs == 70_000
     assert schwab_1m.p3_min_vol_ratio == 1.50
@@ -214,14 +255,22 @@ def test_schwab_native_variants_keep_intended_live_execution_tuning() -> None:
     state = StrategyEngineState(
         settings=Settings(
             strategy_macd_30s_enabled=True,
+<<<<<<< HEAD
             strategy_webull_30s_enabled=True,
+=======
+            strategy_polygon_30s_enabled=True,
+>>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
             strategy_macd_1m_enabled=False,
             strategy_schwab_1m_enabled=True,
         )
     )
 
     schwab_30s = state.bots["macd_30s"].definition.trading_config
+<<<<<<< HEAD
     webull_30s = state.bots["webull_30s"].definition.trading_config
+=======
+    polygon_30s = state.bots["polygon_30s"].definition.trading_config
+>>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
     schwab_1m = state.bots["schwab_1m"].definition.trading_config
 
     assert schwab_30s.schwab_native_use_chop_regime is True
@@ -235,6 +284,7 @@ def test_schwab_native_variants_keep_intended_live_execution_tuning() -> None:
     assert schwab_30s.p3_max_recent_runup_pct == 8.0
     assert schwab_30s.p3_recent_runup_lookback_bars == 8
 
+<<<<<<< HEAD
     assert webull_30s.p3_allow_momentum_override is True
     assert webull_30s.p3_entry_stoch_k_cap is None
     assert webull_30s.p3_min_volume_abs is None
@@ -244,6 +294,17 @@ def test_schwab_native_variants_keep_intended_live_execution_tuning() -> None:
     assert webull_30s.p3_max_bars_since_macd_cross is None
     assert webull_30s.p3_max_recent_runup_pct is None
     assert webull_30s.p3_recent_runup_lookback_bars == 0
+=======
+    assert polygon_30s.p3_allow_momentum_override is True
+    assert polygon_30s.p3_entry_stoch_k_cap is None
+    assert polygon_30s.p3_min_volume_abs is None
+    assert polygon_30s.p3_min_dollar_volume_abs is None
+    assert polygon_30s.p3_min_vol_ratio is None
+    assert polygon_30s.p3_hard_stop_pause_minutes == 0
+    assert polygon_30s.p3_max_bars_since_macd_cross is None
+    assert polygon_30s.p3_max_recent_runup_pct is None
+    assert polygon_30s.p3_recent_runup_lookback_bars == 0
+>>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
 
     assert schwab_1m.schwab_native_use_chop_regime is True
     assert schwab_1m.p3_allow_momentum_override is False
@@ -266,7 +327,11 @@ def test_schwab_native_variants_keep_intended_live_execution_tuning() -> None:
     assert schwab_1m.cooldown_bars == 5
     assert schwab_1m.entry_intrabar_enabled is False
     assert schwab_30s.p4_prev_bar_entry_enabled is False
+<<<<<<< HEAD
     assert webull_30s.p4_prev_bar_entry_enabled is False
+=======
+    assert polygon_30s.p4_prev_bar_entry_enabled is False
+>>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
     assert schwab_1m.p4_prev_bar_entry_enabled is False
     assert schwab_1m.p4_enabled is True
 
@@ -275,7 +340,11 @@ def test_schwab_1m_needs_history_seed_until_required_bars_loaded() -> None:
     state = StrategyEngineState(
         settings=Settings(
             strategy_macd_30s_enabled=False,
+<<<<<<< HEAD
             strategy_webull_30s_enabled=False,
+=======
+            strategy_polygon_30s_enabled=False,
+>>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
             strategy_macd_1m_enabled=False,
             strategy_schwab_1m_enabled=True,
         )
@@ -297,7 +366,11 @@ def test_schwab_1m_lazy_seed_retries_while_still_under_required_bars() -> None:
     state = StrategyEngineState(
         settings=Settings(
             strategy_macd_30s_enabled=False,
+<<<<<<< HEAD
             strategy_webull_30s_enabled=False,
+=======
+            strategy_polygon_30s_enabled=False,
+>>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
             strategy_macd_1m_enabled=False,
             strategy_schwab_1m_enabled=True,
         )
@@ -348,7 +421,7 @@ def test_schwab_1m_no_first_tick_does_not_halt_flat_symbol() -> None:
         settings=Settings(
             redis_url="redis://localhost:6379/15",
             strategy_macd_30s_enabled=False,
-            strategy_webull_30s_enabled=False,
+            strategy_polygon_30s_enabled=False,
             strategy_macd_1m_enabled=False,
             strategy_schwab_1m_enabled=True,
         )
@@ -382,7 +455,11 @@ def test_schwab_1m_runtime_does_not_emit_intrabar_open_on_trade_tick(monkeypatch
         settings=make_test_settings(
             redis_stream_prefix="test",
             strategy_macd_30s_enabled=False,
+<<<<<<< HEAD
             strategy_webull_30s_enabled=False,
+=======
+            strategy_polygon_30s_enabled=False,
+>>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
             strategy_macd_1m_enabled=False,
             strategy_schwab_1m_enabled=True,
             strategy_schwab_1m_broker_provider="schwab",
@@ -765,7 +842,11 @@ def test_schwab_1m_history_loader_prefers_recorded_live_bars(tmp_path: Path, mon
         settings=make_test_settings(
             redis_stream_prefix="test",
             strategy_macd_30s_enabled=False,
+<<<<<<< HEAD
             strategy_webull_30s_enabled=False,
+=======
+            strategy_polygon_30s_enabled=False,
+>>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
             strategy_macd_1m_enabled=False,
             strategy_schwab_1m_enabled=True,
             schwab_tick_archive_enabled=True,
@@ -807,7 +888,11 @@ def test_schwab_1m_history_loader_expands_beyond_current_session_when_warmup_is_
         settings=make_test_settings(
             redis_stream_prefix="test",
             strategy_macd_30s_enabled=False,
+<<<<<<< HEAD
             strategy_webull_30s_enabled=False,
+=======
+            strategy_polygon_30s_enabled=False,
+>>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
             strategy_macd_1m_enabled=False,
             strategy_schwab_1m_enabled=True,
         ),
@@ -856,7 +941,11 @@ def test_schwab_1m_history_loader_merges_persisted_older_bars_when_live_history_
         settings=make_test_settings(
             redis_stream_prefix="test",
             strategy_macd_30s_enabled=False,
+<<<<<<< HEAD
             strategy_webull_30s_enabled=False,
+=======
+            strategy_polygon_30s_enabled=False,
+>>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
             strategy_macd_1m_enabled=False,
             strategy_schwab_1m_enabled=True,
             dashboard_snapshot_persistence_enabled=False,
@@ -928,7 +1017,11 @@ def test_schwab_1m_restore_prefers_fuller_archived_history_when_db_session_slice
         settings=make_test_settings(
             redis_stream_prefix="test",
             strategy_macd_30s_enabled=False,
+<<<<<<< HEAD
             strategy_webull_30s_enabled=False,
+=======
+            strategy_polygon_30s_enabled=False,
+>>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
             strategy_macd_1m_enabled=False,
             strategy_schwab_1m_enabled=True,
             schwab_tick_archive_enabled=True,
@@ -1010,7 +1103,11 @@ def test_schwab_1m_restore_prefers_fuller_archived_history_when_db_session_slice
             60,
             {
                 "strategy_macd_30s_enabled": False,
+<<<<<<< HEAD
                 "strategy_webull_30s_enabled": False,
+=======
+                "strategy_polygon_30s_enabled": False,
+>>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
                 "strategy_macd_1m_enabled": False,
                 "strategy_schwab_1m_enabled": True,
             },
@@ -1020,7 +1117,11 @@ def test_schwab_1m_restore_prefers_fuller_archived_history_when_db_session_slice
             30,
             {
                 "strategy_macd_30s_enabled": True,
+<<<<<<< HEAD
                 "strategy_webull_30s_enabled": False,
+=======
+                "strategy_polygon_30s_enabled": False,
+>>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
                 "strategy_macd_1m_enabled": False,
                 "strategy_schwab_1m_enabled": False,
             },
@@ -1109,7 +1210,11 @@ def test_polygon_30s_bot_does_not_mix_schwab_trade_vwap_after_hours(tmp_path: Pa
             dashboard_snapshot_persistence_enabled=False,
             strategy_history_persistence_enabled=False,
             strategy_macd_30s_enabled=False,
+<<<<<<< HEAD
             strategy_webull_30s_enabled=True,
+=======
+            strategy_polygon_30s_enabled=True,
+>>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
             strategy_schwab_1m_enabled=False,
             strategy_macd_1m_enabled=False,
         ),
@@ -1117,7 +1222,11 @@ def test_polygon_30s_bot_does_not_mix_schwab_trade_vwap_after_hours(tmp_path: Pa
         now_provider=lambda: now,
     )
 
+<<<<<<< HEAD
     runtime = service.state.bots["webull_30s"]
+=======
+    runtime = service.state.bots["polygon_30s"]
+>>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
     runtime.set_watchlist(["VSME"])
     bars = [
         {
@@ -1148,7 +1257,11 @@ async def test_schwab_1m_history_refresh_replays_missing_completed_bar(monkeypat
         settings=make_test_settings(
             redis_stream_prefix="test",
             strategy_macd_30s_enabled=False,
+<<<<<<< HEAD
             strategy_webull_30s_enabled=False,
+=======
+            strategy_polygon_30s_enabled=False,
+>>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
             strategy_macd_1m_enabled=False,
             strategy_schwab_1m_enabled=True,
             strategy_schwab_1m_broker_provider="schwab",
@@ -1203,7 +1316,11 @@ async def test_schwab_1m_history_refresh_ignores_prior_session_bars(monkeypatch)
         settings=make_test_settings(
             redis_stream_prefix="test",
             strategy_macd_30s_enabled=False,
+<<<<<<< HEAD
             strategy_webull_30s_enabled=False,
+=======
+            strategy_polygon_30s_enabled=False,
+>>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
             strategy_macd_1m_enabled=False,
             strategy_schwab_1m_enabled=True,
             strategy_schwab_1m_broker_provider="schwab",
@@ -1258,7 +1375,11 @@ def test_schwab_1m_runtime_emits_signal_immediately_from_final_live_bar(monkeypa
         settings=make_test_settings(
             redis_stream_prefix="test",
             strategy_macd_30s_enabled=False,
+<<<<<<< HEAD
             strategy_webull_30s_enabled=False,
+=======
+            strategy_polygon_30s_enabled=False,
+>>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
             strategy_macd_1m_enabled=False,
             strategy_schwab_1m_enabled=True,
             strategy_schwab_1m_broker_provider="schwab",
@@ -1323,7 +1444,11 @@ def test_schwab_1m_final_live_bar_uses_accumulated_trade_tick_count(monkeypatch)
         settings=make_test_settings(
             redis_stream_prefix="test",
             strategy_macd_30s_enabled=False,
+<<<<<<< HEAD
             strategy_webull_30s_enabled=False,
+=======
+            strategy_polygon_30s_enabled=False,
+>>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
             strategy_macd_1m_enabled=False,
             strategy_schwab_1m_enabled=True,
             strategy_schwab_1m_broker_provider="schwab",
@@ -1380,7 +1505,11 @@ def test_schwab_1m_trade_tick_count_is_recorded_even_when_fallback_path_handles_
         settings=make_test_settings(
             redis_stream_prefix="test",
             strategy_macd_30s_enabled=False,
+<<<<<<< HEAD
             strategy_webull_30s_enabled=False,
+=======
+            strategy_polygon_30s_enabled=False,
+>>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
             strategy_macd_1m_enabled=False,
             strategy_schwab_1m_enabled=True,
             strategy_schwab_1m_broker_provider="schwab",
@@ -1422,7 +1551,11 @@ def test_schwab_1m_final_live_bar_falls_back_when_no_ticks_seen() -> None:
         settings=make_test_settings(
             redis_stream_prefix="test",
             strategy_macd_30s_enabled=False,
+<<<<<<< HEAD
             strategy_webull_30s_enabled=False,
+=======
+            strategy_polygon_30s_enabled=False,
+>>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
             strategy_macd_1m_enabled=False,
             strategy_schwab_1m_enabled=True,
             strategy_schwab_1m_broker_provider="schwab",
@@ -1455,7 +1588,7 @@ def test_flat_symbol_schwab_resubscribe_interval_is_backed_off() -> None:
         settings=Settings(
             redis_url="redis://localhost:6379/15",
             strategy_macd_30s_enabled=True,
-            strategy_webull_30s_enabled=False,
+            strategy_polygon_30s_enabled=False,
             strategy_macd_1m_enabled=False,
             strategy_schwab_1m_enabled=False,
         )
@@ -1469,7 +1602,7 @@ def test_data_health_summary_is_degraded_for_flat_warning_symbol() -> None:
     state = StrategyEngineState(
         settings=Settings(
             strategy_macd_30s_enabled=True,
-            strategy_webull_30s_enabled=False,
+            strategy_polygon_30s_enabled=False,
             strategy_macd_1m_enabled=False,
             strategy_schwab_1m_enabled=False,
         )

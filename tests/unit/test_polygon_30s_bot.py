@@ -50,10 +50,10 @@ def build_test_session_factory() -> sessionmaker:
     return sessionmaker(bind=engine, expire_on_commit=False)
 
 
-def test_runtime_registry_registers_webull_30s_as_live_webull() -> None:
+def test_runtime_registry_registers_polygon_30s_as_live_polygon_strategy() -> None:
     settings = Settings(
         oms_adapter="schwab",
-        strategy_webull_30s_enabled=True,
+        strategy_polygon_30s_enabled=True,
         scanner_feed_retention_enabled=False,
     )
 
@@ -61,116 +61,116 @@ def test_runtime_registry_registers_webull_30s_as_live_webull() -> None:
     broker_accounts = {item.name: item for item in configured_broker_account_registrations(settings)}
 
     assert registrations["macd_30s"].display_name == "Schwab 30 Sec Bot"
-    assert registrations["webull_30s"].display_name == "Polygon 30 Sec Bot"
-    assert registrations["webull_30s"].execution_mode == "live"
-    assert registrations["webull_30s"].metadata["provider"] == "webull"
-    assert registrations["webull_30s"].metadata["market_data_provider"] == "polygon"
-    assert broker_accounts[settings.strategy_webull_30s_account_name].provider == "webull"
+    assert registrations["polygon_30s"].display_name == "Polygon 30 Sec Bot"
+    assert registrations["polygon_30s"].execution_mode == "live"
+    assert registrations["polygon_30s"].metadata["provider"] == "webull"
+    assert registrations["polygon_30s"].metadata["market_data_provider"] == "polygon"
+    assert broker_accounts[settings.strategy_polygon_30s_account_name].provider == "webull"
 
 
-def test_strategy_state_routes_webull_30s_through_polygon_market_data_path() -> None:
+def test_strategy_state_routes_polygon_30s_through_polygon_market_data_path() -> None:
     state = StrategyEngineState(
         settings=Settings(
             strategy_macd_30s_broker_provider="schwab",
-            strategy_webull_30s_enabled=True,
+            strategy_polygon_30s_enabled=True,
             scanner_feed_retention_enabled=False,
         ),
         now_provider=fixed_now,
     )
 
-    assert "webull_30s" in state.bots
+    assert "polygon_30s" in state.bots
 
 
-def test_webull_30s_uses_tick_bar_close_grace_for_late_polygon_trades() -> None:
+def test_polygon_30s_uses_tick_bar_close_grace_for_late_polygon_trades() -> None:
     state = StrategyEngineState(
         settings=Settings(
             strategy_macd_30s_broker_provider="schwab",
-            strategy_webull_30s_enabled=True,
+            strategy_polygon_30s_enabled=True,
             scanner_feed_retention_enabled=False,
-            strategy_webull_30s_tick_bar_close_grace_seconds=2.0,
+            strategy_polygon_30s_tick_bar_close_grace_seconds=2.0,
         ),
         now_provider=fixed_now,
     )
 
-    builder_manager = state.bots["webull_30s"].builder_manager
+    builder_manager = state.bots["polygon_30s"].builder_manager
 
     assert builder_manager.close_grace_seconds == 2.0
-    assert state.bots["webull_30s"].definition.display_name == "Polygon 30 Sec Bot"
+    assert state.bots["polygon_30s"].definition.display_name == "Polygon 30 Sec Bot"
     assert state.schwab_stream_strategy_codes() == ("macd_30s",)
 
-    state._record_bot_handoff_symbols([{"ticker": "UGRO"}], strategy_codes=["webull_30s"])
-    state._resync_bot_watchlists_from_current_confirmed(strategy_codes=["webull_30s"])
+    state._record_bot_handoff_symbols([{"ticker": "UGRO"}], strategy_codes=["polygon_30s"])
+    state._resync_bot_watchlists_from_current_confirmed(strategy_codes=["polygon_30s"])
 
-    assert "UGRO" in state.bots["webull_30s"].watchlist
+    assert "UGRO" in state.bots["polygon_30s"].watchlist
     assert "UGRO" in state.market_data_symbols()
     assert "UGRO" not in state.schwab_stream_symbols()
 
 
-def test_webull_30s_defaults_to_canonical_polygon_live_bars() -> None:
+def test_polygon_30s_defaults_to_canonical_polygon_live_bars() -> None:
     state = StrategyEngineState(
         settings=Settings(
             strategy_macd_30s_broker_provider="schwab",
-            strategy_webull_30s_enabled=True,
+            strategy_polygon_30s_enabled=True,
             scanner_feed_retention_enabled=False,
         ),
         now_provider=fixed_now,
     )
 
-    webull_bot = state.bots["webull_30s"]
+    polygon_bot = state.bots["polygon_30s"]
 
-    assert webull_bot.use_live_aggregate_bars is True
-    assert webull_bot.live_aggregate_fallback_enabled is False
-    assert webull_bot.live_aggregate_bars_are_final is False
-    assert webull_bot.live_aggregate_stale_after_seconds == 3
+    assert polygon_bot.use_live_aggregate_bars is True
+    assert polygon_bot.live_aggregate_fallback_enabled is False
+    assert polygon_bot.live_aggregate_bars_are_final is False
+    assert polygon_bot.live_aggregate_stale_after_seconds == 3
 
 
-def test_webull_30s_does_not_inherit_global_live_aggregate_stream_toggle() -> None:
+def test_polygon_30s_does_not_inherit_global_live_aggregate_stream_toggle() -> None:
     state = StrategyEngineState(
         settings=Settings(
             strategy_macd_30s_broker_provider="schwab",
-            strategy_webull_30s_enabled=True,
+            strategy_polygon_30s_enabled=True,
             scanner_feed_retention_enabled=False,
             market_data_live_aggregate_stream_enabled=True,
-            strategy_webull_30s_live_aggregate_bars_enabled=False,
+            strategy_polygon_30s_live_aggregate_bars_enabled=False,
         ),
         now_provider=fixed_now,
     )
 
-    webull_bot = state.bots["webull_30s"]
+    polygon_bot = state.bots["polygon_30s"]
 
-    assert webull_bot.use_live_aggregate_bars is False
+    assert polygon_bot.use_live_aggregate_bars is False
 
 
-def test_webull_30s_keeps_polygon_market_data_when_execution_routes_to_schwab() -> None:
+def test_polygon_30s_keeps_polygon_market_data_when_execution_routes_to_schwab() -> None:
     state = StrategyEngineState(
         settings=Settings(
-            strategy_webull_30s_enabled=True,
-            strategy_webull_30s_broker_provider="schwab",
+            strategy_polygon_30s_enabled=True,
+            strategy_polygon_30s_broker_provider="schwab",
             scanner_feed_retention_enabled=False,
         ),
         now_provider=fixed_now,
     )
 
     assert state.schwab_stream_strategy_codes() == ("macd_30s",)
-    state._record_bot_handoff_symbols([{"ticker": "UGRO"}], strategy_codes=["webull_30s"])
-    state._resync_bot_watchlists_from_current_confirmed(strategy_codes=["webull_30s"])
+    state._record_bot_handoff_symbols([{"ticker": "UGRO"}], strategy_codes=["polygon_30s"])
+    state._resync_bot_watchlists_from_current_confirmed(strategy_codes=["polygon_30s"])
     assert "UGRO" in state.market_data_symbols()
     assert "UGRO" not in state.schwab_stream_symbols()
 
 
-def test_webull_30s_runtime_uses_polygon_validation_entry_tuning() -> None:
+def test_polygon_30s_runtime_uses_polygon_validation_entry_tuning() -> None:
     state = StrategyEngineState(
         settings=Settings(
             strategy_macd_30s_broker_provider="schwab",
-            strategy_webull_30s_enabled=True,
+            strategy_polygon_30s_enabled=True,
             scanner_feed_retention_enabled=False,
         ),
         now_provider=fixed_now,
     )
 
-    trading = state.bots["webull_30s"].definition.trading_config
+    trading = state.bots["polygon_30s"].definition.trading_config
 
-    assert trading.entry_logic_mode == "schwab_native_30s"
+    assert trading.entry_logic_mode == "polygon_30s"
     assert trading.schwab_native_use_chop_regime is False
     assert trading.p3_allow_momentum_override is True
     assert trading.p3_entry_stoch_k_cap is None
@@ -180,7 +180,7 @@ def test_gap_recovery_only_tracks_real_risk_cases_for_flat_symbols() -> None:
     state = StrategyEngineState(
         settings=Settings(
             strategy_macd_30s_broker_provider="schwab",
-            strategy_webull_30s_enabled=True,
+            strategy_polygon_30s_enabled=True,
             scanner_feed_retention_enabled=False,
         ),
         now_provider=fixed_now,
@@ -195,11 +195,11 @@ def test_gap_recovery_only_tracks_real_risk_cases_for_flat_symbols() -> None:
     assert schwab_bot._should_track_gap_recovery("UGRO") is True
 
 
-def test_market_data_gateway_enables_live_aggregate_stream_for_webull_30s() -> None:
+def test_market_data_gateway_enables_live_aggregate_stream_for_polygon_30s() -> None:
     service = MarketDataGatewayService(
         settings=Settings(
-            strategy_webull_30s_enabled=True,
-            strategy_webull_30s_live_aggregate_bars_enabled=True,
+            strategy_polygon_30s_enabled=True,
+            strategy_polygon_30s_live_aggregate_bars_enabled=True,
             scanner_feed_retention_enabled=False,
         ),
         redis_client=Mock(),
@@ -217,7 +217,7 @@ def test_oms_service_builds_webull_provider_inside_mixed_router() -> None:
             redis_stream_prefix="test",
             oms_adapter="schwab",
             strategy_macd_30s_broker_provider="schwab",
-            strategy_webull_30s_enabled=True,
+            strategy_polygon_30s_enabled=True,
         ),
         redis_client=FakeRedis(),
         session_factory=build_test_session_factory(),
@@ -227,17 +227,17 @@ def test_oms_service_builds_webull_provider_inside_mixed_router() -> None:
     assert isinstance(service._build_provider_adapter("webull"), WebullBrokerAdapter)
 
 
-def test_control_plane_meta_includes_webull_and_renamed_schwab_bot() -> None:
+def test_control_plane_meta_includes_polygon_and_renamed_schwab_bot() -> None:
     assert BOT_PAGE_META["macd_30s"]["title"] == "Schwab 30 Sec Bot"
-    assert BOT_PAGE_META["webull_30s"]["title"] == "Polygon 30 Sec Bot"
-    assert BOT_PAGE_META["webull_30s"]["path"] == "/bot/30s-polygon"
+    assert BOT_PAGE_META["polygon_30s"]["title"] == "Polygon 30 Sec Bot"
+    assert BOT_PAGE_META["polygon_30s"]["path"] == "/bot/30s-polygon"
 
 
-def test_restore_confirmed_runtime_view_seeds_new_webull_bot_from_confirmed_state() -> None:
+def test_restore_confirmed_runtime_view_seeds_new_polygon_bot_from_confirmed_state() -> None:
     state = StrategyEngineState(
         settings=Settings(
             strategy_macd_30s_broker_provider="schwab",
-            strategy_webull_30s_enabled=True,
+            strategy_polygon_30s_enabled=True,
             scanner_feed_retention_enabled=False,
         ),
         now_provider=fixed_now,
@@ -252,14 +252,14 @@ def test_restore_confirmed_runtime_view_seeds_new_webull_bot_from_confirmed_stat
     )
 
     assert "UGRO" in state.bots["macd_30s"].watchlist
-    assert "UGRO" in state.bots["webull_30s"].watchlist
+    assert "UGRO" in state.bots["polygon_30s"].watchlist
 
 
-def test_restore_confirmed_runtime_view_seeds_new_webull_bot_from_existing_handoff_history() -> None:
+def test_restore_confirmed_runtime_view_seeds_new_polygon_bot_from_existing_handoff_history() -> None:
     state = StrategyEngineState(
         settings=Settings(
             strategy_macd_30s_broker_provider="schwab",
-            strategy_webull_30s_enabled=True,
+            strategy_polygon_30s_enabled=True,
             scanner_feed_retention_enabled=False,
         ),
         now_provider=fixed_now,
@@ -273,14 +273,14 @@ def test_restore_confirmed_runtime_view_seeds_new_webull_bot_from_existing_hando
     )
 
     assert "UGRO" in state.bots["macd_30s"].watchlist
-    assert "UGRO" in state.bots["webull_30s"].watchlist
+    assert "UGRO" in state.bots["polygon_30s"].watchlist
 
 
 def test_active_bot_handoff_replaces_current_confirmed_set_without_losing_history() -> None:
     state = StrategyEngineState(
         settings=Settings(
             strategy_macd_30s_broker_provider="schwab",
-            strategy_webull_30s_enabled=True,
+            strategy_polygon_30s_enabled=True,
             scanner_feed_retention_enabled=False,
         ),
         now_provider=fixed_now,
@@ -293,7 +293,7 @@ def test_active_bot_handoff_replaces_current_confirmed_set_without_losing_histor
     state._resync_bot_watchlists_from_current_confirmed()
 
     assert state.bots["macd_30s"].watchlist == {"UGRO", "CAST"}
-    assert state.bots["webull_30s"].watchlist == {"UGRO", "CAST"}
+    assert state.bots["polygon_30s"].watchlist == {"UGRO", "CAST"}
 
     state._record_bot_handoff_symbols(
         [{"ticker": "UGRO"}],
@@ -302,22 +302,22 @@ def test_active_bot_handoff_replaces_current_confirmed_set_without_losing_histor
     state._resync_bot_watchlists_from_current_confirmed()
 
     assert state.bots["macd_30s"].watchlist == {"UGRO"}
-    assert state.bots["webull_30s"].watchlist == {"UGRO"}
+    assert state.bots["polygon_30s"].watchlist == {"UGRO"}
     assert state.bot_handoff_history_by_strategy["macd_30s"] == {"UGRO", "CAST"}
-    assert state.bot_handoff_history_by_strategy["webull_30s"] == {"UGRO", "CAST"}
+    assert state.bot_handoff_history_by_strategy["polygon_30s"] == {"UGRO", "CAST"}
 
 
-def test_webull_30s_does_not_re_evaluate_same_bar_after_late_same_bucket_live_bar() -> None:
+def test_polygon_30s_does_not_re_evaluate_same_bar_after_late_same_bucket_live_bar() -> None:
     clock = {"now": datetime(2026, 4, 23, 15, 26, 45, tzinfo=UTC)}
     state = StrategyEngineState(
         settings=Settings(
             strategy_macd_30s_broker_provider="schwab",
-            strategy_webull_30s_enabled=True,
+            strategy_polygon_30s_enabled=True,
             scanner_feed_retention_enabled=False,
         ),
         now_provider=lambda: clock["now"],
     )
-    bot = state.bots["webull_30s"]
+    bot = state.bots["polygon_30s"]
     bot.set_watchlist(["RDAC"])
     bot.seed_bars(
         "RDAC",
@@ -412,17 +412,97 @@ def test_webull_30s_does_not_re_evaluate_same_bar_after_late_same_bucket_live_ba
     assert bot.recent_decisions[0]["reason"] == "no entry path matched"
 
 
-def test_webull_30s_skips_first_mid_bucket_live_aggregate_bar() -> None:
-    clock = {"now": datetime(2026, 4, 23, 15, 26, 35, tzinfo=UTC)}
+def test_polygon_30s_revises_last_closed_bar_when_late_second_arrives() -> None:
+    clock = {"now": datetime(2026, 4, 23, 15, 27, 0, tzinfo=UTC)}
     state = StrategyEngineState(
         settings=Settings(
             strategy_macd_30s_broker_provider="schwab",
-            strategy_webull_30s_enabled=True,
+            strategy_polygon_30s_enabled=True,
             scanner_feed_retention_enabled=False,
         ),
         now_provider=lambda: clock["now"],
     )
-    bot = state.bots["webull_30s"]
+    bot = state.bots["polygon_30s"]
+    bot.set_watchlist(["CTNT"])
+    bot.seed_bars(
+        "CTNT",
+        [
+            {
+                "open": 3.00 + index * 0.01,
+                "high": 3.02 + index * 0.01,
+                "low": 2.99 + index * 0.01,
+                "close": 3.01 + index * 0.01,
+                "volume": 20_000 + index * 100,
+                "timestamp": 1_700_000_000.0 + index * 30,
+                "trade_count": 10 + index,
+            }
+            for index in range(55)
+        ],
+    )
+
+    completed_evaluations: list[str] = []
+
+    def fake_evaluate_completed_bar(symbol: str):
+        completed_evaluations.append(symbol)
+        return []
+
+    bot._evaluate_completed_bar = fake_evaluate_completed_bar  # type: ignore[method-assign]
+
+    bot.handle_live_bar(
+        symbol="CTNT",
+        open_price=3.21,
+        high_price=3.25,
+        low_price=3.2032,
+        close_price=3.23,
+        volume=14_122,
+        timestamp=datetime(2026, 4, 23, 15, 26, 30, tzinfo=UTC).timestamp(),
+        trade_count=171,
+    )
+    bot.handle_live_bar(
+        symbol="CTNT",
+        open_price=3.23,
+        high_price=3.24,
+        low_price=3.22,
+        close_price=3.23,
+        volume=500,
+        timestamp=datetime(2026, 4, 23, 15, 27, 0, tzinfo=UTC).timestamp(),
+        trade_count=5,
+    )
+
+    builder = bot.builder_manager.get_builder("CTNT")
+    assert builder is not None
+    assert completed_evaluations == ["CTNT"]
+    assert builder.bars[-1].timestamp == datetime(2026, 4, 23, 15, 26, 30, tzinfo=UTC).timestamp()
+    assert builder.bars[-1].volume == 14_122
+    assert builder.bars[-1].trade_count == 171
+
+    bot.handle_live_bar(
+        symbol="CTNT",
+        open_price=3.23,
+        high_price=3.24,
+        low_price=3.21,
+        close_price=3.23,
+        volume=1_538,
+        timestamp=datetime(2026, 4, 23, 15, 26, 59, tzinfo=UTC).timestamp(),
+        trade_count=30,
+    )
+
+    assert completed_evaluations == ["CTNT"]
+    assert builder.bars[-1].volume == 15_660
+    assert builder.bars[-1].trade_count == 201
+
+
+def test_polygon_30s_skips_first_mid_bucket_live_aggregate_bar() -> None:
+    clock = {"now": datetime(2026, 4, 23, 15, 26, 35, tzinfo=UTC)}
+    state = StrategyEngineState(
+        settings=Settings(
+            strategy_macd_30s_broker_provider="schwab",
+            strategy_polygon_30s_enabled=True,
+            scanner_feed_retention_enabled=False,
+        ),
+        now_provider=lambda: clock["now"],
+    )
+    bot = state.bots["polygon_30s"]
     bot.set_watchlist(["CANF"])
     bot.seed_bars(
         "CANF",
@@ -508,17 +588,17 @@ def test_webull_30s_skips_first_mid_bucket_live_aggregate_bar() -> None:
     assert builder.bars[-1].timestamp == datetime(2026, 4, 23, 15, 27, 0, tzinfo=UTC).timestamp()
 
 
-def test_webull_30s_keeps_sparse_bucket_when_provider_coverage_predates_bucket() -> None:
+def test_polygon_30s_keeps_sparse_bucket_when_provider_coverage_predates_bucket() -> None:
     clock = {"now": datetime(2026, 4, 23, 15, 26, 35, tzinfo=UTC)}
     state = StrategyEngineState(
         settings=Settings(
             strategy_macd_30s_broker_provider="schwab",
-            strategy_webull_30s_enabled=True,
+            strategy_polygon_30s_enabled=True,
             scanner_feed_retention_enabled=False,
         ),
         now_provider=lambda: clock["now"],
     )
-    bot = state.bots["webull_30s"]
+    bot = state.bots["polygon_30s"]
     bot.set_watchlist(["IONZ"])
     bot.seed_bars(
         "IONZ",
@@ -583,17 +663,17 @@ def test_webull_30s_keeps_sparse_bucket_when_provider_coverage_predates_bucket()
     assert builder.bars[-1].timestamp == bucket_start
 
 
-def test_webull_30s_uses_real_live_bar_fallback_when_tick_builder_lags() -> None:
+def test_polygon_30s_uses_real_live_bar_fallback_when_tick_builder_lags() -> None:
     clock = {"now": datetime(2026, 4, 23, 15, 11, 0, tzinfo=UTC)}
     state = StrategyEngineState(
         settings=Settings(
             strategy_macd_30s_broker_provider="schwab",
-            strategy_webull_30s_enabled=True,
+            strategy_polygon_30s_enabled=True,
             scanner_feed_retention_enabled=False,
         ),
         now_provider=lambda: clock["now"],
     )
-    bot = state.bots["webull_30s"]
+    bot = state.bots["polygon_30s"]
     bot.set_watchlist(["CANF"])
     bot.seed_bars(
         "CANF",
@@ -666,18 +746,18 @@ def test_webull_30s_uses_real_live_bar_fallback_when_tick_builder_lags() -> None
     assert observed_timestamps[-1] == first_live_bar_ts
 
 
-def test_webull_open_rejection_blocks_same_symbol_for_20_bars() -> None:
+def test_polygon_open_rejection_blocks_same_symbol_for_20_bars() -> None:
     state = StrategyEngineState(
         settings=Settings(
             strategy_macd_30s_broker_provider="schwab",
-            strategy_webull_30s_enabled=True,
+            strategy_polygon_30s_enabled=True,
             scanner_feed_retention_enabled=False,
         ),
         now_provider=fixed_now,
     )
 
-    webull_bot = state.bots["webull_30s"]
-    webull_bot.seed_bars(
+    polygon_bot = state.bots["polygon_30s"]
+    polygon_bot.seed_bars(
         "UGRO",
         [
             {
@@ -693,18 +773,18 @@ def test_webull_open_rejection_blocks_same_symbol_for_20_bars() -> None:
         ],
     )
 
-    bar_count = webull_bot.builder_manager.get_or_create("UGRO").get_bar_count()
+    bar_count = polygon_bot.builder_manager.get_or_create("UGRO").get_bar_count()
 
     state.apply_order_status(
-        strategy_code="webull_30s",
+        strategy_code="polygon_30s",
         symbol="UGRO",
         intent_type="open",
         status="rejected",
         reason="adapter scaffold reject",
     )
 
-    blocked_gate = webull_bot.entry_engine._check_hard_gates("UGRO", bar_count + 19)
-    allowed_gate = webull_bot.entry_engine._check_hard_gates("UGRO", bar_count + 20)
+    blocked_gate = polygon_bot.entry_engine._check_hard_gates("UGRO", bar_count + 19)
+    allowed_gate = polygon_bot.entry_engine._check_hard_gates("UGRO", bar_count + 20)
 
     assert blocked_gate == {
         "passed": False,
@@ -713,11 +793,11 @@ def test_webull_open_rejection_blocks_same_symbol_for_20_bars() -> None:
     assert allowed_gate == {"passed": True, "reason": ""}
 
 
-def test_schwab_open_rejection_does_not_add_webull_rejection_cooldown() -> None:
+def test_schwab_open_rejection_does_not_add_polygon_rejection_cooldown() -> None:
     state = StrategyEngineState(
         settings=Settings(
             strategy_macd_30s_broker_provider="schwab",
-            strategy_webull_30s_enabled=True,
+            strategy_polygon_30s_enabled=True,
             scanner_feed_retention_enabled=False,
         ),
         now_provider=fixed_now,

@@ -83,8 +83,8 @@ def test_collect_completed_trade_cycles_separates_account_and_strategy_keys() ->
         closed_today=[],
     )[0]
     cycle_b = collect_completed_trade_cycles(
-        strategy_code="webull_30s",
-        broker_account_name="live:webull_30s",
+        strategy_code="polygon_30s",
+        broker_account_name="live:polygon_30s",
         recent_orders=[],
         recent_fills=[
             {
@@ -111,8 +111,8 @@ def test_collect_completed_trade_cycles_separates_account_and_strategy_keys() ->
 
 def test_collect_completed_trade_cycles_falls_back_to_filled_orders_when_needed() -> None:
     cycles = collect_completed_trade_cycles(
-        strategy_code="webull_30s",
-        broker_account_name="live:webull_30s",
+        strategy_code="polygon_30s",
+        broker_account_name="live:polygon_30s",
         recent_orders=[
             {
                 "symbol": "CAST",

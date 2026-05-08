@@ -19,7 +19,7 @@ def test_service_ignores_bot_manual_stops_from_wrong_session_marker() -> None:
             DashboardSnapshot(
                 snapshot_type="bot_manual_stop_symbols",
                 payload={
-                    "bots": {"webull_30s": ["AUUD", "CAST"]},
+                    "bots": {"polygon_30s": ["AUUD", "CAST"]},
                     "scanner_session_start_utc": (current_session_start - timedelta(days=1)).isoformat(),
                 },
                 created_at=datetime.now(UTC),
@@ -30,7 +30,7 @@ def test_service_ignores_bot_manual_stops_from_wrong_session_marker() -> None:
     service = StrategyEngineService(
         settings=make_test_settings(
             redis_url="redis://localhost:6379/0",
-            strategy_webull_30s_enabled=True,
+            strategy_polygon_30s_enabled=True,
         ),
         redis_client=FakeRedis(),
         session_factory=session_factory,
@@ -39,7 +39,7 @@ def test_service_ignores_bot_manual_stops_from_wrong_session_marker() -> None:
     service._preload_manual_stop_state()
 
     assert service.state.manual_stop_symbols_by_strategy == {}
-    assert service.state.bots["webull_30s"].manual_stop_symbols == set()
+    assert service.state.bots["polygon_30s"].manual_stop_symbols == set()
 
 
 def test_service_surfaces_schwab_auth_failure_reason_and_skips_resubscribe() -> None:

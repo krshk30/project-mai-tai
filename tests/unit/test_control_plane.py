@@ -1362,6 +1362,7 @@ def test_control_plane_decision_tape_escalates_stalled_completed_bar_wait(
 def test_control_plane_schwab_1m_placeholder_uses_completed_bar_freshness(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+<<<<<<< HEAD
     settings = Settings(
         redis_stream_prefix="test",
         oms_adapter="alpaca_paper",
@@ -1434,10 +1435,12 @@ def test_control_plane_schwab_1m_placeholder_uses_completed_bar_freshness(
 
 
 def test_control_plane_decision_tape_uses_polygon_wording_for_webull_bot() -> None:
+=======
+>>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
     settings = Settings(
         redis_stream_prefix="test",
         oms_adapter="alpaca_paper",
-        strategy_webull_30s_enabled=True,
+        strategy_schwab_1m_enabled=True,
     )
     session_factory = build_test_session_factory()
     seed_database(session_factory)
@@ -1448,8 +1451,80 @@ def test_control_plane_decision_tape_uses_polygon_wording_for_webull_bot() -> No
     )
     strategy_state_event.payload.bots.append(
         StrategyBotStatePayload(
-            strategy_code="webull_30s",
-            account_name="live:webull_30s",
+            strategy_code="schwab_1m",
+            account_name="paper:schwab_1m",
+            watchlist=["AUUD"],
+            positions=[],
+            pending_open_symbols=[],
+            pending_close_symbols=[],
+            pending_scale_levels=[],
+            recent_decisions=[],
+            bar_counts={"AUUD": 128},
+            last_tick_at={"AUUD": "2026-04-23 10:48:17 AM ET"},
+            indicator_snapshots=[
+                {
+                    "symbol": "AUUD",
+                    "interval_secs": 60,
+                    "bar_count": 128,
+                    "last_bar_at": "2026-04-23 10:45:00 AM ET",
+                    "close": 2.55,
+                    "ema9": 2.53,
+                    "ema20": 2.50,
+                    "macd": 0.07650,
+                    "signal": 0.07432,
+                    "histogram": 0.00218,
+                    "vwap": 2.51,
+                    "macd_above_signal": True,
+                    "price_above_vwap": True,
+                    "price_above_ema9": True,
+                    "price_above_ema20": True,
+                }
+            ],
+            daily_pnl=0.0,
+        )
+    )
+    strategy_state_stream[0][1]["data"] = strategy_state_event.model_dump_json()
+    redis = FakeRedis(streams)
+    fixed_now = datetime(2026, 4, 23, 14, 48, 35, tzinfo=UTC)
+    monkeypatch.setattr("project_mai_tai.services.control_plane.utcnow", lambda: fixed_now)
+
+    app = build_app(
+        settings=settings,
+        session_factory=session_factory,
+        redis_client=redis,
+        legacy_client=FakeLegacyClient(),
+    )
+
+    with TestClient(app) as client:
+        bots = client.get("/api/bots")
+        assert bots.status_code == 200
+        bot_1m = next(item for item in bots.json()["bots"] if item["strategy_code"] == "schwab_1m")
+        assert [item["symbol"] for item in bot_1m["recent_decisions"]] == ["AUUD"]
+        assert bot_1m["recent_decisions"][0]["status"] == "critical"
+        assert bot_1m["recent_decisions"][0]["last_bar_at"] == "2026-04-23 10:45:00 AM ET"
+        assert (
+            bot_1m["recent_decisions"][0]["reason"]
+            == "live in bot; fresh Schwab ticks are arriving but the last completed 1m bar is already 3m35s old - verify bar flow now"
+        )
+
+
+def test_control_plane_decision_tape_uses_polygon_wording_for_polygon_bot() -> None:
+    settings = Settings(
+        redis_stream_prefix="test",
+        oms_adapter="alpaca_paper",
+        strategy_polygon_30s_enabled=True,
+    )
+    session_factory = build_test_session_factory()
+    seed_database(session_factory)
+    streams = make_streams(settings.redis_stream_prefix)
+    strategy_state_stream = streams[f"{settings.redis_stream_prefix}:strategy-state"]
+    strategy_state_event = StrategyStateSnapshotEvent.model_validate_json(
+        strategy_state_stream[0][1]["data"]
+    )
+    strategy_state_event.payload.bots.append(
+        StrategyBotStatePayload(
+            strategy_code="polygon_30s",
+            account_name="live:polygon_30s",
             watchlist=["AUUD"],
             positions=[],
             pending_open_symbols=[],
@@ -1471,11 +1546,11 @@ def test_control_plane_decision_tape_uses_polygon_wording_for_webull_bot() -> No
     with TestClient(app) as client:
         bots = client.get("/api/bots")
         assert bots.status_code == 200
-        webull_bot = next(item for item in bots.json()["bots"] if item["strategy_code"] == "webull_30s")
-        assert [item["symbol"] for item in webull_bot["recent_decisions"]] == ["AUUD"]
-        assert webull_bot["recent_decisions"][0]["status"] == "pending"
+        polygon_bot = next(item for item in bots.json()["bots"] if item["strategy_code"] == "polygon_30s")
+        assert [item["symbol"] for item in polygon_bot["recent_decisions"]] == ["AUUD"]
+        assert polygon_bot["recent_decisions"][0]["status"] == "pending"
         assert (
-            webull_bot["recent_decisions"][0]["reason"]
+            polygon_bot["recent_decisions"][0]["reason"]
             == "live in bot; waiting for Polygon market data"
         )
 
@@ -1483,6 +1558,7 @@ def test_control_plane_decision_tape_uses_polygon_wording_for_webull_bot() -> No
 def test_control_plane_keeps_live_symbol_visible_when_only_stale_row_is_beyond_tape_window(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+<<<<<<< HEAD
     settings = Settings(
         redis_stream_prefix="test",
         oms_adapter="alpaca_paper",
@@ -1557,10 +1633,12 @@ def test_control_plane_keeps_live_symbol_visible_when_only_stale_row_is_beyond_t
 
 
 def test_webull_bot_page_uses_polygon_data_halt_wording() -> None:
+=======
+>>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
     settings = Settings(
         redis_stream_prefix="test",
         oms_adapter="alpaca_paper",
-        strategy_webull_30s_enabled=True,
+        strategy_polygon_30s_enabled=True,
     )
     session_factory = build_test_session_factory()
     seed_database(session_factory)
@@ -1571,8 +1649,82 @@ def test_webull_bot_page_uses_polygon_data_halt_wording() -> None:
     )
     strategy_state_event.payload.bots.append(
         StrategyBotStatePayload(
-            strategy_code="webull_30s",
-            account_name="live:webull_30s",
+            strategy_code="polygon_30s",
+            account_name="live:polygon_30s",
+            watchlist=["GOVX", "LABT", "SOBR"],
+            positions=[],
+            pending_open_symbols=[],
+            pending_close_symbols=[],
+            pending_scale_levels=[],
+            recent_decisions=[
+                *[
+                    {
+                        "symbol": "GOVX" if index % 2 == 0 else "LABT",
+                        "status": "evaluated",
+                        "reason": f"entry evaluated; no setup matched this bar #{index}",
+                        "last_bar_at": f"2026-04-23T10:{(index % 60):02d}:30-04:00",
+                    }
+                    for index in range(50)
+                ],
+                {
+                    "symbol": "SOBR",
+                    "status": "evaluated",
+                    "reason": "entry evaluated; no setup matched this bar",
+                    "last_bar_at": "2026-04-23T09:00:00-04:00",
+                },
+            ],
+            bar_counts={"GOVX": 100, "LABT": 100, "SOBR": 11},
+            last_tick_at={
+                "GOVX": "2026-04-23 10:48:17 AM ET",
+                "LABT": "2026-04-23 10:48:17 AM ET",
+                "SOBR": "2026-04-23 10:48:12 AM ET",
+            },
+            daily_pnl=0.0,
+        )
+    )
+    strategy_state_stream[0][1]["data"] = strategy_state_event.model_dump_json()
+    redis = FakeRedis(streams)
+    fixed_now = datetime(2026, 4, 23, 14, 48, 35, tzinfo=UTC)
+    monkeypatch.setattr("project_mai_tai.services.control_plane.utcnow", lambda: fixed_now)
+
+    app = build_app(
+        settings=settings,
+        session_factory=session_factory,
+        redis_client=redis,
+        legacy_client=FakeLegacyClient(),
+    )
+
+    with TestClient(app) as client:
+        bots = client.get("/api/bots")
+        assert bots.status_code == 200
+        polygon_bot = next(item for item in bots.json()["bots"] if item["strategy_code"] == "polygon_30s")
+        visible_symbols = [item["symbol"] for item in polygon_bot["recent_decisions"][:10]]
+        assert "SOBR" in visible_symbols
+        sobr_row = next(item for item in polygon_bot["recent_decisions"] if item["symbol"] == "SOBR")
+        assert sobr_row["status"] == "pending"
+        assert (
+            sobr_row["reason"]
+            == "live in bot; waiting for next completed 30s trade bar to evaluate (23s since last Polygon tick)"
+        )
+
+
+def test_polygon_bot_page_uses_polygon_data_halt_wording() -> None:
+    settings = Settings(
+        redis_stream_prefix="test",
+        oms_adapter="alpaca_paper",
+        strategy_polygon_30s_enabled=True,
+    )
+    session_factory = build_test_session_factory()
+    seed_database(session_factory)
+    streams = make_streams(settings.redis_stream_prefix)
+    strategy_state_stream = streams[f"{settings.redis_stream_prefix}:strategy-state"]
+    strategy_state_event = StrategyStateSnapshotEvent.model_validate_json(
+        strategy_state_stream[0][1]["data"]
+    )
+    strategy_state_event.payload.bots.append(
+        StrategyBotStatePayload(
+            strategy_code="polygon_30s",
+            account_name="live:polygon_30s",
             watchlist=["AUUD"],
             positions=[],
             pending_open_symbols=[],
@@ -1602,23 +1754,23 @@ def test_webull_bot_page_uses_polygon_data_halt_wording() -> None:
     with TestClient(app) as client:
         bots = client.get("/api/bots")
         assert bots.status_code == 200
-        webull_bot = next(item for item in bots.json()["bots"] if item["strategy_code"] == "webull_30s")
-        assert webull_bot["data_health"]["status"] == "critical"
-        assert webull_bot["listening_status"]["state"] == "DATA HALT"
-        assert "Polygon stream stale/disconnected" in webull_bot["listening_status"]["detail"]
+        polygon_bot = next(item for item in bots.json()["bots"] if item["strategy_code"] == "polygon_30s")
+        assert polygon_bot["data_health"]["status"] == "critical"
+        assert polygon_bot["listening_status"]["state"] == "DATA HALT"
+        assert "Polygon stream stale/disconnected" in polygon_bot["listening_status"]["detail"]
 
-        webull_status = client.get("/botwebull")
-        assert webull_status.status_code == 200
-        assert webull_status.json()["listening_status"]["state"] == "DATA HALT"
-        assert "Polygon stream stale/disconnected" in webull_status.json()["listening_status"]["detail"]
+        polygon_status = client.get("/botpolygon")
+        assert polygon_status.status_code == 200
+        assert polygon_status.json()["listening_status"]["state"] == "DATA HALT"
+        assert "Polygon stream stale/disconnected" in polygon_status.json()["listening_status"]["detail"]
 
-        webull_page = client.get("/bot/30s-webull")
-        assert webull_page.status_code == 200
-        assert "Polygon Data Halt" in webull_page.text
-        assert "Polygon Data Health" in webull_page.text
-        assert "Polygon stream stale/disconnected" in webull_page.text
-        assert "Schwab Data Halt" not in webull_page.text
-        assert "Schwab Data Health" not in webull_page.text
+        polygon_page = client.get("/bot/30s-polygon")
+        assert polygon_page.status_code == 200
+        assert "Polygon Data Halt" in polygon_page.text
+        assert "Polygon Data Health" in polygon_page.text
+        assert "Polygon stream stale/disconnected" in polygon_page.text
+        assert "Schwab Data Halt" not in polygon_page.text
+        assert "Schwab Data Health" not in polygon_page.text
 
 
 def test_control_plane_overview_and_dashboard_render() -> None:

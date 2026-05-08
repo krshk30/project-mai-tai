@@ -1005,7 +1005,7 @@ def test_retention_resume_unblocks_entries_after_reclaim(monkeypatch: pytest.Mon
         {"UGRO": ReferenceData(shares_outstanding=50_000, avg_daily_volume=390_000)},
     )
 
-    assert summary["retention_states"][0]["state"] == "resume_probe"
+    assert state.bots["macd_30s"].lifecycle_states["UGRO"].state == "resume_probe"
     assert state.bots["macd_30s"].entry_blocked_symbols == {"UGRO"}
 
     now_box["value"] = datetime(2026, 4, 17, 10, 12, 30)
@@ -1031,11 +1031,70 @@ def test_retention_resume_unblocks_entries_after_reclaim(monkeypatch: pytest.Mon
         {"UGRO": ReferenceData(shares_outstanding=50_000, avg_daily_volume=390_000)},
     )
 
-    assert summary["retention_states"][0]["state"] == "active"
+    assert state.bots["macd_30s"].lifecycle_states["UGRO"].state == "active"
     assert state.bots["macd_30s"].entry_blocked_symbols == set()
     assert summary["watchlist"] == ["UGRO"]
     for code in ("macd_30s", "macd_1m", "tos"):
         assert state.bots[code].watchlist == {"UGRO"}
+
+
+def test_retention_drops_symbol_without_indicators_after_inactivity(monkeypatch: pytest.MonkeyPatch) -> None:
+    now_box = {"value": datetime(2026, 4, 17, 10, 0)}
+    state = StrategyEngineState(
+        settings=make_test_settings(
+            scanner_feed_retention_enabled=True,
+            scanner_feed_retention_no_activity_minutes=5,
+            scanner_feed_retention_drop_cooldown_minutes=10,
+        ),
+        now_provider=lambda: now_box["value"],
+    )
+    monkeypatch.setattr(state.alert_engine, "check_alerts", lambda snapshots, reference_data: [])
+    monkeypatch.setattr(
+        state.confirmed_scanner,
+        "process_alerts",
+        lambda alerts, reference_data, snapshot_lookup: [],
+    )
+
+    state.confirmed_scanner._confirmed = [
+        {
+            "ticker": "UGRO",
+            "confirmed_at": "10:00:00 AM ET",
+            "entry_price": 2.25,
+            "price": 2.40,
+            "change_pct": 24.5,
+            "volume": 900_000,
+            "rvol": 6.2,
+            "shares_outstanding": 50_000,
+            "confirmation_path": "PATH_B_2SQ",
+        }
+    ]
+    summary = state.process_snapshot_batch(
+        [snapshot_from_payload(make_snapshot_payload(symbol="UGRO", price=2.40, volume=900_000))],
+        {"UGRO": ReferenceData(shares_outstanding=50_000, avg_daily_volume=390_000)},
+    )
+
+    assert summary["watchlist"] == ["UGRO"]
+    assert state.bots["macd_30s"].watchlist == {"UGRO"}
+    assert "UGRO" not in state.bots["macd_30s"].last_indicators
+
+    state.confirmed_scanner._confirmed = []
+    now_box["value"] = datetime(2026, 4, 17, 10, 6)
+    summary = state.process_snapshot_batch(
+        [snapshot_from_payload(make_snapshot_payload(symbol="SNOA", price=3.10, volume=120_000))],
+        {"SNOA": ReferenceData(shares_outstanding=90_000, avg_daily_volume=80_000)},
+    )
+    assert summary["watchlist"] == ["UGRO"]
+    assert state.bots["macd_30s"].lifecycle_states["UGRO"].state == "cooldown"
+
+    now_box["value"] = datetime(2026, 4, 17, 10, 16)
+    summary = state.process_snapshot_batch(
+        [snapshot_from_payload(make_snapshot_payload(symbol="SNOA", price=3.05, volume=110_000))],
+        {"SNOA": ReferenceData(shares_outstanding=90_000, avg_daily_volume=80_000)},
+    )
+
+    assert summary["watchlist"] == []
+    assert state.bots["macd_30s"].watchlist == set()
+    assert state.bots["macd_30s"].lifecycle_states["UGRO"].state == "dropped"
 
 
 def test_cooldown_blocks_non_p4_signal_below_structure(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2641,6 +2700,7 @@ def test_live_second_bars_can_generate_open_intent_for_30s_bot(monkeypatch) -> N
     assert open_intents[0].payload.symbol == "UGRO"
 
 
+<<<<<<< HEAD
 def test_live_second_bars_can_generate_open_intent_for_webull_30s_bot(monkeypatch) -> None:
     state = StrategyEngineState(
         settings=make_test_settings(
@@ -2655,6 +2715,22 @@ def test_live_second_bars_can_generate_open_intent_for_webull_30s_bot(monkeypatc
     bot.definition.trading_config.confirm_bars = 0
     state.seed_bars(
         "webull_30s",
+=======
+def test_live_second_bars_can_generate_open_intent_for_polygon_30s_bot(monkeypatch) -> None:
+    state = StrategyEngineState(
+        settings=make_test_settings(
+            strategy_macd_30s_enabled=False,
+            strategy_polygon_30s_enabled=True,
+            strategy_polygon_30s_live_aggregate_bars_enabled=True,
+        ),
+        now_provider=fixed_now,
+    )
+    bot = state.bots["polygon_30s"]
+    bot.set_watchlist(["UGRO"])
+    bot.definition.trading_config.confirm_bars = 0
+    state.seed_bars(
+        "polygon_30s",
+>>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
         "UGRO",
         seed_trending_bars(count=49, start_timestamp=1_700_000_000.0, interval_secs=30),
     )
@@ -2690,7 +2766,11 @@ def test_live_second_bars_can_generate_open_intent_for_webull_30s_bot(monkeypatc
                 volume=500,
                 timestamp=1_700_001_480.0 + offset,
                 trade_count=10,
+<<<<<<< HEAD
                 strategy_codes=["webull_30s"],
+=======
+                strategy_codes=["polygon_30s"],
+>>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
             )
         )
 
@@ -2736,6 +2816,7 @@ def test_tick_built_macd_30s_ignores_live_bar_packets() -> None:
     assert after_bars == before_bars
 
 
+<<<<<<< HEAD
 def test_webull_tick_built_sparse_ticks_do_not_synthesize_gap_bars(monkeypatch) -> None:
     state = StrategyEngineState(
         settings=make_test_settings(
@@ -2749,6 +2830,21 @@ def test_webull_tick_built_sparse_ticks_do_not_synthesize_gap_bars(monkeypatch) 
     bot.set_watchlist(["UGRO"])
     state.seed_bars(
         "webull_30s",
+=======
+def test_polygon_tick_built_sparse_ticks_do_not_synthesize_gap_bars(monkeypatch) -> None:
+    state = StrategyEngineState(
+        settings=make_test_settings(
+            strategy_macd_30s_enabled=False,
+            strategy_polygon_30s_enabled=True,
+            strategy_polygon_30s_live_aggregate_bars_enabled=False,
+        ),
+        now_provider=lambda: datetime.fromtimestamp(1_700_001_900.0, UTC),
+    )
+    bot = state.bots["polygon_30s"]
+    bot.set_watchlist(["UGRO"])
+    state.seed_bars(
+        "polygon_30s",
+>>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
         "UGRO",
         seed_trending_bars(count=49, start_timestamp=1_700_000_000.0, interval_secs=30),
     )
@@ -2776,7 +2872,11 @@ def test_webull_tick_built_sparse_ticks_do_not_synthesize_gap_bars(monkeypatch) 
             price=2.80,
             size=100,
             timestamp_ns=timestamp_ns,
+<<<<<<< HEAD
             strategy_codes=["webull_30s"],
+=======
+            strategy_codes=["polygon_30s"],
+>>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
         )
 
     assert synthetic_quiet_bars == []
@@ -4024,12 +4124,20 @@ async def test_subscription_sync_persists_replayed_polygon_historical_bars() -> 
             redis_stream_prefix="test",
             dashboard_snapshot_persistence_enabled=False,
             strategy_history_persistence_enabled=True,
+<<<<<<< HEAD
             strategy_webull_30s_enabled=True,
+=======
+            strategy_polygon_30s_enabled=True,
+>>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
         ),
         redis_client=redis,
         session_factory=session_factory,
     )
+<<<<<<< HEAD
     service.state.bots["webull_30s"].set_watchlist(["UGRO"])
+=======
+    service.state.bots["polygon_30s"].set_watchlist(["UGRO"])
+>>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
 
     historical_30s = HistoricalBarsEvent(
         source_service="market-data-gateway",
@@ -4069,7 +4177,11 @@ async def test_subscription_sync_persists_replayed_polygon_historical_bars() -> 
             session.scalars(
                 select(StrategyBarHistory)
                 .where(
+<<<<<<< HEAD
                     StrategyBarHistory.strategy_code == "webull_30s",
+=======
+                    StrategyBarHistory.strategy_code == "polygon_30s",
+>>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
                     StrategyBarHistory.symbol == "UGRO",
                     StrategyBarHistory.interval_secs == 30,
                 )
@@ -4084,22 +4196,159 @@ async def test_subscription_sync_persists_replayed_polygon_historical_bars() -> 
     assert records[1].trade_count == 6
 
 
+<<<<<<< HEAD
 @pytest.mark.asyncio
 async def test_hydrate_generic_history_from_provider_seeds_webull_when_replay_is_missing() -> None:
+=======
+def test_polygon_late_live_second_revises_persisted_closed_bar_without_redecision() -> None:
+    session_factory = build_test_session_factory()
+    clock = {"now": datetime(2026, 4, 23, 15, 27, 0, tzinfo=UTC)}
+    state = StrategyEngineState(
+        settings=make_test_settings(
+            dashboard_snapshot_persistence_enabled=False,
+            strategy_history_persistence_enabled=True,
+            strategy_polygon_30s_enabled=True,
+        ),
+        now_provider=lambda: clock["now"],
+        session_factory=session_factory,
+    )
+    polygon_bot = state.bots["polygon_30s"]
+    polygon_bot.set_watchlist(["CTNT"])
+    state.seed_bars(
+        "polygon_30s",
+        "CTNT",
+        seed_trending_bars(count=55, start_timestamp=1_700_000_000.0, interval_secs=30),
+    )
+
+    observed_decision_bars: list[float] = []
+
+    def fake_calculate(bars):
+        last_bar = bars[-1]
+        return {
+            "price": float(last_bar["close"]),
+            "bar_timestamp": float(last_bar["timestamp"]),
+        }
+
+    def fake_check_entry(_symbol, _indicators, _bar_index, _runtime):
+        return None
+
+    def fake_pop_last_decision(_symbol):
+        observed_decision_bars.append(
+            float(polygon_bot.builder_manager.get_builder("CTNT").bars[-1].timestamp)  # type: ignore[union-attr]
+        )
+        return {
+            "status": "idle",
+            "reason": "no entry path matched",
+        }
+
+    polygon_bot.indicator_engine.calculate = fake_calculate
+    polygon_bot.entry_engine.check_entry = fake_check_entry
+    polygon_bot.entry_engine.pop_last_decision = fake_pop_last_decision
+
+    first_bucket_start = datetime(2026, 4, 23, 15, 26, 30, tzinfo=UTC)
+
+    state.handle_live_bar(
+        symbol="CTNT",
+        interval_secs=1,
+        open_price=3.21,
+        high_price=3.25,
+        low_price=3.2032,
+        close_price=3.23,
+        volume=14_122,
+        timestamp=first_bucket_start.timestamp(),
+        trade_count=171,
+        strategy_codes=["polygon_30s"],
+    )
+    state.handle_live_bar(
+        symbol="CTNT",
+        interval_secs=1,
+        open_price=3.23,
+        high_price=3.24,
+        low_price=3.22,
+        close_price=3.23,
+        volume=500,
+        timestamp=datetime(2026, 4, 23, 15, 27, 0, tzinfo=UTC).timestamp(),
+        trade_count=5,
+        strategy_codes=["polygon_30s"],
+    )
+
+    with session_factory() as session:
+        records = list(
+            session.scalars(
+                select(StrategyBarHistory)
+                .where(
+                    StrategyBarHistory.strategy_code == "polygon_30s",
+                    StrategyBarHistory.symbol == "CTNT",
+                    StrategyBarHistory.interval_secs == 30,
+                )
+                .order_by(StrategyBarHistory.bar_time.asc())
+            )
+        )
+
+    assert observed_decision_bars == [first_bucket_start.timestamp()]
+    assert len(records) == 1
+    assert records[0].bar_time.replace(tzinfo=UTC) == first_bucket_start
+    assert records[0].volume == 14_122
+    assert records[0].trade_count == 171
+
+    state.handle_live_bar(
+        symbol="CTNT",
+        interval_secs=1,
+        open_price=3.23,
+        high_price=3.24,
+        low_price=3.21,
+        close_price=3.23,
+        volume=1_538,
+        timestamp=datetime(2026, 4, 23, 15, 26, 59, tzinfo=UTC).timestamp(),
+        trade_count=30,
+        strategy_codes=["polygon_30s"],
+    )
+
+    with session_factory() as session:
+        records = list(
+            session.scalars(
+                select(StrategyBarHistory)
+                .where(
+                    StrategyBarHistory.strategy_code == "polygon_30s",
+                    StrategyBarHistory.symbol == "CTNT",
+                    StrategyBarHistory.interval_secs == 30,
+                )
+                .order_by(StrategyBarHistory.bar_time.asc())
+            )
+        )
+
+    assert observed_decision_bars == [first_bucket_start.timestamp()]
+    assert len(records) == 1
+    assert records[0].volume == 15_660
+    assert records[0].trade_count == 201
+
+
+@pytest.mark.asyncio
+async def test_hydrate_generic_history_from_provider_seeds_polygon_when_replay_is_missing() -> None:
+>>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
     session_factory = build_test_session_factory()
     service = StrategyEngineService(
         settings=make_test_settings(
             redis_stream_prefix="test",
             dashboard_snapshot_persistence_enabled=False,
             strategy_history_persistence_enabled=True,
+<<<<<<< HEAD
             strategy_webull_30s_enabled=True,
+=======
+            strategy_polygon_30s_enabled=True,
+>>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
             massive_api_key="test-key",
         ),
         redis_client=FakeRedis(),
         session_factory=session_factory,
     )
+<<<<<<< HEAD
     webull = service.state.bots["webull_30s"]
     webull.set_watchlist(["UGRO"])
+=======
+    polygon_bot = service.state.bots["polygon_30s"]
+    polygon_bot.set_watchlist(["UGRO"])
+>>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
 
     class _FakeSnapshotProvider:
         def fetch_historical_bars(
@@ -4133,16 +4382,27 @@ async def test_hydrate_generic_history_from_provider_seeds_webull_when_replay_is
     hydrated = await service._hydrate_generic_history_from_provider({("UGRO", 30)})
 
     assert hydrated is True
+<<<<<<< HEAD
     builder = webull.builder_manager.get_builder("UGRO")
     assert builder is not None
     assert builder.get_bar_count() == 80
     assert "UGRO" in webull.last_indicators
+=======
+    builder = polygon_bot.builder_manager.get_builder("UGRO")
+    assert builder is not None
+    assert builder.get_bar_count() == 80
+    assert "UGRO" in polygon_bot.last_indicators
+>>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
     with session_factory() as session:
         records = list(
             session.scalars(
                 select(StrategyBarHistory)
                 .where(
+<<<<<<< HEAD
                     StrategyBarHistory.strategy_code == "webull_30s",
+=======
+                    StrategyBarHistory.strategy_code == "polygon_30s",
+>>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
                     StrategyBarHistory.symbol == "UGRO",
                     StrategyBarHistory.interval_secs == 30,
                 )
@@ -4154,20 +4414,34 @@ async def test_hydrate_generic_history_from_provider_seeds_webull_when_replay_is
     assert records[-1].bar_time.replace(tzinfo=UTC) == datetime.fromtimestamp(1_700_000_000.0 + (79 * 30), UTC)
 
 
+<<<<<<< HEAD
 def test_restore_runtime_bar_history_from_database_includes_webull_provider_bot() -> None:
+=======
+def test_restore_runtime_bar_history_from_database_includes_polygon_provider_bot() -> None:
+>>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
     session_factory = build_test_session_factory()
     service = StrategyEngineService(
         settings=make_test_settings(
             dashboard_snapshot_persistence_enabled=False,
             strategy_history_persistence_enabled=False,
+<<<<<<< HEAD
             strategy_webull_30s_enabled=True,
             strategy_webull_30s_broker_provider="webull",
+=======
+            strategy_polygon_30s_enabled=True,
+            strategy_polygon_30s_broker_provider="webull",
+>>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
         ),
         redis_client=FakeRedis(),
         session_factory=session_factory,
     )
+<<<<<<< HEAD
     webull = service.state.bots["webull_30s"]
     webull.set_watchlist(["UGRO"])
+=======
+    polygon_bot = service.state.bots["polygon_30s"]
+    polygon_bot.set_watchlist(["UGRO"])
+>>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
 
     session_start_utc = current_scanner_session_start_utc(service.state.alert_engine.now_provider())
     with session_factory() as session:
@@ -4175,7 +4449,11 @@ def test_restore_runtime_bar_history_from_database_includes_webull_provider_bot(
             bar_time = session_start_utc + timedelta(seconds=index * 30)
             session.add(
                 StrategyBarHistory(
+<<<<<<< HEAD
                     strategy_code="webull_30s",
+=======
+                    strategy_code="polygon_30s",
+>>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
                     symbol="UGRO",
                     interval_secs=30,
                     bar_time=bar_time,
@@ -4199,10 +4477,17 @@ def test_restore_runtime_bar_history_from_database_includes_webull_provider_bot(
 
     service._restore_runtime_bar_history_from_database()
 
+<<<<<<< HEAD
     builder = webull.builder_manager.get_builder("UGRO")
     assert builder is not None
     assert builder.get_bar_count() == 80
     assert "UGRO" in webull.last_indicators
+=======
+    builder = polygon_bot.builder_manager.get_builder("UGRO")
+    assert builder is not None
+    assert builder.get_bar_count() == 80
+    assert "UGRO" in polygon_bot.last_indicators
+>>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
 
 
 def test_market_data_symbols_exclude_schwab_native_macd_30s() -> None:
@@ -4568,8 +4853,8 @@ async def test_live_bar_publishes_strategy_snapshot_for_generic_bot_activity_wit
             dashboard_snapshot_persistence_enabled=False,
             strategy_history_persistence_enabled=False,
             strategy_macd_30s_broker_provider="schwab",
-            strategy_webull_30s_enabled=True,
-            strategy_webull_30s_broker_provider="webull",
+            strategy_polygon_30s_enabled=True,
+            strategy_polygon_30s_broker_provider="webull",
         ),
         redis_client=redis,
     )
@@ -4599,7 +4884,11 @@ async def test_live_bar_publishes_strategy_snapshot_for_generic_bot_activity_wit
     await service._handle_stream_message("test:market-data", {"data": event.model_dump_json()})
 
     assert captured["symbol"] == "UGRO"
+<<<<<<< HEAD
     assert captured["strategy_codes"] == ("webull_30s",)
+=======
+    assert captured["strategy_codes"] == ("polygon_30s",)
+>>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
     assert captured["coverage_started_at"] is None
     assert any(stream.endswith("strategy-state") for stream, _ in redis.entries)
 
@@ -4613,8 +4902,13 @@ async def test_live_bar_event_forwards_provider_coverage_timestamp(monkeypatch) 
             dashboard_snapshot_persistence_enabled=False,
             strategy_history_persistence_enabled=False,
             strategy_macd_30s_broker_provider="schwab",
+<<<<<<< HEAD
             strategy_webull_30s_enabled=True,
             strategy_webull_30s_broker_provider="webull",
+=======
+            strategy_polygon_30s_enabled=True,
+            strategy_polygon_30s_broker_provider="webull",
+>>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
         ),
         redis_client=redis,
     )
@@ -4659,7 +4953,11 @@ async def test_schwab_live_bar_publishes_strategy_snapshot_for_generic_bot_activ
             dashboard_snapshot_persistence_enabled=False,
             strategy_history_persistence_enabled=False,
             strategy_macd_30s_enabled=False,
+<<<<<<< HEAD
             strategy_webull_30s_enabled=False,
+=======
+            strategy_polygon_30s_enabled=False,
+>>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
             strategy_macd_1m_enabled=False,
             strategy_schwab_1m_enabled=True,
         ),

@@ -1,5 +1,6 @@
 # Session Handoff - Global
 
+<<<<<<< HEAD
 ## 2026-05-08 Schwab 30s + 1m bar audit (full active-symbol set) + validator parametrization (--interval-secs)
 
 ```
@@ -176,6 +177,32 @@ Reviewed 30s bars across 10:50-11:15 UTC: OHLCs sane, volumes track price action
 - Acceptable trade-offs: tightening VWAP veto / vol gate may cause some "would-have-been-winners" to miss too. Do we want stricter rules (fewer trades, higher win rate) or looser (more trades, current win rate)?
 - Is the P1_CROSS-on-trading-hours-boundary worth fixing, or rare enough to ignore?
 - Should we instrument logged rejection reasons across all paths now, before iterating rules?
+=======
+## 2026-05-08 Architecture rename: `polygon_30s` is now the primary Polygon bot identity
+
+### Naming truth going forward
+- The Polygon-backed 30-second strategy now uses `polygon_30s` as its primary runtime, control-plane, settings, and test name.
+- `webull` is broker terminology only and should stay in OMS or broker-adapter routing concerns.
+- Historical notes below may still say `webull_30s`; treat that as the legacy name for the same Polygon 30s strategy unless a section explicitly discusses broker routing.
+
+### What changed in this session
+- Added a dedicated Polygon module at `src/project_mai_tai/strategy_core/polygon_30s.py` and wired the Polygon bot runtime to use `Polygon30sBarBuilderManager`, `Polygon30sIndicatorEngine`, and `Polygon30sEntryEngine`.
+- Renamed the primary strategy/runtime code from `webull_30s` to `polygon_30s` across runtime registration, control-plane pages, trade coach, market-data wiring, and the main strategy-engine construction path.
+- Renamed primary settings to `strategy_polygon_30s_*` and `live:polygon_30s`, while keeping compatibility aliases for older `strategy_webull_30s_*` field names and env vars during the transition.
+- Renamed the current test surface to Polygon naming (`test_polygon_30s_bot.py`, `test_polygon_last_bot_tick.py`) so new work stops spreading the broker name through strategy code.
+- Removed the unused `make_30s_webull_variant()` strategy shim. Remaining `webull_30s` strings in active source are now intended only for broker-layer naming or explicit legacy-compatibility mapping of old env vars, persisted history rows, and older operator deep links.
+- Renamed leftover non-broker test function names and local variables from `webull` to `polygon` across control-plane, strategy, handoff-restore, and trade-coach tests. The remaining `webull` test references are broker-provider assertions only.
+
+### Operator note
+- Update active env files and deploy scripts to prefer `MAI_TAI_STRATEGY_POLYGON_30S_*` names. The code still accepts the older `MAI_TAI_STRATEGY_WEBULL_30S_*` names for transition safety, but they are no longer the source-of-truth naming.
+
+### Validation in this session
+- `python -m pytest tests/unit/test_polygon_last_bot_tick.py -q`
+- `python -m pytest tests/unit/test_polygon_30s_bot.py tests/unit/test_strategy_engine_service.py -k "polygon_30s or live_second_bars_can_generate_open_intent_for_polygon_30s_bot or late_live_second_revises_persisted_closed_bar_without_redecision or restore_runtime_bar_history_from_database_includes_webull_provider_bot" -q`
+- `python -m py_compile src/project_mai_tai/strategy_core/trading_config.py tests/unit/test_polygon_last_bot_tick.py`
+- `python -m pytest tests/unit/test_polygon_30s_bot.py tests/unit/test_control_plane.py tests/unit/test_strategy_core.py tests/unit/test_strategy_engine_service.py tests/unit/test_trade_coach_repository.py tests/unit/test_bot_handoff_restore_seed.py -k "polygon or webull or handoff or control_plane_decision_tape_uses_polygon_wording_for_polygon_bot or polygon_bot_page_uses_polygon_data_halt_wording" -q`
+- The broad cosmetic-sweep pytest selection above hit two unrelated existing failures in `tests/unit/test_strategy_engine_service.py` (`test_macd_1m_taapi_provider_requires_polygon_secret` and `test_snapshot_batch_does_not_push_polygon_quotes_into_schwab_backed_tos`). They are not tied to the naming-only edits in this session.
+>>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
 
 ## 2026-05-08 Dashboard performance: 3 commits to fix CPU saturation under 5s auto-refresh polling
 

@@ -80,6 +80,22 @@ def current_eastern_day_start_utc(now: datetime | None = None) -> datetime:
     return current_scanner_session_start_utc(now)
 
 
+def _normalize_strategy_code(strategy_code: str | None) -> str:
+    normalized = str(strategy_code or "").strip().lower()
+    if normalized == "webull_30s":
+        return "polygon_30s"
+    return normalized
+
+
+def _strategy_code_variants(strategy_code: str | None) -> tuple[str, ...]:
+    normalized = _normalize_strategy_code(strategy_code)
+    if normalized == "polygon_30s":
+        return ("polygon_30s", "webull_30s")
+    if not normalized:
+        return tuple()
+    return (normalized,)
+
+
 def current_eastern_day_end_utc(now: datetime | None = None) -> datetime:
     return current_eastern_day_start_utc(now) + timedelta(days=1)
 
@@ -393,7 +409,7 @@ class ControlPlaneRepository:
                 bars = list(
                     session.scalars(
                         select(StrategyBarHistory)
-                        .where(StrategyBarHistory.strategy_code == strategy_code)
+                        .where(StrategyBarHistory.strategy_code.in_(_strategy_code_variants(strategy_code)))
                         .where(StrategyBarHistory.symbol == symbol)
                         .where(StrategyBarHistory.interval_secs == interval_secs)
                         .where(StrategyBarHistory.bar_time >= query_start)
@@ -434,7 +450,7 @@ class ControlPlaneRepository:
                 bars_desc = list(
                     session.scalars(
                         select(StrategyBarHistory)
-                        .where(StrategyBarHistory.strategy_code == strategy_code)
+                        .where(StrategyBarHistory.strategy_code.in_(_strategy_code_variants(strategy_code)))
                         .where(StrategyBarHistory.symbol == symbol)
                         .where(StrategyBarHistory.interval_secs == interval_secs)
                         .order_by(desc(StrategyBarHistory.bar_time))
@@ -3387,10 +3403,10 @@ def build_app(
         data = await app.state.repository.load_bot_dashboard_data()
         return _build_bot_api_payload(data, "macd_30s")
 
-    @app.get("/botwebull")
-    async def bot_webull_status() -> dict[str, Any]:
+    @app.get("/botpolygon")
+    async def bot_polygon_status() -> dict[str, Any]:
         data = await app.state.repository.load_bot_dashboard_data()
-        return _build_bot_api_payload(data, "webull_30s")
+        return _build_bot_api_payload(data, "polygon_30s")
 
     @app.get("/bot1m")
     async def bot_1m_status() -> dict[str, Any]:
@@ -3459,9 +3475,14 @@ def build_app(
         return await _render_bot_page_with_trade_coach("macd_30s")
 
     @app.get("/bot/30s-polygon", response_class=HTMLResponse)
+<<<<<<< HEAD
     @app.get("/bot/30s-webull", response_class=HTMLResponse)
     async def bot_webull_30s_page() -> str:
         return await _render_bot_page_with_trade_coach("webull_30s")
+=======
+    async def bot_polygon_30s_page() -> str:
+        return await _render_bot_page_with_trade_coach("polygon_30s")
+>>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
 
     @app.get("/bot/30s-probe", response_class=HTMLResponse)
     async def bot_30s_probe_page() -> str:
@@ -4560,7 +4581,11 @@ BOT_PAGE_META = {
         "color": "#2979ff",
         "path": "/bot/30s",
     },
+<<<<<<< HEAD
     "webull_30s": {
+=======
+    "polygon_30s": {
+>>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
         "title": "Polygon 30 Sec Bot",
         "nav_title": "Polygon 30s",
         "badge": "PG",
@@ -4646,8 +4671,13 @@ def _format_interval_label(interval_secs: object) -> str:
 
 
 def _find_bot_view(data: dict[str, Any], strategy_code: str) -> dict[str, Any] | None:
+    normalized = _normalize_strategy_code(strategy_code)
     return next(
-        (bot for bot in data["bots"] if bot["strategy_code"] == strategy_code),
+        (
+            bot
+            for bot in data["bots"]
+            if _normalize_strategy_code(str(bot.get("strategy_code", ""))) == normalized
+        ),
         None,
     )
 
@@ -4661,11 +4691,12 @@ def _resolved_bot_recent_decisions(data: dict[str, Any], bot: dict[str, Any]) ->
     if runtime_items:
         return runtime_items[:50]
 
-    strategy_code = str(bot.get("strategy_code", "") or "")
+    strategy_code = _normalize_strategy_code(str(bot.get("strategy_code", "") or ""))
     fallback_items = [
         dict(item)
         for item in data.get("recent_bar_decisions", [])
-        if isinstance(item, dict) and str(item.get("strategy_code", "") or "") == strategy_code
+        if isinstance(item, dict)
+        and _normalize_strategy_code(str(item.get("strategy_code", "") or "")) == strategy_code
     ]
     return _dedupe_decision_events(fallback_items)[:50]
 
@@ -5513,7 +5544,7 @@ def _render_bot_detail_page(
     available_codes = [str(item["strategy_code"]) for item in data.get("bots", [])]
     production_preview = int(bot.get("interval_secs") or 0) == 30 and strategy_code in {
         "macd_30s",
-        "webull_30s",
+        "polygon_30s",
         "probe_30s",
         "reclaim_30s",
     }
