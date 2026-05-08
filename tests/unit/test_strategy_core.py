@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+from dataclasses import replace
 from datetime import UTC, datetime
 import pytest
 
@@ -196,7 +197,11 @@ def test_schwab_native_bar_builder_late_trade_replaces_synthetic_flat_bar() -> N
     assert builder._current_bar.timestamp == 1_700_000_070.0
     assert builder._current_bar.open == pytest.approx(3.62)
     assert builder._current_bar.close == pytest.approx(3.62)
-    assert builder._current_bar.volume == 25
+    # The 2026-05-07 cum-volume baseline-preservation fix means the late trade's
+    # volume contribution is computed as cum_vol delta against the prior trade's
+    # cum_vol (1125 - 1000 = 125), not a fallback to the trade's `size` field.
+    # See test_strategy_core_cum_vol_fix.py for the regression test of that fix.
+    assert builder._current_bar.volume == 125
     assert builder._current_bar.trade_count == 1
 
 
@@ -920,7 +925,14 @@ def test_schwab_native_entry_engine_can_fire_p4_burst() -> None:
 
 
 def test_schwab_native_entry_engine_can_fire_p4_burst_from_previous_bar_setup() -> None:
-    config = TradingConfig().make_30s_schwab_native_variant()
+    # `make_30s_schwab_native_variant` defaults `p4_prev_bar_entry_enabled` to
+    # False (the feature is opt-in; see trading_config.py:389). This test
+    # specifically validates the prev-bar path, so we explicitly enable the
+    # feature it's exercising via dataclasses.replace.
+    config = replace(
+        TradingConfig().make_30s_schwab_native_variant(),
+        p4_prev_bar_entry_enabled=True,
+    )
     engine = SchwabNativeEntryEngine(
         config,
         now_provider=lambda: datetime(2026, 4, 17, 10, 0),
