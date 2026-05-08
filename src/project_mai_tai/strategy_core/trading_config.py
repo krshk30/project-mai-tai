@@ -422,11 +422,7 @@ class TradingConfig:
                 "entry_logic_mode": "polygon_30s",
                 "trading_start_hour": 4,
                 "trading_end_hour": 18,
-<<<<<<< HEAD
-                # Keep Webull on the same 30s engine family, but do not inherit
-=======
                 # Keep Polygon on the same 30s engine family, but do not inherit
->>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
                 # the later Schwab-live anti-chase tightenings that suppress
                 # Polygon signal discovery on momentum names.
                 "schwab_native_use_chop_regime": False,

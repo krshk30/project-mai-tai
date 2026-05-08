@@ -103,15 +103,6 @@ class Settings(BaseSettings):
     strategy_macd_30s_live_aggregate_bars_enabled: bool = False
     strategy_macd_30s_live_aggregate_fallback_enabled: bool = True
     strategy_macd_30s_live_aggregate_stale_after_seconds: int = 3
-<<<<<<< HEAD
-    strategy_macd_30s_tick_bar_close_grace_seconds: float = 5.0
-    strategy_macd_30s_trade_stream_service: str = "LEVELONE_EQUITIES"
-    strategy_webull_30s_live_aggregate_bars_enabled: bool = True
-    strategy_webull_30s_live_aggregate_fallback_enabled: bool = False
-    strategy_webull_30s_live_aggregate_stale_after_seconds: int = 3
-    strategy_webull_30s_tick_bar_close_grace_seconds: float = 2.0
-    strategy_webull_30s_trade_stream_service: str = "TIMESALE_EQUITY"
-=======
     strategy_macd_30s_tick_bar_close_grace_seconds: float = 7.5
     strategy_macd_30s_trade_stream_service: str = "LEVELONE_EQUITIES"
     strategy_polygon_30s_live_aggregate_bars_enabled: bool = _legacy_strategy_alias_field(
@@ -139,7 +130,6 @@ class Settings(BaseSettings):
         "strategy_polygon_30s_trade_stream_service",
         "strategy_webull_30s_trade_stream_service",
     )
->>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
     strategy_macd_30s_massive_indicator_overlay_enabled: bool = True
     strategy_macd_30s_probe_enabled: bool = False
     strategy_macd_30s_reclaim_enabled: bool = False
@@ -407,13 +397,8 @@ class Settings(BaseSettings):
             override = self._normalize_provider_name(self.strategy_macd_30s_broker_provider)
             if override is not None:
                 return override
-<<<<<<< HEAD
-        if normalized_code in {"webull_30s", "polygon_30s"}:
-            override = self._normalize_provider_name(self.strategy_webull_30s_broker_provider)
-=======
         if normalized_code in {"polygon_30s", "webull_30s"}:
             override = self._normalize_provider_name(self.strategy_polygon_30s_broker_provider)
->>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
             if override is not None:
                 return override
         if normalized_code == "schwab_1m":
@@ -487,11 +472,7 @@ class Settings(BaseSettings):
             "schwab_1m",
         }:
             return "schwab"
-<<<<<<< HEAD
-        if normalized_code in {"webull_30s", "polygon_30s"}:
-=======
         if normalized_code in {"polygon_30s", "webull_30s"}:
->>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
             return "polygon"
         return "polygon"
 

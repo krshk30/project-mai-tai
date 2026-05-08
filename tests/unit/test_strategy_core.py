@@ -1517,13 +1517,8 @@ def test_schwab_native_entry_engine_blocks_p1_when_chop_lock_hits_threshold() ->
     assert "NO_CLEAN_SIDE" in decision["reason"]
 
 
-<<<<<<< HEAD
-def test_webull_variant_does_not_inherit_schwab_chop_lock_default() -> None:
-    config = TradingConfig().make_30s_webull_variant()
-=======
 def test_polygon_variant_does_not_inherit_schwab_chop_lock_default() -> None:
     config = TradingConfig().make_30s_polygon_variant()
->>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
     config.schwab_native_use_confirmation = False
     engine = SchwabNativeEntryEngine(config, now_provider=lambda: datetime(2026, 4, 17, 10, 0))
     _seed_schwab_native_chop_history(engine, "ELAB")
@@ -1777,25 +1772,15 @@ def test_schwab_native_entry_engine_can_fire_p5_pullback() -> None:
     assert signal["path"] == "P5_PULLBACK"
 
 
-<<<<<<< HEAD
-def test_webull_variant_restores_polygon_momentum_override_that_schwab_blocks() -> None:
-=======
 def test_polygon_variant_restores_polygon_momentum_override_that_schwab_blocks() -> None:
->>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
     schwab_config = TradingConfig().make_30s_schwab_native_variant()
     schwab_config.schwab_native_use_confirmation = False
     schwab_config.p3_allow_momentum_override = True
     schwab_engine = SchwabNativeEntryEngine(schwab_config, now_provider=lambda: datetime(2026, 4, 17, 10, 0))
 
-<<<<<<< HEAD
-    webull_config = TradingConfig().make_30s_webull_variant()
-    webull_config.schwab_native_use_confirmation = False
-    webull_engine = SchwabNativeEntryEngine(webull_config, now_provider=lambda: datetime(2026, 4, 17, 10, 0))
-=======
     polygon_config = TradingConfig().make_30s_polygon_variant()
     polygon_config.schwab_native_use_confirmation = False
     polygon_engine = SchwabNativeEntryEngine(polygon_config, now_provider=lambda: datetime(2026, 4, 17, 10, 0))
->>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
 
     indicators = _make_schwab_native_base_indicators()
     indicators.update(
@@ -1819,15 +1804,9 @@ def test_polygon_variant_restores_polygon_momentum_override_that_schwab_blocks()
     assert schwab_decision["path"] == "P3_SURGE"
     assert schwab_decision["reason"] == "P3 entry stoch_k cap (90.0 >= 80.0)"
 
-<<<<<<< HEAD
-    webull_signal = webull_engine.check_entry("ELAB", indicators, bar_index=60, position_tracker=None)
-    assert webull_signal is not None
-    assert webull_signal["path"] == "P3_SURGE"
-=======
     polygon_signal = polygon_engine.check_entry("ELAB", indicators, bar_index=60, position_tracker=None)
     assert polygon_signal is not None
     assert polygon_signal["path"] == "P3_SURGE"
->>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
 
 
 def test_schwab_native_entry_engine_1m_p3_requires_average_volume() -> None:
@@ -1875,11 +1854,7 @@ def test_schwab_native_entry_engine_1m_p3_blocks_when_ema9_distance_is_too_large
 
 
 def test_schwab_native_entry_engine_records_path_diagnostics_on_no_match() -> None:
-<<<<<<< HEAD
-    config = TradingConfig().make_30s_webull_variant()
-=======
     config = TradingConfig().make_30s_polygon_variant()
->>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
     config.schwab_native_use_confirmation = False
     engine = SchwabNativeEntryEngine(config, now_provider=lambda: datetime(2026, 4, 29, 15, 30))
 

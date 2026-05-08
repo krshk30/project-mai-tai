@@ -60,15 +60,9 @@ def test_massive_historical_bars_drop_in_progress_trailing_bucket(monkeypatch) -
 def test_strategy_runtime_seed_bars_sorts_out_of_order_history() -> None:
     runtime = StrategyBotRuntime(
         StrategyDefinition(
-<<<<<<< HEAD
-            code="webull_30s",
-            display_name="Polygon 30 Sec Bot",
-            account_name="live:webull_30s",
-=======
             code="polygon_30s",
             display_name="Polygon 30 Sec Bot",
             account_name="live:polygon_30s",
->>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
             interval_secs=30,
             trading_config=TradingConfig(),
             indicator_config=IndicatorConfig(),

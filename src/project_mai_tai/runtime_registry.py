@@ -51,15 +51,9 @@ def configured_strategy_registrations(settings: Settings) -> tuple[StrategyRegis
     if settings.strategy_polygon_30s_enabled:
         registrations.append(
             StrategyRegistration(
-<<<<<<< HEAD
-                code="webull_30s",
-                display_name="Polygon 30 Sec Bot",
-                account_name=settings.strategy_webull_30s_account_name,
-=======
                 code="polygon_30s",
                 display_name="Polygon 30 Sec Bot",
                 account_name=settings.strategy_polygon_30s_account_name,
->>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
                 interval_secs=30,
                 runtime_kind="macd",
                 execution_mode=settings.execution_mode_for_provider(
@@ -72,13 +66,8 @@ def configured_strategy_registrations(settings: Settings) -> tuple[StrategyRegis
                     ),
                     "interval_secs": 30,
                     "runtime_kind": "macd",
-<<<<<<< HEAD
-                    "provider": settings.provider_for_strategy("webull_30s"),
-                    "market_data_provider": settings.market_data_provider_for_strategy("webull_30s"),
-=======
                     "provider": settings.provider_for_strategy("polygon_30s"),
                     "market_data_provider": settings.market_data_provider_for_strategy("polygon_30s"),
->>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
                 },
             )
         )

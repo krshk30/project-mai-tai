@@ -266,15 +266,9 @@ class StrategyBotRuntime:
         live_aggregate_stale_after_seconds: int = 3,
         indicator_overlay_provider: MassiveIndicatorProvider | TaapiIndicatorProvider | None = None,
         extended_hours_vwap_provider: Callable[[str, Sequence[float], int], dict[float, float]] | None = None,
-<<<<<<< HEAD
-        builder_manager: BarBuilderManager | SchwabNativeBarBuilderManager | None = None,
-        indicator_engine: IndicatorEngine | SchwabNativeIndicatorEngine | None = None,
-        entry_engine: EntryEngine | SchwabNativeEntryEngine | None = None,
-=======
         builder_manager: BarBuilderManager | SchwabNativeBarBuilderManager | Polygon30sBarBuilderManager | None = None,
         indicator_engine: IndicatorEngine | SchwabNativeIndicatorEngine | Polygon30sIndicatorEngine | None = None,
         entry_engine: EntryEngine | SchwabNativeEntryEngine | Polygon30sEntryEngine | None = None,
->>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
         retention_config: FeedRetentionConfig | None = None,
     ):
         self.definition = definition
@@ -1188,11 +1182,7 @@ class StrategyBotRuntime:
         self._roll_day_if_needed()
         if self.use_live_aggregate_bars and self.live_aggregate_bars_are_final:
             return [], 0
-<<<<<<< HEAD
-        if self.use_live_aggregate_bars and self.definition.code in {"webull_30s", "polygon_30s"}:
-=======
         if self.use_live_aggregate_bars and self.definition.code == "polygon_30s":
->>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
             # Polygon's canonical 30s path is built from streamed 1s aggregate
             # bars. If the strategy consumer lags the Redis stream during a busy
             # move, wall-clock force-closing can freeze a 30s bar before the
@@ -1371,11 +1361,7 @@ class StrategyBotRuntime:
 
         if intent_type == "open":
             self.pending_open_symbols.discard(symbol)
-<<<<<<< HEAD
-            if self.definition.code == "webull_30s":
-=======
             if self.definition.code == "polygon_30s":
->>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
                 self.entry_engine.record_rejected_open(
                     symbol,
                     self.builder_manager.get_or_create(symbol).get_bar_count(),
@@ -3258,11 +3244,7 @@ class StrategyEngineState:
             self.settings.strategy_macd_30s_live_aggregate_bars_enabled
             or self.settings.market_data_live_aggregate_stream_enabled
         )
-<<<<<<< HEAD
-        webull_use_live_aggregate_bars = self.settings.strategy_webull_30s_live_aggregate_bars_enabled
-=======
         polygon_use_live_aggregate_bars = self.settings.strategy_polygon_30s_live_aggregate_bars_enabled
->>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
         self.bots: dict[str, StrategyRuntime] = {}
         if self.settings.strategy_macd_1m_enabled and "macd_1m" in registrations:
             self.bots["macd_1m"] = StrategyBotRuntime(
@@ -3380,17 +3362,6 @@ class StrategyEngineState:
                 ),
                 now_provider=now_provider,
                 session_factory=session_factory if self.settings.strategy_history_persistence_enabled else None,
-<<<<<<< HEAD
-                use_live_aggregate_bars=webull_use_live_aggregate_bars,
-                trade_tick_service=self.settings.strategy_webull_30s_trade_stream_service,
-                live_aggregate_fallback_enabled=self.settings.strategy_webull_30s_live_aggregate_fallback_enabled,
-                live_aggregate_stale_after_seconds=self.settings.strategy_webull_30s_live_aggregate_stale_after_seconds,
-                live_aggregate_bars_are_final=False,
-                builder_manager=SchwabNativeBarBuilderManager(
-                    interval_secs=30,
-                    time_provider=lambda: resolved_now_provider().timestamp(),
-                    close_grace_seconds=self.settings.strategy_webull_30s_tick_bar_close_grace_seconds,
-=======
                 use_live_aggregate_bars=polygon_use_live_aggregate_bars,
                 trade_tick_service=self.settings.strategy_polygon_30s_trade_stream_service,
                 live_aggregate_fallback_enabled=self.settings.strategy_polygon_30s_live_aggregate_fallback_enabled,
@@ -3400,7 +3371,6 @@ class StrategyEngineState:
                     interval_secs=30,
                     time_provider=lambda: resolved_now_provider().timestamp(),
                     close_grace_seconds=self.settings.strategy_polygon_30s_tick_bar_close_grace_seconds,
->>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
                     fill_gap_bars=False,
                 ),
                 indicator_engine=Polygon30sIndicatorEngine(default_indicator_config),
@@ -5896,11 +5866,7 @@ class StrategyEngineService:
                     latest_by_code[code] = session.scalar(
                         select(StrategyBarHistory.bar_time)
                         .where(
-<<<<<<< HEAD
-                            StrategyBarHistory.strategy_code == code,
-=======
                             StrategyBarHistory.strategy_code.in_(strategy_code_candidates(code)),
->>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
                             StrategyBarHistory.symbol == normalized_symbol,
                             StrategyBarHistory.interval_secs == int(interval_secs),
                         )
@@ -5929,11 +5895,7 @@ class StrategyEngineService:
                         bar_time = datetime.fromtimestamp(timestamp, UTC)
                         record = session.scalar(
                             select(StrategyBarHistory).where(
-<<<<<<< HEAD
-                                StrategyBarHistory.strategy_code == code,
-=======
                                 StrategyBarHistory.strategy_code.in_(strategy_code_candidates(code)),
->>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
                                 StrategyBarHistory.symbol == normalized_symbol,
                                 StrategyBarHistory.interval_secs == int(interval_secs),
                                 StrategyBarHistory.bar_time == bar_time,
@@ -7445,11 +7407,7 @@ class StrategyEngineService:
         query = (
             select(StrategyBarHistory)
             .where(
-<<<<<<< HEAD
-                StrategyBarHistory.strategy_code == code,
-=======
                 StrategyBarHistory.strategy_code.in_(strategy_code_candidates(code)),
->>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
                 StrategyBarHistory.symbol == symbol,
                 StrategyBarHistory.interval_secs == runtime.definition.interval_secs,
                 StrategyBarHistory.bar_time >= session_start_utc,

@@ -94,11 +94,8 @@ class BarBuilder:
         completed: list[OHLCVBar] = []
 
         if self._current_bar is None and self.bars and bar_start <= self.bars[-1].timestamp:
-<<<<<<< HEAD
-=======
             if self._revise_last_closed_bar(component_timestamp, bar):
                 return completed
->>>>>>> ec1537e (Rename Polygon 30s strategy runtime)
             logger.debug(
                 "[BAR] Ignoring stale aggregate bar for %s at %.3f (<= last closed %.3f)",
                 self.ticker,
