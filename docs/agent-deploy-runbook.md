@@ -52,6 +52,63 @@ Before work starts, write this into the current session handoff:
 
 Keep the handoff updated as soon as responsibility changes.
 
+## Pre-Merge Regression Check (mandatory for shared hot files)
+
+Concrete incident this rule prevents — **2026-05-08 commit `d5ac600`** "Finalize Polygon 30s rename on main" silently reverted FOUR previously-shipped fixes (`b6fb7b2`, `4f3c989`, `b24873e`, `6420770`) by deleting 1013 lines across 14 files. The user saw the dashboard CPU saturation come back AND the Path="-" / Close bug return because the rename branch had been based on an older parent and force-applied without diffing against current main. PR #78 had to cherry-pick all four commits back. Multi-hour user-visible regression.
+
+This rule is **mandatory for any commit that touches the shared hot files**:
+
+- `src/project_mai_tai/services/control_plane.py`
+- `src/project_mai_tai/services/strategy_engine_app.py`
+- `src/project_mai_tai/strategy_core/schwab_native_30s.py`
+- `src/project_mai_tai/strategy_core/polygon_30s.py`
+- `src/project_mai_tai/strategy_core/bar_builder.py`
+- `src/project_mai_tai/oms/service.py`
+- `src/project_mai_tai/market_data/gateway.py`
+
+It is also mandatory for **any PR whose net diff against `origin/main` deletes more than 100 lines** in any single file, regardless of which file.
+
+### Required pre-merge step
+
+Before opening or merging the PR, the deploy owner runs:
+
+```powershell
+git log --oneline origin/main -- <changed-files>
+git diff origin/main...HEAD --stat
+```
+
+For each of the **last 10 commits** to each changed file, the deploy owner must inspect:
+
+```powershell
+git show <SHA> -- <changed-file>
+```
+
+…and confirm that **NONE of those commits' content is being undone** by the current PR. If the current PR removes a function, condition, or line that one of those last 10 commits added, that's a candidate revert and must be either:
+
+- explicitly preserved (re-applied on top of the rebase), or
+- explicitly justified in the PR description with the phrase **"Intentionally reverts <SHA>"** and reasoning.
+
+### What goes in the PR description
+
+For PRs that hit the rule (touched a hot file OR deleted >100 lines), the PR description **must include a "Last-N commits review" section**:
+
+```markdown
+## Last-10 commits to changed files (per Pre-Merge Regression Check rule)
+
+- <SHA1> "<short title>" — preserved / not relevant
+- <SHA2> "<short title>" — preserved / not relevant
+- ...
+
+No commits in this list are being reverted by this PR. (If any are, list them
+with explicit "Intentionally reverts" justification.)
+```
+
+Without this section, the PR should not be merged — admin-merge or otherwise. The check takes ~3 minutes; the consequence of skipping it (multi-hour user-visible regression) is large.
+
+### Why "shared hot files" specifically
+
+`control_plane.py` and `strategy_engine_app.py` accumulate small fixes very fast (cache TTLs, query optimizations, dashboard rendering, heartbeat fields, etc.). A rename or refactor PR that's been pending for a few days easily lands behind 5-10 hot fixes; rebasing without diffing leaves silent reverts. The other listed files have less churn but a regression there directly affects bar-build integrity or order routing — high-stakes. The 100-line threshold is a backstop for files outside this list.
+
 ## Normal Flow
 
 ### 1. Start Local Work
