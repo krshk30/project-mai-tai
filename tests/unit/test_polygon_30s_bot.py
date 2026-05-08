@@ -802,6 +802,54 @@ def test_polygon_30s_trade_ticks_keep_bot_alive_when_live_bars_starve() -> None:
     assert latest_bar["close"] == 3.11
 
 
+def test_polygon_30s_trade_tick_fallback_accepts_epoch_millisecond_timestamps() -> None:
+    state = StrategyEngineState(
+        settings=Settings(
+            strategy_macd_30s_broker_provider="schwab",
+            strategy_polygon_30s_enabled=True,
+            scanner_feed_retention_enabled=False,
+        ),
+        now_provider=fixed_now,
+    )
+    bot = state.bots["polygon_30s"]
+    bot.set_watchlist(["UGRO"])
+    state.seed_bars(
+        "polygon_30s",
+        "UGRO",
+        [
+            {
+                "open": 2.50 + index * 0.01,
+                "high": 2.52 + index * 0.01,
+                "low": 2.49 + index * 0.01,
+                "close": 2.51 + index * 0.01,
+                "volume": 20_000 + index * 100,
+                "timestamp": 1_700_000_000.0 + index * 30,
+                "trade_count": 10 + index,
+            }
+            for index in range(55)
+        ],
+    )
+    bot.latest_quotes["UGRO"] = {"bid": 2.79, "ask": 2.80}
+
+    assert bot._should_fallback_to_trade_ticks("UGRO") is True
+
+    intents = state.handle_trade_tick(
+        symbol="UGRO",
+        price=3.11,
+        size=200,
+        timestamp_ns=1_700_001_655_000,
+        strategy_codes=["polygon_30s"],
+    )
+
+    builder = bot.builder_manager.get_builder("UGRO")
+
+    assert intents == []
+    assert builder is not None
+    latest_bar = builder.get_bars_with_current_as_dicts()[-1]
+    assert float(latest_bar["timestamp"]) >= float(builder.bars[-1].timestamp)
+    assert latest_bar["close"] == 3.11
+
+
 def test_polygon_open_rejection_blocks_same_symbol_for_20_bars() -> None:
     state = StrategyEngineState(
         settings=Settings(

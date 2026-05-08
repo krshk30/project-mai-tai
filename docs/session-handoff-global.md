@@ -8403,9 +8403,29 @@ Notes:
     - Polygon now defaults to fallback-enabled live aggregate mode
     - Polygon can still be forced into live-bar-only mode for diagnostics
     - trade ticks keep the Polygon builder alive when live bars starve
+- Follow-up root cause found later the same afternoon:
+  - at `2026-05-08 04:19 PM ET`, Polygon went `STALE` again even after fallback was enabled
+  - live `/api/bots` still showed:
+    - fresh `latest_bot_tick_at`
+    - fresh `latest_market_data_at`
+    - fresh `latest_heartbeat_at`
+  - but `latest_decision_at` and all Polygon indicator snapshots were frozen around `04:11:30 PM ET`
+  - direct Redis inspection of `mai_tai:market-data` showed Polygon `trade_tick` payloads with values like `timestamp_ns=1778271666054`
+  - that number is epoch **milliseconds**, not nanoseconds
+  - the fallback bar-builder path was still passing that field through as if it were nanoseconds, so trade-tick fallback could wake up but still fail to advance real `30s` bars because the builder saw effectively `1970`-era timestamps
+- Follow-up durable fix:
+  - normalized incoming trade-tick timestamps by unit inside `StrategyEngineState.handle_trade_tick`
+  - the runtime now converts epoch seconds / milliseconds / microseconds into real nanoseconds before using Polygon fallback ticks for:
+    - live-aggregate trade-count bucketing
+    - intrabar entry evaluation
+    - native builder `on_trade()` fallback bar construction
+- Follow-up regression coverage:
+  - added a Polygon-specific regression proving fallback works when the incoming tick uses the same epoch-millisecond shape observed on the VPS
 - Local validation:
   - `python -m pytest tests/unit/test_polygon_30s_bot.py -k "defaults_to_canonical_polygon_live_bars or force_live_bar_only_mode or trade_ticks_keep_bot_alive_when_live_bars_starve or uses_real_live_bar_fallback_when_tick_builder_lags or late_same_bucket or revises_last_closed_bar or keeps_sparse_bucket or skips_first_mid_bucket" -q`
     - `8 passed`
+  - `python -m pytest tests/unit/test_polygon_30s_bot.py -k "trade_ticks_keep_bot_alive_when_live_bars_starve or trade_tick_fallback_accepts_epoch_millisecond_timestamps" -q`
+    - `2 passed`
   - `python -m py_compile src/project_mai_tai/settings.py src/project_mai_tai/services/strategy_engine_app.py tests/unit/test_polygon_30s_bot.py`
 - Deployment state:
   - fixed locally in clean `main` worktree

@@ -857,6 +857,7 @@ class StrategyBotRuntime:
     ) -> list[TradeIntentEvent]:
         self._roll_day_if_needed()
         normalized_symbol = str(symbol).upper()
+        normalized_timestamp_ns = self._normalize_tick_timestamp_ns(timestamp_ns)
         self._last_tick_at[normalized_symbol] = self._normalize_now(self.now_provider())
         intents = self._evaluate_position_price_intents(symbol, price)
 
@@ -878,7 +879,7 @@ class StrategyBotRuntime:
             and self.live_aggregate_bars_are_final
             and not prewarm_only
         ):
-            self._record_live_aggregate_trade_tick(normalized_symbol, timestamp_ns)
+            self._record_live_aggregate_trade_tick(normalized_symbol, normalized_timestamp_ns)
 
         if self.use_live_aggregate_bars and not prewarm_only and not self._should_fallback_to_trade_ticks(symbol):
             intents.extend(
@@ -886,7 +887,7 @@ class StrategyBotRuntime:
                     symbol,
                     price=price,
                     size=size,
-                    timestamp_ns=timestamp_ns,
+                    timestamp_ns=normalized_timestamp_ns,
                 )
             )
             return intents
@@ -895,7 +896,7 @@ class StrategyBotRuntime:
             symbol,
             price,
             size,
-            timestamp_ns or 0,
+            normalized_timestamp_ns or 0,
             cumulative_volume,
         )
         # When a late-arriving trade tick lands in an already-closed bucket,
@@ -1850,11 +1851,24 @@ class StrategyBotRuntime:
         return [open_intent] if open_intent is not None else []
 
     def _resolve_tick_timestamp(self, timestamp_ns: int | None) -> float:
-        if timestamp_ns and timestamp_ns > 1_000_000_000_000_000_000:
-            return timestamp_ns / 1_000_000_000
-        if timestamp_ns and timestamp_ns > 1_000_000_000_000:
-            return timestamp_ns / 1_000
+        normalized_timestamp_ns = self._normalize_tick_timestamp_ns(timestamp_ns)
+        if normalized_timestamp_ns:
+            return normalized_timestamp_ns / 1_000_000_000
         return self.now_provider().timestamp()
+
+    def _normalize_tick_timestamp_ns(self, timestamp_ns: int | None) -> int | None:
+        if not timestamp_ns:
+            return None
+        value = int(timestamp_ns)
+        if value >= 1_000_000_000_000_000_000:
+            return value
+        if value >= 1_000_000_000_000_000:
+            return value * 1_000
+        if value >= 1_000_000_000_000:
+            return value * 1_000_000
+        if value >= 1_000_000_000:
+            return value * 1_000_000_000
+        return None
 
     def _indicator_snapshots(self) -> list[dict[str, object]]:
         snapshots: list[dict[str, object]] = []
