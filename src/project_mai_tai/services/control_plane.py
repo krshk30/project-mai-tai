@@ -4682,6 +4682,24 @@ def _build_bot_listening_status(
     market_data_age_seconds = _seconds_since_eastern_label(latest_market_data_at)
     heartbeat_age_seconds = _seconds_since_eastern_label(latest_heartbeat_at)
 
+    # The strategy in-memory decision tape is empty for a few minutes after a
+    # restart; treat the first 180s as a grace window so STALE doesn't fire on
+    # bots that haven't had time to evaluate a bar yet. engine_started_at is
+    # stamped on every strategy heartbeat (strategy_engine_app._publish_heartbeat).
+    engine_uptime_seconds: float | None = None
+    engine_started_at_raw = (strategy_service.get("details") or {}).get("engine_started_at", "")
+    if engine_started_at_raw:
+        try:
+            engine_started_at_dt = datetime.fromisoformat(str(engine_started_at_raw))
+            if engine_started_at_dt.tzinfo is None:
+                engine_started_at_dt = engine_started_at_dt.replace(tzinfo=UTC)
+            engine_uptime_seconds = (utcnow() - engine_started_at_dt).total_seconds()
+        except (ValueError, TypeError):
+            engine_uptime_seconds = None
+    within_post_restart_grace = (
+        engine_uptime_seconds is not None and 0 <= engine_uptime_seconds < 180
+    )
+
     service_status = str(
         strategy_service.get("effective_status", strategy_service.get("status", "unknown")) or "unknown"
     ).lower()
@@ -4774,14 +4792,19 @@ def _build_bot_listening_status(
     elif active_session and decision_age_seconds is not None and decision_age_seconds > 120 and watchlist_count > 0:
         if indicator_age_seconds is not None and indicator_age_seconds <= 120:
             detail = "Bars are updating; Decision Tape is lagging behind."
+        elif within_post_restart_grace:
+            detail = "Strategy just restarted; decisions will appear once the next bar evaluates."
         else:
             state = "STALE"
             detail = "Bot has symbols, but no fresh decision rows are being recorded."
             color = "#ffcc5b"
     elif not recent_decisions and active_session and watchlist_count > 0:
-        state = "STALE"
-        detail = "No decision rows are available for an active session."
-        color = "#ffcc5b"
+        if within_post_restart_grace:
+            detail = "Strategy just restarted; decisions will appear once the next bar evaluates."
+        else:
+            state = "STALE"
+            detail = "No decision rows are available for an active session."
+            color = "#ffcc5b"
     elif active_session and heartbeat_age_seconds is not None and heartbeat_age_seconds > 90:
         if has_fresh_bot_activity:
             detail = "Bot activity is fresh; strategy heartbeat is lagging."
