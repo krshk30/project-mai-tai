@@ -724,7 +724,10 @@ class ControlPlaneRepository:
             self._overview_cache_at = None
 
     async def _load_dashboard_data_uncached(self) -> dict[str, Any]:
-        db_state = self._load_database_state()
+        # Run the heavy synchronous DB aggregation in a worker thread so the
+        # asyncio event loop stays responsive to other requests (e.g.
+        # /api/positions, /health) while this expensive scan completes.
+        db_state = await asyncio.to_thread(self._load_database_state)
         stream_state = await self._load_stream_state()
         normalized_strategy_runtime = self._normalize_strategy_runtime(stream_state["strategy_runtime"])
         legacy_shadow = await self._load_legacy_shadow_data(
@@ -849,7 +852,10 @@ class ControlPlaneRepository:
             self._bot_dashboard_cache_at = None
 
     async def _load_bot_dashboard_data_uncached(self) -> dict[str, Any]:
-        db_state = self._load_database_state(lightweight=True)
+        # Run the heavy synchronous DB aggregation in a worker thread so the
+        # asyncio event loop stays responsive to other requests while this
+        # expensive scan completes.
+        db_state = await asyncio.to_thread(self._load_database_state, lightweight=True)
         stream_state = await self._load_stream_state()
         normalized_strategy_runtime = self._normalize_strategy_runtime(stream_state["strategy_runtime"])
         legacy_shadow = self._empty_legacy_shadow_data()
