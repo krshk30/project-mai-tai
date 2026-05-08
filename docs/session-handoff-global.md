@@ -1,5 +1,60 @@
 # Session Handoff - Global
 
+## 2026-05-08 PM: PR #77 cum-vol-delta fix + PR #78 d5ac600 regression restore (path-empty + dashboard CPU)
+
+```
+Deploy owner: this agent (Claude Code)
+Local code owner: this agent (Claude Code)
+Active workstream: schwab heavy-burst v2 + control-plane regression recovery
+Status: BOTH DEPLOYED. End-of-session.
+SHAs: ff8163c (PR #77, late-trade cum-vol-delta), 4b30de1 (PR #78, restore 4 reverted fixes)
+VPS SHA: 4b30de1
+Workflow: feature branches -> PR -> admin-merge -> git fetch+reset on VPS -> systemctl restart
+Service target: strategy (PR #77), control (PR #78)
+Restart window: 2026-05-08 19:18:29 UTC strategy (PR #77); 2026-05-08 20:03:36 UTC control (PR #78)
+Market hours at deploy: yes (post 09:30 ET, but PR #78 landed at 16:03 ET -- 3 min after close)
+Account flat at deploy: yes
+Post-deploy validator: this agent
+```
+
+### Workstream 1: PR #77 — late-trade revision uses cum-vol delta, not size
+
+The 13:00-15:00 ET audit ran post PR #75 deploy showed heavy-trade bars (AEHL, AIIO, MNTS, TRAW) STILL undercounting volume severely (AEHL 13:07:30 rebuilt vol=1690214 vs persisted vol=367451 -- 22% capture). TC matched perfectly across these mismatches; volume contribution per revised trade was tiny. Root cause: PR #75's `_revise_last_closed_bar_from_trade` used `trade.size` for the volume contribution. That's correct for TIMESALE (one event = one trade) but catastrophically wrong for **LEVELONE_EQUITIES** (which is what `strategy_macd_30s_trade_stream_service` is set to). LEVELONE events aggregate multiple ticks; `event.size` is just `last_size`, while `cum_vol - prior_cv` is the actual since-last volume. Fix: snapshot `_last_closed_bar_cum_volume` at bar close, use `max(0, late.cv - frozen_baseline)` for the volume contribution. 10 unit tests pass.
+
+### Workstream 2: PR #78 — restore 4 control-plane fixes silently reverted by d5ac600
+
+User screenshot showed Path="-" / Exit Summary="Close" on TRAW 07:39, 07:45, 07:53, 08:00 AM and CODX 09:24 AM. The DB had correct path metadata (`broker_orders.payload->>'path' = "P4_BURST"` etc.). Investigating the SQL query for `recent_orders` revealed the b6fb7b2 fix (added yesterday) was missing -- `case((BrokerOrder.status == "filled", 0), else_=1)` ORDER BY clause was gone, LIMIT was 1000 instead of 2000. Today's order count: **1297 cancelled + 59 rejected + 45 filled = 1401**. With LIMIT 1000 sorted DESC by `updated_at`, the morning's earliest filled orders got pushed off the result set; pass 2 of `reconstruct_from_events` couldn't see them; closed_today shadow rows rendered with path="-" / summary="Close".
+
+Git archaeology found the offender: commit **`d5ac600`** "Finalize Polygon 30s rename on main" (today 08:18 ET, the codex agent) deleted **1013 lines** across 14 files including: the b6fb7b2 path fix, the 4f3c989 N+1 TradeIntent fix, the b24873e dashboard cache, and the 6420770 asyncio.to_thread fix. Plus 349+133+116 lines of test coverage in `test_control_plane.py` / `test_schwab_1m_bot.py` / `test_strategy_engine_service.py`.
+
+The PR #78 fix cherry-picked all four commits onto current main; cherry-picks applied cleanly with no conflicts. Two regression tests pass: `test_recent_orders_keeps_filled_when_cancelled_orders_flood_the_limit` and `test_load_bot_dashboard_data_avoids_n_plus_one_intent_lookups`. Post-deploy verification: scraped `/bot/30s` HTML for the macd_30s bot, confirmed all five rows now render with their correct paths and exit summaries. Dashboard CPU saturation reported earlier in the session also caused by the same revert; should be resolved by restoring 4f3c989/b24873e/6420770.
+
+### Result
+
+- **Path="-" / Close on Completed Positions: FIXED.** TRAW 07:39 → P4_BURST / Floor Breach; TRAW 07:45 → P4_BURST / Hard Stop; TRAW 07:53 → P5_PULLBACK / Floor Breach; TRAW 08:00 → P1_CROSS / Hard Stop; CODX 09:24 → P4_BURST / Hard Stop.
+- **Dashboard CPU saturation: RESOLVED** (cache + asyncio.to_thread restored).
+- **PR #77 (cum-vol-delta) fix is in production but not yet validated against a clean post-fix bar audit.** Strategy was restarted at 15:18 ET for PR #77, then NOT restarted for PR #78 (which only touched control_plane.py). So the strategy from 15:18 onwards has the cum-vol-delta fix. The afternoon 13:00-15:00 ET audit is mixed-state (pre + post PR #77). Saved for tomorrow morning's clean re-audit.
+
+### Residual considerations (priority-ordered)
+
+1. **Process residual: prevent another silent revert like d5ac600.** The codex agent's "Polygon 30s rename" commit did a mass rebase that deleted four hot fixes. Before merging any commit that touches `control_plane.py` and deletes >100 lines, the runbook should require an explicit diff review against the recent fixes list. Worth adding to `docs/agent-deploy-runbook.md` as a new rule.
+2. **Bar-build re-audit deferred.** Run `scripts/check_bar_build_runtime.py` for both 30s and 1m on a full post-PR #77 window tomorrow morning. Expectation: PMAX/TRAW/CTNT/AEHL heavy-burst bars now hit vol_ratio > 0.95.
+3. **Pre-existing test breakage on main.** `test_control_plane_overview_and_dashboard_render`, `test_schwab_native_bar_builder_late_trade_replaces_synthetic_flat_bar`, `test_schwab_native_entry_engine_can_fire_p4_burst_from_previous_bar_setup` all fail on origin/main today. Three sequential admin-merges (PR #73, #75, #77, #78) bypassed the broken Validate. Fix as a separate prerequisite PR before next material change.
+4. **Reconciler still degraded since 2026-04-28** — keeping overall dashboard rollup at "degraded". Untouched today.
+5. **trade_episodes.py same-symbol same-day coalesce robustness.** PR #78 restored b6fb7b2 (SQL pagination fix) but the deeper concern flagged in the 2026-05-07 evening entry — `coalesce_completed_trade_cycles` LIFO matching under same-symbol same-day reuse — was not the actual cause today (today's symptom was the SQL revert). Still a residual for future investigation if the pattern recurs without an SQL trigger.
+6. **PR #75 size-based fix shipped before audit revealed bug.** Loop-the-loop iterations cost real time. Before next deploy of a fix that depends on data semantics, run a focused unit test that exercises the EXACT data shape (size vs cum-vol delta) before deploying. The size-vs-delta divergence test in PR #77 should have been written for PR #75.
+
+### State at end of work
+
+- GitHub `main` tip: `4b30de1`
+- VPS `git rev-parse HEAD`: `4b30de1`
+- All 5 services active. Strategy restarted 15:18 ET for PR #77; control restarted 16:03 ET for PR #78; OMS / market-data / reconciler unchanged from earlier today.
+- Account flat (verified pre-restart for both deploys).
+
+### Next owner
+
+This agent (Claude Code) parking. Tomorrow morning: bar-build re-audit on full post-PR #77 window across the ~28 active symbols. Then evaluate whether residual #5 (coalesce robustness) or residual #1 (revert prevention rule in runbook) is the next workstream.
+
 ## 2026-05-08 Schwab on_trade late-trade revision (DEPLOYED, fixes PMAX 07:07 root cause)
 
 ```
