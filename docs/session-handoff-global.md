@@ -1,5 +1,41 @@
 # Session Handoff - Global
 
+## 2026-05-08 EOD: New Pre-Merge Regression Check rule added to runbook (READ BEFORE NEXT MERGE)
+
+```
+Deploy owner: this agent (Claude Code)
+Workstream: process / runbook hardening
+Status: DEPLOYED (doc-only)
+SHAs: this commit
+VPS SHA: same
+Service target: none (doc-only; no service touched)
+Restart window: n/a
+```
+
+### Why this matters for the next agent
+
+Today's PR #78 had to cherry-pick four hot fixes back onto main because commit `d5ac600` ("Finalize Polygon 30s rename on main", 2026-05-08 08:18 ET) silently reverted them. The rename branch had been based on an older parent and the diff was force-applied without comparing against current `origin/main`. Net deletion: 1013 lines across 14 files. User-visible result: dashboard CPU saturation came back AND the Path="-" / Exit Summary="Close" bug returned on Completed Positions. Several hours of debugging + the PR #78 restore.
+
+### What the new rule says
+
+`docs/agent-deploy-runbook.md` now has a section titled **"Pre-Merge Regression Check (mandatory for shared hot files)"**. Read it before merging any PR. The 30-second version:
+
+1. **Mandatory for any PR that touches** `control_plane.py`, `strategy_engine_app.py`, `schwab_native_30s.py`, `polygon_30s.py`, `bar_builder.py`, `oms/service.py`, or `market_data/gateway.py`.
+2. **Also mandatory** for any PR with a net deletion >100 lines in any single file.
+3. **Pre-merge step:** run `git log --oneline origin/main -- <changed-files>` and inspect the last 10 commits per changed file. Confirm NONE of them are being silently reverted by this PR.
+4. **PR description must include** a "Last-10 commits review" section listing each recent commit and marking it `preserved / not relevant`. Any intentional revert needs an explicit `Intentionally reverts <SHA>` line with reasoning.
+5. **Without that section, do not admin-merge** — the check takes ~3 minutes; the consequence of skipping it is a multi-hour user-visible regression.
+
+### Why this rule lives in the runbook (vs a CI check)
+
+A `git diff` review against the last 10 commits is the kind of check that's hard to enforce in CI without being overzealous (legitimate refactors do delete lines). The runbook captures the intent; CI may eventually catch the most egregious cases via "lines deleted > N requires explicit acknowledgement label," but the human review for `Intentionally reverts <SHA>` is what catches the d5ac600 class of bug.
+
+### State at end of work
+
+- GitHub `main` tip: this commit
+- VPS `git rev-parse HEAD`: same (sync after merge)
+- Doc-only change; no service restart.
+
 ## 2026-05-08 PM: PR #77 cum-vol-delta fix + PR #78 d5ac600 regression restore (path-empty + dashboard CPU)
 
 ```
