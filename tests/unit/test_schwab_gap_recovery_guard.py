@@ -35,7 +35,7 @@ def test_schwab_30s_gap_recovery_blocks_entries_until_real_bars_rebuild() -> Non
     state = StrategyEngineState(
         settings=Settings(
             strategy_macd_30s_enabled=True,
-            strategy_webull_30s_enabled=False,
+            strategy_polygon_30s_enabled=False,
             strategy_macd_1m_enabled=False,
             strategy_schwab_1m_enabled=False,
         )
@@ -86,7 +86,7 @@ def test_gap_recovery_window_scales_by_interval() -> None:
     state = StrategyEngineState(
         settings=Settings(
             strategy_macd_30s_enabled=True,
-            strategy_webull_30s_enabled=False,
+            strategy_polygon_30s_enabled=False,
             strategy_macd_1m_enabled=False,
             strategy_schwab_1m_enabled=True,
         )
@@ -101,7 +101,7 @@ def test_flush_completed_bars_advances_gap_recovery() -> None:
     state = StrategyEngineState(
         settings=Settings(
             strategy_macd_30s_enabled=True,
-            strategy_webull_30s_enabled=False,
+            strategy_polygon_30s_enabled=False,
             strategy_macd_1m_enabled=False,
             strategy_schwab_1m_enabled=False,
         )
@@ -138,7 +138,7 @@ def test_after_hours_synthetic_gap_does_not_arm_recovery_for_flat_symbol() -> No
     state = StrategyEngineState(
         settings=Settings(
             strategy_macd_30s_enabled=False,
-            strategy_webull_30s_enabled=False,
+            strategy_polygon_30s_enabled=False,
             strategy_macd_1m_enabled=False,
             strategy_schwab_1m_enabled=True,
         )

@@ -313,6 +313,7 @@ def test_polygon_30s_does_not_re_evaluate_same_bar_after_late_same_bucket_live_b
         settings=Settings(
             strategy_macd_30s_broker_provider="schwab",
             strategy_polygon_30s_enabled=True,
+            strategy_polygon_30s_tick_bar_close_grace_seconds=0.0,
             scanner_feed_retention_enabled=False,
         ),
         now_provider=lambda: clock["now"],
@@ -374,11 +375,12 @@ def test_polygon_30s_does_not_re_evaluate_same_bar_after_late_same_bucket_live_b
         trade_count=1,
     )
 
-    clock["now"] = datetime(2026, 4, 23, 15, 27, 0, tzinfo=UTC)
+    clock["now"] = datetime(2026, 4, 23, 15, 27, 1, tzinfo=UTC)
     _intents, completed_count = bot.flush_completed_bars()
 
-    assert completed_count == 0
-    assert len(bot.recent_decisions) == 0
+    assert completed_count == 1
+    assert len(bot.recent_decisions) == 1
+    assert observed_prices == [1.2]
 
     bot.handle_live_bar(
         symbol="RDAC",
@@ -391,11 +393,8 @@ def test_polygon_30s_does_not_re_evaluate_same_bar_after_late_same_bucket_live_b
         trade_count=2,
     )
 
-    clock["now"] = datetime(2026, 4, 23, 15, 27, 29, tzinfo=UTC)
-    _late_intents, late_completed_count = bot.flush_completed_bars()
-
-    assert late_completed_count == 0
-    assert len(bot.recent_decisions) == 0
+    assert len(bot.recent_decisions) == 1
+    assert observed_prices == [1.2]
 
     bot.handle_live_bar(
         symbol="RDAC",
@@ -409,7 +408,7 @@ def test_polygon_30s_does_not_re_evaluate_same_bar_after_late_same_bucket_live_b
     )
 
     assert len(bot.recent_decisions) == 1
-    assert bot.recent_decisions[0]["reason"] == "no entry path matched"
+    assert observed_prices == [1.2]
 
 
 def test_polygon_30s_revises_last_closed_bar_when_late_second_arrives() -> None:
@@ -498,6 +497,7 @@ def test_polygon_30s_skips_first_mid_bucket_live_aggregate_bar() -> None:
         settings=Settings(
             strategy_macd_30s_broker_provider="schwab",
             strategy_polygon_30s_enabled=True,
+            strategy_polygon_30s_tick_bar_close_grace_seconds=0.0,
             scanner_feed_retention_enabled=False,
         ),
         now_provider=lambda: clock["now"],
@@ -570,18 +570,7 @@ def test_polygon_30s_skips_first_mid_bucket_live_aggregate_bar() -> None:
 
     clock["now"] = datetime(2026, 4, 23, 15, 27, 32, tzinfo=UTC)
     _completed_intents, completed_count = bot.flush_completed_bars()
-    assert completed_count == 0
-
-    bot.handle_live_bar(
-        symbol="CANF",
-        open_price=4.13,
-        high_price=4.16,
-        low_price=4.12,
-        close_price=4.15,
-        volume=1_300,
-        timestamp=datetime(2026, 4, 23, 15, 27, 30, tzinfo=UTC).timestamp(),
-        trade_count=10,
-    )
+    assert completed_count == 1
     builder = bot.builder_manager.get_builder("CANF")
 
     assert builder is not None
@@ -594,6 +583,7 @@ def test_polygon_30s_keeps_sparse_bucket_when_provider_coverage_predates_bucket(
         settings=Settings(
             strategy_macd_30s_broker_provider="schwab",
             strategy_polygon_30s_enabled=True,
+            strategy_polygon_30s_tick_bar_close_grace_seconds=0.0,
             scanner_feed_retention_enabled=False,
         ),
         now_provider=lambda: clock["now"],
@@ -644,19 +634,7 @@ def test_polygon_30s_keeps_sparse_bucket_when_provider_coverage_predates_bucket(
 
     clock["now"] = datetime(2026, 4, 23, 15, 27, 29, tzinfo=UTC)
     _completed_intents, completed_count = bot.flush_completed_bars()
-    assert completed_count == 0
-
-    bot.handle_live_bar(
-        symbol="IONZ",
-        open_price=5.15,
-        high_price=5.17,
-        low_price=5.14,
-        close_price=5.16,
-        volume=2_000,
-        timestamp=datetime(2026, 4, 23, 15, 27, 0, tzinfo=UTC).timestamp(),
-        trade_count=4,
-        coverage_started_at=coverage_started_at,
-    )
+    assert completed_count == 1
     builder = bot.builder_manager.get_builder("IONZ")
 
     assert builder is not None

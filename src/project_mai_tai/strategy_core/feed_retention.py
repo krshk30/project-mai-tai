@@ -119,6 +119,7 @@ class FeedRetentionPolicy:
             return state
 
         if metrics is None or metrics.price is None:
+            self._advance_without_metrics(state, now)
             return state
 
         self._update_degraded_overlay(state, metrics, now)
@@ -192,6 +193,24 @@ class FeedRetentionPolicy:
         if state.state == "dropped" and is_confirmed:
             return self.promote(normalized_symbol, now, metrics)
         return state
+
+    def _advance_without_metrics(self, state: RetainedSymbolState, now: datetime) -> None:
+        inactivity_minutes = max(0.0, (now - state.last_activity_at).total_seconds() / 60.0)
+        if state.state == "active":
+            if inactivity_minutes >= self.config.no_activity_minutes:
+                self._transition(state, "cooldown", now)
+                state.cooldown_started_at = state.cooldown_started_at or now
+                state.above_structure_bars = 0
+                state.below_structure_bars = 0
+            return
+
+        if state.state not in {"cooldown", "resume_probe"}:
+            return
+
+        cooldown_started_at = state.cooldown_started_at or state.state_changed_at
+        cooldown_minutes = max(0.0, (now - cooldown_started_at).total_seconds() / 60.0)
+        if cooldown_minutes >= self.config.drop_cooldown_minutes:
+            self._transition(state, "dropped", now)
 
     def _transition(self, state: RetainedSymbolState, next_state: str, now: datetime) -> None:
         if state.state == next_state:

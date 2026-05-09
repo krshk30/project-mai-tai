@@ -1182,14 +1182,6 @@ class StrategyBotRuntime:
         self._roll_day_if_needed()
         if self.use_live_aggregate_bars and self.live_aggregate_bars_are_final:
             return [], 0
-        if self.use_live_aggregate_bars and self.definition.code == "polygon_30s":
-            # Polygon's canonical 30s path is built from streamed 1s aggregate
-            # bars. If the strategy consumer lags the Redis stream during a busy
-            # move, wall-clock force-closing can freeze a 30s bar before the
-            # final in-stream 1s bars for that bucket have been consumed. Let
-            # the next observed bucket close the prior bar instead of forcing a
-            # time-based close locally.
-            return [], 0
         intents: list[TradeIntentEvent] = []
         completed = self.builder_manager.check_all_bar_closes()
         completed_by_symbol: dict[str, list[OHLCVBar]] = {}

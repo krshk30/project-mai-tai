@@ -1,5 +1,89 @@
 # Session Handoff - Global
 
+## Top Summary
+
+- This top section is the current operator handoff.
+- Older detailed notes remain below as chronology and archive.
+- Keep unverified CI counts and copied failure logs out of the top summary until they are rechecked on current `main`.
+
+## Current Truth - 2026-05-08
+
+- `polygon_30s` is the primary name for the Polygon 30-second strategy. `webull` is broker terminology only and should stay out of strategy/runtime naming.
+- The recurring Polygon `STALE` issue had multiple causes identified across runtime logic, env drift, and control-plane caching. The detailed event chain is preserved below in the `2026-05-08` Polygon entries.
+- The deploy-safe worktree is `C:\Users\kkvkr\OneDrive\Documents\GitHub\project-mai-tai-control-deploy`.
+- The main repo `C:\Users\kkvkr\OneDrive\Documents\GitHub\project-mai-tai` may be dirty during active sessions. Do not treat it as deploy-ready without checking `git status`.
+- Overall `/health` may still show `degraded` because of reconciler state. Do not confuse that with a Polygon-specific runtime failure.
+
+## Active Workstreams
+
+1. `polygon_30s` live stability
+   - Success condition is not just fresh ticks or heartbeats; `latest_decision_at` and closed `30s` bars must keep advancing through sparse periods.
+   - Relevant archived entries are:
+     - `2026-05-08 - Recurring Polygon "STALE" state traced to env drift back into deprecated tick-built mode`
+     - `2026-05-08 - Polygon stale listening status root cause found in 30s close policy`
+     - `2026-05-08 - Polygon stale resurfaced: live bars were patchy, fallback was disabled`
+
+2. CI baseline cleanup
+   - The handoff contains repeated references to pre-existing test failures on `main`, but there is not one trusted current count at the top of this document.
+   - Treat notes like `43 still broken`, `46 failures`, `PR #81`, or `gh run view 25579091558 --log-failed` as unverified until rerun from the current branch state.
+   - If this becomes the next workstream, re-establish the baseline from current `main` and replace any old counts with a fresh authoritative list.
+
+3. Hot-file merge guardrail
+   - Read `docs/agent-deploy-runbook.md` before merging changes to `control_plane.py`, `strategy_engine_app.py`, `schwab_native_30s.py`, `polygon_30s.py`, `bar_builder.py`, `oms/service.py`, or `market_data/gateway.py`.
+   - The `d5ac600` revert incident is the reason for this rule. Do the last-10-commits review before merge.
+
+## Latest Confirmed Durable Changes
+
+- Polygon strategy/runtime rename to `polygon_30s`.
+- Dashboard performance recovery after the `d5ac600` revert incident.
+- Control-plane `no-store` headers on dynamic pages to prevent stale browser snapshots.
+- Polygon runtime guardrails so env drift does not silently force deprecated tick-built mode.
+- Polygon wall-clock close behavior restored so sparse live buckets can still produce closed `30s` bars.
+- Polygon live-aggregate fallback behavior restored so patchy `1s` live bars do not wedge the bot.
+
+## Known Open Items
+
+- `polygon_30s` still needs clean sustained validation over time, not only post-restart spot checks.
+- Reconciler degradation is still a separate live issue.
+- CI needs a fresh authoritative baseline before new large failure summaries are added to this handoff.
+
+## Update Rule
+
+- Keep the top summary concise and current.
+- Use the chronology below for investigation details, deploy logs, and one-off diagnostics.
+- If an issue has multiple attempted fixes, summarize only the final confirmed root cause and the latest remaining risk in the top section.
+- If a count or status has not been revalidated locally, mark it unverified or leave it out of the top summary.
+
+## Archived Detailed Notes
+
+Treat the sections below as chronology and supporting detail. The top summary above is the current source of truth.
+
+## 2026-05-08 Polygon stale confidence follow-up: add no-store headers to live control-plane pages
+
+### Why this mattered
+- After the Polygon 30s runtime fixes, the live VPS could already be back to `LISTENING` while the operator browser still showed an older `STALE` snapshot.
+- Direct live checks on `2026-05-08 04:05 PM ET` showed `polygon_30s` healthy again:
+  - `latest_decision_at = 2026-05-08 04:04:00 PM ET`
+  - `latest_bot_tick_at = 2026-05-08 04:05:21 PM ET`
+  - `latest_market_data_at = 2026-05-08 04:05:17 PM ET`
+  - `latest_heartbeat_at = 2026-05-08 04:05:11 PM ET`
+- But the control-plane responses had **no `Cache-Control` headers at all**, which meant a browser or proxy could keep serving an older stale bot page or `/api/bots` payload even after the backend had recovered.
+
+### Durable fix
+- Added control-plane middleware in `src/project_mai_tai/services/control_plane.py` that marks dynamic HTML/JSON/CSV responses as:
+  - `Cache-Control: no-store, no-cache, must-revalidate, max-age=0`
+  - `Pragma: no-cache`
+  - `Expires: 0`
+- This applies to the live bot pages and API responses so operator pages always fetch current bot state instead of replaying a cached stale snapshot.
+
+### Validation
+- `python -m pytest tests/unit/test_control_plane.py -k "dynamic_pages_disable_caching" -q`
+- `python -m py_compile src/project_mai_tai/services/control_plane.py tests/unit/test_control_plane.py`
+- Direct VPS header check before the fix showed both `/bot/30s-polygon` and `/api/bots` returning `200` without any cache headers.
+
+### Note
+- A broader targeted run also hit one unrelated existing failure in `test_control_plane_overview_and_dashboard_render` (`account_position_count` drifted from `2` to `1` in the seeded fixture). That was not changed in this fix.
+
 ## 2026-05-08 Architecture rename: `polygon_30s` is now the primary Polygon bot identity
 
 ### Naming truth going forward
@@ -7937,3 +8021,51 @@ Notes:
     - volume drift
     - trade-count drift
   - if `trade_count` mismatches collapse materially while missing bars stay clean, this was the main remaining Polygon integrity bug
+
+## 2026-05-08 - Polygon stale listening status root cause found in 30s close policy
+
+- Symptom observed live on VPS:
+  - `polygon_30s` kept showing `STALE`
+  - `last_tick_at` for active names such as `AEHL`, `AIIO`, `CODX`, and `TRAW` stayed fresh
+  - but `recent_decisions` and `indicator_snapshots.last_bar_at` for those same symbols were frozen around `2026-05-08 01:58:30 PM ET`
+- Important live evidence:
+  - Redis `mai_tai:market-data` still contained fresh Polygon `live_bar` events for those names
+  - example live stream samples near `2026-05-08 02:40 PM ET` showed fresh:
+    - `AEHL` `live_bar`
+    - `AIIO` `live_bar`
+    - `TRAW` `live_bar`
+    - plus fresh `trade_tick` traffic
+  - Redis `mai_tai:strategy-state` still showed `polygon_30s` closed-bar / decision timestamps stuck at `~01:58:30 PM ET`
+- Root cause:
+  - we had previously hard-disabled `flush_completed_bars()` for `polygon_30s`
+  - that meant Polygon `30s` bars could only close when the *next* bucket's `1s` aggregate arrived
+  - for sparse names, the runtime could keep receiving fresh trade ticks and occasional fresh `1s` live bars, but still have no new *closed* `30s` bar for a long time
+  - the control plane stale badge was therefore reporting a real runtime condition, not just a UI bug
+- Why the earlier policy became wrong:
+  - the no-flush bypass had been added to avoid premature close before late `1s` components arrived
+  - but we now already support late same-bucket revision of the most recent closed Polygon bar
+  - keeping the no-flush bypass after adding late revision left sparse buckets open indefinitely and buried the decision stream
+- Code fix:
+  - removed the Polygon-specific early return in:
+    - `src/project_mai_tai/services/strategy_engine_app.py`
+  - result:
+    - Polygon `30s` can close due buckets on wall clock again
+    - late same-bucket `1s` bars can still revise the last closed canonical bar without re-running the trade decision
+- Test updates:
+  - updated Polygon runtime tests in:
+    - `tests/unit/test_polygon_30s_bot.py`
+  - the updated expectations now prove:
+    - sparse live-aggregate buckets can close on flush
+    - the first mid-bucket partial coverage case is still skipped
+    - a late same-bucket Polygon second revises the just-closed bar without adding another decision row
+- Local validation:
+  - `python -m pytest tests/unit/test_polygon_30s_bot.py -k "late_same_bucket or revises_last_closed_bar or skips_first_mid_bucket or keeps_sparse_bucket" -q`
+    - `4 passed`
+  - `python -m pytest tests/unit/test_polygon_last_bot_tick.py -q`
+    - `1 passed`
+  - `python -m pytest tests/unit/test_strategy_engine_service.py -k "polygon_late_live_second_revises_persisted_closed_bar_without_redecision or live_second_bars_can_generate_open_intent_for_polygon_30s_bot or polygon_tick_built_sparse_ticks_do_not_synthesize_gap_bars" -q`
+    - `3 passed`
+  - `python -m py_compile src/project_mai_tai/services/strategy_engine_app.py tests/unit/test_polygon_30s_bot.py tests/unit/test_polygon_last_bot_tick.py`
+- Deployment state:
+  - fixed locally in repo
+  - not deployed to VPS yet in this session

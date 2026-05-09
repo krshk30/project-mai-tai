@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import time
 from collections.abc import Callable, Iterable
@@ -44,6 +45,30 @@ def _to_timestamp_seconds(value) -> float | None:
     if timestamp > 1_000_000_000_000:
         return timestamp / 1_000
     return float(timestamp)
+
+
+def _normalize_aggregate_trade_count(message, volume: int) -> int:
+    direct_count = _to_int(
+        getattr(message, "aggregate_vwap_trades", None)
+        or getattr(message, "transactions", None)
+        or getattr(message, "trade_count", None)
+    )
+    if direct_count is not None and direct_count > 0:
+        return direct_count
+
+    # Massive/Polygon websocket aggregate field `z` is average trade size, not
+    # trade count. When a direct count is unavailable, estimate count from the
+    # reported aggregate volume and average trade size instead of misreading `z`
+    # as the count itself.
+    average_trade_size = _to_float(
+        getattr(message, "average_trade_size", None)
+        or getattr(message, "average_size", None)
+        or getattr(message, "avg_trade_size", None)
+        or getattr(message, "z", None)
+    )
+    if average_trade_size is not None and average_trade_size > 0 and volume > 0:
+        return max(1, int(round(volume / average_trade_size)))
+    return 1
 
 
 class MassiveSnapshotProvider:
@@ -160,7 +185,22 @@ class MassiveSnapshotProvider:
                 )
             )
         bars.sort(key=lambda item: item.timestamp)
-        return bars
+        return self._filter_completed_bars(bars, interval_secs=interval_secs)
+
+    @staticmethod
+    def _filter_completed_bars(
+        bars: list[HistoricalBarRecord],
+        *,
+        interval_secs: int,
+        now_ts: float | None = None,
+    ) -> list[HistoricalBarRecord]:
+        interval = max(1, int(interval_secs))
+        effective_now = float(now_ts if now_ts is not None else time.time())
+        current_bucket_start = float(int(effective_now // interval) * interval)
+        latest_completed_start = current_bucket_start - interval
+        if latest_completed_start < 0:
+            return []
+        return [bar for bar in bars if float(bar.timestamp) <= latest_completed_start]
 
     def _get_rest_client(self):
         if self._client is None:
@@ -219,6 +259,7 @@ class MassiveTradeStream:
         self._running = False
         self._connected = False
         self._subscriptions: set[str] = set()
+        self._coverage_started_at: dict[str, float] = {}
         self._on_trade: Callable[[TradeTickRecord], None] | None = None
         self._on_quote: Callable[[QuoteTickRecord], None] | None = None
         self._on_agg: Callable[[LiveBarRecord], None] | None = None
@@ -237,24 +278,27 @@ class MassiveTradeStream:
 
     async def stop(self) -> None:
         self._running = False
-        if self._ws is not None:
-            try:
-                self._ws.close()
-            except Exception:
-                logger.exception("Failed to close Massive websocket cleanly")
+        ws = self._ws
+        self._ws = None
+        self._connected = False
+        await self._close_ws(ws)
         if self._task is not None:
             self._task.cancel()
             try:
                 await self._task
             except asyncio.CancelledError:
                 pass
+            self._task = None
         self._connected = False
+        self._coverage_started_at.clear()
 
     async def sync_subscriptions(self, symbols: Iterable[str]) -> None:
         desired = {symbol.upper() for symbol in symbols if symbol}
         to_remove = self._subscriptions - desired
         to_add = desired - self._subscriptions
         self._subscriptions = desired
+        for symbol in to_remove:
+            self._coverage_started_at.pop(symbol, None)
 
         if self._ws is None or not self._connected:
             return
@@ -269,9 +313,12 @@ class MassiveTradeStream:
             self._ws.subscribe(*[f"Q.{symbol}" for symbol in sorted(to_add)])
             if self._on_agg is not None:
                 self._ws.subscribe(*[f"A.{symbol}" for symbol in sorted(to_add)])
+            self._mark_coverage_started(to_add)
 
     async def _run_loop(self) -> None:
         while self._running:
+            ws = None
+            reconnect_delay = 0
             try:
                 ws = self._build_client()
                 self._ws = ws
@@ -280,15 +327,35 @@ class MassiveTradeStream:
                     ws.subscribe(*[f"Q.{symbol}" for symbol in sorted(self._subscriptions)])
                     if self._on_agg is not None:
                         ws.subscribe(*[f"A.{symbol}" for symbol in sorted(self._subscriptions)])
+                    self._mark_coverage_started(self._subscriptions)
                 self._connected = True
                 await asyncio.to_thread(ws.run, self._handle_messages)
+                if self._running:
+                    reconnect_delay = 1
+                    logger.warning("Massive websocket run loop exited unexpectedly; reconnecting in 1 second")
             except asyncio.CancelledError:
                 raise
             except Exception:
-                self._connected = False
                 if self._running:
+                    reconnect_delay = 5
                     logger.exception("Massive websocket error; reconnecting in 5 seconds")
-                    await asyncio.sleep(5)
+            finally:
+                self._connected = False
+                if self._ws is ws:
+                    self._ws = None
+                await self._close_ws(ws)
+            if self._running and reconnect_delay > 0:
+                await asyncio.sleep(reconnect_delay)
+
+    async def _close_ws(self, ws) -> None:
+        if ws is None:
+            return
+        try:
+            close_result = ws.close()
+            if inspect.isawaitable(close_result):
+                await close_result
+        except Exception:
+            logger.exception("Failed to close Massive websocket cleanly")
 
     def _build_client(self):
         try:
@@ -344,6 +411,13 @@ class MassiveTradeStream:
             except Exception:
                 logger.exception("Failed to normalize Massive stream message")
 
+    def _mark_coverage_started(self, symbols: Iterable[str]) -> None:
+        started_at = time.time()
+        for symbol in symbols:
+            normalized_symbol = str(symbol).upper()
+            if normalized_symbol:
+                self._coverage_started_at[normalized_symbol] = started_at
+
     def _normalize_aggregate_bar(self, message, symbol: str) -> LiveBarRecord | None:
         open_price = _to_float(
             getattr(message, "open", None)
@@ -394,10 +468,6 @@ class MassiveTradeStream:
             close=close_price,
             volume=volume or 0,
             timestamp=timestamp,
-            trade_count=_to_int(
-                getattr(message, "aggregate_vwap_trades", None)
-                or getattr(message, "transactions", None)
-                or getattr(message, "z", None)
-            )
-            or 1,
+            trade_count=_normalize_aggregate_trade_count(message, volume or 0),
+            coverage_started_at=self._coverage_started_at.get(str(symbol).upper()),
         )

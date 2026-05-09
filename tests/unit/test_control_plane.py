@@ -1811,6 +1811,33 @@ def test_control_plane_overview_and_dashboard_render() -> None:
         assert "watch" in bot_1m_page.text
 
 
+def test_control_plane_dynamic_pages_disable_caching() -> None:
+    settings = Settings(redis_stream_prefix="test", oms_adapter="alpaca_paper")
+    session_factory = build_test_session_factory()
+    seed_database(session_factory)
+    redis = FakeRedis(make_streams(settings.redis_stream_prefix))
+
+    app = build_app(
+        settings=settings,
+        session_factory=session_factory,
+        redis_client=redis,
+        legacy_client=FakeLegacyClient(),
+    )
+
+    with TestClient(app) as client:
+        bots = client.get("/api/bots")
+        assert bots.status_code == 200
+        assert bots.headers["cache-control"] == "no-store, no-cache, must-revalidate, max-age=0"
+        assert bots.headers["pragma"] == "no-cache"
+        assert bots.headers["expires"] == "0"
+
+        polygon_page = client.get("/bot/30s-polygon")
+        assert polygon_page.status_code == 200
+        assert polygon_page.headers["cache-control"] == "no-store, no-cache, must-revalidate, max-age=0"
+        assert polygon_page.headers["pragma"] == "no-cache"
+        assert polygon_page.headers["expires"] == "0"
+
+
 def test_control_plane_marks_schwab_data_halt_red_on_bot_page() -> None:
     settings = Settings(
         redis_stream_prefix="test",
