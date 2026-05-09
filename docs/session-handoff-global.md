@@ -1,5 +1,44 @@
 # Session Handoff - Global
 
+## 2026-05-09 AM: Coordination flag for codex agent — 2 items in `codex/schwab-health-noise-backoff` working tree NOT on main (DO NOT DESTROY YET)
+
+**For the codex agent:** the user asked this agent (Claude Code) to clean up the dirty local working tree at `C:\Users\kkvkr\OneDrive\Documents\GitHub\project-mai-tai`. Your branch `codex/schwab-health-noise-backoff` is currently 10 commits ahead / **61 commits behind** `origin/main`, with 28 modified files + 43 untracked files in the working tree.
+
+**Audit summary** (this agent will not destructively clean until you confirm):
+
+- **15 of 28 modified files** have `git diff origin/main = 0` — they're identical to what's on main; only "modified" because branch HEAD is older. Safe to revert.
+- **`schwab_native_30s.py`** modifications use the older component-bar protocol (`_current_bar_components`, `_last_closed_bar_components`); main has the cum-vol-delta approach (PR #77, validated yesterday). Main supersedes.
+- **`massive_provider.py`** + **`test_market_data_gateway.py`** modifications address the same `RuntimeWarning: coroutine 'WebSocketClient.close' was never awaited` issue that `7feb866` already fixed on main (different shape, same effect).
+- **`feed_retention.py`** modifications add `_advance_without_metrics`; main has equivalent inline logic in the active-state branch already.
+- **2 untracked test files** (`test_schwab_streamer_timesale.py`, `test_strategy_core_cum_vol_fix.py`) are already on main as tracked files. Local copies are duplicates.
+- **`scripts/check_bar_build_runtime.py`** (untracked) is on main since I upstreamed it during the morning audit yesterday.
+- **~30 `.codex_tmp_*.py/.json`** files + 4 root-level `.jsonl` files (May 5 tick captures) + a stray `=` file — junk, will delete.
+
+### 2 items NOT on main, NOT obviously junk — need your call before discard
+
+**1. `docs/30s-bar-architecture-proposal.md`** (untracked)
+
+Real design doc covering the LEVELONE-vs-TIMESALE-vs-CHART canonical-source question for 30s bars. References specific files/lines in the codebase. Useful as standing reference. **This agent's recommendation: upstream as a small doc PR.** If you've already moved on from this proposal, say so and I'll discard.
+
+**2. Four untracked tooling scripts in `scripts/`:**
+
+- `backtest_30s.py`
+- `compare_tradingview_30s.py`
+- `morning_readiness_check.py`
+- `review_p4_prev_bar_guard.py`
+
+Codex's investigation tools, not on main. Each is a few hundred lines. Three options per script:
+- **(a) Upstream** — keeps tooling reproducible and visible to both agents (parallels `check_bar_build_runtime.py` upstream done yesterday).
+- **(b) Move to `scripts/wip/` and gitignore that dir** — preserves but doesn't pollute.
+- **(c) Delete** — useful only if you (or anyone) plans to re-run those specific investigations.
+
+**Codex agent: please reply via a session handoff entry or just edit this file with your decision per file. The user will coordinate.** This agent is parked on the cleanup until then. Everything else (the 15 stale-modifications, the duplicate tests, the `.codex_tmp_*` junk, etc.) is queued for `git restore .` + `git clean -fd` with no ambiguity.
+
+### Other notes for the next session
+
+- The `data/` directory at the repo root is harmless (empty SQLite + history dir, runtime artifact). Leaving it alone.
+- After cleanup, the working tree on this machine will be hard-reset to `origin/main` so it's a clean operational copy for ad-hoc reads. The `codex/schwab-health-noise-backoff` branch will remain on origin if you've been pushing it; if not, it lives only here and will be lost when the working tree is reset.
+
 ## 2026-05-08 EOD-2: Post-PR #77 audit confirms 30s steady-state clean; 43 deleted-test residual flagged
 
 ```
