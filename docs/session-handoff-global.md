@@ -1,5 +1,52 @@
 # Session Handoff - Global
 
+## Top Summary - 2026-05-09
+
+- This top section is the current operator handoff. Older detailed notes remain below as chronology and archive.
+- `polygon_30s` is the canonical name for the Polygon 30-second strategy. `webull` is broker terminology only and should stay out of strategy/runtime naming.
+- The recurring Polygon `STALE` issue had multiple confirmed causes across runtime logic, env drift, and control-plane caching. The detailed event chain remains preserved below in the `2026-05-08` Polygon entries.
+- Overall `/health` may still show `degraded` because of reconciler state. Do not confuse that with a Polygon-specific runtime failure.
+- Keep copied CI counts and failure logs out of the top summary unless they have been revalidated on current `main`.
+
+## 2026-05-09 AM: Dirty local cleanup coordination resolved
+
+- The dirty local work in `C:\Users\kkvkr\OneDrive\Documents\GitHub\project-mai-tai` was reviewed and split into:
+  - local-only work worth preserving in git
+  - obsolete branch drift / duplicate tracked files
+  - obvious scratch artifacts
+- Preserved to git on branch `origin/codex/schwab-health-noise-backoff` at commit `b6ffa46`:
+  - `docs/30s-bar-architecture-proposal.md`
+  - `scripts/backtest_30s.py`
+  - `scripts/compare_tradingview_30s.py`
+  - `scripts/morning_readiness_check.py`
+  - the remaining local-only tracked diffs that were not on `origin/main`
+- Explicitly discarded during cleanup:
+  - `review_p4_prev_bar_guard.py`
+  - `.codex_tmp_*`
+  - root-level `ATER_2026-05-05.jsonl`, `CLRB_2026-05-05.jsonl`, `CYAB_2026-05-05.jsonl`, `VBIO_2026-05-05.jsonl`
+  - stray `=` file
+  - duplicate local copies of files that are already tracked on `main`
+- The local operational worktree was then cleaned back to `origin/main` content and parked on branch `codex/local-main-synced` because `main` is already checked out in the clean deploy worktree.
+- `data/` was intentionally left alone as a harmless runtime artifact.
+
+## Active Workstreams
+
+1. `polygon_30s` live stability
+   - Success condition is not just fresh ticks or heartbeats; `latest_decision_at` and closed `30s` bars must keep advancing through sparse periods.
+   - Relevant archived entries: `Recurring Polygon "STALE" state traced to env drift back into deprecated tick-built mode`, `Polygon stale listening status root cause found in 30s close policy`, `Polygon stale resurfaced: live bars were patchy, fallback was disabled`.
+
+2. CI baseline cleanup
+   - PR `#81` fixed 3 visible failures, but the larger deleted-test recovery workstream still needs a fresh current-`main` baseline before more admin merges.
+   - Revalidate before quoting old counts.
+
+3. Hot-file merge guardrail
+   - Read `docs/agent-deploy-runbook.md` before merging changes to `control_plane.py`, `strategy_engine_app.py`, `schwab_native_30s.py`, `polygon_30s.py`, `bar_builder.py`, `oms/service.py`, or `market_data/gateway.py`.
+   - The `d5ac600` revert incident is the reason for this rule. Do the last-10-commits review before merge.
+
+## Archived Detailed Notes
+
+Treat the sections below as chronology and supporting detail. The top summary above is the current source of truth.
+
 ## 2026-05-09 AM: Coordination flag for codex agent — 2 items in `codex/schwab-health-noise-backoff` working tree NOT on main (DO NOT DESTROY YET)
 
 **For the codex agent:** the user asked this agent (Claude Code) to clean up the dirty local working tree at `C:\Users\kkvkr\OneDrive\Documents\GitHub\project-mai-tai`. Your branch `codex/schwab-health-noise-backoff` is currently 10 commits ahead / **61 commits behind** `origin/main`, with 28 modified files + 43 untracked files in the working tree.
