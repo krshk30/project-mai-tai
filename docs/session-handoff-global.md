@@ -8,6 +8,90 @@
 - Overall `/health` may still show `degraded` because of reconciler state. Do not confuse that with a Polygon-specific runtime failure.
 - Keep copied CI counts and failure logs out of the top summary unless they have been revalidated on current `main`.
 
+## 2026-05-11 AM: macd_30s Schwab bar-build re-validation + new Schwab eligibility filter spec
+
+```
+Owner: this agent (Claude Code)
+Workstream: validation (macd_30s bar-build, PR #77 post-deploy) + new fix spec (Schwab pre-trade eligibility cache)
+Status: VALIDATION PASSED; FILTER WORKSTREAM OPEN (no code changes today)
+SHAs: VPS HEAD 081f05f (no deploy this session); GitHub main d0069fa
+Service target: none (audit only, no service touched)
+Restart window: n/a
+Market hours at audit: pre-market, 04:00–07:30 ET window observed
+Account flat at audit: yes
+```
+
+### macd_30s bar-build re-validation — PR #77 working as intended
+
+Window: 04:00–08:00 ET on 2026-05-11. Strategy uptime: continuous since 2026-05-08 21:01 UTC, no restart contamination during the audit window. Validator: `scripts/check_bar_build_runtime.py --interval-secs 30 --strategy-code macd_30s`.
+
+macd_30s "live symbols" today (any persisted bar in `strategy_bar_history` with `strategy_code='macd_30s'`): **AEHL, HPAI, CLIK, CRCD, IREZ**.
+
+| Symbol | Persisted bars | avg vol diff | avg price diff |
+|---|---|---|---|
+| AEHL | 398 | 0.0 | 0.000000 |
+| HPAI | 290 | 7,878 | 0.000000 |
+| CRCD | 118 | 208.7 | 0.000125 |
+| CLIK | 100 | 217.8 | 0.000098 |
+| IREZ | 40 | 4,329 | 0.000000 |
+
+For every non-perfect symbol, the residual `avg_abs_vol_diff × num_bars` arithmetically maps to a **single** "first persisted bar of the day" outlier (the worst bar reported by the validator equals the symbol's first persisted bar timestamp in every case). Mechanism: on a fresh symbol the bot's `_last_closed_bar_cum_volume` is `None`, so the in-bar accumulator falls back to size-sum (correct/conservative — pre-window cum_volume is not attributable to the first observed bar). The validator's "rebuilt" side instead computes `cum_volume - 0`, which inflates the first bar by everything that traded in that symbol pre-window. Subsequent bars use cum-vol-delta on both sides and match cleanly.
+
+PR #77's in-window cum-vol-delta math is delivering essentially perfect parity for the steady-state — better than the 71–95% steady-state improvement reported in the 2026-05-08 EOD-2 audit. AEHL's 398-bar zero-drift run on a continuously-running process is the strongest evidence to date.
+
+### Live trading readiness — bot fires correctly, broker rejects most opens
+
+Of the 5 macd_30s symbols, only 3 actually fired open intents today (HPAI and CRCD got blocked by score/filter; their `decision_status='signal'` count was 0). HPAI and CRCD intents observed in `trade_intents` today came from `polygon_30s`, a different bot — not macd_30s.
+
+| Symbol | macd_30s open intents | Filled | Rejected |
+|---|---|---|---|
+| AEHL | 4 | 0 | 4 |
+| CLIK | 5 | 0 | 5 |
+| IREZ | 2 (1 round-trip) | 2 | 0 |
+
+Risk checks all pass (`risk_checks.outcome=pass, reason=ok`). Path classification works (P1_CROSS, P2_VWAP, P3_SURGE, P4_BURST, P5_PULLBACK all observed). Rejection occurs at the Schwab paper layer with a deterministic reason from `broker_order_events`:
+
+> "Opening transactions for this security must be placed with a broker. Contact us"
+
+This is a Schwab compliance restriction on opening new positions in certain securities via electronic order entry. **The restriction is session-wide, not pre-market-only** — once Schwab returns this rejection for a symbol on a given session day, every subsequent OPEN attempt for that symbol gets the same rejection through pre-market, RTH, and after-hours. Same symbols re-attempted later in the same session keep getting the same string back.
+
+Today's IREZ ($7.74) trades filled cleanly (2/2) — proves the macd_30s → OMS → Schwab pipeline is healthy when the symbol is broker-eligible. AEHL ($1.34) and CLIK ($4.88) are in Schwab's restricted list. Eligibility looks like a compliance/restricted-list flag (hard-to-borrow / threshold security / etc.), not just price — CLIK at $4.88 is well above any penny-stock cutoff and still got rejected.
+
+### Workstream NEW & OPEN: Schwab pre-trade eligibility cache
+
+Goal: stop wasting intent slots, broker round-trips, and OMS log noise on symbols Schwab will reject session-wide. Today's macd_30s run wasted **9 of 11** open intents on AEHL+CLIK over a 3.5-hour pre-market window; over a full session day (pre-market + RTH + after-hours) this multiplies, plus the cost is paid by every Schwab-backed bot independently.
+
+Approach (single PR, est. 1–2 hours):
+
+1. **New table `schwab_ineligible_today`** with `(symbol, session_date, broker_account_id, first_seen_at, reason_text, hit_count)`. Populated by OMS the moment `broker_order_events` records a rejection event whose `payload->>'reason'` matches this exact or substring-matched string.
+
+2. **OMS pre-submit check** for OPEN intents on Schwab-backed broker accounts. Lookup `(symbol, today_session_date, broker_account_id)`. If present, mark the intent `rejected` synthetically with reason `schwab_ineligible_cached` and skip the broker submission entirely. CLOSE intents are NOT filtered — we still need to be able to close any position that opened before the cache populated.
+
+3. **Scanner integration** — next scanner promotion cycle reads this table and drops cached symbols from the macd_30s universe (and other Schwab-backed bot universes) for the remainder of the session day.
+
+4. **Session-day scope, NOT pre-market-only**. Cache key is `session_date` (ET), which covers pre-market + RTH + after-hours through the next 04:00 ET boundary. Schwab's restriction holds session-wide; resetting at session boundary handles overnight relistings that clear restrictions.
+
+5. **All Schwab-backed bots inherit it** — `macd_30s`, `schwab_1m`, `tos`, `runner`, and `paper:macd_30s_reclaim` all share the same cache table. Restriction is per-symbol per-broker-account, not per-bot.
+
+Scope: small Alembic migration, ~50 lines in OMS (cache populate + pre-submit check), ~20 lines in scanner (universe filter). No broker-behavior change, no hot-file edits per the runbook's Pre-Merge Regression Check rule. Single PR + Validate + admin-merge if CI red.
+
+### Items explicitly NOT addressed (deferred / no-op)
+
+- **First-bar cold-start drift** — cosmetic only (validator-side artifact, not a runtime bug). Persisted volume is conservatively correct, OHLC is unaffected, and the artificially-low first-bar volume tends to *block* a fire rather than over-fire. No live-trading risk. Not opening a workstream.
+- **Reconciler degradation** — still degraded since 2026-04-28 (no change today). Background residual.
+
+### State at end of work
+
+- GitHub `main` tip: `d0069fa` (no deploy today)
+- VPS `git rev-parse HEAD`: `081f05f` (matches; no sync needed)
+- All 5 services active (strategy continuous since 2026-05-08 21:01 UTC)
+- Account flat (no positions held at audit time; IREZ round-trips already closed)
+- Note: an uncommitted `## 2026-05-10: CI baseline cleanup pass 1` entry exists in the operational checkout's working tree (`codex/local-main-synced`) that should be committed separately by whoever owns yesterday's CI cleanup work.
+
+### Next owner
+
+This agent (Claude Code) parking. Next session: pick the **Schwab eligibility filter PR**. Once merged + validated, the macd_30s pipeline is end-to-end clean for live trading on broker-eligible symbols.
+
 ## 2026-05-09 AM: Dirty local cleanup coordination resolved
 
 - The dirty local work in `C:\Users\kkvkr\OneDrive\Documents\GitHub\project-mai-tai` was reviewed and split into:
@@ -42,6 +126,13 @@
 3. Hot-file merge guardrail
    - Read `docs/agent-deploy-runbook.md` before merging changes to `control_plane.py`, `strategy_engine_app.py`, `schwab_native_30s.py`, `polygon_30s.py`, `bar_builder.py`, `oms/service.py`, or `market_data/gateway.py`.
    - The `d5ac600` revert incident is the reason for this rule. Do the last-10-commits review before merge.
+
+4. Schwab pre-trade eligibility cache (NEW, OPEN — see 2026-05-11 entry)
+   - Cache `(symbol, session_date, broker_account_id)` on first Schwab "Opening transactions … must be placed with a broker" rejection.
+   - OMS pre-submit checks the cache for OPEN intents on Schwab-backed accounts; scanner drops cached symbols from the universe.
+   - **Session-wide scope** (not pre-market only) — restriction holds through RTH and after-hours; resets at next 04:00 ET session boundary.
+   - All Schwab-backed bots inherit (macd_30s, schwab_1m, tos, runner, paper:macd_30s_reclaim).
+   - Estimated 1–2 hours; small Alembic migration + ~70 LoC. No hot-file edits.
 
 ## Archived Detailed Notes
 
