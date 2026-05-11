@@ -2301,6 +2301,8 @@ def test_trade_tick_generates_open_intent_for_confirmed_watchlist(monkeypatch) -
     )
     bot = state.bots["macd_30s"]
     bot.set_watchlist(["UGRO"])
+    bot.definition.trading_config.entry_intrabar_enabled = True
+    bot.definition.trading_config.p4_prev_bar_entry_enabled = False
     bot.latest_quotes["UGRO"] = {"bid": 2.79, "ask": 2.80}
     state.seed_bars(
         "macd_30s",
@@ -2343,6 +2345,8 @@ def test_trade_tick_records_blocked_decision_reason(monkeypatch) -> None:
     )
     bot = state.bots["macd_30s"]
     bot.set_watchlist(["UGRO"])
+    bot.definition.trading_config.entry_intrabar_enabled = False
+    bot.definition.trading_config.p4_prev_bar_entry_enabled = True
     state.seed_bars(
         "macd_30s",
         "UGRO",
@@ -2490,6 +2494,7 @@ def test_trade_tick_uses_monotonic_bar_count_after_history_trim(monkeypatch) -> 
     )
     bot = state.bots["macd_30s"]
     bot.set_watchlist(["UGRO"])
+    bot.definition.trading_config.entry_intrabar_enabled = True
     start_timestamp = 1_700_000_000.0
     state.seed_bars(
         "macd_30s",
@@ -2527,6 +2532,7 @@ def test_trimmed_history_does_not_lock_out_new_open_after_cancel(monkeypatch) ->
     )
     bot = state.bots["macd_30s"]
     bot.set_watchlist(["UGRO"])
+    bot.definition.trading_config.entry_intrabar_enabled = True
     bot.definition.trading_config.confirm_bars = 0
     bot.definition.trading_config.min_score = 0
     start_timestamp = 1_700_000_000.0
@@ -2602,15 +2608,19 @@ def test_flush_completed_bars_evaluates_due_bar_without_waiting_for_next_trade(m
         return current
 
     state = StrategyEngineState(
-        settings=make_test_settings(strategy_macd_30s_live_aggregate_bars_enabled=False),
+        settings=make_test_settings(
+            strategy_macd_30s_live_aggregate_bars_enabled=False,
+            strategy_macd_30s_tick_bar_close_grace_seconds=0,
+        ),
         now_provider=now_provider,
     )
     bot = state.bots["macd_30s"]
     bot.set_watchlist(["UGRO"])
+    bot.definition.trading_config.entry_intrabar_enabled = True
     state.seed_bars(
         "macd_30s",
         "UGRO",
-        seed_trending_bars(start_timestamp=current.timestamp() - 49 * 30, interval_secs=30),
+        seed_trending_bars(start_timestamp=current.timestamp() - 50 * 30, interval_secs=30),
     )
     bot.latest_quotes["UGRO"] = {"bid": 2.79, "ask": 2.80}
     bot.definition.trading_config.confirm_bars = 0
@@ -2690,7 +2700,7 @@ def test_live_second_bars_can_generate_open_intent_for_30s_bot(monkeypatch) -> N
                 low_price=2.69 + offset * 0.001,
                 close_price=2.705 + offset * 0.001,
                 volume=500,
-                timestamp=1_700_001_470.0 + offset,
+                timestamp=1_700_001_480.0 + offset,
                 trade_count=1,
             )
         )
@@ -2768,6 +2778,7 @@ def test_tick_built_macd_30s_ignores_live_bar_packets() -> None:
     )
     bot = state.bots["macd_30s"]
     bot.set_watchlist(["UGRO"])
+    bot.definition.trading_config.entry_intrabar_enabled = True
     state.seed_bars(
         "macd_30s",
         "UGRO",
@@ -2907,7 +2918,10 @@ def test_bot_runtime_keeps_handoff_symbol_in_feed_when_lifecycle_wants_to_drop_i
 
 
 def test_strategy_summary_includes_indicator_snapshots_for_1m_parity(monkeypatch) -> None:
-    state = StrategyEngineState(now_provider=fixed_now)
+    state = StrategyEngineState(
+        settings=make_test_settings(strategy_macd_1m_enabled=True),
+        now_provider=fixed_now,
+    )
     bot = state.bots["macd_1m"]
     bot.set_watchlist(["UGRO"])
     state.seed_bars(
@@ -2954,6 +2968,8 @@ def test_macd_1m_taapi_provider_is_enabled_by_setting() -> None:
         settings=make_test_settings(
             taapi_secret="test-secret",
             massive_api_key="polygon-secret",
+            strategy_macd_1m_enabled=True,
+            strategy_tos_enabled=True,
             strategy_macd_1m_taapi_indicator_source_enabled=True,
         ),
         now_provider=fixed_now,
@@ -3108,6 +3124,7 @@ def test_live_aggregate_30s_falls_back_to_trade_ticks_when_stream_is_missing(mon
     )
     bot = state.bots["macd_30s"]
     bot.set_watchlist(["UGRO"])
+    bot.definition.trading_config.entry_intrabar_enabled = True
     state.seed_bars(
         "macd_30s",
         "UGRO",
@@ -3148,6 +3165,7 @@ def test_live_aggregate_30s_still_emits_intrabar_open_from_trade_tick_when_strea
     )
     bot = state.bots["macd_30s"]
     bot.set_watchlist(["UGRO"])
+    bot.definition.trading_config.entry_intrabar_enabled = True
     state.seed_bars(
         "macd_30s",
         "UGRO",
@@ -3222,6 +3240,8 @@ def test_live_aggregate_30s_prev_bar_intrabar_mode_blocks_non_p4_paths(monkeypat
     )
     bot = state.bots["macd_30s"]
     bot.set_watchlist(["UGRO"])
+    bot.definition.trading_config.entry_intrabar_enabled = False
+    bot.definition.trading_config.p4_prev_bar_entry_enabled = True
     state.seed_bars(
         "macd_30s",
         "UGRO",
@@ -3291,6 +3311,7 @@ def test_live_aggregate_30s_falls_back_to_trade_ticks_when_bar_progress_stalls(m
     )
     bot = state.bots["macd_30s"]
     bot.set_watchlist(["UGRO"])
+    bot.definition.trading_config.entry_intrabar_enabled = True
     state.seed_bars(
         "macd_30s",
         "UGRO",
@@ -3307,6 +3328,7 @@ def test_live_aggregate_30s_falls_back_to_trade_ticks_when_bar_progress_stalls(m
         timestamp=1_700_001_470.0,
         trade_count=10,
     )
+    current = datetime.fromtimestamp(1_700_001_575.0, UTC)
 
     captured: dict[str, float | int] = {}
 
@@ -3338,16 +3360,17 @@ def test_live_aggregate_30s_falls_back_to_trade_ticks_when_bar_progress_stalls(m
         lambda _symbol: {"status": "signal", "reason": "P1_CROSS", "path": "P1_CROSS", "score": "6"},
     )
 
+    assert bot._should_fallback_to_trade_ticks("UGRO") is True
     intents = state.handle_trade_tick(
         symbol="UGRO",
         price=2.81,
         size=200,
-        timestamp_ns=1_700_001_505_000_000_000,
+        timestamp_ns=1_700_001_575_000_000_000,
     )
 
     assert bot.use_live_aggregate_bars is True
     assert [intent.payload.intent_type for intent in intents] == ["open"]
-    assert bot.builder_manager.get_builder("UGRO").get_bars_with_current_as_dicts()[-1]["timestamp"] == 1_700_001_480.0
+    assert bot.builder_manager.get_builder("UGRO").get_bars_with_current_as_dicts()[-1]["timestamp"] == 1_700_001_570.0
     assert bot.builder_manager.get_builder("UGRO").get_bars_with_current_as_dicts()[-1]["close"] == 2.81
 
 
@@ -3390,6 +3413,7 @@ def test_macd_1m_taapi_provider_requires_polygon_secret() -> None:
     state = StrategyEngineState(
         settings=make_test_settings(
             taapi_secret="test-secret",
+            strategy_macd_1m_enabled=True,
             strategy_macd_1m_taapi_indicator_source_enabled=True,
         ),
         now_provider=fixed_now,
@@ -3402,6 +3426,7 @@ def test_macd_1m_massive_provider_remains_available_as_fallback() -> None:
     state = StrategyEngineState(
         settings=make_test_settings(
             massive_api_key="test-key",
+            strategy_macd_1m_enabled=True,
             strategy_macd_1m_massive_indicator_overlay_enabled=True,
         ),
         now_provider=fixed_now,
@@ -3412,7 +3437,10 @@ def test_macd_1m_massive_provider_remains_available_as_fallback() -> None:
 
 def test_strategy_summary_includes_taapi_indicator_fields_for_1m(monkeypatch) -> None:
     now_box = {"value": fixed_now()}
-    state = StrategyEngineState(now_provider=lambda: now_box["value"])
+    state = StrategyEngineState(
+        settings=make_test_settings(strategy_macd_1m_enabled=True),
+        now_provider=lambda: now_box["value"],
+    )
     bot = state.bots["macd_1m"]
     bot.set_watchlist(["UGRO"])
     state.seed_bars(
@@ -3514,11 +3542,13 @@ def test_strategy_summary_includes_taapi_indicator_fields_for_1m(monkeypatch) ->
 
 
 def test_strategy_summary_includes_massive_aggregate_fields_for_30s(monkeypatch) -> None:
-    now_box = {"value": fixed_now()}
+    event_start = datetime(2026, 3, 28, 14, 0, tzinfo=UTC)
+    now_box = {"value": event_start}
     state = StrategyEngineState(
         settings=make_test_settings(
             massive_api_key="test-key",
             strategy_macd_30s_live_aggregate_bars_enabled=True,
+            strategy_macd_30s_tick_bar_close_grace_seconds=0,
         ),
         now_provider=lambda: now_box["value"],
     )
@@ -3582,9 +3612,10 @@ def test_strategy_summary_includes_massive_aggregate_fields_for_30s(monkeypatch)
         low_price=2.78,
         close_price=2.80,
         volume=200,
-        timestamp=datetime(2026, 3, 28, 14, 0, tzinfo=UTC).timestamp(),
+        timestamp=event_start.timestamp(),
+        coverage_started_at=(event_start.timestamp() // 30) * 30,
     )
-    now_box["value"] = fixed_now() + timedelta(seconds=31)
+    now_box["value"] = event_start + timedelta(seconds=31)
     state.flush_completed_bars()
 
     summary = state.summary()
@@ -3599,12 +3630,15 @@ def test_strategy_summary_includes_massive_aggregate_fields_for_30s(monkeypatch)
 
 
 def test_massive_overlay_does_not_change_30s_trading_inputs(monkeypatch) -> None:
+    event_start = datetime(2026, 3, 28, 14, 0, tzinfo=UTC)
+    now_box = {"value": event_start}
     state = StrategyEngineState(
         settings=make_test_settings(
             massive_api_key="test-key",
             strategy_macd_30s_live_aggregate_bars_enabled=True,
+            strategy_macd_30s_tick_bar_close_grace_seconds=0,
         ),
-        now_provider=fixed_now,
+        now_provider=lambda: now_box["value"],
     )
     bot = state.bots["macd_30s"]
     bot.set_watchlist(["UGRO"])
@@ -3668,8 +3702,11 @@ def test_massive_overlay_does_not_change_30s_trading_inputs(monkeypatch) -> None
         low_price=2.78,
         close_price=2.80,
         volume=200,
-        timestamp=datetime(2026, 3, 28, 14, 0, tzinfo=UTC).timestamp(),
+        timestamp=event_start.timestamp(),
+        coverage_started_at=(event_start.timestamp() // 30) * 30,
     )
+    now_box["value"] = event_start + timedelta(seconds=31)
+    state.flush_completed_bars()
 
     assert captured["price"] == pytest.approx(2.8)
     assert captured["vwap"] == pytest.approx(2.61)
@@ -3681,7 +3718,10 @@ def test_massive_overlay_does_not_change_30s_trading_inputs(monkeypatch) -> None
 
 def test_taapi_source_changes_1m_trading_inputs(monkeypatch) -> None:
     now_box = {"value": fixed_now()}
-    state = StrategyEngineState(now_provider=lambda: now_box["value"])
+    state = StrategyEngineState(
+        settings=make_test_settings(strategy_macd_1m_enabled=True),
+        now_provider=lambda: now_box["value"],
+    )
     bot = state.bots["macd_1m"]
     bot.set_watchlist(["UGRO"])
     state.seed_bars(
@@ -4933,7 +4973,12 @@ def test_schwab_quote_enqueue_skips_prewarm_only_symbols() -> None:
 
 def test_market_data_symbols_exclude_schwab_backed_tos() -> None:
     state = StrategyEngineState(
-        settings=make_test_settings(strategy_tos_broker_provider="schwab"),
+        settings=make_test_settings(
+            strategy_macd_1m_enabled=True,
+            strategy_tos_enabled=True,
+            strategy_runner_enabled=True,
+            strategy_tos_broker_provider="schwab",
+        ),
         now_provider=fixed_now,
     )
 
@@ -4949,7 +4994,10 @@ def test_market_data_symbols_exclude_schwab_backed_tos() -> None:
 
 def test_tos_uses_configured_default_quantity() -> None:
     state = StrategyEngineState(
-        settings=make_test_settings(strategy_tos_default_quantity=10),
+        settings=make_test_settings(
+            strategy_tos_enabled=True,
+            strategy_tos_default_quantity=10,
+        ),
         now_provider=fixed_now,
     )
 
@@ -4999,7 +5047,10 @@ def test_macd_30s_uses_configured_tick_bar_close_grace() -> None:
 
 def test_gateway_quote_tick_can_exclude_schwab_backed_tos() -> None:
     state = StrategyEngineState(
-        settings=make_test_settings(strategy_tos_broker_provider="schwab"),
+        settings=make_test_settings(
+            strategy_tos_enabled=True,
+            strategy_tos_broker_provider="schwab",
+        ),
         now_provider=fixed_now,
     )
 
@@ -5824,7 +5875,11 @@ def test_seeded_confirmed_candidates_drop_when_missing_from_fresh_snapshots() ->
         session.commit()
 
     service = StrategyEngineService(
-        settings=make_test_settings(redis_stream_prefix="test", dashboard_snapshot_persistence_enabled=True),
+        settings=make_test_settings(
+            redis_stream_prefix="test",
+            dashboard_snapshot_persistence_enabled=True,
+            strategy_runner_enabled=True,
+        ),
         redis_client=FakeRedis(),
         session_factory=session_factory,
     )
@@ -6505,6 +6560,7 @@ def test_restore_runtime_state_reseeds_schwab_bar_history_for_midday_restart() -
             redis_stream_prefix="test",
             dashboard_snapshot_persistence_enabled=True,
             strategy_macd_30s_broker_provider="schwab",
+            strategy_tos_enabled=True,
             strategy_tos_broker_provider="schwab",
         ),
         redis_client=FakeRedis(),
@@ -6831,12 +6887,14 @@ def test_tos_runtime_emits_intrabar_open_on_current_bar(monkeypatch) -> None:
     service = StrategyEngineService(
         settings=make_test_settings(
             redis_stream_prefix="test",
+            strategy_tos_enabled=True,
             strategy_tos_broker_provider="schwab",
         ),
         redis_client=FakeRedis(),
         now_provider=fixed_now,
     )
     runtime = service.state.bots["tos"]
+    runtime.definition.trading_config.entry_intrabar_enabled = True
     runtime.set_watchlist(["CMND"])
     runtime.seed_bars("CMND", seed_trending_bars(count=40, interval_secs=60))
 

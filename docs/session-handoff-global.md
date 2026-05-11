@@ -110,6 +110,24 @@ Scope: small Alembic migration, ~50 lines in OMS (cache populate + pre-submit ch
 
 This agent (Claude Code) parking. Next session: pick the **Schwab eligibility filter PR**. Once merged + validated, the macd_30s pipeline is end-to-end clean for live trading on broker-eligible symbols.
 
+## 2026-05-10: CI baseline cleanup pass 1
+
+- Revalidated the old deleted-test-recovery note against current `main` and confirmed the quoted `43` count was stale. The current baseline from GitHub `Validate` run `25603635552` was `53` failures on commit `d0069fa`.
+- Fixed the first cleanup cluster locally in the operational repo:
+  - stale tests that assumed optional runtimes (`macd_1m`, `tos`, `runner`) were enabled by default
+  - Schwab prewarm TTL/pruning bug in `StrategyEngineState`
+  - Schwab-backed `tos` market-data routing so Polygon snapshot/quote paths no longer feed a Schwab-backed TOS bot
+  - cross-environment `trade_coach` timestamp normalization when SQLite drops tzinfo
+  - Polygon test drift caused by seeding 2023 bars and then flushing against 2026 clocks
+- Targeted validation now passing:
+  - `python -m pytest tests/unit/test_runtime_seed.py tests/unit/test_oms_risk_service.py -q`
+  - `python -m pytest tests/unit/test_schwab_gap_recovery_guard.py tests/unit/test_schwab_prewarm_and_auth.py -q`
+  - `python -m pytest tests/unit/test_trade_coach_repository.py -q`
+  - `python -m pytest tests/unit/test_polygon_30s_bot.py -k "does_not_re_evaluate_same_bar_after_late_same_bucket_live_bar or skips_first_mid_bucket_live_aggregate_bar or uses_real_live_bar_fallback_when_tick_builder_lags" -q`
+  - `python -m pytest tests/unit/test_strategy_engine_service.py -k "market_data_symbols_exclude_schwab_backed_tos or gateway_quote_tick_can_exclude_schwab_backed_tos or snapshot_batch_does_not_push_polygon_quotes_into_schwab_backed_tos or tos_runtime_emits_intrabar_open_on_current_bar or macd_1m or taapi or runner" -q`
+- Important remaining caveat:
+  - the full-suite current-main baseline has **not** been rebuilt after this repair pass yet, so do not quote a new total failure count until CI or a fresh broader rerun is done from the updated tree.
+
 ## 2026-05-09 AM: Dirty local cleanup coordination resolved
 
 - The dirty local work in `C:\Users\kkvkr\OneDrive\Documents\GitHub\project-mai-tai` was reviewed and split into:
@@ -8724,3 +8742,66 @@ Notes:
 - Deployment state:
   - fixed locally in clean `main` worktree
   - not yet redeployed at the moment this note was written
+
+## 2026-05-11: current-main CI cleanup pass 2
+
+- Scope:
+  - continued the current-`main` cleanup from GitHub `Validate` run `25603635552`
+  - focused on `tests/unit/test_strategy_engine_service.py` using repeated `-x -q` first-failure passes plus targeted reruns
+- Real code fixes merged into the worktree during this pass:
+  - `src/project_mai_tai/services/strategy_engine_app.py`
+    - preserved session-continuity handoff symbols additively in `process_snapshot_batch()` instead of rebasing active handoff to `all_confirmed` each cycle
+    - added retention-driven handoff cleanup so symbols that truly age to `dropped` are removed from active bot handoff before watchlists rebuild
+    - `polygon_30s` now wires `Polygon30sBarBuilderManager(fill_gap_bars=polygon_use_live_aggregate_bars)` instead of always forcing gap-fill in emergency forced tick-built mode
+  - `src/project_mai_tai/strategy_core/feed_retention.py`
+    - retention policy now ages no-metrics symbols through `active -> cooldown -> dropped` instead of short-circuiting unchanged forever when `metrics is None`
+- Test/fixture cleanup completed so far:
+  - optional-runtime registry expectations now explicitly enable `macd_1m`, `tos`, and `runner`
+  - several `macd_30s`/live-aggregate tests were updated to match current runtime contracts:
+    - tick-built open-on-trade tests now explicitly opt into `entry_intrabar_enabled=True` when that behavior is what the test is asserting
+    - `P4-only prev-bar intrabar` coverage now explicitly sets `entry_intrabar_enabled=False` and `p4_prev_bar_entry_enabled=True`
+    - flush tests now seed one bucket earlier and/or zero close-grace where the test is specifically verifying `flush_completed_bars()` timing
+    - live `1s` bar tests now use aligned coverage/bucket timestamps instead of relying on partial-bucket behavior that the runtime now intentionally skips
+    - Massive overlay `30s` summary/input tests now use a real event clock plus `coverage_started_at` and `flush_completed_bars()` so provider overlay assertions are attached to an actual completed bar path
+- Targeted validations completed during this pass:
+  - `python -m pytest tests/unit/test_runtime_seed.py tests/unit/test_oms_risk_service.py -q`
+  - `python -m pytest tests/unit/test_trade_coach_repository.py -q`
+  - `python -m pytest tests/unit/test_schwab_gap_recovery_guard.py tests/unit/test_schwab_prewarm_and_auth.py -q`
+  - `python -m pytest tests/unit/test_polygon_last_bot_tick.py -q`
+  - multiple targeted `tests/unit/test_strategy_engine_service.py -k "<cluster>" -q` reruns covering:
+    - retention drop vs session continuity
+    - trimmed-history monotonic bar index
+    - live aggregate fallback/intrabar paths
+    - Polygon forced tick-built sparse-tick behavior
+    - Massive overlay `30s` summary/input coverage
+- Important current status:
+  - the `test_strategy_engine_service.py` first-failure chain advanced substantially through both real code issues and stale fixture assumptions
+  - the latest broad `python -m pytest tests/unit/test_strategy_engine_service.py -x -q` pass no longer fails in the earlier runtime-registration / retention / Polygon sparse-tick / overlay clusters
+  - the next unknown remaining failure was not captured yet because the last broad pass hit the tool timeout after the newest fixes were in place
+- Next step from this checkpoint:
+  - rerun `python -m pytest tests/unit/test_strategy_engine_service.py -x -q` on the updated worktree to capture the next first failure after pass 2
+  - only quote a refreshed total failure count after a fresh broader baseline run from this newer state
+
+## 2026-05-11 PM: PR #87 is the gating CI-baseline unblock
+
+- Current merge/deploy state:
+  - PR `#87` (`codex/ci-baseline-cleanup-pass2`) is the gating baseline-cleanup PR
+  - PR `#85` (`codex/schwab-1m-chart-canonical-fix`) stays parked behind `#87`
+  - no strategy restart should happen before `#87` is resolved
+- Important GitHub Actions behavior observed today:
+  - the relevant `Validate` runs for `#87` are stuck in `IN_PROGRESS`
+  - in this state, GitHub Actions contributes no new signal until one of these happens:
+    - the run reaches the GitHub Actions 6h timeout and auto-cancels
+    - someone manually cancels the run
+    - the PR is admin-merged despite the stuck check
+  - timeout by itself does **not** break the dependency chain; it only clears the UI state
+- Practical decision rule for the next agent:
+  - if `#87` is admin-merged:
+    - immediately re-check / re-run CI on `#85`
+    - only after that, continue with the planned strategy restart and post-deploy validation
+  - if `#87` only times out or gets cancelled without merge:
+    - treat that as informational only
+    - an explicit merge decision is still required before `#85` or any restart work should proceed
+- Coordination note:
+  - a PR comment was added on `#87` documenting that the stuck `Validate` runs are not expected to self-resolve into useful signal today
+  - keep `#87` as the single gating PR for this workstream so other agents do not fork into independent restart / `#85` actions before the baseline branch lands

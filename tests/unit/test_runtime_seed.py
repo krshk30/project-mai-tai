@@ -24,7 +24,13 @@ def build_test_session_factory() -> sessionmaker[Session]:
 def test_runtime_seed_creates_expected_strategies_and_accounts() -> None:
     session_factory = build_test_session_factory()
     summary = seed_runtime_metadata(
-        Settings(oms_adapter="alpaca_paper", strategy_macd_30s_reclaim_enabled=False),
+        Settings(
+            oms_adapter="alpaca_paper",
+            strategy_macd_30s_reclaim_enabled=False,
+            strategy_macd_1m_enabled=True,
+            strategy_tos_enabled=True,
+            strategy_runner_enabled=True,
+        ),
         session_factory=session_factory,
     )
 
@@ -52,11 +58,23 @@ def test_runtime_seed_creates_expected_strategies_and_accounts() -> None:
 def test_runtime_seed_updates_existing_records_when_adapter_changes() -> None:
     session_factory = build_test_session_factory()
     seed_runtime_metadata(
-        Settings(oms_adapter="simulated", strategy_macd_30s_reclaim_enabled=False),
+        Settings(
+            oms_adapter="simulated",
+            strategy_macd_30s_reclaim_enabled=False,
+            strategy_macd_1m_enabled=True,
+            strategy_tos_enabled=True,
+            strategy_runner_enabled=True,
+        ),
         session_factory=session_factory,
     )
     seed_runtime_metadata(
-        Settings(oms_adapter="alpaca_paper", strategy_macd_30s_reclaim_enabled=False),
+        Settings(
+            oms_adapter="alpaca_paper",
+            strategy_macd_30s_reclaim_enabled=False,
+            strategy_macd_1m_enabled=True,
+            strategy_tos_enabled=True,
+            strategy_runner_enabled=True,
+        ),
         session_factory=session_factory,
     )
 
@@ -73,8 +91,11 @@ def test_runtime_seed_supports_single_shared_schwab_live_account() -> None:
             oms_adapter="schwab",
             strategy_macd_30s_reclaim_enabled=False,
             strategy_macd_30s_account_name="live:schwab_shared",
+            strategy_macd_1m_enabled=True,
             strategy_macd_1m_account_name="live:schwab_shared",
+            strategy_tos_enabled=True,
             strategy_tos_account_name="live:schwab_shared",
+            strategy_runner_enabled=True,
             strategy_runner_account_name="live:schwab_shared",
         ),
         session_factory=session_factory,
@@ -99,6 +120,9 @@ def test_runtime_seed_can_mix_schwab_macd_30s_with_default_accounts() -> None:
             oms_adapter="simulated",
             strategy_macd_30s_reclaim_enabled=False,
             strategy_macd_30s_broker_provider="schwab",
+            strategy_macd_1m_enabled=True,
+            strategy_tos_enabled=True,
+            strategy_runner_enabled=True,
         ),
         session_factory=session_factory,
     )

@@ -557,4 +557,6 @@ class TradeCoachRepository:
     def _datetime_str(value: datetime | None) -> str:
         if value is None:
             return ""
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=EASTERN_TZ)
         return value.astimezone(UTC).astimezone(EASTERN_TZ).strftime("%Y-%m-%d %I:%M:%S %p ET")
