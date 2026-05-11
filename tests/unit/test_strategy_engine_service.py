@@ -141,7 +141,7 @@ def seed_trending_bars(
     start_price: float = 2.0,
     count: int = 50,
     *,
-    start_timestamp: float = 1_776_938_400.0,
+    start_timestamp: float = 1_700_000_000.0,
     interval_secs: int = 30,
 ) -> list[dict[str, float | int]]:
     bars = []
@@ -929,7 +929,7 @@ def test_retention_cooldown_keeps_feed_alive_but_blocks_entries(monkeypatch: pyt
                 low=6.20,
                 close=6.22,
                 volume=2_000,
-                timestamp=1_776_938_400.0 + bar_idx * 30 + idx,
+                timestamp=1_700_000_000.0 + bar_idx * 30 + idx,
             )
             for bar_idx in range(10)
         ]
@@ -987,7 +987,7 @@ def test_retention_resume_unblocks_entries_after_reclaim(monkeypatch: pytest.Mon
             low=6.78,
             close=6.98,
             volume=40_000,
-            timestamp=1_776_938_400.0 + idx * 30 + 1,
+            timestamp=1_700_000_000.0 + idx * 30 + 1,
         )
         for idx in range(10)
     ]
@@ -1016,7 +1016,7 @@ def test_retention_resume_unblocks_entries_after_reclaim(monkeypatch: pytest.Mon
             low=6.82,
             close=7.02,
             volume=42_000,
-            timestamp=1_776_938_400.0 + idx * 30 + 2,
+            timestamp=1_700_000_000.0 + idx * 30 + 2,
         )
         for idx in range(10)
     ]
@@ -2307,7 +2307,7 @@ def test_trade_tick_generates_open_intent_for_confirmed_watchlist(monkeypatch) -
     state.seed_bars(
         "macd_30s",
         "UGRO",
-        seed_trending_bars(start_timestamp=1_776_938_400.0, interval_secs=30),
+        seed_trending_bars(start_timestamp=1_700_000_000.0, interval_secs=30),
     )
     monkeypatch.setattr(bot.indicator_engine, "calculate", lambda bars: {"price": 2.8})
     monkeypatch.setattr(
@@ -2350,7 +2350,7 @@ def test_trade_tick_records_blocked_decision_reason(monkeypatch) -> None:
     state.seed_bars(
         "macd_30s",
         "UGRO",
-        seed_trending_bars(start_timestamp=1_776_938_400.0, interval_secs=30),
+        seed_trending_bars(start_timestamp=1_700_000_000.0, interval_secs=30),
     )
     monkeypatch.setattr(
         bot.indicator_engine,
@@ -2495,7 +2495,7 @@ def test_trade_tick_uses_monotonic_bar_count_after_history_trim(monkeypatch) -> 
     bot = state.bots["macd_30s"]
     bot.set_watchlist(["UGRO"])
     bot.definition.trading_config.entry_intrabar_enabled = True
-    start_timestamp = 1_776_938_400.0
+    start_timestamp = 1_700_000_000.0
     state.seed_bars(
         "macd_30s",
         "UGRO",
@@ -2535,7 +2535,7 @@ def test_trimmed_history_does_not_lock_out_new_open_after_cancel(monkeypatch) ->
     bot.definition.trading_config.entry_intrabar_enabled = True
     bot.definition.trading_config.confirm_bars = 0
     bot.definition.trading_config.min_score = 0
-    start_timestamp = 1_776_938_400.0
+    start_timestamp = 1_700_000_000.0
     state.seed_bars(
         "macd_30s",
         "UGRO",
@@ -2668,7 +2668,7 @@ def test_live_second_bars_can_generate_open_intent_for_30s_bot(monkeypatch) -> N
     state.seed_bars(
         "macd_30s",
         "UGRO",
-        seed_trending_bars(count=49, start_timestamp=1_776_938_400.0, interval_secs=30),
+        seed_trending_bars(count=49, start_timestamp=1_700_000_000.0, interval_secs=30),
     )
 
     signaled = {"done": False}
@@ -2725,7 +2725,7 @@ def test_live_second_bars_can_generate_open_intent_for_polygon_30s_bot(monkeypat
     state.seed_bars(
         "polygon_30s",
         "UGRO",
-        seed_trending_bars(count=49, start_timestamp=1_776_938_400.0, interval_secs=30),
+        seed_trending_bars(count=49, start_timestamp=1_700_000_000.0, interval_secs=30),
     )
 
     signaled = {"done": False}
@@ -2782,7 +2782,7 @@ def test_tick_built_macd_30s_ignores_live_bar_packets() -> None:
     state.seed_bars(
         "macd_30s",
         "UGRO",
-        seed_trending_bars(count=49, start_timestamp=1_776_938_400.0, interval_secs=30),
+        seed_trending_bars(count=49, start_timestamp=1_700_000_000.0, interval_secs=30),
     )
 
     builder = bot.builder_manager.get_builder("UGRO")
@@ -2821,7 +2821,7 @@ def test_polygon_tick_built_sparse_ticks_do_not_synthesize_gap_bars(monkeypatch)
     state.seed_bars(
         "polygon_30s",
         "UGRO",
-        seed_trending_bars(count=49, start_timestamp=1_776_938_400.0, interval_secs=30),
+        seed_trending_bars(count=49, start_timestamp=1_700_000_000.0, interval_secs=30),
     )
 
     synthetic_quiet_bars: list[str] = []
@@ -2861,7 +2861,7 @@ def test_bot_runtime_prunes_symbol_state_when_symbol_is_dropped_from_bot_lifecyc
     state.seed_bars(
         "macd_30s",
         "UGRO",
-        seed_trending_bars(start_timestamp=1_776_938_400.0, interval_secs=30),
+        seed_trending_bars(start_timestamp=1_700_000_000.0, interval_secs=30),
     )
     state.seed_bars(
         "macd_30s",
@@ -2908,7 +2908,7 @@ def test_bot_runtime_keeps_handoff_symbol_in_feed_when_lifecycle_wants_to_drop_i
             vwap=2.05,
             rolling_5m_volume=10_000.0,
             rolling_5m_range_pct=0.4,
-            bar_timestamp=1_776_938_400.0,
+            bar_timestamp=1_700_000_000.0,
         ),
     )
 
@@ -2927,7 +2927,7 @@ def test_strategy_summary_includes_indicator_snapshots_for_1m_parity(monkeypatch
     state.seed_bars(
         "macd_1m",
         "UGRO",
-        seed_trending_bars(start_timestamp=1_776_938_400.0, interval_secs=60),
+        seed_trending_bars(start_timestamp=1_700_000_000.0, interval_secs=60),
     )
     monkeypatch.setattr(
         bot.indicator_engine,
@@ -3067,7 +3067,7 @@ def test_seed_bars_hydrates_pretrigger_recent_bar_memory() -> None:
         "UGRO",
         seed_trending_bars(
             count=60,
-            start_timestamp=1_776_938_400.0,
+            start_timestamp=1_700_000_000.0,
             interval_secs=30,
         ),
     )
@@ -3128,7 +3128,7 @@ def test_live_aggregate_30s_falls_back_to_trade_ticks_when_stream_is_missing(mon
     state.seed_bars(
         "macd_30s",
         "UGRO",
-        seed_trending_bars(start_timestamp=1_776_938_400.0, interval_secs=30),
+        seed_trending_bars(start_timestamp=1_700_000_000.0, interval_secs=30),
     )
     monkeypatch.setattr(bot.indicator_engine, "calculate", lambda bars: {"price": 2.8})
     monkeypatch.setattr(
@@ -3169,7 +3169,7 @@ def test_live_aggregate_30s_still_emits_intrabar_open_from_trade_tick_when_strea
     state.seed_bars(
         "macd_30s",
         "UGRO",
-        seed_trending_bars(start_timestamp=1_776_938_400.0, interval_secs=30),
+        seed_trending_bars(start_timestamp=1_700_000_000.0, interval_secs=30),
     )
     bot.latest_quotes["UGRO"] = {"bid": 2.79, "ask": 2.80}
     bot.handle_live_bar(
@@ -3245,7 +3245,7 @@ def test_live_aggregate_30s_prev_bar_intrabar_mode_blocks_non_p4_paths(monkeypat
     state.seed_bars(
         "macd_30s",
         "UGRO",
-        seed_trending_bars(start_timestamp=1_776_938_400.0, interval_secs=30),
+        seed_trending_bars(start_timestamp=1_700_000_000.0, interval_secs=30),
     )
     bot.latest_quotes["UGRO"] = {"bid": 2.79, "ask": 2.80}
     bot.handle_live_bar(
@@ -3315,7 +3315,7 @@ def test_live_aggregate_30s_falls_back_to_trade_ticks_when_bar_progress_stalls(m
     state.seed_bars(
         "macd_30s",
         "UGRO",
-        seed_trending_bars(start_timestamp=1_776_938_400.0, interval_secs=30),
+        seed_trending_bars(start_timestamp=1_700_000_000.0, interval_secs=30),
     )
     bot.latest_quotes["UGRO"] = {"bid": 2.79, "ask": 2.80}
     bot.handle_live_bar(
@@ -3387,7 +3387,7 @@ def test_reclaim_runtime_checks_pretrigger_logic_while_position_is_open(monkeypa
     state.seed_bars(
         "macd_30s_reclaim",
         "UGRO",
-        seed_trending_bars(start_timestamp=1_776_938_400.0, interval_secs=30),
+        seed_trending_bars(start_timestamp=1_700_000_000.0, interval_secs=30),
     )
     bot.positions.open_position("UGRO", 2.33, quantity=25, path="PRETRIGGER_RECLAIM")
     monkeypatch.setattr(bot.indicator_engine, "calculate", lambda bars: {"price": 2.25})
@@ -3446,7 +3446,7 @@ def test_strategy_summary_includes_taapi_indicator_fields_for_1m(monkeypatch) ->
     state.seed_bars(
         "macd_1m",
         "UGRO",
-        seed_trending_bars(start_timestamp=1_776_938_400.0, interval_secs=60),
+        seed_trending_bars(start_timestamp=1_700_000_000.0, interval_secs=60),
     )
 
     monkeypatch.setattr(
@@ -3557,7 +3557,7 @@ def test_strategy_summary_includes_massive_aggregate_fields_for_30s(monkeypatch)
     state.seed_bars(
         "macd_30s",
         "UGRO",
-        seed_trending_bars(start_timestamp=1_776_938_400.0, interval_secs=30),
+        seed_trending_bars(start_timestamp=1_700_000_000.0, interval_secs=30),
     )
 
     monkeypatch.setattr(
@@ -3645,7 +3645,7 @@ def test_massive_overlay_does_not_change_30s_trading_inputs(monkeypatch) -> None
     state.seed_bars(
         "macd_30s",
         "UGRO",
-        seed_trending_bars(start_timestamp=1_776_938_400.0, interval_secs=30),
+        seed_trending_bars(start_timestamp=1_700_000_000.0, interval_secs=30),
     )
 
     monkeypatch.setattr(
@@ -3727,7 +3727,7 @@ def test_taapi_source_changes_1m_trading_inputs(monkeypatch) -> None:
     state.seed_bars(
         "macd_1m",
         "UGRO",
-        seed_trending_bars(start_timestamp=1_776_938_400.0, interval_secs=60),
+        seed_trending_bars(start_timestamp=1_700_000_000.0, interval_secs=60),
     )
 
     monkeypatch.setattr(
@@ -3940,7 +3940,7 @@ async def test_historical_bars_hydrate_matching_strategy_intervals() -> None:
                     low=Decimal("1.99"),
                     close=Decimal("2.05"),
                     volume=20_000,
-                    timestamp=1_776_938_400.0,
+                    timestamp=1_700_000_000.0,
                 ),
                 HistoricalBarPayload(
                     open=Decimal("2.05"),
@@ -3965,7 +3965,7 @@ async def test_historical_bars_hydrate_matching_strategy_intervals() -> None:
                     low=Decimal("1.95"),
                     close=Decimal("2.15"),
                     volume=80_000,
-                    timestamp=1_776_938_400.0,
+                    timestamp=1_700_000_000.0,
                 ),
                 HistoricalBarPayload(
                     open=Decimal("2.15"),
@@ -4062,7 +4062,7 @@ async def test_subscription_sync_replays_recent_historical_bars_for_active_symbo
                     low=Decimal("1.99"),
                     close=Decimal("2.05"),
                     volume=20_000,
-                    timestamp=1_776_938_400.0,
+                    timestamp=1_700_000_000.0,
                 ),
                 HistoricalBarPayload(
                     open=Decimal("2.05"),
@@ -4087,7 +4087,7 @@ async def test_subscription_sync_replays_recent_historical_bars_for_active_symbo
                     low=Decimal("1.95"),
                     close=Decimal("2.15"),
                     volume=80_000,
-                    timestamp=1_776_938_400.0,
+                    timestamp=1_700_000_000.0,
                 ),
                 HistoricalBarPayload(
                     open=Decimal("2.15"),
@@ -4143,7 +4143,7 @@ async def test_subscription_sync_persists_replayed_polygon_historical_bars() -> 
                     low=Decimal("1.99"),
                     close=Decimal("2.05"),
                     volume=20_000,
-                    timestamp=1_776_938_400.0,
+                    timestamp=1_700_000_000.0,
                     trade_count=5,
                 ),
                 HistoricalBarPayload(
@@ -4178,7 +4178,7 @@ async def test_subscription_sync_persists_replayed_polygon_historical_bars() -> 
         )
 
     assert len(records) == 2
-    assert records[0].bar_time.replace(tzinfo=UTC) == datetime.fromtimestamp(1_776_938_400.0, UTC)
+    assert records[0].bar_time.replace(tzinfo=UTC) == datetime.fromtimestamp(1_700_000_000.0, UTC)
     assert records[0].trade_count == 5
     assert records[1].bar_time.replace(tzinfo=UTC) == datetime.fromtimestamp(1_700_000_030.0, UTC)
     assert records[1].trade_count == 6
@@ -4201,7 +4201,11 @@ def test_polygon_late_live_second_revises_persisted_closed_bar_without_redecisio
     state.seed_bars(
         "polygon_30s",
         "CTNT",
-        seed_trending_bars(count=55, start_timestamp=1_776_938_400.0, interval_secs=30),
+        seed_trending_bars(
+            count=55,
+            start_timestamp=datetime(2026, 4, 23, 14, 59, 0, tzinfo=UTC).timestamp(),
+            interval_secs=30,
+        ),
     )
 
     observed_decision_bars: list[float] = []
@@ -4337,7 +4341,7 @@ async def test_hydrate_generic_history_from_provider_seeds_polygon_when_replay_i
             assert interval_secs == 30
             assert lookback_calendar_days >= 3
             assert limit >= 120
-            start = 1_776_938_400.0
+            start = 1_700_000_000.0
             return [
                 HistoricalBarRecord(
                     open=2.0 + (index * 0.01),
@@ -4373,8 +4377,8 @@ async def test_hydrate_generic_history_from_provider_seeds_polygon_when_replay_i
             )
         )
     assert len(records) == 80
-    assert records[0].bar_time.replace(tzinfo=UTC) == datetime.fromtimestamp(1_776_938_400.0, UTC)
-    assert records[-1].bar_time.replace(tzinfo=UTC) == datetime.fromtimestamp(1_776_938_400.0 + (79 * 30), UTC)
+    assert records[0].bar_time.replace(tzinfo=UTC) == datetime.fromtimestamp(1_700_000_000.0, UTC)
+    assert records[-1].bar_time.replace(tzinfo=UTC) == datetime.fromtimestamp(1_700_000_000.0 + (79 * 30), UTC)
 
 
 def test_restore_runtime_bar_history_from_database_includes_polygon_provider_bot() -> None:
