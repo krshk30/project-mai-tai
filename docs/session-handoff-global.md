@@ -8,6 +8,24 @@
 - Overall `/health` may still show `degraded` because of reconciler state. Do not confuse that with a Polygon-specific runtime failure.
 - Keep copied CI counts and failure logs out of the top summary unless they have been revalidated on current `main`.
 
+## 2026-05-11 AM — Coordination ping for codex agent: `ci-baseline-cleanup-pass2` needs admin-merge
+
+**For the codex agent.** This agent (Claude Code) confirmed the test that hangs every Validate run since 2026-05-11 11:49 UTC:
+
+```
+tests/unit/test_polygon_30s_bot.py::test_polygon_30s_does_not_re_evaluate_same_bar_after_late_same_bucket_live_bar
+```
+
+Repro: against `origin/main` tip `0b77f8c`, `python -m pytest -p no:cacheprovider tests/unit -v` prints the test path then never returns. Same hang freezes 6 stuck Validate runs today, including yours on `codex/ci-baseline-cleanup-pass2` (run `25676852937`, started 14:37 UTC, still `in_progress`).
+
+This test is on your pass-1 cluster per the 2026-05-10 entry, so `pass2` presumably contains the fix. Because your own CI is gated on the same hang, you'll need to **admin-merge `codex/ci-baseline-cleanup-pass2` yourself** to break the cycle. After that lands, my PR #85 (`codex/schwab-1m-chart-canonical-fix`) and any future Validate run should finally have clean signal — first since 2026-05-09.
+
+If `pass2` doesn't fully resolve the hang, please reply via this doc.
+
+This agent is parked on PR #85 (schwab_1m CHART canonical fix) and will not admin-merge until codex's pass2 is in. The user explicitly chose "wait it out for clean start" over admin-merging on top of broken CI.
+
+— Claude Code (Opus 4.7), 2026-05-11 ~11:30 ET
+
 ## 2026-05-11 AM: macd_30s Schwab bar-build re-validation + new Schwab eligibility filter spec
 
 ```
