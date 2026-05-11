@@ -799,13 +799,13 @@ def test_polygon_30s_trade_ticks_keep_bot_alive_when_live_bars_starve() -> None:
     assert bot._should_fallback_to_trade_ticks("UGRO") is True
 
     # Tick timestamp lands in the bucket immediately after the last seed bar
-    # (last seed at 9:59:00 UTC = 1_745_402_340; next bucket starts at
-    # 1_745_402_370; tick at 1_745_402_375 = 5s into that new bucket).
+    # (last seed at 2026-04-23 9:59:00 UTC = 1_776_938_340; next bucket starts
+    # at 1_776_938_370; tick at 1_776_938_375 = 5s into that new bucket).
     intents = state.handle_trade_tick(
         symbol="UGRO",
         price=3.11,
         size=200,
-        timestamp_ns=1_745_402_375_000_000_000,
+        timestamp_ns=1_776_938_375_000_000_000,
         strategy_codes=["polygon_30s"],
     )
 
@@ -846,7 +846,7 @@ def test_polygon_30s_trade_tick_fallback_accepts_epoch_millisecond_timestamps() 
         symbol="UGRO",
         price=3.11,
         size=200,
-        timestamp_ns=1_745_402_375_000,
+        timestamp_ns=1_776_938_375_000,
         strategy_codes=["polygon_30s"],
     )
 
