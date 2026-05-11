@@ -457,21 +457,13 @@ def test_polygon_30s_revises_last_closed_bar_when_late_second_arrives() -> None:
     )
     bot = state.bots["polygon_30s"]
     bot.set_watchlist(["CTNT"])
-    bot.seed_bars(
-        "CTNT",
-        [
-            {
-                "open": 3.00 + index * 0.01,
-                "high": 3.02 + index * 0.01,
-                "low": 2.99 + index * 0.01,
-                "close": 3.01 + index * 0.01,
-                "volume": 20_000 + index * 100,
-                "timestamp": 1_700_000_000.0 + index * 30,
-                "trade_count": 10 + index,
-            }
-            for index in range(55)
-        ],
-    )
+    recent_bars = build_recent_polygon_seed_bars(start=datetime(2026, 4, 23, 14, 59, 0, tzinfo=UTC))
+    for index, bar in enumerate(recent_bars):
+        bar["open"] = 3.00 + index * 0.01
+        bar["high"] = 3.02 + index * 0.01
+        bar["low"] = 2.99 + index * 0.01
+        bar["close"] = 3.01 + index * 0.01
+    bot.seed_bars("CTNT", recent_bars)
 
     completed_evaluations: list[str] = []
 
@@ -615,21 +607,13 @@ def test_polygon_30s_keeps_sparse_bucket_when_provider_coverage_predates_bucket(
     )
     bot = state.bots["polygon_30s"]
     bot.set_watchlist(["IONZ"])
-    bot.seed_bars(
-        "IONZ",
-        [
-            {
-                "open": 5.00 + index * 0.01,
-                "high": 5.02 + index * 0.01,
-                "low": 4.99 + index * 0.01,
-                "close": 5.01 + index * 0.01,
-                "volume": 20_000 + index * 100,
-                "timestamp": 1_700_000_000.0 + index * 30,
-                "trade_count": 10 + index,
-            }
-            for index in range(55)
-        ],
-    )
+    recent_bars = build_recent_polygon_seed_bars(start=datetime(2026, 4, 23, 14, 59, 0, tzinfo=UTC))
+    for index, bar in enumerate(recent_bars):
+        bar["open"] = 5.00 + index * 0.01
+        bar["high"] = 5.02 + index * 0.01
+        bar["low"] = 4.99 + index * 0.01
+        bar["close"] = 5.01 + index * 0.01
+    bot.seed_bars("IONZ", recent_bars)
 
     bucket_start = datetime(2026, 4, 23, 15, 26, 30, tzinfo=UTC).timestamp()
     coverage_started_at = datetime(2026, 4, 23, 15, 26, 0, tzinfo=UTC).timestamp()
@@ -803,22 +787,13 @@ def test_polygon_30s_trade_ticks_keep_bot_alive_when_live_bars_starve() -> None:
     )
     bot = state.bots["polygon_30s"]
     bot.set_watchlist(["UGRO"])
-    state.seed_bars(
-        "polygon_30s",
-        "UGRO",
-        [
-            {
-                "open": 2.50 + index * 0.01,
-                "high": 2.52 + index * 0.01,
-                "low": 2.49 + index * 0.01,
-                "close": 2.51 + index * 0.01,
-                "volume": 20_000 + index * 100,
-                "timestamp": 1_700_000_000.0 + index * 30,
-                "trade_count": 10 + index,
-            }
-            for index in range(55)
-        ],
-    )
+    recent_bars = build_recent_polygon_seed_bars(start=datetime(2026, 4, 23, 9, 32, 0, tzinfo=UTC))
+    for index, bar in enumerate(recent_bars):
+        bar["open"] = 2.50 + index * 0.01
+        bar["high"] = 2.52 + index * 0.01
+        bar["low"] = 2.49 + index * 0.01
+        bar["close"] = 2.51 + index * 0.01
+    state.seed_bars("polygon_30s", "UGRO", recent_bars)
     bot.latest_quotes["UGRO"] = {"bid": 2.79, "ask": 2.80}
 
     assert bot._should_fallback_to_trade_ticks("UGRO") is True
@@ -851,22 +826,13 @@ def test_polygon_30s_trade_tick_fallback_accepts_epoch_millisecond_timestamps() 
     )
     bot = state.bots["polygon_30s"]
     bot.set_watchlist(["UGRO"])
-    state.seed_bars(
-        "polygon_30s",
-        "UGRO",
-        [
-            {
-                "open": 2.50 + index * 0.01,
-                "high": 2.52 + index * 0.01,
-                "low": 2.49 + index * 0.01,
-                "close": 2.51 + index * 0.01,
-                "volume": 20_000 + index * 100,
-                "timestamp": 1_700_000_000.0 + index * 30,
-                "trade_count": 10 + index,
-            }
-            for index in range(55)
-        ],
-    )
+    recent_bars = build_recent_polygon_seed_bars(start=datetime(2026, 4, 23, 9, 32, 0, tzinfo=UTC))
+    for index, bar in enumerate(recent_bars):
+        bar["open"] = 2.50 + index * 0.01
+        bar["high"] = 2.52 + index * 0.01
+        bar["low"] = 2.49 + index * 0.01
+        bar["close"] = 2.51 + index * 0.01
+    state.seed_bars("polygon_30s", "UGRO", recent_bars)
     bot.latest_quotes["UGRO"] = {"bid": 2.79, "ask": 2.80}
 
     assert bot._should_fallback_to_trade_ticks("UGRO") is True
@@ -901,18 +867,7 @@ def test_polygon_open_rejection_blocks_same_symbol_for_20_bars() -> None:
     polygon_bot = state.bots["polygon_30s"]
     polygon_bot.seed_bars(
         "UGRO",
-        [
-            {
-                "open": 1.00 + index * 0.01,
-                "high": 1.02 + index * 0.01,
-                "low": 0.99 + index * 0.01,
-                "close": 1.01 + index * 0.01,
-                "volume": 20_000 + index * 100,
-                "timestamp": 1_700_000_000.0 + index * 30,
-                "trade_count": 10 + index,
-            }
-            for index in range(55)
-        ],
+        build_recent_polygon_seed_bars(start=datetime(2026, 4, 23, 9, 32, 0, tzinfo=UTC)),
     )
 
     bar_count = polygon_bot.builder_manager.get_or_create("UGRO").get_bar_count()
@@ -948,18 +903,7 @@ def test_schwab_open_rejection_does_not_add_polygon_rejection_cooldown() -> None
     schwab_bot = state.bots["macd_30s"]
     schwab_bot.seed_bars(
         "UGRO",
-        [
-            {
-                "open": 1.00 + index * 0.01,
-                "high": 1.02 + index * 0.01,
-                "low": 0.99 + index * 0.01,
-                "close": 1.01 + index * 0.01,
-                "volume": 20_000 + index * 100,
-                "timestamp": 1_700_000_000.0 + index * 30,
-                "trade_count": 10 + index,
-            }
-            for index in range(55)
-        ],
+        build_recent_polygon_seed_bars(start=datetime(2026, 4, 23, 9, 32, 0, tzinfo=UTC)),
     )
 
     bar_count = schwab_bot.builder_manager.get_or_create("UGRO").get_bar_count()
