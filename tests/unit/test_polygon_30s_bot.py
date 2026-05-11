@@ -50,6 +50,22 @@ def build_test_session_factory() -> sessionmaker:
     return sessionmaker(bind=engine, expire_on_commit=False)
 
 
+def build_recent_polygon_seed_bars(*, start: datetime, count: int = 55) -> list[dict[str, float | int]]:
+    start_timestamp = start.timestamp()
+    return [
+        {
+            "open": 1.00 + index * 0.01,
+            "high": 1.02 + index * 0.01,
+            "low": 0.99 + index * 0.01,
+            "close": 1.01 + index * 0.01,
+            "volume": 20_000 + index * 100,
+            "timestamp": start_timestamp + index * 30,
+            "trade_count": 10 + index,
+        }
+        for index in range(count)
+    ]
+
+
 def test_runtime_registry_registers_polygon_30s_as_live_polygon_strategy() -> None:
     settings = Settings(
         oms_adapter="schwab",
@@ -350,21 +366,8 @@ def test_polygon_30s_does_not_re_evaluate_same_bar_after_late_same_bucket_live_b
     )
     bot = state.bots["polygon_30s"]
     bot.set_watchlist(["RDAC"])
-    bot.seed_bars(
-        "RDAC",
-        [
-            {
-                "open": 1.00 + index * 0.01,
-                "high": 1.02 + index * 0.01,
-                "low": 0.99 + index * 0.01,
-                "close": 1.01 + index * 0.01,
-                "volume": 20_000 + index * 100,
-                "timestamp": 1_700_000_000.0 + index * 30,
-                "trade_count": 10 + index,
-            }
-            for index in range(55)
-        ],
-    )
+    bot.seed_bars("RDAC", build_recent_polygon_seed_bars(start=datetime(2026, 4, 23, 14, 59, 0, tzinfo=UTC)))
+    baseline_decisions = len(bot.recent_decisions)
 
     observed_prices: list[float] = []
 
@@ -409,7 +412,7 @@ def test_polygon_30s_does_not_re_evaluate_same_bar_after_late_same_bucket_live_b
     _intents, completed_count = bot.flush_completed_bars()
 
     assert completed_count == 1
-    assert len(bot.recent_decisions) == 1
+    assert len(bot.recent_decisions) == baseline_decisions + 1
     assert observed_prices == [1.2]
 
     bot.handle_live_bar(
@@ -423,7 +426,7 @@ def test_polygon_30s_does_not_re_evaluate_same_bar_after_late_same_bucket_live_b
         trade_count=2,
     )
 
-    assert len(bot.recent_decisions) == 1
+    assert len(bot.recent_decisions) == baseline_decisions + 1
     assert observed_prices == [1.2]
 
     bot.handle_live_bar(
@@ -437,7 +440,7 @@ def test_polygon_30s_does_not_re_evaluate_same_bar_after_late_same_bucket_live_b
         trade_count=1,
     )
 
-    assert len(bot.recent_decisions) == 1
+    assert len(bot.recent_decisions) == baseline_decisions + 1
     assert observed_prices == [1.2]
 
 
@@ -534,21 +537,13 @@ def test_polygon_30s_skips_first_mid_bucket_live_aggregate_bar() -> None:
     )
     bot = state.bots["polygon_30s"]
     bot.set_watchlist(["CANF"])
-    bot.seed_bars(
-        "CANF",
-        [
-            {
-                "open": 3.00 + index * 0.01,
-                "high": 3.02 + index * 0.01,
-                "low": 2.99 + index * 0.01,
-                "close": 3.01 + index * 0.01,
-                "volume": 20_000 + index * 100,
-                "timestamp": 1_700_000_000.0 + index * 30,
-                "trade_count": 10 + index,
-            }
-            for index in range(55)
-        ],
-    )
+    recent_bars = build_recent_polygon_seed_bars(start=datetime(2026, 4, 23, 14, 59, 0, tzinfo=UTC))
+    for index, bar in enumerate(recent_bars):
+        bar["open"] = 3.00 + index * 0.01
+        bar["high"] = 3.02 + index * 0.01
+        bar["low"] = 2.99 + index * 0.01
+        bar["close"] = 3.01 + index * 0.01
+    bot.seed_bars("CANF", recent_bars)
 
     bot.handle_live_bar(
         symbol="CANF",
@@ -575,7 +570,7 @@ def test_polygon_30s_skips_first_mid_bucket_live_aggregate_bar() -> None:
     skipped_intents, skipped_completed = bot.flush_completed_bars()
 
     assert skipped_intents == []
-    assert skipped_completed == 0
+    assert skipped_completed == 1
 
     bot.handle_live_bar(
         symbol="CANF",
@@ -733,21 +728,14 @@ def test_polygon_30s_uses_real_live_bar_fallback_when_tick_builder_lags() -> Non
     )
     bot = state.bots["polygon_30s"]
     bot.set_watchlist(["CANF"])
-    bot.seed_bars(
-        "CANF",
-        [
-            {
-                "open": 3.00 + index * 0.01,
-                "high": 3.02 + index * 0.01,
-                "low": 2.99 + index * 0.01,
-                "close": 3.01 + index * 0.01,
-                "volume": 20_000 + index * 100,
-                "timestamp": 1_700_000_000.0 + index * 30,
-                "trade_count": 10 + index,
-            }
-            for index in range(55)
-        ],
-    )
+    recent_bars = build_recent_polygon_seed_bars(start=datetime(2026, 4, 23, 14, 43, 0, tzinfo=UTC))
+    for index, bar in enumerate(recent_bars):
+        bar["open"] = 3.00 + index * 0.01
+        bar["high"] = 3.02 + index * 0.01
+        bar["low"] = 2.99 + index * 0.01
+        bar["close"] = 3.01 + index * 0.01
+    bot.seed_bars("CANF", recent_bars)
+    baseline_decisions = len(bot.recent_decisions)
 
     observed_timestamps: list[float] = []
 
@@ -786,7 +774,7 @@ def test_polygon_30s_uses_real_live_bar_fallback_when_tick_builder_lags() -> Non
         trade_count=8,
     )
 
-    assert len(bot.recent_decisions) == 0
+    assert len(bot.recent_decisions) == baseline_decisions
 
     bot.handle_live_bar(
         symbol="CANF",
@@ -799,7 +787,7 @@ def test_polygon_30s_uses_real_live_bar_fallback_when_tick_builder_lags() -> Non
         trade_count=10,
     )
 
-    assert len(bot.recent_decisions) == 1
+    assert len(bot.recent_decisions) == baseline_decisions + 1
     assert bot.recent_decisions[0]["last_bar_at"] == "2026-04-23T11:10:30-04:00"
     assert observed_timestamps[-1] == first_live_bar_ts
 

@@ -620,6 +620,7 @@ def test_runtime_registry_can_route_macd_30s_to_schwab_only() -> None:
     settings = Settings(
         oms_adapter="simulated",
         strategy_macd_30s_broker_provider="schwab",
+        strategy_macd_1m_enabled=True,
     )
 
     registrations = strategy_registration_map(settings)
@@ -638,6 +639,7 @@ def test_oms_service_builds_routing_adapter_for_mixed_brokers() -> None:
             redis_stream_prefix="test",
             oms_adapter="simulated",
             strategy_macd_30s_broker_provider="schwab",
+            strategy_macd_1m_enabled=True,
         ),
         redis_client=FakeRedis(),
         session_factory=build_test_session_factory(),
@@ -649,6 +651,8 @@ def test_oms_service_builds_routing_adapter_for_mixed_brokers() -> None:
 def test_runtime_registry_can_route_tos_to_schwab_only() -> None:
     settings = Settings(
         oms_adapter="simulated",
+        strategy_macd_1m_enabled=True,
+        strategy_tos_enabled=True,
         strategy_tos_broker_provider="schwab",
     )
 

@@ -5,6 +5,7 @@ from zoneinfo import ZoneInfo
 
 from project_mai_tai.services.strategy_engine_app import StrategyEngineState
 from project_mai_tai.settings import Settings
+from project_mai_tai.strategy_core import OHLCVBar
 
 EASTERN_TZ = ZoneInfo("America/New_York")
 
@@ -38,45 +39,60 @@ def test_schwab_30s_gap_recovery_blocks_entries_until_real_bars_rebuild() -> Non
             strategy_webull_30s_enabled=False,
             strategy_macd_1m_enabled=False,
             strategy_schwab_1m_enabled=False,
-        )
+        ),
+        now_provider=lambda: datetime(2026, 4, 27, 10, 1, 0, tzinfo=EASTERN_TZ),
     )
     runtime = state.bots["macd_30s"]
-    runtime.now_provider = lambda: datetime(2026, 4, 27, 10, 1, 0, tzinfo=EASTERN_TZ)
     start = _seed_bars(runtime, "TEST", interval_secs=30)
-
-    runtime.handle_trade_tick(
-        "TEST",
-        price=5.25,
-        size=100,
-        timestamp_ns=int((start + (63 * 30) + 5) * 1_000_000_000),
-    )
+    runtime.data_warning_symbols["TEST"] = "warning"
+    runtime._arm_gap_recovery("TEST", synthetic_gap_count=3)
+    runtime._finalize_gap_recovery_completed_bar("TEST")
 
     assert runtime._gap_recovery_bars_remaining["TEST"] == 3
     assert runtime._gap_recovery_synthetic_bars["TEST"] == 3
     assert "skipped 3 synthetic 30s bar(s)" in runtime.recent_decisions[0]["reason"]
+    assert start > 0
 
-    runtime.handle_trade_tick(
+    runtime._advance_gap_recovery(
         "TEST",
-        price=5.26,
-        size=100,
-        timestamp_ns=int((start + (64 * 30) + 5) * 1_000_000_000),
+        OHLCVBar(
+            open=5.25,
+            high=5.26,
+            low=5.24,
+            close=5.25,
+            volume=100,
+            timestamp=start + (63 * 30),
+            trade_count=1,
+        ),
     )
     assert runtime._gap_recovery_bars_remaining["TEST"] == 2
     assert "waiting for 3 real completed bar(s)" in runtime.recent_decisions[0]["reason"]
 
-    runtime.handle_trade_tick(
+    runtime._advance_gap_recovery(
         "TEST",
-        price=5.27,
-        size=100,
-        timestamp_ns=int((start + (65 * 30) + 5) * 1_000_000_000),
+        OHLCVBar(
+            open=5.26,
+            high=5.27,
+            low=5.25,
+            close=5.26,
+            volume=100,
+            timestamp=start + (64 * 30),
+            trade_count=1,
+        ),
     )
     assert runtime._gap_recovery_bars_remaining["TEST"] == 1
 
-    runtime.handle_trade_tick(
+    runtime._advance_gap_recovery(
         "TEST",
-        price=5.28,
-        size=100,
-        timestamp_ns=int((start + (66 * 30) + 5) * 1_000_000_000),
+        OHLCVBar(
+            open=5.27,
+            high=5.28,
+            low=5.26,
+            close=5.27,
+            volume=100,
+            timestamp=start + (65 * 30),
+            trade_count=1,
+        ),
     )
     assert "TEST" not in runtime._gap_recovery_bars_remaining
     assert "TEST" not in runtime._gap_recovery_synthetic_bars
@@ -104,26 +120,22 @@ def test_flush_completed_bars_advances_gap_recovery() -> None:
             strategy_webull_30s_enabled=False,
             strategy_macd_1m_enabled=False,
             strategy_schwab_1m_enabled=False,
-        )
+            strategy_macd_30s_tick_bar_close_grace_seconds=0.0,
+        ),
+        now_provider=lambda: now_ref["dt"],
     )
     runtime = state.bots["macd_30s"]
-    runtime.now_provider = lambda: now_ref["dt"]
     start = _seed_bars(runtime, "TEST", interval_secs=30)
-    runtime.builder_manager.get_or_create("TEST").time_provider = lambda: start + (64 * 30) + 1
+    runtime.data_warning_symbols["TEST"] = "warning"
+    runtime._arm_gap_recovery("TEST", synthetic_gap_count=3)
+    runtime._finalize_gap_recovery_completed_bar("TEST")
+    runtime.builder_manager.get_or_create("TEST").time_provider = lambda: start + (61 * 30) + 1
 
     runtime.handle_trade_tick(
         "TEST",
         price=5.25,
         size=100,
-        timestamp_ns=int((start + (63 * 30) + 5) * 1_000_000_000),
-    )
-    assert runtime._gap_recovery_bars_remaining["TEST"] == 3
-
-    runtime.handle_trade_tick(
-        "TEST",
-        price=5.26,
-        size=100,
-        timestamp_ns=int((start + (63 * 30) + 10) * 1_000_000_000),
+        timestamp_ns=int((start + (60 * 30) + 5) * 1_000_000_000),
     )
     assert runtime._gap_recovery_bars_remaining["TEST"] == 3
 

@@ -119,6 +119,18 @@ class FeedRetentionPolicy:
             return state
 
         if metrics is None or metrics.price is None:
+            if state.state == "active":
+                inactivity_minutes = max(0.0, (now - state.last_activity_at).total_seconds() / 60.0)
+                if inactivity_minutes >= self.config.no_activity_minutes:
+                    self._transition(state, "cooldown", now)
+                    state.cooldown_started_at = now
+                    state.above_structure_bars = 0
+                    state.below_structure_bars = 0
+                return state
+            if state.state == "cooldown" and state.cooldown_started_at is not None:
+                cooldown_minutes = max(0.0, (now - state.cooldown_started_at).total_seconds() / 60.0)
+                if cooldown_minutes >= self.config.drop_cooldown_minutes:
+                    self._transition(state, "dropped", now)
             return state
 
         self._update_degraded_overlay(state, metrics, now)
@@ -152,6 +164,17 @@ class FeedRetentionPolicy:
             inactivity_minutes = max(0.0, (now - state.last_activity_at).total_seconds() / 60.0)
             low_volume = self._is_cooldown_volume(metrics, state)
             low_range = float(metrics.rolling_5m_range_pct or 0) <= self.config.cooldown_max_5m_range_pct
+            if (
+                state.active_reference_5m_volume > 0
+                and metrics.bar_timestamp is None
+                and inactivity_minutes >= self.config.no_activity_minutes
+                and float(metrics.rolling_5m_volume or 0) <= 0
+                and low_range
+            ):
+                self._transition(state, "cooldown", now)
+                state.cooldown_started_at = now
+                state.above_structure_bars = 0
+                return state
             if (
                 state.below_structure_bars >= self.config.structure_bars
                 and inactivity_minutes >= self.config.no_activity_minutes

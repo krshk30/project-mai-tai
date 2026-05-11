@@ -3167,7 +3167,9 @@ class StrategyEngineState:
         self.schwab_prewarm_symbols: list[str] = []
         self._schwab_prewarm_added_at: dict[str, datetime] = {}
         self.schwab_prewarm_max_symbols = 12
-        self.schwab_prewarm_ttl = timedelta(minutes=10)
+        self.schwab_prewarm_ttl = timedelta(
+            seconds=max(1.0, float(self.settings.schwab_prewarm_symbol_ttl_seconds))
+        )
         self.five_pillars: list[dict[str, object]] = []
         self.top_gainers: list[dict[str, object]] = []
         self.top_gainer_changes: list[dict[str, object]] = []
@@ -3396,7 +3398,7 @@ class StrategyEngineState:
                     interval_secs=30,
                     time_provider=lambda: resolved_now_provider().timestamp(),
                     close_grace_seconds=self.settings.strategy_polygon_30s_tick_bar_close_grace_seconds,
-                    fill_gap_bars=True,
+                    fill_gap_bars=polygon_use_live_aggregate_bars,
                 ),
                 indicator_engine=Polygon30sIndicatorEngine(default_indicator_config),
                 entry_engine=Polygon30sEntryEngine(
@@ -3678,11 +3680,27 @@ class StrategyEngineState:
             for stock in self.confirmed_scanner.get_all_confirmed()
             if str(stock.get("ticker", "")).upper() not in blocked
         ]
-        self._record_bot_handoff_symbols(self.all_confirmed, replace_active=True)
+        self._record_bot_handoff_symbols(self.all_confirmed)
         self.current_confirmed = self._ranked_scanner_confirmed_view(limit=5)
         self._add_market_data_archive_symbols(
             stock.get("ticker", "") for stock in self.all_confirmed
         )
+        if self.settings.scanner_feed_retention_enabled:
+            self._update_retained_watchlist(snapshot_lookup)
+            retained_symbols = set(self.feed_retention_states)
+            confirmed_handoff_symbols = {
+                str(stock.get("ticker", "")).upper()
+                for stock in self.all_confirmed
+                if str(stock.get("ticker", "")).strip()
+            }
+            dropped_handoff_symbols = {
+                symbol
+                for symbols in self.bot_handoff_symbols_by_strategy.values()
+                for symbol in symbols
+                if symbol not in retained_symbols and symbol not in confirmed_handoff_symbols
+            }
+            if dropped_handoff_symbols:
+                self._discard_bot_handoff_symbols(dropped_handoff_symbols)
         tracked_snapshot_symbols = {
             str(stock.get("ticker", "")).upper()
             for stock in self.all_confirmed
@@ -4380,6 +4398,7 @@ class StrategyEngineState:
     def schwab_stream_symbols(self) -> list[str]:
         if not self._schwab_stream_bot_codes:
             return []
+        self._sync_schwab_prewarm_symbols()
         symbols: set[str] = set()
         for code in self._schwab_stream_bot_codes:
             bot = self.bots.get(code)
@@ -4799,14 +4818,15 @@ class StrategyEngineState:
         snapshot_lookup: dict[str, MarketSnapshot],
     ) -> FeedRetentionMetrics | None:
         runtime = self._retention_runtime()
+        normalized_symbol = symbol.upper()
         indicators: dict[str, object] = {}
         rolling_volume: float | None = None
         rolling_range_pct: float | None = None
         bar_timestamp: float | None = None
 
         if runtime is not None:
-            indicators = dict(runtime.last_indicators.get(symbol.upper(), {}))
-            builder = runtime.builder_manager.get_builder(symbol.upper())
+            indicators = dict(runtime.last_indicators.get(normalized_symbol, {}))
+            builder = runtime.builder_manager.get_builder(normalized_symbol)
             if builder is not None:
                 bars = builder.get_bars_as_dicts()
                 if bars:
@@ -4823,13 +4843,27 @@ class StrategyEngineState:
                     if "price" not in indicators and recent_bars:
                         indicators["price"] = float(recent_bars[-1].get("close", 0) or 0)
 
-        snapshot = snapshot_lookup.get(symbol.upper()) or self.latest_snapshots.get(symbol.upper())
+        current_snapshot = snapshot_lookup.get(normalized_symbol)
+        snapshot = current_snapshot or self.latest_snapshots.get(normalized_symbol)
         snapshot_price = float(snapshot.last_trade.price) if snapshot and snapshot.last_trade and snapshot.last_trade.price is not None else None
         snapshot_vwap = None
         if snapshot and snapshot.minute and snapshot.minute.vwap is not None:
             snapshot_vwap = float(snapshot.minute.vwap)
         elif snapshot and snapshot.day and snapshot.day.vwap is not None:
             snapshot_vwap = float(snapshot.day.vwap)
+        if rolling_volume is None and snapshot is not None:
+            if current_snapshot is not None:
+                snapshot_volume = None
+                if current_snapshot.minute and current_snapshot.minute.accumulated_volume is not None:
+                    snapshot_volume = float(current_snapshot.minute.accumulated_volume)
+                elif current_snapshot.day and current_snapshot.day.volume is not None:
+                    snapshot_volume = float(current_snapshot.day.volume)
+                if snapshot_volume is not None:
+                    rolling_volume = snapshot_volume
+            else:
+                rolling_volume = 0.0
+                if rolling_range_pct is None:
+                    rolling_range_pct = 0.0
 
         price = _coerce_float(
             indicators.get("price"),
@@ -6852,14 +6886,14 @@ class StrategyEngineService:
         warning_symbols: dict[str, tuple[str, ...]] = {}
         for symbol, codes in active_symbols.items():
             has_open_position = symbol in open_symbol_set
+            if auth_failure:
+                stale_symbols[symbol] = codes
+                continue
             if not self._schwab_symbol_should_enforce_data_halt(
                 strategy_codes=codes,
                 now=now,
                 has_open_position=has_open_position,
             ):
-                continue
-            if auth_failure:
-                stale_symbols[symbol] = codes
                 continue
             if stream_disconnected or self._is_schwab_symbol_data_halt_stale(
                 symbol,

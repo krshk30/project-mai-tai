@@ -498,6 +498,8 @@ class Settings(BaseSettings):
             return "schwab"
         if normalized_code in {"polygon_30s", "webull_30s"}:
             return "polygon"
+        if normalized_code == "tos" and self.provider_for_strategy("tos") == "schwab":
+            return "schwab"
         return "polygon"
 
     @computed_field
