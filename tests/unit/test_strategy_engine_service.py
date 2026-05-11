@@ -4201,7 +4201,11 @@ def test_polygon_late_live_second_revises_persisted_closed_bar_without_redecisio
     state.seed_bars(
         "polygon_30s",
         "CTNT",
-        seed_trending_bars(count=55, start_timestamp=1_700_000_000.0, interval_secs=30),
+        seed_trending_bars(
+            count=55,
+            start_timestamp=datetime(2026, 4, 23, 14, 59, 0, tzinfo=UTC).timestamp(),
+            interval_secs=30,
+        ),
     )
 
     observed_decision_bars: list[float] = []
