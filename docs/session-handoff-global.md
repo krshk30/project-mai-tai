@@ -8763,3 +8763,27 @@ Notes:
 - Next step from this checkpoint:
   - rerun `python -m pytest tests/unit/test_strategy_engine_service.py -x -q` on the updated worktree to capture the next first failure after pass 2
   - only quote a refreshed total failure count after a fresh broader baseline run from this newer state
+
+## 2026-05-11 PM: PR #87 is the gating CI-baseline unblock
+
+- Current merge/deploy state:
+  - PR `#87` (`codex/ci-baseline-cleanup-pass2`) is the gating baseline-cleanup PR
+  - PR `#85` (`codex/schwab-1m-chart-canonical-fix`) stays parked behind `#87`
+  - no strategy restart should happen before `#87` is resolved
+- Important GitHub Actions behavior observed today:
+  - the relevant `Validate` runs for `#87` are stuck in `IN_PROGRESS`
+  - in this state, GitHub Actions contributes no new signal until one of these happens:
+    - the run reaches the GitHub Actions 6h timeout and auto-cancels
+    - someone manually cancels the run
+    - the PR is admin-merged despite the stuck check
+  - timeout by itself does **not** break the dependency chain; it only clears the UI state
+- Practical decision rule for the next agent:
+  - if `#87` is admin-merged:
+    - immediately re-check / re-run CI on `#85`
+    - only after that, continue with the planned strategy restart and post-deploy validation
+  - if `#87` only times out or gets cancelled without merge:
+    - treat that as informational only
+    - an explicit merge decision is still required before `#85` or any restart work should proceed
+- Coordination note:
+  - a PR comment was added on `#87` documenting that the stuck `Validate` runs are not expected to self-resolve into useful signal today
+  - keep `#87` as the single gating PR for this workstream so other agents do not fork into independent restart / `#85` actions before the baseline branch lands
