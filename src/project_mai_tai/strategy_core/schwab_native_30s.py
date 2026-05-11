@@ -102,6 +102,14 @@ class SchwabNativeBarBuilder:
         # _current_bar_last_cum_volume which gets dragged forward by trades
         # in subsequent bars.
         self._last_closed_bar_cum_volume: int | None = None
+        # True when bars[-1] was set by on_final_bar (CHART_EQUITY canonical
+        # source for `live_aggregate_bars_are_final=True` bots like schwab_1m).
+        # Late TIMESALE/LEVELONE ticks for that bar must NOT call
+        # _revise_last_closed_bar_from_trade: the cum_vol baseline carries
+        # over from the prior tick-close, which for CHART-only sequences is
+        # many bars stale, producing the trade_count=2 + 4-10x volume
+        # artifact diagnosed 2026-05-11.
+        self._last_closed_bar_from_aggregate: bool = False
 
     def on_trade(
         self,
@@ -243,11 +251,13 @@ class SchwabNativeBarBuilder:
                 return []
             if bar_start == last_bar_start:
                 self.bars[-1] = aligned_bar
+                self._last_closed_bar_from_aggregate = True
                 return []
 
         self.bars.append(aligned_bar)
         self._bar_count += 1
         self._trim_history()
+        self._last_closed_bar_from_aggregate = True
         return [aligned_bar]
 
     def check_bar_closes(self) -> list[OHLCVBar]:
@@ -298,6 +308,7 @@ class SchwabNativeBarBuilder:
         self._bar_count = 0
         self._recent_revised_closed_bar = None
         self._last_closed_bar_cum_volume = None
+        self._last_closed_bar_from_aggregate = False
 
     def consume_recent_revised_closed_bar(self) -> OHLCVBar | None:
         revised = self._recent_revised_closed_bar
@@ -338,6 +349,16 @@ class SchwabNativeBarBuilder:
         volume we just credited back to the closed bar.
         """
         if not self.bars:
+            return
+        if self._last_closed_bar_from_aggregate:
+            # bars[-1] came from on_final_bar (CHART_EQUITY canonical for
+            # live_aggregate_bars_are_final=True bots like schwab_1m).
+            # The cum_vol baseline carries over from the prior tick-close,
+            # which for CHART-only sequences can be many bars stale.
+            # Computing volume_contrib against that baseline produces a
+            # delta covering the entire CHART-only gap (4-10x over-count
+            # plus trade_count=2 artifact diagnosed 2026-05-11). CHART is
+            # canonical for these bots; do not let late ticks overwrite it.
             return
         last_closed = self.bars[-1]
 
@@ -395,6 +416,8 @@ class SchwabNativeBarBuilder:
         # trades that revise this bar will compute their volume contribution
         # from this snapshot via _revise_last_closed_bar_from_trade.
         self._last_closed_bar_cum_volume = self._current_bar_last_cum_volume
+        # bars[-1] is now a tick-built (not CHART) bar; revisions are valid.
+        self._last_closed_bar_from_aggregate = False
         return bar
 
     def _pop_last_closed_bar(self) -> OHLCVBar | None:
