@@ -38,11 +38,13 @@ from project_mai_tai.runtime_registry import configured_broker_account_registrat
 from project_mai_tai.runtime_seed import seed_runtime_metadata
 from project_mai_tai.services.runtime import _install_signal_handlers
 from project_mai_tai.settings import Settings, get_settings
+from project_mai_tai.strategy_core.time_utils import session_day_eastern_str
 
 logger = logging.getLogger(__name__)
 
 SERVICE_NAME = "oms-risk"
 SESSION_TZ = ZoneInfo("America/New_York")
+SCHWAB_INELIGIBLE_REASON_SUBSTRINGS = ("must be placed with a broker",)
 
 
 def utcnow() -> datetime:
@@ -285,6 +287,25 @@ class OmsRiskService:
                 for order_event in published_events:
                     await self._publish_order_event(order_event)
                 return published_events
+
+            if (
+                broker_account.provider == "schwab"
+                and event.payload.intent_type == "open"
+                and self._has_cached_schwab_ineligible_symbol(
+                    session=session,
+                    broker_account_id=broker_account.id,
+                    symbol=event.payload.symbol,
+                )
+            ):
+                self.store.mark_intent_status(intent, "rejected")
+                order_event = self._build_rejected_event(
+                    event,
+                    intent.id,
+                    reason="schwab_ineligible_cached",
+                )
+                session.commit()
+                await self._publish_order_event(order_event)
+                return [order_event]
 
             blocked_reason = await self._get_session_symbol_block_reason(
                 account_name=event.payload.broker_account_name,
@@ -1508,6 +1529,10 @@ class OmsRiskService:
         next_midnight = datetime.combine(tomorrow, datetime.min.time(), tzinfo=SESSION_TZ)
         return max(60, int((next_midnight - now).total_seconds()))
 
+    @staticmethod
+    def _current_session_day(now: datetime | None = None) -> str:
+        return session_day_eastern_str(now or utcnow())
+
     async def _get_session_symbol_block_reason(self, *, account_name: str, symbol: str) -> str | None:
         getter = getattr(self.redis, "get", None)
         if getter is None:
@@ -1649,6 +1674,15 @@ class OmsRiskService:
                 status=report.event_type,
                 reason=report.reason,
             )
+            if report.event_type == "rejected" and self._is_schwab_ineligible_reason(report.reason):
+                self.store.record_schwab_ineligible_entry(
+                    session,
+                    broker_account_id=broker_account_id,
+                    symbol=request.symbol,
+                    session_date=self._current_session_day(report.reported_at),
+                    reason_text=report.reason or "",
+                    first_seen_at=report.reported_at,
+                )
             if report.event_type == "rejected" and self._is_not_tradable_reason(report.reason):
                 await self._set_session_symbol_block(
                     account_name=intent_event.payload.broker_account_name,
@@ -1964,6 +1998,28 @@ class OmsRiskService:
             if report.event_type == "rejected" and self._is_stop_rejection_reason(report.reason):
                 return report.reason or "stop_rejected"
         return None
+
+    def _has_cached_schwab_ineligible_symbol(
+        self,
+        *,
+        session: Session,
+        broker_account_id: UUID,
+        symbol: str,
+    ) -> bool:
+        return (
+            self.store.get_schwab_ineligible_entry(
+                session,
+                broker_account_id=broker_account_id,
+                symbol=symbol,
+                session_date=self._current_session_day(),
+            )
+            is not None
+        )
+
+    @staticmethod
+    def _is_schwab_ineligible_reason(reason: str | None) -> bool:
+        normalized = str(reason or "").strip().lower()
+        return any(fragment in normalized for fragment in SCHWAB_INELIGIBLE_REASON_SUBSTRINGS)
 
     async def _process_stop_reject_market_fallback(
         self,

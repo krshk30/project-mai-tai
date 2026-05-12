@@ -20,6 +20,7 @@ from project_mai_tai.db.models import (
     BrokerOrder,
     DashboardSnapshot,
     ScannerBlacklistEntry,
+    SchwabIneligibleToday,
     Strategy,
     StrategyBarHistory,
     TradeIntent,
@@ -62,6 +63,7 @@ from project_mai_tai.market_data.schwab_tick_archive import (
 )
 from project_mai_tai.market_data.schwab_streamer import SchwabStreamerClient
 from project_mai_tai.market_data.taapi_indicator_provider import TaapiIndicatorProvider
+from project_mai_tai.oms.store import OmsStore
 from project_mai_tai.strategy_core import (
     CatalystAiConfig,
     CatalystAiEvaluator,
@@ -3181,6 +3183,7 @@ class StrategyEngineState:
         self.schwab_prewarm_ttl = timedelta(
             seconds=max(1.0, float(self.settings.schwab_prewarm_symbol_ttl_seconds))
         )
+        self._broker_blocked_symbols_by_strategy: dict[str, set[str]] = {}
         self.five_pillars: list[dict[str, object]] = []
         self.top_gainers: list[dict[str, object]] = []
         self.top_gainer_changes: list[dict[str, object]] = []
@@ -3720,9 +3723,15 @@ class StrategyEngineState:
         for code, bot in self.bots.items():
             bot_watchlist = self._watchlist_for_bot(code, self._bot_handoff_symbols_for_bot(code))
             if code == "runner":
+                blocked_candidates = self._broker_blocked_symbols_for_bot(code)
+                runner_candidates = [
+                    candidate
+                    for candidate in self.current_confirmed
+                    if str(candidate.get("ticker", "")).upper() not in blocked_candidates
+                ]
                 bot.update_market_snapshots(filtered_snapshots)
                 bot.set_watchlist(bot_watchlist)
-                bot.update_candidates(self.current_confirmed)
+                bot.update_candidates(runner_candidates)
                 continue
             if hasattr(bot, "set_manual_stop_symbols"):
                 bot.set_manual_stop_symbols(self._manual_stop_symbols_for_bot(code))
@@ -4114,7 +4123,14 @@ class StrategyEngineState:
             if hasattr(bot, "set_entry_blocked_symbols"):
                 bot.set_entry_blocked_symbols(())
             if code == "runner":
-                bot.update_candidates(self.current_confirmed)
+                blocked_candidates = self._broker_blocked_symbols_for_bot(code)
+                bot.update_candidates(
+                    [
+                        candidate
+                        for candidate in self.current_confirmed
+                        if str(candidate.get("ticker", "")).upper() not in blocked_candidates
+                    ]
+                )
             else:
                 refresh_lifecycle = getattr(bot, "refresh_lifecycle", None)
                 if refresh_lifecycle is not None:
@@ -4676,6 +4692,9 @@ class StrategyEngineState:
         blocked = self._manual_stop_symbols_for_bot(code)
         if blocked:
             normalized = [symbol for symbol in normalized if symbol not in blocked]
+        broker_blocked = self._broker_blocked_symbols_for_bot(code)
+        if broker_blocked:
+            normalized = [symbol for symbol in normalized if symbol not in broker_blocked]
         if code == "macd_30s_reclaim" and self.reclaim_excluded_symbols:
             normalized = [
                 symbol
@@ -4706,6 +4725,7 @@ class StrategyEngineState:
         self._clear_market_data_archive_symbols()
         self.schwab_prewarm_symbols = []
         self._schwab_prewarm_added_at.clear()
+        self._broker_blocked_symbols_by_strategy = {}
         self.bot_handoff_symbols_by_strategy = {code: set() for code in self.bots}
         self.bot_handoff_history_by_strategy = {code: set() for code in self.bots}
         self.session_handoff_active = False
@@ -4729,6 +4749,24 @@ class StrategyEngineState:
         self._resync_bot_watchlists_from_current_confirmed()
         self._active_scanner_session_start = current_session_start
         return True
+
+    def set_broker_blocked_symbols_by_strategy(
+        self,
+        blocked_symbols_by_strategy: dict[str, Iterable[str]] | None,
+    ) -> None:
+        normalized: dict[str, set[str]] = {}
+        for code in self.bots:
+            symbols = blocked_symbols_by_strategy.get(code, ()) if blocked_symbols_by_strategy else ()
+            normalized[code] = {
+                str(symbol).upper()
+                for symbol in symbols
+                if str(symbol).strip()
+            }
+        self._broker_blocked_symbols_by_strategy = normalized
+        self._resync_bot_watchlists_from_current_confirmed()
+
+    def _broker_blocked_symbols_for_bot(self, code: str) -> set[str]:
+        return set(self._broker_blocked_symbols_by_strategy.get(code, set()))
 
     def retention_summary(self) -> list[dict[str, object]]:
         rows: list[dict[str, object]] = []
@@ -5297,6 +5335,9 @@ class StrategyEngineService:
                 for item in event.payload.reference_data
             }
             self._preload_manual_stop_state()
+            self.state.set_broker_blocked_symbols_by_strategy(
+                self._load_schwab_ineligible_symbols_by_strategy()
+            )
             summary = self.state.process_snapshot_batch(
                 snapshots,
                 reference,
@@ -8120,6 +8161,41 @@ class StrategyEngineService:
         except Exception:
             self.logger.exception("failed to load scanner blacklist entries")
             return set()
+
+    def _load_schwab_ineligible_symbols_by_strategy(self) -> dict[str, set[str]]:
+        if self.session_factory is None:
+            return {}
+
+        schwab_accounts_by_code = {
+            code: bot.definition.account_name
+            for code, bot in self.state.bots.items()
+            if self.settings.provider_for_account(bot.definition.account_name) == "schwab"
+        }
+        if not schwab_accounts_by_code:
+            return {}
+
+        try:
+            with self.session_factory() as session:
+                accounts = session.scalars(
+                    select(BrokerAccount).where(BrokerAccount.name.in_(list(schwab_accounts_by_code.values())))
+                ).all()
+                account_ids_by_name = {account.name: account.id for account in accounts}
+                blocked_by_account = OmsStore().list_schwab_ineligible_symbols_by_account(
+                    session,
+                    broker_account_ids=list(account_ids_by_name.values()),
+                    session_date=session_day_eastern_str(self.state.alert_engine.now_provider()),
+                )
+        except Exception:
+            self.logger.exception("failed to load Schwab ineligible symbols")
+            return {}
+
+        blocked_by_strategy: dict[str, set[str]] = {}
+        for code, account_name in schwab_accounts_by_code.items():
+            account_id = account_ids_by_name.get(account_name)
+            if account_id is None:
+                continue
+            blocked_by_strategy[code] = set(blocked_by_account.get(account_id, set()))
+        return blocked_by_strategy
 
     def _load_manual_stop_symbols(self) -> dict[str, set[str]]:
         if self.session_factory is None:
