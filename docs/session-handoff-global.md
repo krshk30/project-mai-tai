@@ -8,6 +8,60 @@
 - Overall `/health` may still show `degraded` because of reconciler state. Do not confuse that with a Polygon-specific runtime failure.
 - Keep copied CI counts and failure logs out of the top summary unless they have been revalidated on current `main`.
 
+## 2026-05-12 SESSION START — schwab_1m bar-build validation pickup
+
+> **Read this first.** This section is the live pickup pointer for the next session. Older entries below are chronology + archive.
+
+### Critical first action: validate the schwab_1m CHART-canonical fix
+
+PR #85 (`schwab_1m: skip late-trade revision on CHART-sourced bars`) merged at `3019151` 2026-05-12 01:48 UTC. Strategy restarted 01:49:28 UTC. Market was closed at deploy → bar-build validation deferred to today's pre-market.
+
+### State at session start
+
+- `main` HEAD: `09b6dcf` (post-cleanup-audit) — confirm with `gh api repos/krshk30/project-mai-tai/commits/main --jq '.sha'`
+- VPS HEAD: `09b6dcf` ✓ matches (`ssh mai-tai-vps "git -C /home/trader/project-mai-tai rev-parse HEAD"`)
+- All 5 services `active`; strategy uptime since 2026-05-12 01:49:27 UTC
+- Positions: only `CYN x 8000` on `paper:schwab_1m` + `paper:macd_30s` — **exempt** per user (do NOT include in account-flat pre-flight blocking)
+- CI baseline: 517 passed / 15 failed / 91.90s, no hangs (15 failures = next cleanup cluster, full list in 2026-05-11 PM entry)
+
+### Validation steps
+
+1. **Wait for 30+ min of pre-market bars.** Pre-market opens 04:00 ET = 08:00 UTC. Bars are persisted continuously; at 04:30+ ET there should be enough data to validate.
+
+2. **Find today's active schwab_1m symbols:**
+   ```
+   ssh mai-tai-vps 'sudo -u postgres psql -d project_mai_tai -c "SELECT symbol, count(*) AS bars, max(bar_time AT TIME ZONE '"'"'America/New_York'"'"') AS latest_et FROM strategy_bar_history WHERE strategy_code='"'"'schwab_1m'"'"' AND interval_secs=60 AND bar_time::date='"'"'2026-05-12'"'"' GROUP BY symbol ORDER BY bars DESC LIMIT 10;"'
+   ```
+
+3. **Run the validator** (full DSN-extraction template in 2026-05-11 PM entry's "Validation" section). Substitute today's date and the symbol list from step 2:
+   ```
+   ssh mai-tai-vps 'URL=$(sudo grep -E "^MAI_TAI_DATABASE_URL=" /etc/project-mai-tai/project-mai-tai.env | head -1 | cut -d= -f2-); PGPASSWORD=$(echo "$URL" | sed -E "s|^[^:]+://[^:]+:([^@]+)@.*|\1|"); PGUSER=$(echo "$URL" | sed -E "s|^[^:]+://([^:]+):.*|\1|"); DSN="dbname=project_mai_tai user=${PGUSER} host=localhost"; PYTHONPATH=/home/trader/project-mai-tai/src PGPASSWORD=$PGPASSWORD /home/trader/project-mai-tai/.venv/bin/python /home/trader/project-mai-tai/scripts/check_bar_build_runtime.py --day 2026-05-12 --start-hour 4 --end-hour 8 --archive-dir /var/lib/project-mai-tai/schwab_ticks/2026-05-12 --symbols <SYM1> <SYM2> ... --interval-secs 60 --strategy-code schwab_1m --dsn "$DSN"'
+   ```
+
+4. **Cross-check the bug pattern is gone**:
+   ```
+   ssh mai-tai-vps 'sudo -u postgres psql -d project_mai_tai -c "SELECT symbol, bar_time AT TIME ZONE '"'"'America/New_York'"'"' AS et, volume, trade_count FROM strategy_bar_history WHERE strategy_code='"'"'schwab_1m'"'"' AND interval_secs=60 AND bar_time::date='"'"'2026-05-12'"'"' AND trade_count <= 3 AND volume > 50000 ORDER BY volume DESC LIMIT 20;"'
+   ```
+   Pre-fix on 2026-05-11 returned 20+ rows with `trade_count=2` and `volume` in the 100K-1.87M range. Post-fix expectation: **zero rows or only legitimate single-print blocks** (which would have `trade_count=1` not 2).
+
+5. **Update this doc with the result** (replace this section with the next session's pickup).
+
+### Decision tree
+
+- **Validation passes** (outliers gone; per-bar `avg_abs_vol_diff` drops to inherent CHART vs TIMESALE drift on trade_count-matching bars, ~5-15%) → mark deploy success, move on to **Active Workstream #4**: Schwab pre-trade eligibility cache. Spec is in the 2026-05-11 AM entry.
+- **Outliers persist** → instrument `src/project_mai_tai/strategy_core/schwab_native_30s.py` `_last_closed_bar_from_aggregate` flag (set/clear sites at lines 112, 254, 260, 311, 353). Confirm flag is `True` after `on_final_bar` for CHART_EQUITY bars and that `_revise_last_closed_bar_from_trade` is early-returning. The 4 unit tests in `tests/unit/test_schwab_native_late_trade_revision.py` added in PR #85 cover the synthetic happy path; if they pass but production drifts, look for a code path that sets `bars[-1]` without going through `on_final_bar` (e.g., `_pop_last_closed_bar` corner cases).
+- **Strategy not running / new errors in log** → first check `sudo systemctl status project-mai-tai-strategy`, then `sudo tail -100 /var/log/project-mai-tai/strategy.log`. Pre-existing fd-leak ("Too many open files") is unrelated to this PR but may surface as background noise.
+
+### Other open workstreams (not immediate, see entries below)
+
+- **CI baseline**: 15 failures in `test_strategy_engine_service.py` (full list in 2026-05-11 PM entry). Codex's natural next cleanup cluster.
+- **Schwab eligibility filter** (Active Workstream #4): spec in 2026-05-11 AM entry. ~70 LoC + Alembic migration. Unblocks proper trade routing for restricted symbols (AEHL, CLIK, etc.).
+- **Reconciler** still degraded since 2026-04-28. Background residual.
+- **fd-leak** in catalyst/news fetch (`OSError: [Errno 24] Too many open files`). Pre-existing; pre-existing log noise from 2026-05-11 18:27 UTC.
+- **Codex's WIP**: ~10 worktrees in `AppData/Local/Temp`, ~50 remote `codex/*` branches, PR #67 (April). Codex's responsibility; do not touch.
+
+---
+
 ## 2026-05-12 ~02:00 UTC: Post-deploy cleanup audit + control-deploy worktree flag
 
 After the schwab_1m deploy chain landed (see entry below), this agent (Claude Code) ran a full cleanup audit. Recording what was cleaned vs left-alone vs flagged so next-agent state is clear.
