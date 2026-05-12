@@ -175,6 +175,30 @@ class BrokerOrderEvent(Base):
     payload: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
 
 
+class SchwabIneligibleToday(Base):
+    __tablename__ = "schwab_ineligible_today"
+    __table_args__ = (
+        UniqueConstraint(
+            "symbol",
+            "session_date",
+            "broker_account_id",
+            name="uq_schwab_ineligible_today_symbol_session_account",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(), primary_key=True, default=uuid4)
+    symbol: Mapped[str] = mapped_column(String(16), index=True)
+    session_date: Mapped[str] = mapped_column(String(10), index=True)
+    broker_account_id: Mapped[UUID] = mapped_column(ForeignKey("broker_accounts.id"), index=True)
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow,
+        server_default=func.now(),
+    )
+    reason_text: Mapped[str] = mapped_column(Text, default="")
+    hit_count: Mapped[int] = mapped_column(Integer, default=1, server_default=text("1"))
+
+
 class Fill(Base):
     __tablename__ = "fills"
 

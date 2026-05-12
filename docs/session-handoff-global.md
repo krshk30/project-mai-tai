@@ -385,7 +385,6 @@ Workstream: `polygon_30s` bar continuity during sparse/patchy live aggregate cov
   - re-audit `polygon_30s` persisted bars on the next live window, especially around resumed sparse periods
 
 ---
-
 ## 2026-05-12 ~02:00 UTC: Post-deploy cleanup audit + control-deploy worktree flag
 
 After the schwab_1m deploy chain landed (see entry below), this agent (Claude Code) ran a full cleanup audit. Recording what was cleaned vs left-alone vs flagged so next-agent state is clear.
@@ -686,7 +685,7 @@ This agent (Claude Code) parking. Next session: pick the **Schwab eligibility fi
    - Read `docs/agent-deploy-runbook.md` before merging changes to `control_plane.py`, `strategy_engine_app.py`, `schwab_native_30s.py`, `polygon_30s.py`, `bar_builder.py`, `oms/service.py`, or `market_data/gateway.py`.
    - The `d5ac600` revert incident is the reason for this rule. Do the last-10-commits review before merge.
 
-4. Schwab pre-trade eligibility cache (NEW, OPEN — see 2026-05-11 entry)
+4. Schwab pre-trade eligibility cache (LOCAL FIX READY, UNMERGED — see 2026-05-12 entry)
    - Cache `(symbol, session_date, broker_account_id)` on first Schwab "Opening transactions … must be placed with a broker" rejection.
    - OMS pre-submit checks the cache for OPEN intents on Schwab-backed accounts; scanner drops cached symbols from the universe.
    - **Session-wide scope** (not pre-market only) — restriction holds through RTH and after-hours; resets at next 04:00 ET session boundary.

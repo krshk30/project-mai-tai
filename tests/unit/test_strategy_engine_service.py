@@ -11,7 +11,16 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from project_mai_tai.db.base import Base
-from project_mai_tai.db.models import BrokerAccount, BrokerOrder, DashboardSnapshot, Strategy, StrategyBarHistory, TradeIntent, VirtualPosition
+from project_mai_tai.db.models import (
+    BrokerAccount,
+    BrokerOrder,
+    DashboardSnapshot,
+    SchwabIneligibleToday,
+    Strategy,
+    StrategyBarHistory,
+    TradeIntent,
+    VirtualPosition,
+)
 from project_mai_tai.events import (
     HistoricalBarPayload,
     HistoricalBarsEvent,
@@ -4445,6 +4454,71 @@ def test_market_data_symbols_exclude_schwab_native_macd_30s() -> None:
 
     assert state.market_data_symbols() == []
     assert state.schwab_stream_symbols() == ["ELAB"]
+
+
+def test_broker_blocked_symbols_filter_only_schwab_backed_watchlists() -> None:
+    state = StrategyEngineState(
+        settings=make_test_settings(
+            strategy_macd_30s_enabled=True,
+            strategy_macd_30s_broker_provider="schwab",
+            strategy_polygon_30s_enabled=True,
+            strategy_polygon_30s_broker_provider="simulated",
+        ),
+        now_provider=fixed_now,
+    )
+
+    state.restore_confirmed_runtime_view(
+        [{"ticker": "UGRO", "score": 7}],
+        all_confirmed=[{"ticker": "UGRO", "score": 7}],
+    )
+    state.set_broker_blocked_symbols_by_strategy({"macd_30s": {"UGRO"}})
+
+    assert state.bots["macd_30s"].watchlist == set()
+    assert state.bots["polygon_30s"].watchlist == {"UGRO"}
+
+
+def test_service_loads_schwab_ineligible_symbols_per_strategy_account() -> None:
+    session_factory = build_test_session_factory()
+    settings = make_test_settings(
+        strategy_macd_30s_enabled=True,
+        strategy_macd_30s_broker_provider="schwab",
+        strategy_polygon_30s_enabled=True,
+        strategy_polygon_30s_broker_provider="simulated",
+    )
+    service = StrategyEngineService(
+        settings=settings,
+        redis_client=FakeRedis(),
+        session_factory=session_factory,
+        now_provider=fixed_now,
+    )
+
+    with session_factory() as session:
+        macd_account = BrokerAccount(
+            name=settings.strategy_macd_30s_account_name,
+            provider="schwab",
+            environment=settings.environment,
+        )
+        polygon_account = BrokerAccount(
+            name=settings.strategy_polygon_30s_account_name,
+            provider="simulated",
+            environment=settings.environment,
+        )
+        session.add_all([macd_account, polygon_account])
+        session.flush()
+        session.add(
+            SchwabIneligibleToday(
+                symbol="UGRO",
+                session_date="2026-03-28",
+                broker_account_id=macd_account.id,
+                reason_text="Opening transactions for this security must be placed with a broker. Contact us",
+                hit_count=1,
+            )
+        )
+        session.commit()
+
+    blocked = service._load_schwab_ineligible_symbols_by_strategy()
+
+    assert blocked == {"macd_30s": {"UGRO"}}
 
 
 def test_market_data_archive_retention_keeps_symbols_for_ttl(monkeypatch: pytest.MonkeyPatch) -> None:

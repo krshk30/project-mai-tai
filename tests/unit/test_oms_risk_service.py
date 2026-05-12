@@ -12,7 +12,16 @@ from sqlalchemy.pool import StaticPool
 from project_mai_tai.broker_adapters.routing import RoutingBrokerAdapter
 from project_mai_tai.broker_adapters.protocols import BrokerPositionSnapshot, ExecutionReport
 from project_mai_tai.db.base import Base
-from project_mai_tai.db.models import AccountPosition, BrokerAccount, BrokerOrder, Fill, Strategy, TradeIntent, VirtualPosition
+from project_mai_tai.db.models import (
+    AccountPosition,
+    BrokerAccount,
+    BrokerOrder,
+    Fill,
+    SchwabIneligibleToday,
+    Strategy,
+    TradeIntent,
+    VirtualPosition,
+)
 from project_mai_tai.events import (
     QuoteTickEvent,
     QuoteTickPayload,
@@ -25,6 +34,7 @@ from project_mai_tai.oms.service import OmsRiskService
 from project_mai_tai.oms.store import OmsStore
 from project_mai_tai.runtime_registry import configured_broker_account_registrations, strategy_registration_map
 from project_mai_tai.settings import Settings
+from project_mai_tai.strategy_core.time_utils import session_day_eastern_str
 
 
 class FakeRedis:
@@ -605,6 +615,35 @@ class FakeRejectNotTradableBrokerAdapter:
         return []
 
 
+class FakeRejectSchwabIneligibleBrokerAdapter:
+    def __init__(self) -> None:
+        self.requests = []
+
+    async def submit_order(self, request):
+        self.requests.append(request)
+        return [
+            ExecutionReport(
+                event_type="rejected",
+                client_order_id=request.client_order_id,
+                broker_order_id=None,
+                symbol=request.symbol,
+                side=request.side,
+                intent_type=request.intent_type,
+                quantity=request.quantity,
+                reason="Opening transactions for this security must be placed with a broker. Contact us",
+                metadata=dict(request.metadata),
+            )
+        ]
+
+    async def fetch_order_update(self, request):
+        del request
+        return None
+
+    async def list_account_positions(self, broker_account_name: str):
+        del broker_account_name
+        return []
+
+
 def build_test_session_factory() -> sessionmaker[Session]:
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",
@@ -805,6 +844,67 @@ async def test_oms_service_blocks_not_tradable_symbol_for_rest_of_session() -> N
         intents = session.scalars(select(TradeIntent).order_by(TradeIntent.created_at.asc())).all()
         assert len(intents) == 2
         assert all(intent.status == "rejected" for intent in intents)
+
+
+@pytest.mark.asyncio
+async def test_oms_service_caches_schwab_ineligible_symbol_for_session_day() -> None:
+    redis = FakeRedis()
+    session_factory = build_test_session_factory()
+    adapter = FakeRejectSchwabIneligibleBrokerAdapter()
+    service = OmsRiskService(
+        settings=Settings(
+            redis_stream_prefix="test",
+            oms_adapter="simulated",
+            strategy_macd_30s_broker_provider="schwab",
+        ),
+        redis_client=redis,
+        session_factory=session_factory,
+        broker_adapter=adapter,
+    )
+
+    first = await service.process_trade_intent(
+        TradeIntentEvent(
+            source_service="strategy-engine",
+            payload=TradeIntentPayload(
+                strategy_code="macd_30s",
+                broker_account_name="paper:macd_30s",
+                symbol="AEHL",
+                side="buy",
+                quantity=Decimal("10"),
+                intent_type="open",
+                reason="ENTRY_P1_MACD_CROSS",
+                metadata={},
+            ),
+        )
+    )
+    second = await service.process_trade_intent(
+        TradeIntentEvent(
+            source_service="strategy-engine",
+            payload=TradeIntentPayload(
+                strategy_code="macd_30s",
+                broker_account_name="paper:macd_30s",
+                symbol="AEHL",
+                side="buy",
+                quantity=Decimal("10"),
+                intent_type="open",
+                reason="ENTRY_P1_MACD_CROSS",
+                metadata={},
+            ),
+        )
+    )
+
+    assert len(adapter.requests) == 1
+    assert first[0].payload.status == "rejected"
+    assert "placed with a broker" in (first[0].payload.reason or "")
+    assert second[0].payload.status == "rejected"
+    assert second[0].payload.reason == "schwab_ineligible_cached"
+
+    with session_factory() as session:
+        entries = session.scalars(select(SchwabIneligibleToday)).all()
+        assert len(entries) == 1
+        assert entries[0].symbol == "AEHL"
+        assert entries[0].session_date == session_day_eastern_str()
+        assert entries[0].hit_count == 1
 
 
 @pytest.mark.asyncio
