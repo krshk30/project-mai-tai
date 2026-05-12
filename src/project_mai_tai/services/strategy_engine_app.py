@@ -6188,6 +6188,7 @@ class StrategyEngineService:
             end_at=end_at,
             need_extended_hours_data=True,
         )
+        bars = self._drop_placeholder_bars(bars)
         if len(bars) >= required_bars:
             return bars[-limit:]
 
@@ -6201,6 +6202,7 @@ class StrategyEngineService:
                 end_at=end_at,
                 need_extended_hours_data=True,
             )
+            broader_bars = self._drop_placeholder_bars(broader_bars)
             if len(broader_bars) > len(bars):
                 bars = broader_bars
 
@@ -6270,6 +6272,22 @@ class StrategyEngineService:
                 required_bars,
             )
         return merged[-limit:]
+
+    @staticmethod
+    def _drop_placeholder_bars(
+        bars: Sequence[dict[str, float | int]],
+    ) -> list[dict[str, float | int]]:
+        # Schwab's pricehistory API returns a minute bar for every minute in the
+        # requested range, including minutes with no trades. Those bars carry
+        # volume=0, trade_count=0, and a flat OHLC equal to the symbol's prior
+        # close. Hydrating them as-is pollutes persisted history and can drive
+        # zero-volume bars into handle_live_bar during refresh.
+        return [
+            bar
+            for bar in bars
+            if int(bar.get("volume", 0) or 0) > 0
+            or int(bar.get("trade_count", 0) or 0) > 0
+        ]
 
     @staticmethod
     def _merge_historical_bar_payloads(

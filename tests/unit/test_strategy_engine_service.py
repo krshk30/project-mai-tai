@@ -7002,3 +7002,35 @@ def test_schwab_native_30s_runtime_does_not_emit_intrabar_open_when_intrabar_dis
     assert runtime.definition.trading_config.confirm_bars == 0
     assert runtime.definition.trading_config.entry_intrabar_enabled is False
     assert runtime.definition.trading_config.schwab_native_use_confirmation is True
+
+
+def test_drop_placeholder_bars_filters_zero_volume_and_zero_trade_count() -> None:
+    bars = [
+        {"open": 1.10, "high": 1.10, "low": 1.10, "close": 1.10, "volume": 0, "trade_count": 0, "timestamp": 1_778_577_840.0},
+        {"open": 1.32, "high": 1.44, "low": 1.29, "close": 1.44, "volume": 324_283, "trade_count": 46, "timestamp": 1_778_577_900.0},
+        {"open": 1.49, "high": 1.55, "low": 1.49, "close": 1.50, "volume": 157_327, "trade_count": 37, "timestamp": 1_778_577_960.0},
+    ]
+
+    kept = StrategyEngineService._drop_placeholder_bars(bars)
+
+    assert [bar["timestamp"] for bar in kept] == [1_778_577_900.0, 1_778_577_960.0]
+
+
+def test_drop_placeholder_bars_keeps_bars_with_volume_only() -> None:
+    bars = [{"open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0, "volume": 100}]
+    assert StrategyEngineService._drop_placeholder_bars(bars) == bars
+
+
+def test_drop_placeholder_bars_keeps_bars_with_trade_count_only() -> None:
+    bars = [{"open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0, "trade_count": 3}]
+    assert StrategyEngineService._drop_placeholder_bars(bars) == bars
+
+
+def test_drop_placeholder_bars_drops_bars_with_missing_volume_and_trade_count() -> None:
+    bars = [{"open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0}]
+    assert StrategyEngineService._drop_placeholder_bars(bars) == []
+
+
+def test_drop_placeholder_bars_drops_bars_with_none_volume() -> None:
+    bars = [{"open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0, "volume": None, "trade_count": None}]
+    assert StrategyEngineService._drop_placeholder_bars(bars) == []
