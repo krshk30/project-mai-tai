@@ -230,6 +230,77 @@ Next session — see new SESSION START above. Priority 1: deploy PR #92. Priorit
 
 ---
 
+## 2026-05-12 ~11:05 UTC: `polygon_30s` live-aggregate gap-fill regression fixed locally, not deployed
+
+Workstream: `polygon_30s` bar continuity during sparse/patchy live aggregate coverage.
+
+### What triggered this
+
+- User reported that the Polygon bot looked dead after the morning while the other `30s` bot kept trading.
+- Live check on the VPS showed this was **not** another stale-runtime incident:
+  - current `polygon_30s` watchlist had narrowed to `AMBO`, `BZFD`, `HTCO`, `TDIC`
+  - `latest_decision_at` was fresh and kept advancing (`07:03:30 AM ET` during audit)
+  - `latest_bot_tick_at` / `latest_market_data_at` / `latest_heartbeat_at` were all fresh
+- But persisted `strategy_bar_history` for `strategy_code='polygon_30s'` and `interval_secs=30` still had real earlier-session holes.
+
+### VPS evidence
+
+- Active live-watchlist symbols were clean in the **recent** window:
+  - from `06:00 AM ET` through `07:03:30 AM ET`, `AMBO`, `BZFD`, `HTCO`, and `TDIC` had **0 persisted gaps > 30s**
+- Earlier pre-market window still had persisted holes:
+  - active names had repeated `60-150s` gaps between `04:00 AM ET` and `~04:34 AM ET`
+  - one synchronized cluster hit **8 symbols at once**:
+    - `prev_bar_et = 2026-05-12 04:32:30 AM ET`
+    - `next bar_et = 2026-05-12 04:34:00 AM ET`
+    - symbols: `AIIO, AMBO, BZFD, CVM, HPAI, HTCO, WOK, XOS`
+- Larger rotated-off-name holes also existed (`CGTL`, `INBS`, `VEEE`, etc.), but the important point is that the active names were **not** actually gap-free earlier in the morning.
+
+### Root cause
+
+- `src/project_mai_tai/strategy_core/polygon_30s.py` had an asymmetry between the trade-tick and live-aggregate paths:
+  - `on_trade()` already did:
+    - close current bar
+    - `_fill_gap_bars(...)`
+    - open resumed bucket
+  - `on_bar()` when `bar_start > self._current_bar_start` only did:
+    - close current bar
+    - open resumed bucket
+  - it **did not backfill the skipped intermediate 30s buckets**
+- Result: when Polygon `1s` live aggregates resumed after skipping one or more 30s buckets, Mai Tai persisted a real hole instead of the intended synthetic continuity bars.
+- This matches the current symptom profile exactly:
+  - fresh runtime now
+  - no duplicate bars
+  - holes appear when coverage resumes after a gap
+
+### Local fix
+
+- Added the missing gap-fill call in `Polygon30sBarBuilder.on_bar()`:
+  - after `_close_current_bar()`
+  - before constructing the resumed current bucket
+- Added a new regression test that reproduces the missing case the existing suite did not cover:
+  - existing coverage only proved gap-fill when `self._current_bar is None`
+  - new coverage proves gap-fill when a **current live aggregate bar is already open** and the next component jumps multiple buckets forward
+
+### Validation
+
+- `pytest tests/unit/test_polygon_30s_bot.py -q` -> `27 passed`
+- `pytest tests/unit/test_strategy_engine_service.py -k "polygon_late_live_second_revises_persisted_closed_bar_without_redecision or live_second_bars_can_generate_open_intent_for_polygon_30s_bot or polygon_tick_built_sparse_ticks_do_not_synthesize_gap_bars" -q` -> `3 passed`
+- `py_compile` passed on:
+  - `src/project_mai_tai/strategy_core/polygon_30s.py`
+  - `tests/unit/test_polygon_30s_bot.py`
+
+### Current state / next step
+
+- Fix is on local branch `codex/polygon-live-bar-gap-fill`
+- **Not merged, not deployed**
+- If user wants the live system corrected today, next step is:
+  - push branch / open PR
+  - merge
+  - deploy **strategy service only** using `docs/live-market-restart-runbook.md`
+  - re-audit `polygon_30s` persisted bars on the next live window, especially around resumed sparse periods
+
+---
+
 ## 2026-05-12 ~02:00 UTC: Post-deploy cleanup audit + control-deploy worktree flag
 
 After the schwab_1m deploy chain landed (see entry below), this agent (Claude Code) ran a full cleanup audit. Recording what was cleaned vs left-alone vs flagged so next-agent state is clear.
