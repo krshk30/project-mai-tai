@@ -216,3 +216,130 @@ def test_no_revision_signal_when_trade_lands_in_a_fresh_bucket() -> None:
     # A trade in the next bucket closes bar 0 and opens bar 1 -- still no revision.
     builder.on_trade(price=10.5, size=50, timestamp_ns=t_ns(31), cumulative_volume=1100)
     assert builder.consume_recent_revised_closed_bar() is None
+
+
+# ---------------------------------------------------------------------------
+# CHART_EQUITY canonical-source guard (schwab_1m bug fix, 2026-05-11)
+#
+# When `live_aggregate_bars_are_final=True` (schwab_1m), bars are persisted
+# from CHART_EQUITY. The bug: _revise_last_closed_bar_from_trade ALSO ran
+# on those CHART-sourced bars when late TIMESALE/LEVELONE ticks landed in
+# the same bucket. The cum_vol baseline carried over from a much earlier
+# tick-close (potentially many CHART-only bars back), so a single late tick
+# computed volume_contrib = cum_vol_now - stale_baseline = MASSIVE delta,
+# inflating the CHART bar to 4-10x its real volume and stamping
+# trade_count=2. Fix: skip revision when bars[-1] came from on_final_bar.
+# ---------------------------------------------------------------------------
+
+
+def _make_aggregate_bar(*, bucket_start_s: int, open_p: float, high_p: float,
+                       low_p: float, close_p: float, volume: int) -> "OHLCVBar":
+    from project_mai_tai.strategy_core.models import OHLCVBar
+    return OHLCVBar(
+        open=open_p, high=high_p, low=low_p, close=close_p,
+        volume=volume, timestamp=float(bucket_start_s), trade_count=1,
+    )
+
+
+def test_late_trade_does_not_revise_chart_sourced_bar() -> None:
+    """Bug repro from 2026-05-11 audit: AEHL 07:19 bar persisted=1.45M
+    while CHART live_bar=298K. CHART arrives, then a late TIMESALE tick for
+    the same bucket arrives with cum_vol much higher than the baseline
+    (because the baseline is from a tick-closed bar potentially many
+    CHART-only bars back). Without the fix, the tick contributes a huge
+    cum_vol delta to the CHART bar's volume.
+
+    With the fix: bars[-1] is flagged as aggregate-sourced; the revision
+    path is skipped; the CHART value is preserved.
+    """
+    builder, clock = _make_builder()
+
+    # Establish a tick-built baseline far back so cum_vol baseline is stale.
+    builder.on_trade(price=10.0, size=100, timestamp_ns=t_ns(0), cumulative_volume=1000)
+    clock["now"] = float(BASE_S + 35)
+    builder.check_bar_closes()
+    # bars[-1] is now the tick-built bar 0; _last_closed_bar_cum_volume = 1000.
+
+    # CHART_EQUITY for bar 1 arrives: append CHART-sourced bar with vol 5000.
+    builder.on_final_bar(_make_aggregate_bar(
+        bucket_start_s=BASE_S + 30,
+        open_p=10.5, high_p=10.6, low_p=10.4, close_p=10.55, volume=5000,
+    ))
+    assert builder.bars[-1].volume == 5000
+    assert builder._last_closed_bar_from_aggregate is True
+
+    # Late TIMESALE tick for bar 1 with a MUCH higher cum_vol.
+    # Without the fix: volume_contrib = 100000 - 1000 = 99000 added to the
+    #                  CHART bar -> 5000 + 99000 = 104000 (inflated 20x).
+    # With the fix:    revision is skipped; CHART bar stays at 5000.
+    builder.on_trade(price=10.6, size=50, timestamp_ns=t_ns(45), cumulative_volume=100000)
+    assert builder.bars[-1].volume == 5000, "CHART-sourced bar must not be revised by late ticks"
+    assert builder.bars[-1].trade_count == 1, "trade_count must not be incremented"
+    assert builder.consume_recent_revised_closed_bar() is None, (
+        "no revision stamp should be set; engine must not re-persist"
+    )
+
+
+def test_chart_aggregate_flag_clears_on_subsequent_tick_close() -> None:
+    """After a CHART bar lands, if the strategy goes back to building a
+    tick bar and that tick bar closes naturally (or via check_bar_closes),
+    the aggregate flag must clear so future late-trade revisions on the
+    new tick-built bars[-1] work correctly.
+    """
+    builder, clock = _make_builder()
+
+    # CHART bar 0.
+    builder.on_final_bar(_make_aggregate_bar(
+        bucket_start_s=BASE_S, open_p=10.0, high_p=10.1, low_p=9.9,
+        close_p=10.05, volume=4000,
+    ))
+    assert builder._last_closed_bar_from_aggregate is True
+
+    # Tick traffic resumes: builds bar 1, then bar 2 starts which closes bar 1.
+    builder.on_trade(price=10.1, size=100, timestamp_ns=t_ns(31), cumulative_volume=5000)
+    builder.on_trade(price=10.2, size=50, timestamp_ns=t_ns(61), cumulative_volume=5150)
+    # bar 1 (tick-built) just closed via the bucket-change path.
+    assert builder._last_closed_bar_from_aggregate is False, (
+        "_close_current_bar must clear the aggregate flag when a tick-built "
+        "bar replaces the CHART bar at bars[-1]"
+    )
+
+    # Late tick for bar 1 (now bars[-1] = bar 1 tick-built, vol=100, cv=5000).
+    # Should revise normally: volume_contrib = 5100 - 5000 = 100; bar 1 -> 200.
+    builder.on_trade(price=10.15, size=25, timestamp_ns=t_ns(45), cumulative_volume=5100)
+    assert builder.bars[1].volume == 200, (
+        "tick-built bar must accept revision once the aggregate flag clears"
+    )
+    assert builder.bars[1].trade_count == 2
+
+
+def test_macd_30s_path_unaffected_when_on_final_bar_never_called() -> None:
+    """Regression guard for macd_30s, which uses
+    `live_aggregate_bars_are_final=False` and therefore never calls
+    on_final_bar. The aggregate flag must stay False throughout, and the
+    existing late-trade revision behavior must be preserved bit-for-bit.
+    """
+    builder, _ = _make_builder()
+
+    # Tick-built bar 0.
+    builder.on_trade(price=10.0, size=100, timestamp_ns=t_ns(0), cumulative_volume=1000)
+    # Bar 1 first tick closes bar 0.
+    builder.on_trade(price=10.5, size=50, timestamp_ns=t_ns(31), cumulative_volume=1100)
+    assert builder._last_closed_bar_from_aggregate is False
+
+    # Late tick for bar 0 -- existing test asserts vol becomes 180.
+    builder.on_trade(price=10.2, size=25, timestamp_ns=t_ns(20), cumulative_volume=1080)
+    assert builder.bars[0].volume == 180, "macd_30s tick-only late-trade revision must still work"
+    assert builder.bars[0].trade_count == 2
+    assert builder._last_closed_bar_from_aggregate is False
+
+
+def test_reset_clears_aggregate_flag() -> None:
+    builder, _ = _make_builder()
+    builder.on_final_bar(_make_aggregate_bar(
+        bucket_start_s=BASE_S, open_p=10.0, high_p=10.0, low_p=10.0,
+        close_p=10.0, volume=1000,
+    ))
+    assert builder._last_closed_bar_from_aggregate is True
+    builder.reset()
+    assert builder._last_closed_bar_from_aggregate is False
