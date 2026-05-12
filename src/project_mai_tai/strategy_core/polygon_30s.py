@@ -201,6 +201,8 @@ class Polygon30sBarBuilder:
 
         if bar_start > self._current_bar_start:
             completed.append(self._close_current_bar())
+            if self.fill_gap_bars:
+                completed.extend(self._fill_gap_bars(self._current_bar_start + self.interval_secs, bar_start))
             self._current_bar_components = {
                 component_timestamp: OHLCVBar.from_bar(bar, timestamp=component_timestamp)
             }
