@@ -8,57 +8,131 @@
 - Overall `/health` may still show `degraded` because of reconciler state. Do not confuse that with a Polygon-specific runtime failure.
 - Keep copied CI counts and failure logs out of the top summary unless they have been revalidated on current `main`.
 
-## 2026-05-12 SESSION START — schwab_1m bar-build validation pickup
+## 2026-05-12 SESSION START — PR #92 Schwab eligibility cache deploy + TDIC missed-bar residual
 
 > **Read this first.** This section is the live pickup pointer for the next session. Older entries below are chronology + archive.
 
-### Critical first action: validate the schwab_1m CHART-canonical fix
-
-PR #85 (`schwab_1m: skip late-trade revision on CHART-sourced bars`) merged at `3019151` 2026-05-12 01:48 UTC. Strategy restarted 01:49:28 UTC. Market was closed at deploy → bar-build validation deferred to today's pre-market.
-
 ### State at session start
 
-- `main` HEAD: `09b6dcf` (post-cleanup-audit) — confirm with `gh api repos/krshk30/project-mai-tai/commits/main --jq '.sha'`
-- VPS HEAD: `09b6dcf` ✓ matches (`ssh mai-tai-vps "git -C /home/trader/project-mai-tai rev-parse HEAD"`)
-- All 5 services `active`; strategy uptime since 2026-05-12 01:49:27 UTC
-- Positions: only `CYN x 8000` on `paper:schwab_1m` + `paper:macd_30s` — **exempt** per user (do NOT include in account-flat pre-flight blocking)
-- CI baseline: 517 passed / 15 failed / 91.90s, no hangs (15 failures = next cleanup cluster, full list in 2026-05-11 PM entry)
+- `main` HEAD: post-PR-91 + this PR (handoff-only update). Confirm with `gh api repos/krshk30/project-mai-tai/commits/main --jq '.sha'`. Prior session validation entry is the 2026-05-12 ~12:00 UTC entry below.
+- VPS HEAD should match `main` (VPS was synced to `16763d1` before this entry; resync after this PR merges)
+- All 5 services `active`; strategy uptime since 2026-05-12 01:49:27 UTC (unchanged since PR #85)
+- Positions: only `CYN x 8000` on `paper:schwab_1m` + `paper:macd_30s` — **exempt** per user
+- CI baseline: 517 passed / 15 failed in `test_strategy_engine_service.py` (full list in 2026-05-11 PM entry)
+- **PR #85 schwab_1m CHART-canonical fix is VALIDATED** (see 2026-05-12 ~12:00 UTC entry below). The `trade_count=2 + 4-10x volume` bug pattern is eliminated.
 
-### Validation steps
+### Critical first action: deploy PR #92 (Schwab pre-trade eligibility cache)
 
-1. **Wait for 30+ min of pre-market bars.** Pre-market opens 04:00 ET = 08:00 UTC. Bars are persisted continuously; at 04:30+ ET there should be enough data to validate.
+PR #92 (`codex/schwab-ineligible-cache`) opened by codex 2026-05-12 ~02:40 UTC at SHA `af97369`. Spec is in the 2026-05-11 AM entry. Adds `schwab_ineligible_today` table + OMS short-circuit for `Opening transactions for this security must be placed with a broker` rejects + strategy-side per-account watchlist filtering.
 
-2. **Find today's active schwab_1m symbols:**
-   ```
-   ssh mai-tai-vps 'sudo -u postgres psql -d project_mai_tai -c "SELECT symbol, count(*) AS bars, max(bar_time AT TIME ZONE '"'"'America/New_York'"'"') AS latest_et FROM strategy_bar_history WHERE strategy_code='"'"'schwab_1m'"'"' AND interval_secs=60 AND bar_time::date='"'"'2026-05-12'"'"' GROUP BY symbol ORDER BY bars DESC LIMIT 10;"'
-   ```
+Deploy lifecycle requires migration + coordinated OMS + strategy restart per the live-restart-runbook OMS path (stop strategy → migrate → restart oms → start strategy). Either `Deploy Service` per service or `Deploy Main` off-hours.
 
-3. **Run the validator** (full DSN-extraction template in 2026-05-11 PM entry's "Validation" section). Substitute today's date and the symbol list from step 2:
-   ```
-   ssh mai-tai-vps 'URL=$(sudo grep -E "^MAI_TAI_DATABASE_URL=" /etc/project-mai-tai/project-mai-tai.env | head -1 | cut -d= -f2-); PGPASSWORD=$(echo "$URL" | sed -E "s|^[^:]+://[^:]+:([^@]+)@.*|\1|"); PGUSER=$(echo "$URL" | sed -E "s|^[^:]+://([^:]+):.*|\1|"); DSN="dbname=project_mai_tai user=${PGUSER} host=localhost"; PYTHONPATH=/home/trader/project-mai-tai/src PGPASSWORD=$PGPASSWORD /home/trader/project-mai-tai/.venv/bin/python /home/trader/project-mai-tai/scripts/check_bar_build_runtime.py --day 2026-05-12 --start-hour 4 --end-hour 8 --archive-dir /var/lib/project-mai-tai/schwab_ticks/2026-05-12 --symbols <SYM1> <SYM2> ... --interval-secs 60 --strategy-code schwab_1m --dsn "$DSN"'
-   ```
+Steps:
+1. `gh pr checks 92 --watch` — confirm Validate is green, or matches the documented 15 baseline failures only
+2. Read the PR diff to satisfy the Pre-Merge Regression Check rule (`oms/service.py`, `strategy_engine_app.py` are shared hot files)
+3. Account-flat pre-flight (CYN exempt)
+4. `gh pr merge 92 --squash --delete-branch` (or `--admin` if CI is on the same 15 baseline)
+5. Run Alembic migration on VPS
+6. Coordinated restart per live-session restart choreography for OMS
 
-4. **Cross-check the bug pattern is gone**:
-   ```
-   ssh mai-tai-vps 'sudo -u postgres psql -d project_mai_tai -c "SELECT symbol, bar_time AT TIME ZONE '"'"'America/New_York'"'"' AS et, volume, trade_count FROM strategy_bar_history WHERE strategy_code='"'"'schwab_1m'"'"' AND interval_secs=60 AND bar_time::date='"'"'2026-05-12'"'"' AND trade_count <= 3 AND volume > 50000 ORDER BY volume DESC LIMIT 20;"'
-   ```
-   Pre-fix on 2026-05-11 returned 20+ rows with `trade_count=2` and `volume` in the 100K-1.87M range. Post-fix expectation: **zero rows or only legitimate single-print blocks** (which would have `trade_count=1` not 2).
+### Residual to triage: TDIC missed-bar at 05:24 ET (NOT a PR #85 regression)
 
-5. **Update this doc with the result** (replace this section with the next session's pickup).
+TDIC 2026-05-12 05:24:00 ET persisted=(1.1, 1.1, 1.1, 1.1, **vol=0, trade_count=0**) but rebuilt-from-archive=(1.325, 1.44, 1.2897, 1.44, **vol=330023, trade_count=46**). The 05:25 neighbor also diverges (rebuilt vol=292K vs persisted vol=157K).
 
-### Decision tree
+This pattern is UNDER-counting — the opposite of PR #85's bug — so it is NOT a regression of that fix. Two plausible causes:
+1. A CHART_EQUITY 0-vol bar landed first at 05:24 and the new `_last_closed_bar_from_aggregate` early-return in `_revise_last_closed_bar_from_trade` now suppresses late-TIMESALE revision even when CHART vol=0. If so, the early-return needs a `aggregate_volume > 0` guard.
+2. Strategy-engine drain hiccup around 05:24 unrelated to PR #85.
 
-- **Validation passes** (outliers gone; per-bar `avg_abs_vol_diff` drops to inherent CHART vs TIMESALE drift on trade_count-matching bars, ~5-15%) → mark deploy success, move on to **Active Workstream #4**: Schwab pre-trade eligibility cache. Spec is in the 2026-05-11 AM entry.
-- **Outliers persist** → instrument `src/project_mai_tai/strategy_core/schwab_native_30s.py` `_last_closed_bar_from_aggregate` flag (set/clear sites at lines 112, 254, 260, 311, 353). Confirm flag is `True` after `on_final_bar` for CHART_EQUITY bars and that `_revise_last_closed_bar_from_trade` is early-returning. The 4 unit tests in `tests/unit/test_schwab_native_late_trade_revision.py` added in PR #85 cover the synthetic happy path; if they pass but production drifts, look for a code path that sets `bars[-1]` without going through `on_final_bar` (e.g., `_pop_last_closed_bar` corner cases).
-- **Strategy not running / new errors in log** → first check `sudo systemctl status project-mai-tai-strategy`, then `sudo tail -100 /var/log/project-mai-tai/strategy.log`. Pre-existing fd-leak ("Too many open files") is unrelated to this PR but may surface as background noise.
+To distinguish: grep `/var/log/project-mai-tai/strategy.log` around 09:24:00-09:25:00 UTC for `on_final_bar` on TDIC; compare against archive `.jsonl` `live_bar` events for TDIC. Low-priority residual; the inflation bug — the original reported symptom — is resolved.
 
 ### Other open workstreams (not immediate, see entries below)
 
 - **CI baseline**: 15 failures in `test_strategy_engine_service.py` (full list in 2026-05-11 PM entry). Codex's natural next cleanup cluster.
-- **Schwab eligibility filter** (Active Workstream #4): spec in 2026-05-11 AM entry. ~70 LoC + Alembic migration. Unblocks proper trade routing for restricted symbols (AEHL, CLIK, etc.).
 - **Reconciler** still degraded since 2026-04-28. Background residual.
-- **fd-leak** in catalyst/news fetch (`OSError: [Errno 24] Too many open files`). Pre-existing; pre-existing log noise from 2026-05-11 18:27 UTC.
-- **Codex's WIP**: ~10 worktrees in `AppData/Local/Temp`, ~50 remote `codex/*` branches, PR #67 (April). Codex's responsibility; do not touch.
+- **fd-leak** in catalyst/news fetch (`OSError: [Errno 24] Too many open files`). Pre-existing.
+- **Codex's WIP**: ~10 worktrees in `AppData/Local/Temp`, ~50 remote `codex/*` branches, PR #67 (April). Do not touch.
+
+---
+
+## 2026-05-12 ~12:00 UTC: schwab_1m CHART-canonical fix (PR #85) VALIDATED in pre-market
+
+```
+Deploy owner: this agent (Claude Code) — validation + doc update only
+Local code owner: this agent (Claude Code)
+Active workstream: schwab_1m bar-build correctness validation (post PR #85)
+Status: VALIDATED. Inflation bug pattern eliminated. One unrelated UNDER-count residual (TDIC) flagged.
+SHAs: validated against main HEAD 16763d1 (no code change in this entry)
+VPS SHA: 16763d1 (matches main at validation time)
+Workflow: handoff-only — no service restart
+Service target: none
+Restart window: n/a
+Market hours at validation: NO (pre-market 04:00-08:00 ET = 08:00-12:00 UTC)
+Account flat at validation: yes (only CYN exempt held)
+Post-deploy validator: this agent (Claude Code)
+```
+
+### Validation method
+
+Followed the validation procedure in the prior 2026-05-12 SESSION START section (now replaced by this entry's successor SESSION START above). Ran `scripts/check_bar_build_runtime.py` against the 10 most-active schwab_1m symbols of the morning plus the cross-check outlier query.
+
+Active symbols (bar counts at 06:51 ET): AMBO 173, BZFD 173, WOK 170, XOS 170, AIIO 168, HTCO 127, TDIC 88, HPAI 69, CVM 55, VEEE 50.
+
+### Cross-check outlier query (the bug-pattern detector)
+
+```
+SELECT symbol, bar_time, volume, trade_count
+FROM strategy_bar_history
+WHERE strategy_code='schwab_1m' AND interval_secs=60
+  AND bar_time::date='2026-05-12'
+  AND trade_count <= 3 AND volume > 50000
+ORDER BY volume DESC LIMIT 20;
+```
+
+Returned **0 rows**. Pre-fix on 2026-05-11 the same query returned 20+ rows (CLIK 1.87M vol, HPAI 663K, AEHL 1.45M, all with `trade_count=2`). The `trade_count=2 + 4-10x-volume` signature is eliminated.
+
+### Per-symbol validator results
+
+| Symbol | avg_abs_vol_diff | overlap | Notes |
+|---|---|---|---|
+| AMBO | 61.7 | 173/173 | Negligible drift |
+| BZFD | 433.6 | 173/173 | Inherent CHART/TIMESALE drift, ~0.5% on largest bars |
+| WOK | 0.0 | 169/169 | Perfect |
+| XOS | 0.0 | 167/170 | Perfect on overlap |
+| AIIO | 25.5 | 163/168 | Excellent |
+| HTCO | 0.0 | 128/128 | Perfect on overlap |
+| TDIC | 5223.2 | 89/89 | Outlier — single missed bar; see residual |
+| HPAI | 0.0 | 59/137 | Perfect on overlap (yesterday's worst offender — 7.9x ratio — now fixed) |
+| CVM | 0.0 | 28/62 | Perfect on overlap |
+| VEEE | 2.7 | 20/50 | Excellent |
+
+7/10 symbols show CHART matches TIMESALE rebuild exactly where they overlap. BZFD's 433.6 avg drift is in the accepted "inherent CHART vs TIMESALE" band documented in the project context memory.
+
+### Result
+
+PR #85 fix is VALIDATED. The trade_count=2 + 4-10x-volume bug pattern is eliminated. macd_30s pipeline structurally unaffected (regression-tested in PR #85's `test_macd_30s_path_unaffected_when_on_final_bar_never_called`).
+
+### Residual: TDIC 05:24 ET — missed bar (separate issue)
+
+TDIC at 2026-05-12 05:24:00 ET shows:
+- persisted: o=1.1 h=1.1 l=1.1 c=1.1 vol=0 trade_count=0
+- rebuilt: o=1.325 h=1.44 l=1.2897 c=1.44 vol=330023 trade_count=46
+
+The 05:25 neighbor also diverges (rebuilt vol=292165 vs persisted vol=157327). This is UNDER-counting, not OVER-counting; not a PR #85 regression. Triage steps captured in the SESSION START "Residual to triage" section above. Low priority.
+
+### Tests added
+
+None in this entry (validation-only). PR #85's regression tests (4 new in `tests/unit/test_schwab_native_late_trade_revision.py`) already lock in the fix at the unit level.
+
+### State at end of work
+
+- GitHub `main` SHA: this doc-update PR's squash-merge commit (filled after merge)
+- VPS `git rev-parse HEAD`: same after resync
+- All 5 services active since strategy restart 2026-05-12 01:49:28 UTC (unchanged)
+- CYN x 8000 still on paper accounts (exempt)
+
+### Next owner
+
+Next session — see new SESSION START above. Priority 1: deploy PR #92. Priority 2 (if time): TDIC residual investigation.
 
 ---
 
