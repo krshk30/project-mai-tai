@@ -8,50 +8,138 @@
 - Overall `/health` may still show `degraded` because of reconciler state. Do not confuse that with a Polygon-specific runtime failure.
 - Keep copied CI counts and failure logs out of the top summary unless they have been revalidated on current `main`.
 
-## 2026-05-12 SESSION START — PR #92 Schwab eligibility cache deploy
+## 2026-05-12 SESSION START — Schwab eligibility cache (PR #92) live; monitor cache hits
 
 > **Read this first.** This section is the live pickup pointer for the next session. Older entries below are chronology + archive.
 
 ### State at session start
 
-- `main` HEAD: `6a2e473` (PR #97 squash-merge) + this handoff-doc PR. Confirm with `gh api repos/krshk30/project-mai-tai/commits/main --jq '.sha'`.
-- VPS HEAD: matches `main` (resynced to `6a2e473` 2026-05-12 11:33 UTC after PR #97 merge)
-- All 5 services `active`; strategy restarted 2026-05-12 11:33:15 UTC for PR #97 deploy (clean log, momentum alert engine restored, runtime bar history restored)
-- Positions: account flat (`virtual_positions WHERE quantity != 0` = 0 rows). PR #97 deploy was authorized by user despite two paper-account BZFD positions open at the time (they closed naturally within minutes; this was a one-time exception, not a new standing rule)
-- CI baseline: 517 passed / 15 failed in `test_strategy_engine_service.py` (full list in 2026-05-11 PM entry). PR #94 added 5 new passing tests + PR #97 added 3 more (525 / 15).
-- **PR #85 + PR #94 + PR #97 all shipped today** — see entries below. The schwab_1m zero-bar pollution chain is closed at both the bootstrap entry (PR #94) and the live-path persist entry (PR #97).
+- `main` HEAD: `0f5d66e` (PR #92 squash-merge) + this handoff-doc PR. Confirm with `gh api repos/krshk30/project-mai-tai/commits/main --jq '.sha'`.
+- VPS HEAD: matches `main` (resynced to `0f5d66e` 2026-05-12 11:58 UTC after PR #92 merge)
+- All 5 services `active`; OMS restarted + strategy restarted 2026-05-12 11:58 UTC (clean coordinated restart per live-restart-runbook OMS path)
+- DB: alembic at `20260511_0005` (head). New table `schwab_ineligible_today` created, 0 rows at deploy.
+- Positions: account flat at deploy
+- CI baseline: 15 failures in `test_strategy_engine_service.py`. PRs #94/#97/#92 added 5+3+3 new passing tests respectively (528 / 15).
+- **All four PRs shipped today**: PR #85 + #94 + #97 (schwab_1m bar-build correctness) + **PR #92 (Schwab eligibility cache)**
 
-### Critical first action: deploy PR #92 (Schwab pre-trade eligibility cache)
+### Critical first action: monitor Schwab eligibility cache as rejections roll in
 
-PR #92 (`codex/schwab-ineligible-cache`) opened by codex 2026-05-12 ~02:40 UTC at SHA `af97369`. Spec is in the 2026-05-11 AM entry. Adds `schwab_ineligible_today` table + OMS short-circuit for `Opening transactions for this security must be placed with a broker` rejects + strategy-side per-account watchlist filtering.
+PR #92 is live but `schwab_ineligible_today` is empty (no rejects since deploy at 11:58 UTC). When a Schwab-backed OPEN intent for a restricted symbol (e.g., AEHL, CLIK, or any name with the rejection text "Opening transactions for this security must be placed with a broker") flows through OMS, the cache should populate. Subsequent OPEN intents for the same symbol on the same Schwab-backed account should short-circuit with synthetic reason `schwab_ineligible_cached` instead of round-tripping to the broker.
 
-Deploy lifecycle requires migration + coordinated OMS + strategy restart per the live-restart-runbook OMS path (stop strategy → migrate → restart oms → start strategy). Either `Deploy Service` per service or `Deploy Main` off-hours.
+Validation queries (run during the trading day to confirm the feature is working):
+```
+-- 1. Watch the cache populate
+sudo -u postgres psql -d project_mai_tai -c "SELECT symbol, broker_account_id, session_date, first_seen_at AT TIME ZONE 'America/New_York' AS first_seen_et, hit_count, left(reason_text, 60) AS reason FROM schwab_ineligible_today ORDER BY first_seen_at DESC LIMIT 20;"
 
-Steps:
-1. `gh pr checks 92 --watch` — confirm Validate is green, or matches the documented 15 baseline failures only
-2. Read the PR diff to satisfy the Pre-Merge Regression Check rule (`oms/service.py`, `strategy_engine_app.py` are shared hot files). PR #92 may need rebase since main has moved from `09b6dcf` to `6a2e473` since it was opened — codex should rebase before merge.
-3. Account-flat pre-flight
-4. `gh pr merge 92 --squash --delete-branch` (or `--admin` if CI is on the same 15 baseline)
-5. Run Alembic migration on VPS
-6. Coordinated restart per live-session restart choreography for OMS
+-- 2. Confirm short-circuit is firing (look for schwab_ineligible_cached reason in trade_intents)
+sudo -u postgres psql -d project_mai_tai -c "SELECT symbol, broker_account_name, decision_status, created_at AT TIME ZONE 'America/New_York' AS et FROM trade_intents WHERE decision_reason='schwab_ineligible_cached' ORDER BY created_at DESC LIMIT 20;"
 
-### PR #94 + PR #97 production validation status
+-- 3. Confirm polygon_30s watchlist is NOT filtered (regression — polygon-backed bot should retain Schwab-restricted names)
+-- Compare polygon_30s vs schwab_1m vs macd_30s watchlists in /api/bots
+```
 
-PR #94 (bootstrap path) + PR #97 (live persist path) are both live on VPS at `6a2e473`. Validation since PR #97 deploy at 11:33 UTC: zero new `(volume=0, trade_count=0)` rows in `strategy_bar_history` for schwab_1m. Validation accrues as more symbols get promoted and live CHART_EQUITY events arrive throughout the day.
+Per-bot filter design (verified in code review of `_load_schwab_ineligible_symbols_by_strategy` at strategy_engine_app.py line ~8133): the filter only applies when `provider_for_account(bot.definition.account_name) == "schwab"`. So:
+- **schwab_1m** → cache applies (provider=schwab)
+- **macd_30s** → cache applies (provider=schwab)
+- **polygon_30s** → cache does NOT apply (provider=polygon)
 
-The two paths cover:
-- **PR #94**: filters placeholder bars OUT of Schwab pricehistory API responses before they enter `bot.seed_bars` (bootstrap-time hydration)
-- **PR #97**: filters placeholder bars OUT of `_persist_bar_history`'s DB-write step when the bot's `builder.bars[-1]` is `vol=0 + tc=0` (live-stream and force-close cases)
+### PR #94 + PR #97 + PR #92 production validation status
 
-Together they close both code paths that were producing the zero-bar pollution observed in the 2026-05-12 pre-market validation.
+All three live. PR #94/#97 zero-bar count post-deploy = 0 (and stays 0 as bots run). PR #92 cache table populates passively as Schwab rejects arrive — first cache entries expected when scanner promotions hit restricted symbols today.
+
+The schwab_1m correctness chain is now end-to-end:
+- **PR #85** — late-trade revision skip on CHART-sourced bars (no over-count)
+- **PR #94** — bootstrap drops placeholder bars from Schwab pricehistory API (no zero-bar hydration)
+- **PR #97** — `_persist_bar_history` skips vol=0/tc=0 bars at write time (no force-close pollution)
+- **PR #92** — restricted Schwab symbols cached + filtered per-Schwab-backed-account, polygon_30s unaffected
 
 ### Other open workstreams (not immediate, see entries below)
 
-- **Pre-PR-94/97 zero-bars already in DB** are NOT cleaned up by either PR (both only affect new writes). The 12 symbols' 2026-05-12 03:59 ET placeholders + VEEE/CVM/CGTL/INBS/etc.'s extended zero-bar runs remain. Cosmetic and unlikely to affect future analytics; not opening a cleanup workstream.
-- **CI baseline**: 15 failures in `test_strategy_engine_service.py` (full list in 2026-05-11 PM entry). Codex's natural next cleanup cluster.
+- **Pre-PR-94/97 zero-bars already in DB** remain (cosmetic; not opening a cleanup workstream).
+- **CI baseline**: 15 failures in `test_strategy_engine_service.py`. Codex's natural next cleanup cluster.
 - **Reconciler** still degraded since 2026-04-28. Background residual.
-- **fd-leak** in catalyst/news fetch (`OSError: [Errno 24] Too many open files`). Pre-existing.
+- **fd-leak** in catalyst/news fetch. Pre-existing.
 - **Codex's WIP**: ~10 worktrees in `AppData/Local/Temp`, ~50 remote `codex/*` branches, PR #67 (April). Do not touch.
+
+---
+
+## 2026-05-12 ~11:58 UTC: Schwab session-ineligible cache (PR #92) DEPLOYED
+
+```
+Deploy owner: this agent (Claude Code)
+Local code owner: Codex (original); this agent (Claude Code) for the rebase + method-insertion fix
+Active workstream: Schwab pre-trade eligibility cache
+Status: DEPLOYED. Cache table empty at deploy; will populate passively as Schwab rejects arrive.
+SHAs: 0f5d66e (PR #92 squash-merge) on top of 5779160 (handoff PR #98)
+VPS SHA after deploy: 0f5d66e (matches main; verified via `git rev-parse HEAD`)
+Workflow: admin-merge (CI matched 15 baseline failures exactly, 0 new failures from this PR or the rebase fix)
+Service target: oms + strategy (coordinated, OMS-path live-restart choreography)
+Restart window: 2026-05-12 ~11:58 UTC (stop strategy → migrate → restart oms → start strategy). Total downtime ~6 sec.
+Migration: 20260424_0004 → 20260511_0005 (creates `schwab_ineligible_today` table + 3 indexes + 1 unique constraint)
+Market hours at deploy: YES (pre-market, ~07:58 ET)
+Account flat at deploy: YES (`virtual_positions WHERE quantity != 0` = 0 rows; re-checked immediately before merge)
+Post-deploy validator: this agent (Claude Code)
+```
+
+### Change
+
+PR #92 adds:
+1. **New table** `schwab_ineligible_today` with `(id, symbol, session_date, broker_account_id, first_seen_at, reason_text, hit_count)`, indexed on symbol/session_date/broker_account_id, unique constraint on `(symbol, session_date, broker_account_id)`. FK to `broker_accounts.id`.
+2. **OMS write-side** (`oms/service.py`): on broker rejection events with reason containing "must be placed with a broker", insert/update the cache for the rejecting `(symbol, session_date, broker_account_id)` tuple. ET-boundary session-day used (resets at next 04:00 ET).
+3. **OMS read-side** (`oms/service.py`): pre-submit, for OPEN intents on `provider=schwab` broker accounts, look up the cache. If hit, synthetically reject the intent with reason `schwab_ineligible_cached` and skip broker round-trip.
+4. **Strategy scanner filter** (`services/strategy_engine_app.py`): on each snapshot batch + on `_resync_bot_watchlists`, load the cache per Schwab-backed bot account and remove those symbols from those bots' watchlists. CRITICAL: only bots whose `account_name → provider` resolves to `schwab` get filtered. `polygon_30s` (provider=polygon, formerly webull) is NOT in the dict so it retains the symbols.
+
+Original `45ffe05` had a method-insertion bug — `set_broker_blocked_symbols_by_strategy` + `_broker_blocked_symbols_for_bot` were placed inside `_roll_scanner_session_if_needed`'s body, orphaning the parent method's trailing lines as dead code after a `return`. The pre-existing test `test_scanner_session_roll_clears_state_without_snapshot_batch` caught this (the method returned `None` instead of `True`). Rebase + fix moved the new methods to AFTER the parent method returns. Final head: `7c912b8` → squash-merge `0f5d66e`.
+
+Net diff (rebased): +491 lines (+18 in `oms/service.py`, +77 in `oms/store.py`, +24 in `db/models.py`, +79 migration, +80 in `services/strategy_engine_app.py`, +213 tests).
+
+### Pre-Merge Regression Check
+
+Hot files touched: `oms/service.py`, `strategy_engine_app.py`. Last 10 commits on each were reviewed for silent reverts; none found. PR comment on #92 documents the rebase + method-insertion fix.
+
+### Validation
+
+- **Targeted tests** (VPS Python env): 4 pass — 3 PR #92 new cache tests + the previously-broken `test_scanner_session_roll_clears_state_without_snapshot_batch` (now passing after the method-insertion fix)
+- **Full strategy + OMS suites** (VPS): 85 failures = baseline exactly. 0 new failures.
+- **CI Validate on PR #92** (rebased head `7c912b8`): 15 failures = documented baseline, char-for-char match. 0 new failures.
+- **Migration apply**: `20260424_0004 → 20260511_0005` ran clean in transactional DDL. `alembic current` after: `20260511_0005 (head)`.
+- **Service health post-deploy**: all 5 services `active (running)`. /health shows `degraded` overall but that's the pre-existing reconciler issue (since 2026-04-28); market-data/oms/strategy/control all `healthy`/`active`.
+- **Strategy log post-restart**: clean startup at 11:58:36 UTC, momentum alert engine restored (history_cycles=120, spike_tickers=80, cooldowns=2), 5 confirmed candidates seeded, runtime bar history restored.
+- **OMS log post-restart**: only the pre-existing "missing Alpaca credentials for broker account paper:macd_30s_reclaim / live:webull_30s" warnings (disabled accounts; not new from this deploy).
+- **Three-way SHA**: GitHub `main` `0f5d66e` == VPS `git rev-parse HEAD` `0f5d66e`. Match.
+- **New table sanity**: `SELECT count(*) FROM schwab_ineligible_today` = 0 (clean fresh table ready to accept entries).
+
+### Result
+
+DEPLOYED. The feature is now live but the cache is empty. Production behavior will become visible when:
+1. A Schwab-backed bot generates an OPEN intent for a symbol Schwab rejects with the "must be placed with a broker" reason → row inserted into `schwab_ineligible_today`
+2. A subsequent OPEN intent for the same `(symbol, broker_account_id)` on the same session_date → synthetically rejected with reason `schwab_ineligible_cached`, no broker round-trip
+3. Next scanner promotion cycle → that symbol removed from Schwab-backed bot watchlists (macd_30s, schwab_1m), retained for polygon_30s
+
+### Residual considerations
+
+1. **Cache populates passively** — visible only when a real Schwab rejection happens. Pre-market traffic is light; the first entry might not appear until RTH. If the user wants to seed test data, manually insert a row + monitor strategy filter behavior on the next snapshot batch.
+2. **Session-day boundary** — cache rows persist until next 04:00 ET (per `session_day_eastern_str`). Old rows from previous session days remain in the table (no auto-cleanup). Could grow over weeks; consider a daily cleanup if it becomes large.
+3. **No backfill from historical rejections** — only NEW rejections from this point forward enter the cache. Any pre-deploy rejections (e.g., today's AEHL/CLIK 4-5 attempted opens per the 2026-05-11 AM audit) are NOT in the cache. They'll re-enter naturally on the next rejection.
+
+### Tests added by PR #92
+
+- `test_caches_schwab_ineligible_symbol_for_session_day` (OMS write-side, populates cache on rejection)
+- `test_blocks_rest_of_session_for_cached_schwab_ineligible_symbol` (OMS read-side, short-circuits subsequent intent)
+- `test_broker_blocked_symbols_filter_only_schwab_backed_watchlists` (strategy filter, polygon_30s not filtered)
+- `test_service_loads_schwab_ineligible_symbols_per_strategy_account` (E2E, scanner loads cache per Schwab account)
+
+### State at end of work
+
+- GitHub `main` SHA: `0f5d66e` (PR #92 squash-merge) → then this handoff PR
+- VPS `git rev-parse HEAD`: `0f5d66e` (matches; will re-sync to handoff-doc SHA after merge)
+- All 5 services active; strategy uptime since 2026-05-12 11:58 UTC, OMS since 2026-05-12 11:58 UTC
+- DB at `20260511_0005`
+- Account flat
+
+### Next owner
+
+This agent (Claude Code) parking. Next session priority: monitor cache population as the trading day progresses; spot-check that polygon_30s retains Schwab-restricted names while macd_30s/schwab_1m drop them.
 
 ---
 
