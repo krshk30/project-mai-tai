@@ -7004,6 +7004,131 @@ def test_schwab_native_30s_runtime_does_not_emit_intrabar_open_when_intrabar_dis
     assert runtime.definition.trading_config.schwab_native_use_confirmation is True
 
 
+def _build_runtime_with_session(session_factory):
+    state = StrategyEngineState(
+        settings=make_test_settings(
+            dashboard_snapshot_persistence_enabled=False,
+            strategy_history_persistence_enabled=True,
+            strategy_polygon_30s_enabled=True,
+        ),
+        session_factory=session_factory,
+    )
+    bot = state.bots["polygon_30s"]
+    bot.set_watchlist(["UGRO"])
+    return state, bot
+
+
+def test_persist_bar_history_skips_placeholder_zero_volume_bar() -> None:
+    session_factory = build_test_session_factory()
+    _, bot = _build_runtime_with_session(session_factory)
+
+    placeholder_ts = 1_700_001_650.0
+    seeded = seed_trending_bars(count=5, start_timestamp=1_700_000_000.0, interval_secs=30)
+    seeded.append({
+        "open": 2.05,
+        "high": 2.05,
+        "low": 2.05,
+        "close": 2.05,
+        "volume": 0,
+        "timestamp": placeholder_ts,
+        "trade_count": 0,
+    })
+    bot.seed_bars("UGRO", seeded)
+
+    bot._persist_bar_history(
+        symbol="UGRO",
+        indicators={"price": 2.05},
+        decision={"status": "idle", "reason": "no entry path matched"},
+    )
+
+    with session_factory() as session:
+        records = list(
+            session.scalars(
+                select(StrategyBarHistory).where(
+                    StrategyBarHistory.strategy_code == "polygon_30s",
+                    StrategyBarHistory.symbol == "UGRO",
+                    StrategyBarHistory.bar_time == datetime.fromtimestamp(placeholder_ts, UTC),
+                )
+            )
+        )
+    assert records == []
+
+
+def test_persist_bar_history_persists_real_volume_bar() -> None:
+    session_factory = build_test_session_factory()
+    _, bot = _build_runtime_with_session(session_factory)
+
+    real_ts = 1_700_001_650.0
+    seeded = seed_trending_bars(count=5, start_timestamp=1_700_000_000.0, interval_secs=30)
+    seeded.append({
+        "open": 2.05,
+        "high": 2.10,
+        "low": 2.04,
+        "close": 2.08,
+        "volume": 1000,
+        "timestamp": real_ts,
+        "trade_count": 5,
+    })
+    bot.seed_bars("UGRO", seeded)
+
+    bot._persist_bar_history(
+        symbol="UGRO",
+        indicators={"price": 2.08},
+        decision={"status": "idle", "reason": "no entry path matched"},
+    )
+
+    with session_factory() as session:
+        records = list(
+            session.scalars(
+                select(StrategyBarHistory).where(
+                    StrategyBarHistory.strategy_code == "polygon_30s",
+                    StrategyBarHistory.symbol == "UGRO",
+                    StrategyBarHistory.bar_time == datetime.fromtimestamp(real_ts, UTC),
+                )
+            )
+        )
+    assert len(records) == 1
+    assert records[0].volume == 1000
+    assert records[0].trade_count == 5
+
+
+def test_persist_bar_history_persists_zero_volume_bar_with_nonzero_trade_count() -> None:
+    session_factory = build_test_session_factory()
+    _, bot = _build_runtime_with_session(session_factory)
+
+    ts = 1_700_001_650.0
+    seeded = seed_trending_bars(count=5, start_timestamp=1_700_000_000.0, interval_secs=30)
+    seeded.append({
+        "open": 2.05,
+        "high": 2.05,
+        "low": 2.05,
+        "close": 2.05,
+        "volume": 0,
+        "timestamp": ts,
+        "trade_count": 1,
+    })
+    bot.seed_bars("UGRO", seeded)
+
+    bot._persist_bar_history(
+        symbol="UGRO",
+        indicators={"price": 2.05},
+        decision={"status": "idle", "reason": "no entry path matched"},
+    )
+
+    with session_factory() as session:
+        records = list(
+            session.scalars(
+                select(StrategyBarHistory).where(
+                    StrategyBarHistory.strategy_code == "polygon_30s",
+                    StrategyBarHistory.symbol == "UGRO",
+                    StrategyBarHistory.bar_time == datetime.fromtimestamp(ts, UTC),
+                )
+            )
+        )
+    assert len(records) == 1
+    assert records[0].trade_count == 1
+
+
 def test_drop_placeholder_bars_filters_zero_volume_and_zero_trade_count() -> None:
     bars = [
         {"open": 1.10, "high": 1.10, "low": 1.10, "close": 1.10, "volume": 0, "trade_count": 0, "timestamp": 1_778_577_840.0},
