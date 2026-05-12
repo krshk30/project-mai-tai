@@ -19,7 +19,8 @@
 - All 5 services `active`; strategy restarted 2026-05-12 11:33:15 UTC for PR #97 deploy (clean log, momentum alert engine restored, runtime bar history restored)
 - Positions: account flat (`virtual_positions WHERE quantity != 0` = 0 rows). PR #97 deploy was authorized by user despite two paper-account BZFD positions open at the time (they closed naturally within minutes; this was a one-time exception, not a new standing rule)
 - CI baseline: 517 passed / 15 failed in `test_strategy_engine_service.py` (full list in 2026-05-11 PM entry). PR #94 added 5 new passing tests + PR #97 added 3 more (525 / 15).
-- **PR #85 + PR #94 + PR #97 all shipped today** — see entries below. The schwab_1m zero-bar pollution chain is closed at both the bootstrap entry (PR #94) and the live-path persist entry (PR #97).
+- `polygon_30s` gap-fill PR #96 was deployed just before PR #97. Post-restart audit on `AIIO`, `AMBO`, `BZFD`, `HTCO`, `TDIC` showed `0` persisted gaps greater than `30s` from `2026-05-12 07:30:00 AM ET` forward. Earlier `04:00-04:34 AM ET` holes remain historical pre-fix artifacts. See the PR #96 entry below.
+- **PR #85 + PR #94 + PR #96 + PR #97 all shipped today** - see entries below. The schwab_1m zero-bar pollution chain is closed at both the bootstrap entry (PR #94) and the live-path persist entry (PR #97), and the Polygon resumed-aggregate hole is closed by PR #96.
 
 ### Critical first action: deploy PR #92 (Schwab pre-trade eligibility cache)
 
@@ -143,6 +144,70 @@ This agent (Claude Code) parking. Next session priority remains PR #92 deploy.
 
 ---
 
+## 2026-05-12 ~11:30 UTC: `polygon_30s` live-aggregate gap-fill (PR #96) DEPLOYED
+
+```
+Deploy owner: this agent (Codex)
+Local code owner: this agent (Codex)
+Active workstream: `polygon_30s` bar continuity during sparse live-aggregate coverage
+Status: DEPLOYED and live-validated on the post-restart window
+SHAs: `36c43f3` (PR #96 squash-merge) on top of `55bcfc6` (handoff PR #95)
+VPS SHA after deploy: `36c43f3` (verified at deploy time)
+Workflow: merge PR #96 -> sync VPS checkout -> strategy-only restart per runbook
+Service target: strategy
+Restart window: strategy active again at `2026-05-12 11:30:23 UTC`
+Market hours at deploy: YES (pre-market, ~07:30 ET)
+Account handling at deploy: proceeded by explicit user instruction; `CYN` remained exempt
+Post-deploy validator: this agent (Codex)
+```
+
+### Change
+
+- PR #96 fixed a real asymmetry in `src/project_mai_tai/strategy_core/polygon_30s.py`:
+  - `on_trade()` already closed the current bar, backfilled skipped 30s buckets, then opened the resumed bucket
+  - `on_bar()` closed the current bar and opened the resumed bucket, but did **not** backfill skipped intermediate buckets
+- Fix: added the missing `_fill_gap_bars(...)` call in `Polygon30sBarBuilder.on_bar()` before constructing the resumed current bucket.
+- Regression coverage was added in `tests/unit/test_polygon_30s_bot.py` for the exact missing case: a current live-aggregate bar is already open and the next component jumps multiple 30s buckets forward.
+
+### Symptom and root cause
+
+- Earlier on `2026-05-12`, persisted `strategy_bar_history` for `strategy_code='polygon_30s'` / `interval_secs=30` showed real holes, including a synchronized `04:32:30 -> 04:34:00 AM ET` gap across `AIIO`, `AMBO`, `BZFD`, `CVM`, `HPAI`, `HTCO`, `WOK`, and `XOS`.
+- This was **not** a stale-runtime incident. During the investigation the live runtime was still fresh and evaluating bars normally.
+- Root cause: when Polygon live aggregates resumed after one or more skipped 30s buckets, `on_bar()` persisted the resumed bucket but failed to synthesize the intermediate continuity bars. That created true gaps in persisted history.
+
+### Validation before ship
+
+- `pytest tests/unit/test_polygon_30s_bot.py -q` -> `27 passed`
+- `pytest tests/unit/test_strategy_engine_service.py -k "polygon_late_live_second_revises_persisted_closed_bar_without_redecision or live_second_bars_can_generate_open_intent_for_polygon_30s_bot or polygon_tick_built_sparse_ticks_do_not_synthesize_gap_bars" -q` -> `3 passed`
+- Focused combined post-rebase slice including the new regression -> `5 passed`
+- `py_compile` passed on the changed files
+
+### Deploy steps performed
+
+1. Merged PR #96.
+2. Synced VPS checkout to the merged SHA `36c43f3`.
+3. Restarted `project-mai-tai-strategy.service` only, per the runbook strategy path.
+4. Verified strategy came back active and Polygon runtime resumed with fresh timestamps.
+
+### Post-deploy validation
+
+- `/api/bots` on the live system showed `polygon_30s` enabled with a fresh watchlist including `AIIO`, `AMBO`, `BZFD`, `HTCO`, `TDIC`.
+- Latest decision / heartbeat / market-data timestamps were advancing after restart, confirming runtime liveness.
+- Persisted post-restart bar audit on the active watchlist, starting `2026-05-12 07:30:00 AM ET`, showed:
+  - `gap_count = 0` for all five names
+  - `max_gap_seconds = 30`
+  - contiguous bars through the validated live window
+- Conclusion: the fix is effective for new post-deploy data. The earlier-morning holes remain historical artifacts from before PR #96 shipped.
+
+### Non-blocker noted during validation
+
+- Polygon/Webull open intents still reject if they reach broker execution because Webull App Key / App Secret are intentionally not configured yet. That is expected for this phase and separate from bar building / signal generation.
+
+### Next owner
+
+- If another Polygon bar-gap concern appears, start by auditing persisted bars after `2026-05-12 07:30 AM ET` to see whether any **new** holes were created after PR #96. Do not treat the earlier `04:00-04:34 AM ET` holes as evidence of current live regression unless new gaps appear after the deploy timestamp.
+
+---
 ## 2026-05-12 ~11:17 UTC: schwab_1m bootstrap placeholder filter (PR #94) SHIPPED
 
 ```
