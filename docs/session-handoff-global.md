@@ -8,6 +8,111 @@
 - Overall `/health` may still show `degraded` because of reconciler state. Do not confuse that with a Polygon-specific runtime failure.
 - Keep copied CI counts and failure logs out of the top summary unless they have been revalidated on current `main`.
 
+## 2026-05-11 PM: schwab_1m CHART-canonical fix DEPLOYED (PR #85 + 2 cleanup PRs in chain)
+
+```
+Deploy owner: this agent (Claude Code)
+Local code owner: this agent (Claude Code)
+Active workstream: schwab_1m bar-build correctness + CI baseline cleanup
+Status: DEPLOYED; post-deploy bar-build validation DEFERRED to 2026-05-12 pre-market (market closed at deploy)
+SHAs: 3019151 (PR #85, schwab_1m fix) on top of 5de54fc (PR #88, polygon test hang fix) on top of 59355b7 (PR #87, codex CI cleanup pass 2)
+VPS SHA after deploy: 3019151 (matches main; verified via `git rev-parse HEAD`)
+Workflow: admin-merge x3 (CI baseline 53 failures + d5ac600 fallout, then narrowed to 15 baseline failures after PR #88)
+Service target: strategy (live-restart-runbook strategy-only path; oms/market-data not touched)
+Restart window: 2026-05-12 01:49:24-01:49:28 UTC (4 sec stop+start)
+Market hours at deploy: NO (after-hours, 21:49 ET)
+Account flat at deploy: yes (only CYN x 8000 on paper:schwab_1m + paper:macd_30s; user-confirmed exempt 2026-05-11)
+Post-deploy validator: this agent (Claude Code) -- DEFERRED to 2026-05-12 04:00 ET pre-market window
+```
+
+### Change
+
+**PR #85** (`schwab_1m: skip late-trade revision on CHART-sourced bars`, +23/-0 in `src/project_mai_tai/strategy_core/schwab_native_30s.py`, +127/-0 in `tests/unit/test_schwab_native_late_trade_revision.py`): adds `_last_closed_bar_from_aggregate` flag to `SchwabNativeBarBuilder`. Set in `on_final_bar` when CHART_EQUITY appends/replaces `bars[-1]`; cleared in `_close_current_bar`; `_revise_last_closed_bar_from_trade` early-returns when set. Prevents late TIMESALE/LEVELONE ticks from double-counting volume into CHART-canonical bars.
+
+Two enabling PRs landed first (codex's pass-2 + Claude's polygon-test-hang-fix) to unblock CI. See "Path to deploy" below.
+
+### Symptom (the bug)
+
+2026-05-11 AM audit (see prior entry below) found that schwab_1m persisted bars showed huge over-counts vs the CHART_EQUITY live_bar values. AEHL 07:19 persisted=1,451,391 while CHART live_bar=298,843 (4.86x). Same pattern across 20+ bars today (CLIK 07:19 vol=1.87M vs CHART=247K = 7.57x; HPAI 07:14 vol=663K vs CHART=84K). The persisted `trade_count = 2` was the giveaway: CHART's stamped 1 + 1 revision call.
+
+### Root cause
+
+When `on_final_bar` appends or replaces `bars[-1]` with a CHART_EQUITY bar, `_last_closed_bar_cum_volume` was NOT updated -- it carried over from the prior tick-close, which for CHART-only sequences (typical in pre-market low-TIMESALE conditions) is many bars stale. Late TIMESALE/LEVELONE ticks for the CHART bar then routed to `_revise_last_closed_bar_from_trade` which computed `volume_contrib = cumulative_volume - stale_baseline` -- a delta covering the entire CHART-only gap. `last_closed.update(price, contrib)` did `self.volume += contrib`, inflating the CHART value.
+
+### Path to deploy
+
+1. **PR #85 opened 12:31 UTC** with the fix + 4 new tests (13 targeted tests + 52 broader Schwab regression all pass on VPS Python env)
+2. **CI hung** on `tests/unit/test_polygon_30s_bot.py::test_polygon_30s_does_not_re_evaluate_same_bar_after_late_same_bucket_live_bar` -- a baseline test from the d5ac600 fallout. Same hang on every Validate run since 11:49 UTC (6 stuck runs)
+3. **PR #87 (codex) admin-merged at 18:23:58 UTC** -- codex's `ci-baseline-cleanup-pass2` containing the targeted fix for that one test
+4. **Fresh PR #85 CI hung again** -- next adjacent test `test_polygon_30s_revises_last_closed_bar_when_late_second_arrives` was also hanging (codex's pass-2 only fixed one of the cluster)
+5. **PR #88 opened by this agent + admin-merged at 20:24:15 UTC** (`test_polygon_30s_bot: migrate remaining 6 hanging tests + tick timestamps to 2026`). Migrated 6 sites in `test_polygon_30s_bot.py` from the hardcoded `1_700_000_000.0` (Nov 2023) seed timestamp to 2026 timestamps using codex's `build_recent_polygon_seed_bars` helper, plus a targeted single-site fix in `test_strategy_engine_service.py` for the next hanging test. Initial broad-migration attempt of 35 sites in `test_strategy_engine_service.py` was reverted -- introduced regressions in 10 tests that previously passed (e.g., `test_subscription_sync_persists_replayed_polygon_historical_bars`). Final scope: 6 polygon test sites + 1 strategy_engine test site.
+6. **Fresh PR #85 CI completed at 20:26:21 UTC** with `FAILURE` -- but the 15 reported failures EXACTLY match the VPS-validated baseline (verified with `gh api .../jobs/.../logs | findstr FAILED` -- all 15 in `test_strategy_engine_service.py`, all assertion errors, 0 hangs, 0 new failures introduced)
+7. **PR #85 admin-merged at 01:48 UTC 2026-05-12** (per standing authorization for admin-merge while CI red on baseline)
+8. **VPS sync + restart** at 01:49:24-01:49:28 UTC. All 5 services active post-restart. Momentum alert engine restored from snapshot (history_cycles=120). 11 confirmed candidates seeded for fresh restart revalidation.
+
+### Validation
+
+- **Local tests (VPS Python env)**: 13/13 targeted late-trade-revision tests pass; 52/52 broader Schwab regression suite (`test_schwab_1m_bot.py`, `test_schwab_native_late_trade_revision.py`, `test_schwab_streamer_timesale.py`, `test_strategy_core_cum_vol_fix.py`) pass. Full unit suite on post-PR-88 main: 517 passed / 15 failed / 91.90s, no hangs.
+- **CI Validate on PR #85 final state**: 15 failures, all in `test_strategy_engine_service.py`, exact match to VPS baseline. No new failures introduced.
+- **VPS three-way SHA**: GitHub `main` `3019151` == VPS `git rev-parse HEAD` `3019151adc4b3d8b27e52b061e1d7b05badd7261`. Match.
+- **Service status**: all 5 services `active (running)` post-restart.
+- **Strategy log post-restart**: clean startup at 01:49:28 UTC, momentum alerts restored, no errors. Pre-existing "Too many open files" errors in log are from 18:27 UTC (unrelated fd-leak issue, not introduced by this deploy).
+- **Post-deploy bar-build validation**: DEFERRED to 2026-05-12 pre-market (04:00 ET = 08:00 UTC). Market is closed at deploy time so no new schwab_1m bars are being produced. Validator command for tomorrow morning:
+  ```
+  PYTHONPATH=/home/trader/project-mai-tai/src PGPASSWORD=... \
+    /home/trader/project-mai-tai/.venv/bin/python \
+    /home/trader/project-mai-tai/scripts/check_bar_build_runtime.py \
+    --day 2026-05-12 --start-hour 4 --end-hour 8 \
+    --archive-dir /var/lib/project-mai-tai/schwab_ticks/2026-05-12 \
+    --symbols <today's active set> \
+    --interval-secs 60 --strategy-code schwab_1m --dsn "$DSN"
+  ```
+  Expected: `trade_count=2 + 4-10x volume` outliers gone. Per-bar avg_abs_vol_diff should drop to inherent CHART vs TIMESALE drift levels (~5-15% on trade_count-matching bars, no more giant outliers).
+
+### Result
+
+DEPLOYED. macd_30s pipeline structurally unaffected (regression test added in PR #85 explicitly locks this in: `test_macd_30s_path_unaffected_when_on_final_bar_never_called`). schwab_1m fix is live; full validation tomorrow morning.
+
+### Residual considerations
+
+1. **Post-deploy bar-build validation pending** -- must run tomorrow morning during pre-market. Most important task at session-start.
+2. **15 baseline test failures still in `test_strategy_engine_service.py`** -- next CI cleanup cluster. Codex/next agent should pick up. Specifically (from CI log):
+   - `test_trimmed_history_does_not_lock_out_new_open_after_cancel` (assert 0 == 1)
+   - `test_live_second_bars_can_generate_open_intent_for_30s_bot` (assert 0 == 1)
+   - `test_live_second_bars_can_generate_open_intent_for_polygon_30s_bot` (assert 0 == 1)
+   - `test_live_aggregate_30s_falls_back_to_trade_ticks_when_stream_is_missing` (`assert [] == ['open']`)
+   - `test_historical_bars_hydrate_matching_strategy_intervals` (assert 0 == 1)
+   - `test_subscription_sync_replays_recent_historical_bars_for_active_symbols` (`KeyError: 'macd_1m'`)
+   - `test_schwab_prewarm_symbols_expire_and_do_not_accumulate_indefinitely` (`assert ['UGRO', 'WBUY'] == []`)
+   - `test_trade_tick_stream_routes_to_schwab_native_macd_30s_when_stream_fallback_is_active` (`assert 'macd_30s' in ()`)
+   - `test_service_uses_fallback_quotes_for_stale_schwab_open_positions` (`AttributeError: 'FakeStreamClient' object has no attribute 'sync_subscriptions'`)
+   - `test_service_halts_stale_schwab_watchlist_symbol_without_open_position` (`assert set() == {'ENVB'}`)
+   - `test_service_clears_data_halt_when_stale_symbol_leaves_active_set` (`assert [] == ['ENVB']`)
+   - `test_service_reactivated_symbol_gets_fresh_schwab_stale_grace_window` (`assert [] == ['ENVB']`)
+   - `test_service_persistent_schwab_stream_disconnect_halts_symbols_after_grace_window` (`assert 'degraded' == 'critical'`)
+   - `test_strategy_service_restores_runtime_positions_and_pending_from_database` (`KeyError: 'runner'`)
+   - `test_tos_runtime_emits_intrabar_open_on_current_bar` (assert 0 == 1)
+3. **Schwab eligibility filter workstream** still open (Active Workstream #4, see prior 2026-05-11 AM entry).
+4. **Reconciler still degraded since 2026-04-28** (no change today).
+5. **Pre-existing fd-leak in catalyst/news fetch** (`OSError: [Errno 24] Too many open files`) -- separate workstream; not introduced by this deploy but worth tracking.
+6. **CYN positions still held** on `paper:schwab_1m` + `paper:macd_30s` (8000 shares each) -- per user's exemption these are managed manually outside Mai-tai.
+
+### Tests added in this deploy chain
+
+- PR #85: `test_late_trade_does_not_revise_chart_sourced_bar` (bug repro), `test_chart_aggregate_flag_clears_on_subsequent_tick_close`, `test_macd_30s_path_unaffected_when_on_final_bar_never_called` (regression guard), `test_reset_clears_aggregate_flag`. All 13 in `test_schwab_native_late_trade_revision.py` pass on VPS in 0.48s.
+- PR #88: no new tests; restored functionality of 6+1 previously-hanging tests by migrating their seed timestamps.
+
+### State at end of work
+
+- GitHub `main` SHA: `3019151` (PR #85 squash-merge commit)
+- VPS `git rev-parse HEAD`: `3019151` (matches)
+- All 5 services active since strategy restart at 2026-05-12 01:49:28 UTC; control/oms/market-data/reconciler unchanged from earlier (active since 2026-05-08 21:01)
+- CYN x 8000 still on `paper:schwab_1m` + `paper:macd_30s` (exempt)
+
+### Next owner
+
+This agent (Claude Code) parking. **Critical pickup item for next session**: post-deploy bar-build validation against tomorrow's 2026-05-12 pre-market schwab_1m bars (run validator script per "Validation" section). If outliers gone -> deploy success confirmed; if not -> investigate. After that: Schwab eligibility filter workstream (Active Workstream #4) is the next-most-valuable thing to ship.
+
 ## 2026-05-11 AM — Coordination ping for codex agent: `ci-baseline-cleanup-pass2` needs admin-merge
 
 **For the codex agent.** This agent (Claude Code) confirmed the test that hangs every Validate run since 2026-05-11 11:49 UTC:
