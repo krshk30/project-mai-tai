@@ -8,6 +8,46 @@
 - Overall `/health` may still show `degraded` because of reconciler state. Do not confuse that with a Polygon-specific runtime failure.
 - Keep copied CI counts and failure logs out of the top summary unless they have been revalidated on current `main`.
 
+## 2026-05-12 ~02:00 UTC: Post-deploy cleanup audit + control-deploy worktree flag
+
+After the schwab_1m deploy chain landed (see entry below), this agent (Claude Code) ran a full cleanup audit. Recording what was cleaned vs left-alone vs flagged so next-agent state is clear.
+
+### Cleaned (this agent's session artifacts only)
+
+- 5 local branches (their remotes were already deleted by `gh pr merge --delete-branch`):
+  - `codex/coordination-ping-2026-05-11` (PR #86)
+  - `codex/handoff-2026-05-11` (PR #84)
+  - `codex/handoff-2026-05-11-pm` (PR #89)
+  - `codex/polygon-test-hang-fix` (PR #88)
+  - `codex/schwab-1m-chart-canonical-fix` (PR #85)
+- 2 VPS tmp worktrees: `/tmp/pmt-fullsuite-test`, `/tmp/pmt-polygon-fix-test`
+- 5 VPS tmp diagnostic/log files: `/tmp/diag.py`, `/tmp/fullsuite.log`, `/tmp/fullsuite-v3.log`, `/tmp/polygon-test.log`, `/tmp/postmerge-fullsuite.log`
+- 3 local OneDrive worktree dirs (`pmt-handoff-2026-05-11`, `pmt-coord-ping`, `pmt-handoff-pm`) -- final force-deletion via PowerShell after the OneDrive lock cleared
+
+### Left alone (codex's WIP / pre-existing -- NOT this agent's to clean)
+
+- `PR #67 codex/gap-recovery-entry-guard` (open since 2026-04-28)
+- 58 local `codex/*` branches and ~50 remote `codex/*` branches
+- ~10 worktrees in `C:/Users/kkvkr/AppData/Local/Temp/project-mai-tai-*`, all on codex branches
+- `C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai` operational checkout (currently on `codex/ci-baseline-cleanup-pass2`; only `?? data/` untracked which is a harmless runtime artifact)
+- `C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai-main-sync` and `-main-sync-2` worktrees (codex's review-center work)
+- VPS pre-session log files: `/tmp/codex_pip_reconcile.log` (Apr 18), `/tmp/pytest_baseline*.log` (May 7), `/tmp/pytest_*.log`
+
+### Worth flagging for next agent / next deploy
+
+**`C:/Users/kkvkr/OneDrive/Documents/GitHub/project-mai-tai-control-deploy` is on the `main` branch but at `d0069fa` -- 3 commits behind current `main` (`acc8039`).** Missing: PR #85 (schwab_1m fix), PR #88 (polygon test hang fix), PR #89 (the 2026-05-11 PM handoff entry).
+
+Per `docs/agent-deploy-runbook.md` this is the canonical "clean deploy worktree on main" referenced in worktree planning (the reason other worktrees can't check out `main`).
+
+Next-agent action depends on how it's used:
+- **If GitHub Actions deploy workflow already runs `git fetch && git reset --hard origin/main` on the runner before the deploy** -- no action needed; the stale worktree is purely cosmetic.
+- **If a manual `Deploy Service` / `Deploy Main` invocation is planned from this worktree** -- run `git pull --ff-only origin main` there FIRST, or it will deploy stale code (would silently regress the schwab_1m fix this session just shipped).
+- **To verify**: open `.github/workflows/deploy-*.yml` and check whether the workflow does its own `git fetch + reset` on the runner.
+
+If unsure, the safe action is just `cd .../project-mai-tai-control-deploy && git pull --ff-only origin main` -- updating to current `main` is always safe since the worktree is on the `main` branch.
+
+---
+
 ## 2026-05-11 PM: schwab_1m CHART-canonical fix DEPLOYED (PR #85 + 2 cleanup PRs in chain)
 
 ```
