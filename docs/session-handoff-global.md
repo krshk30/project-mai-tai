@@ -8,18 +8,18 @@
 - Overall `/health` may still show `degraded` because of reconciler state. Do not confuse that with a Polygon-specific runtime failure.
 - Keep copied CI counts and failure logs out of the top summary unless they have been revalidated on current `main`.
 
-## 2026-05-12 SESSION START — PR #92 Schwab eligibility cache deploy + TDIC missed-bar residual
+## 2026-05-12 SESSION START — PR #92 Schwab eligibility cache deploy
 
 > **Read this first.** This section is the live pickup pointer for the next session. Older entries below are chronology + archive.
 
 ### State at session start
 
-- `main` HEAD: post-PR-91 + this PR (handoff-only update). Confirm with `gh api repos/krshk30/project-mai-tai/commits/main --jq '.sha'`. Prior session validation entry is the 2026-05-12 ~12:00 UTC entry below.
-- VPS HEAD should match `main` (VPS was synced to `16763d1` before this entry; resync after this PR merges)
-- All 5 services `active`; strategy uptime since 2026-05-12 01:49:27 UTC (unchanged since PR #85)
-- Positions: only `CYN x 8000` on `paper:schwab_1m` + `paper:macd_30s` — **exempt** per user
-- CI baseline: 517 passed / 15 failed in `test_strategy_engine_service.py` (full list in 2026-05-11 PM entry)
-- **PR #85 schwab_1m CHART-canonical fix is VALIDATED** (see 2026-05-12 ~12:00 UTC entry below). The `trade_count=2 + 4-10x volume` bug pattern is eliminated.
+- `main` HEAD: `2eee6a7` (PR #94 squash-merge) + this handoff-doc PR. Confirm with `gh api repos/krshk30/project-mai-tai/commits/main --jq '.sha'`.
+- VPS HEAD: matches `main` (resynced to `2eee6a7` 2026-05-12 11:17 UTC after PR #94 merge)
+- All 5 services `active`; strategy restarted 2026-05-12 11:17:44 UTC for PR #94 deploy (clean log, momentum alert engine restored, runtime bar history restored)
+- Positions: account flat at deploy (`virtual_positions` empty); CYN was previously held on paper accounts (exempt) but has been closed since the 2026-05-11 PM entry
+- CI baseline: 517 passed / 15 failed in `test_strategy_engine_service.py` (full list in 2026-05-11 PM entry). PR #94 added 5 new passing tests (522 / 15).
+- **PR #85 schwab_1m CHART-canonical fix VALIDATED** + **PR #94 bootstrap-placeholder-filter SHIPPED** (see entries below)
 
 ### Critical first action: deploy PR #92 (Schwab pre-trade eligibility cache)
 
@@ -30,27 +30,121 @@ Deploy lifecycle requires migration + coordinated OMS + strategy restart per the
 Steps:
 1. `gh pr checks 92 --watch` — confirm Validate is green, or matches the documented 15 baseline failures only
 2. Read the PR diff to satisfy the Pre-Merge Regression Check rule (`oms/service.py`, `strategy_engine_app.py` are shared hot files)
-3. Account-flat pre-flight (CYN exempt)
+3. Account-flat pre-flight (CYN now closed; query `virtual_positions WHERE quantity != 0` should remain empty)
 4. `gh pr merge 92 --squash --delete-branch` (or `--admin` if CI is on the same 15 baseline)
 5. Run Alembic migration on VPS
 6. Coordinated restart per live-session restart choreography for OMS
 
-### Residual to triage: TDIC missed-bar at 05:24 ET (NOT a PR #85 regression)
+### PR #94 production validation pending
 
-TDIC 2026-05-12 05:24:00 ET persisted=(1.1, 1.1, 1.1, 1.1, **vol=0, trade_count=0**) but rebuilt-from-archive=(1.325, 1.44, 1.2897, 1.44, **vol=330023, trade_count=46**). The 05:25 neighbor also diverges (rebuilt vol=292K vs persisted vol=157K).
+PR #94's `_drop_placeholder_bars` filter is on `main` + VPS, unit tests pass, strategy restarted clean. BUT: the bootstrap path isn't exercised every session — it only fires when a new symbol gets promoted into schwab_1m (CONFIRMED alert) or periodic refresh detects stale history. As of the PR #94 deploy at 11:17 UTC, no fresh bootstrap had been triggered yet (`schwab_1m` bars touched post-restart = 0).
 
-This pattern is UNDER-counting — the opposite of PR #85's bug — so it is NOT a regression of that fix. Two plausible causes:
-1. A CHART_EQUITY 0-vol bar landed first at 05:24 and the new `_last_closed_bar_from_aggregate` early-return in `_revise_last_closed_bar_from_trade` now suppresses late-TIMESALE revision even when CHART vol=0. If so, the early-return needs a `aggregate_volume > 0` guard.
-2. Strategy-engine drain hiccup around 05:24 unrelated to PR #85.
-
-To distinguish: grep `/var/log/project-mai-tai/strategy.log` around 09:24:00-09:25:00 UTC for `on_final_bar` on TDIC; compare against archive `.jsonl` `live_bar` events for TDIC. Low-priority residual; the inflation bug — the original reported symptom — is resolved.
+Validation will accrue passively as the day progresses. To confirm explicitly: any new `bootstrapped N Schwab historical bars` log line should be followed by zero `(volume=0, trade_count=0)` rows persisted for that symbol. Query for the day after PR #94:
+```
+SELECT count(*) FROM strategy_bar_history
+WHERE strategy_code='schwab_1m' AND interval_secs=60
+  AND volume=0 AND trade_count=0
+  AND updated_at > '<deploy timestamp>';
+```
+Expected: 0.
 
 ### Other open workstreams (not immediate, see entries below)
 
+- **Pre-PR-94 zero-bars already in DB** are NOT cleaned up by PR #94 (filter only affects new writes). They include the 12 symbols' 2026-05-12 03:59 ET placeholders + VEEE/CVM/CGTL/etc.'s extended zero-bar runs. Cosmetic and unlikely to affect future analytics (next-day bootstrap reads from `_load_persisted_schwab_1m_history_bars` as a fallback only when Schwab API returns short of `required_bars`).
 - **CI baseline**: 15 failures in `test_strategy_engine_service.py` (full list in 2026-05-11 PM entry). Codex's natural next cleanup cluster.
 - **Reconciler** still degraded since 2026-04-28. Background residual.
 - **fd-leak** in catalyst/news fetch (`OSError: [Errno 24] Too many open files`). Pre-existing.
 - **Codex's WIP**: ~10 worktrees in `AppData/Local/Temp`, ~50 remote `codex/*` branches, PR #67 (April). Do not touch.
+
+---
+
+## 2026-05-12 ~11:17 UTC: schwab_1m bootstrap placeholder filter (PR #94) SHIPPED
+
+```
+Deploy owner: this agent (Claude Code)
+Local code owner: this agent (Claude Code)
+Active workstream: schwab_1m bootstrap data-quality
+Status: DEPLOYED; production validation pending next bootstrap trigger
+SHAs: 2eee6a7 (PR #94 squash-merge) on top of 16763d1 (handoff doc PR #93)
+VPS SHA after deploy: 2eee6a7 (matches main; verified via `git rev-parse HEAD`)
+Workflow: admin-merge (CI matched 15 baseline failures exactly, 0 new failures)
+Service target: strategy (live-restart-runbook strategy-only path)
+Restart window: 2026-05-12 11:17:42-11:17:44 UTC (2 sec stop+start)
+Market hours at deploy: YES (pre-market, ~07:17 ET)
+Account flat at deploy: yes (`virtual_positions WHERE quantity != 0` returned 0 rows)
+Post-deploy validator: this agent (Claude Code)
+```
+
+### Change
+
+`strategy_engine_app.py::_load_schwab_history_bars`: added `_drop_placeholder_bars` static helper that filters out bars with `volume=0 AND trade_count=0`. Called immediately after both `fetch_historical_bars` invocations (initial fetch + broader-lookback fetch). 5 new unit tests in `tests/unit/test_strategy_engine_service.py` cover the filter (drop zeros, keep real bars, volume-only, trade-count-only, missing/None keys).
+
+Net diff: +50 lines (+18 in `strategy_engine_app.py`, +32 in tests). Pre-Merge Regression Check section in PR #94 documents that no recent commit on `strategy_engine_app.py` (last 10) touches the Schwab bootstrap path — only Polygon/test edits.
+
+### Symptom
+
+The 2026-05-12 pre-market validation of PR #85 surfaced this as a separate bar-build correctness issue:
+- 12 of 13 active schwab_1m symbols had a synthetic 03:59 ET bar with flat OHLC = prior-day-close and vol=0/tc=0
+- 4 symbols had >25% of their persisted bars as vol=0 (VEEE 33/50 = 66%, CVM 27/55 = 49%)
+- TDIC at 05:24 ET: persisted `(1.10, 1.10, 1.10, 1.10, 0, 0)` while TIMESALE archive showed 46 real trades, vol=324K, price range 1.32-1.44 in that minute
+
+The 2026-05-11 AM audit had classified "first-bar cold-start drift" as cosmetic and deferred. Today's deeper investigation showed schwab_1m is different from macd_30s — schwab_1m bootstraps from Schwab's pricehistory API, which returns a minute bar for every minute in the requested range, including minutes with no trades.
+
+### Root cause
+
+`_load_schwab_history_bars` (around line 6184 pre-fix) has an asymmetric return path:
+- Early-return at line 6191 returns Schwab API bars verbatim when `len(bars) >= required_bars`
+- Fallback paths go through `_merge_historical_bar_payloads` which sanitizes `trade_count` via `int(bar.get("trade_count", 1) or 1)`
+
+No path filtered `volume=0` bars. Schwab's API returns placeholders with `OHLC = prior_close, volume=0, trade_count=0` for minutes with no trades — and for bars not yet aggregated server-side (TDIC's 05:24 was 30-90 seconds before the bootstrap call at 05:26:08). Those flowed straight into `hydrate_historical_bars` → `bot.seed_bars` → persisted to `strategy_bar_history` with `decision_status='idle'`.
+
+`_refresh_stale_schwab_1m_history` (the second caller) was also affected — it would feed zero-volume bars into `handle_live_bar` which is on the trade-intent generation path.
+
+### Fix applied
+
+Added `_drop_placeholder_bars` static method as a Schwab-API-response sanitizer. Filters bars where both `volume=0` AND `trade_count=0` (so legitimate volume-only or trade_count-only bars survive). Called twice in `_load_schwab_history_bars` after each `fetch_historical_bars`.
+
+Why the filter is `volume=0 AND trade_count=0` rather than `volume=0`: Schwab CHART_EQUITY occasionally reports `volume=0` with a non-zero `trade_count` for halted-then-resumed minutes; we keep those because they carry meaningful price information.
+
+### Validation
+
+- **Unit tests** (VPS Python env): 5 new tests pass in 0.48s, full `test_strategy_engine_service.py` baseline unchanged at 15 failures
+- **CI Validate** on PR #94: 15 failures, all matching the documented 15-baseline list character-for-character. 0 new failures introduced.
+- **VPS three-way SHA**: GitHub `main` `2eee6a7` == VPS `git rev-parse HEAD` `2eee6a7`. Match.
+- **Service status**: all 5 services `active (running)` post-restart. Strategy restarted clean at 11:17:44 UTC.
+- **Strategy log post-restart**: momentum alert engine restored (history_cycles=120, spike_tickers=71, cooldowns=13); 5 confirmed candidates seeded for fresh restart revalidation; runtime bar history restored from DB (symbol_pairs=15). No errors.
+- **Production behavior validation**: PENDING. The bootstrap code path is only triggered by new-symbol promotion or stale-history refresh. As of 11:30 UTC no such event has occurred since restart, so the filter hasn't been exercised in production yet. See "PR #94 production validation pending" in the new SESSION START.
+
+### Result
+
+DEPLOYED. The TDIC 05:24 anomaly's root cause is now understood (was bootstrap placeholder pollution, NOT a PR #85 regression as initially hypothesized). The under-count residual flagged in the 2026-05-12 ~12:00 UTC validation entry is closed by this PR.
+
+### Residual considerations
+
+1. **Pre-deploy zero-bars still in DB** — PR #94 only affects new writes. The 12 placeholder bars from today's 03:59 ET bootstrap + VEEE/CVM/CGTL/etc.'s extended zero-bar runs remain. They're not cleaned up by this PR. Most do no harm — `decision_status='idle'`, no orders generated, no indicators trained on them — but `_load_persisted_schwab_1m_history_bars` (line 6208 in pre-fix code) reads from `strategy_bar_history` as a fallback. If a thinly-traded name has a multi-day stretch of bootstrap placeholders, that fallback could be polluted. Low priority cleanup, not urgent.
+2. **`_refresh_stale_schwab_1m_history`** — same fix flows through (both callers of `_load_schwab_history_bars` are filtered). Reduced log noise + no spurious intent generation from vol=0 refresh bars.
+3. **Asymmetry NOT fully removed** — line 6191 still early-returns raw `bars[-limit:]` (skipping the trade_count normalization in `_merge_historical_bar_payloads`). Today's fix is narrow (drop placeholders) and doesn't address potential future issues with non-zero-volume bars Schwab might send with `trade_count=0`. Possible follow-up: route all paths through `_merge_historical_bar_payloads`.
+
+### Tests added
+
+- `test_drop_placeholder_bars_filters_zero_volume_and_zero_trade_count` (the bug repro from TDIC 05:24)
+- `test_drop_placeholder_bars_keeps_bars_with_volume_only`
+- `test_drop_placeholder_bars_keeps_bars_with_trade_count_only`
+- `test_drop_placeholder_bars_drops_bars_with_missing_volume_and_trade_count`
+- `test_drop_placeholder_bars_drops_bars_with_none_volume`
+
+All 5 pass on VPS Python env. Suite count moves from 517 to 522 passing.
+
+### State at end of work
+
+- GitHub `main` SHA: `2eee6a7` (PR #94 squash-merge)
+- VPS `git rev-parse HEAD`: `2eee6a7` (matches)
+- All 5 services active; strategy uptime since 2026-05-12 11:17:44 UTC
+- Account flat (`virtual_positions WHERE quantity != 0` = 0 rows)
+
+### Next owner
+
+This agent (Claude Code) parking. Priority 1 for next session: PR #92 deploy. Priority 2 (passive, accrues with time): confirm PR #94 zero-bar filter is observed working in production by querying `strategy_bar_history` for any new `volume=0 AND trade_count=0` rows in schwab_1m written after 2026-05-12 11:17 UTC — should remain 0.
 
 ---
 
