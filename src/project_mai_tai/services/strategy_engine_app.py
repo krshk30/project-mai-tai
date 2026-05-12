@@ -2456,6 +2456,17 @@ class StrategyBotRuntime:
             return
 
         last_bar = builder.bars[-1]
+        # Skip persisting placeholder bars. vol=0 + tc=0 means either a
+        # CHART_EQUITY quiet-minute report or a bar-builder force-close when
+        # no trades arrived during the bar window (e.g., mid-bar symbol
+        # promotion with no subsequent fills). OHLC on such bars is stale
+        # (carried from prior close), so writing them pollutes
+        # strategy_bar_history with idle rows whose price values don't reflect
+        # the actual market state. Real trades arriving later go through
+        # _persist_revised_closed_bar, which creates the row at revision time.
+        if int(last_bar.volume) == 0 and int(last_bar.trade_count) == 0:
+            return
+
         bar_time = datetime.fromtimestamp(last_bar.timestamp, UTC)
         position_state, position_quantity = self._position_snapshot(symbol)
         indicator_payload = self._build_history_indicator_payload(indicators)
