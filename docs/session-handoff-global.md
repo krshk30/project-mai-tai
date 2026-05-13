@@ -43,54 +43,61 @@
 
 ---
 
-## 2026-05-12 SESSION START — Schwab eligibility cache (PR #92) live; monitor cache hits
+## 2026-05-13 SESSION START — Validate PR #103 scanner-filter eviction at pre-market
 
 > **Read this first.** This section is the live pickup pointer for the next session. Older entries below are chronology + archive.
 
 ### State at session start
 
-- `main` HEAD: `0f5d66e` (PR #92 squash-merge) + this handoff-doc PR. Confirm with `gh api repos/krshk30/project-mai-tai/commits/main --jq '.sha'`.
-- VPS HEAD: matches `main` (resynced to `0f5d66e` 2026-05-12 11:58 UTC after PR #92 merge)
-- All 5 services `active`; OMS restarted + strategy restarted 2026-05-12 11:58 UTC (clean coordinated restart per live-restart-runbook OMS path)
-- DB: alembic at `20260511_0005` (head). New table `schwab_ineligible_today` created, 0 rows at deploy.
+- `main` HEAD: `0c7eca4` (handoff doc PR #107, on top of PR #103 `3441f23`). Confirm with `gh api repos/krshk30/project-mai-tai/commits/main --jq '.sha'`.
+- VPS HEAD: matches `main` (resynced 2026-05-13 00:59 UTC after PR #103 merge + handoff doc resync)
+- All 5 services `active`; strategy restarted 2026-05-13 00:59:19 UTC for PR #103 deploy (clean, momentum alert engine restored, 25 confirmed candidates seeded)
+- DB: alembic at `20260511_0005`. Cache table `schwab_ineligible_today` has 15 rows for 8 distinct symbols carried over from 2026-05-12 (will reset at next 04:00 ET session-day boundary): AEHL, AIIO, CGTL, ELPW, FCHL, HTCO, STAK, TDIC
 - Positions: account flat at deploy
-- CI baseline: 15 failures in `test_strategy_engine_service.py`. PRs #94/#97/#92 added 5+3+3 new passing tests respectively (528 / 15).
-- **All four PRs shipped today**: PR #85 + #94 + #97 (schwab_1m bar-build correctness) + **PR #92 (Schwab eligibility cache)**
+- CI baseline: 15 failures in `test_strategy_engine_service.py`. PR #103 added 3 more passing tests. Today's chain shipped 8 PRs (see chronology below).
+- **All today's PRs (PR #85 + #94 + #97 + #92 + #103) shipped successfully.** Full schwab_1m correctness chain + complete Schwab eligibility cache loop now live.
 
-### Critical first action: monitor Schwab eligibility cache as rejections roll in
+### Critical first action: validate PR #103 scanner-filter at 2026-05-13 pre-market
 
-PR #92 is live but `schwab_ineligible_today` is empty (no rejects since deploy at 11:58 UTC). When a Schwab-backed OPEN intent for a restricted symbol (e.g., AEHL, CLIK, or any name with the rejection text "Opening transactions for this security must be placed with a broker") flows through OMS, the cache should populate. Subsequent OPEN intents for the same symbol on the same Schwab-backed account should short-circuit with synthetic reason `schwab_ineligible_cached` instead of round-tripping to the broker.
+PR #103 fixes the gap surfaced by today's 11-hour monitor: PR #92's OMS short-circuit worked, but the bots kept emitting OPEN intents for cached symbols for 6+ hours (14 AEHL intents post-cache). PR #103 evicts cached symbols from `lifecycle_states` so the bot stops generating signals for them in the first place.
 
-Validation queries (run during the trading day to confirm the feature is working):
+**Validation is most meaningful at pre-market open (04:00 ET = 08:00 UTC)** because that's when scanner promotion + signal generation is most active.
+
+Step-by-step validation:
+
+```bash
+# 1. Confirm cache rolled over (session_date should be 2026-05-13 for fresh entries, not 2026-05-12)
+ssh mai-tai-vps 'sudo -u postgres psql -d project_mai_tai -c "SELECT symbol, session_date, count(*) FROM schwab_ineligible_today GROUP BY symbol, session_date ORDER BY session_date DESC, symbol;"'
+
+# 2. After 04:00 ET (08:00 UTC) — count NEW OPEN intents for any symbol cached today
+ssh mai-tai-vps 'sudo -u postgres psql -d project_mai_tai -c "SELECT s.code AS strat, ti.symbol, count(*) AS open_intents FROM trade_intents ti JOIN strategies s ON ti.strategy_id=s.id WHERE ti.intent_type='''open''' AND ti.symbol IN (SELECT distinct symbol FROM schwab_ineligible_today WHERE session_date='''2026-05-13''') AND ti.created_at::date='''2026-05-13''' GROUP BY s.code, ti.symbol ORDER BY s.code, ti.symbol;"'
+
+# 3. Compare to today's 2026-05-12 PRE-PR-103 baseline
+# Pre-PR-103 (PR #92 alone): AEHL had 14 OPEN intents over 6 hours from schwab_1m + macd_30s, all OMS-rejected synthetically
+# Post-PR-103 (today's after-hours validation): 0 new intents for any cached symbol in the brief window after deploy
+# Expected at 2026-05-13 pre-market: should be 1 intent per Schwab-backed bot per restricted symbol (the FIRST attempt that populates the cache for that session_date), then 0 thereafter
 ```
--- 1. Watch the cache populate
-sudo -u postgres psql -d project_mai_tai -c "SELECT symbol, broker_account_id, session_date, first_seen_at AT TIME ZONE 'America/New_York' AS first_seen_et, hit_count, left(reason_text, 60) AS reason FROM schwab_ineligible_today ORDER BY first_seen_at DESC LIMIT 20;"
 
--- 2. Confirm short-circuit is firing (look for schwab_ineligible_cached reason in trade_intents)
-sudo -u postgres psql -d project_mai_tai -c "SELECT symbol, broker_account_name, decision_status, created_at AT TIME ZONE 'America/New_York' AS et FROM trade_intents WHERE decision_reason='schwab_ineligible_cached' ORDER BY created_at DESC LIMIT 20;"
+**Decision tree:**
 
--- 3. Confirm polygon_30s watchlist is NOT filtered (regression — polygon-backed bot should retain Schwab-restricted names)
--- Compare polygon_30s vs schwab_1m vs macd_30s watchlists in /api/bots
+- **Pass (expected)**: ≤1 OPEN intent per `(strategy_code, symbol, broker_account)` triple for cached symbols, then 0 more. The first intent populates the cache, PR #103's eviction triggers on the next snapshot batch, no further intents. → mark PR #103 success, archive this workstream.
+- **Partial pass**: cache populates but intents continue trickling (e.g., 2-3 per symbol before eviction takes effect). Investigate snapshot-batch frequency vs cache-write timing in `process_snapshot_batch`.
+- **Fail**: intents keep firing at the previous baseline rate (10+ per symbol). PR #103's eviction didn't engage — check `bot.broker_blocked_symbols`, `bot.lifecycle_states`, and the `set_broker_blocked_symbols_by_strategy` call site at line ~5376 of `strategy_engine_app.py`.
+
+### Per-bot filter — verify polygon_30s unaffected
+
+`polygon_30s` should retain Schwab-restricted symbols in its watchlist (provider=polygon, not schwab). Quick check:
+
+```bash
+# Look for any TDIC/AEHL/etc bars persisted under polygon_30s today
+ssh mai-tai-vps 'sudo -u postgres psql -d project_mai_tai -c "SELECT strategy_code, count(distinct symbol) AS distinct_symbols FROM strategy_bar_history WHERE strategy_code IN ('''polygon_30s''', '''macd_30s''', '''schwab_1m''') AND symbol IN ('''AEHL''', '''AIIO''', '''CGTL''', '''TDIC''', '''HTCO''') AND bar_time::date='''2026-05-13''' GROUP BY strategy_code;"'
 ```
 
-Per-bot filter design (verified in code review of `_load_schwab_ineligible_symbols_by_strategy` at strategy_engine_app.py line ~8133): the filter only applies when `provider_for_account(bot.definition.account_name) == "schwab"`. So:
-- **schwab_1m** → cache applies (provider=schwab)
-- **macd_30s** → cache applies (provider=schwab)
-- **polygon_30s** → cache does NOT apply (provider=polygon)
+Expected: polygon_30s sees 4-5 of those symbols (its watchlist isn't filtered); macd_30s and schwab_1m see significantly fewer (or zero new bars for symbols that get cached during pre-market).
 
-### PR #94 + PR #97 + PR #92 production validation status
+### Other open workstreams (not immediate)
 
-All three live. PR #94/#97 zero-bar count post-deploy = 0 (and stays 0 as bots run). PR #92 cache table populates passively as Schwab rejects arrive — first cache entries expected when scanner promotions hit restricted symbols today.
-
-The schwab_1m correctness chain is now end-to-end:
-- **PR #85** — late-trade revision skip on CHART-sourced bars (no over-count)
-- **PR #94** — bootstrap drops placeholder bars from Schwab pricehistory API (no zero-bar hydration)
-- **PR #97** — `_persist_bar_history` skips vol=0/tc=0 bars at write time (no force-close pollution)
-- **PR #92** — restricted Schwab symbols cached + filtered per-Schwab-backed-account, polygon_30s unaffected
-
-### Other open workstreams (not immediate, see entries below)
-
-- **Pre-PR-94/97 zero-bars already in DB** remain (cosmetic; not opening a cleanup workstream).
+- **Codex's PR #105 / #101 / others merged in parallel today** — codex pushed several PRs (VPS runtime snapshot mode, Polygon Webull-rejects fix). Unrelated to the cache work.
 - **CI baseline**: 15 failures in `test_strategy_engine_service.py`. Codex's natural next cleanup cluster.
 - **Reconciler** still degraded since 2026-04-28. Background residual.
 - **fd-leak** in catalyst/news fetch. Pre-existing.
