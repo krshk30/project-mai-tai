@@ -173,6 +173,56 @@ jobs:
                   print(result.stderr.rstrip())
 
 
+          def xrevrange_json(topic: str, count: int = 1) -> list[dict]:
+              stream = f"mai_tai:{topic}"
+              try:
+                  result = subprocess.run(
+                      ["redis-cli", "--raw", "XREVRANGE", stream, "+", "-", "COUNT", str(count)],
+                      check=False,
+                      capture_output=True,
+                      text=True,
+                  )
+              except Exception as exc:  # pragma: no cover - live ops helper
+                  print(
+                      json.dumps(
+                          {"redis_cli_launch_error": f"{type(exc).__name__}: {exc}", "topic": topic},
+                          indent=2,
+                      )
+                  )
+                  return []
+
+              if result.returncode != 0:
+                  stderr = result.stderr.strip() or result.stdout.strip() or f"redis-cli exit {result.returncode}"
+                  print(json.dumps({"redis_cli_error": stderr, "topic": topic}, indent=2))
+                  return []
+
+              lines = [line for line in result.stdout.splitlines() if line.strip()]
+              events: list[dict] = []
+              i = 0
+              while i + 2 < len(lines):
+                  entry_id = lines[i].strip()
+                  field = lines[i + 1].strip()
+                  value = lines[i + 2]
+                  i += 3
+                  if field != "data":
+                      continue
+                  try:
+                      payload = json.loads(value)
+                  except Exception as exc:  # pragma: no cover - live ops helper
+                      events.append(
+                          {
+                              "entry_id": entry_id,
+                              "decode_error": f"{type(exc).__name__}: {exc}",
+                              "raw": value,
+                          }
+                      )
+                      continue
+                  if isinstance(payload, dict):
+                      payload["_stream_entry_id"] = entry_id
+                  events.append(payload)
+              return events
+
+
           final_health = {}
           final_health_error = None
           for attempt in range(1, 13):
@@ -355,6 +405,112 @@ jobs:
                           "indicator_snapshots_preview": indicator_preview,
                       }
                       print(json.dumps(summary, indent=2, default=str))
+          print("== redis strategy-state polygon summary ==")
+          strategy_state_events = xrevrange_json("strategy-state", count=3)
+          latest_strategy_state = strategy_state_events[0] if strategy_state_events else {}
+          polygon_runtime = {}
+          payload = latest_strategy_state.get("payload")
+          if isinstance(payload, dict):
+              for bot in payload.get("bots") or []:
+                  if isinstance(bot, dict) and str(bot.get("strategy_code", "")).lower() == "polygon_30s":
+                      polygon_runtime = bot
+                      break
+          if not polygon_runtime:
+              print(
+                  json.dumps(
+                      {
+                          "fetch_error": "polygon_30s runtime snapshot not found",
+                          "events_seen": len(strategy_state_events),
+                      },
+                      indent=2,
+                  )
+              )
+          else:
+              retention_states = polygon_runtime.get("retention_states") or []
+              retention_counter = Counter(
+                  str(item.get("state", "") or "unknown")
+                  for item in retention_states
+                  if isinstance(item, dict)
+              )
+              blocked_retention = [
+                  str(item.get("ticker") or item.get("symbol") or "")
+                  for item in retention_states
+                  if isinstance(item, dict) and bool(item.get("blocks_entries"))
+              ]
+              degraded_retention = [
+                  str(item.get("ticker") or item.get("symbol") or "")
+                  for item in retention_states
+                  if isinstance(item, dict) and bool(item.get("degraded_mode"))
+              ]
+              latest_ticks = sorted(
+                  [
+                      (str(symbol), str(observed_at))
+                      for symbol, observed_at in dict(polygon_runtime.get("last_tick_at", {}) or {}).items()
+                      if str(observed_at or "").strip()
+                  ],
+                  key=lambda item: item[1],
+                  reverse=True,
+              )[:12]
+              print(
+                  json.dumps(
+                      {
+                          "stream_entry_id": latest_strategy_state.get("_stream_entry_id"),
+                          "produced_at": latest_strategy_state.get("produced_at"),
+                          "strategy_code": polygon_runtime.get("strategy_code"),
+                          "watchlist_size": len(list(polygon_runtime.get("watchlist") or [])),
+                          "watchlist_preview": list(polygon_runtime.get("watchlist") or [])[:12],
+                          "pending_open_symbols": list(polygon_runtime.get("pending_open_symbols") or []),
+                          "pending_close_symbols": list(polygon_runtime.get("pending_close_symbols") or []),
+                          "retention_state_counts": dict(retention_counter),
+                          "blocked_retention_preview": blocked_retention[:12],
+                          "degraded_retention_preview": degraded_retention[:12],
+                          "recent_decisions_preview": list(polygon_runtime.get("recent_decisions") or [])[:10],
+                          "indicator_snapshots_preview": list(polygon_runtime.get("indicator_snapshots") or [])[:8],
+                          "last_tick_at_preview": latest_ticks,
+                      },
+                      indent=2,
+                      default=str,
+                  )
+              )
+          print("== redis strategy-intents polygon preview ==")
+          polygon_intent_events = []
+          for event in xrevrange_json("strategy-intents", count=80):
+              payload = event.get("payload")
+              if not isinstance(payload, dict):
+                  continue
+              if str(payload.get("strategy_code", "")).lower() != "polygon_30s":
+                  continue
+              polygon_intent_events.append(
+                  {
+                      "stream_entry_id": event.get("_stream_entry_id"),
+                      "produced_at": event.get("produced_at"),
+                      "symbol": payload.get("symbol"),
+                      "intent_type": payload.get("intent_type"),
+                      "side": payload.get("side"),
+                      "reason": payload.get("reason"),
+                      "metadata": payload.get("metadata"),
+                  }
+              )
+          print(json.dumps(polygon_intent_events[:12], indent=2, default=str))
+          print("== redis service heartbeats preview ==")
+          heartbeat_preview = []
+          for event in xrevrange_json("heartbeats", count=60):
+              payload = event.get("payload")
+              if not isinstance(payload, dict):
+                  continue
+              service_name = str(payload.get("service_name", ""))
+              if service_name not in {"strategy-engine", "oms-risk", "market-data-gateway"}:
+                  continue
+              heartbeat_preview.append(
+                  {
+                      "stream_entry_id": event.get("_stream_entry_id"),
+                      "produced_at": event.get("produced_at"),
+                      "service_name": service_name,
+                      "status": payload.get("status"),
+                      "details": payload.get("details"),
+                  }
+              )
+          print(json.dumps(heartbeat_preview[:12], indent=2, default=str))
           print("== polygon db summary ==")
           run_psql(
               """
