@@ -475,7 +475,7 @@ def main() -> int:
     for ti in intents:
         sym_bars = bars.get(ti.symbol, [])
         bar, age = _find_driving_bar(ti, sym_bars, interval_secs)
-        if ti.intent_type in {"open", "scale"}:
+        if ti.intent_type == "open":
             ok, issues = _validate_open_intent(ti, bar, price_tolerance=args.price_tolerance)
         else:
             ok, issues = _validate_close_intent(ti, bar, price_tolerance=args.price_tolerance)
