@@ -116,6 +116,7 @@ jobs:
           import json
           import time
           import urllib.request
+          from collections import Counter
 
           HEALTH_URL = "http://127.0.0.1:8100/health"
           OVERVIEW_URL = "http://127.0.0.1:8100/api/overview"
@@ -142,21 +143,27 @@ jobs:
 
 
           final_health = {}
+          final_health_error = None
           for attempt in range(1, 13):
-              final_health = fetch(HEALTH_URL)
-              strategy = service_row(final_health, "strategy-engine")
-              status = str(strategy.get("status", "unknown"))
-              observed_at = str(strategy.get("observed_at", ""))
+              final_health, final_health_error = try_fetch(HEALTH_URL)
+              strategy = service_row(final_health or {}, "strategy-engine")
+              status = str(strategy.get("status", "unknown")) if final_health is not None else "fetch_error"
+              observed_at = str(strategy.get("observed_at", "")) if final_health is not None else ""
               print(
                   f"health poll {attempt}: control={final_health.get('status')} "
                   f"strategy={status} observed_at={observed_at}"
+                  if final_health is not None
+                  else f"health poll {attempt}: fetch_error={final_health_error}"
               )
-              if status == "healthy":
+              if final_health is not None and status == "healthy":
                   break
               time.sleep(5)
 
           print("== /health ==")
-          print(json.dumps(final_health, indent=2))
+          if final_health is None:
+              print(json.dumps({"fetch_error": final_health_error}, indent=2))
+          else:
+              print(json.dumps(final_health, indent=2))
           overview, overview_error = try_fetch(OVERVIEW_URL)
           bots_payload, bots_error = try_fetch(BOTS_URL)
           print("== /api/overview summary ==")
@@ -206,6 +213,38 @@ jobs:
               for bot in polygon_bots:
                   watchlist = bot.get("watchlist") or []
                   recent_decisions = bot.get("recent_decisions") or []
+                  retention_states = bot.get("retention_states") or []
+                  retention_counter = Counter(
+                      str(item.get("state", "") or "unknown")
+                      for item in retention_states
+                      if isinstance(item, dict)
+                  )
+                  blocked_retention = [
+                      str(item.get("ticker") or item.get("symbol") or "")
+                      for item in retention_states
+                      if isinstance(item, dict) and bool(item.get("blocks_entries"))
+                  ]
+                  degraded_retention = [
+                      str(item.get("ticker") or item.get("symbol") or "")
+                      for item in retention_states
+                      if isinstance(item, dict) and bool(item.get("degraded_mode"))
+                  ]
+                  indicator_preview = []
+                  for snapshot in list(bot.get("indicator_snapshots") or [])[:8]:
+                      if not isinstance(snapshot, dict):
+                          continue
+                      indicator_preview.append(
+                          {
+                              "symbol": snapshot.get("symbol"),
+                              "last_bar_at": snapshot.get("last_bar_at"),
+                              "bar_count": snapshot.get("bar_count"),
+                              "provider_status": snapshot.get("provider_status"),
+                              "provider_source": snapshot.get("provider_source"),
+                              "close": snapshot.get("close"),
+                              "ema20": snapshot.get("ema20"),
+                              "vwap": snapshot.get("vwap"),
+                          }
+                      )
                   summary = {
                       "strategy_code": bot.get("strategy_code") or bot.get("code"),
                       "name": bot.get("name") or bot.get("slug"),
@@ -217,10 +256,73 @@ jobs:
                       "latest_market_data_at": bot.get("latest_market_data_at"),
                       "latest_heartbeat_at": bot.get("latest_heartbeat_at"),
                       "listening_status": bot.get("listening_status"),
-                      "recent_decisions_preview": recent_decisions[:5],
+                      "pending_open_symbols": list(bot.get("pending_open_symbols") or []),
+                      "pending_close_symbols": list(bot.get("pending_close_symbols") or []),
+                      "recent_intents_preview": list(bot.get("recent_intents") or [])[:10],
+                      "retention_state_counts": dict(retention_counter),
+                      "blocked_retention_preview": blocked_retention[:12],
+                      "degraded_retention_preview": degraded_retention[:12],
+                      "recent_decisions_preview": recent_decisions[:10],
+                      "indicator_snapshots_preview": indicator_preview,
                   }
                   print(json.dumps(summary, indent=2, default=str))
           PY
+              echo
+              echo '== polygon db summary =='
+              sudo bash -lc '
+                source /etc/project-mai-tai/project-mai-tai.env
+                psql "$MAI_TAI_DATABASE_URL" -P pager=off <<'"'"'SQL'"'"'
+                WITH polygon_intents AS (
+                    SELECT ti.symbol, ti.intent_type, ti.status, ti.reason, ti.created_at
+                    FROM trade_intents ti
+                    JOIN strategies s ON s.id = ti.strategy_id
+                    JOIN broker_accounts ba ON ba.id = ti.broker_account_id
+                    WHERE s.code = '"'"'polygon_30s'"'"'
+                      AND ba.name = '"'"'live:polygon_30s'"'"'
+                      AND ti.created_at >= now() - interval '"'"'36 hours'"'"'
+                )
+                SELECT '"'"'intent_status_counts'"'"' AS section, status, count(*)::text AS value_1, '"'"''"'"' AS value_2, '"'"''"'"' AS value_3
+                FROM polygon_intents
+                GROUP BY status
+                UNION ALL
+                SELECT
+                    '"'"'latest_bar_times'"'"' AS section,
+                    strategy_code,
+                    coalesce(to_char(max(bar_time AT TIME ZONE '"'"'America/New_York'"'"'), '"'"'YYYY-MM-DD HH24:MI:SS TZ'"'"'), '"'"''"'"') AS value_1,
+                    coalesce(
+                        to_char(
+                            max(CASE WHEN coalesce(decision_status, '"'"''"'"') <> '"'"''"'"' THEN bar_time END) AT TIME ZONE '"'"'America/New_York'"'"',
+                            '"'"'YYYY-MM-DD HH24:MI:SS TZ'"'"'
+                        ),
+                        '"'"''"'"'
+                    ) AS value_2,
+                    count(*)::text AS value_3
+                FROM strategy_bar_history
+                WHERE strategy_code IN ('"'"'polygon_30s'"'"', '"'"'macd_30s'"'"', '"'"'schwab_1m'"'"')
+                  AND bar_time >= now() - interval '"'"'36 hours'"'"'
+                GROUP BY strategy_code
+                ORDER BY 1, 2;
+
+                SELECT symbol, intent_type, status, reason, created_at AT TIME ZONE '"'"'America/New_York'"'"' AS created_et
+                FROM polygon_intents
+                ORDER BY created_at DESC
+                LIMIT 20;
+
+                SELECT
+                    symbol,
+                    bar_time AT TIME ZONE '"'"'America/New_York'"'"' AS bar_et,
+                    volume,
+                    trade_count,
+                    decision_status,
+                    decision_reason
+                FROM strategy_bar_history
+                WHERE strategy_code = '"'"'polygon_30s'"'"'
+                  AND bar_time >= now() - interval '"'"'18 hours'"'"'
+                  AND coalesce(decision_status, '"'"''"'"') <> '"'"''"'"'
+                ORDER BY bar_time DESC
+                LIMIT 20;
+                SQL
+              ' || true
               echo
               echo '== strategy log tail =='
               sudo tail -n 80 /var/log/project-mai-tai/strategy.log || true
