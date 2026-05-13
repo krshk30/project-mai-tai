@@ -205,17 +205,22 @@ class MarketDataGatewayService:
 
             for stream, entries in messages:
                 for message_id, fields in entries:
-                    self._subscription_offsets[stream] = message_id
-                    data = fields.get("data")
-                    if not data:
-                        continue
-                    event = MarketDataSubscriptionEvent.model_validate(json.loads(data))
-                    symbols = await self.apply_subscription_event(event)
-                    self.logger.info(
-                        "market-data subscriptions updated by %s -> %s symbols",
-                        event.payload.consumer_name,
-                        len(symbols),
-                    )
+                    try:
+                        self._subscription_offsets[stream] = message_id
+                        data = fields.get("data")
+                        if not data:
+                            continue
+                        event = MarketDataSubscriptionEvent.model_validate(json.loads(data))
+                        symbols = await self.apply_subscription_event(event)
+                        self.logger.info(
+                            "market-data subscriptions updated by %s -> %s symbols",
+                            event.payload.consumer_name,
+                            len(symbols),
+                        )
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception:
+                        self.logger.exception("failed to apply market-data subscription event")
 
     async def _restore_subscription_state(self) -> None:
         stream = stream_name(self.settings.redis_stream_prefix, "market-data-subscriptions")
@@ -257,17 +262,41 @@ class MarketDataGatewayService:
         while not stop_event.is_set():
             try:
                 trade = await asyncio.wait_for(self._trade_queue.get(), timeout=1.0)
-                await self.publisher.publish_trade_tick(trade)
+                await self._publish_trade_tick_safely(trade)
             except TimeoutError:
                 pass
 
             while not self._bar_queue.empty():
                 bar = await self._bar_queue.get()
-                await self.publisher.publish_live_bar(bar)
+                await self._publish_live_bar_safely(bar)
 
             while not self._quote_queue.empty():
                 quote = await self._quote_queue.get()
-                await self.publisher.publish_quote_tick(quote)
+                await self._publish_quote_tick_safely(quote)
+
+    async def _publish_trade_tick_safely(self, trade: TradeTickRecord) -> None:
+        try:
+            await self.publisher.publish_trade_tick(trade)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            self.logger.exception("failed to publish trade tick for %s", trade.symbol)
+
+    async def _publish_live_bar_safely(self, bar: LiveBarRecord) -> None:
+        try:
+            await self.publisher.publish_live_bar(bar)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            self.logger.exception("failed to publish live bar for %s", bar.symbol)
+
+    async def _publish_quote_tick_safely(self, quote: QuoteTickRecord) -> None:
+        try:
+            await self.publisher.publish_quote_tick(quote)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            self.logger.exception("failed to publish quote tick for %s", quote.symbol)
 
     async def _heartbeat_loop(self, stop_event: asyncio.Event) -> None:
         interval = max(1, self.settings.service_heartbeat_interval_seconds)
@@ -310,10 +339,19 @@ class MarketDataGatewayService:
                 if not bars:
                     continue
 
-                await self.publisher.publish_historical_bars(
-                    HistoricalBarsRecord(
-                        symbol=symbol,
-                        interval_secs=interval_secs,
-                        bars=tuple(bars),
+                try:
+                    await self.publisher.publish_historical_bars(
+                        HistoricalBarsRecord(
+                            symbol=symbol,
+                            interval_secs=interval_secs,
+                            bars=tuple(bars),
+                        )
                     )
-                )
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    self.logger.exception(
+                        "historical warmup publish failed for %s @ %ss",
+                        symbol,
+                        interval_secs,
+                    )
