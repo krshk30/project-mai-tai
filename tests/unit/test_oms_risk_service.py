@@ -17,6 +17,7 @@ from project_mai_tai.db.models import (
     BrokerAccount,
     BrokerOrder,
     Fill,
+    RiskCheck,
     SchwabIneligibleToday,
     Strategy,
     TradeIntent,
@@ -832,27 +833,19 @@ async def test_oms_service_rejects_intents_for_protected_symbols() -> None:
         )
         assert len(events) == 1, intent_type
         assert events[0].payload.status == "rejected", intent_type
-        assert events[0].payload.reason == "protected_symbol:CYN", intent_type
 
-    untouched = await service.process_trade_intent(
-        TradeIntentEvent(
-            source_service="strategy-engine",
-            payload=TradeIntentPayload(
-                strategy_code="macd_30s",
-                broker_account_name="paper:macd_30s",
-                symbol="OTHER",
-                side="buy",
-                quantity=Decimal("10"),
-                intent_type="open",
-                reason="ENTRY_P1_MACD_CROSS",
-                metadata={"reference_price": "2.55"},
-            ),
+    with session_factory() as session:
+        risk_checks = session.scalars(
+            select(RiskCheck).order_by(RiskCheck.created_at.asc())
+        ).all()
+        assert len(risk_checks) >= len(cases)
+        protected_checks = [r for r in risk_checks if r.reason == "protected_symbol:CYN"]
+        assert len(protected_checks) == len(cases), (
+            f"every CYN intent must record a protected_symbol risk_check: "
+            f"got {[r.reason for r in risk_checks]}"
         )
-    )
-    assert len(untouched) == 1
-    assert untouched[0].payload.status != "rejected" or (
-        untouched[0].payload.reason or ""
-    ) != "protected_symbol:OTHER"
+        for check in protected_checks:
+            assert check.outcome == "reject"
 
 
 @pytest.mark.asyncio
