@@ -112,7 +112,7 @@ jobs:
               print_repo_state
               ;;
             runtime_snapshot)
-              python3 - <<'PY'
+              python3 - <<'PY' || true
           import json
           import time
           import urllib.request
@@ -125,6 +125,13 @@ jobs:
           def fetch(url: str) -> dict:
               with urllib.request.urlopen(url, timeout=10) as response:
                   return json.loads(response.read().decode("utf-8"))
+
+
+          def try_fetch(url: str) -> tuple[dict | None, str | None]:
+              try:
+                  return fetch(url), None
+              except Exception as exc:  # pragma: no cover - live ops helper
+                  return None, f"{type(exc).__name__}: {exc}"
 
 
           def service_row(payload: dict, name: str) -> dict:
@@ -148,23 +155,30 @@ jobs:
                   break
               time.sleep(5)
 
-          overview = fetch(OVERVIEW_URL)
-          bots_payload = fetch(BOTS_URL)
           print("== /health ==")
           print(json.dumps(final_health, indent=2))
+          overview, overview_error = try_fetch(OVERVIEW_URL)
+          bots_payload, bots_error = try_fetch(BOTS_URL)
           print("== /api/overview summary ==")
-          print(
-              json.dumps(
-                  {
-                      "status": overview.get("status"),
-                      "counts": overview.get("counts"),
-                      "reconciliation": overview.get("reconciliation"),
-                  },
-                  indent=2,
+          if overview is None:
+              print(json.dumps({"fetch_error": overview_error}, indent=2))
+          else:
+              print(
+                  json.dumps(
+                      {
+                          "status": overview.get("status"),
+                          "counts": overview.get("counts"),
+                          "reconciliation": overview.get("reconciliation"),
+                      },
+                      indent=2,
+                  )
               )
-          )
           print("== /api/bots polygon summary ==")
-          bots = bots_payload.get("bots", [])
+          if bots_payload is None:
+              print(json.dumps({"fetch_error": bots_error}, indent=2))
+              bots = []
+          else:
+              bots = bots_payload.get("bots", [])
           polygon_bots = []
           for bot in bots:
               haystack = json.dumps(bot, default=str).lower()
