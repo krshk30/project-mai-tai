@@ -7203,6 +7203,89 @@ def test_persist_bar_history_persists_zero_volume_bar_with_nonzero_trade_count()
     assert records[0].trade_count == 1
 
 
+def test_flush_completed_polygon_bar_persists_real_bar_before_synthetic_gap_fill() -> None:
+    session_factory = build_test_session_factory()
+    clock = {"now": datetime(2026, 4, 23, 15, 26, 59, tzinfo=UTC)}
+    state = StrategyEngineState(
+        settings=make_test_settings(
+            dashboard_snapshot_persistence_enabled=False,
+            strategy_history_persistence_enabled=True,
+            strategy_polygon_30s_enabled=True,
+            strategy_polygon_30s_tick_bar_close_grace_seconds=0.0,
+        ),
+        now_provider=lambda: clock["now"],
+        session_factory=session_factory,
+    )
+    bot = state.bots["polygon_30s"]
+    bot.set_watchlist(["UGRO"])
+    state.seed_bars(
+        "polygon_30s",
+        "UGRO",
+        seed_trending_bars(
+            count=55,
+            start_timestamp=datetime(2026, 4, 23, 14, 59, 0, tzinfo=UTC).timestamp(),
+            interval_secs=30,
+        ),
+    )
+
+    bot.indicator_engine.calculate = lambda bars: {
+        "price": float(bars[-1]["close"]),
+        "bar_timestamp": float(bars[-1]["timestamp"]),
+    }
+    bot.entry_engine.check_entry = lambda *_args, **_kwargs: None
+    bot.entry_engine.pop_last_decision = lambda _symbol: None
+
+    bot.handle_live_bar(
+        symbol="UGRO",
+        open_price=4.00,
+        high_price=4.04,
+        low_price=3.99,
+        close_price=4.02,
+        volume=900,
+        timestamp=datetime(2026, 4, 23, 15, 26, 35, tzinfo=UTC).timestamp(),
+        trade_count=6,
+        coverage_started_at=datetime(2026, 4, 23, 15, 26, 0, tzinfo=UTC).timestamp(),
+    )
+    bot.handle_live_bar(
+        symbol="UGRO",
+        open_price=4.02,
+        high_price=4.05,
+        low_price=4.00,
+        close_price=4.03,
+        volume=1_100,
+        timestamp=datetime(2026, 4, 23, 15, 26, 59, tzinfo=UTC).timestamp(),
+        trade_count=7,
+        coverage_started_at=datetime(2026, 4, 23, 15, 26, 0, tzinfo=UTC).timestamp(),
+    )
+
+    clock["now"] = datetime(2026, 4, 23, 15, 28, 5, tzinfo=UTC)
+    _intents, completed_count = bot.flush_completed_bars()
+
+    with session_factory() as session:
+        persisted = session.scalar(
+            select(StrategyBarHistory).where(
+                StrategyBarHistory.strategy_code == "polygon_30s",
+                StrategyBarHistory.symbol == "UGRO",
+                StrategyBarHistory.interval_secs == 30,
+                StrategyBarHistory.bar_time == datetime(2026, 4, 23, 15, 26, 30, tzinfo=UTC),
+            )
+        )
+        synthetic = session.scalar(
+            select(StrategyBarHistory).where(
+                StrategyBarHistory.strategy_code == "polygon_30s",
+                StrategyBarHistory.symbol == "UGRO",
+                StrategyBarHistory.interval_secs == 30,
+                StrategyBarHistory.bar_time == datetime(2026, 4, 23, 15, 27, 30, tzinfo=UTC),
+            )
+        )
+
+    assert completed_count == 3
+    assert persisted is not None
+    assert persisted.volume == 2_000
+    assert persisted.trade_count == 13
+    assert synthetic is None
+
+
 def test_drop_placeholder_bars_filters_zero_volume_and_zero_trade_count() -> None:
     bars = [
         {"open": 1.10, "high": 1.10, "low": 1.10, "close": 1.10, "volume": 0, "trade_count": 0, "timestamp": 1_778_577_840.0},

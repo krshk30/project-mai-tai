@@ -467,7 +467,8 @@ def test_polygon_30s_revises_last_closed_bar_when_late_second_arrives() -> None:
 
     completed_evaluations: list[str] = []
 
-    def fake_evaluate_completed_bar(symbol: str):
+    def fake_evaluate_completed_bar(symbol: str, *, completed_bar=None):
+        assert completed_bar is not None
         completed_evaluations.append(symbol)
         return []
 
