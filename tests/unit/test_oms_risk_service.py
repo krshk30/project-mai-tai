@@ -17,6 +17,7 @@ from project_mai_tai.db.models import (
     BrokerAccount,
     BrokerOrder,
     Fill,
+    RiskCheck,
     SchwabIneligibleToday,
     Strategy,
     TradeIntent,
@@ -789,6 +790,62 @@ async def test_oms_service_rejects_non_positive_quantity() -> None:
         stored_intent = session.scalar(select(TradeIntent))
         assert stored_intent is not None
         assert stored_intent.status == "rejected"
+
+
+@pytest.mark.asyncio
+async def test_oms_service_rejects_intents_for_protected_symbols() -> None:
+    """Protected-symbol gate: every intent type (open/close/scale/cancel) for
+    a symbol listed in MAI_TAI_PROTECTED_SYMBOLS must be rejected at the OMS
+    risk evaluator, regardless of strategy code or broker account."""
+    redis = FakeRedis()
+    session_factory = build_test_session_factory()
+    service = OmsRiskService(
+        settings=Settings(
+            redis_stream_prefix="test",
+            oms_adapter="simulated",
+            protected_symbols="CYN, XYZ",
+        ),
+        redis_client=redis,
+        session_factory=session_factory,
+    )
+
+    cases = [
+        ("open", "buy", Decimal("10")),
+        ("close", "sell", Decimal("10")),
+        ("scale", "buy", Decimal("5")),
+        ("cancel", "sell", Decimal("0")),
+    ]
+    for intent_type, side, quantity in cases:
+        events = await service.process_trade_intent(
+            TradeIntentEvent(
+                source_service="strategy-engine",
+                payload=TradeIntentPayload(
+                    strategy_code="macd_30s",
+                    broker_account_name="paper:macd_30s",
+                    symbol="cyn",
+                    side=side,
+                    quantity=quantity,
+                    intent_type=intent_type,
+                    reason="ENTRY_P1_MACD_CROSS",
+                    metadata={},
+                ),
+            )
+        )
+        assert len(events) == 1, intent_type
+        assert events[0].payload.status == "rejected", intent_type
+
+    with session_factory() as session:
+        risk_checks = session.scalars(
+            select(RiskCheck).order_by(RiskCheck.created_at.asc())
+        ).all()
+        assert len(risk_checks) >= len(cases)
+        protected_checks = [r for r in risk_checks if r.reason == "protected_symbol:CYN"]
+        assert len(protected_checks) == len(cases), (
+            f"every CYN intent must record a protected_symbol risk_check: "
+            f"got {[r.reason for r in risk_checks]}"
+        )
+        for check in protected_checks:
+            assert check.outcome == "reject"
 
 
 @pytest.mark.asyncio

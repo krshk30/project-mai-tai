@@ -278,6 +278,7 @@ class Settings(BaseSettings):
     schwab_stream_symbol_resubscribe_interval_seconds: float = 5.0
     schwab_emergency_close_rest_rescue_enabled: bool = True
     schwab_prewarm_symbol_ttl_seconds: float = 900.0
+    protected_symbols: str = ""
     webull_base_url: str = "https://api.webull.com"
     webull_region_id: str = "us"
     webull_request_timeout_seconds: int = 10
@@ -337,6 +338,17 @@ class Settings(BaseSettings):
                 for symbol in self.strategy_macd_30s_reclaim_excluded_symbols.split(",")
                 if symbol.strip()
             }
+        )
+
+    @computed_field
+    @property
+    def protected_symbol_set(self) -> frozenset[str]:
+        if not self.protected_symbols.strip():
+            return frozenset()
+        return frozenset(
+            symbol.strip().upper()
+            for symbol in self.protected_symbols.split(",")
+            if symbol.strip()
         )
 
     @computed_field
