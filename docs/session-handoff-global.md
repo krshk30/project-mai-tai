@@ -8,6 +8,41 @@
 - Overall `/health` may still show `degraded` because of reconciler state. Do not confuse that with a Polygon-specific runtime failure.
 - Keep copied CI counts and failure logs out of the top summary unless they have been revalidated on current `main`.
 
+## 2026-05-12 LOCAL ONLY - `polygon_30s` signal suppression from intentional Webull rejects
+
+> **Read this if Polygon seems to go quiet after morning despite bars continuing.** This is a local code fix, not deployed yet.
+
+### What was found
+
+- A real Polygon-only suppression path exists outside the bar builder itself.
+- `StrategyBotRuntime.apply_order_status()` was applying a `20`-bar `record_rejected_open(...)` cooldown to `polygon_30s` on **every** rejected open.
+- That included infrastructure/configuration rejects from the Webull adapter such as:
+  - `missing Webull App Key/App Secret; listening is active but broker auth is not configured yet`
+  - `missing Webull account id`
+  - `adapter scaffolding is live but official order submission is not implemented yet`
+- In the current intended operating mode, those rejects are expected while signal validation continues before Webull execution is enabled. Feeding them back into the entry engine suppresses later same-symbol Polygon signals for 20 bars even though there was no market-side rejection.
+
+### Local fix
+
+- Narrowed the Polygon rejected-open cooldown so it still applies to real broker-side rejects, but **does not** apply to the known Webull infrastructure/configuration reject reasons above.
+- Files changed locally:
+  - `src/project_mai_tai/services/strategy_engine_app.py`
+  - `tests/unit/test_polygon_30s_bot.py`
+
+### Validation
+
+- Targeted test slice passed:
+  - `pytest tests/unit/test_polygon_30s_bot.py -k "open_rejection or live_bar_resume_backfills_missing_gap_bars or open_current_live_bar_resume_backfills_intermediate_gap_bars or uses_real_live_bar_fallback_when_tick_builder_lags or trade_ticks_keep_bot_alive_when_live_bars_starve" -q`
+  - result: `6 passed`
+- `py_compile` passed on the changed files.
+
+### Important limitation
+
+- VPS was unreachable from this workstation during follow-up checks (`ssh` to `159.223.190.79:22` timed out), so this session could not re-verify whether today's live Polygon runtime is currently fresh or whether additional post-morning live issues exist beyond this code-path bug.
+- The builder-side PR #96 fix remains the last confirmed live Polygon bar-gap fix. This new local-only patch addresses one separate way Polygon signals can get muted while bars are otherwise healthy.
+
+---
+
 ## 2026-05-12 SESSION START — Schwab eligibility cache (PR #92) live; monitor cache hits
 
 > **Read this first.** This section is the live pickup pointer for the next session. Older entries below are chronology + archive.
