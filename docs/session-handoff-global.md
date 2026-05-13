@@ -8,6 +8,52 @@
 - Overall `/health` may still show `degraded` because of reconciler state. Do not confuse that with a Polygon-specific runtime failure.
 - Keep copied CI counts and failure logs out of the top summary unless they have been revalidated on current `main`.
 
+## 2026-05-13 LIVE UPDATE - `polygon_30s` sparse-period persistence fix is now deployed and persisted bars resumed
+
+> **Current deploy state.** PR #113 is merged on `main` as `1792575`, and the strategy service was manually redeployed from VPS `main` after the official live deploy workflow was blocked by a flaky control-plane preflight endpoint.
+
+### What shipped
+
+- PR #113 (`Persist sparse Polygon bars before synthetic gap fill`) merged to `main` as commit `179257590faea32e1cd050060842cbfa47d81964`.
+- `Deploy Service` run `25795886015` fetched the new `main` onto the VPS but failed in live preflight because `deploy_preflight.py` timed out loading `http://127.0.0.1:8100/api/overview`.
+- Manual operator review showed the remaining preflight blockers were not active live Polygon risk:
+  - `open_account_positions=2` and `critical_findings=1` were the known exempt `CYN` paper mismatch only
+  - `pending_intents=64` were stale historical paper `submitted` / `accepted` close/cancel records from prior days
+  - no live Polygon position was open
+- `CYN` was left untouched.
+- Manual strategy deploy was then executed directly on the VPS from clean `main`.
+
+### Manual deploy proof
+
+- VPS repo after deploy: `main` at `179257590faea32e1cd050060842cbfa47d81964`, working tree clean.
+- Strategy restart timestamp from systemd: `2026-05-13 11:30:10 UTC`.
+- Strategy log confirms the restart and recovery:
+  - `2026-05-13 11:30:13` `strategy-engine starting`
+  - `2026-05-13 11:30:26` `restored runtime bar history from database | symbol_pairs=15`
+
+### Post-deploy validation
+
+- GitHub Actions `VPS Repo Maintenance` runtime snapshot run `25796375852` after the manual restart showed:
+  - `/health`: `strategy-engine=healthy`, `market-data-gateway=healthy`
+  - `/api/bots` `polygon_30s`:
+    - `watchlist_size=5`
+    - `watchlist_preview=AEHL,FCHL,OCG,TDIC,WOK`
+    - `latest_decision_at=2026-05-13 07:31:00 AM ET`
+    - `latest_bot_tick_at=2026-05-13 07:31:45 AM ET`
+    - `latest_market_data_at=2026-05-13 07:31:39 AM ET`
+    - `latest_heartbeat_at=2026-05-13 07:31:36 AM ET`
+    - `listening_status.state=LISTENING`
+- Direct VPS `strategy_bar_history` queries after deploy showed the persistence stall is no longer stuck at the old `06:23 ET` boundary:
+  - latest persisted bars: `polygon_30s=2026-05-13 11:32:00+00`, `macd_30s=2026-05-13 11:32:00+00`, `schwab_1m=2026-05-13 11:31:00+00`
+  - current active Polygon names `WOK`, `AEHL`, `OCG`, `FCHL`, and `TDIC` all had persisted `11:32:00+00` bars with new bars recorded in the last 30 minutes
+- This is the key confirmation that PR #113 fixed the sparse-period persistence drop on the live runtime.
+
+### Remaining caveats
+
+- `/health` still reports overall `degraded` because reconciler remains degraded.
+- `/api/overview` and `/api/positions` are still intermittently timing out locally on the VPS control-plane endpoint; that flakiness is what blocked the official `Deploy Service` workflow preflight.
+- Massive provider instability is still a separate open workstream and is not fixed by PR #113.
+
 ## 2026-05-13 PRE-MARKET VALIDATION - bar build clean on both Schwab bots; Massive snapshot instability remains the active live blocker
 
 > **Read this first.** Validations run during 2026-05-13 pre-market on `main` HEAD `7f97183` (PR #103 + PR #111 deployed; VPS in sync, all 5 services `active`, services restarted 2026-05-13 02:08 UTC).
