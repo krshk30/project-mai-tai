@@ -8,6 +8,56 @@
 - Overall `/health` may still show `degraded` because of reconciler state. Do not confuse that with a Polygon-specific runtime failure.
 - Keep copied CI counts and failure logs out of the top summary unless they have been revalidated on current `main`.
 
+## 2026-05-13 LIVE UPDATE - `polygon_30s` PR #101 deployed; current blocker is live Massive snapshot instability
+
+> **This supersedes the older "LOCAL ONLY" PR #101 note below.** The reject-cooldown fix is now merged and deployed.
+
+### What shipped
+
+- PR #101 (`60b9460`) was merged to `main` and the strategy service was deployed from `main` via `Deploy Service`.
+- The first deploy attempt failed because the VPS checkout was dirty on old `main` commit `8e58916`.
+- To recover without direct workstation SSH, manual GitHub Actions workflow `VPS Repo Maintenance` was added and used to:
+  - inspect the VPS checkout
+  - reset the VPS repo to clean `main`
+  - capture VPS-local runtime snapshots/logs post-deploy
+- After the reset, the official strategy deploy succeeded and restarted `project-mai-tai-strategy.service`.
+
+### Current validated live state
+
+- `polygon_30s` is **not dead/stale right now**. VPS-local `/api/bots` showed:
+  - `strategy_code="polygon_30s"`
+  - `watchlist_size=25`
+  - `listening_status.state="LISTENING"`
+  - `latest_market_data_at="2026-05-12 09:03:03 PM ET"`
+  - `latest_heartbeat_at="2026-05-12 09:03:06 PM ET"`
+- `latest_decision_at` and `latest_bot_tick_at` were blank in that after-hours snapshot, so the post-deploy proof is **fresh listening + fresh market data**, not "recent trade/open signal fired".
+- Strategy logs during the same window showed fresh restart recovery plus resumed processing:
+  - `strategy-engine starting`
+  - `restored runtime bar history from database | symbol_pairs=71`
+  - repeated `snapshot batch processed | alerts=0 confirmed=5`
+  - fresh confirmed candidates including `TDIC`, `BZFD`, `OCG`, `STAK`
+
+### Active unresolved issue
+
+- The strongest current live blocker is **intermittent Massive snapshot provider failure**, not the already-fixed PR #101 reject-cooldown path.
+- VPS market-data logs showed repeated Massive failures during the same validation window, including:
+  - `snapshot polling failed`
+  - `Read timed out`
+  - `Connection refused`
+  - `urllib3.exceptions.MaxRetryError` against `api.massive.com`
+- During those failures, VPS-local `/health` stayed `degraded` and did not surface a clean `strategy-engine=healthy` row even though `/api/bots` still showed Polygon listening with fresh market data timestamps.
+
+### Next session starting point
+
+- Do **not** start by re-debugging PR #101; treat that fix as shipped.
+- Start from the current live hypothesis:
+  - `polygon_30s` runtime is up and listening
+  - the remaining production risk is Massive snapshot/network instability and any downstream impact that has on scanner/watchlist freshness or post-morning signal quality
+- Use `VPS Repo Maintenance` first if workstation SSH is still unavailable:
+  - `mode=inspect`
+  - `mode=reset_to_origin_main`
+  - `mode=runtime_snapshot`
+
 ## 2026-05-12 LOCAL ONLY - `polygon_30s` signal suppression from intentional Webull rejects
 
 > **Read this if Polygon seems to go quiet after morning despite bars continuing.** This is a local code fix, not deployed yet.
