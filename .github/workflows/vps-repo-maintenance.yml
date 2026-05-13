@@ -328,7 +328,7 @@ jobs:
           PY
               echo
               echo '== polygon db summary =='
-              sudo -u postgres psql -d project_mai_tai -P pager=off <<'"'"'SQL'"'"' || true
+              sudo -u postgres psql -d project_mai_tai -P pager=off <<'SQL' || true
                 WITH polygon_intents AS (
                     SELECT ti.symbol, ti.intent_type, ti.status, ti.reason, ti.created_at
                     FROM trade_intents ti
