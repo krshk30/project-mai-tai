@@ -540,6 +540,134 @@ jobs:
           SQL
 
               echo
+              echo '== redis stream timeline summary (post-morning window) =='
+              sudo -u trader bash -lc '
+                set -a
+                source /etc/project-mai-tai/project-mai-tai.env
+                set +a
+                /home/trader/project-mai-tai/.venv/bin/python - <<'"'"'PY'"'"'
+          import json
+          import os
+          from collections import Counter
+          from datetime import UTC, datetime
+
+          import redis
+
+          start_utc = datetime.fromisoformat("2026-05-12T13:00:00+00:00")
+          end_utc = datetime.fromisoformat("2026-05-12T20:00:00+00:00")
+          start_id = f"{int(start_utc.timestamp() * 1000)}-0"
+          end_id = f"{int(end_utc.timestamp() * 1000)}-999999"
+          prefix = os.environ.get("MAI_TAI_REDIS_STREAM_PREFIX", "mai_tai")
+          client = redis.Redis.from_url(
+              os.environ.get("MAI_TAI_REDIS_URL", "redis://localhost:6379/0"),
+              decode_responses=True,
+          )
+
+
+          def to_et_label(iso_value: str) -> str:
+              dt = datetime.fromisoformat(iso_value.replace("Z", "+00:00"))
+              if dt.tzinfo is None:
+                  dt = dt.replace(tzinfo=UTC)
+              return dt.astimezone().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+
+
+          def stream_entries(topic: str) -> list[dict]:
+              rows = client.xrange(f"{prefix}:{topic}", min=start_id, max=end_id, count=5000)
+              parsed: list[dict] = []
+              for _entry_id, fields in rows:
+                  raw = fields.get("data")
+                  if not raw:
+                      continue
+                  try:
+                      parsed.append(json.loads(raw))
+                  except Exception:
+                      continue
+              return parsed
+
+
+          strategy_entries = stream_entries("strategy-state")
+          print(json.dumps({"strategy_state_entries": len(strategy_entries)}, indent=2))
+          polygon_changes: list[dict[str, object]] = []
+          previous_watchlist: list[str] | None = None
+          for payload in strategy_entries:
+              event_payload = payload.get("payload", {})
+              bots = event_payload.get("bots", [])
+              polygon_bot = next(
+                  (bot for bot in bots if str(bot.get("strategy_code", "")).lower() == "polygon_30s"),
+                  None,
+              )
+              if not polygon_bot:
+                  continue
+              watchlist = [str(symbol) for symbol in polygon_bot.get("watchlist", [])]
+              recent_decisions = polygon_bot.get("recent_decisions", []) or []
+              if previous_watchlist != watchlist:
+                  polygon_changes.append(
+                      {
+                          "at": payload.get("created_at"),
+                          "watchlist_size": len(watchlist),
+                          "watchlist_preview": watchlist[:10],
+                          "recent_decisions_preview": recent_decisions[:3],
+                      }
+                  )
+                  previous_watchlist = watchlist
+          print("strategy-state polygon watchlist changes:")
+          print(json.dumps(polygon_changes[:80], indent=2))
+
+          snapshot_entries = stream_entries("snapshot-batches")
+          by_hour = Counter()
+          for payload in snapshot_entries:
+              created_at = payload.get("created_at")
+              if not isinstance(created_at, str):
+                  continue
+              dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+              if dt.tzinfo is None:
+                  dt = dt.replace(tzinfo=UTC)
+              by_hour[dt.astimezone().strftime("%Y-%m-%d %H:00:%S %Z")] += 1
+          print("snapshot-batches by ET hour:")
+          print(json.dumps(dict(sorted(by_hour.items())), indent=2))
+
+          subscription_entries = stream_entries("market-data-subscriptions")
+          latest_subscriptions = []
+          for payload in subscription_entries[-20:]:
+              event_payload = payload.get("payload", {})
+              symbols = [str(symbol) for symbol in event_payload.get("symbols", [])]
+              latest_subscriptions.append(
+                  {
+                      "at": payload.get("created_at"),
+                      "consumer_name": event_payload.get("consumer_name"),
+                      "mode": event_payload.get("mode"),
+                      "symbol_count": len(symbols),
+                      "symbols_preview": symbols[:12],
+                  }
+              )
+          print("market-data subscriptions latest events:")
+          print(json.dumps(latest_subscriptions, indent=2))
+
+          heartbeat_entries = stream_entries("heartbeats")
+          heartbeat_summary: dict[str, dict[str, object]] = {}
+          for payload in heartbeat_entries:
+              event_payload = payload.get("payload", {})
+              service_name = str(event_payload.get("service_name", ""))
+              if service_name not in {"strategy-engine", "market-data"}:
+                  continue
+              row = heartbeat_summary.setdefault(service_name, {"count": 0, "last": None, "statuses": Counter()})
+              row["count"] = int(row["count"]) + 1
+              row["last"] = payload.get("created_at")
+              statuses = row["statuses"]
+              statuses[str(event_payload.get("status", ""))] += 1
+          serializable = {
+              key: {
+                  "count": value["count"],
+                  "last": value["last"],
+                  "statuses": dict(value["statuses"]),
+              }
+              for key, value in heartbeat_summary.items()
+          }
+          print("heartbeat summary:")
+          print(json.dumps(serializable, indent=2))
+          PY'
+
+              echo
               echo '== strategy.log slice (post-morning window) =='
               slice_log \
                 /var/log/project-mai-tai/strategy.log \
