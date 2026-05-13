@@ -7233,3 +7233,85 @@ def test_drop_placeholder_bars_drops_bars_with_missing_volume_and_trade_count() 
 def test_drop_placeholder_bars_drops_bars_with_none_volume() -> None:
     bars = [{"open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0, "volume": None, "trade_count": None}]
     assert StrategyEngineService._drop_placeholder_bars(bars) == []
+
+
+def test_set_broker_blocked_symbols_evicts_from_lifecycle_and_watchlist() -> None:
+    state = StrategyEngineState(
+        settings=make_test_settings(strategy_polygon_30s_enabled=True),
+        now_provider=fixed_now,
+    )
+    bot = state.bots["polygon_30s"]
+    bot.set_watchlist(["AEHL", "WOK"])
+    assert "AEHL" in bot.watchlist
+    assert "WOK" in bot.watchlist
+
+    bot.set_broker_blocked_symbols(["AEHL"])
+
+    assert "AEHL" not in bot.watchlist
+    assert "WOK" in bot.watchlist
+    assert "AEHL" not in bot.lifecycle_states
+    assert "AEHL" in bot.broker_blocked_symbols
+    assert "AEHL" in bot.entry_blocked_symbols
+
+
+def test_broker_blocked_symbol_records_blocked_decision_instead_of_emitting_intent(monkeypatch) -> None:
+    state = StrategyEngineState(
+        settings=make_test_settings(strategy_polygon_30s_enabled=True),
+        now_provider=fixed_now,
+    )
+    bot = state.bots["polygon_30s"]
+    bot.set_watchlist(["AEHL"])
+    state.seed_bars(
+        "polygon_30s",
+        "AEHL",
+        seed_trending_bars(count=55, start_timestamp=1_700_000_000.0, interval_secs=30),
+    )
+
+    def fake_calculate(bars):
+        return {"price": float(bars[-1]["close"]), "bar_timestamp": float(bars[-1]["timestamp"])}
+
+    def fake_check_entry(symbol, indicators, bar_index, runtime):
+        return {
+            "action": "BUY",
+            "ticker": symbol,
+            "path": "P4_BURST",
+            "price": indicators["price"],
+            "score": 6,
+            "score_details": "burst",
+        }
+
+    monkeypatch.setattr(bot.indicator_engine, "calculate", fake_calculate)
+    monkeypatch.setattr(bot.entry_engine, "check_entry", fake_check_entry)
+    monkeypatch.setattr(
+        bot.entry_engine,
+        "pop_last_decision",
+        lambda _symbol: {"status": "signal", "reason": "P4_BURST", "path": "P4_BURST", "score": "6"},
+    )
+
+    bot.set_broker_blocked_symbols(["AEHL"])
+
+    intents = bot.handle_trade_tick(
+        "AEHL",
+        price=2.5,
+        size=100,
+        timestamp_ns=1_700_001_650_000_000_000,
+        cumulative_volume=50_000,
+    )
+
+    assert intents == []
+    assert "AEHL" not in bot.watchlist
+    assert "AEHL" in bot.broker_blocked_symbols
+
+
+def test_set_broker_blocked_symbols_by_strategy_routes_to_bots() -> None:
+    state = StrategyEngineState(
+        settings=make_test_settings(strategy_polygon_30s_enabled=True),
+        now_provider=fixed_now,
+    )
+    state.bots["polygon_30s"].set_watchlist(["AEHL", "WOK"])
+
+    state.set_broker_blocked_symbols_by_strategy({"polygon_30s": {"AEHL"}})
+
+    assert "AEHL" in state.bots["polygon_30s"].broker_blocked_symbols
+    assert "AEHL" not in state.bots["polygon_30s"].watchlist
+    assert "AEHL" not in state.bots["polygon_30s"].lifecycle_states

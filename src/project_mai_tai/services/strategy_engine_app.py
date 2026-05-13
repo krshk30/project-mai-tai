@@ -303,6 +303,7 @@ class StrategyBotRuntime:
         self.lifecycle_states: dict[str, RetainedSymbolState] = {}
         self._desired_watchlist_symbols: set[str] = set()
         self.manual_stop_symbols: set[str] = set()
+        self.broker_blocked_symbols: set[str] = set()
         self.pending_open_symbols: set[str] = set()
         self.pending_close_symbols: set[str] = set()
         self.pending_scale_levels: set[tuple[str, str]] = set()
@@ -394,6 +395,32 @@ class StrategyBotRuntime:
             return
         for symbol in list(self.lifecycle_states):
             if symbol in self.manual_stop_symbols:
+                self.lifecycle_states.pop(symbol, None)
+        self._sync_watchlist_from_lifecycle()
+        self._prune_runtime_state()
+
+    def set_broker_blocked_symbols(self, symbols) -> None:
+        # Mirror of set_manual_stop_symbols for symbols cached as Schwab-
+        # ineligible (PR #92 cache). Evicts from _desired_watchlist_symbols,
+        # prewarm_symbols, and lifecycle_states so the bot stops emitting
+        # OPEN intents. Open positions are preserved by
+        # _sync_watchlist_from_lifecycle's positions clause (exits still work).
+        self.broker_blocked_symbols = {
+            str(symbol).upper() for symbol in symbols if str(symbol).strip()
+        }
+        self._desired_watchlist_symbols.difference_update(self.broker_blocked_symbols)
+        self.prewarm_symbols.difference_update(self.broker_blocked_symbols)
+        if not self.lifecycle_policy.config.enabled:
+            self.watchlist = {
+                symbol
+                for symbol in self.watchlist
+                if symbol not in self.broker_blocked_symbols
+            }
+            self.entry_blocked_symbols = self._blocked_lifecycle_symbols()
+            self._prune_runtime_state()
+            return
+        for symbol in list(self.lifecycle_states):
+            if symbol in self.broker_blocked_symbols:
                 self.lifecycle_states.pop(symbol, None)
         self._sync_watchlist_from_lifecycle()
         self._prune_runtime_state()
@@ -1755,6 +1782,14 @@ class StrategyBotRuntime:
                 indicators=indicators,
             )
             return []
+        if symbol in self.broker_blocked_symbols:
+            self._record_decision(
+                symbol=symbol,
+                status="blocked",
+                reason="schwab_ineligible_cached",
+                indicators=indicators,
+            )
+            return []
         if symbol in self.entry_blocked_symbols and not self._reactivate_lifecycle_from_signal(symbol, metrics, signal):
             return []
         open_intent, _routing_block_reason = self._try_emit_open_intent(signal)
@@ -1846,6 +1881,14 @@ class StrategyBotRuntime:
                 symbol=symbol,
                 status="blocked",
                 reason="manually stopped by operator",
+                indicators=indicators,
+            )
+            return []
+        if symbol in self.broker_blocked_symbols:
+            self._record_decision(
+                symbol=symbol,
+                status="blocked",
+                reason="schwab_ineligible_cached",
                 indicators=indicators,
             )
             return []
@@ -2939,6 +2982,7 @@ class StrategyBotRuntime:
             if state.blocks_entries()
         }
         blocked.update(self.manual_stop_symbols)
+        blocked.update(self.broker_blocked_symbols)
         return blocked
 
     def _symbol_requires_feed(self, symbol: str) -> bool:
@@ -4777,6 +4821,10 @@ class StrategyEngineState:
                 if str(symbol).strip()
             }
         self._broker_blocked_symbols_by_strategy = normalized
+        for code, bot in self.bots.items():
+            set_broker_blocked = getattr(bot, "set_broker_blocked_symbols", None)
+            if set_broker_blocked is not None:
+                set_broker_blocked(normalized.get(code, set()))
         self._resync_bot_watchlists_from_current_confirmed()
 
     def _broker_blocked_symbols_for_bot(self, code: str) -> set[str]:
