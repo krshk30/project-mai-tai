@@ -239,7 +239,7 @@ jobs:
                 local start_ts="$2"
                 local end_ts="$3"
                 local pattern="$4"
-                python3 - "$file" "$start_ts" "$end_ts" "$pattern" <<'PY'
+                sudo python3 - "$file" "$start_ts" "$end_ts" "$pattern" <<'PY'
           import pathlib
           import re
           import sys
@@ -522,12 +522,30 @@ jobs:
           SQL
 
               echo
+              echo '== latest scanner snapshot rows for 2026-05-12 =='
+              sudo -u postgres psql -d project_mai_tai -v ON_ERROR_STOP=1 -P pager=off <<SQL
+          SELECT
+            created_at AT TIME ZONE 'America/New_York' AS et,
+            snapshot_type
+          FROM dashboard_snapshots
+          WHERE snapshot_type IN (
+              'scanner_confirmed_last_nonempty',
+              'scanner_cycle_history',
+              'scanner_alert_engine_state'
+            )
+            AND created_at >= TIMESTAMPTZ '${SESSION_START_UTC}'
+            AND created_at < TIMESTAMPTZ '${SESSION_END_UTC}'
+          ORDER BY created_at DESC
+          LIMIT 30;
+          SQL
+
+              echo
               echo '== strategy.log slice (post-morning window) =='
               slice_log \
                 /var/log/project-mai-tai/strategy.log \
                 '2026-05-12 13:00:00' \
                 '2026-05-12 20:00:00' \
-                'snapshot batch processed|seeded [0-9]+ confirmed candidates|restored runtime bar history|polygon_30s|ERROR|Traceback'
+                'snapshot batch processed|seeded [0-9]+ confirmed candidates|restored runtime bar history|polygon_30s|historical bars|direct provider history bars|no historical bars available|ERROR|Traceback'
 
               echo
               echo '== market-data.log slice (post-morning window) =='
@@ -535,7 +553,7 @@ jobs:
                 /var/log/project-mai-tai/market-data.log \
                 '2026-05-12 13:00:00' \
                 '2026-05-12 20:00:00' \
-                'published snapshot batch|snapshot polling failed|api\\.massive\\.com|Read timed out|Connection refused|market-data subscriptions updated'
+                'published snapshot batch|snapshot polling failed|api\\.massive\\.com|Read timed out|Connection refused|market-data subscriptions updated|historical_bars'
               ;;
             *)
               echo "unknown mode: ${MODE}"
