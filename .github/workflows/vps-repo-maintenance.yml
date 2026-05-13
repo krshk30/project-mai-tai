@@ -114,6 +114,7 @@ jobs:
             runtime_snapshot)
               python3 - <<'PY' || true
           import json
+          import subprocess
           import time
           import urllib.request
           from collections import Counter
@@ -141,6 +142,35 @@ jobs:
                   if str(row.get("service_name")) == name:
                       return row
               return {}
+
+
+          def run_psql(query: str) -> None:
+              try:
+                  result = subprocess.run(
+                      [
+                          "sudo",
+                          "-u",
+                          "postgres",
+                          "psql",
+                          "-d",
+                          "project_mai_tai",
+                          "-P",
+                          "pager=off",
+                          "-c",
+                          query,
+                      ],
+                      check=False,
+                      capture_output=True,
+                      text=True,
+                  )
+              except Exception as exc:  # pragma: no cover - live ops helper
+                  print(json.dumps({"psql_launch_error": f"{type(exc).__name__}: {exc}"}, indent=2))
+                  return
+
+              if result.stdout.strip():
+                  print(result.stdout.rstrip())
+              if result.stderr.strip():
+                  print(result.stderr.rstrip())
 
 
           final_health = {}
@@ -325,60 +355,76 @@ jobs:
                           "indicator_snapshots_preview": indicator_preview,
                       }
                       print(json.dumps(summary, indent=2, default=str))
+          print("== polygon db summary ==")
+          run_psql(
+              """
+              WITH polygon_intents AS (
+                  SELECT ti.symbol, ti.intent_type, ti.status, ti.reason, ti.created_at
+                  FROM trade_intents ti
+                  JOIN strategies s ON s.id = ti.strategy_id
+                  JOIN broker_accounts ba ON ba.id = ti.broker_account_id
+                  WHERE s.code = 'polygon_30s'
+                    AND ba.name = 'live:polygon_30s'
+                    AND ti.created_at >= now() - interval '36 hours'
+              )
+              SELECT 'intent_status_counts' AS section, status, count(*)::text AS value_1, '' AS value_2, '' AS value_3
+              FROM polygon_intents
+              GROUP BY status
+              UNION ALL
+              SELECT
+                  'latest_bar_times' AS section,
+                  strategy_code,
+                  coalesce(to_char(max(bar_time AT TIME ZONE 'America/New_York'), 'YYYY-MM-DD HH24:MI:SS TZ'), '') AS value_1,
+                  coalesce(
+                      to_char(
+                          max(CASE WHEN coalesce(decision_status, '') <> '' THEN bar_time END) AT TIME ZONE 'America/New_York',
+                          'YYYY-MM-DD HH24:MI:SS TZ'
+                      ),
+                      ''
+                  ) AS value_2,
+                  count(*)::text AS value_3
+              FROM strategy_bar_history
+              WHERE strategy_code IN ('polygon_30s', 'macd_30s', 'schwab_1m')
+                AND bar_time >= now() - interval '36 hours'
+              GROUP BY strategy_code
+              ORDER BY 1, 2;
+              """
+          )
+          run_psql(
+              """
+              WITH polygon_intents AS (
+                  SELECT ti.symbol, ti.intent_type, ti.status, ti.reason, ti.created_at
+                  FROM trade_intents ti
+                  JOIN strategies s ON s.id = ti.strategy_id
+                  JOIN broker_accounts ba ON ba.id = ti.broker_account_id
+                  WHERE s.code = 'polygon_30s'
+                    AND ba.name = 'live:polygon_30s'
+                    AND ti.created_at >= now() - interval '36 hours'
+              )
+              SELECT symbol, intent_type, status, reason, created_at AT TIME ZONE 'America/New_York' AS created_et
+              FROM polygon_intents
+              ORDER BY created_at DESC
+              LIMIT 20;
+              """
+          )
+          run_psql(
+              """
+              SELECT
+                  symbol,
+                  bar_time AT TIME ZONE 'America/New_York' AS bar_et,
+                  volume,
+                  trade_count,
+                  decision_status,
+                  decision_reason
+              FROM strategy_bar_history
+              WHERE strategy_code = 'polygon_30s'
+                AND bar_time >= now() - interval '18 hours'
+                AND coalesce(decision_status, '') <> ''
+              ORDER BY bar_time DESC
+              LIMIT 20;
+              """
+          )
           PY
-              echo
-              echo '== polygon db summary =='
-              sudo -u postgres psql -d project_mai_tai -P pager=off <<'SQL' || true
-                WITH polygon_intents AS (
-                    SELECT ti.symbol, ti.intent_type, ti.status, ti.reason, ti.created_at
-                    FROM trade_intents ti
-                    JOIN strategies s ON s.id = ti.strategy_id
-                    JOIN broker_accounts ba ON ba.id = ti.broker_account_id
-                    WHERE s.code = '"'"'polygon_30s'"'"'
-                      AND ba.name = '"'"'live:polygon_30s'"'"'
-                      AND ti.created_at >= now() - interval '"'"'36 hours'"'"'
-                )
-                SELECT '"'"'intent_status_counts'"'"' AS section, status, count(*)::text AS value_1, '"'"''"'"' AS value_2, '"'"''"'"' AS value_3
-                FROM polygon_intents
-                GROUP BY status
-                UNION ALL
-                SELECT
-                    '"'"'latest_bar_times'"'"' AS section,
-                    strategy_code,
-                    coalesce(to_char(max(bar_time AT TIME ZONE '"'"'America/New_York'"'"'), '"'"'YYYY-MM-DD HH24:MI:SS TZ'"'"'), '"'"''"'"') AS value_1,
-                    coalesce(
-                        to_char(
-                            max(CASE WHEN coalesce(decision_status, '"'"''"'"') <> '"'"''"'"' THEN bar_time END) AT TIME ZONE '"'"'America/New_York'"'"',
-                            '"'"'YYYY-MM-DD HH24:MI:SS TZ'"'"'
-                        ),
-                        '"'"''"'"'
-                    ) AS value_2,
-                    count(*)::text AS value_3
-                FROM strategy_bar_history
-                WHERE strategy_code IN ('"'"'polygon_30s'"'"', '"'"'macd_30s'"'"', '"'"'schwab_1m'"'"')
-                  AND bar_time >= now() - interval '"'"'36 hours'"'"'
-                GROUP BY strategy_code
-                ORDER BY 1, 2;
-
-                SELECT symbol, intent_type, status, reason, created_at AT TIME ZONE '"'"'America/New_York'"'"' AS created_et
-                FROM polygon_intents
-                ORDER BY created_at DESC
-                LIMIT 20;
-
-                SELECT
-                    symbol,
-                    bar_time AT TIME ZONE '"'"'America/New_York'"'"' AS bar_et,
-                    volume,
-                    trade_count,
-                    decision_status,
-                    decision_reason
-                FROM strategy_bar_history
-                WHERE strategy_code = '"'"'polygon_30s'"'"'
-                  AND bar_time >= now() - interval '"'"'18 hours'"'"'
-                  AND coalesce(decision_status, '"'"''"'"') <> '"'"''"'"'
-                ORDER BY bar_time DESC
-                LIMIT 20;
-              SQL
               echo
               echo '== strategy log tail =='
               sudo tail -n 80 /var/log/project-mai-tai/strategy.log || true
