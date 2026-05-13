@@ -671,6 +671,28 @@ jobs:
                 '2026-05-12 13:00:00' \
                 '2026-05-12 20:00:00' \
                 'published snapshot batch|snapshot polling failed|api\\.massive\\.com|Read timed out|Connection refused|market-data subscriptions updated|historical_bars'
+
+              echo
+              echo '== strategy journal slice (post-morning window) =='
+              sudo journalctl \
+                -u project-mai-tai-strategy.service \
+                --since '2026-05-12 13:00:00 UTC' \
+                --until '2026-05-12 20:00:00 UTC' \
+                --no-pager \
+                -o short-iso \
+                | grep -E 'polygon_30s|snapshot batch|historical bars|history bars|provider history|generated [0-9]+ intents|market-data subscriptions|strategy-state|ERROR|Traceback|Exception' \
+                || true
+
+              echo
+              echo '== market-data journal slice (post-morning window) =='
+              sudo journalctl \
+                -u project-mai-tai-market-data.service \
+                --since '2026-05-12 13:00:00 UTC' \
+                --until '2026-05-12 20:00:00 UTC' \
+                --no-pager \
+                -o short-iso \
+                | grep -E 'published snapshot batch|snapshot polling failed|api\\.massive\\.com|Read timed out|Connection refused|historical_bars|live_bar|trade_tick|quote_tick|subscription' \
+                || true
               ;;
             *)
               echo "unknown mode: ${MODE}"
