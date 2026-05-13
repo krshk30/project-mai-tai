@@ -5644,6 +5644,18 @@ class StrategyEngineService:
             await self._publish_strategy_state_snapshot()
 
     async def _publish_intent(self, intent: TradeIntentEvent) -> None:
+        symbol = str(intent.payload.symbol).strip().upper()
+        if symbol and symbol in self.settings.protected_symbol_set:
+            self.logger.warning(
+                "blocked intent for protected symbol %s (strategy=%s intent_type=%s side=%s qty=%s); "
+                "symbol is in MAI_TAI_PROTECTED_SYMBOLS exception list",
+                symbol,
+                intent.payload.strategy_code,
+                intent.payload.intent_type,
+                intent.payload.side,
+                intent.payload.quantity,
+            )
+            return
         stream = stream_name(self.settings.redis_stream_prefix, "strategy-intents")
         await self.redis.xadd(
             stream,

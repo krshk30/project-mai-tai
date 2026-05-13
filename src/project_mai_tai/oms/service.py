@@ -1432,6 +1432,9 @@ class OmsRiskService:
         }
 
     def _evaluate_risk(self, event: TradeIntentEvent) -> tuple[bool, str]:
+        symbol = str(event.payload.symbol).strip().upper()
+        if symbol and symbol in self.settings.protected_symbol_set:
+            return False, f"protected_symbol:{symbol}"
         if event.payload.intent_type == "cancel":
             if event.payload.quantity < 0:
                 return False, "cancel quantity cannot be negative"

@@ -792,6 +792,70 @@ async def test_oms_service_rejects_non_positive_quantity() -> None:
 
 
 @pytest.mark.asyncio
+async def test_oms_service_rejects_intents_for_protected_symbols() -> None:
+    """Protected-symbol gate: every intent type (open/close/scale/cancel) for
+    a symbol listed in MAI_TAI_PROTECTED_SYMBOLS must be rejected at the OMS
+    risk evaluator, regardless of strategy code or broker account."""
+    redis = FakeRedis()
+    session_factory = build_test_session_factory()
+    service = OmsRiskService(
+        settings=Settings(
+            redis_stream_prefix="test",
+            oms_adapter="simulated",
+            protected_symbols="CYN, XYZ",
+        ),
+        redis_client=redis,
+        session_factory=session_factory,
+    )
+
+    cases = [
+        ("open", "buy", Decimal("10")),
+        ("close", "sell", Decimal("10")),
+        ("scale", "buy", Decimal("5")),
+        ("cancel", "sell", Decimal("0")),
+    ]
+    for intent_type, side, quantity in cases:
+        events = await service.process_trade_intent(
+            TradeIntentEvent(
+                source_service="strategy-engine",
+                payload=TradeIntentPayload(
+                    strategy_code="macd_30s",
+                    broker_account_name="paper:macd_30s",
+                    symbol="cyn",
+                    side=side,
+                    quantity=quantity,
+                    intent_type=intent_type,
+                    reason="ENTRY_P1_MACD_CROSS",
+                    metadata={},
+                ),
+            )
+        )
+        assert len(events) == 1, intent_type
+        assert events[0].payload.status == "rejected", intent_type
+        assert events[0].payload.reason == "protected_symbol:CYN", intent_type
+
+    untouched = await service.process_trade_intent(
+        TradeIntentEvent(
+            source_service="strategy-engine",
+            payload=TradeIntentPayload(
+                strategy_code="macd_30s",
+                broker_account_name="paper:macd_30s",
+                symbol="OTHER",
+                side="buy",
+                quantity=Decimal("10"),
+                intent_type="open",
+                reason="ENTRY_P1_MACD_CROSS",
+                metadata={"reference_price": "2.55"},
+            ),
+        )
+    )
+    assert len(untouched) == 1
+    assert untouched[0].payload.status != "rejected" or (
+        untouched[0].payload.reason or ""
+    ) != "protected_symbol:OTHER"
+
+
+@pytest.mark.asyncio
 async def test_oms_service_blocks_not_tradable_symbol_for_rest_of_session() -> None:
     redis = FakeRedis()
     session_factory = build_test_session_factory()

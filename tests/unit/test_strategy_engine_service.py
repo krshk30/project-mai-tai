@@ -31,6 +31,8 @@ from project_mai_tai.events import (
     OrderEventEvent,
     OrderEventPayload,
     SnapshotBatchEvent,
+    TradeIntentEvent,
+    TradeIntentPayload,
     TradeTickEvent,
     TradeTickPayload,
 )
@@ -5387,6 +5389,62 @@ async def test_service_emergency_close_rescue_can_be_disabled_via_setting() -> N
     close_intents = [p for p in published if p.payload.intent_type == "close"]
     assert len(close_intents) == 1
     assert close_intents[0].payload.reason == "SCHWAB_DATA_STALE_EMERGENCY_CLOSE"
+
+
+@pytest.mark.asyncio
+async def test_publish_intent_drops_protected_symbols_before_publish() -> None:
+    """Defense-in-depth: even before OMS sees it, the strategy service must
+    never publish an intent (open OR close) for a symbol in
+    MAI_TAI_PROTECTED_SYMBOLS. Verifies the Redis stream stays clean."""
+    settings = make_test_settings(
+        redis_stream_prefix="test",
+        dashboard_snapshot_persistence_enabled=False,
+        strategy_history_persistence_enabled=False,
+        protected_symbols="CYN, ABC",
+    )
+    redis = FakeRedis()
+    service = StrategyEngineService(settings=settings, redis_client=redis)
+
+    for intent_type, side in [("open", "buy"), ("close", "sell"), ("scale", "buy")]:
+        await service._publish_intent(
+            TradeIntentEvent(
+                source_service="strategy-engine",
+                payload=TradeIntentPayload(
+                    strategy_code="macd_30s",
+                    broker_account_name="paper:macd_30s",
+                    symbol="cyn",
+                    side=side,
+                    quantity=Decimal("10"),
+                    intent_type=intent_type,
+                    reason="ENTRY_P1_MACD_CROSS",
+                    metadata={},
+                ),
+            )
+        )
+
+    intent_entries = [e for e in redis.entries if "strategy-intents" in e[0]]
+    assert intent_entries == [], (
+        f"protected-symbol intents must not reach the stream: {intent_entries}"
+    )
+
+    await service._publish_intent(
+        TradeIntentEvent(
+            source_service="strategy-engine",
+            payload=TradeIntentPayload(
+                strategy_code="macd_30s",
+                broker_account_name="paper:macd_30s",
+                symbol="OTHER",
+                side="buy",
+                quantity=Decimal("10"),
+                intent_type="open",
+                reason="ENTRY_P1_MACD_CROSS",
+                metadata={},
+            ),
+        )
+    )
+    unprotected_entries = [e for e in redis.entries if "strategy-intents" in e[0]]
+    assert len(unprotected_entries) == 1, "unprotected symbol must still publish"
+    assert '"symbol":"OTHER"' in unprotected_entries[0][1]
 
 
 @pytest.mark.asyncio
