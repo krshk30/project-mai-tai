@@ -8,6 +8,48 @@
 - Overall `/health` may still show `degraded` because of reconciler state. Do not confuse that with a Polygon-specific runtime failure.
 - Keep copied CI counts and failure logs out of the top summary unless they have been revalidated on current `main`.
 
+## 2026-05-13 PRE-MARKET VALIDATION - bar build clean on both Schwab bots; Massive snapshot instability remains the active live blocker
+
+> **Read this first.** Validations run during 2026-05-13 pre-market on `main` HEAD `7f97183` (PR #103 + PR #111 deployed; VPS in sync, all 5 services `active`, services restarted 2026-05-13 02:08 UTC).
+
+### Validation results (2026-05-13 04:00-07:00 ET window)
+
+**PR #103 scanner-filter eviction — PASS (no false-fire)**
+- Schwab-backed bots emitted `0` OPEN intents for any symbol today, but they are 100% `blocked` by `outside trading hours` pre-RTH (configured RTH-only). 4,401 `macd_30s` and 2,070 `schwab_1m` bars built across 25 symbols, decisions populated.
+- `polygon_30s` emitted 13 OPEN intents (FCHL=3, TDIC=9). These are unrelated to PR #103 — `schwab_ineligible_today` does not gate the polygon broker path.
+- Real eviction trial fires at 09:30 ET (13:30 UTC). The pre-RTH evidence shows no over-eviction or unexpected suppression of bar/decision flow.
+
+**`schwab_1m` 60s bar validation — PASS (no fixes needed for live trading)**
+- Ran `scripts/check_bar_build_runtime.py --interval-secs 60 --strategy-code schwab_1m` over 10 active symbols.
+- 9/10 symbols: `avg_abs_vol_diff=0` and `avg_abs_price_diff=0` on overlapping bars.
+- AEHL outlier: bar `2026-05-13T06:13:00-04:00` had rebuilt vol=23913 vs persisted vol=1907. **This fits the documented CHART_EQUITY vs TIMESALE inherent drift** (CHART_EQUITY is canonical for `schwab_1m`, accepted as inherently lossy vs TIMESALE rebuild). Not a regression, not a fix target.
+
+**`macd_30s` 30s bar validation — PASS (no fixes needed for live trading)**
+- Ran `scripts/check_bar_build_runtime.py --interval-secs 30 --strategy-code macd_30s` over 10 active symbols.
+- 9/10 symbols fully clean: `vol_diff=0`, `price_diff=0`.
+- TDIC: `avg_abs_vol_diff=1.7` (single 302-vol delta bar) — noise floor.
+- PR #77 steady-state fix is holding cleanly — well within the post-PR-#77 audit baseline (which already showed 71-95% reduction vs pre-fix). `_revise_last_closed_bar_from_trade` cum-vol delta math is intact.
+
+### Active live blocker — Massive snapshot provider instability
+
+The remaining production risk is **not** in bar build, decision flow, or the Schwab eligibility cache. It is upstream in the Massive snapshot provider:
+
+- VPS `market-data.log` shows repeated failures against `api.massive.com`:
+  - `snapshot polling failed`
+  - `Read timed out`
+  - `Connection refused`
+  - `urllib3.exceptions.MaxRetryError`
+- Symptom: `/health` stays `degraded` and does not surface a clean `strategy-engine=healthy` row even when `/api/bots` shows bots LISTENING with fresh market data timestamps.
+- Downstream concern: snapshot polling is the scanner-promotion source. Sustained Massive failures can stall watchlist freshness and post-morning signal quality even while live bar builders look healthy. PR #111 (publish-loop hardening) protects the strategy side from one-off publish failures, but it does not fix the upstream Massive flakiness itself.
+
+### Next session starting point
+
+- Bar build correctness on `schwab_1m` and `macd_30s` is **validated and not blocking**. Do not re-run bar build audits unless something visibly regresses.
+- Pick up Massive snapshot stability as the next workstream:
+  - Triage the failure mix (timeout vs refused vs MaxRetryError) and time distribution from `market-data.log`.
+  - Decide between provider-side mitigation (retry/backoff/circuit-breaker around the Massive client) and a fallback snapshot source.
+  - Confirm whether `/health=degraded` after Massive failures is purely a status signal or if it is gating any downstream behavior.
+
 ## 2026-05-13 LIVE UPDATE - `polygon_30s` PR #101 deployed; current blocker is live Massive snapshot instability
 
 > **This supersedes the older "LOCAL ONLY" PR #101 note below.** The reject-cooldown fix is now merged and deployed.
