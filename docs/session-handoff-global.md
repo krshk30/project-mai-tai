@@ -98,6 +98,92 @@ The schwab_1m correctness chain is now end-to-end:
 
 ---
 
+## 2026-05-13 ~00:59 UTC: Schwab cache scanner filter (PR #103) DEPLOYED
+
+```
+Deploy owner: this agent (Claude Code)
+Local code owner: this agent (Claude Code)
+Active workstream: Schwab eligibility cache — scanner-side eviction follow-up to PR #92
+Status: DEPLOYED. After-hours window so production validation is light; unit-tested architecture + zero new OPEN intents for cached symbols since deploy.
+SHAs: 3441f23 (PR #103 squash-merge) on top of 826ac70 (codex PR #105 VPS runtime snapshot)
+VPS SHA after deploy: 3441f23 (matches main; verified via `git rev-parse HEAD`)
+Workflow: admin-merge (CI matched 15 baseline failures exactly, 0 new failures)
+Service target: strategy (strategy-only restart)
+Restart window: 2026-05-13 00:59:19 UTC (clean stop+start, ~3 sec)
+Market hours at deploy: NO (after-hours closing, ~20:59 ET)
+Account flat at deploy: yes
+Post-deploy validator: this agent (Claude Code)
+```
+
+### Change
+
+Adds `broker_blocked_symbols` field + `set_broker_blocked_symbols()` method on `StrategyBotRuntime`, mirroring `manual_stop_symbols`. State-level `set_broker_blocked_symbols_by_strategy` now routes the cached set to each Schwab-backed bot. `_blocked_lifecycle_symbols` includes broker_blocked; both intent-emission gates (`_evaluate_completed_bar`, `_evaluate_intrabar_entry`) record a `blocked` decision with reason `schwab_ineligible_cached` as defense-in-depth.
+
+Net diff: +130 lines (+48 in `strategy_engine_app.py`, +82 in tests).
+
+### Symptom
+
+Today's 11-hour post-PR-92 monitor (12:16 UTC baseline → 23:22 UTC sample) showed:
+- Cache populated correctly (15 rows for 7 distinct symbols across 2 Schwab accounts)
+- OMS-side short-circuit fired correctly (intents post-cache have `broker_order_id=NULL`)
+- **But intents kept being EMITTED** for cached symbols (e.g., 14 AEHL OPEN intents over 6 hours post-cache, all OMS-rejected synthetically)
+
+The scanner-side watchlist filter (the spec's "drops cached symbols from the universe") wasn't working.
+
+### Root cause
+
+PR #92's filter at `_watchlist_for_bot` excludes cached symbols from the WATCHLIST INPUT passed to `bot.set_watchlist()`. But `bot._sync_watchlist_from_lifecycle()` rebuilds `self.watchlist` as the union of `_desired_watchlist_symbols + lifecycle_states (keeps_feed) + pending_* + positions`. Cached symbols stay in `lifecycle_states` across `set_watchlist` calls (the lifecycle policy has its own timeout-based demotion), so they remain in `self.watchlist` and the bot keeps emitting signals.
+
+### Fix applied
+
+Mirror the `manual_stop_symbols` pattern at the bot level:
+- New field `self.broker_blocked_symbols`
+- New method `set_broker_blocked_symbols(symbols)` that pops cached symbols from `lifecycle_states`, `_desired_watchlist_symbols`, `prewarm_symbols` (open positions preserved via `_sync_watchlist_from_lifecycle`'s positions clause)
+- `_blocked_lifecycle_symbols` includes broker_blocked
+- Defense-in-depth gates at both emission paths
+- State's `set_broker_blocked_symbols_by_strategy` routes per-bot symbol sets to each bot before `_resync_bot_watchlists_from_current_confirmed`
+
+Per-bot filter unchanged: only Schwab-backed bots (`schwab_1m`, `macd_30s`) get a non-empty set; `polygon_30s` is not affected.
+
+### Validation
+
+- **Unit tests** (VPS Python env): 3 new tests pass in 2.04s
+- **CI Validate on PR #103**: 15 failures = documented baseline, char-for-char. 0 new failures.
+- **VPS three-way SHA**: GitHub `main` `3441f23` == VPS `3441f23`. Match.
+- **Service status**: all 5 services `active (running)` post-restart. Strategy stop→start 00:59:19 UTC, momentum alert engine restored (history_cycles=37, spike_tickers=1177), 25 confirmed candidates seeded.
+- **Production behavior validation**: post-deploy query for new OPEN intents on the 8 currently-cached symbols (AEHL, AIIO, CGTL, ELPW, FCHL, HTCO, STAK, TDIC) returned 0 rows. After-hours so traffic is light; full validation will accrue at tomorrow's pre-market.
+
+### Result
+
+DEPLOYED. The PR #92 + PR #103 chain now closes the eligibility cache loop end-to-end: bot evicts cached symbols from its lifecycle (no signals fire), OMS short-circuit catches anything that slips through (no broker round-trip).
+
+### Residual considerations
+
+1. **Production validation pending pre-market**: market is closed at deploy. Tomorrow morning (2026-05-13 pre-market 04:00 ET = 08:00 UTC), monitor `trade_intents` for any new OPEN intents for cached symbols. Expected: 0. Compare to today's pre-PR-103 baseline (14 AEHL intents in 6 hours).
+2. **Cache rows persist across deploys**: today's 15 cached rows for 7 symbols carry forward through tomorrow until `session_date` rolls at next 04:00 ET. So pre-market tomorrow will use a fresh cache; previously-cached symbols may re-appear as rejections.
+3. **Codex pushed PR #105 (VPS runtime snapshot mode) + #101 (Polygon Webull-rejects fix) + others** between my PRs — these are codex's WIP merged in parallel and unrelated to the cache work.
+
+### Tests added by PR #103
+
+- `test_set_broker_blocked_symbols_evicts_from_lifecycle_and_watchlist` — direct call evicts from lifecycle/watchlist
+- `test_broker_blocked_symbol_records_blocked_decision_instead_of_emitting_intent` — after eviction, `handle_trade_tick` for cached symbol emits no intents
+- `test_set_broker_blocked_symbols_by_strategy_routes_to_bots` — state-level setter routes per-bot
+
+All 3 pass on VPS Python env.
+
+### State at end of work
+
+- GitHub `main` SHA: `3441f23` (PR #103 squash-merge) → then this handoff PR
+- VPS `git rev-parse HEAD`: `3441f23` (matches; will re-sync to handoff-doc SHA after merge)
+- All 5 services active; strategy uptime since 2026-05-13 00:59:19 UTC
+- Account flat; cache table has 15 rows for 7 distinct symbols
+
+### Next owner
+
+This agent (Claude Code) parking. Next session priority: pre-market validation of PR #103 (zero new OPEN intents for cached symbols during the busy 04:00-09:30 ET window).
+
+---
+
 ## 2026-05-12 ~11:58 UTC: Schwab session-ineligible cache (PR #92) DEPLOYED
 
 ```
