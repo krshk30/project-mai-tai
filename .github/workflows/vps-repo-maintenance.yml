@@ -10,6 +10,7 @@ on:
         options:
           - inspect
           - reset_to_origin_main
+          - runtime_snapshot
       confirm_reset:
         description: "Type RESET to allow reset_to_origin_main"
         required: false
@@ -109,6 +110,109 @@ jobs:
               echo
               echo '== after reset =='
               print_repo_state
+              ;;
+            runtime_snapshot)
+              python3 - <<'PY'
+          import json
+          import time
+          import urllib.request
+
+          HEALTH_URL = "http://127.0.0.1:8100/health"
+          OVERVIEW_URL = "http://127.0.0.1:8100/api/overview"
+          BOTS_URL = "http://127.0.0.1:8100/api/bots"
+
+
+          def fetch(url: str) -> dict:
+              with urllib.request.urlopen(url, timeout=10) as response:
+                  return json.loads(response.read().decode("utf-8"))
+
+
+          def service_row(payload: dict, name: str) -> dict:
+              for row in payload.get("services", []):
+                  if str(row.get("service_name")) == name:
+                      return row
+              return {}
+
+
+          final_health = {}
+          for attempt in range(1, 13):
+              final_health = fetch(HEALTH_URL)
+              strategy = service_row(final_health, "strategy-engine")
+              status = str(strategy.get("status", "unknown"))
+              observed_at = str(strategy.get("observed_at", ""))
+              print(
+                  f"health poll {attempt}: control={final_health.get('status')} "
+                  f"strategy={status} observed_at={observed_at}"
+              )
+              if status == "healthy":
+                  break
+              time.sleep(5)
+
+          overview = fetch(OVERVIEW_URL)
+          bots_payload = fetch(BOTS_URL)
+          print("== /health ==")
+          print(json.dumps(final_health, indent=2))
+          print("== /api/overview summary ==")
+          print(
+              json.dumps(
+                  {
+                      "status": overview.get("status"),
+                      "counts": overview.get("counts"),
+                      "reconciliation": overview.get("reconciliation"),
+                  },
+                  indent=2,
+              )
+          )
+          print("== /api/bots polygon summary ==")
+          bots = bots_payload.get("bots", [])
+          polygon_bots = []
+          for bot in bots:
+              haystack = json.dumps(bot, default=str).lower()
+              if "polygon_30s" in haystack or "polygon" in haystack:
+                  polygon_bots.append(bot)
+
+          if not polygon_bots:
+              print(
+                  json.dumps(
+                      {
+                          "bot_count": len(bots),
+                          "sample_bot_keys": sorted(bots[0].keys()) if bots else [],
+                          "sample_bot_names": [
+                              bot.get("strategy_code")
+                              or bot.get("code")
+                              or bot.get("slug")
+                              or bot.get("name")
+                              for bot in bots[:5]
+                          ],
+                      },
+                      indent=2,
+                  )
+              )
+          else:
+              for bot in polygon_bots:
+                  watchlist = bot.get("watchlist") or []
+                  recent_decisions = bot.get("recent_decisions") or []
+                  summary = {
+                      "strategy_code": bot.get("strategy_code") or bot.get("code"),
+                      "name": bot.get("name") or bot.get("slug"),
+                      "state": bot.get("state"),
+                      "watchlist_size": len(watchlist) if isinstance(watchlist, list) else None,
+                      "watchlist_preview": watchlist[:10] if isinstance(watchlist, list) else watchlist,
+                      "latest_decision_at": bot.get("latest_decision_at"),
+                      "latest_bot_tick_at": bot.get("latest_bot_tick_at"),
+                      "latest_market_data_at": bot.get("latest_market_data_at"),
+                      "latest_heartbeat_at": bot.get("latest_heartbeat_at"),
+                      "listening_status": bot.get("listening_status"),
+                      "recent_decisions_preview": recent_decisions[:5],
+                  }
+                  print(json.dumps(summary, indent=2, default=str))
+          PY
+              echo
+              echo '== strategy log tail =='
+              sudo tail -n 80 /var/log/project-mai-tai/strategy.log || true
+              echo
+              echo '== market-data log tail =='
+              sudo tail -n 80 /var/log/project-mai-tai/market-data.log || true
               ;;
             *)
               echo "unknown mode: ${MODE}"
