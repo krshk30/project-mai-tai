@@ -11,6 +11,7 @@ on:
           - inspect
           - reset_to_origin_main
           - runtime_snapshot
+          - polygon_audit_2026_05_12
       confirm_reset:
         description: "Type RESET to allow reset_to_origin_main"
         required: false
@@ -227,6 +228,314 @@ jobs:
               echo
               echo '== market-data log tail =='
               sudo tail -n 80 /var/log/project-mai-tai/market-data.log || true
+              ;;
+            polygon_audit_2026_05_12)
+              SESSION_START_UTC="2026-05-12 08:00:00+00"
+              POST_MORNING_START_UTC="2026-05-12 13:00:00+00"
+              SESSION_END_UTC="2026-05-12 20:00:00+00"
+
+              slice_log() {
+                local file="$1"
+                local start_ts="$2"
+                local end_ts="$3"
+                local pattern="$4"
+                python3 - "$file" "$start_ts" "$end_ts" "$pattern" <<'PY'
+          import pathlib
+          import re
+          import sys
+
+          file_path, start_ts, end_ts, pattern = sys.argv[1:5]
+          rx = re.compile(pattern)
+          matched = 0
+
+          with pathlib.Path(file_path).open("r", encoding="utf-8", errors="replace") as handle:
+              for raw in handle:
+                  if len(raw) < 19:
+                      continue
+                  ts = raw[:19]
+                  if ts < start_ts:
+                      continue
+                  if ts > end_ts:
+                      break
+                  if rx.search(raw):
+                      sys.stdout.write(raw)
+                      matched += 1
+                      if matched >= 400:
+                          print("... truncated after 400 matching lines ...")
+                          break
+
+          print(f"-- matched_lines={matched}")
+          PY
+              }
+
+              echo '== polygon decision timeline by ET hour =='
+              sudo -u postgres psql -d project_mai_tai -v ON_ERROR_STOP=1 -P pager=off <<SQL
+          SELECT
+            date_trunc('hour', bar_time AT TIME ZONE 'America/New_York') AS et_hour,
+            count(*) AS decision_rows,
+            count(*) FILTER (WHERE decision_status = 'signal') AS signal_rows,
+            count(*) FILTER (WHERE decision_status = 'idle') AS idle_rows,
+            count(*) FILTER (WHERE decision_status = 'blocked') AS blocked_rows,
+            count(DISTINCT symbol) AS symbols
+          FROM strategy_bar_history
+          WHERE strategy_code = 'polygon_30s'
+            AND interval_secs = 30
+            AND decision_status <> ''
+            AND bar_time >= TIMESTAMPTZ '${SESSION_START_UTC}'
+            AND bar_time < TIMESTAMPTZ '${SESSION_END_UTC}'
+          GROUP BY 1
+          ORDER BY 1;
+          SQL
+
+              echo
+              echo '== latest polygon decision rows =='
+              sudo -u postgres psql -d project_mai_tai -v ON_ERROR_STOP=1 -P pager=off <<SQL
+          SELECT
+            symbol,
+            bar_time AT TIME ZONE 'America/New_York' AS et,
+            decision_status,
+            left(decision_reason, 140) AS decision_reason,
+            left(decision_path, 140) AS decision_path
+          FROM strategy_bar_history
+          WHERE strategy_code = 'polygon_30s'
+            AND interval_secs = 30
+            AND decision_status <> ''
+            AND bar_time >= TIMESTAMPTZ '${SESSION_START_UTC}'
+            AND bar_time < TIMESTAMPTZ '${SESSION_END_UTC}'
+          ORDER BY bar_time DESC, symbol
+          LIMIT 80;
+          SQL
+
+              echo
+              echo '== polygon symbols seen on 2026-05-12 =='
+              sudo -u postgres psql -d project_mai_tai -v ON_ERROR_STOP=1 -P pager=off <<SQL
+          WITH polygon_symbols AS (
+            SELECT DISTINCT symbol
+            FROM strategy_bar_history
+            WHERE strategy_code = 'polygon_30s'
+              AND interval_secs = 30
+              AND bar_time >= TIMESTAMPTZ '${SESSION_START_UTC}'
+              AND bar_time < TIMESTAMPTZ '${SESSION_END_UTC}'
+            UNION
+            SELECT DISTINCT ti.symbol
+            FROM trade_intents ti
+            JOIN strategies s ON s.id = ti.strategy_id
+            WHERE s.code = 'polygon_30s'
+              AND ti.created_at >= TIMESTAMPTZ '${SESSION_START_UTC}'
+              AND ti.created_at < TIMESTAMPTZ '${SESSION_END_UTC}'
+          )
+          SELECT string_agg(symbol, ', ' ORDER BY symbol) AS symbols
+          FROM polygon_symbols;
+          SQL
+
+              echo
+              echo '== polygon strategy_bar_history continuity summary (post-morning window) =='
+              sudo -u postgres psql -d project_mai_tai -v ON_ERROR_STOP=1 -P pager=off <<SQL
+          WITH polygon_symbols AS (
+            SELECT DISTINCT symbol
+            FROM strategy_bar_history
+            WHERE strategy_code = 'polygon_30s'
+              AND interval_secs = 30
+              AND bar_time >= TIMESTAMPTZ '${SESSION_START_UTC}'
+              AND bar_time < TIMESTAMPTZ '${SESSION_END_UTC}'
+            UNION
+            SELECT DISTINCT ti.symbol
+            FROM trade_intents ti
+            JOIN strategies s ON s.id = ti.strategy_id
+            WHERE s.code = 'polygon_30s'
+              AND ti.created_at >= TIMESTAMPTZ '${SESSION_START_UTC}'
+              AND ti.created_at < TIMESTAMPTZ '${SESSION_END_UTC}'
+          ),
+          bars AS (
+            SELECT
+              h.symbol,
+              h.bar_time,
+              h.volume,
+              h.trade_count,
+              h.decision_status,
+              h.decision_reason
+            FROM strategy_bar_history h
+            JOIN polygon_symbols ps ON ps.symbol = h.symbol
+            WHERE h.strategy_code = 'polygon_30s'
+              AND h.interval_secs = 30
+              AND h.bar_time >= TIMESTAMPTZ '${POST_MORNING_START_UTC}'
+              AND h.bar_time < TIMESTAMPTZ '${SESSION_END_UTC}'
+          ),
+          ordered AS (
+            SELECT
+              symbol,
+              bar_time,
+              volume,
+              trade_count,
+              decision_status,
+              decision_reason,
+              lag(bar_time) OVER (PARTITION BY symbol ORDER BY bar_time) AS prev_bar_time
+            FROM bars
+          )
+          SELECT
+            symbol,
+            min(bar_time AT TIME ZONE 'America/New_York') AS first_et,
+            max(bar_time AT TIME ZONE 'America/New_York') AS last_et,
+            count(*) AS bar_count,
+            count(*) FILTER (
+              WHERE prev_bar_time IS NOT NULL
+                AND EXTRACT(EPOCH FROM (bar_time - prev_bar_time)) > 30
+            ) AS gap_events,
+            coalesce(
+              max(EXTRACT(EPOCH FROM (bar_time - prev_bar_time))) FILTER (WHERE prev_bar_time IS NOT NULL),
+              0
+            )::int AS max_gap_seconds,
+            count(*) FILTER (WHERE volume = 0 AND trade_count = 0) AS zero_bars,
+            count(*) FILTER (WHERE decision_status = 'signal') AS signal_bars
+          FROM ordered
+          GROUP BY symbol
+          ORDER BY gap_events DESC, max_gap_seconds DESC, symbol;
+          SQL
+
+              echo
+              echo '== polygon strategy_bar_history gap details (>30s, post-morning window) =='
+              sudo -u postgres psql -d project_mai_tai -v ON_ERROR_STOP=1 -P pager=off <<SQL
+          WITH polygon_symbols AS (
+            SELECT DISTINCT symbol
+            FROM strategy_bar_history
+            WHERE strategy_code = 'polygon_30s'
+              AND interval_secs = 30
+              AND bar_time >= TIMESTAMPTZ '${SESSION_START_UTC}'
+              AND bar_time < TIMESTAMPTZ '${SESSION_END_UTC}'
+            UNION
+            SELECT DISTINCT ti.symbol
+            FROM trade_intents ti
+            JOIN strategies s ON s.id = ti.strategy_id
+            WHERE s.code = 'polygon_30s'
+              AND ti.created_at >= TIMESTAMPTZ '${SESSION_START_UTC}'
+              AND ti.created_at < TIMESTAMPTZ '${SESSION_END_UTC}'
+          ),
+          bars AS (
+            SELECT
+              h.symbol,
+              h.bar_time,
+              h.volume,
+              h.trade_count,
+              h.decision_status,
+              h.decision_reason
+            FROM strategy_bar_history h
+            JOIN polygon_symbols ps ON ps.symbol = h.symbol
+            WHERE h.strategy_code = 'polygon_30s'
+              AND h.interval_secs = 30
+              AND h.bar_time >= TIMESTAMPTZ '${POST_MORNING_START_UTC}'
+              AND h.bar_time < TIMESTAMPTZ '${SESSION_END_UTC}'
+          ),
+          ordered AS (
+            SELECT
+              symbol,
+              bar_time,
+              volume,
+              trade_count,
+              decision_status,
+              decision_reason,
+              lag(bar_time) OVER (PARTITION BY symbol ORDER BY bar_time) AS prev_bar_time
+            FROM bars
+          )
+          SELECT
+            symbol,
+            prev_bar_time AT TIME ZONE 'America/New_York' AS prev_et,
+            bar_time AT TIME ZONE 'America/New_York' AS curr_et,
+            EXTRACT(EPOCH FROM (bar_time - prev_bar_time))::int AS gap_seconds,
+            volume,
+            trade_count,
+            decision_status,
+            left(decision_reason, 120) AS decision_reason
+          FROM ordered
+          WHERE prev_bar_time IS NOT NULL
+            AND EXTRACT(EPOCH FROM (bar_time - prev_bar_time)) > 30
+          ORDER BY gap_seconds DESC, symbol, curr_et
+          LIMIT 200;
+          SQL
+
+              echo
+              echo '== polygon trade_intents by ET hour (post-morning window) =='
+              sudo -u postgres psql -d project_mai_tai -v ON_ERROR_STOP=1 -P pager=off <<SQL
+          SELECT
+            date_trunc('hour', ti.created_at AT TIME ZONE 'America/New_York') AS et_hour,
+            count(*) AS intents,
+            count(*) FILTER (WHERE ti.intent_type = 'open') AS open_intents,
+            count(*) FILTER (WHERE ti.status = 'rejected') AS rejected_intents,
+            count(DISTINCT ti.symbol) AS symbols
+          FROM trade_intents ti
+          JOIN strategies s ON s.id = ti.strategy_id
+          WHERE s.code = 'polygon_30s'
+            AND ti.created_at >= TIMESTAMPTZ '${POST_MORNING_START_UTC}'
+            AND ti.created_at < TIMESTAMPTZ '${SESSION_END_UTC}'
+          GROUP BY 1
+          ORDER BY 1;
+          SQL
+
+              echo
+              echo '== polygon trade_intents detail (post-morning window) =='
+              sudo -u postgres psql -d project_mai_tai -v ON_ERROR_STOP=1 -P pager=off <<SQL
+          SELECT
+            ti.created_at AT TIME ZONE 'America/New_York' AS et,
+            ti.symbol,
+            ti.intent_type,
+            ti.side,
+            ti.status AS intent_status,
+            ba.name AS account_name,
+            left(regexp_replace(ti.reason, E'[\\n\\r\\t]+', ' ', 'g'), 160) AS reason,
+            bo.status AS latest_order_status,
+            bo.broker_order_id
+          FROM trade_intents ti
+          JOIN strategies s ON s.id = ti.strategy_id
+          LEFT JOIN broker_accounts ba ON ba.id = ti.broker_account_id
+          LEFT JOIN LATERAL (
+            SELECT
+              o.status,
+              o.broker_order_id
+            FROM broker_orders o
+            WHERE o.intent_id = ti.id
+            ORDER BY o.updated_at DESC NULLS LAST, o.id DESC
+            LIMIT 1
+          ) bo ON true
+          WHERE s.code = 'polygon_30s'
+            AND ti.created_at >= TIMESTAMPTZ '${POST_MORNING_START_UTC}'
+            AND ti.created_at < TIMESTAMPTZ '${SESSION_END_UTC}'
+          ORDER BY ti.created_at, ti.symbol
+          LIMIT 300;
+          SQL
+
+              echo
+              echo '== polygon scanner snapshot history (post-morning window) =='
+              sudo -u postgres psql -d project_mai_tai -v ON_ERROR_STOP=1 -P pager=off <<SQL
+          SELECT
+            created_at AT TIME ZONE 'America/New_York' AS et,
+            snapshot_type,
+            left(replace(replace(payload::text, E'\n', ' '), E'\r', ' '), 240) AS payload_preview
+          FROM dashboard_snapshots
+          WHERE snapshot_type IN (
+              'scanner_confirmed_last_nonempty',
+              'scanner_cycle_history',
+              'scanner_alert_engine_state'
+            )
+            AND created_at >= TIMESTAMPTZ '${POST_MORNING_START_UTC}'
+            AND created_at < TIMESTAMPTZ '${SESSION_END_UTC}'
+          ORDER BY created_at DESC
+          LIMIT 80;
+          SQL
+
+              echo
+              echo '== strategy.log slice (post-morning window) =='
+              slice_log \
+                /var/log/project-mai-tai/strategy.log \
+                '2026-05-12 13:00:00' \
+                '2026-05-12 20:00:00' \
+                'snapshot batch processed|seeded [0-9]+ confirmed candidates|restored runtime bar history|polygon_30s|ERROR|Traceback'
+
+              echo
+              echo '== market-data.log slice (post-morning window) =='
+              slice_log \
+                /var/log/project-mai-tai/market-data.log \
+                '2026-05-12 13:00:00' \
+                '2026-05-12 20:00:00' \
+                'published snapshot batch|snapshot polling failed|api\\.massive\\.com|Read timed out|Connection refused|market-data subscriptions updated'
               ;;
             *)
               echo "unknown mode: ${MODE}"
