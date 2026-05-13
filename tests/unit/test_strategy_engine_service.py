@@ -5207,6 +5207,183 @@ async def test_service_uses_fallback_quotes_for_stale_schwab_open_positions() ->
 
 
 @pytest.mark.asyncio
+async def test_service_skips_emergency_close_when_rest_quote_proves_stream_lag() -> None:
+    settings = make_test_settings(
+        strategy_macd_30s_broker_provider="schwab",
+        redis_stream_prefix="test",
+        dashboard_snapshot_persistence_enabled=False,
+        strategy_history_persistence_enabled=False,
+        schwab_stream_symbol_stale_after_seconds=1.0,
+        schwab_stream_symbol_quote_poll_interval_seconds=0.5,
+        schwab_stream_symbol_resubscribe_interval_seconds=1.0,
+    )
+    service = StrategyEngineService(settings=settings, redis_client=FakeRedis())
+    runtime = service.state.bots["macd_30s"]
+    runtime.positions.open_position("ENVB", 4.0, quantity=10, path="ENTRY")
+    old = datetime.now(UTC) - timedelta(seconds=40)
+    service._schwab_symbol_last_stream_trade_at["ENVB"] = old
+    service._schwab_symbol_last_stream_quote_at["ENVB"] = old
+
+    published: list[TradeIntent] = []
+    fresh_trade_time_ms = (datetime.now(UTC) - timedelta(seconds=2)).timestamp() * 1000.0
+
+    class FakeStreamClient:
+        def __init__(self) -> None:
+            self.force_resubscribe_calls = 0
+
+        async def force_resubscribe(self) -> None:
+            self.force_resubscribe_calls += 1
+
+    class FakeQuotePollAdapter:
+        async def fetch_quotes(self, symbols):
+            return {
+                "ENVB": {
+                    "bid_price": 4.20,
+                    "ask_price": 4.22,
+                    "last_price": 4.21,
+                    "trade_time_ms": fresh_trade_time_ms,
+                    "quote_time_ms": fresh_trade_time_ms,
+                }
+            }
+
+    service._schwab_stream_client = FakeStreamClient()
+    service._schwab_quote_poll_adapter = FakeQuotePollAdapter()
+
+    async def fake_publish_intent(intent):
+        published.append(intent)
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(service, "_publish_intent", fake_publish_intent)
+    try:
+        await service._monitor_schwab_symbol_health()
+    finally:
+        monkeypatch.undo()
+
+    close_intents = [p for p in published if p.payload.intent_type == "close"]
+    assert close_intents == [], (
+        "REST poll showed fresh data; emergency close must not fire"
+    )
+    assert "ENVB" not in service._schwab_stale_symbols
+    assert runtime.data_health_summary()["halted_symbols"] == []
+    last_quote_at = service._schwab_symbol_last_stream_quote_at["ENVB"]
+    assert (datetime.now(UTC) - last_quote_at).total_seconds() < 5.0, (
+        "stream baseline should advance to the fresh REST poll timestamp"
+    )
+
+
+@pytest.mark.asyncio
+async def test_service_falls_through_to_emergency_close_when_rest_quote_also_stale() -> None:
+    settings = make_test_settings(
+        strategy_macd_30s_broker_provider="schwab",
+        redis_stream_prefix="test",
+        dashboard_snapshot_persistence_enabled=False,
+        strategy_history_persistence_enabled=False,
+        schwab_stream_symbol_stale_after_seconds=1.0,
+        schwab_stream_symbol_quote_poll_interval_seconds=0.5,
+        schwab_stream_symbol_resubscribe_interval_seconds=1.0,
+    )
+    service = StrategyEngineService(settings=settings, redis_client=FakeRedis())
+    runtime = service.state.bots["macd_30s"]
+    runtime.positions.open_position("ENVB", 4.0, quantity=10, path="ENTRY")
+    old = datetime.now(UTC) - timedelta(seconds=40)
+    service._schwab_symbol_last_stream_trade_at["ENVB"] = old
+    service._schwab_symbol_last_stream_quote_at["ENVB"] = old
+
+    published: list[TradeIntent] = []
+    stale_trade_time_ms = (datetime.now(UTC) - timedelta(seconds=120)).timestamp() * 1000.0
+
+    class FakeStreamClient:
+        async def force_resubscribe(self) -> None:
+            return None
+
+    class FakeQuotePollAdapter:
+        async def fetch_quotes(self, symbols):
+            return {
+                "ENVB": {
+                    "bid_price": 4.20,
+                    "ask_price": 4.22,
+                    "last_price": 4.21,
+                    "trade_time_ms": stale_trade_time_ms,
+                    "quote_time_ms": stale_trade_time_ms,
+                }
+            }
+
+    service._schwab_stream_client = FakeStreamClient()
+    service._schwab_quote_poll_adapter = FakeQuotePollAdapter()
+
+    async def fake_publish_intent(intent):
+        published.append(intent)
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(service, "_publish_intent", fake_publish_intent)
+    try:
+        await service._monitor_schwab_symbol_health()
+    finally:
+        monkeypatch.undo()
+
+    close_intents = [p for p in published if p.payload.intent_type == "close"]
+    assert len(close_intents) == 1
+    assert close_intents[0].payload.symbol == "ENVB"
+    assert close_intents[0].payload.reason == "SCHWAB_DATA_STALE_EMERGENCY_CLOSE"
+
+
+@pytest.mark.asyncio
+async def test_service_emergency_close_rescue_can_be_disabled_via_setting() -> None:
+    settings = make_test_settings(
+        strategy_macd_30s_broker_provider="schwab",
+        redis_stream_prefix="test",
+        dashboard_snapshot_persistence_enabled=False,
+        strategy_history_persistence_enabled=False,
+        schwab_stream_symbol_stale_after_seconds=1.0,
+        schwab_stream_symbol_quote_poll_interval_seconds=0.5,
+        schwab_stream_symbol_resubscribe_interval_seconds=1.0,
+        schwab_emergency_close_rest_rescue_enabled=False,
+    )
+    service = StrategyEngineService(settings=settings, redis_client=FakeRedis())
+    runtime = service.state.bots["macd_30s"]
+    runtime.positions.open_position("ENVB", 4.0, quantity=10, path="ENTRY")
+    old = datetime.now(UTC) - timedelta(seconds=40)
+    service._schwab_symbol_last_stream_trade_at["ENVB"] = old
+    service._schwab_symbol_last_stream_quote_at["ENVB"] = old
+
+    published: list[TradeIntent] = []
+    fresh_trade_time_ms = (datetime.now(UTC) - timedelta(seconds=2)).timestamp() * 1000.0
+
+    class FakeStreamClient:
+        async def force_resubscribe(self) -> None:
+            return None
+
+    class FakeQuotePollAdapter:
+        async def fetch_quotes(self, symbols):
+            return {
+                "ENVB": {
+                    "bid_price": 4.20,
+                    "ask_price": 4.22,
+                    "last_price": 4.21,
+                    "trade_time_ms": fresh_trade_time_ms,
+                    "quote_time_ms": fresh_trade_time_ms,
+                }
+            }
+
+    service._schwab_stream_client = FakeStreamClient()
+    service._schwab_quote_poll_adapter = FakeQuotePollAdapter()
+
+    async def fake_publish_intent(intent):
+        published.append(intent)
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(service, "_publish_intent", fake_publish_intent)
+    try:
+        await service._monitor_schwab_symbol_health()
+    finally:
+        monkeypatch.undo()
+
+    close_intents = [p for p in published if p.payload.intent_type == "close"]
+    assert len(close_intents) == 1
+    assert close_intents[0].payload.reason == "SCHWAB_DATA_STALE_EMERGENCY_CLOSE"
+
+
+@pytest.mark.asyncio
 async def test_service_skips_stale_quote_poll_when_adapter_lacks_fetch_quotes() -> None:
     settings = make_test_settings(
         strategy_macd_30s_broker_provider="schwab",

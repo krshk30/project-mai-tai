@@ -6972,6 +6972,22 @@ class StrategyEngineService:
             float(self.settings.schwab_stream_symbol_stale_after_seconds_without_position),
         )
 
+    def _schwab_rest_quote_age_seconds(
+        self, quote: dict[str, object], now: datetime
+    ) -> float | None:
+        candidates: list[float] = []
+        for key in ("trade_time_ms", "quote_time_ms"):
+            raw = quote.get(key)
+            if not isinstance(raw, (int, float)) or raw <= 0:
+                continue
+            ts_seconds = float(raw) / 1000.0
+            age = now.timestamp() - ts_seconds
+            if age >= -5.0:
+                candidates.append(age)
+        if not candidates:
+            return None
+        return min(candidates)
+
     def _schwab_symbol_resubscribe_interval_seconds(self, *, has_open_position: bool) -> float:
         base_interval = max(
             1.0,
@@ -7226,6 +7242,10 @@ class StrategyEngineService:
 
         quotes = await fetch_quotes(poll_symbols)
         intent_count = 0
+        rescue_enabled = bool(
+            getattr(self.settings, "schwab_emergency_close_rest_rescue_enabled", True)
+        )
+        rescue_window = self._schwab_data_halt_stale_after_seconds(has_open_position=True)
         for symbol in poll_symbols:
             self._schwab_symbol_last_quote_poll_at[symbol] = now
             quote = quotes.get(symbol)
@@ -7235,6 +7255,24 @@ class StrategyEngineService:
                     symbol,
                 )
                 continue
+
+            if rescue_enabled:
+                rest_age = self._schwab_rest_quote_age_seconds(quote, now)
+                if rest_age is not None and rest_age < rescue_window:
+                    polled_fresh_at = now - timedelta(seconds=max(0.0, rest_age))
+                    existing_quote_at = self._schwab_symbol_last_stream_quote_at.get(symbol)
+                    if existing_quote_at is None or polled_fresh_at > existing_quote_at:
+                        self._schwab_symbol_last_stream_quote_at[symbol] = polled_fresh_at
+                    self._clear_schwab_runtime_data_halt(symbol)
+                    self._schwab_stale_symbols.discard(symbol)
+                    self.logger.warning(
+                        "Schwab stream lagged for %s but REST poll fresh "
+                        "(rest_quote_age=%.1fs < %.1fs); deferring emergency close",
+                        symbol,
+                        rest_age,
+                        rescue_window,
+                    )
+                    continue
 
             bid_price = quote.get("bid_price")
             ask_price = quote.get("ask_price")
