@@ -317,10 +317,22 @@ class SchwabBrokerAdapter:
             )
             if bid_price is None and ask_price is None and last_price is None:
                 continue
+            quote_time_ms = self._float_or_none(
+                payload.get("quoteTime")
+                or payload.get("quote_time")
+                or payload.get("quoteTimeInLong")
+            )
+            trade_time_ms = self._float_or_none(
+                payload.get("tradeTime")
+                or payload.get("trade_time")
+                or payload.get("tradeTimeInLong")
+            )
             quotes[symbol] = {
                 "bid_price": bid_price,
                 "ask_price": ask_price,
                 "last_price": last_price,
+                "quote_time_ms": quote_time_ms,
+                "trade_time_ms": trade_time_ms,
             }
         return quotes
 

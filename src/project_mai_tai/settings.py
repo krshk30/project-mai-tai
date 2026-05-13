@@ -276,6 +276,7 @@ class Settings(BaseSettings):
     schwab_stream_symbol_stale_after_seconds_without_position: float = 90.0
     schwab_stream_symbol_quote_poll_interval_seconds: float = 2.0
     schwab_stream_symbol_resubscribe_interval_seconds: float = 5.0
+    schwab_emergency_close_rest_rescue_enabled: bool = True
     schwab_prewarm_symbol_ttl_seconds: float = 900.0
     webull_base_url: str = "https://api.webull.com"
     webull_region_id: str = "us"
