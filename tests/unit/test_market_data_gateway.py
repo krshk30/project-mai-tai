@@ -40,6 +40,24 @@ class FakeRedis:
         return None
 
 
+class FlakyMarketDataRedis(FakeRedis):
+    def __init__(self) -> None:
+        super().__init__()
+        self.failed_once = False
+
+    async def xadd(self, stream: str, fields: dict[str, str], **kwargs) -> str:
+        payload = json.loads(fields["data"])
+        if (
+            not self.failed_once
+            and stream.endswith(":market-data")
+            and payload.get("event_type") == "trade_tick"
+        ):
+            self.failed_once = True
+            raise RuntimeError("synthetic xadd failure")
+        self.entries.append((stream, payload, kwargs))
+        return "1-0"
+
+
 class FakeSnapshotProvider:
     def fetch_all_snapshots(self):
         return []
@@ -388,6 +406,57 @@ async def test_stream_publish_loop_publishes_live_bar_events() -> None:
     assert live_bar_events[0]["payload"]["symbol"] == "SAGT"
     assert live_bar_events[0]["payload"]["interval_secs"] == 30
     assert live_bar_events[0]["payload"]["close"] == "2.55"
+
+
+@pytest.mark.asyncio
+async def test_stream_publish_loop_survives_single_market_data_publish_failure(caplog: pytest.LogCaptureFixture) -> None:
+    redis = FlakyMarketDataRedis()
+    service = MarketDataGatewayService(
+        settings=Settings(redis_stream_prefix="test"),
+        redis_client=redis,
+        snapshot_provider=FakeSnapshotProvider(),
+        trade_stream=FakeTradeStream(),
+        reference_cache=FakeReferenceCache(),
+    )
+    stop_event = asyncio.Event()
+
+    await service._trade_queue.put(
+        TradeTickRecord(
+            symbol="SAGT",
+            price=2.55,
+            size=100,
+            timestamp_ns=1_700_000_030_000_000_000,
+            cumulative_volume=12_500,
+        )
+    )
+    await service._bar_queue.put(
+        LiveBarRecord(
+            symbol="SAGT",
+            interval_secs=30,
+            open=2.4,
+            high=2.6,
+            low=2.35,
+            close=2.55,
+            volume=12_500,
+            timestamp=1_700_000_030.0,
+            trade_count=18,
+        )
+    )
+
+    task = asyncio.create_task(service._stream_publish_loop(stop_event))
+    try:
+        await asyncio.wait_for(_wait_for_event(redis, "test:market-data", "live_bar"), timeout=2.0)
+    finally:
+        stop_event.set()
+        await asyncio.wait_for(task, timeout=2.0)
+
+    live_bar_events = [
+        payload
+        for stream, payload, _kwargs in redis.entries
+        if stream == "test:market-data" and payload["event_type"] == "live_bar"
+    ]
+    assert len(live_bar_events) == 1
+    assert "failed to publish trade tick for SAGT" in caplog.text
 
 
 @pytest.mark.asyncio
