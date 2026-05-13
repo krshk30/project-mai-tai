@@ -5296,6 +5296,9 @@ async def test_service_falls_through_to_emergency_close_when_rest_quote_also_sta
         async def force_resubscribe(self) -> None:
             return None
 
+        async def sync_subscriptions(self, *args, **kwargs) -> None:
+            return None
+
     class FakeQuotePollAdapter:
         async def fetch_quotes(self, symbols):
             return {
@@ -5351,6 +5354,9 @@ async def test_service_emergency_close_rescue_can_be_disabled_via_setting() -> N
 
     class FakeStreamClient:
         async def force_resubscribe(self) -> None:
+            return None
+
+        async def sync_subscriptions(self, *args, **kwargs) -> None:
             return None
 
     class FakeQuotePollAdapter:
