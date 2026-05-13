@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+import project_mai_tai.services.control_plane as control_plane
 from project_mai_tai.services.control_plane import _build_bot_listening_status
 from project_mai_tai.services.strategy_engine_app import EASTERN_TZ
 
@@ -111,3 +112,63 @@ def test_listening_status_keeps_bot_listening_for_flat_symbol_warning() -> None:
 
     assert listening_status["state"] == "LISTENING"
     assert "temporarily sparse" in listening_status["detail"]
+
+
+def test_listening_status_marks_synthetic_quiet_only_activity(monkeypatch) -> None:
+    now = datetime(2026, 5, 13, 15, 0, tzinfo=UTC)
+    now_et = now.astimezone(EASTERN_TZ)
+    heartbeat_at = (now_et - timedelta(seconds=15)).strftime("%Y-%m-%d %I:%M:%S %p ET")
+    market_data_at = (now_et - timedelta(seconds=10)).strftime("%Y-%m-%d %I:%M:%S %p ET")
+    tick_at = (now_et - timedelta(seconds=12)).strftime("%Y-%m-%d %I:%M:%S %p ET")
+    synthetic_at = (now_et - timedelta(seconds=30)).strftime("%Y-%m-%d %I:%M:%S %p ET")
+    stale_real_decision_at = (now_et - timedelta(minutes=5)).strftime("%Y-%m-%d %I:%M:%S %p ET")
+    monkeypatch.setattr(control_plane, "utcnow", lambda: now)
+
+    data = {
+        "services": [
+            {
+                "service_name": "strategy-engine",
+                "status": "healthy",
+                "effective_status": "healthy",
+                "observed_at": heartbeat_at,
+                "details": {},
+            }
+        ],
+        "market_data": {
+            "latest_snapshot_batch": {
+                "completed_at": market_data_at,
+            }
+        },
+    }
+    bot = {
+        "provider": "polygon",
+        "watchlist": ["UGRO"],
+        "positions": [],
+        "last_tick_at": {
+            "UGRO": tick_at,
+        },
+        "indicator_snapshots": [{"symbol": "UGRO", "last_bar_at": synthetic_at}],
+        "data_health": {
+            "status": "healthy",
+            "halted_symbols": [],
+            "reasons": {},
+        },
+        "bar_counts": {"UGRO": 200},
+    }
+    recent_decisions = [
+        {
+            "status": "quiet",
+            "reason": "synthetic quiet bar; no real trades in this bucket",
+            "last_bar_at": synthetic_at,
+        },
+        {
+            "status": "evaluated",
+            "reason": "entry evaluated; no setup matched this bar",
+            "last_bar_at": stale_real_decision_at,
+        },
+    ]
+
+    listening_status = _build_bot_listening_status(data, bot, recent_decisions)
+
+    assert listening_status["state"] == "QUIET TAPE"
+    assert listening_status["detail"] == "Only synthetic quiet bars are updating; no real completed bar has evaluated recently."

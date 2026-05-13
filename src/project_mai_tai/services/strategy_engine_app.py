@@ -1767,7 +1767,17 @@ class StrategyBotRuntime:
             return
         indicators = self._decorate_indicators(symbol, local_indicators)
         self.last_indicators[symbol] = indicators
-        self._finalize_completed_bar(symbol, indicators, [], decision=None)
+        self._finalize_completed_bar(
+            symbol,
+            indicators,
+            [],
+            decision=self._record_decision(
+                symbol=symbol,
+                status="synthetic_quiet",
+                reason="synthetic quiet bar; no real trades in bucket",
+                indicators=indicators,
+            ),
+        )
 
     def _intrabar_entry_mode_enabled(self) -> bool:
         trading = self.definition.trading_config
@@ -2461,6 +2471,9 @@ class StrategyBotRuntime:
         if status == "idle" and reason == "no entry path matched":
             row["status"] = "evaluated"
             row["reason"] = "entry evaluated; no setup matched this bar"
+        elif status == "synthetic_quiet":
+            row["status"] = "quiet"
+            row["reason"] = "synthetic quiet bar; no real trades in this bucket"
         return row
 
     def _bar_counts(self) -> dict[str, int]:

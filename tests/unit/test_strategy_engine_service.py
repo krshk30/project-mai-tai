@@ -7202,6 +7202,51 @@ def test_strategy_bot_runtime_uses_eastern_bar_timestamps() -> None:
     assert summary["indicator_snapshots"][0]["last_bar_at"].endswith("-04:00")
 
 
+def test_strategy_bot_runtime_labels_synthetic_quiet_decisions() -> None:
+    runtime = StrategyBotRuntime(
+        StrategyDefinition(
+            code="macd_30s",
+            display_name="MACD Bot",
+            account_name="paper:macd_30s",
+            interval_secs=30,
+            trading_config=TradingConfig().make_30s_variant(),
+            indicator_config=IndicatorConfig(),
+        ),
+        now_provider=fixed_now,
+    )
+    runtime.set_watchlist(["UGRO"])
+    runtime.seed_bars(
+        "UGRO",
+        [
+            {
+                "open": 2.35,
+                "high": 2.40,
+                "low": 2.34,
+                "close": 2.39,
+                "volume": 18_000,
+                "timestamp": datetime(2026, 3, 28, 13, 59, 30, tzinfo=UTC).timestamp(),
+            }
+        ],
+    )
+    runtime.last_indicators["UGRO"] = {
+        "price": 2.39,
+        "ema9": 2.36,
+        "ema20": 2.31,
+        "vwap": 2.34,
+    }
+    runtime._record_decision(
+        symbol="UGRO",
+        status="synthetic_quiet",
+        reason="synthetic quiet bar; no real trades in bucket",
+        indicators=runtime.last_indicators["UGRO"],
+    )
+
+    summary = runtime.summary()
+
+    assert summary["recent_decisions"][0]["status"] == "quiet"
+    assert summary["recent_decisions"][0]["reason"] == "synthetic quiet bar; no real trades in this bucket"
+
+
 def test_tos_runtime_emits_intrabar_open_on_current_bar(monkeypatch) -> None:
     service = StrategyEngineService(
         settings=make_test_settings(

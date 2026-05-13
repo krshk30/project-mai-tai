@@ -1732,6 +1732,9 @@ class ControlPlaneRepository:
         if status == "idle" and reason == "no entry path matched":
             row["status"] = "evaluated"
             row["reason"] = "entry evaluated; no setup matched this bar"
+        elif status == "synthetic_quiet":
+            row["status"] = "quiet"
+            row["reason"] = "synthetic quiet bar; no real trades in this bucket"
         return row
 
     def _live_decision_placeholder_rows(
@@ -4757,8 +4760,22 @@ def _build_bot_listening_status(
     latest_market_data_at = str(latest_snapshot.get("completed_at") or "")
     if not latest_market_data_at:
         latest_market_data_at = _datetime_str(market_data.get("latest_subscription_observed_at_raw"))
-    real_decisions = [item for item in recent_decisions if not bool(item.get("is_placeholder"))]
+    real_decisions = [
+        item
+        for item in recent_decisions
+        if not bool(item.get("is_placeholder"))
+        and str(item.get("status", "")).lower() != "quiet"
+    ]
+    synthetic_quiet_decisions = [
+        item
+        for item in recent_decisions
+        if not bool(item.get("is_placeholder"))
+        and str(item.get("status", "")).lower() == "quiet"
+    ]
     latest_decision_at = str(real_decisions[0].get("last_bar_at") or "") if real_decisions else ""
+    latest_synthetic_quiet_at = (
+        str(synthetic_quiet_decisions[0].get("last_bar_at") or "") if synthetic_quiet_decisions else ""
+    )
     latest_bot_tick_at = max((str(value or "") for value in dict(bot.get("last_tick_at", {}) or {}).values()), default="")
     indicator_snapshots = list(bot.get("indicator_snapshots", []) or [])
     latest_indicator_at = max(
@@ -4768,6 +4785,7 @@ def _build_bot_listening_status(
     latest_heartbeat_at = str(strategy_service.get("observed_at") or "")
 
     decision_age_seconds = _seconds_since_eastern_label(latest_decision_at)
+    synthetic_quiet_age_seconds = _seconds_since_eastern_label(latest_synthetic_quiet_at)
     bot_tick_age_seconds = _seconds_since_eastern_label(latest_bot_tick_at)
     indicator_age_seconds = _seconds_since_eastern_label(latest_indicator_at)
     market_data_age_seconds = _seconds_since_eastern_label(latest_market_data_at)
@@ -4881,7 +4899,11 @@ def _build_bot_listening_status(
         detail = "Bot is up, but there are no active symbols to evaluate."
         color = "#98a6c8"
     elif active_session and decision_age_seconds is not None and decision_age_seconds > 120 and watchlist_count > 0:
-        if indicator_age_seconds is not None and indicator_age_seconds <= 120:
+        if synthetic_quiet_age_seconds is not None and synthetic_quiet_age_seconds <= 120:
+            state = "QUIET TAPE"
+            detail = "Only synthetic quiet bars are updating; no real completed bar has evaluated recently."
+            color = "#98a6c8"
+        elif indicator_age_seconds is not None and indicator_age_seconds <= 120:
             detail = "Bars are updating; Decision Tape is lagging behind."
         elif within_post_restart_grace:
             detail = "Strategy just restarted; decisions will appear once the next bar evaluates."

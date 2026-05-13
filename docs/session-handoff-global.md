@@ -8,6 +8,57 @@
 - Overall `/health` may still show `degraded` because of reconciler state. Do not confuse that with a Polygon-specific runtime failure.
 - Keep copied CI counts and failure logs out of the top summary unless they have been revalidated on current `main`.
 
+## 2026-05-13 LIVE UPDATE - Polygon deep root-cause pass: no hidden OMS loss; synthetic quiet bars were masking the real state
+
+> **Current investigation result.** This was a root-cause session, not another shallow Polygon patch pass. The key finding is that the current "alive after morning but no trades" pattern is now split into two separate truths:
+
+- **No hidden OMS / intent-drop failure is showing up now.** Live Redis inspection on the VPS proved:
+  - `strategy-engine`, `market-data-gateway`, and `oms-risk` heartbeats were all healthy around `2026-05-13 23:02 UTC`
+  - `polygon_30s` runtime snapshot (`mai_tai:strategy-state`) was fresh at `2026-05-13T23:02:30Z`
+  - `pending_open_symbols=[]`
+  - retention blocking was **not** widespread (`active=21`, `dropped=6`, `cooldown=1`, blocked preview only `JZXN`)
+  - raw Redis `mai_tai:strategy-intents` had **no Polygon intents at all** in the recent window
+- **So the current post-morning silence is not explained by OMS lag, pending-open leakage, or broad lifecycle suppression.** The bot is evaluating, but not emitting Polygon opens.
+- **The misleading part was observability.** Runtime `recent_decisions` could stay fresh on **synthetic quiet bars** even when no real completed trade bars were landing. Those synthetic bars were being surfaced as generic `idle / no entry path matched`, which made `/botpolygon` and control-plane state look like fresh "evaluated" activity.
+
+### Live evidence that matters
+
+- VPS diagnostic branch `codex/polygon-root-cause-probe` added direct Redis inspection to the `VPS Repo Maintenance` runtime snapshot so the check no longer depends on `/botpolygon` succeeding.
+- Latest strong live snapshot (`Actions run 25831350428`) showed:
+  - `/health`: `strategy-engine=healthy`, `market-data-gateway=healthy`, `oms-risk=healthy`
+  - Redis `strategy-state` for `polygon_30s` at `2026-05-13T23:02:30Z` with `watchlist_size=28`
+  - fresh runtime `recent_decisions` on names like `KULR`, `LESL`, `DXF`, `SNDQ`, `VIVO`, `TDIC`, `STAK`, `SST`, `SOBR`
+  - all of those recent runtime rows were plain `evaluated / no setup matched this bar`
+  - Redis `strategy-intents` preview for Polygon was `[]`
+- At the same time, persisted DB state still lagged:
+  - latest `strategy_bar_history` row for `polygon_30s`: `2026-05-13 18:36:00 ET`
+  - latest **nonblank** persisted Polygon decision: `2026-05-13 15:45:00 ET`
+  - latest persisted Polygon trade intent remained the old rejected `FCHL` open at `2026-05-13 08:44:32 ET`
+- This proves two things:
+  - recent after-hours "fresh decisions" were not new trade intents
+  - the control plane could overstate Polygon liveness by treating synthetic quiet activity like real evaluated bars
+
+### Code fix prepared locally (not deployed yet)
+
+- Local code change marks synthetic quiet bars explicitly instead of surfacing them as normal evaluated decisions:
+  - `StrategyBotRuntime._finalize_synthetic_quiet_completed_bar()` now records `synthetic_quiet`
+  - strategy-runtime summary and control-plane display convert that to `quiet`
+  - control-plane listening-state logic now treats fresh `quiet` rows separately and shows `QUIET TAPE` when only synthetic quiet bars are updating during an active session
+- Local validation passed:
+  - `pytest tests/unit/test_control_plane_listening_status.py tests/unit/test_strategy_engine_service.py -k "synthetic_quiet or uses_eastern_bar_timestamps"` -> `3 passed`
+  - `py_compile` passed on the changed files
+- This fix is about **truthful state reporting**, not forcing more Polygon trades. It removes one major source of false confidence and should stop future sessions from confusing synthetic quiet bars with real evaluated opportunities.
+
+### Current conclusion / next action
+
+- As of this session, the strongest evidence says:
+  - **Polygon is not currently being muted by a hidden runtime/OMS failure after morning**
+  - **Polygon simply did not emit post-morning intents on real bars in the inspected live window**
+  - **the misleading "it still looks active" symptom was partly synthetic quiet-bar reporting**
+- Next session should decide whether to:
+  - ship the observability fix first, then re-validate next live session, or
+  - pivot from bug-hunting to **strategy/scanner diagnosis** for why post-morning real bars are mostly evaluating to no setup
+
 ## 2026-05-13 LIVE UPDATE - Schwab emergency-close REST-poll rescue (PR #115) + CYN protected-symbols hard-block (PR #116) deployed
 
 > **Both PRs are live on `main` as `847badb`.** Strategy + OMS both running the new code. CYN positions (`paper:schwab_1m` and `paper:macd_30s`, 8000 each at $2.57) are now untouchable from every code path.
