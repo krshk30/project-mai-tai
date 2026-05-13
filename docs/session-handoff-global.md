@@ -8,6 +8,42 @@
 - Overall `/health` may still show `degraded` because of reconciler state. Do not confuse that with a Polygon-specific runtime failure.
 - Keep copied CI counts and failure logs out of the top summary unless they have been revalidated on current `main`.
 
+## 2026-05-13 LIVE UPDATE - Schwab emergency-close REST-poll rescue (PR #115) + CYN protected-symbols hard-block (PR #116) deployed
+
+> **Both PRs are live on `main` as `847badb`.** Strategy + OMS both running the new code. CYN positions (`paper:schwab_1m` and `paper:macd_30s`, 8000 each at $2.57) are now untouchable from every code path.
+
+### What shipped
+
+- **PR #115 (`2cc1204`) — Schwab emergency-close REST-poll rescue.** Strategy restart only. Before force-closing an open Schwab position on a 30s stream-stale fire, the bot now cross-checks Schwab's REST `/marketdata/v1/quotes` `quoteTime`/`tradeTime`. If the REST timestamp is within the same stale window (i.e. Schwab is delivering data, the streamer is just buffering), the bot advances its stream baseline to the polled timestamp, clears the runtime data halt, drops the symbol from `_schwab_stale_symbols`, logs the rescue, and skips the close. Feature flag `MAI_TAI_SCHWAB_EMERGENCY_CLOSE_REST_RESCUE_ENABLED` (default `true`). Backwards-compatible: if Schwab REST stops returning timestamps the rescue silently no-ops.
+- **PR #116 (`847badb`) — protected-symbols hard-block.** OMS + strategy. Any intent (open/close/scale/cancel) for a symbol in `MAI_TAI_PROTECTED_SYMBOLS` is rejected at OMS `_evaluate_risk` with reason `protected_symbol:<SYMBOL>` (recorded to `risk_checks`) and dropped at strategy `_publish_intent` before reaching Redis (defense in depth).
+- **VPS env updated**: `MAI_TAI_PROTECTED_SYMBOLS=CYN` appended to `/etc/project-mai-tai/project-mai-tai.env`.
+- **Restart choreography executed** (PR #115 was strategy-only; PR #116 used stop-strategy → restart-oms → start-strategy because OMS also changed):
+  - PR #115 strategy restart: 12:18:31 UTC, clean (15 symbol_pairs rehydrated).
+  - PR #116 OMS restart: 12:38:35 UTC. Strategy restart: 12:38:37 UTC. Clean (12 symbol_pairs rehydrated).
+- **CYN positions held as operator exception** for the restarts (deviates from the runbook's account-flat pre-flight rule; explicit one-off authorization from operator). Positions still tracked correctly post-restart.
+
+### Why these PRs exist — today's BWEN forensics
+
+- First live Schwab trade of the day (`macd_30s` × BWEN, 11:21:15 → 11:22:52 UTC, 97-second hold) was emergency-closed at **-$0.30 / -0.65%** before the entry setup could play out.
+- Stream-stale fire at 11:22:51 UTC tracked `last_trade_at=11:22:21` (30s delta = exactly the hardcoded floor in `_schwab_data_halt_stale_after_seconds`).
+- Tick-archive forensics on `/var/lib/project-mai-tai/schwab_ticks/2026-05-13/BWEN.jsonl` proved upstream Schwab held the next trade for **35.15 seconds** before delivery (delivery_lag ramp: 2s → 5s → 11s → 35s, then back to ~3s after the gap). Gateway + strategy + safety detector all worked correctly — Schwab itself was the source of the silence.
+- 30s threshold cannot be safely loosened (volatile stocks can move 30-50% in 30s of true silence). REST-side cross-check is the right discrimination between "feed dead" and "streamer lagging" — that's PR #115.
+- PR #116 is the broader hedge: even with PR #115's protection, the operator wants existing positions completely untouchable for separate reasons (manual oversight, paper-trade seed positions, research).
+
+### Active live blocker (unchanged)
+
+- **Massive snapshot provider instability** remains the standing concern (timeouts, `Read timed out`, `Connection refused` against `api.massive.com`). PR #111 hardens the strategy publish path against single bad publishes but does not fix upstream Massive flakiness. Not impacted by today's PRs.
+
+### What to expect / validate in the next session
+
+- **PR #115 rescue fires** would log: `Schwab stream lagged for X but REST poll fresh (rest_quote_age=Y.Y s < Z.Z s); deferring emergency close`. Grep `strategy.log` for `deferring emergency close`. As of 12:39 UTC there had been no such fires yet — needs natural Schwab-stale-on-position to validate live.
+- **PR #116 protected-symbol fires** would log:
+  - Strategy: `blocked intent for protected symbol CYN ...`
+  - OMS: `risk_checks` row with `reason='protected_symbol:CYN'` and `outcome='reject'`. SQL: `SELECT * FROM risk_checks WHERE reason LIKE 'protected_symbol:%' ORDER BY created_at DESC LIMIT 20;`
+  - As of 12:39 UTC no protection-fire events yet (no bot has attempted a CYN trade since deploy).
+- **CYN positions** can be flattened later by removing the `MAI_TAI_PROTECTED_SYMBOLS=CYN` line from `/etc/project-mai-tai/project-mai-tai.env` and re-running the OMS restart choreography. The protection is purely env-driven.
+- **CI baseline**: 15 known failures in `test_strategy_engine_service.py` (unchanged). Today's chain added 6 passing tests (3 from PR #115, 1 from PR #116 strategy, 2 from PR #116 oms regression-check confirmation).
+
 ## 2026-05-13 LIVE UPDATE - `polygon_30s` sparse-period persistence fix is now deployed and persisted bars resumed
 
 > **Current deploy state.** PR #113 is merged on `main` as `1792575`, and the strategy service was manually redeployed from VPS `main` after the official live deploy workflow was blocked by a flaky control-plane preflight endpoint.
