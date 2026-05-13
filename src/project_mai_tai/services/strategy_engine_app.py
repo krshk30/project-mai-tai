@@ -956,7 +956,7 @@ class StrategyBotRuntime:
                 if int(getattr(_bar, "trade_count", 0) or 0) <= 0 and int(getattr(_bar, "volume", 0) or 0) <= 0:
                     self._finalize_synthetic_quiet_completed_bar(symbol)
                     continue
-                intents.extend(self._evaluate_completed_bar(symbol))
+                intents.extend(self._evaluate_completed_bar(symbol, completed_bar=_bar))
                 self._advance_gap_recovery(symbol, _bar)
         if not prewarm_only:
             intents.extend(self._evaluate_intrabar_entry(symbol))
@@ -1020,7 +1020,7 @@ class StrategyBotRuntime:
                 if prewarm_only:
                     self._finalize_prewarm_completed_bar(symbol)
                 else:
-                    intents.extend(self._evaluate_completed_bar(symbol))
+                    intents.extend(self._evaluate_completed_bar(symbol, completed_bar=_bar))
                     self._advance_gap_recovery(symbol, _bar)
             return intents
 
@@ -1064,7 +1064,7 @@ class StrategyBotRuntime:
                 if int(getattr(_bar, "trade_count", 0) or 0) <= 0 and int(getattr(_bar, "volume", 0) or 0) <= 0:
                     self._finalize_synthetic_quiet_completed_bar(symbol)
                     continue
-                intents.extend(self._evaluate_completed_bar(symbol))
+                intents.extend(self._evaluate_completed_bar(symbol, completed_bar=_bar))
                 self._advance_gap_recovery(symbol, _bar)
         if not prewarm_only:
             intents.extend(self._evaluate_intrabar_entry(symbol))
@@ -1254,7 +1254,7 @@ class StrategyBotRuntime:
                     if int(getattr(bar, "trade_count", 0) or 0) <= 0 and int(getattr(bar, "volume", 0) or 0) <= 0:
                         self._finalize_synthetic_quiet_completed_bar(symbol)
                         continue
-                    intents.extend(self._evaluate_completed_bar(symbol))
+                    intents.extend(self._evaluate_completed_bar(symbol, completed_bar=bar))
                     self._advance_gap_recovery(symbol, bar)
         return intents, len(completed)
 
@@ -1503,7 +1503,12 @@ class StrategyBotRuntime:
         active.update(self.prewarm_symbols)
         return active
 
-    def _evaluate_completed_bar(self, symbol: str) -> list[TradeIntentEvent]:
+    def _evaluate_completed_bar(
+        self,
+        symbol: str,
+        *,
+        completed_bar: OHLCVBar | None = None,
+    ) -> list[TradeIntentEvent]:
         builder = self.builder_manager.get_builder(symbol)
         if builder is None:
             return []
@@ -1538,7 +1543,13 @@ class StrategyBotRuntime:
                         close_intent = self._safe_emit_close_intent(probe_signal)
                         if close_intent is not None:
                             intents.append(close_intent)
-                    return self._finalize_completed_bar(symbol, indicators, intents, decision=decision)
+                    return self._finalize_completed_bar(
+                        symbol,
+                        indicators,
+                        intents,
+                        decision=decision,
+                        completed_bar=completed_bar,
+                    )
 
             exit_signal = self.exit_engine.check_exit(position, indicators)
             if exit_signal:
@@ -1563,6 +1574,7 @@ class StrategyBotRuntime:
                         reason="position open",
                         indicators=indicators,
                     ),
+                    completed_bar=completed_bar,
                 )
 
             if probe_signal is not None and probe_signal.get("action") == "BUY":
@@ -1577,7 +1589,13 @@ class StrategyBotRuntime:
                             reason=routing_block_reason or "missing extended-hours ask quote",
                             indicators=indicators,
                         )
-                return self._finalize_completed_bar(symbol, indicators, intents, decision=decision)
+                return self._finalize_completed_bar(
+                    symbol,
+                    indicators,
+                    intents,
+                    decision=decision,
+                    completed_bar=completed_bar,
+                )
             return self._finalize_completed_bar(
                 symbol,
                 indicators,
@@ -1589,6 +1607,7 @@ class StrategyBotRuntime:
                     reason="position open",
                     indicators=indicators,
                 ),
+                completed_bar=completed_bar,
             )
 
         if symbol in self.pending_open_symbols:
@@ -1602,6 +1621,7 @@ class StrategyBotRuntime:
                     reason="awaiting open fill",
                     indicators=indicators,
                 ),
+                completed_bar=completed_bar,
             )
 
         if self._is_data_halted(symbol):
@@ -1611,7 +1631,13 @@ class StrategyBotRuntime:
                 reason=self._data_halt_reason(symbol),
                 indicators=indicators,
             )
-            return self._finalize_completed_bar(symbol, indicators, [], decision=decision)
+            return self._finalize_completed_bar(
+                symbol,
+                indicators,
+                [],
+                decision=decision,
+                completed_bar=completed_bar,
+            )
 
         can_open, _reason = self.positions.can_open_position(symbol)
         if not can_open:
@@ -1621,7 +1647,13 @@ class StrategyBotRuntime:
                 reason=str(_reason),
                 indicators=indicators,
             )
-            return self._finalize_completed_bar(symbol, indicators, [], decision=decision)
+            return self._finalize_completed_bar(
+                symbol,
+                indicators,
+                [],
+                decision=decision,
+                completed_bar=completed_bar,
+            )
 
         if self._is_gap_recovery_active(symbol):
             decision = self._record_decision(
@@ -1630,7 +1662,13 @@ class StrategyBotRuntime:
                 reason=self._gap_recovery_reason(symbol),
                 indicators=indicators,
             )
-            return self._finalize_completed_bar(symbol, indicators, [], decision=decision)
+            return self._finalize_completed_bar(
+                symbol,
+                indicators,
+                [],
+                decision=decision,
+                completed_bar=completed_bar,
+            )
 
         signal = self.entry_engine.check_entry(symbol, indicators, builder.get_bar_count(), self)
         decision = self._capture_entry_decision(symbol, indicators)
@@ -1642,7 +1680,13 @@ class StrategyBotRuntime:
                     reason="manually stopped by operator",
                     indicators=indicators,
                 )
-                return self._finalize_completed_bar(symbol, indicators, [], decision=decision)
+                return self._finalize_completed_bar(
+                    symbol,
+                    indicators,
+                    [],
+                    decision=decision,
+                    completed_bar=completed_bar,
+                )
             if signal is not None and self._reactivate_lifecycle_from_signal(symbol, metrics, signal):
                 self.entry_blocked_symbols.discard(symbol)
             else:
@@ -1652,9 +1696,21 @@ class StrategyBotRuntime:
                     reason="bot lifecycle cooldown active: waiting for P4 or VWAP/EMA20 reclaim",
                     indicators=indicators,
                 )
-                return self._finalize_completed_bar(symbol, indicators, [], decision=decision)
+                return self._finalize_completed_bar(
+                    symbol,
+                    indicators,
+                    [],
+                    decision=decision,
+                    completed_bar=completed_bar,
+                )
         if signal is None:
-            return self._finalize_completed_bar(symbol, indicators, [], decision=decision)
+            return self._finalize_completed_bar(
+                symbol,
+                indicators,
+                [],
+                decision=decision,
+                completed_bar=completed_bar,
+            )
 
         open_intent, routing_block_reason = self._try_emit_open_intent(signal)
         if open_intent is not None:
@@ -1666,7 +1722,13 @@ class StrategyBotRuntime:
                 reason=routing_block_reason or "missing extended-hours ask quote",
                 indicators=indicators,
             )
-        return self._finalize_completed_bar(symbol, indicators, intents, decision=decision)
+        return self._finalize_completed_bar(
+            symbol,
+            indicators,
+            intents,
+            decision=decision,
+            completed_bar=completed_bar,
+        )
 
     def _finalize_prewarm_completed_bar(self, symbol: str) -> None:
         del symbol
@@ -2459,6 +2521,7 @@ class StrategyBotRuntime:
         intents: list[TradeIntentEvent],
         *,
         decision: dict[str, str] | None = None,
+        completed_bar: OHLCVBar | None = None,
     ) -> list[TradeIntentEvent]:
         if decision is None:
             position_state, _position_quantity = self._position_snapshot(symbol)
@@ -2497,7 +2560,12 @@ class StrategyBotRuntime:
                     reason="no entry path matched",
                     indicators=indicators,
                 )
-        self._persist_bar_history(symbol=symbol, indicators=indicators, decision=decision)
+        self._persist_bar_history(
+            symbol=symbol,
+            indicators=indicators,
+            decision=decision,
+            completed_bar=completed_bar,
+        )
         return intents
 
     def _persist_bar_history(
@@ -2506,15 +2574,20 @@ class StrategyBotRuntime:
         symbol: str,
         indicators: dict[str, object],
         decision: dict[str, str] | None = None,
+        completed_bar: OHLCVBar | None = None,
     ) -> None:
         if self.session_factory is None:
             return
 
         builder = self.builder_manager.get_builder(symbol)
-        if builder is None or not builder.bars:
+        if builder is None:
             return
 
-        last_bar = builder.bars[-1]
+        last_bar = completed_bar
+        if last_bar is None:
+            if not builder.bars:
+                return
+            last_bar = builder.bars[-1]
         # Skip persisting placeholder bars. vol=0 + tc=0 means either a
         # CHART_EQUITY quiet-minute report or a bar-builder force-close when
         # no trades arrived during the bar window (e.g., mid-bar symbol

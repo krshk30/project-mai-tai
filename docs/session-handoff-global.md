@@ -50,6 +50,62 @@ The remaining production risk is **not** in bar build, decision flow, or the Sch
   - Decide between provider-side mitigation (retry/backoff/circuit-breaker around the Massive client) and a fallback snapshot source.
   - Confirm whether `/health=degraded` after Massive failures is purely a status signal or if it is gating any downstream behavior.
 
+## 2026-05-13 LIVE UPDATE - `polygon_30s` PR #111 is helping live runtime, but a separate sparse-period persistence bug was found locally
+
+### Fresh live validation (`2026-05-13 06:49 ET`)
+
+- Latest VPS runtime snapshot: GitHub Actions `VPS Repo Maintenance` run `25794404080` on deployed `main` SHA `7f97183`.
+- Unlike the earlier overnight restart snapshots, this one showed the live runtime recovered cleanly:
+  - `/health`: `strategy-engine=healthy`, `market-data-gateway=healthy`
+  - `/api/bots` `polygon_30s`:
+    - `watchlist_size=6`
+    - `latest_decision_at=2026-05-13 06:49:00 AM ET`
+    - `latest_bot_tick_at=2026-05-13 06:49:55 AM ET`
+    - `latest_market_data_at=2026-05-13 06:49:51 AM ET`
+    - `latest_heartbeat_at=2026-05-13 06:49:45 AM ET`
+    - `listening_status.state=LISTENING`
+- Strategy log tail during the same snapshot showed uninterrupted `snapshot batch processed` lines through `10:49:53 UTC`.
+
+### What PR #111 did help
+
+- PR #111's guarded market-data publish loop appears to have fixed the earlier May 12 style silent-live-path death.
+- The current live bot is clearly evaluating again; the earlier overnight `strategy-engine=stopping` / stale control-plane mismatch did **not** persist into the fresh morning snapshot.
+
+### New leftover found during direct VPS bar-history audit
+
+- Direct VPS `psql` queries against `strategy_bar_history` showed a different production problem still open:
+  - `polygon_30s` persisted bars stopped around `06:23 ET`
+  - at the same time, `macd_30s` and `schwab_1m` continued persisting through `~06:54-06:55 ET`
+  - this means live runtime decisions/ticks were fresh, but Polygon bar persistence was not keeping up
+- For the current live Polygon watchlist names (`AEHL`, `ELPW`, `FCHL`, `OCG`, `TDIC`, `WOK`), the `04:00 ET -> ~06:49 ET` persisted history was **not** gap-free.
+- This is a different failure than PR #111: the bot was alive, but sparse-period completed bars could still fail to land in `strategy_bar_history`.
+
+### Root cause of the leftover
+
+- In `StrategyBotRuntime.flush_completed_bars()`, a real completed Polygon bar can be followed immediately by synthetic flat gap bars during sparse periods.
+- `_evaluate_completed_bar(...)` then finalized persistence through `_persist_bar_history(...)`.
+- Before the local fix, `_persist_bar_history(...)` always wrote from `builder.bars[-1]`.
+- When synthetic gap bars had already been appended, `builder.bars[-1]` pointed at the last synthetic placeholder bar instead of the real completed bar that had just been evaluated.
+- Because placeholder bars are intentionally skipped (`volume=0` and `trade_count=0`), the real completed bar was silently dropped from `strategy_bar_history`.
+
+### Local fix and validation
+
+- Local-only fix:
+  - thread the actual completed `OHLCVBar` through `_evaluate_completed_bar(...) -> _finalize_completed_bar(...) -> _persist_bar_history(...)`
+  - persist the real completed bar directly instead of inferring it later from `builder.bars[-1]`
+- Added regression coverage proving a real completed Polygon bar still persists when `flush_completed_bars()` appends synthetic gap bars after it.
+- Validation passed:
+  - `pytest tests/unit/test_strategy_engine_service.py -k "flush_completed_polygon_bar_persists_real_bar_before_synthetic_gap_fill or persist_bar_history_persists_real_volume_bar or polygon_late_live_second_revises_persisted_closed_bar_without_redecision or live_second_bars_can_generate_open_intent_for_polygon_30s_bot" -q`
+    - `4 passed`
+  - `pytest tests/unit/test_polygon_30s_bot.py tests/unit/test_strategy_engine_service.py -k "polygon_30s or flush_completed_polygon_bar_persists_real_bar_before_synthetic_gap_fill" -q`
+    - `30 passed`
+  - `py_compile src/project_mai_tai/services/strategy_engine_app.py tests/unit/test_strategy_engine_service.py tests/unit/test_polygon_30s_bot.py`
+
+### Deployment status
+
+- PR #111 remains the deployed live publish-loop fix.
+- The new sparse-period persistence fix is **local only** at the time of this note and still needs PR / merge / deploy before the persisted Polygon history can be trusted again during sparse windows.
+
 ## 2026-05-13 LIVE UPDATE - `polygon_30s` PR #101 deployed; current blocker is live Massive snapshot instability
 
 > **This supersedes the older "LOCAL ONLY" PR #101 note below.** The reject-cooldown fix is now merged and deployed.
