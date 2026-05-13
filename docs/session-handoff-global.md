@@ -58,6 +58,72 @@
   - `mode=reset_to_origin_main`
   - `mode=runtime_snapshot`
 
+## 2026-05-13 LOCAL ONLY - likely May 12 Polygon root cause: silent market-data publish-loop death
+
+> **Read this before another speculative Polygon deploy.** This is a local code fix and root-cause writeup, not deployed yet.
+
+### What the May 12 evidence proved
+
+- `polygon_30s` normal decision rows in `strategy_bar_history` stopped at `2026-05-12 09:19:00 ET`.
+- After that point there were `0` Polygon `trade_intents`, so the post-morning silence was not just a UI artifact.
+- Later in the day, `strategy_bar_history` still received many Polygon `30s` rows for newer symbols such as `JZXN`, `FCHL`, `OCG`, `HCHL`, and `SST`, but those rows mostly had blank `decision_status`.
+- Blank `decision_status` means those rows did **not** come from the normal completed-bar decision path. They can come from:
+  - revised closed-bar persistence in `StrategyBotRuntime._persist_revised_closed_bar(...)`
+  - history hydration persistence in `StrategyEngineService._persist_generic_provider_history_bars(...)`
+
+### Root-cause conclusion
+
+- The strongest root cause is now the market-data gateway publish path, not the already-fixed Webull rejected-open cooldown.
+- `MarketDataGatewayService.run()` starts independent tasks for:
+  - snapshot polling
+  - subscription processing
+  - live stream publication
+  - heartbeats
+- Before this local fix, `MarketDataGatewayService._stream_publish_loop(...)` had no exception handling around:
+  - `publish_trade_tick(...)`
+  - `publish_live_bar(...)`
+  - `publish_quote_tick(...)`
+- A single Redis publish failure or malformed live record could therefore kill only the live publish loop task while leaving:
+  - snapshot polling alive
+  - subscription updates alive
+  - heartbeats alive
+  - service status looking healthy enough from the outside
+- That failure mode matches the May 12 evidence exactly:
+  - scanner/snapshot activity can continue
+  - strategy can keep emitting later `market-data-subscriptions` replace events
+  - gateway can keep publishing historical warmup bars for newly added symbols from `_publish_historical_warmup(...)`
+  - strategy then persists those history bars without decision metadata
+  - but no new live `trade_tick` / `quote_tick` / `live_bar` events reach strategy, so normal Polygon decisions stop
+
+### Local fix
+
+- Hardened `src/project_mai_tai/market_data/gateway.py` so the live publish loop no longer dies on one failed market-data publish.
+- Added guarded per-record publish helpers for:
+  - trade ticks
+  - live bars
+  - quote ticks
+- Also hardened:
+  - subscription event application so one bad subscription event does not kill the subscription loop
+  - historical warmup publish so one failed warmup write does not abort the rest of the warmup
+
+### Validation
+
+- Passed:
+  - `pytest tests/unit/test_market_data_gateway.py -k "stream_publish_loop or historical_warmup" -q`
+    - `3 passed`
+  - `pytest tests/unit/test_market_data_gateway.py -q`
+    - `11 passed`
+  - `py_compile src/project_mai_tai/market_data/gateway.py tests/unit/test_market_data_gateway.py`
+
+### Deployment status
+
+- Not deployed yet.
+- Next safe step is:
+  - review this root-cause fix
+  - merge it
+  - deploy market-data using the coordinated live restart runbook (`strategy -> market-data -> strategy`)
+  - validate that live `market-data` stream events continue even if one publish fails
+
 ## 2026-05-12 LOCAL ONLY - `polygon_30s` signal suppression from intentional Webull rejects
 
 > **Read this if Polygon seems to go quiet after morning despite bars continuing.** This is a local code fix, not deployed yet.
