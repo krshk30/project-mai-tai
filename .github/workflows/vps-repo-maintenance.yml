@@ -120,6 +120,7 @@ jobs:
 
           HEALTH_URL = "http://127.0.0.1:8100/health"
           OVERVIEW_URL = "http://127.0.0.1:8100/api/overview"
+          BOTPOLYGON_URL = "http://127.0.0.1:8100/botpolygon"
           BOTS_URL = "http://127.0.0.1:8100/api/bots"
 
 
@@ -165,7 +166,8 @@ jobs:
           else:
               print(json.dumps(final_health, indent=2))
           overview, overview_error = try_fetch(OVERVIEW_URL)
-          bots_payload, bots_error = try_fetch(BOTS_URL)
+          polygon_bot_payload, polygon_bot_error = try_fetch(BOTPOLYGON_URL)
+          bots_payload, bots_error = try_fetch(BOTS_URL) if polygon_bot_payload is None else (None, None)
           print("== /api/overview summary ==")
           if overview is None:
               print(json.dumps({"fetch_error": overview_error}, indent=2))
@@ -181,97 +183,152 @@ jobs:
                   )
               )
           print("== /api/bots polygon summary ==")
-          if bots_payload is None:
-              print(json.dumps({"fetch_error": bots_error}, indent=2))
-              bots = []
-          else:
-              bots = bots_payload.get("bots", [])
-          polygon_bots = []
-          for bot in bots:
-              haystack = json.dumps(bot, default=str).lower()
-              if "polygon_30s" in haystack or "polygon" in haystack:
-                  polygon_bots.append(bot)
-
-          if not polygon_bots:
+          if polygon_bot_payload is not None:
+              retention_states = polygon_bot_payload.get("retention_states") or []
+              retention_counter = Counter(
+                  str(item.get("state", "") or "unknown")
+                  for item in retention_states
+                  if isinstance(item, dict)
+              )
+              blocked_retention = [
+                  str(item.get("ticker") or item.get("symbol") or "")
+                  for item in retention_states
+                  if isinstance(item, dict) and bool(item.get("blocks_entries"))
+              ]
+              degraded_retention = [
+                  str(item.get("ticker") or item.get("symbol") or "")
+                  for item in retention_states
+                  if isinstance(item, dict) and bool(item.get("degraded_mode"))
+              ]
+              indicator_preview = []
+              for snapshot in list(polygon_bot_payload.get("indicator_snapshots") or [])[:8]:
+                  if not isinstance(snapshot, dict):
+                      continue
+                  indicator_preview.append(
+                      {
+                          "symbol": snapshot.get("symbol"),
+                          "last_bar_at": snapshot.get("last_bar_at"),
+                          "bar_count": snapshot.get("bar_count"),
+                          "provider_status": snapshot.get("provider_status"),
+                          "provider_source": snapshot.get("provider_source"),
+                          "close": snapshot.get("close"),
+                          "ema20": snapshot.get("ema20"),
+                          "vwap": snapshot.get("vwap"),
+                      }
+                  )
               print(
                   json.dumps(
                       {
-                          "bot_count": len(bots),
-                          "sample_bot_keys": sorted(bots[0].keys()) if bots else [],
-                          "sample_bot_names": [
-                              bot.get("strategy_code")
-                              or bot.get("code")
-                              or bot.get("slug")
-                              or bot.get("name")
-                              for bot in bots[:5]
-                          ],
+                          "strategy_code": "polygon_30s",
+                          "watched_tickers_count": len(list(polygon_bot_payload.get("watched_tickers") or [])),
+                          "watched_tickers_preview": list(polygon_bot_payload.get("watched_tickers") or [])[:12],
+                          "latest_decision_at": polygon_bot_payload.get("listening_status", {}).get("latest_decision_at"),
+                          "latest_bot_tick_at": polygon_bot_payload.get("listening_status", {}).get("latest_bot_tick_at"),
+                          "latest_market_data_at": polygon_bot_payload.get("listening_status", {}).get("latest_market_data_at"),
+                          "latest_heartbeat_at": polygon_bot_payload.get("listening_status", {}).get("latest_heartbeat_at"),
+                          "listening_status": polygon_bot_payload.get("listening_status"),
+                          "pending_open_symbols": list(polygon_bot_payload.get("pending_open_symbols") or []),
+                          "pending_close_symbols": list(polygon_bot_payload.get("pending_close_symbols") or []),
+                          "recent_intents_preview": list(polygon_bot_payload.get("recent_intents") or [])[:10],
+                          "retention_state_counts": dict(retention_counter),
+                          "blocked_retention_preview": blocked_retention[:12],
+                          "degraded_retention_preview": degraded_retention[:12],
+                          "recent_decisions_preview": list(polygon_bot_payload.get("recent_decisions") or [])[:10],
+                          "indicator_snapshots_preview": indicator_preview,
                       },
                       indent=2,
+                      default=str,
                   )
               )
+          elif bots_payload is None:
+              print(json.dumps({"fetch_error": polygon_bot_error or bots_error}, indent=2))
+              bots = []
           else:
-              for bot in polygon_bots:
-                  watchlist = bot.get("watchlist") or []
-                  recent_decisions = bot.get("recent_decisions") or []
-                  retention_states = bot.get("retention_states") or []
-                  retention_counter = Counter(
-                      str(item.get("state", "") or "unknown")
-                      for item in retention_states
-                      if isinstance(item, dict)
-                  )
-                  blocked_retention = [
-                      str(item.get("ticker") or item.get("symbol") or "")
-                      for item in retention_states
-                      if isinstance(item, dict) and bool(item.get("blocks_entries"))
-                  ]
-                  degraded_retention = [
-                      str(item.get("ticker") or item.get("symbol") or "")
-                      for item in retention_states
-                      if isinstance(item, dict) and bool(item.get("degraded_mode"))
-                  ]
-                  indicator_preview = []
-                  for snapshot in list(bot.get("indicator_snapshots") or [])[:8]:
-                      if not isinstance(snapshot, dict):
-                          continue
-                      indicator_preview.append(
+              bots = bots_payload.get("bots", [])
+              polygon_bots = []
+              for bot in bots:
+                  haystack = json.dumps(bot, default=str).lower()
+                  if "polygon_30s" in haystack or "polygon" in haystack:
+                      polygon_bots.append(bot)
+
+              if not polygon_bots:
+                  print(
+                      json.dumps(
                           {
-                              "symbol": snapshot.get("symbol"),
-                              "last_bar_at": snapshot.get("last_bar_at"),
-                              "bar_count": snapshot.get("bar_count"),
-                              "provider_status": snapshot.get("provider_status"),
-                              "provider_source": snapshot.get("provider_source"),
-                              "close": snapshot.get("close"),
-                              "ema20": snapshot.get("ema20"),
-                              "vwap": snapshot.get("vwap"),
-                          }
+                              "bot_count": len(bots),
+                              "sample_bot_keys": sorted(bots[0].keys()) if bots else [],
+                              "sample_bot_names": [
+                                  bot.get("strategy_code")
+                                  or bot.get("code")
+                                  or bot.get("slug")
+                                  or bot.get("name")
+                                  for bot in bots[:5]
+                              ],
+                          },
+                          indent=2,
                       )
-                  summary = {
-                      "strategy_code": bot.get("strategy_code") or bot.get("code"),
-                      "name": bot.get("name") or bot.get("slug"),
-                      "state": bot.get("state"),
-                      "watchlist_size": len(watchlist) if isinstance(watchlist, list) else None,
-                      "watchlist_preview": watchlist[:10] if isinstance(watchlist, list) else watchlist,
-                      "latest_decision_at": bot.get("latest_decision_at"),
-                      "latest_bot_tick_at": bot.get("latest_bot_tick_at"),
-                      "latest_market_data_at": bot.get("latest_market_data_at"),
-                      "latest_heartbeat_at": bot.get("latest_heartbeat_at"),
-                      "listening_status": bot.get("listening_status"),
-                      "pending_open_symbols": list(bot.get("pending_open_symbols") or []),
-                      "pending_close_symbols": list(bot.get("pending_close_symbols") or []),
-                      "recent_intents_preview": list(bot.get("recent_intents") or [])[:10],
-                      "retention_state_counts": dict(retention_counter),
-                      "blocked_retention_preview": blocked_retention[:12],
-                      "degraded_retention_preview": degraded_retention[:12],
-                      "recent_decisions_preview": recent_decisions[:10],
-                      "indicator_snapshots_preview": indicator_preview,
-                  }
-                  print(json.dumps(summary, indent=2, default=str))
+                  )
+              else:
+                  for bot in polygon_bots:
+                      watchlist = bot.get("watchlist") or []
+                      recent_decisions = bot.get("recent_decisions") or []
+                      retention_states = bot.get("retention_states") or []
+                      retention_counter = Counter(
+                          str(item.get("state", "") or "unknown")
+                          for item in retention_states
+                          if isinstance(item, dict)
+                      )
+                      blocked_retention = [
+                          str(item.get("ticker") or item.get("symbol") or "")
+                          for item in retention_states
+                          if isinstance(item, dict) and bool(item.get("blocks_entries"))
+                      ]
+                      degraded_retention = [
+                          str(item.get("ticker") or item.get("symbol") or "")
+                          for item in retention_states
+                          if isinstance(item, dict) and bool(item.get("degraded_mode"))
+                      ]
+                      indicator_preview = []
+                      for snapshot in list(bot.get("indicator_snapshots") or [])[:8]:
+                          if not isinstance(snapshot, dict):
+                              continue
+                          indicator_preview.append(
+                              {
+                                  "symbol": snapshot.get("symbol"),
+                                  "last_bar_at": snapshot.get("last_bar_at"),
+                                  "bar_count": snapshot.get("bar_count"),
+                                  "provider_status": snapshot.get("provider_status"),
+                                  "provider_source": snapshot.get("provider_source"),
+                                  "close": snapshot.get("close"),
+                                  "ema20": snapshot.get("ema20"),
+                                  "vwap": snapshot.get("vwap"),
+                              }
+                          )
+                      summary = {
+                          "strategy_code": bot.get("strategy_code") or bot.get("code"),
+                          "name": bot.get("name") or bot.get("slug"),
+                          "state": bot.get("state"),
+                          "watchlist_size": len(watchlist) if isinstance(watchlist, list) else None,
+                          "watchlist_preview": watchlist[:10] if isinstance(watchlist, list) else watchlist,
+                          "latest_decision_at": bot.get("latest_decision_at"),
+                          "latest_bot_tick_at": bot.get("latest_bot_tick_at"),
+                          "latest_market_data_at": bot.get("latest_market_data_at"),
+                          "latest_heartbeat_at": bot.get("latest_heartbeat_at"),
+                          "listening_status": bot.get("listening_status"),
+                          "pending_open_symbols": list(bot.get("pending_open_symbols") or []),
+                          "pending_close_symbols": list(bot.get("pending_close_symbols") or []),
+                          "recent_intents_preview": list(bot.get("recent_intents") or [])[:10],
+                          "retention_state_counts": dict(retention_counter),
+                          "blocked_retention_preview": blocked_retention[:12],
+                          "degraded_retention_preview": degraded_retention[:12],
+                          "recent_decisions_preview": recent_decisions[:10],
+                          "indicator_snapshots_preview": indicator_preview,
+                      }
+                      print(json.dumps(summary, indent=2, default=str))
           PY
               echo
               echo '== polygon db summary =='
-              sudo bash -lc '
-                source /etc/project-mai-tai/project-mai-tai.env
-                psql "$MAI_TAI_DATABASE_URL" -P pager=off <<'"'"'SQL'"'"'
+              sudo -u postgres psql -d project_mai_tai -P pager=off <<'"'"'SQL'"'"' || true
                 WITH polygon_intents AS (
                     SELECT ti.symbol, ti.intent_type, ti.status, ti.reason, ti.created_at
                     FROM trade_intents ti
@@ -321,8 +378,7 @@ jobs:
                   AND coalesce(decision_status, '"'"''"'"') <> '"'"''"'"'
                 ORDER BY bar_time DESC
                 LIMIT 20;
-                SQL
-              ' || true
+              SQL
               echo
               echo '== strategy log tail =='
               sudo tail -n 80 /var/log/project-mai-tai/strategy.log || true
