@@ -947,7 +947,7 @@ def test_polygon_open_rejection_blocks_same_symbol_for_20_bars() -> None:
         symbol="UGRO",
         intent_type="open",
         status="rejected",
-        reason="adapter scaffold reject",
+        reason="temporary broker reject",
     )
 
     blocked_gate = polygon_bot.entry_engine._check_hard_gates("UGRO", bar_count + 19)
@@ -958,6 +958,41 @@ def test_polygon_open_rejection_blocks_same_symbol_for_20_bars() -> None:
         "reason": "open rejection cooldown (1 bars remaining)",
     }
     assert allowed_gate == {"passed": True, "reason": ""}
+
+
+def test_polygon_webull_auth_rejection_does_not_add_open_cooldown() -> None:
+    state = StrategyEngineState(
+        settings=Settings(
+            strategy_macd_30s_broker_provider="schwab",
+            strategy_polygon_30s_enabled=True,
+            scanner_feed_retention_enabled=False,
+        ),
+        now_provider=fixed_now,
+    )
+
+    polygon_bot = state.bots["polygon_30s"]
+    polygon_bot.seed_bars(
+        "UGRO",
+        build_recent_polygon_seed_bars(start=datetime(2026, 4, 23, 9, 32, 0, tzinfo=UTC)),
+    )
+
+    bar_count = polygon_bot.builder_manager.get_or_create("UGRO").get_bar_count()
+
+    state.apply_order_status(
+        strategy_code="polygon_30s",
+        symbol="UGRO",
+        intent_type="open",
+        status="rejected",
+        reason=(
+            "Webull order rejected: missing Webull App Key/App Secret; "
+            "listening is active but broker auth is not configured yet"
+        ),
+    )
+
+    assert polygon_bot.entry_engine._check_hard_gates("UGRO", bar_count + 1) == {
+        "passed": True,
+        "reason": "",
+    }
 
 
 def test_schwab_open_rejection_does_not_add_polygon_rejection_cooldown() -> None:

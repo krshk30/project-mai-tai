@@ -1366,7 +1366,9 @@ class StrategyBotRuntime:
 
         if intent_type == "open":
             self.pending_open_symbols.discard(symbol)
-            if self.definition.code == "polygon_30s":
+            if self.definition.code == "polygon_30s" and self._should_apply_polygon_rejected_open_cooldown(
+                normalized_reason
+            ):
                 self.entry_engine.record_rejected_open(
                     symbol,
                     self.builder_manager.get_or_create(symbol).get_bar_count(),
@@ -2192,6 +2194,18 @@ class StrategyBotRuntime:
     def _is_scale_retry_blocked(self, symbol: str, level: str) -> bool:
         blocked_until = self.scale_retry_blocked_until.get((symbol, level))
         return blocked_until is not None and utcnow() < blocked_until
+
+    @staticmethod
+    def _should_apply_polygon_rejected_open_cooldown(reason: str) -> bool:
+        if not reason:
+            return True
+        infrastructure_reasons = (
+            "missing webull app key/app secret",
+            "broker auth is not configured yet",
+            "missing webull account id",
+            "official order submission is not implemented yet",
+        )
+        return not any(marker in reason for marker in infrastructure_reasons)
 
     def _gap_recovery_bars_required(self) -> int:
         interval = max(1, int(self.definition.interval_secs))
