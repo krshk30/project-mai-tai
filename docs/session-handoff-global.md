@@ -8,6 +8,101 @@
 - Overall `/health` may still show `degraded` because of reconciler state. Do not confuse that with a Polygon-specific runtime failure.
 - Keep copied CI counts and failure logs out of the top summary unless they have been revalidated on current `main`.
 
+## 🚩 NEXT SESSION (2026-05-15) — READ FIRST — Claude handoff from 2026-05-14 EOD
+
+> **Read this entire section before any action tomorrow morning.** Three live fixes shipped today are on their first overnight; validation depends on watching specific signals during premarket open and first hour of RTH. Three follow-up workstreams are queued.
+
+### Live state at handoff (2026-05-14 22:18 UTC / 18:18 ET)
+
+- VPS HEAD: `b3e094b` (PR #131 — FD-leak fix, just deployed)
+- All 5 services `active`. Strategy restarted at `2026-05-14 22:16:42 UTC`, market-data at `22:16:18 UTC`.
+- env file polygon settings on VPS:
+  - `MAI_TAI_STRATEGY_POLYGON_30S_LIVE_AGGREGATE_BARS_ENABLED=false` (env-fix applied 12:52:30 UTC — DO NOT flip back unless rolling back PR #124)
+  - `MAI_TAI_STRATEGY_POLYGON_30S_LIVE_AGGREGATE_FALLBACK_ENABLED=true` (unchanged)
+  - `MAI_TAI_PROTECTED_SYMBOLS=CYN` (unchanged)
+- Open positions (operator-aware):
+  - `CYN` ×8000 on `paper:schwab_1m` and `paper:macd_30s` (protected)
+  - `MOBX` ×13 broker / 10 virtual on `paper:schwab_1m` and ×13 broker / 3 virtual on `paper:macd_30s` (**stuck on OMS `stop_guard` rejection — see "Open issues" below; do not attempt to flatten via bot — won't work**)
+
+### 🎯 First-thing-tomorrow validation checklist
+
+Tomorrow's premarket opens at `04:00 ET` (`08:00 UTC`). Walk through these three checks **in order**:
+
+#### Check 1 — polygon_30s tick-built chain (PR #122 + #124 + #126 + env-fix)
+
+At ~`04:05 ET` (`08:05 UTC`), confirm polygon resumes producing bars:
+
+```sql
+SELECT strategy_code, MAX(bar_time) AS latest, EXTRACT(EPOCH FROM (NOW()-MAX(bar_time)))::int AS stale_secs
+FROM strategy_bar_history WHERE bar_time >= '2026-05-15 08:00:00+00' GROUP BY strategy_code;
+```
+
+Expected: all 3 strategies show `latest` near current time, `stale_secs < 180`.
+
+If polygon stale > 5 min during active tape: re-investigate. Likely candidates are env regression (someone flipped a flag back) or builder hydration / state-transition bug we did NOT solve today (see PR #126 review concern #3).
+
+#### Check 2 — PR #126 warmup-row firing on polygon_30s
+
+At ~`04:20 ET`, confirm fresh polygon symbols hit the warmup-persistence path:
+
+```sql
+SELECT symbol, COUNT(*) AS bars, COUNT(*) FILTER (WHERE decision_reason LIKE 'warmup%') AS warmup_bars
+FROM strategy_bar_history
+WHERE strategy_code='polygon_30s' AND bar_time >= '2026-05-15 08:00:00+00'
+GROUP BY symbol HAVING COUNT(*) FILTER (WHERE decision_reason LIKE 'warmup%') > 0;
+```
+
+Expected: at least 1-2 fresh symbols show `warmup_bars > 0`. Yesterday polygon fired 176 warmup rows across the day. If zero, PR #126 isn't firing — investigate the early-return guard at `strategy_engine_app.py:1519`.
+
+#### Check 3 — PR #131 FD-leak fix holding
+
+Run periodically during RTH (`13:30-20:00 UTC`):
+
+```bash
+PID=$(systemctl show -p MainPID --value project-mai-tai-strategy)
+sudo ls -la /proc/$PID/fd | grep -c "\.jsonl"
+```
+
+Expected: count climbs as symbols rotate in, but **caps at 256** even by end of RTH. Yesterday hit `EMFILE` at 1024 after 6h. If count exceeds 256, the LRU eviction isn't firing — check `SchwabTickArchive.max_handles` is the new bounded version, not a stale import.
+
+### Open issues and follow-up workstreams (priority order)
+
+| # | Workstream | Status | Where |
+|---|---|---|---|
+| 1 | macd_30s late-trade revision (PR #77) silent — 100-5000× volume undercounts | **Issue filed** | [#130](https://github.com/krshk30/project-mai-tai/issues/130) |
+| 2 | FD-leak in tick-archive writer | **DONE — needs overnight validation** | PR [#131](https://github.com/krshk30/project-mai-tai/pull/131) merged 2026-05-14 22:14 UTC |
+| 3 | **MOBX overcount root cause** — single bar on macd_30s had persisted vol=2.3M vs rebuilt=91k (25× overcount); possibly hydration-replay artifact during today's strategy crash | NOT STARTED | flag for investigation |
+| 4 | schwab_1m HIGH-price discrepancies — CHART_EQUITY persists HIGHs that TIMESALE rebuild cannot reproduce (1-5¢ deltas, up to 3-4% on penny stocks) | NOT STARTED | flag for investigation |
+| 5 | Env-drift startup warning — strategy should log a `WARNING` at boot if `LIVE_AGGREGATE_BARS_ENABLED=true` is set, to prevent the same silent regression on any other VPS | NOT STARTED | small, concrete; ~30 min PR |
+| 6 | MOBX `stop_guard` permanent-rejection loop — OMS-risk rejects every close with `HARD_STOP / FLOOR_BREACH` because limit price has gapped beyond `panic_buffer_pct`. Position can't unstick itself, even though it's not in `MAI_TAI_PROTECTED_SYMBOLS` | NOT STARTED | high-value structural fix |
+| 7 | Strategy SIGTERM-timeout-then-SIGKILL on shutdown (asyncio `attached to a different loop` bug) — happens on every restart, 30s wasted each time | NOT STARTED | quality-of-life |
+
+Recommended order for tomorrow's session: validation checklist first → if green, pick up #5 (small, concrete) or #6 (high-value, more involved). Don't touch #3/#4 without a quiet afternoon.
+
+### Yesterday's chain (today's PRs in chronological merge order)
+
+- **PR #122** (`8aa5ac6`, deployed 00:43 UTC) — gateway-side disable of Massive `A.*` aggregate subscriptions. Eliminated 1008 storms.
+- **PR #124** (`0970a1e`, deployed 11:34 UTC) — code default flip to tick-built mode. By itself insufficient on a VPS whose env still opted into aggregate mode.
+- **PR #126** (`9877db2`, deployed 12:42 UTC) — persists warmup bars during tick-built startup. Fires 176× per day on polygon_30s.
+- **PR #127** (`37fec1b`) — PR #126 pre-merge review note. Doc-only.
+- **Env fix** (12:52:30 UTC) — flipped `MAI_TAI_STRATEGY_POLYGON_30S_LIVE_AGGREGATE_BARS_ENABLED` `true → false`. This unblocked the live runtime.
+- **PR #128** (`3b55e69`) — full-day validation note. Doc-only.
+- **PR #131** (`b3e094b`, deployed 22:14 UTC) — bounded LRU on `SchwabTickArchive._handles`. Fixes the FD-leak that crashed strategy at 20:54 UTC.
+
+### Validation evidence collected today
+
+- 3,210 polygon_30s bars over 8h, 34 symbols, 176 warmup rows, 17 signals → PR #126 + env-fix combo proven working
+- 4,688 macd_30s bars, 6,483 schwab_1m bars — both Schwab bots healthy throughout
+- Zero `1008` errors since PR #122 deploy
+- `pytest tests/unit/test_schwab_tick_archive.py -q` → 9 passed (new); `test_market_data_gateway.py` → 13 passed (unchanged baseline)
+- Bar-build validator on RTH window showed clean OHLCV on most symbols. Outliers documented for Issue #130 follow-up.
+
+### Lessons captured for the next investigation
+
+1. **Always re-query 30-60s later before declaring a "silence" regression.** Today's "tertiary regression at 12:58:48 UTC" was a snapshot-timing artifact during minute-boundary write lag. Cost me 30 min of false-alarm investigation.
+2. **Env files override code defaults silently.** PR #124 fixed the code default but the VPS env was opted back in. Future settings-default flips should be paired with either an env-update step or a startup `WARNING` if the legacy value is still set.
+3. **Forensic bar-build pattern of 100-5000× volume undercount on a single bar** → likely LEVELONE_EQUITIES `last_size` vs `cumulative_volume_delta` issue (PR #77 territory). Filed as #130.
+
 ## 2026-05-14 LIVE FIX + FULL-DAY VALIDATION - polygon_30s secondary root cause was VPS env drift overriding PR #124's tick-built default
 
 > **PR #126 was merged and deployed AND a one-line env fix was applied. The combined fix restored polygon_30s to healthy production operation for the entire trading day after the deploy.** End-of-day validation: 3,210 polygon bars persisted across 34 symbols over 8 hours of continuous operation, with PR #126's warmup-persistence path firing 176 times as fresh symbols rotated onto the watchlist.
