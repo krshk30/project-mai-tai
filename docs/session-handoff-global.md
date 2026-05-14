@@ -8,6 +8,50 @@
 - Overall `/health` may still show `degraded` because of reconciler state. Do not confuse that with a Polygon-specific runtime failure.
 - Keep copied CI counts and failure logs out of the top summary unless they have been revalidated on current `main`.
 
+## 2026-05-13 EOD WRAP-UP - PR #118 backtest validator shipped, VWAP after-hours semantics flagged for follow-up
+
+> **Doc-only follow-up to today's deploys.** Captures (a) the new trade-validation script that landed late in the session, (b) a deferred workstream around after-hours VWAP semantics, and (c) cleanup of a stale PR.
+
+### What shipped (PR #118 — `b687107`)
+
+- **`scripts/backtest_validate_trades.py`** — Option A trade-validation harness. Reads `trade_intents` for a given strategy + day, finds the driving bar in `strategy_bar_history`, and verifies the intent's metadata (`reference_price`, `path`, `score`) is consistent with the bar's persisted decision. Reports any discrepancy plus coverage gaps (signal-bars with no matching open intent). Read-only; no live-trading impact. No service restart needed.
+- Today's run: `macd_30s` 21 intents → 18 clean / 3 explainable post-bar tick drift / 0 coverage gaps. `schwab_1m` 32 intents → 32 clean / 0 coverage gaps. Both bots' decision logic is producing intents that match their bar history.
+
+### Deferred — VWAP after-hours semantics
+
+Surfaced from a TOS Parity panel screenshot showing 15-25% VWAP divergence on JZXN / KULR after RTH close. Investigated and confirmed not a math bug — but the semantics are non-obvious and worth fixing before it bites:
+
+- **During RTH (09:30-16:00 ET)**: `indicators["vwap"]` is the standard HLC/3 bar-weighted VWAP from `strategy_core/indicators.py::vwap()`. Matches TOS exactly.
+- **During extended hours (16:00-20:00 + 04:00-09:30 ET)**: `_apply_extended_hours_vwap_override` (`strategy_engine_app.py:2936`) silently overwrites `indicators["vwap"]` with a trade-weighted VWAP from `_load_schwab_trade_extended_vwap_series` (`strategy_engine_app.py:4283`). Different formula, different time window (04:00-20:00 ET full extended), depends on tick-archive completeness.
+- TOS by default freezes the RTH VWAP after 16:00 → side-by-side comparison after 16:00 is meaningless.
+
+**Today's after-hours impact (audited):** 7 Schwab-bot intents fired post-16:00 ET. 5 had `vwap+` as a confirming flag. 4 of those were P4_BURST/P5_PULLBACK (vwap is 1-of-6 factors, low risk). 1 was a P2_VWAP entry (DXF schwab_1m, 17:42 ET) where VWAP is the primary signal driver — but that entry was broker-rejected (penny-stock restriction) so no fill. Net real-money impact today: $0.
+
+**Recommendation tiers when revisiting** (deferred, not for next session unless symptomatic):
+- Tier 1 (low risk): dashboard-only fix — label the VWAP column "Extended VWAP (Mai Tai)" after 16:00 ET, or add a separate "RTH VWAP (frozen)" column. Stops the misleading TOS-parity comparison.
+- Tier 2: gate P2_VWAP after-hours entries on having RTH bar history available, so the "reclaim" is anchored to a real RTH VWAP.
+- Tier 3 (only if a real trade goes wrong): pick one canonical formula and use it consistently. Behavior change to live bots; needs careful regression testing.
+
+The DXF P2_VWAP audit method is reusable — for any future P2_VWAP entry that DOES fill, run the per-symbol VWAP comparison to verify the entry would have been valid under RTH-VWAP semantics too.
+
+### PR #67 closed as obsolete (recommended cleanup)
+
+- PR #67 ("Guard entries after live feed gap recovery"), branch `codex/gap-recovery-entry-guard`, OPEN since 2026-04-28 with no updates in 15 days.
+- The functionality has already landed on `main` via a later PR. Evidence: `tests/unit/test_schwab_gap_recovery_guard.py` is on `main` with the same 4 tests; the implementation must be live (tests would fail otherwise).
+- PR #67's `docs/session-handoff-global.md` diff is from 2026-04-28 — wildly stale.
+- **Action**: close as obsolete via `gh pr close 67 --comment "Superseded by later gap-recovery work already merged on main"`. No code review needed.
+
+### Active live blocker (unchanged)
+
+- **Massive snapshot provider instability** still standing. Today's PRs don't touch it.
+
+### State at EOD 2026-05-13
+
+- `main` HEAD: `b687107` (PR #118)
+- VPS in sync. All 5 services `active`.
+- CYN positions still held (`paper:schwab_1m` 8000 @ $2.57, `paper:macd_30s` 8000 @ $2.57). Protected by `MAI_TAI_PROTECTED_SYMBOLS=CYN`.
+- CI baseline: 15 known failures in `test_strategy_engine_service.py` (unchanged).
+
 ## 2026-05-13 LIVE UPDATE - Schwab emergency-close REST-poll rescue (PR #115) + CYN protected-symbols hard-block (PR #116) deployed
 
 > **Both PRs are live on `main` as `847badb`.** Strategy + OMS both running the new code. CYN positions (`paper:schwab_1m` and `paper:macd_30s`, 8000 each at $2.57) are now untouchable from every code path.
