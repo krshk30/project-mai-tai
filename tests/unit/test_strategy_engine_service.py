@@ -2845,7 +2845,7 @@ def test_polygon_tick_built_sparse_ticks_do_not_synthesize_gap_bars(monkeypatch)
     monkeypatch.setattr(
         bot,
         "_evaluate_completed_bar",
-        lambda symbol: real_completed_bars.append(symbol) or [],
+        lambda symbol, *, completed_bar=None: real_completed_bars.append(symbol) or [],
     )
 
     for timestamp_ns in (
@@ -4136,6 +4136,7 @@ async def test_subscription_sync_persists_replayed_polygon_historical_bars() -> 
             dashboard_snapshot_persistence_enabled=False,
             strategy_history_persistence_enabled=True,
             strategy_polygon_30s_enabled=True,
+            strategy_polygon_30s_live_aggregate_bars_enabled=True,
         ),
         redis_client=redis,
         session_factory=session_factory,
@@ -4203,6 +4204,7 @@ def test_polygon_late_live_second_revises_persisted_closed_bar_without_redecisio
             dashboard_snapshot_persistence_enabled=False,
             strategy_history_persistence_enabled=True,
             strategy_polygon_30s_enabled=True,
+            strategy_polygon_30s_live_aggregate_bars_enabled=True,
         ),
         now_provider=lambda: clock["now"],
         session_factory=session_factory,
@@ -4331,6 +4333,7 @@ async def test_hydrate_generic_history_from_provider_seeds_polygon_when_replay_i
             dashboard_snapshot_persistence_enabled=False,
             strategy_history_persistence_enabled=True,
             strategy_polygon_30s_enabled=True,
+            strategy_polygon_30s_live_aggregate_bars_enabled=True,
             massive_api_key="test-key",
         ),
         redis_client=FakeRedis(),
@@ -7452,6 +7455,7 @@ def test_flush_completed_polygon_bar_persists_real_bar_before_synthetic_gap_fill
             dashboard_snapshot_persistence_enabled=False,
             strategy_history_persistence_enabled=True,
             strategy_polygon_30s_enabled=True,
+            strategy_polygon_30s_live_aggregate_bars_enabled=True,
             strategy_polygon_30s_tick_bar_close_grace_seconds=0.0,
         ),
         now_provider=lambda: clock["now"],

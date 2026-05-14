@@ -122,7 +122,7 @@ def test_polygon_30s_uses_tick_bar_close_grace_for_late_polygon_trades() -> None
     assert "UGRO" not in state.schwab_stream_symbols()
 
 
-def test_polygon_30s_defaults_to_canonical_polygon_live_bars() -> None:
+def test_polygon_30s_defaults_to_tick_built_runtime_when_live_aggregates_are_disabled() -> None:
     state = StrategyEngineState(
         settings=Settings(
             strategy_macd_30s_broker_provider="schwab",
@@ -134,7 +134,7 @@ def test_polygon_30s_defaults_to_canonical_polygon_live_bars() -> None:
 
     polygon_bot = state.bots["polygon_30s"]
 
-    assert polygon_bot.use_live_aggregate_bars is True
+    assert polygon_bot.use_live_aggregate_bars is False
     assert polygon_bot.live_aggregate_fallback_enabled is True
     assert polygon_bot.live_aggregate_bars_are_final is False
     assert polygon_bot.live_aggregate_stale_after_seconds == 3
@@ -145,6 +145,7 @@ def test_polygon_30s_can_force_live_bar_only_mode_for_diagnostics() -> None:
         settings=Settings(
             strategy_macd_30s_broker_provider="schwab",
             strategy_polygon_30s_enabled=True,
+            strategy_polygon_30s_live_aggregate_bars_enabled=True,
             strategy_polygon_30s_force_live_bar_only_mode=True,
             scanner_feed_retention_enabled=False,
         ),
@@ -233,6 +234,7 @@ def test_market_data_gateway_enables_live_aggregate_stream_for_polygon_30s() -> 
     service = MarketDataGatewayService(
         settings=Settings(
             strategy_polygon_30s_enabled=True,
+            strategy_polygon_30s_live_aggregate_bars_enabled=True,
             scanner_feed_retention_enabled=False,
         ),
         redis_client=Mock(),
@@ -244,7 +246,22 @@ def test_market_data_gateway_enables_live_aggregate_stream_for_polygon_30s() -> 
     assert service._live_aggregate_stream_enabled is True
 
 
-def test_polygon_30s_deprecated_disable_flag_does_not_turn_off_canonical_live_bars() -> None:
+def test_market_data_gateway_keeps_polygon_trade_quote_only_by_default() -> None:
+    service = MarketDataGatewayService(
+        settings=Settings(
+            strategy_polygon_30s_enabled=True,
+            scanner_feed_retention_enabled=False,
+        ),
+        redis_client=Mock(),
+        snapshot_provider=Mock(),
+        trade_stream=Mock(),
+        reference_cache=Mock(),
+    )
+
+    assert service._live_aggregate_stream_enabled is False
+
+
+def test_polygon_30s_does_not_use_live_aggregate_bars_when_disabled() -> None:
     state = StrategyEngineState(
         settings=Settings(
             strategy_polygon_30s_enabled=True,
@@ -254,7 +271,7 @@ def test_polygon_30s_deprecated_disable_flag_does_not_turn_off_canonical_live_ba
         now_provider=fixed_now,
     )
 
-    assert state.bots["polygon_30s"].use_live_aggregate_bars is True
+    assert state.bots["polygon_30s"].use_live_aggregate_bars is False
 
 
 def test_oms_service_builds_webull_provider_inside_mixed_router() -> None:
@@ -359,6 +376,7 @@ def test_polygon_30s_does_not_re_evaluate_same_bar_after_late_same_bucket_live_b
         settings=Settings(
             strategy_macd_30s_broker_provider="schwab",
             strategy_polygon_30s_enabled=True,
+            strategy_polygon_30s_live_aggregate_bars_enabled=True,
             strategy_polygon_30s_tick_bar_close_grace_seconds=0.0,
             scanner_feed_retention_enabled=False,
         ),
@@ -450,6 +468,7 @@ def test_polygon_30s_revises_last_closed_bar_when_late_second_arrives() -> None:
         settings=Settings(
             strategy_macd_30s_broker_provider="schwab",
             strategy_polygon_30s_enabled=True,
+            strategy_polygon_30s_live_aggregate_bars_enabled=True,
             strategy_polygon_30s_tick_bar_close_grace_seconds=0.0,
             scanner_feed_retention_enabled=False,
         ),
@@ -524,6 +543,7 @@ def test_polygon_30s_skips_first_mid_bucket_live_aggregate_bar() -> None:
         settings=Settings(
             strategy_macd_30s_broker_provider="schwab",
             strategy_polygon_30s_enabled=True,
+            strategy_polygon_30s_live_aggregate_bars_enabled=True,
             scanner_feed_retention_enabled=False,
         ),
         now_provider=lambda: clock["now"],
@@ -601,6 +621,7 @@ def test_polygon_30s_keeps_sparse_bucket_when_provider_coverage_predates_bucket(
         settings=Settings(
             strategy_macd_30s_broker_provider="schwab",
             strategy_polygon_30s_enabled=True,
+            strategy_polygon_30s_live_aggregate_bars_enabled=True,
             strategy_polygon_30s_tick_bar_close_grace_seconds=0.0,
             scanner_feed_retention_enabled=False,
         ),
@@ -657,6 +678,7 @@ def test_polygon_30s_live_bar_resume_backfills_missing_gap_bars() -> None:
         settings=Settings(
             strategy_macd_30s_broker_provider="schwab",
             strategy_polygon_30s_enabled=True,
+            strategy_polygon_30s_live_aggregate_bars_enabled=True,
             strategy_polygon_30s_tick_bar_close_grace_seconds=0.0,
             scanner_feed_retention_enabled=False,
         ),
@@ -707,6 +729,7 @@ def test_polygon_30s_open_current_live_bar_resume_backfills_intermediate_gap_bar
         settings=Settings(
             strategy_macd_30s_broker_provider="schwab",
             strategy_polygon_30s_enabled=True,
+            strategy_polygon_30s_live_aggregate_bars_enabled=True,
             strategy_polygon_30s_tick_bar_close_grace_seconds=0.0,
             scanner_feed_retention_enabled=False,
         ),
@@ -772,6 +795,7 @@ def test_polygon_30s_uses_real_live_bar_fallback_when_tick_builder_lags() -> Non
         settings=Settings(
             strategy_macd_30s_broker_provider="schwab",
             strategy_polygon_30s_enabled=True,
+            strategy_polygon_30s_live_aggregate_bars_enabled=True,
             scanner_feed_retention_enabled=False,
         ),
         now_provider=lambda: clock["now"],
