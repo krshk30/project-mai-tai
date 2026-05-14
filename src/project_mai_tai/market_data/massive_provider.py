@@ -252,7 +252,7 @@ class MassiveSnapshotProvider:
 
 
 class MassiveTradeStream:
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: str, *, enable_aggregate_subscriptions: bool = False):
         self.api_key = api_key
         self._ws = None
         self._task: asyncio.Task | None = None
@@ -263,6 +263,7 @@ class MassiveTradeStream:
         self._on_trade: Callable[[TradeTickRecord], None] | None = None
         self._on_quote: Callable[[QuoteTickRecord], None] | None = None
         self._on_agg: Callable[[LiveBarRecord], None] | None = None
+        self._provider_aggregate_subscriptions_enabled = bool(enable_aggregate_subscriptions)
         self._aggregate_subscriptions_allowed = True
 
     async def start(
@@ -393,7 +394,11 @@ class MassiveTradeStream:
 
     @property
     def _aggregate_subscriptions_enabled(self) -> bool:
-        return self._on_agg is not None and self._aggregate_subscriptions_allowed
+        return (
+            self._on_agg is not None
+            and self._provider_aggregate_subscriptions_enabled
+            and self._aggregate_subscriptions_allowed
+        )
 
     async def _close_ws(self) -> None:
         ws = self._ws

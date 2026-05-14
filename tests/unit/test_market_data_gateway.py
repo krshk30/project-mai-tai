@@ -386,7 +386,7 @@ async def test_massive_trade_stream_downgrades_aggregate_subscriptions_after_pol
             self.closed.set()
 
     clients: list[FakeWebSocketClient] = []
-    stream = MassiveTradeStream(api_key="test")
+    stream = MassiveTradeStream(api_key="test", enable_aggregate_subscriptions=True)
 
     def build_client() -> FakeWebSocketClient:
         client = FakeWebSocketClient()
@@ -414,6 +414,57 @@ async def test_massive_trade_stream_downgrades_aggregate_subscriptions_after_pol
     assert "A.UGRO" in clients[0].subscriptions
     assert all(not subscription.startswith("A.") for subscription in clients[1].subscriptions)
     assert stream._aggregate_subscriptions_allowed is False
+
+
+@pytest.mark.asyncio
+async def test_massive_trade_stream_defaults_to_trade_quote_only_even_with_live_bar_handler() -> None:
+    class FakeWebSocketClient:
+        def __init__(self) -> None:
+            self.subscriptions: list[str] = []
+            self.closed = threading.Event()
+
+        def subscribe(self, *subscriptions: str) -> None:
+            self.subscriptions.extend(subscriptions)
+
+        def unsubscribe(self, *subscriptions: str) -> None:
+            for subscription in subscriptions:
+                while subscription in self.subscriptions:
+                    self.subscriptions.remove(subscription)
+
+        def run(self, _handler) -> None:
+            self.closed.wait(timeout=1.0)
+
+        async def close(self) -> None:
+            self.closed.set()
+
+    clients: list[FakeWebSocketClient] = []
+    stream = MassiveTradeStream(api_key="test")
+
+    def build_client() -> FakeWebSocketClient:
+        client = FakeWebSocketClient()
+        clients.append(client)
+        return client
+
+    stream._build_client = build_client  # type: ignore[method-assign]
+    await stream.start(
+        on_trade=lambda _record: None,
+        on_quote=lambda _record: None,
+        on_agg=lambda _record: None,
+    )
+    await stream.sync_subscriptions(["UGRO"])
+
+    try:
+        async def connected() -> None:
+            while not clients or not clients[0].subscriptions:
+                await asyncio.sleep(0.01)
+
+        await asyncio.wait_for(connected(), timeout=1.0)
+    finally:
+        await stream.stop()
+
+    assert any(subscription.startswith("T.") for subscription in clients[0].subscriptions)
+    assert any(subscription.startswith("Q.") for subscription in clients[0].subscriptions)
+    assert all(not subscription.startswith("A.") for subscription in clients[0].subscriptions)
 
 
 @pytest.mark.asyncio
