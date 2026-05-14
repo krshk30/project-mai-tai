@@ -42,6 +42,21 @@
 - Merge and deploy this default-alignment fix, then recheck live Polygon persistence and decision timestamps during the active session window.
 - `CYN` remains exempt and untouched.
 
+### Current deploy status
+
+- **PR #124 (`0970a1e`) is merged to `main`, but not yet live on the VPS.**
+- Official `Deploy Service` run `25857519637` failed because `/api/overview` timed out during live preflight.
+- Lower-risk `Deploy Service` run `25857560681` for `service=control` succeeded and cleared the timeout, but the follow-up official `Deploy Service` run `25857581084` for `service=market-data` still blocked on live preflight.
+- The blocking preflight reasons were explicit:
+  - control-plane overview status `degraded`
+  - `66` strategy intents still `pending/submitted/accepted`
+  - `1` virtual position still open
+  - `4` broker account positions still open
+  - `3` fills recorded in the last `180` seconds
+  - reconciliation reported `2` critical findings
+  - `reconciler` service status `degraded`
+- Do **not** bypass this with an ad hoc live restart unless an operator intentionally accepts the trading risk. The merged code fix is ready, but the production deploy must wait for a clean or explicitly reviewed live state.
+
 ## 2026-05-13 LATE LIVE UPDATE - PR #122 disabled Massive websocket `A.*` subscriptions by default after direct root-cause proof
 
 > **This is the current Polygon root-cause state.** PR #121 was a real hardening pass, but it was not the final fix. The stronger provider-level fix is now merged and deployed as PR #122.
