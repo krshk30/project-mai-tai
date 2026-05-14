@@ -8,6 +8,40 @@
 - Overall `/health` may still show `degraded` because of reconciler state. Do not confuse that with a Polygon-specific runtime failure.
 - Keep copied CI counts and failure logs out of the top summary unless they have been revalidated on current `main`.
 
+## 2026-05-14 LIVE UPDATE - Polygon aggregate default still mismatched the PR #122 provider path
+
+> **This is the current Polygon root-cause state.** PR #122 correctly disabled Massive websocket `A.*` subscriptions by default, but `polygon_30s` still booted in live-aggregate runtime mode unless an emergency rollback flag was set. That left the runtime expecting aggregate bars from a provider path we had just disabled.
+
+### What was proved
+
+- The current `main` code after PR #122 still had a default mismatch:
+  - `strategy_polygon_30s_live_aggregate_bars_enabled` existed but was not actually controlling the runtime default
+  - `strategy_polygon_30s_runtime_uses_live_aggregate_bars` still resolved to `True` unless `strategy_polygon_30s_force_tick_built_mode=true`
+  - `MarketDataGatewayService` therefore still enabled Polygon live aggregate streaming by default
+- This matches the live symptom reported on `2026-05-14`: `polygon_30s` persisted zero bars after `09:54 UTC` because the runtime was still waiting for aggregate-driven flow even though the provider path had been moved to trade/quote-only by default.
+
+### What changed locally
+
+- Polygon now defaults to **tick-built runtime mode** unless live aggregates are explicitly re-enabled.
+- `strategy_polygon_30s_runtime_uses_live_aggregate_bars` now honors `strategy_polygon_30s_live_aggregate_bars_enabled` instead of ignoring it.
+- The stale warning in `strategy_engine_app.py` claiming Polygon "ignores" the disable flag was removed.
+- Tests that genuinely require live aggregate behavior now opt in explicitly instead of inheriting it accidentally.
+
+### Validation on the local fix
+
+- `pytest tests/unit/test_polygon_30s_bot.py -q` -> `29 passed`
+- `pytest tests/unit/test_strategy_engine_service.py -q -k "polygon or live_aggregate"` -> `14 passed`
+- `py_compile` passed on:
+  - `src/project_mai_tai/settings.py`
+  - `src/project_mai_tai/services/strategy_engine_app.py`
+  - `tests/unit/test_polygon_30s_bot.py`
+  - `tests/unit/test_strategy_engine_service.py`
+
+### Next step
+
+- Merge and deploy this default-alignment fix, then recheck live Polygon persistence and decision timestamps during the active session window.
+- `CYN` remains exempt and untouched.
+
 ## 2026-05-13 LATE LIVE UPDATE - PR #122 disabled Massive websocket `A.*` subscriptions by default after direct root-cause proof
 
 > **This is the current Polygon root-cause state.** PR #121 was a real hardening pass, but it was not the final fix. The stronger provider-level fix is now merged and deployed as PR #122.

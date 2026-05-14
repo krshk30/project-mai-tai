@@ -106,7 +106,7 @@ class Settings(BaseSettings):
     strategy_macd_30s_tick_bar_close_grace_seconds: float = 7.5
     strategy_macd_30s_trade_stream_service: str = "LEVELONE_EQUITIES"
     strategy_polygon_30s_live_aggregate_bars_enabled: bool = _legacy_strategy_alias_field(
-        True,
+        False,
         "strategy_polygon_30s_live_aggregate_bars_enabled",
         "strategy_webull_30s_live_aggregate_bars_enabled",
     )
@@ -378,7 +378,9 @@ class Settings(BaseSettings):
     @computed_field
     @property
     def strategy_polygon_30s_runtime_uses_live_aggregate_bars(self) -> bool:
-        return not bool(self.strategy_polygon_30s_force_tick_built_mode)
+        return bool(self.strategy_polygon_30s_live_aggregate_bars_enabled) and not bool(
+            self.strategy_polygon_30s_force_tick_built_mode
+        )
 
     @computed_field
     @property
