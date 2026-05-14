@@ -8,9 +8,70 @@
 - Overall `/health` may still show `degraded` because of reconciler state. Do not confuse that with a Polygon-specific runtime failure.
 - Keep copied CI counts and failure logs out of the top summary unless they have been revalidated on current `main`.
 
+## 2026-05-14 PR #126 PRE-MERGE VALIDATION - Claude (Opus 4.7) review of "Persist polygon warmup bars during tick-built startup"
+
+> **Pre-merge validation only. PR #126 is open on `codex/polygon-warmup-bar-persistence` and not yet deployed.** This entry records an independent code review and live correlation against the post-`PR #124` Polygon silence observed today; it does not change any code or production state.
+
+### Live correlation that motivated the review
+
+After `PR #124` deployed at `2026-05-14 11:34:45 UTC` and bars resumed, `polygon_30s` went silent again at `2026-05-14 11:46:30 UTC`:
+
+- `macd_30s` latest bar at observation time (`11:57:55 UTC`): stale 56s (healthy)
+- `schwab_1m` latest bar: stale 116s (healthy, one bar lag)
+- `polygon_30s` latest bar: `11:46:30 UTC`, stale **686s** across all 10 watchlist symbols
+- `/api/bots` continued showing `data_health=healthy` and `latest_decision_at=07:57 AM ET` (misleading)
+- Recent trade ticks for polygon symbols (`SNAL`, `AEHL`) visible in `mai_tai:market-data` Redis stream at `11:57:58 UTC` — feed alive, bot not consuming into persistence
+- Zero `1008` / policy-violation / Massive websocket errors in `market-data.log` since the `PR #122` and `PR #124` deploys (verified by line-count grep)
+- `market-data.log` mtime frozen at `11:35:53 UTC` (right after restart) — process alive and producing Redis output, just not file logging routine activity
+- Validator output: `decision_status` distribution for polygon_30s post-deploy was `idle=74, blank=24, signal=2` — the 24 blank-status rows are consistent with the synthetic-quiet / dropped-warmup framing Codex identifies
+
+### What was reviewed
+
+- PR #126 diff: `+142/-1` across `services/strategy_engine_app.py`, `tests/unit/test_strategy_engine_service.py`, `docs/session-handoff-global.md`
+- Branch HEAD fetched and inspected: `codex/polygon-warmup-bar-persistence`
+- CI status: `validate` workflow failed twice with `15 failed, 548 passed` — **exact match to the documented baseline of 15 known `d5ac600`-fallout failures**, so PR #126 introduces zero net new failing tests
+- Codex's two added tests (`test_polygon_tick_built_persists_real_completed_bars_during_warmup`, `test_polygon_tick_built_sparse_ticks_do_not_synthesize_gap_bars`) both pass
+- Root-cause callsite: `StrategyBotRuntime._evaluate_completed_bar` at `strategy_engine_app.py:1519` returned `[]` when `indicator_engine.calculate(bars)` was `None`, dropping real completed bars before `_finalize_completed_bar` or `_persist_bar_history` could run
+- `_required_history_bars()` = `max(macd_slow + macd_signal, schwab_native_warmup_bars_required, 1)` = `35` bars for the default MACD(12,26,9) config (≈17.5 min on a 30s interval) — that is the maximum warmup window in which the bug would mask bars
+
+### What the fix does
+
+- Replaces the bare `return []` with `return self._finalize_warmup_completed_bar(symbol, completed_bar=completed_bar)`
+- The new helper records a `blocked` decision with `reason="warmup (n/N bars)"`, then routes the real completed bar through the existing `_persist_bar_history` path
+- Returns `[]` for intents (correct — no entry signal can be evaluated without indicators)
+
+### Validation verdict
+
+**Approve for deployment** with the caveats below. The fix is real, minimal, well-tested for the `polygon_30s` case, and strictly improves observability even in scenarios that may have a *separate* second root cause.
+
+### Concerns flagged for the PR (non-blocking)
+
+1. **All-bots scope.** `_evaluate_completed_bar` lives on the base `StrategyBotRuntime`, so `macd_30s`, `schwab_1m`, `runner`, and `tos` will also begin persisting warmup bars. This is a behavior change for the Schwab bots not called out in the PR body. It is an improvement (audit trail), but a regression test for `macd_30s` warmup persistence would harden the contract.
+2. **`current_bars` cap is `min(max(0, builder.get_bar_count()), required_bars)`** — once a symbol has accumulated `required` bars and indicators *still* return None (a future indicator-engine bug, not warmup), the decision_reason will read `"warmup (35/35 bars)"`. That conflates "still warming" with "indicators unavailable for another reason", and may hide a future bug. Suggest splitting the reason text or adding a second branch when `current_bars >= required_bars`.
+3. **Live-incident coverage.** PR #126 cleanly explains *fresh-symbol-after-restart* drops. It does **not** by itself explain why bars persisted from `11:35-11:46 UTC` and then halted at `11:46:30 UTC` — that 11-minute window had `indicators valid → bars persisted` evidence, so something else flipped indicators back to `None` across all 10 symbols simultaneously. Possible follow-up causes (not addressed by PR #126):
+   - Builder bar list reset/clear during a state transition after hydration completes
+   - Watchlist churn or retention-state transition that re-initializes the indicator engine
+   - A separate code path (e.g., gap-recovery) that overrides the builder bar buffer
+
+   Even without solving that secondary mystery, PR #126 turns the silent drop into a `blocked: warmup` row in `strategy_bar_history` — which is **exactly the diagnostic signal we needed and currently lack**.
+
+4. **Dashboard noise.** Every closed bar during warmup will add a `recent_decisions` entry with `status=blocked, reason=warmup (n/N bars)`. Up to 35 such entries per symbol during cold-start warmup. Cosmetic only; can be filtered later if it becomes noisy.
+
+### Recommended next steps after PR #126 merges and deploys
+
+- Validate the live behavior by querying `strategy_bar_history WHERE decision_reason LIKE 'warmup (%'` after the next strategy restart to confirm warmup rows are being written for polygon_30s
+- If polygon_30s still goes silent for windows that have **no** `warmup` rows in `strategy_bar_history`, the secondary root cause (concern #3) is real and needs a separate workstream — likely in builder hydration / state-transition code
+
+### Cross-references
+
+- PR #122 (`8aa5ac6`): disabled Massive websocket `A.*` aggregate subscriptions (gateway side)
+- PR #124 (`0970a1e`): defaulted polygon_30s to tick-built runtime mode (strategy side)
+- PR #126 (`9877db2`): persist warmup bars during tick-built startup (this review). Merged 2026-05-14 12:40:44 UTC.
+- All three together form the post-`PR #122`/`PR #124` Polygon stability chain
+
 ## 2026-05-14 LIVE UPDATE - tick-built Polygon warmup bars were being dropped before persistence
 
-> **This is the current local root-cause fix for the post-morning Polygon drift investigation.** After the PR #124 tick-built default change, `polygon_30s` could still look "silent" or frozen in `strategy_bar_history` whenever symbols rotated onto fresh or lightly seeded names. The reason was not another aggregate/tick mismatch. Real completed bars were being discarded during indicator warmup.
+> **Pre-merge root-cause writeup from PR #126's branch. Merged as `9877db2` at 2026-05-14 12:40:44 UTC.** Kept here for chronological record alongside the validation review above.
 
 ### What was proved
 
@@ -44,8 +105,7 @@
 
 ### Deploy status
 
-- **Not deployed yet in this session.**
-- This is a code-backed local fix on a clean feature branch and should be the next Polygon deploy candidate if live validation is still showing "runtime alive, persisted bars frozen" behavior.
+- Merged to `main` as `9877db2`. VPS deploy in progress in this session.
 
 ## 2026-05-14 LIVE UPDATE - Polygon aggregate default still mismatched the PR #122 provider path
 
