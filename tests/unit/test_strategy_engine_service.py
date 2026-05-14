@@ -2865,6 +2865,72 @@ def test_polygon_tick_built_sparse_ticks_do_not_synthesize_gap_bars(monkeypatch)
     assert real_completed_bars
 
 
+def test_polygon_tick_built_persists_real_completed_bars_during_warmup() -> None:
+    session_factory = build_test_session_factory()
+    clock = {"now": datetime(2026, 5, 14, 12, 0, 0, tzinfo=UTC)}
+    state = StrategyEngineState(
+        settings=make_test_settings(
+            dashboard_snapshot_persistence_enabled=False,
+            strategy_history_persistence_enabled=True,
+            strategy_macd_30s_enabled=False,
+            strategy_polygon_30s_enabled=True,
+            strategy_polygon_30s_live_aggregate_bars_enabled=False,
+            strategy_polygon_30s_force_tick_built_mode=True,
+        ),
+        now_provider=lambda: clock["now"],
+        session_factory=session_factory,
+    )
+    bot = state.bots["polygon_30s"]
+    bot.set_watchlist(["TEST"])
+    bot._ensure_history_seeded = lambda _symbol: None  # type: ignore[method-assign]
+
+    timestamps = [
+        datetime(2026, 5, 14, 12, 0, 0, tzinfo=UTC).timestamp(),
+        datetime(2026, 5, 14, 12, 0, 30, tzinfo=UTC).timestamp(),
+        datetime(2026, 5, 14, 12, 1, 0, tzinfo=UTC).timestamp(),
+    ]
+
+    for ts in timestamps:
+        state.handle_trade_tick(
+            symbol="TEST",
+            price=2.5,
+            size=100,
+            timestamp_ns=int(ts * 1_000_000_000),
+            strategy_codes=["polygon_30s"],
+        )
+
+    clock["now"] = datetime(2026, 5, 14, 12, 1, 33, tzinfo=UTC)
+    _intents, completed_count = state.flush_completed_bars()
+
+    assert completed_count == 1
+    assert bot.recent_decisions
+    assert bot.recent_decisions[0]["status"] == "blocked"
+    assert bot.recent_decisions[0]["reason"] == f"warmup (3/{bot.required_history_bars()} bars)"
+
+    with session_factory() as session:
+        rows = list(
+            session.scalars(
+                select(StrategyBarHistory)
+                .where(
+                    StrategyBarHistory.strategy_code == "polygon_30s",
+                    StrategyBarHistory.symbol == "TEST",
+                    StrategyBarHistory.interval_secs == 30,
+                )
+                .order_by(StrategyBarHistory.bar_time.asc())
+            )
+        )
+
+    assert [row.bar_time.replace(tzinfo=UTC) for row in rows] == [
+        datetime(2026, 5, 14, 12, 0, 0, tzinfo=UTC),
+        datetime(2026, 5, 14, 12, 0, 30, tzinfo=UTC),
+        datetime(2026, 5, 14, 12, 1, 0, tzinfo=UTC),
+    ]
+    assert all(row.volume == 100 for row in rows)
+    assert all(row.trade_count == 1 for row in rows)
+    assert all(row.decision_status == "blocked" for row in rows)
+    assert all(row.decision_reason.startswith("warmup (") for row in rows)
+
+
 def test_bot_runtime_prunes_symbol_state_when_symbol_is_dropped_from_bot_lifecycle() -> None:
     state = StrategyEngineState(now_provider=fixed_now)
     bot = state.bots["macd_30s"]
