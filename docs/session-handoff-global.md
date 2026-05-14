@@ -223,8 +223,35 @@ PR #124 should arguably have been paired with an env-update step (or a deploy-ti
 
 ### Deploy status
 
-- **Not deployed yet in this session.**
-- If the same live stuck-position pattern reappears, this is the next Schwab 1m / 30s fix to merge and deploy.
+- **Merged and deployed on `main` in the same session.**
+- PR #129 merged to `main` as commit `2be6a31`.
+- VPS repo was reset to `main` at `2be6a31`.
+- Live OMS restart sequence followed the runbook:
+  - stopped `project-mai-tai-strategy.service` at `2026-05-14 22:14:54 UTC`
+  - restarted `project-mai-tai-oms.service` at `2026-05-14 22:15:40 UTC`
+  - restarted `project-mai-tai-strategy.service` at `2026-05-14 22:16:42 UTC`
+- `CYN` was intentionally left alone.
+
+### Post-deploy validation status
+
+- Deploy itself succeeded:
+  - OMS came back `active`
+  - strategy came back `active`
+  - VPS repo HEAD confirmed `2be6a31`
+- Immediate control-plane state after restart:
+  - `/health` showed `oms-risk=healthy`
+  - `/health` showed `strategy-engine=healthy`
+  - top-level `/health` remained `degraded` only because of the pre-existing reconciler condition
+- Important caveat:
+  - the old rejected `MOBX` `HARD_STOP` intents remained visible in `/api/orders` because they were historical rows from before the restart
+  - after the restart window, **no fresh post-restart `MOBX` hard-stop intent had fired yet**, so this deploy was not able to exercise the new preemption path immediately on live tape
+  - the old `PCT2` scale orders were still visible as working accepted sells during the first post-restart checks, but there was no new post-restart hard-stop collision yet to prove the live path end-to-end
+
+### Next live check
+
+- The next time `MOBX` or another open held Schwab symbol emits a fresh `HARD_STOP`, verify that OMS now:
+  - cancels the older working scale exit first
+  - then accepts the hard-stop close instead of rejecting it for reserved quantity / duplicate exit reasons
 
 ## 2026-05-14 PR #126 PRE-MERGE VALIDATION - Claude (Opus 4.7) review of "Persist polygon warmup bars during tick-built startup"
 
