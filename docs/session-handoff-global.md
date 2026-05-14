@@ -8,6 +8,55 @@
 - Overall `/health` may still show `degraded` because of reconciler state. Do not confuse that with a Polygon-specific runtime failure.
 - Keep copied CI counts and failure logs out of the top summary unless they have been revalidated on current `main`.
 
+## 2026-05-13 LATE LIVE UPDATE - PR #122 disabled Massive websocket `A.*` subscriptions by default after direct root-cause proof
+
+> **This is the current Polygon root-cause state.** PR #121 was a real hardening pass, but it was not the final fix. The stronger provider-level fix is now merged and deployed as PR #122.
+
+### What was proved
+
+- The post-morning Polygon failure boundary was narrowed to the generic live market-data stream, not OMS or a hidden intent leak.
+- Direct VPS probing proved the key provider behavior:
+  - `T.<symbol>` + `Q.<symbol>` survives
+  - `T.<symbol>` + `Q.<symbol>` + `A.<symbol>` triggers Massive websocket `1008 (policy violation)`
+- That explains the recurring pattern where scanner/history/backfill activity could continue while Polygon's real live completed-bar evaluation went silent.
+
+### Why PR #121 was not enough
+
+- PR #121 (`2954377`) added an in-process downgrade after aggregate-policy failures, but the gateway could still come up from a fresh restart trying `A.*` again before that downgrade latched.
+- Follow-up VPS maintenance snapshots after PR #121 still showed fresh `1008` reconnect evidence mixed into `market-data.log`, so treating the downgrade alone as the final fix was too optimistic.
+
+### What shipped now
+
+- **PR #122 (`8aa5ac6`)** - `Disable Massive websocket aggregates by default`
+- `MassiveTradeStream` now treats websocket aggregate subscriptions as **opt-in**, not default-on. For the live stock feed, the gateway will stay on trade/quote flow and let Polygon use its existing trade-tick bar path instead of asking Massive for unsupported `A.*` subscriptions.
+- The PR #121 downgrade remains in place as a secondary guard if aggregate subscriptions are ever explicitly re-enabled later.
+- Validation on the code change:
+  - `pytest tests/unit/test_market_data_gateway.py -q` -> `13 passed`
+  - `py_compile` passed on the changed files
+
+### Live deploy state
+
+- PR #122 merged to `main` as `8aa5ac6efa7077768a2ae5934f1f5e49b9b7c7d7`.
+- Official `Deploy Service` run `25834806857` succeeded for `service=market-data`.
+- The deploy workflow restarted:
+  - `project-mai-tai-market-data.service` at `2026-05-14 00:43:38 UTC`
+  - `project-mai-tai-strategy.service` at `2026-05-14 00:43:38 UTC`
+- `CYN` remained untouched.
+
+### Post-deploy evidence and remaining caveat
+
+- Immediate runtime snapshot `25834845309` showed `polygon_30s` reachable again in `/api/bots` with fresh `latest_market_data_at = 2026-05-13 08:45:57 PM ET`.
+- The control plane was still noisy / partially stale after restart:
+  - `/health` remained `degraded`
+  - `/api/overview` timed out in the snapshot workflow
+  - `/api/bots` still showed `watchlist_size=0` and blank decision timestamps in that after-hours window
+- The maintenance workflow's `market-data.log` tail still mixed in older-looking `1008` tracebacks, so do **not** overclaim this as fully proven until the next live session revalidates Polygon during an active tape window.
+
+### Next session priority
+
+- At the next premarket / market window, verify whether Polygon now keeps producing normal post-morning decision timestamps and intents without the old silence pattern.
+- If silence still reappears, investigate from the trade/quote-only live stream path forward; do **not** reopen the old `A.*` websocket theory unless new provider evidence contradicts the direct probe above.
+
 ## 2026-05-13 EOD WRAP-UP - PR #118 backtest validator shipped, VWAP after-hours semantics flagged for follow-up
 
 > **Doc-only follow-up to today's deploys.** Captures (a) the new trade-validation script that landed late in the session, (b) a deferred workstream around after-hours VWAP semantics, and (c) cleanup of a stale PR.
