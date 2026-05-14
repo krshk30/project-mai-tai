@@ -88,6 +88,49 @@ Lesson: when investigating "silence", query at least once more 30-60 seconds lat
 
 PR #124 should arguably have been paired with an env-update step (or a deploy-time check) that warned when `LIVE_AGGREGATE_BARS_ENABLED=true` was present on a VPS after the default flipped. Without it, every operator-managed VPS would silently regress in the same way. Worth a follow-up PR to add a startup warning when the env still uses the aggregate-bar opt-in for polygon. This would have caught today's issue at strategy boot instead of via forensic investigation.
 
+## 2026-05-14 LIVE UPDATE - `schwab_1m` and `macd_30s` hard stops were blocked by their own working scale exits
+
+> **This is the current local root-cause fix for the "stuck open position for hours" bug on the Schwab 1m and 30s bots.** The live failure was not primarily OMS silence and not a missing `pending_close` cleanup. Both bots were still trying to fire `HARD_STOP` exits on the held symbol, but OMS was rejecting them because older working scale sells were still reserving the same quantity.
+
+### What was proved from live state
+
+- The live held symbol on both bots was `MOBX`.
+- `trade_intents` showed repeated `close/HARD_STOP` intents for both `schwab_1m` and `macd_30s` ending in `status=rejected`.
+- The reject path was downstream of strategy emission:
+  - strategy was still generating the hard-stop close attempts
+  - the close intents were not disappearing before OMS
+- `broker_orders` showed the conflicting open exit orders were older `SCALE_PCT2` sell orders still sitting in `accepted` state and being watchdog-refreshed.
+- OMS pre-submit logic then saw those older open exits first:
+  - `find_open_exit_order(...)` returned a working sell
+  - `get_open_exit_reserved_quantity(...)` treated that sell as reserved quantity
+  - the new hard-stop close was rejected as `duplicate_exit_in_flight` or `broker quantity already reserved for pending exits`
+- That is why the position looked "stuck for hours": the hard stop kept trying, but its own earlier scale order prevented it from getting through.
+
+### Local fix
+
+- Hard-stop close intents now preempt older non-stopguard exit orders for the same strategy/account/symbol before OMS performs the duplicate/reserved-quantity checks.
+- The new OMS path:
+  - finds the existing working exit order
+  - submits a targeted cancel for it
+  - then continues with the hard-stop close submission
+- Native stop-guard management remains unchanged; this fix is specifically for older working strategy exits such as `SCALE_PCT2`.
+
+### Local validation
+
+- Added a regression test that reproduces the exact shape:
+  - open fills
+  - `scale` order becomes `accepted`
+  - later `HARD_STOP` close arrives
+  - OMS now emits `cancelled` for the old scale and `accepted` for the hard-stop close instead of rejecting it
+- Validation:
+  - `pytest tests/unit/test_oms_risk_service.py -k "hard_stop_preempts_existing_scale_exit or rejects_duplicate_exit_in_flight"` -> `2 passed`
+  - `python -m py_compile src/project_mai_tai/oms/service.py tests/unit/test_oms_risk_service.py` -> passed
+
+### Deploy status
+
+- **Not deployed yet in this session.**
+- If the same live stuck-position pattern reappears, this is the next Schwab 1m / 30s fix to merge and deploy.
+
 ## 2026-05-14 PR #126 PRE-MERGE VALIDATION - Claude (Opus 4.7) review of "Persist polygon warmup bars during tick-built startup"
 
 > **Pre-merge validation only. PR #126 is open on `codex/polygon-warmup-bar-persistence` and not yet deployed.** This entry records an independent code review and live correlation against the post-`PR #124` Polygon silence observed today; it does not change any code or production state.

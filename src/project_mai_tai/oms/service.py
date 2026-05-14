@@ -334,6 +334,18 @@ class OmsRiskService:
                             symbol=event.payload.symbol,
                         )
                     )
+                if (
+                    event.payload.intent_type == "close"
+                    and str(event.payload.metadata.get("stop_guard", "")).strip().lower() == "true"
+                ):
+                    pre_submit_events.extend(
+                        await self._cancel_open_exit_orders_before_hard_stop(
+                            session=session,
+                            strategy=strategy,
+                            broker_account=broker_account,
+                            symbol=event.payload.symbol,
+                        )
+                    )
                 duplicate_exit = self.store.find_open_exit_order(
                     session,
                     strategy_id=strategy.id,
@@ -651,6 +663,79 @@ class OmsRiskService:
             intent=cancel_intent,
             event=cancel_event,
         )
+
+    async def _cancel_open_exit_orders_before_hard_stop(
+        self,
+        *,
+        session: Session,
+        strategy: Strategy,
+        broker_account: BrokerAccount,
+        symbol: str,
+    ) -> list[OrderEventEvent]:
+        published_events: list[OrderEventEvent] = []
+        seen_client_order_ids: set[str] = set()
+
+        while True:
+            open_exit = self.store.find_open_exit_order(
+                session,
+                strategy_id=strategy.id,
+                broker_account_id=broker_account.id,
+                symbol=symbol,
+                include_native_stop_guard=False,
+            )
+            if open_exit is None:
+                break
+
+            payload = {str(k): str(v) for k, v in (open_exit.payload or {}).items()}
+            if str(payload.get("stop_guard", "")).strip().lower() == "true":
+                break
+
+            if open_exit.client_order_id in seen_client_order_ids:
+                break
+            seen_client_order_ids.add(open_exit.client_order_id)
+
+            cancel_event = TradeIntentEvent(
+                source_service=SERVICE_NAME,
+                payload=TradeIntentPayload(
+                    strategy_code=strategy.code,
+                    broker_account_name=broker_account.name,
+                    symbol=symbol,
+                    side="sell",
+                    quantity=open_exit.quantity,
+                    intent_type="cancel",
+                    reason="HARD_STOP_PREEMPT_PENDING_EXIT",
+                    metadata={
+                        "hard_stop_preempt": "true",
+                        "target_client_order_id": open_exit.client_order_id,
+                        "broker_order_id": open_exit.broker_order_id or "",
+                    },
+                ),
+            )
+            cancel_intent = self.store.create_trade_intent(
+                session,
+                strategy=strategy,
+                broker_account=broker_account,
+                event=cancel_event,
+            )
+            self._record_internal_risk_pass(
+                session,
+                intent=cancel_intent,
+                strategy=strategy,
+                broker_account=broker_account,
+                metadata=dict(cancel_event.payload.metadata),
+                reason="hard_stop_preempt_pending_exit",
+            )
+            published_events.extend(
+                await self._process_cancel_intent(
+                    session=session,
+                    strategy_id=strategy.id,
+                    broker_account_id=broker_account.id,
+                    intent=cancel_intent,
+                    event=cancel_event,
+                )
+            )
+
+        return published_events
 
     async def _arm_or_rearm_native_stop_guard(
         self,
