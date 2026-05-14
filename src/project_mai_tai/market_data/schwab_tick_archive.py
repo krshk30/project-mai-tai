@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import time
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
 from collections.abc import Sequence
 from dataclasses import asdict
 from datetime import UTC, datetime
@@ -19,13 +19,32 @@ from project_mai_tai.market_data.models import (
 
 EASTERN_TZ = ZoneInfo("America/New_York")
 
+# Default cap on cached append-mode handles. Set well below the typical Linux
+# soft FD limit (1024) and well above the typical watchlist size (~30 symbols
+# per bot × 3 active bots ≈ 90). Production crash on 2026-05-14 hit `EMFILE`
+# after ~6h of operation because the cache grew unbounded as symbols rotated
+# in and out of watchlists; LRU eviction prevents that.
+DEFAULT_MAX_HANDLES = 256
+
 
 class SchwabTickArchive:
-    """Append raw Schwab stream events into per-symbol ET-day JSONL files."""
+    """Append raw Schwab stream events into per-symbol ET-day JSONL files.
 
-    def __init__(self, root_path: str | Path) -> None:
+    Caches file handles keyed by absolute path, bounded by ``max_handles`` to
+    avoid file-descriptor exhaustion. Eviction is least-recently-used: every
+    successful append marks its handle MRU; when the cache exceeds the cap,
+    the eldest handle is closed before the new one is admitted.
+    """
+
+    def __init__(
+        self,
+        root_path: str | Path,
+        *,
+        max_handles: int = DEFAULT_MAX_HANDLES,
+    ) -> None:
         self.root_path = Path(root_path)
-        self._handles: dict[Path, TextIO] = {}
+        self.max_handles = max(1, int(max_handles))
+        self._handles: OrderedDict[Path, TextIO] = OrderedDict()
 
     def close(self) -> None:
         for handle in self._handles.values():
@@ -88,6 +107,14 @@ class SchwabTickArchive:
             path.parent.mkdir(parents=True, exist_ok=True)
             handle = path.open("a", encoding="utf-8", buffering=1)
             self._handles[path] = handle
+            while len(self._handles) > self.max_handles:
+                _evicted_path, evicted_handle = self._handles.popitem(last=False)
+                try:
+                    evicted_handle.close()
+                except OSError:
+                    pass
+        else:
+            self._handles.move_to_end(path)
         handle.write(json.dumps(payload, separators=(",", ":"), sort_keys=True))
         handle.write("\n")
         return path
