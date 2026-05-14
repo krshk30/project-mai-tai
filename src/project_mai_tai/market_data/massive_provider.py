@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import time
 from collections.abc import Callable, Iterable
@@ -262,6 +263,7 @@ class MassiveTradeStream:
         self._on_trade: Callable[[TradeTickRecord], None] | None = None
         self._on_quote: Callable[[QuoteTickRecord], None] | None = None
         self._on_agg: Callable[[LiveBarRecord], None] | None = None
+        self._aggregate_subscriptions_allowed = True
 
     async def start(
         self,
@@ -272,16 +274,13 @@ class MassiveTradeStream:
         self._on_trade = on_trade
         self._on_quote = on_quote
         self._on_agg = on_agg
+        self._aggregate_subscriptions_allowed = on_agg is not None
         self._running = True
         self._task = asyncio.create_task(self._run_loop())
 
     async def stop(self) -> None:
         self._running = False
-        if self._ws is not None:
-            try:
-                self._ws.close()
-            except Exception:
-                logger.exception("Failed to close Massive websocket cleanly")
+        await self._close_ws()
         if self._task is not None:
             self._task.cancel()
             try:
@@ -305,12 +304,12 @@ class MassiveTradeStream:
         if to_remove:
             self._ws.unsubscribe(*[f"T.{symbol}" for symbol in sorted(to_remove)])
             self._ws.unsubscribe(*[f"Q.{symbol}" for symbol in sorted(to_remove)])
-            if self._on_agg is not None:
+            if self._aggregate_subscriptions_enabled:
                 self._ws.unsubscribe(*[f"A.{symbol}" for symbol in sorted(to_remove)])
         if to_add:
             self._ws.subscribe(*[f"T.{symbol}" for symbol in sorted(to_add)])
             self._ws.subscribe(*[f"Q.{symbol}" for symbol in sorted(to_add)])
-            if self._on_agg is not None:
+            if self._aggregate_subscriptions_enabled:
                 self._ws.subscribe(*[f"A.{symbol}" for symbol in sorted(to_add)])
             self._mark_coverage_started(to_add)
 
@@ -322,15 +321,18 @@ class MassiveTradeStream:
                 if self._subscriptions:
                     ws.subscribe(*[f"T.{symbol}" for symbol in sorted(self._subscriptions)])
                     ws.subscribe(*[f"Q.{symbol}" for symbol in sorted(self._subscriptions)])
-                    if self._on_agg is not None:
+                    if self._aggregate_subscriptions_enabled:
                         ws.subscribe(*[f"A.{symbol}" for symbol in sorted(self._subscriptions)])
                     self._mark_coverage_started(self._subscriptions)
                 self._connected = True
                 await asyncio.to_thread(ws.run, self._handle_messages)
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except Exception as exc:
                 self._connected = False
+                await self._close_ws()
+                if self._downgrade_aggregate_subscriptions(exc):
+                    continue
                 if self._running:
                     logger.exception("Massive websocket error; reconnecting in 5 seconds")
                     await asyncio.sleep(5)
@@ -388,6 +390,57 @@ class MassiveTradeStream:
                         self._on_agg(bar)
             except Exception:
                 logger.exception("Failed to normalize Massive stream message")
+
+    @property
+    def _aggregate_subscriptions_enabled(self) -> bool:
+        return self._on_agg is not None and self._aggregate_subscriptions_allowed
+
+    async def _close_ws(self) -> None:
+        ws = self._ws
+        self._ws = None
+        if ws is None:
+            return
+        close = getattr(ws, "close", None)
+        if close is None:
+            return
+        try:
+            result = close()
+            if inspect.isawaitable(result):
+                await result
+        except Exception:
+            logger.exception("Failed to close Massive websocket cleanly")
+
+    def _downgrade_aggregate_subscriptions(self, exc: Exception) -> bool:
+        if not self._aggregate_subscriptions_enabled:
+            return False
+        if not self._is_policy_violation(exc):
+            return False
+        self._aggregate_subscriptions_allowed = False
+        logger.warning(
+            "Massive websocket rejected aggregate subscriptions with policy violation; "
+            "downgrading to trade/quote-only stream so Polygon can fall back to tick-built bars."
+        )
+        return True
+
+    def _is_policy_violation(self, exc: BaseException) -> bool:
+        seen: set[int] = set()
+        stack: list[BaseException | None] = [exc]
+        while stack:
+            current = stack.pop()
+            if current is None:
+                continue
+            marker = id(current)
+            if marker in seen:
+                continue
+            seen.add(marker)
+            if "1008" in repr(current):
+                return True
+            for close_state in (getattr(current, "rcvd", None), getattr(current, "sent", None)):
+                if getattr(close_state, "code", None) == 1008:
+                    return True
+            stack.append(getattr(current, "__cause__", None))
+            stack.append(getattr(current, "__context__", None))
+        return False
 
     def _mark_coverage_started(self, symbols: Iterable[str]) -> None:
         started_at = time.time()
