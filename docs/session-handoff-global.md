@@ -8,6 +8,45 @@
 - Overall `/health` may still show `degraded` because of reconciler state. Do not confuse that with a Polygon-specific runtime failure.
 - Keep copied CI counts and failure logs out of the top summary unless they have been revalidated on current `main`.
 
+## 2026-05-14 LIVE UPDATE - tick-built Polygon warmup bars were being dropped before persistence
+
+> **This is the current local root-cause fix for the post-morning Polygon drift investigation.** After the PR #124 tick-built default change, `polygon_30s` could still look "silent" or frozen in `strategy_bar_history` whenever symbols rotated onto fresh or lightly seeded names. The reason was not another aggregate/tick mismatch. Real completed bars were being discarded during indicator warmup.
+
+### What was proved
+
+- `StrategyBotRuntime._evaluate_completed_bar()` returned immediately when `indicator_engine.calculate(...)` was still `None`.
+- That early return happened **before** `_finalize_completed_bar()` and `_persist_bar_history()`.
+- Result: a tick-built Polygon symbol could receive real trades, close real 30s bars, and still write **zero** new `strategy_bar_history` rows until it accumulated enough bars for warmup.
+- This exactly explains the misleading boundary we kept seeing:
+  - runtime/watchlist/tick activity could keep advancing
+  - but persisted Polygon bar history could appear frozen, especially after symbol churn or restarts
+- I reproduced this locally with a fresh tick-built `polygon_30s` symbol:
+  - three real completed bars closed
+  - `strategy_bar_history` still had `0` rows under the old code
+  - after the fix, those same bars persist with `decision_status=blocked` and `decision_reason=warmup (...)`
+
+### What changed locally
+
+- Warmup no longer short-circuits real completed-bar persistence.
+- When a real completed bar closes before indicators are ready, the runtime now:
+  - records a warmup decision (`blocked`, `warmup (n/N bars)`)
+  - persists the real completed bar to `strategy_bar_history`
+- This keeps Polygon bar coverage durable during symbol warmup instead of making fresh symbols look dead in the DB.
+
+### Validation on the local fix
+
+- `pytest tests/unit/test_strategy_engine_service.py -k "polygon_tick_built_persists_real_completed_bars_during_warmup or polygon_tick_built_sparse_ticks_do_not_synthesize_gap_bars"` -> `2 passed`
+- `pytest tests/unit/test_strategy_engine_service.py -k "polygon or synthetic_quiet or uses_eastern_bar_timestamps"` -> `12 passed`
+- `pytest tests/unit/test_polygon_30s_bot.py` -> `29 passed`
+- `py_compile` passed on:
+  - `src/project_mai_tai/services/strategy_engine_app.py`
+  - `tests/unit/test_strategy_engine_service.py`
+
+### Deploy status
+
+- **Not deployed yet in this session.**
+- This is a code-backed local fix on a clean feature branch and should be the next Polygon deploy candidate if live validation is still showing "runtime alive, persisted bars frozen" behavior.
+
 ## 2026-05-14 LIVE UPDATE - Polygon aggregate default still mismatched the PR #122 provider path
 
 > **This is the current Polygon root-cause state.** PR #122 correctly disabled Massive websocket `A.*` subscriptions by default, but `polygon_30s` still booted in live-aggregate runtime mode unless an emergency rollback flag was set. That left the runtime expecting aggregate bars from a provider path we had just disabled.

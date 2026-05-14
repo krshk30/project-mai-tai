@@ -1519,7 +1519,7 @@ class StrategyBotRuntime:
 
         local_indicators = self.indicator_engine.calculate(bars)
         if local_indicators is None:
-            return []
+            return self._finalize_warmup_completed_bar(symbol, completed_bar=completed_bar)
 
         indicators = self._decorate_indicators(symbol, local_indicators)
         self.last_indicators[symbol] = indicators
@@ -1733,6 +1733,42 @@ class StrategyBotRuntime:
     def _finalize_prewarm_completed_bar(self, symbol: str) -> None:
         del symbol
         return
+
+    def _finalize_warmup_completed_bar(
+        self,
+        symbol: str,
+        *,
+        completed_bar: OHLCVBar | None = None,
+    ) -> list[TradeIntentEvent]:
+        builder = self.builder_manager.get_builder(symbol)
+        if builder is None:
+            return []
+        bar = completed_bar
+        if bar is None:
+            if not builder.bars:
+                return []
+            bar = builder.bars[-1]
+        required_bars = max(1, self._required_history_bars())
+        current_bars = min(max(0, builder.get_bar_count()), required_bars)
+        indicators = {
+            "price": float(bar.close),
+            "open": float(bar.open),
+            "bar_timestamp": float(bar.timestamp),
+            "bar_volume": int(bar.volume),
+        }
+        decision = self._record_decision(
+            symbol=symbol,
+            status="blocked",
+            reason=f"warmup ({current_bars}/{required_bars} bars)",
+            indicators=indicators,
+        )
+        self._persist_bar_history(
+            symbol=symbol,
+            indicators=indicators,
+            decision=decision,
+            completed_bar=bar,
+        )
+        return []
 
     def _finalize_gap_recovery_completed_bar(self, symbol: str) -> None:
         builder = self.builder_manager.get_builder(symbol)
