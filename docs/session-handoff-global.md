@@ -8,6 +8,86 @@
 - Overall `/health` may still show `degraded` because of reconciler state. Do not confuse that with a Polygon-specific runtime failure.
 - Keep copied CI counts and failure logs out of the top summary unless they have been revalidated on current `main`.
 
+## 2026-05-14 LIVE FIX + FULL-DAY VALIDATION - polygon_30s secondary root cause was VPS env drift overriding PR #124's tick-built default
+
+> **PR #126 was merged and deployed AND a one-line env fix was applied. The combined fix restored polygon_30s to healthy production operation for the entire trading day after the deploy.** End-of-day validation: 3,210 polygon bars persisted across 34 symbols over 8 hours of continuous operation, with PR #126's warmup-persistence path firing 176 times as fresh symbols rotated onto the watchlist.
+
+### Timeline
+
+| Time (UTC) | Event |
+|---|---|
+| `11:34:45` | PR #124 deployed (defaulted polygon_30s to tick-built mode in code). Initial bars resumed for ~12 min via per-symbol aggregate→tick fallback. |
+| `11:46:30` | polygon_30s persisted its last bar pre-PR-#126. Bot kept reporting `LISTENING` with fresh `latest_decision_at`, but `strategy_bar_history` froze. |
+| `12:40:44` | **PR #126** (`9877db2`) merged — persists warmup bars during tick-built startup. |
+| `12:42:51` | Strategy restarted with PR #126 live. macd_30s + schwab_1m resumed and PR #126's `warmup` rows started appearing on those bots. **polygon_30s remained completely silent** — not even warmup rows. This proved PR #126 alone was insufficient and pointed at a second root cause. |
+| `12:52:00` | Code investigation found `StrategyBotRuntime.flush_completed_bars` at `strategy_engine_app.py:1224` silently returns `[], 0` if `use_live_aggregate_bars and live_aggregate_bars_are_final`. Confirmed `runtime_uses_live_aggregate_bars` was still `True` at runtime despite PR #124, because the VPS env had `MAI_TAI_STRATEGY_POLYGON_30S_LIVE_AGGREGATE_BARS_ENABLED=true`. |
+| `12:52:30` | Env edited: `LIVE_AGGREGATE_BARS_ENABLED=true → false`. Backup created at `/etc/project-mai-tai/project-mai-tai.env.bak-20260514-125230-pre-polygon-tickbuilt`. |
+| `12:52:36` | Strategy restarted. |
+| `12:53:00` | First polygon_30s bar persisted post-fix. Operation sustained continuously through to end-of-RTH. |
+| `20:55:30` | Last polygon bar of the day (post-RTH wind-down — expected behavior, not a regression). |
+
+### Why PR #124 alone wasn't enough on this VPS
+
+PR #124 changed the code default of `strategy_polygon_30s_runtime_uses_live_aggregate_bars` to honor `strategy_polygon_30s_live_aggregate_bars_enabled`. But the **VPS env file kept the explicit opt-in** to aggregate mode:
+
+```
+MAI_TAI_STRATEGY_POLYGON_30S_LIVE_AGGREGATE_BARS_ENABLED=true   # ← env override
+MAI_TAI_STRATEGY_POLYGON_30S_FORCE_TICK_BUILT_MODE=(unset)      # ← default False
+```
+
+Resolved by the computed property to `True AND NOT False = True`, so polygon booted in aggregate-bar mode. The gateway side (PR #122) had simultaneously disabled Massive `A.*` subscriptions, so no aggregate bars arrived. `LIVE_AGGREGATE_FALLBACK_ENABLED=true` per-symbol fallback was the only thing producing the initial 12-min burst after the `11:34:45` deploy — but that fallback state machine wasn't durable across synthetic-quiet-bar transitions and eventually self-evicted.
+
+### Why macd_30s and schwab_1m were never affected
+
+- `macd_30s` ticks come via Schwab TIMESALE/LEVELONE — not gated by `use_live_aggregate_bars`
+- `schwab_1m` aggregate bars come via Schwab CHART_EQUITY, which is wired to a different callback that fires normally — the line-1224 early-return is polygon-specific in practice
+
+### Full-day validation (after env-fix restart at 12:52:36 UTC)
+
+| Strategy | First bar | Last bar | Total bars | Symbols | Warmup bars (PR #126) |
+|---|---|---|---|---|---|
+| `macd_30s` | 12:53:30 | 21:16:30 | 4,688 | 32 | 31 |
+| `polygon_30s` | 12:53:00 | **20:55:30** | **3,210** | **34** | **176** |
+| `schwab_1m` | 12:53:00 | 21:46:00 | 6,483 | 31 | 11 |
+
+Polygon decision activity by hour (post env-fix):
+
+| Hour (UTC) | idle | blocked | signal | pending_open |
+|---|---|---|---|---|
+| 12 | 86 | 58 | — | — |
+| 13 | 545 | 8 | **1** | — |
+| 14 | 538 | 30 | **5** | — |
+| 15 | 475 | 45 | **5** | **1** |
+| 16 | 469 | 27 | **3** | — |
+| 17 | 354 | 31 | **1** | — |
+| 18 | 95 | 16 | — | — |
+| 19 | 219 | 61 | **2** | — |
+| 20 | 117 | 18 | — | — |
+
+**17 polygon signals fired across the day** with one pending_open at `15:00 UTC` (11:00 ET). Bot was actively evaluating bars and producing trade-eligible signals throughout RTH.
+
+### Important: false-positive "tertiary regression" was investigated and dismissed
+
+At `12:58:48 UTC` (T+5.5min after env-fix restart) a validation snapshot appeared to show polygon stuck at `12:54:30 UTC` — only 2 minutes of bars then silent. That triggered a "tertiary regression" panic mid-session. **This was a snapshot-timing artifact.** The bar-writer was mid-cycle for the 12:55 minute when queried, so the 12:55 batch hadn't been committed yet. End-of-day data confirms bars flowed continuously from 12:53 onward — minute 12:55 alone has 21 bars across 11 symbols persisted, and every minute through `20:55 UTC` has bars. **No tertiary root cause exists.** PR #124 + PR #126 + env fix is the complete solution.
+
+Lesson: when investigating "silence", query at least once more 30-60 seconds later before declaring a regression. The persistence path has visible write-lag at minute boundaries during high-throughput windows.
+
+### PR #126's value, confirmed by full-day data
+
+176 polygon warmup-blocked rows over the day proves PR #126 is doing real work. Without PR #126, those 176 fresh-symbol-during-warmup bars would have been silently dropped — preserving the same auditability gap that initially made this whole investigation hard. macd_30s and schwab_1m saw 31 and 11 warmup rows respectively, confirming the all-bots-scope concern from my pre-merge review is benign and beneficial (audit trail across all bots).
+
+### Cross-references and complete PR chain for the 2026-05-14 Polygon stability work
+
+- PR #122 (`8aa5ac6`) — disabled Massive websocket `A.*` aggregate subscriptions at the gateway. Eliminated the 1008 policy-violation storms.
+- PR #124 (`0970a1e`) — changed the code default of `strategy_polygon_30s_runtime_uses_live_aggregate_bars` to honor the `live_aggregate_bars_enabled` flag. **By itself insufficient on any VPS whose env still set the flag to `true`.**
+- PR #126 (`9877db2`) — persists real completed bars during indicator warmup. Adds `decision_status=blocked, decision_reason="warmup (n/N bars)"` rows that were previously dropped silently. Fired 176 times on polygon_30s on its first deploy day.
+- PR #127 (`37fec1b`) — pre-merge review note for PR #126.
+- **Env fix (2026-05-14 12:52:30 UTC)** — flipped `MAI_TAI_STRATEGY_POLYGON_30S_LIVE_AGGREGATE_BARS_ENABLED` from `true` to `false` so the VPS runtime honors PR #124's tick-built code default.
+
+### Operational follow-up — env-drift hardening
+
+PR #124 should arguably have been paired with an env-update step (or a deploy-time check) that warned when `LIVE_AGGREGATE_BARS_ENABLED=true` was present on a VPS after the default flipped. Without it, every operator-managed VPS would silently regress in the same way. Worth a follow-up PR to add a startup warning when the env still uses the aggregate-bar opt-in for polygon. This would have caught today's issue at strategy boot instead of via forensic investigation.
+
 ## 2026-05-14 PR #126 PRE-MERGE VALIDATION - Claude (Opus 4.7) review of "Persist polygon warmup bars during tick-built startup"
 
 > **Pre-merge validation only. PR #126 is open on `codex/polygon-warmup-bar-persistence` and not yet deployed.** This entry records an independent code review and live correlation against the post-`PR #124` Polygon silence observed today; it does not change any code or production state.
