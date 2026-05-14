@@ -37,25 +37,46 @@
   - `tests/unit/test_polygon_30s_bot.py`
   - `tests/unit/test_strategy_engine_service.py`
 
-### Next step
+### Live deploy status
 
-- Merge and deploy this default-alignment fix, then recheck live Polygon persistence and decision timestamps during the active session window.
-- `CYN` remains exempt and untouched.
+- **PR #124 (`0970a1e`) is now live on the VPS.**
+- Official deploy attempts still demonstrated the control-plane risk:
+  - `Deploy Service` run `25857519637` failed because `/api/overview` timed out during live preflight.
+  - `Deploy Service` run `25857560681` for `service=control` succeeded and cleared the timeout.
+  - Follow-up `Deploy Service` run `25857581084` for `service=market-data` still blocked on live preflight because the live state was not clean: overview `degraded`, `66` active intents, `1` virtual position, `4` broker account positions, `3` recent fills, `2` critical reconciliation findings, and degraded reconciler state.
+- After explicit operator approval to take the risk anyway, the VPS was manually refreshed from clean `main` and restarted in the runbook order:
+  - runtime bootstrap completed with `MAI_TAI_RUN_MIGRATIONS=0`
+  - `project-mai-tai-strategy.service` stopped
+  - `project-mai-tai-market-data.service` restarted
+  - `project-mai-tai-strategy.service` started
+  - both services came back at `2026-05-14 11:34:45 UTC`
+- `CYN` remained exempt and untouched.
 
-### Current deploy status
+### Post-deploy evidence
 
-- **PR #124 (`0970a1e`) is merged to `main`, but not yet live on the VPS.**
-- Official `Deploy Service` run `25857519637` failed because `/api/overview` timed out during live preflight.
-- Lower-risk `Deploy Service` run `25857560681` for `service=control` succeeded and cleared the timeout, but the follow-up official `Deploy Service` run `25857581084` for `service=market-data` still blocked on live preflight.
-- The blocking preflight reasons were explicit:
-  - control-plane overview status `degraded`
-  - `66` strategy intents still `pending/submitted/accepted`
-  - `1` virtual position still open
-  - `4` broker account positions still open
-  - `3` fills recorded in the last `180` seconds
-  - reconciliation reported `2` critical findings
-  - `reconciler` service status `degraded`
-- Do **not** bypass this with an ad hoc live restart unless an operator intentionally accepts the trading risk. The merged code fix is ready, but the production deploy must wait for a clean or explicitly reviewed live state.
+- Immediate local VPS checks after the restart showed:
+  - `polygon_30s` watchlist rebuilt to `25`
+  - `latest_decision_at = 2026-05-14 07:34:00 AM ET`
+  - `latest_bot_tick_at = 2026-05-14 07:34:43 AM ET`
+  - `latest_market_data_at = 2026-05-14 07:34:45 AM ET`
+  - `latest_heartbeat_at = 2026-05-14 07:34:45 AM ET`
+- Post-deploy maintenance snapshot `25857873570` showed the runtime continuing to advance:
+  - `latest_decision_at = 2026-05-14 07:36:00 AM ET`
+  - `latest_bot_tick_at = 2026-05-14 07:36:33 AM ET`
+  - `latest_heartbeat_at = 2026-05-14 07:36:25 AM ET`
+  - watchlist had compacted to `9` names
+- Strategy log evidence after restart showed persisted Polygon history activity resumed instead of staying at zero:
+  - `fetched 3945 direct provider history bars for DXF @ 30s into macd_30s,polygon_30s | persisted=393`
+  - `fetched 280 direct provider history bars for HCTI @ 30s into macd_30s,polygon_30s | persisted=42`
+
+### Remaining caveat
+
+- This deploy fixed the runtime/provider default mismatch, but Polygon is **not fully healthy yet**:
+  - `/health` still reports overall `degraded`
+  - Polygon `latest_market_data_at` lagged behind decisions in the maintenance snapshot
+  - `/api/bots` marked Polygon `STALE` because the feed looked stale
+  - `market-data.log` still shows Massive websocket restart / policy-violation noise in the live environment
+- So the PR #124 code is now deployed, but the broader live Polygon feed stability problem remains open.
 
 ## 2026-05-13 LATE LIVE UPDATE - PR #122 disabled Massive websocket `A.*` subscriptions by default after direct root-cause proof
 
