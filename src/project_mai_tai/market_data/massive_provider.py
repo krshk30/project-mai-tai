@@ -252,15 +252,6 @@ class MassiveSnapshotProvider:
 
 
 class MassiveTradeStream:
-    # Force a reconnect if the live websocket goes silent (zero messages) for
-    # this long. The websocket library has a known cross-loop bug
-    # (`Future attached to a different loop` from `send_context`) that
-    # intermittently wedges the connection in a state where ws.run() keeps
-    # blocking on a dead socket without raising — no error path, no recovery.
-    # Watching the message-flow heartbeat in the run loop is the only way to
-    # notice and recover.
-    STALE_RECONNECT_AFTER_SECONDS = 60.0
-
     def __init__(self, api_key: str, *, enable_aggregate_subscriptions: bool = False):
         self.api_key = api_key
         self._ws = None
@@ -274,7 +265,6 @@ class MassiveTradeStream:
         self._on_agg: Callable[[LiveBarRecord], None] | None = None
         self._provider_aggregate_subscriptions_enabled = bool(enable_aggregate_subscriptions)
         self._aggregate_subscriptions_allowed = True
-        self._last_message_at: float = 0.0
 
     async def start(
         self,
@@ -312,33 +302,17 @@ class MassiveTradeStream:
         if self._ws is None or not self._connected:
             return
 
-        try:
-            if to_remove:
-                self._ws.unsubscribe(*[f"T.{symbol}" for symbol in sorted(to_remove)])
-                self._ws.unsubscribe(*[f"Q.{symbol}" for symbol in sorted(to_remove)])
-                if self._aggregate_subscriptions_enabled:
-                    self._ws.unsubscribe(*[f"A.{symbol}" for symbol in sorted(to_remove)])
-            if to_add:
-                self._ws.subscribe(*[f"T.{symbol}" for symbol in sorted(to_add)])
-                self._ws.subscribe(*[f"Q.{symbol}" for symbol in sorted(to_add)])
-                if self._aggregate_subscriptions_enabled:
-                    self._ws.subscribe(*[f"A.{symbol}" for symbol in sorted(to_add)])
-                self._mark_coverage_started(to_add)
-        except RuntimeError as exc:
-            # Known cross-loop bug: when ws.run() is dispatched via
-            # asyncio.to_thread, subscribe/unsubscribe calls from the main
-            # asyncio loop trip `Future attached to a different loop` inside
-            # the websockets library's send_context. Force a reconnect — the
-            # next ws built by _run_loop will pick up the updated subscription
-            # list (self._subscriptions has already been mutated above).
-            if "attached to a different loop" in str(exc):
-                logger.warning(
-                    "Massive ws subscription hit cross-loop bug (%s); forcing reconnect.",
-                    exc,
-                )
-                await self._close_ws()
-                return
-            raise
+        if to_remove:
+            self._ws.unsubscribe(*[f"T.{symbol}" for symbol in sorted(to_remove)])
+            self._ws.unsubscribe(*[f"Q.{symbol}" for symbol in sorted(to_remove)])
+            if self._aggregate_subscriptions_enabled:
+                self._ws.unsubscribe(*[f"A.{symbol}" for symbol in sorted(to_remove)])
+        if to_add:
+            self._ws.subscribe(*[f"T.{symbol}" for symbol in sorted(to_add)])
+            self._ws.subscribe(*[f"Q.{symbol}" for symbol in sorted(to_add)])
+            if self._aggregate_subscriptions_enabled:
+                self._ws.subscribe(*[f"A.{symbol}" for symbol in sorted(to_add)])
+            self._mark_coverage_started(to_add)
 
     async def _run_loop(self) -> None:
         while self._running:
@@ -352,31 +326,7 @@ class MassiveTradeStream:
                         ws.subscribe(*[f"A.{symbol}" for symbol in sorted(self._subscriptions)])
                     self._mark_coverage_started(self._subscriptions)
                 self._connected = True
-                self._last_message_at = time.monotonic()
-                ws_task = asyncio.create_task(asyncio.to_thread(ws.run, self._handle_messages))
-                stale_forced_reconnect = False
-                while not ws_task.done():
-                    try:
-                        await asyncio.wait_for(asyncio.shield(ws_task), timeout=15.0)
-                    except asyncio.TimeoutError:
-                        idle_for = time.monotonic() - self._last_message_at
-                        if idle_for > self.STALE_RECONNECT_AFTER_SECONDS:
-                            logger.warning(
-                                "Massive websocket has been silent for %.1fs; "
-                                "forcing reconnect to recover from suspected silent wedge.",
-                                idle_for,
-                            )
-                            stale_forced_reconnect = True
-                            await self._close_ws()
-                            try:
-                                await asyncio.wait_for(ws_task, timeout=5.0)
-                            except (asyncio.TimeoutError, asyncio.CancelledError, Exception):
-                                ws_task.cancel()
-                            break
-                if not stale_forced_reconnect:
-                    exc = ws_task.exception() if ws_task.done() else None
-                    if exc is not None:
-                        raise exc
+                await asyncio.to_thread(ws.run, self._handle_messages)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -399,8 +349,6 @@ class MassiveTradeStream:
         return WebSocketClient(api_key=self.api_key, subscriptions=[])
 
     def _handle_messages(self, messages) -> None:
-        if messages:
-            self._last_message_at = time.monotonic()
         for message in messages:
             try:
                 event_type = getattr(message, "event_type", None) or getattr(message, "ev", None)
@@ -453,21 +401,19 @@ class MassiveTradeStream:
         )
 
     async def _close_ws(self) -> None:
-        # We deliberately do NOT call ws.close() here. The massive WebSocket
-        # client's close() returns an awaitable that internally executes
-        # `await self.websocket.close()` → `async with send_context()` →
-        # `await asyncio.shield(self.connection_lost_waiter)`. That future
-        # was created in the ws.run thread loop, so awaiting it from the
-        # main asyncio loop trips `RuntimeError: Future attached to a
-        # different loop`. Whether we treat the return as a coroutine
-        # (.close()) or a Task (.cancel()) or just await it, the underlying
-        # send_context path is reached and the bug fires.
-        #
-        # Instead, drop the reference and let _run_loop's ws.run task
-        # detect the closure (either via ws_task.cancel() in the watchdog
-        # path, or via a natural disconnect/exception). The next reconnect
-        # builds a fresh WebSocketClient from scratch.
+        ws = self._ws
         self._ws = None
+        if ws is None:
+            return
+        close = getattr(ws, "close", None)
+        if close is None:
+            return
+        try:
+            result = close()
+            if inspect.isawaitable(result):
+                await result
+        except Exception:
+            logger.exception("Failed to close Massive websocket cleanly")
 
     def _downgrade_aggregate_subscriptions(self, exc: Exception) -> bool:
         if not self._aggregate_subscriptions_enabled:
