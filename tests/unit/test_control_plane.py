@@ -936,6 +936,114 @@ def make_streams(
     }
 
 
+def _seed_completed_cycle(
+    session: Session,
+    *,
+    strategy: Strategy,
+    account: BrokerAccount,
+    symbol: str,
+    quantity: str,
+    entry_price: str,
+    exit_price: str,
+    entry_time: datetime,
+    exit_time: datetime,
+    path: str,
+    exit_reason: str,
+) -> None:
+    open_intent = TradeIntent(
+        strategy_id=strategy.id,
+        broker_account_id=account.id,
+        symbol=symbol,
+        side="buy",
+        intent_type="open",
+        quantity=Decimal(quantity),
+        reason=f"ENTRY_{path}",
+        status="filled",
+        payload={"metadata": {"path": path}},
+        created_at=entry_time,
+        updated_at=entry_time,
+    )
+    close_intent = TradeIntent(
+        strategy_id=strategy.id,
+        broker_account_id=account.id,
+        symbol=symbol,
+        side="sell",
+        intent_type="close",
+        quantity=Decimal(quantity),
+        reason=exit_reason,
+        status="filled",
+        payload={},
+        created_at=exit_time,
+        updated_at=exit_time,
+    )
+    session.add_all([open_intent, close_intent])
+    session.flush()
+
+    open_order = BrokerOrder(
+        intent_id=open_intent.id,
+        strategy_id=strategy.id,
+        broker_account_id=account.id,
+        client_order_id=f"{symbol.lower()}-open-{entry_time.timestamp()}",
+        broker_order_id=f"{symbol.lower()}-open-broker-{entry_time.timestamp()}",
+        symbol=symbol,
+        side="buy",
+        order_type="market",
+        time_in_force="day",
+        quantity=Decimal(quantity),
+        status="filled",
+        payload={},
+        submitted_at=entry_time,
+        updated_at=entry_time,
+    )
+    close_order = BrokerOrder(
+        intent_id=close_intent.id,
+        strategy_id=strategy.id,
+        broker_account_id=account.id,
+        client_order_id=f"{symbol.lower()}-close-{exit_time.timestamp()}",
+        broker_order_id=f"{symbol.lower()}-close-broker-{exit_time.timestamp()}",
+        symbol=symbol,
+        side="sell",
+        order_type="market",
+        time_in_force="day",
+        quantity=Decimal(quantity),
+        status="filled",
+        payload={},
+        submitted_at=exit_time,
+        updated_at=exit_time,
+    )
+    session.add_all([open_order, close_order])
+    session.flush()
+
+    session.add_all(
+        [
+            Fill(
+                order_id=open_order.id,
+                strategy_id=strategy.id,
+                broker_account_id=account.id,
+                broker_fill_id=f"{symbol.lower()}-open-fill-{entry_time.timestamp()}",
+                symbol=symbol,
+                side="buy",
+                quantity=Decimal(quantity),
+                price=Decimal(entry_price),
+                filled_at=entry_time,
+                payload={},
+            ),
+            Fill(
+                order_id=close_order.id,
+                strategy_id=strategy.id,
+                broker_account_id=account.id,
+                broker_fill_id=f"{symbol.lower()}-close-fill-{exit_time.timestamp()}",
+                symbol=symbol,
+                side="sell",
+                quantity=Decimal(quantity),
+                price=Decimal(exit_price),
+                filled_at=exit_time,
+                payload={},
+            ),
+        ]
+    )
+
+
 def test_control_plane_surfaces_probe_and_reclaim_bot_pages_when_enabled() -> None:
     settings = Settings(
         redis_stream_prefix="test",
@@ -1998,6 +2106,76 @@ def test_bot_page_renders_simple_trade_summary_table() -> None:
         assert "Mai Tai Scanner" in bot_30s_page.text
         assert "Trade Coach" in bot_30s_page.text
         assert "Mai Tai Control Plane" in bot_30s_page.text
+
+
+def test_bot_page_renders_trade_forensics_report_from_completed_cycles() -> None:
+    settings = Settings(redis_stream_prefix="test", oms_adapter="alpaca_paper")
+    session_factory = build_test_session_factory()
+    seed_database(session_factory)
+    today_start = current_scanner_session_start_utc()
+    with session_factory() as session:
+        strategy = session.scalar(select(Strategy).where(Strategy.code == "macd_30s"))
+        account = session.scalar(
+            select(BrokerAccount).where(BrokerAccount.name == "paper:macd_30s")
+        )
+        assert strategy is not None
+        assert account is not None
+        _seed_completed_cycle(
+            session,
+            strategy=strategy,
+            account=account,
+            symbol="SNAL",
+            quantity="100",
+            entry_price="0.92",
+            exit_price="0.89",
+            entry_time=today_start + timedelta(hours=1, minutes=5),
+            exit_time=today_start + timedelta(hours=1, minutes=6),
+            path="P4_BURST",
+            exit_reason="HARD_STOP",
+        )
+        _seed_completed_cycle(
+            session,
+            strategy=strategy,
+            account=account,
+            symbol="CODX",
+            quantity="25",
+            entry_price="2.60",
+            exit_price="2.74",
+            entry_time=today_start - timedelta(days=2) + timedelta(hours=2),
+            exit_time=today_start - timedelta(days=2) + timedelta(hours=2, minutes=3),
+            path="P1_CROSS",
+            exit_reason="FINAL_CLOSE",
+        )
+        session.commit()
+    redis = FakeRedis(make_streams(settings.redis_stream_prefix))
+
+    app = build_app(
+        settings=settings,
+        session_factory=session_factory,
+        redis_client=redis,
+        legacy_client=FakeLegacyClient(),
+    )
+
+    with TestClient(app) as client:
+        bots = client.get("/api/bots")
+        assert bots.status_code == 200
+        bot_30s = next(item for item in bots.json()["bots"] if item["strategy_code"] == "macd_30s")
+        forensics = bot_30s["trade_forensics"]
+        assert forensics["today"]["count"] == 1
+        assert forensics["history"]["count"] == 2
+        assert any(item["label"] == "sub-$1" for item in forensics["price_bands"])
+        assert any(item["label"] == "$2-$5" for item in forensics["price_bands"])
+
+        bot_page = client.get("/bot/30s")
+        assert bot_page.status_code == 200
+        assert "Trade Forensics" in bot_page.text
+        assert "Price Bucket Scoreboard" in bot_page.text
+        assert "Path Scoreboard" in bot_page.text
+        assert "Exit Pattern Scoreboard" in bot_page.text
+        assert "Biggest Drags" in bot_page.text
+        assert "sub-$1" in bot_page.text
+        assert "$2-$5" in bot_page.text
+        assert "SNAL" in bot_page.text
 
 
 def test_bot_page_live_symbols_only_show_current_confirmed_handoff() -> None:
