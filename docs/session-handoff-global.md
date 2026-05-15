@@ -38,7 +38,7 @@
   - control-plane-only deploy succeeded via `Deploy Service` run `25913583965`
   - public HTTPS verification from this workstation is currently blocked by `401 Authorization Required`, so live render verification must be done either from the authenticated UI or a VPS-local curl path
 
-## 2026-05-15 LIVE CONFIG CHANGE READY - macd_30s Schwab confirmation default raised to 1 bar
+## 2026-05-15 LIVE UPDATE - macd_30s Schwab confirmation default raised to 1 bar is deployed
 
 - Scope: only the live Schwab-native `macd_30s` config default was changed from `confirm_bars=0` to `confirm_bars=1`.
 - Intent: preserve the previously tuned Schwab-native score/path logic while requiring one completed confirmation bar before an open can fire.
@@ -51,7 +51,20 @@
   - `pytest tests/unit/test_strategy_engine_service.py -k schwab_native_30s_runtime_does_not_emit_intrabar_open_when_intrabar_disabled`
   - combined slice: `2 passed`
   - `python -m py_compile src/project_mai_tai/strategy_core/trading_config.py tests/unit/test_strategy_core.py tests/unit/test_strategy_engine_service.py`
-- Status: code/test/handoff are ready locally on a clean feature branch, but this change is **not deployed yet**.
+- Deploy status:
+  - merged via PR `#138`
+  - VPS `main` fast-forwarded to `5ffa578` before restart
+  - `project-mai-tai-strategy.service` restarted at `2026-05-15 10:59:09 UTC`
+  - only strategy was restarted; `market-data`, `oms`, and operator-protected `CYN` positions were left alone
+- Post-deploy validation:
+  - VPS code confirms `TradingConfig().make_30s_schwab_native_variant().confirm_bars == 1`
+  - `/health` after restart shows `strategy-engine=healthy`, `market-data-gateway=healthy`, `oms-risk=healthy`; overall status still `degraded` only because reconciler still carries its existing finding set
+  - `/api/positions` still shows only operator-frozen `CYN x8000` on `paper:schwab_1m` and `paper:macd_30s`; `virtual_positions=[]`
+  - `/api/scanner` is active with `watchlist_count=8`
+  - `strategy.log` shows clean restart and runtime recovery:
+    - `strategy-engine starting` at `2026-05-15 10:59:10 UTC`
+    - `seeded 8 confirmed candidates for fresh restart revalidation`
+    - `restored runtime bar history from database | symbol_pairs=22`
 
 ## 🚩 NEXT SESSION (2026-05-15) — READ FIRST — Claude handoff from 2026-05-14 EOD
 
