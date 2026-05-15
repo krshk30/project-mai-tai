@@ -8,6 +8,114 @@
 - Overall `/health` may still show `degraded` because of reconciler state. Do not confuse that with a Polygon-specific runtime failure.
 - Keep copied CI counts and failure logs out of the top summary unless they have been revalidated on current `main`.
 
+## 🚩 NEXT SESSION (2026-05-16) — READ FIRST — Claude EOD handoff from 2026-05-15
+
+> Read this entire section before any action next session. Today's work fixed two long-standing structural bugs (Massive WS cross-loop, urllib3 retry-thread leak), closed all 7 morning workstreams, and bounced the strategy through ~10 restarts. Polygon stream is confirmed working at EOD but the post-market window is the first sustained test of all the new code paths together.
+
+### Live state at handoff (2026-05-15 21:15 UTC / 17:15 ET, mid-post-market)
+
+- VPS HEAD: `5b76ed3` (PR #167 — temp-diag revert; all structural fixes live underneath)
+- All 5 services `active`. Strategy last restarted at `2026-05-15 21:11 UTC` (post-diag-revert).
+- Env file values you should NOT touch without rolling back the corresponding PR:
+  - `MAI_TAI_STRATEGY_POLYGON_30S_LIVE_AGGREGATE_BARS_ENABLED=false` (from 2026-05-14 env-fix; PR #134 warns at boot if flipped)
+  - `MAI_TAI_PROTECTED_SYMBOLS=CYN` (PR #116)
+- File-permission fix done outside of git (NOT a PR): `chown trader:trader /var/log/project-mai-tai/market-data.log`. The log had been root-owned, silently swallowing all market-data writes. **If you ever see market-data.log mtime "stale" for >60s while the process is alive, re-check ownership first.**
+- Open positions (operator-aware):
+  - `CYN` ×8000 on `paper:schwab_1m` and `paper:macd_30s` (protected, hard-blocked at OMS + strategy)
+  - `MOBX` cleared overnight; not in current positions
+- All 7 of yesterday's priority-queue workstreams are now closed (5 as code, 2 as issues).
+
+### What shipped today (chronological)
+
+Morning (priority-queue follow-ups from 2026-05-14 handoff):
+- **PR [#134](https://github.com/krshk30/project-mai-tai/pull/134)** — Warn at strategy boot if polygon_30s aggregate-bar opt-in is set (workstream #5). Defensive log; silent on this VPS because env is correct.
+- **PR [#140](https://github.com/krshk30/project-mai-tai/pull/140)** — Unstick OMS HARD_STOP loop (workstream #6). Two bugs: (A) `_stop_reject_reason` now fires for `intent_type=close` with `stop_guard=true` metadata so broker stop-rejections escalate via `_process_stop_reject_market_fallback`; (B) `_cancel_open_exit_orders_before_hard_stop` no longer bails on prior `stop_guard=true` open orders. MOBX scenario will not re-occur.
+- **Issue [#144](https://github.com/krshk30/project-mai-tai/issues/144)** — schwab_1m HIGH discrepancy filed as not-a-bug (workstream #4). CHART_EQUITY is authoritative; TIMESALE rebuild is a lossy lower bound on penny stocks. Validator + doc follow-ups suggested.
+- **Issue [#145](https://github.com/krshk30/project-mai-tai/issues/145)** — MOBX 25× overcount filed (workstream #3). Mechanism narrowed but stall root cause unknown; diagnostic logging PR queued before a confident code fix.
+
+Midday (strategy shutdown — three-PR chain to fully close workstream #7):
+- **PR [#143](https://github.com/krshk30/project-mai-tai/pull/143)** — Bounded shutdown cleanup with `asyncio.wait_for` (ws.close 2s, task gather 3s, redis aclose 5s).
+- **PR [#149](https://github.com/krshk30/project-mai-tai/pull/149)** — Race init phase against `stop_event` so SIGTERM during init cancels the in-flight task.
+- **PR [#151](https://github.com/krshk30/project-mai-tai/pull/151)** — Wrap sync init steps (`_restore_runtime_state_from_database` etc.) in `asyncio.to_thread` so they don't block the event loop and prevent `stop_event` from being observed. Back-to-back restart drill now 23-24s clean (was 30s SIGKILL).
+
+Mid-afternoon (bot-page performance):
+- **PR [#153](https://github.com/krshk30/project-mai-tai/pull/153)** — Kill switch + cache + lookback knob for trade forensics. Default `dashboard_trade_forensics_enabled=False`. Re-enable via env once we index `broker_order_events.event_at`.
+- **PR [#154](https://github.com/krshk30/project-mai-tai/pull/154)** — Cache `load_trade_coach_regime_profiles` output (was the *real* 9.4s bottleneck — fingerprint-keyed, 60s TTL). Bot pages now render in <0.5s after the first viewer.
+
+Late afternoon — Massive WebSocket cross-loop / retry-storm rescue (this is the deep one):
+- **PR [#155](https://github.com/krshk30/project-mai-tai/pull/155), [#156](https://github.com/krshk30/project-mai-tai/pull/156), [#158](https://github.com/krshk30/project-mai-tai/pull/158)** — Three attempts to fix the cross-loop bug from the wrong angle (stale-watchdog, don't-await close, no-op close). **All three reverted via [PR #159](https://github.com/krshk30/project-mai-tai/pull/159)**. They made the symptom worse by leaking abandoned threads. Lesson: don't ship band-aids for an asyncio cross-loop bug — find the second loop.
+- **PR [#161](https://github.com/krshk30/project-mai-tai/pull/161) — ✅ THE STRUCTURAL FIX**. Replace `await asyncio.to_thread(ws.run, ...)` with `await ws.connect(...)` directly. `ws.run()` is just `asyncio.run(self.connect(handler))` — it creates a fresh event loop in whatever thread it's invoked from. Running on the main loop eliminates the entire class of `Future attached to a different loop` errors permanently.
+- **PR [#164](https://github.com/krshk30/project-mai-tai/pull/164)** — Massive REST `RESTClient(retries=0, connect_timeout=5.0, read_timeout=8.0)` + per-symbol `HISTORICAL_FETCH_FAILURE_COOLDOWN_SECONDS=60` cache. Was: default `retries=3` × urllib3 backoff = 30-60s per failed call, with `asyncio.to_thread` workers leaking when `asyncio.wait_for(timeout=15)` cancelled the outer task. Now: each failed call exits in ~10s, no thread leak, scanner re-promoting an unreachable symbol short-circuits.
+- **PRs [#165](https://github.com/krshk30/project-mai-tai/pull/165), [#166](https://github.com/krshk30/project-mai-tai/pull/166)** — Temp diag logging that proved polygon `_persist_bar_history` is reached 100% of the time `_evaluate_completed_bar` is called (29/29 in the post-#164 run window). **Reverted via [PR #167](https://github.com/krshk30/project-mai-tai/pull/167)**. The earlier "missing bars" worry was a misread of diag counts spanning deploys.
+
+### Operational gotchas surfaced today
+
+1. **Yesterday's "asyncio attached to a different loop" framing was wrong.** Yesterday's handoff attributed it to the strategy service. The real source was always **market-data-gateway** — `massive.WebSocketClient.run()` wrapping `asyncio.run()` inside `asyncio.to_thread()`. PR #143's strategy-side shutdown bounds were still useful for a different problem (slow init/shutdown), but they were unrelated to cross-loop.
+2. **Service log file ownership matters.** `market-data.log` ended up root-owned (the systemd unit runs `User=trader`). Writes silently failed for an unknown duration. No alert surfaced; only noticed because mtime stopped advancing. Check `ls -la /var/log/project-mai-tai/*.log` periodically.
+3. **Schwab token rolled today and re-auth callback returned 500 multiple times before succeeding.** The 200 OK callback only became reliable after a control-plane restart. After successful re-auth, **services restarted BEFORE the token-store mtime updates won't pick up the new token** — that bit us this morning. Always check `stat -c "%y" /var/lib/macd-webhook-server/data/schwab_tokens.json` against the restart time.
+4. **The macd_30s "Live Symbols" sidebar panel** has confusing semantics — the same label is used twice on `/bot/30s` with different data sources. Sidebar shows scanner-confirmed handoff, hero card shows watchlist+coach context. User confirmed cosmetic, no fix shipped.
+
+### First-thing-tomorrow validation checklist
+
+In order. Don't skip — the cross-loop fix is the first sustained-overnight test.
+
+#### Check 1 — Massive WS cross-loop errors stayed at zero
+
+```bash
+ssh mai-tai-vps "sudo grep -c 'attached to a different loop' /var/log/project-mai-tai/market-data.log"
+```
+
+Expected: count unchanged from yesterday's frozen log (which had 10ish errors from before the fix). Any NEW errors mean PR #161 doesn't cover all paths.
+
+#### Check 2 — urllib3 retry-storm absent
+
+```bash
+ssh mai-tai-vps "sudo grep -c 'urllib3.connectionpool.*Retrying' /var/log/project-mai-tai/strategy.log"
+```
+
+Expected: count should stop growing after PR #164 deploy. If it's still climbing rapidly, the `retries=0` setting didn't reach this code path.
+
+#### Check 3 — Strategy CPU back to normal
+
+```bash
+ssh mai-tai-vps "ps -p \$(systemctl show -p MainPID --value project-mai-tai-strategy) -o pid,etime,pcpu,pmem"
+```
+
+Expected: %CPU <50%, %MEM <12%. Today saw 70-95% / 9-19% with the retry-thread leak. If still high, more thread leaks somewhere.
+
+#### Check 4 — Polygon bar persistence rate
+
+```sql
+SELECT to_char(bar_time AT TIME ZONE 'UTC', 'HH24:MI') AS minute, COUNT(DISTINCT symbol) AS syms, COUNT(*) AS bars
+FROM strategy_bar_history
+WHERE strategy_code='polygon_30s' AND bar_time >= NOW() - INTERVAL '10 minutes'
+GROUP BY minute ORDER BY minute DESC;
+```
+
+Expected during RTH: 30-60 bars/min spread across the active watchlist. Post-market: 5-15 bars/min from the 5-10 actively-trading penny stocks. If zero across 10 min during RTH, something regressed.
+
+#### Check 5 — Back-to-back restart drill (only if any of #1-#4 show concerns)
+
+Issue three `sudo systemctl restart project-mai-tai-strategy` calls 10-15s apart. Each `Stopping → Stopped` interval should be 1-25s; **no `State 'stop-sigterm' timed out` lines**. If you see a SIGKILL, PR #149/#151 regressed.
+
+### Open issues for follow-up (priority order)
+
+| # | Item | Status | Where |
+|---|---|---|---|
+| 1 | macd_30s late-trade revision silent (100-5000× vol undercount) | Issue filed yesterday | [#130](https://github.com/krshk30/project-mai-tai/issues/130) |
+| 2 | MOBX 25× overcount root cause + diagnostic logging PR | Issue filed today; needs diagnostic logging PR first | [#145](https://github.com/krshk30/project-mai-tai/issues/145) |
+| 3 | schwab_1m validator HIGH/LOW comparison noise | Issue filed today | [#144](https://github.com/krshk30/project-mai-tai/issues/144) |
+| 4 | Index `broker_order_events.event_at` so trade forensics can be re-enabled | Not started | small PR; re-enable via `MAI_TAI_DASHBOARD_TRADE_FORENSICS_ENABLED=true` after |
+| 5 | Strategy startup hydration is slow (~1 min per symbol × 30 symbols) | Not started | first restart of the day still takes 20+ min to fully hydrate polygon |
+| 6 | Env-drift startup WARNING is polygon-only — extend to other bot env opt-ins | Not started | small QoL extension of PR #134 |
+
+### Cross-references
+
+- Today's PRs in merge order: #134, #136, #140, #141, #143, #146, #149, #151, #152, #153, #154, #155 (reverted), #156 (reverted), #158 (reverted), #159 (revert), #161, #164, #165 (reverted), #166 (reverted), #167 (revert)
+- Today's issues: #144, #145
+- VPS HEAD trajectory: `b3e094b` (yesterday's overnight) → `3806673` → `efa04ee` → `139b035` → `2ad016d` → `6498c5e` → `9c3bef5` → `e8957dd` → ... → `5b76ed3` (EOD)
+- Co-existing branch: `codex/macd-trade-forensics-report` (P4 work from codex agent in parallel). Their PRs today: #135, #137, #138, #139, #162, #163. Don't conflict with my changes.
+
 ## 2026-05-15 LIVE DEPLOY - P4-only classic confirmation is now live
 
 - Merged PR `#162` (`Restore classic P4 confirmation`) to `main` at commit `59f33a7`.
