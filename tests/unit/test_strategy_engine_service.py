@@ -7417,7 +7417,7 @@ def test_schwab_native_30s_runtime_does_not_emit_intrabar_open_when_intrabar_dis
     assert intents == []
     assert captured == {}
     assert "CMND" not in runtime.pending_open_symbols
-    assert runtime.definition.trading_config.confirm_bars == 0
+    assert runtime.definition.trading_config.confirm_bars == 1
     assert runtime.definition.trading_config.entry_intrabar_enabled is False
     assert runtime.definition.trading_config.schwab_native_use_confirmation is True
 

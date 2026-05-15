@@ -38,6 +38,21 @@
   - control-plane-only deploy succeeded via `Deploy Service` run `25913583965`
   - public HTTPS verification from this workstation is currently blocked by `401 Authorization Required`, so live render verification must be done either from the authenticated UI or a VPS-local curl path
 
+## 2026-05-15 LIVE CONFIG CHANGE READY - macd_30s Schwab confirmation default raised to 1 bar
+
+- Scope: only the live Schwab-native `macd_30s` config default was changed from `confirm_bars=0` to `confirm_bars=1`.
+- Intent: preserve the previously tuned Schwab-native score/path logic while requiring one completed confirmation bar before an open can fire.
+- Code path:
+  - `src/project_mai_tai/strategy_core/trading_config.py` now sets `make_30s_schwab_native_variant(...).confirm_bars = 1`
+  - the behavior regression in `tests/unit/test_strategy_core.py` now asserts the first qualifying bar is `pending` and the second bar produces the `P1_CROSS` signal
+  - `tests/unit/test_strategy_engine_service.py` now asserts the live Schwab runtime default is `1`
+- Local validation completed:
+  - `pytest tests/unit/test_strategy_core.py -k schwab_native_confirm_bars_one_requires_one_confirmation_bar`
+  - `pytest tests/unit/test_strategy_engine_service.py -k schwab_native_30s_runtime_does_not_emit_intrabar_open_when_intrabar_disabled`
+  - combined slice: `2 passed`
+  - `python -m py_compile src/project_mai_tai/strategy_core/trading_config.py tests/unit/test_strategy_core.py tests/unit/test_strategy_engine_service.py`
+- Status: code/test/handoff are ready locally on a clean feature branch, but this change is **not deployed yet**.
+
 ## 🚩 NEXT SESSION (2026-05-15) — READ FIRST — Claude handoff from 2026-05-14 EOD
 
 > **Read this entire section before any action tomorrow morning.** Three live fixes shipped today are on their first overnight; validation depends on watching specific signals during premarket open and first hour of RTH. Three follow-up workstreams are queued.

@@ -1556,10 +1556,10 @@ def test_polygon_variant_does_not_inherit_schwab_chop_lock_default() -> None:
     assert signal["path"] == "P1_CROSS"
 
 
-def test_schwab_native_confirm_bars_zero_signals_without_extra_bar_wait() -> None:
+def test_schwab_native_confirm_bars_one_requires_one_confirmation_bar() -> None:
     config = TradingConfig().make_30s_schwab_native_variant()
     assert config.schwab_native_use_confirmation is True
-    assert config.confirm_bars == 0
+    assert config.confirm_bars == 1
     engine = SchwabNativeEntryEngine(config, now_provider=lambda: datetime(2026, 4, 17, 10, 0))
     indicators = _make_schwab_native_base_indicators()
     indicators.update(
@@ -1578,6 +1578,15 @@ def test_schwab_native_confirm_bars_zero_signals_without_extra_bar_wait() -> Non
     )
 
     signal = engine.check_entry("ELAB", indicators, bar_index=60, position_tracker=None)
+
+    assert signal is None
+    decision = engine.pop_last_decision("ELAB")
+    assert decision is not None
+    assert decision["status"] == "pending"
+    assert decision["reason"] == "P1_CROSS waiting confirmation"
+    assert decision["path"] == "P1_CROSS"
+
+    signal = engine.check_entry("ELAB", indicators, bar_index=61, position_tracker=None)
 
     assert signal is not None
     assert signal["path"] == "P1_CROSS"
