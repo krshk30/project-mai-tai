@@ -1511,15 +1511,38 @@ class StrategyBotRuntime:
     ) -> list[TradeIntentEvent]:
         builder = self.builder_manager.get_builder(symbol)
         if builder is None:
+            logger.info(
+                "[diag] _evaluate_completed_bar: builder is None code=%s sym=%s",
+                self.definition.code,
+                symbol,
+            )
             return []
 
         bars = builder.get_bars_as_dicts()
         if not bars:
+            logger.info(
+                "[diag] _evaluate_completed_bar: bars empty code=%s sym=%s",
+                self.definition.code,
+                symbol,
+            )
             return []
 
         local_indicators = self.indicator_engine.calculate(bars)
         if local_indicators is None:
+            logger.info(
+                "[diag] _evaluate_completed_bar: warmup path code=%s sym=%s bars=%d",
+                self.definition.code,
+                symbol,
+                len(bars),
+            )
             return self._finalize_warmup_completed_bar(symbol, completed_bar=completed_bar)
+
+        if self.definition.code == "polygon_30s":
+            logger.info(
+                "[diag] _evaluate_completed_bar: indicators OK code=polygon_30s sym=%s bars=%d",
+                symbol,
+                len(bars),
+            )
 
         indicators = self._decorate_indicators(symbol, local_indicators)
         self.last_indicators[symbol] = indicators
