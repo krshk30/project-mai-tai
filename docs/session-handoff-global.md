@@ -8,6 +8,28 @@
 - Overall `/health` may still show `degraded` because of reconciler state. Do not confuse that with a Polygon-specific runtime failure.
 - Keep copied CI counts and failure logs out of the top summary unless they have been revalidated on current `main`.
 
+## 2026-05-15 LOCAL FEATURE - macd_30s live trade-forensics report on bot page
+
+- A new deterministic `Trade Forensics` panel was added locally on branch `codex/macd-trade-forensics-report`.
+- Scope:
+  - lives on the bot detail page and `/api/bots`
+  - uses production-style completed flat-to-flat trade cycles reconstructed from `fills` + filled `broker_orders`
+  - shows `Today` and `Last 7 Days` summaries plus:
+    - `Price Bucket Scoreboard` across **all** entry-price buckets (`sub-$1`, `$1-$2`, `$2-$5`, `$5-$10`, `$10+`)
+    - `Path Scoreboard`
+    - `Exit Pattern Scoreboard`
+    - `Biggest Drags`
+- Intent:
+  - give the operator a live, deterministic performance report for `macd_30s` without relying on AI trade-coach reviews
+  - support the current question around tiny notional churn / fast exits / poor expectancy using the same production trade truth the VPS uses
+- Validation completed locally:
+  - `pytest tests/unit/test_control_plane.py` -> `48 passed`
+  - `python -m py_compile src/project_mai_tai/services/control_plane.py tests/unit/test_control_plane.py`
+- Status:
+  - implemented and tested locally only
+  - **not merged, not pushed, not deployed**
+  - next step is operator review, then push/PR/deploy if wanted
+
 ## 🚩 NEXT SESSION (2026-05-15) — READ FIRST — Claude handoff from 2026-05-14 EOD
 
 > **Read this entire section before any action tomorrow morning.** Three live fixes shipped today are on their first overnight; validation depends on watching specific signals during premarket open and first hour of RTH. Three follow-up workstreams are queued.

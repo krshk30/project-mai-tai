@@ -64,6 +64,7 @@ from project_mai_tai.strategy_core import (
 from project_mai_tai.trade_episodes import collect_completed_trade_cycles
 from project_mai_tai.trade_episodes import display_order_path
 from project_mai_tai.trade_episodes import looks_like_broker_payload_text
+from project_mai_tai.trade_episodes import parse_et_timestamp
 from project_mai_tai.trade_episodes import summarize_closed_today_reason
 
 
@@ -891,6 +892,21 @@ class ControlPlaneRepository:
             open_orders=db_state["open_orders"],
             persisted_snapshots=db_state["dashboard_snapshots"],
         )
+        trade_forensics = await asyncio.to_thread(
+            self.load_bot_trade_forensics,
+            strategy_accounts=[
+                (str(bot.get("strategy_code", "") or ""), str(bot.get("account_name", "") or ""))
+                for bot in bots
+                if str(bot.get("strategy_code", "") or "").strip()
+                and str(bot.get("account_name", "") or "").strip()
+            ],
+        )
+        for bot in bots:
+            key = (
+                str(bot.get("strategy_code", "") or ""),
+                str(bot.get("account_name", "") or ""),
+            )
+            bot["trade_forensics"] = dict(trade_forensics.get(key, {}) or {})
 
         overall_status = "healthy"
         if db_state["errors"] or stream_state["errors"]:
@@ -921,6 +937,194 @@ class ControlPlaneRepository:
             "legacy_shadow": legacy_shadow,
             "errors": db_state["errors"] + stream_state["errors"],
         }
+
+    def load_bot_trade_forensics(
+        self,
+        *,
+        strategy_accounts: list[tuple[str, str]],
+        lookback_days: int = 7,
+        now: datetime | None = None,
+    ) -> dict[tuple[str, str], dict[str, Any]]:
+        normalized_pairs = [
+            (str(strategy_code or "").strip(), str(account_name or "").strip())
+            for strategy_code, account_name in strategy_accounts
+            if str(strategy_code or "").strip() and str(account_name or "").strip()
+        ]
+        unique_pairs = list(dict.fromkeys(normalized_pairs))
+        if not unique_pairs:
+            return {}
+
+        reference_now = now or utcnow()
+        today_start = current_eastern_day_start_utc(reference_now)
+        today_end = current_eastern_day_end_utc(reference_now)
+        history_start = today_start - timedelta(days=max(lookback_days - 1, 0))
+
+        reports: dict[tuple[str, str], dict[str, Any]] = {}
+        with self.session_factory() as session:
+            for strategy_code, broker_account_name in unique_pairs:
+                recent_orders = self._load_trade_forensics_orders(
+                    session=session,
+                    strategy_code=strategy_code,
+                    broker_account_name=broker_account_name,
+                    window_start=history_start,
+                    window_end=today_end,
+                )
+                recent_fills = self._load_trade_forensics_fills(
+                    session=session,
+                    strategy_code=strategy_code,
+                    broker_account_name=broker_account_name,
+                    window_start=history_start,
+                    window_end=today_end,
+                )
+                cycles = collect_completed_trade_cycles(
+                    strategy_code=strategy_code,
+                    broker_account_name=broker_account_name,
+                    recent_orders=recent_orders,
+                    recent_fills=recent_fills,
+                    closed_today=[],
+                )
+                reports[(strategy_code, broker_account_name)] = _build_trade_forensics_report(
+                    cycles,
+                    today_start=today_start,
+                    today_end=today_end,
+                    history_start=history_start,
+                    lookback_days=lookback_days,
+                )
+        return reports
+
+    def _load_trade_forensics_orders(
+        self,
+        *,
+        session: Session,
+        strategy_code: str,
+        broker_account_name: str,
+        window_start: datetime,
+        window_end: datetime,
+    ) -> list[dict[str, Any]]:
+        strategy = session.scalar(select(Strategy).where(Strategy.code == strategy_code))
+        broker_account = session.scalar(
+            select(BrokerAccount).where(BrokerAccount.name == broker_account_name)
+        )
+        if strategy is None or broker_account is None:
+            return []
+
+        latest_order_event_by_order: dict[Any, BrokerOrderEvent] = {}
+        for entry in session.scalars(
+            select(BrokerOrderEvent)
+            .join(BrokerOrder, BrokerOrder.id == BrokerOrderEvent.order_id)
+            .where(
+                BrokerOrder.strategy_id == strategy.id,
+                BrokerOrder.broker_account_id == broker_account.id,
+                BrokerOrderEvent.event_at >= window_start,
+                BrokerOrderEvent.event_at < window_end,
+            )
+            .order_by(desc(BrokerOrderEvent.event_at))
+        ).all():
+            latest_order_event_by_order.setdefault(entry.order_id, entry)
+
+        order_rows = list(
+            session.scalars(
+                select(BrokerOrder)
+                .where(
+                    BrokerOrder.strategy_id == strategy.id,
+                    BrokerOrder.broker_account_id == broker_account.id,
+                    BrokerOrder.updated_at >= window_start,
+                    BrokerOrder.updated_at < window_end,
+                )
+                .order_by(desc(BrokerOrder.updated_at))
+            ).all()
+        )
+        referenced_intent_ids = {
+            order.intent_id for order in order_rows if order.intent_id is not None
+        }
+        intent_lookup: dict[Any, TradeIntent] = {}
+        if referenced_intent_ids:
+            for intent in session.scalars(
+                select(TradeIntent).where(TradeIntent.id.in_(referenced_intent_ids))
+            ).all():
+                intent_lookup[intent.id] = intent
+
+        rows: list[dict[str, Any]] = []
+        for order in order_rows:
+            intent = intent_lookup.get(order.intent_id) if order.intent_id else None
+            latest_event = latest_order_event_by_order.get(order.id)
+            latest_event_payload = (
+                latest_event.payload
+                if latest_event is not None and isinstance(latest_event.payload, dict)
+                else {}
+            )
+            intent_payload = intent.payload if intent is not None and isinstance(intent.payload, dict) else {}
+            intent_metadata = (
+                intent_payload.get("metadata", {})
+                if isinstance(intent_payload.get("metadata", {}), dict)
+                else {}
+            )
+            intent_reason = intent.reason if intent is not None else ""
+            rows.append(
+                {
+                    "strategy_code": strategy_code,
+                    "broker_account_name": broker_account_name,
+                    "symbol": order.symbol,
+                    "side": order.side,
+                    "intent_type": intent.intent_type if intent is not None else "",
+                    "quantity": _decimal_str(order.quantity),
+                    "price": _decimal_str(latest_event_payload.get("fill_price")),
+                    "status": order.status,
+                    "reason": _select_filled_order_reason(
+                        latest_event_payload.get("reason"),
+                        intent_reason,
+                    ),
+                    "path": display_order_path(
+                        {
+                            "path": str(intent_metadata.get("path") or ""),
+                            "metadata": intent_metadata,
+                            "reason": intent_reason,
+                        }
+                    ),
+                    "updated_at": _datetime_str(order.updated_at),
+                }
+            )
+        return rows
+
+    def _load_trade_forensics_fills(
+        self,
+        *,
+        session: Session,
+        strategy_code: str,
+        broker_account_name: str,
+        window_start: datetime,
+        window_end: datetime,
+    ) -> list[dict[str, Any]]:
+        strategy = session.scalar(select(Strategy).where(Strategy.code == strategy_code))
+        broker_account = session.scalar(
+            select(BrokerAccount).where(BrokerAccount.name == broker_account_name)
+        )
+        if strategy is None or broker_account is None:
+            return []
+
+        rows: list[dict[str, Any]] = []
+        for fill in session.scalars(
+            select(Fill)
+            .where(
+                Fill.strategy_id == strategy.id,
+                Fill.broker_account_id == broker_account.id,
+                Fill.filled_at >= window_start,
+                Fill.filled_at < window_end,
+            )
+            .order_by(desc(Fill.filled_at))
+        ).all():
+            rows.append(
+                {
+                    "strategy_code": strategy_code,
+                    "broker_account_name": broker_account_name,
+                    "symbol": fill.symbol,
+                    "side": fill.side,
+                    "quantity": _decimal_str(fill.quantity),
+                    "price": _decimal_str(fill.price),
+                    "filled_at": _datetime_str(fill.filled_at),
+                }
+            )
+        return rows
 
     def _normalize_strategy_runtime(self, strategy_runtime: dict[str, Any]) -> dict[str, Any]:
         normalized = dict(strategy_runtime)
@@ -5458,6 +5662,7 @@ def _render_bot_detail_page(
     recent_orders = [item for item in data["recent_orders"] if item["strategy_code"] == strategy_code]
     recent_trade_coach_reviews = list(bot.get("recent_trade_coach_reviews", []))
     live_trade_coach_advisories = list(trade_coach_live_advisories or [])
+    trade_forensics = dict(bot.get("trade_forensics", {}) or {})
     position_rows = _build_bot_position_rows(data, bot)
     completed_rows, completed_count, completed_pnl = _build_completed_position_rows(bot, recent_orders, recent_fills)
     trade_coach_rows, trade_coach_count = _build_trade_coach_review_rows(recent_trade_coach_reviews)
@@ -5637,6 +5842,7 @@ def _render_bot_detail_page(
                 </table>
             </div>
         </section>"""
+    trade_forensics_panel = _build_trade_forensics_panel(trade_forensics)
 
     live_trade_coach_panel = f"""
             <section class="panel full accent-panel coach-advisory-panel">
@@ -6267,6 +6473,7 @@ def _render_bot_detail_page(
             </section>
 
             {completed_positions_panel}
+            {trade_forensics_panel}
             {live_trade_coach_panel}
             {trade_coach_panel}
 
@@ -8643,6 +8850,368 @@ def _render_trade_coach_review_center(
     </div>
 </body>
 </html>"""
+
+
+def _build_trade_forensics_report(
+    cycles: list[Any],
+    *,
+    today_start: datetime,
+    today_end: datetime,
+    history_start: datetime,
+    lookback_days: int,
+) -> dict[str, Any]:
+    rows: list[dict[str, Any]] = []
+    for cycle in cycles:
+        entry_at = parse_et_timestamp(str(cycle.entry_time or "")).astimezone(UTC)
+        exit_at = parse_et_timestamp(str(cycle.exit_time or "")).astimezone(UTC)
+        if exit_at.year <= 1 or exit_at < history_start or exit_at >= today_end:
+            continue
+        quantity = _as_float(cycle.quantity)
+        entry_price = _as_float(cycle.entry_price)
+        hold_secs = max(int((exit_at - entry_at).total_seconds()), 0)
+        rows.append(
+            {
+                "symbol": str(cycle.symbol or "").upper(),
+                "path": str(cycle.path or "-") or "-",
+                "exit_summary": str(cycle.summary or "-") or "-",
+                "pnl": _as_float(cycle.pnl),
+                "pnl_pct": _as_float(cycle.pnl_pct),
+                "quantity": quantity,
+                "entry_price": entry_price,
+                "notional": quantity * entry_price,
+                "hold_secs": hold_secs,
+                "entry_time": str(cycle.entry_time or ""),
+                "exit_time": str(cycle.exit_time or ""),
+                "price_band": _trade_coach_price_band(entry_price) if entry_price > 0 else "-",
+                "exit_at": exit_at,
+            }
+        )
+
+    rows.sort(key=lambda item: item["exit_at"], reverse=True)
+    today_rows = [
+        row for row in rows if today_start <= row["exit_at"] < today_end
+    ]
+    return {
+        "generated_at": _datetime_str(utcnow()),
+        "lookback_days": lookback_days,
+        "today": _trade_forensics_window_summary(today_rows),
+        "history": _trade_forensics_window_summary(rows),
+        "price_bands": _trade_forensics_price_band_rows(rows),
+        "paths": _trade_forensics_group_rows(rows, key="path", limit=8),
+        "exit_reasons": _trade_forensics_group_rows(rows, key="exit_summary", limit=8),
+        "loser_symbols": _trade_forensics_symbol_rows(rows, limit=8),
+    }
+
+
+def _trade_forensics_window_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    pnls = [_as_float(row.get("pnl")) for row in rows]
+    pnl_pcts = [_as_float(row.get("pnl_pct")) for row in rows]
+    holds = [max(int(row.get("hold_secs", 0) or 0), 0) for row in rows]
+    notionals = [_as_float(row.get("notional")) for row in rows]
+    wins = sum(1 for pnl in pnls if pnl > 0)
+    losses = sum(1 for pnl in pnls if pnl < 0)
+    flats = sum(1 for pnl in pnls if abs(pnl) < 0.0001)
+    gross_wins = sum(pnl for pnl in pnls if pnl > 0)
+    gross_losses = sum(abs(pnl) for pnl in pnls if pnl < 0)
+    return {
+        "count": len(rows),
+        "wins": wins,
+        "losses": losses,
+        "flats": flats,
+        "total_pnl": round(sum(pnls), 4),
+        "win_rate_pct": round((wins / len(rows)) * 100.0, 1) if rows else 0.0,
+        "profit_factor": round(gross_wins / gross_losses, 2) if gross_losses > 0 else None,
+        "avg_pnl_pct": round(sum(pnl_pcts) / len(pnl_pcts), 4) if pnl_pcts else 0.0,
+        "median_hold_secs": _median_int(holds),
+        "avg_hold_secs": round(sum(holds) / len(holds), 1) if holds else 0.0,
+        "avg_notional": round(sum(notionals) / len(notionals), 2) if notionals else 0.0,
+        "median_notional": round(_median_float(notionals), 2) if notionals else 0.0,
+    }
+
+
+def _trade_forensics_price_band_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    ordered_bands = ["sub-$1", "$1-$2", "$2-$5", "$5-$10", "$10+"]
+    grouped: dict[str, list[dict[str, Any]]] = {band: [] for band in ordered_bands}
+    for row in rows:
+        grouped.setdefault(str(row.get("price_band") or "-"), []).append(row)
+    results: list[dict[str, Any]] = []
+    for band in ordered_bands:
+        band_rows = grouped.get(band, [])
+        if not band_rows:
+            continue
+        summary = _trade_forensics_window_summary(band_rows)
+        results.append(
+            {
+                "label": band,
+                "count": summary["count"],
+                "wins": summary["wins"],
+                "losses": summary["losses"],
+                "total_pnl": summary["total_pnl"],
+                "win_rate_pct": summary["win_rate_pct"],
+                "median_hold_secs": summary["median_hold_secs"],
+                "avg_notional": summary["avg_notional"],
+            }
+        )
+    return results
+
+
+def _trade_forensics_group_rows(
+    rows: list[dict[str, Any]],
+    *,
+    key: str,
+    limit: int,
+) -> list[dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        label = str(row.get(key) or "-").strip() or "-"
+        grouped.setdefault(label, []).append(row)
+    ranked = sorted(
+        grouped.items(),
+        key=lambda item: (-len(item[1]), sum(_as_float(row.get("pnl")) for row in item[1])),
+    )
+    results: list[dict[str, Any]] = []
+    for label, grouped_rows in ranked[:limit]:
+        summary = _trade_forensics_window_summary(grouped_rows)
+        results.append(
+            {
+                "label": label,
+                "count": summary["count"],
+                "total_pnl": summary["total_pnl"],
+                "win_rate_pct": summary["win_rate_pct"],
+                "median_hold_secs": summary["median_hold_secs"],
+            }
+        )
+    return results
+
+
+def _trade_forensics_symbol_rows(rows: list[dict[str, Any]], *, limit: int) -> list[dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        symbol = str(row.get("symbol") or "").upper()
+        if not symbol:
+            continue
+        grouped.setdefault(symbol, []).append(row)
+    ranked = []
+    for symbol, grouped_rows in grouped.items():
+        total_pnl = sum(_as_float(row.get("pnl")) for row in grouped_rows)
+        if total_pnl >= 0:
+            continue
+        ranked.append((symbol, grouped_rows, total_pnl))
+    ranked.sort(key=lambda item: (item[2], -len(item[1])))
+    results: list[dict[str, Any]] = []
+    for symbol, grouped_rows, _ in ranked[:limit]:
+        summary = _trade_forensics_window_summary(grouped_rows)
+        entry_prices = [_as_float(row.get("entry_price")) for row in grouped_rows if _as_float(row.get("entry_price")) > 0]
+        results.append(
+            {
+                "label": symbol,
+                "count": summary["count"],
+                "total_pnl": summary["total_pnl"],
+                "median_hold_secs": summary["median_hold_secs"],
+                "avg_entry_price": round(sum(entry_prices) / len(entry_prices), 4) if entry_prices else 0.0,
+            }
+        )
+    return results
+
+
+def _build_trade_forensics_panel(report: dict[str, Any]) -> str:
+    today = dict(report.get("today", {}) or {})
+    history = dict(report.get("history", {}) or {})
+    price_rows = _render_trade_forensics_summary_rows(
+        list(report.get("price_bands", []) or []),
+        label_header="Price Band",
+        empty_text="No completed trades yet in the current history window.",
+    )
+    path_rows = _render_trade_forensics_group_rows(
+        list(report.get("paths", []) or []),
+        label_header="Path",
+        empty_text="No path data yet.",
+    )
+    exit_rows = _render_trade_forensics_group_rows(
+        list(report.get("exit_reasons", []) or []),
+        label_header="Exit",
+        empty_text="No exit data yet.",
+    )
+    loser_rows = _render_trade_forensics_loser_rows(
+        list(report.get("loser_symbols", []) or []),
+        empty_text="No losing-symbol aggregates yet.",
+    )
+    return f"""
+            <section class="panel full accent-panel">
+                <div class="panel-header">
+                    <div>
+                        <h3>Trade Forensics</h3>
+                        <div class="sub">Deterministic live report from completed flat-to-flat cycles on this bot. Today uses the current ET session; history covers the last {escape(str(report.get("lookback_days", 7) or 7))} ET sessions across all price buckets.</div>
+                    </div>
+                    <span class="count accent">{escape(str(history.get("count", 0) or 0))} trades</span>
+                </div>
+                <div class="summary-grid">
+                    {_build_trade_forensics_window_card("Today", today)}
+                    {_build_trade_forensics_window_card(f"Last {escape(str(report.get('lookback_days', 7) or 7))} Days", history)}
+                </div>
+                <div class="panel-header coach-subheader">
+                    <div>
+                        <h3>Price Bucket Scoreboard</h3>
+                        <div class="sub">Completed-trade performance across every entry-price bucket, not just cheap stocks.</div>
+                    </div>
+                    <span class="count">{len(list(report.get("price_bands", []) or []))}</span>
+                </div>
+                <div class="table-wrap">
+                    <table>
+                        <thead><tr><th>Price Band</th><th style="text-align:right">Trades</th><th>W-L</th><th>P&amp;L</th><th style="text-align:right">Win Rate</th><th style="text-align:right">Median Hold</th><th style="text-align:right">Avg Notional</th></tr></thead>
+                        <tbody>{price_rows}</tbody>
+                    </table>
+                </div>
+                <div class="summary-grid">
+                    <section class="panel" style="background:transparent;border:none;box-shadow:none;">
+                        <div class="panel-header coach-subheader">
+                            <div>
+                                <h3>Path Scoreboard</h3>
+                                <div class="sub">Which entry paths are actually holding up over the current history window.</div>
+                            </div>
+                            <span class="count">{len(list(report.get("paths", []) or []))}</span>
+                        </div>
+                        <div class="table-wrap">
+                            <table>
+                                <thead><tr><th>Path</th><th style="text-align:right">Trades</th><th>P&amp;L</th><th style="text-align:right">Win Rate</th><th style="text-align:right">Median Hold</th></tr></thead>
+                                <tbody>{path_rows}</tbody>
+                            </table>
+                        </div>
+                    </section>
+                    <section class="panel" style="background:transparent;border:none;box-shadow:none;">
+                        <div class="panel-header coach-subheader">
+                            <div>
+                                <h3>Exit Pattern Scoreboard</h3>
+                                <div class="sub">How the bot is actually getting taken out of trades over the current history window.</div>
+                            </div>
+                            <span class="count">{len(list(report.get("exit_reasons", []) or []))}</span>
+                        </div>
+                        <div class="table-wrap">
+                            <table>
+                                <thead><tr><th>Exit</th><th style="text-align:right">Trades</th><th>P&amp;L</th><th style="text-align:right">Win Rate</th><th style="text-align:right">Median Hold</th></tr></thead>
+                                <tbody>{exit_rows}</tbody>
+                            </table>
+                        </div>
+                    </section>
+                </div>
+                <div class="panel-header coach-subheader">
+                    <div>
+                        <h3>Biggest Drags</h3>
+                        <div class="sub">Aggregated losing symbols in the current history window so weak names show up immediately.</div>
+                    </div>
+                    <span class="count">{len(list(report.get("loser_symbols", []) or []))}</span>
+                </div>
+                <div class="table-wrap">
+                    <table>
+                        <thead><tr><th>Symbol</th><th style="text-align:right">Trades</th><th>P&amp;L</th><th style="text-align:right">Median Hold</th><th style="text-align:right">Avg Entry</th></tr></thead>
+                        <tbody>{loser_rows}</tbody>
+                    </table>
+                </div>
+            </section>"""
+
+
+def _build_trade_forensics_window_card(title: str, summary: dict[str, Any]) -> str:
+    total_pnl = _as_float(summary.get("total_pnl"))
+    pnl_color = "#5fff8d" if total_pnl >= 0 else "#ff6b6b"
+    profit_factor = summary.get("profit_factor")
+    profit_factor_text = "-" if profit_factor is None else f"{_as_float(profit_factor):.2f}"
+    return f"""
+        <div class="hero-card">
+            <span>{escape(title)}</span>
+            <strong style="color:{pnl_color}">${total_pnl:+,.2f}</strong>
+            <small>{escape(str(int(summary.get("count", 0) or 0)))} trades · {escape(str(int(summary.get("wins", 0) or 0)))}W / {escape(str(int(summary.get("losses", 0) or 0)))}L / {escape(str(int(summary.get("flats", 0) or 0)))}F</small>
+            <small>Win rate {float(summary.get("win_rate_pct", 0) or 0):.1f}% · Profit factor {profit_factor_text}</small>
+            <small>Median hold {_format_age(summary.get("median_hold_secs", 0))} · Median notional ${float(summary.get("median_notional", 0) or 0):,.2f}</small>
+        </div>"""
+
+
+def _render_trade_forensics_summary_rows(
+    rows: list[dict[str, Any]],
+    *,
+    label_header: str,
+    empty_text: str,
+) -> str:
+    del label_header
+    if not rows:
+        return f'<tr><td colspan="7" style="text-align:center;color:#888;">{escape(empty_text)}</td></tr>'
+    rendered: list[str] = []
+    for row in rows:
+        total_pnl = _as_float(row.get("total_pnl"))
+        color = "#5fff8d" if total_pnl >= 0 else "#ff6b6b"
+        rendered.append(
+            f"""<tr>
+            <td><strong>{escape(str(row.get("label", "") or "-"))}</strong></td>
+            <td style="text-align:right">{int(row.get("count", 0) or 0)}</td>
+            <td>{int(row.get("wins", 0) or 0)}W / {int(row.get("losses", 0) or 0)}L</td>
+            <td style="color:{color};white-space:nowrap;">${total_pnl:+.2f}</td>
+            <td style="text-align:right">{float(row.get("win_rate_pct", 0) or 0):.1f}%</td>
+            <td style="text-align:right">{escape(_format_age(row.get("median_hold_secs", 0)))}</td>
+            <td style="text-align:right">${float(row.get("avg_notional", 0) or 0):,.2f}</td>
+        </tr>"""
+        )
+    return "".join(rendered)
+
+
+def _render_trade_forensics_group_rows(
+    rows: list[dict[str, Any]],
+    *,
+    label_header: str,
+    empty_text: str,
+) -> str:
+    del label_header
+    if not rows:
+        return f'<tr><td colspan="5" style="text-align:center;color:#888;">{escape(empty_text)}</td></tr>'
+    rendered: list[str] = []
+    for row in rows:
+        total_pnl = _as_float(row.get("total_pnl"))
+        color = "#5fff8d" if total_pnl >= 0 else "#ff6b6b"
+        rendered.append(
+            f"""<tr>
+            <td><strong>{escape(str(row.get("label", "") or "-"))}</strong></td>
+            <td style="text-align:right">{int(row.get("count", 0) or 0)}</td>
+            <td style="color:{color};white-space:nowrap;">${total_pnl:+.2f}</td>
+            <td style="text-align:right">{float(row.get("win_rate_pct", 0) or 0):.1f}%</td>
+            <td style="text-align:right">{escape(_format_age(row.get("median_hold_secs", 0)))}</td>
+        </tr>"""
+        )
+    return "".join(rendered)
+
+
+def _render_trade_forensics_loser_rows(
+    rows: list[dict[str, Any]],
+    *,
+    empty_text: str,
+) -> str:
+    if not rows:
+        return f'<tr><td colspan="5" style="text-align:center;color:#888;">{escape(empty_text)}</td></tr>'
+    rendered: list[str] = []
+    for row in rows:
+        total_pnl = _as_float(row.get("total_pnl"))
+        color = "#5fff8d" if total_pnl >= 0 else "#ff6b6b"
+        rendered.append(
+            f"""<tr>
+            <td><strong>{escape(str(row.get("label", "") or "-"))}</strong></td>
+            <td style="text-align:right">{int(row.get("count", 0) or 0)}</td>
+            <td style="color:{color};white-space:nowrap;">${total_pnl:+.2f}</td>
+            <td style="text-align:right">{escape(_format_age(row.get("median_hold_secs", 0)))}</td>
+            <td style="text-align:right">{_fmt_money(_as_float(row.get("avg_entry_price")))}</td>
+        </tr>"""
+        )
+    return "".join(rendered)
+
+
+def _median_float(values: list[float]) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    middle = len(ordered) // 2
+    if len(ordered) % 2 == 1:
+        return ordered[middle]
+    return (ordered[middle - 1] + ordered[middle]) / 2.0
+
+
+def _median_int(values: list[int]) -> int:
+    return int(round(_median_float([float(value) for value in values]))) if values else 0
 
 
 def _build_completed_position_rows(
