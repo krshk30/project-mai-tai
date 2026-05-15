@@ -413,6 +413,192 @@ class FakeAcceptedOnlyBrokerAdapter:
         return []
 
 
+class FakeStopGuardCloseRejectFallbackBrokerAdapter:
+    """Open fills; first stop_guard close gets stop-rejected; market fallback fills."""
+
+    def __init__(self) -> None:
+        self.submit_requests: list = []
+        self.position_qty = Decimal("0")
+
+    async def submit_order(self, request):
+        self.submit_requests.append(request)
+        if request.intent_type == "open":
+            self.position_qty = request.quantity
+            return [
+                ExecutionReport(
+                    event_type="accepted",
+                    client_order_id=request.client_order_id,
+                    broker_order_id="ord-open",
+                    symbol=request.symbol,
+                    side=request.side,
+                    intent_type=request.intent_type,
+                    quantity=request.quantity,
+                    reason=request.reason,
+                    metadata=dict(request.metadata),
+                ),
+                ExecutionReport(
+                    event_type="filled",
+                    client_order_id=request.client_order_id,
+                    broker_order_id="ord-open",
+                    broker_fill_id="fill-open",
+                    symbol=request.symbol,
+                    side=request.side,
+                    intent_type=request.intent_type,
+                    quantity=request.quantity,
+                    filled_quantity=request.quantity,
+                    fill_price=Decimal("2.55"),
+                    reason=request.reason,
+                    metadata=dict(request.metadata),
+                ),
+            ]
+        is_stop_guard = str(request.metadata.get("stop_guard", "")).strip().lower() == "true"
+        is_fallback = str(request.metadata.get("stop_reject_fallback", "")).strip().lower() == "true"
+        if is_stop_guard and not is_fallback:
+            return [
+                ExecutionReport(
+                    event_type="rejected",
+                    client_order_id=request.client_order_id,
+                    broker_order_id=None,
+                    symbol=request.symbol,
+                    side=request.side,
+                    intent_type=request.intent_type,
+                    quantity=request.quantity,
+                    reason="child stop rejected at/below stop",
+                    metadata=dict(request.metadata),
+                )
+            ]
+        self.position_qty = Decimal("0")
+        return [
+            ExecutionReport(
+                event_type="accepted",
+                client_order_id=request.client_order_id,
+                broker_order_id="ord-fallback",
+                symbol=request.symbol,
+                side=request.side,
+                intent_type=request.intent_type,
+                quantity=request.quantity,
+                reason=request.reason,
+                metadata=dict(request.metadata),
+            ),
+            ExecutionReport(
+                event_type="filled",
+                client_order_id=request.client_order_id,
+                broker_order_id="ord-fallback",
+                broker_fill_id="fill-fallback",
+                symbol=request.symbol,
+                side=request.side,
+                intent_type=request.intent_type,
+                quantity=request.quantity,
+                filled_quantity=request.quantity,
+                fill_price=Decimal("2.40"),
+                reason=request.reason,
+                metadata=dict(request.metadata),
+            ),
+        ]
+
+    async def fetch_order_update(self, request):
+        del request
+        return None
+
+    async def list_account_positions(self, broker_account_name: str):
+        if self.position_qty <= 0:
+            return []
+        return [
+            BrokerPositionSnapshot(
+                broker_account_name=broker_account_name,
+                symbol="UGRO",
+                quantity=self.position_qty,
+                average_price=Decimal("2.55"),
+                market_value=None,
+                as_of=None,
+            )
+        ]
+
+
+class FakeHardStopThenHardStopBrokerAdapter:
+    """Open fills; HARD_STOP closes stay open (accepted) so a second HARD_STOP must preempt the first."""
+
+    def __init__(self) -> None:
+        self.submit_requests: list = []
+        self._hard_stop_count = 0
+
+    async def submit_order(self, request):
+        self.submit_requests.append(request)
+        if request.intent_type == "open":
+            return [
+                ExecutionReport(
+                    event_type="accepted",
+                    client_order_id=request.client_order_id,
+                    broker_order_id="ord-open",
+                    symbol=request.symbol,
+                    side=request.side,
+                    intent_type=request.intent_type,
+                    quantity=request.quantity,
+                    reason=request.reason,
+                    metadata=dict(request.metadata),
+                ),
+                ExecutionReport(
+                    event_type="filled",
+                    client_order_id=request.client_order_id,
+                    broker_order_id="ord-open",
+                    broker_fill_id="fill-open",
+                    symbol=request.symbol,
+                    side=request.side,
+                    intent_type=request.intent_type,
+                    quantity=request.quantity,
+                    filled_quantity=request.quantity,
+                    fill_price=Decimal("2.55"),
+                    reason=request.reason,
+                    metadata=dict(request.metadata),
+                ),
+            ]
+        if request.intent_type == "cancel":
+            return [
+                ExecutionReport(
+                    event_type="cancelled",
+                    client_order_id=request.client_order_id,
+                    broker_order_id=str(request.metadata.get("broker_order_id", "ord-cancelled")),
+                    symbol=request.symbol,
+                    side=request.side,
+                    intent_type="cancel",
+                    quantity=request.quantity,
+                    reason=request.reason,
+                    metadata=dict(request.metadata),
+                )
+            ]
+        self._hard_stop_count += 1
+        broker_id = f"ord-hard-stop-{self._hard_stop_count}"
+        return [
+            ExecutionReport(
+                event_type="accepted",
+                client_order_id=request.client_order_id,
+                broker_order_id=broker_id,
+                symbol=request.symbol,
+                side=request.side,
+                intent_type=request.intent_type,
+                quantity=request.quantity,
+                reason=request.reason,
+                metadata=dict(request.metadata),
+            )
+        ]
+
+    async def fetch_order_update(self, request):
+        del request
+        return None
+
+    async def list_account_positions(self, broker_account_name: str):
+        return [
+            BrokerPositionSnapshot(
+                broker_account_name=broker_account_name,
+                symbol="UGRO",
+                quantity=Decimal("10"),
+                average_price=Decimal("2.55"),
+                market_value=None,
+                as_of=None,
+            )
+        ]
+
+
 class FakeWorkingOrderRefreshBrokerAdapter:
     def __init__(
         self,
@@ -2417,6 +2603,181 @@ async def test_oms_service_hard_stop_preempts_existing_scale_exit() -> None:
         ).all()
         assert len(open_orders) == 1
         assert open_orders[0].payload.get("stop_guard") == "true"
+
+
+@pytest.mark.asyncio
+async def test_oms_service_hard_stop_preempts_existing_stop_guard_close() -> None:
+    """A second HARD_STOP close must cancel a stuck prior HARD_STOP close, not bail out."""
+    redis = FakeRedis()
+    session_factory = build_test_session_factory()
+    broker_adapter = FakeHardStopThenHardStopBrokerAdapter()
+    service = OmsRiskService(
+        settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
+        redis_client=redis,
+        session_factory=session_factory,
+        broker_adapter=broker_adapter,
+    )
+
+    await service.process_trade_intent(
+        TradeIntentEvent(
+            source_service="strategy-engine",
+            payload=TradeIntentPayload(
+                strategy_code="macd_30s",
+                broker_account_name="paper:macd_30s",
+                symbol="UGRO",
+                side="buy",
+                quantity=Decimal("10"),
+                intent_type="open",
+                reason="ENTRY_P1_MACD_CROSS",
+                metadata={"reference_price": "2.55"},
+            ),
+        )
+    )
+
+    first_hard_stop = await service.process_trade_intent(
+        TradeIntentEvent(
+            source_service="strategy-engine",
+            payload=TradeIntentPayload(
+                strategy_code="macd_30s",
+                broker_account_name="paper:macd_30s",
+                symbol="UGRO",
+                side="sell",
+                quantity=Decimal("10"),
+                intent_type="close",
+                reason="HARD_STOP",
+                metadata={
+                    "stop_guard": "true",
+                    "order_type": "limit",
+                    "limit_price": "2.40",
+                    "reference_price": "2.40",
+                    "time_in_force": "day",
+                },
+            ),
+        )
+    )
+    assert [event.payload.status for event in first_hard_stop] == ["accepted"]
+
+    second_hard_stop = await service.process_trade_intent(
+        TradeIntentEvent(
+            source_service="strategy-engine",
+            payload=TradeIntentPayload(
+                strategy_code="macd_30s",
+                broker_account_name="paper:macd_30s",
+                symbol="UGRO",
+                side="sell",
+                quantity=Decimal("10"),
+                intent_type="close",
+                reason="HARD_STOP",
+                metadata={
+                    "stop_guard": "true",
+                    "order_type": "limit",
+                    "limit_price": "2.35",
+                    "reference_price": "2.35",
+                    "time_in_force": "day",
+                },
+            ),
+        )
+    )
+
+    statuses = [event.payload.status for event in second_hard_stop]
+    intent_types = [event.payload.intent_type for event in second_hard_stop]
+    reasons = [event.payload.reason for event in second_hard_stop]
+
+    assert statuses[0] == "cancelled"
+    assert intent_types[0] == "cancel"
+    assert reasons[0] == "HARD_STOP_PREEMPT_PENDING_EXIT"
+    assert "accepted" in statuses[1:]
+    assert [request.intent_type for request in broker_adapter.submit_requests] == [
+        "open",
+        "close",
+        "cancel",
+        "close",
+    ]
+
+    with session_factory() as session:
+        open_orders = session.scalars(
+            select(BrokerOrder).where(BrokerOrder.status.in_(OmsStore.OPEN_ORDER_STATUSES))
+        ).all()
+        assert len(open_orders) == 1
+        assert open_orders[0].payload.get("stop_guard") == "true"
+        assert open_orders[0].broker_order_id == "ord-hard-stop-2"
+
+
+@pytest.mark.asyncio
+async def test_oms_service_stop_guard_close_gets_market_fallback_on_stop_rejection() -> None:
+    """A HARD_STOP close rejected by the broker for stop reasons must escalate to a market fallback."""
+    redis = FakeRedis()
+    session_factory = build_test_session_factory()
+    broker_adapter = FakeStopGuardCloseRejectFallbackBrokerAdapter()
+    service = OmsRiskService(
+        settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
+        redis_client=redis,
+        session_factory=session_factory,
+        broker_adapter=broker_adapter,
+    )
+
+    open_events = await service.process_trade_intent(
+        TradeIntentEvent(
+            source_service="strategy-engine",
+            payload=TradeIntentPayload(
+                strategy_code="macd_30s",
+                broker_account_name="paper:macd_30s",
+                symbol="UGRO",
+                side="buy",
+                quantity=Decimal("10"),
+                intent_type="open",
+                reason="ENTRY_P1_MACD_CROSS",
+                metadata={"reference_price": "2.55"},
+            ),
+        )
+    )
+    assert [event.payload.status for event in open_events] == ["accepted", "filled"]
+
+    hard_stop_events = await service.process_trade_intent(
+        TradeIntentEvent(
+            source_service="strategy-engine",
+            payload=TradeIntentPayload(
+                strategy_code="macd_30s",
+                broker_account_name="paper:macd_30s",
+                symbol="UGRO",
+                side="sell",
+                quantity=Decimal("10"),
+                intent_type="close",
+                reason="HARD_STOP",
+                metadata={
+                    "stop_guard": "true",
+                    "order_type": "limit",
+                    "limit_price": "2.40",
+                    "reference_price": "2.40",
+                    "time_in_force": "day",
+                },
+            ),
+        )
+    )
+
+    statuses = [event.payload.status for event in hard_stop_events]
+    assert "rejected" in statuses
+    assert "filled" in statuses
+    fallback_fill = next(
+        event for event in hard_stop_events if event.payload.status == "filled"
+    )
+    assert fallback_fill.payload.reason == "STOP_REJECTED_FALLBACK"
+    assert (
+        str(fallback_fill.payload.metadata.get("stop_reject_fallback", "")).lower()
+        == "true"
+    )
+
+    submitted_intents = [request.intent_type for request in broker_adapter.submit_requests]
+    assert submitted_intents == ["open", "close", "close"]
+
+    with session_factory() as session:
+        account_position = session.scalar(
+            select(AccountPosition).where(AccountPosition.symbol == "UGRO")
+        )
+        assert account_position is not None
+        assert account_position.quantity == Decimal("0")
+
+
 @pytest.mark.asyncio
 async def test_oms_service_submits_market_fallback_after_stop_rejection() -> None:
     redis = FakeRedis()

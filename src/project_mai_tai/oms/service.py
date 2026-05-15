@@ -686,10 +686,6 @@ class OmsRiskService:
             if open_exit is None:
                 break
 
-            payload = {str(k): str(v) for k, v in (open_exit.payload or {}).items()}
-            if str(payload.get("stop_guard", "")).strip().lower() == "true":
-                break
-
             if open_exit.client_order_id in seen_client_order_ids:
                 break
             seen_client_order_ids.add(open_exit.client_order_id)
@@ -2080,7 +2076,11 @@ class OmsRiskService:
     ) -> str | None:
         if str(request.metadata.get("stop_reject_fallback", "")).lower() == "true":
             return None
-        if request.intent_type not in {"open", "scale"}:
+        is_stop_guard_close = (
+            request.intent_type == "close"
+            and str(request.metadata.get("stop_guard", "")).strip().lower() == "true"
+        )
+        if request.intent_type not in {"open", "scale"} and not is_stop_guard_close:
             return None
         for report in reports:
             if report.event_type == "rejected" and self._is_stop_rejection_reason(report.reason):
