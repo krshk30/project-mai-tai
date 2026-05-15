@@ -235,6 +235,56 @@ async def test_run_init_phase_cancels_in_flight_init_when_signal_arrives() -> No
 
 
 @pytest.mark.asyncio
+async def test_run_init_phase_cancels_sync_init_step_running_in_thread() -> None:
+    """Synchronous init steps (DB restore etc.) run via asyncio.to_thread so the event loop stays
+    responsive. SIGTERM during a sync step must still return False within a few seconds, even
+    though the underlying thread will keep running its sync work to completion."""
+    import asyncio as _asyncio
+    import threading as _threading
+
+    settings = make_test_settings()
+    redis = FakeRedis()
+    service = StrategyEngineService(settings=settings, redis_client=redis)
+
+    sync_started = _threading.Event()
+    sync_release = _threading.Event()
+
+    async def _async_noop() -> None:
+        return None
+
+    def _sync_noop() -> None:
+        return None
+
+    def hanging_sync_step() -> None:
+        sync_started.set()
+        sync_release.wait(timeout=10.0)
+
+    service._initialize_stream_offsets = _async_noop  # type: ignore[method-assign]
+    service._restore_alert_engine_state_from_dashboard_snapshot = _sync_noop  # type: ignore[method-assign]
+    service._seed_confirmed_candidates_from_dashboard_snapshot = _sync_noop  # type: ignore[method-assign]
+    service._restore_runtime_state_from_database = hanging_sync_step  # type: ignore[method-assign]
+
+    stop_event = _asyncio.Event()
+
+    async def trigger_stop() -> None:
+        while not sync_started.is_set():
+            await _asyncio.sleep(0.05)
+        stop_event.set()
+
+    loop = _asyncio.get_running_loop()
+    start = loop.time()
+    _trigger_task = _asyncio.create_task(trigger_stop())
+    try:
+        completed = await service._run_init_phase(stop_event)
+    finally:
+        sync_release.set()
+    elapsed = loop.time() - start
+
+    assert completed is False, "_run_init_phase must return False when SIGTERM arrives mid-sync-step"
+    assert elapsed < 5.0, f"_run_init_phase took {elapsed:.2f}s; expected < 5s"
+
+
+@pytest.mark.asyncio
 async def test_initialize_stream_offsets_anchors_to_latest_ids() -> None:
     settings = make_test_settings()
     redis = FakeRedis()

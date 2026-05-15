@@ -5393,11 +5393,11 @@ class StrategyEngineService:
 
         async def _do_init() -> None:
             await self._initialize_stream_offsets()
-            self._restore_alert_engine_state_from_dashboard_snapshot()
-            self._seed_confirmed_candidates_from_dashboard_snapshot()
-            self._restore_runtime_state_from_database()
-            self._purge_stale_manual_stop_snapshots()
-            self._preload_manual_stop_state()
+            await asyncio.to_thread(self._restore_alert_engine_state_from_dashboard_snapshot)
+            await asyncio.to_thread(self._seed_confirmed_candidates_from_dashboard_snapshot)
+            await asyncio.to_thread(self._restore_runtime_state_from_database)
+            await asyncio.to_thread(self._purge_stale_manual_stop_snapshots)
+            await asyncio.to_thread(self._preload_manual_stop_state)
             await self._prefill_alert_history_from_snapshot_batches()
             if self._schwab_stream_client is not None:
                 await self._schwab_stream_client.start(
