@@ -8,6 +8,30 @@
 - Overall `/health` may still show `degraded` because of reconciler state. Do not confuse that with a Polygon-specific runtime failure.
 - Keep copied CI counts and failure logs out of the top summary unless they have been revalidated on current `main`.
 
+## 2026-05-15 LIVE HOTFIX PREP - macd_30s P4 was retriggering on the same move
+
+- Live symptom:
+  - `macd_30s` started emitting repeated `P4_BURST` signals on adjacent bars for the same symbol and same momentum leg
+  - concrete VPS examples from `strategy_bar_history`:
+    - `AUUD` signaled `P4_BURST` at `2026-05-15 13:46:00 UTC` and again at `13:47:00 UTC`
+    - `SLE` signaled `P4_BURST` at `2026-05-15 12:40:00 UTC` and again at `12:40:30 UTC`
+- Root cause:
+  - the recent P4 rework blocked late re-arm when a recent setup already existed, but it did not remember that a P4 had already fired on the current move
+  - `prev_bar` P4 entries could therefore trigger immediately, then trigger again on the next bar because the late-chase guard only reasoned about recent setup bars, not recent actual P4 triggers
+- Local fix prepared:
+  - add `_last_p4_trigger_bar[ticker]` runtime state to `SchwabNativeEntryEngine`
+  - write that state whenever `P4_BURST` is emitted or armed for confirmation
+  - block both classic and `prev_bar` P4 paths when another P4 trigger already occurred inside the configured late-chase lookback
+  - keep the first valid `prev_bar` P4 intact; only suppress the repeated same-move retrigger
+- Regression coverage added:
+  - `tests/unit/test_strategy_core.py::test_schwab_native_entry_engine_blocks_consecutive_prev_bar_p4_rearm_on_same_move`
+- Local validation:
+  - `pytest tests/unit/test_strategy_core.py -k "p4_burst or late_chase or consecutive_prev_bar_p4_rearm"` -> `5 passed`
+  - `python -m py_compile src/project_mai_tai/strategy_core/schwab_native_30s.py tests/unit/test_strategy_core.py`
+- Deploy intent:
+  - strategy-only deploy is sufficient for this hotfix
+  - after deploy, recheck the latest persisted `P4_BURST` rows and confirm adjacent-bar same-symbol retriggers stop appearing
+
 ## 2026-05-15 LIVE AUTH FIX PREP - Schwab OAuth callback page was broken by Request import shadowing
 
 - Symptom reported from the live auth page:
