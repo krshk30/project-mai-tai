@@ -3444,6 +3444,16 @@ class StrategyEngineState:
             or self.settings.market_data_live_aggregate_stream_enabled
         )
         polygon_use_live_aggregate_bars = self.settings.strategy_polygon_30s_runtime_uses_live_aggregate_bars
+        if polygon_use_live_aggregate_bars:
+            logger.warning(
+                "polygon_30s runtime resolved to live-aggregate-bar mode "
+                "(MAI_TAI_STRATEGY_POLYGON_30S_LIVE_AGGREGATE_BARS_ENABLED=true). "
+                "Since PR #122 disabled Massive A.* subscriptions at the market-data "
+                "gateway, aggregate bars no longer flow and polygon_30s will silently "
+                "stop persisting bars. Set "
+                "MAI_TAI_STRATEGY_POLYGON_30S_LIVE_AGGREGATE_BARS_ENABLED=false "
+                "(default since PR #124) to use the tick-built path."
+            )
         self.bots: dict[str, StrategyRuntime] = {}
         if self.settings.strategy_macd_1m_enabled and "macd_1m" in registrations:
             self.bots["macd_1m"] = StrategyBotRuntime(
