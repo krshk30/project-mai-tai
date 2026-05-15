@@ -156,7 +156,7 @@ def test_schwab_1m_uses_completed_bar_entries_and_shorter_cooldown() -> None:
     assert schwab_30s.entry_intrabar_enabled is False
     assert polygon_30s.entry_intrabar_enabled is False
     assert schwab_1m.entry_intrabar_enabled is False
-    assert schwab_30s.p4_prev_bar_entry_enabled is False
+    assert schwab_30s.p4_prev_bar_entry_enabled is True
     assert polygon_30s.p4_prev_bar_entry_enabled is False
     assert schwab_1m.p4_prev_bar_entry_enabled is False
     assert schwab_30s.schwab_native_warmup_bars_required == 35
@@ -265,7 +265,7 @@ def test_schwab_native_variants_keep_intended_live_execution_tuning() -> None:
     assert schwab_1m.p1_min_dollar_volume_abs == 25_000
     assert schwab_1m.cooldown_bars == 5
     assert schwab_1m.entry_intrabar_enabled is False
-    assert schwab_30s.p4_prev_bar_entry_enabled is False
+    assert schwab_30s.p4_prev_bar_entry_enabled is True
     assert polygon_30s.p4_prev_bar_entry_enabled is False
     assert schwab_1m.p4_prev_bar_entry_enabled is False
     assert schwab_1m.p4_enabled is True

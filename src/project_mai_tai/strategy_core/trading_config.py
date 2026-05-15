@@ -230,6 +230,13 @@ class TradingConfig:
     p4_prev_bar_require_break_prev_high: bool = True
     p4_prev_bar_require_close_above_prev_close: bool = True
     p4_prev_bar_confirm_close_top_pct: float | None = 50.0
+    p4_classic_requires_confirmation: bool = True
+    p4_confirm_require_break_setup_high: bool = True
+    p4_confirm_require_close_above_setup_close: bool = True
+    p4_confirm_close_top_pct: float | None = 50.0
+    p4_confirm_next_open_max_breakdown_pct: float | None = 1.0
+    p4_block_late_chase_rearm: bool = True
+    p4_late_chase_lookback_bars: int = 3
     p4_enabled: bool = True
     p5_spike_lookback: int = 15
     p5_spike_ext_pct: float = 2.5
@@ -386,12 +393,19 @@ class TradingConfig:
                 "schwab_native_use_confirmation": True,
                 "schwab_native_use_chop_regime": True,
                 "schwab_native_warmup_bars_required": 35,
-                "p4_prev_bar_entry_enabled": False,
+                "p4_prev_bar_entry_enabled": True,
                 "p4_prev_bar_require_prev_above_vwap_or_green": True,
                 "p4_prev_bar_next_open_max_breakdown_pct": 1.0,
                 "p4_prev_bar_require_break_prev_high": True,
                 "p4_prev_bar_require_close_above_prev_close": True,
                 "p4_prev_bar_confirm_close_top_pct": 50.0,
+                "p4_classic_requires_confirmation": True,
+                "p4_confirm_require_break_setup_high": True,
+                "p4_confirm_require_close_above_setup_close": True,
+                "p4_confirm_close_top_pct": 50.0,
+                "p4_confirm_next_open_max_breakdown_pct": 1.0,
+                "p4_block_late_chase_rearm": True,
+                "p4_late_chase_lookback_bars": 3,
                 "p3_allow_momentum_override": False,
                 "p3_entry_stoch_k_cap": 80.0,
                 "p3_min_volume_abs": 10_000,

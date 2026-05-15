@@ -30,6 +30,30 @@ Quiet pre-RTH window, picked up the remaining open workstreams.
   - If both never fire, the position closes normally on the first HARD_STOP (also fine)
 - Account state at restart: only operator-frozen CYN ×8000 ×2 accounts. No virtual positions. **MOBX still cleared** — fix is purely defensive for the next victim.
 - Workstream #6 in the priority table below is marked DONE.
+## 2026-05-15 LIVE LOGIC UPDATE - macd_30s P4 rework prepared locally, not deployed yet
+
+- Root-cause analysis from the VPS-backed last-7-day `P4_BURST` audit:
+  - `11/16` filled `P4_BURST` trades had an earlier valid setup-style bar before the live burst entry, so the current live path often chases a later/worse burst.
+  - the remaining bad `P4_BURST` losses were often raw one-bar bursts that should have needed confirmation before risking money.
+- Code change prepared locally:
+  - live Schwab-native `macd_30s` now enables the existing prev-bar `P4` path by default
+  - same-bar classic `P4` no longer enters immediately; it arms a pending `P4_BURST` setup and must confirm on the next bar
+  - classic `P4` confirmation now requires:
+    - next bar open not to break down too far from setup close
+    - next bar high to break the setup high
+    - next bar close to stay above the setup close
+    - next bar close to finish in the upper half of its own range
+  - same-bar classic `P4` now refuses to re-arm as a late chase when a valid prev-bar-style setup already existed in the recent lookback window
+- Code paths touched:
+  - `src/project_mai_tai/strategy_core/schwab_native_30s.py`
+  - `src/project_mai_tai/strategy_core/trading_config.py`
+- Targeted validation completed locally:
+  - `pytest tests/unit/test_strategy_core.py -k "p4_burst or late_chase"` -> `4 passed`
+  - `PYTHONPATH=. pytest tests/unit/test_schwab_1m_bot.py -k "completed_bar_entries_and_shorter_cooldown or intended_live_execution_tuning"` -> `2 passed`
+  - `python -m py_compile src/project_mai_tai/strategy_core/schwab_native_30s.py src/project_mai_tai/strategy_core/trading_config.py tests/unit/test_strategy_core.py tests/unit/test_schwab_1m_bot.py`
+- Deploy status:
+  - this P4 rework is **not deployed yet**
+  - review it as the planned replacement for the current live `P4_BURST` behavior before restarting `strategy`
 
 ## 2026-05-15 morning — PR #134 deployed, env-drift WARNING live (workstream #5 done)
 
