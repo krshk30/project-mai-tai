@@ -8,6 +8,32 @@
 - Overall `/health` may still show `degraded` because of reconciler state. Do not confuse that with a Polygon-specific runtime failure.
 - Keep copied CI counts and failure logs out of the top summary unless they have been revalidated on current `main`.
 
+## 2026-05-15 LIVE DEPLOY - P4-only classic confirmation is now live
+
+- Merged PR `#162` (`Restore classic P4 confirmation`) to `main` at commit `59f33a7`.
+- Scope of the live change is intentionally narrow:
+  - classic `P4_BURST` no longer enters immediately
+  - classic `P4_BURST` now arms and waits for next-bar confirmation
+  - `p4_prev_bar_entry_enabled` remains `False`
+  - `P5_PULLBACK` remains immediate
+  - no change to `P1` / `P2` / `P3`
+  - no change to `CYN`
+- Historical clarification that motivated this deploy:
+  - the remembered April 21/22 behavior was not an exact prior live commit
+  - the closest intended behavior was implemented explicitly here as a new P4-only variant
+- VPS deploy:
+  - VPS `main` fast-forwarded to `59f33a7`
+  - restarted only `project-mai-tai-strategy.service`
+  - restart completed at `2026-05-15 20:14:18 UTC` (`04:14:18 PM ET`)
+- Immediate post-deploy validation:
+  - `project-mai-tai-strategy.service` is `active`
+  - `/api/bots` again shows `macd_30s` live with `data_health.status=healthy`
+  - post-restart `macd_30s` watchlist rebuilt to `18` symbols
+  - first follow-up `/api/overview` still showed `strategy-engine=stopping`, so treat the control-plane status as briefly stale during the restart window rather than as proof of a failed deploy
+- Remaining validation task:
+  - judge the change on real subsequent `P4_BURST` opportunities only
+  - do not use the pre-deploy `P4_BURST` spam from earlier on `2026-05-15` to score this version
+
 ## 2026-05-15 P4 HISTORY CHECK - the remembered multi-bar-confirm P4 was not the April 22 live baseline
 
 - Historical clarification from session doc + git history:
