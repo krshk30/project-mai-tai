@@ -366,7 +366,7 @@ class TradingConfig:
                 "trading_end_hour": 18,
                 "dead_zone_start": "00:00",
                 "dead_zone_end": "00:00",
-                "confirm_bars": 0,
+                "confirm_bars": 1,
                 "min_score": 4,
                 "p3_min_score": 5,
                 "vol_min": 2_500,
