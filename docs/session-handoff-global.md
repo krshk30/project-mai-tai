@@ -8,6 +8,14 @@
 - Overall `/health` may still show `degraded` because of reconciler state. Do not confuse that with a Polygon-specific runtime failure.
 - Keep copied CI counts and failure logs out of the top summary unless they have been revalidated on current `main`.
 
+## 2026-05-15 morning — PR #134 deployed, env-drift WARNING live (workstream #5 done)
+
+- VPS HEAD: `3806673` (PR #134 — env-drift WARNING at strategy boot)
+- All 5 services `active`. Strategy restarted at `2026-05-15 10:40:26 UTC`, PID `1278893`.
+- Account state at restart: only operator-frozen CYN ×8000 on each Schwab bot account. **MOBX cleared overnight** — virtual positions empty, no MOBX in `account_positions`. Workstream #6 (stop_guard permanent-rejection loop) is now latent rather than active; keep the fix planned for the next gap-down repeat, not urgent today.
+- WARNING validation: silent in `strategy.log` post-restart, as expected — env on VPS is correctly `MAI_TAI_STRATEGY_POLYGON_30S_LIVE_AGGREGATE_BARS_ENABLED=false`. The warning will only fire on a VPS whose env still carries the legacy opt-in.
+- Workstream #5 in the priority table below is marked DONE.
+
 ## 2026-05-15 LOCAL FEATURE - macd_30s live trade-forensics report on bot page
 
 - A new deterministic `Trade Forensics` panel was added locally on branch `codex/macd-trade-forensics-report`.
@@ -95,7 +103,7 @@ Expected: count climbs as symbols rotate in, but **caps at 256** even by end of 
 | 2 | FD-leak in tick-archive writer | **DONE — needs overnight validation** | PR [#131](https://github.com/krshk30/project-mai-tai/pull/131) merged 2026-05-14 22:14 UTC |
 | 3 | **MOBX overcount root cause** — single bar on macd_30s had persisted vol=2.3M vs rebuilt=91k (25× overcount); possibly hydration-replay artifact during today's strategy crash | NOT STARTED | flag for investigation |
 | 4 | schwab_1m HIGH-price discrepancies — CHART_EQUITY persists HIGHs that TIMESALE rebuild cannot reproduce (1-5¢ deltas, up to 3-4% on penny stocks) | NOT STARTED | flag for investigation |
-| 5 | Env-drift startup warning — strategy should log a `WARNING` at boot if `LIVE_AGGREGATE_BARS_ENABLED=true` is set, to prevent the same silent regression on any other VPS | NOT STARTED | small, concrete; ~30 min PR |
+| 5 | Env-drift startup warning — strategy logs a `WARNING` at boot when `polygon_30s_runtime_uses_live_aggregate_bars` resolves to `True` (i.e., `LIVE_AGGREGATE_BARS_ENABLED=true` with `FORCE_TICK_BUILT_MODE` unset) | **DONE** | PR [#134](https://github.com/krshk30/project-mai-tai/pull/134) merged + deployed 2026-05-15 10:40 UTC |
 | 6 | MOBX `stop_guard` permanent-rejection loop — OMS-risk rejects every close with `HARD_STOP / FLOOR_BREACH` because limit price has gapped beyond `panic_buffer_pct`. Position can't unstick itself, even though it's not in `MAI_TAI_PROTECTED_SYMBOLS` | NOT STARTED | high-value structural fix |
 | 7 | Strategy SIGTERM-timeout-then-SIGKILL on shutdown (asyncio `attached to a different loop` bug) — happens on every restart, 30s wasted each time | NOT STARTED | quality-of-life |
 
