@@ -462,10 +462,20 @@ class MassiveTradeStream:
             return
         try:
             result = close()
-            if inspect.isawaitable(result):
+            if inspect.iscoroutine(result):
+                # Awaiting the close coroutine from the main asyncio loop
+                # trips the cross-loop bug inside the websockets library
+                # (send_context → asyncio.shield(connection_lost_waiter)
+                # against a future from ws.run's thread loop). The close
+                # was already initiated by calling close(); abandon the
+                # coroutine so the websocket tears down asynchronously in
+                # its own loop. The next _run_loop iteration will see the
+                # disconnect and reconnect.
+                result.close()
+            elif inspect.isawaitable(result):
                 await result
         except Exception:
-            logger.exception("Failed to close Massive websocket cleanly")
+            logger.debug("Failed to close Massive websocket cleanly", exc_info=True)
 
     def _downgrade_aggregate_subscriptions(self, exc: Exception) -> bool:
         if not self._aggregate_subscriptions_enabled:
