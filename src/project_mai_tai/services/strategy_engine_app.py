@@ -1511,38 +1511,15 @@ class StrategyBotRuntime:
     ) -> list[TradeIntentEvent]:
         builder = self.builder_manager.get_builder(symbol)
         if builder is None:
-            logger.info(
-                "[diag] _evaluate_completed_bar: builder is None code=%s sym=%s",
-                self.definition.code,
-                symbol,
-            )
             return []
 
         bars = builder.get_bars_as_dicts()
         if not bars:
-            logger.info(
-                "[diag] _evaluate_completed_bar: bars empty code=%s sym=%s",
-                self.definition.code,
-                symbol,
-            )
             return []
 
         local_indicators = self.indicator_engine.calculate(bars)
         if local_indicators is None:
-            logger.info(
-                "[diag] _evaluate_completed_bar: warmup path code=%s sym=%s bars=%d",
-                self.definition.code,
-                symbol,
-                len(bars),
-            )
             return self._finalize_warmup_completed_bar(symbol, completed_bar=completed_bar)
-
-        if self.definition.code == "polygon_30s":
-            logger.info(
-                "[diag] _evaluate_completed_bar: indicators OK code=polygon_30s sym=%s bars=%d",
-                symbol,
-                len(bars),
-            )
 
         indicators = self._decorate_indicators(symbol, local_indicators)
         self.last_indicators[symbol] = indicators
@@ -2635,38 +2612,18 @@ class StrategyBotRuntime:
         decision: dict[str, str] | None = None,
         completed_bar: OHLCVBar | None = None,
     ) -> None:
-        if self.definition.code == "polygon_30s":
-            logger.info(
-                "[diag2] persist entry sym=%s have_completed=%s",
-                symbol,
-                completed_bar is not None,
-            )
         if self.session_factory is None:
-            if self.definition.code == "polygon_30s":
-                logger.info("[diag2] bail no factory sym=%s", symbol)
             return
 
         builder = self.builder_manager.get_builder(symbol)
         if builder is None:
-            if self.definition.code == "polygon_30s":
-                logger.info("[diag2] bail no builder sym=%s", symbol)
             return
 
         last_bar = completed_bar
         if last_bar is None:
             if not builder.bars:
-                if self.definition.code == "polygon_30s":
-                    logger.info("[diag2] bail no bars sym=%s", symbol)
                 return
             last_bar = builder.bars[-1]
-        if self.definition.code == "polygon_30s":
-            logger.info(
-                "[diag2] persist proceeding sym=%s ts=%.0f vol=%s tc=%s",
-                symbol,
-                float(last_bar.timestamp),
-                int(last_bar.volume),
-                int(last_bar.trade_count),
-            )
         # Skip persisting placeholder bars. vol=0 + tc=0 means either a
         # CHART_EQUITY quiet-minute report or a bar-builder force-close when
         # no trades arrived during the bar window (e.g., mid-bar symbol
