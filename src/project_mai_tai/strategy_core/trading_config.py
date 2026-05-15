@@ -399,7 +399,7 @@ class TradingConfig:
                 "p4_prev_bar_require_break_prev_high": True,
                 "p4_prev_bar_require_close_above_prev_close": True,
                 "p4_prev_bar_confirm_close_top_pct": 50.0,
-                "p4_classic_requires_confirmation": False,
+                "p4_classic_requires_confirmation": True,
                 "p4_confirm_require_break_setup_high": True,
                 "p4_confirm_require_close_above_setup_close": True,
                 "p4_confirm_close_top_pct": 50.0,

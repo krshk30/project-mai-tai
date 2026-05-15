@@ -8,6 +8,27 @@
 - Overall `/health` may still show `degraded` because of reconciler state. Do not confuse that with a Polygon-specific runtime failure.
 - Keep copied CI counts and failure logs out of the top summary unless they have been revalidated on current `main`.
 
+## 2026-05-15 P4 HISTORY CHECK - the remembered multi-bar-confirm P4 was not the April 22 live baseline
+
+- Historical clarification from session doc + git history:
+  - `2026-04-22` commit `ee8cbc6` (`Require confirmation for Schwab native 30s`) turned confirmation on for the Schwab-native engine overall
+  - but even in that version, `P4_BURST` and `P5_PULLBACK` were still exempt and entered immediately
+  - the actual classic-P4 setup/confirm behavior only arrived much later in PR `#142`, but that same PR also enabled the much weaker `prev_bar` P4 path and caused the signal explosion
+- Practical conclusion:
+  - there is no exact older live version in history that equals `classic P4 waits for confirmation while prev_bar stays disabled`
+  - the closest faithful variant to the operator's intended behavior is:
+    - keep `p4_prev_bar_entry_enabled=False`
+    - keep `p4_block_late_chase_rearm=False`
+    - set `p4_classic_requires_confirmation=True`
+    - allow only classic burst P4 to arm, then confirm on the next bar
+- Local candidate fix prepared:
+  - `P4_BURST` no longer bypasses confirmation
+  - `P5_PULLBACK` remains immediate
+  - live Schwab 30s still does **not** enable the permissive `prev_bar` P4 path
+- Local validation:
+  - `pytest tests/unit/test_strategy_core.py -k "p4_burst or prev_bar or late_chase"` -> `3 passed`
+  - `python -m py_compile src/project_mai_tai/strategy_core/schwab_native_30s.py src/project_mai_tai/strategy_core/trading_config.py tests/unit/test_strategy_core.py`
+
 ## 2026-05-15 LIVE ROLLBACK PREP - macd_30s P4 expanded too aggressively after the P4 rework
 
 - Live symptom:

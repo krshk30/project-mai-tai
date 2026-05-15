@@ -883,7 +883,7 @@ def test_schwab_native_entry_engine_can_fire_p4_burst() -> None:
         )
     engine.seed_recent_bars("ELAB", history)
 
-    signal = engine.check_entry(
+    setup = engine.check_entry(
         "ELAB",
         {
             "open": 2.10,
@@ -923,6 +923,53 @@ def test_schwab_native_entry_engine_can_fire_p4_burst() -> None:
         position_tracker=None,
     )
 
+    assert setup is None
+    pending = engine.pop_last_decision("ELAB")
+    assert pending is not None
+    assert pending["status"] == "pending"
+    assert pending["path"] == "P4_BURST"
+
+    signal = engine.check_entry(
+        "ELAB",
+        {
+            "open": 2.21,
+            "price": 2.25,
+            "high": 2.26,
+            "low": 2.20,
+            "volume": 14_000.0,
+            "ema9": 2.14,
+            "ema20": 2.07,
+            "vwap": 2.10,
+            "vol_avg20": 3_500.0,
+            "vol_avg5": 3_500.0,
+            "macd": 0.01,
+            "signal": 0.02,
+            "histogram": 0.03,
+            "stoch_k": 72.0,
+            "macd_cross_above": False,
+            "bars_below_signal_prev": 0,
+            "price_cross_above_vwap": False,
+            "macd_above_signal": False,
+            "macd_increasing": False,
+            "macd_delta": 0.0,
+            "macd_delta_prev": 0.01,
+            "hist_value": 0.03,
+            "price_above_ema9": True,
+            "price_above_ema20": True,
+            "price_above_vwap": True,
+            "hist_growing": True,
+            "stoch_k_rising": True,
+            "ema9_dist_pct": 1.5,
+            "vwap_dist_pct": 5.0,
+            "ema9_trend_rising": True,
+            "in_regular_session": True,
+            "stoch_cross_below_exit": False,
+            "macd_cross_below": False,
+        },
+        bar_index=56,
+        position_tracker=None,
+    )
+
     assert signal is not None
     assert signal["path"] == "P4_BURST"
 
@@ -930,7 +977,7 @@ def test_schwab_native_entry_engine_can_fire_p4_burst() -> None:
 def test_schwab_native_variant_rolls_back_prev_bar_p4_path() -> None:
     config = TradingConfig().make_30s_schwab_native_variant()
     assert config.p4_prev_bar_entry_enabled is False
-    assert config.p4_classic_requires_confirmation is False
+    assert config.p4_classic_requires_confirmation is True
     assert config.p4_block_late_chase_rearm is False
 
 
