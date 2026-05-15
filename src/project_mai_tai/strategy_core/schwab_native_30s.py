@@ -755,6 +755,7 @@ class SchwabNativeEntryEngine:
         self._session_highs: dict[str, float] = {}
         self._spike_anchor_bar: dict[str, int] = {}
         self._spike_anchor_high: dict[str, float] = {}
+        self._last_p4_trigger_bar: dict[str, int] = {}
         self._active_day_by_ticker: dict[str, str] = {}
         self._chop_lock_active: dict[str, bool] = {}
         self._p3_hard_stop_pause_until: dict[str, datetime] = {}
@@ -828,6 +829,7 @@ class SchwabNativeEntryEngine:
         self._session_highs.clear()
         self._spike_anchor_bar.clear()
         self._spike_anchor_high.clear()
+        self._last_p4_trigger_bar.clear()
         self._active_day_by_ticker.clear()
         self._chop_lock_active.clear()
         self._p3_hard_stop_pause_until.clear()
@@ -842,6 +844,7 @@ class SchwabNativeEntryEngine:
             self._session_highs,
             self._spike_anchor_bar,
             self._spike_anchor_high,
+            self._last_p4_trigger_bar,
             self._active_day_by_ticker,
             self._chop_lock_active,
             self._p3_hard_stop_pause_until,
@@ -920,11 +923,15 @@ class SchwabNativeEntryEngine:
                 return None
 
         if immediate_entry or not self.config.schwab_native_use_confirmation or self.config.confirm_bars <= 0:
+            if path == "P4_BURST":
+                self._last_p4_trigger_bar[ticker] = bar_index
             self._last_buy_bar[ticker] = bar_index
             self._record_decision(ticker, status="signal", reason=path, path=path, score=score, score_details=score_details)
             return self._build_buy_signal(ticker, path, indicators, score, score_details)
 
         current = self._snapshot_from_indicators(indicators, bar_index=bar_index)
+        if path == "P4_BURST":
+            self._last_p4_trigger_bar[ticker] = bar_index
         self._pending[ticker] = _PendingConfirmation(
             trigger_bar_idx=bar_index,
             trigger_path=path,
@@ -1181,11 +1188,15 @@ class SchwabNativeEntryEngine:
                 and self._p4_prev_bar_entry_ok(previous, current)
             )
             raw_p4_classic = raw_p4_classic and current["high"] > recent_high
-            raw_p4 = raw_p4_classic or raw_p4_prev_bar
-            if raw_p4_prev_bar:
+            recent_p4_setup_exists = self._p4_late_chase_recent_setup_exists(recent)
+            recent_p4_trigger_exists = self._p4_recent_trigger_exists(ticker, bar_index)
+            raw_p4 = (
+                raw_p4_classic or raw_p4_prev_bar
+            ) and not recent_p4_setup_exists and not recent_p4_trigger_exists
+            if raw_p4_prev_bar and not recent_p4_trigger_exists:
                 score, details = self._quality_score(indicators)
                 return "P4_BURST", score, details, chop, True, "prev_bar"
-            if raw_p4_classic and not self._p4_late_chase_recent_setup_exists(recent):
+            if raw_p4_classic and not recent_p4_setup_exists and not recent_p4_trigger_exists:
                 score, details = self._quality_score(indicators)
                 return "P4_BURST", score, details, chop, not self.config.p4_classic_requires_confirmation, "classic"
 
@@ -1228,6 +1239,17 @@ class SchwabNativeEntryEngine:
             if self._p4_prev_bar_entry_ok(previous, current):
                 return True
         return False
+
+    def _p4_recent_trigger_exists(self, ticker: str, bar_index: int) -> bool:
+        if not self.config.p4_block_late_chase_rearm:
+            return False
+        lookback = max(int(self.config.p4_late_chase_lookback_bars or 0), 0)
+        if lookback <= 0:
+            return False
+        last_trigger_bar = self._last_p4_trigger_bar.get(ticker)
+        if last_trigger_bar is None:
+            return False
+        return (bar_index - last_trigger_bar) <= lookback
 
     def _p4_confirmation_error(
         self,
