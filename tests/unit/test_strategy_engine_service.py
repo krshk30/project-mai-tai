@@ -2931,6 +2931,40 @@ def test_polygon_tick_built_persists_real_completed_bars_during_warmup() -> None
     assert all(row.decision_reason.startswith("warmup (") for row in rows)
 
 
+def test_polygon_env_drift_logs_warning_when_live_aggregate_bars_enabled(caplog) -> None:
+    caplog.set_level("WARNING", logger="project_mai_tai.services.strategy_engine_app")
+    StrategyEngineState(
+        settings=make_test_settings(
+            strategy_macd_30s_enabled=False,
+            strategy_polygon_30s_enabled=True,
+            strategy_polygon_30s_live_aggregate_bars_enabled=True,
+        ),
+        now_provider=fixed_now,
+    )
+    matching = [
+        record
+        for record in caplog.records
+        if record.levelname == "WARNING"
+        and "MAI_TAI_STRATEGY_POLYGON_30S_LIVE_AGGREGATE_BARS_ENABLED=true" in record.message
+    ]
+    assert matching, "expected env-drift WARNING when polygon aggregate-bar opt-in is set"
+
+
+def test_polygon_env_drift_warning_silent_in_default_tick_built_mode(caplog) -> None:
+    caplog.set_level("WARNING", logger="project_mai_tai.services.strategy_engine_app")
+    StrategyEngineState(
+        settings=make_test_settings(
+            strategy_macd_30s_enabled=False,
+            strategy_polygon_30s_enabled=True,
+        ),
+        now_provider=fixed_now,
+    )
+    assert not any(
+        "MAI_TAI_STRATEGY_POLYGON_30S_LIVE_AGGREGATE_BARS_ENABLED" in record.message
+        for record in caplog.records
+    ), "tick-built default must not emit the env-drift WARNING"
+
+
 def test_bot_runtime_prunes_symbol_state_when_symbol_is_dropped_from_bot_lifecycle() -> None:
     state = StrategyEngineState(now_provider=fixed_now)
     bot = state.bots["macd_30s"]
