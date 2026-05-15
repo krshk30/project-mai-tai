@@ -2635,18 +2635,38 @@ class StrategyBotRuntime:
         decision: dict[str, str] | None = None,
         completed_bar: OHLCVBar | None = None,
     ) -> None:
+        if self.definition.code == "polygon_30s":
+            logger.info(
+                "[diag2] persist entry sym=%s have_completed=%s",
+                symbol,
+                completed_bar is not None,
+            )
         if self.session_factory is None:
+            if self.definition.code == "polygon_30s":
+                logger.info("[diag2] bail no factory sym=%s", symbol)
             return
 
         builder = self.builder_manager.get_builder(symbol)
         if builder is None:
+            if self.definition.code == "polygon_30s":
+                logger.info("[diag2] bail no builder sym=%s", symbol)
             return
 
         last_bar = completed_bar
         if last_bar is None:
             if not builder.bars:
+                if self.definition.code == "polygon_30s":
+                    logger.info("[diag2] bail no bars sym=%s", symbol)
                 return
             last_bar = builder.bars[-1]
+        if self.definition.code == "polygon_30s":
+            logger.info(
+                "[diag2] persist proceeding sym=%s ts=%.0f vol=%s tc=%s",
+                symbol,
+                float(last_bar.timestamp),
+                int(last_bar.volume),
+                int(last_bar.trade_count),
+            )
         # Skip persisting placeholder bars. vol=0 + tc=0 means either a
         # CHART_EQUITY quiet-minute report or a bar-builder force-close when
         # no trades arrived during the bar window (e.g., mid-bar symbol
