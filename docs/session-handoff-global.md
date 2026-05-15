@@ -8,6 +8,20 @@
 - Overall `/health` may still show `degraded` because of reconciler state. Do not confuse that with a Polygon-specific runtime failure.
 - Keep copied CI counts and failure logs out of the top summary unless they have been revalidated on current `main`.
 
+## 2026-05-15 — PR #140 deployed, OMS HARD_STOP loop unstuck (workstream #6 done)
+
+- VPS HEAD: `efa04ee` (PR #140 — stop-reject fallback + stop_guard preempt for HARD_STOP closes)
+- All 5 services `active`. OMS-restart choreography (stop strategy → restart oms → start strategy) completed at `2026-05-15 11:56:30-11:56:39 UTC`. OMS PID `1286791` at `11:56:35 UTC`.
+- Two bugs fixed together (both required to actually unstick the MOBX-style loop):
+  - Bug A: `_stop_reject_reason` now fires for `intent_type=close` when metadata `stop_guard=true`, so broker stop-rejections route through the existing `_process_stop_reject_market_fallback` market-order escalation. Profit-taking limit exits unchanged.
+  - Bug B: `_cancel_open_exit_orders_before_hard_stop` now cancels prior `stop_guard=true` open orders (previously it bailed the loop), so a new HARD_STOP can supersede a stuck one instead of hitting `broker quantity already reserved for pending exits`.
+- Validation signals to watch on the next live HARD_STOP gap-down:
+  - `STOP_REJECTED_FALLBACK` reason appearing in `oms.log` when a broker stop-rejection escalates to market
+  - `HARD_STOP_PREEMPT_PENDING_EXIT` reason appearing on a second HARD_STOP that preempts a stuck prior one
+  - If both never fire, the position closes normally on the first HARD_STOP (also fine)
+- Account state at restart: only operator-frozen CYN ×8000 ×2 accounts. No virtual positions. **MOBX still cleared** — fix is purely defensive for the next victim.
+- Workstream #6 in the priority table below is marked DONE.
+
 ## 2026-05-15 morning — PR #134 deployed, env-drift WARNING live (workstream #5 done)
 
 - VPS HEAD: `3806673` (PR #134 — env-drift WARNING at strategy boot)
@@ -132,7 +146,7 @@ Expected: count climbs as symbols rotate in, but **caps at 256** even by end of 
 | 3 | **MOBX overcount root cause** — single bar on macd_30s had persisted vol=2.3M vs rebuilt=91k (25× overcount); possibly hydration-replay artifact during today's strategy crash | NOT STARTED | flag for investigation |
 | 4 | schwab_1m HIGH-price discrepancies — CHART_EQUITY persists HIGHs that TIMESALE rebuild cannot reproduce (1-5¢ deltas, up to 3-4% on penny stocks) | NOT STARTED | flag for investigation |
 | 5 | Env-drift startup warning — strategy logs a `WARNING` at boot when `polygon_30s_runtime_uses_live_aggregate_bars` resolves to `True` (i.e., `LIVE_AGGREGATE_BARS_ENABLED=true` with `FORCE_TICK_BUILT_MODE` unset) | **DONE** | PR [#134](https://github.com/krshk30/project-mai-tai/pull/134) merged + deployed 2026-05-15 10:40 UTC |
-| 6 | MOBX `stop_guard` permanent-rejection loop — OMS-risk rejects every close with `HARD_STOP / FLOOR_BREACH` because limit price has gapped beyond `panic_buffer_pct`. Position can't unstick itself, even though it's not in `MAI_TAI_PROTECTED_SYMBOLS` | NOT STARTED | high-value structural fix |
+| 6 | HARD_STOP permanent-rejection loop — two latent bugs: (A) `_stop_reject_reason` excluded close intents so broker stop-rejections never escalated to market fallback; (B) preempt-cancel bailed on prior `stop_guard=true` orders so subsequent HARD_STOPs blocked on reserved-quantity check forever | **DONE** | PR [#140](https://github.com/krshk30/project-mai-tai/pull/140) merged + deployed 2026-05-15 11:56 UTC |
 | 7 | Strategy SIGTERM-timeout-then-SIGKILL on shutdown (asyncio `attached to a different loop` bug) — happens on every restart, 30s wasted each time | NOT STARTED | quality-of-life |
 
 Recommended order for tomorrow's session: validation checklist first → if green, pick up #5 (small, concrete) or #6 (high-value, more involved). Don't touch #3/#4 without a quiet afternoon.
