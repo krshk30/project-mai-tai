@@ -8,6 +8,35 @@
 - Overall `/health` may still show `degraded` because of reconciler state. Do not confuse that with a Polygon-specific runtime failure.
 - Keep copied CI counts and failure logs out of the top summary unless they have been revalidated on current `main`.
 
+## 2026-05-15 LIVE ROLLBACK PREP - macd_30s P4 expanded too aggressively after the P4 rework
+
+- Live symptom:
+  - `macd_30s` started surfacing `P4_BURST` signals that did not match the older tighter live P4 behavior
+  - the operator explicitly reported that P4 was "throwing signals for no reason"
+- Root cause confirmed before rollback:
+  - the real expansion was not the same-move duplicate hotfix by itself
+  - it was the earlier P4 rework from PR `#142`, specifically enabling the weaker `prev_bar` P4 path for live Schwab 30s
+  - compare replay on today's bars showed:
+    - old P4 rules: `40` hits
+    - current P4 rules: `847` hits
+    - current-only extras: `823`
+  - that made it clear the new `prev_bar` path was far more permissive than the pre-`#142` classic burst behavior
+- Rollback prepared locally:
+  - set `p4_prev_bar_entry_enabled=False` again for live Schwab 30s
+  - set `p4_classic_requires_confirmation=False` again
+  - set `p4_block_late_chase_rearm=False` again
+  - restore classic `P4_BURST` immediate-entry behavior instead of the setup/confirm rework
+  - keep the change narrowly scoped to P4 behavior only; do not touch `P5`, `CYN`, or unrelated OMS/runtime paths
+- Regression coverage updated:
+  - `tests/unit/test_strategy_core.py::test_schwab_native_entry_engine_can_fire_p4_burst`
+  - `tests/unit/test_strategy_core.py::test_schwab_native_variant_rolls_back_prev_bar_p4_path`
+- Local validation:
+  - `pytest tests/unit/test_strategy_core.py -k "p4_burst or prev_bar or late_chase"` -> `3 passed`
+  - `python -m py_compile src/project_mai_tai/strategy_core/schwab_native_30s.py src/project_mai_tai/strategy_core/trading_config.py tests/unit/test_strategy_core.py`
+- Deploy intent:
+  - strategy-only deploy is sufficient for this rollback
+  - after deploy, recheck recent persisted `P4_BURST` rows and confirm the extra `prev_bar` continuation-style hits disappear
+
 ## 2026-05-15 LIVE HOTFIX PREP - macd_30s P4 was retriggering on the same move
 
 - Live symptom:
