@@ -42,6 +42,7 @@ from project_mai_tai.services.control_plane import (
     _build_bot_decision_rows,
     _build_bot_listening_status,
     _dedupe_decision_events,
+    _exchange_schwab_authorization_code,
     _normalize_closed_today_rows,
     _render_confirmed_catalyst_cell,
     _select_filled_order_reason,
@@ -70,6 +71,46 @@ class FakeRedis:
 
     async def aclose(self) -> None:
         return None
+
+
+def test_exchange_schwab_authorization_code_uses_url_request(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self) -> bytes:
+            return b'{\"access_token\":\"access\",\"refresh_token\":\"refresh\",\"expires_in\":1800}'
+
+    def fake_urlopen(request, timeout):
+        captured["request"] = request
+        captured["timeout"] = timeout
+        return FakeResponse()
+
+    monkeypatch.setattr(control_plane_module, "urlopen", fake_urlopen)
+    settings = Settings(
+        redis_stream_prefix="test",
+        oms_adapter="alpaca_paper",
+        schwab_client_id="client-id",
+        schwab_client_secret="client-secret",
+        schwab_token_url="https://example.test/token",
+    )
+
+    payload = _exchange_schwab_authorization_code(settings, "sample-code")
+
+    request = captured["request"]
+    assert request.full_url == "https://example.test/token"
+    assert request.get_method() == "POST"
+    assert request.data is not None
+    assert b"grant_type=authorization_code" in request.data
+    assert b"code=sample-code" in request.data
+    assert captured["timeout"] == settings.schwab_request_timeout_seconds
+    assert payload["access_token"] == "access"
+    assert payload["refresh_token"] == "refresh"
 
 
 def test_normalize_closed_today_rows_replaces_raw_broker_payload_reason() -> None:

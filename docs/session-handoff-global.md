@@ -8,6 +8,28 @@
 - Overall `/health` may still show `degraded` because of reconciler state. Do not confuse that with a Polygon-specific runtime failure.
 - Keep copied CI counts and failure logs out of the top summary unless they have been revalidated on current `main`.
 
+## 2026-05-15 LIVE AUTH FIX PREP - Schwab OAuth callback page was broken by Request import shadowing
+
+- Symptom reported from the live auth page:
+  - `Schwab OAuth Failed`
+  - `Request.__init__() got an unexpected keyword argument 'data'`
+- Root cause:
+  - `src/project_mai_tai/services/control_plane.py` imported both `urllib.request.Request` and `fastapi.Request` under the same name
+  - the Schwab auth-code exchange helper accidentally called the FastAPI request class instead of the urllib request class when posting to the token endpoint
+- Local fix prepared:
+  - alias `urllib.request.Request` as `UrlRequest`
+  - alias `fastapi.Request` as `FastAPIRequest`
+  - use `UrlRequest(...)` inside `_exchange_schwab_authorization_code(...)`
+  - keep the middleware request annotation on `FastAPIRequest`
+- Regression coverage added:
+  - `tests/unit/test_control_plane.py::test_exchange_schwab_authorization_code_uses_url_request`
+- Local validation:
+  - `pytest tests/unit/test_control_plane.py -k "exchange_schwab_authorization_code_uses_url_request or dynamic_pages_disable_caching"` -> `2 passed`
+  - `python -m py_compile src/project_mai_tai/services/control_plane.py tests/unit/test_control_plane.py`
+- Deploy intent:
+  - control-plane-only deploy is sufficient for this fix
+  - after deploy, retry `/auth/schwab/start`; if the page still fails, the next error should be a real Schwab token exchange response rather than this local Python constructor bug
+
 ## 2026-05-15 LIVE DEPLOY - macd_30s P4 rework is live, but Schwab OAuth failure blocks meaningful runtime validation
 
 - PR `#142` is merged on `main` and deployed on the VPS.
