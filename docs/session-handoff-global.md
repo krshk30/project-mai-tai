@@ -16,9 +16,9 @@
 - WARNING validation: silent in `strategy.log` post-restart, as expected — env on VPS is correctly `MAI_TAI_STRATEGY_POLYGON_30S_LIVE_AGGREGATE_BARS_ENABLED=false`. The warning will only fire on a VPS whose env still carries the legacy opt-in.
 - Workstream #5 in the priority table below is marked DONE.
 
-## 2026-05-15 LOCAL FEATURE - macd_30s live trade-forensics report on bot page
+## 2026-05-15 LIVE FEATURE - macd_30s trade-forensics report on bot page
 
-- A new deterministic `Trade Forensics` panel was added locally on branch `codex/macd-trade-forensics-report`.
+- A new deterministic `Trade Forensics` panel is now merged on `main` and deployed on `project-mai-tai-control.service`.
 - Scope:
   - lives on the bot detail page and `/api/bots`
   - uses production-style completed flat-to-flat trade cycles reconstructed from `fills` + filled `broker_orders`
@@ -34,9 +34,9 @@
   - `pytest tests/unit/test_control_plane.py` -> `48 passed`
   - `python -m py_compile src/project_mai_tai/services/control_plane.py tests/unit/test_control_plane.py`
 - Status:
-  - implemented and tested locally only
-  - **not merged, not pushed, not deployed**
-  - next step is operator review, then push/PR/deploy if wanted
+  - merged via PR `#135`
+  - control-plane-only deploy succeeded via `Deploy Service` run `25913583965`
+  - public HTTPS verification from this workstation is currently blocked by `401 Authorization Required`, so live render verification must be done either from the authenticated UI or a VPS-local curl path
 
 ## 🚩 NEXT SESSION (2026-05-15) — READ FIRST — Claude handoff from 2026-05-14 EOD
 
