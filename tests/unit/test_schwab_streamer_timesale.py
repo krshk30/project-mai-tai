@@ -1,7 +1,12 @@
 """Smoke tests for the LEVELONE/CHART/TIMESALE multi-service streamer."""
 from __future__ import annotations
 
+import asyncio
+
+import pytest
+
 from project_mai_tai.market_data.schwab_streamer import SchwabStreamerClient
+from project_mai_tai.settings import Settings
 
 
 def test_levelone_trade_extraction_unchanged() -> None:
@@ -76,3 +81,44 @@ def test_chart_equity_bar_extraction() -> None:
     assert bars[0].close == 10.2
     assert bars[0].volume == 5000
     assert bars[0].interval_secs == 60
+
+
+class _HangingWebSocket:
+    async def close(self) -> None:
+        await asyncio.Event().wait()
+
+
+@pytest.mark.asyncio
+async def test_stop_bounds_total_time_when_websocket_close_and_task_both_hang() -> None:
+    """stop() must not hang past ~6s when ws.close() and the connection task both stall."""
+    client = SchwabStreamerClient(Settings())
+
+    async def hanging_connection_loop() -> None:
+        await asyncio.Event().wait()
+
+    client._task = asyncio.create_task(hanging_connection_loop())
+    client._ws = _HangingWebSocket()  # type: ignore[assignment]
+
+    loop = asyncio.get_running_loop()
+    start = loop.time()
+    await asyncio.wait_for(client.stop(), timeout=10.0)
+    elapsed = loop.time() - start
+
+    assert elapsed < 8.0, f"stop() took {elapsed:.2f}s; expected < 8s"
+    assert client._task is None
+    assert client._ws is None
+    assert client._stop_event.is_set()
+
+
+@pytest.mark.asyncio
+async def test_stop_completes_fast_when_streamer_is_idle() -> None:
+    """stop() returns quickly when there's no task and no websocket — no regression on the happy path."""
+    client = SchwabStreamerClient(Settings())
+
+    loop = asyncio.get_running_loop()
+    start = loop.time()
+    await client.stop()
+    elapsed = loop.time() - start
+
+    assert elapsed < 0.5
+    assert client._stop_event.is_set()

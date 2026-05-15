@@ -5388,12 +5388,21 @@ class StrategyEngineService:
                 await self._publish_heartbeat("healthy")
                 last_heartbeat_at = utcnow()
 
-        await self._publish_heartbeat("stopping")
+        try:
+            await asyncio.wait_for(self._publish_heartbeat("stopping"), timeout=2.0)
+        except TimeoutError:
+            self.logger.warning("publish_heartbeat('stopping') timed out; proceeding with shutdown")
         if self._schwab_stream_client is not None:
-            await self._schwab_stream_client.stop()
+            try:
+                await asyncio.wait_for(self._schwab_stream_client.stop(), timeout=10.0)
+            except TimeoutError:
+                self.logger.warning("Schwab streamer stop timed out; proceeding with shutdown")
         if self._schwab_tick_archive is not None:
             self._schwab_tick_archive.close()
-        await self.redis.aclose()
+        try:
+            await asyncio.wait_for(self.redis.aclose(), timeout=5.0)
+        except TimeoutError:
+            self.logger.warning("redis aclose timed out; proceeding with shutdown")
         self.logger.info("%s stopping", SERVICE_NAME)
 
     async def _prefill_alert_history_from_snapshot_batches(self) -> None:
