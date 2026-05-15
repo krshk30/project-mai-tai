@@ -113,11 +113,24 @@ class SchwabStreamerClient:
         self._connected = False
         if ws is not None:
             try:
-                await ws.close()
-            except Exception:
-                logger.debug("error closing Schwab streamer websocket", exc_info=True)
+                await asyncio.wait_for(ws.close(), timeout=2.0)
+            except (TimeoutError, Exception):
+                logger.debug("error or timeout closing Schwab streamer websocket", exc_info=True)
         if self._task is not None:
-            await asyncio.gather(self._task, return_exceptions=True)
+            try:
+                await asyncio.wait_for(
+                    asyncio.shield(asyncio.gather(self._task, return_exceptions=True)),
+                    timeout=3.0,
+                )
+            except TimeoutError:
+                self._task.cancel()
+                try:
+                    await asyncio.wait_for(
+                        asyncio.gather(self._task, return_exceptions=True),
+                        timeout=1.0,
+                    )
+                except (TimeoutError, Exception):
+                    logger.debug("Schwab streamer task did not exit cleanly", exc_info=True)
             self._task = None
         self._credentials = None
         self._subscribed_symbols.clear()
