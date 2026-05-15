@@ -10,6 +10,7 @@ from html import escape
 from io import StringIO
 import json
 from pathlib import Path
+import time
 from typing import Any
 from urllib.error import HTTPError
 from urllib.parse import quote, urlencode
@@ -256,6 +257,7 @@ class ControlPlaneRepository:
         self._bot_dashboard_cache: dict[str, Any] | None = None
         self._bot_dashboard_cache_at: datetime | None = None
         self._bot_dashboard_cache_lock = asyncio.Lock()
+        self._trade_forensics_cache: dict[tuple, tuple[float, dict[tuple[str, str], dict[str, Any]]]] = {}
 
     @staticmethod
     def _snapshot_matches_current_scanner_session(
@@ -942,9 +944,11 @@ class ControlPlaneRepository:
         self,
         *,
         strategy_accounts: list[tuple[str, str]],
-        lookback_days: int = 7,
+        lookback_days: int | None = None,
         now: datetime | None = None,
     ) -> dict[tuple[str, str], dict[str, Any]]:
+        if not bool(self.settings.dashboard_trade_forensics_enabled):
+            return {}
         normalized_pairs = [
             (str(strategy_code or "").strip(), str(account_name or "").strip())
             for strategy_code, account_name in strategy_accounts
@@ -954,10 +958,24 @@ class ControlPlaneRepository:
         if not unique_pairs:
             return {}
 
+        resolved_lookback = int(
+            lookback_days
+            if lookback_days is not None
+            else self.settings.dashboard_trade_forensics_lookback_days
+        )
+        cache_ttl = max(0.0, float(self.settings.dashboard_trade_forensics_cache_ttl_seconds))
+        cache_key = (tuple(unique_pairs), resolved_lookback)
+        if cache_ttl > 0 and now is None:
+            cached = self._trade_forensics_cache.get(cache_key)
+            if cached is not None:
+                cached_at, cached_value = cached
+                if time.monotonic() - cached_at < cache_ttl:
+                    return cached_value
+
         reference_now = now or utcnow()
         today_start = current_eastern_day_start_utc(reference_now)
         today_end = current_eastern_day_end_utc(reference_now)
-        history_start = today_start - timedelta(days=max(lookback_days - 1, 0))
+        history_start = today_start - timedelta(days=max(resolved_lookback - 1, 0))
 
         reports: dict[tuple[str, str], dict[str, Any]] = {}
         with self.session_factory() as session:
@@ -988,8 +1006,10 @@ class ControlPlaneRepository:
                     today_start=today_start,
                     today_end=today_end,
                     history_start=history_start,
-                    lookback_days=lookback_days,
+                    lookback_days=resolved_lookback,
                 )
+        if cache_ttl > 0 and now is None:
+            self._trade_forensics_cache[cache_key] = (time.monotonic(), reports)
         return reports
 
     def _load_trade_forensics_orders(

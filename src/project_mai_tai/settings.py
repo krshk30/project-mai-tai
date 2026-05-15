@@ -300,6 +300,9 @@ class Settings(BaseSettings):
     dashboard_refresh_seconds: int = 5
     dashboard_snapshot_persistence_enabled: bool = True
     dashboard_scanner_history_retention: int = 5_000
+    dashboard_trade_forensics_enabled: bool = False
+    dashboard_trade_forensics_lookback_days: int = 2
+    dashboard_trade_forensics_cache_ttl_seconds: float = 30.0
     strategy_history_persistence_enabled: bool = True
     service_heartbeat_interval_seconds: int = 15
     reconciliation_interval_seconds: int = 30
