@@ -8,6 +8,27 @@
 - Overall `/health` may still show `degraded` because of reconciler state. Do not confuse that with a Polygon-specific runtime failure.
 - Keep copied CI counts and failure logs out of the top summary unless they have been revalidated on current `main`.
 
+## 2026-05-15 LIVE DEPLOY - macd_30s P4 rework is live, but Schwab OAuth failure blocks meaningful runtime validation
+
+- PR `#142` is merged on `main` and deployed on the VPS.
+- VPS `main` HEAD after deploy: `8c6f0ae` (`Rework Schwab 30s P4 setup confirmation (#142)`).
+- Strategy-only restart completed at `2026-05-15 14:07:13 UTC` (`10:07:13 AM ET`).
+- Why this was a manual deploy instead of the official workflow:
+  - `deploy_preflight.py --service strategy` timed out on `/api/overview`
+  - direct VPS DB checks before restart showed `0` open virtual positions, `0` broker account positions, and `0` fills in the last `180s`
+  - there were still `70` stale pending/submitted/accepted intents in the database, so treat this as an operator-approved manual restart rather than a clean automated preflight pass
+- Post-deploy state:
+  - `/health`: `market-data-gateway=healthy`, `oms-risk=healthy`, `strategy-engine=degraded`; overall still `degraded`
+  - `/api/bots` for `macd_30s` shows fresh runtime timestamps after restart, but the bot is `DEGRADED`
+- Current blocker to judging P4 live:
+  - the Schwab refresh token on the VPS is invalid/revoked
+  - control-plane `data_health` marks the Schwab 30s watchlist `critical` with `Schwab OAuth refresh failed on the VPS; reauthorize Schwab tokens before trading`
+  - `strategy.log` shows repeated `invalid_grant` / `failed refreshing Schwab token` errors immediately before and after restart
+- Interpretation:
+  - the P4 code is live
+  - any immediate no-trade / critical-state behavior after this deploy should be blamed on the Schwab OAuth outage first, not on the P4 rework
+  - reauthorize Schwab on the VPS before using live behavior to judge whether PR `#142` helped
+
 ## 2026-05-15 afternoon — workstreams #3, #4, #7 closed in one sweep
 
 Quiet pre-RTH window, picked up the remaining open workstreams.
@@ -30,7 +51,7 @@ Quiet pre-RTH window, picked up the remaining open workstreams.
   - If both never fire, the position closes normally on the first HARD_STOP (also fine)
 - Account state at restart: only operator-frozen CYN ×8000 ×2 accounts. No virtual positions. **MOBX still cleared** — fix is purely defensive for the next victim.
 - Workstream #6 in the priority table below is marked DONE.
-## 2026-05-15 LIVE LOGIC UPDATE - macd_30s P4 rework prepared locally, not deployed yet
+## 2026-05-15 LIVE LOGIC UPDATE - macd_30s P4 rework prepared locally before deploy
 
 - Root-cause analysis from the VPS-backed last-7-day `P4_BURST` audit:
   - `11/16` filled `P4_BURST` trades had an earlier valid setup-style bar before the live burst entry, so the current live path often chases a later/worse burst.
@@ -52,8 +73,8 @@ Quiet pre-RTH window, picked up the remaining open workstreams.
   - `PYTHONPATH=. pytest tests/unit/test_schwab_1m_bot.py -k "completed_bar_entries_and_shorter_cooldown or intended_live_execution_tuning"` -> `2 passed`
   - `python -m py_compile src/project_mai_tai/strategy_core/schwab_native_30s.py src/project_mai_tai/strategy_core/trading_config.py tests/unit/test_strategy_core.py tests/unit/test_schwab_1m_bot.py`
 - Deploy status:
-  - this P4 rework is **not deployed yet**
-  - review it as the planned replacement for the current live `P4_BURST` behavior before restarting `strategy`
+  - this entry records the pre-deploy local validation state for PR `#142`
+  - see the newer `LIVE DEPLOY` section above for the actual VPS rollout state
 
 ## 2026-05-15 morning — PR #134 deployed, env-drift WARNING live (workstream #5 done)
 
