@@ -72,9 +72,17 @@ def _normalize_aggregate_trade_count(message, volume: int) -> int:
 
 
 class MassiveSnapshotProvider:
+    # When a `fetch_historical_bars` call times out or errors, skip further
+    # attempts for the same symbol/interval for this many seconds. Prevents
+    # the scanner re-promoting a problematic symbol every few seconds and
+    # flooding the worker pool with HTTP threads that will all fail the
+    # same way.
+    HISTORICAL_FETCH_FAILURE_COOLDOWN_SECONDS = 60.0
+
     def __init__(self, api_key: str):
         self.api_key = api_key
         self._client = None
+        self._historical_failures: dict[tuple[str, int], float] = {}
 
     def fetch_all_snapshots(self) -> list[SnapshotRecord]:
         client = self._get_rest_client()
@@ -152,18 +160,32 @@ class MassiveSnapshotProvider:
         lookback_calendar_days: int,
         limit: int,
     ) -> list[HistoricalBarRecord]:
+        failure_key = (str(symbol).upper(), int(interval_secs))
+        cooldown_until = self._historical_failures.get(failure_key)
+        if cooldown_until is not None:
+            if time.monotonic() < cooldown_until:
+                return []
+            # Cooldown elapsed; clear and allow a fresh attempt.
+            self._historical_failures.pop(failure_key, None)
+
         client = self._get_rest_client()
         multiplier, timespan = self._resolve_agg_interval(interval_secs)
         from_date = date.today() - timedelta(days=max(1, lookback_calendar_days))
         to_date = date.today()
-        aggs = client.list_aggs(
-            symbol,
-            multiplier,
-            timespan,
-            from_=from_date.strftime("%Y-%m-%d"),
-            to=to_date.strftime("%Y-%m-%d"),
-            limit=limit,
-        )
+        try:
+            aggs = client.list_aggs(
+                symbol,
+                multiplier,
+                timespan,
+                from_=from_date.strftime("%Y-%m-%d"),
+                to=to_date.strftime("%Y-%m-%d"),
+                limit=limit,
+            )
+        except Exception:
+            self._historical_failures[failure_key] = (
+                time.monotonic() + self.HISTORICAL_FETCH_FAILURE_COOLDOWN_SECONDS
+            )
+            raise
         bars: list[HistoricalBarRecord] = []
         for agg in aggs:
             close = _to_float(getattr(agg, "close", None))
@@ -210,7 +232,21 @@ class MassiveSnapshotProvider:
                 raise RuntimeError(
                     "The 'massive' package is required for live market-data polling."
                 ) from exc
-            self._client = RESTClient(api_key=self.api_key)
+            # `retries=0` is critical here. The default `retries=3` makes
+            # urllib3 retry transient timeouts with exponential backoff —
+            # each failed call then takes ~30-60s to return. We invoke this
+            # client from `asyncio.to_thread(...)` wrapped in
+            # `asyncio.wait_for(timeout=15)`; the asyncio side cancels at
+            # 15s but the urllib3 retry loop keeps running in the worker
+            # thread, leaking threads and pinning CPU. With `retries=0`
+            # each call either succeeds or fails fast in ~read_timeout
+            # seconds, so the thread exits cleanly on cancellation.
+            self._client = RESTClient(
+                api_key=self.api_key,
+                connect_timeout=5.0,
+                read_timeout=8.0,
+                retries=0,
+            )
         return self._client
 
     def _resolve_agg_interval(self, interval_secs: int) -> tuple[int, str]:
