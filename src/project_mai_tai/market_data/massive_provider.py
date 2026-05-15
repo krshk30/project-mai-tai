@@ -453,29 +453,21 @@ class MassiveTradeStream:
         )
 
     async def _close_ws(self) -> None:
-        ws = self._ws
+        # We deliberately do NOT call ws.close() here. The massive WebSocket
+        # client's close() returns an awaitable that internally executes
+        # `await self.websocket.close()` → `async with send_context()` →
+        # `await asyncio.shield(self.connection_lost_waiter)`. That future
+        # was created in the ws.run thread loop, so awaiting it from the
+        # main asyncio loop trips `RuntimeError: Future attached to a
+        # different loop`. Whether we treat the return as a coroutine
+        # (.close()) or a Task (.cancel()) or just await it, the underlying
+        # send_context path is reached and the bug fires.
+        #
+        # Instead, drop the reference and let _run_loop's ws.run task
+        # detect the closure (either via ws_task.cancel() in the watchdog
+        # path, or via a natural disconnect/exception). The next reconnect
+        # builds a fresh WebSocketClient from scratch.
         self._ws = None
-        if ws is None:
-            return
-        close = getattr(ws, "close", None)
-        if close is None:
-            return
-        try:
-            result = close()
-            if inspect.iscoroutine(result):
-                # Awaiting the close coroutine from the main asyncio loop
-                # trips the cross-loop bug inside the websockets library
-                # (send_context → asyncio.shield(connection_lost_waiter)
-                # against a future from ws.run's thread loop). The close
-                # was already initiated by calling close(); abandon the
-                # coroutine so the websocket tears down asynchronously in
-                # its own loop. The next _run_loop iteration will see the
-                # disconnect and reconnect.
-                result.close()
-            elif inspect.isawaitable(result):
-                await result
-        except Exception:
-            logger.debug("Failed to close Massive websocket cleanly", exc_info=True)
 
     def _downgrade_aggregate_subscriptions(self, exc: Exception) -> bool:
         if not self._aggregate_subscriptions_enabled:
