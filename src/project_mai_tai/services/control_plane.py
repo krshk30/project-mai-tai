@@ -13,10 +13,10 @@ from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError
 from urllib.parse import quote, urlencode
-from urllib.request import Request, urlopen
+from urllib.request import Request as UrlRequest, urlopen
 from zoneinfo import ZoneInfo
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request as FastAPIRequest
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from redis.asyncio import Redis
 from sqlalchemy import case, desc, func, select, text
@@ -153,7 +153,7 @@ def _exchange_schwab_authorization_code(settings: Settings, code: str) -> dict[s
         }
     ).encode("utf-8")
     basic = base64.b64encode(f"{client_id}:{client_secret}".encode("utf-8")).decode("ascii")
-    request = Request(
+    request = UrlRequest(
         settings.schwab_token_url,
         data=body,
         headers={
@@ -3182,7 +3182,7 @@ def build_app(
     )
 
     @app.middleware("http")
-    async def disable_dynamic_response_caching(request: Request, call_next):
+    async def disable_dynamic_response_caching(request: FastAPIRequest, call_next):
         response = await call_next(request)
         if request.method.upper() in {"GET", "HEAD"} and _should_disable_cache_for_response(
             response.headers.get("content-type")
