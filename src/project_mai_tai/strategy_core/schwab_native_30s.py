@@ -717,6 +717,11 @@ class _PendingConfirmation:
     cross_price: float
     required_score: int
     bars_waiting: int = 0
+    setup_source: str = ""
+    setup_open: float = 0.0
+    setup_close: float = 0.0
+    setup_high: float = 0.0
+    setup_low: float = 0.0
 
 
 @dataclass
@@ -872,7 +877,7 @@ class SchwabNativeEntryEngine:
             if ticker in self._pending:
                 return None
 
-        path, score, score_details, chop = self._evaluate_paths(ticker, indicators, bar_index)
+        path, score, score_details, chop, immediate_entry, setup_source = self._evaluate_paths(ticker, indicators, bar_index)
         if path is None:
             if chop.active:
                 self._record_decision(
@@ -914,20 +919,22 @@ class SchwabNativeEntryEngine:
                 )
                 return None
 
-        if (
-            path in {"P4_BURST", "P5_PULLBACK"}
-            or not self.config.schwab_native_use_confirmation
-            or self.config.confirm_bars <= 0
-        ):
+        if immediate_entry or not self.config.schwab_native_use_confirmation or self.config.confirm_bars <= 0:
             self._last_buy_bar[ticker] = bar_index
             self._record_decision(ticker, status="signal", reason=path, path=path, score=score, score_details=score_details)
             return self._build_buy_signal(ticker, path, indicators, score, score_details)
 
+        current = self._snapshot_from_indicators(indicators, bar_index=bar_index)
         self._pending[ticker] = _PendingConfirmation(
             trigger_bar_idx=bar_index,
             trigger_path=path,
             cross_price=float(indicators["price"]),
             required_score=self.config.p3_min_score if path == "P3_SURGE" else self.config.min_score,
+            setup_source=setup_source,
+            setup_open=float(current["open"]) if current is not None else 0.0,
+            setup_close=float(current["close"]) if current is not None else float(indicators["price"]),
+            setup_high=float(current["high"]) if current is not None else float(indicators.get("high", indicators["price"])),
+            setup_low=float(current["low"]) if current is not None else float(indicators.get("low", indicators["price"])),
         )
         self._record_decision(ticker, status="pending", reason=f"{path} waiting confirmation", path=path)
         return None
@@ -965,6 +972,17 @@ class SchwabNativeEntryEngine:
                 path=pending.trigger_path,
             )
             return None
+        if pending.trigger_path == "P4_BURST" and pending.setup_source == "classic":
+            p4_confirmation_error = self._p4_confirmation_error(pending, current)
+            if p4_confirmation_error:
+                self._pending.pop(ticker, None)
+                self._record_decision(
+                    ticker,
+                    status="blocked",
+                    reason=p4_confirmation_error,
+                    path=pending.trigger_path,
+                )
+                return None
         score, score_details = self._quality_score(indicators)
         if score < pending.required_score or float(indicators.get("volume", 0) or 0) < self.config.vol_min:
             self._pending.pop(ticker, None)
@@ -994,14 +1012,14 @@ class SchwabNativeEntryEngine:
         ticker: str,
         indicators: dict[str, float | bool],
         bar_index: int,
-    ) -> tuple[str | None, int, str, _ChopEvaluation]:
+    ) -> tuple[str | None, int, str, _ChopEvaluation, bool, str]:
         common = self._common_gate_state(indicators)
         vol_ok = bool(common["vol_ok"])
         time_allowed = self._time_allowed()
         recent = self._recent_bars.get(ticker, [])
         current = self._snapshot_from_indicators(indicators, bar_index=bar_index)
         if current is None:
-            return None, 0, "diag: g[current=missing]", _ChopEvaluation(False, False, 0, [], False, False, False)
+            return None, 0, "diag: g[current=missing]", _ChopEvaluation(False, False, 0, [], False, False, False), False, ""
         previous = recent[-1] if recent else None
         chop = self._evaluate_chop_lock(ticker, indicators, current, recent)
 
@@ -1048,9 +1066,9 @@ class SchwabNativeEntryEngine:
                     current=current,
                     previous=previous,
                     recent=recent,
-                ), chop
+                ), chop, False, ""
             score, details = self._quality_score(indicators)
-            return "P1_CROSS", score, details, chop
+            return "P1_CROSS", score, details, chop, False, ""
 
         raw_p2 = (
             bool(indicators.get("price_cross_above_vwap", False))
@@ -1075,9 +1093,9 @@ class SchwabNativeEntryEngine:
                     current=current,
                     previous=previous,
                     recent=recent,
-                ), chop
+                ), chop, False, ""
             score, details = self._quality_score(indicators)
-            return "P2_VWAP", score, details, chop
+            return "P2_VWAP", score, details, chop, False, ""
 
         raw_p3 = (
             bool(indicators.get("macd_above_signal", False))
@@ -1124,9 +1142,9 @@ class SchwabNativeEntryEngine:
                     current=current,
                     previous=previous,
                     recent=recent,
-                ), chop
+                ), chop, False, ""
             score, details = self._quality_score(indicators)
-            return "P3_SURGE", score, details, chop
+            return "P3_SURGE", score, details, chop, False, ""
 
         raw_p4 = False
         if self.config.p4_enabled and previous is not None:
@@ -1162,15 +1180,19 @@ class SchwabNativeEntryEngine:
                 and time_allowed
                 and self._p4_prev_bar_entry_ok(previous, current)
             )
-            raw_p4 = (raw_p4_classic and current["high"] > recent_high) or raw_p4_prev_bar
-            if raw_p4:
+            raw_p4_classic = raw_p4_classic and current["high"] > recent_high
+            raw_p4 = raw_p4_classic or raw_p4_prev_bar
+            if raw_p4_prev_bar:
                 score, details = self._quality_score(indicators)
-                return "P4_BURST", score, details, chop
+                return "P4_BURST", score, details, chop, True, "prev_bar"
+            if raw_p4_classic and not self._p4_late_chase_recent_setup_exists(recent):
+                score, details = self._quality_score(indicators)
+                return "P4_BURST", score, details, chop, not self.config.p4_classic_requires_confirmation, "classic"
 
         raw_p5 = self._is_pullback_entry_ready(ticker, current, recent)
         if raw_p5 and time_allowed:
             score, details = self._quality_score(indicators)
-            return "P5_PULLBACK", score, details, chop
+            return "P5_PULLBACK", score, details, chop, True, ""
 
         return (
             None,
@@ -1191,7 +1213,47 @@ class SchwabNativeEntryEngine:
                 recent=recent,
             ),
             chop,
+            False,
+            "",
         )
+
+    def _p4_late_chase_recent_setup_exists(self, recent: list[dict[str, float]]) -> bool:
+        if not self.config.p4_block_late_chase_rearm or not self.config.p4_prev_bar_entry_enabled:
+            return False
+        lookback = max(int(self.config.p4_late_chase_lookback_bars or 0), 0)
+        if lookback <= 0 or len(recent) < 2:
+            return False
+        window = recent[-(lookback + 1) :]
+        for previous, current in zip(window, window[1:]):
+            if self._p4_prev_bar_entry_ok(previous, current):
+                return True
+        return False
+
+    def _p4_confirmation_error(
+        self,
+        pending: _PendingConfirmation,
+        current: dict[str, float] | None,
+    ) -> str | None:
+        if current is None:
+            return "P4 confirmation missing bar snapshot"
+        if self.config.p4_confirm_next_open_max_breakdown_pct is not None and pending.setup_close > 0:
+            min_allowed_open = pending.setup_close * (
+                1.0 - (float(self.config.p4_confirm_next_open_max_breakdown_pct) / 100.0)
+            )
+            if current["open"] < min_allowed_open:
+                return "P4 confirmation opened too weak"
+        if self.config.p4_confirm_require_break_setup_high and current["high"] <= pending.setup_high:
+            return "P4 confirmation failed to break setup high"
+        if self.config.p4_confirm_require_close_above_setup_close and current["close"] <= pending.setup_close:
+            return "P4 confirmation closed below setup close"
+        close_top_pct = self.config.p4_confirm_close_top_pct
+        if close_top_pct is not None and current["high"] > current["low"]:
+            min_close_for_band = current["low"] + (current["high"] - current["low"]) * (
+                1.0 - (float(close_top_pct) / 100.0)
+            )
+            if current["close"] < min_close_for_band:
+                return "P4 confirmation close finished too low in range"
+        return None
 
     def _is_pullback_entry_ready(
         self,
