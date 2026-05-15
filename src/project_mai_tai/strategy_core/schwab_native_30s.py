@@ -923,7 +923,7 @@ class SchwabNativeEntryEngine:
                 return None
 
         if (
-            path in {"P4_BURST", "P5_PULLBACK"}
+            (path == "P5_PULLBACK")
             or immediate_entry
             or not self.config.schwab_native_use_confirmation
             or self.config.confirm_bars <= 0
@@ -1181,18 +1181,11 @@ class SchwabNativeEntryEngine:
                 and p4_ema9_dist_ok
                 and time_allowed
             )
-            raw_p4_prev_bar = (
-                not p1_available
-                and not p2_available
-                and not p3_available
-                and time_allowed
-                and self._p4_prev_bar_entry_ok(previous, current)
-            )
             raw_p4_classic = raw_p4_classic and current["high"] > recent_high
-            raw_p4 = (raw_p4_classic and current["high"] > recent_high) or raw_p4_prev_bar
-            if raw_p4:
+            raw_p4 = raw_p4_classic
+            if raw_p4_classic:
                 score, details = self._quality_score(indicators)
-                return "P4_BURST", score, details, chop, True, ""
+                return "P4_BURST", score, details, chop, not self.config.p4_classic_requires_confirmation, "classic"
 
         raw_p5 = self._is_pullback_entry_ready(ticker, current, recent)
         if raw_p5 and time_allowed:
