@@ -8,6 +8,15 @@
 - Overall `/health` may still show `degraded` because of reconciler state. Do not confuse that with a Polygon-specific runtime failure.
 - Keep copied CI counts and failure logs out of the top summary unless they have been revalidated on current `main`.
 
+## 2026-05-15 afternoon — workstreams #3, #4, #7 closed in one sweep
+
+Quiet pre-RTH window, picked up the remaining open workstreams.
+
+- **#7 — Strategy SIGTERM→SIGKILL on shutdown** — fixed and deployed. PR [#143](https://github.com/krshk30/project-mai-tai/pull/143) merged `139b035`, strategy-only restart at `2026-05-15 12:20:21→12:20:22 UTC` (1s clean, no SIGKILL). The "asyncio attached to a different loop" framing in yesterday's handoff was a guess; real symptom was zero log output during the 30s window because `SchwabStreamerClient.stop()` awaited `ws.close()` and `asyncio.gather(self._task)` with no timeouts. Fix bounds every shutdown step with `asyncio.wait_for`: ws.close 2s, task gather 3s + 1s cancel drain, redis aclose 5s, publish_heartbeat('stopping') 2s. Worst-case cleanup ~17s, well under `TimeoutStopSec=30`. Two new tests in `test_schwab_streamer_timesale.py` (hanging-everything bound test + happy-path no-regression test).
+- **#4 — schwab_1m HIGH discrepancies** — closed as not-a-bug, issue [#144](https://github.com/krshk30/project-mai-tai/issues/144) filed. Forensics over 2026-05-14 RTH (22 symbols, 579 flagged bars): 91% are `persisted_HIGH > rebuilt_HIGH`, max delta 4.76%. CHART_EQUITY is the authoritative source for schwab_1m (`live_aggregate_bars_are_final=True`); Schwab's TIMESALE stream systematically drops >95% of executions on heavy-volume bars (MOBX 09:34: CHART vol=2,273,464 vs TIMESALE sum=29,404, 77× undercount). The missing prints carry the HIGH. Issue asks for two follow-ups: (1) validator skips HIGH/LOW comparison when `--strategy-code schwab_1m`; (2) bar-build invariants doc states CHART HIGH/LOW is canonical for schwab_1m.
+- **#3 — MOBX 25× volume overcount** — closed as needs-more-data, issue [#145](https://github.com/krshk30/project-mai-tai/issues/145) filed. Forensics confirmed the outlier: MOBX `bar_time=2026-05-14 15:40:00 UTC` on macd_30s, persisted vol=2,338,034 vs TIMESALE-rebuilt 91,206 (25.6×); persisted open/high `3.15` doesn't appear in any tick in the 15:40 window. DB `updated_at=15:50:57` shows the row was rewritten ~10 min after creation, matching the force-close batch log at 15:50:35. ~60%-confidence mechanism: `bars[-1]` got stuck at `15:40:00` for 10 minutes, late TIMESALE trades routed through `_revise_last_closed_bar_from_trade` each adding `cum_vol` delta. Open question: WHY did `check_bar_closes` stall for 10 min on MOBX when its TIMESALE ticks were flowing? Issue asks for diagnostic-logging PR first (not a speculative cap on the revision path) per `feedback_root_cause_over_bandaid.md` — the band-aid would hide the real stall on the next occurrence. Wait for next instance with the diagnostics live before shipping the targeted fix.
+- VPS HEAD: `139b035` (PR #143). All 5 services active.
+
 ## 2026-05-15 — PR #140 deployed, OMS HARD_STOP loop unstuck (workstream #6 done)
 
 - VPS HEAD: `efa04ee` (PR #140 — stop-reject fallback + stop_guard preempt for HARD_STOP closes)
@@ -143,11 +152,11 @@ Expected: count climbs as symbols rotate in, but **caps at 256** even by end of 
 |---|---|---|---|
 | 1 | macd_30s late-trade revision (PR #77) silent — 100-5000× volume undercounts | **Issue filed** | [#130](https://github.com/krshk30/project-mai-tai/issues/130) |
 | 2 | FD-leak in tick-archive writer | **DONE — needs overnight validation** | PR [#131](https://github.com/krshk30/project-mai-tai/pull/131) merged 2026-05-14 22:14 UTC |
-| 3 | **MOBX overcount root cause** — single bar on macd_30s had persisted vol=2.3M vs rebuilt=91k (25× overcount); possibly hydration-replay artifact during today's strategy crash | NOT STARTED | flag for investigation |
-| 4 | schwab_1m HIGH-price discrepancies — CHART_EQUITY persists HIGHs that TIMESALE rebuild cannot reproduce (1-5¢ deltas, up to 3-4% on penny stocks) | NOT STARTED | flag for investigation |
+| 3 | MOBX 25× overcount — mechanism narrowed to stuck `bars[-1]` + 10 min of `_revise_last_closed_bar_from_trade` re-applies. Root cause of the stall not yet known; wait for next occurrence with diagnostic logging | **ISSUE FILED** | [#145](https://github.com/krshk30/project-mai-tai/issues/145) — diagnostic-logging PR first, then targeted fix |
+| 4 | schwab_1m HIGH-price discrepancies — not a bug; CHART_EQUITY is authoritative for schwab_1m, TIMESALE is a lossy lower bound (drops >95% of prints on heavy bars) | **ISSUE FILED** | [#144](https://github.com/krshk30/project-mai-tai/issues/144) — validator + doc follow-ups |
 | 5 | Env-drift startup warning — strategy logs a `WARNING` at boot when `polygon_30s_runtime_uses_live_aggregate_bars` resolves to `True` (i.e., `LIVE_AGGREGATE_BARS_ENABLED=true` with `FORCE_TICK_BUILT_MODE` unset) | **DONE** | PR [#134](https://github.com/krshk30/project-mai-tai/pull/134) merged + deployed 2026-05-15 10:40 UTC |
 | 6 | HARD_STOP permanent-rejection loop — two latent bugs: (A) `_stop_reject_reason` excluded close intents so broker stop-rejections never escalated to market fallback; (B) preempt-cancel bailed on prior `stop_guard=true` orders so subsequent HARD_STOPs blocked on reserved-quantity check forever | **DONE** | PR [#140](https://github.com/krshk30/project-mai-tai/pull/140) merged + deployed 2026-05-15 11:56 UTC |
-| 7 | Strategy SIGTERM-timeout-then-SIGKILL on shutdown (asyncio `attached to a different loop` bug) — happens on every restart, 30s wasted each time | NOT STARTED | quality-of-life |
+| 7 | Strategy SIGTERM→SIGKILL on shutdown — Schwab streamer teardown had no timeouts, hung indefinitely on a broken WebSocket. Bounded with `asyncio.wait_for` at every shutdown step | **DONE** | PR [#143](https://github.com/krshk30/project-mai-tai/pull/143) merged + deployed 2026-05-15 12:20 UTC |
 
 Recommended order for tomorrow's session: validation checklist first → if green, pick up #5 (small, concrete) or #6 (high-value, more involved). Don't touch #3/#4 without a quiet afternoon.
 
