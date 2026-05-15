@@ -5318,22 +5318,10 @@ class StrategyEngineService:
             self.settings.strategy_macd_30s_default_quantity,
             sorted(self.state.bots.keys()),
         )
-        await self._initialize_stream_offsets()
-        self._restore_alert_engine_state_from_dashboard_snapshot()
-        self._seed_confirmed_candidates_from_dashboard_snapshot()
-        self._restore_runtime_state_from_database()
-        self._purge_stale_manual_stop_snapshots()
-        self._preload_manual_stop_state()
-        await self._prefill_alert_history_from_snapshot_batches()
-        if self._schwab_stream_client is not None:
-            await self._schwab_stream_client.start(
-                on_trade=self._enqueue_schwab_trade_tick,
-                on_quote=self._enqueue_schwab_quote_tick,
-                on_bar=self._enqueue_schwab_live_bar,
-            )
-        await self._sync_subscription_targets()
-        await self._publish_strategy_state_snapshot()
-        await self._publish_heartbeat("starting")
+        init_completed = await self._run_init_phase(stop_event)
+        if not init_completed or stop_event.is_set():
+            await self._shutdown_cleanup()
+            return
         last_runtime_db_reconcile_at = utcnow()
 
         while not stop_event.is_set():
@@ -5388,21 +5376,102 @@ class StrategyEngineService:
                 await self._publish_heartbeat("healthy")
                 last_heartbeat_at = utcnow()
 
+        await self._shutdown_cleanup()
+
+    async def _run_init_phase(self, stop_event: asyncio.Event) -> bool:
+        """Execute the startup sequence, racing it against ``stop_event``.
+
+        Returns ``True`` when init finishes normally. Returns ``False`` if
+        SIGTERM (or SIGINT) arrives mid-init — the caller is then expected to
+        skip the main loop and go straight to bounded cleanup. Without this
+        race, a back-to-back restart hits the unbounded ``_restore_runtime_*``
+        + ``_prefill_alert_history_*`` + Schwab streamer connect chain (~20-40s
+        on a real VPS) and gets SIGKILLed at ``TimeoutStopSec=30``.
+        """
+        if stop_event.is_set():
+            return False
+
+        async def _do_init() -> None:
+            await self._initialize_stream_offsets()
+            self._restore_alert_engine_state_from_dashboard_snapshot()
+            self._seed_confirmed_candidates_from_dashboard_snapshot()
+            self._restore_runtime_state_from_database()
+            self._purge_stale_manual_stop_snapshots()
+            self._preload_manual_stop_state()
+            await self._prefill_alert_history_from_snapshot_batches()
+            if self._schwab_stream_client is not None:
+                await self._schwab_stream_client.start(
+                    on_trade=self._enqueue_schwab_trade_tick,
+                    on_quote=self._enqueue_schwab_quote_tick,
+                    on_bar=self._enqueue_schwab_live_bar,
+                )
+            await self._sync_subscription_targets()
+            await self._publish_strategy_state_snapshot()
+            await self._publish_heartbeat("starting")
+
+        init_task = asyncio.create_task(_do_init())
+        stop_task = asyncio.create_task(stop_event.wait())
+        try:
+            done, _pending = await asyncio.wait(
+                [init_task, stop_task],
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+        finally:
+            if not stop_task.done():
+                stop_task.cancel()
+                try:
+                    await stop_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+
+        if init_task in done:
+            exc = init_task.exception()
+            if exc is not None:
+                raise exc
+            return True
+
+        self.logger.warning(
+            "strategy-engine SIGTERM during init; cancelling in-flight init and shutting down"
+        )
+        init_task.cancel()
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(init_task, return_exceptions=True),
+                timeout=3.0,
+            )
+        except (TimeoutError, Exception):
+            self.logger.debug("init task did not exit cleanly during SIGTERM cancel", exc_info=True)
+        return False
+
+    async def _shutdown_cleanup(self) -> None:
+        """Bounded teardown — every step capped by ``asyncio.wait_for``.
+
+        Worst-case total ~17s, well under systemd's ``TimeoutStopSec=30``.
+        """
         try:
             await asyncio.wait_for(self._publish_heartbeat("stopping"), timeout=2.0)
         except TimeoutError:
             self.logger.warning("publish_heartbeat('stopping') timed out; proceeding with shutdown")
+        except Exception:
+            self.logger.debug("publish_heartbeat('stopping') raised", exc_info=True)
         if self._schwab_stream_client is not None:
             try:
                 await asyncio.wait_for(self._schwab_stream_client.stop(), timeout=10.0)
             except TimeoutError:
                 self.logger.warning("Schwab streamer stop timed out; proceeding with shutdown")
+            except Exception:
+                self.logger.debug("Schwab streamer stop raised", exc_info=True)
         if self._schwab_tick_archive is not None:
-            self._schwab_tick_archive.close()
+            try:
+                self._schwab_tick_archive.close()
+            except Exception:
+                self.logger.debug("tick archive close raised", exc_info=True)
         try:
             await asyncio.wait_for(self.redis.aclose(), timeout=5.0)
         except TimeoutError:
             self.logger.warning("redis aclose timed out; proceeding with shutdown")
+        except Exception:
+            self.logger.debug("redis aclose raised", exc_info=True)
         self.logger.info("%s stopping", SERVICE_NAME)
 
     async def _prefill_alert_history_from_snapshot_batches(self) -> None:
