@@ -172,6 +172,69 @@ def seed_trending_bars(
 
 
 @pytest.mark.asyncio
+async def test_run_init_phase_returns_false_when_stop_event_set_before_call() -> None:
+    """SIGTERM before init starts: _run_init_phase should not begin any work."""
+    import asyncio as _asyncio
+
+    settings = make_test_settings()
+    redis = FakeRedis()
+    service = StrategyEngineService(settings=settings, redis_client=redis)
+
+    init_calls: list[str] = []
+
+    async def fake_step() -> None:
+        init_calls.append("ran")
+
+    service._initialize_stream_offsets = fake_step  # type: ignore[method-assign]
+
+    stop_event = _asyncio.Event()
+    stop_event.set()
+
+    completed = await service._run_init_phase(stop_event)
+    assert completed is False
+    assert init_calls == [], "init must not run when stop_event was already set"
+
+
+@pytest.mark.asyncio
+async def test_run_init_phase_cancels_in_flight_init_when_signal_arrives() -> None:
+    """SIGTERM during init: the in-flight init step must be cancelled within ~3s."""
+    import asyncio as _asyncio
+
+    settings = make_test_settings()
+    redis = FakeRedis()
+    service = StrategyEngineService(settings=settings, redis_client=redis)
+
+    init_started = _asyncio.Event()
+    init_cancelled = _asyncio.Event()
+
+    async def hanging_step() -> None:
+        init_started.set()
+        try:
+            await _asyncio.Event().wait()
+        except _asyncio.CancelledError:
+            init_cancelled.set()
+            raise
+
+    service._initialize_stream_offsets = hanging_step  # type: ignore[method-assign]
+
+    stop_event = _asyncio.Event()
+
+    async def trigger_stop() -> None:
+        await init_started.wait()
+        stop_event.set()
+
+    loop = _asyncio.get_running_loop()
+    start = loop.time()
+    _trigger_task = _asyncio.create_task(trigger_stop())
+    completed = await service._run_init_phase(stop_event)
+    elapsed = loop.time() - start
+
+    assert completed is False
+    assert init_cancelled.is_set(), "the hanging init step should have received CancelledError"
+    assert elapsed < 5.0, f"_run_init_phase took {elapsed:.2f}s; expected < 5s"
+
+
+@pytest.mark.asyncio
 async def test_initialize_stream_offsets_anchors_to_latest_ids() -> None:
     settings = make_test_settings()
     redis = FakeRedis()
