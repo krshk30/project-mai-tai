@@ -258,6 +258,8 @@ class ControlPlaneRepository:
         self._bot_dashboard_cache_at: datetime | None = None
         self._bot_dashboard_cache_lock = asyncio.Lock()
         self._trade_forensics_cache: dict[tuple, tuple[float, dict[tuple[str, str], dict[str, Any]]]] = {}
+        self._regime_profiles_cache: dict[tuple, tuple[float, dict[str, dict[str, Any]]]] = {}
+        self._regime_profiles_cache_ttl_seconds: float = 60.0
 
     @staticmethod
     def _snapshot_matches_current_scanner_session(
@@ -385,6 +387,21 @@ class ControlPlaneRepository:
         self,
         reviews: list[dict[str, Any]],
     ) -> dict[str, dict[str, Any]]:
+        # Heavy: one DB query per unique (strategy_code, symbol, interval_secs)
+        # tuple across all reviews + Python compute per review. Measured ~9.4s
+        # for 843 reviews on the live VPS. The review list itself only grows
+        # when a new flat-to-flat cycle is reviewed (rare), so cache the result
+        # keyed on a fingerprint of cycle_keys with a short TTL.
+        cache_ttl = max(0.0, float(self._regime_profiles_cache_ttl_seconds))
+        cache_key: tuple[str, ...] | None = None
+        if cache_ttl > 0:
+            cache_key = tuple(str(r.get("cycle_key", "") or "") for r in reviews)
+            cached = self._regime_profiles_cache.get(cache_key)
+            if cached is not None:
+                cached_at, cached_value = cached
+                if time.monotonic() - cached_at < cache_ttl:
+                    return cached_value
+
         grouped_reviews: dict[tuple[str, str, int], list[dict[str, Any]]] = {}
         for review in reviews:
             cycle_key = str(review.get("cycle_key", "") or "").strip()
@@ -438,6 +455,8 @@ class ControlPlaneRepository:
                     if profile:
                         profiles[str(window["cycle_key"])] = profile
 
+        if cache_key is not None and cache_ttl > 0:
+            self._regime_profiles_cache[cache_key] = (time.monotonic(), profiles)
         return profiles
 
     def load_live_trade_coach_regime_profiles(
