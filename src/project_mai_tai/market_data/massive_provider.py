@@ -315,6 +315,17 @@ class MassiveTradeStream:
             self._mark_coverage_started(to_add)
 
     async def _run_loop(self) -> None:
+        # We use the massive WebSocketClient's *async* connect() entrypoint
+        # rather than its sync run() wrapper. run() internally calls
+        # `asyncio.run(self.connect(...))` which creates a NEW event loop in
+        # whatever thread it's invoked from. When that runs via
+        # `asyncio.to_thread`, the websocket library's futures end up bound
+        # to the thread's loop while our main asyncio loop tries to interact
+        # with the same connection (close, subscribe), tripping
+        # `RuntimeError: Future attached to a different loop` inside
+        # `websockets.asyncio.connection.send_context`. Calling
+        # `await ws.connect(handler)` directly keeps everything on a single
+        # event loop and eliminates the cross-loop class of bugs.
         while self._running:
             try:
                 ws = self._build_client()
@@ -326,7 +337,11 @@ class MassiveTradeStream:
                         ws.subscribe(*[f"A.{symbol}" for symbol in sorted(self._subscriptions)])
                     self._mark_coverage_started(self._subscriptions)
                 self._connected = True
-                await asyncio.to_thread(ws.run, self._handle_messages)
+
+                async def _async_processor(messages) -> None:
+                    self._handle_messages(messages)
+
+                await ws.connect(_async_processor)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:

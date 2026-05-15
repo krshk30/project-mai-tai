@@ -373,14 +373,14 @@ async def test_massive_trade_stream_downgrades_aggregate_subscriptions_after_pol
                 while subscription in self.subscriptions:
                     self.subscriptions.remove(subscription)
 
-        def run(self, _handler) -> None:
+        async def connect(self, _processor, **_kwargs) -> None:
             if any(subscription.startswith("A.") for subscription in self.subscriptions):
                 raise ConnectionClosedError(
                     Close(code=1008, reason=""),
                     Close(code=1008, reason=""),
                     True,
                 )
-            self.closed.wait(timeout=1.0)
+            await asyncio.to_thread(self.closed.wait, 1.0)
 
         async def close(self) -> None:
             self.closed.set()
@@ -431,8 +431,8 @@ async def test_massive_trade_stream_defaults_to_trade_quote_only_even_with_live_
                 while subscription in self.subscriptions:
                     self.subscriptions.remove(subscription)
 
-        def run(self, _handler) -> None:
-            self.closed.wait(timeout=1.0)
+        async def connect(self, _processor, **_kwargs) -> None:
+            await asyncio.to_thread(self.closed.wait, 1.0)
 
         async def close(self) -> None:
             self.closed.set()
