@@ -5259,6 +5259,12 @@ class StrategyEngineService:
         self._last_scanner_history_signature: str | None = None
         self._historical_hydration_attempts = 5
         self._historical_hydration_poll_delay_secs = 0.2
+        # Track in-flight background hydration so duplicate subscription-sync
+        # passes don't fan out N concurrent fetches for the same symbols.
+        # Key is "generic:<SYM>" or "schwab:<SYM>". Tasks keep strong refs in
+        # _hydration_tasks so they aren't garbage-collected mid-flight.
+        self._pending_hydration_keys: set[str] = set()
+        self._hydration_tasks: set[asyncio.Task[None]] = set()
         self._runtime_db_reconcile_interval_secs = 5
         self._schwab_stream_drain_max_events = 100
         self._schwab_trade_queue: asyncio.Queue[TradeTickRecord] = asyncio.Queue()
@@ -5911,6 +5917,63 @@ class StrategyEngineService:
         await self._publish_strategy_state_snapshot()
         self._last_generic_bot_activity_snapshot_at = now
 
+    def _spawn_background_hydration(
+        self,
+        *,
+        kind: str,
+        symbols: set[str],
+        coro_factory,
+    ) -> None:
+        """Run a hydration coroutine off the main subscription-sync path.
+
+        Scanner symbol-promotion was calling `_sync_market_data_subscriptions`
+        which `await`ed `_hydrate_recent_historical_bars` inline. On 2026-05-18
+        07:07:48 ET, SBFM got promoted and the synchronous replay of 1924
+        historical bars blocked the event loop for 47s. During that gap the
+        GOVX 07:07:30 macd_30s bar never closed on-schedule, so the
+        P1_CROSS signal that should have produced an intent ~07:08:07 ET
+        didn't fire until 07:08:40 — a 33s entry delay, 2.45 -> 2.44 fill
+        and a hard-stop loss at 2.4002.
+
+        Detaching hydration keeps the event loop unblocked. New symbols
+        get live ticks immediately; their indicators backfill once
+        hydration completes (bot evaluator gates entries on warmup, so
+        no false signals during the window).
+        """
+        fresh = {sym for sym in symbols if f"{kind}:{sym}" not in self._pending_hydration_keys}
+        if not fresh:
+            return
+        keys = {f"{kind}:{sym}" for sym in fresh}
+        self._pending_hydration_keys.update(keys)
+
+        async def _run() -> None:
+            try:
+                await coro_factory(fresh)
+            except Exception:
+                self.logger.exception(
+                    "background hydration failed | kind=%s symbols=%s",
+                    kind,
+                    sorted(fresh),
+                )
+            finally:
+                self._pending_hydration_keys.difference_update(keys)
+
+        sample = ",".join(sorted(fresh))[:60]
+        task = asyncio.create_task(_run(), name=f"hydrate-{kind}-{sample}")
+        self._hydration_tasks.add(task)
+        task.add_done_callback(self._hydration_tasks.discard)
+
+    async def _wait_for_pending_hydration(self) -> None:
+        """Await all in-flight background hydration tasks.
+
+        Used by tests and by clean-shutdown paths. Hot paths should
+        never call this — it would re-introduce the blocking behavior
+        the spawn-as-background change exists to remove.
+        """
+        while self._hydration_tasks:
+            tasks = list(self._hydration_tasks)
+            await asyncio.gather(*tasks, return_exceptions=True)
+
     async def _sync_market_data_subscriptions(self, symbols: Sequence[str]) -> None:
         normalized = {symbol.upper() for symbol in symbols if symbol}
         if normalized == self._last_market_data_symbols:
@@ -5932,7 +5995,11 @@ class StrategyEngineService:
             maxlen=self.settings.redis_market_data_subscription_stream_maxlen,
             approximate=True,
         )
-        await self._hydrate_recent_historical_bars(normalized)
+        self._spawn_background_hydration(
+            kind="generic",
+            symbols=normalized,
+            coro_factory=self._hydrate_recent_historical_bars,
+        )
 
     async def _sync_schwab_stream_subscriptions(self, symbols: Sequence[str]) -> None:
         normalized = {symbol.upper() for symbol in symbols if symbol}
@@ -5985,7 +6052,11 @@ class StrategyEngineService:
         await self._sync_schwab_stream_subscriptions(
             effective_schwab_symbols
         )
-        await self._hydrate_recent_schwab_historical_bars(set(effective_schwab_symbols))
+        self._spawn_background_hydration(
+            kind="schwab",
+            symbols={str(sym).upper() for sym in effective_schwab_symbols},
+            coro_factory=self._hydrate_recent_schwab_historical_bars,
+        )
 
     def _should_use_generic_market_data_fallback_for_schwab(self) -> bool:
         if not self.state.schwab_stream_strategy_codes():
