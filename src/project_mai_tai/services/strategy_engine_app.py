@@ -758,7 +758,7 @@ class StrategyBotRuntime:
                     f"(limit {limit_secs:.1f}s); new entries blocked"
                 )
 
-        freshness_issue = self.builder_manager.entry_freshness_issue(symbol, now_ts=now_ts)
+        freshness_issue = self.builder_manager.entry_freshness_issue(symbol)
         if freshness_issue:
             return f"Schwab entry freshness guard: {freshness_issue}; new entries blocked"
         return None

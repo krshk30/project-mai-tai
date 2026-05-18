@@ -27,9 +27,11 @@
 - Validation:
   - `.venv\Scripts\python.exe -m pytest tests/unit/test_strategy_core.py -k "entry_freshness or close_grace" -q` -> `2 passed`
   - `.venv\Scripts\python.exe -m pytest tests/unit/test_strategy_engine_service.py -k "completed_bar_arrives_late or live_aggregate_30s" -q` -> `5 passed`
+  - `.venv\Scripts\python.exe -m pytest tests/unit/test_strategy_engine_service.py -k "completed_bar_arrives_late or live_aggregate_30s or tos_runtime_emits_intrabar_open_on_current_bar" -q` -> `6 passed`
   - `.venv\Scripts\python.exe -m pytest tests/unit/test_strategy_engine_service.py::test_macd_30s_blocks_new_entry_when_completed_bar_arrives_late tests/unit/test_strategy_engine_service.py::test_live_aggregate_30s_falls_back_to_trade_ticks_when_stream_is_missing tests/unit/test_strategy_engine_service.py::test_live_aggregate_30s_still_emits_intrabar_open_from_trade_tick_when_stream_is_fresh tests/unit/test_strategy_core.py::test_schwab_native_bar_builder_reports_entry_freshness_stall_issue tests/unit/test_strategy_core.py::test_schwab_native_bar_builder_close_grace_keeps_same_bucket_trade_real -q` -> `5 passed`
   - `.venv\Scripts\python.exe -m py_compile src/project_mai_tai/strategy_core/schwab_native_30s.py src/project_mai_tai/services/strategy_engine_app.py tests/unit/test_strategy_core.py tests/unit/test_strategy_engine_service.py` -> passed
   - `git diff --check` -> passed
+  - Initial CI run #710 failed partly because the guard passed a timezone-normalized runtime clock into builder stall checks while Linux tests used a naive fixed clock; follow-up commit changed builder stall/revise checks to use the builder's own clock domain.
   - Broader `tests/unit/test_strategy_core.py tests/unit/test_schwab_native_late_trade_revision.py -q` still has three pre-existing `_evaluate_paths` tuple-unpack failures in P1 volume-floor tests unrelated to this change.
   - Full `tests/unit/test_strategy_engine_service.py -q` timed out locally before completion.
 - Deploy status:
