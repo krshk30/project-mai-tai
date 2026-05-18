@@ -5305,6 +5305,14 @@ class StrategyEngineService:
                 continue
             self._stream_offsets[stream] = latest[0][0] if latest else "0-0"
 
+    # Per-xread max events. With 11+ active symbols producing trade+quote
+    # ticks during high-volume windows, producer rate can exceed 200/sec;
+    # at the prior count=50, the consumer was rate-bound and polygon_30s
+    # persistence routinely fell 100-700s behind real time on 2026-05-18.
+    # 500 gives ~10x more headroom without materially slowing the rest of
+    # the main loop.
+    _MARKET_DATA_XREAD_COUNT = 500
+
     async def _read_stream_group(self, streams: Sequence[str], *, block_ms: int) -> bool:
         offsets = {
             stream: self._stream_offsets[stream]
@@ -5317,7 +5325,7 @@ class StrategyEngineService:
             messages = await self.redis.xread(
                 offsets,
                 block=block_ms,
-                count=50,
+                count=self._MARKET_DATA_XREAD_COUNT,
             )
         except Exception:
             self.logger.exception("redis xread failed for streams: %s", ",".join(offsets))
