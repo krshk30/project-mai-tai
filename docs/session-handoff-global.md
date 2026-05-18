@@ -35,8 +35,9 @@
   - Broader `tests/unit/test_strategy_core.py tests/unit/test_schwab_native_late_trade_revision.py -q` still has three pre-existing `_evaluate_paths` tuple-unpack failures in P1 volume-floor tests unrelated to this change.
   - Full `tests/unit/test_strategy_engine_service.py -q` timed out locally before completion.
 - Deploy status:
-  - not deployed yet
-  - strategy-engine code changed; if merged/deployed during market hours, follow `docs/live-market-restart-runbook.md` strategy restart preflight and prefer waiting until flat
+  - merged via PR `#177` and deployed to VPS `main` at `a51443c`
+  - VPS `project-mai-tai-strategy.service` was restarted at `2026-05-18 18:46:59 UTC`
+  - the automated live preflight blocked on known stale submitted intents, protected `CYN` account positions, and existing reconciler degradation; operator explicitly approved a narrow strategy deploy after confirming no bot virtual positions and no active broker orders
 
 ## 2026-05-18 Runtime completed-bar-flow incident layer prepared
 
@@ -58,8 +59,10 @@
   - `.venv\Scripts\python.exe -m py_compile src/project_mai_tai/services/strategy_engine_app.py tests/unit/test_strategy_engine_service.py` -> passed
   - `git diff --check` -> passed
 - Deployment status:
-  - not deployed yet
-  - PR branch was rebased onto `origin/main` `3545348` (`OMS: cancel stuck intents fast`) after this change was prepared
+  - merged via PR `#177` and deployed to VPS `main` at `a51443c`
+  - VPS `project-mai-tai-strategy.service` was restarted at `2026-05-18 18:46:59 UTC`; `control`, `market-data`, `oms`, and `reconciler` were not restarted
+  - post-deploy behavior confirmed the protective circuit is active: affected symbols now show `data_health=degraded`, `Completed bar flow stalled:` halt reasons, and new entries are halted until completed-bar flow recovers
+  - important: this is a safety/alert deploy, not a provider/bar-builder root-cause repair; recurring Polygon/Schwab bar-flow stalls still need separate investigation from live provider data
 
 ## 🚩 NEXT SESSION (2026-05-16) — READ FIRST — Claude EOD handoff from 2026-05-15
 
