@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from importlib import import_module
 from datetime import UTC, datetime, timedelta
@@ -4332,6 +4333,7 @@ async def test_subscription_sync_replays_recent_historical_bars_for_active_symbo
     )
 
     await service._sync_market_data_subscriptions(["UGRO"])
+    await service._wait_for_pending_hydration()
 
     assert service.state.bots["macd_30s"].builder_manager.get_bars("UGRO") == []
     assert len(service.state.bots["macd_1m"].builder_manager.get_bars("UGRO")) == 1
@@ -4388,6 +4390,7 @@ async def test_subscription_sync_persists_replayed_polygon_historical_bars() -> 
     )
 
     await service._sync_market_data_subscriptions(["UGRO"])
+    await service._wait_for_pending_hydration()
 
     with session_factory() as session:
         records = list(
