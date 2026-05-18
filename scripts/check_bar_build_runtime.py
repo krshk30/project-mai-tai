@@ -250,6 +250,14 @@ def compare_symbol(
     rebuilt_only = len(rebuilt_times - persisted_times)
     persisted_only = len(persisted_times - rebuilt_times)
 
+    # For schwab_1m, CHART_EQUITY is the canonical primary feed
+    # (live_aggregate_bars_are_final=True). Schwab's TIMESALE stream
+    # systematically drops a large fraction of executions on heavy-volume bars
+    # (see docs/bar-build-invariants.md and issue #144), so HIGH/LOW from a
+    # TIMESALE rebuild is a lossy lower bound — not a valid cross-check on
+    # this bot. Compare OPEN/CLOSE only; HIGH/LOW deltas would be noise.
+    compare_high_low = strategy_code != "schwab_1m"
+
     price_diffs: list[float] = []
     volume_diffs: list[int] = []
     zero_persisted_vs_real = 0
@@ -259,10 +267,11 @@ def compare_symbol(
         persisted_bar = persisted[bar_time]
         diffs = [
             abs(rebuilt_bar.open - persisted_bar.open),
-            abs(rebuilt_bar.high - persisted_bar.high),
-            abs(rebuilt_bar.low - persisted_bar.low),
             abs(rebuilt_bar.close - persisted_bar.close),
         ]
+        if compare_high_low:
+            diffs.append(abs(rebuilt_bar.high - persisted_bar.high))
+            diffs.append(abs(rebuilt_bar.low - persisted_bar.low))
         volume_diff = abs(int(rebuilt_bar.volume) - persisted_bar.volume)
         trade_count_diff = abs(int(getattr(rebuilt_bar, "trade_count", 0)) - persisted_bar.trade_count)
         price_diffs.extend(diffs)
@@ -277,7 +286,8 @@ def compare_symbol(
     avg_price = sum(price_diffs) / len(price_diffs) if price_diffs else 0.0
     avg_volume = sum(volume_diffs) / len(volume_diffs) if volume_diffs else 0.0
 
-    print(f"=== {symbol} ({interval_secs}s / {strategy_code}) ===")
+    compared_fields = "open/close" if not compare_high_low else "open/high/low/close"
+    print(f"=== {symbol} ({interval_secs}s / {strategy_code}) [price diffs: {compared_fields}] ===")
     print(
         "raw_trades={raw} rebuilt_bars={rebuilt_count} persisted_bars={persisted_count} "
         "overlap={overlap_count} rebuilt_only={rebuilt_only} persisted_only={persisted_only} "
