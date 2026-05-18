@@ -1,5 +1,65 @@
 # Session Handoff - Global
 
+## 🚩 NEXT SESSION (2026-05-19) — READ FIRST — Claude EOD handoff from 2026-05-18
+
+Twelve PRs shipped today addressing four distinct bug classes that compounded into the AUUD/QNCX/SBFM stuck-order incident the operator witnessed. All deployed live. VPS HEAD `03bf291` (PR #180) at session end.
+
+### What shipped (chronological)
+
+**Signal timing — GOVX 33s late (root cause: scanner promotion blocked the event loop)**
+- **PR #173** Detached scanner-promotion hydration from event loop. `_sync_market_data_subscriptions` no longer inline-awaits `_hydrate_recent_historical_bars`. New `_spawn_background_hydration` runs as `asyncio.Task`, deduplicates per-symbol. Eliminated the 47-second loop block from SBFM promotion that delayed GOVX P1_CROSS by 33s on 07:08 ET.
+- **PR #175** Bumped market-data xread `count=50 → 500` for the consumer-rate-bound polygon backlog.
+
+**Polygon persist lag (sustained 700s+ lag)**
+- **PR #179** Added `_drain_market_data_stream` with `_MARKET_DATA_DRAIN_BUDGET=5000` per main-loop iteration. Drops polygon median lag from 700s+ → ~6s post-deploy. Also tightened `SCHWAB30-STALL` WARN heuristic — now requires `current_bar_overdue` (bar past force-close threshold), eliminating ~800+ false positives/day on thin penny stocks.
+
+**OMS stuck-intent loop (414-retry AUUD over 4.5 hours)**
+- **PR #178** Three-tier cancel:
+  - Tier 1 quote-tick instant cancel when ask > limit + 1¢ tolerance (default)
+  - Tier 2 intent max-age cap (`oms_intent_max_age_seconds=30`)
+  - Tier 3 setup re-validation against `strategy_bar_history` before refresh
+  - Stamped `[OMS-ABANDON-INTENT]` log + `broker_orders.payload.abandon_reason_code`. Also made `_handle_stream_message` no longer short-circuit quote_ticks unless armed_hard_stops are set (the previous gate blocked Tier 1 entirely for pre-fill orders).
+
+**Bar-flow stalled detector (weeks-long halt loop)**
+- **PR #177 (codex)** Schwab entry freshness guard at strategy boundary. Blocks new entries when bar/tick > `max(15s, interval*0.5)` stale. Records `decision_status='blocked'` with reason starting `Schwab entry freshness guard:`. Entry-only — no exit/stop changes, no CYN changes.
+- **PR #180** On-stall immediate REST recovery. When `monitor_completed_bar_flow` newly halts symbols, `_immediate_schwab_1m_history_refresh` fetches REST for them bypassing the 15s throttle, then re-runs the detector. End-to-end recovery 1-3s vs prior multi-minute halts. Logs `[ON-STALL-RECOVERY]`.
+
+**Observability + validators**
+- **PR #169** Indexed `broker_order_events.event_at`; flipped `MAI_TAI_DASHBOARD_TRADE_FORENSICS_ENABLED=true`. Bot pages render in 0.2s cached.
+- **PR #170** Issue #130 — INFO logging on `_revise_last_closed_bar_from_trade` (applied / skip-reasons) + `_persist_revised_closed_bar` (action, vol_before/after).
+- **PR #171** Issue #145 — WARN guards for revision-storm / stall / persist-lag (the MOBX 2026-05-14 signature).
+- **PR #172** Issue #144 — schwab_1m validator skips HIGH/LOW (CHART is canonical, TIMESALE rebuild is lossy lower bound). New `docs/bar-build-invariants.md`.
+- **PR #174** New `scripts/check_bar_persist_lag.py`. Cron-friendly DB audit, exit 0/1 on threshold violations. Defaults: 30s bots warn>15s/error>30s; 60s bot 30/60.
+
+### How to validate the fixes (carry forward)
+- Persist-lag (user phrases: "check persist lag", "validate signal timing", "any signal delays today"):
+  ```bash
+  PYTHONPATH=/home/trader/project-mai-tai/src PGPASSWORD=$PGPASSWORD \
+    /home/trader/project-mai-tai/.venv/bin/python \
+    /home/trader/project-mai-tai/scripts/check_bar_persist_lag.py \
+    --day YYYY-MM-DD --all-bots --dsn "$DSN"
+  ```
+- Stuck-order check (real-time):
+  ```sql
+  SELECT symbol, intent_id, COUNT(*) AS retries
+  FROM broker_orders
+  WHERE created_at >= NOW() - INTERVAL '1 hour'
+  GROUP BY symbol, intent_id HAVING COUNT(*) > 5
+  ORDER BY retries DESC;
+  ```
+  With PR #178 live, max retries should be ≤3. ≥5 means all three guards failed → real bug.
+- On-stall recovery firing: `sudo grep '[ON-STALL-RECOVERY]' /var/log/project-mai-tai/strategy.log | tail -20`. If a bar-flow-stalled notification fires and no `[ON-STALL-RECOVERY]` line appears within seconds, Schwab REST itself is failing — separate concern.
+
+### Open / deferred
+- **polygon_30s broker auth gap**: every entry rejects with `Webull order rejected: missing Webull App Key/App Secret`. Bot was renamed from webull_30s ~2026-05-08 but account is still wired as Webull. Polygon is shadow-trading only. Operator decided to defer — "not ready to integrate with actual broker yet given these many issues" (their words, 2026-05-18 EOD).
+- **schwab_1m post-market sparse CHART_EQUITY**: detector + on-stall recovery handle it cleanly. If recurring stalls happen during RTH, that's a real Schwab feed issue not a bot bug.
+- **macd_30s chop-lock gating**: 6800+ blocked decisions today, almost all `chop lock active`. Whether the calibration is right is a strategy-tuning conversation, not a bug.
+
+### Operating-rule update (operator request)
+- **After every shipped fix, update this handoff doc immediately** with PR number, one-line summary, root cause, deploy timestamp. Don't wait until EOD. Same for memory: write what's worth remembering as it happens.
+
+---
+
 ## Top Summary - 2026-05-09
 
 - This top section is the current operator handoff. Older detailed notes remain below as chronology and archive.
