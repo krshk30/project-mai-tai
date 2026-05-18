@@ -2000,6 +2000,7 @@ class ControlPlaneRepository:
             for symbol in list(data_health.get("halted_symbols", []) or [])
             if str(symbol).strip()
         }
+        data_health_status = str(data_health.get("status", "healthy") or "healthy").lower()
         warning_symbols = {
             str(symbol).upper()
             for symbol in list(data_health.get("warning_symbols", []) or [])
@@ -2039,7 +2040,7 @@ class ControlPlaneRepository:
             bar_count = int(bar_counts.get(symbol, 0) or 0)
             status = "pending"
             if symbol in halted_symbols:
-                status = "critical"
+                status = "critical" if data_health_status in {"critical", "error"} else "blocked"
                 reason = halt_reasons.get(symbol) or f"{market_data_source} market data halt active"
             elif symbol in warning_symbols:
                 status = "warning"

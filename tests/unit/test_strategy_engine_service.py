@@ -3443,6 +3443,32 @@ def test_runtime_bar_flow_monitor_halts_when_no_completed_bar_forms() -> None:
     assert "no completed 30s bar has formed" in bot.data_halt_symbols["UGRO"]
 
 
+def test_runtime_bar_flow_monitor_uses_polygon_market_data_provider_label() -> None:
+    settings = make_test_settings(
+        strategy_polygon_30s_enabled=True,
+        strategy_polygon_30s_broker_provider="webull",
+    )
+    state = StrategyEngineState(settings=settings, now_provider=fixed_now)
+    bot = state.bots["polygon_30s"]
+    bot.set_watchlist(["UGRO"])
+    now_ts = fixed_now().replace(tzinfo=EASTERN_TZ).timestamp()
+    bot._last_tick_at["UGRO"] = fixed_now().replace(tzinfo=EASTERN_TZ)
+    state.seed_bars(
+        "polygon_30s",
+        "UGRO",
+        seed_trending_bars(start_timestamp=now_ts - 1800.0, interval_secs=30),
+    )
+
+    changed = state.monitor_completed_bar_flow(
+        market_data_provider_for_strategy=settings.market_data_provider_for_strategy,
+    )
+
+    assert changed == 1
+    assert "UGRO" in bot.data_halt_symbols
+    assert "fresh POLYGON ticks" in bot.data_halt_symbols["UGRO"]
+    assert "WEBULL" not in bot.data_halt_symbols["UGRO"]
+
+
 def test_strategy_service_persists_runtime_data_health_incident() -> None:
     session_factory = build_test_session_factory()
     service = StrategyEngineService(
@@ -3464,7 +3490,7 @@ def test_strategy_service_persists_runtime_data_health_incident() -> None:
         incident = session.scalar(select(SystemIncident))
         assert incident is not None
         assert incident.status == "open"
-        assert incident.severity == "critical"
+        assert incident.severity == "warning"
         assert incident.title == "macd_30s completed-bar flow stalled for UGRO"
         assert incident.payload["symbol"] == "UGRO"
 
@@ -3475,6 +3501,33 @@ def test_strategy_service_persists_runtime_data_health_incident() -> None:
         incident = session.scalar(select(SystemIncident))
         assert incident is not None
         assert incident.status == "closed"
+
+
+def test_strategy_service_marks_runtime_data_health_incident_critical_with_exposure() -> None:
+    session_factory = build_test_session_factory()
+    service = StrategyEngineService(
+        settings=make_test_settings(),
+        redis_client=FakeRedis(),
+        session_factory=session_factory,
+        now_provider=fixed_now,
+    )
+    bot = service.state.bots["macd_30s"]
+    bot.positions.open_position("UGRO", 2.8, quantity=10, path="P1_CROSS")
+    bot.apply_data_halt(
+        "UGRO",
+        reason="Completed bar flow stalled: fresh SCHWAB ticks are arriving but bars stopped",
+        observed_at=fixed_now(),
+    )
+
+    service._sync_runtime_data_health_incidents()
+
+    with session_factory() as session:
+        incident = session.scalar(select(SystemIncident))
+        assert incident is not None
+        assert incident.status == "open"
+        assert incident.severity == "critical"
+        assert incident.payload["data_health_status"] == "critical"
+        assert incident.payload["severity"] == "critical"
 
 
 def test_live_aggregate_30s_falls_back_to_trade_ticks_when_stream_is_missing(monkeypatch) -> None:
