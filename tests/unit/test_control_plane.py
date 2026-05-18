@@ -2150,7 +2150,11 @@ def test_bot_page_renders_simple_trade_summary_table() -> None:
 
 
 def test_bot_page_renders_trade_forensics_report_from_completed_cycles() -> None:
-    settings = Settings(redis_stream_prefix="test", oms_adapter="alpaca_paper")
+    settings = Settings(
+        redis_stream_prefix="test",
+        oms_adapter="alpaca_paper",
+        dashboard_trade_forensics_enabled=True,
+    )
     session_factory = build_test_session_factory()
     seed_database(session_factory)
     today_start = current_scanner_session_start_utc()
@@ -2182,10 +2186,63 @@ def test_bot_page_renders_trade_forensics_report_from_completed_cycles() -> None
             quantity="25",
             entry_price="2.60",
             exit_price="2.74",
-            entry_time=today_start - timedelta(days=2) + timedelta(hours=2),
-            exit_time=today_start - timedelta(days=2) + timedelta(hours=2, minutes=3),
+            entry_time=today_start - timedelta(days=1) + timedelta(hours=2),
+            exit_time=today_start - timedelta(days=1) + timedelta(hours=2, minutes=3),
             path="P1_CROSS",
             exit_reason="FINAL_CLOSE",
+        )
+        session.add_all(
+            [
+                StrategyBarHistory(
+                    strategy_code="macd_30s",
+                    symbol="SNAL",
+                    interval_secs=30,
+                    bar_time=today_start + timedelta(hours=1, minutes=4),
+                    open_price=Decimal("0.88"),
+                    high_price=Decimal("0.94"),
+                    low_price=Decimal("0.87"),
+                    close_price=Decimal("0.92"),
+                    volume=1000,
+                    trade_count=10,
+                    decision_status="pending",
+                    decision_path="P4_BURST",
+                    created_at=today_start + timedelta(hours=1, minutes=4, seconds=31),
+                    updated_at=today_start + timedelta(hours=1, minutes=4, seconds=31),
+                ),
+                StrategyBarHistory(
+                    strategy_code="macd_30s",
+                    symbol="SNAL",
+                    interval_secs=30,
+                    bar_time=today_start + timedelta(hours=1, minutes=4, seconds=30),
+                    open_price=Decimal("0.92"),
+                    high_price=Decimal("0.95"),
+                    low_price=Decimal("0.91"),
+                    close_price=Decimal("0.93"),
+                    volume=1200,
+                    trade_count=12,
+                    decision_status="signal",
+                    decision_path="P4_BURST",
+                    decision_score="6",
+                    created_at=today_start + timedelta(hours=1, minutes=5),
+                    updated_at=today_start + timedelta(hours=1, minutes=5),
+                ),
+                StrategyBarHistory(
+                    strategy_code="macd_30s",
+                    symbol="SNAL",
+                    interval_secs=30,
+                    bar_time=today_start + timedelta(hours=1, minutes=5),
+                    open_price=Decimal("0.92"),
+                    high_price=Decimal("0.93"),
+                    low_price=Decimal("0.88"),
+                    close_price=Decimal("0.89"),
+                    volume=900,
+                    trade_count=9,
+                    decision_status="idle",
+                    decision_path="",
+                    created_at=today_start + timedelta(hours=1, minutes=5, seconds=31),
+                    updated_at=today_start + timedelta(hours=1, minutes=5, seconds=31),
+                ),
+            ]
         )
         session.commit()
     redis = FakeRedis(make_streams(settings.redis_stream_prefix))
@@ -2206,6 +2263,12 @@ def test_bot_page_renders_trade_forensics_report_from_completed_cycles() -> None
         assert forensics["history"]["count"] == 2
         assert any(item["label"] == "sub-$1" for item in forensics["price_bands"])
         assert any(item["label"] == "$2-$5" for item in forensics["price_bands"])
+        reconstruction = forensics["recent_reconstructions"][0]
+        assert reconstruction["symbol"] == "SNAL"
+        assert reconstruction["setup_bar_time"]
+        assert reconstruction["confirmation_bar_time"]
+        assert reconstruction["signal_to_intent_secs"] == 0.0
+        assert reconstruction["first_adverse_bar"]["low_price"] == 0.88
 
         bot_page = client.get("/bot/30s")
         assert bot_page.status_code == 200
@@ -2214,6 +2277,8 @@ def test_bot_page_renders_trade_forensics_report_from_completed_cycles() -> None
         assert "Path Scoreboard" in bot_page.text
         assert "Exit Pattern Scoreboard" in bot_page.text
         assert "Biggest Drags" in bot_page.text
+        assert "Recent Trade Reconstruction" in bot_page.text
+        assert "signal-to-intent 0.0s" in bot_page.text
         assert "sub-$1" in bot_page.text
         assert "$2-$5" in bot_page.text
         assert "SNAL" in bot_page.text

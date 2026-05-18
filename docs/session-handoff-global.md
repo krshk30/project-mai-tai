@@ -8,6 +8,34 @@
 - Overall `/health` may still show `degraded` because of reconciler state. Do not confuse that with a Polygon-specific runtime failure.
 - Keep copied CI counts and failure logs out of the top summary unless they have been revalidated on current `main`.
 
+## 2026-05-18 GOVX follow-up - per-trade forensics reconstruction prepared
+
+- Starting state verified before edits:
+  - local active worktree moved from stale `codex/local-clean-main` to fresh branch `codex/trade-forensics-reconstruction` at `origin/main` `879b984`
+  - deploy worktree `project-mai-tai-control-deploy` fast-forwarded to `879b984` before edits, then to `54009dc` after PR #175 advanced `main`
+  - VPS checkout `/home/trader/project-mai-tai` was initially on `main` `879b984`; final recheck shows `main` `54009dc`
+  - VPS services are all `active`; initial `/health` was `degraded` due to reconciler while `strategy-engine`, `market-data-gateway`, and `oms-risk` were healthy
+- GOVX live evidence checked on VPS:
+  - `macd_30s` P1_CROSS setup/pending bar was `2026-05-18 07:07:00 AM ET`
+  - P1_CROSS confirmation/signal bar was `07:07:30 AM ET`, but persisted at `07:08:40 AM ET`
+  - open intent was created at `07:08:40 AM ET`; buy filled at `07:08:48 AM ET`
+  - HARD_STOP close intent was created at `07:08:53 AM ET`; sell filled at `07:08:54 AM ET`
+  - raw Schwab tick archive `/var/lib/project-mai-tai/schwab_ticks/2026-05-18/GOVX.jsonl` shows large delivery lag in the signal window, including roughly 20s lag near 07:07:00 ET and 28-34s lag around the 07:08:30-ish delivered ticks sampled in this session
+- Local control-plane change prepared:
+  - existing Trade Forensics panel still keeps aggregate scoreboards
+  - added a `Recent Trade Reconstruction` table for completed trades
+  - per trade it now reconstructs setup bar time, confirmation bar time, confirmation persisted time, intent creation, broker accepted time, entry fill, signal-to-intent seconds, persist-to-intent seconds, intent-to-fill seconds, optional raw Schwab archive lag summary, stop trigger source/price, stop fill, first adverse bar after entry, and deterministic lateness attribution
+  - raw Schwab lag is read opportunistically from `settings.schwab_tick_archive_root`; if the archive file is absent, the row says missing/unavailable instead of failing the bot page
+  - no strategy, OMS, order, or market-data behavior changed
+- Validation:
+  - `.venv\Scripts\python.exe -m pytest tests/unit/test_control_plane.py -k "trade_forensics" -q` -> `1 passed`
+  - `.venv\Scripts\python.exe -m pytest tests/unit/test_control_plane.py -q` -> `49 passed`
+  - `.venv\Scripts\python.exe -m py_compile src/project_mai_tai/services/control_plane.py tests/unit/test_control_plane.py`
+- Deploy status:
+  - not deployed yet
+  - PR opened as #176 from `codex/trade-forensics-reconstruction`, rebased onto `origin/main` `54009dc`, and confirmed mergeable
+  - if merged, this is control-plane-only and should use the live runbook's control-plane deploy/restart path
+
 ## 🚩 NEXT SESSION (2026-05-16) — READ FIRST — Claude EOD handoff from 2026-05-15
 
 > Read this entire section before any action next session. Today's work fixed two long-standing structural bugs (Massive WS cross-loop, urllib3 retry-thread leak), closed all 7 morning workstreams, and bounced the strategy through ~10 restarts. Polygon stream is confirmed working at EOD but the post-market window is the first sustained test of all the new code paths together.
