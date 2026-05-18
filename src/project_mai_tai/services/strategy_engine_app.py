@@ -5600,6 +5600,28 @@ class StrategyEngineService:
             bar_flow_change_count = self.state.monitor_completed_bar_flow(
                 provider_for_strategy=self.settings.provider_for_strategy,
             )
+            # Real-fix loop (2026-05-18): the bar-flow-stalled detector
+            # halts entries when CHART_EQUITY drops behind. Instead of
+            # waiting up to 15s per symbol for the next throttled REST
+            # refresh, we immediately fetch REST for every schwab_1m
+            # symbol the detector just halted. After the fetch, re-run the
+            # detector so halts that recovered get cleared in the same
+            # iteration. End-to-end recovery becomes ~1-3 seconds (one
+            # REST roundtrip) instead of multi-minute halts.
+            recovery_bar_count = 0
+            if bar_flow_change_count > 0:
+                stalled = self._symbols_halted_by_bar_flow_stall("schwab_1m")
+                if stalled:
+                    recovery_bar_count = await self._immediate_schwab_1m_history_refresh(
+                        symbols=stalled,
+                    )
+                    if recovery_bar_count > 0:
+                        # Recovery delivered bars; re-run the detector so
+                        # symbols that caught up have their halts cleared
+                        # without waiting for the next loop iteration.
+                        bar_flow_change_count += self.state.monitor_completed_bar_flow(
+                            provider_for_strategy=self.settings.provider_for_strategy,
+                        )
             schwab_1m_history_intent_count, schwab_1m_history_bar_count = await self._refresh_stale_schwab_1m_history()
             if (
                 schwab_event_count
@@ -6796,6 +6818,112 @@ class StrategyEngineService:
         if not isinstance(latest, dict):
             return _coerce_float(getattr(latest, "timestamp", None))
         return _coerce_float(latest.get("timestamp"))
+
+    def _symbols_halted_by_bar_flow_stall(self, bot_code: str) -> list[str]:
+        """Return symbols currently halted by the bar-flow-stalled detector.
+
+        Used by the on-stall recovery path to know which symbols need an
+        immediate REST refresh (bypassing the 15s throttle).
+        """
+        runtime = self.state.bots.get(bot_code)
+        if not isinstance(runtime, StrategyBotRuntime):
+            return []
+        halt_reasons = getattr(runtime, "data_halt_symbols", None) or {}
+        return sorted(
+            symbol
+            for symbol, reason in halt_reasons.items()
+            if str(reason).startswith("Completed bar flow stalled:")
+        )
+
+    async def _immediate_schwab_1m_history_refresh(self, *, symbols: Sequence[str]) -> int:
+        """Force-refresh schwab_1m history for specific symbols bypassing the
+        per-symbol throttle. Called when the bar-flow stall detector trips,
+        so recovery is immediate instead of waiting up to 15s/symbol.
+
+        Returns count of fresh bars replayed across all symbols.
+        """
+        runtime = self.state.bots.get("schwab_1m")
+        if not isinstance(runtime, StrategyBotRuntime):
+            return 0
+        if not runtime.use_live_aggregate_bars or not runtime.live_aggregate_bars_are_final:
+            return 0
+        if not symbols:
+            return 0
+
+        now = utcnow()
+        expected_latest_completed = self._latest_expected_completed_bar_timestamp(
+            now=now,
+            interval_secs=60,
+        )
+        if expected_latest_completed is None:
+            return 0
+        session_start_timestamp = current_scanner_session_start_utc(now).timestamp()
+        required_bars = max(2, runtime.required_history_bars())
+        total_fresh_bars = 0
+
+        for normalized in sorted({str(symbol).upper() for symbol in symbols}):
+            latest_runtime_completed = self._latest_runtime_completed_bar_timestamp(
+                runtime, normalized
+            )
+            if (
+                latest_runtime_completed is not None
+                and latest_runtime_completed >= expected_latest_completed
+            ):
+                continue
+
+            self._schwab_1m_last_history_refresh_at[normalized] = now
+            bars = await self._load_schwab_history_bars(
+                symbol=normalized,
+                interval_secs=60,
+                required_bars=required_bars,
+            )
+            if not bars:
+                continue
+
+            fresh_completed_bars = [
+                bar
+                for bar in bars
+                if (
+                    (timestamp := _coerce_float(bar.get("timestamp"))) is not None
+                    and timestamp >= session_start_timestamp
+                    and timestamp <= expected_latest_completed
+                    and (
+                        latest_runtime_completed is None
+                        or timestamp > latest_runtime_completed
+                    )
+                )
+            ]
+            if not fresh_completed_bars:
+                continue
+
+            for bar in fresh_completed_bars:
+                intents = self.state.handle_live_bar(
+                    symbol=normalized,
+                    interval_secs=60,
+                    open_price=float(bar["open"]),
+                    high_price=float(bar["high"]),
+                    low_price=float(bar["low"]),
+                    close_price=float(bar["close"]),
+                    volume=int(bar["volume"]),
+                    timestamp=float(bar["timestamp"]),
+                    trade_count=int(bar.get("trade_count", 1) or 1),
+                    strategy_codes=("schwab_1m",),
+                )
+                for intent in intents:
+                    await self._publish_intent(intent)
+            total_fresh_bars += len(fresh_completed_bars)
+            latest_bar_at = datetime.fromtimestamp(
+                float(fresh_completed_bars[-1]["timestamp"]),
+                UTC,
+            ).astimezone(EASTERN_TZ)
+            self.logger.info(
+                "[ON-STALL-RECOVERY] replayed %s fresh Schwab 1m history bars for %s "
+                "through %s (triggered by bar-flow-stalled detector)",
+                len(fresh_completed_bars),
+                normalized,
+                latest_bar_at.isoformat(),
+            )
+        return total_fresh_bars
 
     async def _refresh_stale_schwab_1m_history(self) -> tuple[int, int]:
         runtime = self.state.bots.get("schwab_1m")
