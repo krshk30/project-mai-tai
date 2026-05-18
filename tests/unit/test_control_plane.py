@@ -1422,6 +1422,51 @@ def test_control_plane_marks_no_exposure_data_halt_placeholder_blocked() -> None
         assert "fresh POLYGON ticks" in bot_30s["recent_decisions"][0]["reason"]
 
 
+def test_control_plane_marks_degraded_inferred_stale_placeholder_warning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = Settings(redis_stream_prefix="test", oms_adapter="alpaca_paper")
+    session_factory = build_test_session_factory()
+    seed_database(session_factory)
+    streams = make_streams(settings.redis_stream_prefix)
+    strategy_state_stream = streams[f"{settings.redis_stream_prefix}:strategy-state"]
+    strategy_state_event = StrategyStateSnapshotEvent.model_validate_json(
+        strategy_state_stream[0][1]["data"]
+    )
+    runtime_bot = strategy_state_event.payload.bots[0]
+    runtime_bot.watchlist = ["AUUD"]
+    runtime_bot.positions = []
+    runtime_bot.recent_decisions = []
+    runtime_bot.bar_counts = {"AUUD": 27}
+    runtime_bot.last_tick_at = {"AUUD": "2026-04-23 10:48:17 AM ET"}
+    runtime_bot.data_health = {
+        "status": "degraded",
+        "halted_symbols": ["UGRO"],
+        "reasons": {
+            "UGRO": "Completed bar flow stalled: fresh POLYGON ticks are arriving but the last completed 30s bar is 180.0s old; new entries halted until bar flow recovers"
+        },
+        "since": {"UGRO": "2026-04-23 10:48:17 AM ET"},
+    }
+    strategy_state_stream[0][1]["data"] = strategy_state_event.model_dump_json()
+    redis = FakeRedis(streams)
+    fixed_now = datetime(2026, 4, 23, 14, 49, 50, tzinfo=UTC)
+    monkeypatch.setattr("project_mai_tai.services.control_plane.utcnow", lambda: fixed_now)
+
+    app = build_app(
+        settings=settings,
+        session_factory=session_factory,
+        redis_client=redis,
+        legacy_client=FakeLegacyClient(),
+    )
+
+    with TestClient(app) as client:
+        bots = client.get("/api/bots")
+        assert bots.status_code == 200
+        bot_30s = next(item for item in bots.json()["bots"] if item["strategy_code"] == "macd_30s")
+        assert bot_30s["recent_decisions"][0]["status"] == "warning"
+        assert "verify tape/bar flow now" in bot_30s["recent_decisions"][0]["reason"]
+
+
 def test_control_plane_last_decision_ignores_pending_tick_placeholders(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
