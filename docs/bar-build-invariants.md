@@ -39,3 +39,29 @@ The bot trades against CHART HIGH — that is the live execution reality. Sourci
 - **macd_30s**: a HIGH discrepancy IS a bug to investigate — the bot's TIMESALE bar is what the strategy is reading. Issue #130 tracks one such pattern.
 - **polygon_30s**: Polygon ticks come from a different SIP than Schwab's TIMESALE, so they can disagree with macd_30s on volume by 10-20% in normal operation. This is provider-feed difference, not a bug.
 - **schwab_1m**: only CLOSE/volume comparisons against CHART are meaningful. HIGH/LOW comparisons against TIMESALE are noise (see above).
+
+## Persist-lag validation (signal timing)
+
+Independent of OHLC correctness, every bar should reach `strategy_bar_history` within seconds of its scheduled close. Persistence delays indicate the strategy event loop was blocked (hydration, sync I/O, etc.) and signals will fire late — exactly the GOVX 2026-05-18 07:08:40 ET incident, where a P1_CROSS confirmation bar persisted 40s late and the buy filled after the move was over.
+
+`scripts/check_bar_persist_lag.py` audits this directly from `strategy_bar_history`:
+
+```bash
+# All bots, today, default thresholds
+PYTHONPATH=/home/trader/project-mai-tai/src \
+  PGPASSWORD=$PGPASSWORD \
+  /home/trader/project-mai-tai/.venv/bin/python \
+  /home/trader/project-mai-tai/scripts/check_bar_persist_lag.py \
+  --day YYYY-MM-DD --all-bots --dsn "$DSN"
+```
+
+Thresholds (default):
+
+| Interval | Warn  | Error |
+|----------|-------|-------|
+| 30s bots | 15s   | 30s   |
+| 60s bot  | 30s   | 60s   |
+
+Exit code 0 if every bar is under the error threshold, 1 otherwise. Cron-friendly. Run it as part of daily bar-build validation alongside `check_bar_build_runtime.py` and `backtest_validate_trades.py`.
+
+The 2026-05-18 incident would have surfaced as: `macd_30s GOVX bar=07:07:30 persisted=07:08:40 lag=40.0s ERROR`.
