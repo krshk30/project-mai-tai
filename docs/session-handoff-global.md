@@ -59,7 +59,7 @@
   - `git diff --check` -> passed
 - Deployment status:
   - not deployed yet
-  - `origin/main` advanced to `3545348` (`OMS: cancel stuck intents fast`) after this branch was opened; rebase this PR branch onto current `origin/main` before merge/deploy
+  - PR branch was rebased onto `origin/main` `3545348` (`OMS: cancel stuck intents fast`) after this change was prepared
 
 ## 🚩 NEXT SESSION (2026-05-16) — READ FIRST — Claude EOD handoff from 2026-05-15
 
