@@ -1527,6 +1527,7 @@ def test_control_plane_normalizes_degraded_polygon_bar_flow_runtime_rows() -> No
         bots = client.get("/api/bots")
         assert bots.status_code == 200
         polygon_bot = next(item for item in bots.json()["bots"] if item["strategy_code"] == "polygon_30s")
+        assert "fresh Polygon ticks" in polygon_bot["data_health"]["reasons"]["ZDAI"]
         assert polygon_bot["recent_decisions"][0]["status"] == "blocked"
         assert "fresh Polygon ticks" in polygon_bot["recent_decisions"][0]["reason"]
         assert "WEBULL" not in polygon_bot["recent_decisions"][0]["reason"]

@@ -1809,6 +1809,12 @@ class ControlPlaneRepository:
                 for item in list(runtime_bot.get("retention_states", []))
                 if not self._is_ui_hidden_symbol(account_name, item.get("ticker") or item.get("symbol"))
             ]
+            runtime_provider = (
+                self.settings.provider_for_strategy(code)
+                if registration
+                else str(runtime_bot.get("provider", "") or "")
+            )
+            market_data_source = self._market_data_source_label(runtime_provider)
             data_health = dict(runtime_bot.get("data_health", {}) or {})
             halted_symbols = [
                 str(symbol).upper()
@@ -1830,14 +1836,20 @@ class ControlPlaneRepository:
                 "halted_symbols": halted_symbols,
                 "warning_symbols": warning_symbols,
                 "reasons": {
-                    str(symbol).upper(): str(raw_reasons.get(symbol) or raw_reasons.get(str(symbol).upper()) or "")
+                    str(symbol).upper(): self._normalize_market_data_reason(
+                        str(raw_reasons.get(symbol) or raw_reasons.get(str(symbol).upper()) or ""),
+                        market_data_source=market_data_source,
+                    )
                     for symbol in halted_symbols
                 },
                 "warning_reasons": {
-                    str(symbol).upper(): str(
-                        raw_warning_reasons.get(symbol)
-                        or raw_warning_reasons.get(str(symbol).upper())
-                        or ""
+                    str(symbol).upper(): self._normalize_market_data_reason(
+                        str(
+                            raw_warning_reasons.get(symbol)
+                            or raw_warning_reasons.get(str(symbol).upper())
+                            or ""
+                        ),
+                        market_data_source=market_data_source,
                     )
                     for symbol in warning_symbols
                 },
@@ -1857,11 +1869,7 @@ class ControlPlaneRepository:
             recent_decisions = self._normalize_data_health_decision_rows(
                 recent_decisions,
                 data_health=data_health,
-                provider=(
-                    self.settings.provider_for_strategy(code)
-                    if registration
-                    else str(runtime_bot.get("provider", "") or "")
-                ),
+                provider=runtime_provider,
             )
             recent_decisions = self._live_decision_placeholder_rows(
                 strategy_code=code,
@@ -1872,11 +1880,7 @@ class ControlPlaneRepository:
                 last_tick_at=last_tick_at,
                 indicator_snapshots=indicator_snapshots,
                 data_health=data_health,
-                provider=(
-                    self.settings.provider_for_strategy(code)
-                    if registration
-                    else str(runtime_bot.get("provider", "") or "")
-                ),
+                provider=runtime_provider,
             ) + recent_decisions
             recent_decisions = self._ensure_visible_live_symbol_decision_rows(
                 strategy_code=code,
@@ -1887,11 +1891,7 @@ class ControlPlaneRepository:
                 last_tick_at=last_tick_at,
                 indicator_snapshots=indicator_snapshots,
                 data_health=data_health,
-                provider=(
-                    self.settings.provider_for_strategy(code)
-                    if registration
-                    else str(runtime_bot.get("provider", "") or "")
-                ),
+                provider=runtime_provider,
                 visible_limit=50,
             )
             tos_parity = self._build_tos_parity_view(
@@ -2053,7 +2053,10 @@ class ControlPlaneRepository:
             status = "pending"
             if symbol in halted_symbols:
                 status = "critical" if data_health_status in {"critical", "error"} else "blocked"
-                reason = halt_reasons.get(symbol) or f"{market_data_source} market data halt active"
+                reason = self._normalize_market_data_reason(
+                    halt_reasons.get(symbol) or f"{market_data_source} market data halt active",
+                    market_data_source=market_data_source,
+                )
             elif symbol in warning_symbols:
                 status = "warning"
                 reason = warning_reasons.get(symbol) or f"{market_data_source} ticks are temporarily quiet on this flat symbol"
@@ -2208,10 +2211,18 @@ class ControlPlaneRepository:
             if symbol in halted_symbols and reason.startswith("Completed bar flow stalled:"):
                 if status == "critical":
                     row["status"] = "blocked"
-                if market_data_source == "Polygon":
-                    row["reason"] = reason.replace("fresh WEBULL ticks", "fresh Polygon ticks")
+                row["reason"] = self._normalize_market_data_reason(
+                    reason,
+                    market_data_source=market_data_source,
+                )
             normalized_rows.append(row)
         return normalized_rows
+
+    @staticmethod
+    def _normalize_market_data_reason(reason: str, *, market_data_source: str) -> str:
+        if market_data_source == "Polygon":
+            return str(reason or "").replace("fresh WEBULL ticks", "fresh Polygon ticks")
+        return str(reason or "")
 
     @staticmethod
     def _market_data_source_label(provider: str) -> str:
