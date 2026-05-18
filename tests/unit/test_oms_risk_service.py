@@ -20,6 +20,7 @@ from project_mai_tai.db.models import (
     RiskCheck,
     SchwabIneligibleToday,
     Strategy,
+    StrategyBarHistory,
     TradeIntent,
     VirtualPosition,
 )
@@ -3028,3 +3029,313 @@ def test_store_clears_virtual_positions_without_broker_backing() -> None:
         assert positions["UGRO"].quantity == Decimal("0")
         assert positions["UGRO"].average_price == Decimal("0")
         assert positions["MESA"].quantity == Decimal("5")
+
+
+# ---- Stuck-intent cancellation (2026-05-18 incident regression tests) ---------
+#
+# Three guards prevent the 4.5-hour / 414-attempt loop that hit AUUD/QNCX/SBFM:
+#   Tier 1: quote-tick instant cancel when limit drifts past ask/bid
+#   Tier 2: intent max-age cap (default 30s)
+#   Tier 3: setup re-validation against strategy_bar_history before retry
+
+
+@pytest.mark.asyncio
+async def test_oms_service_cancels_buy_limit_when_ask_drifts_past_limit() -> None:
+    """Tier 1: a quote tick whose ask > limit + tolerance cancels the order and
+    marks the intent abandoned with reason QUOTE_DRIFT_CANCEL."""
+    redis = FakeRedis()
+    session_factory = build_test_session_factory()
+    adapter = FakeWorkingOrderRefreshBrokerAdapter(ask_price=2.13, bid_price=2.11)
+    service = OmsRiskService(
+        settings=Settings(
+            redis_stream_prefix="test",
+            oms_adapter="simulated",
+            oms_quote_drift_cancel_tolerance_cents=1.0,
+        ),
+        redis_client=redis,
+        session_factory=session_factory,
+        broker_adapter=adapter,
+    )
+    service.sync_broker_state = _noop_sync_broker_state  # type: ignore[method-assign]
+
+    await service.process_trade_intent(
+        TradeIntentEvent(
+            source_service="strategy-engine",
+            payload=TradeIntentPayload(
+                strategy_code="macd_30s",
+                broker_account_name="paper:macd_30s",
+                symbol="AUUD",
+                side="buy",
+                quantity=Decimal("10"),
+                intent_type="open",
+                reason="ENTRY_P2_VWAP",
+                metadata={
+                    "order_type": "limit",
+                    "time_in_force": "day",
+                    "limit_price": "2.11",
+                    "reference_price": "2.11",
+                    "price_source": "ask",
+                    "path": "P2_VWAP",
+                },
+            ),
+        )
+    )
+
+    # Quote tick: ask is now 2.13 — 2c past the 2.11 limit.
+    await service._handle_stream_message(
+        {
+            "data": QuoteTickEvent(
+                source_service="market-data",
+                payload=QuoteTickPayload(
+                    symbol="AUUD",
+                    bid_price=Decimal("2.11"),
+                    ask_price=Decimal("2.13"),
+                ),
+            ).model_dump_json()
+        }
+    )
+
+    with session_factory() as session:
+        intent = session.scalar(select(TradeIntent).where(TradeIntent.symbol == "AUUD"))
+        orders = session.scalars(
+            select(BrokerOrder).where(BrokerOrder.symbol == "AUUD")
+        ).all()
+        assert intent is not None
+        assert intent.status == "cancelled"
+        assert len(orders) == 1
+        assert orders[0].status == "cancelled"
+        assert orders[0].payload.get("abandon_reason_code") == "QUOTE_DRIFT_CANCEL"
+
+    # Critical: exactly one cancel went to the broker; NO replacement order.
+    assert [request.intent_type for request in adapter.submit_requests] == ["open", "cancel"]
+
+
+@pytest.mark.asyncio
+async def test_oms_service_does_not_cancel_when_ask_within_tolerance() -> None:
+    """Tier 1 sanity: quote within tolerance does not trigger cancellation."""
+    redis = FakeRedis()
+    session_factory = build_test_session_factory()
+    adapter = FakeWorkingOrderRefreshBrokerAdapter(ask_price=2.115, bid_price=2.10)
+    service = OmsRiskService(
+        settings=Settings(
+            redis_stream_prefix="test",
+            oms_adapter="simulated",
+            oms_quote_drift_cancel_tolerance_cents=1.0,
+        ),
+        redis_client=redis,
+        session_factory=session_factory,
+        broker_adapter=adapter,
+    )
+    service.sync_broker_state = _noop_sync_broker_state  # type: ignore[method-assign]
+
+    await service.process_trade_intent(
+        TradeIntentEvent(
+            source_service="strategy-engine",
+            payload=TradeIntentPayload(
+                strategy_code="macd_30s",
+                broker_account_name="paper:macd_30s",
+                symbol="AUUD",
+                side="buy",
+                quantity=Decimal("10"),
+                intent_type="open",
+                reason="ENTRY_P2_VWAP",
+                metadata={
+                    "order_type": "limit",
+                    "time_in_force": "day",
+                    "limit_price": "2.11",
+                    "reference_price": "2.11",
+                    "price_source": "ask",
+                    "path": "P2_VWAP",
+                },
+            ),
+        )
+    )
+
+    # Ask drifts only 0.5c past the limit — within 1c tolerance.
+    await service._handle_stream_message(
+        {
+            "data": QuoteTickEvent(
+                source_service="market-data",
+                payload=QuoteTickPayload(
+                    symbol="AUUD",
+                    bid_price=Decimal("2.10"),
+                    ask_price=Decimal("2.115"),
+                ),
+            ).model_dump_json()
+        }
+    )
+
+    with session_factory() as session:
+        intent = session.scalar(select(TradeIntent).where(TradeIntent.symbol == "AUUD"))
+        orders = session.scalars(
+            select(BrokerOrder).where(BrokerOrder.symbol == "AUUD")
+        ).all()
+        assert intent is not None
+        assert intent.status != "cancelled"
+        assert all(order.status != "cancelled" for order in orders)
+
+
+@pytest.mark.asyncio
+async def test_oms_service_abandons_intent_after_max_age_instead_of_refresh() -> None:
+    """Tier 2: intent older than oms_intent_max_age_seconds is abandoned, not refreshed."""
+    redis = FakeRedis()
+    session_factory = build_test_session_factory()
+    adapter = FakeWorkingOrderRefreshBrokerAdapter()
+    service = OmsRiskService(
+        settings=Settings(
+            redis_stream_prefix="test",
+            oms_adapter="simulated",
+            oms_working_order_refresh_seconds=5,
+            oms_intent_max_age_seconds=30,
+            oms_intent_setup_revalidation_enabled=False,
+            oms_quote_drift_cancel_tolerance_cents=0.0,  # don't fire Tier 1 here
+        ),
+        redis_client=redis,
+        session_factory=session_factory,
+        broker_adapter=adapter,
+    )
+    service.sync_broker_state = _noop_sync_broker_state  # type: ignore[method-assign]
+
+    await service.process_trade_intent(
+        TradeIntentEvent(
+            source_service="strategy-engine",
+            payload=TradeIntentPayload(
+                strategy_code="macd_1m",
+                broker_account_name="paper:macd_1m",
+                symbol="BFRG",
+                side="buy",
+                quantity=Decimal("100"),
+                intent_type="open",
+                reason="ENTRY_P3_MACD_SURGE",
+                metadata={
+                    "order_type": "limit",
+                    "time_in_force": "day",
+                    "limit_price": "1.15",
+                    "reference_price": "1.15",
+                    "price_source": "ask",
+                    "path": "P3_MACD_SURGE",
+                },
+            ),
+        )
+    )
+
+    # Age the intent + order well past the 30s cap so refresh would trigger.
+    now = datetime.now(UTC)
+    with session_factory() as session:
+        intent = session.scalar(select(TradeIntent).where(TradeIntent.symbol == "BFRG"))
+        assert intent is not None
+        intent.created_at = now - timedelta(seconds=120)
+        order = session.scalar(select(BrokerOrder).where(BrokerOrder.symbol == "BFRG"))
+        assert order is not None
+        order.updated_at = now - timedelta(seconds=10)
+        order.submitted_at = now - timedelta(seconds=120)
+        session.commit()
+
+    await service.sync_broker_orders(account_names=["paper:macd_1m"])
+
+    with session_factory() as session:
+        intent = session.scalar(select(TradeIntent).where(TradeIntent.symbol == "BFRG"))
+        orders = session.scalars(
+            select(BrokerOrder).where(BrokerOrder.symbol == "BFRG")
+        ).all()
+        assert intent is not None
+        assert intent.status == "cancelled"
+        assert len(orders) == 1  # NO replacement order spawned
+        assert orders[0].status == "cancelled"
+        assert orders[0].payload.get("abandon_reason_code") == "INTENT_MAX_AGE"
+
+    # Open + cancel went out; no second open (no retry).
+    assert [request.intent_type for request in adapter.submit_requests] == ["open", "cancel"]
+
+
+@pytest.mark.asyncio
+async def test_oms_service_abandons_intent_when_setup_no_longer_matches() -> None:
+    """Tier 3: latest strategy_bar_history bar status != signal -> abandon, not refresh."""
+    redis = FakeRedis()
+    session_factory = build_test_session_factory()
+    adapter = FakeWorkingOrderRefreshBrokerAdapter()
+    service = OmsRiskService(
+        settings=Settings(
+            redis_stream_prefix="test",
+            oms_adapter="simulated",
+            oms_working_order_refresh_seconds=5,
+            oms_intent_max_age_seconds=0,  # disable Tier 2 here
+            oms_intent_setup_revalidation_enabled=True,
+            oms_quote_drift_cancel_tolerance_cents=0.0,  # disable Tier 1 here
+        ),
+        redis_client=redis,
+        session_factory=session_factory,
+        broker_adapter=adapter,
+    )
+    service.sync_broker_state = _noop_sync_broker_state  # type: ignore[method-assign]
+
+    await service.process_trade_intent(
+        TradeIntentEvent(
+            source_service="strategy-engine",
+            payload=TradeIntentPayload(
+                strategy_code="macd_30s",
+                broker_account_name="paper:macd_30s",
+                symbol="GOVX",
+                side="buy",
+                quantity=Decimal("10"),
+                intent_type="open",
+                reason="ENTRY_P1_CROSS",
+                metadata={
+                    "order_type": "limit",
+                    "time_in_force": "day",
+                    "limit_price": "2.40",
+                    "reference_price": "2.40",
+                    "price_source": "ask",
+                    "path": "P1_CROSS",
+                },
+            ),
+        )
+    )
+
+    # Strategy publishes a fresh bar showing the setup is no longer 'signal'.
+    now = datetime.now(UTC)
+    with session_factory() as session:
+        strategy = session.scalar(select(Strategy).where(Strategy.code == "macd_30s"))
+        assert strategy is not None
+        session.add(
+            StrategyBarHistory(
+                strategy_code="macd_30s",
+                symbol="GOVX",
+                interval_secs=30,
+                bar_time=now - timedelta(seconds=2),
+                open_price=Decimal("2.39"),
+                high_price=Decimal("2.41"),
+                low_price=Decimal("2.38"),
+                close_price=Decimal("2.39"),
+                volume=10000,
+                trade_count=20,
+                position_state="flat",
+                position_quantity=0,
+                decision_status="idle",
+                decision_reason="momentum faded",
+                decision_path="",
+                decision_score="",
+                decision_score_details="",
+                indicators_json={},
+            )
+        )
+        order = session.scalar(select(BrokerOrder).where(BrokerOrder.symbol == "GOVX"))
+        assert order is not None
+        order.updated_at = now - timedelta(seconds=10)
+        order.submitted_at = now - timedelta(seconds=10)
+        session.commit()
+
+    await service.sync_broker_orders(account_names=["paper:macd_30s"])
+
+    with session_factory() as session:
+        intent = session.scalar(select(TradeIntent).where(TradeIntent.symbol == "GOVX"))
+        orders = session.scalars(
+            select(BrokerOrder).where(BrokerOrder.symbol == "GOVX")
+        ).all()
+        assert intent is not None
+        assert intent.status == "cancelled"
+        assert len(orders) == 1
+        assert orders[0].status == "cancelled"
+        assert orders[0].payload.get("abandon_reason_code") == "SETUP_INVALID"
+
+    assert [request.intent_type for request in adapter.submit_requests] == ["open", "cancel"]
