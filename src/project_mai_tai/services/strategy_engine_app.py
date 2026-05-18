@@ -542,12 +542,23 @@ class StrategyBotRuntime:
     def _data_halt_reason(self, symbol: str) -> str:
         return self.data_halt_symbols.get(str(symbol).upper(), "Schwab stream data halt active")
 
+    def _has_data_halt_exposure(self, symbol: str) -> bool:
+        normalized = str(symbol).upper()
+        if self.positions.get_position(normalized) is not None:
+            return True
+        if normalized in self.pending_open_symbols or normalized in self.pending_close_symbols:
+            return True
+        return any(pending_symbol == normalized for pending_symbol, _level in self.pending_scale_levels)
+
     def data_health_summary(self) -> dict[str, object]:
         halted_symbols = sorted(self.data_halt_symbols)
         warning_symbols = sorted(
             symbol
             for symbol in self.data_warning_symbols
             if symbol not in self.data_halt_symbols
+        )
+        halted_exposure_symbols = sorted(
+            symbol for symbol in halted_symbols if self._has_data_halt_exposure(symbol)
         )
         halted_open_position_symbols = sorted(
             symbol
@@ -557,10 +568,11 @@ class StrategyBotRuntime:
         return {
             "status": (
                 "critical"
-                if halted_open_position_symbols
+                if halted_exposure_symbols
                 else "degraded" if halted_symbols or warning_symbols else "healthy"
             ),
             "halted_symbols": halted_symbols,
+            "exposure_halted_symbols": halted_exposure_symbols,
             "open_position_halted_symbols": halted_open_position_symbols,
             "warning_symbols": warning_symbols,
             "reasons": dict(sorted(self.data_halt_symbols.items())),
@@ -4385,12 +4397,19 @@ class StrategyEngineState:
             "bots": {code: bot.summary() for code, bot in self.bots.items()},
         }
 
-    def monitor_completed_bar_flow(self, *, provider_for_strategy: Callable[[str], str]) -> int:
+    def monitor_completed_bar_flow(
+        self,
+        *,
+        provider_for_strategy: Callable[[str], str] | None = None,
+        market_data_provider_for_strategy: Callable[[str], str] | None = None,
+    ) -> int:
         changed = 0
+        provider_resolver = market_data_provider_for_strategy or provider_for_strategy
         for code, bot in self.bots.items():
             if not isinstance(bot, StrategyBotRuntime):
                 continue
-            changed += bot.monitor_completed_bar_flow(provider=provider_for_strategy(code))
+            provider = provider_resolver(code) if provider_resolver is not None else "market data"
+            changed += bot.monitor_completed_bar_flow(provider=provider)
         return changed
 
     def seed_confirmed_candidates(self, candidates: Sequence[dict[str, object]]) -> None:
@@ -5617,7 +5636,7 @@ class StrategyEngineService:
             schwab_intent_count, schwab_event_count = await self._drain_schwab_stream_queues()
             schwab_fallback_intent_count = await self._monitor_schwab_symbol_health()
             bar_flow_change_count = self.state.monitor_completed_bar_flow(
-                provider_for_strategy=self.settings.provider_for_strategy,
+                market_data_provider_for_strategy=self.settings.market_data_provider_for_strategy,
             )
             # Real-fix loop (2026-05-18): the bar-flow-stalled detector
             # halts entries when CHART_EQUITY drops behind. Instead of
@@ -5639,7 +5658,7 @@ class StrategyEngineService:
                         # symbols that caught up have their halts cleared
                         # without waiting for the next loop iteration.
                         bar_flow_change_count += self.state.monitor_completed_bar_flow(
-                            provider_for_strategy=self.settings.provider_for_strategy,
+                            market_data_provider_for_strategy=self.settings.market_data_provider_for_strategy,
                         )
             schwab_1m_history_intent_count, schwab_1m_history_bar_count = await self._refresh_stale_schwab_1m_history()
             if (
@@ -6213,6 +6232,15 @@ class StrategyEngineService:
                 if not reason.startswith("Completed bar flow stalled:"):
                     continue
                 title = f"{code} completed-bar flow stalled for {normalized}"
+                severity = (
+                    "critical"
+                    if normalized
+                    in {
+                        str(symbol).upper()
+                        for symbol in list(health.get("exposure_halted_symbols", []) or [])
+                    }
+                    else "warning"
+                )
                 active[title] = {
                     "source": "runtime_data_health",
                     "strategy_code": code,
@@ -6220,6 +6248,7 @@ class StrategyEngineService:
                     "reason": reason,
                     "account_name": runtime.definition.account_name,
                     "data_health_status": health.get("status", ""),
+                    "severity": severity,
                 }
 
         try:
@@ -6238,12 +6267,13 @@ class StrategyEngineService:
                 }
 
                 for title, payload in active.items():
+                    severity = str(payload.get("severity", "warning") or "warning")
                     incident = tracked_open.get(title)
                     if incident is None:
                         session.add(
                             SystemIncident(
                                 service_name=SERVICE_NAME,
-                                severity="critical",
+                                severity=severity,
                                 title=title,
                                 status="open",
                                 payload=payload,
@@ -6251,7 +6281,7 @@ class StrategyEngineService:
                             )
                         )
                         continue
-                    incident.severity = "critical"
+                    incident.severity = severity
                     incident.payload = payload
 
                 for title, incident in tracked_open.items():
