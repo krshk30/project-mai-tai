@@ -294,29 +294,60 @@ class SchwabNativeBarBuilder:
         if self._current_bar is None and self.fill_gap_bars:
             completed.extend(self._fill_missing_gaps_until(now_bucket))
 
-        # Stall detection (issue #145): trades have been arriving but
-        # check_bar_closes has not advanced any bar for >2x interval_secs.
-        # Only WARN once per stall; reset when _close_current_bar fires.
-        if (
-            not self._stall_warn_issued
-            and self._last_trade_wallclock > 0.0
-            and self._last_bar_advancement_wallclock > 0.0
-            and self._last_trade_wallclock - self._last_bar_advancement_wallclock
-            > 2.0 * float(self.interval_secs)
-        ):
-            stall_secs = now_ts - self._last_bar_advancement_wallclock
-            logger.warning(
-                "[SCHWAB30-STALL] ticker=%s stall_secs=%.1f last_trade_wc=%.3f last_bar_wc=%.3f "
-                "interval_secs=%d current_bar_start=%.3f bars_tail_ts=%s — ticks arriving but no advancement",
-                self.ticker,
-                stall_secs,
-                self._last_trade_wallclock,
-                self._last_bar_advancement_wallclock,
-                self.interval_secs,
-                self._current_bar_start,
-                self.bars[-1].timestamp if self.bars else None,
+        # Stall detection (issue #145). Fires when ALL of the following are
+        # true:
+        #   1. Trades have been arriving recently (last_trade_wallclock fresh)
+        #   2. No bar has advanced for > 2x interval_secs
+        #   3. The current bar IS past its force-close threshold
+        #      (current_bar_start + interval + grace + 2s buffer)
+        #
+        # Condition 3 is essential -- the original heuristic (1 & 2 only)
+        # over-fired on legitimate low-volume gaps where the previous bar
+        # closed normally and the next bar is still in-flight but hasn't
+        # reached its own close threshold yet. The 2026-05-18 RTH log
+        # showed [SCHWAB30-STALL] firing on ASTN/FABC/ARTL/SLE/DXF/STAK
+        # tens of times during normal-but-thin penny-stock trading. A real
+        # stall (the MOBX 2026-05-14 signature) has the current bar
+        # overdue -- check_bar_closes was called but couldn't advance.
+        if not self._stall_warn_issued:
+            ticks_arrived = self._last_trade_wallclock > 0.0
+            prior_bar_known = self._last_bar_advancement_wallclock > 0.0
+            tick_lag_exceeded = (
+                ticks_arrived
+                and prior_bar_known
+                and self._last_trade_wallclock - self._last_bar_advancement_wallclock
+                > 2.0 * float(self.interval_secs)
             )
-            self._stall_warn_issued = True
+            current_bar_overdue = (
+                self._current_bar is not None
+                and now_ts
+                > (
+                    self._current_bar_start
+                    + float(self.interval_secs)
+                    + float(self.close_grace_seconds)
+                    + 2.0
+                )
+            )
+            if tick_lag_exceeded and current_bar_overdue:
+                stall_secs = now_ts - self._last_bar_advancement_wallclock
+                bar_overdue_secs = now_ts - (
+                    self._current_bar_start + float(self.interval_secs)
+                )
+                logger.warning(
+                    "[SCHWAB30-STALL] ticker=%s stall_secs=%.1f bar_overdue_secs=%.1f "
+                    "last_trade_wc=%.3f last_bar_wc=%.3f interval_secs=%d "
+                    "current_bar_start=%.3f bars_tail_ts=%s "
+                    "— current bar past force-close threshold while ticks keep arriving",
+                    self.ticker,
+                    stall_secs,
+                    bar_overdue_secs,
+                    self._last_trade_wallclock,
+                    self._last_bar_advancement_wallclock,
+                    self.interval_secs,
+                    self._current_bar_start,
+                    self.bars[-1].timestamp if self.bars else None,
+                )
+                self._stall_warn_issued = True
         return completed
 
     def get_current_price(self) -> float | None:
