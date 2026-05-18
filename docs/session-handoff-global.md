@@ -24,6 +24,9 @@ Twelve PRs shipped today addressing four distinct bug classes that compounded in
 - **PR #177 (codex)** Schwab entry freshness guard at strategy boundary. Blocks new entries when bar/tick > `max(15s, interval*0.5)` stale. Records `decision_status='blocked'` with reason starting `Schwab entry freshness guard:`. Entry-only — no exit/stop changes, no CYN changes.
 - **PR #180** On-stall immediate REST recovery. When `monitor_completed_bar_flow` newly halts symbols, `_immediate_schwab_1m_history_refresh` fetches REST for them bypassing the 15s throttle, then re-runs the detector. End-to-end recovery 1-3s vs prior multi-minute halts. Logs `[ON-STALL-RECOVERY]`.
 
+**Decision-tape cleanup (post-RTH operator review surfaced these)**
+- **PR #182** (deploy 21:11:58 UTC) — `_persist_revised_closed_bar` INSERT path now stamps `decision_status='late_revision'` + clear reason instead of empty fields. Eliminates the 13-19 "empty" tape rows/day. UPDATE path explicitly preserves existing decision_* fields. No behavior change to entry decisions.
+
 **Observability + validators**
 - **PR #169** Indexed `broker_order_events.event_at`; flipped `MAI_TAI_DASHBOARD_TRADE_FORENSICS_ENABLED=true`. Bot pages render in 0.2s cached.
 - **PR #170** Issue #130 — INFO logging on `_revise_last_closed_bar_from_trade` (applied / skip-reasons) + `_persist_revised_closed_bar` (action, vol_before/after).
