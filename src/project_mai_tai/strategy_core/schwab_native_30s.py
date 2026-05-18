@@ -110,6 +110,18 @@ class SchwabNativeBarBuilder:
         # many bars stale, producing the trade_count=2 + 4-10x volume
         # artifact diagnosed 2026-05-11.
         self._last_closed_bar_from_aggregate: bool = False
+        # Stall-detection state (issue #145). Track wall-clock of last trade
+        # received and last bar advancement so we can WARN when ticks keep
+        # arriving but check_bar_closes never moves the bars forward — the
+        # 2026-05-14 MOBX 10-minute stall signature. Reset on each bar close.
+        self._last_trade_wallclock: float = 0.0
+        self._last_bar_advancement_wallclock: float = 0.0
+        self._stall_warn_issued: bool = False
+        # Revision rate-of-fire tracking (issue #145). Same bar revised many
+        # times within 30s indicates the next-bar bucket isn't advancing.
+        self._last_revised_bar_timestamp: float | None = None
+        self._revisions_for_current_tail: int = 0
+        self._first_revision_wallclock: float = 0.0
 
     def on_trade(
         self,
@@ -125,6 +137,8 @@ class SchwabNativeBarBuilder:
         bucket_start = (now_ts // self.interval_secs) * self.interval_secs
         completed: list[OHLCVBar] = []
         delta_volume = self._resolve_volume_delta(size, cumulative_volume)
+        # Track wall-clock of trade arrival for stall-detection (issue #145).
+        self._last_trade_wallclock = self.time_provider()
 
         if self._current_bar is None and self.bars and bucket_start <= self.bars[-1].timestamp:
             if bucket_start == self.bars[-1].timestamp and _is_synthetic_bar(self.bars[-1]):
@@ -279,6 +293,30 @@ class SchwabNativeBarBuilder:
 
         if self._current_bar is None and self.fill_gap_bars:
             completed.extend(self._fill_missing_gaps_until(now_bucket))
+
+        # Stall detection (issue #145): trades have been arriving but
+        # check_bar_closes has not advanced any bar for >2x interval_secs.
+        # Only WARN once per stall; reset when _close_current_bar fires.
+        if (
+            not self._stall_warn_issued
+            and self._last_trade_wallclock > 0.0
+            and self._last_bar_advancement_wallclock > 0.0
+            and self._last_trade_wallclock - self._last_bar_advancement_wallclock
+            > 2.0 * float(self.interval_secs)
+        ):
+            stall_secs = now_ts - self._last_bar_advancement_wallclock
+            logger.warning(
+                "[SCHWAB30-STALL] ticker=%s stall_secs=%.1f last_trade_wc=%.3f last_bar_wc=%.3f "
+                "interval_secs=%d current_bar_start=%.3f bars_tail_ts=%s — ticks arriving but no advancement",
+                self.ticker,
+                stall_secs,
+                self._last_trade_wallclock,
+                self._last_bar_advancement_wallclock,
+                self.interval_secs,
+                self._current_bar_start,
+                self.bars[-1].timestamp if self.bars else None,
+            )
+            self._stall_warn_issued = True
         return completed
 
     def get_current_price(self) -> float | None:
@@ -309,6 +347,12 @@ class SchwabNativeBarBuilder:
         self._recent_revised_closed_bar = None
         self._last_closed_bar_cum_volume = None
         self._last_closed_bar_from_aggregate = False
+        self._last_trade_wallclock = 0.0
+        self._last_bar_advancement_wallclock = 0.0
+        self._stall_warn_issued = False
+        self._last_revised_bar_timestamp = None
+        self._revisions_for_current_tail = 0
+        self._first_revision_wallclock = 0.0
 
     def consume_recent_revised_closed_bar(self) -> OHLCVBar | None:
         revised = self._recent_revised_closed_bar
@@ -429,6 +473,30 @@ class SchwabNativeBarBuilder:
             int(last_closed.volume),
             volume_path,
         )
+        # Revision rate-of-fire tracking (issue #145). Same bar revised many
+        # times within 30s is the MOBX 2026-05-14 stall signature.
+        wallclock = self.time_provider()
+        if self._last_revised_bar_timestamp != last_closed.timestamp:
+            self._last_revised_bar_timestamp = last_closed.timestamp
+            self._revisions_for_current_tail = 1
+            self._first_revision_wallclock = wallclock
+        else:
+            self._revisions_for_current_tail += 1
+            elapsed = wallclock - self._first_revision_wallclock
+            if (
+                self._revisions_for_current_tail in (5, 20, 100)
+                and elapsed > float(self.interval_secs)
+            ):
+                logger.warning(
+                    "[SCHWAB30-REVISE-STORM] ticker=%s bar_ts=%s revisions=%d elapsed_secs=%.1f "
+                    "vol_after=%d trade_count=%d — bars[-1] not advancing while late trades keep arriving",
+                    self.ticker,
+                    last_closed.timestamp,
+                    self._revisions_for_current_tail,
+                    elapsed,
+                    int(last_closed.volume),
+                    int(last_closed.trade_count),
+                )
 
     def _resolve_volume_delta(self, size: int, cumulative_volume: int | None) -> int:
         if cumulative_volume is None:
@@ -450,6 +518,12 @@ class SchwabNativeBarBuilder:
         self._last_closed_bar_cum_volume = self._current_bar_last_cum_volume
         # bars[-1] is now a tick-built (not CHART) bar; revisions are valid.
         self._last_closed_bar_from_aggregate = False
+        # Issue #145 stall + revision-storm tracking: bar advanced, reset state.
+        self._last_bar_advancement_wallclock = self.time_provider()
+        self._stall_warn_issued = False
+        self._last_revised_bar_timestamp = None
+        self._revisions_for_current_tail = 0
+        self._first_revision_wallclock = 0.0
         return bar
 
     def _pop_last_closed_bar(self) -> OHLCVBar | None:

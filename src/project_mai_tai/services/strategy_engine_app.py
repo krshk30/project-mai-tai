@@ -2728,8 +2728,9 @@ class StrategyBotRuntime:
                 record.volume = int(bar.volume)
                 record.trade_count = int(bar.trade_count)
                 session.commit()
+                persist_lag_secs = (datetime.now(UTC) - bar_time).total_seconds()
                 logger.info(
-                    "[STRATEGY-REVISE-PERSIST] strategy=%s symbol=%s bar_ts=%s action=%s vol_before=%s vol_after=%d trade_count=%d",
+                    "[STRATEGY-REVISE-PERSIST] strategy=%s symbol=%s bar_ts=%s action=%s vol_before=%s vol_after=%d trade_count=%d persist_lag_secs=%.1f",
                     self.definition.code,
                     symbol,
                     bar_time.isoformat(),
@@ -2737,7 +2738,22 @@ class StrategyBotRuntime:
                     vol_before,
                     int(bar.volume),
                     int(bar.trade_count),
+                    persist_lag_secs,
                 )
+                if persist_lag_secs > 120.0:
+                    # Issue #145: bar updated more than 2 minutes after it was
+                    # supposed to close. MOBX 2026-05-14 showed updated_at
+                    # ~10 minutes after bar_time when the stall happened.
+                    logger.warning(
+                        "[STRATEGY-REVISE-PERSIST-LAG] strategy=%s symbol=%s bar_ts=%s persist_lag_secs=%.1f action=%s vol_after=%d "
+                        "— bar revised long after its scheduled close, likely a check_bar_closes stall",
+                        self.definition.code,
+                        symbol,
+                        bar_time.isoformat(),
+                        persist_lag_secs,
+                        record_action,
+                        int(bar.volume),
+                    )
         except Exception:
             logger.exception(
                 "failed to persist revised strategy bar history for %s %s",
