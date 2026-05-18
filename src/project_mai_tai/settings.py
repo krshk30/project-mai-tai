@@ -287,6 +287,13 @@ class Settings(BaseSettings):
     webull_account_id: str | None = None
     oms_broker_sync_interval_seconds: int = 5
     oms_working_order_refresh_seconds: int = 5
+    # Stuck-intent cancellation (2026-05-18 incident: pre-market intents
+    # for AUUD/QNCX/SBFM kept retrying for 4.5 hours and 400+ attempts
+    # each because the OMS had no max-age cap, no quote-drift sanity, and
+    # no setup re-validation on retry).
+    oms_intent_max_age_seconds: int = 30
+    oms_quote_drift_cancel_tolerance_cents: float = 1.0
+    oms_intent_setup_revalidation_enabled: bool = True
     oms_stop_guard_refresh_stage_1_seconds: float = 1.0
     oms_stop_guard_refresh_stage_2_seconds: float = 2.0
     oms_stop_guard_refresh_stage_3_seconds: float = 3.0

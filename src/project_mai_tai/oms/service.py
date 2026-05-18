@@ -21,7 +21,7 @@ from project_mai_tai.broker_adapters.schwab import SchwabBrokerAdapter
 from project_mai_tai.broker_adapters.simulated import SimulatedBrokerAdapter
 from project_mai_tai.broker_adapters.webull import WebullBrokerAdapter
 from project_mai_tai.db.session import build_session_factory
-from project_mai_tai.db.models import BrokerAccount, BrokerOrder, Strategy, TradeIntent
+from project_mai_tai.db.models import BrokerAccount, BrokerOrder, Strategy, StrategyBarHistory, TradeIntent
 from project_mai_tai.events import (
     HeartbeatEvent,
     HeartbeatPayload,
@@ -219,8 +219,11 @@ class OmsRiskService:
             event = TradeIntentEvent.model_validate(payload)
             await self.process_trade_intent(event)
             return
-        if not self._armed_hard_stops:
-            return
+        # Quote/trade ticks: must reach the handler even without armed hard
+        # stops so the Tier 1 quote-drift cancel can fire on working open
+        # limit orders (which by definition have not filled yet, so no
+        # armed hard stop). The handler itself short-circuits the
+        # hard-stop evaluation when there are no armed stops.
         if event_type == "quote_tick":
             event = QuoteTickEvent.model_validate(payload)
             await self._handle_quote_tick_event(event)
@@ -1125,17 +1128,55 @@ class OmsRiskService:
                     )
 
                 if should_refresh:
-                    refresh_result = await self._refresh_working_order(
-                        session=session,
-                        order=order,
-                        intent=intent,
-                        strategy_code=strategy.code if strategy is not None else "",
-                        broker_account_name=account.name,
-                        report=report,
-                    )
-                    synced_orders += refresh_result["orders"]
-                    terminal_orders += refresh_result["terminal_orders"]
-                    published_events.extend(refresh_result["published_events"])
+                    # Tier 2 + Tier 3: before paying for another cancel-and-replace
+                    # cycle, decide whether the intent itself should be abandoned.
+                    # The 2026-05-18 incident had 414 retries on a single intent;
+                    # these guards stop that.
+                    abandon_code: str | None = None
+                    abandon_detail: str | None = None
+                    if (
+                        str(intent.intent_type).lower() == "open"
+                        and not self._is_stop_guard_order(order)
+                    ):
+                        if self._intent_too_old(intent):
+                            abandon_code = "INTENT_MAX_AGE"
+                            abandon_detail = (
+                                f"intent age {self._intent_age_secs(intent):.1f}s "
+                                f"exceeds max {self._intent_max_age_secs()}s"
+                            )
+                        else:
+                            invalid_reason = self._intent_setup_invalid_reason(
+                                session,
+                                intent=intent,
+                                strategy=strategy,
+                            )
+                            if invalid_reason:
+                                abandon_code = "SETUP_INVALID"
+                                abandon_detail = invalid_reason
+                    if abandon_code is not None:
+                        await self._cancel_working_order_and_abandon_intent(
+                            session=session,
+                            order=order,
+                            intent=intent,
+                            strategy=strategy,
+                            broker_account=account,
+                            reason_code=abandon_code,
+                            reason_detail=abandon_detail or abandon_code,
+                        )
+                        synced_orders += 1
+                        terminal_orders += 1
+                    else:
+                        refresh_result = await self._refresh_working_order(
+                            session=session,
+                            order=order,
+                            intent=intent,
+                            strategy_code=strategy.code if strategy is not None else "",
+                            broker_account_name=account.name,
+                            report=report,
+                        )
+                        synced_orders += refresh_result["orders"]
+                        terminal_orders += refresh_result["terminal_orders"]
+                        published_events.extend(refresh_result["published_events"])
                 elif not status_changed and fill is None:
                     continue
 
@@ -1211,7 +1252,9 @@ class OmsRiskService:
             "ask": float(event.payload.ask_price),
             "received_at": utcnow(),
         }
-        await self._evaluate_hard_stop_market_event(symbol)
+        if self._armed_hard_stops:
+            await self._evaluate_hard_stop_market_event(symbol)
+        await self._cancel_drifted_working_orders(symbol)
 
     async def _handle_trade_tick_event(self, event: TradeTickEvent) -> None:
         symbol = str(event.payload.symbol).upper()
@@ -1796,6 +1839,258 @@ class OmsRiskService:
         if last_activity.tzinfo is None:
             last_activity = last_activity.replace(tzinfo=UTC)
         return (utcnow() - last_activity).total_seconds() >= refresh_after
+
+    # ----- Stuck-intent cancellation (2026-05-18 incident) ----------------
+    # AUUD/QNCX/SBFM pre-market intents at 09:27 ET kept retrying for 4.5
+    # hours and 400+ attempts each. Three guards stop that:
+    #   Tier 1 (quote-driven): _cancel_drifted_working_orders cancels a
+    #          working limit on the very next quote tick when the ask
+    #          (buy) / bid (sell) has moved past the limit by more than
+    #          the configured tolerance. Fires within ms of the quote
+    #          update; no retry.
+    #   Tier 2 (age cap): _intent_too_old marks an intent as abandoned
+    #          once it has been open longer than
+    #          oms_intent_max_age_seconds (default 30s). Belt-and-braces
+    #          for stocks that stop quoting entirely.
+    #   Tier 3 (setup revalidation): _intent_setup_invalid_reason checks
+    #          strategy_bar_history for the latest bar of the intent's
+    #          symbol+strategy; if the bar is no longer status=signal
+    #          with the same path, the intent is abandoned. Prevents
+    #          buying on a setup that has expired since the original
+    #          intent fired.
+
+    def _intent_max_age_secs(self) -> int:
+        return max(0, int(getattr(self.settings, "oms_intent_max_age_seconds", 0) or 0))
+
+    def _quote_drift_tolerance_dollars(self) -> float:
+        return max(
+            0.0,
+            float(getattr(self.settings, "oms_quote_drift_cancel_tolerance_cents", 0.0) or 0.0),
+        ) / 100.0
+
+    @staticmethod
+    def _normalize_intent_created_at(intent: TradeIntent) -> datetime | None:
+        created = intent.created_at
+        if created is None:
+            return None
+        return created if created.tzinfo is not None else created.replace(tzinfo=UTC)
+
+    def _intent_age_secs(self, intent: TradeIntent) -> float:
+        created = self._normalize_intent_created_at(intent)
+        if created is None:
+            return 0.0
+        return max(0.0, (utcnow() - created).total_seconds())
+
+    def _intent_too_old(self, intent: TradeIntent) -> bool:
+        max_age = self._intent_max_age_secs()
+        if max_age <= 0:
+            return False
+        return self._intent_age_secs(intent) > max_age
+
+    def _intent_path(self, intent: TradeIntent) -> str:
+        payload = intent.payload if isinstance(intent.payload, dict) else {}
+        metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+        return str(metadata.get("path", "")).strip()
+
+    def _intent_setup_invalid_reason(
+        self,
+        session: Session,
+        *,
+        intent: TradeIntent,
+        strategy: Strategy | None,
+    ) -> str | None:
+        if not bool(getattr(self.settings, "oms_intent_setup_revalidation_enabled", True)):
+            return None
+        if str(intent.intent_type).lower() != "open":
+            return None
+        if strategy is None:
+            return None
+        intent_path = self._intent_path(intent)
+        if not intent_path:
+            return None
+        record = session.scalar(
+            select(StrategyBarHistory)
+            .where(
+                StrategyBarHistory.strategy_code == strategy.code,
+                StrategyBarHistory.symbol == intent.symbol,
+            )
+            .order_by(StrategyBarHistory.bar_time.desc())
+            .limit(1)
+        )
+        if record is None:
+            return None
+        decision_status = str(record.decision_status or "").strip()
+        decision_path = str(record.decision_path or "").strip()
+        if decision_status == "signal" and decision_path == intent_path:
+            return None
+        bar_et = record.bar_time.astimezone(SESSION_TZ).strftime("%H:%M:%S") if record.bar_time else "?"
+        return (
+            f"latest bar {bar_et} ET status={decision_status or 'idle'} "
+            f"path={decision_path or 'none'} != intent path={intent_path}"
+        )
+
+    def _quote_drift_dollars_against(
+        self,
+        order: BrokerOrder,
+        quote: dict[str, object],
+    ) -> float | None:
+        if self._is_stop_guard_order(order):
+            return None
+        payload = order.payload or {}
+        if str(payload.get("order_type", "")).strip().lower() != "limit":
+            return None
+        try:
+            limit_price = float(str(payload.get("limit_price", "")).strip())
+        except (TypeError, ValueError):
+            return None
+        if limit_price <= 0:
+            return None
+        side = str(order.side).lower()
+        if side == "buy":
+            ask = quote.get("ask")
+            if not isinstance(ask, (int, float)) or ask <= 0:
+                return None
+            return float(ask) - limit_price
+        if side == "sell":
+            bid = quote.get("bid")
+            if not isinstance(bid, (int, float)) or bid <= 0:
+                return None
+            return limit_price - float(bid)
+        return None
+
+    async def _cancel_working_order_and_abandon_intent(
+        self,
+        *,
+        session: Session,
+        order: BrokerOrder,
+        intent: TradeIntent,
+        strategy: Strategy | None,
+        broker_account: BrokerAccount,
+        reason_code: str,
+        reason_detail: str,
+    ) -> list[OrderEventEvent]:
+        existing_metadata = {str(k): str(v) for k, v in (order.payload or {}).items()}
+        cancel_request = OrderRequest(
+            client_order_id=order.client_order_id,
+            broker_account_name=broker_account.name,
+            strategy_code=strategy.code if strategy is not None else "",
+            symbol=order.symbol,
+            side=order.side,  # type: ignore[arg-type]
+            intent_type="cancel",
+            quantity=order.quantity,
+            reason=reason_code,
+            metadata={
+                **existing_metadata,
+                "broker_order_id": order.broker_order_id or "",
+                "target_client_order_id": order.client_order_id,
+                "abandon_intent": "true",
+                "abandon_reason_code": reason_code,
+                "abandon_reason_detail": reason_detail,
+            },
+            order_type=order.order_type,
+            time_in_force=order.time_in_force,
+        )
+        cancel_reports = await self.broker_adapter.submit_order(cancel_request)
+        cancelled_report = next(
+            (item for item in cancel_reports if item.event_type == "cancelled"),
+            None,
+        )
+        if cancelled_report is not None:
+            cancel_metadata = {
+                **existing_metadata,
+                **{str(k): str(v) for k, v in cancelled_report.metadata.items()},
+                "abandon_intent": "true",
+                "abandon_reason_code": reason_code,
+                "abandon_reason_detail": reason_detail,
+            }
+            self.store.update_order_from_report(
+                order,
+                report=cancelled_report,
+                metadata=cancel_metadata,
+            )
+            self.store.append_order_event(
+                session,
+                order=order,
+                report=cancelled_report,
+                payload={
+                    "client_order_id": cancelled_report.client_order_id,
+                    "broker_order_id": cancelled_report.broker_order_id,
+                    "broker_fill_id": cancelled_report.broker_fill_id,
+                    "metadata": dict(cancelled_report.metadata),
+                    "reason": cancelled_report.reason,
+                    "internal": reason_code,
+                },
+            )
+        self.store.mark_intent_status(intent, "cancelled")
+        self.logger.info(
+            "[OMS-ABANDON-INTENT] code=%s symbol=%s strategy=%s side=%s "
+            "intent_age_s=%.1f limit=%s reason=%s",
+            reason_code,
+            order.symbol,
+            strategy.code if strategy is not None else "?",
+            order.side,
+            self._intent_age_secs(intent),
+            str((order.payload or {}).get("limit_price", "")),
+            reason_detail,
+        )
+        return []
+
+    async def _cancel_drifted_working_orders(self, symbol: str) -> None:
+        """Tier 1: cancel working limit orders the instant the quote drifts past the limit."""
+        tolerance_dollars = self._quote_drift_tolerance_dollars()
+        if tolerance_dollars <= 0:
+            return
+        quote = self._latest_quotes_by_symbol.get(symbol.upper())
+        if not quote:
+            return
+        with self.session_factory() as session:
+            orders = session.scalars(
+                select(BrokerOrder)
+                .where(BrokerOrder.status.in_(self.store.OPEN_ORDER_STATUSES))
+                .where(BrokerOrder.symbol == symbol.upper())
+            ).all()
+            if not orders:
+                return
+            account_lookup = {
+                account.id: account
+                for account in self.store.list_active_broker_accounts(session)
+            }
+            strategy_lookup = {
+                strategy.id: strategy
+                for strategy in session.scalars(select(Strategy)).all()
+            }
+            cancelled_any = False
+            for order in orders:
+                if order.intent_id is None:
+                    continue
+                drift = self._quote_drift_dollars_against(order, quote)
+                if drift is None or drift <= tolerance_dollars:
+                    continue
+                intent = session.get(TradeIntent, order.intent_id)
+                if intent is None:
+                    continue
+                if str(intent.intent_type).lower() != "open":
+                    continue  # don't auto-cancel close/scale chases here
+                account = account_lookup.get(order.broker_account_id)
+                if account is None:
+                    continue
+                strategy = strategy_lookup.get(order.strategy_id)
+                detail = (
+                    f"quote drift {drift * 100:.1f}c past limit "
+                    f"(tolerance {tolerance_dollars * 100:.1f}c); ask/bid moved away"
+                )
+                await self._cancel_working_order_and_abandon_intent(
+                    session=session,
+                    order=order,
+                    intent=intent,
+                    strategy=strategy,
+                    broker_account=account,
+                    reason_code="QUOTE_DRIFT_CANCEL",
+                    reason_detail=detail,
+                )
+                cancelled_any = True
+            if cancelled_any:
+                session.commit()
 
     def _refresh_after_seconds(self, order: BrokerOrder) -> float:
         if self._is_stop_guard_order(order):
