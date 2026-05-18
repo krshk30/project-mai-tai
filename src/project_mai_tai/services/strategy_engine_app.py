@@ -718,6 +718,64 @@ class StrategyBotRuntime:
         current = self._normalize_now(self.now_provider())
         return (current - received_at).total_seconds() * 1000 <= max_age_ms
 
+    def _entry_freshness_limit_seconds(self) -> float:
+        return max(15.0, float(self.definition.interval_secs) * 0.5)
+
+    def _entry_freshness_block_reason(
+        self,
+        symbol: str,
+        *,
+        completed_bar: OHLCVBar | None = None,
+        tick_timestamp: float | None = None,
+    ) -> str | None:
+        if not isinstance(self.builder_manager, SchwabNativeBarBuilderManager):
+            return None
+
+        now = self._normalize_now(self.now_provider()).astimezone(UTC)
+        now_ts = now.timestamp()
+        interval = max(1, int(self.definition.interval_secs))
+        limit_secs = self._entry_freshness_limit_seconds()
+        # Unit tests and historical replay seed bars from old dates while using
+        # a fixed current clock. Only treat same-session live lag as a blocker.
+        max_live_lag_secs = 18.0 * 60.0 * 60.0
+
+        if completed_bar is not None:
+            bar_close_ts = float(completed_bar.timestamp) + float(interval)
+            close_lag_secs = now_ts - bar_close_ts
+            if limit_secs < close_lag_secs <= max_live_lag_secs:
+                return (
+                    "Schwab entry freshness guard: "
+                    f"completed bar arrived {close_lag_secs:.1f}s after close "
+                    f"(limit {limit_secs:.1f}s); new entries blocked"
+                )
+
+        if tick_timestamp is not None:
+            tick_lag_secs = now_ts - float(tick_timestamp)
+            if limit_secs < tick_lag_secs <= max_live_lag_secs:
+                return (
+                    "Schwab entry freshness guard: "
+                    f"trade tick arrived {tick_lag_secs:.1f}s after exchange timestamp "
+                    f"(limit {limit_secs:.1f}s); new entries blocked"
+                )
+
+        freshness_issue = self.builder_manager.entry_freshness_issue(symbol, now_ts=now_ts)
+        if freshness_issue:
+            return f"Schwab entry freshness guard: {freshness_issue}; new entries blocked"
+        return None
+
+    def _apply_entry_freshness_warning(self, symbol: str, reason: str) -> None:
+        self.apply_data_warning(
+            symbol,
+            reason=reason,
+            observed_at=self._normalize_now(self.now_provider()),
+        )
+
+    def _clear_entry_freshness_warning(self, symbol: str) -> None:
+        normalized = str(symbol).upper()
+        reason = self.data_warning_symbols.get(normalized, "")
+        if str(reason).startswith("Schwab entry freshness guard:"):
+            self.clear_data_warning(normalized)
+
     def seed_bars(self, symbol: str, bars: Sequence[dict[str, float | int]]) -> None:
         normalized_symbol = str(symbol).upper()
         builder = self.builder_manager.get_or_create(symbol)
@@ -1670,6 +1728,27 @@ class StrategyBotRuntime:
                 completed_bar=completed_bar,
             )
 
+        freshness_block_reason = self._entry_freshness_block_reason(
+            symbol,
+            completed_bar=completed_bar,
+        )
+        if freshness_block_reason:
+            self._apply_entry_freshness_warning(symbol, freshness_block_reason)
+            decision = self._record_decision(
+                symbol=symbol,
+                status="blocked",
+                reason=freshness_block_reason,
+                indicators=indicators,
+            )
+            return self._finalize_completed_bar(
+                symbol,
+                indicators,
+                [],
+                decision=decision,
+                completed_bar=completed_bar,
+            )
+        self._clear_entry_freshness_warning(symbol)
+
         signal = self.entry_engine.check_entry(symbol, indicators, builder.get_bar_count(), self)
         decision = self._capture_entry_decision(symbol, indicators)
         if self.lifecycle_policy.config.enabled and symbol in self.entry_blocked_symbols:
@@ -1850,6 +1929,17 @@ class StrategyBotRuntime:
 
         indicators = self._decorate_indicators(symbol, local_indicators)
         metrics = self._build_lifecycle_metrics(symbol, indicators, self.builder_manager)
+        freshness_block_reason = self._entry_freshness_block_reason(symbol)
+        if freshness_block_reason:
+            self._apply_entry_freshness_warning(symbol, freshness_block_reason)
+            self._record_decision(
+                symbol=symbol,
+                status="blocked",
+                reason=freshness_block_reason,
+                indicators=indicators,
+            )
+            return []
+        self._clear_entry_freshness_warning(symbol)
         if self._is_data_halted(symbol):
             self._record_decision(
                 symbol=symbol,
@@ -1951,6 +2041,20 @@ class StrategyBotRuntime:
 
         indicators = self._decorate_indicators(symbol, local_indicators)
         metrics = self._build_lifecycle_metrics(symbol, indicators, self.builder_manager)
+        freshness_block_reason = self._entry_freshness_block_reason(
+            symbol,
+            tick_timestamp=tick_ts,
+        )
+        if freshness_block_reason:
+            self._apply_entry_freshness_warning(symbol, freshness_block_reason)
+            self._record_decision(
+                symbol=symbol,
+                status="blocked",
+                reason=freshness_block_reason,
+                indicators=indicators,
+            )
+            return []
+        self._clear_entry_freshness_warning(symbol)
         if self._is_data_halted(symbol):
             self._record_decision(
                 symbol=symbol,
