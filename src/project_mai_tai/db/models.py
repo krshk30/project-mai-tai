@@ -171,7 +171,7 @@ class BrokerOrderEvent(Base):
     id: Mapped[UUID] = mapped_column(Uuid(), primary_key=True, default=uuid4)
     order_id: Mapped[UUID] = mapped_column(ForeignKey("broker_orders.id"), index=True)
     event_type: Mapped[str] = mapped_column(String(32), index=True)
-    event_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    event_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
     payload: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
 
 
