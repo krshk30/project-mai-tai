@@ -1020,8 +1020,21 @@ class ControlPlaneRepository:
                     recent_fills=recent_fills,
                     closed_today=[],
                 )
+                symbols = sorted({str(cycle.symbol or "").upper() for cycle in cycles if str(cycle.symbol or "").strip()})
+                strategy_bars = self._load_trade_forensics_strategy_bars(
+                    session=session,
+                    strategy_code=strategy_code,
+                    symbols=symbols,
+                    interval_secs=_trade_forensics_interval_secs(strategy_code),
+                    window_start=history_start - timedelta(minutes=10),
+                    window_end=today_end + timedelta(minutes=10),
+                )
                 reports[(strategy_code, broker_account_name)] = _build_trade_forensics_report(
                     cycles,
+                    recent_orders=recent_orders,
+                    recent_fills=recent_fills,
+                    strategy_bars=strategy_bars,
+                    schwab_tick_archive_root=self.settings.schwab_tick_archive_root,
                     today_start=today_start,
                     today_end=today_end,
                     history_start=history_start,
@@ -1047,7 +1060,7 @@ class ControlPlaneRepository:
         if strategy is None or broker_account is None:
             return []
 
-        latest_order_event_by_order: dict[Any, BrokerOrderEvent] = {}
+        order_events_by_order: dict[Any, list[BrokerOrderEvent]] = {}
         for entry in session.scalars(
             select(BrokerOrderEvent)
             .join(BrokerOrder, BrokerOrder.id == BrokerOrderEvent.order_id)
@@ -1059,7 +1072,7 @@ class ControlPlaneRepository:
             )
             .order_by(desc(BrokerOrderEvent.event_at))
         ).all():
-            latest_order_event_by_order.setdefault(entry.order_id, entry)
+            order_events_by_order.setdefault(entry.order_id, []).append(entry)
 
         order_rows = list(
             session.scalars(
@@ -1086,7 +1099,16 @@ class ControlPlaneRepository:
         rows: list[dict[str, Any]] = []
         for order in order_rows:
             intent = intent_lookup.get(order.intent_id) if order.intent_id else None
-            latest_event = latest_order_event_by_order.get(order.id)
+            order_events = order_events_by_order.get(order.id, [])
+            latest_event = order_events[0] if order_events else None
+            accepted_event = next(
+                (
+                    event
+                    for event in sorted(order_events, key=lambda item: item.event_at)
+                    if str(event.event_type or "").lower() in {"accepted", "submitted"}
+                ),
+                None,
+            )
             latest_event_payload = (
                 latest_event.payload
                 if latest_event is not None and isinstance(latest_event.payload, dict)
@@ -1101,6 +1123,8 @@ class ControlPlaneRepository:
             intent_reason = intent.reason if intent is not None else ""
             rows.append(
                 {
+                    "order_id": str(order.id),
+                    "intent_id": str(order.intent_id or ""),
                     "strategy_code": strategy_code,
                     "broker_account_name": broker_account_name,
                     "symbol": order.symbol,
@@ -1109,6 +1133,8 @@ class ControlPlaneRepository:
                     "quantity": _decimal_str(order.quantity),
                     "price": _decimal_str(latest_event_payload.get("fill_price")),
                     "status": order.status,
+                    "order_type": order.order_type,
+                    "broker_order_id": order.broker_order_id or "",
                     "reason": _select_filled_order_reason(
                         latest_event_payload.get("reason"),
                         intent_reason,
@@ -1120,7 +1146,20 @@ class ControlPlaneRepository:
                             "reason": intent_reason,
                         }
                     ),
+                    "metadata": intent_metadata,
+                    "intent_created_at": _datetime_str(intent.created_at if intent is not None else None),
+                    "intent_created_at_raw": intent.created_at if intent is not None else None,
+                    "intent_updated_at": _datetime_str(intent.updated_at if intent is not None else None),
+                    "intent_updated_at_raw": intent.updated_at if intent is not None else None,
+                    "submitted_at": _datetime_str(order.submitted_at),
+                    "submitted_at_raw": order.submitted_at,
+                    "broker_accepted_at": _datetime_str(accepted_event.event_at if accepted_event is not None else None),
+                    "broker_accepted_at_raw": accepted_event.event_at if accepted_event is not None else None,
+                    "latest_event_type": latest_event.event_type if latest_event is not None else "",
+                    "latest_event_at": _datetime_str(latest_event.event_at if latest_event is not None else None),
+                    "latest_event_at_raw": latest_event.event_at if latest_event is not None else None,
                     "updated_at": _datetime_str(order.updated_at),
+                    "updated_at_raw": order.updated_at,
                 }
             )
         return rows
@@ -1154,6 +1193,8 @@ class ControlPlaneRepository:
         ).all():
             rows.append(
                 {
+                    "fill_id": str(fill.id),
+                    "order_id": str(fill.order_id),
                     "strategy_code": strategy_code,
                     "broker_account_name": broker_account_name,
                     "symbol": fill.symbol,
@@ -1161,6 +1202,54 @@ class ControlPlaneRepository:
                     "quantity": _decimal_str(fill.quantity),
                     "price": _decimal_str(fill.price),
                     "filled_at": _datetime_str(fill.filled_at),
+                    "filled_at_raw": fill.filled_at,
+                    "payload": fill.payload if isinstance(fill.payload, dict) else {},
+                }
+            )
+        return rows
+
+    def _load_trade_forensics_strategy_bars(
+        self,
+        *,
+        session: Session,
+        strategy_code: str,
+        symbols: list[str],
+        interval_secs: int,
+        window_start: datetime,
+        window_end: datetime,
+    ) -> list[dict[str, Any]]:
+        if not symbols:
+            return []
+        rows: list[dict[str, Any]] = []
+        for bar in session.scalars(
+            select(StrategyBarHistory)
+            .where(
+                StrategyBarHistory.strategy_code.in_(_strategy_code_variants(strategy_code)),
+                StrategyBarHistory.symbol.in_(symbols),
+                StrategyBarHistory.interval_secs == interval_secs,
+                StrategyBarHistory.bar_time >= window_start,
+                StrategyBarHistory.bar_time < window_end,
+            )
+            .order_by(StrategyBarHistory.symbol.asc(), StrategyBarHistory.bar_time.asc())
+        ).all():
+            rows.append(
+                {
+                    "strategy_code": bar.strategy_code,
+                    "symbol": bar.symbol,
+                    "interval_secs": bar.interval_secs,
+                    "bar_time": bar.bar_time,
+                    "open_price": _as_float(bar.open_price),
+                    "high_price": _as_float(bar.high_price),
+                    "low_price": _as_float(bar.low_price),
+                    "close_price": _as_float(bar.close_price),
+                    "volume": int(bar.volume or 0),
+                    "trade_count": int(bar.trade_count or 0),
+                    "position_state": bar.position_state or "",
+                    "decision_status": bar.decision_status or "",
+                    "decision_path": bar.decision_path or "",
+                    "decision_score": bar.decision_score or "",
+                    "created_at": bar.created_at,
+                    "updated_at": bar.updated_at,
                 }
             )
         return rows
@@ -8894,17 +8983,26 @@ def _render_trade_coach_review_center(
 def _build_trade_forensics_report(
     cycles: list[Any],
     *,
+    recent_orders: list[dict[str, Any]] | None = None,
+    recent_fills: list[dict[str, Any]] | None = None,
+    strategy_bars: list[dict[str, Any]] | None = None,
+    schwab_tick_archive_root: str | None = None,
     today_start: datetime,
     today_end: datetime,
     history_start: datetime,
     lookback_days: int,
 ) -> dict[str, Any]:
+    orders = list(recent_orders or [])
+    fills = list(recent_fills or [])
+    bars = list(strategy_bars or [])
+    eligible_cycles: list[Any] = []
     rows: list[dict[str, Any]] = []
     for cycle in cycles:
         entry_at = parse_et_timestamp(str(cycle.entry_time or "")).astimezone(UTC)
         exit_at = parse_et_timestamp(str(cycle.exit_time or "")).astimezone(UTC)
         if exit_at.year <= 1 or exit_at < history_start or exit_at >= today_end:
             continue
+        eligible_cycles.append(cycle)
         quantity = _as_float(cycle.quantity)
         entry_price = _as_float(cycle.entry_price)
         hold_secs = max(int((exit_at - entry_at).total_seconds()), 0)
@@ -8930,6 +9028,25 @@ def _build_trade_forensics_report(
     today_rows = [
         row for row in rows if today_start <= row["exit_at"] < today_end
     ]
+    recent_cycles = sorted(
+        eligible_cycles,
+        key=lambda item: parse_et_timestamp(str(item.exit_time or "")),
+        reverse=True,
+    )[:12]
+    reconstructions = [
+        reconstruction
+        for reconstruction in (
+            _build_trade_reconstruction(
+                cycle,
+                recent_orders=orders,
+                recent_fills=fills,
+                strategy_bars=bars,
+                schwab_tick_archive_root=schwab_tick_archive_root,
+            )
+            for cycle in recent_cycles
+        )
+        if reconstruction
+    ]
     return {
         "generated_at": _datetime_str(utcnow()),
         "lookback_days": lookback_days,
@@ -8939,7 +9056,407 @@ def _build_trade_forensics_report(
         "paths": _trade_forensics_group_rows(rows, key="path", limit=8),
         "exit_reasons": _trade_forensics_group_rows(rows, key="exit_summary", limit=8),
         "loser_symbols": _trade_forensics_symbol_rows(rows, limit=8),
+        "recent_reconstructions": reconstructions,
     }
+
+
+def _build_trade_reconstruction(
+    cycle: Any,
+    *,
+    recent_orders: list[dict[str, Any]],
+    recent_fills: list[dict[str, Any]],
+    strategy_bars: list[dict[str, Any]],
+    schwab_tick_archive_root: str | None,
+) -> dict[str, Any]:
+    symbol = str(cycle.symbol or "").upper()
+    entry_at = parse_et_timestamp(str(cycle.entry_time or "")).astimezone(UTC)
+    exit_at = parse_et_timestamp(str(cycle.exit_time or "")).astimezone(UTC)
+    if not symbol or entry_at.year <= 1 or exit_at.year <= 1:
+        return {}
+
+    open_fill = _match_trade_forensics_fill(
+        recent_fills,
+        symbol=symbol,
+        side="buy",
+        target_at=entry_at,
+        target_price=_as_float(cycle.entry_price),
+    )
+    close_fill = _match_trade_forensics_fill(
+        recent_fills,
+        symbol=symbol,
+        side="sell",
+        target_at=exit_at,
+        target_price=_as_float(cycle.exit_price),
+    )
+    open_order = _find_order_for_fill(recent_orders, open_fill)
+    close_order = _find_order_for_fill(recent_orders, close_fill)
+    path = str(cycle.path or "").strip() or "-"
+    interval_secs = _trade_forensics_interval_secs(str(cycle.strategy_code or ""))
+    bars_for_symbol = [
+        bar for bar in strategy_bars if str(bar.get("symbol", "") or "").upper() == symbol
+    ]
+    confirmation_bar = _find_trade_confirmation_bar(
+        bars_for_symbol,
+        path=path,
+        intent_created_at=_raw_datetime(open_order.get("intent_created_at_raw") if open_order else None) or entry_at,
+    )
+    setup_bar = _find_trade_setup_bar(bars_for_symbol, confirmation_bar=confirmation_bar, path=path)
+    first_adverse_bar = _find_first_adverse_bar(
+        bars_for_symbol,
+        entry_at=entry_at,
+        entry_price=_as_float(cycle.entry_price),
+        interval_secs=interval_secs,
+    )
+    raw_lag = _load_trade_archive_lag_summary(
+        schwab_tick_archive_root,
+        symbol=symbol,
+        start_at=(
+            _raw_datetime(setup_bar.get("bar_time") if setup_bar else None)
+            or _raw_datetime(confirmation_bar.get("bar_time") if confirmation_bar else None)
+            or entry_at - timedelta(seconds=interval_secs)
+        ),
+        end_at=(
+            _raw_datetime(open_order.get("intent_created_at_raw") if open_order else None)
+            or entry_at
+        )
+        + timedelta(seconds=5),
+    )
+    timing = _trade_reconstruction_timing(
+        setup_bar=setup_bar,
+        confirmation_bar=confirmation_bar,
+        open_order=open_order,
+        open_fill=open_fill,
+        close_order=close_order,
+        close_fill=close_fill,
+        interval_secs=interval_secs,
+        raw_lag=raw_lag,
+    )
+    stop_metadata = _trade_order_metadata(close_order)
+    return {
+        "symbol": symbol,
+        "path": path,
+        "quantity": _as_float(cycle.quantity),
+        "entry_time": str(cycle.entry_time or ""),
+        "entry_price": _as_float(cycle.entry_price),
+        "exit_time": str(cycle.exit_time or ""),
+        "exit_price": _as_float(cycle.exit_price),
+        "pnl": _as_float(cycle.pnl),
+        "pnl_pct": _as_float(cycle.pnl_pct),
+        "exit_summary": str(cycle.summary or "-") or "-",
+        "setup_bar_time": _datetime_str(setup_bar.get("bar_time") if setup_bar else None),
+        "confirmation_bar_time": _datetime_str(confirmation_bar.get("bar_time") if confirmation_bar else None),
+        "confirmation_bar_persisted_at": _datetime_str(confirmation_bar.get("created_at") if confirmation_bar else None),
+        "confirmation_score": str(confirmation_bar.get("decision_score", "") if confirmation_bar else ""),
+        "intent_created_at": str(open_order.get("intent_created_at", "") if open_order else ""),
+        "broker_accepted_at": str(open_order.get("broker_accepted_at", "") if open_order else ""),
+        "entry_fill_at": str(open_fill.get("filled_at", "") if open_fill else str(cycle.entry_time or "")),
+        "close_intent_created_at": str(close_order.get("intent_created_at", "") if close_order else ""),
+        "close_fill_at": str(close_fill.get("filled_at", "") if close_fill else str(cycle.exit_time or "")),
+        "signal_to_intent_secs": timing["signal_to_intent_secs"],
+        "persist_to_intent_secs": timing["persist_to_intent_secs"],
+        "intent_to_fill_secs": timing["intent_to_fill_secs"],
+        "raw_schwab_lag": raw_lag,
+        "stop_trigger_source": str(stop_metadata.get("stop_trigger_source") or stop_metadata.get("price_source") or ""),
+        "stop_trigger_price": _as_float(stop_metadata.get("stop_trigger_price") or stop_metadata.get("stop_price")),
+        "stop_reference_price": _as_float(stop_metadata.get("reference_price")),
+        "stop_fill_price": _as_float(close_fill.get("price") if close_fill else cycle.exit_price),
+        "first_adverse_bar": first_adverse_bar,
+        "lateness": _classify_trade_lateness(
+            timing=timing,
+            raw_lag=raw_lag,
+            interval_secs=interval_secs,
+            entry_price=_as_float(cycle.entry_price),
+            confirmation_close=_as_float(confirmation_bar.get("close_price") if confirmation_bar else 0),
+            first_adverse_bar=first_adverse_bar,
+        ),
+    }
+
+
+def _trade_forensics_interval_secs(strategy_code: str) -> int:
+    if str(strategy_code or "").lower() in {"macd_30s", "polygon_30s", "webull_30s"}:
+        return 30
+    return 60
+
+
+def _match_trade_forensics_fill(
+    fills: list[dict[str, Any]],
+    *,
+    symbol: str,
+    side: str,
+    target_at: datetime,
+    target_price: float,
+) -> dict[str, Any] | None:
+    candidates = [
+        fill
+        for fill in fills
+        if str(fill.get("symbol", "") or "").upper() == symbol
+        and str(fill.get("side", "") or "").lower() == side
+    ]
+    best: tuple[float, float, dict[str, Any]] | None = None
+    for fill in candidates:
+        filled_at = _raw_datetime(fill.get("filled_at_raw")) or parse_et_timestamp(str(fill.get("filled_at", "") or "")).astimezone(UTC)
+        time_delta = abs((filled_at - target_at).total_seconds())
+        if time_delta > 5:
+            continue
+        price_delta = abs(_as_float(fill.get("price")) - target_price) if target_price > 0 else 0.0
+        score = (time_delta, price_delta, fill)
+        if best is None or score[:2] < best[:2]:
+            best = score
+    return best[2] if best is not None else None
+
+
+def _find_order_for_fill(
+    orders: list[dict[str, Any]],
+    fill: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if not fill:
+        return None
+    fill_order_id = str(fill.get("order_id", "") or "")
+    if fill_order_id:
+        for order in orders:
+            if str(order.get("order_id", "") or "") == fill_order_id:
+                return order
+    symbol = str(fill.get("symbol", "") or "").upper()
+    side = str(fill.get("side", "") or "").lower()
+    filled_at = _raw_datetime(fill.get("filled_at_raw"))
+    if filled_at is None:
+        return None
+    candidates = [
+        order
+        for order in orders
+        if str(order.get("symbol", "") or "").upper() == symbol
+        and str(order.get("side", "") or "").lower() == side
+        and str(order.get("status", "") or "").lower() == "filled"
+    ]
+    best: tuple[float, dict[str, Any]] | None = None
+    for order in candidates:
+        updated_at = _raw_datetime(order.get("updated_at_raw"))
+        if updated_at is None:
+            continue
+        delta = abs((updated_at - filled_at).total_seconds())
+        if best is None or delta < best[0]:
+            best = (delta, order)
+    return best[1] if best is not None and best[0] <= 10 else None
+
+
+def _find_trade_confirmation_bar(
+    bars: list[dict[str, Any]],
+    *,
+    path: str,
+    intent_created_at: datetime,
+) -> dict[str, Any] | None:
+    normalized_path = str(path or "").upper()
+    candidates = []
+    for bar in bars:
+        bar_time = _raw_datetime(bar.get("bar_time"))
+        if bar_time is None or bar_time > intent_created_at + timedelta(seconds=2):
+            continue
+        if str(bar.get("decision_status", "") or "").lower() != "signal":
+            continue
+        if str(bar.get("decision_path", "") or "").upper() != normalized_path:
+            continue
+        candidates.append(bar)
+    if candidates:
+        return max(candidates, key=lambda item: _raw_datetime(item.get("bar_time")) or datetime.min.replace(tzinfo=UTC))
+    fallback = [
+        bar
+        for bar in bars
+        if str(bar.get("decision_path", "") or "").upper() == normalized_path
+        and (_raw_datetime(bar.get("bar_time")) or datetime.max.replace(tzinfo=UTC)) <= intent_created_at + timedelta(seconds=2)
+    ]
+    return max(fallback, key=lambda item: _raw_datetime(item.get("bar_time")) or datetime.min.replace(tzinfo=UTC)) if fallback else None
+
+
+def _find_trade_setup_bar(
+    bars: list[dict[str, Any]],
+    *,
+    confirmation_bar: dict[str, Any] | None,
+    path: str,
+) -> dict[str, Any] | None:
+    if not confirmation_bar:
+        return None
+    confirmation_time = _raw_datetime(confirmation_bar.get("bar_time"))
+    if confirmation_time is None:
+        return None
+    normalized_path = str(path or "").upper()
+    candidates = [
+        bar
+        for bar in bars
+        if (_raw_datetime(bar.get("bar_time")) or datetime.min.replace(tzinfo=UTC)) < confirmation_time
+        and str(bar.get("decision_status", "") or "").lower() == "pending"
+        and str(bar.get("decision_path", "") or "").upper() == normalized_path
+    ]
+    return max(candidates, key=lambda item: _raw_datetime(item.get("bar_time")) or datetime.min.replace(tzinfo=UTC)) if candidates else None
+
+
+def _find_first_adverse_bar(
+    bars: list[dict[str, Any]],
+    *,
+    entry_at: datetime,
+    entry_price: float,
+    interval_secs: int,
+) -> dict[str, Any]:
+    if entry_price <= 0:
+        return {}
+    entry_bucket_epoch = int(entry_at.timestamp()) // interval_secs * interval_secs
+    entry_bucket = datetime.fromtimestamp(entry_bucket_epoch, tz=UTC)
+    for bar in sorted(bars, key=lambda item: _raw_datetime(item.get("bar_time")) or datetime.max.replace(tzinfo=UTC)):
+        bar_time = _raw_datetime(bar.get("bar_time"))
+        if bar_time is None or bar_time < entry_bucket:
+            continue
+        low_price = _as_float(bar.get("low_price"))
+        close_price = _as_float(bar.get("close_price"))
+        adverse_pct = ((low_price - entry_price) / entry_price * 100.0) if entry_price > 0 and low_price > 0 else 0.0
+        if low_price > 0 and low_price < entry_price:
+            return {
+                "bar_time": _datetime_str(bar_time),
+                "low_price": low_price,
+                "close_price": close_price,
+                "adverse_pct": round(adverse_pct, 2),
+            }
+    return {}
+
+
+def _load_trade_archive_lag_summary(
+    root_path: str | None,
+    *,
+    symbol: str,
+    start_at: datetime,
+    end_at: datetime,
+) -> dict[str, Any]:
+    if not root_path or not symbol or end_at <= start_at:
+        return {"status": "unavailable"}
+    day = start_at.astimezone(EASTERN_TZ).strftime("%Y-%m-%d")
+    path = Path(root_path) / day / f"{symbol.upper()}.jsonl"
+    if not path.exists():
+        return {"status": "missing", "path": str(path)}
+    start_ns = int(start_at.timestamp() * 1_000_000_000)
+    end_ns = int(end_at.timestamp() * 1_000_000_000)
+    lags: list[float] = []
+    first_seen: datetime | None = None
+    last_seen: datetime | None = None
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                try:
+                    payload = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if str(payload.get("event_type", "") or "").lower() != "trade":
+                    continue
+                try:
+                    timestamp_ns = int(payload.get("timestamp_ns") or 0)
+                    recorded_at_ns = int(payload.get("recorded_at_ns") or 0)
+                except (TypeError, ValueError):
+                    continue
+                if timestamp_ns <= 0 or recorded_at_ns <= 0:
+                    continue
+                if timestamp_ns < start_ns or timestamp_ns >= end_ns:
+                    continue
+                lag_secs = (recorded_at_ns - timestamp_ns) / 1_000_000_000
+                if lag_secs < -1:
+                    continue
+                lags.append(lag_secs)
+                recorded_at = datetime.fromtimestamp(recorded_at_ns / 1_000_000_000, tz=UTC)
+                first_seen = recorded_at if first_seen is None else min(first_seen, recorded_at)
+                last_seen = recorded_at if last_seen is None else max(last_seen, recorded_at)
+    except OSError:
+        return {"status": "unavailable", "path": str(path)}
+    if not lags:
+        return {"status": "empty", "path": str(path)}
+    ordered = sorted(lags)
+    p95 = ordered[min(len(ordered) - 1, int(len(ordered) * 0.95))]
+    return {
+        "status": "ok",
+        "trade_count": len(lags),
+        "avg_secs": round(sum(lags) / len(lags), 1),
+        "p95_secs": round(p95, 1),
+        "max_secs": round(max(lags), 1),
+        "first_recorded_at": _datetime_str(first_seen),
+        "last_recorded_at": _datetime_str(last_seen),
+    }
+
+
+def _trade_reconstruction_timing(
+    *,
+    setup_bar: dict[str, Any] | None,
+    confirmation_bar: dict[str, Any] | None,
+    open_order: dict[str, Any] | None,
+    open_fill: dict[str, Any] | None,
+    close_order: dict[str, Any] | None,
+    close_fill: dict[str, Any] | None,
+    interval_secs: int,
+    raw_lag: dict[str, Any],
+) -> dict[str, Any]:
+    del setup_bar, close_order, close_fill, raw_lag
+    intent_created_at = _raw_datetime(open_order.get("intent_created_at_raw") if open_order else None)
+    fill_at = _raw_datetime(open_fill.get("filled_at_raw") if open_fill else None)
+    confirmation_time = _raw_datetime(confirmation_bar.get("bar_time") if confirmation_bar else None)
+    confirmation_persisted_at = _raw_datetime(confirmation_bar.get("created_at") if confirmation_bar else None)
+    signal_to_intent = None
+    persist_to_intent = None
+    intent_to_fill = None
+    if confirmation_time is not None and intent_created_at is not None:
+        signal_close_at = confirmation_time + timedelta(seconds=interval_secs)
+        signal_to_intent = round((intent_created_at - signal_close_at).total_seconds(), 1)
+    if confirmation_persisted_at is not None and intent_created_at is not None:
+        persist_to_intent = round((intent_created_at - confirmation_persisted_at).total_seconds(), 1)
+    if intent_created_at is not None and fill_at is not None:
+        intent_to_fill = round((fill_at - intent_created_at).total_seconds(), 1)
+    return {
+        "signal_to_intent_secs": signal_to_intent,
+        "persist_to_intent_secs": persist_to_intent,
+        "intent_to_fill_secs": intent_to_fill,
+    }
+
+
+def _trade_order_metadata(order: dict[str, Any] | None) -> dict[str, Any]:
+    if not order:
+        return {}
+    metadata = order.get("metadata", {})
+    return metadata if isinstance(metadata, dict) else {}
+
+
+def _classify_trade_lateness(
+    *,
+    timing: dict[str, Any],
+    raw_lag: dict[str, Any],
+    interval_secs: int,
+    entry_price: float,
+    confirmation_close: float,
+    first_adverse_bar: dict[str, Any],
+) -> dict[str, Any]:
+    reasons: list[str] = []
+    signal_to_intent = timing.get("signal_to_intent_secs")
+    intent_to_fill = timing.get("intent_to_fill_secs")
+    if isinstance(signal_to_intent, (int, float)) and signal_to_intent >= interval_secs * 0.8:
+        reasons.append("confirmation/feed-to-intent delay")
+    if raw_lag.get("status") == "ok" and _as_float(raw_lag.get("max_secs")) >= 15:
+        reasons.append("raw Schwab delivery lag")
+    if isinstance(intent_to_fill, (int, float)) and intent_to_fill >= 10:
+        reasons.append("broker/order fill delay")
+    if entry_price > 0 and confirmation_close > 0:
+        move_pct = (entry_price - confirmation_close) / confirmation_close * 100.0
+        if abs(move_pct) >= 1.0:
+            reasons.append("price moved before fill")
+    if first_adverse_bar:
+        reasons.append("adverse bar after entry")
+    return {
+        "primary": " + ".join(reasons[:3]) if reasons else "on time",
+        "reasons": reasons,
+    }
+
+
+def _raw_datetime(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        return value.astimezone(UTC) if value.tzinfo is not None else value.replace(tzinfo=UTC)
+    if isinstance(value, str) and value:
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            parsed = parse_et_timestamp(value)
+        return parsed.astimezone(UTC) if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+    return None
 
 
 def _trade_forensics_window_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -9075,6 +9592,9 @@ def _build_trade_forensics_panel(report: dict[str, Any]) -> str:
         list(report.get("loser_symbols", []) or []),
         empty_text="No losing-symbol aggregates yet.",
     )
+    reconstruction_rows = _render_trade_forensics_reconstruction_rows(
+        list(report.get("recent_reconstructions", []) or []),
+    )
     return f"""
             <section class="panel full accent-panel">
                 <div class="panel-header">
@@ -9144,6 +9664,19 @@ def _build_trade_forensics_panel(report: dict[str, Any]) -> str:
                     <table>
                         <thead><tr><th>Symbol</th><th style="text-align:right">Trades</th><th>P&amp;L</th><th style="text-align:right">Median Hold</th><th style="text-align:right">Avg Entry</th></tr></thead>
                         <tbody>{loser_rows}</tbody>
+                    </table>
+                </div>
+                <div class="panel-header coach-subheader">
+                    <div>
+                        <h3>Recent Trade Reconstruction</h3>
+                        <div class="sub">Per-trade timing from bars, intents, broker events, fills, and Schwab tick-archive lag when available.</div>
+                    </div>
+                    <span class="count">{len(list(report.get("recent_reconstructions", []) or []))}</span>
+                </div>
+                <div class="table-wrap">
+                    <table>
+                        <thead><tr><th>Trade</th><th>Signal</th><th>Execution</th><th>Lag Attribution</th><th>Stop / Adverse</th></tr></thead>
+                        <tbody>{reconstruction_rows}</tbody>
                     </table>
                 </div>
             </section>"""
@@ -9237,6 +9770,75 @@ def _render_trade_forensics_loser_rows(
         </tr>"""
         )
     return "".join(rendered)
+
+
+def _render_trade_forensics_reconstruction_rows(rows: list[dict[str, Any]]) -> str:
+    if not rows:
+        return '<tr><td colspan="5" style="text-align:center;color:#888;">No completed trades available for reconstruction.</td></tr>'
+    rendered: list[str] = []
+    for row in rows:
+        pnl = _as_float(row.get("pnl"))
+        pnl_color = "#5fff8d" if pnl >= 0 else "#ff6b6b"
+        raw_lag = row.get("raw_schwab_lag", {}) if isinstance(row.get("raw_schwab_lag"), dict) else {}
+        lag_text = "Schwab lag unavailable"
+        if raw_lag.get("status") == "ok":
+            lag_text = (
+                f"Schwab lag avg {_format_seconds_decimal(raw_lag.get('avg_secs'))}, "
+                f"p95 {_format_seconds_decimal(raw_lag.get('p95_secs'))}, "
+                f"max {_format_seconds_decimal(raw_lag.get('max_secs'))} "
+                f"({int(raw_lag.get('trade_count', 0) or 0)} ticks)"
+            )
+        elif raw_lag.get("status"):
+            lag_text = f"Schwab lag {escape(str(raw_lag.get('status')))}"
+        adverse = row.get("first_adverse_bar", {}) if isinstance(row.get("first_adverse_bar"), dict) else {}
+        adverse_text = "No adverse bar in window"
+        if adverse:
+            adverse_text = (
+                f"{escape(str(adverse.get('bar_time', '') or '-'))}<br>"
+                f"low {_fmt_money(_as_float(adverse.get('low_price')))} "
+                f"({float(adverse.get('adverse_pct', 0) or 0):+.2f}%)"
+            )
+        lateness = row.get("lateness", {}) if isinstance(row.get("lateness"), dict) else {}
+        rendered.append(
+            f"""<tr>
+            <td><strong>{escape(str(row.get("symbol", "") or "-"))}</strong><br>
+                {escape(str(row.get("path", "") or "-"))}<br>
+                <span style="color:#888;">{escape(str(row.get("quantity", "") or "-"))} @ {_fmt_money(_as_float(row.get("entry_price")))}</span><br>
+                <span style="color:{pnl_color};">${pnl:+.2f} ({float(row.get("pnl_pct", 0) or 0):+.2f}%)</span>
+            </td>
+            <td>setup {escape(str(row.get("setup_bar_time", "") or "-"))}<br>
+                confirm {escape(str(row.get("confirmation_bar_time", "") or "-"))}<br>
+                persisted {escape(str(row.get("confirmation_bar_persisted_at", "") or "-"))}<br>
+                score {escape(str(row.get("confirmation_score", "") or "-"))}
+            </td>
+            <td>intent {escape(str(row.get("intent_created_at", "") or "-"))}<br>
+                accepted {escape(str(row.get("broker_accepted_at", "") or "-"))}<br>
+                fill {escape(str(row.get("entry_fill_at", "") or "-"))}<br>
+                intent-to-fill {_format_seconds_decimal(row.get("intent_to_fill_secs"))}
+            </td>
+            <td>{escape(str(lateness.get("primary", "") or "on time"))}<br>
+                signal-to-intent {_format_seconds_decimal(row.get("signal_to_intent_secs"))}<br>
+                persist-to-intent {_format_seconds_decimal(row.get("persist_to_intent_secs"))}<br>
+                {lag_text}
+            </td>
+            <td>stop {escape(str(row.get("stop_trigger_source", "") or "-"))}
+                {_fmt_money(_as_float(row.get("stop_trigger_price")))}<br>
+                fill {_fmt_money(_as_float(row.get("stop_fill_price")))}
+                at {escape(str(row.get("close_fill_at", "") or "-"))}<br>
+                {adverse_text}
+            </td>
+        </tr>"""
+        )
+    return "".join(rendered)
+
+
+def _format_seconds_decimal(value: Any) -> str:
+    if value is None or value == "":
+        return "-"
+    try:
+        return f"{float(value):.1f}s"
+    except (TypeError, ValueError):
+        return "-"
 
 
 def _median_float(values: list[float]) -> float:
