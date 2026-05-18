@@ -2883,6 +2883,14 @@ class StrategyBotRuntime:
                 if record is None:
                     record_action = "insert"
                     position_state, position_quantity = self._position_snapshot(symbol)
+                    # 2026-05-18 fix: this insert happens when the live
+                    # _persist_completed_bar never ran for this bar (e.g.,
+                    # restart during the close window, or the bar lived in
+                    # the builder's history but the engine missed
+                    # _evaluate_completed_bar). Stamp a sentinel decision so
+                    # the decision tape clearly shows "this row exists
+                    # because a late tick filled in the OHLCV -- no entry
+                    # decision was ever made" instead of an empty row.
                     record = StrategyBarHistory(
                         strategy_code=self.definition.code,
                         symbol=symbol,
@@ -2890,6 +2898,12 @@ class StrategyBotRuntime:
                         bar_time=bar_time,
                         position_state=position_state,
                         position_quantity=position_quantity,
+                        decision_status="late_revision",
+                        decision_reason=(
+                            "Bar persisted via late-trade revision path; "
+                            "no entry decision was recorded at the bar's "
+                            "original close (likely restart or missed close event)"
+                        ),
                     )
                     session.add(record)
 
@@ -2899,6 +2913,11 @@ class StrategyBotRuntime:
                 record.close_price = Decimal(str(bar.close))
                 record.volume = int(bar.volume)
                 record.trade_count = int(bar.trade_count)
+                # NB: decision_status / decision_reason / decision_path /
+                # decision_score are intentionally NOT overwritten on
+                # update. If the row already exists, it had a real entry
+                # decision recorded at the bar's original close; preserve
+                # it. The revision only updates OHLCV / volume / trade_count.
                 session.commit()
                 persist_lag_secs = (datetime.now(UTC) - bar_time).total_seconds()
                 logger.info(
