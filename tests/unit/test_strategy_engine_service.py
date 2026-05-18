@@ -342,7 +342,7 @@ async def test_read_stream_group_reads_priority_stream_without_waiting_on_market
 
     handled = await service._read_stream_group(["test:snapshot-batches"], block_ms=1)
 
-    assert handled is True
+    assert handled == 1
     assert seen == [("test:snapshot-batches", {"data": json.dumps({"event_type": "snapshot_batch", "payload": {}})})]
     assert service._stream_offsets["test:snapshot-batches"] == "21-0"
 

@@ -5485,22 +5485,35 @@ class StrategyEngineService:
                 continue
             self._stream_offsets[stream] = latest[0][0] if latest else "0-0"
 
-    # Per-xread max events. With 11+ active symbols producing trade+quote
-    # ticks during high-volume windows, producer rate can exceed 200/sec;
-    # at the prior count=50, the consumer was rate-bound and polygon_30s
-    # persistence routinely fell 100-700s behind real time on 2026-05-18.
-    # 500 gives ~10x more headroom without materially slowing the rest of
-    # the main loop.
+    # Per-xread max events. Producer rate in volatile RTH windows with 30+
+    # active symbols can exceed 200 events/sec; at count=50 the consumer was
+    # rate-bound and polygon_30s persistence fell 100-700s behind real time
+    # on 2026-05-18 (pre-fix).
     _MARKET_DATA_XREAD_COUNT = 500
 
-    async def _read_stream_group(self, streams: Sequence[str], *, block_ms: int) -> bool:
+    # Hard cap on events drained from market-data per main-loop iteration.
+    # 5000 gives ~10x headroom over the typical 500-event xread while
+    # bounding loop iteration time so flush_completed_bars and the heartbeat
+    # path still run at reasonable cadence. At 65% strategy CPU with
+    # count=500 alone, polygon was barely outpacing the producer and lag
+    # stayed at 10+ min throughout RTH on 2026-05-18. The drain loop below
+    # keeps reading until the stream is empty or this budget is exhausted.
+    _MARKET_DATA_DRAIN_BUDGET = 5000
+
+    async def _read_stream_group(
+        self,
+        streams: Sequence[str],
+        *,
+        block_ms: int,
+    ) -> int:
+        """Read up to _MARKET_DATA_XREAD_COUNT events. Returns count read."""
         offsets = {
             stream: self._stream_offsets[stream]
             for stream in streams
             if stream in self._stream_offsets
         }
         if not offsets:
-            return False
+            return 0
         try:
             messages = await self.redis.xread(
                 offsets,
@@ -5510,16 +5523,39 @@ class StrategyEngineService:
         except Exception:
             self.logger.exception("redis xread failed for streams: %s", ",".join(offsets))
             await asyncio.sleep(1)
-            return False
+            return 0
 
         if not messages:
-            return False
+            return 0
 
+        processed = 0
         for stream, entries in messages:
             for message_id, fields in entries:
                 self._stream_offsets[stream] = message_id
                 await self._handle_stream_message(stream, fields)
-        return True
+                processed += 1
+        return processed
+
+    async def _drain_market_data_stream(self, *, first_block_ms: int) -> int:
+        """Drain market-data aggressively. Returns total events processed.
+
+        First xread waits up to first_block_ms for events; subsequent
+        passes use block=0 (non-blocking) and stop the moment the stream
+        is empty. Bounded by _MARKET_DATA_DRAIN_BUDGET so a single hot
+        symbol cannot starve the rest of the main loop.
+        """
+        events_processed = 0
+        block_ms = first_block_ms
+        while events_processed < self._MARKET_DATA_DRAIN_BUDGET:
+            count = await self._read_stream_group(
+                [self._market_data_stream],
+                block_ms=block_ms,
+            )
+            block_ms = 0  # subsequent passes never wait
+            if count == 0:
+                break
+            events_processed += count
+        return events_processed
 
     async def run(self) -> None:
         stop_event = asyncio.Event()
@@ -5548,10 +5584,15 @@ class StrategyEngineService:
         last_runtime_db_reconcile_at = utcnow()
 
         while not stop_event.is_set():
-            handled_priority = await self._read_stream_group(self._priority_streams, block_ms=1)
-            await self._read_stream_group(
-                [self._market_data_stream],
-                block_ms=1 if handled_priority else stream_block_ms,
+            priority_count = await self._read_stream_group(self._priority_streams, block_ms=1)
+            # Drain market-data aggressively per main-loop iteration. Bounded
+            # by _MARKET_DATA_DRAIN_BUDGET so flush_completed_bars and the
+            # heartbeat path still run at reasonable cadence. When the
+            # priority stream was busy, don't block waiting on market-data;
+            # otherwise wait up to stream_block_ms on the first xread so
+            # we don't spin when there is nothing to do.
+            await self._drain_market_data_stream(
+                first_block_ms=1 if priority_count else stream_block_ms,
             )
 
             schwab_intent_count, schwab_event_count = await self._drain_schwab_stream_queues()
