@@ -359,6 +359,35 @@ class SchwabNativeBarBuilder:
         self._recent_revised_closed_bar = None
         return revised
 
+    def entry_freshness_issue(self, *, now_ts: float | None = None) -> str | None:
+        """Return why fresh entries should be blocked for this builder, if any."""
+        observed_now = self.time_provider() if now_ts is None else float(now_ts)
+        stall_threshold_secs = 2.0 * float(self.interval_secs)
+        if (
+            self._last_trade_wallclock > 0.0
+            and self._last_bar_advancement_wallclock > 0.0
+            and self._last_trade_wallclock > self._last_bar_advancement_wallclock
+        ):
+            trade_after_advance_secs = self._last_trade_wallclock - self._last_bar_advancement_wallclock
+            stall_secs = observed_now - self._last_bar_advancement_wallclock
+            if trade_after_advance_secs > stall_threshold_secs and stall_secs > stall_threshold_secs:
+                return (
+                    "bar builder stalled: "
+                    f"last bar advanced {stall_secs:.1f}s ago while ticks kept arriving "
+                    f"{trade_after_advance_secs:.1f}s after that advance"
+                )
+
+        if self._revisions_for_current_tail >= 5 and self._first_revision_wallclock > 0.0:
+            revision_elapsed_secs = observed_now - self._first_revision_wallclock
+            if revision_elapsed_secs > float(self.interval_secs):
+                return (
+                    "late-trade revise storm: "
+                    f"{self._revisions_for_current_tail} revisions over {revision_elapsed_secs:.1f}s "
+                    "without tail advancement"
+                )
+
+        return None
+
     def _revise_last_closed_bar_from_trade(
         self,
         price: float,
@@ -603,6 +632,12 @@ class SchwabNativeBarBuilderManager:
         if builder is None:
             return None
         return builder.consume_recent_revised_closed_bar()
+
+    def entry_freshness_issue(self, ticker: str, *, now_ts: float | None = None) -> str | None:
+        builder = self._builders.get(ticker)
+        if builder is None:
+            return None
+        return builder.entry_freshness_issue(now_ts=now_ts)
 
     def on_trade(
         self,

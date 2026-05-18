@@ -8,6 +8,59 @@
 - Overall `/health` may still show `degraded` because of reconciler state. Do not confuse that with a Polygon-specific runtime failure.
 - Keep copied CI counts and failure logs out of the top summary unless they have been revalidated on current `main`.
 
+## 2026-05-18 Schwab entry freshness circuit breaker prepared
+
+- Starting state verified before edits:
+  - local feature branch `codex/schwab-freshness-circuit` created from `origin/main` `54009dc`
+  - deploy worktree `project-mai-tai-control-deploy` is clean on `main` at `54009dc`
+  - VPS checkout `/home/trader/project-mai-tai` is clean on `main` at `54009dc`
+  - VPS `strategy`, `control`, `oms`, and `market-data` services were `active`
+- Root cause driving this change:
+  - May 18 Schwab trade comparison showed `macd_30s` losers were often not bad P1/P2/P4/P5 rules; the strongest example was GOVX 07:08 ET, where the confirmation existed but raw Schwab ticks and bar persistence were late enough that the entry was stale by wall-clock time.
+  - Later VPS logs showed active `[SCHWAB30-STALL]`, `[SCHWAB30-REVISE-STORM]`, and `[STRATEGY-REVISE-PERSIST-LAG]` signatures, meaning the 30-second bot could stay internally consistent while processing stale bars.
+- Local strategy safety change prepared:
+  - `SchwabNativeBarBuilder` now exposes a machine-readable `entry_freshness_issue()` for the existing stall/revise-storm diagnostics instead of only logging WARNs.
+  - `StrategyBotRuntime` now blocks new Schwab-native entries when the completed bar or trade tick is stale for the current live session.
+  - Default freshness limit is `max(15s, interval_secs * 0.5)`, so `macd_30s` blocks entries after about 15s of close/tick lag and `schwab_1m` after about 30s.
+  - The guard records a blocked decision and applies a bot data-health warning beginning with `Schwab entry freshness guard:` so the bot page can explain that entries are blocked by stale data.
+  - The guard is entry-only: it does not alter P1/P2/P3/P4/P5 rules, does not touch CYN, and does not prevent open-position exit/stop evaluation.
+- Validation:
+  - `.venv\Scripts\python.exe -m pytest tests/unit/test_strategy_core.py -k "entry_freshness or close_grace" -q` -> `2 passed`
+  - `.venv\Scripts\python.exe -m pytest tests/unit/test_strategy_engine_service.py -k "completed_bar_arrives_late or live_aggregate_30s" -q` -> `5 passed`
+  - `.venv\Scripts\python.exe -m pytest tests/unit/test_strategy_engine_service.py -k "completed_bar_arrives_late or live_aggregate_30s or tos_runtime_emits_intrabar_open_on_current_bar" -q` -> `6 passed`
+  - `.venv\Scripts\python.exe -m pytest tests/unit/test_strategy_engine_service.py::test_macd_30s_blocks_new_entry_when_completed_bar_arrives_late tests/unit/test_strategy_engine_service.py::test_live_aggregate_30s_falls_back_to_trade_ticks_when_stream_is_missing tests/unit/test_strategy_engine_service.py::test_live_aggregate_30s_still_emits_intrabar_open_from_trade_tick_when_stream_is_fresh tests/unit/test_strategy_core.py::test_schwab_native_bar_builder_reports_entry_freshness_stall_issue tests/unit/test_strategy_core.py::test_schwab_native_bar_builder_close_grace_keeps_same_bucket_trade_real -q` -> `5 passed`
+  - `.venv\Scripts\python.exe -m py_compile src/project_mai_tai/strategy_core/schwab_native_30s.py src/project_mai_tai/services/strategy_engine_app.py tests/unit/test_strategy_core.py tests/unit/test_strategy_engine_service.py` -> passed
+  - `git diff --check` -> passed
+  - Initial CI run #710 failed partly because the guard passed a timezone-normalized runtime clock into builder stall checks while Linux tests used a naive fixed clock; follow-up commit changed builder stall/revise checks to use the builder's own clock domain.
+  - Broader `tests/unit/test_strategy_core.py tests/unit/test_schwab_native_late_trade_revision.py -q` still has three pre-existing `_evaluate_paths` tuple-unpack failures in P1 volume-floor tests unrelated to this change.
+  - Full `tests/unit/test_strategy_engine_service.py -q` timed out locally before completion.
+- Deploy status:
+  - not deployed yet
+  - strategy-engine code changed; if merged/deployed during market hours, follow `docs/live-market-restart-runbook.md` strategy restart preflight and prefer waiting until flat
+
+## 2026-05-18 Runtime completed-bar-flow incident layer prepared
+
+- Why this follow-up exists:
+  - The bot Decision Tape screenshots showed `CRITICAL` rows such as "fresh Schwab ticks are arriving but the last completed 30s trade bar is already 44m17s old" and "no completed 30s trade bar for 5m5s after the last live Polygon tick".
+  - Those rows were visible on the bot page but were not durable runtime incidents, so an operator could miss them unless actively watching the page.
+  - This is a data-flow problem, not a P1/P2/P3/P4/P5 rule problem: if ticks keep arriving but completed bars stop advancing, entries can be wall-clock stale even when the strategy logic is internally consistent.
+- Local safety/alert change prepared on `codex/schwab-freshness-circuit`:
+  - `StrategyBotRuntime.monitor_completed_bar_flow()` now detects active symbols where recent provider ticks exist but no completed bar has formed, or the latest completed bar is stale beyond `max(interval_secs * 4, 120s)`.
+  - Matching symbols get a data-health halt reason beginning `Completed bar flow stalled:`; new entries are halted until completed-bar flow recovers.
+  - `StrategyEngineService._strategy_health_status()` now reports `degraded` when any runtime data halt is active, not only when Schwab stale-symbol tracking is active.
+  - `StrategyEngineService._sync_runtime_data_health_incidents()` now persists open `SystemIncident` rows for completed-bar-flow stalls and closes them after recovery.
+  - This remains entry-only and data-health-only: exits/stops still evaluate, strategy path rules are unchanged, and CYN remains untouched.
+- Immediate operator alert coverage:
+  - A Codex heartbeat monitor named `mai-tai-critical-bot-health-monitor` was created to check live `/api/overview` and `/api/bots` every 2 minutes for critical/degraded bot data health, stale completed-bar Decision Tape rows, stale bar/tick flow, pending intents, and open positions with stale data.
+  - This heartbeat reports back to the current thread only; it does not restart or deploy services automatically.
+- Validation:
+  - `.venv\Scripts\python.exe -m pytest tests/unit/test_strategy_engine_service.py -k "bar_flow_monitor or runtime_data_health_incident or completed_bar_arrives_late or live_aggregate_30s" -q` -> `8 passed`
+  - `.venv\Scripts\python.exe -m py_compile src/project_mai_tai/services/strategy_engine_app.py tests/unit/test_strategy_engine_service.py` -> passed
+  - `git diff --check` -> passed
+- Deployment status:
+  - not deployed yet
+  - PR branch was rebased onto `origin/main` `3545348` (`OMS: cancel stuck intents fast`) after this change was prepared
+
 ## 🚩 NEXT SESSION (2026-05-16) — READ FIRST — Claude EOD handoff from 2026-05-15
 
 > Read this entire section before any action next session. Today's work fixed two long-standing structural bugs (Massive WS cross-loop, urllib3 retry-thread leak), closed all 7 morning workstreams, and bounced the strategy through ~10 restarts. Polygon stream is confirmed working at EOD but the post-market window is the first sustained test of all the new code paths together.

@@ -19,6 +19,7 @@ from project_mai_tai.db.models import (
     SchwabIneligibleToday,
     Strategy,
     StrategyBarHistory,
+    SystemIncident,
     TradeIntent,
     VirtualPosition,
 )
@@ -3337,6 +3338,143 @@ def test_30s_family_applies_common_and_variant_trading_overrides() -> None:
     assert state.bots["macd_30s_retest"].definition.trading_config.pretrigger_retest_min_breakout_pct == 0.006
     assert state.bots["macd_30s_retest"].definition.trading_config.pretrigger_retest_arm_break_lookahead_bars == 2
     assert state.bots["macd_30s_retest"].definition.trading_config.pretrigger_retest_require_dual_anchor is False
+
+
+def test_macd_30s_blocks_new_entry_when_completed_bar_arrives_late(monkeypatch) -> None:
+    state = StrategyEngineState(settings=make_test_settings(), now_provider=fixed_now)
+    bot = state.bots["macd_30s"]
+    bot.set_watchlist(["UGRO"])
+    now_ts = fixed_now().replace(tzinfo=EASTERN_TZ).timestamp()
+    stale_bar_ts = now_ts - 60.0
+    state.seed_bars(
+        "macd_30s",
+        "UGRO",
+        seed_trending_bars(start_timestamp=now_ts - 1530.0, interval_secs=30),
+    )
+    monkeypatch.setattr(
+        bot.indicator_engine,
+        "calculate",
+        lambda bars: {"price": float(bars[-1]["close"]), "bar_timestamp": float(bars[-1]["timestamp"])},
+    )
+    entry_checks = {"count": 0}
+
+    def fake_check_entry(*_args, **_kwargs):
+        entry_checks["count"] += 1
+        return {
+            "action": "BUY",
+            "ticker": "UGRO",
+            "path": "P1_CROSS",
+            "price": 2.8,
+            "score": 6,
+            "score_details": "test",
+        }
+
+    monkeypatch.setattr(bot.entry_engine, "check_entry", fake_check_entry)
+
+    intents = bot._evaluate_completed_bar(
+        "UGRO",
+        completed_bar=OHLCVBar(
+            open=2.7,
+            high=2.9,
+            low=2.65,
+            close=2.8,
+            volume=25_000,
+            timestamp=stale_bar_ts,
+            trade_count=12,
+        ),
+    )
+
+    assert intents == []
+    assert entry_checks["count"] == 0
+    assert bot.recent_decisions[0]["status"] == "blocked"
+    assert "completed bar arrived 30.0s after close" in bot.recent_decisions[0]["reason"]
+    assert bot.data_health_summary()["warning_symbols"] == ["UGRO"]
+
+
+def test_runtime_bar_flow_monitor_halts_and_recovers_stale_completed_bar() -> None:
+    state = StrategyEngineState(settings=make_test_settings(), now_provider=fixed_now)
+    bot = state.bots["macd_30s"]
+    bot.set_watchlist(["UGRO"])
+    now_ts = fixed_now().replace(tzinfo=EASTERN_TZ).timestamp()
+    bot._last_tick_at["UGRO"] = fixed_now().replace(tzinfo=EASTERN_TZ)
+    state.seed_bars(
+        "macd_30s",
+        "UGRO",
+        seed_trending_bars(start_timestamp=now_ts - 1800.0, interval_secs=30),
+    )
+
+    changed = state.monitor_completed_bar_flow(provider_for_strategy=lambda _code: "schwab")
+
+    assert changed == 1
+    assert "UGRO" in bot.data_halt_symbols
+    assert "Completed bar flow stalled" in bot.data_halt_symbols["UGRO"]
+
+    state.seed_bars(
+        "macd_30s",
+        "UGRO",
+        seed_trending_bars(start_timestamp=now_ts - 1500.0, interval_secs=30),
+    )
+
+    changed = state.monitor_completed_bar_flow(provider_for_strategy=lambda _code: "schwab")
+
+    assert changed == 1
+    assert "UGRO" not in bot.data_halt_symbols
+
+
+def test_runtime_bar_flow_monitor_halts_when_no_completed_bar_forms() -> None:
+    state = StrategyEngineState(settings=make_test_settings(), now_provider=fixed_now)
+    bot = state.bots["macd_30s"]
+    bot.set_watchlist(["UGRO"])
+    now = fixed_now().replace(tzinfo=EASTERN_TZ)
+    now_ts = now.timestamp()
+    bot._last_tick_at["UGRO"] = now
+    bot.builder_manager.on_trade(
+        "UGRO",
+        price=1.25,
+        size=100,
+        timestamp_ns=int((now_ts - 240.0) * 1000),
+        cumulative_volume=100,
+    )
+
+    changed = state.monitor_completed_bar_flow(provider_for_strategy=lambda _code: "schwab")
+
+    assert changed == 1
+    assert "UGRO" in bot.data_halt_symbols
+    assert "no completed 30s bar has formed" in bot.data_halt_symbols["UGRO"]
+
+
+def test_strategy_service_persists_runtime_data_health_incident() -> None:
+    session_factory = build_test_session_factory()
+    service = StrategyEngineService(
+        settings=make_test_settings(),
+        redis_client=FakeRedis(),
+        session_factory=session_factory,
+        now_provider=fixed_now,
+    )
+    bot = service.state.bots["macd_30s"]
+    bot.apply_data_halt(
+        "UGRO",
+        reason="Completed bar flow stalled: fresh SCHWAB ticks are arriving but bars stopped",
+        observed_at=fixed_now(),
+    )
+
+    service._sync_runtime_data_health_incidents()
+
+    with session_factory() as session:
+        incident = session.scalar(select(SystemIncident))
+        assert incident is not None
+        assert incident.status == "open"
+        assert incident.severity == "critical"
+        assert incident.title == "macd_30s completed-bar flow stalled for UGRO"
+        assert incident.payload["symbol"] == "UGRO"
+
+    bot.clear_data_halt("UGRO")
+    service._sync_runtime_data_health_incidents()
+
+    with session_factory() as session:
+        incident = session.scalar(select(SystemIncident))
+        assert incident is not None
+        assert incident.status == "closed"
 
 
 def test_live_aggregate_30s_falls_back_to_trade_ticks_when_stream_is_missing(monkeypatch) -> None:

@@ -160,6 +160,34 @@ def test_schwab_native_bar_builder_close_grace_keeps_same_bucket_trade_real() ->
     assert closed[0].trade_count == 2
 
 
+def test_schwab_native_bar_builder_reports_entry_freshness_stall_issue() -> None:
+    clock = {"ts": 1_700_000_000.0}
+    builder = SchwabNativeBarBuilder("RDAC", interval_secs=30, time_provider=lambda: clock["ts"])
+
+    builder.on_trade(
+        price=3.50,
+        size=50,
+        timestamp_ns=1_700_000_005_000_000_000,
+        cumulative_volume=1_000,
+    )
+    clock["ts"] = 1_700_000_061.0
+    assert len(builder.check_bar_closes()) == 2
+    assert builder.entry_freshness_issue(now_ts=clock["ts"]) is None
+
+    clock["ts"] = 1_700_000_125.0
+    builder.on_trade(
+        price=3.55,
+        size=25,
+        timestamp_ns=1_700_000_035_000_000_000,
+        cumulative_volume=1_025,
+    )
+
+    reason = builder.entry_freshness_issue(now_ts=clock["ts"])
+
+    assert reason is not None
+    assert "bar builder stalled" in reason
+
+
 def test_schwab_native_bar_builder_late_trade_replaces_synthetic_flat_bar() -> None:
     clock = {"ts": 1_700_000_101.0}
     builder = SchwabNativeBarBuilder(
