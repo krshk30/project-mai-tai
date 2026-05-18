@@ -23,6 +23,7 @@ from project_mai_tai.db.models import (
     SchwabIneligibleToday,
     Strategy,
     StrategyBarHistory,
+    SystemIncident,
     TradeIntent,
     VirtualPosition,
 )
@@ -775,6 +776,73 @@ class StrategyBotRuntime:
         reason = self.data_warning_symbols.get(normalized, "")
         if str(reason).startswith("Schwab entry freshness guard:"):
             self.clear_data_warning(normalized)
+
+    def monitor_completed_bar_flow(self, *, provider: str) -> int:
+        """Halt new entries when live ticks continue but completed bars stop advancing."""
+        provider_label = str(provider or "market data").strip() or "market data"
+        market_data_source = provider_label.upper() if len(provider_label) <= 8 else provider_label
+        active_symbols = self.active_symbols()
+        if not active_symbols:
+            return 0
+
+        now = self._normalize_now(self.now_provider()).astimezone(UTC)
+        now_ts = now.timestamp()
+        interval = max(1, int(self.definition.interval_secs))
+        stale_after_secs = max(float(interval * 4), 120.0)
+        tick_fresh_secs = max(float(interval * 2), 90.0)
+        changed = 0
+
+        for symbol in sorted(active_symbols):
+            normalized = str(symbol).upper()
+            last_tick_at = self._last_tick_at.get(normalized)
+            builder = self.builder_manager.get_builder(normalized)
+            bars = getattr(builder, "bars", None) if builder is not None else None
+            if last_tick_at is None or builder is None:
+                continue
+
+            tick_age_secs = (
+                now - self._normalize_now(last_tick_at).astimezone(UTC)
+            ).total_seconds()
+            if tick_age_secs > tick_fresh_secs:
+                continue
+
+            completed_bar_age_secs: float | None = None
+            if bars:
+                last_bar = bars[-1]
+                last_bar_close_ts = float(last_bar.timestamp) + float(interval)
+                completed_bar_age_secs = now_ts - last_bar_close_ts
+                reason = (
+                    "Completed bar flow stalled: "
+                    f"fresh {market_data_source} ticks are arriving but the last completed "
+                    f"{interval}s bar is {completed_bar_age_secs:.1f}s old; "
+                    "new entries halted until bar flow recovers"
+                )
+            else:
+                current_bar = getattr(builder, "_current_bar", None)
+                current_bar_start = float(getattr(builder, "_current_bar_start", 0.0) or 0.0)
+                if current_bar is None or current_bar_start <= 0:
+                    continue
+                first_bar_due_ts = current_bar_start + float(interval)
+                completed_bar_age_secs = now_ts - first_bar_due_ts
+                reason = (
+                    "Completed bar flow stalled: "
+                    f"fresh {market_data_source} ticks are arriving but no completed "
+                    f"{interval}s bar has formed for {completed_bar_age_secs:.1f}s; "
+                    "new entries halted until bar flow recovers"
+                )
+
+            if completed_bar_age_secs <= stale_after_secs:
+                reason = self.data_halt_symbols.get(normalized, "")
+                if str(reason).startswith("Completed bar flow stalled:"):
+                    self.clear_data_halt(normalized)
+                    changed += 1
+                continue
+
+            if self.data_halt_symbols.get(normalized) != reason:
+                self.apply_data_halt(normalized, reason=reason, observed_at=now)
+                changed += 1
+
+        return changed
 
     def seed_bars(self, symbol: str, bars: Sequence[dict[str, float | int]]) -> None:
         normalized_symbol = str(symbol).upper()
@@ -4298,6 +4366,14 @@ class StrategyEngineState:
             "bots": {code: bot.summary() for code, bot in self.bots.items()},
         }
 
+    def monitor_completed_bar_flow(self, *, provider_for_strategy: Callable[[str], str]) -> int:
+        changed = 0
+        for code, bot in self.bots.items():
+            if not isinstance(bot, StrategyBotRuntime):
+                continue
+            changed += bot.monitor_completed_bar_flow(provider=provider_for_strategy(code))
+        return changed
+
     def seed_confirmed_candidates(self, candidates: Sequence[dict[str, object]]) -> None:
         self.confirmed_scanner.seed_confirmed_candidates(candidates)
         self._seeded_confirmed_pending_revalidation = bool(candidates)
@@ -5480,16 +5556,21 @@ class StrategyEngineService:
 
             schwab_intent_count, schwab_event_count = await self._drain_schwab_stream_queues()
             schwab_fallback_intent_count = await self._monitor_schwab_symbol_health()
+            bar_flow_change_count = self.state.monitor_completed_bar_flow(
+                provider_for_strategy=self.settings.provider_for_strategy,
+            )
             schwab_1m_history_intent_count, schwab_1m_history_bar_count = await self._refresh_stale_schwab_1m_history()
             if (
                 schwab_event_count
                 or schwab_intent_count
                 or schwab_fallback_intent_count
+                or bar_flow_change_count
                 or schwab_1m_history_intent_count
                 or schwab_1m_history_bar_count
             ):
                 await self._sync_subscription_targets()
                 await self._publish_strategy_state_snapshot()
+                self._sync_runtime_data_health_incidents()
 
             bar_close_intents, completed_bar_count = self.state.flush_completed_bars()
             for intent in bar_close_intents:
@@ -5929,6 +6010,9 @@ class StrategyEngineService:
     def _strategy_health_status(self, status: str) -> str:
         if self._schwab_stale_symbols:
             return "degraded"
+        for runtime in self.state.bots.values():
+            if isinstance(runtime, StrategyBotRuntime) and runtime.data_halt_symbols:
+                return "degraded"
         return status
 
     async def _publish_heartbeat(self, status: str) -> None:
@@ -6028,6 +6112,74 @@ class StrategyEngineService:
             return
         await self._publish_strategy_state_snapshot()
         self._last_generic_bot_activity_snapshot_at = now
+
+    def _sync_runtime_data_health_incidents(self) -> None:
+        if self.session_factory is None:
+            return
+
+        active: dict[str, dict[str, object]] = {}
+        for code, runtime in self.state.bots.items():
+            if not isinstance(runtime, StrategyBotRuntime):
+                continue
+            health = runtime.data_health_summary()
+            reasons = dict(health.get("reasons", {}) or {})
+            for symbol in list(health.get("halted_symbols", []) or []):
+                normalized = str(symbol).upper()
+                if not normalized:
+                    continue
+                reason = str(reasons.get(normalized) or reasons.get(symbol) or "")
+                if not reason.startswith("Completed bar flow stalled:"):
+                    continue
+                title = f"{code} completed-bar flow stalled for {normalized}"
+                active[title] = {
+                    "source": "runtime_data_health",
+                    "strategy_code": code,
+                    "symbol": normalized,
+                    "reason": reason,
+                    "account_name": runtime.definition.account_name,
+                    "data_health_status": health.get("status", ""),
+                }
+
+        try:
+            with self.session_factory() as session:
+                open_incidents = session.scalars(
+                    select(SystemIncident).where(
+                        SystemIncident.service_name == SERVICE_NAME,
+                        SystemIncident.status != "closed",
+                    )
+                ).all()
+                tracked_open = {
+                    incident.title: incident
+                    for incident in open_incidents
+                    if isinstance(incident.payload, dict)
+                    and incident.payload.get("source") == "runtime_data_health"
+                }
+
+                for title, payload in active.items():
+                    incident = tracked_open.get(title)
+                    if incident is None:
+                        session.add(
+                            SystemIncident(
+                                service_name=SERVICE_NAME,
+                                severity="critical",
+                                title=title,
+                                status="open",
+                                payload=payload,
+                                opened_at=utcnow(),
+                            )
+                        )
+                        continue
+                    incident.severity = "critical"
+                    incident.payload = payload
+
+                for title, incident in tracked_open.items():
+                    if title not in active:
+                        incident.status = "closed"
+                        incident.closed_at = utcnow()
+
+                session.commit()
+        except Exception:
+            self.logger.exception("failed syncing runtime data-health incidents")
 
     def _spawn_background_hydration(
         self,

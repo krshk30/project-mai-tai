@@ -38,6 +38,29 @@
   - not deployed yet
   - strategy-engine code changed; if merged/deployed during market hours, follow `docs/live-market-restart-runbook.md` strategy restart preflight and prefer waiting until flat
 
+## 2026-05-18 Runtime completed-bar-flow incident layer prepared
+
+- Why this follow-up exists:
+  - The bot Decision Tape screenshots showed `CRITICAL` rows such as "fresh Schwab ticks are arriving but the last completed 30s trade bar is already 44m17s old" and "no completed 30s trade bar for 5m5s after the last live Polygon tick".
+  - Those rows were visible on the bot page but were not durable runtime incidents, so an operator could miss them unless actively watching the page.
+  - This is a data-flow problem, not a P1/P2/P3/P4/P5 rule problem: if ticks keep arriving but completed bars stop advancing, entries can be wall-clock stale even when the strategy logic is internally consistent.
+- Local safety/alert change prepared on `codex/schwab-freshness-circuit`:
+  - `StrategyBotRuntime.monitor_completed_bar_flow()` now detects active symbols where recent provider ticks exist but no completed bar has formed, or the latest completed bar is stale beyond `max(interval_secs * 4, 120s)`.
+  - Matching symbols get a data-health halt reason beginning `Completed bar flow stalled:`; new entries are halted until completed-bar flow recovers.
+  - `StrategyEngineService._strategy_health_status()` now reports `degraded` when any runtime data halt is active, not only when Schwab stale-symbol tracking is active.
+  - `StrategyEngineService._sync_runtime_data_health_incidents()` now persists open `SystemIncident` rows for completed-bar-flow stalls and closes them after recovery.
+  - This remains entry-only and data-health-only: exits/stops still evaluate, strategy path rules are unchanged, and CYN remains untouched.
+- Immediate operator alert coverage:
+  - A Codex heartbeat monitor named `mai-tai-critical-bot-health-monitor` was created to check live `/api/overview` and `/api/bots` every 2 minutes for critical/degraded bot data health, stale completed-bar Decision Tape rows, stale bar/tick flow, pending intents, and open positions with stale data.
+  - This heartbeat reports back to the current thread only; it does not restart or deploy services automatically.
+- Validation:
+  - `.venv\Scripts\python.exe -m pytest tests/unit/test_strategy_engine_service.py -k "bar_flow_monitor or runtime_data_health_incident or completed_bar_arrives_late or live_aggregate_30s" -q` -> `8 passed`
+  - `.venv\Scripts\python.exe -m py_compile src/project_mai_tai/services/strategy_engine_app.py tests/unit/test_strategy_engine_service.py` -> passed
+  - `git diff --check` -> passed
+- Deployment status:
+  - not deployed yet
+  - `origin/main` advanced to `3545348` (`OMS: cancel stuck intents fast`) after this branch was opened; rebase this PR branch onto current `origin/main` before merge/deploy
+
 ## 🚩 NEXT SESSION (2026-05-16) — READ FIRST — Claude EOD handoff from 2026-05-15
 
 > Read this entire section before any action next session. Today's work fixed two long-standing structural bugs (Massive WS cross-loop, urllib3 retry-thread leak), closed all 7 morning workstreams, and bounced the strategy through ~10 restarts. Polygon stream is confirmed working at EOD but the post-market window is the first sustained test of all the new code paths together.
