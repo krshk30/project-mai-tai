@@ -2706,7 +2706,10 @@ class StrategyBotRuntime:
                         StrategyBarHistory.bar_time == bar_time,
                     )
                 )
+                record_action = "update"
+                vol_before = int(record.volume) if record is not None else None
                 if record is None:
+                    record_action = "insert"
                     position_state, position_quantity = self._position_snapshot(symbol)
                     record = StrategyBarHistory(
                         strategy_code=self.definition.code,
@@ -2725,6 +2728,16 @@ class StrategyBotRuntime:
                 record.volume = int(bar.volume)
                 record.trade_count = int(bar.trade_count)
                 session.commit()
+                logger.info(
+                    "[STRATEGY-REVISE-PERSIST] strategy=%s symbol=%s bar_ts=%s action=%s vol_before=%s vol_after=%d trade_count=%d",
+                    self.definition.code,
+                    symbol,
+                    bar_time.isoformat(),
+                    record_action,
+                    vol_before,
+                    int(bar.volume),
+                    int(bar.trade_count),
+                )
         except Exception:
             logger.exception(
                 "failed to persist revised strategy bar history for %s %s",
