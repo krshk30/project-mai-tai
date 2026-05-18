@@ -349,6 +349,13 @@ class SchwabNativeBarBuilder:
         volume we just credited back to the closed bar.
         """
         if not self.bars:
+            logger.info(
+                "[SCHWAB30-REVISE] skip ticker=%s reason=no_closed_bars price=%.4f size=%d cum_vol=%s",
+                self.ticker,
+                price,
+                int(size),
+                cumulative_volume,
+            )
             return
         if self._last_closed_bar_from_aggregate:
             # bars[-1] came from on_final_bar (CHART_EQUITY canonical for
@@ -359,17 +366,29 @@ class SchwabNativeBarBuilder:
             # delta covering the entire CHART-only gap (4-10x over-count
             # plus trade_count=2 artifact diagnosed 2026-05-11). CHART is
             # canonical for these bots; do not let late ticks overwrite it.
+            logger.info(
+                "[SCHWAB30-REVISE] skip ticker=%s bar_ts=%s reason=chart_aggregate_canonical price=%.4f size=%d cum_vol=%s",
+                self.ticker,
+                self.bars[-1].timestamp,
+                price,
+                int(size),
+                cumulative_volume,
+            )
             return
         last_closed = self.bars[-1]
+        prior_baseline = self._last_closed_bar_cum_volume
 
         # Compute volume contribution. Prefer cum-vol delta against the bar's
         # own frozen baseline; fall back to size only when we have no cv
         # context (first-trade-of-session or non-LEVELONE source).
         if cumulative_volume is None or self._last_closed_bar_cum_volume is None:
             volume_contrib = max(0, int(size))
+            volume_path = "size_fallback"
         else:
             volume_contrib = max(0, int(cumulative_volume - self._last_closed_bar_cum_volume))
+            volume_path = "cv_delta"
 
+        vol_before = int(last_closed.volume)
         # OHLCVBar.update extends high/low if applicable and updates close.
         # Open is left at the original first-arrival trade's price; reordering
         # late trades to update open would require per-trade timestamp tracking
@@ -396,6 +415,19 @@ class SchwabNativeBarBuilder:
 
         self._recent_revised_closed_bar = OHLCVBar.from_bar(
             last_closed, timestamp=last_closed.timestamp
+        )
+        logger.info(
+            "[SCHWAB30-REVISE] applied ticker=%s bar_ts=%s price=%.4f size=%d cum_vol=%s prior_baseline=%s volume_contrib=%d vol_before=%d vol_after=%d path=%s",
+            self.ticker,
+            last_closed.timestamp,
+            price,
+            int(size),
+            cumulative_volume,
+            prior_baseline,
+            volume_contrib,
+            vol_before,
+            int(last_closed.volume),
+            volume_path,
         )
 
     def _resolve_volume_delta(self, size: int, cumulative_volume: int | None) -> int:
