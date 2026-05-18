@@ -26,6 +26,7 @@ Twelve PRs shipped today addressing four distinct bug classes that compounded in
 
 **Polygon data-health hardening (operator requested Polygon stay broker-disconnected)**
 - **PR #185 (codex)** Keeps Polygon broker auth out of scope and fixes the remaining operator-facing data-health issues: completed-bar-flow monitor now labels Polygon stalls as POLYGON market-data stalls instead of WEBULL broker stalls; no-exposure bar-flow stalls still block new entries but persist as warning incidents instead of critical incidents; Decision Tape placeholders show `BLOCKED` instead of `CRITICAL` when entries are halted without open order/position exposure.
+- **PR #186 (codex)** Follow-up control-plane cleanup: inferred stale Decision Tape placeholders now downgrade from `CRITICAL` to `WARNING` when the runtime data-health status is already `degraded` rather than `critical`. This removes the remaining no-exposure Polygon critical rows without hiding the stale-bar reason.
 
 **Decision-tape cleanup (post-RTH operator review surfaced these)**
 - **PR #182** (deploy 21:11:58 UTC) — `_persist_revised_closed_bar` INSERT path now stamps `decision_status='late_revision'` + clear reason instead of empty fields. Eliminates the 13-19 "empty" tape rows/day. UPDATE path explicitly preserves existing decision_* fields. No behavior change to entry decisions.

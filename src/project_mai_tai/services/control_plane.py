@@ -2029,6 +2029,9 @@ class ControlPlaneRepository:
             if str(strategy_code or "").strip().lower() == "schwab_1m"
             else f"completed {resolved_interval_secs}s trade bar"
         )
+        inferred_stale_status = (
+            "warning" if data_health_status == "degraded" else "critical"
+        )
 
         placeholders: list[dict[str, Any]] = []
         for symbol in sorted(live_symbols):
@@ -2050,13 +2053,13 @@ class ControlPlaneRepository:
                 completed_age_seconds = _seconds_since_eastern_label(last_completed_label)
                 stale_after_seconds = max(resolved_interval_secs * 2, 120)
                 if completed_age_seconds is not None and completed_age_seconds >= stale_after_seconds:
-                    status = "critical"
+                    status = inferred_stale_status
                     reason = (
                         f"live in bot; fresh {market_data_source} ticks are arriving but the last "
                         f"{bar_label} is already {_format_age(completed_age_seconds)} old - verify bar flow now"
                     )
                 elif wait_age_seconds is not None and wait_age_seconds >= 90:
-                    status = "critical"
+                    status = inferred_stale_status
                     reason = (
                         f"live in bot; no {bar_label} for {_format_age(wait_age_seconds)} "
                         f"after the last live {market_data_source} tick - verify tape/bar flow now"
@@ -2076,7 +2079,7 @@ class ControlPlaneRepository:
             elif last_tick_label and bar_count > 0:
                 wait_age_seconds = _seconds_since_eastern_label(last_tick_label)
                 if wait_age_seconds is not None and wait_age_seconds >= 90:
-                    status = "critical"
+                    status = inferred_stale_status
                     reason = (
                         f"live in bot; no {bar_label} for "
                         f"{_format_age(wait_age_seconds)} after the last live "
