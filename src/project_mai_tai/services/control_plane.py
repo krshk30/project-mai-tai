@@ -1854,6 +1854,15 @@ class ControlPlaneRepository:
                     for symbol in warning_symbols
                 },
             }
+            recent_decisions = self._normalize_data_health_decision_rows(
+                recent_decisions,
+                data_health=data_health,
+                provider=(
+                    self.settings.provider_for_strategy(code)
+                    if registration
+                    else str(runtime_bot.get("provider", "") or "")
+                ),
+            )
             recent_decisions = self._live_decision_placeholder_rows(
                 strategy_code=code,
                 interval_secs=int(runtime_bot.get("interval_secs", 0) or 0),
@@ -2171,6 +2180,38 @@ class ControlPlaneRepository:
         if not placeholders:
             return recent_decisions
         return _dedupe_decision_events(placeholders + recent_decisions)
+
+    def _normalize_data_health_decision_rows(
+        self,
+        recent_decisions: list[dict[str, Any]],
+        *,
+        data_health: dict[str, Any],
+        provider: str,
+    ) -> list[dict[str, Any]]:
+        data_health_status = str(data_health.get("status", "healthy") or "healthy").lower()
+        if data_health_status not in {"degraded", "warning"}:
+            return recent_decisions
+        halted_symbols = {
+            str(symbol).upper()
+            for symbol in list(data_health.get("halted_symbols", []) or [])
+            if str(symbol).strip()
+        }
+        if not halted_symbols:
+            return recent_decisions
+        market_data_source = self._market_data_source_label(provider)
+        normalized_rows: list[dict[str, Any]] = []
+        for item in recent_decisions:
+            row = dict(item)
+            symbol = str(row.get("symbol") or row.get("ticker") or "").upper()
+            reason = str(row.get("reason", "") or "")
+            status = str(row.get("status", "") or "").lower()
+            if symbol in halted_symbols and reason.startswith("Completed bar flow stalled:"):
+                if status == "critical":
+                    row["status"] = "blocked"
+                if market_data_source == "Polygon":
+                    row["reason"] = reason.replace("fresh WEBULL ticks", "fresh Polygon ticks")
+            normalized_rows.append(row)
+        return normalized_rows
 
     @staticmethod
     def _market_data_source_label(provider: str) -> str:

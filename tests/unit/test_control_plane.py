@@ -1467,6 +1467,71 @@ def test_control_plane_marks_degraded_inferred_stale_placeholder_warning(
         assert "verify tape/bar flow now" in bot_30s["recent_decisions"][0]["reason"]
 
 
+def test_control_plane_normalizes_degraded_polygon_bar_flow_runtime_rows() -> None:
+    settings = Settings(
+        redis_stream_prefix="test",
+        oms_adapter="alpaca_paper",
+        strategy_polygon_30s_enabled=True,
+    )
+    session_factory = build_test_session_factory()
+    seed_database(session_factory)
+    streams = make_streams(settings.redis_stream_prefix)
+    strategy_state_stream = streams[f"{settings.redis_stream_prefix}:strategy-state"]
+    strategy_state_event = StrategyStateSnapshotEvent.model_validate_json(
+        strategy_state_stream[0][1]["data"]
+    )
+    strategy_state_event.payload.bots.append(
+        StrategyBotStatePayload(
+            strategy_code="polygon_30s",
+            account_name="live:polygon_30s",
+            watchlist=["ZDAI"],
+            positions=[],
+            pending_open_symbols=[],
+            pending_close_symbols=[],
+            pending_scale_levels=[],
+            daily_pnl=0.0,
+            recent_decisions=[
+                {
+                    "symbol": "ZDAI",
+                    "status": "critical",
+                    "reason": (
+                        "Completed bar flow stalled: fresh WEBULL ticks are arriving but the last "
+                        "completed 30s bar is 151.9s old; new entries halted until bar flow recovers"
+                    ),
+                    "last_bar_at": "",
+                }
+            ],
+            data_health={
+                "status": "degraded",
+                "halted_symbols": ["ZDAI"],
+                "reasons": {
+                    "ZDAI": (
+                        "Completed bar flow stalled: fresh WEBULL ticks are arriving but the last "
+                        "completed 30s bar is 151.9s old; new entries halted until bar flow recovers"
+                    )
+                },
+            },
+        )
+    )
+    strategy_state_stream[0][1]["data"] = strategy_state_event.model_dump_json()
+    redis = FakeRedis(streams)
+
+    app = build_app(
+        settings=settings,
+        session_factory=session_factory,
+        redis_client=redis,
+        legacy_client=FakeLegacyClient(),
+    )
+
+    with TestClient(app) as client:
+        bots = client.get("/api/bots")
+        assert bots.status_code == 200
+        polygon_bot = next(item for item in bots.json()["bots"] if item["strategy_code"] == "polygon_30s")
+        assert polygon_bot["recent_decisions"][0]["status"] == "blocked"
+        assert "fresh Polygon ticks" in polygon_bot["recent_decisions"][0]["reason"]
+        assert "WEBULL" not in polygon_bot["recent_decisions"][0]["reason"]
+
+
 def test_control_plane_last_decision_ignores_pending_tick_placeholders(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
