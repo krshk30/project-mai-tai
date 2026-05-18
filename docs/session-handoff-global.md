@@ -61,6 +61,67 @@ Twelve PRs shipped today addressing four distinct bug classes that compounded in
 ### Operating-rule update (operator request)
 - **After every shipped fix, update this handoff doc immediately** with PR number, one-line summary, root cause, deploy timestamp. Don't wait until EOD. Same for memory: write what's worth remembering as it happens.
 
+### 📋 Validation checklist for 2026-05-19 RTH open (Claude — pick up these)
+
+Today's 14 PRs were mostly validated in post-market quiet. Tomorrow morning's RTH is their first real stress test. Run these in order, within the first hour of RTH (09:30-10:30 ET):
+
+1. **Persist-lag healthy on all three bots** (the structural fixes from #173/#175/#179):
+   ```bash
+   PYTHONPATH=/home/trader/project-mai-tai/src PGPASSWORD=$PGPASSWORD \
+     /home/trader/project-mai-tai/.venv/bin/python \
+     /home/trader/project-mai-tai/scripts/check_bar_persist_lag.py \
+     --day 2026-05-19 --all-bots --start-hour 9 --end-hour 11 --dsn "$DSN"
+   ```
+   Expected: median <10s for all three bots. Polygon was 700s+ pre-fix; if it drifts past 30s during RTH, the drain budget needs tuning.
+
+2. **OMS abandon events are sane** (PR #178 working):
+   ```bash
+   ssh mai-tai-vps "sudo grep '\[OMS-ABANDON-INTENT\]' /var/log/project-mai-tai/oms.log | tail -30"
+   ```
+   Expected: 0-2 lines per minute during normal trading. If >5/min on a single symbol, the abandon reason will say why.
+
+3. **Stuck-order SQL — no intent should retry >3 times**:
+   ```sql
+   SELECT symbol, intent_id, COUNT(*) AS retries
+   FROM broker_orders
+   WHERE created_at >= NOW() - INTERVAL '1 hour'
+   GROUP BY symbol, intent_id HAVING COUNT(*) > 5 ORDER BY retries DESC;
+   ```
+   With PR #178 live this should return zero rows during RTH. ≥1 row = real bug.
+
+4. **On-stall recovery firing under load** (PR #180):
+   ```bash
+   ssh mai-tai-vps "sudo grep '\[ON-STALL-RECOVERY\]' /var/log/project-mai-tai/strategy.log | tail -20"
+   ```
+   Expected: when "Completed bar flow stalled:" notifications fire, an `[ON-STALL-RECOVERY]` line should appear within seconds. Halt should clear in the next minute, not stay sticky.
+
+5. **SCHWAB30-STALL near-zero** (PR #179 tightened heuristic):
+   ```bash
+   ssh mai-tai-vps "sudo grep -c '\[SCHWAB30-STALL\]' /var/log/project-mai-tai/strategy.log"
+   ```
+   Was 871 today (mostly false positives). Tomorrow's count should grow by single-digits per hour during RTH if at all.
+
+6. **Decision tape sanity check** — verify the `late_revision` sentinel appears legibly instead of empty rows:
+   ```sql
+   SELECT strategy_code, COUNT(*) FROM strategy_bar_history
+   WHERE decision_status='' AND bar_time >= '2026-05-19 13:30:00+00'
+   GROUP BY strategy_code;
+   ```
+   PR #182: should return zero. If non-zero, PR #182 has a hole.
+
+7. **`critical` decision_status during RTH should be near-zero** — today's data showed 0% rate during 04:00-13:00 ET, only fired post-market. If RTH bars show >1% critical rate, the bar-flow recovery is breaking down under live load.
+
+### What to defer (operator confirmed)
+- polygon_30s Webull credentials — operator said "not ready to integrate with actual broker yet given these many issues" (2026-05-18 EOD). Don't touch.
+- macd_30s chop-lock calibration — strategy-tuning conversation, not a bug.
+- schwab_1m post-market `degraded` data_health — accepted as designed; freshness guard correctly halting on stale Schwab CHART data.
+
+### State at session end (2026-05-18 21:11 UTC)
+- VPS HEAD: `fc2e642` (PR #182). PR #183 doc-only update pending merge — landing right after this.
+- All 5 services active. Strategy uptime since 21:11:58 UTC.
+- Open positions: 0. CYN protected-symbols flag still set in env.
+- Polygon persist lag: post-deploy steady-state ~6s during today's quiet hours. Will retest under RTH load tomorrow.
+
 ---
 
 ## Top Summary - 2026-05-09
