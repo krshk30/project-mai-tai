@@ -168,6 +168,16 @@ class SchwabStreamerClient:
         except websockets.exceptions.ConnectionClosed:
             self._handle_subscription_sync_connection_closed()
 
+    async def force_reconnect(self) -> None:
+        ws = self._ws
+        self._connected = False
+        if ws is None:
+            return
+        try:
+            await asyncio.wait_for(ws.close(), timeout=2.0)
+        except (TimeoutError, Exception):
+            logger.debug("error or timeout forcing Schwab streamer reconnect", exc_info=True)
+
     async def probe(
         self,
         *,
