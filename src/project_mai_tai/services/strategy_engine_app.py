@@ -1110,21 +1110,42 @@ class StrategyBotRuntime:
             for bar in completed_bars
             if int(getattr(bar, "trade_count", 0) or 0) <= 0 and int(getattr(bar, "volume", 0) or 0) <= 0
         ]
+        # Arm gap-recovery tracking for synthetic gap bars on tracked symbols
+        # (open positions / pending / halt / warning). Don't early-return —
+        # PR #196 (2026-05-19) flipped macd_30s fill_gap_bars to True, so
+        # synthetic bars now coexist with real bars in the same batch on
+        # symbols that have data_warning_symbols entries (e.g. "Schwab
+        # symbol quiet" warns on thin penny stocks). Skipping the bar-loop
+        # here would drop the real bars on the floor — their volume/OHLC
+        # never reach _evaluate_completed_bar → _persist_bar_history, so the
+        # decision tape goes stale even though the bot is processing ticks.
+        gap_recovery_armed = False
         if synthetic_gap_bars and not prewarm_only:
             if self._should_track_gap_recovery(symbol):
                 self._arm_gap_recovery(symbol, synthetic_gap_count=len(synthetic_gap_bars))
                 self._finalize_gap_recovery_completed_bar(symbol)
-                return intents
-            self._clear_gap_recovery(symbol)
+                gap_recovery_armed = True
+            else:
+                self._clear_gap_recovery(symbol)
         for _bar in completed_bars:
             if prewarm_only:
                 self._finalize_prewarm_completed_bar(symbol)
-            else:
-                if int(getattr(_bar, "trade_count", 0) or 0) <= 0 and int(getattr(_bar, "volume", 0) or 0) <= 0:
-                    self._finalize_synthetic_quiet_completed_bar(symbol)
+                continue
+            is_synthetic = (
+                int(getattr(_bar, "trade_count", 0) or 0) <= 0
+                and int(getattr(_bar, "volume", 0) or 0) <= 0
+            )
+            if is_synthetic:
+                # When gap-recovery is armed we already emitted the
+                # gap-recovery completed-bar finalize above; skip the
+                # per-bar quiet finalize so we don't double-stamp the
+                # decision tape for the same bucket.
+                if gap_recovery_armed:
                     continue
-                intents.extend(self._evaluate_completed_bar(symbol, completed_bar=_bar))
-                self._advance_gap_recovery(symbol, _bar)
+                self._finalize_synthetic_quiet_completed_bar(symbol)
+                continue
+            intents.extend(self._evaluate_completed_bar(symbol, completed_bar=_bar))
+            self._advance_gap_recovery(symbol, _bar)
         if not prewarm_only:
             intents.extend(self._evaluate_intrabar_entry(symbol))
 
@@ -1218,21 +1239,32 @@ class StrategyBotRuntime:
             for bar in completed_bars
             if int(getattr(bar, "trade_count", 0) or 0) <= 0 and int(getattr(bar, "volume", 0) or 0) <= 0
         ]
+        # See handle_trade_tick for the rationale: PR #196 made synthetic
+        # bars common; the early-return here previously dropped real bars
+        # from the same batch.
+        gap_recovery_armed = False
         if synthetic_gap_bars and not prewarm_only:
             if self._should_track_gap_recovery(symbol):
                 self._arm_gap_recovery(symbol, synthetic_gap_count=len(synthetic_gap_bars))
                 self._finalize_gap_recovery_completed_bar(symbol)
-                return intents
-            self._clear_gap_recovery(symbol)
+                gap_recovery_armed = True
+            else:
+                self._clear_gap_recovery(symbol)
         for _bar in completed_bars:
             if prewarm_only:
                 self._finalize_prewarm_completed_bar(symbol)
-            else:
-                if int(getattr(_bar, "trade_count", 0) or 0) <= 0 and int(getattr(_bar, "volume", 0) or 0) <= 0:
-                    self._finalize_synthetic_quiet_completed_bar(symbol)
+                continue
+            is_synthetic = (
+                int(getattr(_bar, "trade_count", 0) or 0) <= 0
+                and int(getattr(_bar, "volume", 0) or 0) <= 0
+            )
+            if is_synthetic:
+                if gap_recovery_armed:
                     continue
-                intents.extend(self._evaluate_completed_bar(symbol, completed_bar=_bar))
-                self._advance_gap_recovery(symbol, _bar)
+                self._finalize_synthetic_quiet_completed_bar(symbol)
+                continue
+            intents.extend(self._evaluate_completed_bar(symbol, completed_bar=_bar))
+            self._advance_gap_recovery(symbol, _bar)
         if not prewarm_only:
             intents.extend(self._evaluate_intrabar_entry(symbol))
 
@@ -1408,21 +1440,33 @@ class StrategyBotRuntime:
                 for bar in symbol_bars
                 if int(getattr(bar, "trade_count", 0) or 0) <= 0 and int(getattr(bar, "volume", 0) or 0) <= 0
             ]
+            # See handle_trade_tick for the rationale: PR #196 made
+            # synthetic bars common; the `continue` here previously dropped
+            # real bars in the same batch on tracked-recovery symbols
+            # (data_warning, etc.) so the decision tape went stale for them.
+            gap_recovery_armed = False
             if synthetic_gap_bars and not prewarm_only:
                 if self._should_track_gap_recovery(symbol):
                     self._arm_gap_recovery(symbol, synthetic_gap_count=len(synthetic_gap_bars))
                     self._finalize_gap_recovery_completed_bar(symbol)
-                    continue
-                self._clear_gap_recovery(symbol)
+                    gap_recovery_armed = True
+                else:
+                    self._clear_gap_recovery(symbol)
             for bar in symbol_bars:
                 if prewarm_only:
                     self._finalize_prewarm_completed_bar(symbol)
-                else:
-                    if int(getattr(bar, "trade_count", 0) or 0) <= 0 and int(getattr(bar, "volume", 0) or 0) <= 0:
-                        self._finalize_synthetic_quiet_completed_bar(symbol)
+                    continue
+                is_synthetic = (
+                    int(getattr(bar, "trade_count", 0) or 0) <= 0
+                    and int(getattr(bar, "volume", 0) or 0) <= 0
+                )
+                if is_synthetic:
+                    if gap_recovery_armed:
                         continue
-                    intents.extend(self._evaluate_completed_bar(symbol, completed_bar=bar))
-                    self._advance_gap_recovery(symbol, bar)
+                    self._finalize_synthetic_quiet_completed_bar(symbol)
+                    continue
+                intents.extend(self._evaluate_completed_bar(symbol, completed_bar=bar))
+                self._advance_gap_recovery(symbol, bar)
         return intents, len(completed)
 
     def apply_execution_fill(
