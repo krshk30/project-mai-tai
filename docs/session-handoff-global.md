@@ -427,12 +427,12 @@ Twelve PRs shipped today addressing four distinct bug classes that compounded in
   - this is **not** the root cause of the AMST missed early scale
   - it is a separate stale-intent / resubmission-loop prevention improvement for OMS cleanup
 
-### 2026-05-19 evening - local fix prepared for connected-but-stale Schwab delivery (NOT DEPLOYED YET)
+### 2026-05-19 evening - connected-but-stale Schwab recovery patch deployed, but post-market validation still shows heavy lag
 
 - Scope:
   - do **not** change Mai Tai strategy rules, path priority, MACD/EMA math, or Pine parity thresholds
   - only harden Schwab stream recovery when the websocket stays connected but minute bars / trades arrive late
-- Local implementation prepared:
+- Implemented change:
   - `SchwabStreamerClient` now has `force_reconnect()` so the strategy service can recycle the full Schwab socket instead of only resubscribing symbols
   - `StrategyEngineService` now tracks Schwab `bar` activity separately from `trade` / `quote` activity
   - `_refresh_stale_schwab_1m_history()` now escalates broad same-minute lag clusters to a **full Schwab reconnect** before replaying history
@@ -449,8 +449,35 @@ Twelve PRs shipped today addressing four distinct bug classes that compounded in
   - `pytest tests/unit/test_strategy_engine_service.py -k "delayed_live_bar_after_history_replay or clustered_lag or schwab_stream_queue_drain_prioritizes_live_bars_over_quote_backlog or service_uses_fallback_quotes_for_stale_schwab_open_positions or service_skips_emergency_close_when_rest_quote_proves_stream_lag"` -> `5 passed`
   - `python -m py_compile src/project_mai_tai/services/strategy_engine_app.py src/project_mai_tai/market_data/schwab_streamer.py tests/unit/test_strategy_engine_service.py` -> `ok`
 - Deploy status:
-  - local only right now
-  - next step is deploy + live validation during active market hours, specifically watching for the `schwab_1m` same-minute history-replay cluster pattern to disappear or materially shrink
+  - committed locally as `4166a86` on `codex/local-clean-main`
+  - cherry-picked/rebased onto deploy worktree `main` and pushed as GitHub/VPS SHA `49dea12`
+  - deployed to VPS via `ops/systemd/deploy_service.sh /home/trader/project-mai-tai main strategy`
+  - `project-mai-tai-strategy.service` restarted successfully at `2026-05-19 20:31:24 UTC`
+- Post-market live validation result:
+  - the new logic **did activate**
+    - `20:36:52 UTC`: `forced full Schwab streamer reconnect for stale schwab_1m cluster (lagging_symbols=25, expected_completed=16:35 ET)`
+    - `20:36:58 UTC`: `Schwab streamer connected after 1 consecutive failure(s)`
+    - `20:37:30 UTC`: many `ignoring delayed Schwab live bar ... because fresh history already replayed through ...` logs, proving the duplicate-late-live-bar guard is working
+    - `20:37:31 UTC` and again `20:40:06 UTC`: another quiet-symbol wave escalated into another full reconnect
+  - but the feed is still not healthy in this post-market window
+    - post-`20:36:52 UTC` DB slice:
+      - `schwab_1m`: `69` bars, average lag `136.2s`, max lag `485.5s`, all `69/69 >= 30s`
+      - `macd_30s`: `29` bars, average lag `195.6s`, max lag `390.9s`, all `29/29 >= 30s`
+      - `polygon_30s`: `245` bars, average lag `133.4s`, max lag `305.5s`
+    - `/health` at `20:40:16 UTC` still showed `strategy-engine status=degraded` even though `schwab_stream_connected=true` and `schwab_generic_fallback_active=false`
+- Current classification:
+  - this patch is **partially successful**
+    - full reconnect escalation works
+    - delayed live-bar suppression works
+  - but it did **not** cure the underlying late-data condition tonight
+  - the remaining problem is now more clearly upstream / stream-lifecycle related:
+    - repeated connected-or-reconnecting Schwab delivery degradation
+    - followed by replay-heavy recovery
+    - affecting both `schwab_1m` and `macd_30s`
+- Next follow-up:
+  - inspect why the restarted strategy took ~3 minutes to get the first `Schwab streamer connected` event (`20:31:25` -> `20:34:48 UTC`)
+  - determine whether post-market Schwab channel behavior is intrinsically too sparse/noisy for the current stale thresholds, or whether reconnect is repeatedly tearing down a stream that was already weak
+  - keep using this deployed patch, but do **not** mark the Schwab stream-health workstream closed
 
 ### 2026-05-18 late session - remaining restart blocker identified
 
