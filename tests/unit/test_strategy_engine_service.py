@@ -3614,18 +3614,32 @@ def test_runtime_bar_flow_monitor_does_not_halt_when_no_in_flight_current_bar() 
     assert "UGRO" not in bot.data_halt_symbols
 
 
-def test_flush_completed_bars_persists_real_bars_even_when_gap_recovery_armed() -> None:
-    """Regression for 2026-05-19 mid-RTH macd_30s persist-gap incident:
-    PR #196 flipped macd_30s `fill_gap_bars` to True, so synthetic gap bars
-    started appearing in completed-bar batches alongside real bars. The
-    pre-existing gap-recovery short-circuit (`continue` when synthetic bars
-    present AND `_should_track_gap_recovery` returns True for the symbol)
-    then dropped the real bars on the floor — they never reached
-    `_evaluate_completed_bar` → `_persist_bar_history`. Symbols with
-    `data_warning_symbols` entries (e.g. Schwab-quiet warnings on thin
-    penny stocks) stopped persisting bars to DB for ~45 minutes even
-    though the bot kept generating intents from live trade ticks. The
-    decision tape rendered half-an-hour-old data."""
+def test_flush_completed_bars_evaluates_real_and_synthetic_bars_when_gap_recovery_armed() -> None:
+    """Regression for the 2026-05-19 macd_30s zero-trades-day incident.
+
+    History of the four PRs that shaped this code path:
+
+    - PR #196 flipped macd_30s `fill_gap_bars` to True so synthetic gap
+      bars started appearing in completed-bar batches alongside real bars.
+    - PR #198 fixed the gap-recovery `continue` that was dropping real
+      bars from the same batch (45-min persist-gap symptom).
+    - PR #200 (this fix) restores synthetic-bar evaluation. PR #198
+      still routed synthetic bars to `_finalize_synthetic_quiet_completed_bar`
+      / `_finalize_gap_recovery_completed_bar` instead of
+      `_evaluate_completed_bar`, cutting the bot's evaluation frequency
+      12x vs yesterday (12,339 evaluations → ~1,000). macd_30s did 0
+      fills today vs 9 yesterday. The freshness guard (PR #177) + the
+      entry engine's existing logic handles "is it safe to enter on
+      stale data"; `_persist_bar_history`'s `vol=0 + tc=0` filter at
+      line ~2820 still skips writing synthetic OHLC to the DB so the
+      decision tape stays clean.
+
+    This test asserts: BOTH real and synthetic bars reach
+    `_evaluate_completed_bar` even when `_should_track_gap_recovery`
+    returns True (the regression cause), AND gap-recovery state is
+    still armed for the `_advance_gap_recovery` accounting on later
+    real bars.
+    """
     state = StrategyEngineState(settings=make_test_settings(), now_provider=fixed_now)
     bot = state.bots["macd_30s"]
     bot.set_watchlist(["UGRO"])
@@ -3633,11 +3647,6 @@ def test_flush_completed_bars_persists_real_bars_even_when_gap_recovery_armed() 
     bot.data_warning_symbols["UGRO"] = "stale Schwab quote"
     assert bot._should_track_gap_recovery("UGRO")
 
-    # Capture calls to `_evaluate_completed_bar` — that's the gate the
-    # short-circuit was skipping. Synthetic bars don't reach this path
-    # (they're handled by `_finalize_synthetic_quiet_completed_bar` /
-    # `_finalize_gap_recovery_completed_bar`), so anything captured here
-    # is a real bar.
     evaluated: list[tuple[str, int, int]] = []
 
     def _capture(symbol, *, completed_bar=None):
@@ -3651,11 +3660,6 @@ def test_flush_completed_bars_persists_real_bars_even_when_gap_recovery_armed() 
 
     bot._evaluate_completed_bar = _capture  # type: ignore[method-assign]
 
-    # Hand-roll a completed_bars list containing one real bar followed by
-    # one synthetic gap-fill bar, mimicking what
-    # SchwabNativeBarBuilder.check_bar_closes returns under
-    # `fill_gap_bars=True` when a tick closes a real bucket and fresh
-    # buckets pass with no trades.
     now_ts = fixed_now().replace(tzinfo=EASTERN_TZ).timestamp()
     bucket_start = (now_ts // 30) * 30 - 60
     real_bar = OHLCVBar(
@@ -3684,16 +3688,13 @@ def test_flush_completed_bars_persists_real_bars_even_when_gap_recovery_armed() 
     intents, completed_n = bot.flush_completed_bars()
 
     assert completed_n == 2
-    # The real bar (vol=5000, tc=7) must reach `_evaluate_completed_bar`
-    # (which then drives `_persist_bar_history`). Before the fix the
-    # gap-recovery short-circuit dropped it on the floor.
-    assert (
-        "UGRO",
-        5_000,
-        7,
-    ) in evaluated, f"real bar not evaluated; evaluated={evaluated!r}"
-    # And gap-recovery should still be armed (synthetic gaps were detected
-    # and the symbol is in data_warning_symbols).
+    # Both bars must reach `_evaluate_completed_bar`. The real bar drives
+    # `_persist_bar_history` to disk; the synthetic bar runs strategy
+    # evaluation (indicators, entry checks, freshness guard) but skips
+    # the disk write via the vol=0+tc=0 filter inside `_persist_bar_history`.
+    assert ("UGRO", 5_000, 7) in evaluated, f"real bar not evaluated; evaluated={evaluated!r}"
+    assert ("UGRO", 0, 0) in evaluated, f"synthetic bar not evaluated; evaluated={evaluated!r}"
+    # Gap-recovery accounting still armed.
     assert bot._is_gap_recovery_active("UGRO")
 
 
