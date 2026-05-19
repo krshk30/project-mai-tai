@@ -1,5 +1,63 @@
 # Session Handoff - Global
 
+## 🚩 2026-05-19 RTH late-session — macd_30s revise-storm root-cause fix shipped (PR #196)
+
+VPS HEAD `565bfd5`. Strategy restarted at 15:56:12 UTC. PR #194 unblocked entries but didn't address the underlying "decision tape rendering 30-minute-old bars" symptom — operator flagged that next. This PR addresses the root cause.
+
+### Operator-reported symptom (after PR #194)
+
+Mid-RTH 11:46 ET: macd_30s decision tape showing bars from 30+ minutes ago even though the bot was nominally "running". DB confirmed it — AMST persist_lag trajectory after the 11:04 restart grew exponentially:
+
+```
+11:05:30 → 37s     11:09:30 → 460s
+11:06:00 → 52s     11:11:00 → 771s
+11:07:00 → 108s    11:13:00 → 1358s
+11:08:00 → 208s    11:14:30 → 1850s (= 31 min)
+```
+
+Pattern repeated identically after every restart today. Operator quote: "30sec bot not getting current bars, decision tab with old data not a fresh one … it was fine yesterday."
+
+### Root cause (feedback loop)
+
+1. Today's confirmed-symbol universe (AMST/MTVA/HCWB/CODX/INM/WNW/RUBI/...) is thin penny stocks with sparse on-exchange trades but heavy off-exchange / late-reported odd-lot prints.
+2. Schwab LEVELONE_EQUITIES emits update events on *any* field change. Off-exchange prints grow `TOTAL_VOLUME` without advancing `LAST_TRADE_TIME`.
+3. Our streamer maps `LAST_TRADE_TIME` → `timestamp_ns`. With `fill_gap_bars=False` on macd_30s (commit `e7ffa07` 2026-05-07, never flipped back when schwab_1m's was), those events bucket to `bars[-1].timestamp` and route through `_revise_last_closed_bar_from_trade`. Each revise = one `[STRATEGY-REVISE-PERSIST]` DB write + one `[STRATEGY-REVISE-PERSIST-LAG]` WARN.
+4. Today's macd_30s revise-persist count hit **35,041 WARNs through mid-RTH alone**. The DB-write rate exceeded what the 1Hz main loop could drain per iteration.
+5. As the loop fell behind, `flush_completed_bars` ran less often, so newer buckets failed to force-close on schedule → also reported via revise → more writes → loop falls further behind. Cascading failure.
+6. Decision tape reads `strategy_bar_history` ordered by `bar_time`, so operators see bars that were "persisted recently" but with `bar_time` half-an-hour stale.
+
+Yesterday was "fine" because the prior session's confirmed universe had more liquid stocks with continuous on-exchange trading. `bars[-1]` advanced naturally on each fresh-bucket trade, so the revise path rarely fired. Today's penny-stock universe inverted that profile.
+
+### Fix (PR #196, deployed 15:56:12 UTC)
+
+`strategy_engine_app.py:3821` — flip macd_30s `fill_gap_bars` from `False` to `True` (matches schwab_1m default). Effect:
+
+- `bars[-1]` auto-advances every interval via synthetic zero-volume bars during silent on-exchange periods.
+- Late LEVELONE events with old `LAST_TRADE_TIME` now have `bucket < bars[-1].timestamp` and get ignored as stale (DEBUG log only, no persist). Revise-storm + DB-write feedback loop breaks.
+- Indicator math during silent periods stays flat (synthetic zero-vol bars don't move MACD/RSI/EMA), so no spurious entry signals fire. The existing `_is_synthetic_bar` check in `_revise_last_closed_bar_from_trade` already handles synthetic bars correctly when late on-exchange trades do arrive.
+- polygon_30s keeps its own `fill_gap_bars=polygon_use_live_aggregate_bars` setting (not affected — Polygon delivers aggregate bars, not LEVELONE-style snapshot events).
+
+Test guard: `test_macd_30s_uses_configured_tick_bar_close_grace` updated to assert `fill_gap_bars=True` with a cross-reference comment so any future regression flip back to `False` is caught loudly.
+
+### Today's PR chain (chronological)
+
+1. **PR #192** (12:50 UTC) — Evening-restart leak fix: yesterday's `scanner_confirmed_last_nonempty` snapshot restored into the new session, leaving stale symbols on bot watchlists past the 04:00 ET roll. Added `strategy_seeded_snapshot_max_age_seconds` cap + cleared `_desired_watchlist_symbols` in `_roll_day_if_needed` + structured logging.
+2. **PR #194** (15:04 UTC) — Bar-flow detector false-positive fix: `monitor_completed_bar_flow` was halting *quiet* macd_30s symbols (no in-flight `_current_bar`) rather than genuine stalls. Added the `current_bar_overdue` guard to match the SCHWAB30-STALL WARN heuristic.
+3. **PR #196** (15:56 UTC) — This PR. Closes the underlying revise-storm feedback loop.
+
+### What to watch (next 30 min and tomorrow)
+
+- `sudo grep -c 'STRATEGY-REVISE-PERSIST-LAG' /var/log/project-mai-tai/strategy.log` — count should grow MUCH slower (today's pre-fix count through mid-RTH was 35,041; post-fix should add only handfuls per hour during RTH).
+- `check_bar_persist_lag.py --day 2026-05-19 --all-bots --dsn "$DSN"` — macd_30s median lag should drop under 10s within 30 min of restart.
+- `[SCHWAB30-REVISE-STORM]` WARN count should fall similarly.
+- macd_30s decision tape should render bars within the last minute, not the last half-hour.
+
+### Trading impact
+
+macd_30s ran on stale data from ~09:51 ET to ~15:56 UTC restart (~6 hours of degraded RTH). PR #194 unblocked entries but the bot was effectively trading on 30-min-old data the whole time. No exposure (no open positions when fixes landed).
+
+---
+
 ## 🚩 2026-05-19 RTH mid-session — Bar-flow detector false-positive fix shipped (PR #194)
 
 VPS HEAD `82229dd`. Strategy restarted at 15:04:19 UTC on the fixed code. macd_30s `halted_symbols` dropped from 13 → 0; bars are flowing 0-30s behind real-time for all 23 watchlist symbols. Zero `Completed bar flow stalled` log entries since 15:05 UTC.
