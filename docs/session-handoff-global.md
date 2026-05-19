@@ -41,17 +41,30 @@ The drop traced to PR #198's gap-recovery short-circuit routing synthetic bars t
 | 6 | Empty decision_status | ✅ 0 |
 | 7 | Critical decision rate post-PR #200 | ✅ 0.35% (3/850) |
 
-### 🚩 What to validate at 2026-05-20 RTH open (next session)
+### 🚩 What to validate at 2026-05-20 PRE-MARKET (next session)
 
-This is the actual validation window for PR #200. Run within the first hour of RTH (09:30-10:30 ET):
+**Validation window is PRE-MARKET 07:00-09:30 ET (11:00-13:30 UTC), not RTH open.** macd_30s historical fill-time distribution shows 55-65% of fills land before RTH on penny-stock-heavy days:
 
-1. **macd_30s evaluation rate**: query `SELECT COUNT(*) FROM strategy_bar_history WHERE strategy_code='macd_30s' AND bar_time >= '2026-05-20 13:30:00+00'`. Expect 1,000+ within the first hour (vs today's effective rate of ~50/hour during normal periods, which was the regression). Pre-regression normal: 1,800-2,000/hour.
-2. **macd_30s entry signals fired**: query `SELECT COUNT(*) FROM strategy_bar_history WHERE strategy_code='macd_30s' AND decision_status='signal' AND bar_time >= '2026-05-20 13:30:00+00'`. Expect ≥1 within the first hour given a tradeable universe.
-3. **Open intents → fills**: `SELECT COUNT(*) FILTER (WHERE intent_type='open' AND status='filled') FROM trade_intents WHERE strategy_id IN (SELECT id FROM strategies WHERE code='macd_30s') AND created_at >= '2026-05-20 13:30:00+00'`. Yesterday baseline was 9 over the whole RTH; first-hour target is ≥1.
-4. **Persist-lag stays under 30s for all bots** — the EOD-window saw polygon_30s and schwab_1m persist-lag elevated to 36-78s median. May be transient post-restart; if it persists tomorrow morning, investigate.
-5. **No new REVISE-STORM warnings on macd_30s** (PR #196 benefit) — should stay near zero.
-6. **No new `[OMS-ABANDON-INTENT]` storms** — PR #178 + PR #189 protections remain.
-7. **Decision tape currency**: pick any macd_30s active symbol and verify the bot page shows bars from the current minute, not from hours ago.
+| Day | 07 ET | 08 ET | 09 ET | 10+ ET | Pre-RTH share |
+|---|---|---|---|---|---|
+| 05-18 | 3 | 2 | 4 | 0 | 5/9 = 55% before 09:30 ET |
+| 05-14 | 6 | 5 | 5 | 1 | 11/17 = 65% |
+| 05-12 | 2 | 2 | 3 | 12 | 4/19 = 21% |
+| 05-11 | 3 | 0 | 2 | 10 | 3/15 = 20% |
+
+schwab_1m has a similar pre-market lean (2026-05-18: 2 fills at 07 ET, 2 at 08 ET, 5 at 09 ET). Validating only at RTH 09:30+ would miss the high-activity window for both bots.
+
+**Run all checks at ~07:30 ET (11:30 UTC) — 30 min of pre-market activity in the books AND time to fix anything before 09:30 RTH open if it's still broken.** If problems are still present at 07:30, re-check at 08:30 and 09:00.
+
+Adjust the `bar_time >= '...'` timestamp in each query to the actual pre-market start (use `2026-05-20 08:00:00+00` for "since 04:00 ET scanner-session-roll"):
+
+1. **macd_30s evaluation rate**: query `SELECT COUNT(*) FROM strategy_bar_history WHERE strategy_code='macd_30s' AND bar_time >= '2026-05-20 08:00:00+00'`. By 07:30 ET (~3.5h of pre-market) expect 4,000+ rows. Pre-regression baseline: ~1,800/hour. If <500 rows total → PR #200 didn't actually restore evaluation, dig into why.
+2. **macd_30s entry signals fired**: query `SELECT COUNT(*) FROM strategy_bar_history WHERE strategy_code='macd_30s' AND decision_status='signal' AND bar_time >= '2026-05-20 08:00:00+00'`. By 07:30 ET expect ≥1 (yesterday's 07:00-08:00 ET had 3 fills; 06:30-07:30 today should produce a comparable signal count if the universe is tradeable).
+3. **Open intents → fills**: `SELECT COUNT(*) FILTER (WHERE intent_type='open' AND status='filled') FROM trade_intents ti JOIN strategies s ON s.id=ti.strategy_id WHERE s.code='macd_30s' AND ti.created_at >= '2026-05-20 08:00:00+00'`. Yesterday 07-08 ET had 5 fills. By 07:30 ET target ≥1.
+4. **Persist-lag stays under 30s for all bots** — yesterday's EOD-window saw polygon_30s and schwab_1m persist-lag elevated to 36-78s median. May be transient post-restart; if it persists into pre-market, investigate. `check_bar_persist_lag.py --day 2026-05-20 --all-bots --start-hour 4 --end-hour 8 --dsn "$DSN"`.
+5. **No new REVISE-STORM warnings on macd_30s** (PR #196 benefit) — should stay near zero. `sudo grep -c 'SCHWAB30-REVISE-STORM' /var/log/project-mai-tai/strategy.log` against the pre-market window.
+6. **No new `[OMS-ABANDON-INTENT]` storms** — PR #178 + PR #189 protections remain. `sudo grep -c '\[OMS-ABANDON-INTENT\]' /var/log/project-mai-tai/oms.log`.
+7. **Decision tape currency**: open the macd_30s bot page in browser, verify `bar_time` on the top decision row is within the last 1-2 minutes (not from hours ago).
 
 ### Open follow-ups (not blocking tomorrow's RTH)
 
