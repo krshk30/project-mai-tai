@@ -5724,6 +5724,69 @@ async def test_schwab_stream_queue_drain_is_bounded() -> None:
     assert service._schwab_trade_queue.qsize() == 2
 
 
+@pytest.mark.asyncio
+async def test_schwab_stream_queue_drain_prioritizes_live_bars_over_quote_backlog() -> None:
+    service = StrategyEngineService(
+        settings=make_test_settings(
+            redis_stream_prefix="test",
+            dashboard_snapshot_persistence_enabled=False,
+            strategy_history_persistence_enabled=False,
+            strategy_macd_30s_broker_provider="schwab",
+            strategy_schwab_1m_enabled=True,
+        ),
+        redis_client=FakeRedis(),
+    )
+    service.state.bots["schwab_1m"].set_watchlist(["AMST"])
+    service._schwab_stream_drain_max_events = 3
+    drain_order: list[str] = []
+
+    def fake_handle_quote_tick(**kwargs):
+        drain_order.append(f"quote:{kwargs['symbol']}")
+        return []
+
+    def fake_handle_live_bar(**kwargs):
+        drain_order.append(f"bar:{kwargs['symbol']}")
+        return []
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(service.state, "handle_quote_tick", fake_handle_quote_tick)
+    monkeypatch.setattr(service.state, "handle_live_bar", fake_handle_live_bar)
+
+    try:
+        for index in range(5):
+            service._enqueue_schwab_quote_tick(
+                QuoteTickRecord(
+                    symbol="AMST",
+                    bid_price=1.00 + index,
+                    ask_price=1.01 + index,
+                )
+            )
+
+        service._enqueue_schwab_live_bar(
+            LiveBarRecord(
+                symbol="AMST",
+                interval_secs=60,
+                open=2.20,
+                high=2.35,
+                low=2.18,
+                close=2.30,
+                volume=25_000,
+                timestamp=1_700_001_560.0,
+                trade_count=42,
+            )
+        )
+
+        intent_count, event_count = await service._drain_schwab_stream_queues()
+    finally:
+        monkeypatch.undo()
+
+    assert intent_count == 0
+    assert event_count == 3
+    assert drain_order[0] == "bar:AMST"
+    assert service._schwab_bar_queue.qsize() == 0
+    assert service._schwab_quote_queue.qsize() == 3
+
+
 def test_schwab_quote_enqueue_skips_prewarm_only_symbols() -> None:
     service = StrategyEngineService(
         settings=make_test_settings(
@@ -7446,6 +7509,80 @@ def test_strategy_service_reconcile_restores_missing_runtime_position_from_virtu
     assert restored is not None
     assert restored.quantity == 25
     assert restored.entry_price == 2.55
+
+
+def test_strategy_service_restore_ignores_native_stop_guard_for_intrabar_scale() -> None:
+    session_factory = build_test_session_factory()
+    with session_factory() as session:
+        strategy = Strategy(code="schwab_1m", name="Schwab 1m", execution_mode="paper", metadata_json={})
+        account = BrokerAccount(
+            name="paper:schwab_1m",
+            provider="schwab",
+            environment="test",
+        )
+        session.add_all([strategy, account])
+        session.flush()
+        session.add(
+            VirtualPosition(
+                strategy_id=strategy.id,
+                broker_account_id=account.id,
+                symbol="AMST",
+                quantity=Decimal("10"),
+                average_price=Decimal("1.7499"),
+            )
+        )
+        native_guard_intent = TradeIntent(
+            strategy_id=strategy.id,
+            broker_account_id=account.id,
+            symbol="AMST",
+            side="sell",
+            intent_type="close",
+            quantity=Decimal("10"),
+            reason="HARD_STOP_NATIVE_BACKUP",
+            status="submitted",
+            payload={"metadata": {"native_stop_guard": "true"}},
+        )
+        session.add(native_guard_intent)
+        session.flush()
+        session.add(
+            BrokerOrder(
+                intent_id=native_guard_intent.id,
+                strategy_id=strategy.id,
+                broker_account_id=account.id,
+                client_order_id="native-guard-order",
+                symbol="AMST",
+                side="sell",
+                order_type="stop",
+                time_in_force="day",
+                quantity=Decimal("10"),
+                status="accepted",
+                payload={"native_stop_guard": "true"},
+            )
+        )
+        session.commit()
+
+    service = StrategyEngineService(
+        settings=make_test_settings(
+            redis_stream_prefix="test",
+            dashboard_snapshot_persistence_enabled=True,
+            strategy_schwab_1m_enabled=True,
+            strategy_schwab_1m_account_name="paper:schwab_1m",
+        ),
+        redis_client=FakeRedis(),
+        session_factory=session_factory,
+    )
+
+    service._restore_runtime_state_from_database()
+
+    runtime = service.state.bots["schwab_1m"]
+    assert runtime.positions.get_position("AMST") is not None
+    assert "AMST" not in runtime.pending_close_symbols
+
+    intents = runtime.handle_quote_tick("AMST", bid_price=1.83, ask_price=1.84)
+
+    assert len(intents) == 1
+    assert intents[0].payload.intent_type == "scale"
+    assert intents[0].payload.reason == "SCALE_FAST4"
 
 
 def test_strategy_service_reconcile_restores_runtime_position_path_from_latest_open_intent() -> None:

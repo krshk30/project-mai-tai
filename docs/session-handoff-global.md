@@ -211,6 +211,48 @@ Today's 14 PRs from 2026-05-18 still need RTH stress test. Originally scheduled 
 
 Twelve PRs shipped today addressing four distinct bug classes that compounded into the AUUD/QNCX/SBFM stuck-order incident the operator witnessed. All deployed live. VPS HEAD `03bf291` (PR #180) at session end.
 
+### 2026-05-19 afternoon - AMST schwab_1m late-entry root cause confirmed locally
+
+- Operator concern: AMST `schwab_1m` trades diverged from the TradingView/Pine reference; do **not** retune rules first. Prove whether Mai Tai saw late/incorrect bars.
+- Live evidence collected from VPS:
+  - `08:58` AMST confirm bar persisted at `08:59:18 ET` (`~18s` after the `08:59:00` close boundary) and generated the live `P1_CROSS` entry from the Schwab bar queue.
+  - `10:15` and `10:16` AMST bars persisted `73s` and `79s` late; `10:17` then signaled from replayed history, not timely live bar flow.
+  - `/var/lib/project-mai-tai/schwab_ticks/2026-05-19/AMST.jsonl` showed `live_bar` records for the `10:08-10:30 ET` window being archived minutes late (`10:17` recorded at `10:23:55`, `10:30` recorded at `10:31:33`), proving the strategy service drained those bars late rather than Schwab history simply persisting late.
+- Root cause:
+  - `StrategyEngineService._drain_schwab_stream_queues()` used one shared drain budget (`_schwab_stream_drain_max_events=100`) and drained Schwab queues in `quote -> bar -> trade` order.
+  - Under quote bursts, the loop could stay active while starving the `CHART_EQUITY` minute-bar queue, so `schwab_1m` kept relying on stale-history replay and therefore evaluated MACD/EMA/path decisions on delayed inputs.
+- Local fix prepared:
+  - Reworked the bounded Schwab drain pass to service `bar -> trade -> quote` in a round-robin loop so final minute bars and timesale ticks cannot starve behind quote backlog while quotes still make progress every pass.
+  - Added regression test `test_schwab_stream_queue_drain_prioritizes_live_bars_over_quote_backlog`.
+- Local validation:
+  - `.venv\Scripts\python.exe -m pytest tests/unit/test_strategy_engine_service.py -k "schwab_stream_queue_drain" -q` -> `2 passed`
+  - `.venv\Scripts\python.exe -m pytest tests/unit/test_strategy_engine_service.py::test_schwab_live_bar_publishes_strategy_snapshot_for_generic_bot_activity_without_intents tests/unit/test_strategy_engine_service.py::test_schwab_stream_queue_drain_is_bounded tests/unit/test_strategy_engine_service.py::test_schwab_stream_queue_drain_prioritizes_live_bars_over_quote_backlog -q` -> `3 passed`
+  - `.venv\Scripts\python.exe -m py_compile src/project_mai_tai/services/strategy_engine_app.py tests/unit/test_strategy_engine_service.py`
+- Deployment status:
+  - Local only in this note. Not deployed yet. Before deploy, re-check VPS `strategy.log` around the AMST window and monitor whether fresh RTH `schwab_1m` bars stop falling into the stale-history replay path.
+
+### 2026-05-19 afternoon - AMST schwab_1m missed early scale root cause confirmed locally
+
+- Operator concern: on the `14:46 ET` AMST `schwab_1m` trade, the move cleared the expected scale thresholds, but the first live scale did not fire until much later.
+- Live evidence collected from VPS:
+  - Entry fill: `14:46:29 ET`, `ENTRY_P4_BURST`, reference/fill price `1.7499`.
+  - Raw AMST Schwab archive showed the first qualifying quote at `14:49:58.706 ET` with `bid=1.83 ask=1.84`, already above both the `2%` scale (`1.7849`) and `4%` fast scale (`1.8199`) thresholds.
+  - Despite that, the first live scale intent did not fill until `14:51:20 ET`, and it filled as `SCALE_FAST4` (`7/10` shares at `profit_pct ~8.11%`), followed by the remaining `3/10` shares at `14:52:11 ET` as another `SCALE_FAST4`.
+  - This proves the issue was not "price never reached the threshold". The bot saw a qualifying live quote ~81 seconds earlier and still waited.
+- Root cause:
+  - Intrabar scales go through `StrategyBotRuntime._evaluate_position_price_intents()`, which returns immediately when the symbol is in `pending_close_symbols`.
+  - Runtime DB reconcile was treating the broker-native backup stop (`HARD_STOP_NATIVE_BACKUP` / `native_stop_guard=true`) as a generic open `close` order and loading that symbol into `pending_close_symbols`.
+  - Completed-bar exit evaluation does **not** apply that `pending_close_symbols` gate for scale signals, so the trade eventually scaled only when the next completed 1m bars arrived. That is why AMST skipped the earlier quote-based scale and later sold straight into `FAST4`.
+- Local fix prepared:
+  - Runtime state restore/reconcile now ignores broker orders marked `native_stop_guard=true` when rebuilding `pending_close_symbols`.
+  - This keeps the protective native stop armed in OMS without blocking intrabar scale logic in the strategy runtime.
+  - Added regression test `test_strategy_service_restore_ignores_native_stop_guard_for_intrabar_scale`.
+- Local validation:
+  - `.venv\Scripts\python.exe -m pytest tests/unit/test_strategy_engine_service.py::test_strategy_service_restore_ignores_native_stop_guard_for_intrabar_scale tests/unit/test_strategy_engine_service.py::test_schwab_stream_queue_drain_is_bounded tests/unit/test_strategy_engine_service.py::test_schwab_stream_queue_drain_prioritizes_live_bars_over_quote_backlog -q` -> `3 passed`
+  - `.venv\Scripts\python.exe -m py_compile src/project_mai_tai/services/strategy_engine_app.py tests/unit/test_strategy_engine_service.py`
+- Deployment status:
+  - Local only in this note. Not deployed yet.
+
 ### 2026-05-18 late session - remaining restart blocker identified
 
 - Remaining issue after the Polygon control-plane hardening: safe strategy restart is blocked by stale active `trade_intents`, not by real broker-active orders.

@@ -7526,7 +7526,10 @@ class StrategyEngineService:
         event_count = 0
         max_events = max(1, int(self._schwab_stream_drain_max_events))
 
-        while event_count < max_events and not self._schwab_quote_queue.empty():
+        async def _drain_one_quote() -> bool:
+            nonlocal event_count
+            if self._schwab_quote_queue.empty():
+                return False
             quote = await self._schwab_quote_queue.get()
             event_count += 1
             self._record_schwab_stream_activity(quote.symbol, activity_kind="quote")
@@ -7543,8 +7546,12 @@ class StrategyEngineService:
             if intents:
                 await self._sync_subscription_targets()
                 await self._publish_strategy_state_snapshot()
+            return True
 
-        while event_count < max_events and not self._schwab_bar_queue.empty():
+        async def _drain_one_bar() -> bool:
+            nonlocal intent_count, event_count
+            if self._schwab_bar_queue.empty():
+                return False
             bar = await self._schwab_bar_queue.get()
             event_count += 1
             self._record_schwab_stream_activity(bar.symbol, activity_kind="bar")
@@ -7579,8 +7586,12 @@ class StrategyEngineService:
                 )
             elif strategy_codes:
                 await self._publish_strategy_state_snapshot_for_generic_bot_activity()
+            return True
 
-        while event_count < max_events and not self._schwab_trade_queue.empty():
+        async def _drain_one_trade() -> bool:
+            nonlocal intent_count, event_count
+            if self._schwab_trade_queue.empty():
+                return False
             trade = await self._schwab_trade_queue.get()
             event_count += 1
             self._record_schwab_stream_activity(trade.symbol, activity_kind="trade")
@@ -7603,6 +7614,25 @@ class StrategyEngineService:
                     len(intents),
                     trade.symbol,
                 )
+            return True
+
+        while event_count < max_events:
+            progressed = False
+            # Final completed 1m bars are the canonical source for schwab_1m.
+            # Service them ahead of quote churn so the runtime does not keep
+            # replaying REST history while fresh CHART_EQUITY bars sit queued.
+            progressed = await _drain_one_bar() or progressed
+            if event_count >= max_events:
+                break
+            # Timesale ticks remain next-highest priority because they build the
+            # tick-native Schwab runtimes. Quotes still make progress each pass,
+            # but they no longer starve completed bars or trades.
+            progressed = await _drain_one_trade() or progressed
+            if event_count >= max_events:
+                break
+            progressed = await _drain_one_quote() or progressed
+            if not progressed:
+                break
 
         return intent_count, event_count
 
@@ -8832,6 +8862,11 @@ class StrategyEngineService:
             intent_type = str(intent.intent_type if intent is not None else "")
             symbol = str(order.symbol).upper()
             payload = order.payload if isinstance(order.payload, dict) else {}
+            metadata = payload.get("metadata", {}) if isinstance(payload.get("metadata", {}), dict) else {}
+            is_native_stop_guard = (
+                str(payload.get("native_stop_guard", "")).strip().lower() == "true"
+                or str(metadata.get("native_stop_guard", "")).strip().lower() == "true"
+            )
 
             if intent_type == "open" and order.side == "buy":
                 expected_pending_open.setdefault(strategy.code, set()).add(symbol)
@@ -8841,6 +8876,8 @@ class StrategyEngineService:
                 continue
 
             if intent_type == "close":
+                if is_native_stop_guard:
+                    continue
                 expected_pending_close.setdefault(strategy.code, set()).add(symbol)
                 continue
 
