@@ -5733,7 +5733,11 @@ def test_macd_30s_uses_configured_tick_bar_close_grace() -> None:
     runtime = state.bots["macd_30s"]
 
     assert getattr(runtime.builder_manager, "close_grace_seconds", None) == pytest.approx(2.0)
-    assert getattr(runtime.builder_manager, "fill_gap_bars", None) is False
+    # Flipped to True on 2026-05-19 (matches schwab_1m default). Prevents
+    # the LEVELONE off-exchange revise-storm feedback loop where bars[-1]
+    # stayed anchored to the last on-exchange trade time while late events
+    # piled up DB writes.
+    assert getattr(runtime.builder_manager, "fill_gap_bars", None) is True
     assert getattr(runtime, "trade_tick_service", None) == "LEVELONE_EQUITIES"
 
 
