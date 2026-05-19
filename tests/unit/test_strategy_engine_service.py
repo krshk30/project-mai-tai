@@ -5788,6 +5788,51 @@ async def test_schwab_stream_queue_drain_prioritizes_live_bars_over_quote_backlo
     assert service._schwab_quote_queue.qsize() == 3
 
 
+@pytest.mark.asyncio
+async def test_schwab_stream_queue_drain_ignores_delayed_live_bar_after_history_replay(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = StrategyEngineService(
+        settings=make_test_settings(
+            redis_stream_prefix="test",
+            dashboard_snapshot_persistence_enabled=False,
+            strategy_history_persistence_enabled=False,
+            strategy_macd_30s_broker_provider="schwab",
+            strategy_schwab_1m_enabled=True,
+        ),
+        redis_client=FakeRedis(),
+    )
+    service.state.bots["schwab_1m"].set_watchlist(["AMST"])
+    service._schwab_1m_history_replay_authority_until_timestamp["AMST"] = 1_700_001_560.0
+    handled: list[dict[str, object]] = []
+
+    def fake_handle_live_bar(**kwargs):
+        handled.append(kwargs)
+        return []
+
+    monkeypatch.setattr(service.state, "handle_live_bar", fake_handle_live_bar)
+    service._enqueue_schwab_live_bar(
+        LiveBarRecord(
+            symbol="AMST",
+            interval_secs=60,
+            open=2.20,
+            high=2.35,
+            low=2.18,
+            close=2.30,
+            volume=25_000,
+            timestamp=1_700_001_560.0,
+            trade_count=42,
+        )
+    )
+
+    intent_count, event_count = await service._drain_schwab_stream_queues()
+
+    assert intent_count == 0
+    assert event_count == 1
+    assert handled == []
+    assert "AMST" in service._schwab_symbol_last_stream_bar_at
+
+
 def test_schwab_quote_enqueue_skips_prewarm_only_symbols() -> None:
     service = StrategyEngineService(
         settings=make_test_settings(
@@ -5934,6 +5979,9 @@ async def test_service_uses_fallback_quotes_for_stale_schwab_open_positions() ->
         async def force_resubscribe(self) -> None:
             self.force_resubscribe_calls += 1
 
+        async def sync_subscriptions(self, *args, **kwargs) -> None:
+            return None
+
     class FakeQuotePollAdapter:
         async def fetch_quotes(self, symbols):
             assert symbols == ["ENVB"]
@@ -5966,9 +6014,60 @@ async def test_service_uses_fallback_quotes_for_stale_schwab_open_positions() ->
     assert runtime.latest_quotes["ENVB"] == {"bid": 4.2, "ask": 4.22}
     assert runtime.data_health_summary()["status"] == "critical"
     assert runtime.data_health_summary()["halted_symbols"] == ["ENVB"]
-    assert published[0].payload.intent_type == "close"
-    assert published[0].payload.symbol == "ENVB"
-    assert published[0].payload.reason == "SCHWAB_DATA_STALE_EMERGENCY_CLOSE"
+    close_intents = [p for p in published if p.payload.intent_type == "close"]
+    assert len(close_intents) == 1
+    assert close_intents[0].payload.symbol == "ENVB"
+    assert close_intents[0].payload.reason == "SCHWAB_DATA_STALE_EMERGENCY_CLOSE"
+
+
+@pytest.mark.asyncio
+async def test_refresh_stale_schwab_1m_history_forces_full_reconnect_on_clustered_lag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = StrategyEngineService(
+        settings=make_test_settings(
+            redis_stream_prefix="test",
+            dashboard_snapshot_persistence_enabled=False,
+            strategy_history_persistence_enabled=False,
+            strategy_schwab_1m_enabled=True,
+        ),
+        redis_client=FakeRedis(),
+    )
+    service.state.bots["schwab_1m"].set_watchlist(["AMST", "AMPG", "CNEY", "QUCY"])
+    fixed_now = datetime(2026, 5, 19, 19, 26, 5, tzinfo=UTC)
+    expected_latest_completed = datetime(2026, 5, 19, 19, 25, 0, tzinfo=UTC).timestamp()
+
+    class FakeStreamClient:
+        connected = True
+
+        def __init__(self) -> None:
+            self.force_reconnect_calls = 0
+
+        async def force_reconnect(self) -> None:
+            self.force_reconnect_calls += 1
+
+    async def fake_load_schwab_history_bars(**kwargs):
+        return []
+
+    fake_stream_client = FakeStreamClient()
+    service._schwab_stream_client = fake_stream_client
+    monkeypatch.setattr("project_mai_tai.services.strategy_engine_app.utcnow", lambda: fixed_now)
+    monkeypatch.setattr(
+        service,
+        "_load_schwab_history_bars",
+        fake_load_schwab_history_bars,
+    )
+    monkeypatch.setattr(
+        service,
+        "_latest_runtime_completed_bar_timestamp",
+        lambda runtime, symbol: expected_latest_completed - 60.0,
+    )
+
+    intent_count, refreshed_bar_count = await service._refresh_stale_schwab_1m_history()
+
+    assert intent_count == 0
+    assert refreshed_bar_count == 0
+    assert fake_stream_client.force_reconnect_calls == 1
 
 
 @pytest.mark.asyncio
@@ -5998,6 +6097,9 @@ async def test_service_skips_emergency_close_when_rest_quote_proves_stream_lag()
 
         async def force_resubscribe(self) -> None:
             self.force_resubscribe_calls += 1
+
+        async def sync_subscriptions(self, *args, **kwargs) -> None:
+            return None
 
     class FakeQuotePollAdapter:
         async def fetch_quotes(self, symbols):

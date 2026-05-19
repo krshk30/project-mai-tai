@@ -348,6 +348,76 @@ Twelve PRs shipped today addressing four distinct bug classes that compounded in
   - Verify whether the runtime is failing to publish fresh heartbeats/decision snapshots after restart or whether control-plane is failing to ingest/render them.
   - Keep this separate from the AMST entry-latency and intrabar-scale fixes.
 
+### 2026-05-19 afternoon - cross-bot live validation after the AMST deploy
+
+- The AMST deploy fixed the proven in-process `schwab_1m` queue-starvation bug, but live validation shows there is still a **second** Schwab stream-health issue. Keep these two layers separate.
+
+#### `schwab_1m` - original queue-starvation bug improved, but connected-but-stale Schwab delivery remains
+
+- VPS validation window `15:15-16:00 ET` (post-restart slice, excludes the original `15:10 ET` deploy boundary):
+  - `384` `schwab_1m` bars across the live watchlist
+  - average persist lag `17.1s`
+  - `p95=31.8s`
+  - `max=52.2s`
+  - `0` bars over the `60s` error threshold
+- This is materially better than the earlier AMST failure mode and is consistent with the queue-drain fix helping.
+- But the remaining live issue is real:
+  - at `15:26:03-15:26:11 ET`, strategy replayed `1 fresh Schwab 1m history bar` for a broad symbol set (`ADIL`, `AMPG`, `AMST`, `AUUD`, `BEZ`, `BLRX`, `CJMB`, `CNEY`, `CODX`, `CORD`, `DAMD`, `GOVX`, `HCWB`, `IONZ`, `MTVA`, `NOWL`, `QUCY`, `RKLZ`, `SNAL`, `TDTH`, `TRNR`)
+  - this replay came from the ordinary stale-history refresh path, **not** the `[ON-STALL-RECOVERY]` bar-flow-stalled recovery path
+  - raw Schwab archive proof:
+    - `AMST` `15:25` `live_bar` archived at `15:26:48 ET`
+    - `AMPG` `15:25` `live_bar` archived at `15:26:48 ET`
+    - `QUCY` `15:25` `live_bar` archived at `15:26:48 ET`
+    - `CNEY` `15:25` `live_bar` archived at `15:26:48 ET`
+    - those `live_bar` rows arrived **after** the runtime had already replayed fresh history
+    - corresponding `15:26` `live_bar` rows did not arrive until around `15:27:50 ET`
+- Current classification:
+  - the severe Mai Tai-side queue starvation was fixed
+  - the remaining `schwab_1m` issue is a different failure family: **connected websocket + stale or delayed Schwab symbol/channel delivery + history replay masking the gap**
+  - this is no longer a strategy-rule problem
+
+#### `macd_30s` - likely shares the same Schwab stream-health problem
+
+- VPS validation window `15:15-16:00 ET`:
+  - `115` `macd_30s` bars across the live watchlist
+  - average persist lag `57.2s`
+  - `p95=156.3s`
+  - `max=723.5s`
+  - `69` bars over the `30s` error threshold
+- The strongest evidence is `CNEY`:
+  - `15:16:30 ET` lag `275.2s`
+  - `15:17:00 ET` lag `347.9s`
+  - `15:17:30 ET` lag `401.3s`
+  - `15:18:00 ET` lag `500.9s`
+  - `15:18:30 ET` lag `684.4s`
+  - `15:19:00 ET` lag `723.5s`
+- Strategy logs in the same window show repeated `SCHWAB30-REVISE` updates for those old `CNEY` bars landing minutes late.
+- Current classification:
+  - `macd_30s` appears to share the same broader Schwab stream-health problem as `schwab_1m`
+  - the symptom is different:
+    - `schwab_1m`: missing timely completed bars, then history replay
+    - `macd_30s`: very late trade-driven revisions to already-closed bars
+  - but the common factor is **late Schwab stream data while the websocket still looks connected**
+
+#### `polygon_30s` - today's visible lag spike is restart-boundary, not yet proven to share the Schwab issue
+
+- Day-level `polygon_30s` persist-lag numbers look bad if read naively:
+  - `8534` bars
+  - median `8.3s`
+  - `p95=64.4s`
+  - `max=231.7s`
+  - `848` bars over the `30s` error threshold
+- But the post-`15:15 ET` slice shows the worst cluster centered at `15:37:00 ET`:
+  - `BEZ` `173.4s`
+  - many others around `150s`
+- Strategy log evidence shows this cluster is restart-boundary contamination:
+  - `strategy-engine starting` at `2026-05-19 19:37:18 UTC` (`15:37:18 ET`)
+  - that restart lines up directly with the worst `polygon_30s` lag burst
+- Current classification:
+  - do **not** lump `polygon_30s` into the same proven Schwab root cause from this pass
+  - today's visible Polygon lag spike is explained by a strategy restart boundary
+  - a separate steady-state Polygon audit is still required before claiming Polygon has the same live issue as Schwab
+
 ### 2026-05-19 follow-up todo - stale HARD_STOP_NATIVE_BACKUP intent churn hardening
 
 - Another agent suggestion is directionally reasonable as a separate OMS hardening follow-up:
@@ -356,6 +426,31 @@ Twelve PRs shipped today addressing four distinct bug classes that compounded in
 - Keep this classified correctly:
   - this is **not** the root cause of the AMST missed early scale
   - it is a separate stale-intent / resubmission-loop prevention improvement for OMS cleanup
+
+### 2026-05-19 evening - local fix prepared for connected-but-stale Schwab delivery (NOT DEPLOYED YET)
+
+- Scope:
+  - do **not** change Mai Tai strategy rules, path priority, MACD/EMA math, or Pine parity thresholds
+  - only harden Schwab stream recovery when the websocket stays connected but minute bars / trades arrive late
+- Local implementation prepared:
+  - `SchwabStreamerClient` now has `force_reconnect()` so the strategy service can recycle the full Schwab socket instead of only resubscribing symbols
+  - `StrategyEngineService` now tracks Schwab `bar` activity separately from `trade` / `quote` activity
+  - `_refresh_stale_schwab_1m_history()` now escalates broad same-minute lag clusters to a **full Schwab reconnect** before replaying history
+    - current threshold: `>=4` active `schwab_1m` symbols missing the same latest completed minute
+    - cooldown: `30s` between forced reconnects
+  - if fresh history already replayed a `schwab_1m` bar timestamp, later delayed `live_bar` packets for that same timestamp are ignored instead of re-driving strategy state
+- Why this is the right layer:
+  - directly targets the proven remaining failure family from `15:26 ET`
+  - avoids retuning entries/exits around bad transport timing
+  - should help both:
+    - `schwab_1m`: missing completed-minute bars + history replay
+    - `macd_30s`: same connected-but-stale Schwab socket family, even though the visible symptom is late trade-driven bar revision
+- Local validation:
+  - `pytest tests/unit/test_strategy_engine_service.py -k "delayed_live_bar_after_history_replay or clustered_lag or schwab_stream_queue_drain_prioritizes_live_bars_over_quote_backlog or service_uses_fallback_quotes_for_stale_schwab_open_positions or service_skips_emergency_close_when_rest_quote_proves_stream_lag"` -> `5 passed`
+  - `python -m py_compile src/project_mai_tai/services/strategy_engine_app.py src/project_mai_tai/market_data/schwab_streamer.py tests/unit/test_strategy_engine_service.py` -> `ok`
+- Deploy status:
+  - local only right now
+  - next step is deploy + live validation during active market hours, specifically watching for the `schwab_1m` same-minute history-replay cluster pattern to disappear or materially shrink
 
 ### 2026-05-18 late session - remaining restart blocker identified
 

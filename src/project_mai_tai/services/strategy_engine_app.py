@@ -5577,6 +5577,7 @@ class StrategyEngineService:
         self._schwab_tick_archive = self._build_schwab_tick_archive()
         self._schwab_symbol_last_stream_trade_at: dict[str, datetime] = {}
         self._schwab_symbol_last_stream_quote_at: dict[str, datetime] = {}
+        self._schwab_symbol_last_stream_bar_at: dict[str, datetime] = {}
         self._schwab_symbol_last_resubscribe_at: dict[str, datetime] = {}
         self._schwab_symbol_last_quote_poll_at: dict[str, datetime] = {}
         self._schwab_symbol_active_first_seen_at: dict[str, datetime] = {}
@@ -5584,7 +5585,11 @@ class StrategyEngineService:
         self._schwab_warning_symbols: set[str] = set()
         self._schwab_stream_disconnected_since: datetime | None = None
         self._schwab_1m_last_history_refresh_at: dict[str, datetime] = {}
+        self._schwab_1m_history_replay_authority_until_timestamp: dict[str, float] = {}
         self._schwab_1m_history_refresh_interval_secs = 15
+        self._schwab_cluster_reconnect_threshold = 4
+        self._schwab_cluster_reconnect_cooldown_secs = 30.0
+        self._schwab_last_forced_reconnect_at: datetime | None = None
         self._last_generic_bot_activity_snapshot_at: datetime | None = None
         self._generic_bot_activity_snapshot_interval_secs = 5
 
@@ -6961,6 +6966,81 @@ class StrategyEngineService:
             if str(reason).startswith("Completed bar flow stalled:")
         )
 
+    def _remember_schwab_1m_history_replay_authority(
+        self,
+        symbol: str,
+        *,
+        latest_bar_timestamp: float,
+    ) -> None:
+        normalized = str(symbol).upper()
+        current = self._schwab_1m_history_replay_authority_until_timestamp.get(normalized)
+        if current is None or latest_bar_timestamp > current:
+            self._schwab_1m_history_replay_authority_until_timestamp[normalized] = latest_bar_timestamp
+
+    def _release_schwab_1m_history_replay_authority(
+        self,
+        symbol: str,
+        *,
+        live_bar_timestamp: float,
+    ) -> None:
+        normalized = str(symbol).upper()
+        current = self._schwab_1m_history_replay_authority_until_timestamp.get(normalized)
+        if current is not None and live_bar_timestamp > current:
+            self._schwab_1m_history_replay_authority_until_timestamp.pop(normalized, None)
+
+    async def _maybe_force_schwab_stream_reconnect_for_stale_1m_cluster(
+        self,
+        *,
+        runtime: StrategyBotRuntime,
+        now: datetime,
+        expected_latest_completed: float,
+    ) -> None:
+        client = self._schwab_stream_client
+        if client is None or not getattr(client, "connected", False):
+            return
+        force_reconnect = getattr(client, "force_reconnect", None)
+        if not callable(force_reconnect):
+            return
+        last_reconnect_at = self._schwab_last_forced_reconnect_at
+        if (
+            last_reconnect_at is not None
+            and (now - last_reconnect_at).total_seconds()
+            < float(self._schwab_cluster_reconnect_cooldown_secs)
+        ):
+            return
+
+        lagging_symbols: list[tuple[str, float | None]] = []
+        for symbol in sorted(runtime.active_symbols()):
+            normalized = str(symbol).upper()
+            latest_runtime_completed = self._latest_runtime_completed_bar_timestamp(runtime, normalized)
+            if (
+                latest_runtime_completed is None
+                or latest_runtime_completed < expected_latest_completed
+            ):
+                lagging_symbols.append((normalized, latest_runtime_completed))
+
+        if len(lagging_symbols) < int(self._schwab_cluster_reconnect_threshold):
+            return
+
+        self._schwab_last_forced_reconnect_at = now
+        try:
+            await force_reconnect()
+        except Exception:
+            self.logger.exception("failed forcing Schwab streamer reconnect for stale 1m cluster")
+            return
+
+        lagging_summary = ",".join(
+            f"{symbol}:{_datetime_str(datetime.fromtimestamp(ts, UTC)) if ts is not None else 'none'}"
+            for symbol, ts in lagging_symbols[:12]
+        )
+        self.logger.warning(
+            "forced full Schwab streamer reconnect for stale schwab_1m cluster "
+            "(lagging_symbols=%s sample=%s expected_completed=%s)",
+            len(lagging_symbols),
+            lagging_summary,
+            _datetime_str(datetime.fromtimestamp(expected_latest_completed, UTC)),
+        )
+
     async def _immediate_schwab_1m_history_refresh(self, *, symbols: Sequence[str]) -> int:
         """Force-refresh schwab_1m history for specific symbols bypassing the
         per-symbol throttle. Called when the bar-flow stall detector trips,
@@ -7037,6 +7117,10 @@ class StrategyEngineService:
                 )
                 for intent in intents:
                     await self._publish_intent(intent)
+            self._remember_schwab_1m_history_replay_authority(
+                normalized,
+                latest_bar_timestamp=float(fresh_completed_bars[-1]["timestamp"]),
+            )
             total_fresh_bars += len(fresh_completed_bars)
             latest_bar_at = datetime.fromtimestamp(
                 float(fresh_completed_bars[-1]["timestamp"]),
@@ -7071,6 +7155,12 @@ class StrategyEngineService:
         refreshed_bar_count = 0
         refresh_interval = max(1, int(self._schwab_1m_history_refresh_interval_secs))
         required_bars = max(2, runtime.required_history_bars())
+
+        await self._maybe_force_schwab_stream_reconnect_for_stale_1m_cluster(
+            runtime=runtime,
+            now=now,
+            expected_latest_completed=expected_latest_completed,
+        )
 
         for symbol in sorted(runtime.active_symbols()):
             normalized = str(symbol).upper()
@@ -7129,6 +7219,10 @@ class StrategyEngineService:
                 for intent in intents:
                     await self._publish_intent(intent)
                 intent_count += len(intents)
+            self._remember_schwab_1m_history_replay_authority(
+                normalized,
+                latest_bar_timestamp=float(fresh_completed_bars[-1]["timestamp"]),
+            )
             refreshed_bar_count += len(fresh_completed_bars)
             latest_bar_at = datetime.fromtimestamp(
                 float(fresh_completed_bars[-1]["timestamp"]),
@@ -7526,6 +7620,22 @@ class StrategyEngineService:
             self._record_schwab_stream_activity(bar.symbol, activity_kind="bar")
             if self._schwab_tick_archive is not None:
                 self._schwab_tick_archive.record_live_bar(bar)
+            if int(bar.interval_secs) == 60:
+                replay_authority = self._schwab_1m_history_replay_authority_until_timestamp.get(
+                    str(bar.symbol).upper()
+                )
+                if replay_authority is not None and float(bar.timestamp) <= replay_authority:
+                    self.logger.info(
+                        "ignoring delayed Schwab live bar for %s at %s because fresh history already replayed through %s",
+                        str(bar.symbol).upper(),
+                        _datetime_str(datetime.fromtimestamp(float(bar.timestamp), UTC)),
+                        _datetime_str(datetime.fromtimestamp(float(replay_authority), UTC)),
+                    )
+                    return True
+                self._release_schwab_1m_history_replay_authority(
+                    bar.symbol,
+                    live_bar_timestamp=float(bar.timestamp),
+                )
             strategy_codes = self._schwab_live_bar_strategy_codes(bar.interval_secs)
             intents = self.state.handle_live_bar(
                 symbol=bar.symbol,
@@ -7608,8 +7718,10 @@ class StrategyEngineService:
     def _record_schwab_stream_activity(self, symbol: str, *, activity_kind: str) -> None:
         normalized = str(symbol).upper()
         observed_at = utcnow()
-        if activity_kind in {"trade", "bar"}:
+        if activity_kind == "trade":
             self._schwab_symbol_last_stream_trade_at[normalized] = observed_at
+        elif activity_kind == "bar":
+            self._schwab_symbol_last_stream_bar_at[normalized] = observed_at
         else:
             self._schwab_symbol_last_stream_quote_at[normalized] = observed_at
         if normalized in self._schwab_stale_symbols:
@@ -7721,6 +7833,11 @@ class StrategyEngineService:
             for symbol, observed_at in self._schwab_symbol_last_stream_trade_at.items()
             if symbol in normalized_active
         }
+        self._schwab_symbol_last_stream_bar_at = {
+            symbol: observed_at
+            for symbol, observed_at in self._schwab_symbol_last_stream_bar_at.items()
+            if symbol in normalized_active
+        }
         self._schwab_symbol_last_stream_quote_at = {
             symbol: observed_at
             for symbol, observed_at in self._schwab_symbol_last_stream_quote_at.items()
@@ -7734,6 +7851,11 @@ class StrategyEngineService:
         self._schwab_symbol_last_quote_poll_at = {
             symbol: observed_at
             for symbol, observed_at in self._schwab_symbol_last_quote_poll_at.items()
+            if symbol in normalized_active
+        }
+        self._schwab_1m_history_replay_authority_until_timestamp = {
+            symbol: replay_until
+            for symbol, replay_until in self._schwab_1m_history_replay_authority_until_timestamp.items()
             if symbol in normalized_active
         }
         self._schwab_stale_symbols.intersection_update(normalized_active)
