@@ -448,6 +448,47 @@ Twelve PRs shipped today addressing four distinct bug classes that compounded in
 - Local validation:
   - `pytest tests/unit/test_strategy_engine_service.py -k "delayed_live_bar_after_history_replay or clustered_lag or schwab_stream_queue_drain_prioritizes_live_bars_over_quote_backlog or service_uses_fallback_quotes_for_stale_schwab_open_positions or service_skips_emergency_close_when_rest_quote_proves_stream_lag"` -> `5 passed`
   - `python -m py_compile src/project_mai_tai/services/strategy_engine_app.py src/project_mai_tai/market_data/schwab_streamer.py tests/unit/test_strategy_engine_service.py` -> `ok`
+
+### 2026-05-19 late evening - restart-boundary init bottleneck fixed and deployed
+
+- New root cause proven after the earlier Schwab stream fixes:
+  - the remaining worst restart-boundary delay was **not** just connected-but-stale Schwab delivery
+  - the strategy process itself was spending minutes inside `_restore_runtime_bar_history_from_database()`
+  - on restart `2026-05-19 23:32:01 UTC` (old SHA `a3eb4ce`), `restored runtime bar history from database` did not land until `23:40:55 UTC`
+  - that is an `~8m54s` init-time restore gap before the service could finish startup
+- Exact bottleneck:
+  - generic runtime restore loaded the **entire current scanner session** for `macd_30s` and `polygon_30s` because `_runtime_bar_history_restore_limit()` returned `None` for 30s bots
+  - same-day VPS data showed the restore scale clearly:
+    - `macd_30s`: `56` symbol-pairs, avg `111.8` bars/pair, total `6259`
+    - `polygon_30s`: `57` symbol-pairs, avg `612.6` bars/pair, total `34921`
+    - restoring all of that on every late-day restart was unnecessary because `seed_bars()` already truncates to the builder's recent working set and only needs warmup/recent-context bars for indicators + path evaluation
+  - there was also a correctness trap: if restore becomes limited, the query must fetch the **latest** bars, not the earliest session bars
+- Fix:
+  - bound runtime restore history for non-`schwab_1m` bots to a recent working set instead of the full `04:00 ET` session
+    - `30s` bots now restore `max(required_bars * 4, required_bars, 120)`
+    - `schwab_1m` keeps its existing narrower custom path
+  - changed generic restore query order so limited restores fetch the **most recent** bars (`ORDER BY bar_time DESC LIMIT N`, then reverse in memory back to ascending)
+  - added elapsed-seconds logging to `restored runtime bar history from database`
+  - added regression test `test_restore_runtime_bar_history_from_database_uses_latest_polygon_bars_when_limited`
+- Local validation:
+  - `.venv\Scripts\python.exe -m pytest tests/unit/test_strategy_engine_service.py -k "restore_runtime_bar_history_from_database or run_init_phase_syncs_subscriptions_after_seed_before_restore or quote_only_symbols" -q` -> `4 passed`
+  - `.venv\Scripts\python.exe -m py_compile src/project_mai_tai/services/strategy_engine_app.py tests/unit/test_strategy_engine_service.py` -> passed
+  - `git diff --check` -> passed
+- Deploy result:
+  - local commit `a2566b3` (`Cap restart runtime history restore`) was cherry-picked onto deploy-worktree `main` as pushed/VPS SHA `c95946d`
+  - VPS `/home/trader/project-mai-tai` fast-forwarded to `c95946d` and `project-mai-tai-strategy.service` restarted successfully
+- Post-deploy live validation:
+  - fresh restart at `2026-05-19 23:43:49 UTC`
+  - `Schwab streamer connected` at `23:43:51 UTC`
+  - `restored runtime bar history from database | symbol_pairs=89 elapsed_secs=29.19` at `23:44:19 UTC`
+  - `prefilled momentum alert history from 35 snapshot batches` at `23:45:27 UTC`
+  - normal `snapshot batch processed` logs resumed at `23:45:29 UTC` and continued every ~1-2s afterward
+  - this is a material improvement over the prior `~8m54s` restore window and confirms the service is no longer trapped in the late-day full-session restore path
+- Current classification:
+  - original AMST late-entry bug: fixed earlier
+  - connected-but-stale Schwab recovery path: still relevant
+  - late-evening restart-boundary blow-up from full-session 30s runtime restore: **fixed and deployed**
+  - remaining future work should validate RTH live lag again on this new base instead of continuing to reason from the slower pre-`c95946d` restart behavior
 - Deploy status:
   - committed locally as `4166a86` on `codex/local-clean-main`
   - cherry-picked/rebased onto deploy worktree `main` and pushed as GitHub/VPS SHA `49dea12`
