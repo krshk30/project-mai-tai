@@ -20,8 +20,17 @@ Twelve PRs shipped today addressing four distinct bug classes that compounded in
   - It also terminalizes stale native-stop cancel-management intents when the referenced target order is already terminal.
   - Tests added in `tests/unit/test_oms_risk_service.py`.
   - Validation: `python -m pytest tests/unit/test_oms_risk_service.py -q` -> `42 passed`; `py_compile` and `git diff --check` passed.
+- Deployed result:
+  - PR #189 merged and deployed to VPS `main` at `6a1ebfa`.
+  - `project-mai-tai-oms.service` restarted with strategy held stopped; OMS sync repaired stale active intents from `82` to `0`.
+  - Post-repair DB check: `open_orders=0`, `active_intents=0`, `virtual_positions=0`; only protected `CYN` account positions remain.
+  - Strategy was started afterward to activate pending strategy-side Polygon data-health severity logic.
+- Follow-up fix prepared:
+  - Strategy runtime data-health incident sync now runs at startup and on each heartbeat, not only after bar-flow change events.
+  - This closes/downgrades old runtime data-health `SystemIncident` rows after a clean restart instead of leaving stale critical incidents open.
+  - Validation: `python -m pytest tests/unit/test_strategy_engine_service.py -k "runtime_data_health_incident or bar_flow_monitor" -q` -> `5 passed`; `py_compile` and `git diff --check` passed.
 - Safe next action:
-  - Get operator approval to deploy OMS-only, restart `project-mai-tai-oms.service`, let broker sync repair the stale intents, re-check `/api/orders`, `/api/reconciliation`, and only then perform the pending strategy restart to activate PR #185 strategy-side Polygon incident-severity logic.
+  - Deploy the strategy incident-sync follow-up, restart `project-mai-tai-strategy.service`, then verify `/api/bots` remains healthy and `/api/reconciliation` no longer reports stale critical runtime incidents.
   - Do not touch `CYN`.
 
 ### What shipped (chronological)
