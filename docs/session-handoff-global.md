@@ -29,8 +29,16 @@ Twelve PRs shipped today addressing four distinct bug classes that compounded in
   - Strategy runtime data-health incident sync now runs at startup and on each heartbeat, not only after bar-flow change events.
   - This closes/downgrades old runtime data-health `SystemIncident` rows after a clean restart instead of leaving stale critical incidents open.
   - Validation: `python -m pytest tests/unit/test_strategy_engine_service.py -k "runtime_data_health_incident or bar_flow_monitor" -q` -> `5 passed`; `py_compile` and `git diff --check` passed.
+- Follow-up deployed result:
+  - PR #190 merged and deployed to VPS `main` at `b37ce50`.
+  - Strategy restarted cleanly and published a fresh heartbeat after startup restore.
+  - `/api/bots`: `polygon_30s` healthy with zero halted/warning symbols; `macd_30s` healthy; `schwab_1m` degraded with 34 post-market warning-level completed-bar-flow halts.
+  - DB `system_incidents`: zero open `critical` strategy-engine runtime incidents; open strategy-engine runtime incidents are warning-level only.
+  - `/api/orders`: no pending/submitted/accepted/partially-filled orders or intents.
+  - `/api/reconciliation`: remaining critical is protected `CYN` quantity mismatch (`paper:schwab_1m` account quantity 8000 vs virtual 0). CYN remains operator-frozen; do not touch without explicit instruction.
 - Safe next action:
-  - Deploy the strategy incident-sync follow-up, restart `project-mai-tai-strategy.service`, then verify `/api/bots` remains healthy and `/api/reconciliation` no longer reports stale critical runtime incidents.
+  - Treat Polygon data-health hardening as deployed and healthy.
+  - Continue to monitor Schwab 1m post-market bar-flow warnings separately from Polygon.
   - Do not touch `CYN`.
 
 ### What shipped (chronological)
