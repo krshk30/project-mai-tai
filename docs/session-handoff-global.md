@@ -1,5 +1,41 @@
 # Session Handoff - Global
 
+## 🚩 2026-05-19 RTH mid-session — Bar-flow detector false-positive fix shipped (PR #194)
+
+VPS HEAD `82229dd`. Strategy restarted at 15:04:19 UTC on the fixed code. macd_30s `halted_symbols` dropped from 13 → 0; bars are flowing 0-30s behind real-time for all 23 watchlist symbols. Zero `Completed bar flow stalled` log entries since 15:05 UTC.
+
+### Operator-reported symptom
+
+2026-05-19 09:19:30 ET decision tape showed 8 macd_30s symbols (CODX/INM/WNW/TRNR/RUBI/MTVA/HCWB/GOVX) all BLOCKED with "Completed bar flow stalled: fresh SCHWAB ticks are arriving but the last completed 30s bar is 937.3s old". Re-checked at 10:48 ET: **13 macd_30s symbols halted with bars 56+ minutes stale during active RTH** — bot effectively offline.
+
+### Root cause
+
+- macd_30s bar builder is configured `fill_gap_bars=False` (since commit `e7ffa07` 2026-05-07 — inherited from when the schwab_1m live-aggregate path was introduced; schwab_1m later went back to the default `True`, macd_30s was left at `False`).
+- Schwab LEVELONE_EQUITIES emits events whenever *any* field changes (bid, ask, TOTAL_VOLUME, etc.) — not only on new on-exchange trades. Off-exchange / late-reported odd-lot prints grow `TOTAL_VOLUME` while `LAST_TRADE_TIME` stays pinned to the last genuine on-exchange trade.
+- The streamer maps `LAST_TRADE_TIME` → `timestamp_ns`. With `fill_gap_bars=False`, those events bucket to `bars[-1].timestamp` and route through `_revise_last_closed_bar_from_trade` instead of opening a new in-flight bar. The builder revises the same closed bar over and over while `bars[-1]` never advances.
+- `_last_tick_at` IS updated on every revise event, so `monitor_completed_bar_flow` saw "fresh ticks + stale `bars[-1]`" and halted — even though no `_current_bar` existed. The detector was halting *quiet* on-exchange symbols rather than genuinely stuck ones.
+- Diagnostic signature: `[SCHWAB30-REVISE-STORM]` warnings ("bars[-1] not advancing while late trades keep arriving") + `[STRATEGY-REVISE-PERSIST-LAG]` with `persist_lag_secs=800+`.
+
+### Fix (PR #194, deployed 15:04:19 UTC)
+
+`monitor_completed_bar_flow` (`strategy_engine_app.py:792`) now skips the halt when:
+- builder `_current_bar is None` (quiet symbol, no fresh bucket pending close), OR
+- the current bar is still in-flight within its first interval (not yet overdue for force-close).
+
+Real stalls — current bar past force-close threshold while ticks keep arriving (the MOBX 2026-05-14 signature PR #177 added) — still halt as before. The detector now matches the `current_bar_overdue` guard the SCHWAB30-STALL WARN heuristic already uses in `schwab_native_30s.check_bar_closes`.
+
+Tests: new regression `test_runtime_bar_flow_monitor_does_not_halt_when_no_in_flight_current_bar` covers the quiet-symbol path. Existing `..._halts_and_recovers_stale_completed_bar` and `..._uses_polygon_market_data_provider_label` updated to open an in-flight `_current_bar` past force-close threshold via `on_trade` with a 200s-old timestamp.
+
+### Trading impact
+
+Bot was halted from ~09:51 ET to ~11:04 ET (1h 13min lost during active RTH). All macd_30s entries during that window were blocked. No exposure to the bug (no open positions when fix landed).
+
+### Open question (not blocking)
+
+Why does macd_30s use `fill_gap_bars=False` while schwab_1m uses the default `True`? Both are Schwab-native bar builders. The inconsistency dates to commit `e7ffa07` and may have been an unintentional carry-over. Worth a follow-up to decide if macd_30s should also flip to `True` (synthetic gap bars during silent periods, simpler bar-flow semantics) — separate from this fix. Indicator math implications need a look first.
+
+---
+
 ## 🚩 2026-05-19 mid-session — Evening-restart leak fix shipped (PR #192)
 
 VPS HEAD now `01c5cec`. Strategy restarted twice today: first at 10:33 UTC (operator-side cleanup) then at 12:50 UTC (deploy of PR #192). Bot watchlists are now showing today's-scanner-only symbols (13 per bot post-12:50 restart) instead of yesterday's leftovers.
