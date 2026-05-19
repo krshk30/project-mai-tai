@@ -152,6 +152,12 @@ class Settings(BaseSettings):
     )
     strategy_schwab_1m_default_quantity: int = 100
     strategy_macd_30s_reclaim_excluded_symbols: str = "JEM,CYCN,BFRG,UCAR,BBGI"
+    # Maximum age (seconds) for the `scanner_confirmed_last_nonempty` snapshot
+    # to be eligible for startup restore. Older snapshots are skipped, so
+    # after-active-hours restarts (e.g. 20:43 ET) don't carry yesterday's
+    # confirmed candidates and bot handoff into the next session. Set to 0 to
+    # disable the age check.
+    strategy_seeded_snapshot_max_age_seconds: float = 3600.0
     scanner_feed_retention_enabled: bool = True
     scanner_feed_retention_structure_bars: int = 10
     scanner_feed_retention_no_activity_minutes: int = 20

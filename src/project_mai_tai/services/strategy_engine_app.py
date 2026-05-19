@@ -1614,6 +1614,7 @@ class StrategyBotRuntime:
         self._gap_recovery_synthetic_bars.clear()
         self.lifecycle_states.clear()
         self.watchlist.clear()
+        self._desired_watchlist_symbols.clear()
         self.prewarm_symbols.clear()
         self.recent_decisions.clear()
         self.builder_manager.reset()
@@ -1622,7 +1623,14 @@ class StrategyBotRuntime:
         self._live_aggregate_skipped_bucket_start.clear()
         self._live_aggregate_trade_tick_counts.clear()
         self._history_seed_attempted.clear()
+        previous_day = self._active_day
         self._active_day = current_day
+        logger.info(
+            "bot day-roll fired | strategy=%s previous_day=%s current_day=%s",
+            self.definition.code,
+            previous_day,
+            current_day,
+        )
         return True
 
     def has_position(self, ticker: str) -> bool:
@@ -5130,6 +5138,11 @@ class StrategyEngineState:
         if current_session_start == self._active_scanner_session_start:
             return False
 
+        logger.info(
+            "scanner session-roll fired | previous_session=%s new_session=%s",
+            self._active_scanner_session_start.isoformat(),
+            current_session_start.isoformat(),
+        )
         self.confirmed_scanner.reset()
         self.alert_engine.reset()
         self.alert_warmup = self.alert_engine.get_warmup_status()
@@ -8233,6 +8246,30 @@ class StrategyEngineService:
                 session_start.isoformat(),
             )
             return
+
+        # Skip restore if the persisted snapshot is older than the staleness cap.
+        # Evening restarts (e.g. 20:43 ET after 2026-05-18 RTH close) used to
+        # restore yesterday's full confirmed + handoff because they were still
+        # technically inside the same 4 AM ET → 4 AM ET session window. The
+        # next 4 AM ET roll then failed to fully clean up because bot
+        # `_desired_watchlist_symbols` wasn't cleared by `_roll_day_if_needed`,
+        # leaving yesterday's 39 symbols stuck on bot watchlists into the next
+        # session. Cap the restore window so post-active-session restarts
+        # start fresh.
+        now = utcnow()
+        max_age_seconds = float(
+            self.settings.strategy_seeded_snapshot_max_age_seconds
+        )
+        if max_age_seconds > 0:
+            persisted_age_seconds = (now - persisted_at.astimezone(UTC)).total_seconds()
+            if persisted_age_seconds > max_age_seconds:
+                self.logger.info(
+                    "skipping confirmed-candidate seed: snapshot stale | persisted_at=%s age_seconds=%.0f max_age_seconds=%.0f",
+                    persisted_at.isoformat(),
+                    persisted_age_seconds,
+                    max_age_seconds,
+                )
+                return
 
         seeded_candidates = snapshot.payload.get("all_confirmed_candidates")
         if not isinstance(seeded_candidates, list) or not seeded_candidates:

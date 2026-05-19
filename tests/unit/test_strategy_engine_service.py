@@ -62,9 +62,15 @@ def make_test_settings(**kwargs) -> Settings:
 
     When :func:`scanner_feed_retention` is enabled, :meth:`StrategyBotRuntime.set_watchlist` syncs
     from lifecycle state; tests that call ``set_watchlist`` directly need retention off.
+
+    Also disables ``strategy_seeded_snapshot_max_age_seconds`` so existing fixtures with old
+    ``persisted_at`` timestamps continue to restore. Tests that exercise the staleness guard
+    pass an explicit value.
     """
     if not any(str(k).startswith("scanner_feed_retention") for k in kwargs):
         kwargs = {**kwargs, "scanner_feed_retention_enabled": False}
+    if "strategy_seeded_snapshot_max_age_seconds" not in kwargs:
+        kwargs = {**kwargs, "strategy_seeded_snapshot_max_age_seconds": 0.0}
     settings_cls = import_module("project_mai_tai.settings").Settings
     return settings_cls(**kwargs)
 
@@ -991,6 +997,149 @@ def test_scanner_session_roll_clears_state_without_snapshot_batch() -> None:
     assert state.feed_retention_states == {}
     assert state.bots["macd_30s"].watchlist == set()
     assert state.bots["macd_30s"].recent_decisions == []
+
+
+def test_session_roll_clears_bot_desired_watchlist_symbols_and_lifecycle() -> None:
+    """Regression for 2026-05-19 morning leak: yesterday's restored symbols
+    persisted on bot watchlists into the next session because the bot's
+    `_desired_watchlist_symbols` field was not cleared by `_roll_day_if_needed`.
+    The next session's set_watchlist([]) then leaked yesterday's symbols
+    through `_sync_watchlist_from_lifecycle`."""
+    now_box = {"value": datetime(2026, 5, 18, 20, 43, tzinfo=EASTERN_TZ)}
+    state = StrategyEngineState(
+        settings=make_test_settings(
+            strategy_macd_30s_enabled=True,
+            scanner_feed_retention_enabled=True,
+        ),
+        now_provider=lambda: now_box["value"],
+    )
+    # Simulate yesterday-EOD restore: handoff carries 3 stale symbols.
+    state.bot_handoff_symbols_by_strategy["macd_30s"] = {"AEHL", "GOVX", "MOBX"}
+    state.bot_handoff_history_by_strategy["macd_30s"] = {"AEHL", "GOVX", "MOBX"}
+    state._resync_bot_watchlists_from_current_confirmed()
+    bot = state.bots["macd_30s"]
+    assert bot._desired_watchlist_symbols == {"AEHL", "GOVX", "MOBX"}
+    assert set(bot.lifecycle_states.keys()) == {"AEHL", "GOVX", "MOBX"}
+
+    # Cross 04:00 ET boundary into next session.
+    now_box["value"] = datetime(2026, 5, 19, 4, 1, tzinfo=EASTERN_TZ)
+    assert state._roll_scanner_session_if_needed() is True
+
+    # All bot-level symbol state must be clean post-roll.
+    assert bot.watchlist == set()
+    assert bot.lifecycle_states == {}
+    assert bot._desired_watchlist_symbols == set()
+    assert bot.prewarm_symbols == set()
+    assert state.bot_handoff_symbols_by_strategy["macd_30s"] == set()
+    assert state.bot_handoff_history_by_strategy["macd_30s"] == set()
+
+
+def test_seeded_snapshot_skipped_when_persisted_at_exceeds_max_age(monkeypatch) -> None:
+    """Regression for 2026-05-19 evening-restart leak: yesterday's persisted
+    snapshot was restored because it was still inside the same 4 AM ET →
+    4 AM ET session window. The fix adds a freshness cap so post-active-hours
+    restarts don't carry stale state forward."""
+    session_factory = build_test_session_factory()
+    session_start = current_scanner_session_start_utc(datetime(2026, 5, 18, 14, 0, tzinfo=UTC))
+    with session_factory() as session:
+        session.add(
+            DashboardSnapshot(
+                snapshot_type="scanner_confirmed_last_nonempty",
+                payload={
+                    "persisted_at": datetime(2026, 5, 18, 14, 0, tzinfo=UTC).isoformat(),
+                    "scanner_session_start_utc": session_start.isoformat(),
+                    "all_confirmed_candidates": [
+                        {
+                            "ticker": "STALE",
+                            "rank_score": 50.0,
+                            "confirmed_at": "10:00:00 AM ET",
+                            "entry_price": 2.0,
+                            "price": 2.1,
+                            "change_pct": 5.0,
+                        }
+                    ],
+                    "top_confirmed": [],
+                    "bot_handoff_symbols_by_strategy": {"macd_30s": ["STALE"]},
+                    "bot_handoff_history_by_strategy": {"macd_30s": ["STALE"]},
+                },
+                created_at=datetime(2026, 5, 18, 14, 0, tzinfo=UTC),
+            )
+        )
+        session.commit()
+
+    # 6.5 hours later — still inside the same session, but past active-hours
+    # close (16:00 ET). With the 1-hour max age, the restore must be skipped.
+    monkeypatch.setattr(
+        "project_mai_tai.services.strategy_engine_app.utcnow",
+        lambda: datetime(2026, 5, 18, 20, 30, tzinfo=UTC),
+    )
+    service = StrategyEngineService(
+        settings=make_test_settings(
+            redis_stream_prefix="test",
+            dashboard_snapshot_persistence_enabled=True,
+            strategy_macd_30s_enabled=True,
+            strategy_seeded_snapshot_max_age_seconds=3600.0,
+        ),
+        redis_client=FakeRedis(),
+        session_factory=session_factory,
+    )
+    service._seed_confirmed_candidates_from_dashboard_snapshot()
+
+    assert service.state.confirmed_scanner.get_all_confirmed() == []
+    assert service.state.all_confirmed == []
+    assert service.state.bot_handoff_symbols_by_strategy.get("macd_30s", set()) == set()
+    assert service.state.bots["macd_30s"].watchlist == set()
+
+
+def test_seeded_snapshot_restored_when_within_max_age(monkeypatch) -> None:
+    """The freshness cap allows fresh same-session snapshots through. A live
+    restart 15 minutes after the snapshot was persisted must still restore."""
+    session_factory = build_test_session_factory()
+    session_start = current_scanner_session_start_utc(datetime(2026, 5, 18, 14, 0, tzinfo=UTC))
+    with session_factory() as session:
+        session.add(
+            DashboardSnapshot(
+                snapshot_type="scanner_confirmed_last_nonempty",
+                payload={
+                    "persisted_at": datetime(2026, 5, 18, 14, 0, tzinfo=UTC).isoformat(),
+                    "scanner_session_start_utc": session_start.isoformat(),
+                    "all_confirmed_candidates": [
+                        {
+                            "ticker": "FRESH",
+                            "rank_score": 80.0,
+                            "confirmed_at": "10:00:00 AM ET",
+                            "entry_price": 3.0,
+                            "price": 3.2,
+                            "change_pct": 8.0,
+                        }
+                    ],
+                    "top_confirmed": [],
+                    "bot_handoff_symbols_by_strategy": {"macd_30s": ["FRESH"]},
+                    "bot_handoff_history_by_strategy": {"macd_30s": ["FRESH"]},
+                },
+                created_at=datetime(2026, 5, 18, 14, 0, tzinfo=UTC),
+            )
+        )
+        session.commit()
+
+    monkeypatch.setattr(
+        "project_mai_tai.services.strategy_engine_app.utcnow",
+        lambda: datetime(2026, 5, 18, 14, 15, tzinfo=UTC),
+    )
+    service = StrategyEngineService(
+        settings=make_test_settings(
+            redis_stream_prefix="test",
+            dashboard_snapshot_persistence_enabled=True,
+            strategy_macd_30s_enabled=True,
+            strategy_seeded_snapshot_max_age_seconds=3600.0,
+        ),
+        redis_client=FakeRedis(),
+        session_factory=session_factory,
+    )
+    service._seed_confirmed_candidates_from_dashboard_snapshot()
+
+    assert {item["ticker"] for item in service.state.all_confirmed} == {"FRESH"}
+    assert service.state.bot_handoff_symbols_by_strategy["macd_30s"] == {"FRESH"}
 
 
 def test_retention_cooldown_keeps_feed_alive_but_blocks_entries(monkeypatch: pytest.MonkeyPatch) -> None:
