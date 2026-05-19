@@ -1617,6 +1617,143 @@ async def test_oms_service_sync_skips_duplicate_partial_without_new_fill_progres
 
 
 @pytest.mark.asyncio
+async def test_oms_service_sync_terminalizes_intent_when_all_linked_orders_are_cancelled() -> None:
+    redis = FakeRedis()
+    session_factory = build_test_session_factory()
+    service = OmsRiskService(
+        settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
+        redis_client=redis,
+        session_factory=session_factory,
+        broker_adapter=FakeOrderSyncBrokerAdapter(None),
+    )
+
+    with session_factory() as session:
+        strategy = service.store.ensure_strategy(session, "macd_30s", name="MACD 30s")
+        account = service.store.ensure_broker_account(
+            session,
+            "paper:macd_30s",
+            provider="simulated",
+            environment="paper",
+        )
+        intent = service.store.create_trade_intent(
+            session,
+            strategy=strategy,
+            broker_account=account,
+            event=TradeIntentEvent(
+                source_service="oms-risk",
+                payload=TradeIntentPayload(
+                    strategy_code="macd_30s",
+                    broker_account_name="paper:macd_30s",
+                    symbol="LABT",
+                    side="sell",
+                    quantity=Decimal("10"),
+                    intent_type="close",
+                    reason=service.NATIVE_STOP_GUARD_REASON,
+                    metadata={"native_stop_guard": "true"},
+                ),
+            ),
+        )
+        intent.status = "submitted"
+        for idx in range(2):
+            session.add(
+                BrokerOrder(
+                    intent_id=intent.id,
+                    strategy_id=strategy.id,
+                    broker_account_id=account.id,
+                    client_order_id=f"macd_30s-LABT-close-stop-{idx}",
+                    broker_order_id=f"stop-{idx}",
+                    symbol="LABT",
+                    side="sell",
+                    order_type="STOP",
+                    time_in_force="day",
+                    quantity=Decimal("10"),
+                    status="cancelled",
+                    payload={"native_stop_guard": "true"},
+                    submitted_at=datetime.now(UTC),
+                )
+            )
+        session.commit()
+
+    summary = await service.sync_broker_orders(account_names=["paper:macd_30s"])
+    assert summary == {"orders": 0, "terminal_orders": 0}
+
+    with session_factory() as session:
+        stored_intent = session.scalar(select(TradeIntent).where(TradeIntent.symbol == "LABT"))
+        assert stored_intent is not None
+        assert stored_intent.status == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_oms_service_sync_terminalizes_native_stop_cancel_intent_when_target_is_terminal() -> None:
+    redis = FakeRedis()
+    session_factory = build_test_session_factory()
+    service = OmsRiskService(
+        settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
+        redis_client=redis,
+        session_factory=session_factory,
+        broker_adapter=FakeOrderSyncBrokerAdapter(None),
+    )
+
+    with session_factory() as session:
+        strategy = service.store.ensure_strategy(session, "macd_30s", name="MACD 30s")
+        account = service.store.ensure_broker_account(
+            session,
+            "paper:macd_30s",
+            provider="simulated",
+            environment="paper",
+        )
+        target_client_order_id = "macd_30s-GCTK-close-stop"
+        session.add(
+            BrokerOrder(
+                intent_id=None,
+                strategy_id=strategy.id,
+                broker_account_id=account.id,
+                client_order_id=target_client_order_id,
+                broker_order_id="stop-target",
+                symbol="GCTK",
+                side="sell",
+                order_type="STOP",
+                time_in_force="day",
+                quantity=Decimal("10"),
+                status="cancelled",
+                payload={"native_stop_guard": "true"},
+                submitted_at=datetime.now(UTC),
+            )
+        )
+        cancel_intent = service.store.create_trade_intent(
+            session,
+            strategy=strategy,
+            broker_account=account,
+            event=TradeIntentEvent(
+                source_service="oms-risk",
+                payload=TradeIntentPayload(
+                    strategy_code="macd_30s",
+                    broker_account_name="paper:macd_30s",
+                    symbol="GCTK",
+                    side="sell",
+                    quantity=Decimal("10"),
+                    intent_type="cancel",
+                    reason="NATIVE_STOP_GUARD_CANCEL",
+                    metadata={
+                        "native_stop_guard_manage": "true",
+                        "target_client_order_id": target_client_order_id,
+                        "broker_order_id": "stop-target",
+                    },
+                ),
+            ),
+        )
+        cancel_intent.status = "accepted"
+        session.commit()
+
+    await service.sync_broker_orders(account_names=["paper:macd_30s"])
+
+    with session_factory() as session:
+        stored_intent = session.scalar(select(TradeIntent).where(TradeIntent.intent_type == "cancel"))
+        assert stored_intent is not None
+        assert stored_intent.status == "cancelled"
+
+
+@pytest.mark.asyncio
 async def test_oms_service_refreshes_stale_working_limit_buy_order() -> None:
     redis = FakeRedis()
     session_factory = build_test_session_factory()

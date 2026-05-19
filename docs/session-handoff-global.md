@@ -4,6 +4,26 @@
 
 Twelve PRs shipped today addressing four distinct bug classes that compounded into the AUUD/QNCX/SBFM stuck-order incident the operator witnessed. All deployed live. VPS HEAD `03bf291` (PR #180) at session end.
 
+### 2026-05-18 late session - remaining restart blocker identified
+
+- Remaining issue after the Polygon control-plane hardening: safe strategy restart is blocked by stale active `trade_intents`, not by real broker-active orders.
+- Live evidence from VPS at `2026-05-18 ~20:18 ET`:
+  - `/api/positions`: `virtual_positions=[]`; only protected `CYN` account positions in `paper:schwab_1m` and `paper:macd_30s`.
+  - DB query: `broker_orders` with status in `pending/submitted/accepted/partially_filled` returned `0` rows.
+  - DB query: `trade_intents` with status in `pending/submitted/accepted` returned `82` rows, almost all `HARD_STOP_NATIVE_BACKUP`; every linked broker order was already `cancelled`.
+  - Two older `NATIVE_STOP_GUARD_CANCEL` intents had no linked broker order, but their target native-stop orders were already terminal/cancelled.
+- Root cause classification:
+  - OMS native-stop guard cancel/rearm paths can leave the parent stop-guard `trade_intent` in `submitted` after all child/replacement broker orders have been cancelled.
+  - Reconciler and deploy preflight correctly see these stale intents as in-flight, even though there is no broker exposure.
+- Local fix prepared but not deployed at this note:
+  - `OmsRiskService.sync_broker_orders()` now terminalizes orphaned active intents when all linked broker orders are terminal.
+  - It also terminalizes stale native-stop cancel-management intents when the referenced target order is already terminal.
+  - Tests added in `tests/unit/test_oms_risk_service.py`.
+  - Validation: `python -m pytest tests/unit/test_oms_risk_service.py -q` -> `42 passed`; `py_compile` and `git diff --check` passed.
+- Safe next action:
+  - Get operator approval to deploy OMS-only, restart `project-mai-tai-oms.service`, let broker sync repair the stale intents, re-check `/api/orders`, `/api/reconciliation`, and only then perform the pending strategy restart to activate PR #185 strategy-side Polygon incident-severity logic.
+  - Do not touch `CYN`.
+
 ### What shipped (chronological)
 
 **Signal timing — GOVX 33s late (root cause: scanner promotion blocked the event loop)**

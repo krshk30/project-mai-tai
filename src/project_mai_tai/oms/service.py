@@ -1180,6 +1180,10 @@ class OmsRiskService:
                 elif not status_changed and fill is None:
                     continue
 
+            self._terminalize_orphaned_active_intents(
+                session,
+                broker_account_ids=list(account_lookup.keys()),
+            )
             session.commit()
 
         for order_event in published_events:
@@ -1189,6 +1193,82 @@ class OmsRiskService:
             "orders": synced_orders,
             "terminal_orders": terminal_orders,
         }
+
+    def _terminalize_orphaned_active_intents(
+        self,
+        session: Session,
+        *,
+        broker_account_ids: list[UUID],
+    ) -> int:
+        """Repair active intents whose broker orders have already gone terminal."""
+        if not broker_account_ids:
+            return 0
+
+        active_statuses = set(self.store.OPEN_ORDER_STATUSES)
+        repaired = 0
+        active_intents = session.scalars(
+            select(TradeIntent)
+            .where(TradeIntent.broker_account_id.in_(broker_account_ids))
+            .where(TradeIntent.status.in_(("pending", "submitted", "accepted")))
+        ).all()
+
+        for intent in active_intents:
+            related_orders = session.scalars(
+                select(BrokerOrder).where(BrokerOrder.intent_id == intent.id)
+            ).all()
+            if related_orders:
+                statuses = {str(order.status).lower() for order in related_orders}
+                if statuses & active_statuses:
+                    continue
+                terminal_status = self._terminal_intent_status_from_order_statuses(statuses)
+                if terminal_status is None:
+                    continue
+                self.store.mark_intent_status(intent, terminal_status)
+                repaired += 1
+                continue
+
+            if str(intent.intent_type).lower() != "cancel":
+                continue
+            target_order = self._target_order_for_cancel_intent(session, intent)
+            if target_order is None or str(target_order.status).lower() in active_statuses:
+                continue
+            self.store.mark_intent_status(intent, str(target_order.status).lower())
+            repaired += 1
+
+        if repaired:
+            self.logger.info("[OMS-INTENT-REPAIR] terminalized %s orphaned active intents", repaired)
+        return repaired
+
+    @staticmethod
+    def _terminal_intent_status_from_order_statuses(statuses: set[str]) -> str | None:
+        if not statuses:
+            return None
+        if "filled" in statuses:
+            return "filled"
+        if "partially_filled" in statuses:
+            return None
+        if "cancelled" in statuses:
+            return "cancelled"
+        if "rejected" in statuses:
+            return "rejected"
+        return None
+
+    def _target_order_for_cancel_intent(self, session: Session, intent: TradeIntent) -> BrokerOrder | None:
+        payload = intent.payload or {}
+        metadata = payload.get("metadata") if isinstance(payload, dict) else None
+        if not isinstance(metadata, dict):
+            return None
+        target_client_order_id = str(metadata.get("target_client_order_id") or "").strip()
+        broker_order_id = str(metadata.get("broker_order_id") or "").strip()
+        if target_client_order_id:
+            order = session.scalar(
+                select(BrokerOrder).where(BrokerOrder.client_order_id == target_client_order_id)
+            )
+            if order is not None:
+                return order
+        if broker_order_id:
+            return session.scalar(select(BrokerOrder).where(BrokerOrder.broker_order_id == broker_order_id))
+        return None
 
     async def _publish_order_event(self, event: OrderEventEvent) -> None:
         await self.redis.xadd(
