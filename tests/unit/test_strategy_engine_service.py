@@ -3551,6 +3551,17 @@ def test_runtime_bar_flow_monitor_halts_and_recovers_stale_completed_bar() -> No
         "UGRO",
         seed_trending_bars(start_timestamp=now_ts - 1800.0, interval_secs=30),
     )
+    # Open an in-flight current bar so the detector treats this as an active
+    # stall (real bar builder failing to close) rather than a quiet on-exchange
+    # period. on_trade with a timestamp 200s in the past forces _current_bar
+    # past its force-close threshold.
+    bot.builder_manager.on_trade(
+        "UGRO",
+        price=1.25,
+        size=10,
+        timestamp_ns=int((now_ts - 200.0) * 1_000_000_000),
+        cumulative_volume=10,
+    )
 
     changed = state.monitor_completed_bar_flow(provider_for_strategy=lambda _code: "schwab")
 
@@ -3567,6 +3578,39 @@ def test_runtime_bar_flow_monitor_halts_and_recovers_stale_completed_bar() -> No
     changed = state.monitor_completed_bar_flow(provider_for_strategy=lambda _code: "schwab")
 
     assert changed == 1
+    assert "UGRO" not in bot.data_halt_symbols
+
+
+def test_runtime_bar_flow_monitor_does_not_halt_when_no_in_flight_current_bar() -> None:
+    """Regression for 2026-05-19 RTH incident: 13 macd_30s symbols halted
+    during active trading because `fill_gap_bars=False` + Schwab LEVELONE
+    off-exchange cum-vol updates kept `_last_tick_at` fresh while bars[-1]
+    couldn't advance (no genuine new on-exchange trade in a new bucket).
+    The detector should treat the lack of an in-flight `_current_bar` as
+    "quiet symbol, not stalled" — only halt when the builder IS actively
+    trying to close a bar but failing."""
+    state = StrategyEngineState(settings=make_test_settings(), now_provider=fixed_now)
+    bot = state.bots["macd_30s"]
+    bot.set_watchlist(["UGRO"])
+    now_ts = fixed_now().replace(tzinfo=EASTERN_TZ).timestamp()
+    bot._last_tick_at["UGRO"] = fixed_now().replace(tzinfo=EASTERN_TZ)
+    # Seed historical bars far enough back that the old detector would halt
+    # (bar age > stale_after_secs = 120s), with no in-flight `_current_bar`.
+    state.seed_bars(
+        "macd_30s",
+        "UGRO",
+        seed_trending_bars(start_timestamp=now_ts - 3600.0, interval_secs=30),
+    )
+    builder = bot.builder_manager.get_builder("UGRO")
+    assert builder is not None
+    assert builder._current_bar is None  # quiet symbol — last on-exchange trade was the seeded bar
+    assert bool(builder.bars)
+    bars_tail_age_secs = now_ts - float(builder.bars[-1].timestamp)
+    assert bars_tail_age_secs > 120.0  # would have tripped the old detector
+
+    changed = state.monitor_completed_bar_flow(provider_for_strategy=lambda _code: "schwab")
+
+    assert changed == 0
     assert "UGRO" not in bot.data_halt_symbols
 
 
@@ -3606,6 +3650,15 @@ def test_runtime_bar_flow_monitor_uses_polygon_market_data_provider_label() -> N
         "polygon_30s",
         "UGRO",
         seed_trending_bars(start_timestamp=now_ts - 1800.0, interval_secs=30),
+    )
+    # Open an in-flight current bar past its force-close threshold, so the
+    # detector treats this as a real stall.
+    bot.builder_manager.on_trade(
+        "UGRO",
+        price=1.25,
+        size=10,
+        timestamp_ns=int((now_ts - 200.0) * 1_000_000_000),
+        cumulative_volume=10,
     )
 
     changed = state.monitor_completed_bar_flow(

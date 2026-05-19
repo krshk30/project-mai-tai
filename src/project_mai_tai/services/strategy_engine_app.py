@@ -820,9 +820,38 @@ class StrategyBotRuntime:
 
             completed_bar_age_secs: float | None = None
             if bars:
+                # Only halt when the builder is ACTIVELY trying to close a bar
+                # but can't (a real stall — matches the SCHWAB30-STALL WARN
+                # heuristic in `schwab_native_30s.check_bar_closes`). If
+                # `_current_bar is None` the symbol is just quiet on-exchange:
+                # `_last_tick_at` may stay fresh because LEVELONE_EQUITIES
+                # keeps emitting events with cum_vol updates from off-exchange
+                # prints, but no new bar bucket is being built. For macd_30s
+                # (`fill_gap_bars=False`) on thin penny stocks that's normal,
+                # not a stall — falsely halting these symbols took 13 of them
+                # offline during 2026-05-19 RTH. We only halt when there's a
+                # current bar past its force-close threshold, which is the
+                # real "bars stuck while ticks arrive" signature.
+                current_bar = getattr(builder, "_current_bar", None)
+                current_bar_start = float(getattr(builder, "_current_bar_start", 0.0) or 0.0)
+                if current_bar is None:
+                    reason = self.data_halt_symbols.get(normalized, "")
+                    if str(reason).startswith("Completed bar flow stalled:"):
+                        self.clear_data_halt(normalized)
+                        changed += 1
+                    continue
                 last_bar = bars[-1]
                 last_bar_close_ts = float(last_bar.timestamp) + float(interval)
                 completed_bar_age_secs = now_ts - last_bar_close_ts
+                current_bar_overdue_secs = now_ts - (current_bar_start + float(interval))
+                if current_bar_overdue_secs <= 0:
+                    # Current bar is still in-flight within its window. Not a
+                    # stall — wait for the next bar's force-close threshold.
+                    reason = self.data_halt_symbols.get(normalized, "")
+                    if str(reason).startswith("Completed bar flow stalled:"):
+                        self.clear_data_halt(normalized)
+                        changed += 1
+                    continue
                 reason = (
                     "Completed bar flow stalled: "
                     f"fresh {market_data_source} ticks are arriving but the last completed "
