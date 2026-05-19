@@ -211,7 +211,7 @@ Today's 14 PRs from 2026-05-18 still need RTH stress test. Originally scheduled 
 
 Twelve PRs shipped today addressing four distinct bug classes that compounded into the AUUD/QNCX/SBFM stuck-order incident the operator witnessed. All deployed live. VPS HEAD `03bf291` (PR #180) at session end.
 
-### 2026-05-19 afternoon - AMST schwab_1m late-entry root cause confirmed locally
+### 2026-05-19 afternoon - AMST schwab_1m late-entry root cause fixed and deployed
 
 - Operator concern: AMST `schwab_1m` trades diverged from the TradingView/Pine reference; do **not** retune rules first. Prove whether Mai Tai saw late/incorrect bars.
 - Live evidence collected from VPS:
@@ -221,17 +221,20 @@ Twelve PRs shipped today addressing four distinct bug classes that compounded in
 - Root cause:
   - `StrategyEngineService._drain_schwab_stream_queues()` used one shared drain budget (`_schwab_stream_drain_max_events=100`) and drained Schwab queues in `quote -> bar -> trade` order.
   - Under quote bursts, the loop could stay active while starving the `CHART_EQUITY` minute-bar queue, so `schwab_1m` kept relying on stale-history replay and therefore evaluated MACD/EMA/path decisions on delayed inputs.
-- Local fix prepared:
+- Fix:
   - Reworked the bounded Schwab drain pass to service `bar -> trade -> quote` in a round-robin loop so final minute bars and timesale ticks cannot starve behind quote backlog while quotes still make progress every pass.
   - Added regression test `test_schwab_stream_queue_drain_prioritizes_live_bars_over_quote_backlog`.
 - Local validation:
   - `.venv\Scripts\python.exe -m pytest tests/unit/test_strategy_engine_service.py -k "schwab_stream_queue_drain" -q` -> `2 passed`
   - `.venv\Scripts\python.exe -m pytest tests/unit/test_strategy_engine_service.py::test_schwab_live_bar_publishes_strategy_snapshot_for_generic_bot_activity_without_intents tests/unit/test_strategy_engine_service.py::test_schwab_stream_queue_drain_is_bounded tests/unit/test_strategy_engine_service.py::test_schwab_stream_queue_drain_prioritizes_live_bars_over_quote_backlog -q` -> `3 passed`
   - `.venv\Scripts\python.exe -m py_compile src/project_mai_tai/services/strategy_engine_app.py tests/unit/test_strategy_engine_service.py`
-- Deployment status:
-  - Local only in this note. Not deployed yet. Before deploy, re-check VPS `strategy.log` around the AMST window and monitor whether fresh RTH `schwab_1m` bars stop falling into the stale-history replay path.
+- Deploy result:
+  - Local commit `1e3c5ea` (`fix schwab_1m bar drain and intrabar scale gating`) was cherry-picked onto deploy-worktree `main` as VPS/pushed SHA `2944e9f`.
+  - Official `ops/systemd/deploy_service.sh ... strategy` preflight refused to continue because control-plane `/health` was already `degraded` from the protected `CYN` reconciliation finding, so strategy-only deploy was completed manually by operator request.
+  - VPS checkout `/home/trader/project-mai-tai` fast-forwarded to `2944e9f5d254` on `main`, runtime reinstalled with `MAI_TAI_RUN_MIGRATIONS=0`, and `project-mai-tai-strategy.service` restarted successfully at `2026-05-19 19:10:22 UTC`.
+  - Post-deploy verification: VPS `git status` clean; strategy log shows clean startup and resumed snapshot processing.
 
-### 2026-05-19 afternoon - AMST schwab_1m missed early scale root cause confirmed locally
+### 2026-05-19 afternoon - AMST schwab_1m missed early scale root cause fixed and deployed
 
 - Operator concern: on the `14:46 ET` AMST `schwab_1m` trade, the move cleared the expected scale thresholds, but the first live scale did not fire until much later.
 - Live evidence collected from VPS:
@@ -243,15 +246,35 @@ Twelve PRs shipped today addressing four distinct bug classes that compounded in
   - Intrabar scales go through `StrategyBotRuntime._evaluate_position_price_intents()`, which returns immediately when the symbol is in `pending_close_symbols`.
   - Runtime DB reconcile was treating the broker-native backup stop (`HARD_STOP_NATIVE_BACKUP` / `native_stop_guard=true`) as a generic open `close` order and loading that symbol into `pending_close_symbols`.
   - Completed-bar exit evaluation does **not** apply that `pending_close_symbols` gate for scale signals, so the trade eventually scaled only when the next completed 1m bars arrived. That is why AMST skipped the earlier quote-based scale and later sold straight into `FAST4`.
-- Local fix prepared:
+- Fix:
   - Runtime state restore/reconcile now ignores broker orders marked `native_stop_guard=true` when rebuilding `pending_close_symbols`.
   - This keeps the protective native stop armed in OMS without blocking intrabar scale logic in the strategy runtime.
   - Added regression test `test_strategy_service_restore_ignores_native_stop_guard_for_intrabar_scale`.
 - Local validation:
   - `.venv\Scripts\python.exe -m pytest tests/unit/test_strategy_engine_service.py::test_strategy_service_restore_ignores_native_stop_guard_for_intrabar_scale tests/unit/test_strategy_engine_service.py::test_schwab_stream_queue_drain_is_bounded tests/unit/test_strategy_engine_service.py::test_schwab_stream_queue_drain_prioritizes_live_bars_over_quote_backlog -q` -> `3 passed`
   - `.venv\Scripts\python.exe -m py_compile src/project_mai_tai/services/strategy_engine_app.py tests/unit/test_strategy_engine_service.py`
-- Deployment status:
-  - Local only in this note. Not deployed yet.
+- Deploy result:
+  - Included in the same deployed SHA `2944e9f` / VPS SHA `2944e9f5d254`.
+  - This is the direct fix for the AMST missed-early-scale bug. It is separate from any stale OMS `HARD_STOP_NATIVE_BACKUP` intent cleanup follow-up.
+
+### 2026-05-19 afternoon - post-deploy control-plane strategy heartbeat still stale
+
+- After the strategy restart, the VPS strategy process was healthy and active, but control-plane APIs still showed stale strategy status:
+  - `/health` at `2026-05-19 15:13:03 ET` still reported `strategy-engine observed_at=2026-05-19 15:09:25 ET` and `engine_started_at=2026-05-19T17:16:21.492142+00:00` (pre-restart value).
+  - `/api/bots` at `2026-05-19 15:13 ET` still showed `latest_heartbeat_at=2026-05-19 15:09:25 ET`, `latest_decision_at=2026-05-19 15:08:00 ET`, and `listening_status=STALE`, even though the strategy log shows fresh process startup at `19:10:22 UTC`.
+- This is **not** evidence that the AMST fixes failed. It is a separate post-restart status-sync/control-plane freshness issue that needs follow-up.
+- Next session:
+  - Verify whether the runtime is failing to publish fresh heartbeats/decision snapshots after restart or whether control-plane is failing to ingest/render them.
+  - Keep this separate from the AMST entry-latency and intrabar-scale fixes.
+
+### 2026-05-19 follow-up todo - stale HARD_STOP_NATIVE_BACKUP intent churn hardening
+
+- Another agent suggestion is directionally reasonable as a separate OMS hardening follow-up:
+  - extend the PR #178 max-age / PR #189 orphan-terminalization family to cover repeated cancelled `HARD_STOP_NATIVE_BACKUP` close-side intents
+  - if many cancelled STOP children exist for the same intent and the position is gone or the parent intent is terminal, mark the guard-management intent terminal instead of resubmitting forever
+- Keep this classified correctly:
+  - this is **not** the root cause of the AMST missed early scale
+  - it is a separate stale-intent / resubmission-loop prevention improvement for OMS cleanup
 
 ### 2026-05-18 late session - remaining restart blocker identified
 
