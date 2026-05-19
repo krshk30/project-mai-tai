@@ -1,5 +1,73 @@
 # Session Handoff - Global
 
+## 🚩 2026-05-19 EOD — 5 PRs deep on the morning regression; macd_30s 0 fills for the day
+
+VPS HEAD `6f4e64c` at RTH close. macd_30s did **0 entry signals / 0 fills** today vs **9 fills yesterday** on a similar penny-stock universe. Other bots OK: schwab_1m did 7 buy fills + 5 closes + 5 scales; polygon_30s fired 122 signals but all rejected (broker not wired, deferred).
+
+### Today's 5-PR chain (chronological)
+
+1. **PR #192** (12:50 UTC) — Evening-restart `scanner_confirmed_last_nonempty` snapshot leaking yesterday's symbols into the new session. Added `strategy_seeded_snapshot_max_age_seconds` cap (default 3600s) + cleared `_desired_watchlist_symbols` in `_roll_day_if_needed` + structured logging.
+2. **PR #194** (15:04 UTC) — `monitor_completed_bar_flow` halting *quiet* macd_30s symbols (no in-flight `_current_bar`). Added the `current_bar_overdue` guard.
+3. **PR #196** (15:56 UTC) — Flipped macd_30s `fill_gap_bars` to `True` to break the LEVELONE off-exchange revise-storm (persist_lag 33s → 1850s feedback loop).
+4. **PR #198** (17:16 UTC) — Gap-recovery short-circuit was dropping real bars when synthetic bars appeared in the same batch (PR #196 regression).
+5. **PR #200** (19:43 UTC) — Restored evaluation frequency by routing synthetic bars through `_evaluate_completed_bar` (PR #198 regression: synthetic-bar shortcuts cut evaluation 12x).
+
+Plus a non-PR direct push to main: **2944e9f** (`fix schwab_1m bar drain and intrabar scale gating`) — interleaved bar/trade/quote draining in `_drain_schwab_stream_queues`. Deployed alongside but pushed without PR — operator-side change while EOD-watch was running.
+
+### macd_30s 0-fill incident
+
+| Day | Signals | Open fills | Close fills |
+|---|---|---|---|
+| 05-19 (today) | **0** | **0** | **0** |
+| 05-18 | 14 | 9 | 9 |
+| 05-15 | 44 | 1 | 1 |
+| 05-14 | 27 | 17 | 16 |
+| 05-13 | 13 | 6 | 6 |
+| 05-12 | 90 | 19 | 18 |
+| 05-11 | 81 | 15 | 14 |
+| 05-08 | 37 | 13 | 12 |
+
+The drop traced to PR #198's gap-recovery short-circuit routing synthetic bars to `_finalize_synthetic_quiet_completed_bar` / `_finalize_gap_recovery_completed_bar` instead of `_evaluate_completed_bar`. Yesterday's 12,339 daily bar evaluations → today's ~1,000 (mostly from the morning bug window). PR #200 deployed at 19:43 UTC with ~17 minutes of RTH remaining — not enough time to validate the fix in live conditions.
+
+### 7-step final check at 19:55 UTC
+
+| # | Check | Result |
+|---|---|---|
+| 1 | persist-lag post-PR #200 | ⚠️ polygon_30s median 36.4s p99 81.4s; schwab_1m median 77.8s p99 103.7s; macd_30s 0 bars (warmup post-restart) |
+| 2 | OMS abandons | ✅ 0 |
+| 3 | Stuck-order retries (last hour) | ✅ 0 |
+| 4 | ON-STALL-RECOVERY | ✅ 118 total today, concentrated in morning incident chain |
+| 5 | SCHWAB30-STALL | ✅ 0 all day |
+| 6 | Empty decision_status | ✅ 0 |
+| 7 | Critical decision rate post-PR #200 | ✅ 0.35% (3/850) |
+
+### 🚩 What to validate at 2026-05-20 RTH open (next session)
+
+This is the actual validation window for PR #200. Run within the first hour of RTH (09:30-10:30 ET):
+
+1. **macd_30s evaluation rate**: query `SELECT COUNT(*) FROM strategy_bar_history WHERE strategy_code='macd_30s' AND bar_time >= '2026-05-20 13:30:00+00'`. Expect 1,000+ within the first hour (vs today's effective rate of ~50/hour during normal periods, which was the regression). Pre-regression normal: 1,800-2,000/hour.
+2. **macd_30s entry signals fired**: query `SELECT COUNT(*) FROM strategy_bar_history WHERE strategy_code='macd_30s' AND decision_status='signal' AND bar_time >= '2026-05-20 13:30:00+00'`. Expect ≥1 within the first hour given a tradeable universe.
+3. **Open intents → fills**: `SELECT COUNT(*) FILTER (WHERE intent_type='open' AND status='filled') FROM trade_intents WHERE strategy_id IN (SELECT id FROM strategies WHERE code='macd_30s') AND created_at >= '2026-05-20 13:30:00+00'`. Yesterday baseline was 9 over the whole RTH; first-hour target is ≥1.
+4. **Persist-lag stays under 30s for all bots** — the EOD-window saw polygon_30s and schwab_1m persist-lag elevated to 36-78s median. May be transient post-restart; if it persists tomorrow morning, investigate.
+5. **No new REVISE-STORM warnings on macd_30s** (PR #196 benefit) — should stay near zero.
+6. **No new `[OMS-ABANDON-INTENT]` storms** — PR #178 + PR #189 protections remain.
+7. **Decision tape currency**: pick any macd_30s active symbol and verify the bot page shows bars from the current minute, not from hours ago.
+
+### Open follow-ups (not blocking tomorrow's RTH)
+
+- **AMST stop-guard 10-retry cancel loop** (14:46:30 → 14:51:09 ET, intent `8268ced6-bc25-4a4c-8166-1983921636a2`): 10 broker_orders cancelled in 4.5 min for a `HARD_STOP_NATIVE_BACKUP` intent. PR #178's three-tier abandon is Open-side; Tier 3 explicitly skips close/stop intents. PR #189 (orphan terminalize) ran on deploy but the runtime cancel-and-rearm loop still fires under some condition. No current exposure. Worth investigating root cause when there's bandwidth.
+- **CNEY revise-storm** (~19:17-19:19 UTC): 30 `[STRATEGY-REVISE-PERSIST-LAG]` warns concentrated on CNEY alone (just-added symbol via `[ON-STALL-RECOVERY]` at 17:45 UTC with 698 historical bars). Pattern matches the original revise-storm signature but limited to one symbol. May resolve under PR #200's new evaluation pattern.
+- **macd_30s decision-tape sparsity on quiet symbols**: operator-accepted on 2026-05-19. Synthetic bars don't persist to DB (vol=0+tc=0 filter). Tape stays sparse on truly quiet penny stocks. Don't try to "fix" unless operator complains the BOT is missing entries.
+- **Persist-lag elevation post-PR #200 (and possibly 2944e9f)**: polygon_30s and schwab_1m showed elevated lag in the EOD window. Could be transient post-restart catchup OR a side-effect of the new evaluation path running on more bars. Monitor at next RTH open.
+
+### Operating-rule lessons captured
+
+- **Don't trust "blocked is fine" without checking signal count.** I read the morning 7-step's `macd_30s blocked=78% post-fix` as "warmup, no failures." It was actually telling us the bot was offline. **Always cross-reference decision distribution against actual signal/fill counts.**
+- **A flag flip that changes the contents of `completed_bars` needs a callgraph audit, not just a trace through the one path the commit-message reasoning follows.** PR #196's "synthetic bars get ignored by the revise path" was true but missed BOTH the upstream gap-recovery short-circuit AND the downstream evaluation-skip. Two follow-on regressions in one day.
+- **The EOD-watch loop is high-value.** It caught the PR #198 regression within ~3 min of starting (persist_lag last 15 min = 0) and would have caught the PR #200 case if the operator hadn't independently pushed `2944e9f`. **Always arm a session-length monitor after deploying changes that touch hot paths.**
+
+---
+
 ## 🚩 2026-05-19 RTH 13:21 ET — PR #196 regression fixed (PR #198)
 
 VPS HEAD `a34da42`. Strategy restarted 17:16:19 UTC on the fix. macd_30s `strategy_bar_history` rows resumed within ~3 min of restart (57 rows from 25 symbols; latest bar 13:19:30 ET ~100s behind real-time). Caught by the EOD-watch loop.
