@@ -1,5 +1,63 @@
 # Session Handoff - Global
 
+## 🚩 2026-05-19 mid-session — Evening-restart leak fix shipped (PR #192)
+
+VPS HEAD now `01c5cec`. Strategy restarted twice today: first at 10:33 UTC (operator-side cleanup) then at 12:50 UTC (deploy of PR #192). Bot watchlists are now showing today's-scanner-only symbols (13 per bot post-12:50 restart) instead of yesterday's leftovers.
+
+### Operator-reported symptom
+
+Morning of 2026-05-19, operator opened bot pages and saw bot watchlists showing 22-41 symbols each — all yesterday's leftovers (AEHL, AIIO, AMPG, ARTL, GOVX, MOBX, SBFM, …) — instead of the small 5-7 fresh scanner promotions that should appear pre-RTH. Quote: "i see all our bot having too many stocks it seems like yesterday stocks never been reset."
+
+### Root cause
+
+- Strategy restarted 2026-05-19 00:43 UTC (20:43 ET 2026-05-18, post-market).
+- `_seed_confirmed_candidates_from_dashboard_snapshot` restored yesterday's `scanner_confirmed_last_nonempty` snapshot because both existing guards passed: `persisted_session_start == current_session_start` (both = 2026-05-18 08:00 UTC) AND `persisted_at >= session_start`. 39 yesterday-symbols seeded into `confirmed_scanner._confirmed`, `state.bot_handoff_symbols_by_strategy`, and `bot.lifecycle_states` (via `set_watchlist` → `lifecycle_policy.promote`).
+- At 04:00:02 ET today, `_roll_scanner_session_if_needed` fired (visible: `Momentum Confirmed scanner reset` + `Momentum alert engine reset` at 08:00:02 UTC). It cleared scanner state, handoff active+history, and called `bot._roll_day_if_needed` for each bot.
+- BUT `bot._roll_day_if_needed` cleared `lifecycle_states`/`watchlist`/`builder_manager` WITHOUT clearing `bot._desired_watchlist_symbols`. With `scanner_feed_retention_enabled=True` in production, the surrounding `apply_global_manual_stop_symbols(set())` → `_resync` chain calls `bot.set_watchlist([])` → `_sync_watchlist_from_lifecycle` reads `_desired_watchlist_symbols` + `lifecycle_states`. Stale entries leaked through into the next session's `bot.watchlist`.
+- Evidence: live `retention_states` showed 43 entries per bot with `promoted_at` exactly matching the 04:00:02 ET roll instant; `bot_handoff_history` showed only 6 (today's real promotions). The mismatch confirms the leak path: symbols added to `lifecycle_states` without going through `_record_bot_handoff_symbols`.
+
+### Fix (PR #192, deployed 12:50:12 UTC)
+
+- `_seed_confirmed_candidates_from_dashboard_snapshot`: skip restore if `(utcnow() - persisted_at) > strategy_seeded_snapshot_max_age_seconds`. Default `3600s` covers normal mid-session restarts; after-active-hours restarts (post-16:00 ET) now start clean. Set to `0` to disable.
+- `StrategyBotRuntime._roll_day_if_needed`: also clears `_desired_watchlist_symbols`.
+- New structured INFO logs:
+  - `scanner session-roll fired | previous_session=... new_session=...` inside `_roll_scanner_session_if_needed` (both heartbeat and snapshot-batch trigger paths now log).
+  - `bot day-roll fired | strategy=... previous_day=... current_day=...` inside `_roll_day_if_needed`.
+- Tests: 3 new regressions in `tests/unit/test_strategy_engine_service.py` (`test_session_roll_clears_bot_desired_watchlist_symbols_and_lifecycle`, `test_seeded_snapshot_skipped_when_persisted_at_exceeds_max_age`, `test_seeded_snapshot_restored_when_within_max_age`). `make_test_settings` defaults `strategy_seeded_snapshot_max_age_seconds=0` so existing fixtures with old `persisted_at` keep working.
+
+### Operator-side immediate cleanup (before PR landed)
+
+10:33:28 UTC strategy restart. Account flat pre-flight passed (0 virtual positions, 0 active intents, only protected CYN). Post-restart watchlists dropped from 22-41 stale → 7 today's-only (AMST/CJMB/GOVX/MTVA/PMAX/TRNR/WNW) — validating the diagnosis before code change.
+
+### Validation at 12:50 UTC deploy
+
+- Bot watchlists: 13/13/12 today's-only symbols. No yesterday leftovers.
+- `seeded 13 confirmed candidates for fresh restart revalidation` — today's snapshot, 13 symbols (post-04:00 ET roll content).
+- No `skipping confirmed-candidate seed: snapshot stale` line yet because restart was during active hours; tomorrow's evening restart (if any) will exercise that path.
+
+### What to watch tomorrow morning (RTH 2026-05-20)
+
+- `grep 'scanner session-roll fired' /var/log/project-mai-tai/strategy.log` at ~08:00 UTC. Should appear once.
+- `grep 'bot day-roll fired' /var/log/project-mai-tai/strategy.log` at ~08:00 UTC. Should appear once per bot (3 lines).
+- Bot watchlists pre-RTH should be ≤10 symbols (today's confirmed only).
+- If evening restart happened the prior day: `grep 'skipping confirmed-candidate seed: snapshot stale' /var/log/project-mai-tai/strategy.log` should be visible in the startup log.
+
+---
+
+## 🚩 2026-05-19 morning RTH validation checklist (still pending — claude pickup)
+
+Today's 14 PRs from 2026-05-18 still need RTH stress test. Originally scheduled for 09:30-10:30 ET first hour. Run when ready:
+
+1. `check_bar_persist_lag.py --day 2026-05-19 --all-bots --start-hour 9 --end-hour 11 --dsn "$DSN"` — expect median <10s all three bots.
+2. `grep '[OMS-ABANDON-INTENT]' oms.log | tail -30` — expect 0-2/min normal.
+3. Stuck-order SQL: zero rows expected (retries>5 in last hour).
+4. `grep '[ON-STALL-RECOVERY]' strategy.log | tail -20` — should follow every `Completed bar flow stalled:` notification.
+5. `grep -c '[SCHWAB30-STALL]' strategy.log` — single-digits/hour expected (was 871 yesterday).
+6. `decision_status='' AND bar_time >= '2026-05-19 13:30:00+00'` — zero rows (PR #182).
+7. RTH-window critical decision_status rate — <1%.
+
+---
+
 ## 🚩 NEXT SESSION (2026-05-19) — READ FIRST — Claude EOD handoff from 2026-05-18
 
 Twelve PRs shipped today addressing four distinct bug classes that compounded into the AUUD/QNCX/SBFM stuck-order incident the operator witnessed. All deployed live. VPS HEAD `03bf291` (PR #180) at session end.
