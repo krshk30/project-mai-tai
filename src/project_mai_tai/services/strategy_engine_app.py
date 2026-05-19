@@ -7019,7 +7019,7 @@ class StrategyEngineService:
         recent_activity_after = now - timedelta(seconds=120)
         for symbol in sorted(runtime.active_symbols()):
             normalized = str(symbol).upper()
-            last_update = self._schwab_last_stream_update_at(normalized)
+            last_update = self._schwab_last_bar_driver_activity_at(normalized)
             if last_update is None or last_update < recent_activity_after:
                 continue
             latest_runtime_completed = self._latest_runtime_completed_bar_timestamp(runtime, normalized)
@@ -7165,6 +7165,7 @@ class StrategyEngineService:
         refreshed_bar_count = 0
         refresh_interval = max(1, int(self._schwab_1m_history_refresh_interval_secs))
         required_bars = max(2, runtime.required_history_bars())
+        recent_activity_after = now - timedelta(seconds=120)
 
         await self._maybe_force_schwab_stream_reconnect_for_stale_1m_cluster(
             runtime=runtime,
@@ -7178,6 +7179,12 @@ class StrategyEngineService:
             if (
                 last_refresh_at is not None
                 and (now - last_refresh_at).total_seconds() < refresh_interval
+            ):
+                continue
+            last_bar_driver_activity = self._schwab_last_bar_driver_activity_at(normalized)
+            if (
+                last_bar_driver_activity is None
+                or last_bar_driver_activity < recent_activity_after
             ):
                 continue
 
@@ -7876,6 +7883,24 @@ class StrategyEngineService:
         candidates = [
             self._schwab_symbol_last_stream_trade_at.get(normalized),
             self._schwab_symbol_last_stream_quote_at.get(normalized),
+        ]
+        present = [candidate for candidate in candidates if candidate is not None]
+        if not present:
+            return None
+        return max(present)
+
+    def _schwab_last_bar_driver_activity_at(self, symbol: str) -> datetime | None:
+        """Return the most recent Schwab activity that can advance completed bars.
+
+        Fresh quotes alone do not imply `schwab_1m` should produce a new
+        completed bar. After-hours names can keep publishing quote updates long
+        after their last trade, and treating those quote-only symbols as
+        "missing bars" creates false history replays and reconnect storms.
+        """
+        normalized = str(symbol).upper()
+        candidates = [
+            self._schwab_symbol_last_stream_trade_at.get(normalized),
+            self._schwab_symbol_last_stream_bar_at.get(normalized),
         ]
         present = [candidate for candidate in candidates if candidate is not None]
         if not present:
