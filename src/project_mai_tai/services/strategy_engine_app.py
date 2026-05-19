@@ -3818,7 +3818,27 @@ class StrategyEngineState:
                     interval_secs=30,
                     time_provider=lambda: resolved_now_provider().timestamp(),
                     close_grace_seconds=self.settings.strategy_macd_30s_tick_bar_close_grace_seconds,
-                    fill_gap_bars=False,
+                    # Aligned with schwab_1m (default=True) on 2026-05-19.
+                    # Previously False (since e7ffa07 2026-05-07, bundled with
+                    # the schwab_1m live-aggregate-final work; schwab_1m was
+                    # later reverted to default True, macd_30s was left at False).
+                    # The False setting interacted catastrophically with Schwab
+                    # LEVELONE_EQUITIES on thin penny stocks during 2026-05-19
+                    # RTH: off-exchange prints grow TOTAL_VOLUME without
+                    # advancing LAST_TRADE_TIME, so every event bucketed to
+                    # bars[-1].timestamp and routed through
+                    # _revise_last_closed_bar_from_trade. Each revise = one
+                    # STRATEGY-REVISE-PERSIST DB write; the persist rate
+                    # exceeded the 1Hz main loop's drain budget and persist_lag
+                    # grew exponentially (33s → 1850s = 31min over 24 minutes
+                    # of bars on AMST). The decision tape rendered
+                    # half-an-hour-old data while the bot was nominally
+                    # "running". With fill_gap_bars=True, bars[-1] advances
+                    # via synthetic zero-volume bars every interval; late
+                    # LEVELONE events with old LAST_TRADE_TIME now bucket
+                    # < bars[-1].timestamp and get ignored as stale (debug
+                    # log only, no persist). The revise-storm + DB-write
+                    # feedback loop breaks.
                 ),
                 indicator_engine=SchwabNativeIndicatorEngine(default_indicator_config),
                 entry_engine=SchwabNativeEntryEngine(
