@@ -5702,6 +5702,7 @@ class StrategyEngineService:
                     )
                     await self._sync_subscription_targets()
                     await self._publish_strategy_state_snapshot()
+                self._sync_runtime_data_health_incidents()
                 await self._publish_heartbeat("healthy")
                 last_heartbeat_at = utcnow()
 
@@ -5736,6 +5737,7 @@ class StrategyEngineService:
                 )
             await self._sync_subscription_targets()
             await self._publish_strategy_state_snapshot()
+            self._sync_runtime_data_health_incidents()
             await self._publish_heartbeat("starting")
 
         init_task = asyncio.create_task(_do_init())
