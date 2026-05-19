@@ -1,5 +1,60 @@
 # Session Handoff - Global
 
+## 🚩 2026-05-19 RTH 13:21 ET — PR #196 regression fixed (PR #198)
+
+VPS HEAD `a34da42`. Strategy restarted 17:16:19 UTC on the fix. macd_30s `strategy_bar_history` rows resumed within ~3 min of restart (57 rows from 25 symbols; latest bar 13:19:30 ET ~100s behind real-time). Caught by the EOD-watch loop.
+
+### Symptom
+
+During the EOD-watch first probe at 16:02 UTC, the persist_lag query for macd_30s returned **0 bars in last 15 min**. Investigation showed macd_30s had not persisted a single `strategy_bar_history` row since 11:59:48 ET (15:59:48 UTC) — ~45 minutes after the PR #196 deploy at 15:56:12 UTC. In-memory `bar_counts` were growing normally (AMST 601, MTVA 586, GOVX 594, ...) and trade ticks were generating intents from the intrabar path, but DB persists stopped. schwab_1m and polygon_30s persisted normally throughout the gap. Decision tape rendered 45-min-stale data.
+
+### Root cause
+
+PR #196 flipped macd_30s `fill_gap_bars` to `True` (correctly fixing the LEVELONE off-exchange revise-storm). With that flag on, synthetic gap bars (vol=0, trade_count=0) now appear in `completed_bars` batches alongside real bars during silent on-exchange periods.
+
+A pre-existing pattern in `StrategyBotRuntime.flush_completed_bars`, `.handle_trade_tick`, and `.handle_live_bar` short-circuited on synthetic gap bars:
+
+```python
+synthetic_gap_bars = [b for b in completed_bars if vol=0+tc=0]
+if synthetic_gap_bars and not prewarm_only:
+    if self._should_track_gap_recovery(symbol):
+        self._arm_gap_recovery(...)
+        self._finalize_gap_recovery_completed_bar(symbol)
+        return intents   # ← (or `continue` in flush_*)
+    self._clear_gap_recovery(symbol)
+for _bar in completed_bars: ...  # _evaluate_completed_bar → _persist_bar_history
+```
+
+`_should_track_gap_recovery` returns True for symbols with open positions / pending intents / data halts / **`data_warning_symbols` entries**. The "Schwab symbol quiet" WARN path populates `data_warning_symbols` for thin penny stocks during RTH — today's macd_30s confirmed universe was almost entirely flagged. Every batch with at least one synthetic gap-fill tripped the short-circuit, dropping the real bar in the same batch on the floor before it could reach `_evaluate_completed_bar` → `_persist_bar_history`.
+
+Under the prior `fill_gap_bars=False` regime, synthetic bars never appeared in `completed_bars`, so the short-circuit was a no-op. PR #196 + Schwab-quiet warnings on penny stocks = persist gap.
+
+### Fix (PR #198, deployed 17:16:19 UTC)
+
+Don't early-return. Arm gap-recovery as a side-effect (still tracks `_gap_recovery_bars_remaining` correctly), then fall through to the bar-processing loop. Inside the loop, gate the per-bar synthetic finalize on whether gap-recovery was already armed for this batch (avoids double-stamping the decision tape). Real bars always reach `_evaluate_completed_bar` → `_persist_bar_history`. Applied at all 3 call sites in `strategy_engine_app.py`.
+
+New regression test `test_flush_completed_bars_persists_real_bars_even_when_gap_recovery_armed`: symbol marked with `data_warning_symbols`, completed_bars=[real, synthetic] → real reaches `_evaluate_completed_bar` AND gap-recovery still armed.
+
+### Today's PR chain (chronological — 4 PRs deep on the same morning regression)
+
+1. **PR #192** (12:50 UTC) — Evening-restart leak fix (yesterday's snapshot carried into next session).
+2. **PR #194** (15:04 UTC) — Bar-flow detector false-positive (halting quiet symbols).
+3. **PR #196** (15:56 UTC) — `fill_gap_bars=True` to break LEVELONE revise-storm.
+4. **PR #198** (17:16 UTC) — Gap-recovery short-circuit interaction with PR #196.
+
+### Operating-rule lessons
+
+- PR #196's commit message specifically said synthetic bars would be "ignored as stale" by the revise path. That was true for the revise path. It did NOT account for the gap-recovery short-circuit in the upstream bar-processing flow, which fired on the same synthetic bars. **A flag flip that changes the contents of `completed_bars` needs a callgraph audit, not just trace through the one path you're testing.**
+- The EOD-watch monitoring loop caught this within minutes of arming. The `persist_lag last 15 min` probe was the trigger — without it, the decision-tape staleness might have persisted until manual operator check at EOD.
+
+### What to watch (rest of RTH)
+
+- macd_30s `strategy_bar_history` row count should keep growing steadily; max_lag should stabilize under 30-60s for non-startup bars.
+- `[STRATEGY-REVISE-PERSIST-LAG]` count post-fix should stay near zero (PR #196 benefit retained).
+- macd_30s `data_health.halted_symbols` should stay at 0 (PR #194 detector fix retained).
+
+---
+
 ## 🚩 2026-05-19 RTH late-session — macd_30s revise-storm root-cause fix shipped (PR #196)
 
 VPS HEAD `565bfd5`. Strategy restarted at 15:56:12 UTC. PR #194 unblocked entries but didn't address the underlying "decision tape rendering 30-minute-old bars" symptom — operator flagged that next. This PR addresses the root cause.
