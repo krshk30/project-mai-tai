@@ -5179,6 +5179,65 @@ def test_restore_runtime_bar_history_from_database_includes_polygon_provider_bot
     assert "UGRO" in polygon_bot.last_indicators
 
 
+def test_restore_runtime_bar_history_from_database_uses_latest_polygon_bars_when_limited() -> None:
+    session_factory = build_test_session_factory()
+    service = StrategyEngineService(
+        settings=make_test_settings(
+            dashboard_snapshot_persistence_enabled=False,
+            strategy_history_persistence_enabled=False,
+            strategy_polygon_30s_enabled=True,
+            strategy_polygon_30s_broker_provider="webull",
+        ),
+        redis_client=FakeRedis(),
+        session_factory=session_factory,
+    )
+    polygon_bot = service.state.bots["polygon_30s"]
+    polygon_bot.set_watchlist(["UGRO"])
+
+    restore_limit = service._runtime_bar_history_restore_limit(polygon_bot)
+    assert restore_limit is not None
+    total_bars = int(restore_limit) + 60
+    session_start_utc = current_scanner_session_start_utc(service.state.alert_engine.now_provider())
+
+    with session_factory() as session:
+        for index in range(total_bars):
+            bar_time = session_start_utc + timedelta(seconds=index * 30)
+            session.add(
+                StrategyBarHistory(
+                    strategy_code="polygon_30s",
+                    symbol="UGRO",
+                    interval_secs=30,
+                    bar_time=bar_time,
+                    open_price=Decimal("2.00") + (Decimal("0.01") * index),
+                    high_price=Decimal("2.02") + (Decimal("0.01") * index),
+                    low_price=Decimal("1.99") + (Decimal("0.01") * index),
+                    close_price=Decimal("2.01") + (Decimal("0.01") * index),
+                    volume=20_000 + index,
+                    trade_count=5,
+                    position_state="flat",
+                    position_quantity=0,
+                    decision_status="idle",
+                    decision_reason="seed",
+                    decision_path="",
+                    decision_score="",
+                    decision_score_details="",
+                    indicators_json={},
+                )
+            )
+        session.commit()
+
+    service._restore_runtime_bar_history_from_database()
+
+    builder = polygon_bot.builder_manager.get_builder("UGRO")
+    assert builder is not None
+    assert builder.get_bar_count() == restore_limit
+    assert "UGRO" in polygon_bot.last_indicators
+
+    expected_first_index = total_bars - restore_limit
+    assert builder.bars[0].open == pytest.approx(2.00 + (0.01 * expected_first_index))
+    assert builder.bars[-1].open == pytest.approx(2.00 + (0.01 * (total_bars - 1)))
+
+
 def test_market_data_symbols_exclude_schwab_native_macd_30s() -> None:
     state = StrategyEngineState(
         settings=make_test_settings(
