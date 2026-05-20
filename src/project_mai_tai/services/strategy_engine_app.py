@@ -5843,11 +5843,6 @@ class StrategyEngineService:
                 )
             await asyncio.to_thread(self._restore_alert_engine_state_from_dashboard_snapshot)
             await asyncio.to_thread(self._seed_confirmed_candidates_from_dashboard_snapshot)
-            # Seeded confirmed/runtime view already rebuilds bot watchlists.
-            # Subscribe immediately so the Schwab socket can start receiving
-            # live data while the slower DB restore / snapshot-prefill steps
-            # continue in the background of init.
-            await self._sync_subscription_targets()
             await asyncio.to_thread(self._restore_runtime_state_from_database)
             await asyncio.to_thread(self._purge_stale_manual_stop_snapshots)
             await asyncio.to_thread(self._preload_manual_stop_state)
