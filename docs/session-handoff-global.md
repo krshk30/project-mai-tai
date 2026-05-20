@@ -1,5 +1,93 @@
 # Session Handoff - Global
 
+## 🚩 2026-05-20 EOD — Two code regressions caught + Schwab platform-side delivery delay remains
+
+VPS HEAD `745040d` after two surgical reverts deployed today. Trading day was effectively lost (0 macd_30s fills, 0 schwab_1m fills) but root causes identified and bounded.
+
+### Morning incident: Schwab 7-day refresh-token expiry
+
+- 9,914 `invalid_grant: "Refresh token is invalid, expired or revoked"` errors in strategy.log this morning
+- Schwab refresh token's 7-day rollover hit. Documented playbook in [[project_mai_tai]] memory worked: operator re-auth via `https://project-mai-tai.live/auth/schwab/start` + restart strategy + oms (stop strategy → restart oms → start strategy, account-flat pre-flight)
+- Token mtime: `/var/lib/macd-webhook-server/data/schwab_tokens.json` updated to 10:53 UTC after OAuth callback
+- Resolved cleanly at 10:54 UTC restart; 0 invalid_grant errors since
+
+### PR #200 revert (#204, c8ae360) — polygon_30s persist-lag regression fixed ✅
+
+- **Baseline 5/18**: polygon_30s persist-lag median 5-10s
+- **Today pre-revert (post 10:54 UTC restart)**: median 19-30s sustained, p95 121-149s, 130 bars over 30s error threshold in 3-hour window
+- **Cause**: PR #200 routed synthetic gap bars through `_evaluate_completed_bar` (full indicator math) instead of `_finalize_synthetic_quiet_completed_bar`. With macd_30s `fill_gap_bars=True` (PR #196), synthetic bars appear in every interval → doubled per-iter evaluation work.
+- **Post-revert**: polygon_30s median **3-7s** in 2-min buckets, p95 11-46s. 6-10x improvement. Confirmed code regression.
+- Trade-off: re-introduces yesterday's macd_30s evaluation-frequency drop on synthetic-bar-heavy quiet days. Acceptable given macd_30s has separate off-exchange-print issue today.
+
+### Schwab-stream-management cluster revert (#205, 745040d) — degradation cycle broken ✅
+
+- Reverted **4 commits** from 2026-05-19 16:29-19:42 UTC: `5e99dab` + `95dfaaf` + `a3eb4ce` + `c95946d`. Kept `49dea12` (only added unused `force_reconnect()` method, conflict in handoff doc not worth resolving).
+- **Diagnostic that found this**: post-restart degradation curve in 5-min buckets
+
+| Window post-restart | Pre-revert Schwab arrival lag | **Post-revert** |
+|---|---|---|
+| T+0-5 min | 70s | 102s |
+| T+5-10 min | 54s | 70s |
+| T+10-15 min | 72s | **38s** ⬇ |
+| T+15-20 min | 80s | **32s** ⬇ |
+| T+20-25 min | **140s** ⬆ degrading | **66s** ↓ no climb |
+
+- **Pre-revert pattern**: lag climbed monotonically over 25 min (Schwab put us in degraded delivery tier as state accumulated)
+- **Post-revert pattern**: lag improved over time, no climb. Degradation cycle eliminated.
+- Persist-lag bimodal post-revert: 5-30s for ~half of bars, 30-60s for the rest. **The 5s buckets prove our pipeline can be fast** — bottleneck is upstream.
+
+### Remaining issue: Schwab CHART_EQUITY platform delivery is genuinely slow today
+
+After both reverts:
+- 5/18 baseline: schwab_1m arrival median **9.8s**, p95 40s
+- 2026-05-20 best post-revert window: arrival median **32s**, p95 60-100s
+- **3-6x worse than baseline** even with all known code regressions fixed
+- 0 force_reconnect, 0 stall_recovery, 0 reconnects, clean connection state
+- This is **NOT a code issue** — our processing is healthy (proven by 5s persist-lag spikes)
+- Cause is most likely Schwab platform load OR our connection in a slower delivery tier they assign server-side
+
+### Trade impact summary
+
+- **macd_30s**: 0 fills. LEVELONE off-exchange-print pattern keeps `LAST_TRADE_TIME` pinned to old on-exchange trade, so new bars don't form. Today's confirmed universe (MWC/VIDA/PPBT/SUGP/HCWB/EVTV/...) is dominated by off-exchange pre-market activity. Documented as operator-accepted pattern in [[project_mai_tai]].
+- **schwab_1m**: 0 fills. 100+ blocked entries per 10-min window by PR #177's freshness guard (correctly — bars are >30s stale). Will be tradeable when Schwab arrival lag drops back below 30s.
+- **polygon_30s**: 5-8 signals per 30-min window, all rejected. Broker not wired (operator's deliberate decision per [[project_mai_tai]]).
+
+### 🚩 What to validate tomorrow morning (priority order)
+
+1. **At session start (~07:30 ET pre-market)**: pull persist-lag for first hour using `check_bar_persist_lag.py --day TOMORROW --all-bots --start-hour 4 --end-hour 8`. Check:
+   - polygon_30s median <10s sustained (PR #200 revert should hold)
+   - schwab_1m persist-lag median <30s sustained (cluster revert should hold)
+2. **If schwab_1m arrival lag back to baseline (<15s median)**: Schwab platform recovered. Trade normally.
+3. **If schwab_1m arrival lag still 30-100s+ at session open**: escalate to Schwab developer support BEFORE pre-market with today's data (5/18 baseline 9.8s vs 5/20 32-100s, no code change between).
+4. **PR #200 RTH validation** that was deferred from 2026-05-19 EOD is still relevant — confirm the revert holds under realistic pre-market volume.
+
+### Open follow-ups
+
+- **`49dea12` `force_reconnect()` method is now unused dead code**. Clean up or leave (harmless).
+- **The 4 reverted commits were each trying to fix something real**:
+  - `5e99dab`: prevent over-aggressive cluster-reconnect at startup. Accepted trade-off (60s reconnect-loop noise from morning pre-token-reauth may return).
+  - `95dfaaf`: skip stale-recovery on quote-only after-hours symbols. Accepted trade-off (more REST refresh attempts on quiet symbols).
+  - `a3eb4ce`: symptom-of-symptom patch for `5e99dab` init reorder — unneeded now.
+  - `c95946d`: faster restart by capping history restore. Accepted trade-off (slower restart again).
+- **macd_30s off-exchange-print structural issue**: no current fix. May resolve when symbol universe rotates to liquid stocks.
+- **Control-plane "ticks quiet on flat symbols" detector** inaccurately flags moving stocks with off-exchange volume. Documented in 2026-05-20 morning entry below. Tier-1 fix would be using `cumulative_volume` advancement as activity signal.
+
+### Operating-rule lessons captured today
+
+1. **"X is slow" is NOT a root cause — it's an observation.** Diagnostic theater wasted ~3 hours today before forcing actual bisect. When the operator pushes back on a diagnosis, listen.
+2. **Restart-improves-then-degrades pattern = state-management regression signature.** Capture the degradation curve in fine buckets EARLY in next investigation — that's the unlock.
+3. **Pull baseline data FIRST.** The 5/18 baseline ("median 9.8s on schwab_1m") was the unlock for proving "5-7x regression magnitude" and motivating the cluster revert. Always pull baseline before diagnosing.
+4. **Bimodal lag (some fast, some slow) = our pipeline is HEALTHY; bottleneck is upstream.** Use this discriminator.
+5. **A cluster of 4-5 commits pushed within hours yesterday all touching the same subsystem is a red flag.** Investigate as a cluster, not one-at-a-time. The 5e99dab + a3eb4ce + 95dfaaf + c95946d sequence was layered symptom-of-symptom patches.
+6. **`feedback_schwab_data_chronic_pattern` correction**: never propose Polygon-bar swap. Schwab is the deliberate choice per operator's accuracy requirements.
+
+### Memory files created today
+
+- [feedback_schwab_data_chronic_pattern](../../.claude/projects/.../memory/feedback_schwab_data_chronic_pattern.md) — **CORRECTED** to say never propose polygon swap; Schwab is operator's deliberate choice; recent issues are regressions, not structural data quality.
+- [project_mai_tai_schwab_bar_build_core](../../.claude/projects/.../memory/project_mai_tai_schwab_bar_build_core.md) — canonical bar-build pipeline reference with 10 invariants every future patch must preserve. Read BEFORE touching `schwab_native_30s.py`, `schwab_streamer.py`, `strategy_engine_app.py` bar-handling, drain, detectors.
+
+---
+
 ## 🚩 2026-05-20 ~10:25 UTC (06:25 ET) — Display-only false-CRITICAL on freshly-promoted / pre-market-quiet symbols (NOT a code bug)
 
 Operator-reported during pre-market validation. Logged here as a recurring diagnostic pattern so future sessions don't waste cycles chasing it as a bar-flow regression.
