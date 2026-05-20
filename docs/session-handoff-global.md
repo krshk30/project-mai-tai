@@ -441,14 +441,14 @@ Today's 14 PRs from 2026-05-18 still need RTH stress test. Originally scheduled 
 
 Twelve PRs shipped today addressing four distinct bug classes that compounded into the AUUD/QNCX/SBFM stuck-order incident the operator witnessed. All deployed live. VPS HEAD `03bf291` (PR #180) at session end.
 
-### 2026-05-20 evening - permanent Schwab streamer and 30s-finalization fix implemented locally (NOT DEPLOYED)
+### 2026-05-20 evening - permanent Schwab streamer and 30s-finalization fix deployed
 
 - Research conclusion:
   - Schwab public/legal docs do **not** promise strict timeliness or sequencing for market data, so delayed/out-of-order delivery is contractually possible.
   - Fresh Mai Tai instrumentation still showed the main practical fix target is **our** client/runtime:
     - `schwab_1m`: live `CHART_EQUITY` bars often reached the process late or only after history replay had already filled the minute.
     - `macd_30s`: same primary receive-side issue, plus a local scheduling problem where 30s close/revision waited behind shared-loop Schwab recovery/state publication.
-- Permanent fix implemented locally:
+- Permanent fix implemented and deployed:
   - `src/project_mai_tai/market_data/schwab_streamer.py`
     - added streamer-owned per-service state for `LEVELONE_EQUITIES`, `CHART_EQUITY`, and `TIMESALE_EQUITY`
     - split **requested** vs **confirmed** subscription state so the client no longer treats a service as active immediately after sending `SUBS/ADD`
@@ -463,10 +463,25 @@ Twelve PRs shipped today addressing four distinct bug classes that compounded in
   - `.venv\Scripts\python.exe -m pytest tests/unit/test_schwab_1m_bot.py -k "timesale or subscription or keeps_levelone_trade_until_timesale_is_confirmed or disables_timesale_after_inactivity" -q` -> `9 passed`
   - `.venv\Scripts\python.exe -m pytest tests/unit/test_strategy_engine_service.py -k "schwab_stream_queue_drain or run_flushes_completed_bars_before_schwab_recovery_work" -q` -> `5 passed`
   - `.venv\Scripts\python.exe -m py_compile src/project_mai_tai/market_data/schwab_streamer.py src/project_mai_tai/services/strategy_engine_app.py tests/unit/test_schwab_1m_bot.py tests/unit/test_strategy_engine_service.py`
-- Status:
-  - local repo only
-  - **not deployed yet**
-  - next action if accepted: deploy strategy, then validate fresh `schwab_1m` and `macd_30s` windows with the existing `received_at_ns` instrumentation
+- Deploy result:
+  - local repo commit: `fb1fbf5` (`harden Schwab streamer health and prioritize 30s closes`)
+  - deploy-worktree/main commit: `8e4ee8e`
+  - VPS strategy checkout: `8e4ee8ec8f289d6ea8fc4ad940734d6a60bced87`
+  - `project-mai-tai-strategy.service` restarted successfully at `2026-05-20 22:53:29 UTC`
+- Post-deploy validation:
+  - fresh `strategy_state_snapshot` events are flowing from the new process (Redis `mai_tai:strategy-state` showed a fresh snapshot at `2026-05-20T22:58:02Z`)
+  - `strategy-engine` heartbeats are also flowing again; the service is **not** stuck at `starting`
+  - current control-plane `/health` shows `strategy-engine status=degraded`, not `starting`
+  - current heartbeat details:
+    - `watchlist_size=15`
+    - `schwab_stream_symbols=15`
+    - `schwab_stale_symbols=""`
+    - `schwab_generic_fallback_active=true`
+    - `schwab_stream_connected=false`
+    - `schwab_stream_last_error="websockets.exceptions.ConnectionClosedError: sent 1000 (OK); no close frame received"`
+  - this means the code deploy succeeded and the runtime is publishing state/heartbeats normally; the remaining live issue is the **current after-hours Schwab stream disconnect/degraded state**, not a frozen or failed strategy process
+- Next action:
+  - validate the new streamer lifecycle and 30s-finalization behavior during the next active Schwab window; do **not** interpret this after-hours `schwab_stream_connected=false` state as evidence that the deployment itself failed
 
 ### 2026-05-19 afternoon - AMST schwab_1m late-entry root cause fixed and deployed
 
