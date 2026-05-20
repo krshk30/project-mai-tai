@@ -549,7 +549,7 @@ Twelve PRs shipped today addressing four distinct bug classes that compounded in
     - `recent_alerts_count=10` with fresh `VOLUME_SPIKE` rows and `MWC` `SQUEEZE_5MIN`
     - all three bots (`macd_30s`, `polygon_30s`, `schwab_1m`) had `watchlist=["MWC"]`
 
-### 2026-05-20 - Schwab stale-chain observability gap closed locally (not deployed yet)
+### 2026-05-20 - Schwab stale-chain observability gap deployed
 
 - Critical root-cause finding:
   - existing Schwab archive rows were **not** a true websocket-receive timestamp source
@@ -570,6 +570,11 @@ Twelve PRs shipped today addressing four distinct bug classes that compounded in
 - Local validation:
   - `.venv\Scripts\python.exe -m pytest tests\unit\test_schwab_tick_archive.py tests\unit\test_strategy_engine_service.py -k "received_and_recorded_timestamps_separately or preserves_receive_vs_record_times or schwab_stream_queue_drain_prioritizes_live_bars_over_quote_backlog or schwab_stream_queue_drain_is_bounded or schwab_stream_queue_drain_ignores_delayed_live_bar_after_history_replay" -q` -> `5 passed`
   - `.venv\Scripts\python.exe -m py_compile scripts\analyze_schwab_event_latency.py src\project_mai_tai\services\strategy_engine_app.py src\project_mai_tai\market_data\schwab_tick_archive.py tests\unit\test_schwab_tick_archive.py tests\unit\test_strategy_engine_service.py`
+- Deploy result:
+  - local commit `155b3cf` was rebased/cherry-picked onto current `origin/main` and deployed as VPS/pushed SHA `be27336`
+  - VPS `/home/trader/project-mai-tai` fast-forwarded to `be27336a4d7b9c7281e3dccd4662edaf1dd9bf50`
+  - `project-mai-tai-strategy.service` restarted successfully at `2026-05-20 21:20:56 UTC`
+  - immediate post-deploy logs show the new build active and writing through the existing Schwab reconnect/replay path; fresh evidence collection should use only events after this restart
 - Next session / next deploy use:
   - collect **new** post-deploy Schwab stale episodes
   - run the script on both `schwab_1m` and `macd_30s`
