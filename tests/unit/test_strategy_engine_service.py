@@ -293,46 +293,6 @@ async def test_run_init_phase_cancels_sync_init_step_running_in_thread() -> None
 
 
 @pytest.mark.asyncio
-async def test_run_init_phase_syncs_subscriptions_after_seed_before_restore() -> None:
-    settings = make_test_settings()
-    redis = FakeRedis()
-    service = StrategyEngineService(settings=settings, redis_client=redis)
-
-    steps: list[str] = []
-
-    async def async_noop(name: str) -> None:
-        steps.append(name)
-
-    def sync_noop(name: str) -> None:
-        steps.append(name)
-
-    class FakeStreamClient:
-        async def start(self, **kwargs) -> None:
-            del kwargs
-            steps.append("start_stream")
-
-    service._schwab_stream_client = FakeStreamClient()
-    service._initialize_stream_offsets = lambda: async_noop("initialize_offsets")  # type: ignore[method-assign]
-    service._restore_alert_engine_state_from_dashboard_snapshot = lambda: sync_noop("restore_alert")  # type: ignore[method-assign]
-    service._seed_confirmed_candidates_from_dashboard_snapshot = lambda: sync_noop("seed_confirmed")  # type: ignore[method-assign]
-    service._restore_runtime_state_from_database = lambda: sync_noop("restore_runtime")  # type: ignore[method-assign]
-    service._purge_stale_manual_stop_snapshots = lambda: sync_noop("purge_manual_stop")  # type: ignore[method-assign]
-    service._preload_manual_stop_state = lambda: sync_noop("preload_manual_stop")  # type: ignore[method-assign]
-    service._prefill_alert_history_from_snapshot_batches = lambda: async_noop("prefill_alert_history")  # type: ignore[method-assign]
-    service._sync_subscription_targets = lambda **kwargs: async_noop("sync_subscriptions")  # type: ignore[method-assign]
-    service._publish_strategy_state_snapshot = lambda: async_noop("publish_snapshot")  # type: ignore[method-assign]
-    service._publish_heartbeat = lambda status: async_noop(f"publish_heartbeat:{status}")  # type: ignore[method-assign]
-    service._sync_runtime_data_health_incidents = lambda: steps.append("sync_incidents")  # type: ignore[method-assign]
-
-    completed = await service._run_init_phase(asyncio.Event())
-
-    assert completed is True
-    assert steps.index("seed_confirmed") < steps.index("sync_subscriptions")
-    assert steps.index("sync_subscriptions") < steps.index("restore_runtime")
-    assert steps.count("sync_subscriptions") == 2
-
-
-@pytest.mark.asyncio
 async def test_initialize_stream_offsets_anchors_to_latest_ids() -> None:
     settings = make_test_settings()
     redis = FakeRedis()
@@ -5178,65 +5138,6 @@ def test_restore_runtime_bar_history_from_database_includes_polygon_provider_bot
     assert "UGRO" in polygon_bot.last_indicators
 
 
-def test_restore_runtime_bar_history_from_database_uses_latest_polygon_bars_when_limited() -> None:
-    session_factory = build_test_session_factory()
-    service = StrategyEngineService(
-        settings=make_test_settings(
-            dashboard_snapshot_persistence_enabled=False,
-            strategy_history_persistence_enabled=False,
-            strategy_polygon_30s_enabled=True,
-            strategy_polygon_30s_broker_provider="webull",
-        ),
-        redis_client=FakeRedis(),
-        session_factory=session_factory,
-    )
-    polygon_bot = service.state.bots["polygon_30s"]
-    polygon_bot.set_watchlist(["UGRO"])
-
-    restore_limit = service._runtime_bar_history_restore_limit(polygon_bot)
-    assert restore_limit is not None
-    total_bars = int(restore_limit) + 60
-    session_start_utc = current_scanner_session_start_utc(service.state.alert_engine.now_provider())
-
-    with session_factory() as session:
-        for index in range(total_bars):
-            bar_time = session_start_utc + timedelta(seconds=index * 30)
-            session.add(
-                StrategyBarHistory(
-                    strategy_code="polygon_30s",
-                    symbol="UGRO",
-                    interval_secs=30,
-                    bar_time=bar_time,
-                    open_price=Decimal("2.00") + (Decimal("0.01") * index),
-                    high_price=Decimal("2.02") + (Decimal("0.01") * index),
-                    low_price=Decimal("1.99") + (Decimal("0.01") * index),
-                    close_price=Decimal("2.01") + (Decimal("0.01") * index),
-                    volume=20_000 + index,
-                    trade_count=5,
-                    position_state="flat",
-                    position_quantity=0,
-                    decision_status="idle",
-                    decision_reason="seed",
-                    decision_path="",
-                    decision_score="",
-                    decision_score_details="",
-                    indicators_json={},
-                )
-            )
-        session.commit()
-
-    service._restore_runtime_bar_history_from_database()
-
-    builder = polygon_bot.builder_manager.get_builder("UGRO")
-    assert builder is not None
-    assert builder.get_bar_count() == restore_limit
-    assert "UGRO" in polygon_bot.last_indicators
-
-    expected_first_index = total_bars - restore_limit
-    assert builder.bars[0].open == pytest.approx(2.00 + (0.01 * expected_first_index))
-    assert builder.bars[-1].open == pytest.approx(2.00 + (0.01 * (total_bars - 1)))
-
-
 def test_market_data_symbols_exclude_schwab_native_macd_30s() -> None:
     state = StrategyEngineState(
         settings=make_test_settings(
@@ -6134,10 +6035,6 @@ async def test_refresh_stale_schwab_1m_history_forces_full_reconnect_on_clustere
     service.state.bots["schwab_1m"].set_watchlist(["AMST", "AMPG", "CNEY", "QUCY"])
     fixed_now = datetime(2026, 5, 19, 19, 26, 5, tzinfo=UTC)
     expected_latest_completed = datetime(2026, 5, 19, 19, 25, 0, tzinfo=UTC).timestamp()
-    service._started_at = fixed_now - timedelta(minutes=10)
-    recent = fixed_now - timedelta(seconds=30)
-    for symbol in ("AMST", "AMPG", "CNEY", "QUCY"):
-        service._schwab_symbol_last_stream_trade_at[symbol] = recent
 
     class FakeStreamClient:
         connected = True
@@ -6162,7 +6059,7 @@ async def test_refresh_stale_schwab_1m_history_forces_full_reconnect_on_clustere
     monkeypatch.setattr(
         service,
         "_latest_runtime_completed_bar_timestamp",
-        lambda runtime, symbol: expected_latest_completed - 120.0,
+        lambda runtime, symbol: expected_latest_completed - 60.0,
     )
 
     intent_count, refreshed_bar_count = await service._refresh_stale_schwab_1m_history()
@@ -6170,113 +6067,6 @@ async def test_refresh_stale_schwab_1m_history_forces_full_reconnect_on_clustere
     assert intent_count == 0
     assert refreshed_bar_count == 0
     assert fake_stream_client.force_reconnect_calls == 1
-
-
-@pytest.mark.asyncio
-async def test_refresh_stale_schwab_1m_history_skips_quote_only_symbols(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    service = StrategyEngineService(
-        settings=make_test_settings(
-            redis_stream_prefix="test",
-            dashboard_snapshot_persistence_enabled=False,
-            strategy_history_persistence_enabled=False,
-            strategy_schwab_1m_enabled=True,
-        ),
-        redis_client=FakeRedis(),
-    )
-    service.state.bots["schwab_1m"].set_watchlist(["AMST", "AMPG", "CNEY", "QUCY"])
-    fixed_now = datetime(2026, 5, 19, 20, 57, 7, tzinfo=UTC)
-    service._started_at = fixed_now - timedelta(minutes=10)
-    recent_quote = fixed_now - timedelta(seconds=10)
-    stale_trade = fixed_now - timedelta(minutes=5)
-    for symbol in ("AMST", "AMPG", "CNEY", "QUCY"):
-        service._schwab_symbol_last_stream_quote_at[symbol] = recent_quote
-        service._schwab_symbol_last_stream_trade_at[symbol] = stale_trade
-
-    class FakeStreamClient:
-        connected = True
-
-        def __init__(self) -> None:
-            self.force_reconnect_calls = 0
-
-        async def force_reconnect(self) -> None:
-            self.force_reconnect_calls += 1
-
-    load_calls: list[str] = []
-
-    async def fake_load_schwab_history_bars(**kwargs):
-        load_calls.append(str(kwargs.get("symbol")))
-        return []
-
-    fake_stream_client = FakeStreamClient()
-    service._schwab_stream_client = fake_stream_client
-    monkeypatch.setattr("project_mai_tai.services.strategy_engine_app.utcnow", lambda: fixed_now)
-    monkeypatch.setattr(
-        service,
-        "_load_schwab_history_bars",
-        fake_load_schwab_history_bars,
-    )
-    monkeypatch.setattr(
-        service,
-        "_latest_runtime_completed_bar_timestamp",
-        lambda runtime, symbol: None,
-    )
-
-    intent_count, refreshed_bar_count = await service._refresh_stale_schwab_1m_history()
-
-    assert intent_count == 0
-    assert refreshed_bar_count == 0
-    assert load_calls == []
-    assert fake_stream_client.force_reconnect_calls == 0
-
-
-@pytest.mark.asyncio
-async def test_refresh_stale_schwab_1m_history_skips_full_reconnect_during_startup_grace(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    service = StrategyEngineService(
-        settings=make_test_settings(
-            redis_stream_prefix="test",
-            dashboard_snapshot_persistence_enabled=False,
-            strategy_history_persistence_enabled=False,
-            strategy_schwab_1m_enabled=True,
-        ),
-        redis_client=FakeRedis(),
-    )
-    service.state.bots["schwab_1m"].set_watchlist(["AMST", "AMPG", "CNEY", "QUCY"])
-    fixed_now = datetime(2026, 5, 19, 19, 26, 5, tzinfo=UTC)
-
-    class FakeStreamClient:
-        connected = True
-
-        def __init__(self) -> None:
-            self.force_reconnect_calls = 0
-
-        async def force_reconnect(self) -> None:
-            self.force_reconnect_calls += 1
-
-    async def fake_load_schwab_history_bars(**kwargs):
-        return []
-
-    fake_stream_client = FakeStreamClient()
-    service._schwab_stream_client = fake_stream_client
-    service._started_at = fixed_now - timedelta(seconds=30)
-    monkeypatch.setattr("project_mai_tai.services.strategy_engine_app.utcnow", lambda: fixed_now)
-    monkeypatch.setattr(
-        service,
-        "_load_schwab_history_bars",
-        fake_load_schwab_history_bars,
-    )
-    monkeypatch.setattr(
-        service,
-        "_latest_runtime_completed_bar_timestamp",
-        lambda runtime, symbol: None,
-    )
-
-    await service._refresh_stale_schwab_1m_history()
-
-    assert fake_stream_client.force_reconnect_calls == 0
 
 
 @pytest.mark.asyncio

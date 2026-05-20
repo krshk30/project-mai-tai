@@ -8,7 +8,6 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from time import perf_counter
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -5621,7 +5620,6 @@ class StrategyEngineService:
         self._schwab_1m_history_refresh_interval_secs = 15
         self._schwab_cluster_reconnect_threshold = 4
         self._schwab_cluster_reconnect_cooldown_secs = 30.0
-        self._schwab_cluster_reconnect_startup_grace_secs = 180.0
         self._schwab_last_forced_reconnect_at: datetime | None = None
         self._last_generic_bot_activity_snapshot_at: datetime | None = None
         self._generic_bot_activity_snapshot_interval_secs = 5
@@ -5836,23 +5834,18 @@ class StrategyEngineService:
 
         async def _do_init() -> None:
             await self._initialize_stream_offsets()
+            await asyncio.to_thread(self._restore_alert_engine_state_from_dashboard_snapshot)
+            await asyncio.to_thread(self._seed_confirmed_candidates_from_dashboard_snapshot)
+            await asyncio.to_thread(self._restore_runtime_state_from_database)
+            await asyncio.to_thread(self._purge_stale_manual_stop_snapshots)
+            await asyncio.to_thread(self._preload_manual_stop_state)
+            await self._prefill_alert_history_from_snapshot_batches()
             if self._schwab_stream_client is not None:
                 await self._schwab_stream_client.start(
                     on_trade=self._enqueue_schwab_trade_tick,
                     on_quote=self._enqueue_schwab_quote_tick,
                     on_bar=self._enqueue_schwab_live_bar,
                 )
-            await asyncio.to_thread(self._restore_alert_engine_state_from_dashboard_snapshot)
-            await asyncio.to_thread(self._seed_confirmed_candidates_from_dashboard_snapshot)
-            # Seeded confirmed/runtime view already rebuilds bot watchlists.
-            # Subscribe immediately so the Schwab socket can start receiving
-            # live data while the slower DB restore / snapshot-prefill steps
-            # continue in the background of init.
-            await self._sync_subscription_targets()
-            await asyncio.to_thread(self._restore_runtime_state_from_database)
-            await asyncio.to_thread(self._purge_stale_manual_stop_snapshots)
-            await asyncio.to_thread(self._preload_manual_stop_state)
-            await self._prefill_alert_history_from_snapshot_batches()
             await self._sync_subscription_targets()
             await self._publish_strategy_state_snapshot()
             self._sync_runtime_data_health_incidents()
@@ -7033,10 +7026,6 @@ class StrategyEngineService:
         now: datetime,
         expected_latest_completed: float,
     ) -> None:
-        if (
-            now - self._started_at
-        ).total_seconds() < float(self._schwab_cluster_reconnect_startup_grace_secs):
-            return
         client = self._schwab_stream_client
         if client is None or not getattr(client, "connected", False):
             return
@@ -7052,17 +7041,12 @@ class StrategyEngineService:
             return
 
         lagging_symbols: list[tuple[str, float | None]] = []
-        interval_secs = max(60.0, float(runtime.definition.interval_secs or 60))
-        recent_activity_after = now - timedelta(seconds=120)
         for symbol in sorted(runtime.active_symbols()):
             normalized = str(symbol).upper()
-            last_update = self._schwab_last_bar_driver_activity_at(normalized)
-            if last_update is None or last_update < recent_activity_after:
-                continue
             latest_runtime_completed = self._latest_runtime_completed_bar_timestamp(runtime, normalized)
             if (
                 latest_runtime_completed is None
-                or latest_runtime_completed < (expected_latest_completed - interval_secs)
+                or latest_runtime_completed < expected_latest_completed
             ):
                 lagging_symbols.append((normalized, latest_runtime_completed))
 
@@ -7202,7 +7186,6 @@ class StrategyEngineService:
         refreshed_bar_count = 0
         refresh_interval = max(1, int(self._schwab_1m_history_refresh_interval_secs))
         required_bars = max(2, runtime.required_history_bars())
-        recent_activity_after = now - timedelta(seconds=120)
 
         await self._maybe_force_schwab_stream_reconnect_for_stale_1m_cluster(
             runtime=runtime,
@@ -7216,12 +7199,6 @@ class StrategyEngineService:
             if (
                 last_refresh_at is not None
                 and (now - last_refresh_at).total_seconds() < refresh_interval
-            ):
-                continue
-            last_bar_driver_activity = self._schwab_last_bar_driver_activity_at(normalized)
-            if (
-                last_bar_driver_activity is None
-                or last_bar_driver_activity < recent_activity_after
             ):
                 continue
 
@@ -7920,24 +7897,6 @@ class StrategyEngineService:
         candidates = [
             self._schwab_symbol_last_stream_trade_at.get(normalized),
             self._schwab_symbol_last_stream_quote_at.get(normalized),
-        ]
-        present = [candidate for candidate in candidates if candidate is not None]
-        if not present:
-            return None
-        return max(present)
-
-    def _schwab_last_bar_driver_activity_at(self, symbol: str) -> datetime | None:
-        """Return the most recent Schwab activity that can advance completed bars.
-
-        Fresh quotes alone do not imply `schwab_1m` should produce a new
-        completed bar. After-hours names can keep publishing quote updates long
-        after their last trade, and treating those quote-only symbols as
-        "missing bars" creates false history replays and reconnect storms.
-        """
-        normalized = str(symbol).upper()
-        candidates = [
-            self._schwab_symbol_last_stream_trade_at.get(normalized),
-            self._schwab_symbol_last_stream_bar_at.get(normalized),
         ]
         present = [candidate for candidate in candidates if candidate is not None]
         if not present:
@@ -8712,7 +8671,6 @@ class StrategyEngineService:
 
         restored_pairs = 0
         session_start_utc = self._current_strategy_session_start_utc()
-        started_at = perf_counter()
 
         try:
             with self.session_factory() as session:
@@ -8743,9 +8701,8 @@ class StrategyEngineService:
 
         if restored_pairs:
             self.logger.info(
-                "restored runtime bar history from database | symbol_pairs=%s elapsed_secs=%.2f",
+                "restored runtime bar history from database | symbol_pairs=%s",
                 restored_pairs,
-                perf_counter() - started_at,
             )
 
     def _load_runtime_restore_bars(
@@ -8774,19 +8731,11 @@ class StrategyEngineService:
                 StrategyBarHistory.interval_secs == runtime.definition.interval_secs,
                 StrategyBarHistory.bar_time >= session_start_utc,
             )
+            .order_by(StrategyBarHistory.bar_time.asc())
         )
         if history_limit is not None:
-            records = list(
-                reversed(
-                    list(
-                        session.scalars(
-                            query.order_by(StrategyBarHistory.bar_time.desc()).limit(history_limit)
-                        ).all()
-                    )
-                )
-            )
-        else:
-            records = list(session.scalars(query.order_by(StrategyBarHistory.bar_time.asc())).all())
+            query = query.limit(history_limit)
+        records = list(session.scalars(query).all())
         return self._strategy_bar_history_records_to_payloads(records)
 
     def _load_schwab_1m_runtime_restore_bars(
@@ -8858,18 +8807,11 @@ class StrategyEngineService:
     def _runtime_bar_history_restore_limit(self, runtime: StrategyBotRuntime) -> int | None:
         trading_config = runtime.definition.trading_config
         indicator_config = runtime.definition.indicator_config
+        if runtime.definition.code in {"macd_30s", "polygon_30s"} and runtime.definition.interval_secs == 30:
+            return None
         indicator_min_bars = int(indicator_config.macd_slow + indicator_config.macd_signal)
         strategy_min_bars = int(getattr(trading_config, "schwab_native_warmup_bars_required", 0) or 0)
-        required_bars = max(indicator_min_bars, strategy_min_bars, 1)
-        if runtime.definition.code == "schwab_1m" and runtime.definition.interval_secs == 60:
-            return required_bars
-        if runtime.definition.interval_secs <= 30:
-            # Restarts only need enough recent history to rebuild indicators and
-            # entry-engine context. Loading the entire 04:00+ session for every
-            # 30s symbol made late-day restarts take several minutes and delayed
-            # Schwab subscription recovery.
-            return max(required_bars * 4, required_bars, 120)
-        return max(required_bars * 4, required_bars)
+        return max(indicator_min_bars, strategy_min_bars, 1)
 
     def _current_strategy_session_start_utc(self) -> datetime:
         return current_scanner_session_start_utc(self.state.alert_engine.now_provider())
