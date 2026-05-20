@@ -51,27 +51,51 @@ class SchwabTickArchive:
             handle.close()
         self._handles.clear()
 
-    def record_quote(self, record: QuoteTickRecord, *, recorded_at_ns: int | None = None) -> Path:
+    def record_quote(
+        self,
+        record: QuoteTickRecord,
+        *,
+        received_at_ns: int | None = None,
+        recorded_at_ns: int | None = None,
+    ) -> Path:
         stored_at_ns = int(recorded_at_ns or time.time_ns())
+        received_ns = int(received_at_ns or stored_at_ns)
         payload = asdict(record)
         payload["event_type"] = "quote"
+        payload["received_at_ns"] = received_ns
         payload["recorded_at_ns"] = stored_at_ns
-        day = self._session_day_from_ns(stored_at_ns)
+        day = self._session_day_from_ns(received_ns)
         return self._append(day=day, symbol=record.symbol, payload=payload)
 
-    def record_trade(self, record: TradeTickRecord, *, recorded_at_ns: int | None = None) -> Path:
+    def record_trade(
+        self,
+        record: TradeTickRecord,
+        *,
+        received_at_ns: int | None = None,
+        recorded_at_ns: int | None = None,
+    ) -> Path:
         stored_at_ns = int(recorded_at_ns or time.time_ns())
+        received_ns = int(received_at_ns or stored_at_ns)
         payload = asdict(record)
         payload["event_type"] = "trade"
+        payload["received_at_ns"] = received_ns
         payload["recorded_at_ns"] = stored_at_ns
         payload["conditions"] = list(record.conditions)
-        day = self._session_day_from_ns(stored_at_ns)
+        day = self._session_day_from_ns(received_ns)
         return self._append(day=day, symbol=record.symbol, payload=payload)
 
-    def record_live_bar(self, record: LiveBarRecord, *, recorded_at_ns: int | None = None) -> Path:
+    def record_live_bar(
+        self,
+        record: LiveBarRecord,
+        *,
+        received_at_ns: int | None = None,
+        recorded_at_ns: int | None = None,
+    ) -> Path:
         stored_at_ns = int(recorded_at_ns or time.time_ns())
+        received_ns = int(received_at_ns or stored_at_ns)
         payload = asdict(record)
         payload["event_type"] = "live_bar"
+        payload["received_at_ns"] = received_ns
         payload["recorded_at_ns"] = stored_at_ns
         day = self._session_day_from_epoch(float(record.timestamp))
         return self._append(day=day, symbol=record.symbol, payload=payload)
