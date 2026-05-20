@@ -1871,17 +1871,6 @@ class ControlPlaneRepository:
                 data_health=data_health,
                 provider=runtime_provider,
             )
-            recent_decisions = self._live_decision_placeholder_rows(
-                strategy_code=code,
-                interval_secs=int(runtime_bot.get("interval_secs", 0) or 0),
-                live_symbols=live_decision_symbols,
-                recent_decisions=recent_decisions,
-                bar_counts=bar_counts,
-                last_tick_at=last_tick_at,
-                indicator_snapshots=indicator_snapshots,
-                data_health=data_health,
-                provider=runtime_provider,
-            ) + recent_decisions
             recent_decisions = self._ensure_visible_live_symbol_decision_rows(
                 strategy_code=code,
                 interval_secs=int(runtime_bot.get("interval_secs", 0) or 0),
@@ -2213,19 +2202,34 @@ class ControlPlaneRepository:
             latest_row = latest_visible_by_symbol.get(str(symbol).upper())
             if latest_row is None:
                 continue
+            current_bar_label = str(latest_completed_bar_at.get(symbol, "") or "")
+            current_tick_label = str(last_tick_at.get(symbol, "") or "")
             _current_label, current_dt = _latest_observed_label(
-                str(latest_completed_bar_at.get(symbol, "") or ""),
-                str(last_tick_at.get(symbol, "") or ""),
+                current_bar_label,
+                current_tick_label,
             )
             if current_dt is None:
                 continue
+            row_bar_label = str(latest_row.get("last_bar_at", "") or "")
+            row_tick_label = str(latest_row.get("last_tick_at", "") or "")
             _row_label, row_dt = _latest_observed_label(
-                str(latest_row.get("last_bar_at", "") or ""),
-                str(latest_row.get("last_tick_at", "") or ""),
+                row_bar_label,
+                row_tick_label,
             )
-            if row_dt is None or current_dt > row_dt:
-                refresh_symbols.add(symbol)
-                continue
+            current_bar_dt = _parse_eastern_label(current_bar_label)
+            row_bar_dt = _parse_eastern_label(row_bar_label)
+
+            if bool(latest_row.get("is_placeholder")):
+                if row_dt is None or current_dt > row_dt:
+                    refresh_symbols.add(symbol)
+                    continue
+            else:
+                # Real decision rows are bar-based. A newer tick inside the same bar
+                # should not outrank a current completed-bar decision and replace it
+                # with a synthetic placeholder.
+                if current_bar_dt is not None and (row_bar_dt is None or current_bar_dt > row_bar_dt):
+                    refresh_symbols.add(symbol)
+                    continue
             if (
                 symbol not in halted_symbols
                 and symbol not in warning_symbols

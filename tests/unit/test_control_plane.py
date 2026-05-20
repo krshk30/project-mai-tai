@@ -1942,6 +1942,82 @@ def test_control_plane_current_placeholder_overrides_stale_visible_row_for_same_
         )
 
 
+def test_control_plane_keeps_current_real_row_ahead_of_placeholder_when_only_tick_is_newer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = Settings(
+        redis_stream_prefix="test",
+        oms_adapter="alpaca_paper",
+        strategy_polygon_30s_enabled=True,
+    )
+    session_factory = build_test_session_factory()
+    seed_database(session_factory)
+    streams = make_streams(settings.redis_stream_prefix)
+    strategy_state_stream = streams[f"{settings.redis_stream_prefix}:strategy-state"]
+    strategy_state_event = StrategyStateSnapshotEvent.model_validate_json(
+        strategy_state_stream[0][1]["data"]
+    )
+    strategy_state_event.payload.bots.append(
+        StrategyBotStatePayload(
+            strategy_code="polygon_30s",
+            account_name="live:polygon_30s",
+            watchlist=["AUUD"],
+            positions=[],
+            pending_open_symbols=[],
+            pending_close_symbols=[],
+            pending_scale_levels=[],
+            recent_decisions=[
+                {
+                    "symbol": "AUUD",
+                    "status": "blocked",
+                    "reason": "outside trading hours",
+                    "last_bar_at": "2026-04-23T10:48:00-04:00",
+                }
+            ],
+            bar_counts={"AUUD": 27},
+            last_tick_at={"AUUD": "2026-04-23 10:48:17 AM ET"},
+            indicator_snapshots=[
+                {
+                    "symbol": "AUUD",
+                    "interval_secs": 30,
+                    "bar_count": 27,
+                    "last_bar_at": "2026-04-23 10:48:00 AM ET",
+                    "close": 2.55,
+                    "ema9": 2.53,
+                    "ema20": 2.50,
+                    "macd": 0.07650,
+                    "signal": 0.07432,
+                    "histogram": 0.00218,
+                    "vwap": 2.51,
+                    "macd_above_signal": True,
+                    "price_above_ema20": True,
+                }
+            ],
+            daily_pnl=0.0,
+        )
+    )
+    strategy_state_stream[0][1]["data"] = strategy_state_event.model_dump_json()
+    redis = FakeRedis(streams)
+    fixed_now = datetime(2026, 4, 23, 14, 48, 35, tzinfo=UTC)
+    monkeypatch.setattr("project_mai_tai.services.control_plane.utcnow", lambda: fixed_now)
+
+    app = build_app(
+        settings=settings,
+        session_factory=session_factory,
+        redis_client=redis,
+        legacy_client=FakeLegacyClient(),
+    )
+
+    with TestClient(app) as client:
+        bots = client.get("/api/bots")
+        assert bots.status_code == 200
+        polygon_bot = next(item for item in bots.json()["bots"] if item["strategy_code"] == "polygon_30s")
+        assert polygon_bot["recent_decisions"][0]["symbol"] == "AUUD"
+        assert polygon_bot["recent_decisions"][0]["status"] == "blocked"
+        assert polygon_bot["recent_decisions"][0]["reason"] == "outside trading hours"
+        assert polygon_bot["recent_decisions"][0].get("is_placeholder") is not True
+
+
 def test_polygon_bot_page_uses_polygon_data_halt_wording() -> None:
     settings = Settings(
         redis_stream_prefix="test",
