@@ -202,3 +202,26 @@ def test_record_quote_uses_same_handle_cache(tmp_path: Path) -> None:
     assert len(lines) == 2
     event_types = [json.loads(line)["event_type"] for line in lines]
     assert event_types == ["quote", "trade"]
+
+
+def test_archive_records_received_and_recorded_timestamps_separately(tmp_path: Path) -> None:
+    archive = SchwabTickArchive(tmp_path, max_handles=2)
+    trade = TradeTickRecord(
+        symbol="AAA",
+        price=1.005,
+        size=100,
+        timestamp_ns=1_715_000_000_000_000_100,
+        cumulative_volume=None,
+        exchange="Q",
+        conditions=(),
+    )
+
+    path = archive.record_trade(
+        trade,
+        received_at_ns=1_715_000_000_000_000_200,
+        recorded_at_ns=1_715_000_000_000_000_900,
+    )
+
+    payload = json.loads(path.read_text().splitlines()[0])
+    assert payload["received_at_ns"] == 1_715_000_000_000_000_200
+    assert payload["recorded_at_ns"] == 1_715_000_000_000_000_900

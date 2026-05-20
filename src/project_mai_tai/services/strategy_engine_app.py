@@ -8,6 +8,7 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from time import perf_counter, time_ns
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -5591,9 +5592,9 @@ class StrategyEngineService:
         self._hydration_tasks: set[asyncio.Task[None]] = set()
         self._runtime_db_reconcile_interval_secs = 5
         self._schwab_stream_drain_max_events = 100
-        self._schwab_trade_queue: asyncio.Queue[TradeTickRecord] = asyncio.Queue()
-        self._schwab_quote_queue: asyncio.Queue[QuoteTickRecord] = asyncio.Queue()
-        self._schwab_bar_queue: asyncio.Queue[LiveBarRecord] = asyncio.Queue()
+        self._schwab_trade_queue: asyncio.Queue[tuple[TradeTickRecord, int]] = asyncio.Queue()
+        self._schwab_quote_queue: asyncio.Queue[tuple[QuoteTickRecord, int]] = asyncio.Queue()
+        self._schwab_bar_queue: asyncio.Queue[tuple[LiveBarRecord, int]] = asyncio.Queue()
         self._schwab_stream_client = self._build_schwab_stream_client()
         self._schwab_quote_poll_adapter = (
             self._schwab_stream_client.auth_adapter
@@ -7575,17 +7576,17 @@ class StrategyEngineService:
         return result
 
     def _enqueue_schwab_trade_tick(self, record: TradeTickRecord) -> None:
-        self._schwab_trade_queue.put_nowait(record)
+        self._schwab_trade_queue.put_nowait((record, time_ns()))
 
     def _enqueue_schwab_quote_tick(self, record: QuoteTickRecord) -> None:
         if not self._should_keep_schwab_quote_tick(record.symbol):
             return
-        self._schwab_quote_queue.put_nowait(record)
+        self._schwab_quote_queue.put_nowait((record, time_ns()))
 
     def _enqueue_schwab_live_bar(self, record: LiveBarRecord) -> None:
         if not self._should_keep_schwab_live_bar(record.symbol, interval_secs=record.interval_secs):
             return
-        self._schwab_bar_queue.put_nowait(record)
+        self._schwab_bar_queue.put_nowait((record, time_ns()))
 
     def _should_keep_schwab_quote_tick(self, symbol: str) -> bool:
         normalized = str(symbol).upper()
@@ -7624,11 +7625,15 @@ class StrategyEngineService:
             nonlocal event_count
             if self._schwab_quote_queue.empty():
                 return False
-            quote = await self._schwab_quote_queue.get()
+            quote, received_at_ns = await self._schwab_quote_queue.get()
             event_count += 1
             self._record_schwab_stream_activity(quote.symbol, activity_kind="quote")
             if self._schwab_tick_archive is not None:
-                self._schwab_tick_archive.record_quote(quote)
+                self._schwab_tick_archive.record_quote(
+                    quote,
+                    received_at_ns=received_at_ns,
+                    recorded_at_ns=time_ns(),
+                )
             intents = self.state.handle_quote_tick(
                 symbol=quote.symbol,
                 bid_price=quote.bid_price,
@@ -7646,11 +7651,15 @@ class StrategyEngineService:
             nonlocal intent_count, event_count
             if self._schwab_bar_queue.empty():
                 return False
-            bar = await self._schwab_bar_queue.get()
+            bar, received_at_ns = await self._schwab_bar_queue.get()
             event_count += 1
             self._record_schwab_stream_activity(bar.symbol, activity_kind="bar")
             if self._schwab_tick_archive is not None:
-                self._schwab_tick_archive.record_live_bar(bar)
+                self._schwab_tick_archive.record_live_bar(
+                    bar,
+                    received_at_ns=received_at_ns,
+                    recorded_at_ns=time_ns(),
+                )
             if int(bar.interval_secs) == 60:
                 replay_authority = self._schwab_1m_history_replay_authority_until_timestamp.get(
                     str(bar.symbol).upper()
@@ -7702,11 +7711,15 @@ class StrategyEngineService:
             nonlocal intent_count, event_count
             if self._schwab_trade_queue.empty():
                 return False
-            trade = await self._schwab_trade_queue.get()
+            trade, received_at_ns = await self._schwab_trade_queue.get()
             event_count += 1
             self._record_schwab_stream_activity(trade.symbol, activity_kind="trade")
             if self._schwab_tick_archive is not None:
-                self._schwab_tick_archive.record_trade(trade)
+                self._schwab_tick_archive.record_trade(
+                    trade,
+                    received_at_ns=received_at_ns,
+                    recorded_at_ns=time_ns(),
+                )
             intents = self.state.handle_trade_tick(
                 symbol=trade.symbol,
                 price=trade.price,

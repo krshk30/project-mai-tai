@@ -5,6 +5,7 @@ import json
 from importlib import import_module
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 from sqlalchemy import create_engine, select
@@ -5785,6 +5786,49 @@ async def test_schwab_stream_queue_drain_prioritizes_live_bars_over_quote_backlo
     assert drain_order[0] == "bar:AMST"
     assert service._schwab_bar_queue.qsize() == 0
     assert service._schwab_quote_queue.qsize() == 3
+
+
+@pytest.mark.asyncio
+async def test_schwab_stream_queue_drain_preserves_receive_vs_record_times(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = StrategyEngineService(
+        settings=make_test_settings(
+            redis_stream_prefix="test",
+            dashboard_snapshot_persistence_enabled=False,
+            strategy_history_persistence_enabled=False,
+            strategy_macd_30s_broker_provider="schwab",
+            strategy_schwab_1m_enabled=True,
+            schwab_tick_archive_enabled=True,
+            schwab_tick_archive_root=str(tmp_path),
+        ),
+        redis_client=FakeRedis(),
+    )
+    service.state.bots["schwab_1m"].set_watchlist(["AMST"])
+    timestamps = iter([100, 200])
+    monkeypatch.setattr("project_mai_tai.services.strategy_engine_app.time_ns", lambda: next(timestamps))
+
+    service._enqueue_schwab_live_bar(
+        LiveBarRecord(
+            symbol="AMST",
+            interval_secs=60,
+            open=2.20,
+            high=2.35,
+            low=2.18,
+            close=2.30,
+            volume=25_000,
+            timestamp=1_700_001_560.0,
+            trade_count=42,
+        )
+    )
+
+    _intent_count, _event_count = await service._drain_schwab_stream_queues()
+
+    archive_path = tmp_path / "2023-11-14" / "AMST.jsonl"
+    payload = json.loads(archive_path.read_text(encoding="utf-8").splitlines()[0])
+    assert payload["received_at_ns"] == 100
+    assert payload["recorded_at_ns"] == 200
 
 
 @pytest.mark.asyncio
