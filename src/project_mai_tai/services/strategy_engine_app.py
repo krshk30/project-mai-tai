@@ -8296,6 +8296,7 @@ class StrategyEngineService:
         persisted_at = utcnow().isoformat()
         scanner_session_start = current_scanner_session_start_utc(utcnow()).isoformat()
         top_confirmed = list(summary.get("top_confirmed", []))
+        watchlist = list(summary.get("watchlist", []))
         all_confirmed_candidates = list(self.state.confirmed_scanner.get_all_confirmed())
         bot_handoff_symbols_by_strategy = {
             code: sorted(symbols)
@@ -8311,7 +8312,7 @@ class StrategyEngineService:
             payload = {
                 "top_confirmed": top_confirmed,
                 "all_confirmed_candidates": all_confirmed_candidates,
-                "watchlist": list(summary.get("watchlist", [])),
+                "watchlist": watchlist,
                 "bot_handoff_symbols_by_strategy": bot_handoff_symbols_by_strategy,
                 "bot_handoff_history_by_strategy": bot_handoff_history_by_strategy,
                 "cycle_count": int(summary.get("cycle_count", 0) or 0),
@@ -8319,6 +8320,24 @@ class StrategyEngineService:
                 "scanner_session_start_utc": scanner_session_start,
             }
             self._replace_dashboard_snapshot("scanner_confirmed_last_nonempty", payload)
+        elif not watchlist:
+            # Clear cross-session scanner carryover when the fresh session is
+            # genuinely empty. Without this, control-plane can restore the prior
+            # session's last non-empty scanner rows after the live runtime has
+            # already rolled to an empty watchlist.
+            self._replace_dashboard_snapshot(
+                "scanner_confirmed_last_nonempty",
+                {
+                    "top_confirmed": [],
+                    "all_confirmed_candidates": [],
+                    "watchlist": [],
+                    "bot_handoff_symbols_by_strategy": {},
+                    "bot_handoff_history_by_strategy": {},
+                    "cycle_count": int(summary.get("cycle_count", 0) or 0),
+                    "persisted_at": persisted_at,
+                    "scanner_session_start_utc": scanner_session_start,
+                },
+            )
 
         alert_state = self.state.alert_engine.export_state()
         alert_state["cycle_count"] = int(summary.get("cycle_count", 0) or 0)

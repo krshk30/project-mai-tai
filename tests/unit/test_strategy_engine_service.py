@@ -7451,6 +7451,65 @@ def test_seeded_confirmed_candidates_skip_unmarked_snapshot_even_if_recent(monke
     assert service.state.bots["macd_30s"].watchlist == set()
 
 
+def test_persist_scanner_snapshots_clears_last_nonempty_when_current_watchlist_is_empty(monkeypatch) -> None:
+    session_factory = build_test_session_factory()
+    with session_factory() as session:
+        session.add(
+            DashboardSnapshot(
+                snapshot_type="scanner_confirmed_last_nonempty",
+                payload={
+                    "persisted_at": datetime(2026, 3, 30, 10, 5, tzinfo=UTC).isoformat(),
+                    "scanner_session_start_utc": datetime(2026, 3, 30, 8, 0, tzinfo=UTC).isoformat(),
+                    "all_confirmed_candidates": [{"ticker": "GNLN"}],
+                    "top_confirmed": [{"ticker": "GNLN"}],
+                    "watchlist": ["GNLN"],
+                    "bot_handoff_symbols_by_strategy": {"polygon_30s": ["GNLN"]},
+                    "bot_handoff_history_by_strategy": {"polygon_30s": ["GNLN"]},
+                    "cycle_count": 25,
+                },
+            )
+        )
+        session.commit()
+
+    monkeypatch.setattr(
+        "project_mai_tai.services.strategy_engine_app.utcnow",
+        lambda: datetime(2026, 3, 31, 13, 45, tzinfo=UTC),
+    )
+    monkeypatch.setattr(
+        "project_mai_tai.services.strategy_engine_app.current_scanner_session_start_utc",
+        lambda now=None: datetime(2026, 3, 31, 8, 0, tzinfo=UTC),
+    )
+
+    service = StrategyEngineService(
+        settings=make_test_settings(redis_stream_prefix="test", dashboard_snapshot_persistence_enabled=True),
+        redis_client=FakeRedis(),
+        session_factory=session_factory,
+    )
+
+    service._persist_scanner_snapshots(
+        {
+            "top_confirmed": [],
+            "watchlist": [],
+            "cycle_count": 1,
+        }
+    )
+
+    with session_factory() as session:
+        snapshot = session.scalar(
+            select(DashboardSnapshot).where(
+                DashboardSnapshot.snapshot_type == "scanner_confirmed_last_nonempty"
+            )
+        )
+
+    assert snapshot is not None
+    assert snapshot.payload["scanner_session_start_utc"] == "2026-03-31T08:00:00+00:00"
+    assert snapshot.payload["all_confirmed_candidates"] == []
+    assert snapshot.payload["top_confirmed"] == []
+    assert snapshot.payload["watchlist"] == []
+    assert snapshot.payload["bot_handoff_symbols_by_strategy"] == {}
+    assert snapshot.payload["bot_handoff_history_by_strategy"] == {}
+
+
 def test_publish_strategy_state_persists_scanner_cycle_history_snapshot() -> None:
     session_factory = build_test_session_factory()
     service = StrategyEngineService(
