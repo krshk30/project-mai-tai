@@ -483,6 +483,30 @@ Twelve PRs shipped today addressing four distinct bug classes that compounded in
 - Next action:
   - validate the new streamer lifecycle and 30s-finalization behavior during the next active Schwab window; do **not** interpret this after-hours `schwab_stream_connected=false` state as evidence that the deployment itself failed
 
+### 2026-05-20 evening - Decision Tape placeholder precedence regression fixed and deployed
+
+- Operator-visible symptom:
+  - bot pages could still look "broken" after the earlier placeholder work because synthetic live placeholders were outranking real completed-bar decisions in the Decision Tape
+  - most obvious case: after-hours real `outside trading hours` rows were getting buried under placeholder `critical` / `warning` / `pending` rows for the same symbols
+- Root cause in control-plane:
+  - the bot payload builder was doing an unconditional placeholder prepend before visible-row reconciliation
+  - `_ensure_visible_live_symbol_decision_rows()` also treated a newer live tick as newer decision state than a fresh completed-bar decision row, so real rows were repeatedly refreshed back into placeholders even when no newer completed bar existed
+- Fix:
+  - removed the blanket placeholder prepend and let the visible-row reconciliation path own placeholder insertion
+  - changed visible-row refresh logic so a real decision row is only displaced when there is a genuinely newer completed bar or a real stale/critical condition to surface; a newer tick inside the same still-open bar no longer outranks a current completed-bar decision
+- Local validation:
+  - `.venv\Scripts\python.exe -m pytest tests/unit/test_control_plane.py -k "current_placeholder_overrides_stale_visible_row_for_same_symbol or keeps_current_real_row_ahead_of_placeholder_when_only_tick_is_newer or pending_tick_placeholders or stale_visible_row_for_same_symbol or waiting_for_evaluation or schwab_1m_placeholder_uses_completed_bar_freshness or last_decision_ignores_pending_tick_placeholders" -q` -> `5 passed`
+  - `.venv\Scripts\python.exe -m py_compile src/project_mai_tai/services/control_plane.py tests/unit/test_control_plane.py`
+- Deploy result:
+  - local repo commit: `89157d9` (`fix decision tape placeholder precedence`)
+  - deploy-worktree/main commit: `f81df8b`
+  - deployed to VPS via `ops/systemd/deploy_service.sh /home/trader/project-mai-tai main control`
+  - `project-mai-tai-control.service` restarted successfully at `2026-05-20 23:27:43 UTC`
+- Live validation:
+  - `macd_30s` Decision Tape payload now shows `26` rows with `0` placeholders at the top; real completed-bar rows lead the tape again
+  - `polygon_30s` still shows a small number of placeholders, but only for symbols that are actually stale right now; normal after-hours rows now remain visible instead of being displaced wholesale
+  - `schwab_1m` still shows warning placeholders for genuinely stale symbols; that remaining warning state is the live Schwab/bar-freshness issue, not the old placeholder-precedence rendering bug
+
 ### 2026-05-19 afternoon - AMST schwab_1m late-entry root cause fixed and deployed
 
 - Operator concern: AMST `schwab_1m` trades diverged from the TradingView/Pine reference; do **not** retune rules first. Prove whether Mai Tai saw late/incorrect bars.
