@@ -1,5 +1,66 @@
 # Session Handoff - Global
 
+## 🚩 2026-05-20 ~10:25 UTC (06:25 ET) — Display-only false-CRITICAL on freshly-promoted / pre-market-quiet symbols (NOT a code bug)
+
+Operator-reported during pre-market validation. Logged here as a recurring diagnostic pattern so future sessions don't waste cycles chasing it as a bar-flow regression.
+
+### Symptom (the operator-visible surface)
+
+Two CRITICAL decision-tape rows on MWC after Codex's `67f32ec` scanner-recovery deploy:
+
+- **schwab_1m**: `MWC | CRITICAL | live in bot; fresh Schwab ticks are arriving but the last completed 1m bar is already 860m old - verify bar flow now` (the displayed `bar_time` is `2026-05-19 04:00 PM ET` — yesterday's RTH close)
+- **macd_30s**: `MWC | CRITICAL | live in bot; fresh Schwab ticks are arriving but the last completed 30s trade bar is already 3m9s old - verify bar flow now`
+
+### Where it shows up (three surfaces, one root)
+
+All three render from the same control-plane Decision Tape placeholder logic shipped in `c04c133` (2026-05-19 evening):
+
+1. **`/api/bots` placeholder rows** — `_ensure_visible_live_symbol_decision_rows()` synthesizes a placeholder for the live symbol using `last_tick_at` as the timestamp fallback when no fresh completed bar exists.
+2. **Decision Tape UI** — renders the placeholder row at the top of the bot page.
+3. **CRITICAL severity banner** — assigned by the renderer when the gap between `last_tick_at` (fresh, LEVELONE streaming) and `last_bar_at` (most recent COMPLETED bar) exceeds the threshold, **independent of the runtime's own `data_health.status`**.
+
+### Why it's not a bar-flow code bug
+
+Runtime ground truth (verified 2026-05-20 10:25 UTC against `/api/bots`):
+- All 3 bots: `data_health.status = healthy`, `halted_symbols = []`, `warning_symbols = []`, `listening_status = LISTENING`
+- No `[SCHWAB30-STALL]` WARN for MWC, ever
+- No `[ON-STALL-RECOVERY]` for MWC since promotion at 10:18:32 UTC
+- polygon_30s persisting normally (1 row / 30s, ~30s lag, `tracked_bar_count=870`)
+- macd_30s `tracked_bar_count=6037`, schwab_1m `tracked_bar_count=3400` — both LISTENING and evaluating
+
+Per-case explanation:
+
+- **schwab_1m "860m old"** = 14h 20m, matches yesterday's 16:00 ET RTH close → now. The bot bootstrapped 140 Schwab CHART_EQUITY historical bars at promotion (`10:18:47 UTC`); the most recent in history is yesterday's RTH close. **Schwab CHART_EQUITY does not publish overnight or pre-market for thin penny stocks**, so there is no new 1m bar physically available until 09:30 ET RTH open. The bar-flow code cannot manufacture a bar the feed isn't sending.
+- **macd_30s "3m9s old"** = a 3-minute gap with no on-exchange trades on a thin penny stock pre-market. macd_30s uses LEVELONE TIMESALE for 30s bars; PR #194's `current_bar_overdue` guard correctly prevents the runtime from halting in this case (which is why `data_health = healthy`). The renderer's threshold is more pessimistic than the runtime's halt threshold and trips on this normal silence.
+
+### Discriminator — when this IS a real bug (escalate)
+
+The same surface message ("fresh ticks but stale completed bars") IS a real condition if ANY of these are also true:
+
+- Runtime `data_health.status` is `degraded` or `failed` for the symbol
+- `halted_symbols` (or `exposure_halted_symbols` / `open_position_halted_symbols`) contains the symbol
+- `[SCHWAB30-STALL]` WARN is firing for the symbol
+- `[ON-STALL-RECOVERY]` is looping (recovery firing but no fresh bars landing)
+- Symbol is NOT freshly promoted AND time is INSIDE RTH (09:30-16:00 ET)
+- `[STRATEGY-REVISE-PERSIST-LAG]` warnings concentrated on the symbol
+
+If none of the above are true, the CRITICAL row is display noise from the placeholder renderer.
+
+### Operating rule (carry forward)
+
+When an operator reports a CRITICAL decision-tape row, **first check the runtime ground truth** via `/api/bots` → `data_health.status` + `halted_symbols`. If the runtime is healthy, the CRITICAL row is display noise from this pattern. If the runtime is `degraded`/`failed`, it's a real condition — escalate per the bar-flow runbook.
+
+### UX follow-up (NOT blocking — do not prioritize over RTH validation)
+
+Possible control-plane tweak (file an issue if this false alarm keeps consuming operator attention across multiple sessions):
+
+- Make the Decision Tape severity defer to runtime `data_health.status` for the symbol rather than recomputing freshness independently from `last_tick_at` vs `last_bar_at`.
+- Or suppress CRITICAL when (a) the symbol was promoted within the last N minutes, OR (b) `last_bar_at` is from a prior trading session (e.g., `bar_time` predates the current scanner session start at 04:00 ET).
+
+**Do not touch the control-plane placeholder logic again before PR #200 is validated under live RTH.** Yesterday's 5-PR cascade was caused by exactly this kind of "we should also tidy this adjacent surface" reflex.
+
+---
+
 ## 🚩 2026-05-19 EOD — 5 PRs deep on the morning regression; macd_30s 0 fills for the day
 
 VPS HEAD `6f4e64c` at RTH close. macd_30s did **0 entry signals / 0 fills** today vs **9 fills yesterday** on a similar penny-stock universe. Other bots OK: schwab_1m did 7 buy fills + 5 closes + 5 scales; polygon_30s fired 122 signals but all rejected (broker not wired, deferred).
