@@ -5620,7 +5620,6 @@ class StrategyEngineService:
         self._schwab_1m_history_refresh_interval_secs = 15
         self._schwab_cluster_reconnect_threshold = 4
         self._schwab_cluster_reconnect_cooldown_secs = 30.0
-        self._schwab_cluster_reconnect_startup_grace_secs = 180.0
         self._schwab_last_forced_reconnect_at: datetime | None = None
         self._last_generic_bot_activity_snapshot_at: datetime | None = None
         self._generic_bot_activity_snapshot_interval_secs = 5
@@ -5835,18 +5834,18 @@ class StrategyEngineService:
 
         async def _do_init() -> None:
             await self._initialize_stream_offsets()
-            if self._schwab_stream_client is not None:
-                await self._schwab_stream_client.start(
-                    on_trade=self._enqueue_schwab_trade_tick,
-                    on_quote=self._enqueue_schwab_quote_tick,
-                    on_bar=self._enqueue_schwab_live_bar,
-                )
             await asyncio.to_thread(self._restore_alert_engine_state_from_dashboard_snapshot)
             await asyncio.to_thread(self._seed_confirmed_candidates_from_dashboard_snapshot)
             await asyncio.to_thread(self._restore_runtime_state_from_database)
             await asyncio.to_thread(self._purge_stale_manual_stop_snapshots)
             await asyncio.to_thread(self._preload_manual_stop_state)
             await self._prefill_alert_history_from_snapshot_batches()
+            if self._schwab_stream_client is not None:
+                await self._schwab_stream_client.start(
+                    on_trade=self._enqueue_schwab_trade_tick,
+                    on_quote=self._enqueue_schwab_quote_tick,
+                    on_bar=self._enqueue_schwab_live_bar,
+                )
             await self._sync_subscription_targets()
             await self._publish_strategy_state_snapshot()
             self._sync_runtime_data_health_incidents()
@@ -7027,10 +7026,6 @@ class StrategyEngineService:
         now: datetime,
         expected_latest_completed: float,
     ) -> None:
-        if (
-            now - self._started_at
-        ).total_seconds() < float(self._schwab_cluster_reconnect_startup_grace_secs):
-            return
         client = self._schwab_stream_client
         if client is None or not getattr(client, "connected", False):
             return
@@ -7046,17 +7041,12 @@ class StrategyEngineService:
             return
 
         lagging_symbols: list[tuple[str, float | None]] = []
-        interval_secs = max(60.0, float(runtime.definition.interval_secs or 60))
-        recent_activity_after = now - timedelta(seconds=120)
         for symbol in sorted(runtime.active_symbols()):
             normalized = str(symbol).upper()
-            last_update = self._schwab_last_stream_update_at(normalized)
-            if last_update is None or last_update < recent_activity_after:
-                continue
             latest_runtime_completed = self._latest_runtime_completed_bar_timestamp(runtime, normalized)
             if (
                 latest_runtime_completed is None
-                or latest_runtime_completed < (expected_latest_completed - interval_secs)
+                or latest_runtime_completed < expected_latest_completed
             ):
                 lagging_symbols.append((normalized, latest_runtime_completed))
 
