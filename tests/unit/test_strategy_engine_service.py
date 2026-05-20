@@ -294,6 +294,93 @@ async def test_run_init_phase_cancels_sync_init_step_running_in_thread() -> None
 
 
 @pytest.mark.asyncio
+async def test_run_init_phase_syncs_subscriptions_after_seed_before_restore() -> None:
+    settings = make_test_settings()
+    redis = FakeRedis()
+    service = StrategyEngineService(settings=settings, redis_client=redis)
+
+    steps: list[str] = []
+
+    async def async_noop(name: str) -> None:
+        steps.append(name)
+
+    def sync_noop(name: str) -> None:
+        steps.append(name)
+
+    class FakeStreamClient:
+        async def start(self, **kwargs) -> None:
+            del kwargs
+            steps.append("start_stream")
+
+    service._schwab_stream_client = FakeStreamClient()
+    service._initialize_stream_offsets = lambda: async_noop("initialize_offsets")  # type: ignore[method-assign]
+    service._restore_alert_engine_state_from_dashboard_snapshot = lambda: sync_noop("restore_alert")  # type: ignore[method-assign]
+    service._seed_confirmed_candidates_from_dashboard_snapshot = lambda: sync_noop("seed_confirmed")  # type: ignore[method-assign]
+    service._restore_runtime_state_from_database = lambda: sync_noop("restore_runtime")  # type: ignore[method-assign]
+    service._purge_stale_manual_stop_snapshots = lambda: sync_noop("purge_manual_stop")  # type: ignore[method-assign]
+    service._preload_manual_stop_state = lambda: sync_noop("preload_manual_stop")  # type: ignore[method-assign]
+    service._prefill_alert_history_from_snapshot_batches = lambda: async_noop("prefill_alert_history")  # type: ignore[method-assign]
+    service._sync_subscription_targets = lambda **kwargs: async_noop("sync_subscriptions")  # type: ignore[method-assign]
+    service._publish_strategy_state_snapshot = lambda: async_noop("publish_snapshot")  # type: ignore[method-assign]
+    service._publish_heartbeat = lambda status: async_noop(f"publish_heartbeat:{status}")  # type: ignore[method-assign]
+    service._sync_runtime_data_health_incidents = lambda: steps.append("sync_incidents")  # type: ignore[method-assign]
+
+    completed = await service._run_init_phase(asyncio.Event())
+
+    assert completed is True
+    assert steps.index("seed_confirmed") < steps.index("sync_subscriptions")
+    assert steps.index("sync_subscriptions") < steps.index("restore_runtime")
+    assert steps.count("sync_subscriptions") == 2
+
+
+@pytest.mark.asyncio
+async def test_run_flushes_completed_bars_before_schwab_recovery_work(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = make_test_settings()
+    redis = FakeRedis()
+    service = StrategyEngineService(settings=settings, redis_client=redis)
+    steps: list[str] = []
+    captured_stop_event: dict[str, asyncio.Event] = {}
+
+    def fake_install_signal_handlers(stop_event: asyncio.Event) -> None:
+        captured_stop_event["event"] = stop_event
+
+    async def async_step(name: str, result=None):
+        steps.append(name)
+        return result
+
+    monkeypatch.setattr(
+        "project_mai_tai.services.strategy_engine_app._install_signal_handlers",
+        fake_install_signal_handlers,
+    )
+    service._run_init_phase = lambda stop_event: async_step("run_init", True)  # type: ignore[method-assign]
+    service._read_stream_group = lambda *args, **kwargs: async_step("read_priority", 0)  # type: ignore[method-assign]
+    service._drain_market_data_stream = lambda **kwargs: async_step("drain_market")  # type: ignore[method-assign]
+    service._drain_schwab_stream_queues = lambda: async_step("drain_schwab", (0, 0))  # type: ignore[method-assign]
+    service.state.flush_completed_bars = lambda: (steps.append("flush_completed_bars") or [], 1)  # type: ignore[method-assign]
+    service._monitor_schwab_symbol_health = lambda: async_step("monitor_health", 0)  # type: ignore[method-assign]
+    service.state.monitor_completed_bar_flow = lambda **kwargs: (steps.append("monitor_bar_flow") or 0)  # type: ignore[method-assign]
+
+    async def fake_refresh() -> tuple[int, int]:
+        steps.append("refresh_stale_1m")
+        captured_stop_event["event"].set()
+        return 0, 0
+
+    service._refresh_stale_schwab_1m_history = fake_refresh  # type: ignore[method-assign]
+    service._sync_subscription_targets = lambda **kwargs: async_step("sync_subscriptions")  # type: ignore[method-assign]
+    service._publish_strategy_state_snapshot = lambda: async_step("publish_snapshot")  # type: ignore[method-assign]
+    service._sync_runtime_data_health_incidents = lambda: steps.append("sync_incidents")  # type: ignore[method-assign]
+    service._publish_heartbeat = lambda status: async_step(f"heartbeat:{status}")  # type: ignore[method-assign]
+    service._shutdown_cleanup = lambda: async_step("shutdown")  # type: ignore[method-assign]
+
+    await service.run()
+
+    assert steps.index("flush_completed_bars") < steps.index("monitor_health")
+    assert steps.index("flush_completed_bars") < steps.index("refresh_stale_1m")
+
+
+@pytest.mark.asyncio
 async def test_initialize_stream_offsets_anchors_to_latest_ids() -> None:
     settings = make_test_settings()
     redis = FakeRedis()

@@ -5,7 +5,7 @@ import json
 import logging
 import traceback
 from collections.abc import Callable, Collection, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 
 import websockets
 
@@ -41,7 +41,18 @@ class SchwabStreamerProbeResult:
     error: str | None = None
 
 
+@dataclass
+class SchwabStreamServiceState:
+    requested_symbols: set[str] = field(default_factory=set)
+    confirmed_symbols: set[str] = field(default_factory=set)
+    last_response_monotonic: float | None = None
+    last_message_monotonic: float | None = None
+
+
 class SchwabStreamerClient:
+    LEVELONE_EQUITIES_SERVICE = "LEVELONE_EQUITIES"
+    CHART_EQUITY_SERVICE = "CHART_EQUITY"
+    TIMESALE_EQUITY_SERVICE = "TIMESALE_EQUITY"
     LEVELONE_EQUITIES_FIELDS = "0,1,2,3,4,5,8,9,35"
     CHART_EQUITY_FIELDS = "0,1,2,3,4,5,6,7,8"
     TIMESALE_EQUITY_FIELDS = "0,1,2,3,4"
@@ -68,6 +79,9 @@ class SchwabStreamerClient:
         self._subscribed_symbols: set[str] = set()
         self._subscribed_chart_symbols: set[str] = set()
         self._subscribed_timesale_symbols: set[str] = set()
+        self._requested_symbols: set[str] = set()
+        self._requested_chart_symbols: set[str] = set()
+        self._requested_timesale_symbols: set[str] = set()
         self._timesale_service_available = True
         self._request_id = 1
         self._credentials: SchwabStreamerCredentials | None = None
@@ -78,6 +92,12 @@ class SchwabStreamerClient:
         self._connected = False
         self._connection_failures = 0
         self._last_error: str | None = None
+        self._service_states: dict[str, SchwabStreamServiceState] = {
+            self.LEVELONE_EQUITIES_SERVICE: SchwabStreamServiceState(),
+            self.CHART_EQUITY_SERVICE: SchwabStreamServiceState(),
+            self.TIMESALE_EQUITY_SERVICE: SchwabStreamServiceState(),
+        }
+        self._pending_subscription_requests: dict[int, tuple[str, str, tuple[str, ...]]] = {}
 
     @property
     def connected(self) -> bool:
@@ -90,6 +110,24 @@ class SchwabStreamerClient:
     @property
     def last_error(self) -> str | None:
         return self._last_error
+
+    def is_service_healthy(self, service: str) -> bool:
+        normalized = str(service).strip().upper()
+        state = self._service_states.get(normalized)
+        if state is None or not state.confirmed_symbols:
+            return False
+        if normalized == self.TIMESALE_EQUITY_SERVICE and not self._timesale_service_available:
+            return False
+        if not self._connected:
+            return False
+        last_message_at = state.last_message_monotonic
+        if last_message_at is None:
+            return False
+        try:
+            now = asyncio.get_running_loop().time()
+        except RuntimeError:
+            return False
+        return (now - last_message_at) <= self._service_stale_after_seconds(normalized)
 
     async def start(
         self,
@@ -136,7 +174,12 @@ class SchwabStreamerClient:
         self._subscribed_symbols.clear()
         self._subscribed_chart_symbols.clear()
         self._subscribed_timesale_symbols.clear()
+        self._requested_symbols.clear()
+        self._requested_chart_symbols.clear()
+        self._requested_timesale_symbols.clear()
         self._timesale_service_available = True
+        self._pending_subscription_requests.clear()
+        self._reset_service_states()
         self._last_error = None
 
     async def sync_subscriptions(
@@ -317,10 +360,15 @@ class SchwabStreamerClient:
                 self._connection_failures = 0
                 self._last_error = None
                 self._timesale_service_available = True
+                self._reset_service_states()
                 await self._apply_subscription_delta(force_resubscribe=True)
 
                 while not self._stop_event.is_set():
-                    raw_message = await websocket.recv()
+                    try:
+                        raw_message = await asyncio.wait_for(websocket.recv(), timeout=1.0)
+                    except TimeoutError:
+                        await self._handle_service_liveness_timeout()
+                        continue
                     await self._handle_message(raw_message)
             except asyncio.CancelledError:
                 raise
@@ -352,6 +400,11 @@ class SchwabStreamerClient:
                 self._subscribed_symbols.clear()
                 self._subscribed_chart_symbols.clear()
                 self._subscribed_timesale_symbols.clear()
+                self._requested_symbols.clear()
+                self._requested_chart_symbols.clear()
+                self._requested_timesale_symbols.clear()
+                self._pending_subscription_requests.clear()
+                self._reset_service_states()
                 if websocket is not None:
                     try:
                         await websocket.close()
@@ -427,25 +480,25 @@ class SchwabStreamerClient:
         desired_chart = set(self._desired_chart_symbols)
         desired_timesale = set(self._desired_timesale_symbols) if self._timesale_service_available else set()
         if force_resubscribe:
-            to_remove = set(self._subscribed_symbols)
+            to_remove = set(self._requested_symbols)
             to_add = desired
-            chart_to_remove = set(self._subscribed_chart_symbols)
+            chart_to_remove = set(self._requested_chart_symbols)
             chart_to_add = desired_chart
-            timesale_to_remove = set(self._subscribed_timesale_symbols)
+            timesale_to_remove = set(self._requested_timesale_symbols)
             timesale_to_add = desired_timesale
         else:
-            to_remove = self._subscribed_symbols - desired
-            to_add = desired - self._subscribed_symbols
-            chart_to_remove = self._subscribed_chart_symbols - desired_chart
-            chart_to_add = desired_chart - self._subscribed_chart_symbols
-            timesale_to_remove = self._subscribed_timesale_symbols - desired_timesale
-            timesale_to_add = desired_timesale - self._subscribed_timesale_symbols
+            to_remove = self._requested_symbols - desired
+            to_add = desired - self._requested_symbols
+            chart_to_remove = self._requested_chart_symbols - desired_chart
+            chart_to_add = desired_chart - self._requested_chart_symbols
+            timesale_to_remove = self._requested_timesale_symbols - desired_timesale
+            timesale_to_add = desired_timesale - self._requested_timesale_symbols
 
         if to_remove:
             await self._send_subscription_command(
                 websocket,
                 credentials,
-                service="LEVELONE_EQUITIES",
+                service=self.LEVELONE_EQUITIES_SERVICE,
                 command="UNSUBS",
                 symbols=sorted(to_remove),
             )
@@ -453,7 +506,7 @@ class SchwabStreamerClient:
             await self._send_subscription_command(
                 websocket,
                 credentials,
-                service="LEVELONE_EQUITIES",
+                service=self.LEVELONE_EQUITIES_SERVICE,
                 command="ADD",
                 symbols=sorted(to_add),
             )
@@ -461,16 +514,16 @@ class SchwabStreamerClient:
             await self._send_subscription_command(
                 websocket,
                 credentials,
-                service="CHART_EQUITY",
+                service=self.CHART_EQUITY_SERVICE,
                 command="UNSUBS",
                 symbols=sorted(chart_to_remove),
             )
         if chart_to_add:
-            chart_command = "ADD" if self._subscribed_chart_symbols else "SUBS"
+            chart_command = "ADD" if self._requested_chart_symbols else "SUBS"
             await self._send_subscription_command(
                 websocket,
                 credentials,
-                service="CHART_EQUITY",
+                service=self.CHART_EQUITY_SERVICE,
                 command=chart_command,
                 symbols=sorted(chart_to_add),
             )
@@ -483,17 +536,20 @@ class SchwabStreamerClient:
                 symbols=sorted(timesale_to_remove),
             )
         if timesale_to_add:
-            timesale_command = "ADD" if self._subscribed_timesale_symbols else "SUBS"
+            timesale_command = "ADD" if self._requested_timesale_symbols else "SUBS"
             await self._send_subscription_command(
                 websocket,
                 credentials,
-                service="TIMESALE_EQUITY",
+                service=self.TIMESALE_EQUITY_SERVICE,
                 command=timesale_command,
                 symbols=sorted(timesale_to_add),
             )
-        self._subscribed_symbols = desired
-        self._subscribed_chart_symbols = desired_chart
-        self._subscribed_timesale_symbols = desired_timesale
+        self._requested_symbols = desired
+        self._requested_chart_symbols = desired_chart
+        self._requested_timesale_symbols = desired_timesale
+        self._service_states[self.LEVELONE_EQUITIES_SERVICE].requested_symbols = set(desired)
+        self._service_states[self.CHART_EQUITY_SERVICE].requested_symbols = set(desired_chart)
+        self._service_states[self.TIMESALE_EQUITY_SERVICE].requested_symbols = set(desired_timesale)
 
     async def _send_subscription_command(
         self,
@@ -513,6 +569,15 @@ class SchwabStreamerClient:
             command=command,
             symbols=symbols,
         )
+        request_id = int(request["requests"][0]["requestid"])
+        normalized_symbols = tuple(
+            sorted(str(symbol).upper() for symbol in symbols if str(symbol).strip())
+        )
+        self._pending_subscription_requests[request_id] = (
+            str(service).upper(),
+            str(command).upper(),
+            normalized_symbols,
+        )
         async with self._send_lock:
             await websocket.send(json.dumps(request))
 
@@ -525,9 +590,16 @@ class SchwabStreamerClient:
     def _disable_timesale_service(self, *, reason: str) -> None:
         if not self._timesale_service_available and not self._subscribed_timesale_symbols:
             return
-        fallback_symbols = sorted(self._subscribed_timesale_symbols or self._desired_timesale_symbols)
+        fallback_symbols = sorted(
+            self._subscribed_timesale_symbols
+            or self._requested_timesale_symbols
+            or self._desired_timesale_symbols
+        )
         self._timesale_service_available = False
+        self._requested_timesale_symbols.clear()
         self._subscribed_timesale_symbols.clear()
+        self._service_states[self.TIMESALE_EQUITY_SERVICE].requested_symbols.clear()
+        self._service_states[self.TIMESALE_EQUITY_SERVICE].confirmed_symbols.clear()
         if fallback_symbols:
             logger.warning(
                 "Schwab TIMESALE_EQUITY unavailable; falling back to LEVELONE_EQUITIES trades | "
@@ -538,20 +610,25 @@ class SchwabStreamerClient:
 
     async def _handle_message(self, raw_message: str | bytes) -> None:
         payload = self._decode_message(raw_message)
+        now = asyncio.get_running_loop().time()
         for response in payload.get("response", []):
             if not isinstance(response, dict):
                 continue
-            service = str(response.get("service", "")).strip()
-            command = str(response.get("command", "")).strip()
+            service = str(response.get("service", "")).strip().upper()
+            command = str(response.get("command", "")).strip().upper()
             content = response.get("content", {})
             if isinstance(content, list):
                 content = content[0] if content else {}
             if not isinstance(content, dict):
                 continue
+            request_id = self._int_or_none(response.get("requestid"))
             code = str(content.get("code", "")).strip()
+            state = self._service_states.get(service)
+            if state is not None:
+                state.last_response_monotonic = now
             if code and code != "0":
                 message = str(content.get("msg") or content.get("message") or "unknown response error")
-                if service.upper() == "TIMESALE_EQUITY":
+                if service == self.TIMESALE_EQUITY_SERVICE:
                     self._disable_timesale_service(reason=message)
                 logger.warning(
                     "Schwab streamer response error | service=%s command=%s code=%s message=%s",
@@ -560,7 +637,21 @@ class SchwabStreamerClient:
                     code,
                     message,
                 )
-        quotes, trades, bars = self._extract_records(payload, timesale_symbols=self._subscribed_timesale_symbols)
+                if request_id is not None:
+                    self._pending_subscription_requests.pop(request_id, None)
+                continue
+            if request_id is not None:
+                self._mark_subscription_request_confirmed(
+                    request_id=request_id,
+                    service=service,
+                    command=command,
+                    observed_at=now,
+                )
+        self._record_service_messages_from_payload(payload, observed_at=now)
+        quotes, trades, bars = self._extract_records(
+            payload,
+            timesale_symbols=self._healthy_timesale_symbols_for_trade_dedupe(now),
+        )
         if self._on_quote is not None:
             for quote in quotes:
                 self._on_quote(quote)
@@ -584,33 +675,173 @@ class SchwabStreamerClient:
         normalized_timesale_symbols = {
             str(symbol).upper() for symbol in (timesale_symbols or ()) if str(symbol).strip()
         }
+        timesale_symbols_seen_in_payload: set[str] = set()
+        for item in payload.get("data", []):
+            service = str(item.get("service", "")).strip().upper()
+            if service != cls.TIMESALE_EQUITY_SERVICE:
+                continue
+            for content in item.get("content", []):
+                if not isinstance(content, dict):
+                    continue
+                symbol = str(content.get("key") or content.get("0") or "").upper()
+                if symbol:
+                    timesale_symbols_seen_in_payload.add(symbol)
         for item in payload.get("data", []):
             service = str(item.get("service", "")).strip().upper()
             for content in item.get("content", []):
                 if not isinstance(content, dict):
                     continue
-                if service == "LEVELONE_EQUITIES":
+                if service == cls.LEVELONE_EQUITIES_SERVICE:
                     quote = cls._extract_quote_record(content)
                     if quote is not None:
                         quotes.append(quote)
 
                     symbol = str(content.get("key") or content.get("0") or "").upper()
-                    if symbol in normalized_timesale_symbols:
+                    if symbol in normalized_timesale_symbols or symbol in timesale_symbols_seen_in_payload:
                         continue
                     trade = cls._extract_trade_record(content)
                     if trade is not None:
                         trades.append(trade)
                     continue
-                if service == "CHART_EQUITY":
+                if service == cls.CHART_EQUITY_SERVICE:
                     bar = cls._extract_chart_bar_record(content)
                     if bar is not None:
                         bars.append(bar)
                     continue
-                if service == "TIMESALE_EQUITY":
+                if service == cls.TIMESALE_EQUITY_SERVICE:
                     trade = cls._extract_timesale_trade_record(content)
                     if trade is not None:
                         trades.append(trade)
         return quotes, trades, bars
+
+    async def _handle_service_liveness_timeout(self) -> None:
+        now = asyncio.get_running_loop().time()
+        if self._timesale_service_available and self._should_disable_timesale_for_inactivity(now):
+            self._disable_timesale_service(
+                reason="no TIMESALE_EQUITY messages while other Schwab services remained active"
+            )
+        if self._should_force_reconnect_for_chart_inactivity(now):
+            raise RuntimeError("Schwab CHART_EQUITY channel stale while websocket remained connected")
+
+    def _should_disable_timesale_for_inactivity(self, now: float) -> bool:
+        timesale_state = self._service_states[self.TIMESALE_EQUITY_SERVICE]
+        if not timesale_state.confirmed_symbols:
+            return False
+        if timesale_state.last_message_monotonic is not None and (
+            now - timesale_state.last_message_monotonic
+        ) <= self._service_stale_after_seconds(self.TIMESALE_EQUITY_SERVICE):
+            return False
+        return self._other_services_showing_life(self.TIMESALE_EQUITY_SERVICE, now)
+
+    def _should_force_reconnect_for_chart_inactivity(self, now: float) -> bool:
+        chart_state = self._service_states[self.CHART_EQUITY_SERVICE]
+        if not chart_state.confirmed_symbols:
+            return False
+        if chart_state.last_message_monotonic is not None and (
+            now - chart_state.last_message_monotonic
+        ) <= self._service_stale_after_seconds(self.CHART_EQUITY_SERVICE):
+            return False
+        return self._other_services_showing_life(self.CHART_EQUITY_SERVICE, now)
+
+    def _other_services_showing_life(self, service: str, now: float) -> bool:
+        for other_service, state in self._service_states.items():
+            if other_service == service:
+                continue
+            if not state.confirmed_symbols:
+                continue
+            last_message = state.last_message_monotonic
+            if last_message is None:
+                continue
+            if (now - last_message) <= self._service_stale_after_seconds(other_service):
+                return True
+        return False
+
+    def _healthy_timesale_symbols_for_trade_dedupe(self, now: float) -> set[str]:
+        if not self._timesale_service_available:
+            return set()
+        state = self._service_states[self.TIMESALE_EQUITY_SERVICE]
+        if not state.confirmed_symbols:
+            return set()
+        last_message = state.last_message_monotonic
+        if last_message is None:
+            return set()
+        if (now - last_message) > self._service_stale_after_seconds(self.TIMESALE_EQUITY_SERVICE):
+            return set()
+        return set(state.confirmed_symbols)
+
+    def _mark_subscription_request_confirmed(
+        self,
+        *,
+        request_id: int,
+        service: str,
+        command: str,
+        observed_at: float,
+    ) -> None:
+        pending = self._pending_subscription_requests.pop(request_id, None)
+        if pending is None:
+            return
+        pending_service, pending_command, pending_symbols = pending
+        normalized_service = str(service).upper()
+        if normalized_service != pending_service or str(command).upper() != pending_command:
+            return
+        state = self._service_states.get(normalized_service)
+        if state is None:
+            return
+        state.last_response_monotonic = observed_at
+        if pending_command == "UNSUBS":
+            state.confirmed_symbols.difference_update(pending_symbols)
+        else:
+            state.confirmed_symbols.update(pending_symbols)
+        if normalized_service == self.LEVELONE_EQUITIES_SERVICE:
+            self._subscribed_symbols = set(state.confirmed_symbols)
+        elif normalized_service == self.CHART_EQUITY_SERVICE:
+            self._subscribed_chart_symbols = set(state.confirmed_symbols)
+        elif normalized_service == self.TIMESALE_EQUITY_SERVICE:
+            self._subscribed_timesale_symbols = set(state.confirmed_symbols)
+
+    def _record_service_messages_from_payload(
+        self,
+        payload: dict[str, object],
+        *,
+        observed_at: float,
+    ) -> None:
+        for item in payload.get("data", []):
+            service = str(item.get("service", "")).strip().upper()
+            state = self._service_states.get(service)
+            if state is None:
+                continue
+            content = item.get("content", [])
+            if not isinstance(content, list) or not content:
+                continue
+            state.last_message_monotonic = observed_at
+            for record in content:
+                if not isinstance(record, dict):
+                    continue
+                symbol = str(record.get("key") or record.get("0") or "").upper()
+                if symbol:
+                    state.confirmed_symbols.add(symbol)
+            if service == self.LEVELONE_EQUITIES_SERVICE:
+                self._subscribed_symbols = set(state.confirmed_symbols)
+            elif service == self.CHART_EQUITY_SERVICE:
+                self._subscribed_chart_symbols = set(state.confirmed_symbols)
+            elif service == self.TIMESALE_EQUITY_SERVICE:
+                self._subscribed_timesale_symbols = set(state.confirmed_symbols)
+
+    def _service_stale_after_seconds(self, service: str) -> float:
+        normalized = str(service).strip().upper()
+        base = max(5.0, float(self.settings.schwab_stream_symbol_stale_after_seconds))
+        if normalized == self.CHART_EQUITY_SERVICE:
+            return max(90.0, base * 8.0)
+        if normalized == self.TIMESALE_EQUITY_SERVICE:
+            return max(12.0, base * 2.0)
+        return max(10.0, base * 2.0)
+
+    def _reset_service_states(self) -> None:
+        for state in self._service_states.values():
+            state.requested_symbols.clear()
+            state.confirmed_symbols.clear()
+            state.last_response_monotonic = None
+            state.last_message_monotonic = None
 
     def _build_login_request(
         self,

@@ -441,6 +441,33 @@ Today's 14 PRs from 2026-05-18 still need RTH stress test. Originally scheduled 
 
 Twelve PRs shipped today addressing four distinct bug classes that compounded into the AUUD/QNCX/SBFM stuck-order incident the operator witnessed. All deployed live. VPS HEAD `03bf291` (PR #180) at session end.
 
+### 2026-05-20 evening - permanent Schwab streamer and 30s-finalization fix implemented locally (NOT DEPLOYED)
+
+- Research conclusion:
+  - Schwab public/legal docs do **not** promise strict timeliness or sequencing for market data, so delayed/out-of-order delivery is contractually possible.
+  - Fresh Mai Tai instrumentation still showed the main practical fix target is **our** client/runtime:
+    - `schwab_1m`: live `CHART_EQUITY` bars often reached the process late or only after history replay had already filled the minute.
+    - `macd_30s`: same primary receive-side issue, plus a local scheduling problem where 30s close/revision waited behind shared-loop Schwab recovery/state publication.
+- Permanent fix implemented locally:
+  - `src/project_mai_tai/market_data/schwab_streamer.py`
+    - added streamer-owned per-service state for `LEVELONE_EQUITIES`, `CHART_EQUITY`, and `TIMESALE_EQUITY`
+    - split **requested** vs **confirmed** subscription state so the client no longer treats a service as active immediately after sending `SUBS/ADD`
+    - added message-driven service freshness tracking and inactivity handling
+    - `TIMESALE_EQUITY` now falls back locally to `LEVELONE_EQUITIES` trades when TIMESALE goes stale while other Schwab services are still alive
+    - `CHART_EQUITY` channel inactivity while sibling services are alive now triggers reconnect from the streamer layer instead of waiting for strategy-side stale heuristics
+    - `LEVELONE` trade suppression for TIMESALE symbols now only happens when TIMESALE is actually healthy, not merely requested
+  - `src/project_mai_tai/services/strategy_engine_app.py`
+    - moved `flush_completed_bars()` ahead of Schwab health polling / `schwab_1m` REST replay / snapshot publication / incident sync in the main loop
+    - this is the permanent local fix for the 30s case where Schwab trade events had already been archived but 30s close/revision was still waiting behind unrelated shared-loop work
+- Local validation:
+  - `.venv\Scripts\python.exe -m pytest tests/unit/test_schwab_1m_bot.py -k "timesale or subscription or keeps_levelone_trade_until_timesale_is_confirmed or disables_timesale_after_inactivity" -q` -> `9 passed`
+  - `.venv\Scripts\python.exe -m pytest tests/unit/test_strategy_engine_service.py -k "schwab_stream_queue_drain or run_flushes_completed_bars_before_schwab_recovery_work" -q` -> `5 passed`
+  - `.venv\Scripts\python.exe -m py_compile src/project_mai_tai/market_data/schwab_streamer.py src/project_mai_tai/services/strategy_engine_app.py tests/unit/test_schwab_1m_bot.py tests/unit/test_strategy_engine_service.py`
+- Status:
+  - local repo only
+  - **not deployed yet**
+  - next action if accepted: deploy strategy, then validate fresh `schwab_1m` and `macd_30s` windows with the existing `received_at_ns` instrumentation
+
 ### 2026-05-19 afternoon - AMST schwab_1m late-entry root cause fixed and deployed
 
 - Operator concern: AMST `schwab_1m` trades diverged from the TradingView/Pine reference; do **not** retune rules first. Prove whether Mai Tai saw late/incorrect bars.

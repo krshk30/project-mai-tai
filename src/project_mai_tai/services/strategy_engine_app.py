@@ -551,6 +551,16 @@ class StrategyBotRuntime:
             return True
         return any(pending_symbol == normalized for pending_symbol, _level in self.pending_scale_levels)
 
+    def _is_critical_data_halt_symbol(self, symbol: str) -> bool:
+        normalized = str(symbol).upper()
+        if self._has_data_halt_exposure(normalized):
+            return True
+        reason = str(self.data_halt_symbols.get(normalized, "") or "").lower()
+        return (
+            "trading halted until live schwab ticks recover" in reason
+            or "reauthorize schwab tokens before trading" in reason
+        )
+
     def data_health_summary(self) -> dict[str, object]:
         halted_symbols = sorted(self.data_halt_symbols)
         warning_symbols = sorted(
@@ -561,6 +571,9 @@ class StrategyBotRuntime:
         halted_exposure_symbols = sorted(
             symbol for symbol in halted_symbols if self._has_data_halt_exposure(symbol)
         )
+        critical_halted_symbols = sorted(
+            symbol for symbol in halted_symbols if self._is_critical_data_halt_symbol(symbol)
+        )
         halted_open_position_symbols = sorted(
             symbol
             for symbol in halted_symbols
@@ -569,11 +582,12 @@ class StrategyBotRuntime:
         return {
             "status": (
                 "critical"
-                if halted_exposure_symbols
+                if critical_halted_symbols
                 else "degraded" if halted_symbols or warning_symbols else "healthy"
             ),
             "halted_symbols": halted_symbols,
             "exposure_halted_symbols": halted_exposure_symbols,
+            "critical_halted_symbols": critical_halted_symbols,
             "open_position_halted_symbols": halted_open_position_symbols,
             "warning_symbols": warning_symbols,
             "reasons": dict(sorted(self.data_halt_symbols.items())),
@@ -5746,6 +5760,16 @@ class StrategyEngineService:
             )
 
             schwab_intent_count, schwab_event_count = await self._drain_schwab_stream_queues()
+            bar_close_intents, completed_bar_count = self.state.flush_completed_bars()
+            for intent in bar_close_intents:
+                await self._publish_intent(intent)
+            if bar_close_intents:
+                self.logger.info(
+                    "generated %s intents from %s forced bar closes",
+                    len(bar_close_intents),
+                    completed_bar_count,
+                )
+
             schwab_fallback_intent_count = await self._monitor_schwab_symbol_health()
             bar_flow_change_count = self.state.monitor_completed_bar_flow(
                 market_data_provider_for_strategy=self.settings.market_data_provider_for_strategy,
@@ -5771,9 +5795,12 @@ class StrategyEngineService:
                         # without waiting for the next loop iteration.
                         bar_flow_change_count += self.state.monitor_completed_bar_flow(
                             market_data_provider_for_strategy=self.settings.market_data_provider_for_strategy,
-                        )
+            )
             schwab_1m_history_intent_count, schwab_1m_history_bar_count = await self._refresh_stale_schwab_1m_history()
             if (
+                bar_close_intents
+                or completed_bar_count
+                or
                 schwab_event_count
                 or schwab_intent_count
                 or schwab_fallback_intent_count
@@ -5784,20 +5811,6 @@ class StrategyEngineService:
                 await self._sync_subscription_targets()
                 await self._publish_strategy_state_snapshot()
                 self._sync_runtime_data_health_incidents()
-
-            bar_close_intents, completed_bar_count = self.state.flush_completed_bars()
-            for intent in bar_close_intents:
-                await self._publish_intent(intent)
-            if bar_close_intents:
-                await self._sync_subscription_targets()
-            if completed_bar_count:
-                await self._publish_strategy_state_snapshot()
-            if bar_close_intents:
-                self.logger.info(
-                    "generated %s intents from %s forced bar closes",
-                    len(bar_close_intents),
-                    completed_bar_count,
-                )
 
             if (utcnow() - last_runtime_db_reconcile_at).total_seconds() >= self._runtime_db_reconcile_interval_secs:
                 runtime_changed = self._reconcile_runtime_state_from_database(log_when_changed=False)
