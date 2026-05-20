@@ -348,7 +348,7 @@ Twelve PRs shipped today addressing four distinct bug classes that compounded in
   - Verify whether the runtime is failing to publish fresh heartbeats/decision snapshots after restart or whether control-plane is failing to ingest/render them.
   - Keep this separate from the AMST entry-latency and intrabar-scale fixes.
 
-### 2026-05-19 evening - control-plane Decision Tape placeholder rendering fix (local, pending deploy)
+### 2026-05-19 evening - control-plane Decision Tape placeholder rendering fix deployed
 
 - Operator-visible symptom:
   - bot pages could show an older `critical` or `warning` Decision Tape row for a live symbol even after the runtime had moved on to a current "waiting for fresh ticks / next bar" state
@@ -363,6 +363,15 @@ Twelve PRs shipped today addressing four distinct bug classes that compounded in
 - Local validation:
   - `.venv\Scripts\python.exe -m pytest tests/unit/test_control_plane.py -k "waiting_for_evaluation or pending_tick_placeholders or stale_visible_row_for_same_symbol or stale_row_is_beyond_tape_window or schwab_1m_placeholder_uses_completed_bar_freshness" -q` -> `5 passed`
   - `.venv\Scripts\python.exe -m py_compile src/project_mai_tai/services/control_plane.py tests/unit/test_control_plane.py`
+- Deploy result:
+  - local commit `288ca31` was cherry-picked onto deploy-worktree `main` as pushed/VPS SHA `c04c133`
+  - deployed to VPS via `ops/systemd/deploy_service.sh /home/trader/project-mai-tai main control`
+  - `project-mai-tai-control.service` restarted successfully at `2026-05-20 00:07:13 UTC`
+  - immediate `/health` raced startup and returned connect-failed once, but the next check succeeded with `status=degraded` due to the existing reconciler finding rather than a control-plane crash
+- Live validation:
+  - direct `http://127.0.0.1:8100/api/bots` after deploy showed `0` top-tape `pending` placeholder rows with blank `last_bar_at`
+  - live `macd_30s`, `schwab_1m`, and `polygon_30s` rows now show placeholder-backed current timestamps (`last_bar_at` / `last_tick_at`) instead of blank `bar_time`
+  - this confirms the page no longer needs an old stale persisted row to surface the current live-placeholder state for the same symbol
 
 ### 2026-05-19 afternoon - cross-bot live validation after the AMST deploy
 
