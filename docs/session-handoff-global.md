@@ -348,6 +348,22 @@ Twelve PRs shipped today addressing four distinct bug classes that compounded in
   - Verify whether the runtime is failing to publish fresh heartbeats/decision snapshots after restart or whether control-plane is failing to ingest/render them.
   - Keep this separate from the AMST entry-latency and intrabar-scale fixes.
 
+### 2026-05-19 evening - control-plane Decision Tape placeholder rendering fix (local, pending deploy)
+
+- Operator-visible symptom:
+  - bot pages could show an older `critical` or `warning` Decision Tape row for a live symbol even after the runtime had moved on to a current "waiting for fresh ticks / next bar" state
+  - placeholder rows with fresh `last_tick_at` but no completed bar were rendering with blank `bar_time`, which made the page look like a broken persisted decision row instead of a current live placeholder
+- Root cause in control-plane:
+  - `_ensure_visible_live_symbol_decision_rows()` only added placeholders for completely missing live symbols, not for live symbols whose visible row was stale relative to the current runtime `last_tick_at` / `indicator_snapshots`
+  - `_live_decision_placeholder_rows()` left `last_bar_at` empty when there was no completed bar yet, even if a fresh live tick timestamp existed
+- Fix:
+  - refresh the visible Decision Tape row for a live symbol when current runtime timestamps are newer than the visible row or when an old visible `critical` / `warning` row is no longer supported by current runtime data-health
+  - use `last_tick_at` as the placeholder timestamp fallback when no completed bar is available yet, so the page shows a current observable time instead of a blank field
+  - this is a control-plane visibility fix only; it does **not** change strategy/runtime behavior or hide real feed stalls
+- Local validation:
+  - `.venv\Scripts\python.exe -m pytest tests/unit/test_control_plane.py -k "waiting_for_evaluation or pending_tick_placeholders or stale_visible_row_for_same_symbol or stale_row_is_beyond_tape_window or schwab_1m_placeholder_uses_completed_bar_freshness" -q` -> `5 passed`
+  - `.venv\Scripts\python.exe -m py_compile src/project_mai_tai/services/control_plane.py tests/unit/test_control_plane.py`
+
 ### 2026-05-19 afternoon - cross-bot live validation after the AMST deploy
 
 - The AMST deploy fixed the proven in-process `schwab_1m` queue-starvation bug, but live validation shows there is still a **second** Schwab stream-health issue. Keep these two layers separate.

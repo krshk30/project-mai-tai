@@ -2033,6 +2033,13 @@ class ControlPlaneRepository:
             if str(item.get("symbol") or item.get("ticker") or "").strip()
             and str(item.get("last_bar_at") or "").strip()
         }
+        latest_seen_labels = {
+            str(item.get("symbol") or item.get("ticker") or "").upper(): str(
+                item.get("last_bar_at") or item.get("last_tick_at") or ""
+            )
+            for item in recent_decisions
+            if str(item.get("symbol") or item.get("ticker") or "").strip()
+        }
         bar_label = (
             "completed 1m bar"
             if str(strategy_code or "").strip().lower() == "schwab_1m"
@@ -2132,7 +2139,7 @@ class ControlPlaneRepository:
                     "path": "",
                     "score": "",
                     "price": "",
-                    "last_bar_at": last_completed_label,
+                    "last_bar_at": last_completed_label or last_tick_label or latest_seen_labels.get(symbol, ""),
                     "last_tick_at": last_tick_label,
                     "is_placeholder": True,
                 }
@@ -2157,6 +2164,11 @@ class ControlPlaneRepository:
         if visible_limit <= 0:
             return recent_decisions
         visible_window = list(recent_decisions[:visible_limit])
+        latest_visible_by_symbol: dict[str, dict[str, Any]] = {}
+        for item in visible_window:
+            symbol = str(item.get("symbol") or item.get("ticker") or "").upper()
+            if symbol and symbol not in latest_visible_by_symbol:
+                latest_visible_by_symbol[symbol] = item
         visible_symbols = {
             str(item.get("symbol") or item.get("ticker") or "").upper()
             for item in visible_window
@@ -2167,13 +2179,74 @@ class ControlPlaneRepository:
             for symbol in live_symbols
             if str(symbol).strip() and str(symbol).upper() not in visible_symbols
         }
-        if not missing_symbols:
+        latest_completed_bar_at = {
+            str(item.get("symbol") or item.get("ticker") or "").upper(): str(item.get("last_bar_at") or "")
+            for item in indicator_snapshots
+            if str(item.get("symbol") or item.get("ticker") or "").strip()
+            and str(item.get("last_bar_at") or "").strip()
+        }
+        halted_symbols = {
+            str(symbol).upper()
+            for symbol in list(data_health.get("halted_symbols", []) or [])
+            if str(symbol).strip()
+        }
+        warning_symbols = {
+            str(symbol).upper()
+            for symbol in list(data_health.get("warning_symbols", []) or [])
+            if str(symbol).strip()
+        }
+
+        def _latest_observed_label(*labels: str) -> tuple[str, datetime | None]:
+            best_label = ""
+            best_dt: datetime | None = None
+            for label in labels:
+                parsed = _parse_eastern_label(label)
+                if parsed is None:
+                    continue
+                if best_dt is None or parsed > best_dt:
+                    best_dt = parsed
+                    best_label = label
+            return best_label, best_dt
+
+        refresh_symbols: set[str] = set()
+        for symbol in sorted(live_symbols):
+            latest_row = latest_visible_by_symbol.get(str(symbol).upper())
+            if latest_row is None:
+                continue
+            _current_label, current_dt = _latest_observed_label(
+                str(latest_completed_bar_at.get(symbol, "") or ""),
+                str(last_tick_at.get(symbol, "") or ""),
+            )
+            if current_dt is None:
+                continue
+            _row_label, row_dt = _latest_observed_label(
+                str(latest_row.get("last_bar_at", "") or ""),
+                str(latest_row.get("last_tick_at", "") or ""),
+            )
+            if row_dt is None or current_dt > row_dt:
+                refresh_symbols.add(symbol)
+                continue
+            if (
+                symbol not in halted_symbols
+                and symbol not in warning_symbols
+                and not bool(latest_row.get("is_placeholder"))
+                and str(latest_row.get("status", "") or "").lower() in {"critical", "warning"}
+            ):
+                refresh_symbols.add(symbol)
+
+        target_symbols = missing_symbols | refresh_symbols
+        if not target_symbols:
             return recent_decisions
+        placeholder_seed_rows = [
+            item
+            for item in visible_window
+            if str(item.get("symbol") or item.get("ticker") or "").upper() not in refresh_symbols
+        ]
         placeholders = self._live_decision_placeholder_rows(
             strategy_code=strategy_code,
             interval_secs=interval_secs,
-            live_symbols=missing_symbols,
-            recent_decisions=visible_window,
+            live_symbols=target_symbols,
+            recent_decisions=placeholder_seed_rows,
             bar_counts=bar_counts,
             last_tick_at=last_tick_at,
             indicator_snapshots=indicator_snapshots,
