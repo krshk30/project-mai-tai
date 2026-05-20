@@ -535,6 +535,41 @@ def test_schwab_streamer_skips_levelone_trade_when_symbol_uses_timesale() -> Non
     assert bars == []
 
 
+def test_schwab_streamer_keeps_levelone_trade_until_timesale_is_confirmed() -> None:
+    client = SchwabStreamerClient(Settings())
+    client._desired_timesale_symbols = {"SNBR"}
+    trades_seen = []
+    client._on_trade = trades_seen.append
+
+    async def _run() -> None:
+        payload = {
+            "data": [
+                {
+                    "service": "LEVELONE_EQUITIES",
+                    "content": [
+                        {
+                            "key": "SNBR",
+                            "1": "3.38",
+                            "2": "3.40",
+                            "3": "3.39",
+                            "4": "10",
+                            "5": "12",
+                            "8": "6611",
+                            "9": "100",
+                            "35": "1777410960000",
+                        }
+                    ],
+                }
+            ]
+        }
+        await client._handle_message(json.dumps(payload))
+
+    asyncio.run(_run())
+
+    assert len(trades_seen) == 1
+    assert trades_seen[0].symbol == "SNBR"
+
+
 def test_schwab_streamer_uses_subs_for_initial_chart_equity_subscription() -> None:
     client = SchwabStreamerClient(Settings())
     client._credentials = SchwabStreamerCredentials(
@@ -636,6 +671,30 @@ def test_schwab_streamer_falls_back_to_levelone_trade_when_timesale_is_rejected(
     assert len(trades_seen) == 1
     assert trades_seen[0].symbol == "SNBR"
     assert trades_seen[0].price == 3.39
+    assert client._timesale_service_available is False
+    assert client._subscribed_timesale_symbols == set()
+
+
+def test_schwab_streamer_disables_timesale_after_inactivity_when_levelone_is_alive(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = SchwabStreamerClient(Settings())
+    client._connected = True
+    client._timesale_service_available = True
+    now = 100.0
+    client._service_states[client.LEVELONE_EQUITIES_SERVICE].confirmed_symbols = {"SNBR"}
+    client._service_states[client.LEVELONE_EQUITIES_SERVICE].last_message_monotonic = now
+    client._service_states[client.TIMESALE_EQUITY_SERVICE].confirmed_symbols = {"SNBR"}
+    client._service_states[client.TIMESALE_EQUITY_SERVICE].last_message_monotonic = 0.0
+    client._subscribed_timesale_symbols = {"SNBR"}
+
+    class _FakeLoop:
+        def time(self) -> float:
+            return now
+
+    monkeypatch.setattr(asyncio, "get_running_loop", lambda: _FakeLoop())
+    asyncio.run(client._handle_service_liveness_timeout())
+
     assert client._timesale_service_available is False
     assert client._subscribed_timesale_symbols == set()
 
