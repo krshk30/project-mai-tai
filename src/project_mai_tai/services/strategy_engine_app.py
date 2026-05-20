@@ -8,7 +8,6 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from time import perf_counter
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -8712,7 +8711,6 @@ class StrategyEngineService:
 
         restored_pairs = 0
         session_start_utc = self._current_strategy_session_start_utc()
-        started_at = perf_counter()
 
         try:
             with self.session_factory() as session:
@@ -8743,9 +8741,8 @@ class StrategyEngineService:
 
         if restored_pairs:
             self.logger.info(
-                "restored runtime bar history from database | symbol_pairs=%s elapsed_secs=%.2f",
+                "restored runtime bar history from database | symbol_pairs=%s",
                 restored_pairs,
-                perf_counter() - started_at,
             )
 
     def _load_runtime_restore_bars(
@@ -8774,19 +8771,11 @@ class StrategyEngineService:
                 StrategyBarHistory.interval_secs == runtime.definition.interval_secs,
                 StrategyBarHistory.bar_time >= session_start_utc,
             )
+            .order_by(StrategyBarHistory.bar_time.asc())
         )
         if history_limit is not None:
-            records = list(
-                reversed(
-                    list(
-                        session.scalars(
-                            query.order_by(StrategyBarHistory.bar_time.desc()).limit(history_limit)
-                        ).all()
-                    )
-                )
-            )
-        else:
-            records = list(session.scalars(query.order_by(StrategyBarHistory.bar_time.asc())).all())
+            query = query.limit(history_limit)
+        records = list(session.scalars(query).all())
         return self._strategy_bar_history_records_to_payloads(records)
 
     def _load_schwab_1m_runtime_restore_bars(
@@ -8858,18 +8847,11 @@ class StrategyEngineService:
     def _runtime_bar_history_restore_limit(self, runtime: StrategyBotRuntime) -> int | None:
         trading_config = runtime.definition.trading_config
         indicator_config = runtime.definition.indicator_config
+        if runtime.definition.code in {"macd_30s", "polygon_30s"} and runtime.definition.interval_secs == 30:
+            return None
         indicator_min_bars = int(indicator_config.macd_slow + indicator_config.macd_signal)
         strategy_min_bars = int(getattr(trading_config, "schwab_native_warmup_bars_required", 0) or 0)
-        required_bars = max(indicator_min_bars, strategy_min_bars, 1)
-        if runtime.definition.code == "schwab_1m" and runtime.definition.interval_secs == 60:
-            return required_bars
-        if runtime.definition.interval_secs <= 30:
-            # Restarts only need enough recent history to rebuild indicators and
-            # entry-engine context. Loading the entire 04:00+ session for every
-            # 30s symbol made late-day restarts take several minutes and delayed
-            # Schwab subscription recovery.
-            return max(required_bars * 4, required_bars, 120)
-        return max(required_bars * 4, required_bars)
+        return max(indicator_min_bars, strategy_min_bars, 1)
 
     def _current_strategy_session_start_utc(self) -> datetime:
         return current_scanner_session_start_utc(self.state.alert_engine.now_provider())
