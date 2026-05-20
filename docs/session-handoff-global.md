@@ -373,6 +373,33 @@ Twelve PRs shipped today addressing four distinct bug classes that compounded in
   - live `macd_30s`, `schwab_1m`, and `polygon_30s` rows now show placeholder-backed current timestamps (`last_bar_at` / `last_tick_at`) instead of blank `bar_time`
   - this confirms the page no longer needs an old stale persisted row to surface the current live-placeholder state for the same symbol
 
+### 2026-05-20 premarket - stale scanner carryover fixed; live alerts recovered
+
+- Operator-reported failure right before premarket:
+  - momentum scanner still showed yesterday's confirmed names
+  - bots were silent / watchlists empty even though fresh market data was flowing
+- Proven live state before the fix:
+  - `/api/overview` showed `scanner.watchlist_count=30` from stale restored names, but all three bots had empty live watchlists and `active_subscription_symbols=0`
+  - Redis showed `market-data-subscriptions` replace `[]` at `2026-05-20 08:00:08 UTC`
+  - strategy had rolled the new session at `2026-05-20 08:00:11 UTC`, but control-plane kept restoring the old non-empty scanner snapshot
+- Root cause:
+  - `StrategyEngineService._persist_scanner_snapshots()` could leave the previous session's `scanner_confirmed_last_nonempty` snapshot in place when the fresh session was genuinely empty
+  - control-plane then restored that stale non-empty snapshot into the scanner view even though live runtime state had already rolled empty
+- Fix:
+  - when the current live summary has an empty watchlist, `scanner_confirmed_last_nonempty` is now overwritten with an empty current-session payload instead of preserving the old non-empty session view
+  - local test added: `test_persist_scanner_snapshots_clears_last_nonempty_when_current_watchlist_is_empty`
+- Local validation:
+  - `.venv\Scripts\python.exe -m pytest tests/unit/test_strategy_engine_service.py -k "persist_scanner_snapshots_clears_last_nonempty_when_current_watchlist_is_empty or seeded_confirmed_candidates_skip_unmarked_snapshot_even_if_recent or seeded_confirmed_candidates_skip_prior_session_snapshot or publish_strategy_state_persists_scanner_cycle_history_snapshot" -q` -> `4 passed`
+- Deploy/result:
+  - local commit `15b6484` was cherry-picked onto deploy-worktree `main` as VPS/pushed SHA `67f32ec`
+  - strategy service restarted successfully on VPS at `2026-05-20 10:16 UTC`
+  - post-fix live evidence at `06:18:55 ET`:
+    - `strategy-engine` heartbeats and `strategy-state` stream present again
+    - `scanner.watchlist_count=1`, `all_confirmed_count=1`, `active_subscription_symbols=1`
+    - live confirmed symbol was `MWC`
+    - `recent_alerts_count=10` with fresh `VOLUME_SPIKE` rows and `MWC` `SQUEEZE_5MIN`
+    - all three bots (`macd_30s`, `polygon_30s`, `schwab_1m`) had `watchlist=["MWC"]`
+
 ### 2026-05-19 afternoon - cross-bot live validation after the AMST deploy
 
 - The AMST deploy fixed the proven in-process `schwab_1m` queue-starvation bug, but live validation shows there is still a **second** Schwab stream-health issue. Keep these two layers separate.
