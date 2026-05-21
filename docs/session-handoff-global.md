@@ -481,6 +481,29 @@ Twelve PRs shipped today addressing four distinct bug classes that compounded in
   - a fresh 30-minute live validation is required on active `schwab_1m` names to confirm:
     - no false freshness block when `CHART_EQUITY` receive lag is only a few seconds
     - replay only fires when the live 1m bar is truly missing, not merely late in our local drain/persist path
+- 30-minute live validation result:
+  - **not clean / not closed**
+  - current `schwab_1m` bot state after the deploy:
+    - `watchlist_count=11`
+    - `listening_state=STALE`
+    - `latest_decision_at=2026-05-21 11:43:00 AM ET`
+    - `latest_market_data_at=2026-05-21 11:46:05 AM ET`
+    - `latest_heartbeat_at=2026-05-21 11:45:27 AM ET`
+  - post-deploy logs still show repeated:
+    - `forced full Schwab streamer reconnect for stale schwab_1m cluster`
+    - `replayed ... fresh Schwab 1m history bars`
+    - `ignoring delayed Schwab live bar ... because fresh history already replayed through ...`
+  - analyzer proves the remaining issue is mixed, not a single bucket:
+    - `AUUD 10:06` — `receive_lag_s=5.046`, but `persist_created_lag_s=315.908` -> local post-receive delay still real
+    - `AUUD 10:10` — no live bar archived at all -> `history_only_or_missing_live_bar`
+    - `AUUD 10:12` — `receive_lag_s=2.914`, but replay won first -> `history_replay_before_live_bar_arrived`
+    - `BESS 11:43` — `receive_lag_s=2.107`, but `persist_created_lag_s=84.455` -> local post-receive delay
+    - `MNTS 11:44` — `receive_lag_s=5.387`, but `persist_created_lag_s=91.989` -> local post-receive delay
+    - `CODX/IONZ/VIDA/RGTZ/RYOJ 10:07-10:09` — many `receive_lag_s ~ 24-97s` -> live `CHART_EQUITY` bars also still arriving late
+  - operational conclusion:
+    - the deployed receive-vs-replay fix improved **classification** and prevents us from blaming every stale minute on the same false freshness reason
+    - but it did **not** resolve the real stale-chain problem on live `schwab_1m`
+    - remaining work is still on the `schwab_1m` completed-bar path / stream lifecycle, not on strategy rules
 
 ### 2026-05-20 evening - permanent Schwab streamer and 30s-finalization fix deployed
 
