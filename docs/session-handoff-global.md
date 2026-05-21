@@ -474,8 +474,25 @@ Twelve PRs shipped today addressing four distinct bug classes that compounded in
   - `python -m pytest tests/unit/test_strategy_engine_service.py -k "bar_driver_activity_ignores_duplicate_trade_payload_timestamps or refresh_stale_schwab_1m_history or clustered_lag" -q` -> `4 passed`
   - `python -m py_compile src/project_mai_tai/strategy_core/schwab_native_30s.py src/project_mai_tai/services/strategy_engine_app.py tests/unit/test_strategy_core.py tests/unit/test_strategy_engine_service.py`
 - Deploy status:
-  - local only at this point in the handoff update
-  - next live check should confirm that weak symbols like `AUUD` fall into the "no advancing market event" bucket instead of manufacturing false `bar builder stalled` pressure
+  - pushed to `origin/main` as `9639204` (`Ignore duplicate stale Schwab packets in freshness guards`)
+  - VPS `/home/trader/project-mai-tai` fast-forwarded to `9639204`
+  - `project-mai-tai-strategy.service` restarted at `2026-05-21 18:40:19 UTC`
+- Post-deploy validation:
+  - strategy engine recovered normally after warmup:
+    - `Schwab streamer connected` at `18:41:11 UTC`
+    - snapshot batches resumed immediately after prefill
+    - `/health` later showed `strategy-engine=healthy`, `schwab_stream_connected=true`, `engine_started_at=2026-05-21T18:40:21.032635+00:00`
+  - the `AUUD` duplicate-stale-packet class is now separated from the active validation set:
+    - raw archive proved its `trade` / `live_bar` payloads were exact duplicates with frozen source timestamps while only receipt time advanced
+    - after restart, `AUUD` was no longer the active reproducer; watchlist rotated away before a same-symbol recheck
+  - a real remaining `schwab_1m` issue still exists on active names like `NIVF`:
+    - raw archive after restart showed **advancing** trades through `15:50 ET`
+    - a completed `live_bar` for `15:49` arrived at `15:50:02 ET`
+    - Decision Tape still showed `bar builder stalled` on `NIVF` through `15:49 ET`
+  - operational conclusion:
+    - this deploy fixes one false-stale class (`duplicate stale packets counted as fresh activity`)
+    - it does **not** close the remaining genuine `schwab_1m` live-bar path issue
+    - next root-cause pass should focus on why active symbols like `NIVF` can have advancing trades but still keep the 1m builder in a stalled state
 
 ### 2026-05-21 morning - `ATPC` proved `schwab_1m` splits into missing-live-bar vs late-after-receive, and the receive-vs-replay fix is now deployed
 
