@@ -329,6 +329,7 @@ class StrategyBotRuntime:
         self.indicator_overlay_provider = indicator_overlay_provider
         self.extended_hours_vwap_provider = extended_hours_vwap_provider
         self._last_live_bar_received_at: dict[str, datetime] = {}
+        self._recent_live_bar_delivery: dict[str, dict[float, tuple[datetime | None, datetime | None, str]]] = {}
         self._live_aggregate_skipped_bucket_start: dict[str, float] = {}
         self._live_aggregate_trade_tick_counts: dict[str, dict[float, int]] = {}
         self._history_seed_attempted: set[str] = set()
@@ -755,6 +756,9 @@ class StrategyBotRuntime:
         *,
         completed_bar: OHLCVBar | None = None,
         tick_timestamp: float | None = None,
+        completed_bar_received_at: datetime | None = None,
+        completed_bar_recorded_at: datetime | None = None,
+        completed_bar_source: str = "live",
     ) -> str | None:
         if not isinstance(self.builder_manager, SchwabNativeBarBuilderManager):
             return None
@@ -769,13 +773,42 @@ class StrategyBotRuntime:
 
         if completed_bar is not None:
             bar_close_ts = float(completed_bar.timestamp) + float(interval)
-            close_lag_secs = now_ts - bar_close_ts
-            if limit_secs < close_lag_secs <= max_live_lag_secs:
+            bar_close_at = datetime.fromtimestamp(bar_close_ts, UTC)
+            receive_lag_secs: float | None = None
+            record_lag_secs: float | None = None
+            if completed_bar_received_at is not None:
+                receive_lag_secs = (
+                    completed_bar_received_at.astimezone(UTC) - bar_close_at
+                ).total_seconds()
+            if completed_bar_recorded_at is not None:
+                record_lag_secs = (
+                    completed_bar_recorded_at.astimezone(UTC) - bar_close_at
+                ).total_seconds()
+            if receive_lag_secs is not None and limit_secs < receive_lag_secs <= max_live_lag_secs:
                 return (
                     "Schwab entry freshness guard: "
-                    f"completed bar arrived {close_lag_secs:.1f}s after close "
+                    f"completed bar arrived {receive_lag_secs:.1f}s after close "
                     f"(limit {limit_secs:.1f}s); new entries blocked"
                 )
+            if (
+                str(completed_bar_source).strip().lower() == "history"
+                and receive_lag_secs is None
+            ):
+                replay_lag_secs = now_ts - bar_close_ts
+                if limit_secs < replay_lag_secs <= max_live_lag_secs:
+                    return (
+                        "Schwab entry freshness guard: "
+                        f"completed live bar missing from Schwab stream; history replay filled after {replay_lag_secs:.1f}s "
+                        f"(limit {limit_secs:.1f}s); new entries blocked"
+                    )
+            if receive_lag_secs is None and record_lag_secs is None:
+                close_lag_secs = now_ts - bar_close_ts
+                if limit_secs < close_lag_secs <= max_live_lag_secs:
+                    return (
+                        "Schwab entry freshness guard: "
+                        f"completed bar arrived {close_lag_secs:.1f}s after close "
+                        f"(limit {limit_secs:.1f}s); new entries blocked"
+                    )
 
         if tick_timestamp is not None:
             tick_lag_secs = now_ts - float(tick_timestamp)
@@ -1178,11 +1211,25 @@ class StrategyBotRuntime:
         timestamp: float,
         trade_count: int = 1,
         coverage_started_at: float | None = None,
+        live_bar_received_at: datetime | None = None,
+        live_bar_recorded_at: datetime | None = None,
+        live_bar_source: str = "live",
     ) -> list[TradeIntentEvent]:
         self._roll_day_if_needed()
         normalized_symbol = str(symbol).upper()
         self._last_tick_at[normalized_symbol] = self._normalize_now(self.now_provider())
-        self._last_live_bar_received_at[normalized_symbol] = self._normalize_now(self.now_provider())
+        normalized_source = str(live_bar_source or "live").strip().lower() or "live"
+        if normalized_source == "live":
+            self._last_live_bar_received_at[normalized_symbol] = self._normalize_now(
+                live_bar_received_at or self.now_provider()
+            )
+        self._remember_live_bar_delivery(
+            normalized_symbol,
+            timestamp=float(timestamp),
+            received_at=live_bar_received_at,
+            recorded_at=live_bar_recorded_at,
+            source=normalized_source,
+        )
         intents: list[TradeIntentEvent] = []
 
         position = self.positions.get_position(symbol)
@@ -1223,7 +1270,15 @@ class StrategyBotRuntime:
                 if prewarm_only:
                     self._finalize_prewarm_completed_bar(symbol)
                 else:
-                    intents.extend(self._evaluate_completed_bar(symbol, completed_bar=_bar))
+                    intents.extend(
+                        self._evaluate_completed_bar(
+                            symbol,
+                            completed_bar=_bar,
+                            completed_bar_received_at=live_bar_received_at,
+                            completed_bar_recorded_at=live_bar_recorded_at,
+                            completed_bar_source=normalized_source,
+                        )
+                    )
                     self._advance_gap_recovery(symbol, _bar)
             return intents
 
@@ -1708,6 +1763,7 @@ class StrategyBotRuntime:
         self.builder_manager.reset()
         self._applied_fill_quantity_by_order.clear()
         self._last_live_bar_received_at.clear()
+        self._recent_live_bar_delivery.clear()
         self._live_aggregate_skipped_bucket_start.clear()
         self._live_aggregate_trade_tick_counts.clear()
         self._history_seed_attempted.clear()
@@ -1737,11 +1793,34 @@ class StrategyBotRuntime:
         active.update(self.prewarm_symbols)
         return active
 
+    def _remember_live_bar_delivery(
+        self,
+        symbol: str,
+        *,
+        timestamp: float,
+        received_at: datetime | None,
+        recorded_at: datetime | None,
+        source: str,
+    ) -> None:
+        entries = self._recent_live_bar_delivery.setdefault(symbol, {})
+        entries[float(timestamp)] = (
+            self._normalize_now(received_at) if received_at is not None else None,
+            self._normalize_now(recorded_at) if recorded_at is not None else None,
+            str(source or "live").strip().lower() or "live",
+        )
+        cutoff = float(timestamp) - (float(self.definition.interval_secs) * 12.0)
+        stale_keys = [bar_ts for bar_ts in entries if bar_ts < cutoff]
+        for stale_key in stale_keys:
+            entries.pop(stale_key, None)
+
     def _evaluate_completed_bar(
         self,
         symbol: str,
         *,
         completed_bar: OHLCVBar | None = None,
+        completed_bar_received_at: datetime | None = None,
+        completed_bar_recorded_at: datetime | None = None,
+        completed_bar_source: str = "live",
     ) -> list[TradeIntentEvent]:
         builder = self.builder_manager.get_builder(symbol)
         if builder is None:
@@ -1907,6 +1986,9 @@ class StrategyBotRuntime:
         freshness_block_reason = self._entry_freshness_block_reason(
             symbol,
             completed_bar=completed_bar,
+            completed_bar_received_at=completed_bar_received_at,
+            completed_bar_recorded_at=completed_bar_recorded_at,
+            completed_bar_source=completed_bar_source,
         )
         if freshness_block_reason:
             self._apply_entry_freshness_warning(symbol, freshness_block_reason)
@@ -3393,6 +3475,11 @@ class StrategyBotRuntime:
             for symbol, bucket_start in self._live_aggregate_skipped_bucket_start.items()
             if symbol in keep
         }
+        self._recent_live_bar_delivery = {
+            symbol: entries
+            for symbol, entries in self._recent_live_bar_delivery.items()
+            if symbol in keep
+        }
         self.entry_engine.prune_tickers(keep)
         self.builder_manager.remove_tickers(
             {ticker for ticker in self.builder_manager.get_all_tickers() if ticker not in keep}
@@ -4349,6 +4436,9 @@ class StrategyEngineState:
         timestamp: float,
         trade_count: int = 1,
         coverage_started_at: float | None = None,
+        live_bar_received_at: datetime | None = None,
+        live_bar_recorded_at: datetime | None = None,
+        live_bar_source: str = "live",
         strategy_codes: Sequence[str] | None = None,
         exclude_codes: Sequence[str] | None = None,
     ) -> list[TradeIntentEvent]:
@@ -4372,6 +4462,9 @@ class StrategyEngineState:
                     timestamp=timestamp,
                     trade_count=trade_count,
                     coverage_started_at=coverage_started_at,
+                    live_bar_received_at=live_bar_received_at,
+                    live_bar_recorded_at=live_bar_recorded_at,
+                    live_bar_source=live_bar_source,
                 )
             )
         return intents
@@ -5632,6 +5725,8 @@ class StrategyEngineService:
         self._schwab_stream_disconnected_since: datetime | None = None
         self._schwab_1m_last_history_refresh_at: dict[str, datetime] = {}
         self._schwab_1m_history_replay_authority_until_timestamp: dict[str, float] = {}
+        self._schwab_1m_last_enqueued_live_bar_timestamp: dict[str, float] = {}
+        self._schwab_1m_last_enqueued_live_bar_received_at: dict[str, datetime] = {}
         self._schwab_1m_history_refresh_interval_secs = 15
         self._schwab_cluster_reconnect_threshold = 4
         self._schwab_cluster_reconnect_cooldown_secs = 30.0
@@ -7033,6 +7128,31 @@ class StrategyEngineService:
         if current is not None and live_bar_timestamp > current:
             self._schwab_1m_history_replay_authority_until_timestamp.pop(normalized, None)
 
+    def _remember_schwab_1m_enqueued_live_bar(
+        self,
+        symbol: str,
+        *,
+        live_bar_timestamp: float,
+        received_at_ns: int,
+    ) -> None:
+        normalized = str(symbol).upper()
+        current = self._schwab_1m_last_enqueued_live_bar_timestamp.get(normalized)
+        if current is None or live_bar_timestamp >= current:
+            self._schwab_1m_last_enqueued_live_bar_timestamp[normalized] = float(live_bar_timestamp)
+            self._schwab_1m_last_enqueued_live_bar_received_at[normalized] = datetime.fromtimestamp(
+                received_at_ns / 1_000_000_000,
+                UTC,
+            )
+
+    def _schwab_1m_live_bar_already_received(
+        self,
+        symbol: str,
+        *,
+        minimum_timestamp: float,
+    ) -> bool:
+        latest_timestamp = self._schwab_1m_last_enqueued_live_bar_timestamp.get(str(symbol).upper())
+        return latest_timestamp is not None and latest_timestamp >= float(minimum_timestamp)
+
     async def _maybe_force_schwab_stream_reconnect_for_stale_1m_cluster(
         self,
         *,
@@ -7121,6 +7241,11 @@ class StrategyEngineService:
                 and latest_runtime_completed >= expected_latest_completed
             ):
                 continue
+            if self._schwab_1m_live_bar_already_received(
+                normalized,
+                minimum_timestamp=expected_latest_completed,
+            ):
+                continue
 
             self._schwab_1m_last_history_refresh_at[normalized] = now
             bars = await self._load_schwab_history_bars(
@@ -7158,6 +7283,7 @@ class StrategyEngineService:
                     volume=int(bar["volume"]),
                     timestamp=float(bar["timestamp"]),
                     trade_count=int(bar.get("trade_count", 1) or 1),
+                    live_bar_source="history",
                     strategy_codes=("schwab_1m",),
                 )
                 for intent in intents:
@@ -7222,6 +7348,11 @@ class StrategyEngineService:
                 and latest_runtime_completed >= expected_latest_completed
             ):
                 continue
+            if self._schwab_1m_live_bar_already_received(
+                normalized,
+                minimum_timestamp=expected_latest_completed,
+            ):
+                continue
 
             self._schwab_1m_last_history_refresh_at[normalized] = now
             bars = await self._load_schwab_history_bars(
@@ -7259,6 +7390,7 @@ class StrategyEngineService:
                     volume=int(bar["volume"]),
                     timestamp=float(bar["timestamp"]),
                     trade_count=int(bar.get("trade_count", 1) or 1),
+                    live_bar_source="history",
                     strategy_codes=("schwab_1m",),
                 )
                 for intent in intents:
@@ -7599,7 +7731,14 @@ class StrategyEngineService:
     def _enqueue_schwab_live_bar(self, record: LiveBarRecord) -> None:
         if not self._should_keep_schwab_live_bar(record.symbol, interval_secs=record.interval_secs):
             return
-        self._schwab_bar_queue.put_nowait((record, time_ns()))
+        received_at_ns = time_ns()
+        if int(record.interval_secs) == 60:
+            self._remember_schwab_1m_enqueued_live_bar(
+                record.symbol,
+                live_bar_timestamp=float(record.timestamp),
+                received_at_ns=received_at_ns,
+            )
+        self._schwab_bar_queue.put_nowait((record, received_at_ns))
 
     def _should_keep_schwab_quote_tick(self, symbol: str) -> bool:
         normalized = str(symbol).upper()
@@ -7667,11 +7806,12 @@ class StrategyEngineService:
             bar, received_at_ns = await self._schwab_bar_queue.get()
             event_count += 1
             self._record_schwab_stream_activity(bar.symbol, activity_kind="bar")
+            recorded_at_ns = time_ns()
             if self._schwab_tick_archive is not None:
                 self._schwab_tick_archive.record_live_bar(
                     bar,
                     received_at_ns=received_at_ns,
-                    recorded_at_ns=time_ns(),
+                    recorded_at_ns=recorded_at_ns,
                 )
             if int(bar.interval_secs) == 60:
                 replay_authority = self._schwab_1m_history_replay_authority_until_timestamp.get(
@@ -7705,6 +7845,9 @@ class StrategyEngineService:
                     if bar.coverage_started_at is not None
                     else None
                 ),
+                live_bar_received_at=datetime.fromtimestamp(received_at_ns / 1_000_000_000, UTC),
+                live_bar_recorded_at=datetime.fromtimestamp(recorded_at_ns / 1_000_000_000, UTC),
+                live_bar_source="live",
                 strategy_codes=strategy_codes,
             )
             for intent in intents:

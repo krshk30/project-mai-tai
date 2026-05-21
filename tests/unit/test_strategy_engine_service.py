@@ -3628,6 +3628,106 @@ def test_macd_30s_blocks_new_entry_when_completed_bar_arrives_late(monkeypatch) 
     assert bot.data_health_summary()["warning_symbols"] == ["UGRO"]
 
 
+def test_schwab_1m_does_not_block_when_live_bar_was_received_on_time(monkeypatch) -> None:
+    now = datetime(2026, 3, 28, 10, 0, 35)
+    state = StrategyEngineState(
+        settings=make_test_settings(strategy_macd_30s_enabled=False, strategy_schwab_1m_enabled=True),
+        now_provider=lambda: now,
+    )
+    bot = state.bots["schwab_1m"]
+    bot.set_watchlist(["UGRO"])
+    now_ts = now.replace(tzinfo=EASTERN_TZ).timestamp()
+    bar_ts = now_ts - 95.0
+    state.seed_bars(
+        "schwab_1m",
+        "UGRO",
+        seed_trending_bars(start_timestamp=now_ts - 60.0 * 56, interval_secs=60),
+    )
+    monkeypatch.setattr(
+        bot.indicator_engine,
+        "calculate",
+        lambda bars: {"price": float(bars[-1]["close"]), "bar_timestamp": float(bars[-1]["timestamp"])},
+    )
+    entry_checks = {"count": 0}
+
+    def fake_check_entry(*_args, **_kwargs):
+        entry_checks["count"] += 1
+        return None
+
+    monkeypatch.setattr(bot.entry_engine, "check_entry", fake_check_entry)
+
+    intents = bot._evaluate_completed_bar(
+        "UGRO",
+        completed_bar=OHLCVBar(
+            open=2.7,
+            high=2.9,
+            low=2.65,
+            close=2.8,
+            volume=25_000,
+            timestamp=bar_ts,
+            trade_count=12,
+        ),
+        completed_bar_received_at=datetime(2026, 3, 28, 10, 0, 3, tzinfo=EASTERN_TZ),
+        completed_bar_recorded_at=datetime(2026, 3, 28, 10, 0, 35, tzinfo=EASTERN_TZ),
+        completed_bar_source="live",
+    )
+
+    assert intents == []
+    assert entry_checks["count"] == 1
+    assert bot.recent_decisions[0]["status"] != "blocked"
+    assert "Schwab entry freshness guard" not in bot.recent_decisions[0]["reason"]
+    assert bot.data_health_summary()["warning_symbols"] == []
+
+
+def test_schwab_1m_history_replay_reason_distinguishes_missing_live_bar(monkeypatch) -> None:
+    now = datetime(2026, 3, 28, 10, 0, 0)
+    state = StrategyEngineState(
+        settings=make_test_settings(strategy_macd_30s_enabled=False, strategy_schwab_1m_enabled=True),
+        now_provider=lambda: now,
+    )
+    bot = state.bots["schwab_1m"]
+    bot.set_watchlist(["UGRO"])
+    now_ts = now.replace(tzinfo=EASTERN_TZ).timestamp()
+    stale_bar_ts = now_ts - 120.0
+    state.seed_bars(
+        "schwab_1m",
+        "UGRO",
+        seed_trending_bars(start_timestamp=now_ts - 60.0 * 56, interval_secs=60),
+    )
+    monkeypatch.setattr(
+        bot.indicator_engine,
+        "calculate",
+        lambda bars: {"price": float(bars[-1]["close"]), "bar_timestamp": float(bars[-1]["timestamp"])},
+    )
+    entry_checks = {"count": 0}
+
+    def fake_check_entry(*_args, **_kwargs):
+        entry_checks["count"] += 1
+        return None
+
+    monkeypatch.setattr(bot.entry_engine, "check_entry", fake_check_entry)
+
+    intents = bot._evaluate_completed_bar(
+        "UGRO",
+        completed_bar=OHLCVBar(
+            open=2.7,
+            high=2.9,
+            low=2.65,
+            close=2.8,
+            volume=25_000,
+            timestamp=stale_bar_ts,
+            trade_count=12,
+        ),
+        completed_bar_source="history",
+    )
+
+    assert intents == []
+    assert entry_checks["count"] == 0
+    assert bot.recent_decisions[0]["status"] == "blocked"
+    assert "missing from Schwab stream; history replay filled after 60.0s" in bot.recent_decisions[0]["reason"]
+    assert bot.data_health_summary()["warning_symbols"] == ["UGRO"]
+
+
 def test_runtime_bar_flow_monitor_halts_and_recovers_stale_completed_bar() -> None:
     state = StrategyEngineState(settings=make_test_settings(), now_provider=fixed_now)
     bot = state.bots["macd_30s"]

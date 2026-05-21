@@ -441,6 +441,43 @@ Today's 14 PRs from 2026-05-18 still need RTH stress test. Originally scheduled 
 
 Twelve PRs shipped today addressing four distinct bug classes that compounded into the AUUD/QNCX/SBFM stuck-order incident the operator witnessed. All deployed live. VPS HEAD `03bf291` (PR #180) at session end.
 
+### 2026-05-21 morning - `ATPC` proved `schwab_1m` splits into missing-live-bar vs late-after-receive, and a local fix is ready
+
+- Production `ATPC` audit against:
+  - raw Schwab archive `/var/lib/project-mai-tai/schwab_ticks/2026-05-21/ATPC.jsonl`
+  - persisted `StrategyBarHistory`
+  - live `/api/bots`
+  - `strategy.log`
+- What the evidence showed:
+  - `macd_30s` runtime was healthy for `ATPC`:
+    - runtime `last_bar_at` reached `07:01:30 AM ET`
+    - raw Schwab trade stream was timely (`max_receive_lag_s ~= 4.164`)
+    - this is why `ATPC` did **not** show the same freshness error on the 30s Schwab bot
+  - `schwab_1m` was the broken path:
+    - stale span around `06:33-06:43 AM ET` had many timely `trade` events but **zero matching `live_bar` rows** in the raw archive
+    - those 1m bars later appeared in persisted `StrategyBarHistory` only via history replay
+    - analyzer classified those minutes as `history_only_or_missing_live_bar`
+  - later recovery span around `07:00-07:03 AM ET` showed a second bucket:
+    - live `CHART_EQUITY` bars were **received on time** (`close_lag_recv_s ~= 2-4s`)
+    - but some were only **recorded/persisted** `~12-43s` after close
+    - so the current `schwab_1m` freshness guard can still blame the bar as "late" even when the actual Schwab receive time was fine
+- Local code fix implemented (NOT DEPLOYED YET in this pass):
+  - `src/project_mai_tai/services/strategy_engine_app.py`
+    - `schwab_1m` live-bar path now carries explicit `live_bar_received_at` and `live_bar_recorded_at`
+    - entry freshness for canonical `schwab_1m` bars now prefers **receive lag** over implicit persist lag
+    - history-replayed `schwab_1m` bars now surface a distinct reason:
+      - `completed live bar missing from Schwab stream; history replay filled after ...`
+    - history replay now skips a symbol when the expected 1m `CHART_EQUITY` bar has already been enqueued/received locally but has not drained yet
+- Focused local validation:
+  - `python -m pytest tests/unit/test_strategy_engine_service.py -k "schwab_stream_queue_drain or completed_bar_arrives_late or received_on_time or history_replay_reason" -q` -> `7 passed`
+  - `python -m pytest tests/unit/test_schwab_1m_bot.py -k "history_refresh_replays_missing_completed_bar or history_refresh_ignores_prior_session_bars or skips_replay_when_live_bar_is_already_received" -q` -> `3 passed`
+  - `python -m py_compile src/project_mai_tai/services/strategy_engine_app.py tests/unit/test_strategy_engine_service.py tests/unit/test_schwab_1m_bot.py`
+- Immediate next action:
+  - deploy this `schwab_1m` receive-vs-replay fix
+  - then re-check `ATPC` or another active Schwab name to confirm:
+    - no false freshness block when `CHART_EQUITY` receive lag is only a few seconds
+    - replay only fires when the live 1m bar is truly missing, not merely late in our local drain/persist path
+
 ### 2026-05-20 evening - permanent Schwab streamer and 30s-finalization fix deployed
 
 - Research conclusion:
@@ -506,6 +543,39 @@ Twelve PRs shipped today addressing four distinct bug classes that compounded in
   - `macd_30s` Decision Tape payload now shows `26` rows with `0` placeholders at the top; real completed-bar rows lead the tape again
   - `polygon_30s` still shows a small number of placeholders, but only for symbols that are actually stale right now; normal after-hours rows now remain visible instead of being displaced wholesale
   - `schwab_1m` still shows warning placeholders for genuinely stale symbols; that remaining warning state is the live Schwab/bar-freshness issue, not the old placeholder-precedence rendering bug
+
+### 2026-05-20 late evening - recommendation for interpreting `schwab_1m` stale symbols
+
+- Important clarification:
+  - do **not** treat every after-hours `schwab_1m` warning placeholder as the same bug
+  - split the symbols into:
+    - **real fresh-tick + stale/missing completed 1m bar** -> actionable runtime/feed-basis issue
+    - **dead/thin after-hours tape** -> lower-confidence warning; likely weak symbol behavior rather than the same bar-flow fault
+- Current actionable `schwab_1m` stale-bar bucket from the 2026-05-20 after-hours audit:
+  - `AMST`
+  - `APLZ`
+  - `EXYN`
+  - `JAGX`
+  - `MLGO`
+  - also historically ugly today: `BNZI`, `SUGP`
+- Current lower-confidence / likely weak after-hours tape bucket:
+  - `AEHL`
+  - `EVTV`
+  - `FABC`
+- Current names that were **not** leading with live stale-bar placeholders at the time of the audit:
+  - `HCWB`
+  - `MWC`
+  - `PRFX`
+  - `UCAR`
+  - `VIDA`
+- Important nuance:
+  - "not currently leading with a stale placeholder" does **not** mean "clean all day"
+  - the strict latency analyzer still found at least one delay/replay/persist issue somewhere during the day for every symbol in this retained 15-symbol Schwab set
+  - operationally, the useful distinction is **current real stale-bar issue vs weak/dead tape**, not "perfectly clean all day"
+- Recommended next logic / operator policy:
+  - escalate only when **fresh Schwab ticks are still arriving** and the completed `1m` bar is stale/missing or the freshness guard is firing
+  - de-prioritize / potentially evict a symbol when `last_tick_at` and `last_bar_at` both go stale together and the name is obviously dying after-hours
+  - this split should also drive future automation/UI wording so weak-tape after-hours names do not get mixed with true live bar-flow failures
 
 ### 2026-05-19 afternoon - AMST schwab_1m late-entry root cause fixed and deployed
 

@@ -833,6 +833,7 @@ def test_schwab_1m_history_loader_prefers_recorded_live_bars(tmp_path: Path, mon
         redis_client=FakeRedis(),
         now_provider=lambda: datetime(2026, 4, 28, 21, 18, tzinfo=UTC),
     )
+    service._schwab_symbol_last_stream_trade_at["SNBR"] = now
 
     async def _fake_fetch(*_args, **_kwargs):
         return []
@@ -1227,6 +1228,7 @@ async def test_schwab_1m_history_refresh_replays_missing_completed_bar(monkeypat
             start_timestamp=start_at,
         ),
     )
+    service._schwab_symbol_last_stream_trade_at["SNBR"] = now
 
     async def _fake_fetch(*_args, **_kwargs):
         return seed_trending_bars(
@@ -1274,6 +1276,7 @@ async def test_schwab_1m_history_refresh_ignores_prior_session_bars(monkeypatch)
     )
     runtime = service.state.bots["schwab_1m"]
     runtime.set_watchlist(["SNBR"])
+    service._schwab_symbol_last_stream_trade_at["SNBR"] = now
 
     previous_session_bar = datetime(2026, 4, 30, 19, 58, tzinfo=UTC).timestamp()
     current_session_bar = datetime(2026, 5, 1, 10, 30, tzinfo=UTC).timestamp()
@@ -1310,6 +1313,64 @@ async def test_schwab_1m_history_refresh_ignores_prior_session_bars(monkeypatch)
     bars = runtime.builder_manager.get_builder("SNBR").get_bars_as_dicts()
     assert len(bars) == 1
     assert bars[-1]["timestamp"] == current_session_bar
+
+
+@pytest.mark.asyncio
+async def test_schwab_1m_history_refresh_skips_replay_when_live_bar_is_already_received(monkeypatch) -> None:
+    from project_mai_tai.services import strategy_engine_app as strategy_engine_module
+
+    now = datetime(2026, 4, 30, 10, 31, 28, tzinfo=UTC)
+    start_at = datetime(2026, 4, 30, 9, 35, tzinfo=UTC).timestamp()
+    latest_completed = datetime(2026, 4, 30, 10, 30, tzinfo=UTC).timestamp()
+    service = StrategyEngineService(
+        settings=make_test_settings(
+            redis_stream_prefix="test",
+            strategy_macd_30s_enabled=False,
+            strategy_polygon_30s_enabled=False,
+            strategy_macd_1m_enabled=False,
+            strategy_schwab_1m_enabled=True,
+            strategy_schwab_1m_broker_provider="schwab",
+            dashboard_snapshot_persistence_enabled=False,
+            strategy_history_persistence_enabled=False,
+        ),
+        redis_client=FakeRedis(),
+        now_provider=lambda: now,
+    )
+    runtime = service.state.bots["schwab_1m"]
+    runtime.set_watchlist(["SNBR"])
+    runtime.seed_bars(
+        "SNBR",
+        seed_trending_bars(
+            count=55,
+            interval_secs=60,
+            start_timestamp=start_at,
+        ),
+    )
+    service._schwab_symbol_last_stream_trade_at["SNBR"] = now
+
+    fetch_calls = {"count": 0}
+
+    async def _fake_fetch(*_args, **_kwargs):
+        fetch_calls["count"] += 1
+        return seed_trending_bars(
+            count=56,
+            interval_secs=60,
+            start_timestamp=start_at,
+        )
+
+    service._schwab_quote_poll_adapter.fetch_historical_bars = _fake_fetch
+    service._remember_schwab_1m_enqueued_live_bar(
+        "SNBR",
+        live_bar_timestamp=latest_completed,
+        received_at_ns=int(datetime(2026, 4, 30, 10, 31, 2, tzinfo=UTC).timestamp() * 1_000_000_000),
+    )
+    monkeypatch.setattr(strategy_engine_module, "utcnow", lambda: now)
+
+    intents, refreshed = await service._refresh_stale_schwab_1m_history()
+
+    assert intents == 0
+    assert refreshed == 0
+    assert fetch_calls["count"] == 0
 
 
 def test_schwab_1m_runtime_emits_signal_immediately_from_final_live_bar(monkeypatch) -> None:
