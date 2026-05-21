@@ -5913,6 +5913,47 @@ async def test_schwab_stream_queue_drain_is_bounded() -> None:
 
 
 @pytest.mark.asyncio
+async def test_market_data_drain_yields_when_schwab_priority_work_is_queued() -> None:
+    service = StrategyEngineService(
+        settings=make_test_settings(
+            redis_stream_prefix="test",
+            dashboard_snapshot_persistence_enabled=False,
+            strategy_history_persistence_enabled=False,
+            strategy_schwab_1m_enabled=True,
+        ),
+        redis_client=FakeRedis(),
+    )
+    service.state.bots["schwab_1m"].set_watchlist(["AMST"])
+    service._stream_offsets = {service._market_data_stream: "0-0"}
+    read_calls: list[int] = []
+
+    async def fake_read_stream_group(streams, *, block_ms):
+        read_calls.append(block_ms)
+        return 500
+
+    service._read_stream_group = fake_read_stream_group  # type: ignore[method-assign]
+    service._enqueue_schwab_live_bar(
+        LiveBarRecord(
+            symbol="AMST",
+            interval_secs=60,
+            open=2.20,
+            high=2.35,
+            low=2.18,
+            close=2.30,
+            volume=25_000,
+            timestamp=1_700_001_560.0,
+            trade_count=42,
+        )
+    )
+
+    processed = await service._drain_market_data_stream(first_block_ms=1000)
+
+    assert processed == 500
+    assert read_calls == [1000]
+    assert service._schwab_bar_queue.qsize() == 1
+
+
+@pytest.mark.asyncio
 async def test_schwab_stream_queue_drain_prioritizes_live_bars_over_quote_backlog() -> None:
     service = StrategyEngineService(
         settings=make_test_settings(

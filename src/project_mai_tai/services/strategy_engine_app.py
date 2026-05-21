@@ -5801,7 +5801,9 @@ class StrategyEngineService:
         First xread waits up to first_block_ms for events; subsequent
         passes use block=0 (non-blocking) and stop the moment the stream
         is empty. Bounded by _MARKET_DATA_DRAIN_BUDGET so a single hot
-        symbol cannot starve the rest of the main loop.
+        symbol cannot starve the rest of the main loop. If Schwab trade/live
+        bar work is already queued, yield back after the current xread batch so
+        canonical Schwab bars do not wait behind thousands of Redis messages.
         """
         events_processed = 0
         block_ms = first_block_ms
@@ -5814,7 +5816,15 @@ class StrategyEngineService:
             if count == 0:
                 break
             events_processed += count
+            if self._schwab_has_pending_priority_stream_events():
+                break
         return events_processed
+
+    def _schwab_has_pending_priority_stream_events(self) -> bool:
+        return (
+            not self._schwab_bar_queue.empty()
+            or not self._schwab_trade_queue.empty()
+        )
 
     async def run(self) -> None:
         stop_event = asyncio.Event()
