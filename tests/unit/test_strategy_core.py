@@ -221,6 +221,95 @@ def test_schwab_native_bar_builder_duplicate_stale_trade_does_not_refresh_stall_
     assert builder._last_trade_wallclock == first_stall_trade_wallclock
 
 
+def test_schwab_native_bar_builder_final_bar_append_refreshes_stall_clock() -> None:
+    clock = {"ts": 1_700_000_000.0}
+    builder = SchwabNativeBarBuilder("RDAC", interval_secs=60, time_provider=lambda: clock["ts"])
+
+    clock["ts"] = 1_700_000_005.0
+    builder.on_trade(
+        price=3.50,
+        size=50,
+        timestamp_ns=1_700_000_005_000_000_000,
+        cumulative_volume=1_000,
+    )
+    clock["ts"] = 1_700_000_065.0
+    assert len(builder.check_bar_closes()) == 1
+    assert builder._last_bar_advancement_wallclock == pytest.approx(1_700_000_065.0)
+
+    clock["ts"] = 1_700_000_123.0
+    completed = builder.on_final_bar(
+        OHLCVBar(
+            open=3.45,
+            high=3.60,
+            low=3.40,
+            close=3.58,
+            volume=2_500,
+            timestamp=1_700_000_060.0,
+            trade_count=3,
+        )
+    )
+
+    assert len(completed) == 1
+    assert builder._last_bar_advancement_wallclock == pytest.approx(1_700_000_123.0)
+
+    clock["ts"] = 1_700_000_190.0
+    builder.on_trade(
+        price=3.62,
+        size=25,
+        timestamp_ns=1_700_000_065_000_000_000,
+        cumulative_volume=1_025,
+    )
+
+    assert builder.entry_freshness_issue(now_ts=clock["ts"]) is None
+
+
+def test_schwab_native_bar_builder_final_bar_replace_refreshes_stall_clock() -> None:
+    clock = {"ts": 1_700_000_000.0}
+    builder = SchwabNativeBarBuilder("RDAC", interval_secs=60, time_provider=lambda: clock["ts"])
+
+    clock["ts"] = 1_700_000_065.0
+    builder.on_final_bar(
+        OHLCVBar(
+            open=3.45,
+            high=3.60,
+            low=3.40,
+            close=3.58,
+            volume=2_500,
+            timestamp=1_700_000_060.0,
+            trade_count=3,
+        )
+    )
+    assert builder._last_bar_advancement_wallclock == pytest.approx(1_700_000_065.0)
+
+    clock["ts"] = 1_700_000_190.0
+    builder.on_trade(
+        price=3.62,
+        size=25,
+        timestamp_ns=1_700_000_065_000_000_000,
+        cumulative_volume=1_025,
+    )
+    reason = builder.entry_freshness_issue(now_ts=clock["ts"])
+    assert reason is not None
+    assert "bar builder stalled" in reason
+
+    clock["ts"] = 1_700_000_191.0
+    completed = builder.on_final_bar(
+        OHLCVBar(
+            open=3.46,
+            high=3.61,
+            low=3.41,
+            close=3.59,
+            volume=2_550,
+            timestamp=1_700_000_060.0,
+            trade_count=4,
+        )
+    )
+
+    assert completed == []
+    assert builder._last_bar_advancement_wallclock == pytest.approx(1_700_000_191.0)
+    assert builder.entry_freshness_issue(now_ts=clock["ts"]) is None
+
+
 def test_schwab_native_bar_builder_late_trade_replaces_synthetic_flat_bar() -> None:
     clock = {"ts": 1_700_000_101.0}
     builder = SchwabNativeBarBuilder(

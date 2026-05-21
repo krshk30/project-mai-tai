@@ -277,12 +277,14 @@ class SchwabNativeBarBuilder:
             if bar_start == last_bar_start:
                 self.bars[-1] = aligned_bar
                 self._last_closed_bar_from_aggregate = True
+                self._mark_bar_advanced()
                 return []
 
         self.bars.append(aligned_bar)
         self._bar_count += 1
         self._trim_history()
         self._last_closed_bar_from_aggregate = True
+        self._mark_bar_advanced()
         return [aligned_bar]
 
     def check_bar_closes(self) -> list[OHLCVBar]:
@@ -590,12 +592,7 @@ class SchwabNativeBarBuilder:
         self._last_closed_bar_cum_volume = self._current_bar_last_cum_volume
         # bars[-1] is now a tick-built (not CHART) bar; revisions are valid.
         self._last_closed_bar_from_aggregate = False
-        # Issue #145 stall + revision-storm tracking: bar advanced, reset state.
-        self._last_bar_advancement_wallclock = self.time_provider()
-        self._stall_warn_issued = False
-        self._last_revised_bar_timestamp = None
-        self._revisions_for_current_tail = 0
-        self._first_revision_wallclock = 0.0
+        self._mark_bar_advanced()
         return bar
 
     def _pop_last_closed_bar(self) -> OHLCVBar | None:
@@ -613,7 +610,19 @@ class SchwabNativeBarBuilder:
         self.bars.append(bar)
         self._bar_count += 1
         self._trim_history()
+        self._mark_bar_advanced()
         return bar
+
+    def _mark_bar_advanced(self) -> None:
+        # Canonical CHART bars, tick-built closes, and synthetic gap bars all
+        # represent forward movement of the bar tail. Keep stall accounting in
+        # one place so schwab_1m does not continue to report a stale tail after
+        # a valid on_final_bar append/replace.
+        self._last_bar_advancement_wallclock = self.time_provider()
+        self._stall_warn_issued = False
+        self._last_revised_bar_timestamp = None
+        self._revisions_for_current_tail = 0
+        self._first_revision_wallclock = 0.0
 
     def _fill_gap_bars(self, start: float, end_exclusive: float) -> list[OHLCVBar]:
         completed: list[OHLCVBar] = []
