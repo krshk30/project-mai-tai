@@ -482,6 +482,53 @@ Twelve PRs shipped today addressing four distinct bug classes that compounded in
   - what remains on `NIVF` / `TRNR` is a real late `CHART_EQUITY` minute, not stale builder bookkeeping
   - next work should focus on true late-minute delivery / replay timing, not more stall-clock patches
 
+### 2026-05-21 late afternoon follow-up - proved the remaining `NIVF` / `TRNR` issue is specific to the live `CHART_EQUITY` minute path, not generic post-receive backlog
+
+- Fresh validation after the final-bar stall-clock deploy:
+  - `schwab_1m` top rows for `NIVF` / `TRNR` advanced into fresh `evaluated` rows
+  - the remaining blocker is a real late minute:
+    - `completed bar arrived 45.2s after close (limit 30.0s)`
+- Proof from raw archive / analyzer:
+  - both `NIVF` and `TRNR` `17:19` completed bars were first received at `17:20:45.218 ET`
+  - but those same wallclock bursts also contained **fresh** trade activity:
+    - `NIVF` trade exchange timestamp `17:20:41.993 ET`, received `17:20:45.218 ET`
+    - `TRNR` trade exchange timestamp `17:20:41.967 ET`, received `17:20:45.218 ET`
+  - so the websocket / strategy ingest path was still alive enough to deliver current trade data while the completed `CHART_EQUITY` minute for `17:19` arrived ~45s late
+- Code-path implication:
+  - `StrategyEngineService._enqueue_schwab_live_bar()` stamps `received_at_ns` immediately at callback enqueue time
+  - `SchwabStreamerClient._handle_message()` synchronously dispatches `quote`, `trade`, and `bar` records right after `websocket.recv()`
+  - archive-to-persist lag on these late bars was only a few seconds after receipt
+  - therefore the remaining `45s` issue is **not** local post-enqueue drain/persist delay
+- Best current classification:
+  - remaining active bug for these symbols is a **service-specific delayed `CHART_EQUITY` completed-bar delivery / streamer-service liveness problem**
+  - it is narrower than "Schwab stream dead" because fresh trades kept arriving
+  - next fix should target `CHART_EQUITY` service-level recovery and authority handling, not builder stall accounting
+
+### 2026-05-21 evening - added `CHART_EQUITY` deadline-aware liveness so `schwab_1m` no longer treats a late minute as healthy just because some chart payload eventually arrived
+
+- Root-cause gap:
+  - `SchwabStreamerClient` only tracked per-service `last_message_monotonic`
+  - that meant `CHART_EQUITY` still looked healthy if a delayed minute bar finally arrived, even when fresh trade exchange timestamps had already advanced `30-45s` past the last completed chart minute
+  - this matched the proven `NIVF` / `TRNR` `17:19` case
+- Fix:
+  - `src/project_mai_tai/market_data/schwab_streamer.py`
+    - `SchwabStreamServiceState` now also tracks:
+      - `last_exchange_timestamp`
+      - `last_completed_bar_close_timestamp`
+    - `CHART_EQUITY` now becomes unhealthy when fresh trade exchange timestamps from other live Schwab services advance more than the chart deadline beyond the last completed chart close
+    - `_should_force_reconnect_for_chart_inactivity()` now triggers on this exchange-time deadline breach even if a recent late chart payload updated `last_message_monotonic`
+- Intent:
+  - the streamer should recycle sooner in the specific case where:
+    - trades are still current
+    - but the canonical `schwab_1m` completed-bar service is trailing the market
+  - this avoids waiting for another broad replay/stall chain before recovery
+- Focused local validation:
+  - `python -m pytest tests/unit/test_schwab_1m_bot.py -k "timesale or chart_unhealthy or chart_healthy" -q` -> `9 passed`
+  - `python -m py_compile src/project_mai_tai/market_data/schwab_streamer.py tests/unit/test_schwab_1m_bot.py`
+- Deploy status:
+  - local only at this point in the handoff note
+  - next step is live deploy plus validation on active `schwab_1m` names to confirm reconnects happen on the chart-service delay pattern before the minute ages into a user-visible freshness block
+
 ### 2026-05-21 early afternoon - `AUUD` proved a second false-stale class: duplicate stale Schwab packets were being counted as fresh bar-driving activity
 
 - Fresh post-restart validation narrowed the remaining `schwab_1m` problem:
