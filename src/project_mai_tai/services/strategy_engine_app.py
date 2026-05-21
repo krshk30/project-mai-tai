@@ -7163,6 +7163,24 @@ class StrategyEngineService:
         latest_timestamp = self._schwab_1m_last_enqueued_live_bar_timestamp.get(str(symbol).upper())
         return latest_timestamp is not None and latest_timestamp >= float(minimum_timestamp)
 
+    @staticmethod
+    def _schwab_1m_history_replay_grace_seconds(*, interval_secs: int) -> float:
+        interval = max(1, int(interval_secs))
+        return max(15.0, float(interval) * 0.5)
+
+    @classmethod
+    def _schwab_1m_history_replay_deadline_timestamp(
+        cls,
+        *,
+        expected_latest_completed: float,
+        interval_secs: int,
+    ) -> float:
+        return (
+            float(expected_latest_completed)
+            + float(max(1, int(interval_secs)))
+            + cls._schwab_1m_history_replay_grace_seconds(interval_secs=interval_secs)
+        )
+
     async def _maybe_force_schwab_stream_reconnect_for_stale_1m_cluster(
         self,
         *,
@@ -7241,6 +7259,10 @@ class StrategyEngineService:
         session_start_timestamp = current_scanner_session_start_utc(now).timestamp()
         required_bars = max(2, runtime.required_history_bars())
         total_fresh_bars = 0
+        replay_deadline_ts = self._schwab_1m_history_replay_deadline_timestamp(
+            expected_latest_completed=expected_latest_completed,
+            interval_secs=60,
+        )
 
         for normalized in sorted({str(symbol).upper() for symbol in symbols}):
             latest_runtime_completed = self._latest_runtime_completed_bar_timestamp(
@@ -7250,6 +7272,8 @@ class StrategyEngineService:
                 latest_runtime_completed is not None
                 and latest_runtime_completed >= expected_latest_completed
             ):
+                continue
+            if now.timestamp() < replay_deadline_ts:
                 continue
             if self._schwab_1m_live_bar_already_received(
                 normalized,
@@ -7336,6 +7360,11 @@ class StrategyEngineService:
         refreshed_bar_count = 0
         refresh_interval = max(1, int(self._schwab_1m_history_refresh_interval_secs))
         required_bars = max(2, runtime.required_history_bars())
+        recent_activity_after = now - timedelta(seconds=120)
+        replay_deadline_ts = self._schwab_1m_history_replay_deadline_timestamp(
+            expected_latest_completed=expected_latest_completed,
+            interval_secs=60,
+        )
 
         await self._maybe_force_schwab_stream_reconnect_for_stale_1m_cluster(
             runtime=runtime,
@@ -7351,12 +7380,20 @@ class StrategyEngineService:
                 and (now - last_refresh_at).total_seconds() < refresh_interval
             ):
                 continue
+            last_bar_driver_activity = self._schwab_last_bar_driver_activity_at(normalized)
+            if (
+                last_bar_driver_activity is None
+                or last_bar_driver_activity < recent_activity_after
+            ):
+                continue
 
             latest_runtime_completed = self._latest_runtime_completed_bar_timestamp(runtime, normalized)
             if (
                 latest_runtime_completed is not None
                 and latest_runtime_completed >= expected_latest_completed
             ):
+                continue
+            if now.timestamp() < replay_deadline_ts:
                 continue
             if self._schwab_1m_live_bar_already_received(
                 normalized,

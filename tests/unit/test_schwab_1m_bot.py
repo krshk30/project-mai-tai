@@ -1202,7 +1202,7 @@ def test_polygon_30s_bot_does_not_mix_schwab_trade_vwap_after_hours(tmp_path: Pa
 async def test_schwab_1m_history_refresh_replays_missing_completed_bar(monkeypatch) -> None:
     from project_mai_tai.services import strategy_engine_app as strategy_engine_module
 
-    now = datetime(2026, 4, 30, 10, 31, 28, tzinfo=UTC)
+    now = datetime(2026, 4, 30, 10, 31, 31, tzinfo=UTC)
     start_at = datetime(2026, 4, 30, 9, 35, tzinfo=UTC).timestamp()
     service = StrategyEngineService(
         settings=make_test_settings(
@@ -1259,7 +1259,7 @@ async def test_schwab_1m_history_refresh_replays_missing_completed_bar(monkeypat
 async def test_schwab_1m_history_refresh_ignores_prior_session_bars(monkeypatch) -> None:
     from project_mai_tai.services import strategy_engine_app as strategy_engine_module
 
-    now = datetime(2026, 5, 1, 10, 31, 28, tzinfo=UTC)
+    now = datetime(2026, 5, 1, 10, 31, 31, tzinfo=UTC)
     service = StrategyEngineService(
         settings=make_test_settings(
             redis_stream_prefix="test",
@@ -1319,7 +1319,7 @@ async def test_schwab_1m_history_refresh_ignores_prior_session_bars(monkeypatch)
 async def test_schwab_1m_history_refresh_skips_replay_when_live_bar_is_already_received(monkeypatch) -> None:
     from project_mai_tai.services import strategy_engine_app as strategy_engine_module
 
-    now = datetime(2026, 4, 30, 10, 31, 28, tzinfo=UTC)
+    now = datetime(2026, 4, 30, 10, 31, 31, tzinfo=UTC)
     start_at = datetime(2026, 4, 30, 9, 35, tzinfo=UTC).timestamp()
     latest_completed = datetime(2026, 4, 30, 10, 30, tzinfo=UTC).timestamp()
     service = StrategyEngineService(
@@ -1364,6 +1364,58 @@ async def test_schwab_1m_history_refresh_skips_replay_when_live_bar_is_already_r
         live_bar_timestamp=latest_completed,
         received_at_ns=int(datetime(2026, 4, 30, 10, 31, 2, tzinfo=UTC).timestamp() * 1_000_000_000),
     )
+    monkeypatch.setattr(strategy_engine_module, "utcnow", lambda: now)
+
+    intents, refreshed = await service._refresh_stale_schwab_1m_history()
+
+    assert intents == 0
+    assert refreshed == 0
+    assert fetch_calls["count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_schwab_1m_history_refresh_waits_for_replay_grace_window(monkeypatch) -> None:
+    from project_mai_tai.services import strategy_engine_app as strategy_engine_module
+
+    now = datetime(2026, 4, 30, 10, 31, 20, tzinfo=UTC)
+    start_at = datetime(2026, 4, 30, 9, 35, tzinfo=UTC).timestamp()
+    service = StrategyEngineService(
+        settings=make_test_settings(
+            redis_stream_prefix="test",
+            strategy_macd_30s_enabled=False,
+            strategy_polygon_30s_enabled=False,
+            strategy_macd_1m_enabled=False,
+            strategy_schwab_1m_enabled=True,
+            strategy_schwab_1m_broker_provider="schwab",
+            dashboard_snapshot_persistence_enabled=False,
+            strategy_history_persistence_enabled=False,
+        ),
+        redis_client=FakeRedis(),
+        now_provider=lambda: now,
+    )
+    runtime = service.state.bots["schwab_1m"]
+    runtime.set_watchlist(["SNBR"])
+    runtime.seed_bars(
+        "SNBR",
+        seed_trending_bars(
+            count=55,
+            interval_secs=60,
+            start_timestamp=start_at,
+        ),
+    )
+    service._schwab_symbol_last_stream_trade_at["SNBR"] = now
+
+    fetch_calls = {"count": 0}
+
+    async def _fake_fetch(*_args, **_kwargs):
+        fetch_calls["count"] += 1
+        return seed_trending_bars(
+            count=56,
+            interval_secs=60,
+            start_timestamp=start_at,
+        )
+
+    service._schwab_quote_poll_adapter.fetch_historical_bars = _fake_fetch
     monkeypatch.setattr(strategy_engine_module, "utcnow", lambda: now)
 
     intents, refreshed = await service._refresh_stale_schwab_1m_history()

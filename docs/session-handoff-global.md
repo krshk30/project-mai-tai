@@ -515,6 +515,44 @@ Twelve PRs shipped today addressing four distinct bug classes that compounded in
   - `src/project_mai_tai/services/strategy_engine_app.py`
     - `_drain_market_data_stream()` now yields back after the current xread batch whenever queued Schwab bar/trade work exists
     - added `_schwab_has_pending_priority_stream_events()` so canonical Schwab bars cannot wait behind repeated Redis batches
+
+### 2026-05-21 early afternoon - traced `CODX` / `VIDA` / `AUUD` prove replay is still outrunning reasonable live 1m delivery; local grace-gated replay fix is ready
+
+- Live trace against:
+  - `/var/lib/project-mai-tai/schwab_ticks/2026-05-21/CODX.jsonl`
+  - `/var/lib/project-mai-tai/schwab_ticks/2026-05-21/VIDA.jsonl`
+  - `/var/lib/project-mai-tai/schwab_ticks/2026-05-21/AUUD.jsonl`
+  - live `/api/bots`
+  - `scripts/analyze_schwab_event_latency.py`
+- What the trace proved:
+  - the failure is **synchronized across symbols**, not a one-off bad name
+  - `12:48` ET bucket on all three symbols:
+    - `receive_lag_s ~= 48.6`
+    - `persist_created_lag_s ~= 112s`
+    - real late-delivery cluster before our drain path even saw the completed 1m bar
+  - `12:49` ET bucket on all three symbols:
+    - `receive_lag_s ~= 6.8`
+    - but `persist_created_lag_s ~= 52-75s`
+    - this is the local post-receive delay bucket
+  - `12:59` ET bucket split again:
+    - `AUUD` / `CODX`: `history_replay_before_live_bar_arrived`
+    - `VIDA`: `persist_late_without_archive_proof`
+  - conclusion:
+    - replay is still being allowed too early for normal-but-late Schwab 1m delivery
+    - once replay wins, delayed live bars get suppressed and the symbol keeps cycling through replay/reconnect noise
+- Local code fix implemented (NOT DEPLOYED YET in this note):
+  - `src/project_mai_tai/services/strategy_engine_app.py`
+    - added `_schwab_1m_history_replay_grace_seconds()` and `_schwab_1m_history_replay_deadline_timestamp()`
+    - both `_immediate_schwab_1m_history_refresh()` and `_refresh_stale_schwab_1m_history()` now require a post-close grace window before replay can promote REST history over the live `CHART_EQUITY` path
+    - intent: stop replay from outrunning live bars that arrive in ~6-20 seconds, while still allowing replay for genuinely missing/very-late completed bars
+- Local validation:
+  - `python -m pytest tests/unit/test_schwab_1m_bot.py -k "history_refresh" -q` -> `4 passed`
+  - `python -m pytest tests/unit/test_strategy_engine_service.py -k "refresh_stale_schwab_1m_history or clustered_lag or schwab_stream_queue_drain or run_flushes_completed_bars_before_schwab_recovery_work" -q` -> `8 passed`
+  - `python -m py_compile src/project_mai_tai/services/strategy_engine_app.py tests/unit/test_schwab_1m_bot.py`
+- Most likely effect once deployed:
+  - fewer false `history_replay_before_live_bar_arrived` classifications on buckets like `12:49` / `12:59`
+  - lower replay/reconnect churn on symbols whose 1m live bars are late but still within a reasonable post-close window
+  - does **not** solve the real `48s+` late-delivery cluster by itself
   - `tests/unit/test_strategy_engine_service.py`
     - added regression coverage proving the market-data drain stops after one batch when `schwab_1m` live-bar work is already queued
 - Focused validation:
