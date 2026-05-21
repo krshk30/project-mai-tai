@@ -699,6 +699,59 @@ def test_schwab_streamer_disables_timesale_after_inactivity_when_levelone_is_ali
     assert client._subscribed_timesale_symbols == set()
 
 
+def test_schwab_streamer_marks_chart_unhealthy_when_trade_exchange_time_outpaces_chart_close(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = SchwabStreamerClient(Settings())
+    client._connected = True
+    now = 200.0
+    chart = client._service_states[client.CHART_EQUITY_SERVICE]
+    levelone = client._service_states[client.LEVELONE_EQUITIES_SERVICE]
+    chart.confirmed_symbols = {"NIVF"}
+    chart.last_message_monotonic = now
+    chart.last_completed_bar_close_timestamp = 100.0
+    chart.last_exchange_timestamp = 100.0
+    levelone.confirmed_symbols = {"NIVF"}
+    levelone.last_message_monotonic = now
+    levelone.last_exchange_timestamp = 145.5
+
+    class _FakeLoop:
+        def time(self) -> float:
+            return now
+
+    monkeypatch.setattr(asyncio, "get_running_loop", lambda: _FakeLoop())
+
+    assert client.is_service_healthy(client.LEVELONE_EQUITIES_SERVICE) is True
+    assert client.is_service_healthy(client.CHART_EQUITY_SERVICE) is False
+    assert client._should_force_reconnect_for_chart_inactivity(now) is True
+
+
+def test_schwab_streamer_keeps_chart_healthy_when_exchange_gap_is_within_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = SchwabStreamerClient(Settings())
+    client._connected = True
+    now = 200.0
+    chart = client._service_states[client.CHART_EQUITY_SERVICE]
+    levelone = client._service_states[client.LEVELONE_EQUITIES_SERVICE]
+    chart.confirmed_symbols = {"NIVF"}
+    chart.last_message_monotonic = now
+    chart.last_completed_bar_close_timestamp = 100.0
+    chart.last_exchange_timestamp = 100.0
+    levelone.confirmed_symbols = {"NIVF"}
+    levelone.last_message_monotonic = now
+    levelone.last_exchange_timestamp = 129.0
+
+    class _FakeLoop:
+        def time(self) -> float:
+            return now
+
+    monkeypatch.setattr(asyncio, "get_running_loop", lambda: _FakeLoop())
+
+    assert client.is_service_healthy(client.CHART_EQUITY_SERVICE) is True
+    assert client._should_force_reconnect_for_chart_inactivity(now) is False
+
+
 def test_schwab_streamer_skips_timesale_subscription_when_service_is_unavailable() -> None:
     client = SchwabStreamerClient(Settings())
     client._credentials = SchwabStreamerCredentials(

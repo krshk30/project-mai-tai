@@ -47,6 +47,8 @@ class SchwabStreamServiceState:
     confirmed_symbols: set[str] = field(default_factory=set)
     last_response_monotonic: float | None = None
     last_message_monotonic: float | None = None
+    last_exchange_timestamp: float | None = None
+    last_completed_bar_close_timestamp: float | None = None
 
 
 class SchwabStreamerClient:
@@ -127,7 +129,11 @@ class SchwabStreamerClient:
             now = asyncio.get_running_loop().time()
         except RuntimeError:
             return False
-        return (now - last_message_at) <= self._service_stale_after_seconds(normalized)
+        if (now - last_message_at) > self._service_stale_after_seconds(normalized):
+            return False
+        if normalized == self.CHART_EQUITY_SERVICE and self._chart_exchange_deadline_exceeded(now):
+            return False
+        return True
 
     async def start(
         self,
@@ -737,6 +743,8 @@ class SchwabStreamerClient:
         chart_state = self._service_states[self.CHART_EQUITY_SERVICE]
         if not chart_state.confirmed_symbols:
             return False
+        if self._chart_exchange_deadline_exceeded(now):
+            return True
         if chart_state.last_message_monotonic is not None and (
             now - chart_state.last_message_monotonic
         ) <= self._service_stale_after_seconds(self.CHART_EQUITY_SERVICE):
@@ -755,6 +763,42 @@ class SchwabStreamerClient:
             if (now - last_message) <= self._service_stale_after_seconds(other_service):
                 return True
         return False
+
+    def _latest_other_service_exchange_timestamp(self, service: str, now: float) -> float | None:
+        latest: float | None = None
+        for other_service, state in self._service_states.items():
+            if other_service == service:
+                continue
+            if not state.confirmed_symbols:
+                continue
+            last_message = state.last_message_monotonic
+            if last_message is None:
+                continue
+            if (now - last_message) > self._service_stale_after_seconds(other_service):
+                continue
+            exchange_ts = state.last_exchange_timestamp
+            if exchange_ts is None:
+                continue
+            if latest is None or exchange_ts > latest:
+                latest = exchange_ts
+        return latest
+
+    def _chart_exchange_deadline_seconds(self) -> float:
+        base = max(5.0, float(self.settings.schwab_stream_symbol_stale_after_seconds))
+        return max(30.0, base * 4.0)
+
+    def _chart_exchange_deadline_exceeded(self, now: float) -> bool:
+        chart_state = self._service_states[self.CHART_EQUITY_SERVICE]
+        chart_close_ts = chart_state.last_completed_bar_close_timestamp
+        if chart_close_ts is None:
+            return False
+        latest_other_exchange_ts = self._latest_other_service_exchange_timestamp(
+            self.CHART_EQUITY_SERVICE,
+            now,
+        )
+        if latest_other_exchange_ts is None:
+            return False
+        return latest_other_exchange_ts > (chart_close_ts + self._chart_exchange_deadline_seconds())
 
     def _healthy_timesale_symbols_for_trade_dedupe(self, now: float) -> set[str]:
         if not self._timesale_service_available:
@@ -820,6 +864,30 @@ class SchwabStreamerClient:
                 symbol = str(record.get("key") or record.get("0") or "").upper()
                 if symbol:
                     state.confirmed_symbols.add(symbol)
+                if service == self.CHART_EQUITY_SERVICE:
+                    bar = self._extract_chart_bar_record(record)
+                    if bar is not None:
+                        bar_close_ts = float(bar.timestamp) + float(max(1, int(bar.interval_secs)))
+                        state.last_completed_bar_close_timestamp = max(
+                            state.last_completed_bar_close_timestamp or bar_close_ts,
+                            bar_close_ts,
+                        )
+                        state.last_exchange_timestamp = max(
+                            state.last_exchange_timestamp or bar_close_ts,
+                            bar_close_ts,
+                        )
+                elif service in (self.LEVELONE_EQUITIES_SERVICE, self.TIMESALE_EQUITY_SERVICE):
+                    trade = (
+                        self._extract_trade_record(record)
+                        if service == self.LEVELONE_EQUITIES_SERVICE
+                        else self._extract_timesale_trade_record(record)
+                    )
+                    if trade is not None and trade.timestamp_ns is not None:
+                        exchange_ts = float(trade.timestamp_ns) / 1_000_000_000.0
+                        state.last_exchange_timestamp = max(
+                            state.last_exchange_timestamp or exchange_ts,
+                            exchange_ts,
+                        )
             if service == self.LEVELONE_EQUITIES_SERVICE:
                 self._subscribed_symbols = set(state.confirmed_symbols)
             elif service == self.CHART_EQUITY_SERVICE:
@@ -842,6 +910,8 @@ class SchwabStreamerClient:
             state.confirmed_symbols.clear()
             state.last_response_monotonic = None
             state.last_message_monotonic = None
+            state.last_exchange_timestamp = None
+            state.last_completed_bar_close_timestamp = None
 
     def _build_login_request(
         self,
