@@ -3907,6 +3907,43 @@ def test_runtime_bar_flow_monitor_halts_when_no_completed_bar_forms() -> None:
     assert "no completed 30s bar has formed" in bot.data_halt_symbols["UGRO"]
 
 
+def test_schwab_bar_driver_activity_ignores_duplicate_trade_payload_timestamps() -> None:
+    service = StrategyEngineService(
+        settings=make_test_settings(),
+        redis_client=FakeRedis(),
+        session_factory=build_test_session_factory(),
+        now_provider=fixed_now,
+    )
+    first_seen = datetime(2026, 5, 21, 17, 0, 0, tzinfo=UTC)
+    duplicate_seen = first_seen + timedelta(seconds=75)
+    newer_seen = duplicate_seen + timedelta(seconds=30)
+
+    service._record_schwab_stream_activity(
+        "AUUD",
+        activity_kind="trade",
+        event_timestamp=1_779_387_959.766,
+        observed_at=first_seen,
+    )
+    service._record_schwab_stream_activity(
+        "AUUD",
+        activity_kind="trade",
+        event_timestamp=1_779_387_959.766,
+        observed_at=duplicate_seen,
+    )
+
+    assert service._schwab_last_stream_update_at("AUUD") == duplicate_seen
+    assert service._schwab_last_bar_driver_activity_at("AUUD") == first_seen
+
+    service._record_schwab_stream_activity(
+        "AUUD",
+        activity_kind="trade",
+        event_timestamp=1_779_387_967.774,
+        observed_at=newer_seen,
+    )
+
+    assert service._schwab_last_bar_driver_activity_at("AUUD") == newer_seen
+
+
 def test_runtime_bar_flow_monitor_uses_polygon_market_data_provider_label() -> None:
     settings = make_test_settings(
         strategy_polygon_30s_enabled=True,

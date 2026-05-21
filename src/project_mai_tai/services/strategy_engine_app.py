@@ -5717,6 +5717,10 @@ class StrategyEngineService:
         self._schwab_symbol_last_stream_trade_at: dict[str, datetime] = {}
         self._schwab_symbol_last_stream_quote_at: dict[str, datetime] = {}
         self._schwab_symbol_last_stream_bar_at: dict[str, datetime] = {}
+        self._schwab_symbol_last_advancing_trade_at: dict[str, datetime] = {}
+        self._schwab_symbol_last_advancing_bar_at: dict[str, datetime] = {}
+        self._schwab_symbol_last_trade_event_ts: dict[str, float] = {}
+        self._schwab_symbol_last_bar_event_ts: dict[str, float] = {}
         self._schwab_symbol_last_resubscribe_at: dict[str, datetime] = {}
         self._schwab_symbol_last_quote_poll_at: dict[str, datetime] = {}
         self._schwab_symbol_active_first_seen_at: dict[str, datetime] = {}
@@ -7852,7 +7856,11 @@ class StrategyEngineService:
                 return False
             bar, received_at_ns = await self._schwab_bar_queue.get()
             event_count += 1
-            self._record_schwab_stream_activity(bar.symbol, activity_kind="bar")
+            self._record_schwab_stream_activity(
+                bar.symbol,
+                activity_kind="bar",
+                event_timestamp=float(bar.timestamp),
+            )
             recorded_at_ns = time_ns()
             if self._schwab_tick_archive is not None:
                 self._schwab_tick_archive.record_live_bar(
@@ -7916,7 +7924,16 @@ class StrategyEngineService:
                 return False
             trade, received_at_ns = await self._schwab_trade_queue.get()
             event_count += 1
-            self._record_schwab_stream_activity(trade.symbol, activity_kind="trade")
+            trade_event_timestamp = (
+                float(trade.timestamp_ns) / 1_000_000_000
+                if int(trade.timestamp_ns or 0) > 0
+                else None
+            )
+            self._record_schwab_stream_activity(
+                trade.symbol,
+                activity_kind="trade",
+                event_timestamp=trade_event_timestamp,
+            )
             if self._schwab_tick_archive is not None:
                 self._schwab_tick_archive.record_trade(
                     trade,
@@ -7962,13 +7979,34 @@ class StrategyEngineService:
 
         return intent_count, event_count
 
-    def _record_schwab_stream_activity(self, symbol: str, *, activity_kind: str) -> None:
+    def _record_schwab_stream_activity(
+        self,
+        symbol: str,
+        *,
+        activity_kind: str,
+        event_timestamp: float | None = None,
+        observed_at: datetime | None = None,
+    ) -> None:
         normalized = str(symbol).upper()
-        observed_at = utcnow()
+        observed_at = observed_at or utcnow()
         if activity_kind == "trade":
             self._schwab_symbol_last_stream_trade_at[normalized] = observed_at
+            if event_timestamp is None:
+                self._schwab_symbol_last_advancing_trade_at[normalized] = observed_at
+            else:
+                prior_event_ts = self._schwab_symbol_last_trade_event_ts.get(normalized)
+                if prior_event_ts is None or float(event_timestamp) > prior_event_ts:
+                    self._schwab_symbol_last_trade_event_ts[normalized] = float(event_timestamp)
+                    self._schwab_symbol_last_advancing_trade_at[normalized] = observed_at
         elif activity_kind == "bar":
             self._schwab_symbol_last_stream_bar_at[normalized] = observed_at
+            if event_timestamp is None:
+                self._schwab_symbol_last_advancing_bar_at[normalized] = observed_at
+            else:
+                prior_event_ts = self._schwab_symbol_last_bar_event_ts.get(normalized)
+                if prior_event_ts is None or float(event_timestamp) > prior_event_ts:
+                    self._schwab_symbol_last_bar_event_ts[normalized] = float(event_timestamp)
+                    self._schwab_symbol_last_advancing_bar_at[normalized] = observed_at
         else:
             self._schwab_symbol_last_stream_quote_at[normalized] = observed_at
         if normalized in self._schwab_stale_symbols:
@@ -8085,9 +8123,29 @@ class StrategyEngineService:
             for symbol, observed_at in self._schwab_symbol_last_stream_bar_at.items()
             if symbol in normalized_active
         }
+        self._schwab_symbol_last_advancing_trade_at = {
+            symbol: observed_at
+            for symbol, observed_at in self._schwab_symbol_last_advancing_trade_at.items()
+            if symbol in normalized_active
+        }
+        self._schwab_symbol_last_advancing_bar_at = {
+            symbol: observed_at
+            for symbol, observed_at in self._schwab_symbol_last_advancing_bar_at.items()
+            if symbol in normalized_active
+        }
         self._schwab_symbol_last_stream_quote_at = {
             symbol: observed_at
             for symbol, observed_at in self._schwab_symbol_last_stream_quote_at.items()
+            if symbol in normalized_active
+        }
+        self._schwab_symbol_last_trade_event_ts = {
+            symbol: event_ts
+            for symbol, event_ts in self._schwab_symbol_last_trade_event_ts.items()
+            if symbol in normalized_active
+        }
+        self._schwab_symbol_last_bar_event_ts = {
+            symbol: event_ts
+            for symbol, event_ts in self._schwab_symbol_last_bar_event_ts.items()
             if symbol in normalized_active
         }
         self._schwab_symbol_last_resubscribe_at = {
@@ -8129,8 +8187,10 @@ class StrategyEngineService:
         """
         normalized = str(symbol).upper()
         candidates = [
-            self._schwab_symbol_last_stream_trade_at.get(normalized),
-            self._schwab_symbol_last_stream_bar_at.get(normalized),
+            self._schwab_symbol_last_advancing_trade_at.get(normalized)
+            or self._schwab_symbol_last_stream_trade_at.get(normalized),
+            self._schwab_symbol_last_advancing_bar_at.get(normalized)
+            or self._schwab_symbol_last_stream_bar_at.get(normalized),
         ]
         present = [candidate for candidate in candidates if candidate is not None]
         if not present:

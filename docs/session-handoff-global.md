@@ -441,6 +441,42 @@ Today's 14 PRs from 2026-05-18 still need RTH stress test. Originally scheduled 
 
 Twelve PRs shipped today addressing four distinct bug classes that compounded into the AUUD/QNCX/SBFM stuck-order incident the operator witnessed. All deployed live. VPS HEAD `03bf291` (PR #180) at session end.
 
+### 2026-05-21 early afternoon - `AUUD` proved a second false-stale class: duplicate stale Schwab packets were being counted as fresh bar-driving activity
+
+- Fresh post-restart validation narrowed the remaining `schwab_1m` problem:
+  - broad replay-first behavior improved after the `a88804b` receive-vs-replay deploy
+  - but isolated symbols like `AUUD` could still show:
+    - `Schwab entry freshness guard: bar builder stalled: last bar advanced ... while ticks kept arriving ...`
+- Production evidence for `AUUD`:
+  - raw archive tail from `/var/lib/project-mai-tai/schwab_ticks/2026-05-21/AUUD.jsonl` showed repeated stale packets:
+    - `trade px=1.6 ts_ns=1779387959766000000 cum=4143662`
+    - `live_bar bar_ts=1779387900.0 o=1.61 h=1.61 l=1.59005 c=1.6 v=4158`
+    - those exact same trade/bar payloads were re-received at `14:26`, `14:27`, `14:28`, `14:29 ET`
+  - healthy names like `CODX` in the same window showed advancing trade timestamps / cumulative volume instead of frozen duplicates
+- Root cause:
+  - two different local paths were treating **receipt time** as if it proved fresh market activity:
+    - `SchwabNativeBarBuilder.on_trade()` always advanced `_last_trade_wallclock` before checking whether the trade packet was actually new
+    - `StrategyEngineService._record_schwab_stream_activity()` always advanced `schwab_1m` bar-driver activity on receipt, even if Schwab resent the same old trade/bar payload
+  - result:
+    - weak / dying symbols that received duplicate stale packets looked like `ticks kept arriving`
+    - `schwab_1m` bar-builder stall guard, history replay, and reconnect logic then treated those names like real active feed failures
+- Fix implemented locally:
+  - `src/project_mai_tai/strategy_core/schwab_native_30s.py`
+    - builder now fingerprints trade events and does **not** refresh `_last_trade_wallclock` for identical duplicate stale packets
+  - `src/project_mai_tai/services/strategy_engine_app.py`
+    - Schwab stream activity now separates:
+      - raw receipt freshness
+      - bar-driving activity freshness
+    - duplicate stale trade/live-bar payload timestamps no longer refresh the bar-driver activity clock
+    - receipt-level stream health still stays visible
+- Focused local validation:
+  - `python -m pytest tests/unit/test_strategy_core.py -k "freshness_stall or duplicate_stale_trade" -q` -> `2 passed`
+  - `python -m pytest tests/unit/test_strategy_engine_service.py -k "bar_driver_activity_ignores_duplicate_trade_payload_timestamps or refresh_stale_schwab_1m_history or clustered_lag" -q` -> `4 passed`
+  - `python -m py_compile src/project_mai_tai/strategy_core/schwab_native_30s.py src/project_mai_tai/services/strategy_engine_app.py tests/unit/test_strategy_core.py tests/unit/test_strategy_engine_service.py`
+- Deploy status:
+  - local only at this point in the handoff update
+  - next live check should confirm that weak symbols like `AUUD` fall into the "no advancing market event" bucket instead of manufacturing false `bar builder stalled` pressure
+
 ### 2026-05-21 morning - `ATPC` proved `schwab_1m` splits into missing-live-bar vs late-after-receive, and the receive-vs-replay fix is now deployed
 
 - Production `ATPC` audit against:

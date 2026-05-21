@@ -116,6 +116,7 @@ class SchwabNativeBarBuilder:
         # 2026-05-14 MOBX 10-minute stall signature. Reset on each bar close.
         self._last_trade_wallclock: float = 0.0
         self._last_bar_advancement_wallclock: float = 0.0
+        self._last_trade_event_fingerprint: tuple[int, int | None, float, int] | None = None
         self._stall_warn_issued: bool = False
         # Revision rate-of-fire tracking (issue #145). Same bar revised many
         # times within 30s indicates the next-bar bucket isn't advancing.
@@ -137,8 +138,18 @@ class SchwabNativeBarBuilder:
         bucket_start = (now_ts // self.interval_secs) * self.interval_secs
         completed: list[OHLCVBar] = []
         delta_volume = self._resolve_volume_delta(size, cumulative_volume)
-        # Track wall-clock of trade arrival for stall-detection (issue #145).
-        self._last_trade_wallclock = self.time_provider()
+        event_fingerprint = (
+            int(timestamp_ns or int(bucket_start * 1_000_000_000)),
+            int(cumulative_volume) if cumulative_volume is not None else None,
+            round(float(price), 6),
+            int(size),
+        )
+        # Only advance the wall-clock when the underlying market event
+        # advances. Replayed duplicate Schwab trades for weak symbols should
+        # not keep the builder in a false "ticks kept arriving" state.
+        if event_fingerprint != self._last_trade_event_fingerprint:
+            self._last_trade_wallclock = self.time_provider()
+            self._last_trade_event_fingerprint = event_fingerprint
 
         if self._current_bar is None and self.bars and bucket_start <= self.bars[-1].timestamp:
             if bucket_start == self.bars[-1].timestamp and _is_synthetic_bar(self.bars[-1]):
@@ -380,6 +391,7 @@ class SchwabNativeBarBuilder:
         self._last_closed_bar_from_aggregate = False
         self._last_trade_wallclock = 0.0
         self._last_bar_advancement_wallclock = 0.0
+        self._last_trade_event_fingerprint = None
         self._stall_warn_issued = False
         self._last_revised_bar_timestamp = None
         self._revisions_for_current_tail = 0
