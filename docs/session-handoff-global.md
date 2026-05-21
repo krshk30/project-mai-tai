@@ -441,6 +441,47 @@ Today's 14 PRs from 2026-05-18 still need RTH stress test. Originally scheduled 
 
 Twelve PRs shipped today addressing four distinct bug classes that compounded into the AUUD/QNCX/SBFM stuck-order incident the operator witnessed. All deployed live. VPS HEAD `03bf291` (PR #180) at session end.
 
+### 2026-05-21 late afternoon - `NIVF` / `TRNR` proved a third false-stale class: canonical Schwab 1m final bars were not refreshing the builder stall clock
+
+- After the duplicate-stale-packet fix (`9639204`), live `schwab_1m` still showed:
+  - `NIVF`: `bar builder stalled: last bar advanced ... while ticks kept arriving ...`
+  - `TRNR`: same stall reason
+- Production trace for both names showed this was **not** another missing-data case:
+  - raw archive had advancing trades plus advancing `live_bar` rows each minute
+  - analyzer for `17:00-18:00 ET` showed most bars receiving in `~3-7s` and archiving/persisting in `~5-18s`
+  - that did not match the multi-minute stall counters shown in Decision Tape
+- Root cause:
+  - `SchwabNativeBarBuilder._last_bar_advancement_wallclock` was refreshed when a bar advanced via tick-built `_close_current_bar()`
+  - but it was **not** refreshed when `schwab_1m` advanced canonically through `on_final_bar()` append/replace
+  - result:
+    - after any earlier tick-built close or gap-fill, later valid `CHART_EQUITY` 1m bars could keep arriving while the builder still thought the last "advance" happened minutes ago
+    - `entry_freshness_issue()` then emitted false `bar builder stalled` blocks even though the live 1m path was advancing
+- Fix:
+  - `src/project_mai_tai/strategy_core/schwab_native_30s.py`
+    - introduced shared `_mark_bar_advanced()`
+    - canonical `on_final_bar()` append and replace now refresh stall bookkeeping
+    - synthetic flat gap bars also refresh the same bookkeeping so all bar-tail advancement goes through one path
+- Focused local validation:
+  - `python -m pytest tests/unit/test_strategy_core.py -k "entry_freshness or final_bar" -q` -> `3 passed`
+  - `python -m pytest tests/unit/test_strategy_engine_service.py -k "schwab_1m_does_not_block_when_live_bar_was_received_on_time or history_replay_reason" -q` -> `2 passed`
+  - `python -m py_compile src/project_mai_tai/strategy_core/schwab_native_30s.py tests/unit/test_strategy_core.py`
+- Deploy status:
+  - pushed to `origin/main` as `207773a` (`Refresh Schwab stall clock on final bars`)
+  - VPS `/home/trader/project-mai-tai` fast-forwarded from `9639204` to `207773a`
+  - `project-mai-tai-strategy.service` restarted successfully at `2026-05-21 21:19 UTC`
+- Immediate live validation after deploy:
+  - `schwab_1m` `recent_decisions` for `NIVF` / `TRNR` now show fresh `evaluated` rows at `05:20 PM ET`
+  - the newest fresh block for both names is now:
+    - `completed bar arrived 45.2s after close (limit 30.0s)`
+  - the earlier `bar builder stalled` rows still appear in history below the top rows, but no fresh post-restart `SCHWAB30-STALL` warnings showed up in the latest strategy log tail
+  - analyzer confirms the current active reproducer changed from false stall to genuine late live-bar arrival:
+    - `NIVF 17:19` -> `receive_lag_s=45.218`, `archive_lag_s=48.613`, `class=live_bar_received_late_before_drain`
+    - `TRNR 17:19` -> `receive_lag_s=45.218`, `archive_lag_s=48.447`, `class=live_bar_received_late_before_drain`
+- Operational conclusion:
+  - the false `bar builder stalled` state for active canonical `schwab_1m` bars was real and is now fixed
+  - what remains on `NIVF` / `TRNR` is a real late `CHART_EQUITY` minute, not stale builder bookkeeping
+  - next work should focus on true late-minute delivery / replay timing, not more stall-clock patches
+
 ### 2026-05-21 early afternoon - `AUUD` proved a second false-stale class: duplicate stale Schwab packets were being counted as fresh bar-driving activity
 
 - Fresh post-restart validation narrowed the remaining `schwab_1m` problem:
