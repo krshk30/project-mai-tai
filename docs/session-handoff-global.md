@@ -441,7 +441,7 @@ Today's 14 PRs from 2026-05-18 still need RTH stress test. Originally scheduled 
 
 Twelve PRs shipped today addressing four distinct bug classes that compounded into the AUUD/QNCX/SBFM stuck-order incident the operator witnessed. All deployed live. VPS HEAD `03bf291` (PR #180) at session end.
 
-### 2026-05-21 morning - `ATPC` proved `schwab_1m` splits into missing-live-bar vs late-after-receive, and a local fix is ready
+### 2026-05-21 morning - `ATPC` proved `schwab_1m` splits into missing-live-bar vs late-after-receive, and the receive-vs-replay fix is now deployed
 
 - Production `ATPC` audit against:
   - raw Schwab archive `/var/lib/project-mai-tai/schwab_ticks/2026-05-21/ATPC.jsonl`
@@ -461,7 +461,7 @@ Twelve PRs shipped today addressing four distinct bug classes that compounded in
     - live `CHART_EQUITY` bars were **received on time** (`close_lag_recv_s ~= 2-4s`)
     - but some were only **recorded/persisted** `~12-43s` after close
     - so the current `schwab_1m` freshness guard can still blame the bar as "late" even when the actual Schwab receive time was fine
-- Local code fix implemented (NOT DEPLOYED YET in this pass):
+- Code fix implemented:
   - `src/project_mai_tai/services/strategy_engine_app.py`
     - `schwab_1m` live-bar path now carries explicit `live_bar_received_at` and `live_bar_recorded_at`
     - entry freshness for canonical `schwab_1m` bars now prefers **receive lag** over implicit persist lag
@@ -472,9 +472,13 @@ Twelve PRs shipped today addressing four distinct bug classes that compounded in
   - `python -m pytest tests/unit/test_strategy_engine_service.py -k "schwab_stream_queue_drain or completed_bar_arrives_late or received_on_time or history_replay_reason" -q` -> `7 passed`
   - `python -m pytest tests/unit/test_schwab_1m_bot.py -k "history_refresh_replays_missing_completed_bar or history_refresh_ignores_prior_session_bars or skips_replay_when_live_bar_is_already_received" -q` -> `3 passed`
   - `python -m py_compile src/project_mai_tai/services/strategy_engine_app.py tests/unit/test_strategy_engine_service.py tests/unit/test_schwab_1m_bot.py`
-- Immediate next action:
-  - deploy this `schwab_1m` receive-vs-replay fix
-  - then re-check `ATPC` or another active Schwab name to confirm:
+- Deploy status:
+  - pushed to `origin/main` as `a88804b` (`Fix schwab 1m receive-vs-replay freshness handling`)
+  - VPS `/home/trader/project-mai-tai` fast-forwarded from `3809cb5` to `a88804b`
+  - `project-mai-tai-strategy.service` restarted successfully at `2026-05-21 14:05:36 UTC`
+- Immediate post-deploy state:
+  - strategy resumed and is publishing fresh momentum-alert / snapshot-batch logs again
+  - a fresh 30-minute live validation is required on active `schwab_1m` names to confirm:
     - no false freshness block when `CHART_EQUITY` receive lag is only a few seconds
     - replay only fires when the live 1m bar is truly missing, not merely late in our local drain/persist path
 
