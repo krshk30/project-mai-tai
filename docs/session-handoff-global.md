@@ -505,6 +505,35 @@ Twelve PRs shipped today addressing four distinct bug classes that compounded in
     - but it did **not** resolve the real stale-chain problem on live `schwab_1m`
     - remaining work is still on the `schwab_1m` completed-bar path / stream lifecycle, not on strategy rules
 
+### 2026-05-21 late morning - market-data drain now yields to queued Schwab bars, deployed immediately
+
+- New local root cause:
+  - the analyzer and logs showed many cases where `schwab_1m` `CHART_EQUITY` bars were received in `~2-5s` but not archived/persisted until `~80-300s` later
+  - main-loop review showed `run()` drained up to `_MARKET_DATA_DRAIN_BUDGET=5000` generic Redis market-data events before returning to `_drain_schwab_stream_queues()`
+  - this let queued Schwab `live_bar` work sit behind a hot generic stream even when the bars had already reached our process on time
+- Fix:
+  - `src/project_mai_tai/services/strategy_engine_app.py`
+    - `_drain_market_data_stream()` now yields back after the current xread batch whenever queued Schwab bar/trade work exists
+    - added `_schwab_has_pending_priority_stream_events()` so canonical Schwab bars cannot wait behind repeated Redis batches
+  - `tests/unit/test_strategy_engine_service.py`
+    - added regression coverage proving the market-data drain stops after one batch when `schwab_1m` live-bar work is already queued
+- Focused validation:
+  - `python -m pytest tests/unit/test_strategy_engine_service.py -k "market_data_drain_yields_when_schwab_priority_work_is_queued or schwab_stream_queue_drain or run_flushes_completed_bars_before_schwab_recovery_work or completed_bar_arrives_late or received_on_time or history_replay_reason" -q` -> `9 passed`
+  - `python -m pytest tests/unit/test_schwab_1m_bot.py -k "history_refresh_replays_missing_completed_bar or history_refresh_ignores_prior_session_bars or skips_replay_when_live_bar_is_already_received" -q` -> `3 passed`
+  - `python -m py_compile src/project_mai_tai/services/strategy_engine_app.py tests/unit/test_strategy_engine_service.py`
+- Deploy status:
+  - pushed to `origin/main` as `1c51c55` (`Yield market data drain to queued Schwab bars`)
+  - VPS `/home/trader/project-mai-tai` fast-forwarded from `a88804b` to `1c51c55`
+  - `project-mai-tai-strategy.service` restarted successfully at `2026-05-21 15:58:49 UTC`
+- Immediate post-deploy read (`~16:00 UTC` / `12:00 ET`):
+  - `schwab_1m` `listening_state=LISTENING`
+  - `watchlist_count=11`
+  - `latest_decision_at=2026-05-21 11:59:00 AM ET`
+  - `latest_market_data_at=2026-05-21 12:00:37 PM ET`
+  - `latest_heartbeat_at=2026-05-21 12:00:34 PM ET`
+  - live payload no longer showed the earlier wall of freshness-guard stale rows; current rows were advancing and mostly `evaluated` / normal path-specific `blocked`
+  - one fresh symbol-precise warning still appeared (`BESS 11:58` history-replay-missing-live-bar and several `11:58` bars at `54.7s`), so this is **improved immediately after deploy**, not yet declared fully closed
+
 ### 2026-05-20 evening - permanent Schwab streamer and 30s-finalization fix deployed
 
 - Research conclusion:
