@@ -8119,6 +8119,24 @@ class StrategyEngineService:
             return None
         return max(present)
 
+    def _schwab_last_bar_driver_activity_at(self, symbol: str) -> datetime | None:
+        """Return the most recent Schwab activity that can advance completed bars.
+
+        Fresh quotes alone do not imply `schwab_1m` should produce a new
+        completed bar. After-hours names can keep publishing quote updates long
+        after their last trade, and treating those quote-only symbols as
+        "missing bars" creates false history replays and reconnect storms.
+        """
+        normalized = str(symbol).upper()
+        candidates = [
+            self._schwab_symbol_last_stream_trade_at.get(normalized),
+            self._schwab_symbol_last_stream_bar_at.get(normalized),
+        ]
+        present = [candidate for candidate in candidates if candidate is not None]
+        if not present:
+            return None
+        return max(present)
+
     def _is_schwab_symbol_stale(self, symbol: str, now: datetime) -> bool:
         last_update = self._schwab_last_stream_update_at(symbol)
         if last_update is None:
