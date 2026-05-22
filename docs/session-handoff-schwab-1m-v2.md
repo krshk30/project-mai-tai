@@ -533,3 +533,160 @@ log. Expect:
 
 Counts will vary by session — the existence of all three states under
 real data is the validation, not specific counts.
+
+### 2026-05-22 EOD — Post-#220 regression spot-check (clean)
+
+Quick "did the merges break anything" sweep run at 20:52 UTC, ten
+minutes after the PR #220 restart. Four random watchlist symbols
+sampled for bar-build cadence + persist-lag, all three review markers
+checked, heartbeat W2 progression confirmed, error grep clean.
+
+| Symbol | bars/10min | latest_age_s | lag p50 |
+|---|---|---|---|
+| BIYA | 8 | 138s | 90.5s |
+| CPSH | 2 | 318s | 84.7s |
+| GOVX | 8 | 138s | 91.8s |
+| RYOJ | 9 | 78s | 82.3s |
+
+Persist-lag p50 in the 82–92s band across all four — matches the
+pre-PR baseline of ~85s. CPSH's sparser 2-bars/10min is its known
+no-trade-gap behavior on a thin penny stock, not a regression.
+
+C2 marker counts since the 20:42 restart:
+- `[V2-PENDING-CROSS-SET]`: 19
+- `[V2-PENDING-CROSS-EXPIRED]`: 10
+- `[V2-PENDING-CROSS-CONSUMED]`: 0
+
+The +1 EXPIRED over the immediate post-restart count is a live-data
+hit — confirms C2 actively expiring stale pending crosses outside the
+warmup batch too.
+
+W2 verified: heartbeat shows `warmed_size=10, watchlist_size=10`
+stable from 20:49 onward. Got from 0/10 at boot to 10/10 in ~7 min
+(matches REST round-robin × warmup batch time).
+
+Zero errors / tracebacks / exceptions since the #220 restart.
+
+### 2026-05-23 — Day 3 RUNBOOK: Saturday morning streamer connectivity test
+
+**Scope**: this is a plumbing check, NOT a live-data validation. Market
+is closed Saturday so no bars will flow. The check confirms the
+streamer can connect, log in, and subscribe without crashing or
+visibly colliding with the existing `schwab_streamer.py` session in
+the strategy-engine process. The actual persist-lag drop verification
+needs trading-day data and lives on a later trading-day evening.
+
+**Pre-flight — record starting state for exact revert**
+
+SSH to the VPS and check the current value of the streamer flag:
+
+```bash
+sudo grep -E '^#?\s*MAI_TAI_STRATEGY_SCHWAB_1M_V2_STREAMER_ENABLED' \
+  /etc/project-mai-tai/project-mai-tai.env
+```
+
+Expected baseline: either `# MAI_TAI_STRATEGY_SCHWAB_1M_V2_STREAMER_ENABLED=false`
+(commented out, never explicitly set) or `MAI_TAI_STRATEGY_SCHWAB_1M_V2_STREAMER_ENABLED=false`.
+**Write down the exact form** — that's what the revert step needs to restore.
+
+**Activate**
+
+Flip the flag to `=true`:
+
+```bash
+# If the line exists (commented or not):
+sudo sed -i 's/^#\?\s*MAI_TAI_STRATEGY_SCHWAB_1M_V2_STREAMER_ENABLED=.*/MAI_TAI_STRATEGY_SCHWAB_1M_V2_STREAMER_ENABLED=true/' \
+  /etc/project-mai-tai/project-mai-tai.env
+
+# Verify the line is now `MAI_TAI_STRATEGY_SCHWAB_1M_V2_STREAMER_ENABLED=true`:
+sudo grep MAI_TAI_STRATEGY_SCHWAB_1M_V2_STREAMER_ENABLED \
+  /etc/project-mai-tai/project-mai-tai.env
+```
+
+Restart v2 only — the existing schwab_1m streamer session in
+strategy-engine should stay up:
+
+```bash
+sudo systemctl restart project-mai-tai-schwab-1m-v2.service
+```
+
+**Watch — two logs in parallel**
+
+Terminal 1 (v2 log):
+
+```bash
+sudo tail -F /var/log/project-mai-tai/schwab-1m-v2.log
+```
+
+Terminal 2 (production strategy-engine log, for the collision signature):
+
+```bash
+sudo tail -F /var/log/project-mai-tai/strategy.log | grep -i schwab
+```
+
+**What to expect within ~15–30 seconds**
+
+- v2 log:
+  - `[V2-WS-INIT]` log line: `schwab_v2 streamer enabled, REST polling
+    continues for cold-start warmup + reconnect gap-fill` — confirms
+    the flag flip was picked up.
+  - `[V2-WS-LOGIN-OK] schwab_v2 streamer connected
+    (symbols_desired=N)` — OAuth + WS handshake worked. `N` may be 0
+    at first (W2: streamer waits for REST warmup before subscribing).
+  - `[V2-WS-SUB] cmd=SUBS count=N sample=…` — SUBS sent after warmed
+    symbols accumulate. May lag the LOGIN by a minute or two on cold
+    start. Normal.
+- Production log: **no new** `Schwab streamer connection loop failed`
+  lines appearing within seconds of `[V2-WS-LOGIN-OK]`. New
+  disconnects there immediately after v2's login would be the
+  collision signature.
+- `_handle_bar` lines (strategy bars): few or none — market's closed,
+  CHART_EQUITY won't push bars. Expected on a Saturday. Absence of
+  bars is not a failure of this test.
+
+**What this test gives you**
+
+"Streamer connects cleanly, logs in, subscribes, doesn't crash,
+doesn't visibly collide." Plumbing only. Real persist-lag-drops-to-<5s
+and `rest_bars_gated_total` climbing happen on a live trading day.
+
+**Revert — when you're done, do not leave it on**
+
+Restore the flag to its recorded starting state. Two cases:
+
+```bash
+# Case A — original was commented out:
+sudo sed -i 's/^MAI_TAI_STRATEGY_SCHWAB_1M_V2_STREAMER_ENABLED=true/# MAI_TAI_STRATEGY_SCHWAB_1M_V2_STREAMER_ENABLED=false/' \
+  /etc/project-mai-tai/project-mai-tai.env
+
+# Case B — original was an explicit =false:
+sudo sed -i 's/^MAI_TAI_STRATEGY_SCHWAB_1M_V2_STREAMER_ENABLED=true/MAI_TAI_STRATEGY_SCHWAB_1M_V2_STREAMER_ENABLED=false/' \
+  /etc/project-mai-tai/project-mai-tai.env
+```
+
+Apply by restarting v2 again:
+
+```bash
+sudo systemctl restart project-mai-tai-schwab-1m-v2.service
+```
+
+**Confirm revert**:
+
+```bash
+sudo systemctl status project-mai-tai-schwab-1m-v2.service | head -5
+sudo tail -n 30 /var/log/project-mai-tai/schwab-1m-v2.log | grep -E 'idle|enabled'
+```
+
+Expected: service `active (running)` and a log line like
+`schwab_v2_streamer idle: enabled=False token_path='...'`. That
+confirms the streamer is back to its dormant state and REST is the
+sole signal path again.
+
+**Why this needs to revert before the next trading day**
+
+The OAuth single-session collision is unverified at this point. If
+the connection looked fine on Saturday (no traffic), it could still
+collide under Monday's pre-market load. Leaving the streamer on
+overnight without an eyes-on validation window risks production
+schwab_1m / macd_30s outage if collision manifests on the open. The
+plumbing pass is necessary but not sufficient; do not skip the revert.
