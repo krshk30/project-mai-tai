@@ -1,5 +1,58 @@
 # Session Handoff - Global
 
+### 2026-05-22 EOD pt2 — `schwab_1m_v2` Day 2: code review findings closed + Saturday plumbing test scheduled (see dedicated doc)
+
+Five additional PRs shipped today against the Day 1 v2 bot, closing the
+critical findings from `schwab_1m_v2_code_review.md`. Full per-PR detail
++ Saturday morning streamer connectivity test runbook live in the
+dedicated doc: [`docs/session-handoff-schwab-1m-v2.md`](session-handoff-schwab-1m-v2.md).
+
+PRs (all admin-merged, all v2-owned files only — no shared hot code touched):
+
+| PR | Title | What |
+|---|---|---|
+| #216 | dedicated CHART_EQUITY WebSocket streamer (dormant) | New `market_data/schwab_v2_streamer.py`. Default OFF — code lands without behavior change. Activation requires evening test window per the runbook. |
+| #217 | `[V2-MACD-PROBE]` diagnostic log | Per-bar dump of every input to cross detection. Operator validated against TOS for CPSH 15:46–16:00 ET — bot MACD matches TOS to **4 decimals at steady state** (`n_bars=300`), including the 16:00 closing bar at 6-decimal precision (0.009498 / 0.004169). |
+| #218 | W1 — raise `min_bars` to 135 | Probe also empirically scoped the EMA seed-bias zone: bot MACD at `n_bars=35` is 0.085 decaying to ~0.01 by `n_bars=100`. New `SchwabV2Config.macd_warmup_settling_bars=100` walls off the unreliable region. **C1 (stateful-EMA rewrite) deferred** — W1 is what makes deferring C1 safe. |
+| #219 | C3 + W2 + W3 streamer/REST seam | Distinct callbacks for REST/streamer; REST gated when streamer connected AND has delivered same/later bar; streamer subscribes only to REST-warmed symbols; streamer dedupe `<` → `<=`. Heartbeat exposes `warmed_size`, `rest_bars_gated_total`, `rest_bars_gap_fill_total`. **Zero behavior change with streamer flag off.** |
+| #220 | C2 — pending-cross carryforward | `_evaluate_completed_bar` now stashes crosses detected on stale bars; next fresh bar can promote them (with `pending_cross_max_gap_secs=180` expiry + on-current-bar `macd_above_signal` validation). Three new log markers: `[V2-PENDING-CROSS-SET/CONSUMED/EXPIRED]`. |
+
+**Code review status at EOD**:
+
+| Finding | Status | PR |
+|---|---|---|
+| C1 stateful EMA | Deferred (W1 makes it optional) | — |
+| C2 age-guard cross loss | ✅ Closed | #220 |
+| C3 REST/streamer race | ✅ Closed | #219 |
+| W1 min_bars=135 | ✅ Closed | #218 |
+| W2 startup ordering | ✅ Closed | #219 |
+| W3 streamer dedupe `<=` | ✅ Closed | #219 |
+| N1–N4 | No action (minor) | — |
+
+**Validation snapshot at EOD 20:52 UTC (post-#220 spot-check)**:
+- Bar-build pipeline healthy: persist-lag p50=82–92s across 4 random
+  symbols (matches Day 1 baseline of ~85s — REST behavior unchanged
+  by the merges).
+- C2 markers actively firing: 19 SET, 10 EXPIRED on real warmup data;
+  CONSUMED still 0 (open item — requires specific boundary timing
+  alignment that the warmup batches haven't exercised yet).
+- W2 working: `warmed_size=10/10` from 20:49 onward (reached parity
+  with watchlist in ~7 min after restart).
+- Zero errors / tracebacks since the #220 restart.
+
+**Saturday 2026-05-23 morning task**: streamer connectivity plumbing
+test per the runbook in
+[`docs/session-handoff-schwab-1m-v2.md`](session-handoff-schwab-1m-v2.md)
+("Day 3 RUNBOOK"). NOT a live-data validation — market's closed, no
+bars will flow. Confirms streamer can connect, log in, subscribe, and
+doesn't visibly collide with the existing schwab_streamer.py session
+in strategy-engine. **MUST revert the flag before leaving** — leaving
+streamer enabled overnight without eyes-on through a market open
+risks production schwab_1m / macd_30s outage if OAuth single-session
+collision manifests under load. Pre-flight requires recording the
+exact baseline form of the env line so the revert restores it
+verbatim.
+
 ### 2026-05-22 EOD — `schwab_1m_v2` isolated bot built and deployed end-to-end (see dedicated doc)
 
 Eight PRs shipped (#207–#214) building a brand-new isolated 1-minute bot
