@@ -1,5 +1,39 @@
 # Session Handoff - Global
 
+### 2026-05-22 EOD — `schwab_1m_v2` isolated bot built and deployed end-to-end (see dedicated doc)
+
+Eight PRs shipped (#207–#214) building a brand-new isolated 1-minute bot
+parallel to `schwab_1m`. The goal was operator-stated escape from the
+regression chain hitting the existing Schwab bots — `schwab_1m_v2` shares
+**zero** code with `schwab_streamer.py`, `schwab_native_30s.py`,
+`strategy_engine_app.py`, `bar_builder.py`, or `indicators.py`.
+
+All details, deploy log, validation snapshot, and open items live in the
+dedicated doc: [`docs/session-handoff-schwab-1m-v2.md`](session-handoff-schwab-1m-v2.md).
+
+Key cross-bot impacts:
+- **New shared event type** `IsolatedBotStateEvent` in `events.py` (additive).
+- **New Redis stream** `mai_tai:strategy-state-isolated` for per-bot state
+  from isolated services. Control-plane `_load_stream_state` reads both
+  the main `strategy-state` snapshot and this new stream and merges into a
+  single `bots` dict. Existing bots see no change in their snapshot path.
+- **New systemd unit** `project-mai-tai-schwab-1m-v2.service` (sixth service).
+- **New deploy target** `schwab-1m-v2` in `Deploy Service` workflow +
+  `deploy_service.sh` + `install_units.sh`.
+- **Reconciler still degraded** because of the operator-frozen CYN position
+  (paper:schwab_1m 8000 shares vs virtual_position=0). Operator-confirmed
+  baseline: leave as-is.
+- **Legacy API URL disabled** in `/etc/project-mai-tai/project-mai-tai.env`
+  (commented out `MAI_TAI_LEGACY_API_BASE_URL`). The old momentum-stock-trader
+  service isn't running here; the dashboard was generating Connection-refused
+  noise on every refresh. Re-enable only if the legacy stack is actually
+  brought up.
+
+Validation snapshot at EOD 16:02 UTC: v2 persisting 569 bars/hr across 12
+symbols (47/sym/hr vs schwab_1m's 35/sym/hr), persist-lag p50 85s p95 162s,
+zero errors. Strategy hasn't fired a live intent — quiet mid-morning window.
+Tomorrow's pre-market 07-09 ET is the real validation window.
+
 ### 2026-05-22 premarket scanner outage - scanner went blank because strategy-state publication was blocked behind subscription sync
 
 - Live production evidence:
