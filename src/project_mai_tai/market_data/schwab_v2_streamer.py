@@ -265,12 +265,17 @@ class SchwabV2Streamer:
                 bar = self._extract_chart_bar(content)
                 if bar is None:
                     continue
-                # Dedupe: skip strictly-older buckets. Equal timestamps
-                # pass through so any same-bucket refinement from Schwab
-                # updates the strategy's last bar (existing strategy
-                # already handles "same bucket = update, not append").
+                # Dedupe: skip same-or-older buckets. CHART_EQUITY's
+                # contract is that each emit is a FINAL snapshot for the
+                # closed minute, so re-emits of the same bucket are
+                # redundant — letting them through would flip
+                # `state.bars[-1]` under the strategy's update-in-place
+                # path without re-running cross detection, which is
+                # wasted work and a source of cross-feed seam noise.
+                # Tightened from `<` to `<=` per W3 in the code review;
+                # see Day 2 entry in `docs/session-handoff-schwab-1m-v2.md`.
                 prev = self._last_bar_ts_ms.get(bar.symbol, 0)
-                if bar.timestamp_ms < prev:
+                if bar.timestamp_ms <= prev:
                     continue
                 self._last_bar_ts_ms[bar.symbol] = bar.timestamp_ms
                 self._last_bar_received_monotonic = asyncio.get_running_loop().time()
