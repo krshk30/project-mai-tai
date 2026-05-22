@@ -567,126 +567,269 @@ stable from 20:49 onward. Got from 0/10 at boot to 10/10 in ~7 min
 
 Zero errors / tracebacks / exceptions since the #220 restart.
 
-### 2026-05-23 — Day 3 RUNBOOK: Saturday morning streamer connectivity test
+### 2026-05-23 — Streamer Activation Test Plan (Saturday plumbing → weekday-after-close live → separate credential)
 
-**Scope**: this is a plumbing check, NOT a live-data validation. Market
-is closed Saturday so no bars will flow. The check confirms the
-streamer can connect, log in, and subscribe without crashing or
-visibly colliding with the existing `schwab_streamer.py` session in
-the strategy-engine process. The actual persist-lag drop verification
-needs trading-day data and lives on a later trading-day evening.
+This is the day-by-day plan for activating the CHART_EQUITY streamer
+(PR #216, dormant) against the settled REST/streamer seam
+(PRs #218–#220).
 
-**Pre-flight — record starting state for exact revert**
+Read **Core concepts** first — it prevents the most common confusions.
 
-SSH to the VPS and check the current value of the streamer flag:
+#### Core concepts (read first)
 
-```bash
-sudo grep -E '^#?\s*MAI_TAI_STRATEGY_SCHWAB_1M_V2_STREAMER_ENABLED' \
-  /etc/project-mai-tai/project-mai-tai.env
-```
+**1. Architecture: streamer is primary, REST is demoted (not removed).**
 
-Expected baseline: either `# MAI_TAI_STRATEGY_SCHWAB_1M_V2_STREAMER_ENABLED=false`
-(commented out, never explicitly set) or `MAI_TAI_STRATEGY_SCHWAB_1M_V2_STREAMER_ENABLED=false`.
-**Write down the exact form** — that's what the revert step needs to restore.
+- Once activated, the CHART_EQUITY streamer is the PRIMARY live feed.
+  It pushes each closed 1-minute bar at minute close (~T+0–1s).
+- REST stays running but is demoted to TWO jobs only:
+  - **warmup** — the ~500-bar cold-start batch that seeds indicators.
+  - **gap-fill / fallback** — feeds the strategy only when the
+    streamer is disconnected.
+- When the streamer is connected and healthy, C3 gating (PR #219)
+  suppresses REST from the strategy feed. REST still polls; it just
+  stops forwarding bars to the strategy.
 
-**Activate**
+**2. The streamer runs ALL sessions once it is on.**
 
-Flip the flag to `=true`:
+- Once the flag is on and the streamer is connected, it runs
+  continuously: pre-market, regular hours, post-market.
+- You activate it ONCE. You do not flip it on/off around market hours.
+- A clean activation is left ON and carries into every following
+  session on its own.
 
-```bash
-# If the line exists (commented or not):
-sudo sed -i 's/^#\?\s*MAI_TAI_STRATEGY_SCHWAB_1M_V2_STREAMER_ENABLED=.*/MAI_TAI_STRATEGY_SCHWAB_1M_V2_STREAMER_ENABLED=true/' \
-  /etc/project-mai-tai/project-mai-tai.env
+**3. Why activation happens AFTER MARKET CLOSE — the key point.**
 
-# Verify the line is now `MAI_TAI_STRATEGY_SCHWAB_1M_V2_STREAMER_ENABLED=true`:
-sudo grep MAI_TAI_STRATEGY_SCHWAB_1M_V2_STREAMER_ENABLED \
-  /etc/project-mai-tai/project-mai-tai.env
-```
+- The v2 streamer opens a WebSocket session on the SHARED Schwab OAuth
+  token — the same token the production `schwab_1m` / `macd_30s` bots
+  use.
+- Schwab allows ONE streamer session per OAuth token.
+- The first time the flag is flipped, the v2 streamer's connect MAY
+  kick the production session offline (the "collision").
+- Therefore the first flag-flip is done AFTER market close, when
+  production bots are not trading and a collision costs nothing.
+- "After 6 PM" is NOT the streamer's operating schedule. It is the
+  one-time safe window to flip the flag and observe whether it
+  collides. After a clean activation, the streamer runs 24/7 normally.
 
-Restart v2 only — the existing schwab_1m streamer session in
-strategy-engine should stay up:
+**4. The real fix that removes all of this timing fuss.**
 
-```bash
-sudo systemctl restart project-mai-tai-schwab-1m-v2.service
-```
+- Day 3 below: give v2's streamer its OWN Schwab developer-app
+  credential (separate OAuth identity, separate token store path).
+- With a separate token there is NO shared session and NO collision
+  possible. The streamer can then be activated any time.
+- Until Day 3 is done, the after-close activation dance is the
+  interim safe path.
 
-**Watch — two logs in parallel**
+---
 
-Terminal 1 (v2 log):
+#### DAY 1 — Saturday (market closed all day): PLUMBING TEST
 
-```bash
-sudo tail -F /var/log/project-mai-tai/schwab-1m-v2.log
-```
+**Goal**: confirm the streamer connects, logs in, subscribes, and does
+not crash or collide. This validates the MECHANICS only.
 
-Terminal 2 (production strategy-engine log, for the collision signature):
+**What this test CAN prove**: connection works, OAuth works, the code
+path runs without crashing, the flag flips cleanly, rollback works.
 
-```bash
-sudo tail -F /var/log/project-mai-tai/strategy.log | grep -i schwab
-```
+**What this test CANNOT prove**: that bars actually flow, or that
+persist-lag drops. The market is closed Saturday, so CHART_EQUITY has
+no new bars to push. Expect FEW or ZERO `_handle_bar` lines. That is
+NOT a failure — it is expected with the market closed.
 
-**What to expect within ~15–30 seconds**
+**A. Record the starting state (so revert is exact).**
 
-- v2 log:
-  - `[V2-WS-INIT]` log line: `schwab_v2 streamer enabled, REST polling
-    continues for cold-start warmup + reconnect gap-fill` — confirms
-    the flag flip was picked up.
-  - `[V2-WS-LOGIN-OK] schwab_v2 streamer connected
-    (symbols_desired=N)` — OAuth + WS handshake worked. `N` may be 0
-    at first (W2: streamer waits for REST warmup before subscribing).
-  - `[V2-WS-SUB] cmd=SUBS count=N sample=…` — SUBS sent after warmed
-    symbols accumulate. May lag the LOGIN by a minute or two on cold
-    start. Normal.
-- Production log: **no new** `Schwab streamer connection loop failed`
-  lines appearing within seconds of `[V2-WS-LOGIN-OK]`. New
-  disconnects there immediately after v2's login would be the
-  collision signature.
-- `_handle_bar` lines (strategy bars): few or none — market's closed,
-  CHART_EQUITY won't push bars. Expected on a Saturday. Absence of
-  bars is not a failure of this test.
+1. SSH to the VPS.
+2. Check the flag's current state:
+   ```bash
+   sudo grep -E '^#?\s*MAI_TAI_STRATEGY_SCHWAB_1M_V2_STREAMER_ENABLED' \
+     /etc/project-mai-tai/project-mai-tai.env
+   ```
+3. Write down its EXACT current form (commented out OR `=false`).
+   This is what you revert to.
 
-**What this test gives you**
+**B. Activate.**
 
-"Streamer connects cleanly, logs in, subscribes, doesn't crash,
-doesn't visibly collide." Plumbing only. Real persist-lag-drops-to-<5s
-and `rest_bars_gated_total` climbing happen on a live trading day.
+4. Set the flag to true:
+   ```bash
+   sudo sed -i 's/^#\?\s*MAI_TAI_STRATEGY_SCHWAB_1M_V2_STREAMER_ENABLED=.*/MAI_TAI_STRATEGY_SCHWAB_1M_V2_STREAMER_ENABLED=true/' \
+     /etc/project-mai-tai/project-mai-tai.env
+   ```
+   (or edit the line directly to `=true`)
+5. Restart ONLY the v2 service:
+   ```bash
+   sudo systemctl restart project-mai-tai-schwab-1m-v2.service
+   ```
 
-**Revert — when you're done, do not leave it on**
+**C. Watch — two logs in parallel.**
 
-Restore the flag to its recorded starting state. Two cases:
+6. v2 log:
+   ```bash
+   sudo tail -F /var/log/project-mai-tai/schwab-1m-v2.log
+   ```
+7. Production log (collision check):
+   ```bash
+   sudo tail -F /var/log/project-mai-tai/strategy.log | grep -i schwab
+   ```
 
-```bash
-# Case A — original was commented out:
-sudo sed -i 's/^MAI_TAI_STRATEGY_SCHWAB_1M_V2_STREAMER_ENABLED=true/# MAI_TAI_STRATEGY_SCHWAB_1M_V2_STREAMER_ENABLED=false/' \
-  /etc/project-mai-tai/project-mai-tai.env
+**D. Expected within ~15–30 seconds.**
 
-# Case B — original was an explicit =false:
-sudo sed -i 's/^MAI_TAI_STRATEGY_SCHWAB_1M_V2_STREAMER_ENABLED=true/MAI_TAI_STRATEGY_SCHWAB_1M_V2_STREAMER_ENABLED=false/' \
-  /etc/project-mai-tai/project-mai-tai.env
-```
+- `[V2-WS-INIT] schwab_v2 streamer enabled, REST polling continues
+  for cold-start warmup + reconnect gap-fill` → flag flip picked up.
+- `[V2-WS-LOGIN-OK] schwab_v2 streamer connected (symbols_desired=N)`
+  → connection + OAuth OK. `N` may be 0 at first because W2 makes
+  streamer wait for REST warmup.
+- `[V2-WS-SUB] cmd=SUBS count=N sample=...` → subscription sent. May
+  lag the LOGIN by a minute or two on cold start because the streamer
+  only subscribes to REST-warmed symbols. Normal.
+- Production log: NO new "Schwab streamer connection loop failed"
+  lines right after `[V2-WS-LOGIN-OK]`. If those appear → that is
+  the collision.
+- `_handle_bar` lines: probably few or none (market closed).
+  Expected. Not a failure.
 
-Apply by restarting v2 again:
+**E. Revert — DO NOT leave the flag on after Day 1.**
 
-```bash
-sudo systemctl restart project-mai-tai-schwab-1m-v2.service
-```
+8. Set the flag back to its recorded starting state. Two cases:
+   ```bash
+   # Case A — original was commented out:
+   sudo sed -i 's/^MAI_TAI_STRATEGY_SCHWAB_1M_V2_STREAMER_ENABLED=true/# MAI_TAI_STRATEGY_SCHWAB_1M_V2_STREAMER_ENABLED=false/' \
+     /etc/project-mai-tai/project-mai-tai.env
 
-**Confirm revert**:
+   # Case B — original was explicit =false:
+   sudo sed -i 's/^MAI_TAI_STRATEGY_SCHWAB_1M_V2_STREAMER_ENABLED=true/MAI_TAI_STRATEGY_SCHWAB_1M_V2_STREAMER_ENABLED=false/' \
+     /etc/project-mai-tai/project-mai-tai.env
+   ```
+9. Restart v2 again to apply the revert:
+   ```bash
+   sudo systemctl restart project-mai-tai-schwab-1m-v2.service
+   ```
+10. Confirm:
+    ```bash
+    sudo systemctl status project-mai-tai-schwab-1m-v2.service | head -5
+    sudo tail -n 30 /var/log/project-mai-tai/schwab-1m-v2.log | grep -E 'idle|enabled'
+    ```
+    Expected: service active + a log line like
+    `schwab_v2_streamer idle: enabled=False token_path='...'`.
 
-```bash
-sudo systemctl status project-mai-tai-schwab-1m-v2.service | head -5
-sudo tail -n 30 /var/log/project-mai-tai/schwab-1m-v2.log | grep -E 'idle|enabled'
-```
+**Day 1 outcomes**:
 
-Expected: service `active (running)` and a log line like
-`schwab_v2_streamer idle: enabled=False token_path='...'`. That
-confirms the streamer is back to its dormant state and REST is the
-sole signal path again.
+- **Clean** (login OK, no collision, no crash) → proceed to Day 2.
+- **Collision** (production log shows connection-loop failures) →
+  revert immediately. Do NOT proceed to Day 2. Prioritize Day 3
+  (separate credential) — the streamer cannot be safely activated on
+  the shared token.
+- **Crash / errors in v2 log** → revert, capture the error, fix
+  before retrying.
 
-**Why this needs to revert before the next trading day**
+---
 
-The OAuth single-session collision is unverified at this point. If
-the connection looked fine on Saturday (no traffic), it could still
-collide under Monday's pre-market load. Leaving the streamer on
-overnight without an eyes-on validation window risks production
-schwab_1m / macd_30s outage if collision manifests on the open. The
-plumbing pass is necessary but not sufficient; do not skip the revert.
+#### DAY 2 — A WEEKDAY (Mon–Fri), AFTER MARKET CLOSE (after ~16:00 ET / ~20:00 UTC): LIVE ACTIVATION
+
+**Goal**: activate the streamer for real and confirm it delivers the
+lag fix. This is the test Day 1 cannot do, because it needs live bars.
+
+**This is NOT a weekend test.** Saturday/Sunday have no post-close
+extended-hours activity, so CHART_EQUITY won't push anything fresh
+even after a "close" that never happened. Day 2 MUST be a weekday
+trading day, run after the close.
+
+**Pre-req**: Day 1 came back clean.
+
+**Why after close, again**: the flag-flip is the collision-risk
+moment. Doing it after close means production bots are not trading,
+so a collision (if any) is consequence-free. Once activated clean,
+the streamer is LEFT ON and runs into the next pre-market and RTH on
+its own.
+
+**Steps**: same A–D as Day 1 (record state, flip flag, restart, watch
+both logs).
+
+**Difference from Day 1 — what to expect, because the market traded
+today**:
+
+- `_handle_bar` lines for watchlist symbols within ~90s of activation
+  (recent post-close / extended-hours activity is enough).
+- Persist-lag in the DB should drop. Check:
+  ```sql
+  SELECT bar_time,
+         EXTRACT(EPOCH FROM (created_at - bar_time)) AS lag
+  FROM strategy_bar_history
+  WHERE strategy_code='schwab_1m_v2'
+    AND created_at > NOW() - INTERVAL '5 min'
+  ORDER BY created_at DESC LIMIT 20;
+  ```
+  Target: lag < 5s on streamer-fed bars (vs ~85s p50 under REST-only).
+- Heartbeat counter `rest_bars_gated_total` should start climbing —
+  that's C3 working: REST stepping aside while the streamer feeds.
+- **NOTE**: `rest_bars_gap_fill_total` will show a non-zero baseline
+  that is NOT real gap-fills — it counts benign warmup subscription
+  lag. Do not misread a climbing gap-fill counter as the streamer
+  dropping bars.
+
+**Decision point**:
+
+- **Clean + lag dropping + no collision** → LEAVE THE FLAG ON.
+  **Do not revert.** The streamer is now the live feed and carries
+  forward into all following sessions. Monitor the next pre-market.
+- **Collision or instability** → revert (Day 1 steps 8–10), flag
+  off, fall back to REST-only (identical to pre-PR-#216 behavior, no
+  regression). Prioritize Day 3.
+
+---
+
+#### DAY 3 — Separate OAuth credential (the proper fix)
+
+**Goal**: remove the collision risk entirely so the streamer no
+longer depends on after-close activation windows.
+
+**What it involves**:
+
+- Register a separate Schwab developer-app credential — a distinct
+  OAuth identity for v2's streamer, with its own token store path
+  (e.g. `MAI_TAI_SCHWAB_V2_TOKEN_STORE_PATH=/var/lib/macd-webhook-server/data/schwab_v2_tokens.json`).
+- v2's REST client stays on the SHARED token (read-only file access
+  doesn't conflict; the shared token is unrelated to streamer session
+  uniqueness).
+- v2's streamer uses the new dedicated token. No shared session, no
+  collision possible.
+- Implementation note: v2 streamer reads its token via
+  `settings.schwab_token_store_path` today. The Day 3 change adds a
+  v2-streamer-specific token store path and wires
+  `SchwabV2Streamer._read_access_token` to read from it instead.
+
+**After Day 3**:
+
+- The streamer can be activated any time — no after-close window
+  needed.
+- The Day 1 / Day 2 timing constraints no longer apply to future
+  restarts or re-activations.
+
+**Sequencing note**: if Day 1 shows a collision, Day 3 becomes the
+immediate priority and Day 2 is skipped until Day 3 is done.
+
+---
+
+#### Open items to watch during/after activation
+
+1. **C2 CONSUMED path** — `[V2-PENDING-CROSS-CONSUMED]` has fired 0
+   times so far. The code is review-verified but its runtime path
+   isn't yet exercised on real data. Grep for this marker over the
+   next several restarts until it appears at least once.
+2. **Silent WS stall** — if the streamer's socket goes silent without
+   formally disconnecting, `streamer.connected` stays True, C3 keeps
+   gating REST out, and there's a ~20–40s gap until the ping-timeout
+   fires. A staleness watchdog would close this; not built yet.
+3. **`rest_bars_gap_fill_total` baseline** — misnamed; counts benign
+   warmup subscription lag as "gap-fill." Expect a non-zero baseline
+   even when the streamer is delivering normally. Not a bug.
+
+---
+
+#### Quick reference — the one rule that prevents confusion
+
+- The streamer RUNS during market hours. That is its job.
+- The streamer is ACTIVATED (first flag-flip) after market close —
+  ONCE — because the flag-flip is the collision-risk moment.
+- A clean activation is LEFT ON and runs every session afterward.
+- Activate on / observe / leave on (if clean) — or revert (if not).
+- The after-close timing exists ONLY because of the shared OAuth
+  token. Day 3 removes it.
