@@ -375,3 +375,79 @@ W1 walls off the entire unreliable region from any code path that
 matters, so the rewrite is no longer load-bearing. The review doc has
 been updated with a "Validation status" header at the top reflecting
 C1-deferred / W1-confirmed-keep.
+
+### 2026-05-23 — Day 2 (PR #219): C3 + W2 + W3 streamer/REST seam bundle
+
+**Why**: the code review (`schwab_1m_v2_code_review.md`) flagged three
+issues at the REST/streamer seam that the PR #216 "both feeds are
+idempotent" claim doesn't actually cover. Idempotency holds for bar
+**storage** (UPSERT) and bar **state** (strategy's same-bucket update)
+but NOT for cross **detection** or intent **emission** — those are
+first-delivery side effects, so which feed wins the cross is a race
+when both are live. Three coupled fixes below; they ship together
+because the gating (C3) depends on the warmup signal (W2) and the
+streamer dedupe behavior (W3).
+
+**C3 — single signal source when streamer connected**
+- `services/schwab_1m_v2_bot.py` — REST and streamer now use distinct
+  callbacks (`_handle_bar_from_rest` / `_handle_bar_from_streamer`).
+- `_should_skip_rest_strategy_feed`: when `streamer.connected` is True
+  AND streamer has delivered a bar with `ts_ms >= bar.timestamp_ms` for
+  this symbol, REST suppresses the strategy feed entirely. REST still
+  runs its poll loop and advances its internal cursor — only the
+  forward to `_handle_bar` is gated.
+- Two heartbeat counters added: `rest_bars_gated_total` (suppressed —
+  streamer already had it) and `rest_bars_gap_fill_total` (forwarded
+  while streamer was connected — genuine gap-fills).
+
+**W2 — explicit "REST warmup before streamer subscribes" ordering**
+- New per-symbol set `_rest_warmup_done`. A symbol is added the first
+  time REST forwards a bar within `REST_WARMUP_FRESH_THRESHOLD_SECS=300`
+  of wall clock (i.e. the warmup batch has caught up to live).
+- `_apply_strategy_state_event` passes the watchlist set to REST
+  immediately but only the warmed subset to the streamer.
+- When REST marks a new symbol warmed, the streamer's desired set is
+  extended via `_extend_streamer_subscriptions_to_warmed`.
+- When a symbol leaves the watchlist, its warmup status is cleared.
+  If it re-joins, REST has to re-warm it before streamer is told.
+- `[V2-REST-WARMED]` INFO log per symbol on warmup completion, with
+  warmed/watchlist counts.
+
+**W3 — streamer dedupe drops equal-timestamp re-emits**
+- `market_data/schwab_v2_streamer.py` — changed
+  `bar.timestamp_ms < prev` to `<= prev`. CHART_EQUITY's contract is
+  that each emit is a final snapshot for the closed minute; same-bucket
+  re-emits would touch `state.bars[-1]` under the strategy's
+  update-in-place path without re-running cross detection, which is
+  noise. With `<=`, the streamer emits each bucket exactly once.
+
+**Operational impact while streamer flag is OFF (current state)**:
+- `streamer.connected` is False permanently → `_should_skip_rest_strategy_feed`
+  always returns False → REST runs identically to today.
+- `_rest_warmup_done` still tracks warmup completion but is only used
+  to gate streamer subscriptions — streamer.run() is idle.
+- W3 dedupe change has no effect (streamer isn't connected, doesn't
+  process messages).
+- Heartbeat counters publish but stay at zero.
+- **Zero behavior change today. Activation requires the evening test
+  per PR #216's runbook.**
+
+**Operational impact when streamer flag is ON (future evening test)**:
+- On bot startup, streamer.run() connects but `set_desired_symbols`
+  starts with empty intersection (no symbols warmed yet). Streamer
+  connects, logs in, no SUBS sent.
+- REST batch fetches per-symbol histories. As each batch's tail crosses
+  the 300s freshness threshold, the symbol joins `_rest_warmup_done`
+  and streamer SUBS that symbol.
+- From that point: streamer pushes 1m bars at minute close (T+0-1s);
+  REST keeps polling but is gated out of the strategy feed for the
+  same buckets. Persist-lag p50 should drop from ~85s to <2s for any
+  symbol where streamer is delivering.
+- On streamer disconnect: REST resumes feeding strategy (no gating
+  while disconnected). Reconnect triggers re-SUBS for the warmed set;
+  no extra gap-fill code needed because REST has been continuously
+  filling during the disconnect window.
+
+**What's still NOT covered by this bundle**:
+- C2 (age-guard-consumes-cross at the warmup→live seam). Will be the
+  next PR, against the settled seam this bundle creates.
