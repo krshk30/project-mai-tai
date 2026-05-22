@@ -207,6 +207,18 @@ class StrategyStateSnapshotEvent(EventEnvelope):
     payload: StrategyStateSnapshotPayload
 
 
+class IsolatedBotStateEvent(EventEnvelope):
+    """Per-bot state published by an isolated-service bot (e.g. schwab_1m_v2)
+    that does not participate in the strategy-engine's aggregated snapshot.
+
+    Published to its own Redis stream so isolated bots do not overwrite the
+    main strategy-state snapshot. Control-plane reads both streams and merges.
+    """
+
+    event_type: Literal["isolated_bot_state"] = "isolated_bot_state"
+    payload: StrategyBotStatePayload
+
+
 class ManualStopUpdatePayload(BaseModel):
     scope: Literal["bot", "global"]
     action: Literal["stop", "resume"]
