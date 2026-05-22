@@ -109,6 +109,17 @@ class SchwabV2Config:
     # EMAs, so the memo handed off to live evaluation reflects truth
     # rather than seed-biased noise.
     macd_warmup_settling_bars: int = 100
+    # C2: when a MACD-cross or VWAP-breakout cross is detected on a bar
+    # that's then suppressed by the `MAX_BAR_AGE_SECONDS_FOR_EMIT`
+    # freshness guard, carry the cross forward as `pending_*` on the
+    # SymbolState so the next FRESH bar can still consume it. This field
+    # is the maximum allowed gap (in seconds) between the cross-bar's
+    # timestamp and the fresh bar that would consume it — beyond this,
+    # the pending cross expires and the signal is discarded. Default
+    # 180s = 3 bars at 1m, matching the existing emit-freshness window.
+    # Setting to 0 effectively disables pending carryforward (cross
+    # only fires if the cross-bar itself is fresh).
+    pending_cross_max_gap_secs: int = 180
 
 
 @dataclass
@@ -140,6 +151,15 @@ class SymbolState:
     vwap_session_anchor_ms: int = 0
     vwap_sum_pv: float = 0.0
     vwap_sum_v: float = 0.0
+    # C2: pending-cross carryforward. When a cross is detected on a bar
+    # that's then suppressed by the MAX_BAR_AGE_SECONDS_FOR_EMIT
+    # freshness guard, these fields hold the signal so the next fresh
+    # bar can consume it. Cleared after the consuming fresh bar runs
+    # (whether it actually fired or not). Expires per
+    # SchwabV2Config.pending_cross_max_gap_secs.
+    pending_path_macd: bool = False
+    pending_path_vwap: bool = False
+    pending_cross_bar_ts_ms: int = 0
 
 
 @dataclass
@@ -470,15 +490,15 @@ class SchwabV2Strategy:
             or (self.cfg.allow_vwap_cross_entry and vwap_cross_above)
         )
 
-        # Path 1 — MACD Cross.
-        path_macd = (
+        # Path 1 — MACD Cross. (NATIVE = detected on THIS bar's data.)
+        path_macd_native = (
             macd_cross_above
             and macd_increasing
             and vwap_filter_path1
             and base_filters
         )
-        # Path 2 — VWAP Breakout.
-        path_vwap = (
+        # Path 2 — VWAP Breakout. (NATIVE = detected on THIS bar's data.)
+        path_vwap_native = (
             vwap_cross_above
             and macd_above_signal
             and macd_increasing
@@ -488,6 +508,7 @@ class SchwabV2Strategy:
         # Freshness guard precomputed here so the probe log can include it.
         now_ms = int(datetime.now(UTC).timestamp() * 1000)
         bar_age_secs = (now_ms - cur.timestamp_ms) / 1000.0
+        bar_is_fresh = bar_age_secs <= MAX_BAR_AGE_SECONDS_FOR_EMIT
 
         # Diagnostic probe — emit one INFO line per evaluated bar for
         # symbols in the probe set. Captures every input needed to
@@ -536,6 +557,36 @@ class SchwabV2Strategy:
                 state.cooldown_bars_remaining,
             )
 
+        # C2: if a NATIVE cross is detected on this bar AND the bar is
+        # stale (would be suppressed by the freshness guard below),
+        # stash it as a pending cross so the next FRESH bar can still
+        # consume it. The memo updates either way (indicator continuity
+        # requires it), but the SIGNAL is preserved across the
+        # suppressed bar via pending_*.
+        if not bar_is_fresh:
+            if path_macd_native:
+                if not state.pending_path_macd:
+                    logger.info(
+                        "[V2-PENDING-CROSS-SET] sym=%s path=macd "
+                        "cross_bar_ts_ms=%d bar_age_s=%.1f",
+                        state.symbol,
+                        cur.timestamp_ms,
+                        bar_age_secs,
+                    )
+                state.pending_path_macd = True
+                state.pending_cross_bar_ts_ms = cur.timestamp_ms
+            if path_vwap_native:
+                if not state.pending_path_vwap:
+                    logger.info(
+                        "[V2-PENDING-CROSS-SET] sym=%s path=vwap "
+                        "cross_bar_ts_ms=%d bar_age_s=%.1f",
+                        state.symbol,
+                        cur.timestamp_ms,
+                        bar_age_secs,
+                    )
+                state.pending_path_vwap = True
+                state.pending_cross_bar_ts_ms = cur.timestamp_ms
+
         # Persist memo BEFORE any early return so cross-detection stays
         # consistent across bars. Memo MUST update on every bar including
         # historical warmup feeds, otherwise prev_* is stale and crosses
@@ -549,8 +600,70 @@ class SchwabV2Strategy:
         # bars (replayed from the 24h REST window on cold-start) update
         # indicators above but never fire intents. This prevents emitting
         # an "open" intent on a MACD cross that happened hours ago.
-        if bar_age_secs > MAX_BAR_AGE_SECONDS_FOR_EMIT:
+        if not bar_is_fresh:
             return None
+
+        # Bar IS fresh. Resolve effective paths = native ∪ valid-pending.
+        # C2: a pending cross can be consumed by THIS fresh bar if the
+        # gap from the original cross-bar is within the configured cap
+        # AND the cross condition still holds on this bar (macd still
+        # above signal — not reversed) AND the filters still pass.
+        path_macd = path_macd_native
+        path_vwap = path_vwap_native
+        if state.pending_path_macd or state.pending_path_vwap:
+            pending_gap_secs = (
+                cur.timestamp_ms - state.pending_cross_bar_ts_ms
+            ) / 1000.0
+            max_gap = float(self.cfg.pending_cross_max_gap_secs)
+            if pending_gap_secs > max_gap:
+                logger.info(
+                    "[V2-PENDING-CROSS-EXPIRED] sym=%s gap_s=%.1f "
+                    "cap_s=%.1f had_pending_macd=%s had_pending_vwap=%s",
+                    state.symbol,
+                    pending_gap_secs,
+                    max_gap,
+                    str(state.pending_path_macd).lower(),
+                    str(state.pending_path_vwap).lower(),
+                )
+            else:
+                # Pending still within window — promote to effective path
+                # if the validating conditions hold on the fresh bar.
+                if (
+                    state.pending_path_macd
+                    and macd_above_signal
+                    and vwap_filter_path1
+                    and base_filters
+                ):
+                    path_macd = True
+                    logger.info(
+                        "[V2-PENDING-CROSS-CONSUMED] sym=%s path=macd "
+                        "gap_s=%.1f cross_bar_ts_ms=%d fresh_bar_ts_ms=%d",
+                        state.symbol,
+                        pending_gap_secs,
+                        state.pending_cross_bar_ts_ms,
+                        cur.timestamp_ms,
+                    )
+                if (
+                    state.pending_path_vwap
+                    and macd_above_signal
+                    and base_filters
+                ):
+                    path_vwap = True
+                    logger.info(
+                        "[V2-PENDING-CROSS-CONSUMED] sym=%s path=vwap "
+                        "gap_s=%.1f cross_bar_ts_ms=%d fresh_bar_ts_ms=%d",
+                        state.symbol,
+                        pending_gap_secs,
+                        state.pending_cross_bar_ts_ms,
+                        cur.timestamp_ms,
+                    )
+            # Always clear pending after the consuming fresh bar has
+            # evaluated — whether we promoted, expired, or the cross
+            # condition no longer held. The cross's window of opportunity
+            # is one fresh bar.
+            state.pending_path_macd = False
+            state.pending_path_vwap = False
+            state.pending_cross_bar_ts_ms = 0
 
         # State-machine gate (entry side): flat + no cooldown + raw entry.
         if state.position_qty > 0:

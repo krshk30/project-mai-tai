@@ -451,3 +451,85 @@ streamer dedupe behavior (W3).
 **What's still NOT covered by this bundle**:
 - C2 (age-guard-consumes-cross at the warmup→live seam). Will be the
   next PR, against the settled seam this bundle creates.
+
+### 2026-05-23 — Day 2 (PR #220): C2 pending-cross carryforward
+
+**Why**: with W1, C3, W2, W3 in place, the REST/streamer seam is stable
+and the indicator memo updates only on n_bars≥135 bars. But there's
+still a subtle bug at the warmup→live boundary: when a NATIVE cross is
+detected on a stale bar (which is then suppressed by the
+`MAX_BAR_AGE_SECONDS_FOR_EMIT=180s` freshness guard), the memo update
+still happens, which means the next bar's cross detection compares
+against post-cross state. **A real cross at the warmup tail is silently
+eaten** — the bot has no record that it ever happened.
+
+**Fix**: decouple memo update from emit eligibility.
+
+- New `SymbolState` fields: `pending_path_macd`, `pending_path_vwap`,
+  `pending_cross_bar_ts_ms`.
+- New config: `SchwabV2Config.pending_cross_max_gap_secs=180` (operator-
+  tunable; default matches the existing freshness window).
+- In `_evaluate_completed_bar`:
+  1. Compute native cross detection (unchanged).
+  2. If the bar is STALE AND a native cross is detected, stash it as
+     `pending_*` (with `cross_bar_ts_ms = cur.timestamp_ms`).
+  3. Update the memo (unconditional — indicator continuity).
+  4. If the bar is STALE, return None (existing behavior preserved).
+  5. If the bar is FRESH: check pending. If `(cur.timestamp_ms -
+     pending_cross_bar_ts_ms) > pending_cross_max_gap_secs`, expire +
+     discard. Otherwise validate that the cross condition still holds
+     on the CURRENT bar (`macd_above_signal=True` + filters pass) and,
+     if so, promote pending into the effective `path_macd` /
+     `path_vwap` for the state-machine gates.
+  6. Always clear `pending_*` after a fresh-bar evaluation, whether
+     consumed, expired, or invalidated by reversed momentum. The
+     cross's window of opportunity is one fresh bar.
+
+**Why the on-fresh-bar validation**: a pending cross-up was detected
+when the memo at that time said macd≤signal and the cross-bar said
+macd>signal. If the next fresh bar shows `macd<signal` (reversal
+during the gap), firing on the stale cross would buy into reversing
+momentum. The `macd_above_signal` check on the consuming bar prevents
+this — the cross-up is consumed only if the cross is still "alive."
+
+**Expiry policy** (180s default): chosen to match
+`MAX_BAR_AGE_SECONDS_FOR_EMIT`. Operator can tune
+`MAI_TAI_STRATEGY_*` env… actually no, this is a `SchwabV2Config`
+dataclass field — edit in the strategy file to change.
+- Cross at T, fresh bar at T+60 → gap 60s → consume.
+- Cross at T, fresh bar at T+120 → gap 120s → consume.
+- Cross at T, fresh bar at T+180 → gap 180s exactly → consume.
+- Cross at T, fresh bar at T+240 → gap 240s > 180 → expire.
+- AKTX-sized 11-min gap (T+660) → expire. Correct — a cross from 11
+  minutes ago is not a tradeable signal anymore.
+
+**Observability**: three new INFO log markers.
+
+- `[V2-PENDING-CROSS-SET]` — once per pending stash (de-duped: only logs
+  on the FIRST stale bar with a cross; subsequent stale bars don't
+  spam because they don't have new native crosses, only the same path
+  staying active).
+- `[V2-PENDING-CROSS-CONSUMED]` — when a fresh bar promotes the
+  pending into an effective path.
+- `[V2-PENDING-CROSS-EXPIRED]` — when the gap exceeds the cap.
+
+**What this does NOT cover**: the AKTX/GITS/WHLR-style "no candle on
+no-trade minute" gaps are **missing bars**, not stale bars. The bar
+that arrives after such a gap is fresh, so the C2 bug doesn't directly
+trigger there. C2 fires on the warmup→live seam (every bot restart)
+and on any genuine "stale bar contains a cross" path (delayed REST
+delivery, network hiccup). The warmup batch on each restart IS the
+canonical reproduction — exercised once per process start.
+
+**Verification post-deploy**: grep the three markers in the post-restart
+log. Expect:
+- `[V2-PENDING-CROSS-SET]` lines: appear during warmup-batch processing
+  when stale bars trigger native crosses (likely several per symbol).
+- `[V2-PENDING-CROSS-EXPIRED]` lines: appear when the warmup batch
+  has a long stretch of "pending held, no fresh bar" then a fresh bar
+  arrives more than 180s after the last stale cross.
+- `[V2-PENDING-CROSS-CONSUMED]` lines: appear when the warmup tail
+  resolves into the live feed and the cross is still valid.
+
+Counts will vary by session — the existence of all three states under
+real data is the validation, not specific counts.
