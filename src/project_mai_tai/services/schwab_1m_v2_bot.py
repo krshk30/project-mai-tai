@@ -25,6 +25,7 @@ import logging
 import signal
 from datetime import UTC, datetime
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 from redis.asyncio import Redis
 from sqlalchemy import select
@@ -57,6 +58,18 @@ logger = logging.getLogger(__name__)
 
 INTERVAL_SECS = 60
 STATE_PUBLISH_INTERVAL_SECONDS = 5
+EASTERN_TZ = ZoneInfo("America/New_York")
+
+
+def _format_eastern(dt: datetime) -> str:
+    """Format a datetime as `"YYYY-MM-DD HH:MM:SS AM/PM ET"`, matching the
+    existing strategy-engine's `_datetime_str` so the dashboard's max()-based
+    derivation of `latest_bot_tick_at` produces a value that's consistent in
+    sort order and display with the other bots.
+    """
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return dt.astimezone(EASTERN_TZ).strftime("%Y-%m-%d %I:%M:%S %p ET")
 
 
 class SchwabV2BotService:
@@ -312,9 +325,9 @@ class SchwabV2BotService:
         return symbols
 
     async def _handle_bar(self, symbol: str, bar: ChartBar) -> None:
-        now_iso = datetime.now(UTC).isoformat()
-        self._last_tick_at[symbol] = now_iso
-        self._last_bar_at[symbol] = now_iso
+        now_et = _format_eastern(datetime.now(UTC))
+        self._last_tick_at[symbol] = now_et
+        self._last_bar_at[symbol] = now_et
         self._bar_counts[symbol] = self._bar_counts.get(symbol, 0) + 1
 
         await asyncio.to_thread(self._persist_bar, symbol, bar)
@@ -327,7 +340,7 @@ class SchwabV2BotService:
         await self._maybe_emit(draft)
 
     async def _handle_quote(self, symbol: str, quote: Quote) -> None:
-        self._last_tick_at[symbol] = datetime.now(UTC).isoformat()
+        self._last_tick_at[symbol] = _format_eastern(datetime.now(UTC))
         try:
             draft = self.strategy.on_quote(symbol, quote)
         except Exception:

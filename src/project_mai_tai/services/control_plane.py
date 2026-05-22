@@ -5923,6 +5923,15 @@ def _render_bot_detail_page(
         # been annotated with watched_by yet.
         if ticker in bot_watchlist:
             active_symbols.append(ticker)
+    # Final fall-back for isolated-service bots (e.g. schwab_1m_v2) whose
+    # strategy_code is not present in any scanner row's `watched_by`. Without
+    # this, those bots' Live Symbols panel renders empty even when their
+    # watchlist is populated. Skip symbols that are manually stopped.
+    manual_stop_set = {str(symbol).upper() for symbol in manual_stop_symbols}
+    for ticker in sorted(bot_watchlist):
+        if ticker in active_symbols or ticker in manual_stop_set:
+            continue
+        active_symbols.append(ticker)
     open_symbols = {
         str(item.get("ticker") or item.get("symbol") or "").upper()
         for item in bot["positions"]
