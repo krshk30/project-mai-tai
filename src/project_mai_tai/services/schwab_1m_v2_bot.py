@@ -259,14 +259,31 @@ class SchwabV2BotService:
         )
 
     async def _scanner_consumer_loop(self) -> None:
-        """Tail mai_tai:strategy-state and feed confirmed symbols into the
-        REST client's watchlist. Falls back gracefully if no events arrive.
+        """Seed from the latest existing strategy-state snapshot, then tail
+        for new ones. The seed step is critical on cold-start because
+        strategy-engine publishes its snapshot only on bar / intent events,
+        which can be minutes apart in pre-market; without the seed, the v2
+        bot's watchlist stays empty until the next downstream event fires.
         """
         assert self.redis is not None
         assert self.rest_client is not None
         max_watchlist = max(
             1, int(self.settings.strategy_schwab_1m_v2_max_watchlist_size)
         )
+
+        # Step 1: seed from the latest snapshot already in the stream.
+        try:
+            seed = await self.redis.xrevrange(
+                self._strategy_state_stream, count=1
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("schwab_1m_v2 scanner seed xrevrange failed: %s", exc)
+            seed = []
+        for entry_id, data in seed:
+            self._strategy_state_last_id = entry_id
+            self._apply_strategy_state_event(data, max_watchlist=max_watchlist)
+
+        # Step 2: tail for new snapshots.
         while not self._stop_event.is_set():
             try:
                 response = await self.redis.xread(
@@ -283,24 +300,32 @@ class SchwabV2BotService:
             for _stream_key, entries in response:
                 for entry_id, data in entries:
                     self._strategy_state_last_id = entry_id
-                    raw = data.get("data") if isinstance(data, dict) else None
-                    if not isinstance(raw, str):
-                        continue
-                    try:
-                        event = StrategyStateSnapshotEvent.model_validate_json(raw)
-                    except Exception:  # noqa: BLE001
-                        continue
-                    symbols = self._extract_confirmed_symbols(event)
-                    if not symbols:
-                        continue
-                    selected = set(sorted(symbols)[:max_watchlist])
-                    self._watchlist = selected
-                    self.rest_client.set_desired_symbols(selected)
-                    logger.debug(
-                        "schwab_1m_v2 watchlist updated count=%d sample=%s",
-                        len(selected),
-                        ",".join(sorted(selected)[:5]),
-                    )
+                    self._apply_strategy_state_event(data, max_watchlist=max_watchlist)
+
+    def _apply_strategy_state_event(
+        self, data: object, *, max_watchlist: int
+    ) -> None:
+        raw = data.get("data") if isinstance(data, dict) else None
+        if not isinstance(raw, str):
+            return
+        try:
+            event = StrategyStateSnapshotEvent.model_validate_json(raw)
+        except Exception:  # noqa: BLE001
+            return
+        symbols = self._extract_confirmed_symbols(event)
+        if not symbols:
+            return
+        selected = set(sorted(symbols)[:max_watchlist])
+        if selected == self._watchlist:
+            return
+        self._watchlist = selected
+        if self.rest_client is not None:
+            self.rest_client.set_desired_symbols(selected)
+        logger.info(
+            "schwab_1m_v2 watchlist updated count=%d sample=%s",
+            len(selected),
+            ",".join(sorted(selected)[:5]),
+        )
 
     @staticmethod
     def _extract_confirmed_symbols(event: StrategyStateSnapshotEvent) -> set[str]:
