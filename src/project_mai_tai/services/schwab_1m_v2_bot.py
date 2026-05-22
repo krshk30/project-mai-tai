@@ -31,7 +31,13 @@ from redis.asyncio import Redis
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
-from project_mai_tai.db.models import StrategyBarHistory
+from project_mai_tai.db.models import (
+    BrokerAccount,
+    Strategy,
+    StrategyBarHistory,
+    TradeIntent,
+    VirtualPosition,
+)
 from project_mai_tai.db.session import build_session_factory
 from project_mai_tai.events import (
     HeartbeatEvent,
@@ -58,6 +64,8 @@ logger = logging.getLogger(__name__)
 
 INTERVAL_SECS = 60
 STATE_PUBLISH_INTERVAL_SECONDS = 5
+POSITION_POLL_INTERVAL_SECONDS = 5
+INFLIGHT_INTENT_STATUSES_TERMINAL = ("filled", "rejected", "cancelled")
 EASTERN_TZ = ZoneInfo("America/New_York")
 
 
@@ -160,6 +168,7 @@ class SchwabV2BotService:
         if self.enabled:
             tasks.append(asyncio.create_task(self.rest_client.run()))
             tasks.append(asyncio.create_task(self._scanner_consumer_loop()))
+            tasks.append(asyncio.create_task(self._position_poll_loop()))
 
         try:
             await self._stop_event.wait()
@@ -257,6 +266,90 @@ class SchwabV2BotService:
             maxlen=self.settings.redis_strategy_state_isolated_stream_maxlen,
             approximate=True,
         )
+
+    async def _position_poll_loop(self) -> None:
+        """Poll virtual_positions + in-flight trade_intents for v2's broker
+        account every 5s; feed results into the strategy's per-symbol state.
+
+        The strategy's update_position() detects the True→False transition
+        (OMS closed our position) and arms the cooldown, so we never
+        re-enter on the same bar an exit fired on.
+
+        In-flight intents (status NOT IN filled/rejected/cancelled) also
+        count as "in position" — covers the gap between intent emission
+        and virtual_positions row creation, preventing duplicate opens.
+        """
+        while not self._stop_event.is_set():
+            try:
+                positions = await asyncio.to_thread(self._fetch_open_positions)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("schwab_1m_v2 position poll failed: %s", exc)
+                positions = None
+            if positions is not None:
+                tracked = set(self._watchlist) | set(
+                    self.strategy._symbol_states.keys()
+                )
+                for symbol in tracked:
+                    qty = positions.get(symbol, 0)
+                    self.strategy.update_position(symbol, qty)
+            try:
+                await asyncio.wait_for(
+                    self._stop_event.wait(), timeout=POSITION_POLL_INTERVAL_SECONDS
+                )
+            except asyncio.TimeoutError:
+                continue
+
+    def _fetch_open_positions(self) -> dict[str, int]:
+        """SQL: virtual_positions(qty>0) ∪ in-flight trade_intents(open)
+        for the v2 broker account, keyed by symbol. Quantity is the max
+        across sources (a conservative "do we own this" signal).
+        """
+        if self.session_factory is None:
+            return {}
+        account_name = self.settings.strategy_schwab_1m_v2_account_name
+        positions: dict[str, int] = {}
+        try:
+            with self.session_factory() as session:
+                broker = session.scalar(
+                    select(BrokerAccount).where(BrokerAccount.name == account_name)
+                )
+                if broker is None:
+                    return positions
+                # Virtual positions = mai-tai's authoritative view of what
+                # we own (synchronized by OMS on fills).
+                for vp in session.scalars(
+                    select(VirtualPosition).where(
+                        VirtualPosition.broker_account_id == broker.id,
+                        VirtualPosition.quantity > 0,
+                    )
+                ).all():
+                    symbol = str(vp.symbol or "").upper()
+                    if symbol:
+                        positions[symbol] = max(
+                            positions.get(symbol, 0), int(vp.quantity)
+                        )
+                # In-flight open intents — block re-entry until OMS resolves
+                # the prior intent (filled / rejected / cancelled).
+                strategy = session.scalar(
+                    select(Strategy).where(Strategy.code == "schwab_1m_v2")
+                )
+                if strategy is not None:
+                    for ti in session.scalars(
+                        select(TradeIntent).where(
+                            TradeIntent.strategy_id == strategy.id,
+                            TradeIntent.intent_type == "open",
+                            TradeIntent.status.notin_(
+                                INFLIGHT_INTENT_STATUSES_TERMINAL
+                            ),
+                        )
+                    ).all():
+                        symbol = str(ti.symbol or "").upper()
+                        if symbol:
+                            qty = int(ti.quantity or 0) or 1
+                            positions[symbol] = max(positions.get(symbol, 0), qty)
+        except Exception:
+            logger.exception("schwab_1m_v2 _fetch_open_positions failed")
+        return positions
 
     async def _scanner_consumer_loop(self) -> None:
         """Seed from the latest existing strategy-state snapshot, then tail
