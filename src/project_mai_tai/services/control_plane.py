@@ -44,6 +44,7 @@ from project_mai_tai.db.models import (
 from project_mai_tai.db.session import build_session_factory
 from project_mai_tai.events import (
     HeartbeatEvent,
+    IsolatedBotStateEvent,
     ManualStopUpdateEvent,
     ManualStopUpdatePayload,
     MarketDataSubscriptionEvent,
@@ -3077,6 +3078,24 @@ class ControlPlaneRepository:
                 }
         except Exception as exc:
             errors.append(f"redis:strategy-state:{exc}")
+
+        # Merge in any isolated-service bot states (e.g. schwab_1m_v2). These
+        # bots publish their own StrategyBotStatePayload to a separate stream
+        # so they do not overwrite the main strategy-engine snapshot. xrevrange
+        # returns newest-first; we keep the latest event per strategy_code by
+        # only setting when the code is not yet in the bots dict.
+        try:
+            isolated_events = await self._read_stream_events(
+                "strategy-state-isolated", limit=50
+            )
+            bots_dict = strategy_runtime["bots"]
+            for raw in isolated_events:
+                event = IsolatedBotStateEvent.model_validate(raw)
+                code = event.payload.strategy_code
+                if code and code not in bots_dict:
+                    bots_dict[code] = event.payload.model_dump()
+        except Exception as exc:
+            errors.append(f"redis:strategy-state-isolated:{exc}")
 
         self._apply_market_data_feed_status(services=services, market_data=market_data)
 

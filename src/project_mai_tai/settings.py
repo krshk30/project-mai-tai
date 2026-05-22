@@ -75,6 +75,7 @@ class Settings(BaseSettings):
     redis_strategy_intent_stream_maxlen: int = 2_000
     redis_order_event_stream_maxlen: int = 2_000
     redis_strategy_state_stream_maxlen: int = 250
+    redis_strategy_state_isolated_stream_maxlen: int = 50
     redis_heartbeat_stream_maxlen: int = 1_000
 
     legacy_api_base_url: str | None = None

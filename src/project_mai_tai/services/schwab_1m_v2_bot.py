@@ -3,8 +3,10 @@
 Sixth service. Runs as its own systemd unit. Subscribes to the existing
 `mai_tai:strategy-state` Redis stream to pick up the scanner's confirmed
 symbol set, polls Schwab REST for 1m bars + quotes, evaluates the strategy
-(placeholder), emits intents to `mai_tai:strategy-intents` for OMS to
-consume.
+(placeholder), persists completed bars to `strategy_bar_history`, publishes
+its own state to `mai_tai:strategy-state-isolated` so the dashboard renders
+the bot like any other, and emits intents to `mai_tai:strategy-intents` for
+OMS to consume.
 
 NO imports from `services/strategy_engine_app.py`, `services/strategy_engine.py`,
 `market_data/schwab_streamer.py`, `strategy_core/schwab_native_30s.py`, etc.
@@ -21,12 +23,20 @@ from __future__ import annotations
 import asyncio
 import logging
 import signal
+from datetime import UTC, datetime
+from decimal import Decimal
 
 from redis.asyncio import Redis
+from sqlalchemy import select
+from sqlalchemy.orm import Session, sessionmaker
 
+from project_mai_tai.db.models import StrategyBarHistory
+from project_mai_tai.db.session import build_session_factory
 from project_mai_tai.events import (
     HeartbeatEvent,
     HeartbeatPayload,
+    IsolatedBotStateEvent,
+    StrategyBotStatePayload,
     StrategyStateSnapshotEvent,
     stream_name,
 )
@@ -45,19 +55,40 @@ from project_mai_tai.strategy_core.schwab_1m_v2 import (
 
 logger = logging.getLogger(__name__)
 
+INTERVAL_SECS = 60
+STATE_PUBLISH_INTERVAL_SECONDS = 5
+
 
 class SchwabV2BotService:
-    def __init__(self, settings: Settings | None = None) -> None:
+    def __init__(
+        self,
+        settings: Settings | None = None,
+        *,
+        session_factory: sessionmaker[Session] | None = None,
+    ) -> None:
         self.settings = settings or get_settings()
         self.redis: Redis | None = None
         self.strategy = SchwabV2Strategy(self.settings)
         self.rest_client: SchwabV2RestClient | None = None
         self.intent_emitter: SchwabV2IntentEmitter | None = None
+        self.session_factory: sessionmaker[Session] | None = session_factory
         self._stop_event = asyncio.Event()
         self._strategy_state_stream = stream_name(
             self.settings.redis_stream_prefix, "strategy-state"
         )
+        self._isolated_state_stream = stream_name(
+            self.settings.redis_stream_prefix, "strategy-state-isolated"
+        )
         self._strategy_state_last_id = "$"
+        self._watchlist: set[str] = set()
+        self._bar_counts: dict[str, int] = {}
+        self._last_tick_at: dict[str, str] = {}
+        self._last_bar_at: dict[str, str] = {}
+        self._data_health: dict[str, object] = {
+            "status": "starting",
+            "halted_symbols": [],
+            "warning_symbols": [],
+        }
 
     @property
     def enabled(self) -> bool:
@@ -77,6 +108,15 @@ class SchwabV2BotService:
             )
 
         self.redis = Redis.from_url(self.settings.redis_url, decode_responses=True)
+        if self.session_factory is None:
+            try:
+                self.session_factory = build_session_factory(self.settings)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "schwab_1m_v2 session_factory unavailable, bar persistence "
+                    "disabled: %s",
+                    exc,
+                )
         self.intent_emitter = SchwabV2IntentEmitter(
             self.settings,
             self.redis,
@@ -98,9 +138,11 @@ class SchwabV2BotService:
                 pass
 
         await self._publish_heartbeat("starting")
+        self._data_health["status"] = "healthy" if self.enabled else "degraded"
 
         tasks = [
             asyncio.create_task(self._heartbeat_loop()),
+            asyncio.create_task(self._state_publish_loop()),
         ]
         if self.enabled:
             tasks.append(asyncio.create_task(self.rest_client.run()))
@@ -133,6 +175,8 @@ class SchwabV2BotService:
                     "rest_configured": str(
                         bool(self.rest_client and self.rest_client.configured)
                     ).lower(),
+                    "watchlist_size": str(len(self._watchlist)),
+                    "bars_processed": str(sum(self._bar_counts.values())),
                 },
             ),
         )
@@ -155,6 +199,51 @@ class SchwabV2BotService:
                 await asyncio.wait_for(self._stop_event.wait(), timeout=interval)
             except asyncio.TimeoutError:
                 continue
+
+    async def _state_publish_loop(self) -> None:
+        """Publish StrategyBotStatePayload to strategy-state-isolated stream
+        so the dashboard renders the v2 bot like any other.
+        """
+        while not self._stop_event.is_set():
+            try:
+                await self._publish_bot_state()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("schwab_1m_v2 bot-state publish failed: %s", exc)
+            try:
+                await asyncio.wait_for(
+                    self._stop_event.wait(), timeout=STATE_PUBLISH_INTERVAL_SECONDS
+                )
+            except asyncio.TimeoutError:
+                continue
+
+    async def _publish_bot_state(self) -> None:
+        if self.redis is None:
+            return
+        payload = StrategyBotStatePayload(
+            strategy_code=STRATEGY_CODE,
+            account_name=self.settings.strategy_schwab_1m_v2_account_name,
+            watchlist=sorted(self._watchlist),
+            prewarm_symbols=[],
+            data_health=dict(self._data_health),
+            retention_states=[],
+            positions=[],
+            pending_open_symbols=[],
+            pending_close_symbols=[],
+            pending_scale_levels=[],
+            daily_pnl=0.0,
+            closed_today=[],
+            recent_decisions=[],
+            indicator_snapshots=[],
+            bar_counts=dict(self._bar_counts),
+            last_tick_at=dict(self._last_tick_at),
+        )
+        event = IsolatedBotStateEvent(source_service=SERVICE_NAME, payload=payload)
+        await self.redis.xadd(
+            self._isolated_state_stream,
+            {"data": event.model_dump_json()},
+            maxlen=self.settings.redis_strategy_state_isolated_stream_maxlen,
+            approximate=True,
+        )
 
     async def _scanner_consumer_loop(self) -> None:
         """Tail mai_tai:strategy-state and feed confirmed symbols into the
@@ -191,12 +280,13 @@ class SchwabV2BotService:
                     symbols = self._extract_confirmed_symbols(event)
                     if not symbols:
                         continue
-                    selected = sorted(symbols)[:max_watchlist]
-                    self.rest_client.set_desired_symbols(set(selected))
+                    selected = set(sorted(symbols)[:max_watchlist])
+                    self._watchlist = selected
+                    self.rest_client.set_desired_symbols(selected)
                     logger.debug(
                         "schwab_1m_v2 watchlist updated count=%d sample=%s",
                         len(selected),
-                        ",".join(selected[:5]),
+                        ",".join(sorted(selected)[:5]),
                     )
 
     @staticmethod
@@ -205,7 +295,6 @@ class SchwabV2BotService:
         candidates: list[dict | str] = []
         candidates.extend(payload.all_confirmed)
         candidates.extend(payload.top_confirmed)
-        # `watchlist` is already a list[str]; mix it in as a safety net.
         symbols: set[str] = set()
         for item in candidates:
             if isinstance(item, dict):
@@ -223,6 +312,13 @@ class SchwabV2BotService:
         return symbols
 
     async def _handle_bar(self, symbol: str, bar: ChartBar) -> None:
+        now_iso = datetime.now(UTC).isoformat()
+        self._last_tick_at[symbol] = now_iso
+        self._last_bar_at[symbol] = now_iso
+        self._bar_counts[symbol] = self._bar_counts.get(symbol, 0) + 1
+
+        await asyncio.to_thread(self._persist_bar, symbol, bar)
+
         try:
             draft = self.strategy.on_bar(symbol, bar)
         except Exception:
@@ -231,12 +327,71 @@ class SchwabV2BotService:
         await self._maybe_emit(draft)
 
     async def _handle_quote(self, symbol: str, quote: Quote) -> None:
+        self._last_tick_at[symbol] = datetime.now(UTC).isoformat()
         try:
             draft = self.strategy.on_quote(symbol, quote)
         except Exception:
             logger.exception("schwab_1m_v2 on_quote failed for %s", symbol)
             return
         await self._maybe_emit(draft)
+
+    def _persist_bar(self, symbol: str, bar: ChartBar) -> None:
+        """Upsert (strategy_code, symbol, interval_secs, bar_time) into
+        strategy_bar_history. Mirrors the shape the existing strategy-engine
+        writes so the dashboard's decision-tape query treats v2 bars
+        identically. decision_status stays '' until the strategy emits
+        signals.
+        """
+        if self.session_factory is None:
+            return
+
+        volume = int(bar.volume or 0)
+        # No trade_count from Schwab Price History; synthesize so the
+        # vol=0+tc=0 placeholder filter behaves correctly downstream.
+        trade_count = 1 if volume > 0 else 0
+        if volume == 0 and trade_count == 0:
+            return
+
+        bar_time = datetime.fromtimestamp(bar.timestamp_ms / 1000.0, UTC)
+
+        try:
+            with self.session_factory() as session:
+                record = session.scalar(
+                    select(StrategyBarHistory).where(
+                        StrategyBarHistory.strategy_code == STRATEGY_CODE,
+                        StrategyBarHistory.symbol == symbol,
+                        StrategyBarHistory.interval_secs == INTERVAL_SECS,
+                        StrategyBarHistory.bar_time == bar_time,
+                    )
+                )
+                if record is None:
+                    record = StrategyBarHistory(
+                        strategy_code=STRATEGY_CODE,
+                        symbol=symbol,
+                        interval_secs=INTERVAL_SECS,
+                        bar_time=bar_time,
+                        open_price=Decimal(str(bar.open)),
+                        high_price=Decimal(str(bar.high)),
+                        low_price=Decimal(str(bar.low)),
+                        close_price=Decimal(str(bar.close)),
+                        volume=volume,
+                        trade_count=trade_count,
+                    )
+                    session.add(record)
+                else:
+                    record.open_price = Decimal(str(bar.open))
+                    record.high_price = Decimal(str(bar.high))
+                    record.low_price = Decimal(str(bar.low))
+                    record.close_price = Decimal(str(bar.close))
+                    record.volume = volume
+                    record.trade_count = trade_count
+                session.commit()
+        except Exception:
+            logger.exception(
+                "schwab_1m_v2 failed to persist bar history for %s @ %s",
+                symbol,
+                bar_time,
+            )
 
     async def _maybe_emit(self, draft) -> None:  # type: ignore[no-untyped-def]
         if draft is None:
