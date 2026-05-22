@@ -129,17 +129,34 @@ class SchwabV2RestClient:
                 if self._stop_event.is_set():
                     return
                 symbol = next(cycle)
+                since = self._last_bar_timestamp_ms.get(symbol, 0)
                 try:
-                    bar = await asyncio.to_thread(self._fetch_latest_bar, symbol)
+                    bars = await asyncio.to_thread(
+                        self._fetch_recent_closed_bars, symbol, since
+                    )
                 except Exception as exc:  # noqa: BLE001 — keep loop alive
                     logger.warning("schwab_v2 bar poll failed for %s: %s", symbol, exc)
                     await asyncio.sleep(interval)
                     continue
-                if bar is not None:
-                    prior = self._last_bar_timestamp_ms.get(symbol)
-                    if prior is None or bar.timestamp_ms > prior:
-                        self._last_bar_timestamp_ms[symbol] = bar.timestamp_ms
-                        await self._on_chart_bar(symbol, bar)
+                if bars:
+                    # First poll per symbol returns up to ~500 candles (24h of
+                    # 1-min bars). Subsequent polls return only the 1-2 bars
+                    # that closed since the previous poll. Feeding all of them
+                    # warms up the strategy's indicator state instantly; the
+                    # strategy's freshness guard ensures only bars within
+                    # ~3 min of wall clock can fire signals.
+                    if since == 0 and len(bars) > 5:
+                        logger.info(
+                            "schwab_v2 warmup feed for %s: %d bars from %s..%s",
+                            symbol,
+                            len(bars),
+                            bars[0].timestamp_ms,
+                            bars[-1].timestamp_ms,
+                        )
+                    for bar in bars:
+                        if bar.timestamp_ms > self._last_bar_timestamp_ms.get(symbol, 0):
+                            self._last_bar_timestamp_ms[symbol] = bar.timestamp_ms
+                            await self._on_chart_bar(symbol, bar)
                 await asyncio.sleep(interval)
 
     async def _quote_loop(self) -> None:
@@ -198,14 +215,22 @@ class SchwabV2RestClient:
             raise RuntimeError("schwab REST returned non-object payload")
         return payload
 
-    def _fetch_latest_bar(self, symbol: str) -> ChartBar | None:
-        # Use explicit startDate/endDate instead of periodType+period.
-        # Schwab's pricehistory with `periodType=day&period=1` returns the
-        # last fully-closed trading session, NOT "today so far" — so during
-        # today's RTH it gives yesterday's bars and misses today's. Verified
-        # 2026-05-22: period=1 returned last candle 2026-05-21 23:59 UTC
-        # (yesterday's post-market close), while explicit startDate=now-24h
-        # returned candles through 2026-05-22 13:46 UTC (today, current).
+    def _fetch_recent_closed_bars(
+        self, symbol: str, since_ts_ms: int
+    ) -> list[ChartBar]:
+        """Return all closed candles strictly newer than `since_ts_ms`,
+        sorted ascending. "Closed" means timestamp <= (now - 60s) — Schwab's
+        last candle in the array can be the in-flight current minute.
+
+        First call per symbol (`since=0`) returns the full 24h window
+        (~500 candles), giving the strategy instant indicator warmup.
+        Subsequent calls return the 1-2 bars that closed since the
+        previous poll.
+
+        Schwab pricehistory gotcha (verified 2026-05-22): `periodType=day&
+        period=1` returns the last fully-closed trading session, NOT
+        "today so far." Using explicit startDate/endDate avoids this.
+        """
         now_ms = int(datetime.now(UTC).timestamp() * 1000)
         start_ms = now_ms - 24 * 60 * 60 * 1000
         params = urlencode(
@@ -223,35 +248,37 @@ class SchwabV2RestClient:
         payload = self._authorized_get(url)
         candles = payload.get("candles")
         if not isinstance(candles, list) or not candles:
-            return None
-        # The newest closed candle is the second-to-last entry in the array;
-        # the last entry can be an in-flight bar updated by Schwab. To avoid
-        # treating partial bars as final, we take the candle whose timestamp
-        # is older than `now - 60s` and is the most recent such candle.
-        now_ms = int(datetime.now(UTC).timestamp() * 1000)
+            return []
         cutoff_ms = now_ms - 60_000
-        latest_closed: dict[str, object] | None = None
+        bars: list[ChartBar] = []
         for candle in candles:
             if not isinstance(candle, dict):
                 continue
-            ts = int(candle.get("datetime", 0) or 0)
-            if ts <= cutoff_ms:
-                if latest_closed is None or ts > int(latest_closed.get("datetime", 0) or 0):
-                    latest_closed = candle
-        if latest_closed is None:
-            return None
-        try:
-            return ChartBar(
-                symbol=symbol,
-                open=float(latest_closed.get("open", 0.0) or 0.0),
-                high=float(latest_closed.get("high", 0.0) or 0.0),
-                low=float(latest_closed.get("low", 0.0) or 0.0),
-                close=float(latest_closed.get("close", 0.0) or 0.0),
-                volume=int(float(latest_closed.get("volume", 0) or 0)),
-                timestamp_ms=int(latest_closed.get("datetime", 0) or 0),
-            )
-        except (TypeError, ValueError):
-            return None
+            ts_raw = candle.get("datetime", 0) or 0
+            try:
+                ts = int(ts_raw)
+            except (TypeError, ValueError):
+                continue
+            if ts > cutoff_ms:
+                continue
+            if ts <= since_ts_ms:
+                continue
+            try:
+                bars.append(
+                    ChartBar(
+                        symbol=symbol,
+                        open=float(candle.get("open", 0.0) or 0.0),
+                        high=float(candle.get("high", 0.0) or 0.0),
+                        low=float(candle.get("low", 0.0) or 0.0),
+                        close=float(candle.get("close", 0.0) or 0.0),
+                        volume=int(float(candle.get("volume", 0) or 0)),
+                        timestamp_ms=ts,
+                    )
+                )
+            except (TypeError, ValueError):
+                continue
+        bars.sort(key=lambda b: b.timestamp_ms)
+        return bars
 
     def _fetch_quotes(self, symbols: list[str]) -> list[Quote]:
         if not symbols:
