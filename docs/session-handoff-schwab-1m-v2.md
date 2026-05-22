@@ -337,3 +337,41 @@ Mitigations:
 "second Schwab developer-app credential" — a separate OAuth identity for
 v2's streamer with its own token store path. v2's REST stays on the
 shared token (read-only file access doesn't conflict).
+
+### 2026-05-23 — Day 2 (PR #217 + PR #218): MACD probe + W1 warmup-settling bars
+
+**PR #217 — Diagnostic-only `[V2-MACD-PROBE]` per-bar log.**
+Gated by `MAI_TAI_STRATEGY_SCHWAB_1M_V2_MACD_PROBE_SYMBOLS` (CSV or `*`;
+empty = off). Dumps every input to cross detection per evaluated bar.
+Operator validated against TOS for CPSH 2026-05-22 15:46–16:00 ET:
+bot's `macd` / `sig` match TOS to 4 decimals at steady state (`n_bars=300`),
+including the 16:00 ET closing bar at 6-decimal precision (0.009498 /
+0.004169). Closes match exactly.
+
+**PR #218 — W1 fix: raise `min_bars` from 35 to 135.**
+Same probe revealed the EMA seed-bias zone empirically: bot MACD at
+`n_bars=35` is 0.085 (CPSH on 2026-05-22 warmup batch), decaying through
+`n_bars=60` (0.022) → `n_bars=80` (-0.032) → `n_bars=100` (-0.01,
+steady-state range). The unreliable zone is `n_bars=35–100`. By
+`n_bars≈135` the bias decays below TOS display precision.
+
+Fix: new field `SchwabV2Config.macd_warmup_settling_bars=100`, added to
+the bootstrap `min_bars` formula. `_evaluate_completed_bar` now requires
+`n_bars ≥ 135` (= `macd_slow + macd_signal + 100`) before computing
+indicators or touching the `prev_*` memo. The first ~100 warmup bars
+still feed into the deque but don't trigger evaluation, so the
+cross-detection memo handed off to live evaluation reflects converged
+EMAs rather than seed-biased noise.
+
+Trade-off (intentional): the strategy now needs ~135 minutes of bar
+history before any cross can fire. The REST cold-start warmup batch
+(~500 bars per symbol per PR #213) covers this comfortably. The deque
+`maxlen=300` is unchanged — leaves 165 bars of post-warmup convergence
+headroom.
+
+Code review status: this is the W1 finding from the code review doc.
+C1 (the stateful-EMA rewrite) is **deferred** with this fix in place —
+W1 walls off the entire unreliable region from any code path that
+matters, so the rewrite is no longer load-bearing. The review doc has
+been updated with a "Validation status" header at the top reflecting
+C1-deferred / W1-confirmed-keep.

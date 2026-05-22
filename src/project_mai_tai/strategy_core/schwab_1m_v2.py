@@ -98,6 +98,17 @@ class SchwabV2Config:
     # Dead zone (Section 3.2 — disabled by default; both 0)
     dead_zone_start: int = 0
     dead_zone_end: int = 0
+    # Extra bars beyond the strict MACD math minimum (macd_slow +
+    # macd_signal = 35) before `_evaluate_completed_bar` touches
+    # indicators, runs cross detection, or updates the prev_* memo.
+    # Empirical: the simple-average EMA seed bias decays below TOS's
+    # 4-decimal display precision around n_bars ≈ 135 — validated against
+    # CPSH 2026-05-22 15:46–16:00 ET via `[V2-MACD-PROBE]` (see Day 2
+    # entry in `docs/session-handoff-schwab-1m-v2.md`). With this
+    # allowance, crosses detected during the warmup batch use settled
+    # EMAs, so the memo handed off to live evaluation reflects truth
+    # rather than seed-biased noise.
+    macd_warmup_settling_bars: int = 100
 
 
 @dataclass
@@ -362,9 +373,16 @@ class SchwabV2Strategy:
         if not is_new_bar:
             return None
 
-        # Bootstrap: need enough history for the slowest indicator chain.
+        # Bootstrap: need enough history for the slowest indicator chain
+        # PLUS the settling allowance — see `macd_warmup_settling_bars`
+        # docstring on SchwabV2Config for the empirical motivation. The
+        # raw MACD math is well-defined at 35 bars but seed bias makes
+        # the values unreliable until ≈135 bars, so we don't evaluate or
+        # update the prev_* memo until the EMAs have converged.
         min_bars = max(
-            self.cfg.macd_slow_length + self.cfg.macd_signal_length,
+            self.cfg.macd_slow_length
+            + self.cfg.macd_signal_length
+            + max(0, int(self.cfg.macd_warmup_settling_bars)),
             self.cfg.rel_vol_length + 1,
             self.cfg.ema_trend_length + 1,
             self.cfg.stoch_length,
