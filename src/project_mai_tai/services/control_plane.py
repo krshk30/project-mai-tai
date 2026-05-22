@@ -3895,6 +3895,10 @@ def build_app(
     async def bot_schwab_1m_page() -> str:
         return await _render_bot_page_with_trade_coach("schwab_1m")
 
+    @app.get("/bot/1m-schwab-v2", response_class=HTMLResponse)
+    async def bot_schwab_1m_v2_page() -> str:
+        return await _render_bot_page_with_trade_coach("schwab_1m_v2")
+
     @app.get("/bot/tos", response_class=HTMLResponse)
     async def bot_tos_page() -> str:
         return await _render_bot_page_with_trade_coach("tos")
@@ -5010,6 +5014,13 @@ BOT_PAGE_META = {
         "badge": "1M",
         "color": "#1e88e5",
         "path": "/bot/1m-schwab",
+    },
+    "schwab_1m_v2": {
+        "title": "Schwab 1 Min Bot v2 (isolated)",
+        "nav_title": "Schwab 1m v2",
+        "badge": "1Mv2",
+        "color": "#00897b",
+        "path": "/bot/1m-schwab-v2",
     },
     "tos": {
         "title": "Mai Tai TOS Bot",

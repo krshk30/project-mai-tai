@@ -16,7 +16,7 @@ if [[ ! -d "$REPO_DIR/.git" ]]; then
 fi
 
 if [[ -z "$SERVICE_TARGET" ]]; then
-  echo "usage: deploy_service.sh <repo_dir> <branch> <control|reconciler|strategy|oms|market-data>"
+  echo "usage: deploy_service.sh <repo_dir> <branch> <control|reconciler|strategy|oms|market-data|schwab-1m-v2>"
   exit 1
 fi
 
@@ -40,6 +40,10 @@ case "$SERVICE_TARGET" in
   market-data)
     PRIMARY_UNIT="project-mai-tai-market-data.service"
     HIGH_RISK=1
+    ;;
+  schwab-1m-v2)
+    PRIMARY_UNIT="project-mai-tai-schwab-1m-v2.service"
+    HIGH_RISK=0
     ;;
   *)
     echo "unknown service target: $SERVICE_TARGET"
@@ -145,7 +149,7 @@ echo "Refreshing runtime in $REPO_DIR (migrations=$RUN_MIGRATIONS)..."
 sudo MAI_TAI_RUN_MIGRATIONS="$RUN_MIGRATIONS" bash ops/bootstrap/08_install_runtime.sh "$REPO_DIR"
 
 case "$SERVICE_TARGET" in
-  control|reconciler|strategy)
+  control|reconciler|strategy|schwab-1m-v2)
     restart_unit "$PRIMARY_UNIT"
     ;;
   oms)

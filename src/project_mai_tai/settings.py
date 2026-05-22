@@ -151,6 +151,17 @@ class Settings(BaseSettings):
         "strategy_webull_30s_default_quantity",
     )
     strategy_schwab_1m_default_quantity: int = 100
+    # schwab_1m_v2: isolated parallel 1m bot. Shares the existing Schwab
+    # OAuth token but has a dedicated REST-poll client, bar builder, strategy
+    # body, and service process. Strategy body is a placeholder until the
+    # operator's spec arrives.
+    strategy_schwab_1m_v2_enabled: bool = False
+    strategy_schwab_1m_v2_bar_poll_interval_seconds: float = 15.0
+    strategy_schwab_1m_v2_quote_poll_interval_seconds: float = 5.0
+    strategy_schwab_1m_v2_max_watchlist_size: int = 25
+    strategy_schwab_1m_v2_account_name: str = "paper:schwab_1m_v2"
+    strategy_schwab_1m_v2_broker_provider: str | None = "schwab"
+    strategy_schwab_1m_v2_default_quantity: int = 100
     strategy_macd_30s_reclaim_excluded_symbols: str = "JEM,CYCN,BFRG,UCAR,BBGI"
     # Maximum age (seconds) for the `scanner_confirmed_last_nonempty` snapshot
     # to be eligible for startup restore. Older snapshots are skipped, so
@@ -460,6 +471,10 @@ class Settings(BaseSettings):
             override = self._normalize_provider_name(self.strategy_schwab_1m_broker_provider)
             if override is not None:
                 return override
+        if normalized_code == "schwab_1m_v2":
+            override = self._normalize_provider_name(self.strategy_schwab_1m_v2_broker_provider)
+            if override is not None:
+                return override
         if normalized_code == "tos":
             override = self._normalize_provider_name(self.strategy_tos_broker_provider)
             if override is not None:
@@ -474,6 +489,8 @@ class Settings(BaseSettings):
             return self.provider_for_strategy("polygon_30s")
         if normalized_account == self.strategy_schwab_1m_account_name:
             return self.provider_for_strategy("schwab_1m")
+        if normalized_account == self.strategy_schwab_1m_v2_account_name:
+            return self.provider_for_strategy("schwab_1m_v2")
         if normalized_account == self.strategy_tos_account_name:
             return self.provider_for_strategy("tos")
         return self.resolved_broker_provider
@@ -503,6 +520,10 @@ class Settings(BaseSettings):
             override = self._normalize_provider_name(self.strategy_schwab_1m_broker_provider)
             if override is not None:
                 providers.add(override)
+        if self.strategy_schwab_1m_v2_enabled:
+            override = self._normalize_provider_name(self.strategy_schwab_1m_v2_broker_provider)
+            if override is not None:
+                providers.add(override)
         if self.strategy_tos_enabled:
             override = self._normalize_provider_name(self.strategy_tos_broker_provider)
             if override is not None:
@@ -525,6 +546,7 @@ class Settings(BaseSettings):
             "macd_30s_reclaim",
             "macd_30s_retest",
             "schwab_1m",
+            "schwab_1m_v2",
         }:
             return "schwab"
         if normalized_code in {"polygon_30s", "webull_30s"}:
