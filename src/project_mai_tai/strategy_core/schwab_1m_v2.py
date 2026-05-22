@@ -54,6 +54,12 @@ EASTERN_TZ = ZoneInfo("America/New_York")
 # Bars from 04:00 ET through next-day 03:59 ET share a VWAP cumulator.
 VWAP_SESSION_HOUR_ET = 4
 
+# Max age (seconds) a bar can be relative to wall-clock and still emit a
+# signal. The REST client feeds the full 24h candle window on cold-start
+# for indicator warmup; this guard prevents historical bars from firing
+# stale signals while indicators back-fill.
+MAX_BAR_AGE_SECONDS_FOR_EMIT = 180.0
+
 
 @dataclass(frozen=True)
 class SchwabV2Config:
@@ -449,11 +455,22 @@ class SchwabV2Strategy:
         )
 
         # Persist memo BEFORE any early return so cross-detection stays
-        # consistent across bars.
+        # consistent across bars. Memo MUST update on every bar including
+        # historical warmup feeds, otherwise prev_* is stale and crosses
+        # are missed when live bars start arriving.
         state.prev_macd = macd_line
         state.prev_signal = signal_line
         state.prev_close = cur.close
         state.prev_vwap = vwap
+
+        # Freshness guard: only the live tail of any batch can emit. Old
+        # bars (replayed from the 24h REST window on cold-start) update
+        # indicators above but never fire intents. This prevents emitting
+        # an "open" intent on a MACD cross that happened hours ago.
+        now_ms = int(datetime.now(UTC).timestamp() * 1000)
+        bar_age_secs = (now_ms - cur.timestamp_ms) / 1000.0
+        if bar_age_secs > MAX_BAR_AGE_SECONDS_FOR_EMIT:
+            return None
 
         # State-machine gate (entry side): flat + no cooldown + raw entry.
         if state.position_qty > 0:
