@@ -13,12 +13,19 @@ reconsider — that's how regressions cross-contaminate.
 
 ## Status
 
-- **2026-05-22** — Scaffolding PR opened. Bot service boots in idle state.
-  REST poll client + bar/quote handlers wired but no strategy decision body
-  yet (placeholder returns `None` for every bar). Bot URL `/bot/1m-schwab-v2`
-  registered in dashboard. Enable flag `MAI_TAI_STRATEGY_SCHWAB_1M_V2_ENABLED`
-  defaults to `false` — set to `true` on the VPS env file when you're ready
-  to start polling.
+- **2026-05-22 EOD** — Live with full MACD Momentum v1.32 entry strategy.
+  Service active, watchlist 10-15 symbols, 569 rows persisted per hour at
+  47 bars/symbol (compared to 35/sym/hr on schwab_1m WebSocket), persist-lag
+  p50=85s p95=162s, zero errors in last hour. Strategy hasn't fired a live
+  intent yet — small-cap watchlist is in a quiet mid-morning window where
+  even schwab_1m only fired 1 P1_CROSS-equivalent signal all day. Tomorrow
+  pre-market 07-09 ET is the real validation window. See per-deploy log
+  below.
+
+- **2026-05-22 morning** — Scaffolding PR opened. Bot service boots in idle
+  state. REST poll client + bar/quote handlers wired but no strategy
+  decision body yet (placeholder returns `None`). Bot URL `/bot/1m-schwab-v2`
+  registered in dashboard. Enable flag default `false`.
 
 ## Files owned by this bot (the entire surface)
 
@@ -159,13 +166,78 @@ return `None` today. When the spec arrives:
 
 ## Per-deploy log
 
-### 2026-05-22 — Scaffolding PR
+### 2026-05-22 — Day 1: scaffolding → handoff/UI → strategy → live validation
 
-- **PR**: TBD (link will be added at merge time)
-- **What shipped**: 3 new source files + 1 systemd unit + 1 dashboard route
-  + 1 deploy target + settings flags + runtime registration. Strategy body
-  is a placeholder.
-- **VPS deploy**: pending operator decision. Service is safe to deploy in
-  idle state (`MAI_TAI_STRATEGY_SCHWAB_1M_V2_ENABLED=false`), but no value
-  without strategy body. Recommend deploying only after the strategy spec
-  has been added.
+Eight PRs shipped, all admin-merged. Listed in chronological order with
+the operational lesson where applicable.
+
+| # | PR | Title | What it shipped |
+|---|---|---|---|
+| 1 | #207 | scaffolding | 3 new source files (rest_client / strategy_module / engine_service) + systemd unit + dashboard route + deploy target + runtime_registry registration + dedicated session doc. Strategy body placeholder. |
+| 2 | #208 | handoff + bar persistence + dashboard wiring | New `IsolatedBotStateEvent`, new Redis stream `mai_tai:strategy-state-isolated`, control_plane `_load_stream_state` merges both streams. v2 now publishes its own `StrategyBotStatePayload` every 5s without overwriting strategy-engine's snapshot. Bar persistence to `strategy_bar_history`. |
+| 3 | #209 | Live Symbols panel + ET timezone | `_build_bot_views` had a fall-back to `bot_watchlist` only when `watched_by` was empty; isolated bots' codes never appear in `watched_by`, so v2's Live Symbols rendered empty. Added unconditional final pass appending bot_watchlist. Also added local `_format_eastern` helper so `last_tick_at` matches the existing strategy-engine's "YYYY-MM-DD HH:MM:SS AM/PM ET" format. |
+| 4 | #210 | scanner cold-start seed | xread with `last_id="$"` only sees events after the call — after restart, v2 sat with empty watchlist until strategy-engine published its next snapshot (which fires only on bar/intent events, minutes apart in pre-market). Added xrevrange(count=1) seed on startup. |
+| 5 | #211 | REST `startDate/endDate` | **Critical Schwab REST gotcha**: `?periodType=day&period=1` returns the **last fully-closed trading session**, NOT "today so far." During RTH it returns yesterday. Verified with direct API call: period=1 latest candle = 2026-05-21 23:59 UTC; explicit startDate/endDate = 2026-05-22 13:46 UTC. Fix: explicit `startDate=(now - 24h)` and `endDate=now`. |
+| 6 | #212 | MACD Momentum v1.32 entry strategy | Replaced placeholder with full v1.32 design doc entry logic. Two paths: "MACD Cross" + "VWAP Breakout". Seven filter gates (trend/macdStrength/stochNotChase/greenBar/relVol/volAbs/timeAllowed) each with toggle-off semantics. Per-symbol state machine (entry side only — exits remain OMS's job). `_position_poll_loop` queries `virtual_positions` + in-flight `trade_intents` every 5s. Cooldown counter armed on True→False position transitions. Inputs hardcoded as `SchwabV2Config` dataclass (operator can edit the constants in-place to tune). |
+| 7 | #213 | REST batch fetch for instant warmup | After deploy of #212, validation showed bot needed 35 bars per symbol to bootstrap MACD but only had ~22 after restart (~25 min cold-start gap). Schwab REST already returns 500+ candles per call; we were throwing away 499. Changed `_fetch_latest_bar` → `_fetch_recent_closed_bars(since_ts_ms)` returning all closed candles newer than the since-cursor. First poll per symbol returns the full 24h window. Added `MAX_BAR_AGE_SECONDS_FOR_EMIT=180` freshness guard so historical warmup bars update the indicator memo but cannot fire intents. |
+| 8 | #214 | skip DB persist for warmup bars | Warmup feed of 500-1000 bars per symbol was sequentially awaiting DB persist, blocking the bar loop ~9s per symbol (>80s across 10 symbols). Added `PERSIST_BAR_AGE_LIMIT_SECONDS=300` so only bars within 5 min of wall clock get DB-written. Strategy still ingests every bar for indicators. |
+
+### Operational fixes on the VPS the same day
+
+- Cleared `MAI_TAI_LEGACY_API_BASE_URL` in env (commented out). The legacy
+  `momentum-stock-trader` HTTP service isn't running on this VPS, so the
+  control-plane was emitting `/scanner/confirmed`, `/bot`, `/bot1m`,
+  `/tosbot`, `/runnerbot` → Connection-refused errors every refresh,
+  driving overall status to `degraded`. Disabling the URL cleared the
+  errors array to `[]` and removed those particular degraded sources.
+- Killed a rogue `mai-tai-schwab-1m-v2` python process (PID 1536187) left
+  over from a `--help` test. Our service entrypoint ignores `argparse` and
+  unconditionally runs `asyncio.run(main())`, so the test became a permanent
+  background instance, polluting the isolated stream with stale state and
+  causing the dashboard to show empty watchlist intermittently. Lesson:
+  if you ever need to test the entrypoint locally, set the enable flag to
+  `false` first so the service idles instead of competing with the
+  systemd-managed one.
+- Reconciler is still `degraded` because `paper:schwab_1m` shows 8000 CYN
+  at broker but virtual_position=0 — this is the operator-frozen position
+  per PR #116 protected-symbols hard-block. Decision: leave as-is (operator
+  confirmed 2026-05-22). The dashboard `status: degraded` overall is
+  driven solely by this finding now.
+
+### Validation snapshot 2026-05-22 16:02 UTC (12:02 ET)
+
+| Metric | `schwab_1m` baseline | `schwab_1m_v2` |
+|---|---|---|
+| Bars persisted (last 60 min) | 284 | **569** |
+| Symbols covered | 8 | 12 |
+| Avg bars/symbol/hr | 35.5 | **47.4** |
+| Latest bar age | 207s | 87s |
+| Persist-lag p50 / p95 / max | n/a | 85s / 162s / 197s |
+| Errors / warnings last hour | n/a | **0 new** (the 1 historical 429 was pre-fix) |
+| Intents fired today (whole bot family) | 16 (all REJECTED at OMS) | 0 |
+
+Existing schwab_1m fired only 1 P1_CROSS-equivalent signal all day; v2's
+two entry paths require a MACD cross (which schwab_1m's various P1-P5
+paths each detect slightly differently). On a quiet small-cap mid-morning,
+zero v2 fires is consistent with broader market quietness, not a bug.
+
+### What's still open (carry into tomorrow)
+
+- **Live signal validation**: needs a real MACD cross. Best window:
+  tomorrow pre-market 07-09 ET on the small-cap universe (per memory, that's
+  when 55-65% of schwab_1m fills land).
+- **OMS reject path**: every existing bot's intents today were rejected at
+  OMS layer with no row in `risk_checks` (table was empty for the same
+  window). When v2 finally fires, it'll likely hit the same reject reason
+  — pre-existing OMS issue affecting all bots, not v2-specific. Operator
+  noted earlier they're "not ready" for live trading; deferred.
+- **Strategy spec slot still open**: SchwabV2Config in `schwab_1m_v2.py`
+  hardcodes all v1.32 defaults. Operator can tune any constant in that
+  single file (trade_size=read from env; everything else in the dataclass).
+  No new env vars added beyond the original enable + quantity ones.
+- **Decision tape sparseness**: v2's strategy_bar_history rows have empty
+  `decision_status` (we only persist OHLCV, not decision metadata). The
+  control_plane decision-tape filter requires `decision_status != ''` so
+  the tape on `/bot/1m-schwab-v2` will be empty until either (a) we add
+  decision-row persistence on every evaluation, or (b) we start emitting
+  intents and OMS writes them. Not blocking — by-design for now.
