@@ -175,6 +175,12 @@ class Settings(BaseSettings):
     strategy_schwab_1m_v2_streamer_enabled: bool = False
     strategy_schwab_1m_v2_streamer_reconnect_base_secs: float = 1.0
     strategy_schwab_1m_v2_streamer_reconnect_max_secs: float = 30.0
+    # CSV of symbols (or "*" for all watchlist symbols) for which
+    # `_evaluate_completed_bar` emits a `[V2-MACD-PROBE]` INFO log per
+    # evaluated bar, dumping every input needed to cross-check the bot's
+    # MACD/EMA/VWAP/stoch against TOS for the same minute. Diagnostic-only
+    # — never changes strategy behavior. Default empty = no probe.
+    strategy_schwab_1m_v2_macd_probe_symbols: str = ""
     strategy_macd_30s_reclaim_excluded_symbols: str = "JEM,CYCN,BFRG,UCAR,BBGI"
     # Maximum age (seconds) for the `scanner_confirmed_last_nonempty` snapshot
     # to be eligible for startup restore. Older snapshots are skipped, so

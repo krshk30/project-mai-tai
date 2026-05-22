@@ -261,6 +261,19 @@ class SchwabV2Strategy:
         self.settings = settings
         self.cfg = config or SchwabV2Config()
         self._symbol_states: dict[str, SymbolState] = {}
+        # `_macd_probe_*` is a cached parse of
+        # settings.strategy_schwab_1m_v2_macd_probe_symbols. "*" enables
+        # probe for every symbol; an empty/missing setting disables probe
+        # entirely. Diagnostic-only — never gates strategy behavior.
+        raw_probe = str(
+            getattr(self.settings, "strategy_schwab_1m_v2_macd_probe_symbols", "") or ""
+        ).strip()
+        self._macd_probe_all = raw_probe == "*"
+        self._macd_probe_symbols: set[str] = (
+            set()
+            if self._macd_probe_all or not raw_probe
+            else {s.strip().upper() for s in raw_probe.split(",") if s.strip()}
+        )
 
     def watchlist_state(self, symbol: str) -> SymbolState:
         state = self._symbol_states.get(symbol)
@@ -454,6 +467,57 @@ class SchwabV2Strategy:
             and base_filters
         )
 
+        # Freshness guard precomputed here so the probe log can include it.
+        now_ms = int(datetime.now(UTC).timestamp() * 1000)
+        bar_age_secs = (now_ms - cur.timestamp_ms) / 1000.0
+
+        # Diagnostic probe — emit one INFO line per evaluated bar for
+        # symbols in the probe set. Captures every input needed to
+        # cross-check the bot's MACD chain against TOS for the same minute.
+        # Logged BEFORE the memo update so `prev_*` reflects the state
+        # cross-detection actually consumed for this bar.
+        if self._macd_probe_all or state.symbol in self._macd_probe_symbols:
+            rel_vol_ratio = cur.volume / avg_vol if avg_vol > 0 else 0.0
+            logger.info(
+                "[V2-MACD-PROBE] sym=%s ts_ms=%d close=%.6f "
+                "macd=%.6f sig=%.6f hist=%.6f hist_pct=%.4f "
+                "prev_macd=%s prev_sig=%s prev_close=%s prev_vwap=%s "
+                "vwap=%.6f ema%d=%.6f stoch%d=%.4f "
+                "vol=%d avg_vol_%d=%.4f rel_vol_x=%.4f "
+                "cross_macd_above=%s cross_vwap_above=%s "
+                "macd_above_sig=%s macd_inc=%s green=%s "
+                "n_bars=%d age_s=%.2f pos_qty=%d cooldown=%d",
+                state.symbol,
+                cur.timestamp_ms,
+                cur.close,
+                macd_line,
+                signal_line,
+                histogram,
+                hist_pct,
+                "none" if state.prev_macd is None else f"{state.prev_macd:.6f}",
+                "none" if state.prev_signal is None else f"{state.prev_signal:.6f}",
+                "none" if state.prev_close is None else f"{state.prev_close:.6f}",
+                "none" if state.prev_vwap is None else f"{state.prev_vwap:.6f}",
+                vwap,
+                self.cfg.ema_trend_length,
+                ema_trend,
+                self.cfg.stoch_length,
+                stoch_k,
+                int(cur.volume),
+                self.cfg.rel_vol_length,
+                avg_vol,
+                rel_vol_ratio,
+                str(macd_cross_above).lower(),
+                str(vwap_cross_above).lower(),
+                str(macd_above_signal).lower(),
+                str(macd_increasing).lower(),
+                str(cur.close > cur.open).lower(),
+                len(state.bars),
+                bar_age_secs,
+                state.position_qty,
+                state.cooldown_bars_remaining,
+            )
+
         # Persist memo BEFORE any early return so cross-detection stays
         # consistent across bars. Memo MUST update on every bar including
         # historical warmup feeds, otherwise prev_* is stale and crosses
@@ -467,8 +531,6 @@ class SchwabV2Strategy:
         # bars (replayed from the 24h REST window on cold-start) update
         # indicators above but never fire intents. This prevents emitting
         # an "open" intent on a MACD cross that happened hours ago.
-        now_ms = int(datetime.now(UTC).timestamp() * 1000)
-        bar_age_secs = (now_ms - cur.timestamp_ms) / 1000.0
         if bar_age_secs > MAX_BAR_AGE_SECONDS_FOR_EMIT:
             return None
 
