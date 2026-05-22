@@ -163,6 +163,18 @@ class Settings(BaseSettings):
     strategy_schwab_1m_v2_account_name: str = "paper:schwab_1m_v2"
     strategy_schwab_1m_v2_broker_provider: str | None = "schwab"
     strategy_schwab_1m_v2_default_quantity: int = 100
+    # schwab_1m_v2 streamer: dedicated WebSocket bar feed (CHART_EQUITY) in
+    # `market_data/schwab_v2_streamer.py`. Default OFF — the streamer shares
+    # the same OAuth token as the existing schwab_streamer.py session, and
+    # Schwab's streamer may limit one concurrent WS per OAuth user. Flip
+    # ONLY during an evening test window with eyes on the existing
+    # schwab_1m / macd_30s logs for collision symptoms. Rollback = flip
+    # back to false + restart project-mai-tai-schwab-1m-v2.service. REST
+    # poller keeps running concurrently for cold-start warmup + reconnect
+    # gap-fill (both feed `_handle_bar`; strategy + persist are idempotent).
+    strategy_schwab_1m_v2_streamer_enabled: bool = False
+    strategy_schwab_1m_v2_streamer_reconnect_base_secs: float = 1.0
+    strategy_schwab_1m_v2_streamer_reconnect_max_secs: float = 30.0
     strategy_macd_30s_reclaim_excluded_symbols: str = "JEM,CYCN,BFRG,UCAR,BBGI"
     # Maximum age (seconds) for the `scanner_confirmed_last_nonempty` snapshot
     # to be eligible for startup restore. Older snapshots are skipped, so

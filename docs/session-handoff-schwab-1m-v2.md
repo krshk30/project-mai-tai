@@ -31,9 +31,10 @@ reconsider — that's how regressions cross-contaminate.
 
 | Path | Purpose |
 |---|---|
-| `src/project_mai_tai/market_data/schwab_v2_rest_client.py` | Dedicated Schwab Price History + Quotes REST poller |
+| `src/project_mai_tai/market_data/schwab_v2_rest_client.py` | Dedicated Schwab Price History + Quotes REST poller (cold-start warmup + reconnect gap-fill) |
+| `src/project_mai_tai/market_data/schwab_v2_streamer.py` | Dedicated Schwab CHART_EQUITY WebSocket streamer (live 1m bars when streamer flag enabled) |
 | `src/project_mai_tai/strategy_core/schwab_1m_v2.py` | Bar storage, inline indicators, strategy placeholder, intent emitter |
-| `src/project_mai_tai/services/schwab_1m_v2_bot.py` | Sixth service entrypoint; subscribes to scanner state, drives REST client |
+| `src/project_mai_tai/services/schwab_1m_v2_bot.py` | Sixth service entrypoint; subscribes to scanner state, drives REST + streamer |
 | `ops/systemd/project-mai-tai-schwab-1m-v2.service` | systemd unit |
 | `docs/session-handoff-schwab-1m-v2.md` | this doc |
 
@@ -241,3 +242,98 @@ zero v2 fires is consistent with broader market quietness, not a bug.
   the tape on `/bot/1m-schwab-v2` will be empty until either (a) we add
   decision-row persistence on every evaluation, or (b) we start emitting
   intents and OMS writes them. Not blocking — by-design for now.
+
+### 2026-05-23 — Day 2 (PR #216): dedicated CHART_EQUITY WebSocket streamer (dormant)
+
+**Why**: Day 1's REST-poll design has a structural persist-lag floor of
+~85s p50 / 162s p95 vs TOS evaluating at T+0. Lag chain = (a) bar close,
+(b) Schwab API aggregation delay 5-15s, (c) round-robin queue (15s/symbol
+× 12 symbols = up to 180s between polls of the same symbol),
+(d) the 60s `_fetch_latest_bar` finality wait. Net: signals fire ~90s
+after TOS would have. To match TOS we need a push feed, not a pull feed.
+
+**What shipped** (default-OFF, code lands dormant):
+
+- `src/project_mai_tai/market_data/schwab_v2_streamer.py` (new) —
+  dedicated WS client for `CHART_EQUITY` only. Reads `/trader/v1/userPreference`
+  for streamer creds, opens `wss://…`, sends ADMIN LOGIN, then SUBS/ADD/
+  UNSUBS on watchlist changes. Bar extract from fields 0/2/3/4/5/6/7.
+  Exponential-backoff reconnect (1s → 30s). Per-symbol `last_bar_ts_ms`
+  dedupe inside the streamer so Schwab same-bucket re-emits don't
+  double-feed. NO imports from `market_data/schwab_streamer.py`.
+- `services/schwab_1m_v2_bot.py` — boots `SchwabV2Streamer` alongside
+  `SchwabV2RestClient`. Both call the same `_handle_bar`; idempotency
+  is handled by the strategy's same-timestamp update semantics +
+  `_persist_bar` UPSERT. Heartbeat details now include `streamer_enabled`
+  and `streamer_connected`.
+- `settings.py` — three new env vars (defaults shown):
+  - `MAI_TAI_STRATEGY_SCHWAB_1M_V2_STREAMER_ENABLED=false`
+  - `MAI_TAI_STRATEGY_SCHWAB_1M_V2_STREAMER_RECONNECT_BASE_SECS=1.0`
+  - `MAI_TAI_STRATEGY_SCHWAB_1M_V2_STREAMER_RECONNECT_MAX_SECS=30.0`
+
+**REST stays as-is** — keeps running concurrently for (a) cold-start
+warmup of 35-bar MACD window, (b) reconnect gap-fill. Both feeds are
+idempotent, so we don't need a tighter coupling between them. Slight
+duplicate bandwidth (REST keeps polling at 15s/symbol even when streamer
+is healthy) — well under the 120 RPM Schwab limit; optimize later if it
+matters.
+
+**Why CHART_EQUITY only**: bar-close based v1.32 strategy doesn't need
+LEVELONE quotes or TIMESALE trades for entry signals. Smaller protocol
+surface = lower risk. If intrabar entry refinement ever becomes needed,
+add a second service (LEVELONE) — don't expand this one.
+
+**OAuth single-session collision risk** — the streamer reuses the same
+OAuth token that `schwab_streamer.py` (strategy-engine process) already
+holds a WS session on. Schwab typically allows one concurrent streamer
+session per OAuth user. If v2's connect kicks the existing session off,
+production schwab_1m / macd_30s bot WS feeds go dark.
+
+Mitigations:
+- **Ship dormant**. The streamer enable flag defaults to `false` so this
+  PR has zero runtime impact when merged + deployed.
+- **Evening test only**. First connect attempt MUST be after 16:00 ET
+  close. On the existing schwab_1m log, watch for new
+  `Schwab streamer connection loop failed` warnings starting within
+  seconds of `[V2-WS-LOGIN-OK]` — that's the collision signature.
+- **One-line rollback**: set
+  `MAI_TAI_STRATEGY_SCHWAB_1M_V2_STREAMER_ENABLED=false` in
+  `/etc/project-mai-tai/project-mai-tai.env` and
+  `systemctl restart project-mai-tai-schwab-1m-v2.service`. REST-only
+  path is identical to today, no regression to other bots.
+
+**Activation runbook** (when ready to test):
+
+1. After 16:00 ET, on the VPS:
+   ```bash
+   sudo sed -i 's/^# MAI_TAI_STRATEGY_SCHWAB_1M_V2_STREAMER_ENABLED.*/MAI_TAI_STRATEGY_SCHWAB_1M_V2_STREAMER_ENABLED=true/' \
+     /etc/project-mai-tai/project-mai-tai.env
+   # (or just append the line if the comment isn't there)
+   sudo systemctl restart project-mai-tai-schwab-1m-v2.service
+   ```
+2. Tail both logs in parallel:
+   ```bash
+   sudo tail -F /var/log/project-mai-tai/schwab-1m-v2.log
+   sudo tail -F /var/log/project-mai-tai/strategy.log | grep -i schwab
+   ```
+3. Within ~15s expect:
+   - `[V2-WS-LOGIN-OK] schwab_v2 streamer connected (symbols_desired=N)`
+   - `[V2-WS-SUB] cmd=SUBS count=N sample=…`
+   - Existing strategy.log shows NO new "Schwab streamer connection loop
+     failed" entries beyond pre-test baseline.
+4. Within 90s expect at least one CHART_EQUITY bar arrival (any
+   `_handle_bar` log line for a watchlist symbol), then watch persist-lag
+   in DB:
+   ```sql
+   SELECT bar_time, EXTRACT(EPOCH FROM (created_at - bar_time)) AS lag
+   FROM strategy_bar_history
+   WHERE strategy_code='schwab_1m_v2' AND created_at > NOW() - INTERVAL '5 min'
+   ORDER BY created_at DESC LIMIT 20;
+   ```
+   Target: lag drops to <5s on bars fed by the streamer (vs ~85s p50
+   under REST-only).
+
+**If collision is confirmed**: flip flag off + restart v2. Plan Day 3 as
+"second Schwab developer-app credential" — a separate OAuth identity for
+v2's streamer with its own token store path. v2's REST stays on the
+shared token (read-only file access doesn't conflict).

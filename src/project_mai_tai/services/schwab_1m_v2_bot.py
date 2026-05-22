@@ -52,6 +52,7 @@ from project_mai_tai.market_data.schwab_v2_rest_client import (
     Quote,
     SchwabV2RestClient,
 )
+from project_mai_tai.market_data.schwab_v2_streamer import SchwabV2Streamer
 from project_mai_tai.settings import Settings, get_settings
 from project_mai_tai.strategy_core.schwab_1m_v2 import (
     SERVICE_NAME,
@@ -95,6 +96,7 @@ class SchwabV2BotService:
         self.redis: Redis | None = None
         self.strategy = SchwabV2Strategy(self.settings)
         self.rest_client: SchwabV2RestClient | None = None
+        self.streamer: SchwabV2Streamer | None = None
         self.intent_emitter: SchwabV2IntentEmitter | None = None
         self.session_factory: sessionmaker[Session] | None = session_factory
         self._stop_event = asyncio.Event()
@@ -118,6 +120,18 @@ class SchwabV2BotService:
     @property
     def enabled(self) -> bool:
         return bool(getattr(self.settings, "strategy_schwab_1m_v2_enabled", False))
+
+    @property
+    def streamer_enabled(self) -> bool:
+        """Streamer subsumes the REST bar-poll path for live bars. REST keeps
+        running concurrently for cold-start warmup + reconnect gap-fill —
+        both feed `_handle_bar`, which is idempotent at strategy + persist
+        layers via the strategy's same-bucket update semantics and the
+        UPSERT in `_persist_bar`.
+        """
+        return self.enabled and bool(
+            getattr(self.settings, "strategy_schwab_1m_v2_streamer_enabled", False)
+        )
 
     async def run(self) -> None:
         logging.basicConfig(
@@ -152,6 +166,10 @@ class SchwabV2BotService:
             on_chart_bar=self._handle_bar,
             on_quote=self._handle_quote,
         )
+        self.streamer = SchwabV2Streamer(
+            self.settings,
+            on_chart_bar=self._handle_bar,
+        )
 
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGINT, signal.SIGTERM):
@@ -173,6 +191,12 @@ class SchwabV2BotService:
             tasks.append(asyncio.create_task(self.rest_client.run()))
             tasks.append(asyncio.create_task(self._scanner_consumer_loop()))
             tasks.append(asyncio.create_task(self._position_poll_loop()))
+            if self.streamer_enabled:
+                tasks.append(asyncio.create_task(self.streamer.run()))
+                logger.info(
+                    "[V2-WS-INIT] schwab_v2 streamer enabled, REST polling "
+                    "continues for cold-start warmup + reconnect gap-fill"
+                )
 
         try:
             await self._stop_event.wait()
@@ -181,6 +205,8 @@ class SchwabV2BotService:
             for task in tasks:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
+            if self.streamer is not None:
+                await self.streamer.stop()
             if self.rest_client is not None:
                 await self.rest_client.stop()
             if self.redis is not None:
@@ -200,6 +226,10 @@ class SchwabV2BotService:
                     "strategy_code": STRATEGY_CODE,
                     "rest_configured": str(
                         bool(self.rest_client and self.rest_client.configured)
+                    ).lower(),
+                    "streamer_enabled": str(self.streamer_enabled).lower(),
+                    "streamer_connected": str(
+                        bool(self.streamer and self.streamer.connected)
                     ).lower(),
                     "watchlist_size": str(len(self._watchlist)),
                     "bars_processed": str(sum(self._bar_counts.values())),
@@ -418,6 +448,8 @@ class SchwabV2BotService:
         self._watchlist = selected
         if self.rest_client is not None:
             self.rest_client.set_desired_symbols(selected)
+        if self.streamer is not None:
+            self.streamer.set_desired_symbols(selected)
         logger.info(
             "schwab_1m_v2 watchlist updated count=%d sample=%s",
             len(selected),
