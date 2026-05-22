@@ -40,18 +40,36 @@ PRs (all admin-merged, all v2-owned files only — no shared hot code touched):
   with watchlist in ~7 min after restart).
 - Zero errors / tracebacks since the #220 restart.
 
-**Saturday 2026-05-23 morning task**: streamer connectivity plumbing
-test per the runbook in
+**Streamer activation plan (3-day arc)** — full runbook in
 [`docs/session-handoff-schwab-1m-v2.md`](session-handoff-schwab-1m-v2.md)
-("Day 3 RUNBOOK"). NOT a live-data validation — market's closed, no
-bars will flow. Confirms streamer can connect, log in, subscribe, and
-doesn't visibly collide with the existing schwab_streamer.py session
-in strategy-engine. **MUST revert the flag before leaving** — leaving
-streamer enabled overnight without eyes-on through a market open
-risks production schwab_1m / macd_30s outage if OAuth single-session
-collision manifests under load. Pre-flight requires recording the
-exact baseline form of the env line so the revert restores it
-verbatim.
+under "Streamer Activation Test Plan". Three sequential checkpoints:
+
+- **DAY 1 — Saturday (market closed)**: plumbing test. Flip the flag,
+  watch v2 + strategy.log in parallel for `[V2-WS-LOGIN-OK]` and the
+  collision signature (new "Schwab streamer connection loop failed"
+  in strategy.log right after v2's login). Validates mechanics only —
+  no bars will flow because the market's closed. **Revert the flag
+  before leaving.** Day 1 outcome is the gate for Day 2.
+- **DAY 2 — WEEKDAY after market close (~16:00 ET / 20:00 UTC)**:
+  live activation. Same flip + watch pattern, but with post-close
+  extended-hours bars flowing so the persist-lag drop is observable.
+  Target: lag < 5s on streamer-fed bars (vs ~85s p50 baseline).
+  **NOT a weekend test** — needs a real trading day's data.
+  **If clean, LEAVE THE FLAG ON** — clean activation carries forward
+  into all following sessions on its own.
+- **DAY 3 — separate Schwab developer-app credential**: the proper
+  fix. Provisions v2's streamer its own OAuth identity + token store
+  path, removing the OAuth single-session collision risk entirely.
+  After Day 3, future activations need no after-close window.
+
+The after-close timing on Day 1 and Day 2 exists ONLY because the
+v2 streamer currently shares the OAuth token with `schwab_streamer.py`
+in strategy-engine, and Schwab allows one streamer session per token.
+Day 3 dissolves that constraint.
+
+**One-rule mental model** for anyone reading this fresh: the streamer
+RUNS during market hours; the flag-flip is what's dangerous, so we do
+it after close, once. A clean activation is left on permanently.
 
 ### 2026-05-22 EOD — `schwab_1m_v2` isolated bot built and deployed end-to-end (see dedicated doc)
 
