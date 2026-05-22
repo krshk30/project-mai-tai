@@ -12,6 +12,7 @@ for unit in \
   project-mai-tai-oms.service \
   project-mai-tai-reconciler.service \
   project-mai-tai-trade-coach.service \
+  project-mai-tai-schwab-1m-v2.service \
   project-mai-tai.target
 do
   sudo cp "$SOURCE_DIR/$unit" "$SYSTEMD_DIR/$unit"

@@ -93,6 +93,29 @@ def configured_strategy_registrations(settings: Settings) -> tuple[StrategyRegis
                 },
             )
         )
+    if settings.strategy_schwab_1m_v2_enabled:
+        registrations.append(
+            StrategyRegistration(
+                code="schwab_1m_v2",
+                display_name="Schwab 1 Min Bot v2 (isolated)",
+                account_name=settings.strategy_schwab_1m_v2_account_name,
+                interval_secs=60,
+                runtime_kind="schwab_1m_v2",
+                execution_mode=settings.execution_mode_for_provider(
+                    settings.provider_for_strategy("schwab_1m_v2")
+                ),
+                metadata={
+                    "account_name": settings.strategy_schwab_1m_v2_account_name,
+                    "account_display_name": settings.display_account_name(
+                        settings.strategy_schwab_1m_v2_account_name
+                    ),
+                    "interval_secs": 60,
+                    "runtime_kind": "schwab_1m_v2",
+                    "provider": settings.provider_for_strategy("schwab_1m_v2"),
+                    "isolated_service": True,
+                },
+            )
+        )
     if settings.strategy_macd_30s_probe_enabled:
         registrations.append(
             StrategyRegistration(
