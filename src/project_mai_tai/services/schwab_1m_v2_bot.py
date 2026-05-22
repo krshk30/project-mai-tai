@@ -65,6 +65,10 @@ logger = logging.getLogger(__name__)
 INTERVAL_SECS = 60
 STATE_PUBLISH_INTERVAL_SECONDS = 5
 POSITION_POLL_INTERVAL_SECONDS = 5
+# Max bar age (seconds) for DB-persistence. Older bars are warmup feeds
+# that prior service instances already persisted; redoing them on every
+# restart would block the bar loop for ~10s per symbol on cold-start.
+PERSIST_BAR_AGE_LIMIT_SECONDS = 300
 INFLIGHT_INTENT_STATUSES_TERMINAL = ("filled", "rejected", "cancelled")
 EASTERN_TZ = ZoneInfo("America/New_York")
 
@@ -448,7 +452,15 @@ class SchwabV2BotService:
         self._last_bar_at[symbol] = now_et
         self._bar_counts[symbol] = self._bar_counts.get(symbol, 0) + 1
 
-        await asyncio.to_thread(self._persist_bar, symbol, bar)
+        # Only DB-persist bars within the freshness window. The cold-start
+        # warmup batch (up to ~500 historical bars per symbol) was already
+        # persisted by a prior service instance; re-writing them serializes
+        # ~5k SQL roundtrips across all symbols and stalls the bar loop.
+        # In-memory indicator state still consumes EVERY bar via strategy.on_bar.
+        now_ms = int(datetime.now(UTC).timestamp() * 1000)
+        bar_age_secs = (now_ms - bar.timestamp_ms) / 1000.0
+        if bar_age_secs <= PERSIST_BAR_AGE_LIMIT_SECONDS:
+            await asyncio.to_thread(self._persist_bar, symbol, bar)
 
         try:
             draft = self.strategy.on_bar(symbol, bar)
