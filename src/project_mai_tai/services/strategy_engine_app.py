@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 import socket
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Coroutine, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -5737,6 +5737,7 @@ class StrategyEngineService:
         self._schwab_last_forced_reconnect_at: datetime | None = None
         self._last_generic_bot_activity_snapshot_at: datetime | None = None
         self._generic_bot_activity_snapshot_interval_secs = 5
+        self._subscription_sync_timeout_secs = 3.0
 
     async def _initialize_stream_offsets(self) -> None:
         for stream in list(self._stream_offsets):
@@ -6658,17 +6659,45 @@ class StrategyEngineService:
                 {str(symbol).upper() for symbol in effective_market_data_symbols}
                 | {str(symbol).upper() for symbol in fallback_schwab_symbols}
             )
-        await self._sync_market_data_subscriptions(
-            effective_market_data_symbols
+        await self._bounded_subscription_sync_step(
+            "market-data subscriptions",
+            self._sync_market_data_subscriptions(
+                effective_market_data_symbols
+            ),
         )
-        await self._sync_schwab_stream_subscriptions(
-            effective_schwab_symbols
+        await self._bounded_subscription_sync_step(
+            "schwab stream subscriptions",
+            self._sync_schwab_stream_subscriptions(
+                effective_schwab_symbols
+            ),
         )
         self._spawn_background_hydration(
             kind="schwab",
             symbols={str(sym).upper() for sym in effective_schwab_symbols},
             coro_factory=self._hydrate_recent_schwab_historical_bars,
         )
+
+    async def _bounded_subscription_sync_step(
+        self,
+        label: str,
+        awaitable: Coroutine[object, object, object],
+    ) -> None:
+        try:
+            await asyncio.wait_for(
+                awaitable,
+                timeout=self._subscription_sync_timeout_secs,
+            )
+        except TimeoutError:
+            self.logger.warning(
+                "timed out syncing %s after %.1fs; continuing with strategy-state publication",
+                label,
+                self._subscription_sync_timeout_secs,
+            )
+        except Exception:
+            self.logger.exception(
+                "failed syncing %s; continuing with strategy-state publication",
+                label,
+            )
 
     def _should_use_generic_market_data_fallback_for_schwab(self) -> bool:
         if not self.state.schwab_stream_strategy_codes():

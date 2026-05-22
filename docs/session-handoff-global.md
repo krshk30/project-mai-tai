@@ -1,5 +1,45 @@
 # Session Handoff - Global
 
+### 2026-05-22 premarket scanner outage - scanner went blank because strategy-state publication was blocked behind subscription sync
+
+- Live production evidence:
+  - `/api/scanner` showed:
+    - `status=idle`
+    - `cycle_count=0`
+    - `watchlist=[]`
+    - `top_gainers=[]`
+    - `five_pillars=[]`
+    - `recent_alerts=[]`
+    - while `latest_snapshot_batch` was still fresh and `feed_status=live`
+  - `/health` showed `market-data-gateway`, `oms-risk`, and `reconciler`, but **no `strategy-engine` heartbeat**
+  - Redis proved the split directly:
+    - `mai_tai:snapshot-batches` still advancing
+    - `mai_tai:heartbeats` had no fresh `strategy-engine` events
+    - `mai_tai:strategy-state` had `XLEN = 0`
+  - strategy log still showed the independent Schwab reconnect loop running, but the last `snapshot batch processed` rows stopped right after the `08:00 UTC` scanner session roll
+- Root cause:
+  - scanner runtime state is published only after `StrategyEngineService._sync_subscription_targets()`
+  - on the `08:00 UTC` roll, the strategy loop kept running but stopped publishing `strategy-state` / heartbeats while Schwab subscription churn continued
+  - result:
+    - control-plane fell back to the empty default scanner shape
+    - market-data looked live, but scanner/alerts/watchlists were blank
+- Fix:
+  - `src/project_mai_tai/services/strategy_engine_app.py`
+    - added bounded timeout/error handling around subscription-target sync steps
+    - if market-data or Schwab subscription sync stalls, strategy now logs the failure and continues to publish `strategy-state` and heartbeats instead of blanking the scanner
+  - focused tests added in `tests/unit/test_strategy_engine_service.py`
+    - timeout on a stuck subscription-sync step still continues to later sync steps
+    - snapshot-batch handling still publishes `strategy-state` when a subscription-sync step stalls
+- Focused local validation:
+  - `pytest tests/unit/test_strategy_engine_service.py -k "sync_subscription_targets_times_out_stuck_subscription_step_and_continues or snapshot_batch_still_publishes_strategy_state_when_subscription_sync_times_out or sync_subscription_targets_includes_schwab_symbols_when_stream_fallback_is_active or sync_subscription_targets_excludes_prewarm_from_generic_fallback" -q` -> `4 passed`
+  - `python -m py_compile src/project_mai_tai/services/strategy_engine_app.py tests/unit/test_strategy_engine_service.py`
+- Deploy/validation status:
+  - validate after deploy:
+    - `mai_tai:strategy-state` stream length is non-zero
+    - `/health` includes fresh `strategy-engine`
+    - `/api/scanner` cycle count increments again and scanner lists repopulate
+    - scanner no longer blanks just because Schwab subscription sync stalls
+
 ## 🚩 2026-05-20 EOD — Two code regressions caught + Schwab platform-side delivery delay remains
 
 VPS HEAD `745040d` after two surgical reverts deployed today. Trading day was effectively lost (0 macd_30s fills, 0 schwab_1m fills) but root causes identified and bounded.

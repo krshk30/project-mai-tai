@@ -5724,6 +5724,78 @@ async def test_sync_subscription_targets_excludes_prewarm_from_generic_fallback(
 
 
 @pytest.mark.asyncio
+async def test_sync_subscription_targets_times_out_stuck_subscription_step_and_continues(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = StrategyEngineService(
+        settings=make_test_settings(
+            redis_stream_prefix="test",
+            dashboard_snapshot_persistence_enabled=False,
+            strategy_history_persistence_enabled=False,
+        ),
+        redis_client=FakeRedis(),
+    )
+    service._subscription_sync_timeout_secs = 0.01
+    captured: list[str] = []
+
+    async def stuck_market_data_subscriptions(symbols):
+        del symbols
+        await asyncio.sleep(60)
+
+    async def fake_schwab_subscriptions(symbols):
+        captured.extend(list(symbols))
+
+    monkeypatch.setattr(service, "_sync_market_data_subscriptions", stuck_market_data_subscriptions)
+    monkeypatch.setattr(service, "_sync_schwab_stream_subscriptions", fake_schwab_subscriptions)
+
+    await service._sync_subscription_targets(schwab_stream_symbols=["ELAB"])
+
+    assert captured == ["ELAB"]
+
+
+@pytest.mark.asyncio
+async def test_snapshot_batch_still_publishes_strategy_state_when_subscription_sync_times_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    redis = FakeRedis()
+    service = StrategyEngineService(
+        settings=make_test_settings(
+            redis_stream_prefix="test",
+            dashboard_snapshot_persistence_enabled=False,
+            strategy_history_persistence_enabled=False,
+        ),
+        redis_client=redis,
+    )
+    service._subscription_sync_timeout_secs = 0.01
+
+    async def stuck_market_data_subscriptions(symbols):
+        del symbols
+        await asyncio.sleep(60)
+
+    async def fake_schwab_subscriptions(symbols):
+        del symbols
+        return None
+
+    monkeypatch.setattr(service, "_sync_market_data_subscriptions", stuck_market_data_subscriptions)
+    monkeypatch.setattr(service, "_sync_schwab_stream_subscriptions", fake_schwab_subscriptions)
+    monkeypatch.setattr(service, "_load_scanner_blacklist_symbols", lambda: set())
+    monkeypatch.setattr(service, "_load_schwab_ineligible_symbols_by_strategy", lambda: {})
+    monkeypatch.setattr(service.state, "_roll_scanner_session_if_needed", lambda: False)
+
+    event = SnapshotBatchEvent(
+        source_service="market-data-gateway",
+        payload={
+            "snapshots": [],
+            "reference_data": [],
+        },
+    )
+
+    await service._handle_stream_message("test:snapshot-batches", {"data": event.model_dump_json()})
+
+    assert any(stream == "test:strategy-state" for stream, _data in redis.entries)
+
+
+@pytest.mark.asyncio
 async def test_trade_tick_stream_routes_to_schwab_native_macd_30s_when_stream_fallback_is_active(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
