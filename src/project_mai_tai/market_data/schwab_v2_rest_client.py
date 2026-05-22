@@ -199,13 +199,23 @@ class SchwabV2RestClient:
         return payload
 
     def _fetch_latest_bar(self, symbol: str) -> ChartBar | None:
+        # Use explicit startDate/endDate instead of periodType+period.
+        # Schwab's pricehistory with `periodType=day&period=1` returns the
+        # last fully-closed trading session, NOT "today so far" — so during
+        # today's RTH it gives yesterday's bars and misses today's. Verified
+        # 2026-05-22: period=1 returned last candle 2026-05-21 23:59 UTC
+        # (yesterday's post-market close), while explicit startDate=now-24h
+        # returned candles through 2026-05-22 13:46 UTC (today, current).
+        now_ms = int(datetime.now(UTC).timestamp() * 1000)
+        start_ms = now_ms - 24 * 60 * 60 * 1000
         params = urlencode(
             {
                 "symbol": symbol,
                 "periodType": "day",
-                "period": 1,
                 "frequencyType": "minute",
                 "frequency": 1,
+                "startDate": start_ms,
+                "endDate": now_ms,
                 "needExtendedHoursData": "true",
             }
         )
