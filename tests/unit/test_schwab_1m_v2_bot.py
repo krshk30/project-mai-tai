@@ -372,11 +372,12 @@ def test_warmup_completion_drains_buffer_in_timestamp_order() -> None:
     ]
 
 
-def test_drain_skips_buffered_bars_older_or_equal_to_latest_deque_bar() -> None:
+def test_drain_skips_buffered_bars_strictly_older_than_latest_deque_bar() -> None:
     bot = _bot()
 
-    # Buffer one bar that's OLDER than the upcoming REST bar — it
-    # should be dropped on drain, not appended out-of-order.
+    # `stale` is strictly older than the upcoming REST bar -> dropped.
+    # `same` is equal -> replayed as update-in-place.
+    # `fresh` is newer -> appended.
     t_base = _now_ms_at_age(60.0)
     stale = _bar(ts_ms=t_base - 60_000)
     same = _bar(ts_ms=t_base)
@@ -390,9 +391,34 @@ def test_drain_skips_buffered_bars_older_or_equal_to_latest_deque_bar() -> None:
 
     state = bot.strategy.watchlist_state("AAA")
     timestamps = [b.timestamp_ms for b in state.bars]
-    # `stale` (t_base-60s) and `same` (t_base) are <= rest_bar
-    # timestamp; only `fresh` survives the drain.
+    # Only `stale` (strictly older) is dropped. `same` updated the
+    # REST bar in place; `fresh` appended after.
     assert timestamps == [t_base, t_base + 60_000]
+
+
+def test_drain_replays_equal_timestamp_streamer_bar_as_update_in_place() -> None:
+    """When a buffered streamer bar shares a timestamp with the REST
+    warmup-completing bar, the streamer's copy is preferred via
+    on_bar's same-bucket update-in-place. REST applies a 60s in-flight
+    cutoff to its most recent bar, so the streamer's push-at-minute-
+    close copy can carry more complete OHLC + volume — silently
+    dropping it would lose authoritative data.
+    """
+    bot = _bot()
+    t_base = _now_ms_at_age(60.0)
+    # Streamer's copy: more complete (volume 999, close 2.0).
+    streamer_copy = _bar(ts_ms=t_base, close=2.0, volume=999)
+    asyncio.run(bot._handle_bar_from_streamer("AAA", streamer_copy))
+    # REST's copy of the same bucket: in-flight version (volume 100, close 1.0).
+    rest_copy = _bar(ts_ms=t_base, close=1.0, volume=100)
+    asyncio.run(bot._handle_bar_from_rest("AAA", rest_copy))
+
+    state = bot.strategy.watchlist_state("AAA")
+    # Single bar at t_base — same-bucket semantics.
+    assert [b.timestamp_ms for b in state.bars] == [t_base]
+    # Streamer's values won via update-in-place.
+    assert state.bars[-1].close == 2.0
+    assert state.bars[-1].volume == 999
 
 
 def test_buffer_cap_drops_oldest_when_full() -> None:

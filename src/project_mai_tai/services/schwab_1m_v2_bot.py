@@ -840,10 +840,18 @@ class SchwabV2BotService:
 
     async def _drain_streamer_pending(self, symbol: str) -> None:
         """Replay buffered streamer bars for `symbol` after REST warmup
-        completes. Only bars STRICTLY newer than the current
-        `state.bars[-1]` are replayed; older buffered bars would
+        completes. Bars whose timestamp is `>= state.bars[-1].timestamp_ms`
+        are replayed in ascending order; strictly-older bars would
         corrupt the append-only deque and are dropped (logged for
         observability).
+
+        Equal-timestamp bars are explicitly INCLUDED in the replay
+        rather than dropped: REST's Price History endpoint applies a
+        60s in-flight cutoff for the most recent bar, so the streamer's
+        push-at-minute-close copy of the same bucket can carry more
+        complete OHLC + volume. `SchwabV2Strategy.on_bar` handles same-
+        timestamp arrivals via update-in-place (state.bars[-1] = ohlcv),
+        so the streamer's copy wins without disturbing deque order.
         """
         pending = self._streamer_pending.pop(symbol, None)
         if not pending:
@@ -851,7 +859,7 @@ class SchwabV2BotService:
         state = self.strategy.watchlist_state(symbol)
         latest_ts = state.bars[-1].timestamp_ms if state.bars else 0
         fresh = sorted(
-            (b for b in pending if b.timestamp_ms > latest_ts),
+            (b for b in pending if b.timestamp_ms >= latest_ts),
             key=lambda b: b.timestamp_ms,
         )
         dropped = len(pending) - len(fresh)
