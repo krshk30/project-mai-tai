@@ -851,3 +851,159 @@ immediate priority and Day 2 is skipped until Day 3 is done.
 - Activate on / observe / leave on (if clean) — or revert (if not).
 - The after-close timing exists ONLY because of the shared OAuth
   token. Day 3 removes it.
+
+---
+
+### 2026-05-23 — Day 1 plumbing test executed; Day 2 NO-GO pending subscribe/evaluate decoupling
+
+#### Day 1 result
+
+Executed against VPS HEAD `fadb467` (== `origin/main`). Pre-test env did
+NOT contain `MAI_TAI_STRATEGY_SCHWAB_1M_V2_STREAMER_ENABLED` at all
+(neither commented nor `=false`); appended `=true`, restarted v2,
+reverted by deleting the line. Final env SHA256 matches pre-test
+byte-for-byte; backup retained at
+`/etc/project-mai-tai/project-mai-tai.env.bak-day1-2026-05-23`.
+
+Observed pattern over ~2 min, ~14 cycles each ~3-4 s apart:
+
+```
+[V2-WS-LOGIN-OK] schwab_v2 streamer connected (symbols_desired=0)
+[V2-WS-DISCONNECT] schwab_v2 streamer failure #1: received 1000 (OK); then sent 1000 (OK)
+```
+
+No `[V2-WS-SUB]` ever fired. No production-side `Schwab streamer
+connection loop failed` lines — collision criterion did NOT trigger.
+
+#### Streamer code-read (`market_data/schwab_v2_streamer.py`, `fadb467`)
+
+1. **Empty-sub send is gated.** `_apply_subscription_delta` (lines
+   292-301) computes `to_add = desired - requested`. With both empty,
+   it returns without calling `_send_subscription`. Belt-and-suspenders
+   guard at `_send_subscription` line 306: `if not symbols or
+   self._creds is None: return`. Nothing leaves the wire when
+   `_desired_symbols` is empty.
+2. **No heartbeat defect.** No app-level keepalive code anywhere in
+   the file. Protocol-level pings are configured at connect: line 152
+   `ping_interval=20, ping_timeout=20`. Disconnect at 1.3-2.5 s after
+   LOGIN-OK is far too fast to be heartbeat-related (would be ~40 s).
+3. **Server-initiated close, confirmed.** Log signature `received 1000
+   (OK); then sent 1000 (OK)` is the `websockets` library's
+   `ConnectionClosed` format for a remote-initiated close. Code path:
+   `_receive_loop` line 227-228 re-raises `ConnectionClosed`; `run()`
+   line 172-178 catches and logs `[V2-WS-DISCONNECT]`; `finally` line
+   184-187 acks via `ws.close()`. No streamer code path closes
+   pre-emptively.
+4. **Streamer-level verdict: BENIGN.** Schwab closes idle,
+   subscription-less sessions. The streamer reconnects with
+   exponential backoff capped at
+   `strategy_schwab_1m_v2_streamer_reconnect_max_secs`. The streamer
+   itself ships correct.
+
+#### Bot service code-read (`services/schwab_1m_v2_bot.py`, `fadb467`) — gating analysis
+
+1. **When `streamer.set_desired_symbols(...)` is called.** Two
+   callsites only, both gated on `_rest_warmup_done`:
+   - Line 484 (`_apply_strategy_state_event`, on scanner-state arrival):
+     `self.streamer.set_desired_symbols(selected & self._rest_warmup_done)`.
+     On cold start `_rest_warmup_done` is `set()`, so even with a
+     non-empty watchlist the streamer receives `set()`.
+   - Line 587 (`_extend_streamer_subscriptions_to_warmed`):
+     `warmed = self._watchlist & self._rest_warmup_done; self.streamer.set_desired_symbols(warmed)`.
+     Called from `_handle_bar_from_rest` line 536 each time REST
+     delivers a bar with `bar_age_secs <= 300 s` for a not-yet-warmed
+     symbol.
+2. **Subscription IS gated on warmup.** `REST_WARMUP_FRESH_THRESHOLD_SECS
+   = 300.0` (line 79). A symbol is added to `_rest_warmup_done` only
+   when REST delivers a bar within 300 s of wall clock (line 531-535).
+   This is the W2 design comment at line 121-126: *"streamer doesn't
+   subscribe to a symbol until REST has fed its history, so streamer
+   can't drop live bars onto an empty deque ahead of the historical
+   context."* The W1 min_bars gate inside the strategy (`SchwabV2Strategy`)
+   already prevents premature evaluation; W2 is over-cautious and
+   conflates subscription with evaluation.
+3. **Subscribe/evaluate decoupling is NOT in place.** The current
+   wiring is "subscribe late, evaluate late." The correct split per
+   intent is "subscribe early (immediately on scanner-state), evaluate
+   late (min_bars guard in strategy)." Line 484 is the offending
+   intersection; removing the `& self._rest_warmup_done` mask is the
+   minimal fix.
+4. **Weekday cold-start implication.** On a weekday, REST round-robin
+   (5 s per symbol, `bar_poll_interval_seconds=5`) will mark the first
+   symbol warmed within ~5-10 s. Per validation snapshot 2026-05-22,
+   full warmup of 10 symbols took ~7 min. So a weekday cold start sees
+   the same LOGIN-OK → DISCONNECT loop for the first ~5-15 s until at
+   least one symbol crosses the 300 s freshness threshold and the
+   streamer's `_sync_event` fires SUBS on the next reconnect attempt.
+   Once any symbol is subscribed Schwab holds the session and `SUBS`
+   incrementally expands as more symbols warm. The Saturday loop is
+   the same pathology stretched indefinitely because REST never
+   produces a bar within 300 s of wall clock.
+
+#### Day 2 verdict: **NO-GO**
+
+Subscribe/evaluate decoupling is not in place at line 484. Day 2 on a
+weekday after close would reproduce the same reconnect loop for the
+first ~5-15 s of activation. That window is short, but:
+
+- It generates `[V2-WS-DISCONNECT]` noise that's indistinguishable
+  from a real collision when scanning logs post-test, undermining the
+  Day 2 success criterion (clean activation → leave flag on).
+- The reconnect-backoff schedule (base 0.5 s, doubling, capped) means
+  successive failures during the warmup window stretch the time to
+  first SUBS, not shorten it.
+- Reconnects mid-session (e.g. transient network blip) clear
+  `_requested_symbols` (streamer line 167) and re-derive desired from
+  the bot's current `set_desired_symbols` value; if a mid-session
+  reconnect lands during a watchlist transition where every symbol's
+  warmup state was just cleared (line 476:
+  `self._rest_warmup_done &= selected`), the same loop recurs
+  mid-day. Low probability but real.
+
+#### Required fix before Day 2 (do not implement yet — review needed)
+
+Minimal change in `services/schwab_1m_v2_bot.py`:
+
+```diff
+-        if self.streamer is not None:
+-            # Streamer only subscribes to symbols REST has confirmed
+-            # warmed. Newly-added symbols will be added to the streamer
+-            # subscription set incrementally as REST batches complete
+-            # (see `_handle_bar_from_rest`).
+-            self.streamer.set_desired_symbols(selected & self._rest_warmup_done)
++        if self.streamer is not None:
++            # Streamer subscribes to the full watchlist as soon as
++            # scanner-state arrives. REST warmup still drives indicator
++            # bootstrap and the W1 min_bars gate inside SchwabV2Strategy
++            # prevents premature evaluation. The earlier W2 design
++            # ("don't subscribe until warmed") conflated subscription
++            # with evaluation and produced an idle-session reconnect
++            # loop on cold start.
++            self.streamer.set_desired_symbols(selected)
+```
+
+Same simplification applies to `_extend_streamer_subscriptions_to_warmed`
+(line 580-587), which becomes redundant — its only caller is
+`_handle_bar_from_rest` line 536, which can drop the call. The
+`_rest_warmup_done` set itself is still useful elsewhere (REST
+freshness reporting, gap-fill counter heuristics) so keep it; just
+stop using it as a subscription gate.
+
+Validation before Day 2 retry:
+- Unit test: cold-start `_apply_strategy_state_event` with a non-empty
+  watchlist and empty `_rest_warmup_done` → assert
+  `streamer.set_desired_symbols` called with the full watchlist.
+- Unit test: pre-existing W1 min_bars gate still rejects evaluation
+  when streamer bars arrive before REST warmup.
+- Live: a Saturday re-run of Day 1 with the fix should show a single
+  LOGIN-OK followed by SUBS (with N matching the most recent
+  scanner-state snapshot), then a stable held session. Saturday won't
+  produce bars, but the no-disconnect outcome alone proves the
+  decoupling works.
+
+#### Rolling forward
+
+- Day 2 is **blocked** until the fix lands and the validation above
+  passes.
+- Day 1 mechanics (OAuth, websocket, code path, flag flip + revert)
+  proved out — no Day 3 escalation needed.
