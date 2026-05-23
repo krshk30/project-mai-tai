@@ -1001,9 +1001,79 @@ Validation before Day 2 retry:
   produce bars, but the no-disconnect outcome alone proves the
   decoupling works.
 
+#### Day 1 retry — explicit pass condition
+
+After PR #224 lands on the VPS, re-run Day 1 to confirm the loop is
+gone. Pass condition:
+
+- `[V2-WS-LOGIN-OK]` followed by `[V2-WS-SUB]` within ~1 second
+- session held — no `[V2-WS-DISCONNECT]` cycles in the post-restart
+  window
+- production `strategy.log` shows no `Schwab streamer connection loop
+  failed` activity in the same window
+
+Mandatory pre-flight: confirm `XLEN mai_tai:strategy-state` is
+non-zero AND the most recent snapshot contains a non-empty `watchlist`
+/ `all_confirmed`. An empty scanner-state at boot reproduces the
+reconnect loop legitimately (no symbols → no SUBS → idle session
+closed by Schwab); that is a **false alarm**, not a regression.
+Verify scanner-state before declaring failure.
+
+If scanner-state is empty: re-run after the next strategy-engine
+snapshot publishes (state-publish loop fires every 5 s by default
+while the engine is healthy), or run during pre-market when the
+scanner is actively producing snapshots.
+
+#### Tuesday 2026-05-26 — Day 2 live activation plan
+
+After market close (≥ 16:00 ET / 20:00 UTC), with PR #224 live:
+
+- Activate per the existing Day 2 runbook (env flag flip + restart).
+- Watch criteria:
+  - persist-lag p50 drops from ~85 s (REST-only baseline) toward
+    < 5 s (streamer push at minute close)
+  - `_handle_bar` lines flow within ~90 s of activation for
+    post-close extended-hours active symbols
+  - production `strategy.log` shows no collision markers
+- Clean activation → leave flag ON; do not revert.
+- Note in the doc whether `[V2-PENDING-CROSS-CONSUMED]` fires for the
+  first time during the Tuesday window (open item below).
+
+#### Carry-forward open items (after this work stream)
+
+These persist past Day 2 and aren't addressed by PRs #223 / #224:
+
+1. **C2 CONSUMED path** — `[V2-PENDING-CROSS-CONSUMED]` has fired 0
+   times across all restarts so far. The code is review-verified but
+   has not been exercised on live data yet. Grep for this marker
+   after Tuesday Day 2 and on each subsequent restart until at least
+   one real fire is observed.
+2. **OAuth separate-credential (Day 3)** — the real fix that removes
+   the shared-token collision constraint entirely. Until Day 3 is
+   done, every streamer activation carries a non-zero collision risk
+   on the shared OAuth session. Implementation sketch in the
+   Streamer Activation Test Plan section above; not in this PR set.
+3. **Silent WS stall watchdog** — if the streamer's socket goes
+   silent without formally disconnecting, `streamer.connected` stays
+   True and C3 keeps gating REST out until the ping-timeout fires
+   (~20–40 s). A staleness watchdog would close this gap; not built
+   yet.
+4. **`rest_bars_gap_fill_total` baseline noise** — counter is
+   misnamed and currently counts benign cold-start REST bars as
+   "gap-fill" because the streamer's first bar lags REST by one
+   minute. Expect a non-zero baseline even when the streamer is
+   delivering normally. Cosmetic; not a bug.
+
 #### Rolling forward
 
-- Day 2 is **blocked** until the fix lands and the validation above
-  passes.
-- Day 1 mechanics (OAuth, websocket, code path, flag flip + revert)
-  proved out — no Day 3 escalation needed.
+- PRs in flight: **#223 (this doc)** + **#224 (subscribe-early code
+  fix + buffer-and-replay + safety drop, 8 new tests)**.
+- Merge order: **#223 first** (doc only, zero code), **#224 second**
+  (code; depends on the doc's findings being landed).
+- Day 1 retry on Saturday or any market-closed day **after** #224
+  ships to the VPS.
+- Day 2 live activation on Tuesday 2026-05-26 after close.
+- Day 1 mechanics (OAuth, websocket, code path, flag flip + revert
+  byte-identity) proved out on 2026-05-23 — no Day 3 escalation
+  needed yet, but Day 3 remains the durable fix per the carry-forward
+  list above.
