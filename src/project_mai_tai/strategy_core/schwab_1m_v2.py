@@ -343,6 +343,21 @@ class SchwabV2Strategy:
             close=bar.close,
             volume=bar.volume,
         )
+        # Safety drop: `state.bars` is an append-only deque (no sorted
+        # insert). An out-of-order bar would corrupt every indicator
+        # that iterates the deque (MACD EMAs, VWAP, rel_vol). The bot
+        # service's buffer-and-replay path in `_handle_bar_from_rest`
+        # is the primary ordering guarantee; this drop catches any
+        # regression that bypasses it.
+        if state.bars and ohlcv.timestamp_ms < state.bars[-1].timestamp_ms:
+            logger.warning(
+                "schwab_1m_v2 dropping out-of-order bar for %s "
+                "(incoming ts=%d, latest deque ts=%d)",
+                symbol,
+                ohlcv.timestamp_ms,
+                state.bars[-1].timestamp_ms,
+            )
+            return None
         is_new_bar = (
             not state.bars or state.bars[-1].timestamp_ms != ohlcv.timestamp_ms
         )
