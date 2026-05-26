@@ -23,7 +23,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import signal
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
@@ -94,6 +94,46 @@ QUOTE_LIVE_THRESHOLD_SECS = 90.0
 # Grace period after startup before the stall watchdog can fire, so the
 # REST warmup batch has time to land the first bars.
 WATCHDOG_STARTUP_GRACE_SECS = 150.0
+
+# US equity market FULL-closure holidays (NYSE/Nasdaq), as ET local dates.
+# `_market_session` returns "closed" on these so a holiday weekday isn't
+# misread as "regular" — otherwise the watchdog would flag a holiday RTH
+# with no bars as a stall. Observed dates (the weekday the market is
+# actually shut) are listed, not the nominal date.
+#
+# MAINTENANCE: hardcoded because the repo has no market-calendar utility and
+# it's ~10 dates/year. Covers 2026-2027. **Extend this set when the year
+# rolls over** (add the next year before ~December) or holiday RTH days will
+# silently misclassify as "regular" again and quietly reintroduce the
+# false-stall bug. Half-days (day after Thanksgiving, Christmas Eve on a
+# weekday; 13:00 ET early close) are intentionally NOT listed — see the
+# decision documented in `_market_session`.
+_US_MARKET_HOLIDAYS: frozenset[date] = frozenset(
+    {
+        # --- 2026 ---
+        date(2026, 1, 1),    # New Year's Day
+        date(2026, 1, 19),   # MLK Jr. Day
+        date(2026, 2, 16),   # Presidents' Day
+        date(2026, 4, 3),    # Good Friday
+        date(2026, 5, 25),   # Memorial Day
+        date(2026, 6, 19),   # Juneteenth
+        date(2026, 7, 3),    # Independence Day (observed; Jul 4 is a Saturday)
+        date(2026, 9, 7),    # Labor Day
+        date(2026, 11, 26),  # Thanksgiving
+        date(2026, 12, 25),  # Christmas
+        # --- 2027 ---
+        date(2027, 1, 1),    # New Year's Day
+        date(2027, 1, 18),   # MLK Jr. Day
+        date(2027, 2, 15),   # Presidents' Day
+        date(2027, 3, 26),   # Good Friday
+        date(2027, 5, 31),   # Memorial Day
+        date(2027, 6, 18),   # Juneteenth (observed; Jun 19 is a Saturday)
+        date(2027, 7, 5),    # Independence Day (observed; Jul 4 is a Sunday)
+        date(2027, 9, 6),    # Labor Day
+        date(2027, 11, 25),  # Thanksgiving
+        date(2027, 12, 24),  # Christmas (observed; Dec 25 is a Saturday)
+    }
+)
 
 
 def _format_eastern(dt: datetime) -> str:
@@ -261,11 +301,20 @@ class SchwabV2BotService:
 
     def _market_session(self, now: datetime) -> str:
         """US-equity session in ET: 'premarket' | 'regular' | 'afterhours'
-        | 'closed'. Weekday-based; does NOT model market holidays — the
-        quote-liveness gate in `_evaluate_data_flow` covers holidays (on a
-        closed day quotes go stale, so the watchdog won't false-fire)."""
+        | 'closed'. Weekends AND full-closure holidays (see
+        `_US_MARKET_HOLIDAYS`) classify as 'closed' directly.
+
+        Half-day sessions (day after Thanksgiving, Christmas Eve on a
+        weekday — 13:00 ET early close) are intentionally NOT special-cased:
+        they're treated as normal regular hours, and the quote-liveness gate
+        in `_evaluate_data_flow` handles the early close (quotes go stale
+        after 13:00 ET, so the watchdog lands on 'idle_market_quiet' rather
+        than a false stall). Deliberate simplification, not an oversight.
+        """
         et = now.astimezone(EASTERN_TZ)
         if et.weekday() >= 5:
+            return "closed"
+        if et.date() in _US_MARKET_HOLIDAYS:
             return "closed"
         minutes = et.hour * 60 + et.minute
         if 4 * 60 <= minutes < 9 * 60 + 30:
@@ -770,8 +819,13 @@ class SchwabV2BotService:
         # In-memory indicator state still consumes EVERY bar via strategy.on_bar.
         now_ms = int(datetime.now(UTC).timestamp() * 1000)
         # Watchdog: mark that the bar pipeline produced something (any
-        # symbol, warmup or live). A stalled value here during RTH with
-        # live quotes is the starvation signature the heartbeat surfaces.
+        # symbol, warmup or live). NOTE: warmup bars update this too, so
+        # right after a warmup batch lands, bars_flowing reads True for up
+        # to DATA_STALL_THRESHOLD_SECS even if no *live* bar has arrived yet
+        # — the stall signal lags warmup completion by that window. Harmless
+        # (self-corrects within the window), but don't read "flowing"
+        # immediately post-warmup as proof of a live feed. A stalled value
+        # during RTH with live quotes is the starvation signature surfaced.
         self._last_bar_processed_at_ms = now_ms
         bar_age_secs = (now_ms - bar.timestamp_ms) / 1000.0
         if bar_age_secs <= PERSIST_BAR_AGE_LIMIT_SECONDS:

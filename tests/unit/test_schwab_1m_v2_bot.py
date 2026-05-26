@@ -199,6 +199,24 @@ def test_watchdog_premarket_stall_is_expected_offhours_dry() -> None:
     assert detail["data_flow"] == "stalled_offhours_rest_dry"
 
 
+def test_holiday_weekday_is_closed_and_not_stalled_rth() -> None:
+    svc = _enabled_service()
+    svc._watchlist = {"AAPL"}
+    # 2026 Memorial Day = Mon 2026-05-25 — a weekday holiday (not caught by
+    # the weekend check), so this exercises the holiday set specifically.
+    holiday_10am = datetime(2026, 5, 25, 10, 0, tzinfo=EASTERN_TZ)
+    assert svc._market_session(holiday_10am) == "closed"
+
+    now_ms = int(holiday_10am.timestamp() * 1000)
+    svc._last_bar_processed_at_ms = 0  # no bars
+    svc._started_at_ms = now_ms - 300_000  # past grace
+    svc._last_quote_at_ms = {"AAPL": now_ms - 5_000}  # force quotes "live"
+    status, detail = svc._evaluate_data_flow(now_ms)
+    # Even with live quotes, a holiday must NOT read as an RTH pipeline fault.
+    assert detail["market_session"] == "closed"
+    assert detail["data_flow"] != "stalled_rth"
+
+
 def test_watchdog_stale_quotes_means_market_quiet_not_a_fault() -> None:
     svc = _enabled_service()
     svc._watchlist = {"AAPL"}
