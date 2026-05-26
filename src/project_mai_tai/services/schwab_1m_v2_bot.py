@@ -80,6 +80,21 @@ REST_WARMUP_FRESH_THRESHOLD_SECS = 300.0
 INFLIGHT_INTENT_STATUSES_TERMINAL = ("filled", "rejected", "cancelled")
 EASTERN_TZ = ZoneInfo("America/New_York")
 
+# --- Data-flow watchdog thresholds ---
+# Whole-watchlist "no bar processed" window that counts as a data stall.
+# A 60s bar bot during active trading produces a fresh bar for SOME
+# watchlist symbol well within a minute; 180s (3 missed cycles) is a
+# robust stall signal that tolerates a quiet symbol or two.
+DATA_STALL_THRESHOLD_SECS = 180.0
+# Fresh quote activity within this window means the market is actively
+# trading. Quotes are the holiday-safe discriminator between "our bar
+# pipeline is broken" and "market is closed/holiday so no data is
+# expected" — on a closed day quotes go stale too. (Quotes poll ~5s.)
+QUOTE_LIVE_THRESHOLD_SECS = 90.0
+# Grace period after startup before the stall watchdog can fire, so the
+# REST warmup batch has time to land the first bars.
+WATCHDOG_STARTUP_GRACE_SECS = 150.0
+
 
 def _format_eastern(dt: datetime) -> str:
     """Format a datetime as `"YYYY-MM-DD HH:MM:SS AM/PM ET"`, matching the
@@ -132,6 +147,17 @@ class SchwabV2BotService:
         # connected (genuine gap fills where streamer missed a bucket).
         self._rest_bars_gated: int = 0
         self._rest_bars_gap_fill: int = 0
+        # --- Data-flow watchdog state ---
+        # Wall-clock (ms) of process start, last bar processed (any symbol),
+        # and last quote per symbol. The watchdog compares bar-flow against
+        # quote-liveness + market session to decide whether a bar stall is
+        # a genuine RTH pipeline fault (degraded + WARN) or expected
+        # off-hours REST dryness (degraded + INFO). `_last_data_flow` is the
+        # previous classification, for throttled transition logging.
+        self._started_at_ms: int = int(datetime.now(UTC).timestamp() * 1000)
+        self._last_bar_processed_at_ms: int = 0
+        self._last_quote_at_ms: dict[str, int] = {}
+        self._last_data_flow: str | None = None
         self._data_health: dict[str, object] = {
             "status": "starting",
             "halted_symbols": [],
@@ -233,31 +259,176 @@ class SchwabV2BotService:
             if self.redis is not None:
                 await self.redis.aclose()
 
-    async def _publish_heartbeat(self, status: str) -> None:
+    def _market_session(self, now: datetime) -> str:
+        """US-equity session in ET: 'premarket' | 'regular' | 'afterhours'
+        | 'closed'. Weekday-based; does NOT model market holidays — the
+        quote-liveness gate in `_evaluate_data_flow` covers holidays (on a
+        closed day quotes go stale, so the watchdog won't false-fire)."""
+        et = now.astimezone(EASTERN_TZ)
+        if et.weekday() >= 5:
+            return "closed"
+        minutes = et.hour * 60 + et.minute
+        if 4 * 60 <= minutes < 9 * 60 + 30:
+            return "premarket"
+        if 9 * 60 + 30 <= minutes < 16 * 60:
+            return "regular"
+        if 16 * 60 <= minutes < 20 * 60:
+            return "afterhours"
+        return "closed"
+
+    def _evaluate_data_flow(self, now_ms: int) -> tuple[str, dict[str, str]]:
+        """Derive heartbeat status + watchdog detail from bar/quote flow.
+
+        Core insight: quotes flow whenever the market is actually trading
+        (holiday-safe), while pricehistory REST bars can be dry — notably
+        pre/after-hours, where Schwab pricehistory does not serve same-day
+        intraday minutes. So 'quotes live but bars stalled' is the real
+        starvation signature, graded by session:
+
+        - regular hours -> data_flow='stalled_rth' (REST served same-day
+          bars on a normal RTH day, so a stall is a genuine pipeline fault;
+          surfaced via WARN log).
+        - pre/after-hrs -> data_flow='stalled_offhours_rest_dry' (EXPECTED:
+          pricehistory is dry off-hours; the real fix is the CHART_EQUITY
+          streamer; surfaced via INFO log).
+
+        Both map to heartbeat status 'degraded' (not a literal 'unhealthy':
+        HeartbeatPayload.status is a shared Literal the control-plane parses
+        strictly, so a v2-only deploy emitting a new value would make older
+        consumers drop the heartbeat). 'degraded' is the strongest safe
+        status; the data_flow detail carries the RTH-vs-offhours severity.
+        """
+        now = datetime.fromtimestamp(now_ms / 1000.0, UTC)
+        session = self._market_session(now)
+        secs_since_bar = (
+            (now_ms - self._last_bar_processed_at_ms) / 1000.0
+            if self._last_bar_processed_at_ms
+            else None
+        )
+        last_quote_ms = max(self._last_quote_at_ms.values(), default=0)
+        secs_since_quote = (
+            (now_ms - last_quote_ms) / 1000.0 if last_quote_ms else None
+        )
+        quotes_live = (
+            secs_since_quote is not None
+            and secs_since_quote <= QUOTE_LIVE_THRESHOLD_SECS
+        )
+        bars_flowing = (
+            secs_since_bar is not None
+            and secs_since_bar <= DATA_STALL_THRESHOLD_SECS
+        )
+        uptime_secs = (now_ms - self._started_at_ms) / 1000.0
+
+        if not self.enabled:
+            status, flow = "degraded", "disabled"
+        elif not self._watchlist:
+            status, flow = "healthy", "idle_no_watchlist"
+        elif bars_flowing:
+            status, flow = "healthy", "flowing"
+        elif uptime_secs < WATCHDOG_STARTUP_GRACE_SECS:
+            status, flow = "healthy", "warming_up"
+        elif not quotes_live:
+            # Market not actively trading (closed / holiday / thin) — no
+            # bars expected; not a pipeline fault.
+            status, flow = "healthy", "idle_market_quiet"
+        elif session == "regular":
+            status, flow = "degraded", "stalled_rth"
+        else:
+            status, flow = "degraded", "stalled_offhours_rest_dry"
+
+        detail = {
+            "market_session": session,
+            "data_flow": flow,
+            "secs_since_last_bar": (
+                f"{secs_since_bar:.0f}" if secs_since_bar is not None else "none"
+            ),
+            "secs_since_last_quote": (
+                f"{secs_since_quote:.0f}" if secs_since_quote is not None else "none"
+            ),
+            "quotes_live": str(quotes_live).lower(),
+            "rest_empty_streak_max": str(
+                self.rest_client.max_consecutive_empty() if self.rest_client else 0
+            ),
+        }
+        return status, detail
+
+    def _log_data_flow_transition(self, detail: dict[str, str]) -> None:
+        """Throttled logging on data-flow state change. WARN for RTH stalls
+        (actionable pipeline fault), INFO for expected off-hours dryness and
+        recovery."""
+        flow = detail.get("data_flow", "")
+        if flow == self._last_data_flow:
+            return
+        prev = self._last_data_flow
+        self._last_data_flow = flow
+        if flow == "stalled_rth":
+            logger.warning(
+                "[V2-DATA-STALL] quotes live but NO bars processed in %ss during "
+                "regular hours — REST pricehistory pipeline is starved "
+                "(rest_empty_streak_max=%s, watchlist=%d). Genuine fault: "
+                "investigate the REST source.",
+                detail.get("secs_since_last_bar"),
+                detail.get("rest_empty_streak_max"),
+                len(self._watchlist),
+            )
+        elif flow == "stalled_offhours_rest_dry":
+            logger.info(
+                "[V2-DATA-DRY] no REST bars in %ss (session=%s) — EXPECTED: "
+                "Schwab pricehistory does not serve same-day pre/after-hours "
+                "minutes. Warmup seeds from the last session; live pre-market "
+                "bars require the CHART_EQUITY streamer.",
+                detail.get("secs_since_last_bar"),
+                detail.get("market_session"),
+            )
+        elif flow == "flowing" and prev in {
+            "stalled_rth",
+            "stalled_offhours_rest_dry",
+        }:
+            logger.info(
+                "[V2-DATA-RECOVERED] bar flow resumed (session=%s)",
+                detail.get("market_session"),
+            )
+
+    async def _publish_heartbeat(self, status: str | None = None) -> None:
+        """Publish a heartbeat. When `status` is None (the periodic path),
+        the data-flow watchdog derives it; explicit values are used as-is
+        for lifecycle events ('starting' / 'stopping'). Either way the
+        watchdog detail fields are attached and transitions are logged.
+        """
         if self.redis is None:
             return
+        now_ms = int(datetime.now(UTC).timestamp() * 1000)
+        watchdog_status, watchdog_detail = self._evaluate_data_flow(now_ms)
+        effective_status = status or watchdog_status
+        self._log_data_flow_transition(watchdog_detail)
+        if status is None:
+            # Keep the dashboard bot-page health (data_health) in sync with
+            # the derived heartbeat status.
+            self._data_health["status"] = watchdog_status
+        details = {
+            "enabled": str(self.enabled).lower(),
+            "strategy_code": STRATEGY_CODE,
+            "rest_configured": str(
+                bool(self.rest_client and self.rest_client.configured)
+            ).lower(),
+            "streamer_enabled": str(self.streamer_enabled).lower(),
+            "streamer_connected": str(
+                bool(self.streamer and self.streamer.connected)
+            ).lower(),
+            "watchlist_size": str(len(self._watchlist)),
+            "warmed_size": str(len(self._rest_warmup_done)),
+            "bars_processed": str(sum(self._bar_counts.values())),
+            "rest_bars_gated_total": str(self._rest_bars_gated),
+            "rest_bars_gap_fill_total": str(self._rest_bars_gap_fill),
+            **watchdog_detail,
+        }
         event = HeartbeatEvent(
             source_service=SERVICE_NAME,
             payload=HeartbeatPayload(
                 service_name=SERVICE_NAME,
                 instance_name=SERVICE_NAME,
-                status=status,  # type: ignore[arg-type]
-                details={
-                    "enabled": str(self.enabled).lower(),
-                    "strategy_code": STRATEGY_CODE,
-                    "rest_configured": str(
-                        bool(self.rest_client and self.rest_client.configured)
-                    ).lower(),
-                    "streamer_enabled": str(self.streamer_enabled).lower(),
-                    "streamer_connected": str(
-                        bool(self.streamer and self.streamer.connected)
-                    ).lower(),
-                    "watchlist_size": str(len(self._watchlist)),
-                    "warmed_size": str(len(self._rest_warmup_done)),
-                    "bars_processed": str(sum(self._bar_counts.values())),
-                    "rest_bars_gated_total": str(self._rest_bars_gated),
-                    "rest_bars_gap_fill_total": str(self._rest_bars_gap_fill),
-                },
+                status=effective_status,  # type: ignore[arg-type]
+                details=details,
             ),
         )
         await self.redis.xadd(
@@ -271,8 +442,8 @@ class SchwabV2BotService:
         interval = max(5, int(self.settings.service_heartbeat_interval_seconds))
         while not self._stop_event.is_set():
             try:
-                status = "healthy" if self.enabled else "degraded"
-                await self._publish_heartbeat(status)
+                # status=None -> data-flow watchdog derives healthy/degraded.
+                await self._publish_heartbeat()
             except Exception as exc:  # noqa: BLE001
                 logger.warning("schwab_1m_v2 heartbeat failed: %s", exc)
             try:
@@ -598,6 +769,10 @@ class SchwabV2BotService:
         # ~5k SQL roundtrips across all symbols and stalls the bar loop.
         # In-memory indicator state still consumes EVERY bar via strategy.on_bar.
         now_ms = int(datetime.now(UTC).timestamp() * 1000)
+        # Watchdog: mark that the bar pipeline produced something (any
+        # symbol, warmup or live). A stalled value here during RTH with
+        # live quotes is the starvation signature the heartbeat surfaces.
+        self._last_bar_processed_at_ms = now_ms
         bar_age_secs = (now_ms - bar.timestamp_ms) / 1000.0
         if bar_age_secs <= PERSIST_BAR_AGE_LIMIT_SECONDS:
             await asyncio.to_thread(self._persist_bar, symbol, bar)
@@ -610,7 +785,12 @@ class SchwabV2BotService:
         await self._maybe_emit(draft)
 
     async def _handle_quote(self, symbol: str, quote: Quote) -> None:
-        self._last_tick_at[symbol] = _format_eastern(datetime.now(UTC))
+        now = datetime.now(UTC)
+        self._last_tick_at[symbol] = _format_eastern(now)
+        # Watchdog: quotes flow whenever the market is actually trading
+        # (holiday-safe), so this is the discriminator for whether a bar
+        # stall is a real fault vs a quiet/closed market.
+        self._last_quote_at_ms[symbol] = int(now.timestamp() * 1000)
         try:
             draft = self.strategy.on_quote(symbol, quote)
         except Exception:
