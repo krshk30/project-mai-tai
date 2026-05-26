@@ -33,16 +33,30 @@ checking whether the 13:05 "self-recovered blip" recurred. It does, constantly:
   restart 17:41 UTC): **21/22 reconnects `exchange_deadline_exceeded=True` with
   `chart_msg_age` ~1-2s** (feed actively streaming; nowhere near the 90s
   message-stale threshold). NOT a Schwab outage — a self-inflicted spurious reconnect.
-- **FIX BUILT (review-gated): PR #228** — Option B, interval-aware deadline
-  (`CHART_BAR_INTERVAL_SECONDS=60 + max(30, base*4)` = **92s**); the 90s
-  message-stale branch (genuine dead-feed guard) is untouched; regression test
-  added. **DO NOT MERGE until close** — scheduled to merge + manual-strategy-restart
-  deploy AFTER market close 2026-05-26 (behavior change to production hot code →
-  calm window; tomorrow's full RTH is the clean after-measurement).
-- **Validation (post-deploy):** `[SCHWAB-CHART-RECONNECT-CAUSE]` should go
-  near-silent — that silence is the proof. DEBUG log (PR #227) removed in a
-  follow-up once confirmed. Before/after `schwab_1m` bar-rate: **before-baseline
-  = 0.83 bars/symbol/min** (during flap, ceiling 1.0) vs tomorrow's RTH.
+- **FIX DEPLOYED — PR #228, `main`/VPS `7d5b3a7`, strategy restarted 2026-05-26
+  23:15 UTC** (clean after-close path; no preflight bypass needed off-market).
+  Option B interval-aware deadline (`CHART_BAR_INTERVAL_SECONDS=60 + max(30, base*4)`
+  = **92s**); 90s message-stale branch untouched; regression test added.
+  Pre-deploy gate clean (tradeable account flat, blockers only CYN). Post-restart:
+  **0 errors, 0 spurious reconnects** — BUT extended-hours tick volume is thin and
+  the streamer had already self-recovered pre-restart, so tonight is **"deployed
+  clean, no breakage," NOT proof.**
+- **RTH VERDICT PENDING — 2026-05-27. The IDE runs this read-only measurement
+  during RTH and reports** (no restart, no go-ahead needed; continuity). Three
+  checks, thresholds stated up front:
+  1. **Exchange-deadline reconnects** (`[SCHWAB-CHART-RECONNECT-CAUSE]` with
+     `exchange_deadline_exceeded=True`) under sustained full RTH tick load.
+     BEFORE ≈ **3.5/min ≈ 210/hr**. **CLEAN PASS = `< 5/hr`** (>97% reduction; flap
+     eliminated). **PARTIAL = 5–60/hr** (helped but needs more calibration — NOT a
+     clean pass). **FAIL = >60/hr.** Report the ACTUAL rate against this number.
+  2. **Total streamer reconnects** (`streamer connected after`) should fall from
+     ~160/hr toward baseline churn.
+  3. **`schwab_1m` bar-rate vs the 0.83 bars/sym/min before-baseline** — should
+     recover toward ~1.0 (if the flap was dropping bars) or hold (attributable to
+     thin symbols; report with context).
+  **DEBUG log (PR #227) stays until this verdict confirms it, then removed in a
+  follow-up.** A clean verdict closes the production-streamer arc → then resume the
+  **v2 streamer activation tests** (Day-1, still DEFERRED; v2 flag still OFF).
 
 ### 2026-05-26 — 🚩 STANDALONE ITEM: `deploy_preflight` is manually bypassed on every RTH strategy deploy (frozen CYN)
 
