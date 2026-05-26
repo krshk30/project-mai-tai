@@ -74,9 +74,19 @@ PERSIST_BAR_AGE_LIMIT_SECONDS = 300
 # caught up to live for this symbol." The REST warmup batch returns
 # bars oldest-first; the tail of the batch is within ~5 min of wall
 # clock and crossing that threshold marks the symbol as ready for
-# streamer subscription (W2). 300s matches PERSIST_BAR_AGE_LIMIT_SECONDS
-# so we only mark warmed once the same bar would qualify for DB persist.
+# direct strategy ingestion (no longer for streamer subscription —
+# the streamer now subscribes immediately on scanner-state arrival).
+# 300s matches PERSIST_BAR_AGE_LIMIT_SECONDS so we only mark warmed
+# once the same bar would qualify for DB persist.
 REST_WARMUP_FRESH_THRESHOLD_SECS = 300.0
+# Cap on the per-symbol streamer-pending buffer used while REST warmup
+# is in flight. Streamer pushes at most one CHART_EQUITY bar per
+# symbol per minute, so 500 covers >8h of pre-warmup buffering — far
+# beyond any realistic warmup duration. The cap exists only to bound
+# memory if warmup never completes (e.g. weekend test where REST
+# returns no fresh candles); on overflow the oldest pending bar is
+# dropped.
+STREAMER_PENDING_BARS_MAX_PER_SYMBOL = 500
 INFLIGHT_INTENT_STATUSES_TERMINAL = ("filled", "rejected", "cancelled")
 EASTERN_TZ = ZoneInfo("America/New_York")
 
@@ -174,12 +184,20 @@ class SchwabV2BotService:
         self._last_tick_at: dict[str, str] = {}
         self._last_bar_at: dict[str, str] = {}
         # Set of symbols whose REST warmup batch has caught up to within
-        # REST_WARMUP_FRESH_THRESHOLD_SECS of wall clock. Streamer
-        # subscriptions are gated on this set (W2: streamer doesn't
-        # subscribe to a symbol until REST has fed its history, so
-        # streamer can't drop live bars onto an empty deque ahead of the
-        # historical context).
+        # REST_WARMUP_FRESH_THRESHOLD_SECS of wall clock. The streamer
+        # subscribes to the full watchlist immediately on scanner-state
+        # arrival (see `_apply_strategy_state_event`); this set instead
+        # gates strategy INGESTION of streamer bars. Streamer bars for
+        # symbols not yet warmed are buffered in `_streamer_pending` and
+        # replayed in timestamp order when warmup completes, so the
+        # strategy's append-only deque never sees an out-of-order bar.
         self._rest_warmup_done: set[str] = set()
+        # Per-symbol queue of streamer bars received before this symbol's
+        # REST warmup completed. Drained in `_handle_bar_from_rest`
+        # when the symbol crosses into `_rest_warmup_done`, replaying
+        # in timestamp order only those bars strictly newer than the
+        # latest bar already in `state.bars`.
+        self._streamer_pending: dict[str, list[ChartBar]] = {}
         # C3 routing counters — exposed via heartbeat for observability.
         # `rest_bars_gated` increments on REST bars suppressed because
         # streamer is healthy and already has the bucket. `rest_bars_gap_fill`
@@ -690,18 +708,35 @@ class SchwabV2BotService:
         if selected == self._watchlist:
             return
         self._watchlist = selected
-        # W2: drop warmup state for symbols that left the watchlist.
-        # If they re-join later, REST needs to refetch the batch and
-        # mark them warmed again before streamer is told about them.
+        # Drop warmup state for symbols that left the watchlist. If they
+        # re-join later, REST needs to refetch the batch and the
+        # buffer-and-replay path runs again.
         self._rest_warmup_done &= selected
+        # Drop any buffered streamer bars for symbols no longer on the
+        # watchlist — the streamer will be told to UNSUBS them below,
+        # and stale buffers would replay after a re-join with bars
+        # older than whatever the next warmup delivers.
+        if self._streamer_pending:
+            self._streamer_pending = {
+                sym: bars
+                for sym, bars in self._streamer_pending.items()
+                if sym in selected
+            }
         if self.rest_client is not None:
             self.rest_client.set_desired_symbols(selected)
         if self.streamer is not None:
-            # Streamer only subscribes to symbols REST has confirmed
-            # warmed. Newly-added symbols will be added to the streamer
-            # subscription set incrementally as REST batches complete
-            # (see `_handle_bar_from_rest`).
-            self.streamer.set_desired_symbols(selected & self._rest_warmup_done)
+            # Streamer subscribes to the FULL watchlist immediately. The
+            # subscribe/evaluate decoupling lives in
+            # `_handle_bar_from_streamer` (buffer until REST warmup) +
+            # `_handle_bar_from_rest` (drain buffer on warmup), so
+            # subscription no longer waits on `_rest_warmup_done`.
+            # Rationale: keeping symbols out of the SUBS set until they
+            # warmed caused Schwab to close the empty session within
+            # ~3s of LOGIN-OK on cold start, producing a reconnect
+            # loop that delayed first-SUBS rather than protecting
+            # ordering. See docs/session-handoff-schwab-1m-v2.md
+            # 2026-05-23 entry for the race analysis.
+            self.streamer.set_desired_symbols(selected)
         logger.info(
             "schwab_1m_v2 watchlist updated count=%d sample=%s warmed=%d",
             len(selected),
@@ -732,12 +767,13 @@ class SchwabV2BotService:
         return symbols
 
     async def _handle_bar_from_rest(self, symbol: str, bar: ChartBar) -> None:
-        """REST callback. C3+W2 routing:
+        """REST callback. C3 + buffer-drain routing:
 
-        - If REST has caught up to live (bar age < REST_WARMUP_FRESH_THRESHOLD_SECS)
-          mark this symbol's warmup as done. New warmups extend the
-          streamer's subscription set (W2: streamer doesn't see a symbol
-          until REST has fed its history).
+        - If REST has caught up to live (bar age <
+          REST_WARMUP_FRESH_THRESHOLD_SECS) mark this symbol's warmup
+          as done. After feeding the current REST bar, drain any
+          streamer bars buffered during warmup in
+          `_handle_bar_from_streamer`.
         - If the streamer is connected AND has already delivered a bar
           at this `bar.timestamp_ms` or later, skip the strategy feed
           (C3: streamer is signal source of truth when healthy; REST
@@ -748,15 +784,16 @@ class SchwabV2BotService:
         """
         now_ms = int(datetime.now(UTC).timestamp() * 1000)
         bar_age_secs = (now_ms - bar.timestamp_ms) / 1000.0
+        just_warmed = False
         if (
             bar_age_secs <= REST_WARMUP_FRESH_THRESHOLD_SECS
             and symbol not in self._rest_warmup_done
         ):
             self._rest_warmup_done.add(symbol)
-            self._extend_streamer_subscriptions_to_warmed()
+            just_warmed = True
             logger.info(
                 "[V2-REST-WARMED] schwab_v2 REST warmup complete for %s "
-                "(streamer can now subscribe; warmed=%d/%d)",
+                "(warmed=%d/%d)",
                 symbol,
                 len(self._rest_warmup_done),
                 len(self._watchlist),
@@ -764,20 +801,85 @@ class SchwabV2BotService:
 
         if self._should_skip_rest_strategy_feed(symbol, bar):
             self._rest_bars_gated += 1
-            return
+        else:
+            # When streamer is connected but didn't pre-empt this bar,
+            # count it as gap-fill (something streamer didn't deliver
+            # — disconnect, missed bucket, or symbol not yet warmed).
+            if self.streamer is not None and self.streamer.connected:
+                self._rest_bars_gap_fill += 1
+            await self._handle_bar(symbol, bar)
 
-        # When streamer is connected but didn't pre-empt this bar, count
-        # it as gap-fill (something streamer didn't deliver — disconnect,
-        # missed bucket, or symbol not yet streamer-subscribed).
-        if self.streamer is not None and self.streamer.connected:
-            self._rest_bars_gap_fill += 1
-
-        await self._handle_bar(symbol, bar)
+        # Drain buffered streamer bars AFTER the current REST bar is
+        # fed, so the deque tail reflects the latest REST bar before
+        # any newer streamer bars are appended on top.
+        if just_warmed:
+            await self._drain_streamer_pending(symbol)
 
     async def _handle_bar_from_streamer(self, symbol: str, bar: ChartBar) -> None:
-        """Streamer callback. Streamer is always trusted; C3 keeps REST
-        out of its way."""
+        """Streamer callback.
+
+        Before REST warmup completes for this symbol, streamer bars are
+        buffered in `_streamer_pending[symbol]` and replayed at warmup
+        completion. After warmup, bars are fed directly to the
+        strategy. C3 keeps REST out of the way once the streamer is
+        the signal source of truth.
+        """
+        if symbol not in self._rest_warmup_done:
+            pending = self._streamer_pending.setdefault(symbol, [])
+            if len(pending) >= STREAMER_PENDING_BARS_MAX_PER_SYMBOL:
+                logger.warning(
+                    "[V2-STREAMER-PENDING-FULL] dropping oldest pending bar "
+                    "for %s (cap=%d, REST warmup still in flight)",
+                    symbol,
+                    STREAMER_PENDING_BARS_MAX_PER_SYMBOL,
+                )
+                pending.pop(0)
+            pending.append(bar)
+            return
         await self._handle_bar(symbol, bar)
+
+    async def _drain_streamer_pending(self, symbol: str) -> None:
+        """Replay buffered streamer bars for `symbol` after REST warmup
+        completes. Bars whose timestamp is `>= state.bars[-1].timestamp_ms`
+        are replayed in ascending order; strictly-older bars would
+        corrupt the append-only deque and are dropped (logged for
+        observability).
+
+        Equal-timestamp bars are explicitly INCLUDED in the replay
+        rather than dropped: REST's Price History endpoint applies a
+        60s in-flight cutoff for the most recent bar, so the streamer's
+        push-at-minute-close copy of the same bucket can carry more
+        complete OHLC + volume. `SchwabV2Strategy.on_bar` handles same-
+        timestamp arrivals via update-in-place (state.bars[-1] = ohlcv),
+        so the streamer's copy wins without disturbing deque order.
+        """
+        pending = self._streamer_pending.pop(symbol, None)
+        if not pending:
+            return
+        state = self.strategy.watchlist_state(symbol)
+        latest_ts = state.bars[-1].timestamp_ms if state.bars else 0
+        fresh = sorted(
+            (b for b in pending if b.timestamp_ms >= latest_ts),
+            key=lambda b: b.timestamp_ms,
+        )
+        dropped = len(pending) - len(fresh)
+        if dropped:
+            logger.info(
+                "schwab_1m_v2 streamer pending: dropped %d stale buffered "
+                "bars for %s (latest deque ts=%d)",
+                dropped,
+                symbol,
+                latest_ts,
+            )
+        for buffered in fresh:
+            await self._handle_bar(symbol, buffered)
+        if fresh:
+            logger.info(
+                "[V2-STREAMER-DRAIN] replayed %d buffered bars for %s "
+                "after warmup",
+                len(fresh),
+                symbol,
+            )
 
     def _should_skip_rest_strategy_feed(self, symbol: str, bar: ChartBar) -> bool:
         """C3 gating: when streamer is connected and has already
@@ -796,15 +898,6 @@ class SchwabV2BotService:
         if streamer_last_ts <= 0:
             return False
         return bar.timestamp_ms <= streamer_last_ts
-
-    def _extend_streamer_subscriptions_to_warmed(self) -> None:
-        """W2: after a REST warmup completes, refresh the streamer's
-        desired-symbol set to include all warmed symbols intersected
-        with the current watchlist."""
-        if self.streamer is None:
-            return
-        warmed = self._watchlist & self._rest_warmup_done
-        self.streamer.set_desired_symbols(warmed)
 
     async def _handle_bar(self, symbol: str, bar: ChartBar) -> None:
         now_et = _format_eastern(datetime.now(UTC))
