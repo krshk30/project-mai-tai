@@ -727,6 +727,25 @@ class SchwabStreamerClient:
                 reason="no TIMESALE_EQUITY messages while other Schwab services remained active"
             )
         if self._should_force_reconnect_for_chart_inactivity(now):
+            # DIAGNOSTIC (observability-only, behaviorally inert): attribute which
+            # condition forced the reconnect, to confirm whether the exchange-deadline
+            # branch (suspected mis-calibrated 32s deadline vs the 1-min CHART bar
+            # cadence — see 2026-05-26 root-cause diagnosis) or the 90s message-stale
+            # branch is the real trigger. All calls below are pure reads; the raise is
+            # unchanged. REMOVE when the calibration fix (gated on this) lands.
+            _chart_state = self._service_states[self.CHART_EQUITY_SERVICE]
+            _chart_msg_monotonic = _chart_state.last_message_monotonic
+            _chart_msg_age = (
+                None if _chart_msg_monotonic is None else now - _chart_msg_monotonic
+            )
+            logger.warning(
+                "[SCHWAB-CHART-RECONNECT-CAUSE] exchange_deadline_exceeded=%s "
+                "chart_msg_age=%s msg_stale_threshold=%.0fs exchange_deadline=%.0fs",
+                self._chart_exchange_deadline_exceeded(now),
+                f"{_chart_msg_age:.1f}s" if _chart_msg_age is not None else "none",
+                self._service_stale_after_seconds(self.CHART_EQUITY_SERVICE),
+                self._chart_exchange_deadline_seconds(),
+            )
             raise RuntimeError("Schwab CHART_EQUITY channel stale while websocket remained connected")
 
     def _should_disable_timesale_for_inactivity(self, now: float) -> bool:
