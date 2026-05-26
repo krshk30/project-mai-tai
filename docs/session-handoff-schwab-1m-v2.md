@@ -13,6 +13,24 @@ reconsider — that's how regressions cross-contaminate.
 
 ## Status
 
+- **2026-05-26** — REST warmup window widened + data-flow watchdog shipped
+  (PR #225, VPS `0650a99`, deployed 12:06 UTC). Fixes v2 going dark after the
+  long weekend: the fixed `now-24h` warmup window returned empty Schwab
+  pricehistory across the Sat+Sun+Memorial-Mon gap → no warmup → silent
+  `bars_processed=0` under a misleading `healthy` heartbeat (the bar loop never
+  died — it was data-starved). Now: warmup reaches the last session via a
+  7-day lookback (`strategy_schwab_1m_v2_warmup_lookback_days`); the heartbeat
+  carries `data_flow` / `market_session` / `secs_since_last_bar` /
+  `secs_since_last_quote` / `quotes_live` / `rest_empty_streak_max` and goes
+  `degraded` on a real RTH stall (quote-liveness gates RTH-vs-offhours so
+  pre-market REST-dryness reads as expected, not a fault); US market holidays
+  classify as `closed`. Post-deploy verify: warmed 3/3 in ~18s
+  (1035/532/3565-bar feeds), `bars_processed` climbing, `data_flow=flowing`.
+  First v2 unit tests added (`tests/unit/test_schwab_1m_v2_bot.py`, 14).
+  Deployed MANUALLY (GitHub Actions down — see global handoff). Streamer is the
+  separate after-close pre-market fix; Sat Day-1 test = NO-GO (flapping). Full
+  per-change detail in `docs/session-handoff-global.md`.
+
 - **2026-05-22 EOD** — Live with full MACD Momentum v1.32 entry strategy.
   Service active, watchlist 10-15 symbols, 569 rows persisted per hour at
   47 bars/symbol (compared to 35/sym/hr on schwab_1m WebSocket), persist-lag
