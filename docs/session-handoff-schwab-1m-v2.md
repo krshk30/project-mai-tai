@@ -1077,3 +1077,22 @@ These persist past Day 2 and aren't addressed by PRs #223 / #224:
   byte-identity) proved out on 2026-05-23 — no Day 3 escalation
   needed yet, but Day 3 remains the durable fix per the carry-forward
   list above.
+
+#### 2026-05-26 update — status correction (supersedes "Rolling forward" above)
+
+- **Both PRs shipped.** #223 (this doc) merged via the 2026-05-26 batched handoff
+  PR; **#224 merged `9aa4cbb` + deployed to VPS 13:05 UTC with the streamer flag
+  OFF** (rebased onto #225; 23 unioned tests pass; real-CI-gated — its own tests
+  green, the 22 CI failures are the pre-existing baseline in untouched files).
+- **Cause framing confirmed:** this doc's Day-1 analysis correctly attributed the
+  flap to the **empty-subscription idle-close**, NOT an OAuth collision. The "OAuth
+  collision signature" phrasing in some interim handoff/memory notes was the
+  misattribution. #224 implements the subscribe-early fix that resolves it.
+- **Collision risk remains OPEN, not closed.** Saturday was market-closed (couldn't
+  exercise a real collision), and on 2026-05-26 the *production* CHART_EQUITY
+  streamer was found flapping ~every 20s during RTH (see the top item in
+  `session-handoff-global.md`) — which both confounds any v2 collision check and is
+  a higher-priority production issue.
+- **Day-1 retry and Day-2 activation are DEFERRED** (not merely rescheduled) until
+  the production streamer is stable. The v2 streamer flag stays OFF. Day-3
+  (separate Schwab dev-app credential) remains the durable fix once we get there.
