@@ -1,6 +1,36 @@
 # Session Handoff - Global
 
-### 2026-05-26 — 🚩 HIGH PRIORITY / STANDALONE WORK ITEM: GitHub Actions CI + Deploy pipeline is DOWN
+### 2026-05-26 — 🚩 TOP PRIORITY (live RTH issue): production Schwab streamer flapping ~every 20s
+
+**The production CHART_EQUITY streamer — which feeds the live-money bots
+`schwab_1m` + `macd_30s` — is chronically flapping during RTH.** Found while
+checking whether the 13:05 "self-recovered blip" recurred. It does, constantly:
+- **2,113** `streamer connected after N failure(s)` today; **160 in the last
+  hour** (~one reconnect every 15–30s, sustained); **73** forced full-cluster
+  reconnects.
+- At 16:53 UTC / 12:53 ET (RTH open): `schwab_stream_connected=false`,
+  `schwab_generic_fallback_active=true` — the live bots are running on fallback
+  data, not the Schwab stream.
+- Flap signature: `CHART_EQUITY channel stale while websocket remained connected`
+  → liveness-timeout at `schwab_streamer.py:730` → forced reconnect, repeating.
+- Chronic, not new: the 5-22 handoff already flagged "frequent reconnect churn …
+  transport not fully stable" (exact counts un-diffable — strategy.log rotated).
+
+**Decisions (operator, 2026-05-26):**
+- **Top priority, above the v2 streamer work** — it degrades live-money bots in
+  their RTH window.
+- It **confounds the v2 Day-1 (b) collision check**: a v2-induced "kick" can't be
+  told apart from production's own ~20s flapping. **Day-1 is DEFERRED entirely**
+  (not (a)-only) until the production streamer is stable. **v2 streamer flag stays
+  OFF.**
+- **Owner: this session — read-only diagnosis in progress** (flap pattern, the
+  `:730` liveness-timeout threshold, CHART_EQUITY inter-message gaps).
+  **HARD STOP before any change to `schwab_streamer.py`** (shared production hot
+  code): root-cause first, then the fix goes through full production-change
+  discipline — Pre-Merge Regression Check, review, normal deploy path — NOT the
+  isolated v2 treatment.
+
+### 2026-05-26 — GitHub Actions CI + Deploy pipeline outage — RESOLVED (GitHub-wide incident)
 
 **Owner: krshk30 / next session. Do NOT let this get buried under the streamer
 follow-ups — it blocks the normal merge-gate and deploy path for every PR.**
@@ -16,11 +46,15 @@ Impact: PRs can't be CI-gated (this session used `--admin` merge + LOCAL pytest
 as the gate); deploys can't use the workflow (#225 deployed MANUALLY via
 `ops/systemd/deploy_service.sh` — the runbook emergency path, not normal).
 
-Likely causes to check, in order: (1) GitHub Actions spending-limit / minutes cap
-hit for the account (classic cause of dispatch 500 + silent non-triggering);
-(2) Actions disabled at repo/org settings; (3) GitHub-wide incident
-(status.github.com); (4) workflow file regression (less likely — unchanged).
-Until restored: manual `deploy_service.sh` is the interim deploy; local pytest is
+**ROOT CAUSE — CONFIRMED & RESOLVED:** a GitHub-wide platform incident
+("Incident with Actions and Pages", impact `critical`), started 2026-05-26
+10:57 UTC, Actions component back to `operational` ~13:01 UTC. **NOT account-side**:
+the spending-limit theory is **disproven** (the repo is PUBLIC → GitHub-hosted
+standard-runner Actions are free/uncapped), and Actions was **enabled** at the
+repo level. Nothing to fix on our side — it cleared when GitHub mitigated, and CI
+validated #224 normally once back. (Lead-hypothesis-was-spending-limit kept here
+only as a corrected record.)
+Until restored (now resolved): manual `deploy_service.sh` is the interim deploy; local pytest is
 the interim CI gate. **Compounding risk discovered this session: local pytest is
 itself an unreliable CI substitute** — it red-flags 8 tests (`test_control_plane`
 x2, `test_schwab_1m_bot` x3, `test_strategy_core` x3) that PASS on CI (local
@@ -86,11 +120,13 @@ local suite DOES have failures outside `test_strategy_engine_service.py`
 including a structural `too many values to unpack`). An A/B against pre-#225
 `fadb467` (same machine, same data dir, only my 3 source files reverted)
 reproduced the SAME 8 failures identically, so **#225 introduced zero new
-failures**. Those 8 are pre-existing and PASS on CI (Saturday's CI showed only
-`test_strategy_engine_service.py` failing) → a local-environment discrepancy
-(sqlite / data-dir / missing local services), not a regression. **Baseline
-correction**: an earlier *contended* local run misreported the non-engine set as
-empty; the single-process A/B is the trustworthy result. **Process note**: with
+failures**. **CORRECTION (confirmed by #224's CI run `26449409409`):** those 8
+**also FAIL on CI** — the baseline is `test_strategy_engine_service.py` + these 8
+(`test_control_plane` x2, `test_schwab_1m_bot` x3, `test_strategy_core` x3),
+consistent local AND CI, all pre-existing. My earlier "pass on CI" claim came from
+a truncated Saturday tail-read and was wrong. **Baseline correction**: an earlier
+*contended* local run also misreported the non-engine set as empty; the
+single-process A/B + #224's clean CI run are the trustworthy results. **Process note**: with
 CI down, "gate→merge" inverted to "merge→gate" this session — survivable for a
 change this small + isolated, but a habit to correct (see the 🚩 CI item).
 
@@ -98,12 +134,25 @@ change this small + isolated, but a habit to correct (see the 🚩 CI item).
 Schwab serves today's data; does NOT itself make v2 trade the *early* pre-market —
 the CHART_EQUITY streamer remains the real low-latency pre-market fix.
 
-**Open / next owner**:
-- **Streamer = SEPARATE after-close track.** Saturday's Day-1 plumbing test
-  (branch `claude/day1-day2-findings`) returned a **Day-2 NO-GO** — the streamer
-  flapped (connect → close `1000` → reconnect loop, the OAuth single-session
-  collision signature). Diagnose before any activation. Day-3 (separate Schwab
-  dev-app credential) dissolves the collision.
+**Follow-on: PR #224 (subscribe-early + buffer/replay) merged `9aa4cbb` + deployed 13:05 UTC, flag OFF.**
+Rebased onto #225 (resolved the `schwab_1m_v2_bot.py` auto-merge + `test_schwab_1m_v2_bot.py`
+add/add union → 23 tests), real-CI-gated (its tests pass; the 22 CI failures are
+the pre-existing baseline in untouched files), manual-deployed via `deploy_service.sh`.
+Behavior-neutral with the streamer flag OFF (zero `[V2-WS]` activity post-deploy;
+REST + watchdog path unaffected). Warmup re-verified (1094/591/3625-bar feeds, 3/3).
+
+**Corrected framing on the Day-1 NO-GO** (supersedes the "OAuth collision signature"
+label used in earlier handoff/memory notes — that label was the misattribution):
+- The Day-1 NO-GO verdict was **RIGHT** (don't activate until subscribe-early lands).
+- PR #223's own analysis correctly attributed the flap to v2's **empty-subscription
+  idle-close** (Schwab drops an idle, no-SUBS session), NOT an OAuth collision; the
+  collision criterion explicitly did **not** trigger on Saturday.
+- **Collision risk remains OPEN**, not resolved: Saturday was market-closed (can't
+  exercise a real collision), and we've since found the production streamer flaps
+  chronically on weekdays (see the 🚩 top item) — which both confounds any future
+  collision check and is its own, higher-priority issue.
+- **Day-1 is DEFERRED** (gated on production-streamer stability); v2 flag stays OFF.
+  Day-3 (separate Schwab dev-app credential) would dissolve the shared-token concern.
 
 ### 2026-05-22 EOD pt2 — `schwab_1m_v2` Day 2: code review findings closed + Saturday plumbing test scheduled (see dedicated doc)
 
