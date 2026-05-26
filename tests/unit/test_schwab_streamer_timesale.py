@@ -122,3 +122,19 @@ async def test_stop_completes_fast_when_streamer_is_idle() -> None:
 
     assert elapsed < 0.5
     assert client._stop_event.is_set()
+
+
+def test_chart_exchange_deadline_exceeds_bar_interval() -> None:
+    """Regression guard for the 2026-05-26 production flap (root cause introduced
+    by commit 518beea). The CHART exchange-deadline compares a COMPLETED 1-min
+    bar's close against the continuous tick clock, so it MUST exceed the bar
+    interval or it force-reconnects a HEALTHY feed every minute. Default
+    schwab_stream_symbol_stale_after_seconds=8 -> 60 + max(30, 8*4) = 92s."""
+    client = SchwabStreamerClient(Settings())
+    deadline = client._chart_exchange_deadline_seconds()
+    assert deadline >= client.CHART_BAR_INTERVAL_SECONDS, (
+        "exchange-deadline must exceed the 1-min bar interval or it trips every minute"
+    )
+    assert deadline == client.CHART_BAR_INTERVAL_SECONDS + 32.0
+    # The separate 90s message-stale branch (genuine dead-feed guard) is unchanged.
+    assert client._service_stale_after_seconds(client.CHART_EQUITY_SERVICE) == 90.0
