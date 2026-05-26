@@ -163,6 +163,14 @@ class Settings(BaseSettings):
     strategy_schwab_1m_v2_account_name: str = "paper:schwab_1m_v2"
     strategy_schwab_1m_v2_broker_provider: str | None = "schwab"
     strategy_schwab_1m_v2_default_quantity: int = 100
+    # Cold-start warmup lookback (calendar days). The first poll per symbol
+    # (since=0) requests this many days back so the indicator-seed batch
+    # always reaches the last completed trading session even across a
+    # multi-day market closure (weekend + holiday). A fixed 24h window
+    # returns an EMPTY candle array after e.g. a Fri->Tue Memorial-Day gap,
+    # which silently starves the strategy of warmup data. 7 days covers
+    # that gap with buffer. Incremental polls (since>0) use a 24h window.
+    strategy_schwab_1m_v2_warmup_lookback_days: int = 7
     # schwab_1m_v2 streamer: dedicated WebSocket bar feed (CHART_EQUITY) in
     # `market_data/schwab_v2_streamer.py`. Default OFF — the streamer shares
     # the same OAuth token as the existing schwab_streamer.py session, and

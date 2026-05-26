@@ -86,6 +86,13 @@ class SchwabV2RestClient:
         self._symbols_lock = asyncio.Lock()
         self._stop_event = asyncio.Event()
         self._last_bar_timestamp_ms: dict[str, int] = {}
+        # Per-symbol count of consecutive polls whose raw Schwab payload had
+        # ZERO candles (the "REST source is dry" signal — distinct from
+        # "had candles but nothing new since the cursor"). Reset to 0 the
+        # moment a payload comes back with any candles. Surfaced via the
+        # service heartbeat so prolonged emptiness is observable instead of
+        # silent. See `max_consecutive_empty`.
+        self._consecutive_empty: dict[str, int] = {}
 
     @property
     def configured(self) -> bool:
@@ -97,6 +104,17 @@ class SchwabV2RestClient:
         # atomically (no async lock needed for set replacement on a single
         # event loop).
         self._desired_symbols = normalized
+
+    def consecutive_empty_polls(self, symbol: str) -> int:
+        """Consecutive empty-payload polls for `symbol` (0 if last poll
+        returned candles)."""
+        return self._consecutive_empty.get(symbol, 0)
+
+    def max_consecutive_empty(self) -> int:
+        """Largest consecutive empty-payload streak across all symbols —
+        a single scalar the heartbeat can surface as the 'REST is dry'
+        signal."""
+        return max(self._consecutive_empty.values(), default=0)
 
     async def run(self) -> None:
         if not self.configured:
@@ -222,17 +240,27 @@ class SchwabV2RestClient:
         sorted ascending. "Closed" means timestamp <= (now - 60s) — Schwab's
         last candle in the array can be the in-flight current minute.
 
-        First call per symbol (`since=0`) returns the full 24h window
-        (~500 candles), giving the strategy instant indicator warmup.
-        Subsequent calls return the 1-2 bars that closed since the
-        previous poll.
+        First call per symbol (`since=0`) is the cold-start warmup: it
+        requests `strategy_schwab_1m_v2_warmup_lookback_days` back so the
+        indicator-seed batch reaches the last completed trading session
+        even across a multi-day closure. A fixed 24h window returns an
+        EMPTY array after a weekend+holiday gap (e.g. Fri->Tue Memorial
+        Day), silently starving warmup. Subsequent calls (`since>0`) use a
+        24h window — "today" is always within 24h and the since-filter
+        trims to the 1-2 newly-closed bars.
 
         Schwab pricehistory gotcha (verified 2026-05-22): `periodType=day&
         period=1` returns the last fully-closed trading session, NOT
         "today so far." Using explicit startDate/endDate avoids this.
         """
         now_ms = int(datetime.now(UTC).timestamp() * 1000)
-        start_ms = now_ms - 24 * 60 * 60 * 1000
+        if since_ts_ms <= 0:
+            lookback_days = max(
+                1, int(self.settings.strategy_schwab_1m_v2_warmup_lookback_days)
+            )
+            start_ms = now_ms - lookback_days * 24 * 60 * 60 * 1000
+        else:
+            start_ms = now_ms - 24 * 60 * 60 * 1000
         params = urlencode(
             {
                 "symbol": symbol,
@@ -248,7 +276,15 @@ class SchwabV2RestClient:
         payload = self._authorized_get(url)
         candles = payload.get("candles")
         if not isinstance(candles, list) or not candles:
+            # Schwab returned a 200 with no candles (dry source — e.g.
+            # pricehistory does not serve same-day pre/after-hours minutes,
+            # or the window spans only non-trading days). Track the streak
+            # so the service can surface prolonged emptiness.
+            self._consecutive_empty[symbol] = (
+                self._consecutive_empty.get(symbol, 0) + 1
+            )
             return []
+        self._consecutive_empty.pop(symbol, None)
         cutoff_ms = now_ms - 60_000
         bars: list[ChartBar] = []
         for candle in candles:
