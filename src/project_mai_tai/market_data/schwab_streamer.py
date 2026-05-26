@@ -58,6 +58,14 @@ class SchwabStreamerClient:
     LEVELONE_EQUITIES_FIELDS = "0,1,2,3,4,5,8,9,35"
     CHART_EQUITY_FIELDS = "0,1,2,3,4,5,6,7,8"
     TIMESALE_EQUITY_FIELDS = "0,1,2,3,4"
+    # CHART_EQUITY is subscribed as 1-MINUTE bars. The chart-liveness exchange
+    # deadline (`_chart_exchange_deadline_seconds`) depends on this interval: a
+    # completed bar's close inherently trails the live tick clock by up to one
+    # full interval (the in-progress minute hasn't closed yet). If the CHART
+    # subscription interval ever changes, update this constant — otherwise the
+    # deadline mis-fires (too small → spurious reconnects of a healthy feed;
+    # too large → slow to catch a genuinely stalled feed).
+    CHART_BAR_INTERVAL_SECONDS = 60.0
 
     def __init__(
         self,
@@ -804,7 +812,19 @@ class SchwabStreamerClient:
 
     def _chart_exchange_deadline_seconds(self) -> float:
         base = max(5.0, float(self.settings.schwab_stream_symbol_stale_after_seconds))
-        return max(30.0, base * 4.0)
+        # This deadline compares a COMPLETED 1-min CHART bar's close against the
+        # continuous tick-service exchange clock (LEVELONE/TIMESALE). A completed
+        # 1-min bar's close trails the live clock by up to one bar interval (the
+        # in-progress minute) + delivery slack, so the deadline MUST exceed the
+        # interval or it force-reconnects a HEALTHY feed every minute. The prior
+        # `max(30, base*4)` = 32s sat below the 60s bar granularity, which was the
+        # root cause of the 2026-05-26 production flap (introduced by 518beea
+        # "Make Schwab chart liveness deadline-aware"; proven via the
+        # [SCHWAB-CHART-RECONNECT-CAUSE] log: exchange_deadline_exceeded=True with
+        # chart_msg_age ~1-2s). Now interval-aware: one bar interval + slack.
+        # NOTE: the separate 90s message-stale branch (`_service_stale_after_seconds`
+        # for CHART_EQUITY) still catches a genuinely dead feed and is unchanged.
+        return self.CHART_BAR_INTERVAL_SECONDS + max(30.0, base * 4.0)
 
     def _chart_exchange_deadline_exceeded(self, now: float) -> bool:
         chart_state = self._service_states[self.CHART_EQUITY_SERVICE]
