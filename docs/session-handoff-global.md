@@ -1,5 +1,47 @@
 # Session Handoff - Global
 
+### 2026-05-27 (22:55 UTC) — PR #233 DEPLOYED (stale-1m-cluster reconnect fix). Stage-one clean. Tomorrow = DOUBLE VERDICT.
+
+**PR #233 fix** (root cause of the residual ~57/hr flap — see the 17:00 UTC entry below):
+`_maybe_force_schwab_stream_reconnect_for_stale_1m_cluster` counted quiet thin
+symbols (no trade → no CHART bar) as "lagging" → force-reconnected the streamer
+~57–80/hr (1:1 with `ConnectionClosedError: sent 1000`). Fix gates on recent
+bar-driver trade activity (120s window) + a 60s delivery-slack margin; a genuine
+stall (actively trading, bars minutes behind) still reconnects. 3 new tests + 1
+updated; regression check clean (11 pre-existing failures identical on baseline,
+none introduced).
+
+**Deploy:** merged PR #233 → `origin/main` `150e125`; deployed via
+`deploy_service.sh ... main strategy` (off-window, so `deploy_preflight.py`/CYN
+block did not run — manual account-flat done instead: 0 open virtual positions).
+Runtime reinstalled, **strategy restarted 22:55:34 UTC** (strategy-only — this is
+strategy-engine code, no oms/token involvement). Fix confirmed live in deployed
+code; clean startup, NRestarts=0.
+
+**Stage-one verification (23:18 UTC, ~23 min post-deploy) — CLEAN:**
+- forced-cluster-reconnect: **2 during post-restart hydration (22:59, 23:00), then
+  0 across the settled window 23:02–23:18** vs pre-deploy 57–80/hr. connection-loop-
+  failed 2 total / 0 settled. exchange_deadline=True **0** (PR #228 holding).
+- Data flowed continuously; strategy stable; no ERROR-level log entries.
+- **CAVEAT (same as #228 night-of): NOT proof.** Extended-hours volume is thin →
+  fewer actively-trading symbols → even the old code would fire less now. The real
+  test is tomorrow's RTH volume.
+
+**Pre-deploy afternoon baseline (forced-cluster-reconnect/hr, the before-number for
+tomorrow's after-measurement):** 16:00=57, 17:00=58, 18:00=71, 19:00=62, 20:00=80
+(1:1 with total reconnects every hour; volume-dependent, peaks near open/close).
+
+**Host-connectivity blip (noted, not a production incident):** ~23:15–23:18 UTC
+sshd + nginx reset/timed-out from outside while ICMP stayed up (load ~2.5 on 2
+cores, memory healthy, no OOM, 41-day uptime); self-recovered. The internal
+Schwab↔strategy data pipeline was UNAFFECTED (bars never gapped). Unrelated to the
+deploy. Watch if it recurs on this small VPS.
+
+### 🚩 TOMORROW (2026-05-28) — DOUBLE VERDICT, RTH. Operator-pinged (neither a local wakeup nor a remote routine can reach the VPS overnight). Pre-stated thresholds:
+- **(a) PR #228:** `exchange_deadline_exceeded=True` stays **<5/hr (ideally 0) through the 9:30 ET open** — the clean-open confirmation today's outage denied. Confirms #228 → then **remove the PR #227 `[SCHWAB-CHART-RECONNECT-CAUSE]` DEBUG log via a follow-up PR.**
+- **(b) PR #233:** forced-cluster-reconnect **<5/hr across the full RTH session** (vs today's 57–80/hr baseline). Confirms #233.
+- Hourly buckets, plain-against-the-number, no rounding up. **Both clean → the production-streamer arc finally closes**, DEBUG log removed, and **v2 streamer activation resumes** (Day-1 retry first, with the Day-3 separate-credential question to weigh). If either misses, keep the DEBUG log + diagnose.
+
 ### 2026-05-27 (17:00 UTC) — PR #228 RTH verdict: exchange-deadline flap ELIMINATED (clean pass, 0/hr) — but streamer STILL flaps ~57/hr from a 2nd cause (`ConnectionClosedError` "sent 1000"). Arc NOT closed; DEBUG log kept; v2 stays deferred.
 
 Re-measurement ran after the morning's double outage finally left a clean window.
