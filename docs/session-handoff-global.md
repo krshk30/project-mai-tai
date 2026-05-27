@@ -1,5 +1,57 @@
 # Session Handoff - Global
 
+### 2026-05-27 (17:00 UTC) — PR #228 RTH verdict: exchange-deadline flap ELIMINATED (clean pass, 0/hr) — but streamer STILL flaps ~57/hr from a 2nd cause (`ConnectionClosedError` "sent 1000"). Arc NOT closed; DEBUG log kept; v2 stays deferred.
+
+Re-measurement ran after the morning's double outage finally left a clean window.
+
+**GATE (passed):** clean window **15:15:19 → 17:00 UTC (~105 min)**, the stretch after
+the WS blackout self-recovered. Incident-free: 0 token-refresh failures, 0 broker-adapter
+fetch failures since 15:15 (no new auth death); max streamer consecutive-failure attempt = **3**
+(= flap, resets on each reconnect — NOT a blackout, which earlier hit 1500+); continuous data
+flow (latest event always within seconds of now). Full **midday RTH volume** (11:15 ET–1:00 PM ET).
+Caveat: the **9:30 ET open** (the designated hardest stress test) was **NOT measurable clean** —
+it fell inside the OAuth outage (11:19–14:47 UTC).
+
+**PR #228 VERDICT = CLEAN PASS.** `exchange_deadline_exceeded=True` reconnects (the verdict
+number) per clean-window bucket:
+- 15:15–15:59 (44m): **0**  ·  16:00 (full hr): **0**  ·  17:00: **0**
+- **0/hr in EVERY bucket** vs ~210/hr baseline (and 151/hr pre-break this morning). Not "<5" —
+  literally zero. `deadline=False`/chart_msg_age reconnects also **0**: the entire CHART-liveness
+  reconnect path is silent. The proven 2026-05-26 root cause (32s→92s interval-aware deadline) is
+  fixed. Reported plainly against the `<5`/`5–60`/`>60` bands — clean pass, no rounding.
+
+**BUT the streamer is NOT stable — a 2nd, distinct cause remains.** Total reconnects
+(`streamer connected after`) ≈ **57/hr** (16:00 full hour: 57; down from the ~160/hr baseline and
+the ~88/hr seen midday — reduced, NOT gone). WS-cause breakdown in-window: keepalive ping timeout
+= **0**, opening-handshake timeout = **2**, **`ConnectionClosedError` = ~101, ALL
+`sent 1000 (OK); no close frame received`** — a *self-initiated normal-close* (local side sends
+1000, peer drops without a close frame). NOT the exchange deadline (0), NOT keepalive (0). So the
+residual flap is a separate path: since chart-deadline AND chart_msg_age are both 0, it's a
+**non-chart liveness/recycle trigger** (candidates: `_handle_service_liveness_timeout` on a
+non-chart service, or the **90s message-stale branch PR #228 deliberately left untouched**).
+
+**Bar-rate (Check 3):** 16:00 full hour = **0.796** bars/sym/min vs 0.83 baseline. The quick
+reconnects don't materially starve the bots — `schwab_1m` + `macd_30s` stayed fed throughout
+the clean window.
+
+**Honest framing:** PR #228 did exactly its job — on 2026-05-26 the exchange-deadline was 21/22 of
+sampled reconnects (the dominant cause); it is now 0. The fix is real and verified. What's left is
+the *other* path: the ~57/hr `ConnectionClosedError` "sent 1000" flap is now the dominant remaining
+reconnect cause. This is a **partial resolution of the streamer arc**, not a full one — stated
+plainly rather than called "fixed."
+
+**Decisions / next steps:**
+- **KEEP the PR #227 `[SCHWAB-CHART-RECONNECT-CAUSE]` DEBUG log.** Do NOT remove it yet — the
+  9:30 ET open (hardest stress) wasn't measurable clean today; confirm exchange-deadline stays 0
+  across one clean 9:30 open first. Cheap insurance.
+- **Production-streamer arc NOT closed.** Residual ~57/hr flap remains.
+- **v2 streamer activation STAYS DEFERRED, flag OFF** — the deferral condition was "until the
+  production streamer is stable," and it is not (the ~57/hr flap still confounds a v2 collision check).
+- **NEW WORKSTREAM (bring findings before any code change):** diagnose the `ConnectionClosedError`
+  "sent 1000; no close frame received" self-initiated-close flap — identify which non-chart liveness
+  path is recycling the socket ~57×/hr. Root-cause, not band-aid.
+- Read-only measurement; no restart/deploy/behavior change. CYN untouched.
+
 ### 2026-05-27 — PR #228 RTH verdict BLOCKED by a same-day double Schwab-feed outage (refresh-token death → restart-fixed; then WS-handshake blackout → self-recovered)
 
 **Bottom line: PR #228's RTH verdict could NOT be measured.** Two separate
