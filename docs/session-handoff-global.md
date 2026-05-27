@@ -1,5 +1,76 @@
 # Session Handoff - Global
 
+### 2026-05-27 — PR #228 RTH verdict BLOCKED by a same-day double Schwab-feed outage (refresh-token death → restart-fixed; then WS-handshake blackout → self-recovered)
+
+**Bottom line: PR #228's RTH verdict could NOT be measured.** Two separate
+production data-feed failures on the shared Schwab path intercepted the
+measurement window — the 92s deadline behavior was never observable under RTH
+load because the streamer was either auth-dead or endpoint-unreachable for most
+of the morning. Verdict stays **BLOCKED**; PR #227 DEBUG log **stays**;
+production-streamer arc **not** closed; v2 streamer flag stays **OFF**; CYN untouched.
+
+**Problem 1 — Schwab refresh-token death (~11:19→14:48 UTC). FIXED by restart.**
+- ~11:19:06 UTC (07:19 ET): refresh token expired/revoked —
+  `invalid_grant: "Refresh token is invalid, expired or revoked"` (~7-day rollover).
+  Identical failure on BOTH paths: `schwab_streamer.py:432 _fetch_streamer_credentials`
+  AND `broker_adapters/schwab.py:368 fetch_historical_bars`, both via
+  `schwab.py:600 _get_access_token`. Shared token → killed the WS streamer AND the
+  REST adapter together.
+- Operator re-authorized at 11:45:42 UTC (token file rewritten) but did NOT restart
+  strategy → the running process kept using its cached dead in-memory token → zero
+  recovery; streamer consecutive-failure streak hit 1500+ by 14:30. (Documented
+  re-auth→restart rule: services cache the token and only reload on restart.)
+- IDE restarted at **14:47:44 UTC** (account-flat pre-flight: 0 open virtual positions,
+  CYN broker-frozen baseline is not an open position; choreography
+  stop strategy → restart oms → start strategy). Token refreshed (file mtime → 14:48:55),
+  REST recovered (0 fetch failures since). Auth healthy.
+
+**Problem 2 — WS opening-handshake blackout (~14:54→15:15 UTC). SELF-RECOVERED (Schwab-side).**
+- After auth recovered, the streamer connected once (14:49:00), then the connection
+  died (keepalive ping timeout) at 14:54:40 and every reconnect failed
+  `TimeoutError: timed out during opening handshake` (`schwab_streamer.py:358
+  websockets.connect`, `open_timeout=30s`). NOT auth (REST worked throughout).
+  ~18-min total data blackout; both Schwab bots starved; latest received event frozen
+  at 14:49:00; schwab_1m stuck at the 14:48 bar.
+- Time-boxed read-only probe concluded **(B) Schwab-side / transient endpoint issue**
+  (reachability proven by the real client itself reconnecting; creds fetched fresh per
+  connect from `userPreference`; standard timeouts). Per the (B) rule, **NO second restart.**
+- Self-recovered at **15:15:19 UTC**. Sustained-recovery verified at 15:25:20: continuous
+  data (latest event 15:25:18), `schwab_1m` latest bar 15:24:00 (291 bars since 15:10),
+  `macd_30s` latest bar 15:24:30 (443 bars since 15:10) — held past the 5-min danger zone
+  that killed the 14:49 connect. **Production data feed restored.**
+
+**Residual / measurement state:**
+- The chronic ~10–17s-gap flap (the actual PR #228 subject) persists post-recovery
+  (~7 reconnects 15:15–15:25) but does NOT starve the bots — they're fed. A connection
+  now holds through RTH, so PR #228 re-measurement is finally *possible*.
+- **PR #228 re-measure DEFERRED** until ≥90 min of stable-token RTH data accrues
+  (≥~16:45 UTC 2026-05-27), ideally re-confirmed across heavier volume, AND only while the
+  streamer holds (no new auth/blackout event). Keep PR #227 DEBUG log until that clean
+  verdict lands.
+- Only healthy-token data today was pre-break, pre-market, and NOT a clean pass:
+  `exchange_deadline_exceeded=True` 08:00 UTC=**151/hr** (FAIL-range), 09:00=23/hr,
+  10:00=0; total reconnects 300–420/hr (above the ~160 baseline); schwab_1m bars/sym/min
+  0.84/0.76/0.84 then collapse at 11:19. Suggestive of PARTIAL-at-best, but confounded and
+  NOT the RTH verdict.
+
+**🔁 Shared-Schwab-path single-point-of-failure — significant operational finding (own item):**
+- TWO production data-feed outages in ONE day on the shared Schwab dependency: (1) refresh-token
+  death and (2) WS-endpoint blackout — each blacked out BOTH live-money Schwab bots
+  (`schwab_1m` + `macd_30s`) simultaneously. `polygon_30s` (Schwab-independent) unaffected
+  throughout both — clean control proving the common cause is the shared Schwab path.
+- The shared Schwab OAuth token + single streamer session is a repeated SPOF. Strengthens the
+  already-surfaced hardening items:
+  1. **Auto-reload the token store on `invalid_grant`** so a re-auth recovers the running
+     process without a manual restart (today's ~3.5-hour Problem-1 outage was entirely the
+     no-restart gap).
+  2. **Surface dead-token AND streamer-blackout state loudly on the dashboard/health** — both
+     failures were invisible except as buried tracebacks; the operator found the OAuth issue
+     by chance.
+  3. Weigh alongside the **Day-3 separate-credential** decision — note a v2-only credential
+     isolates v2 but would NOT have prevented either of today's PRODUCTION-token failures; the
+     production path itself needs the auto-reload + loud-surfacing hardening.
+
 ### 2026-05-26 — 🚩 TOP PRIORITY (live RTH issue): production Schwab streamer flapping ~every 20s
 
 **The production CHART_EQUITY streamer — which feeds the live-money bots
