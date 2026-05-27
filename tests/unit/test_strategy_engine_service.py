@@ -6416,6 +6416,11 @@ async def test_refresh_stale_schwab_1m_history_forces_full_reconnect_on_clustere
     service.state.bots["schwab_1m"].set_watchlist(["AMST", "AMPG", "CNEY", "QUCY"])
     fixed_now = datetime(2026, 5, 19, 19, 26, 5, tzinfo=UTC)
     expected_latest_completed = datetime(2026, 5, 19, 19, 25, 0, tzinfo=UTC).timestamp()
+    # A forced reconnect now requires a GENUINE stall: symbols actively trading
+    # (recent advancing trades) while their completed bars fall behind. Quiet symbols
+    # no longer count toward the cluster (2026-05-27 flap fix), so seed fresh activity.
+    for _sym in ("AMST", "AMPG", "CNEY", "QUCY"):
+        service._schwab_symbol_last_advancing_trade_at[_sym] = fixed_now - timedelta(seconds=5)
 
     class FakeStreamClient:
         connected = True
@@ -6440,7 +6445,7 @@ async def test_refresh_stale_schwab_1m_history_forces_full_reconnect_on_clustere
     monkeypatch.setattr(
         service,
         "_latest_runtime_completed_bar_timestamp",
-        lambda runtime, symbol: expected_latest_completed - 60.0,
+        lambda runtime, symbol: expected_latest_completed - 120.0,  # > 60s slack -> real lag
     )
 
     intent_count, refreshed_bar_count = await service._refresh_stale_schwab_1m_history()
@@ -9018,3 +9023,119 @@ def test_set_broker_blocked_symbols_by_strategy_routes_to_bots() -> None:
     assert "AEHL" in state.bots["polygon_30s"].broker_blocked_symbols
     assert "AEHL" not in state.bots["polygon_30s"].watchlist
     assert "AEHL" not in state.bots["polygon_30s"].lifecycle_states
+
+
+# --- stale-1m-cluster forced reconnect: trade-activity + slack gate (2026-05-27 flap fix) ---
+
+
+class _ClusterFakeBuilder:
+    def __init__(self, last_bar_ts: float | None) -> None:
+        self._last_bar_ts = last_bar_ts
+
+    def get_bars_as_dicts(self) -> list[dict]:
+        if self._last_bar_ts is None:
+            return []
+        return [{"timestamp": self._last_bar_ts}]
+
+
+class _ClusterFakeBuilderManager:
+    def __init__(self, last_bar_ts_by_symbol: dict[str, float | None]) -> None:
+        self._builders = {
+            sym.upper(): _ClusterFakeBuilder(ts)
+            for sym, ts in last_bar_ts_by_symbol.items()
+        }
+
+    def get_builder(self, symbol: str):
+        return self._builders.get(str(symbol).upper())
+
+
+class _ClusterFakeRuntime:
+    def __init__(self, last_bar_ts_by_symbol: dict[str, float | None]) -> None:
+        self._symbols = {sym.upper() for sym in last_bar_ts_by_symbol}
+        self.builder_manager = _ClusterFakeBuilderManager(last_bar_ts_by_symbol)
+
+    def active_symbols(self) -> set[str]:
+        return set(self._symbols)
+
+
+class _ClusterRecordingStreamClient:
+    def __init__(self) -> None:
+        self.connected = True
+        self.reconnects = 0
+
+    async def force_reconnect(self) -> None:
+        self.reconnects += 1
+
+
+async def _run_stale_1m_cluster_check(
+    *,
+    last_bar_ts_by_symbol: dict[str, float | None],
+    active_trade_age_secs_by_symbol: dict[str, float | None],
+    now: datetime,
+    expected_latest_completed: float,
+) -> _ClusterRecordingStreamClient:
+    service = StrategyEngineService(settings=make_test_settings(), redis_client=FakeRedis())
+    client = _ClusterRecordingStreamClient()
+    service._schwab_stream_client = client
+    for sym, age in active_trade_age_secs_by_symbol.items():
+        if age is not None:
+            service._schwab_symbol_last_advancing_trade_at[sym.upper()] = now - timedelta(seconds=age)
+    runtime = _ClusterFakeRuntime(last_bar_ts_by_symbol)
+    await service._maybe_force_schwab_stream_reconnect_for_stale_1m_cluster(
+        runtime=runtime,
+        now=now,
+        expected_latest_completed=expected_latest_completed,
+    )
+    return client
+
+
+@pytest.mark.asyncio
+async def test_stale_1m_cluster_reconnect_ignores_quiet_symbols() -> None:
+    # The 2026-05-27 residual flap: thin penny stocks that simply did not trade have
+    # no recent completed bar, but that is NOT a feed stall — they must not force
+    # reconnects. Bars are stale, but no symbol has recent trade activity.
+    now = datetime(2026, 5, 27, 16, 0, 18, tzinfo=UTC)
+    expected = datetime(2026, 5, 27, 15, 59, 0, tzinfo=UTC).timestamp()
+    old_bar = datetime(2026, 5, 27, 15, 50, 0, tzinfo=UTC).timestamp()
+    symbols = ["AAA", "BBB", "CCC", "DDD", "EEE"]
+    client = await _run_stale_1m_cluster_check(
+        last_bar_ts_by_symbol={s: old_bar for s in symbols},
+        active_trade_age_secs_by_symbol={s: None for s in symbols},
+        now=now,
+        expected_latest_completed=expected,
+    )
+    assert client.reconnects == 0
+
+
+@pytest.mark.asyncio
+async def test_stale_1m_cluster_reconnect_fires_when_actively_trading_but_bars_stalled() -> None:
+    # Genuine stall: symbols ARE trading (fresh advancing trades) yet their completed
+    # CHART bars are minutes behind the slack margin -> still force a reconnect.
+    now = datetime(2026, 5, 27, 16, 0, 18, tzinfo=UTC)
+    expected = datetime(2026, 5, 27, 15, 59, 0, tzinfo=UTC).timestamp()
+    stalled_bar = datetime(2026, 5, 27, 15, 55, 0, tzinfo=UTC).timestamp()
+    symbols = ["AAA", "BBB", "CCC", "DDD", "EEE"]
+    client = await _run_stale_1m_cluster_check(
+        last_bar_ts_by_symbol={s: stalled_bar for s in symbols},
+        active_trade_age_secs_by_symbol={s: 10.0 for s in symbols},
+        now=now,
+        expected_latest_completed=expected,
+    )
+    assert client.reconnects == 1
+
+
+@pytest.mark.asyncio
+async def test_stale_1m_cluster_reconnect_allows_delivery_slack() -> None:
+    # Actively trading and only just behind (missing the in-flight just-closed minute,
+    # within the delivery-slack margin) -> not a stall, no reconnect.
+    now = datetime(2026, 5, 27, 16, 0, 18, tzinfo=UTC)
+    expected = datetime(2026, 5, 27, 15, 59, 0, tzinfo=UTC).timestamp()
+    within_slack_bar = datetime(2026, 5, 27, 15, 58, 30, tzinfo=UTC).timestamp()
+    symbols = ["AAA", "BBB", "CCC", "DDD", "EEE"]
+    client = await _run_stale_1m_cluster_check(
+        last_bar_ts_by_symbol={s: within_slack_bar for s in symbols},
+        active_trade_age_secs_by_symbol={s: 10.0 for s in symbols},
+        now=now,
+        expected_latest_completed=expected,
+    )
+    assert client.reconnects == 0

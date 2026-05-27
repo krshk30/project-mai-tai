@@ -5734,6 +5734,14 @@ class StrategyEngineService:
         self._schwab_1m_history_refresh_interval_secs = 15
         self._schwab_cluster_reconnect_threshold = 4
         self._schwab_cluster_reconnect_cooldown_secs = 30.0
+        # Only count a symbol toward the stale-cluster reconnect if it has been
+        # actively trading within this window — a quiet symbol legitimately has no
+        # recent completed CHART bar (no trade -> no bar) and must not look "lagging".
+        self._schwab_cluster_reconnect_activity_window_secs = 120.0
+        # Delivery slack: the just-closed minute's completed bar may still be in
+        # flight, so only count a symbol as lagging if it trails the expected minute
+        # by more than this margin (avoids the post-minute-boundary false positive).
+        self._schwab_cluster_reconnect_slack_secs = 60.0
         self._schwab_last_forced_reconnect_at: datetime | None = None
         self._last_generic_bot_activity_snapshot_at: datetime | None = None
         self._generic_bot_activity_snapshot_interval_secs = 5
@@ -7235,13 +7243,32 @@ class StrategyEngineService:
         ):
             return
 
+        # A symbol is "lagging" only if it is ACTIVELY TRADING yet its completed
+        # CHART bars are not keeping up. A quiet symbol produces no bar simply
+        # because it had no trades, so counting it as lagging turned this recovery
+        # path into a self-inflicted ~57/hr reconnect storm on thin penny-stock
+        # universes (the 2026-05-27 residual flap; same false-positive class as the
+        # PR #194 bar-flow detector and the PR #228 chart deadline).
+        # `_schwab_last_bar_driver_activity_at` advances only on genuinely fresh
+        # trade/bar events (not stale-duplicate or quote-only packets — see its
+        # docstring), and the caller already uses this exact 120s activity window.
+        activity_cutoff = now - timedelta(
+            seconds=float(self._schwab_cluster_reconnect_activity_window_secs)
+        )
+        lag_deadline = expected_latest_completed - float(
+            self._schwab_cluster_reconnect_slack_secs
+        )
         lagging_symbols: list[tuple[str, float | None]] = []
         for symbol in sorted(runtime.active_symbols()):
             normalized = str(symbol).upper()
+            last_activity = self._schwab_last_bar_driver_activity_at(normalized)
+            if last_activity is None or last_activity < activity_cutoff:
+                # Not actively trading -> missing bars is expected, not a stall.
+                continue
             latest_runtime_completed = self._latest_runtime_completed_bar_timestamp(runtime, normalized)
             if (
                 latest_runtime_completed is None
-                or latest_runtime_completed < expected_latest_completed
+                or latest_runtime_completed < lag_deadline
             ):
                 lagging_symbols.append((normalized, latest_runtime_completed))
 
