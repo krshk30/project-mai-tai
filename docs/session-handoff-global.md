@@ -1,5 +1,74 @@
 # Session Handoff - Global
 
+### 2026-05-28 (RTH verdict, measured 14:53 UTC / 10:53 ET) — DUAL VERDICT: both **PARTIAL**, both clean at the 9:30 ET open, **arc does NOT close**. Two distinct residual root causes diagnosed for follow-up.
+
+**Bottom line.** Open-bucket pass for both, but neither meets strict "<5/hr in every clean-window bucket." PR #228 has a 04:00-04:50 ET warmup spike (163/hr, then 0 every hour after); PR #233 has a 07:00-07:25 ET pre-market open burst (10/hr in the 11 UTC bucket, <5/hr everywhere else). Each is a separate residual class — distinct from what the deployed fixes targeted, and each is diagnosable. Per discipline: do not round up — production-streamer arc stays open, PR #227 DEBUG log stays in place, v2 streamer activation stays deferred.
+
+**Clean-window gate ✓.** 0 `invalid_grant` / 0 `opening handshake` timeouts today; max consecutive-failure attempt = 5 (flap-only). Clean window from 2026-05-27 22:55:34 UTC (PR #233 restart) through measurement (~16h continuous, well beyond 90 min).
+
+**Check A — PR #228 (chart exchange-deadline), per-hour:**
+
+| UTC | ET | exchange_deadline_exceeded=True /hr | Band |
+|---|---|---:|---|
+| 08:00 | 04:00 (warmup) | **163** | **FAIL (>60)** |
+| 09:00 | 05:00 | 2 | CLEAN PASS |
+| 10–14:00 | 06:00–10:00 | 0 each | CLEAN PASS |
+| **13:30–14:30 (OPEN)** | **9:30–10:30 ET** | **0** | **CLEAN PASS** |
+
+Baseline ~210/hr. Trading hours (09 UTC+): clean. 04:00 ET warmup hour: 163/hr sustained for 50 min (39/45/25/28/25 across 10-min sub-buckets), abruptly stops at 08:50 UTC.
+
+**Check B — PR #233 (stale-1m-cluster reconnect), per-hour:**
+
+| UTC | ET | forced-cluster-reconnect /hr | Band |
+|---|---|---:|---|
+| 09:00 | 05:00 | 7 | PARTIAL (5–40) |
+| 11:00 | 07:00 (pre-mkt open) | **10** | **PARTIAL (5–40)** |
+| 13:00 | 09:00 (incl 9:30 open) | 3 | CLEAN PASS |
+| 14:00 | 10:00 (53m partial) | 0 | CLEAN PASS |
+| Other (00–08, 10, 12) | | 0–5 | CLEAN PASS |
+| **13:30–14:30 (OPEN)** | **9:30–10:30 ET** | **3** | **CLEAN PASS (<5)** |
+
+Baseline 57–80/hr. Total cluster reconnects across the day = 25 vs extrapolated ~800+ at baseline → **~97% reduction**. The fix substantially works; the residual concentrates in the 07:00-07:25 ET pre-market-open window.
+
+**Check C — bar-rate (baseline 0.83 bars/sym/min):**
+
+| UTC | ET | bars | syms | bars/sym/min |
+|---|---|---:|---:|---:|
+| 11:00 | 07:00 | 394 | 10 | 0.657 |
+| 12:00 | 08:00 | 526 | 12 | 0.731 |
+| 13:00 | 09:00 (RTH open) | 638 | 21 | 0.506 |
+| 14:00 | 10:00 (partial) | 835 | 18 | 0.773 |
+
+Holds 0.5–0.8 bars/sym/min through trading hours; 13 UTC dip reflects watchlist expansion to 21 syms (dilution, not starvation). **Bots fed throughout.**
+
+#### Diagnosis #1 — PR #228 04:00 ET warmup spike (next follow-up)
+
+Sample 08 UTC events show `chart_msg_age=1.0–2.6s` (mean 2.55s, p50 1.4s, p95 2.6s) — **feed actively streaming**, but `exchange_deadline_exceeded=True` still fires. Same false-positive pattern as the proven 2026-05-26 root cause, **different trigger**: `_chart_exchange_deadline_exceeded()` (`schwab_streamer.py:829-840`) compares `latest_other_exchange_ts` (TIMESALE/QUOTE clock from other services) against `chart_state.last_completed_bar_close_timestamp + 92s`. At 04:00 ET scanner-session start, fresh CHART_EQUITY subscriptions can carry over `last_completed_bar_close_timestamp` from yesterday's last close (the per-state field is not reset on new subscription) while TIMESALE/QUOTE start streaming today's trades instantly. Until each subscribed symbol accumulates a fresh completed bar, the comparison fails self-inflicted. Self-clears by 08:50 UTC = all subscribed symbols have closed at least one minute of today's bars. Pre-trading window, **no user-facing latency**, but a strict-spec FAIL bucket and a known logic class.
+
+Fix candidates (don't apply yet — bring proof first per discipline):
+1. Reset `last_completed_bar_close_timestamp` to `None` on subscription set change (cleanest; matches the new-subscription semantics).
+2. Skip the deadline check while any `confirmed_symbols` lacks a post-subscription completed bar (grace window).
+3. Tighten further: only count "other exchange ts" from services that started receiving data after the chart subscription was confirmed.
+
+#### Diagnosis #2 — PR #233 07:00-07:25 ET pre-market-open burst (next follow-up)
+
+All 10 events fired between 11:07 and 11:25 UTC + 1 late event at 11:57. Same symbol pool every time: thin penny stocks (ASTC, ATPC, FGL, MASK, SUUN, VTIX, WFF, IMRN, NCT). Sample (11:25:44): `lagging_symbols=6 sample=FGL:07:22, IMRN:07:22, MASK:07:22, SUUN:07:11, VTIX:07:21, WFF:07:13 expected_completed=07:24`. Symbols **are** actively trading (the gate's 120s trade-activity check passes — that's by design after the fix). But Schwab CHART_EQUITY 1-min bar delivery for these thin names is genuinely **15-19 minutes behind** trade activity during peak pre-market open. The 60s `cluster_reconnect_slack_secs` is too tight for these symbols' real Schwab delivery cadence. Each reconnect brings in 2-3 fresh bars but symbols are still lagging → cooldown expires → reconnect fires again.
+
+This is NOT the same as yesterday's "quiet symbol counted as lagging" false positive (PR #233 correctly fixed that). The residual is a **different false-positive class**: actively-trading-but-Schwab-CHART-delivers-late symbols during pre-market open. The reconnects do nothing useful for the lag (Schwab is the delivery bottleneck, not our socket), they just churn.
+
+Fix candidates (don't apply yet — bring proof first per discipline):
+1. Widen `cluster_reconnect_slack_secs` from 60s to ~3-5 min during pre-market window (07:00-09:30 ET) where Schwab CHART delivery is structurally slower than RTH.
+2. Per-symbol lag tracking: skip symbols whose CHART has been chronically lagging by >N min from the cluster count (Schwab not at fault — these are normal-late, not abnormal-late).
+3. Hard rate limit: cap forced-cluster-reconnects at 5/hr regardless of detector (band-aid; prefer 1 or 2).
+
+#### Arc closure & next steps
+
+- **Production-streamer arc does NOT close.** Both fixes hit their open-bucket targets, but each has a residual class.
+- **PR #227 `[SCHWAB-CHART-RECONNECT-CAUSE]` DEBUG log STAYS** until both residuals are resolved.
+- **v2 streamer activation STAYS DEFERRED, flag OFF** — deferral condition was "production streamer stable"; it is not.
+- **CYN untouched. Read-only verdict — no restart, no deploy, no behavior change.**
+- Two follow-up workstreams open (Diagnosis #1 + Diagnosis #2 above). Same discipline: root-cause to proof, fix only after, measure clean.
+
 ### 2026-05-27 (EOD addendum) — two things to carry into tomorrow's RTH double verdict
 
 **1. Tomorrow's 9:30 ET open is the HARDEST stress test for BOTH fixes — bucket it separately.**
