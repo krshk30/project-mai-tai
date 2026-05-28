@@ -1,5 +1,38 @@
 # Session Handoff - Global
 
+### 2026-05-27 (EOD addendum) — two things to carry into tomorrow's RTH double verdict
+
+**1. Tomorrow's 9:30 ET open is the HARDEST stress test for BOTH fixes — bucket it separately.**
+Today's data proved the flap is **volume-dependent**: PR #233 forced-cluster-reconnect
+climbed 57→58→71→62→**80**/hr across 16:00–20:00 UTC, peaking near the close. So the
+9:30 ET open (the highest-volume window of the day) is where the *unfixed* rate would
+have been **highest (≥80/hr, likely more)** — making a clean pass there the **strongest
+possible signal**, stronger than the midday verdict. PR #228 likewise ticked to **2/hr at
+today's close** (its first non-zero since morning) — peak volume is its real stress test too.
+- **Bucket the 9:30–10:30 ET open separately** and report it explicitly as the hardest case,
+  in addition to the full-session hourly buckets.
+- Pass = PR #228 exchange_deadline `<5/hr` (ideally 0) at the open; PR #233
+  forced-cluster-reconnect `<5/hr` at the open AND across the session.
+- **Partial read to watch for:** if PR #233 passes midday but runs 10–20/hr *at the open*,
+  the gate calibration is close but may need tuning at peak load (e.g., the 60s slack or the
+  120s activity window). That's a finding to diagnose, not a pass. Plain-against-the-number,
+  no rounding up. A clean pass at the open closes BOTH arcs for real.
+
+**2. VPS host-connectivity blip — its OWN investigate item, SEPARATE from the streamer fixes.**
+~23:15–23:18 UTC (7:15–7:18 PM ET) the VPS's **TCP services (sshd + nginx) reset/timed-out
+from outside for ~3 min while ICMP/ping stayed up** (load avg ~2.5 on a 2-core box, memory
+healthy, no OOM, 41-day uptime). It **self-recovered**, and the internal Schwab↔strategy data
+pipeline was **unaffected** (bars never gapped) — so it did not affect the stage-one result.
+But "TCP services unresponsive while ping works" is a **host-level signal pointing at the VPS
+itself** (small box; possible load/IO/memory spike; possible something else) — root cause
+**unknown**, unrelated to any streamer fix.
+- **🔎 Investigate item (own line, separate from streamer work): "VPS occasionally has a
+  ~3-min TCP-service blip (sshd+nginx reset) while ICMP holds — root cause unknown."**
+- **Tomorrow's operating note:** if this recurs during RTH and you can't reach the box to
+  measure, **that is a different problem from the streamer fixes — do NOT assume PR #228/#233
+  failed.** Verify via ICMP + (once back) check that bars never gapped internally, then resume
+  measurement.
+
 ### 2026-05-27 (22:55 UTC) — PR #233 DEPLOYED (stale-1m-cluster reconnect fix). Stage-one clean. Tomorrow = DOUBLE VERDICT.
 
 **PR #233 fix** (root cause of the residual ~57/hr flap — see the 17:00 UTC entry below):
