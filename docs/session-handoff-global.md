@@ -1,5 +1,51 @@
 # Session Handoff - Global
 
+### 2026-05-28 (16:55 UTC / 12:55 ET) — BOTH RESIDUAL FIXES DEPLOYED (PR #237 + PR #238 in one restart). Stage-one clean. **Verdict is TOMORROW at the bug-manifestation windows, not today.**
+
+**Deploy summary.** Operator is flat / not trading today, so deployed both residual fixes mid-RTH in one strategy-only restart. Verification windows are tomorrow because each residual class only fires at a specific clock time:
+- **Fix 1 (PR #237 → main `350f3d7`)** — `schwab_streamer.py`: reset `last_completed_bar_close_timestamp` to None on net-new CHART subscriptions. Targets the 04:00–04:50 ET scanner-session warmup spike (163/hr → expected `<5/hr` `exchange_deadline_exceeded=True` in the 08 UTC bucket tomorrow).
+- **Fix 2 (PR #238 → main `d6d83eb`)** — `strategy_engine_app.py`: per-symbol chronic-lag exclusion via new `_schwab_cluster_reconnect_chronic_lag_threshold_secs` (default 300s). Targets the 07:00–07:25 ET pre-market open burst on thin penny stocks (10/hr → expected `<5/hr` `forced full Schwab streamer reconnect for stale schwab_1m cluster` in the 11 UTC bucket tomorrow).
+
+**Pre-flight (the moment-of-restart readings, fresh — not earlier).**
+- Account flat: `curl /api/positions` → `open=0` ✓
+- Reconciler: `degraded`, `total_findings=1`, `critical_findings=1` → matches CYN-only-blocker baseline (PR #116 protected-symbols, paper:macd_30s + paper:schwab_1m each 8000 CYN virtual=0). No other findings.
+- Both fixes verified present in VPS source post-FF: `grep -c "Fresh CHART subscriptions can carry over a stale" schwab_streamer.py` = `1`; `grep -c _schwab_cluster_reconnect_chronic_lag_threshold_secs strategy_engine_app.py` = `2`.
+
+**Deploy mechanics.** Mid-RTH, so manual `systemctl restart project-mai-tai-strategy.service` (the `deploy_service.sh` path's `deploy_preflight.py` would fail on the operator-frozen CYN baseline, as always — see the 2026-05-26 standalone item below for the bypass-erodes-the-gate workstream). Strategy-only restart (no oms / market-data churn). Editable runtime reinstall (`pip install -e .`) clean.
+
+**Restart at 16:55:37 UTC / 12:55:37 ET.** Stage-one verify (60s post-restart):
+- `NRestarts=0`, no crash-loop.
+- Startup sequence clean: `strategy-engine starting` → `strategy bot config | schwab_30s=True polygon_30s=True schwab_1m=True` → momentum alert engine restored (history_cycles=120 spike_tickers=853 cooldowns=37) → restored runtime bar history (52 symbol pairs) → seeded 18 confirmed candidates for revalidation.
+- 0 errors / tracebacks since restart.
+- **CAVEAT: this is "deployed clean," NOT proof.** The bugs only fire at specific windows; if they're absent now it's because of clock-time, not the fixes. The fixes' verdict is tomorrow.
+
+### 🚩 TOMORROW (2026-05-29) — RTH double-fix confirmation. **Operator-pinged.** Pre-stated thresholds:
+
+- **(Fix 1 — PR #237):** `exchange_deadline_exceeded=True` events in the **08 UTC bucket (04:00–04:50 ET warmup)** stay **`<5/hr`** (down from today's 163/hr). The proven trigger was stale carry-over `last_completed_bar_close_timestamp` from yesterday at the scanner-session start; the reset disables the deadline check until any subscribed symbol publishes a fresh bar.
+- **(Fix 2 — PR #238):** `forced full Schwab streamer reconnect for stale schwab_1m cluster` events in the **11 UTC bucket (07:00–07:25 ET pre-market open)** stay **`<5/hr`** (down from today's 10/hr). The proven trigger was thin-penny CHART delivery running 15–19 min behind trades; the chronic-lag exclusion drops symbols past the 300s threshold from the cluster count.
+- **Also re-check the 9:30 ET RTH open buckets (13:30–14:30 UTC):** today both were already clean (Check A=0, Check B=3). Tomorrow should hold.
+- Hourly buckets, plain-against-the-number, no rounding up. Same discipline as the prior verdict.
+
+**Both clean tomorrow → production-streamer arc finally closes.**
+- Remove the PR #227 `[SCHWAB-CHART-RECONNECT-CAUSE]` DEBUG log in a follow-up PR (separate from the verdict report).
+- Update handoff documenting closure.
+- **Then assess v2 Day-1 retry against the now-clean baseline** (see Track 2 below).
+
+**Either misses tomorrow:** report plainly which fix passed and which didn't (don't let a clean pass on one round up the partial/fail on the other). Diagnose the remaining cause to proof before another fix. Keep PR #227 DEBUG log. v2 Day-1 stays deferred.
+
+### 2026-05-28 EOD — Track 2 (v2 Day-1 streamer activation): **deferred to tomorrow** after the dual-fix verdict.
+
+Operator considered running Day-1 today (flat / not trading = unusually clean window), but accepted the asymmetric-downside read: one day of benefit vs. a multi-hour production-streamer outage if the OAuth collision case hits (Schwab kicks one session — scanner / control-plane / heartbeats all depend on the production streamer even on a no-trading day). Also: stacking a v2 flag-flip on two unverified streamer fixes muddies attribution.
+
+**Tomorrow's sequence:**
+1. Verify Fix 1 at the 4 AM ET window and Fix 2 at the 7 AM ET window.
+2. Both clean → production-streamer arc closes; remove PR #227 DEBUG log in a follow-up.
+3. Then assess v2 Day-1 against the now-clean baseline.
+
+**Auto-revert collision-detection idea (preserve for when Day-1 runs):** flip v2 flag OFF if a `[V2-WS-LOGIN-OK]` line is followed within 60s by a new `Schwab streamer connection loop failed` in production `strategy.log` (the exact collision signature). Saves a manual revert if the OAuth-one-session-per-token rule turns out to apply.
+
+**v2 flag stays OFF until tomorrow's assessment.** Day-3 (separate Schwab dev-app credential) remains the structural fix that dissolves the collision question entirely.
+
 ### 2026-05-28 (RTH verdict, measured 14:53 UTC / 10:53 ET) — DUAL VERDICT: both **PARTIAL**, both clean at the 9:30 ET open, **arc does NOT close**. Two distinct residual root causes diagnosed for follow-up.
 
 **Bottom line.** Open-bucket pass for both, but neither meets strict "<5/hr in every clean-window bucket." PR #228 has a 04:00-04:50 ET warmup spike (163/hr, then 0 every hour after); PR #233 has a 07:00-07:25 ET pre-market open burst (10/hr in the 11 UTC bucket, <5/hr everywhere else). Each is a separate residual class — distinct from what the deployed fixes targeted, and each is diagnosable. Per discipline: do not round up — production-streamer arc stays open, PR #227 DEBUG log stays in place, v2 streamer activation stays deferred.
