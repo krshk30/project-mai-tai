@@ -9139,3 +9139,76 @@ async def test_stale_1m_cluster_reconnect_allows_delivery_slack() -> None:
         expected_latest_completed=expected,
     )
     assert client.reconnects == 0
+
+
+@pytest.mark.asyncio
+async def test_stale_1m_cluster_reconnect_excludes_chronic_lag_symbols() -> None:
+    # 2026-05-28 07:00 ET pre-market burst residual: thin penny stocks (ASTC, ATPC,
+    # SUUN, etc.) WERE actively trading but Schwab CHART bars were 15-19 min behind.
+    # That is Schwab's structural pre-market delivery cadence on thin names; a
+    # streamer reconnect cannot catch it up (Schwab is the bottleneck, not our
+    # socket), the existing history-replay path handles it. The cluster-reconnect
+    # must not churn on these symbols.
+    now = datetime(2026, 5, 28, 11, 25, 0, tzinfo=UTC)
+    expected = datetime(2026, 5, 28, 11, 24, 0, tzinfo=UTC).timestamp()
+    # 18 min behind expected -> well past the 300s chronic-lag threshold.
+    chronic_bar = datetime(2026, 5, 28, 11, 6, 0, tzinfo=UTC).timestamp()
+    symbols = ["ASTC", "ATPC", "FGL", "MASK", "SUUN", "VTIX"]
+    client = await _run_stale_1m_cluster_check(
+        last_bar_ts_by_symbol={s: chronic_bar for s in symbols},
+        active_trade_age_secs_by_symbol={s: 10.0 for s in symbols},
+        now=now,
+        expected_latest_completed=expected,
+    )
+    assert client.reconnects == 0
+
+
+@pytest.mark.asyncio
+async def test_stale_1m_cluster_reconnect_fires_on_moderate_lag_within_chronic_threshold() -> None:
+    # Moderate-lag (just past delivery slack, well inside the chronic threshold)
+    # is still a genuine stall the reconnect can fix. Chronic-lag exclusion must
+    # not weaken this happy path.
+    now = datetime(2026, 5, 27, 16, 0, 18, tzinfo=UTC)
+    expected = datetime(2026, 5, 27, 15, 59, 0, tzinfo=UTC).timestamp()
+    # 2 min behind expected -> past 60s slack, well inside 300s chronic threshold.
+    moderate_lag_bar = datetime(2026, 5, 27, 15, 57, 0, tzinfo=UTC).timestamp()
+    symbols = ["AAA", "BBB", "CCC", "DDD", "EEE"]
+    client = await _run_stale_1m_cluster_check(
+        last_bar_ts_by_symbol={s: moderate_lag_bar for s in symbols},
+        active_trade_age_secs_by_symbol={s: 10.0 for s in symbols},
+        now=now,
+        expected_latest_completed=expected,
+    )
+    assert client.reconnects == 1
+
+
+@pytest.mark.asyncio
+async def test_stale_1m_cluster_reconnect_does_not_count_chronic_lag_toward_threshold() -> None:
+    # Mixed cluster: 4 moderate-lag (countable) + 4 chronic-lag (excluded). With
+    # threshold=4, the count from moderate-lag alone hits threshold and reconnects.
+    # But if chronic-lag symbols are wrongly counted too, the count would be 8 in
+    # either case -> this test only fails if the moderate-lag count is wrongly
+    # tied to chronic-lag contribution. The real assert below uses 3 moderate-lag
+    # symbols (below threshold) so any chronic contribution would push it over.
+    now = datetime(2026, 5, 28, 11, 25, 0, tzinfo=UTC)
+    expected = datetime(2026, 5, 28, 11, 24, 0, tzinfo=UTC).timestamp()
+    moderate_lag_bar = datetime(2026, 5, 28, 11, 22, 0, tzinfo=UTC).timestamp()
+    chronic_bar = datetime(2026, 5, 28, 11, 6, 0, tzinfo=UTC).timestamp()
+    last_bar_ts: dict[str, float | None] = {
+        "AAA": moderate_lag_bar,
+        "BBB": moderate_lag_bar,
+        "CCC": moderate_lag_bar,
+        "ASTC": chronic_bar,
+        "ATPC": chronic_bar,
+        "SUUN": chronic_bar,
+        "VTIX": chronic_bar,
+    }
+    activity = {s: 10.0 for s in last_bar_ts}
+    client = await _run_stale_1m_cluster_check(
+        last_bar_ts_by_symbol=last_bar_ts,
+        active_trade_age_secs_by_symbol=activity,
+        now=now,
+        expected_latest_completed=expected,
+    )
+    # Only 3 moderate-lag symbols count; threshold is 4 -> no reconnect.
+    assert client.reconnects == 0
