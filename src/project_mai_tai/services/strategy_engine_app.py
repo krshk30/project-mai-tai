@@ -5742,6 +5742,14 @@ class StrategyEngineService:
         # flight, so only count a symbol as lagging if it trails the expected minute
         # by more than this margin (avoids the post-minute-boundary false positive).
         self._schwab_cluster_reconnect_slack_secs = 60.0
+        # Chronic-lag exclusion: a symbol trailing the expected minute by MORE than
+        # this is Schwab CHART delivering structurally slow (e.g., thin penny-stock
+        # pre-market — PROVEN 2026-05-28 07:00 ET burst on ASTC/ATPC/FGL/MASK/SUUN
+        # at 15-19 min behind trades). A streamer recycle cannot catch up to that;
+        # the existing history-replay path handles it. Excluding these symbols from
+        # the lagging count keeps the cluster-reconnect targeted at "slightly behind,
+        # kick the socket" rather than churning on structural Schwab slowness.
+        self._schwab_cluster_reconnect_chronic_lag_threshold_secs = 300.0
         self._schwab_last_forced_reconnect_at: datetime | None = None
         self._last_generic_bot_activity_snapshot_at: datetime | None = None
         self._generic_bot_activity_snapshot_interval_secs = 5
@@ -7258,6 +7266,9 @@ class StrategyEngineService:
         lag_deadline = expected_latest_completed - float(
             self._schwab_cluster_reconnect_slack_secs
         )
+        chronic_lag_cutoff = expected_latest_completed - float(
+            self._schwab_cluster_reconnect_chronic_lag_threshold_secs
+        )
         lagging_symbols: list[tuple[str, float | None]] = []
         for symbol in sorted(runtime.active_symbols()):
             normalized = str(symbol).upper()
@@ -7270,6 +7281,12 @@ class StrategyEngineService:
                 latest_runtime_completed is None
                 or latest_runtime_completed < lag_deadline
             ):
+                if (
+                    latest_runtime_completed is not None
+                    and latest_runtime_completed < chronic_lag_cutoff
+                ):
+                    # Chronic Schwab CHART slowness — reconnect cannot catch this up.
+                    continue
                 lagging_symbols.append((normalized, latest_runtime_completed))
 
         if len(lagging_symbols) < int(self._schwab_cluster_reconnect_threshold):
