@@ -1,5 +1,73 @@
 # Session Handoff - Global
 
+### 2026-05-29 (RTH dual verdict, measured 16:30 UTC / 12:30 ET) — Fix 2 (PR #238) **CLEAN PASS** and closes its workstream. Fix 1 (PR #237) **FAIL** — production is **measurably worse** than yesterday on two observable axes (spike duration tripled; RTH open contaminated). **Production-streamer arc does NOT close.**
+
+**Pre-flight.** Strategy service uptime since 2026-05-28 16:55:37 UTC (yesterday's deploy), `NRestarts=0`, `MainPID=1700379` — no restart intervened, clean measurement window. Both fixes still present in deployed VPS source (`schwab_streamer.py` PR #237 marker present; `strategy_engine_app.py` `_schwab_cluster_reconnect_chronic_lag_threshold_secs` present 2×). Read-only verdict — no restart, no deploy, no behavior change. CYN untouched.
+
+#### Fix 2 (PR #238) — `forced full Schwab streamer reconnect for stale schwab_1m cluster` — **CLEAN PASS, workstream CLOSED**
+
+| UTC | ET | events/hr | Band | Yesterday |
+|---|---|---:|---|---:|
+| 00:00 | 20:00 | 4 | CLEAN | — |
+| **11:00** | **07:00 (pre-mkt open, manifestation window)** | **1** | **CLEAN (<5)** | 10 |
+| 15:00 | 11:00 | 4 | CLEAN | — |
+| **13:30–14:30 UTC (9:30–10:30 ET RTH open re-confirm)** | | **0** | **CLEAN** | 3 |
+
+Manifestation-window hit `<5/hr` threshold by a wide margin (1/hr vs 10/hr baseline, **~99% reduction at the target window**). Across the whole day max is 4/hr (within clean-pass band). The single 11 UTC hit at `11:11:15` showed 14 symbols ~2 min behind expected (well under the 300s chronic-lag exclusion threshold) — genuine stall, appropriate reconnect. Yesterday's 15–19 min thin-penny structural lag pattern is gone. RTH open cleaner than yesterday (0 vs 3). **The per-symbol chronic-lag exclusion fix is sound and stays in place.**
+
+#### Fix 1 (PR #237) — `exchange_deadline_exceeded=True` — **FAIL, workstream STAYS OPEN**
+
+| UTC | ET | events/hr | Band | Yesterday |
+|---|---|---:|---|---:|
+| **08:00** | **04:00 (warmup, manifestation window)** | **160** | **FAIL (>60)** | 163 |
+| **09:00** | **05:00** | **160** | **FAIL** | 2 |
+| **10:00** | **06:00** | **140** | **FAIL** | 0 |
+| 11:00 | 07:00 | 3 | CLEAN | 0 |
+| 13:00 | 09:00 | 4 | CLEAN | 0 |
+| 14:00 | 10:00 | 7 | PARTIAL (5–60) | 0 |
+| 15:00 | 11:00 | 7 | PARTIAL | 0 |
+| **13:30–14:30 UTC (9:30–10:30 ET RTH open re-confirm)** | | **7** | **PARTIAL** | **0 (clean)** |
+
+**Manifestation window essentially unchanged** (160/hr vs 163/hr baseline). 08 UTC 10-min sub-bucket distribution: `17 / 37 / 37 / 37 / 13 / 19` — spread across the entire hour, not concentrated in the first sub-bucket the reset-on-subscription hypothesis predicted. **The fix did not take at its target window.**
+
+**Production is measurably WORSE than yesterday on two observable axes:**
+1. **Spike duration tripled.** Yesterday: 04:00 ET window spiked 163/hr then self-cleared to 2/hr by 09 UTC. **Today: spike sustains across 08/09/10 UTC at 160/160/140/hr** — 3 hours of FAIL-band readings instead of 1.
+2. **RTH open contaminated.** Yesterday: 13:30–14:30 UTC was 0/hr (clean). **Today: 7/hr (PARTIAL).** A previously-clean window is now reading partial. 14 UTC and 15 UTC also at 7/hr (PARTIAL) — yesterday both were 0/hr.
+
+**Sample-event proof the same false-positive class is still firing:**
+```
+08:59:43 [SCHWAB-CHART-RECONNECT-CAUSE] exchange_deadline_exceeded=True chart_msg_age=1.4s msg_stale_threshold=90s exchange_deadline=92s
+08:59:18 chart_msg_age=1.3s
+08:59:10 chart_msg_age=1.1s
+08:07:59 chart_msg_age=1.3s
+08:07:51 chart_msg_age=1.0s
+08:07:44 chart_msg_age=2.0s
+08:07:34 chart_msg_age=1.8s
+```
+`chart_msg_age` 1–2s = CHART actively streaming fresh bars. Deadline still trips. **Same false-positive class as 2026-05-26 root cause** — PR #237's hypothesis (warmup carry-over of `last_completed_bar_close_timestamp`) is correct in shape, but the deployed reset mechanism did not eliminate it.
+
+#### Per-discipline actions
+
+- **Production-streamer arc does NOT close** — Fix 2's pass does not round up Fix 1's fail.
+- **PR #227 `[SCHWAB-CHART-RECONNECT-CAUSE]` DEBUG log STAYS** — still load-bearing for Fix-1 diagnosis (every line above is from it).
+- **v2 Day-1 streamer activation STAYS DEFERRED, flag stays OFF.** Deferral condition remains unmet.
+- **CYN untouched. Read-only verdict — no restart, no deploy, no behavior change.**
+- **One workstream closes** (PR #238 chronic-lag exclusion confirmed at the manifestation window).
+- **Two workstreams open:**
+  1. **Diagnose PR #237 failure mode to proof.** Two plausible leads — (a) reset doesn't fire at the 04:00 ET scanner-session roll because the subscription set isn't seen as "net-new" by the patched code path; (b) reset fires but is immediately overwritten when the first CHART bar lands, and subsequent TIMESALE/QUOTE exchange-timestamps from other services trip the 92s deadline against that single-bar baseline. **Don't pick one — prove which.** Same discipline as PR #228/#233: root cause to proof, fix only after, measure clean.
+  2. **Diagnose the new pattern.** Why is the 04:00 ET spike now lasting 3 hours instead of 1, and why is the previously-clean 9:30 ET RTH open now reading partial? Yesterday's pattern self-cleared by 09 UTC; today's persists. **Did PR #237 actively create a new pathway for the deadline to trip in windows where it previously didn't?** This is the part that questions whether #237's mechanism is sound at all, not just incomplete.
+
+#### Open decision (operator) — revert PR #237?
+
+The production state today is **measurably worse than yesterday on two axes** (spike sustained 3h vs 1h; RTH open contaminated 7/hr vs 0/hr). By the observable metrics, Fix 1 is doing net harm. Two options on the table:
+
+- **Revert PR #237 now** — get back to known partial baseline (yesterday's pattern: 1-hour 04:00 ET spike, clean RTH open). Fix 2 (PR #238) is independent code-path-wise and stays in place either way. Trade-off: gives up the slim possibility that #237 fixes some sub-population of events while we diagnose; locks in yesterday's worse-by-one-window state as the working baseline.
+- **Hold and diagnose-first** — carry today's worse-by-two-windows state through tomorrow's session while we prove the actual mechanism. Trade-off: another day of degraded production-streamer behavior before we either revert or apply a targeted fix.
+
+Operator decides after the diagnosis findings land. Do not revert unilaterally.
+
+---
+
 ### 2026-05-28 (16:55 UTC / 12:55 ET) — BOTH RESIDUAL FIXES DEPLOYED (PR #237 + PR #238 in one restart). Stage-one clean. **Verdict is TOMORROW at the bug-manifestation windows, not today.**
 
 **Deploy summary.** Operator is flat / not trading today, so deployed both residual fixes mid-RTH in one strategy-only restart. Verification windows are tomorrow because each residual class only fires at a specific clock time:
