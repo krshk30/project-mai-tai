@@ -874,17 +874,7 @@ class SchwabStreamerClient:
         if pending_command == "UNSUBS":
             state.confirmed_symbols.difference_update(pending_symbols)
         else:
-            new_symbols = set(pending_symbols) - state.confirmed_symbols
             state.confirmed_symbols.update(pending_symbols)
-            if new_symbols and normalized_service == self.CHART_EQUITY_SERVICE:
-                # Fresh CHART subscriptions can carry over a stale
-                # last_completed_bar_close_timestamp from before the set change
-                # (PROVEN 2026-05-28: 163 false exchange_deadline_exceeded reconnects
-                # during the 04:00-04:50 ET scanner-session warmup, all with feed-alive
-                # chart_msg_age ~1-2s). The deadline check returns False on None, so
-                # this disables it until any subscribed symbol publishes a fresh bar.
-                # The separate 90s msg_stale dead-feed guard is unaffected.
-                state.last_completed_bar_close_timestamp = None
         if normalized_service == self.LEVELONE_EQUITIES_SERVICE:
             self._subscribed_symbols = set(state.confirmed_symbols)
         elif normalized_service == self.CHART_EQUITY_SERVICE:
