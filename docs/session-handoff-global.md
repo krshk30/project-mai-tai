@@ -1,5 +1,102 @@
 # Session Handoff - Global
 
+### 2026-05-31 — PR #237 REVERTED (#241, main `2371380`). Production back to known partial baseline. **Original PR #228 cold-start residual is now OPEN with no current fix candidate; fix v2 design is its own workstream.**
+
+**Why reverted.** 2026-05-29 RTH dual verdict (#240) found PR #237 failed at its target window AND made production worse on two observable axes (spike duration tripled 1→3 hours; 9:30 ET RTH open contaminated 0→7/hr). Diagnosis proved the mechanism is **unsound, not just incomplete**:
+1. PR #237's added reset duplicates work `_reset_service_states` (`schwab_streamer.py:956-963`) already does on every reconnect — **no-op on the reconnect path** (the field is already None when SUBS is re-issued).
+2. Races against the self-healing `max()` accumulation in `_record_service_messages_from_payload` (line 920). When Schwab CHART payloads arrive (async) BEFORE the SUBS-confirm ack, max-accumulation has already advanced the baseline to a fresh value; then SUBS-confirm fires, `new_symbols` is non-empty (confirmed_symbols was just cleared at reconnect-start), and the reset **clears that fresh progress back to None**. The next CHART bar — possibly Schwab's most-recent-completed-bar snapshot for a quiet thin penny symbol — re-establishes the baseline as stale.
+3. Re-arms the trap on every mid-session symbol promotion (pre-#237 left the established baseline alone; post-#237 each ADD resets to None and takes whatever close_ts the next CHART bar reports, possibly stale).
+
+**Empirical proof — reconnect counts 08–10 UTC, 10-min sub-buckets (2026-05-29):**
+
+| Bucket | Yesterday (pre-#237 effective) | Today (post-#237) |
+|---|---:|---:|
+| 08:00–09 | 67 | 20 |
+| 08:10–19 | 72 | 74 |
+| 08:20–29 | 71 | 71 |
+| 08:30–39 | 71 | 72 |
+| 08:40–49 | 70 | 72 |
+| **08:50–59** | **1** | **66** |
+| **09:00–09** | **5** | **68** |
+| 09:10–19 | 6 | 66 |
+| 09:20–29 | 7 | 70 |
+| 09:30–39 | 4 | 66 |
+| 09:40–49 | 5 | 65 |
+| 09:50–59 | 5 | 68 |
+| 10:00–09 | 3 | 61 |
+| 10:10–19 | 5 | 67 |
+| 10:20–29 | 4 | 66 |
+| 10:30–39 | 4 | 68 |
+| 10:40–49 | 7 | 68 |
+| 10:50–59 | 3 | 62 |
+| **TOTAL 08–10 UTC** | **410** | **1190 (2.9× WORSE)** |
+
+Yesterday: collapsed to 1/10min by 08:50 — self-clearing once max() advanced the baseline. Today: sustained 60–70/10min for 3+ hours; self-clearing destroyed by the reset.
+
+Per-hour `exchange_deadline_exceeded=True` count (PR #227 DEBUG log): 08 UTC yesterday/today = 163/160 (FAIL/FAIL); 09 UTC = 2/160 (CLEAN/FAIL); 10 UTC = 0/140 (CLEAN/FAIL); 13:30–14:30 UTC RTH open = 0/7 (CLEAN/PARTIAL).
+
+**Sample log lines proving the false-positive class continued firing post-#237** (chart_msg_age 1–2s = feed actively streaming, yet deadline trips):
+```
+08:59:43 [SCHWAB-CHART-RECONNECT-CAUSE] exchange_deadline_exceeded=True chart_msg_age=1.4s msg_stale_threshold=90s exchange_deadline=92s
+08:59:18 chart_msg_age=1.3s
+08:59:10 chart_msg_age=1.1s
+09:00:01 chart_msg_age=1.4s
+09:00:10 chart_msg_age=1.1s
+09:01:49 chart_msg_age=1.7s
+```
+
+**Deploy mechanics (2026-05-31).** Operator flat / not trading; weekend (markets closed) — even lower timing risk than yesterday's mid-RTH deploy. Manual `systemctl restart project-mai-tai-strategy.service` (`deploy_preflight.py` would still fail on the CYN baseline, same standing item). Pre-flight: `/api/positions open=0`; `/api/reconciliation total_findings=1 critical_findings=1` (CYN-only). Strategy-only restart at **12:31:48 UTC** (new MainPID, NRestarts=0). Editable runtime reinstall clean. Verified at source pre-restart: PR #237 reset block (`Fresh CHART subscriptions...`) = 0 matches (revert applied); PR #238 `_schwab_cluster_reconnect_chronic_lag_threshold_secs` = 2 matches (Fix 2 preserved).
+
+**Stage-one verify (measured 12:42 UTC, ~10 min post-restart) — CLEAN:**
+- `NRestarts=0`, `ActiveState=active`, `SubState=running`. New MainPID 1761591.
+- **0 tracebacks** since 12:31:48 restart.
+- Clean startup sequence: `strategy-engine starting` → `bot config | bots=['macd_30s', 'polygon_30s', 'schwab_1m']` → PR #192 max-age check correctly skipping alert-engine/confirmed-candidate restore from stale 2026-05-29 persisted session (today's session_start=2026-05-31T08:00:00+00:00; gap >1h triggers the clean-start) → `prefilled momentum alert history from 64 snapshot batches` → snapshot batches processing normally (alerts=0 confirmed=0 — expected, markets closed).
+- Schwab streamer connected at 12:32:34 UTC. Then ~60s `socket closed cleanly; reconnecting` cycles through the window (~11 reconnects in ~10 min ≈ 66/hr equivalent). **This matches the known pre-existing `ConnectionClosedError "sent 1000; no close frame received"` flap** from the 2026-05-27 17:00 UTC verdict entry (~57/hr baseline, "non-chart liveness/recycle trigger"). NOT introduced by the revert — it is a separate, pre-existing residual that PR #228/#237 never targeted.
+- `exchange_deadline_exceeded=True` since restart: **0**. (Sunday off-hours — no trading exchange ts driving the deadline; expected. The real test for this counter is tomorrow's 04:00 ET window.)
+- `forced full Schwab streamer reconnect for stale schwab_1m cluster` since restart: **0**. (PR #238 still effective — no spurious cluster reconnects.)
+- Bot heartbeats fresh (all four bots heartbeat + market_data within the measurement window).
+- Source verification post-restart: PR #237 reset block = 0 matches; PR #238 chronic-lag setting = 2 matches.
+
+**CAVEAT:** stage-one is "deployed clean, no breakage." The real verdict is the next 04:00 ET bug-manifestation window (the original residual class fires only at scanner-session start).
+
+### 🚩 NEXT 04:00 ET PRE-MARKET — falsifiable prediction (revert worked)
+
+Streamer behavior should return to yesterday's pre-#237 pattern at the next trading day's 04:00 ET / 08 UTC:
+- `exchange_deadline_exceeded=True` ~**163/hr** at 08 UTC (warmup spike — UNFIXED, same as pre-#237).
+- **Self-clearing** to ~`<5/hr` by 08:50 UTC, then **~0/hr** the rest of the morning.
+- **RTH open (13:30–14:30 UTC) back to 0/hr** (vs 2026-05-29's 7/hr contaminated reading).
+- PR #238 (`forced full Schwab streamer reconnect for stale schwab_1m cluster`) stays clean at <5/hr at every bucket including the 11 UTC pre-market-open manifestation window — independent code path, was confirmed clean at the 2026-05-29 verdict (PR #240).
+
+If prediction holds: revert is confirmed, we're back to the known partial baseline, original PR #228 cold-start residual is the unfixed-but-known problem awaiting a real fix design.
+If prediction misses: something else is broken — diagnose to proof, don't assume.
+
+### Production-streamer arc state
+
+- **PR #238 (`d6d83eb` chronic-lag exclusion):** ✅ confirmed clean at 2026-05-29 verdict (1/hr vs 10/hr at 11 UTC manifestation window; ~99% reduction; 0/hr at RTH open). **Stays in place — independent code path, separate workstream, do not touch.**
+- **PR #237 (`350f3d7` reset on SUBS-confirm):** ❌ reverted as unsound (#241 `2371380`). Mechanism diagnosis above.
+- **PR #228 cold-start residual (the 04:00 ET 163/hr warmup spike):** ⚠️ **OPEN with no current fix candidate.** Self-clears within ~50 min, no user-facing latency impact (pre-trading window), but it is a strict-spec FAIL bucket and a known logic class.
+- **PR #227 `[SCHWAB-CHART-RECONNECT-CAUSE]` DEBUG log:** stays — load-bearing for fix v2 diagnosis.
+- **Separate `ConnectionClosedError "sent 1000"` ~57–66/hr flap:** pre-existing, surfaced at 2026-05-27 17:00 UTC verdict; NOT addressed by #228/#237/#241; observed continuing post-revert at the same baseline. Own workstream (`_handle_service_liveness_timeout` on a non-chart service, or the 90s msg_stale branch #228 left untouched).
+- **v2 Day-1 streamer activation:** stays DEFERRED, flag OFF. Deferral condition ("production streamer stable") remains unmet — back to the known partial baseline, not zero.
+- **CYN:** untouched.
+
+### Fix v2 design — its own workstream, design-first discipline
+
+The lesson from PR #237: a careful design review BEFORE code would have caught the no-op-on-the-reconnect-path issue (the added reset is identical-effect to the pre-existing `_reset_service_states` call) AND the race against `_record_service_messages_from_payload`'s max-accumulation. **The discipline gate for fix v2 is: write up the design + tradeoffs + edge cases as a design doc, bring it for review, build code only after approval.**
+
+Three design directions on the table (now-proven-mechanism informed):
+1. **Per-symbol `last_completed_bar_close_timestamp`.** Track per-symbol; deadline check compares against the MAX across all subscribed symbols. Removes single-global-baseline-corrupted-by-one-stale-bar failure mode. Tradeoff: more state, more memory, dict update on every CHART payload. Edge case: what is "subscribed" when subscription set changes mid-session?
+2. **MAX-of-all-symbols' close timestamps with no reset.** Keep single global, but never reset it; rely on `max()` accumulation in `_record_service_messages_from_payload`. Once advanced past `now − 92s`, stays clean for the session. Tradeoff: at cold-start with all-stale CHART snapshots, baseline still gets set to stale; need a separate cold-start grace mechanism. Simpler than (1) but doesn't solve all cases.
+3. **N-second deadline-disable after subscription change.** Don't reset state; instead, suppress the deadline check for N seconds after any SUBS/ADD/UNSUBS. Same effect as #237's intent but without touching state (no race with max-accumulation). Tradeoff: harder to size N — too short and the warmup still trips, too long and the genuine deadline check is muted across busy promotion windows. Edge case: what counts as a subscription change? (Every reconnect's force-resubscribe should not count, otherwise it's permanently disabled.)
+
+None of these is approved; the next session's design pass is the next step.
+
+### Open after this revert — CI restoration carry-forward note
+
+Admin-bypass of red CI was the merge path for #241 (same as #237 originally). Tolerable for this revert specifically — diff is a pure inverse, no design risk — but the inability to gate on real CI was a contributing factor to #237 shipping despite its flaws. **CI-restoration stays the top non-trading priority once the production-streamer arc is settled.** Carry forward — don't lose it.
+
+---
+
 ### 2026-05-29 (RTH dual verdict, measured 16:30 UTC / 12:30 ET) — Fix 2 (PR #238) **CLEAN PASS** and closes its workstream. Fix 1 (PR #237) **FAIL** — production is **measurably worse** than yesterday on two observable axes (spike duration tripled; RTH open contaminated). **Production-streamer arc does NOT close.**
 
 **Pre-flight.** Strategy service uptime since 2026-05-28 16:55:37 UTC (yesterday's deploy), `NRestarts=0`, `MainPID=1700379` — no restart intervened, clean measurement window. Both fixes still present in deployed VPS source (`schwab_streamer.py` PR #237 marker present; `strategy_engine_app.py` `_schwab_cluster_reconnect_chronic_lag_threshold_secs` present 2×). Read-only verdict — no restart, no deploy, no behavior change. CYN untouched.
