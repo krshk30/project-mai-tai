@@ -322,6 +322,15 @@ class Settings(BaseSettings):
     schwab_stream_symbol_resubscribe_interval_seconds: float = 5.0
     schwab_emergency_close_rest_rescue_enabled: bool = True
     schwab_prewarm_symbol_ttl_seconds: float = 900.0
+    # CHART_EQUITY subscription grace window (fix v3, 2026-06-01). After a
+    # SUBS/ADD/UNSUBS confirmation, suppress the case-2 path 2 short-circuit
+    # in SchwabStreamerClient._should_force_reconnect_for_chart_inactivity
+    # for this many seconds, so CHART has a chance to deliver its first bar
+    # after subscription. 0 = use computed default (CHART_BAR_INTERVAL_SECONDS
+    # + max(30, schwab_stream_symbol_stale_after_seconds * 4) = 92s with the
+    # default base=8s — matches PR #228's interval-aware deadline knob).
+    # See docs/schwab-chart-grace-window-design.md for the full reasoning.
+    schwab_chart_subscription_grace_seconds: float = 0.0
     protected_symbols: str = ""
     webull_base_url: str = "https://api.webull.com"
     webull_region_id: str = "us"

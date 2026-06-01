@@ -776,7 +776,50 @@ class SchwabStreamerClient:
             now - chart_state.last_message_monotonic
         ) <= self._service_stale_after_seconds(self.CHART_EQUITY_SERVICE):
             return False
+        # CHART subscription grace window (fix v3, 2026-06-01 — see
+        # docs/schwab-chart-grace-window-design.md). Suppress the case-2
+        # short-circuit below for ~one CHART bar interval + slack after the
+        # most recent Schwab response for CHART_EQUITY (`last_response_monotonic`
+        # is bumped at schwab_streamer.py:642 on any SUBS/ADD/UNSUBS confirm).
+        # Without this, the path-2 check below trips within ~8s of every
+        # reconnect because TIMESALE/LEVELONE start delivering messages
+        # immediately while CHART_EQUITY's first 1-min bar is still waiting
+        # for the next minute boundary — producing the 2026-06-01 cascade
+        # (PROVEN 369/hr at 08 UTC, 100% chart_msg_age=none).
+        #
+        # Grace deliberately overrides stale path-3 message clocks because a
+        # fresh SUBS-confirm invalidates the prior stream's freshness — the
+        # new subscription's bars haven't had their chance to arrive yet.
+        #
+        # During cold-start ADD churn (4 AM ET watchlist build), grace stays
+        # active across successive ADDs by design — churn signals legitimate
+        # subscription-state activity. Path 1 (`_chart_exchange_deadline_exceeded`)
+        # above is checked first and remains the load-bearing dead-feed guard:
+        # if CHART is genuinely dead while TIMESALE is alive, the exchange
+        # clock advances past `last_completed_bar_close_timestamp + 92s` and
+        # path 1 fires regardless of grace.
+        if chart_state.last_response_monotonic is not None and (
+            now - chart_state.last_response_monotonic
+        ) <= self._chart_subscription_grace_seconds():
+            return False
         return self._other_services_showing_life(self.CHART_EQUITY_SERVICE, now)
+
+    def _chart_subscription_grace_seconds(self) -> float:
+        # Default = CHART_BAR_INTERVAL_SECONDS (60s) + delivery slack
+        # (max(30s, base*4) = 32s with default base=8s), totaling 92s —
+        # identical to `_chart_exchange_deadline_seconds()` by construction
+        # so the same `schwab_stream_symbol_stale_after_seconds` knob retunes
+        # both. Operator can override the entire computation via
+        # `MAI_TAI_SCHWAB_CHART_SUBSCRIPTION_GRACE_SECONDS` if production
+        # data suggests a different value (e.g., wider grace during a
+        # transient Schwab slowdown).
+        configured = float(
+            getattr(self.settings, "schwab_chart_subscription_grace_seconds", 0.0) or 0.0
+        )
+        if configured > 0:
+            return configured
+        base = max(5.0, float(self.settings.schwab_stream_symbol_stale_after_seconds))
+        return self.CHART_BAR_INTERVAL_SECONDS + max(30.0, base * 4.0)
 
     def _other_services_showing_life(self, service: str, now: float) -> bool:
         for other_service, state in self._service_states.items():

@@ -1,5 +1,83 @@
 # Session Handoff - Global
 
+### 2026-06-01 — Post-revert verdict diagnosed; **case-2 path proven** as the real cold-start mechanism. **Yesterday's three fix v2 directions are obsolete — discarded.** Fix v3 design doc shipped (`docs/schwab-chart-grace-window-design.md`) for review before code.
+
+**Verdict against falsifiable prediction.** Both confirmed AND missed in unexpected ways. **Falsifiable mini-prediction held on bar-flow axis, missed on trigger-mechanism axis.**
+
+| Prediction | Actual | Verdict |
+|---|---|---|
+| Bar-flow held during reconnect storm | ✅ schwab_1m 0.63–0.98 bars/sym/min at 08–10 UTC, persist-lag avg 7–9s max ≤102s. macd_30s, polygon_30s also healthy. | **CONFIRMED — system fed throughout** |
+| 08 UTC reconnects = 90s-msg-stale branch | ❌ Different trigger: case-2 path (`chart_msg_age=none` + `_other_services_showing_life`) | **NEW UNKNOWN — now characterized** |
+| PR #237 reset removed → false-positive class gone | ✅ 0 `exchange_deadline_exceeded=True` events all day | **CONFIRMED** |
+| PR #238 stays clean at 11 UTC manifestation window | ✅ 0/hr at 11 UTC (07 ET pre-mkt open) | **CONFIRMED** |
+| RTH open (13:30–14:30 UTC) for both fixes | exchange_deadline=0 ✓; forced cluster reconnect = 9 (predicted 0) | **MIXED** |
+
+**Proven mechanism — case-2 path in `_should_force_reconnect_for_chart_inactivity`** (`schwab_streamer.py:769–779`). After every reconnect, `_reset_service_states` clears CHART state; SUBS re-issued; TIMESALE/LEVELONE start delivering messages tick-by-tick (sets `other_services_showing_life=True`); CHART_EQUITY waits for the next minute boundary (0–60s) to emit its first 1-min bar; within ~1s the recv-loop fires `_handle_service_liveness_timeout`, which calls `_should_force_reconnect_for_chart_inactivity`. CHART has confirmed_symbols but `last_message_monotonic is None` → falls through to `_other_services_showing_life` (returns True) → reconnect. Cycle reseats every ~8s.
+
+**Measured production data (2026-06-01, post-PR-#241 revert):**
+
+| UTC | ET | `connection loop failed`/hr | `exchange_deadline_exceeded=True`/hr | `chart_msg_age=none` of WARNs |
+|---|---|---:|---:|---:|
+| 08:00 | 04:00 | 369 | 0 | 100% |
+| 09:00 | 05:00 | 417 | 0 | 100% |
+| 10:00 | 06:00 | 396 | 0 | 100% |
+| 11:00 | 07:00 | 8 | 0 | residual tail |
+| 13:00–17:00 | 09:00–13:00 | 1–6 | 0 | mostly PR #238 fires |
+| 18:00 | 14:00 | 16 | 0 | PR #238 cluster-stall spike |
+| 20:00 | 16:00 | 38 (initial count 17 was undercount) | 0 | PR #238 RTH-close spike |
+
+100% of 08 UTC WARN events show the case-2 signature. The cascade is the genuine third reconnect class.
+
+**Bar-flow continuity through the cascade** (validator query against `strategy_bar_history`):
+
+| UTC | schwab_1m bars/sym/min | avg persist-lag (s) | max persist-lag (s) |
+|---|---:|---:|---:|
+| 08 | 0.627 | 7.6 | 102 |
+| 09 | 0.983 | 7.6 | 65 |
+| 10 | 0.893 | 9.1 | 75 |
+| 11 | 0.739 | 6.0 | 102 |
+| 12 | 0.904 | 7.5 | 154 |
+
+System was fed throughout. The cascade is loud-in-logs but operationally invisible (REST history-replay path covers gaps).
+
+**PR #238 spikes at 18 UTC / 20 UTC characterized:** all events show `oldest_lag ≤ 300s` — at or below the chronic-lag exclusion threshold. PR #238 correctly NOT excluding them; they ARE real cluster stalls (4–33 symbols lagging 2–5 min from expected_completed). Behavior is by-design. Why these spikes happened today vs yesterday: today's watchlist held 32–44 symbols during 18–20 UTC vs yesterday's 11–21 → higher probability of cluster-wide stalls exceeding the gate threshold.
+
+### Path A decision: design fix v3 against the proven mechanism
+
+**Yesterday's three fix v2 design directions are OBSOLETE** — they addressed the wrong sub-problem (path 1, the exchange-deadline check, which is silent post-revert). Discarded explicitly:
+- ~~Per-symbol `last_completed_bar_close_timestamp`~~ — addressed path 1.
+- ~~MAX-of-all-symbols' close timestamps with no reset~~ — addressed path 1.
+- ~~N-second deadline-disable after subscription change~~ — addressed path 1.
+
+**New fix v3 direction: a grace window on path 2.** One narrow change at one call site in `_should_force_reconnect_for_chart_inactivity`. Don't fire path 2 for the first ~92s after the most recent SUBS-confirm (anchored on `state.last_response_monotonic`). Default N = 92s matches PR #228's interval-aware deadline tolerance. Design doc: **`docs/schwab-chart-grace-window-design.md`**.
+
+The design doc covers stress-testing against the operator's three named risks (interaction with `_reset_service_states`, with PR #228's interval-aware deadline, and survival across force-resubscribe), the seven proposed unit tests, falsifiable prediction for the post-deploy 04:00 ET verdict, and explicit out-of-scope items. **No code is written until the design doc is approved.**
+
+### 🚩 Workstream state after this verdict
+
+- **PR #228 cold-start residual:** now correctly understood as the **case-2 path**, not the exchange-deadline path. Awaiting fix v3 design approval.
+- **PR #237:** reverted, mechanism confirmed dead.
+- **PR #238:** confirmed clean at its 11 UTC manifestation window. The 18/20 UTC spikes are by-design firings within the 300s chronic-lag threshold — not a regression.
+- **PR #227 `[SCHWAB-CHART-RECONNECT-CAUSE]` DEBUG log:** stays — still load-bearing for the post-fix-v3 verdict.
+- **Separate `socket closed cleanly` ~65/hr flap:** unchanged, separate workstream.
+- **🆕 polygon_30s persist-lag growth (NEW open item):** avg 1.7–9.8s at 08–12 UTC, climbs to avg 1489s / max 1558s by 20 UTC. Independent of Schwab streamer (Polygon WebSocket aggregate-bars data path). Schwab-independent → not blocking fix v3 or v2 Day-1. Needs its own diagnosis pass when the production-streamer arc closes.
+- **v2 Day-1 streamer activation:** stays DEFERRED, flag OFF. Deferral condition (production streamer stable for collision-check readability) blocked by the ~400/hr case-2 cascade — should clear after fix v3 lands.
+- **CYN:** untouched.
+
+### Fix v3 deploy plan (pending design approval, then code, then PR)
+
+1. Design doc lands → operator reviews → approval signal.
+2. Implementation PR: 10-line change at `_should_force_reconnect_for_chart_inactivity` + new `_chart_subscription_grace_seconds` helper + new `Settings.schwab_chart_subscription_grace_seconds` field + 7 unit tests in new file `tests/unit/test_schwab_streamer_chart_grace.py`. Pre-Merge Regression Check against current `origin/main` baseline.
+3. Stop for review of code + regression.
+4. Attended deploy after operator trading window closes (~6 PM ET / 22:00 UTC). Account-flat at restart, CYN-only-blocker re-verified, strategy-only restart, post-deploy stage-one verify.
+5. **Falsifiable stage-two prediction (next 04:00 ET / 08 UTC window):** `[SCHWAB-CHART-RECONNECT-CAUSE]` rate at 08 UTC drops from ~370/hr to under ~20/hr; bar-flow continues to hold cleanly; no `exchange_deadline_exceeded=True` events introduced; PR #238 11 UTC stays clean.
+
+### CI restoration carry-forward (unchanged)
+
+Admin-bypass of red CI remains the merge path. CI-restoration remains the top non-trading priority once the production-streamer arc fully closes (fix v3 verdict confirms).
+
+---
+
 ### 2026-05-31 — PR #237 REVERTED (#241, main `2371380`). Production back to known partial baseline. **Original PR #228 cold-start residual is now OPEN with no current fix candidate; fix v2 design is its own workstream.**
 
 **Why reverted.** 2026-05-29 RTH dual verdict (#240) found PR #237 failed at its target window AND made production worse on two observable axes (spike duration tripled 1→3 hours; 9:30 ET RTH open contaminated 0→7/hr). Diagnosis proved the mechanism is **unsound, not just incomplete**:
