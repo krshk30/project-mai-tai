@@ -1,6 +1,11 @@
 # Design: CHART_EQUITY case-2 grace window (fix v3 for PR #228 cold-start residual)
 
-**Status:** design proposal — pending review. **Do not implement code until this doc is approved.**
+**Status:** **APPROVED 2026-06-01 with three required changes (now incorporated below)**. Proceeding to implementation.
+
+**Resolved open questions:**
+- **OQ1 (test case 4 semantics — grace + stale path-3 message):** **suppress.** A fresh SUBS-confirm semantically invalidates the prior stream's freshness clock — the new subscription's bars haven't had their chance to arrive yet. Production code carries an explicit comment at the grace check stating this.
+- **OQ2 (default N):** **92s.** Alignment with PR #228's `_chart_exchange_deadline_seconds()` is a feature (single tuning knob via `schwab_stream_symbol_stale_after_seconds`).
+- **OQ3 (settings placement):** **env-tunable** `Settings.schwab_chart_subscription_grace_seconds`, default 0 means "use computed default." Matches the existing codebase pattern (e.g., PR #238's `schwab_cluster_reconnect_chronic_lag_threshold_secs`).
 
 **Origin:** the 2026-06-01 verdict against the post-revert (`241`) baseline diagnosed a third reconnect-cause class distinct from what PR #228 and the reverted PR #237 targeted. See `docs/session-handoff-global.md` (2026-06-01 entry) for the verdict findings, and the related memory `[[project-mai-tai-schwab-bar-build-canonical-pipeline]]` for the broader pipeline context.
 
@@ -161,15 +166,29 @@ The grace window suppresses path 2 for N=92s after the most recent SUBS-confirm.
 
 **Detection of CHART feed going dark mid-session:** unchanged. Once any CHART message has arrived, path 3 governs. Stale-after-90s detection continues to work as today.
 
-### 5.5 Worst-case ADD churn
+### 5.5 Worst-case ADD churn — **this IS the 4 AM cold-start window**
 
-Scenario: scanner adds a new symbol every ~30s for an extended period. Each ADD bumps `last_response_monotonic`. Grace stays active indefinitely. Could that mask a real CHART problem?
+The previous version of this section dismissed perpetual-grace-via-ADD-churn as needing "Schwab CHART broken AND scanner constantly adding symbols." Operator review correctly flagged that **the second condition is the normal 4:00 ET cold-start state** — the scanner is building today's watchlist symbol-by-symbol over the warmup window. ADD churn is not an edge case; it is the manifestation window for the bug being fixed.
 
-- Path 1 (exchange-deadline) is unaffected by grace — still fires if CHART completed bars fall behind. Catches "CHART bars exist but lag the live clock."
-- Path 3 (msg_stale 90s) takes over once at least one CHART message has been received. If after the first ADD, CHART delivers any bar, path 3 governs subsequent staleness regardless of further ADD churn.
-- Path 2 with grace only suppresses the "we just SUBS'd and haven't received the first message yet" case. If we've received CHART data at all in this connection session, path 3 is the active detector, not path 2.
+The correct reasoning:
 
-So worst case the grace masks **"we keep ADDing new symbols but CHART has never delivered any message for any symbol."** That's an unusual state — would require both Schwab CHART being broken AND the scanner constantly adding new symbols. Path 1's exchange-deadline still catches CHART staleness if TIMESALE is alive (which it would be if scanner is acting on it). Acceptable boundary case.
+**During cold-start ADD churn, path 1 (`_chart_exchange_deadline_exceeded`) is the load-bearing dead-feed guard.** Path 1 fires when the TIMESALE/LEVELONE exchange clock (`latest_other_exchange_ts`) advances 92s past `chart_state.last_completed_bar_close_timestamp`. If CHART is genuinely dead while TIMESALE is alive (the only scenario where ADD churn could mask anything), the exchange clock keeps advancing on TIMESALE messages and path 1's deadline trips — **regardless of grace status, because path 1 is checked before the grace window in `_should_force_reconnect_for_chart_inactivity`**.
+
+The grace window is intentionally permissive during ADD churn because **churn signals legitimate subscription-state activity** — the scanner is actively telling the streamer what to subscribe to, and each subscription change needs its own ~92s for CHART to deliver the first bar. Aggressively forcing reconnects during churn is the cascade we're trying to fix.
+
+**Combined coverage:**
+
+| Condition during ADD churn | Detector |
+|---|---|
+| CHART delivering bars, lag normal | nothing fires (correct) |
+| CHART delivering bars, completed-bar timestamps lagging the live clock | **path 1** fires regardless of grace |
+| CHART silent, TIMESALE alive (cascade scenario) | path 2 with grace = grace suppresses (correct: bar gap window after each SUBS) |
+| CHART silent, TIMESALE alive, lasting beyond one grace window with no new SUBS | path 2 fires (grace expires) |
+| CHART genuinely dead-and-TIMESALE-clock-running mid-churn | **path 1** fires on the exchange-deadline (`latest_other_exchange_ts > chart_close_ts + 92s`) |
+
+The only scenario the grace masks is "CHART silent + TIMESALE silent + constant ADD churn" — but if TIMESALE is silent, `_other_services_showing_life` returns False at line 779 and path 2 doesn't fire either way. So the grace masks nothing that the existing detectors didn't already let pass.
+
+**This reasoning will also appear as a code comment at the grace check** so a future reader can re-derive it without coming back to the design doc.
 
 ### 5.6 What about the `socket closed cleanly` flap (the separate 57–66/hr pre-existing pattern)?
 
@@ -186,6 +205,18 @@ Unit tests in `tests/unit/test_schwab_streamer_chart_grace.py` (new file, narrow
 5. **`test_grace_window_restarts_on_add_subs_confirm`** — initial SUBS-confirm at t=0, second ADD-confirm at t=60. At t=90, grace should still be active (anchor is t=60). At t=160, grace expired.
 6. **`test_grace_window_clears_after_reset_service_states`** — populate state, call `_reset_service_states`, assert last_response_monotonic is None. After reset, path 0 short-circuits (no confirmed_symbols) so the question doesn't arise — but the grace anchor IS properly cleared (matches reconnect semantics).
 7. **`test_no_grace_means_legacy_path_2_behavior`** — set `settings.schwab_chart_subscription_grace_seconds = 0.01` (effectively disabled). Re-run test 1's setup: should now return True (path 2 fires immediately). Regression hatch for operator to disable the grace if it ever turns out to be wrong.
+8. **`test_grace_window_breaks_cold_start_cascade`** — **THE regression guard for this specific fix.** All other tests prove the function returns the right value in isolation; this one proves the actual cycle is broken. Simulate the full cascade sequence:
+    1. Start with state populated as if mid-session.
+    2. Call `_reset_service_states()` — confirmed_symbols empty, anchors all None.
+    3. Call `_should_force_reconnect_for_chart_inactivity(now=t)` — returns False via path 0 (no confirmed_symbols).
+    4. Simulate SUBS-confirm at t: `_mark_subscription_request_confirmed` populates `confirmed_symbols = {syms}` AND sets `last_response_monotonic = t`.
+    5. Simulate TIMESALE service alive (`last_message_monotonic = t-1`, confirmed non-empty).
+    6. At t+1s, t+10s, t+30s, t+60s — call `_should_force_reconnect_for_chart_inactivity` four times: **all must return False** (grace active; without the fix, all four would return True under the path-2 cascade).
+    7. At t+45s, simulate first CHART bar arrival: set `chart_state.last_message_monotonic = t+45`.
+    8. At t+95s (past grace expiry): call again. Path 3 governs because last_message_monotonic = t+45 is within stale_threshold of t+95 (50s < 90s). Returns False (CHART has recent message).
+    9. At t+200s, no new messages: `now - last_message_monotonic = 155 > 90` → path 3 falls through → grace check uses anchor t (200s > 92s grace) → falls through → path 2 fires. Returns True (correct: CHART has gone genuinely silent).
+    
+    Proves: cascade broken (steps 6 all-False); first-bar handoff to path 3 (step 8); long-term staleness still detected (step 9).
 
 Integration / regression tests:
 - **`test_existing_PR_228_regression_guards_pass`** — the PR #228 tests that assert exchange-deadline behavior should be unaffected. Run them.
@@ -221,11 +252,11 @@ After code + tests land in PR + admin-merge + sync + restart:
 - **Does not change the strategy-engine REST history-replay path.** That path is what kept bar-flow healthy during today's cascade; we leave it alone.
 - **Does not introduce per-symbol state, MAX-of-all timestamps, or any of yesterday's three discarded directions.** This is a single function-level guard at one call site.
 
-## 9. Open questions for review
+## 9. Resolved review decisions
 
-1. **Test case 4 (grace + stale message).** When CHART has prior messages but they're past the 90s stale threshold AND we just resubscribed (grace active), should we suppress reconnect or fire? I argue suppress (let new SUBS deliver fresh bars). Alternative: fire (the prior staleness is suspicious enough). Reviewer's call.
-2. **Default N value.** Proposed 92s (matches PR #228's exchange-deadline). Alternatives: 120s (safer margin), 60s (tighter, equals one CHART interval). I lean 92s for the alignment with the existing deadline knob. Open to discussion.
-3. **Where to land the settings field.** `schwab_chart_subscription_grace_seconds` in `Settings`. Default 0 means "use the computed default" (92s). Operator-tunable. Acceptable, or prefer a hard-coded value?
+1. **OQ1 — grace + stale path-3 message:** **suppress.** A SUBS-confirm semantically invalidates the prior stream's freshness clock. The implementation comment at the grace-window check carries this reasoning verbatim so a future reader can re-derive it from the code alone.
+2. **OQ2 — default N:** **92s** = `CHART_BAR_INTERVAL_SECONDS + max(30, base*4)`, identical to `_chart_exchange_deadline_seconds()`. Single tuning knob shared with PR #228's exchange-deadline.
+3. **OQ3 — settings placement:** env-tunable `Settings.schwab_chart_subscription_grace_seconds`, default 0 means "use computed default." Matches PR #238's `schwab_cluster_reconnect_chronic_lag_threshold_secs` pattern.
 
 ## 10. Out of scope explicitly
 
