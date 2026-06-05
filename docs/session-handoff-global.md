@@ -1,5 +1,149 @@
 # Session Handoff - Global
 
+### 2026-06-05 — 🚨 ~2.6-DAY FULL-PIPELINE OUTAGE (shared-Schwab-token SPOF, now FATAL). Recovered. SPOF hardening re-sequenced to TOP priority, ahead of fix-v3 verdict and v2.
+
+**TL;DR.** A dead shared Schwab refresh token at the 06-03 08:00 UTC scanner-session
+roll threw an uncaught exception that killed strategy-engine's main loop. The process
+stayed "active" (zombie: streamer-reconnect task alive, main/heartbeat/bar-persist task
+dead) → no subscription targets → market-data 0 active symbols → **entire bot fleet
+dark, including Schwab-independent polygon_30s**, from **06-03 08:00:17 UTC to 06-05
+21:45 UTC (~2.6 days / ~61.7h)**. Account was flat the whole time so there was **no
+trading loss — but that was luck (operator wasn't trading this week), not resilience.**
+Recovered via operator re-auth + disciplined restart. The SPOF is now the #1 workstream.
+
+**Timeline bridge (lost deploy record).** fix v3 (PR #243, grace window) deployed
+**06-01 22:03 UTC, stage-one clean** — that deploy record was lost when the IDE closed
+and is absent from committed history, so the permanent record otherwise jumps from
+"06-01 design doc shipped, awaiting review" straight to this outage. Recorded here so the
+committed timeline has no gap.
+
+#### Outage shape (measured)
+
+- **strategy-engine main loop died 06-03 08:00:17 UTC** (= 04:00 ET scanner-session
+  roll). Last `snapshot batch processed` and last `mai_tai:strategy-state` entry both
+  08:00:17; **zero strategy-engine heartbeats** for the following ~2.6 days. Process
+  `active (running)`, NRestarts=0 the entire time — alive but zombified.
+- Bar persistence by day (all bots): 06-02 healthy (macd_30s 16,873 / polygon_30s
+  39,680 / schwab_1m 22,739 / v2 12,900) → **06-03 collapse (6 / 0 / 2 / 1,054)** →
+  **06-04 and 06-05: zero across the board.** polygon_30s (Schwab-independent) going
+  dark confirms the failure was upstream of any single data source — the whole strategy
+  pipeline, not the Schwab feed alone.
+- market-data-gateway stayed "healthy" but `active_symbols=0` (nothing to subscribe to
+  once strategy stopped publishing targets).
+
+#### Root cause: shared-Schwab-token SPOF, escalated from "degraded" to "fatal"
+
+- The shared refresh token (`/var/lib/macd-webhook-server/data/schwab_tokens.json`,
+  used by streamer + REST broker adapter + OMS) died ~06-03. At the 06-03 08:00 scanner
+  roll, `_sync_subscription_targets` / Schwab hydration hit the dead token and an
+  **uncaught exception killed the main processing task**. The streamer-reconnect loop is
+  a separate asyncio task, so it kept running (and spamming `unsupported_token_type` /
+  `Refresh token is invalid, expired or revoked` tracebacks every ~5s, reaching attempt
+  #23k+), masking the fact that the main loop was dead.
+- This is the **2026-05-27 SPOF, now fatal**: previously it presented as degraded
+  streamer/REST; this time it zombified the whole engine. The 2026-05-22 scanner-outage
+  guard (keep publishing strategy-state when subscription-sync stalls) **does not cover
+  this fatal path** — the exception escaped it.
+
+#### The choreography failures that turned a token-roll into a multi-day outage
+
+1. **06-03 06:35:12 UTC** — all 7 services coordinated-restarted (NOT a reboot:
+   49-day uptime; no mai-tai cron/timer; trigger untraceable without journal-group
+   access). This loaded the already-dying pre-re-auth token. Clean startup, ran ~1.5h,
+   then died at the 08:00 roll.
+2. **06-03 11:45:12 UTC** — token re-authed, but **services were never restarted
+   afterward** → exactly the 2026-05-27 "re-auth alone does not recover the running
+   process" failure. Brief streamer success 11:51–11:52, then dead again (see watch
+   item). Nothing restarted until recovery on 06-05.
+   - **Proven code cause:** the Schwab auth adapter calls `_load_token_store()` only in
+     `__init__`, so it caches the token for the process lifetime and re-reads it only on
+     restart (confirmed by code inspection this session). This is *why* re-auth without
+     restart is a no-op — and the proven starting point for Workstream B below, not just
+     observed behavior.
+
+#### Recovery (2026-06-05, attended, account-flat, markets closed)
+
+1. Operator re-auth → token store mtime **21:41:53 UTC** (verified fresh; running
+   streamer still failing on cached dead token, confirming restart was required).
+2. Pre-flight: `virtual_positions` **ALL FLAT**; markets closed (Fri after-hours);
+   explicit operator GO.
+3. Choreography: **stop strategy → restart OMS → start strategy** (both re-read the
+   fresh token; no intent/OMS race). Restart 21:45:16 (OMS) / 21:45:18 (strategy).
+   schwab_1m_v2 also restarted (its REST shares the dead cached token).
+4. Stage-one verify (proof, not assumption):
+   - **Streamer connected 21:45:44** on the fresh token; stable since (1 transient fail
+     during the stop/start gap, 0 auth fails after).
+   - **Main loop alive** — snapshot batches every ~6s; **strategy-engine heartbeat back**;
+     `mai_tai:strategy-state` advancing (frozen 06-03 08:00:17 → live 21:47:38).
+   - **OMS token spam cleared** (60k+ failure tracebacks → gone; only pre-existing benign
+     config warnings remain: `missing Alpaca credentials`, `missing Schwab account hash
+     for paper:schwab_1m_v2`).
+   - All 7 services active.
+- **Not yet provable** (deferred to next active market window): `active_symbols=0` is
+  expected after-hours (`confirmed=0`), so **bar-flow recovery is plumbing-proven but
+  not market-proven** until Monday pre-market.
+
+#### Watch item — did the new token actually stick?
+
+The **06-03 11:45 re-auth died within hours** — abnormal for a 7-day refresh token.
+Likely **revocation, not expiry** → possible Schwab-side multiple-identity / single-
+session collision (note v2's REST also rides the shared token). If the 06-05 21:41 token
+dies fast too, **root cause is upstream of any process fix** and no code change saves us.
+**Check streamer survival at Monday pre-market** — this gates the SPOF workstreams: if
+the token is dying Schwab-side, hardening the process layer aims at the wrong layer.
+
+#### Re-sequenced priorities (this outage reframed the arc)
+
+The SPOF is now **top priority, ahead of the fix-v3 verdict and ahead of v2.** A 4 AM
+cosmetic reconnect cascade is minor next to "a dead token silently takes down the entire
+fleet for days." Both SPOF items are **design-first (design doc → review → code, same
+discipline as fix v3). DO NOT build yet.**
+
+- **Workstream A (urgent, higher priority): make a dead token survivable, not fatal.**
+  Wrap the subscription-sync/hydration path so a Schwab token failure at the scanner-
+  session roll **degrades gracefully** — main loop stays alive, keeps heartbeating,
+  surfaces the failure — instead of an uncaught exception zombifying the process. This is
+  the difference between "token dies → survivable degradation + alert" and "token dies →
+  silent multi-day total outage." The 2026-05-22 guard didn't cover this path.
+- **Workstream B: auto-reload token store on `invalid_grant` + dashboard dead-token
+  visibility.** Starts from the proven root cause (`_load_token_store()` is
+  `__init__`-only, so the token is cached for process lifetime): make a re-auth take
+  effect without a manual process restart (the choreography failure that made the 06-03
+  re-auth a no-op), and make dead-token state visible without log-diving. Third
+  operational surfacing of this, first fatal one.
+
+#### Fix-v3 verdict: INCONCLUSIVE — needs a fresh clean cold-start
+
+Only **06-02 08:00 UTC** was a valid post-deploy cold-start (streamer alive, fix v3
+active). Result: fix v3 **crushed the case-2 cascade** (`chart_msg_age=none` 369→1) but
+**unmasked the known PR #228 path-1 exchange-deadline warmup spike** (115/hr, self-
+clearing: 09=11, 10=3, 11+=0). So 08 UTC total stayed >20 **for the expected reason**
+(path-2 fixed; path-1 is the separate known-OPEN residual). 06-01 baseline was 369/0.
+**06-03/04/05 were destroyed by the outage.** Re-measure at **Monday pre-market 08:00
+UTC**: split cause/hr by `chart_msg_age=none` (case-2, expect ~1) vs `exchange_deadline`
+(path-1). If case-2 stays crushed and path-1 is the only contributor → fix v3 is
+**confirmed for what it targeted**, and the remaining open item is cleanly the PR #228
+path-1 warmup spike (its own decision: fix, or accept as known non-trading-window
+cosmetic residual). Also at Monday pre-market: confirm bar-flow recovers, and check the
+watch item.
+
+#### Next action window — Monday pre-market (08:00 UTC / 04:00 ET), three questions in one pass
+
+1. **Watch item first (gates everything):** did the new token survive the weekend, or
+   die fast like the 06-03 one? If it died fast → root cause is Schwab-side
+   (revocation/multiple-identity collision); diagnose that before building any SPOF
+   hardening.
+2. **Bar-flow recovery:** confirm bars actually flow in a live market (plumbing proven,
+   market-flow not).
+3. **Fix-v3 re-measurement:** 08 UTC cause/hr split by `chart_msg_age=none` (case-2,
+   expect ~1) vs `exchange_deadline` (path-1 PR #228 residual).
+
+Report all three Monday; sequence the workstreams from there.
+
+**Constraints unchanged:** PR #227 `[SCHWAB-CHART-RECONNECT-CAUSE]` DEBUG log **STAYS**
+(verdict unconfirmed); PR #238 untouched; v2 flag OFF; CYN untouched; **no code on any
+workstream (A, B, or fix-v3 follow-up) until design-reviewed.**
+
 ### 2026-06-01 — Post-revert verdict diagnosed; **case-2 path proven** as the real cold-start mechanism. **Yesterday's three fix v2 directions are obsolete — discarded.** Fix v3 design doc shipped (`docs/schwab-chart-grace-window-design.md`) for review before code.
 
 **Verdict against falsifiable prediction.** Both confirmed AND missed in unexpected ways. **Falsifiable mini-prediction held on bar-flow axis, missed on trigger-mechanism axis.**
