@@ -1,5 +1,60 @@
 # Session Handoff - Global
 
+### 🔭 MONDAY 2026-06-08 PLAN — two-ping sequence (foundation check → verdict). READ FIRST.
+
+Operator's planned Monday sequence after the 06-05 SPOF outage + recovery (full incident
+in the entry below). **Both pings are read-only; no code/deploy/restart without explicit
+go-ahead.** Connectivity note: SSH/`gh` to the box intermittently times out — use a retry
+loop, it gets through.
+
+**PING 1 — ~7 AM ET (pre-market foundation check). Three things, in order:**
+
+1. **Token survival — check FIRST, it gates everything.** Did the 06-05 21:41 re-auth
+   token survive the weekend, or die fast like the 06-03 one? Check: token-store mtime
+   (changed / re-authed again?), streamer currently `connected` vs back in the
+   `unsupported_token_type` / `Refresh token is invalid` fail loop, and the count of
+   fresh auth-failure tracebacks since 06-06. **If the token's dead again → STOP and
+   report before anything else** — that points to Schwab-side revocation (not a process
+   problem), and we'd re-auth + restart before pre-market matters.
+2. **Service health.** All 7 services active, NRestarts=0, no crash-loop since the
+   06-05 21:45 recovery restart. Confirm strategy-engine's main loop is alive (snapshot
+   batches processing, heartbeat present, `mai_tai:strategy-state` advancing — NOT the
+   zombie state). Confirm market-data-gateway `active_symbols` is now non-zero (pre-market
+   has symbols to subscribe to).
+3. **Bar-flow (pipeline-recovery confirmation).** Are bars persisting again across the
+   bots? 7 AM ET is pre-market → thin/low counts are normal; the point is bars flow *at
+   all* (pipeline recovered), not volume. Per-bot last-persist timestamp + recent count.
+
+   Green light = token survived + services healthy + bars flowing. **Do NOT do the fix-v3
+   cold-start analysis in Ping 1** — that's Ping 2.
+
+**PING 2 — after 9:30 ET open (verdict + clean bar-flow), read-only. Three things:**
+
+1. **Fix-v3 cold-start verdict — the 08 UTC window (04:00 ET roll), retrospective.**
+   Today's 08 UTC is the **first clean post-deploy cold-start since 06-02** (the outage
+   destroyed 06-03/04/05). Pull 08 UTC `[SCHWAB-CHART-RECONNECT-CAUSE]` events/hr split by
+   trigger: `chart_msg_age=none` (case-2, fix v3's target — **expect ~1**, crushed from
+   the 369 pre-fix baseline) vs `exchange_deadline_exceeded=True` (path-1, the known-OPEN
+   PR #228 warmup residual — **expect ~115 self-clearing by 11 UTC**, per 06-02). Report
+   the split + the self-clear curve (09/10/11 UTC). **Read:** if case-2 stays crushed (~1)
+   and path-1 is the only remaining contributor → **fix v3 confirmed for what it
+   targeted**, and the remaining open item is cleanly the PR #228 path-1 spike (its own
+   fix-or-accept decision). Confirm `exchange_deadline_exceeded=True` is the ONLY thing
+   left (revert holds, no case-2 resurgence).
+2. **Clean bar-flow (real RTH volume)** — the market-proven confirmation the after-hours
+   recovery couldn't give: schwab_1m bars/sym/min (≥0.6 target) + persist-lag across RTH
+   hours.
+3. **PR #238 at the 11 UTC pre-market-open window** — confirm still clean (~0–1/hr),
+   unaffected.
+
+   Don't act on results — bring the verdict; **we decide the workstream sequence**
+   (PR #228 path-1 residual fix-or-accept, and when SPOF Workstream A design starts) from
+   there.
+
+**Constraints (both pings):** PR #227 `[SCHWAB-CHART-RECONNECT-CAUSE]` DEBUG log STAYS
+until the verdict is confirmed AND operator approves removal; PR #238 untouched; v2 flag
+OFF; CYN untouched; design-first on everything, no code yet.
+
 ### 2026-06-05 — 🚨 ~2.6-DAY FULL-PIPELINE OUTAGE (shared-Schwab-token SPOF, now FATAL). Recovered. SPOF hardening re-sequenced to TOP priority, ahead of fix-v3 verdict and v2.
 
 **TL;DR.** A dead shared Schwab refresh token at the 06-03 08:00 UTC scanner-session
