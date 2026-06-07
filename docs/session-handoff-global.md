@@ -17,7 +17,8 @@ loop, it gets through.
    report before anything else** — that points to Schwab-side revocation (not a process
    problem), and we'd re-auth + restart before pre-market matters.
 2. **Service health.** All 7 services active, NRestarts=0, no crash-loop since the
-   06-05 21:45 recovery restart. Confirm strategy-engine's main loop is alive (snapshot
+   **06-07 17:26 strategy restart** (2nd zombie — see 06-07 entry below; confirm it
+   held over the weekend). Confirm strategy-engine's main loop is alive (snapshot
    batches processing, heartbeat present, `mai_tai:strategy-state` advancing — NOT the
    zombie state). Confirm market-data-gateway `active_symbols` is now non-zero (pre-market
    has symbols to subscribe to).
@@ -54,6 +55,45 @@ loop, it gets through.
 **Constraints (both pings):** PR #227 `[SCHWAB-CHART-RECONNECT-CAUSE]` DEBUG log STAYS
 until the verdict is confirmed AND operator approves removal; PR #238 untouched; v2 flag
 OFF; CYN untouched; design-first on everything, no code yet.
+
+### 2026-06-07 — strategy-engine ZOMBIED AGAIN (2nd in 3 days) — NEW trigger (CHART_EQUITY-stale RuntimeError, NOT the token). Restarted. SPOF Workstream A broadened + re-scoped to ALL bots (operator directive).
+
+**What happened.** strategy-engine's main loop died again at **06-07 05:48:59 UTC** (last
+`snapshot batch processed`; `mai_tai:strategy-state` frozen there; no strategy-engine
+heartbeat for ~11.5h; process `active`, NRestarts=0 since the 06-05 recovery — same zombie
+end-state as Friday). Surfaced while investigating the v2 bot page (`LAST STRATEGY
+HEARTBEAT: -` was the tell).
+
+**Different trigger — the fatal mechanism is BROADER than the token.** The token was
+essentially healthy (~4 auth-fails since 06-06; re-authed 16:53 UTC). The killer this time
+was an uncaught **`RuntimeError: Schwab CHART_EQUITY channel stale while websocket remained
+connected`** (chained off a `TimeoutError`) around 05:48–05:52 during background bar
+hydration. So the real fragility is **ANY uncaught streamer-side exception propagating into
+strategy-engine's main loop**, not just a dead token at the scanner roll. Proven triggers
+now: dead-token-at-roll (06-03) + CHART_EQUITY-stale RuntimeError (06-07).
+
+**Recovery.** Strategy-only restart (OMS healthy, token fresh): pre-flight account-flat
+ALL FLAT → `systemctl restart project-mai-tai-strategy.service` at **06-07 17:26:09 UTC**.
+Verified: streamer connected 17:26:49, snapshot batches processing, strategy-engine
+heartbeat back, strategy-state advancing. Monday's 04:00 ET roll will build a fresh
+watchlist (confirmed=0 now = closed weekend, expected). v2 was NOT restarted (healthy,
+own heartbeat, quotes live — its weekend `degraded` is the known off-hours
+`stalled_offhours_rest_dry` false-alarm, will clear at Monday open).
+
+**Operator directive (06-07): fix this across ALL bots.** strategy-engine runs
+macd_30s / schwab_1m / polygon_30s in one process, so one uncaught exception darkens the
+whole fleet; v2 (separate process) wants the same hardening. **SPOF Workstream A is hereby
+broadened** from "survive a dead token at the roll" to **"the main loop must survive ANY
+streamer-side exception, for every bot"** — and bumped in scope by this second occurrence.
+Still design-first (design doc → review → code); no code yet.
+
+**Caveat:** the restart recovers the zombie but the root bug is unfixed, so it *could*
+re-zombie before Monday if the CHART_EQUITY-stale RuntimeError recurs. Monday Ping 1's
+service-health check is the catch.
+
+**Minor v2 follow-up noted:** v2 holds its last-confirmed watchlist (doesn't implement the
+PR #192 04:00-ET session-roll clear the main engine has), so its Live Symbols persist
+off-hours rather than blanking. Cosmetic (v2 isn't trading); record, don't rush.
 
 ### 2026-06-05 — 🚨 ~2.6-DAY FULL-PIPELINE OUTAGE (shared-Schwab-token SPOF, now FATAL). Recovered. SPOF hardening re-sequenced to TOP priority, ahead of fix-v3 verdict and v2.
 
