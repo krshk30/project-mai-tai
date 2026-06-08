@@ -1,5 +1,51 @@
 # Session Handoff - Global
 
+### 2026-06-08 EOD (late) — ✅ v2 LOOP RESILIENCE SHIPPED + survival-test verdict (a–e proven). Workstream A now COMPLETE across the fleet.
+
+PR #252 (schwab_1m_v2 loop resilience) merged + deployed. VPS `3550b2b`. Applies the
+production resilience pattern to v2's multi-task loop (per-task `run_resilient_loop`
+backstop + `run()` liveness supervision + dedicated `loop_health` field). v2's signature
+risk — a silently-dead task while the heartbeat task keeps publishing healthy — is closed.
+
+**Deploy (attended, 19:23 ET, account-flat, CYN protected, v2 streamer flag STAYS OFF):**
+v2-service-only restart; stage-one clean — heartbeat carries `loop_health=healthy` +
+`loop_exceptions_total=0` alongside the existing `data_flow=flowing`; new code present;
+NRestarts=0.
+
+**Survival test = the verdict** (fault-injection `N=15` on `_handle_bar_from_rest`, the E1
+callback path — v2's real remaining escape):
+
+| # | Proof | Evidence |
+|---|---|---|
+| a | bar loop NEVER died | `data_flow=flowing`, `bars_processed` climbing through + after all 15 failures |
+| b | health escalates | `healthy → recovering → degraded-persistent` |
+| c | loud signal | `[V2-LOOP-DEGRADED-PERSISTENT] … task(s) bar_loop … 3+ consecutive` @ 23:24:59 |
+| d | NO false dead-task | `[V2-TASK-DIED]=0` — the liveness supervisor correctly did NOT flag (loop survived → no task read as dead; confirms it distinguishes failing-but-alive from dead) |
+| e | self-clears | `loop_health → healthy` (exc=15) after all 15 injections + the first clean pass |
+
+15/15 injections contained (15× `[V2-LOOP-RECOVERED]`); injection env removed post-test.
+
+**Characteristic (not a bug):** `loop_health` is **pass-cadenced** — `record_success` fires at
+the END of a full round-robin (the approved Q1 one-pass granularity). With a 25-symbol
+watchlist at 15s/poll, a clean pass ≈ 6 min, so degraded-persistent **clears ~6 min after
+failures stop**, not instantly. Escalation INTO degraded-persistent is fast (3 failed passes);
+only the clear is pass-cadenced. Accepted trade-off (per-symbol would fragment accounting).
+
+**🏁 SPOF Workstream A is COMPLETE across the fleet:** production strategy-engine (#249,
+single-loop backstop) + v2 (#252, per-task backstop + liveness supervision), both
+survival-test-verified. A dead Schwab token / streamer exception can no longer zombie the
+production engine *or* silently kill a v2 task.
+
+**Next priorities (unchanged order):**
+1. **Workstream B** — dashboard surfacing of `main_loop_health` (prod) + `loop_health` (v2) +
+   dead-token visibility + auto-reload token on `invalid_grant`. Moved up by the interim-
+   visibility caveat (until B lands, the only persistent-degradation signals are the
+   `[*-DEGRADED-PERSISTENT]`/`[V2-TASK-DIED]` logs + the heartbeat fields).
+2. **CI restoration** — the standing non-trading priority once the resilience arc is settled.
+
+CI-bypass for #252 noted (admin-merge). **Constraints unchanged:** PR #227 DEBUG log stays,
+PR #238 untouched, **v2 streamer flag stays OFF**, CYN untouched, polygon_30s parked.
+
 ### 2026-06-08 EOD — ✅ SPOF WORKSTREAM A SHIPPED + survival-test VERDICT (zombie fixed, proven on demand). Deploy live. ⚠️ Workstream-B visibility caveat recorded.
 
 PR #249 (main-loop resilience) merged (admin-squash) + deployed. VPS `403365c`. The
