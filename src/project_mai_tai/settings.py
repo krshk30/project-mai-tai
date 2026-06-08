@@ -183,6 +183,19 @@ class Settings(BaseSettings):
     strategy_schwab_1m_v2_streamer_enabled: bool = False
     strategy_schwab_1m_v2_streamer_reconnect_base_secs: float = 1.0
     strategy_schwab_1m_v2_streamer_reconnect_max_secs: float = 30.0
+    # --- SPOF Workstream A (v2 follow-up): loop-resilience knobs ---
+    # See docs/schwab-1m-v2-loop-resilience-design.md. Per-task backstop so an
+    # unanticipated exception can't silently kill a v2 task loop.
+    strategy_schwab_1m_v2_loop_error_backoff_seconds: float = 1.0
+    strategy_schwab_1m_v2_loop_persistent_failure_threshold: int = 3
+    # Cadence of the run() task-liveness supervisor (detects a task that ended
+    # unexpectedly while the heartbeat task keeps running — v2's silent-death risk).
+    strategy_schwab_1m_v2_task_liveness_check_interval_seconds: float = 15.0
+    # Controlled fault-injection for the post-deploy survival test (default 0 = OFF).
+    # When > 0, the next N _handle_bar_from_rest calls (the E1 callback path — v2's
+    # real remaining escape) raise a synthetic RuntimeError so an operator can prove
+    # the bar loop survives + escalates in a safe window. Self-clears after N.
+    strategy_schwab_1m_v2_loop_fault_injection_count: int = 0
     # CSV of symbols (or "*" for all watchlist symbols) for which
     # `_evaluate_completed_bar` emits a `[V2-MACD-PROBE]` INFO log per
     # evaluated bar, dumping every input needed to cross-check the bot's
