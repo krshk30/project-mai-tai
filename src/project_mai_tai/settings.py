@@ -331,6 +331,23 @@ class Settings(BaseSettings):
     # default base=8s — matches PR #228's interval-aware deadline knob).
     # See docs/schwab-chart-grace-window-design.md for the full reasoning.
     schwab_chart_subscription_grace_seconds: float = 0.0
+    # --- SPOF Workstream A: strategy-engine main-loop resilience knobs ---
+    # See docs/strategy-engine-main-loop-resilience-design.md. The main loop must
+    # survive any exception from a Schwab-touching step (dead-token RuntimeError,
+    # streamer-side RuntimeError) instead of zombifying the process.
+    # Backoff after an outer-backstop catch, to avoid a hot spin on persistent failure.
+    strategy_main_loop_error_backoff_seconds: float = 1.0
+    # Consecutive same-step failures before main_loop_health escalates to
+    # "degraded-persistent" (loud + dashboard-visible). Single transients stay quiet.
+    strategy_main_loop_persistent_failure_threshold: int = 3
+    # Generous per-step timeout for the wrapped Schwab REST history-refresh calls,
+    # so a network hang is contained as a step failure rather than stalling the loop.
+    strategy_main_loop_step_timeout_seconds: float = 30.0
+    # Controlled fault-injection for the post-deploy survival test (default 0 = OFF).
+    # When > 0, the next N _refresh_stale_schwab_1m_history calls raise a synthetic
+    # RuntimeError so an operator can prove the loop survives + escalates in a safe
+    # window without waiting for a real Schwab token death. Self-clears after N.
+    strategy_main_loop_fault_injection_count: int = 0
     protected_symbols: str = ""
     webull_base_url: str = "https://api.webull.com"
     webull_region_id: str = "us"
