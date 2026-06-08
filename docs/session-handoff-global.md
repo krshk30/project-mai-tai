@@ -1,5 +1,57 @@
 # Session Handoff - Global
 
+### 2026-06-08 EOD — ✅ SPOF WORKSTREAM A SHIPPED + survival-test VERDICT (zombie fixed, proven on demand). Deploy live. ⚠️ Workstream-B visibility caveat recorded.
+
+PR #249 (main-loop resilience) merged (admin-squash) + deployed. VPS `403365c`. The
+2026-06-03/06-07 zombie class is fixed: an uncaught exception from a Schwab-touching loop
+step is now contained (Layer 1) or backstopped (Layer 2) instead of killing the main loop.
+
+**Deploy (attended, off-hours 16:22 ET / 20:22 UTC, account-flat, CYN protected):**
+strategy-only restart; stage-one clean — main loop live, streamer connected, NRestarts=0,
+heartbeat carries the new `main_loop_health=healthy` field, new code present in source.
+
+**Survival test = the verdict** (the real proof, not a wait-for-real-token-death). Used the
+`MAI_TAI_STRATEGY_MAIN_LOOP_FAULT_INJECTION_COUNT` hook (N=100) to raise synthetic
+`RuntimeError`s on `_refresh_stale_schwab_1m_history` — the EXACT 06-03 escape — on demand:
+
+| # | Proof | Evidence |
+|---|---|---|
+| a | loop NEVER died | snapshot batches continuous through all 100 failures; NRestarts=0 |
+| b | health escalates correctly | `healthy → recovering`(exc=1) `→ degraded-persistent`(exc=3) `→ healthy`(exc=100) |
+| c | loud signal fires | `[MAIN-LOOP-DEGRADED-PERSISTENT] … 3+ consecutive … schwab_1m_stale_refresh` at 20:37:44 |
+| d | non-Schwab + Schwab bars keep flowing through degradation | schwab_1m 144 bars/6min, polygon_30s 12 bars/6min while the refresh step failed 59× |
+| e | self-clears | after the 100th injection, `main_loop_health → healthy` at 20:48:50 |
+
+This reproduces the 06-03 dead-token mechanism **100× on demand** and the loop survived every
+one. Injection env removed post-test (process already self-cleared at remaining=0; no restart
+needed). **The zombie is fixed.**
+
+**Cold-start observation (minor, not a fault):** a post-restart schwab-drain backlog
+(revise-persist-lag) slowed the main loop initially (~1 injection/min), speeding up as it
+drained — slowed the N=100 burn (took ~13 min) but did not affect correctness. Loop
+per-iteration time is backlog-dependent right after a cold-start.
+
+**⚠️ Workstream-B-dependency caveat (interim visibility gap — RECORD + act):** the fix
+correctly puts severity in `main_loop_health` and leaves the top-level `status` Literal
+un-overloaded. **Until Workstream B's dashboard surfaces `main_loop_health`, the ONLY
+persistent-degradation signals are (1) the `[MAIN-LOOP-DEGRADED-PERSISTENT]` log line and (2)
+the `main_loop_health` heartbeat field.** Anything monitoring top-level `status` alone will
+read "healthy" through a real main-loop degradation. **If/when log-based alerting exists, wire
+it to `[MAIN-LOOP-DEGRADED-PERSISTENT]`.** This makes **Workstream B the next priority.**
+(Note: top-level `status="degraded"` seen during/after the test is the PRE-EXISTING
+schwab-stale/data-halt signal from `_strategy_health_status`, NOT main-loop — by design.)
+
+**Next, in priority order:**
+1. **Workstream B** — dashboard dead-token / `main_loop_health` visibility (moved up by the
+   interim gap above) + auto-reload token on `invalid_grant`. Design-first.
+2. **v2 loop resilience** — apply the same `_run_main_loop_iteration` + Layer-2 backstop pattern
+   to `schwab_1m_v2_bot`'s separate loop, now on a verified foundation. Clean follow-up PR,
+   design-first.
+
+CI-bypass for #249 noted (admin-merge); CI restoration remains the standing item.
+**Constraints unchanged:** PR #227 DEBUG log stays, PR #238 untouched, v2 flag OFF, CYN
+untouched, polygon_30s parked + out of routine scope.
+
 ### 2026-06-08 — ✅ FIX V3 CONFIRMED (Ping 1 + Ping 2 complete). Decisions: ~20/hr case-2 residual ACCEPTED; PR #227 DEBUG log KEPT. Next: SPOF Workstream A (design-first). Auth-churn was a false alarm.
 
 Monday two-ping validation ran clean (plan recorded below). Pipeline fully recovered and
