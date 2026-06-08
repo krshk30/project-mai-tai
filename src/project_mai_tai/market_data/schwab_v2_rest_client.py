@@ -32,6 +32,10 @@ from urllib.parse import urlencode
 from urllib.request import Request as UrlRequest
 from urllib.request import urlopen
 
+from project_mai_tai.market_data.schwab_v2_loop_health import (
+    LoopHealthTracker,
+    run_resilient_loop,
+)
 from project_mai_tai.settings import Settings
 
 logger = logging.getLogger(__name__)
@@ -78,10 +82,24 @@ class SchwabV2RestClient:
         *,
         on_chart_bar: ChartBarCallback,
         on_quote: QuoteCallback,
+        loop_health: LoopHealthTracker | None = None,
     ) -> None:
         self.settings = settings
         self._on_chart_bar = on_chart_bar
         self._on_quote = on_quote
+        # SPOF Workstream A (v2): shared loop-health tracker (the bot passes its
+        # own so bar/quote-loop failures surface in the bot heartbeat). Falls back
+        # to a private one so the client is self-contained in standalone use/tests.
+        self._loop_health = loop_health or LoopHealthTracker(
+            persistent_failure_threshold=int(
+                getattr(settings, "strategy_schwab_1m_v2_loop_persistent_failure_threshold", 3)
+            ),
+            logger=logger,
+        )
+        self._loop_backoff_secs = max(
+            0.0,
+            float(getattr(settings, "strategy_schwab_1m_v2_loop_error_backoff_seconds", 1.0)),
+        )
         self._desired_symbols: set[str] = set()
         self._symbols_lock = asyncio.Lock()
         self._stop_event = asyncio.Event()
@@ -135,64 +153,86 @@ class SchwabV2RestClient:
         self._stop_event.set()
 
     async def _bar_loop(self) -> None:
+        # SPOF Workstream A (v2): the per-task backstop. A pass = one round-robin
+        # over the watchlist. The per-symbol fetch keeps its own guard (one bad
+        # symbol doesn't abort the pass); the backstop catches anything else
+        # (incl. the E1 `_on_chart_bar` callback, previously unguarded at the
+        # loop level), so the bar loop can never silently die.
         interval = max(0.5, float(self.settings.strategy_schwab_1m_v2_bar_poll_interval_seconds))
-        cycle = itertools.cycle(())  # placeholder; rebuilt each pass
-        while not self._stop_event.is_set():
-            symbols = sorted(self._desired_symbols)
-            if not symbols:
+        await run_resilient_loop(
+            stop_event=self._stop_event,
+            tracker=self._loop_health,
+            name="bar_loop",
+            iteration=lambda: self._bar_loop_pass(interval),
+            backoff_secs=self._loop_backoff_secs,
+            logger=logger,
+        )
+
+    async def _bar_loop_pass(self, interval: float) -> None:
+        symbols = sorted(self._desired_symbols)
+        if not symbols:
+            await asyncio.sleep(interval)
+            return
+        cycle = itertools.cycle(symbols)
+        for _ in range(len(symbols)):
+            if self._stop_event.is_set():
+                return
+            symbol = next(cycle)
+            since = self._last_bar_timestamp_ms.get(symbol, 0)
+            try:
+                bars = await asyncio.to_thread(
+                    self._fetch_recent_closed_bars, symbol, since
+                )
+            except Exception as exc:  # noqa: BLE001 — per-symbol fetch guard
+                logger.warning("schwab_v2 bar poll failed for %s: %s", symbol, exc)
                 await asyncio.sleep(interval)
                 continue
-            cycle = itertools.cycle(symbols)
-            for _ in range(len(symbols)):
-                if self._stop_event.is_set():
-                    return
-                symbol = next(cycle)
-                since = self._last_bar_timestamp_ms.get(symbol, 0)
-                try:
-                    bars = await asyncio.to_thread(
-                        self._fetch_recent_closed_bars, symbol, since
+            if bars:
+                # First poll per symbol returns up to ~500 candles (24h of
+                # 1-min bars). Subsequent polls return only the 1-2 bars
+                # that closed since the previous poll. Feeding all of them
+                # warms up the strategy's indicator state instantly; the
+                # strategy's freshness guard ensures only bars within
+                # ~3 min of wall clock can fire signals.
+                if since == 0 and len(bars) > 5:
+                    logger.info(
+                        "schwab_v2 warmup feed for %s: %d bars from %s..%s",
+                        symbol,
+                        len(bars),
+                        bars[0].timestamp_ms,
+                        bars[-1].timestamp_ms,
                     )
-                except Exception as exc:  # noqa: BLE001 — keep loop alive
-                    logger.warning("schwab_v2 bar poll failed for %s: %s", symbol, exc)
-                    await asyncio.sleep(interval)
-                    continue
-                if bars:
-                    # First poll per symbol returns up to ~500 candles (24h of
-                    # 1-min bars). Subsequent polls return only the 1-2 bars
-                    # that closed since the previous poll. Feeding all of them
-                    # warms up the strategy's indicator state instantly; the
-                    # strategy's freshness guard ensures only bars within
-                    # ~3 min of wall clock can fire signals.
-                    if since == 0 and len(bars) > 5:
-                        logger.info(
-                            "schwab_v2 warmup feed for %s: %d bars from %s..%s",
-                            symbol,
-                            len(bars),
-                            bars[0].timestamp_ms,
-                            bars[-1].timestamp_ms,
-                        )
-                    for bar in bars:
-                        if bar.timestamp_ms > self._last_bar_timestamp_ms.get(symbol, 0):
-                            self._last_bar_timestamp_ms[symbol] = bar.timestamp_ms
-                            await self._on_chart_bar(symbol, bar)
-                await asyncio.sleep(interval)
+                for bar in bars:
+                    if bar.timestamp_ms > self._last_bar_timestamp_ms.get(symbol, 0):
+                        self._last_bar_timestamp_ms[symbol] = bar.timestamp_ms
+                        await self._on_chart_bar(symbol, bar)
+            await asyncio.sleep(interval)
 
     async def _quote_loop(self) -> None:
         interval = max(0.5, float(self.settings.strategy_schwab_1m_v2_quote_poll_interval_seconds))
-        while not self._stop_event.is_set():
-            symbols = sorted(self._desired_symbols)
-            if not symbols:
-                await asyncio.sleep(interval)
-                continue
-            try:
-                quotes = await asyncio.to_thread(self._fetch_quotes, symbols)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("schwab_v2 quote poll failed: %s", exc)
-                await asyncio.sleep(interval)
-                continue
-            for quote in quotes:
-                await self._on_quote(quote.symbol, quote)
+        await run_resilient_loop(
+            stop_event=self._stop_event,
+            tracker=self._loop_health,
+            name="quote_loop",
+            iteration=lambda: self._quote_loop_pass(interval),
+            backoff_secs=self._loop_backoff_secs,
+            logger=logger,
+        )
+
+    async def _quote_loop_pass(self, interval: float) -> None:
+        symbols = sorted(self._desired_symbols)
+        if not symbols:
             await asyncio.sleep(interval)
+            return
+        try:
+            quotes = await asyncio.to_thread(self._fetch_quotes, symbols)
+        except Exception as exc:  # noqa: BLE001 — fetch guard
+            logger.warning("schwab_v2 quote poll failed: %s", exc)
+            await asyncio.sleep(interval)
+            return
+        for quote in quotes:
+            await self._on_quote(quote.symbol, quote)
+        await asyncio.sleep(interval)
 
     def _read_access_token(self) -> str | None:
         path = (self.settings.schwab_token_store_path or "").strip()

@@ -47,6 +47,11 @@ from project_mai_tai.events import (
     StrategyStateSnapshotEvent,
     stream_name,
 )
+from project_mai_tai.market_data.schwab_v2_loop_health import (
+    LoopHealthTracker,
+    run_resilient_loop,
+    sleep_or_stop,
+)
 from project_mai_tai.market_data.schwab_v2_rest_client import (
     ChartBar,
     Quote,
@@ -221,6 +226,26 @@ class SchwabV2BotService:
             "halted_symbols": [],
             "warning_symbols": [],
         }
+        # --- SPOF Workstream A (v2): loop-resilience state ---
+        # Shared with the REST client so bar/quote-loop failures surface in this
+        # service's heartbeat. See docs/schwab-1m-v2-loop-resilience-design.md.
+        self._loop_health = LoopHealthTracker(
+            persistent_failure_threshold=int(
+                getattr(self.settings, "strategy_schwab_1m_v2_loop_persistent_failure_threshold", 3)
+            ),
+            logger=logger,
+        )
+        self._loop_backoff_secs = max(
+            0.0,
+            float(getattr(self.settings, "strategy_schwab_1m_v2_loop_error_backoff_seconds", 1.0)),
+        )
+        self._loop_fault_injection_remaining = max(
+            0,
+            int(getattr(self.settings, "strategy_schwab_1m_v2_loop_fault_injection_count", 0) or 0),
+        )
+        # name -> task, populated in run(); watched by _task_liveness_loop so a
+        # task that ends unexpectedly (v2's silent-death risk) is surfaced loudly.
+        self._tasks: dict[str, asyncio.Task] = {}
 
     @property
     def enabled(self) -> bool:
@@ -270,6 +295,7 @@ class SchwabV2BotService:
             self.settings,
             on_chart_bar=self._handle_bar_from_rest,
             on_quote=self._handle_quote,
+            loop_health=self._loop_health,
         )
         self.streamer = SchwabV2Streamer(
             self.settings,
@@ -288,28 +314,33 @@ class SchwabV2BotService:
         await self._publish_heartbeat("starting")
         self._data_health["status"] = "healthy" if self.enabled else "degraded"
 
-        tasks = [
-            asyncio.create_task(self._heartbeat_loop()),
-            asyncio.create_task(self._state_publish_loop()),
-        ]
+        # Named tasks (SPOF Workstream A v2): each loop is individually backstopped
+        # by run_resilient_loop, and _task_liveness_loop watches this set so a task
+        # that ends unexpectedly is surfaced loudly (v2's silent-death risk).
+        self._tasks = {
+            "heartbeat": asyncio.create_task(self._heartbeat_loop()),
+            "state_publish": asyncio.create_task(self._state_publish_loop()),
+        }
         if self.enabled:
-            tasks.append(asyncio.create_task(self.rest_client.run()))
-            tasks.append(asyncio.create_task(self._scanner_consumer_loop()))
-            tasks.append(asyncio.create_task(self._position_poll_loop()))
+            self._tasks["rest_client"] = asyncio.create_task(self.rest_client.run())
+            self._tasks["scanner"] = asyncio.create_task(self._scanner_consumer_loop())
+            self._tasks["position_poll"] = asyncio.create_task(self._position_poll_loop())
             if self.streamer_enabled:
-                tasks.append(asyncio.create_task(self.streamer.run()))
+                self._tasks["streamer"] = asyncio.create_task(self.streamer.run())
                 logger.info(
                     "[V2-WS-INIT] schwab_v2 streamer enabled, REST polling "
                     "continues for cold-start warmup + reconnect gap-fill"
                 )
+        # Liveness supervisor is started last and never watches itself.
+        self._tasks["liveness"] = asyncio.create_task(self._task_liveness_loop())
 
         try:
             await self._stop_event.wait()
         finally:
             await self._publish_heartbeat("stopping")
-            for task in tasks:
+            for task in self._tasks.values():
                 task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
+            await asyncio.gather(*self._tasks.values(), return_exceptions=True)
             if self.streamer is not None:
                 await self.streamer.stop()
             if self.rest_client is not None:
@@ -488,6 +519,9 @@ class SchwabV2BotService:
             "rest_bars_gated_total": str(self._rest_bars_gated),
             "rest_bars_gap_fill_total": str(self._rest_bars_gap_fill),
             **watchdog_detail,
+            # SPOF Workstream A (v2): dedicated loop-resilience health, alongside
+            # data_flow — NOT folded into the shared status Literal.
+            **self._loop_health.details(),
         }
         event = HeartbeatEvent(
             source_service=SERVICE_NAME,
@@ -507,32 +541,56 @@ class SchwabV2BotService:
 
     async def _heartbeat_loop(self) -> None:
         interval = max(5, int(self.settings.service_heartbeat_interval_seconds))
-        while not self._stop_event.is_set():
-            try:
-                # status=None -> data-flow watchdog derives healthy/degraded.
-                await self._publish_heartbeat()
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("schwab_1m_v2 heartbeat failed: %s", exc)
-            try:
-                await asyncio.wait_for(self._stop_event.wait(), timeout=interval)
-            except asyncio.TimeoutError:
-                continue
+        await run_resilient_loop(
+            stop_event=self._stop_event,
+            tracker=self._loop_health,
+            name="heartbeat",
+            # status=None -> data-flow watchdog derives healthy/degraded.
+            iteration=self._publish_heartbeat,
+            backoff_secs=self._loop_backoff_secs,
+            logger=logger,
+            idle=lambda: sleep_or_stop(self._stop_event, interval),
+        )
 
     async def _state_publish_loop(self) -> None:
         """Publish StrategyBotStatePayload to strategy-state-isolated stream
         so the dashboard renders the v2 bot like any other.
         """
+        await run_resilient_loop(
+            stop_event=self._stop_event,
+            tracker=self._loop_health,
+            name="state_publish",
+            iteration=self._publish_bot_state,
+            backoff_secs=self._loop_backoff_secs,
+            logger=logger,
+            idle=lambda: sleep_or_stop(self._stop_event, STATE_PUBLISH_INTERVAL_SECONDS),
+        )
+
+    async def _task_liveness_loop(self) -> None:
+        """SPOF Workstream A (v2): watch the other tasks. run() does NOT await the
+        tasks (it waits on _stop_event), so a task that ends unexpectedly would be
+        silent while this service keeps heartbeating — v2's signature risk. Detect
+        it and surface loudly via loop_health=degraded-persistent + [V2-TASK-DIED]
+        (the per-task backstop should make this impossible; this is belt-and-
+        suspenders for a death the backstop doesn't see — e.g. a BaseException)."""
+        interval = max(
+            1.0,
+            float(getattr(self.settings, "strategy_schwab_1m_v2_task_liveness_check_interval_seconds", 15.0) or 15.0),
+        )
         while not self._stop_event.is_set():
-            try:
-                await self._publish_bot_state()
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("schwab_1m_v2 bot-state publish failed: %s", exc)
-            try:
-                await asyncio.wait_for(
-                    self._stop_event.wait(), timeout=STATE_PUBLISH_INTERVAL_SECONDS
-                )
-            except asyncio.TimeoutError:
-                continue
+            await sleep_or_stop(self._stop_event, interval)
+            if self._stop_event.is_set():
+                break
+            for name, task in self._tasks.items():
+                if name == "liveness" or not task.done():
+                    continue
+                exc: BaseException | None = None
+                if not task.cancelled():
+                    try:
+                        exc = task.exception()
+                    except Exception:  # pragma: no cover - defensive
+                        exc = None
+                self._loop_health.mark_task_died(name, exc=exc)
 
     async def _publish_bot_state(self) -> None:
         if self.redis is None:
@@ -575,25 +633,24 @@ class SchwabV2BotService:
         count as "in position" — covers the gap between intent emission
         and virtual_positions row creation, preventing duplicate opens.
         """
-        while not self._stop_event.is_set():
-            try:
-                positions = await asyncio.to_thread(self._fetch_open_positions)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("schwab_1m_v2 position poll failed: %s", exc)
-                positions = None
-            if positions is not None:
-                tracked = set(self._watchlist) | set(
-                    self.strategy._symbol_states.keys()
-                )
-                for symbol in tracked:
-                    qty = positions.get(symbol, 0)
-                    self.strategy.update_position(symbol, qty)
-            try:
-                await asyncio.wait_for(
-                    self._stop_event.wait(), timeout=POSITION_POLL_INTERVAL_SECONDS
-                )
-            except asyncio.TimeoutError:
-                continue
+        await run_resilient_loop(
+            stop_event=self._stop_event,
+            tracker=self._loop_health,
+            name="position_poll",
+            iteration=self._position_poll_pass,
+            backoff_secs=self._loop_backoff_secs,
+            logger=logger,
+            idle=lambda: sleep_or_stop(self._stop_event, POSITION_POLL_INTERVAL_SECONDS),
+        )
+
+    async def _position_poll_pass(self) -> None:
+        positions = await asyncio.to_thread(self._fetch_open_positions)
+        if positions is None:
+            return
+        tracked = set(self._watchlist) | set(self.strategy._symbol_states.keys())
+        for symbol in tracked:
+            qty = positions.get(symbol, 0)
+            self.strategy.update_position(symbol, qty)
 
     def _fetch_open_positions(self) -> dict[str, int]:
         """SQL: virtual_positions(qty>0) ∪ in-flight trade_intents(open)
@@ -672,24 +729,29 @@ class SchwabV2BotService:
             self._strategy_state_last_id = entry_id
             self._apply_strategy_state_event(data, max_watchlist=max_watchlist)
 
-        # Step 2: tail for new snapshots.
-        while not self._stop_event.is_set():
-            try:
-                response = await self.redis.xread(
-                    streams={self._strategy_state_stream: self._strategy_state_last_id},
-                    count=10,
-                    block=5_000,
-                )
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("schwab_1m_v2 scanner xread failed: %s", exc)
-                await asyncio.sleep(2.0)
-                continue
-            if not response:
-                continue
-            for _stream_key, entries in response:
-                for entry_id, data in entries:
-                    self._strategy_state_last_id = entry_id
-                    self._apply_strategy_state_event(data, max_watchlist=max_watchlist)
+        # Step 2: tail for new snapshots (backstopped — xread + apply contained).
+        await run_resilient_loop(
+            stop_event=self._stop_event,
+            tracker=self._loop_health,
+            name="scanner",
+            iteration=lambda: self._scanner_tail_pass(max_watchlist),
+            backoff_secs=self._loop_backoff_secs,
+            logger=logger,
+        )
+
+    async def _scanner_tail_pass(self, max_watchlist: int) -> None:
+        assert self.redis is not None
+        response = await self.redis.xread(
+            streams={self._strategy_state_stream: self._strategy_state_last_id},
+            count=10,
+            block=5_000,
+        )
+        if not response:
+            return
+        for _stream_key, entries in response:
+            for entry_id, data in entries:
+                self._strategy_state_last_id = entry_id
+                self._apply_strategy_state_event(data, max_watchlist=max_watchlist)
 
     def _apply_strategy_state_event(
         self, data: object, *, max_watchlist: int
@@ -782,6 +844,18 @@ class SchwabV2BotService:
           feed, or this is a genuine gap fill bar that the streamer
           missed during a disconnect window).
         """
+        if self._loop_fault_injection_remaining > 0:
+            # SPOF Workstream A (v2) controlled survival test (default OFF).
+            # Raises on the E1 callback path — v2's real remaining escape — so an
+            # operator can prove the bar loop survives + escalates in a safe
+            # window. Self-clears after N. The rest client's bar-loop backstop
+            # contains this and records a "bar_loop" failure.
+            self._loop_fault_injection_remaining -= 1
+            raise RuntimeError(
+                "[FAULT-INJECTION] simulated schwab_1m_v2 bar-handling failure "
+                "(MAI_TAI_STRATEGY_SCHWAB_1M_V2_LOOP_FAULT_INJECTION_COUNT) — "
+                "SPOF Workstream A v2 controlled survival test"
+            )
         now_ms = int(datetime.now(UTC).timestamp() * 1000)
         bar_age_secs = (now_ms - bar.timestamp_ms) / 1000.0
         just_warmed = False
