@@ -83,8 +83,15 @@ the `while not stop_event.is_set()` main loop body (`strategy_engine_app.py:5876
 `_immediate_schwab_1m_history_refresh` / `_refresh_stale_schwab_1m_history` /
 `_sync_subscription_targets` (incl. at the 08:00 roll, line 5949→5954) kills the loop
 coroutine while independent tasks (the streamer) keep running = zombie. The 05-22 scanner-stall
-guard is in `_run_init_phase`, not the main loop. Design doc in progress; brought for review
-before any code.
+guard is in `_run_init_phase`, not the main loop. **Design doc shipped for review:
+`docs/strategy-engine-main-loop-resilience-design.md`** (two-layer fix: extend the 05-22
+bounded-step pattern to the unguarded Schwab REST calls + an outer loop-body backstop that
+catches any `Exception` but re-raises `CancelledError`; surfaces via `[MAIN-LOOP-RECOVERED]` +
+degraded heartbeat counters; covers v2's own loop too). Correction recorded there:
+`_sync_subscription_targets` is NOT the escape point (already guarded by the 05-22 fix) — the
+real escapes are `_immediate_schwab_1m_history_refresh` / `_refresh_stale_schwab_1m_history`
+(`_load_schwab_history_bars` → broker adapter raises on dead token, unguarded). No code until
+reviewed; PR will need the Pre-Merge Regression Check (hot file).
 
 ### 🔭 MONDAY 2026-06-08 PLAN — two-ping sequence (foundation check → verdict). READ FIRST.
 
