@@ -5754,6 +5754,32 @@ class StrategyEngineService:
         self._last_generic_bot_activity_snapshot_at: datetime | None = None
         self._generic_bot_activity_snapshot_interval_secs = 5
         self._subscription_sync_timeout_secs = 3.0
+        # --- SPOF Workstream A: main-loop resilience state ---
+        # (see docs/strategy-engine-main-loop-resilience-design.md)
+        self._main_loop_step_consecutive_failures: dict[str, int] = {}
+        self._main_loop_step_failure_totals: dict[str, int] = {}
+        self._main_loop_exception_total = 0
+        self._main_loop_last_error = ""
+        self._main_loop_last_error_at: datetime | None = None
+        # healthy | recovering | degraded-persistent — dedicated heartbeat field,
+        # NOT folded into the top-level status Literal (keeps severity legible).
+        self._main_loop_health = "healthy"
+        self._main_loop_error_backoff_secs = max(
+            0.0,
+            float(getattr(self.settings, "strategy_main_loop_error_backoff_seconds", 1.0) or 1.0),
+        )
+        self._main_loop_persistent_failure_threshold = max(
+            1,
+            int(getattr(self.settings, "strategy_main_loop_persistent_failure_threshold", 3) or 3),
+        )
+        self._main_loop_step_timeout_secs = max(
+            1.0,
+            float(getattr(self.settings, "strategy_main_loop_step_timeout_seconds", 30.0) or 30.0),
+        )
+        self._main_loop_fault_injection_remaining = max(
+            0,
+            int(getattr(self.settings, "strategy_main_loop_fault_injection_count", 0) or 0),
+        )
 
     async def _initialize_stream_offsets(self) -> None:
         for stream in list(self._stream_offsets):
@@ -5874,90 +5900,268 @@ class StrategyEngineService:
         last_runtime_db_reconcile_at = utcnow()
 
         while not stop_event.is_set():
-            priority_count = await self._read_stream_group(self._priority_streams, block_ms=1)
-            # Drain market-data aggressively per main-loop iteration. Bounded
-            # by _MARKET_DATA_DRAIN_BUDGET so flush_completed_bars and the
-            # heartbeat path still run at reasonable cadence. When the
-            # priority stream was busy, don't block waiting on market-data;
-            # otherwise wait up to stream_block_ms on the first xread so
-            # we don't spin when there is nothing to do.
-            await self._drain_market_data_stream(
-                first_block_ms=1 if priority_count else stream_block_ms,
-            )
-
-            schwab_intent_count, schwab_event_count = await self._drain_schwab_stream_queues()
-            bar_close_intents, completed_bar_count = self.state.flush_completed_bars()
-            for intent in bar_close_intents:
-                await self._publish_intent(intent)
-            if bar_close_intents:
-                self.logger.info(
-                    "generated %s intents from %s forced bar closes",
-                    len(bar_close_intents),
-                    completed_bar_count,
+            try:
+                (
+                    last_runtime_db_reconcile_at,
+                    last_heartbeat_at,
+                ) = await self._run_main_loop_iteration(
+                    stream_block_ms=stream_block_ms,
+                    heartbeat_interval_secs=heartbeat_interval_secs,
+                    last_runtime_db_reconcile_at=last_runtime_db_reconcile_at,
+                    last_heartbeat_at=last_heartbeat_at,
                 )
-
-            schwab_fallback_intent_count = await self._monitor_schwab_symbol_health()
-            bar_flow_change_count = self.state.monitor_completed_bar_flow(
-                market_data_provider_for_strategy=self.settings.market_data_provider_for_strategy,
-            )
-            # Real-fix loop (2026-05-18): the bar-flow-stalled detector
-            # halts entries when CHART_EQUITY drops behind. Instead of
-            # waiting up to 15s per symbol for the next throttled REST
-            # refresh, we immediately fetch REST for every schwab_1m
-            # symbol the detector just halted. After the fetch, re-run the
-            # detector so halts that recovered get cleared in the same
-            # iteration. End-to-end recovery becomes ~1-3 seconds (one
-            # REST roundtrip) instead of multi-minute halts.
-            recovery_bar_count = 0
-            if bar_flow_change_count > 0:
-                stalled = self._symbols_halted_by_bar_flow_stall("schwab_1m")
-                if stalled:
-                    recovery_bar_count = await self._immediate_schwab_1m_history_refresh(
-                        symbols=stalled,
+            except asyncio.CancelledError:
+                # Shutdown path — MUST propagate so run() can stop cleanly.
+                raise
+            except Exception:
+                # Layer 2 backstop (SPOF Workstream A): ANY unanticipated
+                # exception is contained here so one bad iteration can never end
+                # the loop (= the 2026-06-03/06-07 zombie). The failure is logged
+                # loudly and surfaced via the heartbeat, never swallowed silently.
+                self._record_main_loop_step_failure("main_loop_body")
+                self.logger.exception(
+                    "[MAIN-LOOP-RECOVERED] main-loop iteration raised; loop continues "
+                    "(main_loop_health=%s, consecutive=%s)",
+                    self._main_loop_health,
+                    self._main_loop_step_consecutive_failures.get("main_loop_body", 0),
+                )
+                # Keep the service observably alive AND observably degraded.
+                try:
+                    await self._publish_heartbeat("healthy")
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    self.logger.debug(
+                        "post-exception heartbeat also failed", exc_info=True
                     )
-                    if recovery_bar_count > 0:
-                        # Recovery delivered bars; re-run the detector so
-                        # symbols that caught up have their halts cleared
-                        # without waiting for the next loop iteration.
-                        bar_flow_change_count += self.state.monitor_completed_bar_flow(
-                            market_data_provider_for_strategy=self.settings.market_data_provider_for_strategy,
-            )
-            schwab_1m_history_intent_count, schwab_1m_history_bar_count = await self._refresh_stale_schwab_1m_history()
-            if (
-                bar_close_intents
-                or completed_bar_count
-                or
-                schwab_event_count
-                or schwab_intent_count
-                or schwab_fallback_intent_count
-                or bar_flow_change_count
-                or schwab_1m_history_intent_count
-                or schwab_1m_history_bar_count
-            ):
-                await self._sync_subscription_targets()
-                await self._publish_strategy_state_snapshot()
-                self._sync_runtime_data_health_incidents()
-
-            if (utcnow() - last_runtime_db_reconcile_at).total_seconds() >= self._runtime_db_reconcile_interval_secs:
-                runtime_changed = self._reconcile_runtime_state_from_database(log_when_changed=False)
-                if runtime_changed:
-                    await self._sync_subscription_targets()
-                    await self._publish_strategy_state_snapshot()
-                last_runtime_db_reconcile_at = utcnow()
-
-            if (utcnow() - last_heartbeat_at).total_seconds() >= heartbeat_interval_secs:
-                if self.state._roll_scanner_session_if_needed():
-                    self.logger.info(
-                        "rolled scanner/runtime session at %s",
-                        self.state._active_scanner_session_start.isoformat(),
-                    )
-                    await self._sync_subscription_targets()
-                    await self._publish_strategy_state_snapshot()
-                self._sync_runtime_data_health_incidents()
-                await self._publish_heartbeat("healthy")
-                last_heartbeat_at = utcnow()
+                if self._main_loop_error_backoff_secs > 0:
+                    await asyncio.sleep(self._main_loop_error_backoff_secs)
 
         await self._shutdown_cleanup()
+
+    async def _run_main_loop_iteration(
+        self,
+        *,
+        stream_block_ms: int,
+        heartbeat_interval_secs: int,
+        last_runtime_db_reconcile_at: datetime,
+        last_heartbeat_at: datetime,
+    ) -> tuple[datetime, datetime]:
+        """One iteration of the strategy-engine main loop.
+
+        Extracted from ``run()`` so the Layer-2 backstop wraps a single call site
+        and the resilience behaviour is unit-testable. Schwab-touching steps that
+        historically escaped uncaught (the 2026-06-03 dead-token and 2026-06-07
+        streamer-RuntimeError zombies) are wrapped per-step (Layer 1) so a
+        contained failure still lets the rest of the iteration — crucially the
+        heartbeat and the non-Schwab bots' market-data drain — run.
+        """
+        priority_count = await self._read_stream_group(self._priority_streams, block_ms=1)
+        # Drain market-data aggressively per main-loop iteration. Bounded
+        # by _MARKET_DATA_DRAIN_BUDGET so flush_completed_bars and the
+        # heartbeat path still run at reasonable cadence. When the
+        # priority stream was busy, don't block waiting on market-data;
+        # otherwise wait up to stream_block_ms on the first xread so
+        # we don't spin when there is nothing to do.
+        await self._drain_market_data_stream(
+            first_block_ms=1 if priority_count else stream_block_ms,
+        )
+
+        # Layer 1: a raising/malformed Schwab stream-queue item must not kill the
+        # loop (the 2026-06-07 streamer-RuntimeError class).
+        schwab_intent_count, schwab_event_count = await self._bounded_loop_step(
+            "schwab_stream_drain",
+            self._drain_schwab_stream_queues(),
+            default=(0, 0),
+        )
+        bar_close_intents, completed_bar_count = self.state.flush_completed_bars()
+        for intent in bar_close_intents:
+            await self._publish_intent(intent)
+        if bar_close_intents:
+            self.logger.info(
+                "generated %s intents from %s forced bar closes",
+                len(bar_close_intents),
+                completed_bar_count,
+            )
+
+        schwab_fallback_intent_count = await self._bounded_loop_step(
+            "schwab_symbol_health",
+            self._monitor_schwab_symbol_health(),
+            default=0,
+        )
+        bar_flow_change_count = self.state.monitor_completed_bar_flow(
+            market_data_provider_for_strategy=self.settings.market_data_provider_for_strategy,
+        )
+        # Real-fix loop (2026-05-18): the bar-flow-stalled detector
+        # halts entries when CHART_EQUITY drops behind. Instead of
+        # waiting up to 15s per symbol for the next throttled REST
+        # refresh, we immediately fetch REST for every schwab_1m
+        # symbol the detector just halted. After the fetch, re-run the
+        # detector so halts that recovered get cleared in the same
+        # iteration. End-to-end recovery becomes ~1-3 seconds (one
+        # REST roundtrip) instead of multi-minute halts.
+        recovery_bar_count = 0
+        if bar_flow_change_count > 0:
+            stalled = self._symbols_halted_by_bar_flow_stall("schwab_1m")
+            if stalled:
+                # Layer 1: this Schwab REST call is a PROVEN 2026-06-03 escape
+                # (dead token -> _load_schwab_history_bars -> RuntimeError).
+                recovery_bar_count = await self._bounded_loop_step(
+                    "schwab_1m_immediate_refresh",
+                    self._immediate_schwab_1m_history_refresh(symbols=stalled),
+                    default=0,
+                    timeout=self._main_loop_step_timeout_secs,
+                )
+                if recovery_bar_count > 0:
+                    # Recovery delivered bars; re-run the detector so
+                    # symbols that caught up have their halts cleared
+                    # without waiting for the next loop iteration.
+                    bar_flow_change_count += self.state.monitor_completed_bar_flow(
+                        market_data_provider_for_strategy=self.settings.market_data_provider_for_strategy,
+                    )
+        # Layer 1: the other PROVEN 2026-06-03 escape (dead-token RuntimeError
+        # out of _load_schwab_history_bars). Unconditional every iteration pre-fix.
+        schwab_1m_history_intent_count, schwab_1m_history_bar_count = await self._bounded_loop_step(
+            "schwab_1m_stale_refresh",
+            self._refresh_stale_schwab_1m_history(),
+            default=(0, 0),
+            timeout=self._main_loop_step_timeout_secs,
+        )
+        if (
+            bar_close_intents
+            or completed_bar_count
+            or schwab_event_count
+            or schwab_intent_count
+            or schwab_fallback_intent_count
+            or bar_flow_change_count
+            or schwab_1m_history_intent_count
+            or schwab_1m_history_bar_count
+        ):
+            await self._sync_subscription_targets()
+            await self._publish_strategy_state_snapshot()
+            self._sync_runtime_data_health_incidents()
+
+        if (utcnow() - last_runtime_db_reconcile_at).total_seconds() >= self._runtime_db_reconcile_interval_secs:
+            runtime_changed = self._reconcile_runtime_state_from_database(log_when_changed=False)
+            if runtime_changed:
+                await self._sync_subscription_targets()
+                await self._publish_strategy_state_snapshot()
+            last_runtime_db_reconcile_at = utcnow()
+
+        if (utcnow() - last_heartbeat_at).total_seconds() >= heartbeat_interval_secs:
+            if self.state._roll_scanner_session_if_needed():
+                self.logger.info(
+                    "rolled scanner/runtime session at %s",
+                    self.state._active_scanner_session_start.isoformat(),
+                )
+                await self._sync_subscription_targets()
+                await self._publish_strategy_state_snapshot()
+            self._sync_runtime_data_health_incidents()
+            await self._publish_heartbeat("healthy")
+            last_heartbeat_at = utcnow()
+
+        # A full clean iteration clears the outer-backstop failure streak.
+        self._record_main_loop_step_success("main_loop_body")
+        return last_runtime_db_reconcile_at, last_heartbeat_at
+
+    async def _bounded_loop_step(
+        self,
+        label: str,
+        awaitable: Coroutine[object, object, object],
+        *,
+        default: object,
+        timeout: float | None = None,
+    ) -> object:
+        """Layer-1 guard: run one Schwab-touching loop step, contain any failure.
+
+        Returns the step result on success (clearing the step's failure streak);
+        returns ``default`` on a contained ``Exception``/timeout (recording the
+        failure for escalation). ``CancelledError`` is re-raised so shutdown still
+        propagates.
+        """
+        try:
+            if timeout is not None:
+                result = await asyncio.wait_for(awaitable, timeout=timeout)
+            else:
+                result = await awaitable
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            self._record_main_loop_step_failure(label)
+            self.logger.exception(
+                "[MAIN-LOOP-STEP-FAILED] step=%s contained; iteration continues "
+                "(main_loop_health=%s, consecutive=%s)",
+                label,
+                self._main_loop_health,
+                self._main_loop_step_consecutive_failures.get(label, 0),
+            )
+            return default
+        self._record_main_loop_step_success(label)
+        return result
+
+    def _record_main_loop_step_failure(self, label: str) -> None:
+        self._main_loop_step_consecutive_failures[label] = (
+            self._main_loop_step_consecutive_failures.get(label, 0) + 1
+        )
+        self._main_loop_step_failure_totals[label] = (
+            self._main_loop_step_failure_totals.get(label, 0) + 1
+        )
+        self._main_loop_exception_total += 1
+        self._main_loop_last_error = label
+        self._main_loop_last_error_at = utcnow()
+        self._refresh_main_loop_health()
+
+    def _record_main_loop_step_success(self, label: str) -> None:
+        if self._main_loop_step_consecutive_failures.get(label):
+            self._main_loop_step_consecutive_failures[label] = 0
+            self._refresh_main_loop_health()
+
+    def _refresh_main_loop_health(self) -> None:
+        worst = max(self._main_loop_step_consecutive_failures.values(), default=0)
+        if worst >= self._main_loop_persistent_failure_threshold:
+            new_health = "degraded-persistent"
+        elif worst >= 1:
+            new_health = "recovering"
+        else:
+            new_health = "healthy"
+        if (
+            new_health == "degraded-persistent"
+            and self._main_loop_health != "degraded-persistent"
+        ):
+            failing = sorted(
+                label
+                for label, count in self._main_loop_step_consecutive_failures.items()
+                if count >= self._main_loop_persistent_failure_threshold
+            )
+            # Loud, distinct, transition-edge signature. The CONTINUOUS signal is
+            # the main_loop_health heartbeat field (Workstream B dashboard banner).
+            self.logger.error(
+                "[MAIN-LOOP-DEGRADED-PERSISTENT] strategy-engine main loop has had "
+                "%s+ consecutive failures on step(s) %s; the loop is ALIVE and "
+                "heartbeating but the Schwab path is failing — INVESTIGATE "
+                "(most likely a dead Schwab token; re-auth + restart strategy/oms)",
+                self._main_loop_persistent_failure_threshold,
+                ",".join(failing) or "?",
+            )
+        self._main_loop_health = new_health
+
+    def _main_loop_health_heartbeat_details(self) -> dict[str, str]:
+        failing = sorted(
+            label
+            for label, count in self._main_loop_step_consecutive_failures.items()
+            if count > 0
+        )
+        last_error_age = ""
+        if self._main_loop_last_error_at is not None:
+            last_error_age = str(
+                int((utcnow() - self._main_loop_last_error_at).total_seconds())
+            )
+        return {
+            "main_loop_health": self._main_loop_health,
+            "main_loop_exceptions_total": str(self._main_loop_exception_total),
+            "main_loop_failing_steps": ",".join(failing),
+            "main_loop_last_error_age_secs": last_error_age,
+        }
 
     async def _run_init_phase(self, stop_event: asyncio.Event) -> bool:
         """Execute the startup sequence, racing it against ``stop_event``.
@@ -6392,6 +6596,10 @@ class StrategyEngineService:
                     ).lower(),
                     "schwab_stream_last_error": str(getattr(stream_client, "last_error", "") or ""),
                     "engine_started_at": self._started_at.isoformat(),
+                    # SPOF Workstream A: dedicated main-loop health field (NOT
+                    # folded into the top-level status Literal). degraded-persistent
+                    # = the loop is alive + heartbeating but a step keeps failing.
+                    **self._main_loop_health_heartbeat_details(),
                 },
             ),
         )
@@ -7418,6 +7626,16 @@ class StrategyEngineService:
         return total_fresh_bars
 
     async def _refresh_stale_schwab_1m_history(self) -> tuple[int, int]:
+        if self._main_loop_fault_injection_remaining > 0:
+            # SPOF Workstream A controlled survival test (default OFF). Simulates
+            # the proven 2026-06-03 dead-token escape so an operator can verify the
+            # loop survives + escalates in a safe window. Self-clears after N.
+            self._main_loop_fault_injection_remaining -= 1
+            raise RuntimeError(
+                "[FAULT-INJECTION] simulated Schwab history-refresh failure "
+                "(MAI_TAI_STRATEGY_MAIN_LOOP_FAULT_INJECTION_COUNT) — "
+                "SPOF Workstream A controlled survival test"
+            )
         runtime = self.state.bots.get("schwab_1m")
         if not isinstance(runtime, StrategyBotRuntime):
             return 0, 0
