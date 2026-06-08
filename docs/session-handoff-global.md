@@ -1,5 +1,91 @@
 # Session Handoff - Global
 
+### 2026-06-08 — ✅ FIX V3 CONFIRMED (Ping 1 + Ping 2 complete). Decisions: ~20/hr case-2 residual ACCEPTED; PR #227 DEBUG log KEPT. Next: SPOF Workstream A (design-first). Auth-churn was a false alarm.
+
+Monday two-ping validation ran clean (plan recorded below). Pipeline fully recovered and
+market-proven; the Sunday 06-07 17:26 strategy restart held through the 08:00 UTC scanner
+roll (no re-zombie).
+
+#### Fix-v3 cold-start verdict — CONFIRMED for what it targeted
+
+08 UTC window (first clean post-deploy cold-start since 06-02), `[SCHWAB-CHART-RECONNECT-CAUSE]`:
+
+| Hour | cause total | case-2 (`chart_msg_age=none`) | path-1 (`exchange_deadline=True`) |
+|---|---|---|---|
+| 08 | 17 | 17 | **0** |
+| 09 | 22 | 22 | **0** |
+| 10 | 23 | 23 | **0** |
+| 11 | 1 | 1 | 0 |
+
+**Cold-start reconnect-cause total: 369 (pre-fix 06-01) → 116 (06-02) → ~20 today — lowest
+yet.** Case-2 cascade crushed; path-1 clean (0, revert holds); no resurgence; self-clears to
+1 by 11 UTC before RTH.
+
+**Prediction inversion (and why it still confirms).** Predicted from the single 06-02 sample:
+case-2 ~1, path-1 ~115. Actual: path-1 = 0, case-2 = ~17–23 self-clearing. On 06-02 the
+cold-start CHART-silence events tripped **path-1 (exchange-deadline) first**, so they counted
+as path-1 and case-2 read 1. Today path-1's exchange timing stayed clean, so the same events
+**fell through to case-2 after the 92s grace expired**. Total is what matters and it's the
+lowest yet — fix v3's grace window is working; the ~20/hr is legitimately-quiet pre-market
+symbols whose CHART stays silent past 92s, not a malfunction.
+
+**Auth-churn correction (Ping 1 false alarm — record explicitly).** The Ping-1 "75 auth-fails"
+were **NOT token-auth failures** — they are **liveness forced-reconnects** (`asyncio.CancelledError`
+on the websocket `recv` reconnect path, same family as the case-2 events viewed from the
+reconnect side). **Zero `failed refreshing Schwab token` today** (last occurrence 2026-06-05
+21:45:04 — the single transient during Friday's recovery restart). Daily "connection loop
+failed": 06-02=492, 06-07=3, 06-08=87 — today is 5.6× *below* a normal trading day, not
+elevated. Token is clean and rotating normally (659 connects, mtime advancing on successful
+refresh). **No auth-churn issue exists.** My Ping-1 label was wrong.
+
+#### Operator decisions (2026-06-08)
+
+1. **~20/hr case-2 warmup residual: ACCEPTED as a known self-clearing pre-market cosmetic.**
+   It's in the cold-start window, self-clears by 11 UTC before RTH, bar-flow held through it,
+   and it's legitimately-quiet symbols' CHART staying silent past the 92s grace — not a
+   malfunction. **Do NOT tune the grace window wider** — that re-extends dead-feed detection
+   delay (the fix-v3 design tradeoff). Same disposition as the path-1 warmup spike.
+2. **PR #227 `[SCHWAB-CHART-RECONNECT-CAUSE]` DEBUG log: KEPT.** It's the only instrumentation
+   for the case-2/path-1 split; with the residual accepted-but-watched, we keep seeing it to
+   confirm it stays self-clearing and doesn't creep. **Do not remove.**
+
+#### Bar-flow — Schwab bots healthy (RTH, market-proven)
+
+| Bot | bars/sym/min (08→14 UTC) | persist-lag |
+|---|---|---|
+| schwab_1m | 0.56 / 0.99 / 0.68 / 0.87 / 0.79 / 0.67 / 0.53 | avg 65–93s, p95 77–189s (baseline floor) |
+| macd_30s | 1.11 / 1.96 / 1.27 / 1.57 / 1.58 / 0.93 / 0.72 | avg 34–43s |
+| schwab_1m_v2 | ~0.6+ (repopulated to 11 symbols, `data_flow=flowing`) | baseline |
+
+At/above the 0.6 target through core hours. **PR #238 at 11 UTC = 0** (manifestation window
+clean); 13 UTC = 4 at RTH open (minor, by-design within the 300s threshold, matches 06-01).
+
+#### Reporting scope going forward (operator)
+
+Routine bar-flow checks are scoped to the **three Schwab bots** (`schwab_1m`, `schwab_1m_v2`,
+`macd_30s` — the ones on the Schwab streamer). **`polygon_30s` is dropped from routine
+bar-flow tables** unless diagnostically relevant again (as in the outage, where its death
+proved the failure was pipeline-wide).
+
+**PARKED (un-prioritized, recorded so it's not lost — NOT a tracked workstream):**
+`polygon_30s` persist-lag growth recurred today (avg 184s @12 UTC → 367s @13 UTC, p95 up to
+712s). Schwab-independent (Polygon data path). Gets its own diagnosis pass only if it ever
+becomes a focus; not on the active queue.
+
+#### Next: SPOF Workstream A — design-first (top priority)
+
+Design doc only, no code until reviewed (same discipline as fix v3). Target: a dead/failing
+Schwab token (or any streamer-side exception) in the subscription-sync/hydration path must NOT
+zombify strategy-engine's main loop — it must degrade gracefully (loop alive, keeps
+heartbeating, surfaces the failure, keeps non-Schwab bots running). **Pinned escape point:**
+the `while not stop_event.is_set()` main loop body (`strategy_engine_app.py:5876–5958`) has
+**no try/except** — any uncaught exception from `_drain_schwab_stream_queues` /
+`_immediate_schwab_1m_history_refresh` / `_refresh_stale_schwab_1m_history` /
+`_sync_subscription_targets` (incl. at the 08:00 roll, line 5949→5954) kills the loop
+coroutine while independent tasks (the streamer) keep running = zombie. The 05-22 scanner-stall
+guard is in `_run_init_phase`, not the main loop. Design doc in progress; brought for review
+before any code.
+
 ### 🔭 MONDAY 2026-06-08 PLAN — two-ping sequence (foundation check → verdict). READ FIRST.
 
 Operator's planned Monday sequence after the 06-05 SPOF outage + recovery (full incident
