@@ -1,3 +1,5 @@
+> 🔴 **CORRECTION (2026-06-09, after the live token-refresh SPOF — see handoff incident block):** This doc says the incidental refresh is alive via the OMS broker-sync because the retired bots are `provider=schwab`. **That was WRONG** — the OMS broker-sync short-circuits on missing-hash and NEVER refreshes; the refresh ran only via a zombie pre-cutover OMS, and **post-cutover there is NO refresh path at all** (it died on the first OMS restart; a temporary `schwab_1m` re-enable bridge now holds it). This makes P0 (this doc) **confirmed-urgent and PRIMARY**, not a resilience-hardening follow-up. The core design (#1 proactive-timer refresher independent of registrations/broker-sync/hashes, #2 auto-reload, #3 atomic writes) is RIGHT and exactly what's needed — the "incidental refresh keeps it alive today" framing is obsolete.
+
 # Design: Schwab token lifecycle — dedicated refresher (#1) + auto-reload (#2) + atomic writes (#3)
 
 **Status: DESIGN — decisions RESOLVED, code-confirms DONE. Final review → implement → additive
