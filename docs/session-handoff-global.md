@@ -1,23 +1,20 @@
 # Session Handoff - Global
 
-### 🚩 NEXT — RTH today (from 13:30 UTC / 9:30 ET): the v2 cutover VERDICT. READ FIRST.
+### 2026-06-09 ~13:52 UTC / 9:52 ET — ✅✅ schwab_1m→v2 STREAMER CUTOVER **COMPLETE** — RTH verdict PASSED on all 5 criteria. v2 is the sole Schwab streamer delivering bars at 2.5s median persist-lag (PAPER).
 
-Pre-market 2026-06-09 RESOLVED the "v2 streamer no-bars" scare: it was **pre-market quiet,
-NOT a bug** (see the 2026-06-09 11:00 entry below — data arrives end-to-end on the unfixed
-code once symbols print). The streamer + pipeline work. RTH is now the only open verification —
-the real test, when liquid symbols print continuously. Leave v2 as-is (current VPS code 3d2812d,
-behaviorally identical to main f6635ef; diag #256 still ON). Watch from 13:30 UTC:
-1. **Normal CHART_EQUITY bar flow** on actively-trading symbols (continuous, not the pre-market trickle).
-2. **Persist-lag actually <5s** under continuous flow — the streamer-latency benefit, finally
-   measurable with real volume (`strategy_bar_history` lag for `schwab_1m_v2` off the ~85s REST floor).
-3. **Normal signal generation**; `loop_health=healthy`; `data_flow=flowing`.
-4. **Streamer session still HELD** (no `[V2-WS-DISCONNECT]` flap under full RTH load).
-5. **gap-expiry check:** confirm `V2-PENDING-CROSS-EXPIRED gap_s≈53760` (overnight warmup-seed→live
-   gap) is the gap-guard working as designed and is NOT suppressing legitimate RTH crosses — i.e.
-   once continuous RTH bars flow, the strategy generates normal crosses, not stuck expiring them.
-   This is the ONLY residual that could still be a real issue; RTH is when it would show.
-If v2 behaves normally at RTH → **cutover is DONE**; then revert the diag (#256) and record complete.
-Back-out still staged (`…env.bak-cutover-2026-06-09` byte-exact + `cutover-backout-2026-06-09.txt`).
+The RTH verdict (the real test, liquid symbols printing continuously) passed decisively:
+1. **Continuous CHART_EQUITY flow** — 37 data frames since 13:30 UTC, most recent seconds-fresh; **1038 bars** persisted in the 09:00–11:00 ET window.
+2. **Persist-lag <5s under real volume** — `strategy_bar_history` for `schwab_1m_v2`: **median 2.5s, p95 3.4s, p99 3.6s** over 1038 bars. This is the streamer-latency payoff — off the ~85s REST floor. Only 2/1038 over the 60s error threshold (one-symbol BTCT catch-up batch at 09:37, 0.19%; not systemic).
+3. **Loop healthy / data flowing** — 329 `V2-MACD-PROBE` since RTH across 15+ symbols (real-time per-bar eval), **0 ERROR/CRITICAL/Traceback/`V2-TASK-DIED`**, service active continuously since 10:30:37. (The literal `loop_health`/`data_flow` heartbeat fields are not emitted to the v2 logs or `service_heartbeats`; health established functionally — bars persisting + probes firing + zero errors.)
+4. **Session held under RTH load** — today-only (date-filtered): **1 `V2-WS-LOGIN-OK`, 0 `V2-WS-DISCONNECT`** since the 10:30:37 connect; no flap.
+5. **Gap-guard not suppressing crosses** — **0 `V2-PENDING-CROSS-EXPIRED` since 13:30 UTC**. The overnight `gap_s≈53760` expiry was a one-time warmup-seed→live boundary artifact, gone once continuous bars flow; strategy evaluates normally (329 probes). No entry signals yet = selective signals working, not a fault.
+
+**The "no-bars" thread was a pre-market-quiet misread, closed.** Cutover housekeeping done:
+- **Diag #256 REVERTED** (PR #261, main `9ec3511`) — removed the setting + streamer diag code.
+- **Diag env var removed** from `/etc/project-mai-tai/project-mai-tai.env` (backup `…env.bak-diag-removal-2026-06-09`), **no restart** — running process keeps the harmless diag until its next natural restart, at which point it is fully gone (code+setting+flag all removed). VPS code still `3d2812d`; deploying #261 later is a clean no-op-behavior step (env var already gone → no stale-var trap).
+- Back-out still staged (`…env.bak-cutover-2026-06-09` byte-exact + `cutover-backout-2026-06-09.txt`) but the cutover is verified — no longer expected to be needed.
+
+**Remaining (separate, later):** real-money conversion of v2 (still PAPER) is its own step, NOT done. Optional housekeeping: deploy #261 + the now-clean env at the next after-hours window to fully drop the diag code live (purely cosmetic; functionally already off at next restart).
 
 ### 2026-06-09 ~11:00 UTC — ✅ "v2 streamer no-bars" was PRE-MARKET QUIET, not a bug. SUBS-ordering hypothesis instrumented, DISPROVEN, reverted. Pipeline works end-to-end on unfixed code.
 
