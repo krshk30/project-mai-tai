@@ -1,21 +1,48 @@
 # Session Handoff - Global
 
-### 🚩 NEXT — ~7 AM ET (08:00–13:00 UTC) pre-market: FINISH the v2 cutover verification (bar-latency, deferred from the closed-market activation). READ FIRST.
+### 🚩 NEXT — RTH today (from 13:30 UTC / 9:30 ET): the v2 cutover VERDICT. READ FIRST.
 
-The schwab_1m→v2 streamer cutover was executed 2026-06-09 ~01:00 UTC with the market CLOSED,
-so the **session-hold** half is verified but the **bar-latency** half is NOT (no bars in a
-closed market). At pre-market, confirm:
-1. **Only v2 is the live Schwab bot**, its streamer `streamer_connected=true` and STILL stable
-   (no `[V2-WS-DISCONNECT]` flap once real load arrives); strategy-engine still holds no
-   streamer session (`schwab_stream_connected=false`).
-2. **Streamer bars land sub-5s** (the whole point): `strategy_bar_history` persist-lag for
-   `schwab_1m_v2` drops from the ~85s REST floor toward <5s on streamer-fed bars;
-   `data_flow=flowing`, `loop_health=healthy`.
-3. **Bar-flow healthy** for v2 as pre-market opens; `schwab_1m`/`macd_30s` stay out of routing;
-   `polygon_30s` untouched.
-If bar-latency disappoints, it is NOT an emergency — v2 still has REST fallback, and the
-**back-out is staged** (`/etc/project-mai-tai/project-mai-tai.env.bak-cutover-2026-06-09`
-byte-exact + `cutover-backout-2026-06-09.txt` flag-only inverse).
+Pre-market 2026-06-09 RESOLVED the "v2 streamer no-bars" scare: it was **pre-market quiet,
+NOT a bug** (see the 2026-06-09 11:00 entry below — data arrives end-to-end on the unfixed
+code once symbols print). The streamer + pipeline work. RTH is now the only open verification —
+the real test, when liquid symbols print continuously. Leave v2 as-is (current VPS code 3d2812d,
+behaviorally identical to main f6635ef; diag #256 still ON). Watch from 13:30 UTC:
+1. **Normal CHART_EQUITY bar flow** on actively-trading symbols (continuous, not the pre-market trickle).
+2. **Persist-lag actually <5s** under continuous flow — the streamer-latency benefit, finally
+   measurable with real volume (`strategy_bar_history` lag for `schwab_1m_v2` off the ~85s REST floor).
+3. **Normal signal generation**; `loop_health=healthy`; `data_flow=flowing`.
+4. **Streamer session still HELD** (no `[V2-WS-DISCONNECT]` flap under full RTH load).
+5. **gap-expiry check:** confirm `V2-PENDING-CROSS-EXPIRED gap_s≈53760` (overnight warmup-seed→live
+   gap) is the gap-guard working as designed and is NOT suppressing legitimate RTH crosses — i.e.
+   once continuous RTH bars flow, the strategy generates normal crosses, not stuck expiring them.
+   This is the ONLY residual that could still be a real issue; RTH is when it would show.
+If v2 behaves normally at RTH → **cutover is DONE**; then revert the diag (#256) and record complete.
+Back-out still staged (`…env.bak-cutover-2026-06-09` byte-exact + `cutover-backout-2026-06-09.txt`).
+
+### 2026-06-09 ~11:00 UTC — ✅ "v2 streamer no-bars" was PRE-MARKET QUIET, not a bug. SUBS-ordering hypothesis instrumented, DISPROVEN, reverted. Pipeline works end-to-end on unfixed code.
+
+Investigation trail (instrument-first paid off — caught a phantom before shipping a fix):
+- **Symptom:** post-cutover, v2's streamer connected + SUBS-acked (code 0) but `rest_bars_gated_total=0`,
+  zero CHART_EQUITY bars, pre-market. Hypothesis: the one code divergence vs the working production
+  streamer — v2 deferred its first SUBS into the receive loop (after a `recv()`); production subscribes
+  synchronously right after the login ack.
+- **Instrumented (PR #256, env-gated `…_streamer_diag_enabled`, NOT a fix):** raw frame-type tally +
+  one-shot CHART_EQUITY raw-content sample. First capture (10:34–10:40 UTC): `notify`+`response` only,
+  **0 `data` frames** → looked like "not arriving."
+- **The baseline MOVED:** at **11:01:02 UTC** CHART_EQUITY `data` frames began arriving on the **OLD,
+  unfixed code** — valid OHLCV (FRSX/CHAI/BGI/ELAB/ABTS), chart_time=11:00 UTC. REST warmup completed
+  (24/25 by 11:03), buffered streamer bars drained (`V2-STREAMER-DRAIN replayed N bars`), strategy
+  processed them. The 10:30–11:00 "0 frames" was simply **illiquid penny stocks not printing pre-market**
+  (~11:00 UTC / 7 AM ET is when they started). v2 had only ever been observed in the overnight/pre-market
+  dead zone since the 01:00 cutover — hence "never received a bar."
+- **Decisions:** (1) **Reverted PR #258** (SUBS-ordering) via **#259** — its premise was disproven and its
+  message asserted a fix that fixed nothing (behaviorally a no-op; data arrives either way). History kept
+  honest. (2) **Closed design PR #257** (two-step plan superseded). (3) **Step 2** (streamer-warms-own-
+  symbols decouple) **PARKED** as a possible future robustness item (don't depend on REST warmup) — REST
+  warmup completes + buffer drains correctly today, so it is NOT an outage fix and NOT urgent.
+- **Diag #256 stays deployed** (flag ON) through RTH as the live verification tool; revert it once RTH
+  confirms v2 trades normally. **Never deployed #258** to the VPS — VPS stayed on 3d2812d (diag only),
+  behaviorally identical to main after the revert. v2 ran undisturbed throughout.
 
 ### 2026-06-09 ~01:00 UTC — ✅ schwab_1m→v2 STREAMER CUTOVER executed; v2 is now the single Schwab bot (Day-1 session-hold VERIFIED, market-closed). Bar-latency deferred to 7 AM ET.
 
