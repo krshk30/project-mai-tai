@@ -164,7 +164,33 @@ safety blocker, stop and reassess rather than ship an unsafe change on the live 
 
 ---
 
-## Constraints (unchanged)
+## Implementation confirms (code-review gates — from final review 2026-06-09, APPROVED for implement)
+
+These are not blockers; they gate at code review on the live token path. Fold each in:
+
+1. **The shared-grant-helper refactor must be PROVABLY behavior-identical.** Extracting the
+   refresh-grant + token-store load/save out of the live `SchwabBrokerAdapter` is surgery on the
+   core of the live token path. "No logic change" is the intent — *prove it*: unit-test the shared
+   helper against the **same inputs/outputs as the current adapter grant** across success,
+   expiry-margin, `invalid_grant`, and torn-read cases, so the refactor is demonstrably a **move,
+   not a rewrite**. This is the piece code review most wants to see — "behavior-identical" refactors
+   are where drift hides. (Approach: characterization tests written against the *current* adapter
+   grant first, then re-pointed at the extracted helper unchanged.)
+
+2. **Close the cutover transient-window (no-gap ordering) — deploy step.** Decision #2 disables the
+   OMS adapter's refresh and hands sole ownership to the new refresher. At deploy, sequence it so
+   there is **never a gap with no active refresher**: the refresher must be confirmed **running AND
+   observed to complete one successful refresh** BEFORE the adapter's refresh is disabled. Otherwise
+   the SPOF is briefly recreated mid-cutover. (Add to Build sequence step 5: refresher up → observe
+   one `[SCHWAB-TOKEN-REFRESHED]` → only then disable adapter refresh.)
+
+3. **Confirm TRUE single-writer — prefer OMS adapter as a PURE READER post-change.** #3 keeps
+   `_save_token_store` as an atomic-write target, which implies the adapter *might* still write. The
+   cleaner invariant: after the change the OMS adapter **never writes** the token store (refresh
+   disabled → on-expiry it only `_load_token_store()` reads) → the race surface decision #2 targets
+   is fully gone. **Target: OMS adapter = pure reader.** If any path can still make it write, **flag
+   where/why** in the PR — that means it's not strictly single-writer and needs justification. The
+   atomic-write helper still applies to the writers that remain (refresher + control re-auth callback).
 
 PR #227 stays · PR #238 untouched · v2 streamer flag stays ON (live sole Schwab bot) · retired
 `schwab_1m`/`macd_30s` dormant **AND not removed until #1 lands — they are load-bearing for token
