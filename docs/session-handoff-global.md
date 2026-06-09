@@ -1,5 +1,58 @@
 # Session Handoff - Global
 
+### 🚩 NEXT — ~7 AM ET (08:00–13:00 UTC) pre-market: FINISH the v2 cutover verification (bar-latency, deferred from the closed-market activation). READ FIRST.
+
+The schwab_1m→v2 streamer cutover was executed 2026-06-09 ~01:00 UTC with the market CLOSED,
+so the **session-hold** half is verified but the **bar-latency** half is NOT (no bars in a
+closed market). At pre-market, confirm:
+1. **Only v2 is the live Schwab bot**, its streamer `streamer_connected=true` and STILL stable
+   (no `[V2-WS-DISCONNECT]` flap once real load arrives); strategy-engine still holds no
+   streamer session (`schwab_stream_connected=false`).
+2. **Streamer bars land sub-5s** (the whole point): `strategy_bar_history` persist-lag for
+   `schwab_1m_v2` drops from the ~85s REST floor toward <5s on streamer-fed bars;
+   `data_flow=flowing`, `loop_health=healthy`.
+3. **Bar-flow healthy** for v2 as pre-market opens; `schwab_1m`/`macd_30s` stay out of routing;
+   `polygon_30s` untouched.
+If bar-latency disappoints, it is NOT an emergency — v2 still has REST fallback, and the
+**back-out is staged** (`/etc/project-mai-tai/project-mai-tai.env.bak-cutover-2026-06-09`
+byte-exact + `cutover-backout-2026-06-09.txt` flag-only inverse).
+
+### 2026-06-09 ~01:00 UTC — ✅ schwab_1m→v2 STREAMER CUTOVER executed; v2 is now the single Schwab bot (Day-1 session-hold VERIFIED, market-closed). Bar-latency deferred to 7 AM ET.
+
+Executed attended, after-close (market closed, account-flat). v2 is the keeper; schwab_1m
+retired, macd_30s decommissioned (dormant). Plan:
+`docs/schwab-1m-v2-day1-streamer-cutover-plan.md`.
+
+**Collision-free sequence (down → verify → up):**
+1. Stood DOWN the strategy-engine streamer: env `SCHWAB_1M_ENABLED=false` +
+   `MACD_30S_ENABLED=false` → restart strategy → `_build_schwab_stream_client()` returns None
+   → **no strategy streamer session** (and both bots out of routing).
+2. **HARD GATE verified zero overlap:** last `Schwab streamer connected` = 00:05:31 (pre-restart,
+   none after); strategy heartbeat `schwab_stream_connected=false`, `schwab_stream_symbols=0`.
+   Only then proceeded.
+3. Brought UP v2's streamer: env `SCHWAB_1M_V2_STREAMER_ENABLED=true` → restart v2.
+
+**Session-hold verdict (≥30-min dwell 01:02:48→01:35, market-closed):**
+- (a) v2 took + **HELD** the single session — `[V2-WS-LOGIN-OK]`→`[V2-WS-SUB] count=25` in ~1s,
+  then **ZERO `[V2-WS-DISCONNECT]` / reconnect across the full dwell**. The 2026-05-23
+  empty-subscription idle-close flap did NOT recur (subscribe-early PR #224 + non-empty 25-sym
+  SUBS hold the session). `streamer_connected=true` throughout, `loop_health=healthy`.
+- (b) exactly ONE streamer session = v2's (strategy holds none).
+- (c) `schwab_1m` + `macd_30s` OUT of routing (bot config + strategy-state snapshot = `polygon_30s` only).
+- (d) account-flat, CYN protected. (e) `polygon_30s` untouched.
+- **Deferred (closed market):** bar-latency sub-5s — see the 7 AM NEXT block above.
+
+**Decommission state (dormant, NOT erased):** `schwab_1m` retired, `macd_30s` decommissioned —
+both via env flag `false` only; code, `strategies` rows, broker accounts preserved dormant.
+**Env dormancy markers added** on both flags (`# DORMANT BY DESIGN 2026-06-09 … Do NOT
+re-enable …`) — critical because `macd_30s` defaults **True**, so a bare flag could look like a
+misconfig a future reader "fixes," silently re-colliding with v2's single streamer session.
+
+**Scope/constraints:** PAPER-v2 — real-money conversion is a SEPARATE later step (NOT done).
+Token SPOF unchanged (v2's streamer is now the sole streamer consumer on the shared token;
+Workstream A keeps its loop alive, Workstream B would surface a dead token). PR #227 stays,
+PR #238 untouched, CYN untouched, polygon parked.
+
 ### 2026-06-08 EOD (late) — ✅ v2 LOOP RESILIENCE SHIPPED + survival-test verdict (a–e proven). Workstream A now COMPLETE across the fleet.
 
 PR #252 (schwab_1m_v2 loop resilience) merged + deployed. VPS `3550b2b`. Applies the
