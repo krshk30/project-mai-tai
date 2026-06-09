@@ -174,13 +174,7 @@ class SchwabV2Streamer:
                 # Force a fresh SUBS on every (re)connect — Schwab's streamer
                 # has no server-side subscription memory across sessions.
                 self._requested_symbols = set()
-                # Finding-1 fix: subscribe IMMEDIATELY after the login ack, before
-                # the receive loop's first recv() — mirror the production streamer,
-                # which subscribes before consuming any inbound frame. (Was:
-                # _sync_event.set() + SUBS deferred into the receive loop after a
-                # recv().) set_desired_symbols() still sets _sync_event, so live
-                # watchlist re-subscribes continue to fire inside the loop.
-                await self._apply_subscription_delta(ws)
+                self._sync_event.set()
                 await self._receive_loop(ws)
             except asyncio.CancelledError:
                 raise
