@@ -183,10 +183,6 @@ class Settings(BaseSettings):
     strategy_schwab_1m_v2_streamer_enabled: bool = False
     strategy_schwab_1m_v2_streamer_reconnect_base_secs: float = 1.0
     strategy_schwab_1m_v2_streamer_reconnect_max_secs: float = 30.0
-    # DIAGNOSTIC (2026-06-09 streamer no-bars investigation) — when true, the v2
-    # streamer logs raw incoming frame composition + a one-shot CHART_EQUITY raw
-    # content sample (pins arriving-vs-dropped). NOT a fix; default off, revertible.
-    strategy_schwab_1m_v2_streamer_diag_enabled: bool = False
     # --- SPOF Workstream A (v2 follow-up): loop-resilience knobs ---
     # See docs/schwab-1m-v2-loop-resilience-design.md. Per-task backstop so an
     # unanticipated exception can't silently kill a v2 task loop.
