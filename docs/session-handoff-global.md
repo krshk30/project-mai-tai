@@ -1,5 +1,25 @@
 # Session Handoff - Global
 
+### 📋 PENDING LIST (fresh, opened 2026-06-09) — schwab_1m_v2 post-cutover follow-ups. READ FIRST.
+
+Bar pipeline is DONE (cutover complete, below). These are the OPEN items from the 2026-06-09 post-cutover analysis (analysis only — NO code changed yet; all flagged for deliberate work):
+
+1. **[P1 — BLOCKER for trading, NOT for validation] v2 execution path: route to PAPER/SIMULATED, do NOT give it the shared Schwab hash.**
+   - Today all 35 v2 entry orders were REJECTED: `missing Schwab account hash for paper:schwab_1m_v2` (broker_orders 35/35 rejected, `broker_order_id=null`, 0 fills, 0 positions). v2 generates valid signals (VWAP Breakout / MACD Cross) but cannot trade.
+   - Root cause: `strategy_schwab_1m_v2_broker_provider` defaults to **`"schwab"`** (settings.py:164) → OMS routes v2 to the **real** `SchwabBrokerAdapter`, which resolves the account hash via the **shared** `schwab_account_hash` (`2EE5A4…` = REAL brokerage account). It is only NOT trading the real account because no `add()` entry exists in `configured_schwab_accounts` (broker_adapters/schwab.py) → accidental safety net.
+   - **DECISION (operator, 2026-06-09): we are NOT ready to integrate v2 with the real Schwab account until v2 is fully validated. Real-Schwab integration is a deliberate, separate step — the day AFTER validation.** Until then: do NOT add the shared hash. Give v2 a paper/simulated execution path (flip its broker_provider to a simulated/alpaca-paper route, or run under the simulated OMS adapter) so validation runs fill with ZERO real-account risk. Wire the real Schwab hash only on integration day.
+   - `"paper:"` in the account name is COSMETIC — it does NOT trigger simulation for a schwab-provider account; a `paper:`-named Schwab account with a real hash WOULD place real orders. Decide how to GUARANTEE "paper:" Schwab strategies are simulated (no-hash, or forced-sim mode) so the boundary isn't an accident.
+
+2. **[P2] strategy-engine has no `schwab_1m_v2` in its bot registry** → 25× today `WARNING ignoring order status for unknown strategy_code=schwab_1m_v2`. v2 self-reconciles via its own `_position_poll_loop`, so largely benign noise, BUT the central engine has zero visibility into v2's order lifecycle. Decide if v2 should be registered for central visibility (vs. intentionally self-contained).
+
+3. **[P3 — likely by-design] No premarket bars 04:00–06:59 ET.** Not an activation/session bug — the bot was active+subscribed+REST-polling; the illiquid penny-stock watchlist simply doesn't print 04:00–07:00 ET and REST pricehistory is dry premarket. First bar 11:01 UTC (07:01 ET), then continuous. This also drives the overnight `gap_s≈53760` cross-expiry. Discussion: does the strategy's design EXPECT 04:00 ET warmup these names can't supply? If yes → watchlist/strategy-expectation change, not a pipeline fix.
+
+4. **[P4 — trivial housekeeping] Stale local checkout.** No VPS↔git drift (VPS clean at `3d2812d`, origin/main fully tracks all v2 files). The "files missing locally" is a stale working copy — e.g. `project-mai-tai` on `codex/local-clean-main` (`6ae2651`) and other old `issue-*`/`codex-*` branches predate the v2 files. Fix: `git fetch` + checkout a current branch in that checkout. ~10 checkouts (incl. primary `mai-tai-wt-fixdesign`) already have the files.
+
+5. **[P5 — cosmetic] Deploy #261 + clean env after-hours** to drop the diag code live (functionally already off at next restart; env var already removed).
+
+---
+
 ### 2026-06-09 ~13:52 UTC / 9:52 ET — ✅✅ schwab_1m→v2 STREAMER CUTOVER **COMPLETE** — RTH verdict PASSED on all 5 criteria. v2 is the sole Schwab streamer delivering bars at 2.5s median persist-lag (PAPER).
 
 The RTH verdict (the real test, liquid symbols printing continuously) passed decisively:
