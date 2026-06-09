@@ -1,3 +1,5 @@
+> 🔴 **CORRECTION (2026-06-09, after the live token-refresh SPOF — see handoff incident block):** This doc's premise that "Phase 1 (v2→simulated) is safe before P0 because the retired bots keep the refresher alive" is **WRONG**. Disabled bots don't register; v2-on-schwab wasn't even the refresher (it has no hash). **Post-cutover there is NO config refresh path** — Phase 1 (or ANY OMS restart) exposes it. **Sequencing is now P0 → P1: do NOT do P1 (any phase) until the P0 dedicated refresher lands.** A temporary `schwab_1m` bridge currently holds the refresh. The Phase-1 routing design below is still directionally valid but MUST follow P0.
+
 # Design (P1): make schwab_1m_v2's "paper" deliberate + structural — it must not be able to reach the real account
 
 **Status: DESIGN — read-only, for review before any code.** Design-first, same discipline as the
