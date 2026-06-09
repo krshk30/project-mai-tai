@@ -97,6 +97,15 @@ class SchwabV2Streamer:
         self._connected = False
         self._connect_failures = 0
         self._last_bar_received_monotonic: float = 0.0
+        # --- DIAGNOSTIC (2026-06-09 streamer no-bars investigation) — env-gated,
+        # NOT a fix. Pins the arriving-vs-dropped fork by logging raw frames.
+        # Revert by setting strategy_schwab_1m_v2_streamer_diag_enabled=false.
+        self._diag_enabled = bool(
+            getattr(settings, "strategy_schwab_1m_v2_streamer_diag_enabled", False)
+        )
+        self._diag_frame_counts: dict[str, int] = {}
+        self._diag_chart_sample_logged = False
+        self._diag_last_tally_log = 0.0
 
     @property
     def configured(self) -> bool:
@@ -235,6 +244,8 @@ class SchwabV2Streamer:
         payload = self._decode(raw)
         if not payload:
             return
+        if self._diag_enabled:
+            self._diag_observe(payload)
         # Admin / subscription responses — log non-zero codes but don't fail.
         for resp in payload.get("response", []):
             if not isinstance(resp, dict):
@@ -286,6 +297,40 @@ class SchwabV2Streamer:
                         "schwab_v2_streamer on_chart_bar raised for %s",
                         bar.symbol,
                     )
+
+    def _diag_observe(self, payload: dict[str, object]) -> None:
+        """DIAGNOSTIC (env-gated, NOT a fix). Pins the arriving-vs-dropped fork:
+        tallies frame composition (response/data/notify), logs each data frame's
+        services, and one-shot-dumps the first CHART_EQUITY data frame's RAW
+        content so the real field keys can be compared to the 0/2/3/4/5/6/7 parse.
+        """
+        present = sorted(k for k in ("response", "data", "notify") if payload.get(k))
+        key = ",".join(present) or "other"
+        self._diag_frame_counts[key] = self._diag_frame_counts.get(key, 0) + 1
+        data = payload.get("data") or []
+        if isinstance(data, list) and data:
+            services = sorted(
+                {str(it.get("service", "")).upper() for it in data if isinstance(it, dict)}
+            )
+            logger.info("[V2-WS-DIAG] data frame: services=%s items=%d", services, len(data))
+            if not self._diag_chart_sample_logged:
+                for it in data:
+                    if isinstance(it, dict) and str(it.get("service", "")).upper() == self.CHART_EQUITY_SERVICE:
+                        logger.info(
+                            "[V2-WS-DIAG-CHART-RAW] item_keys=%s content=%s",
+                            sorted(str(k) for k in it.keys()),
+                            json.dumps(it.get("content"))[:800],
+                        )
+                        self._diag_chart_sample_logged = True
+                        break
+        now = asyncio.get_running_loop().time()
+        if now - self._diag_last_tally_log >= 30.0:
+            self._diag_last_tally_log = now
+            logger.info(
+                "[V2-WS-DIAG-TALLY] frame_composition=%s chart_sample_logged=%s",
+                self._diag_frame_counts,
+                self._diag_chart_sample_logged,
+            )
 
     # -------------------------------------------------------- subscription
 
