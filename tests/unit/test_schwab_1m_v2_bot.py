@@ -25,7 +25,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import urllib.parse
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from project_mai_tai.market_data.schwab_v2_rest_client import (
     ChartBar,
@@ -38,6 +38,7 @@ from project_mai_tai.services.schwab_1m_v2_bot import (
     STREAMER_PENDING_BARS_MAX_PER_SYMBOL,
     WATCHDOG_STARTUP_GRACE_SECS,
     SchwabV2BotService,
+    _current_scanner_session_start_utc,
 )
 from project_mai_tai.settings import Settings
 from project_mai_tai.strategy_core.schwab_1m_v2 import SchwabV2Strategy
@@ -465,6 +466,99 @@ def test_watchlist_transition_drops_pending_for_removed_symbols() -> None:
     assert "CCC" not in bot._rest_warmup_done
     assert "AAA" in bot._streamer_pending
     assert "BBB" in bot._streamer_pending
+
+
+def test_v2_ignores_previous_session_strategy_state_snapshot() -> None:
+    bot = _bot()
+    bot._watchlist = {"OLD"}
+
+    from project_mai_tai.events import (
+        StrategyStateSnapshotEvent,
+        StrategyStateSnapshotPayload,
+    )
+
+    event = StrategyStateSnapshotEvent(
+        source_service="strategy-engine",
+        produced_at=_current_scanner_session_start_utc() - timedelta(seconds=1),
+        payload=StrategyStateSnapshotPayload(watchlist=["NEW"]),
+    )
+
+    bot._apply_strategy_state_event({"data": event.model_dump_json()}, max_watchlist=25)
+
+    assert bot._watchlist == {"OLD"}
+
+
+def test_v2_current_empty_strategy_state_clears_stale_watchlist() -> None:
+    bot = _bot()
+    bot._watchlist = {"OLD"}
+    bot._rest_warmup_done = {"OLD"}
+    bot._streamer_pending["OLD"] = [_bar(ts_ms=_now_ms_at_age(30.0))]
+
+    from project_mai_tai.events import (
+        StrategyStateSnapshotEvent,
+        StrategyStateSnapshotPayload,
+    )
+
+    event = StrategyStateSnapshotEvent(
+        source_service="strategy-engine",
+        produced_at=_current_scanner_session_start_utc() + timedelta(minutes=1),
+        payload=StrategyStateSnapshotPayload(),
+    )
+
+    bot._apply_strategy_state_event({"data": event.model_dump_json()}, max_watchlist=25)
+
+    assert bot._watchlist == set()
+    assert bot._rest_warmup_done == set()
+    assert bot._streamer_pending == {}
+
+
+def test_v2_current_empty_strategy_state_preserves_open_position_symbols() -> None:
+    bot = _bot()
+    bot._watchlist = {"OPEN", "STALE"}
+    bot.strategy.update_position("OPEN", 10)
+
+    from project_mai_tai.events import (
+        StrategyStateSnapshotEvent,
+        StrategyStateSnapshotPayload,
+    )
+
+    event = StrategyStateSnapshotEvent(
+        source_service="strategy-engine",
+        produced_at=_current_scanner_session_start_utc() + timedelta(minutes=1),
+        payload=StrategyStateSnapshotPayload(),
+    )
+
+    bot._apply_strategy_state_event({"data": event.model_dump_json()}, max_watchlist=25)
+
+    assert bot._watchlist == {"OPEN"}
+
+
+def test_v2_watchlist_selection_preserves_scanner_priority_not_alphabetic() -> None:
+    bot = _bot()
+
+    from project_mai_tai.events import (
+        StrategyStateSnapshotEvent,
+        StrategyStateSnapshotPayload,
+    )
+
+    event = StrategyStateSnapshotEvent(
+        source_service="strategy-engine",
+        produced_at=_current_scanner_session_start_utc() + timedelta(minutes=1),
+        payload=StrategyStateSnapshotPayload(
+            top_confirmed=[
+                {"ticker": "ZZZ"},
+                {"ticker": "AAA"},
+            ],
+            all_confirmed=[
+                {"ticker": "BBB"},
+            ],
+            watchlist=["CCC"],
+        ),
+    )
+
+    bot._apply_strategy_state_event({"data": event.model_dump_json()}, max_watchlist=2)
+
+    assert bot._watchlist == {"ZZZ", "AAA"}
 
 
 def test_warmup_completion_only_fires_on_fresh_bar_not_old_one() -> None:

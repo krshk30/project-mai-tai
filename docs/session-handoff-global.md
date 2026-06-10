@@ -1,5 +1,19 @@
 # Session Handoff - Global
 
+### 2026-06-10 ~23:30 UTC - schwab_1m_v2 watchlist session-reset fix ready/deploying
+
+**Issue:** `schwab_1m_v2` could carry previous-session live symbols after the 04:00 ET scanner roll. The isolated V2 service seeded from the latest `mai_tai:strategy-state` snapshot and applied any non-empty symbol set without checking whether the snapshot belonged to the current scanner session. It also ignored empty scanner snapshots (`if not symbols: return`), so a legitimate new-day reset never cleared V2's old watchlist. Selection used `set(sorted(symbols)[:max_watchlist])`, which biased the first 25 alphabetically instead of scanner priority.
+
+**Fix:** V2-only change in `src/project_mai_tai/services/schwab_1m_v2_bot.py`.
+- Ignore strategy-state events whose `produced_at` is older than the current 04:00 ET scanner session.
+- Treat a current-session empty snapshot as a real clear/reset.
+- Preserve scanner priority: `top_confirmed`, then `all_confirmed`, then `watchlist`; support both `ticker` and `symbol` keys.
+- Keep protected symbols with open V2 positions or in-flight V2 open intents even if the scanner list clears.
+
+**Tests:** `python -m pytest tests/unit/test_schwab_1m_v2_bot.py -q` -> 27 passed. `python -m pytest tests/unit/test_schwab_1m_v2_loop_resilience.py -q` -> 9 passed.
+
+**Deploy scope:** restart only `project-mai-tai-schwab-1m-v2.service`. No strategy-engine / OMS / market-data restart is required for this V2-only fix.
+
 ### ✅ 2026-06-10 ~20:10–22:00 UTC — P0 DEPLOYED + SURVIVAL-TESTED (both proofs PASS). TOKEN-REFRESH SPOF **CLOSED**. Bridge REMOVED. READ FIRST.
 
 **The 06-09 token SPOF is fixed and the temporary `schwab_1m` bridge is gone.** PR #274 (`f61e184`) deployed attended, after-close, account-flat. The **dedicated token refresher in the control service is now the sole owner of Schwab token freshness** — proactive timer, independent of any bot / broker-sync / account hash. The load-bearing-bridge constraint is **LIFTED**.

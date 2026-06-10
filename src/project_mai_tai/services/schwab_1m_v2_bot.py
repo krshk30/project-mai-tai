@@ -23,7 +23,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import signal
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
@@ -160,6 +160,15 @@ def _format_eastern(dt: datetime) -> str:
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=UTC)
     return dt.astimezone(EASTERN_TZ).strftime("%Y-%m-%d %I:%M:%S %p ET")
+
+
+def _current_scanner_session_start_utc(now: datetime | None = None) -> datetime:
+    current = now or datetime.now(UTC)
+    current_et = current.astimezone(EASTERN_TZ)
+    session_start_et = current_et.replace(hour=4, minute=0, second=0, microsecond=0)
+    if current_et < session_start_et:
+        session_start_et -= timedelta(days=1)
+    return session_start_et.astimezone(UTC)
 
 
 class SchwabV2BotService:
@@ -763,10 +772,17 @@ class SchwabV2BotService:
             event = StrategyStateSnapshotEvent.model_validate_json(raw)
         except Exception:  # noqa: BLE001
             return
-        symbols = self._extract_confirmed_symbols(event)
-        if not symbols:
+        if not self._strategy_state_event_is_current(event):
+            logger.info(
+                "schwab_1m_v2 ignoring stale strategy-state snapshot "
+                "produced_at=%s current_session_start=%s",
+                event.produced_at.isoformat(),
+                _current_scanner_session_start_utc().isoformat(),
+            )
             return
-        selected = set(sorted(symbols)[:max_watchlist])
+        symbols = self._extract_confirmed_symbols(event)
+        protected = self._protected_symbols()
+        selected = set(symbols[:max_watchlist]) | protected
         if selected == self._watchlist:
             return
         self._watchlist = selected
@@ -807,26 +823,41 @@ class SchwabV2BotService:
         )
 
     @staticmethod
-    def _extract_confirmed_symbols(event: StrategyStateSnapshotEvent) -> set[str]:
+    def _extract_confirmed_symbols(event: StrategyStateSnapshotEvent) -> list[str]:
         payload = event.payload
         candidates: list[dict | str] = []
-        candidates.extend(payload.all_confirmed)
         candidates.extend(payload.top_confirmed)
-        symbols: set[str] = set()
+        candidates.extend(payload.all_confirmed)
+        candidates.extend(payload.watchlist)
+        symbols: list[str] = []
+        seen: set[str] = set()
         for item in candidates:
             if isinstance(item, dict):
-                sym = str(item.get("symbol", "")).strip().upper()
-                if sym:
-                    symbols.add(sym)
+                sym = str(item.get("symbol") or item.get("ticker") or "").strip().upper()
             elif isinstance(item, str):
-                cleaned = item.strip().upper()
-                if cleaned:
-                    symbols.add(cleaned)
-        for sym in payload.watchlist:
-            cleaned = str(sym).strip().upper()
-            if cleaned:
-                symbols.add(cleaned)
+                sym = item.strip().upper()
+            else:
+                sym = ""
+            if sym and sym not in seen:
+                symbols.append(sym)
+                seen.add(sym)
         return symbols
+
+    @staticmethod
+    def _strategy_state_event_is_current(event: StrategyStateSnapshotEvent) -> bool:
+        produced_at = event.produced_at
+        if produced_at.tzinfo is None:
+            produced_at = produced_at.replace(tzinfo=UTC)
+        return produced_at.astimezone(UTC) >= _current_scanner_session_start_utc()
+
+    def _protected_symbols(self) -> set[str]:
+        protected = {
+            symbol
+            for symbol, state in self.strategy._symbol_states.items()
+            if state.position_qty > 0
+        }
+        protected.update(self._fetch_open_positions())
+        return protected
 
     async def _handle_bar_from_rest(self, symbol: str, bar: ChartBar) -> None:
         """REST callback. C3 + buffer-drain routing:
