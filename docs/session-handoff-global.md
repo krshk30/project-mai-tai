@@ -1,6 +1,24 @@
 # Session Handoff - Global
 
-### 🔴 2026-06-09 ~21:19–23:04 UTC — LIVE TOKEN-REFRESH SPOF reproduced + recovered. READ FIRST. ⚠️ TEMPORARY BRIDGE ACTIVE.
+### ✅ 2026-06-10 ~20:10–22:00 UTC — P0 DEPLOYED + SURVIVAL-TESTED (both proofs PASS). TOKEN-REFRESH SPOF **CLOSED**. Bridge REMOVED. READ FIRST.
+
+**The 06-09 token SPOF is fixed and the temporary `schwab_1m` bridge is gone.** PR #274 (`f61e184`) deployed attended, after-close, account-flat. The **dedicated token refresher in the control service is now the sole owner of Schwab token freshness** — proactive timer, independent of any bot / broker-sync / account hash. The load-bearing-bridge constraint is **LIFTED**.
+
+**Deploy sequence executed (no-gap ordering):** pull→`f61e184` → restart control (refresher starts, default-on) → **observed the refresher's own `[SCHWAB-TOKEN-REFRESHED]`** (forced via a temporary wide margin, since the bridge OMS adapter otherwise wins the ~60s margin race — its 15s broker-sync beats the refresher's check) → **then** set `MAI_TAI_SCHWAB_ADAPTER_TOKEN_REFRESH_ENABLED=false` + restart OMS → OMS adapter is now a **pure reader** (on expiry it reloads the refresher's token from disk; never writes). Dual-writer window confirmed safe: **refresh_token is non-rotating** (live prefix `ccCbQArJ…` unchanged across a full day of refreshes) → the two writers don't race.
+
+**Survival test — both proofs PASSED:**
+- **Proof 1 (resilience):** `MAI_TAI_SCHWAB_TOKEN_FAULT_INJECT=invalid_grant` → refresher logged `[SCHWAB-TOKEN-DEAD]` attempts 1→5 **exactly 30s apart** (bounded backoff, no hot-spin) → escalated to `[SCHWAB-TOKEN-REFRESHER-DEGRADED-PERSISTENT]`, loop **alive** (NRestarts=0), token mtime **frozen** (no false recovery while disk holds dead state), v2 stayed healthy. Cleared fault → refresher self-healed (`[SCHWAB-TOKEN-REFRESHED]`, mtime advanced). *(The in-process `[SCHWAB-TOKEN-RELOADED]`-without-restart on a re-authed token is unit-proven; not faked on the live store.)*
+- **Proof 2 (the SPOF verdict):** disabled `schwab_1m` (bridge removed) + restarted OMS → **no schwab-routed bot enabled** (the exact 06-09 fatal condition) → the refresher refreshed the token **alone at 21:58:46** (mtime advanced, expires 22:28:46), v2 **0 401s**, streamer held. **Trap closed.**
+
+**Current steady state (final, clean):** env has `SCHWAB_1M_ENABLED=false` (dormancy marker added — do NOT re-enable; re-creates the retired dual-writer bridge), `MACD_30S_ENABLED=false`, `SCHWAB_ADAPTER_TOKEN_REFRESH_ENABLED=false` (pure reader), `SCHWAB_TOKEN_REFRESHER_CHECK_INTERVAL_SECONDS=10`, no fault-inject, no test-margin (default 60). v2 PAPER, streamer ON, sole Schwab streamer. CYN protected, account flat, polygon parked. Backups: `…env.bak-p0-deploy-2026-06-10`, `…schwab_tokens.json.predeploy-bak-2026-06-10`.
+
+**New code (live):** `broker_adapters/schwab_token_manager.py` (shared grant/atomic-write/read helpers + fault hook), `services/schwab_token_refresher.py` (the refresher), `SchwabBrokerAdapter` refactored to delegate + pure-reader flag + `[SCHWAB-TOKEN-STALE]` warning + dead-token reload. Loud markers: `[SCHWAB-TOKEN-REFRESHED]` / `[SCHWAB-TOKEN-DEAD]` / `[SCHWAB-TOKEN-REFRESHER-DEGRADED-PERSISTENT]` / `[SCHWAB-TOKEN-RELOADED]` / `[SCHWAB-TOKEN-STALE]`.
+
+**Refresh_token TTL note:** non-rotating, so refreshes do NOT reset the ~7-day clock — yet the Jun-03 token ran 7d+ (real TTL for this account is >7 days, unknown ceiling). P0 keeps the **access_token** fresh and now **surfaces a dead refresh_token loudly**; renewing the refresh_token remains a human re-auth (now impossible to miss via `[SCHWAB-TOKEN-REFRESHER-DEGRADED-PERSISTENT]`).
+
+**➡️ NEXT: P1 — route v2 to PAPER/SIMULATED (now UNBLOCKED).** P0→P1 sequencing satisfied; the bridge that made P1 dangerous (it removed the only schwab refresh route → SPOF) is gone, and the refresher is independent of v2's broker provider. Design `docs/p1-v2-deliberate-paper-routing-design.md` is directionally valid. v2 order rejections remain benign/expected (no Schwab paper venue).
+
+### 🔴 2026-06-09 ~21:19–23:04 UTC — LIVE TOKEN-REFRESH SPOF reproduced + recovered. ~~READ FIRST.~~ **RESOLVED 2026-06-10 by P0 (see entry above). Bridge no longer active.**
 
 **What happened:** The Schwab token-refresh path has been **structurally absent in config since the 2026-06-09 ~01:00 cutover** (which disabled `schwab_1m`/`macd_30s`). It was masked for ~4 days by a **zombie OMS** (started Jun 05 21:45, pre-cutover) running **stale in-memory config** in which `schwab_1m` was still enabled with a hash — its broker-sync kept refreshing the token. A Phase-1 deploy (PR #269) restarted the OMS at 21:00, which loaded the **post-cutover config (no schwab-routed account WITH a hash)** → the OMS broker-sync **short-circuits on missing-hash before `_get_access_token`** → **no refresh** → access_token expired 21:19 → v2 (and all token consumers) 401'd for ~2h.
 
