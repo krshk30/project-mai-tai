@@ -587,6 +587,20 @@ class SchwabBrokerAdapter:
                 # our own refresh grant — this adapter never writes the token store.
                 self._load_token_store()
                 if self._access_token:
+                    if (
+                        self._access_token_expires_at is not None
+                        and datetime.now(UTC) >= self._access_token_expires_at
+                    ):
+                        # Loud diagnosis: in pure-reader mode a past-expiry on-disk
+                        # token means the dedicated refresher is not keeping it fresh.
+                        # Surface it before returning so a refresher outage reads as a
+                        # named warning, not a silent downstream 401 storm.
+                        logger.warning(
+                            "[SCHWAB-TOKEN-STALE] on-disk access_token is past expires_at "
+                            "(%s) in refresher-owned mode — is the dedicated refresher down? "
+                            "returning it anyway",
+                            self._access_token_expires_at.isoformat(),
+                        )
                     self.last_error = ""
                     return self._access_token
                 message = "no Schwab access_token in token store (refresher-owned mode)"

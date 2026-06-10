@@ -15,6 +15,7 @@ the documented __init__-cache bug), empty-access-token, and torn-read on load.
 from __future__ import annotations
 
 import json
+import logging
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -235,6 +236,31 @@ async def test_pure_reader_mode_reloads_from_disk_and_never_grants(monkeypatch, 
     monkeypatch.setattr(adapter, "_token_request_json", fail)
 
     assert await adapter._get_access_token(force_refresh=True) == "v2"
+
+
+@pytest.mark.asyncio
+async def test_pure_reader_mode_warns_loudly_when_disk_token_is_stale(
+    monkeypatch, tmp_path: Path, caplog
+) -> None:
+    """If the refresher is down, the on-disk token goes past expires_at. Pure-reader
+    mode must log [SCHWAB-TOKEN-STALE] (loud diagnosis) and still return it, rather
+    than emit a silent token that triggers a downstream 401 storm."""
+    adapter, _ = _adapter(
+        tmp_path,
+        store={"access_token": "stale-token", "refresh_token": "r", "expires_at": "2000-01-01T00:00:00+00:00"},
+        schwab_adapter_token_refresh_enabled=False,
+    )
+
+    async def fail(*, form_data):  # pragma: no cover - must not run
+        raise AssertionError("pure-reader mode must not call the refresh grant")
+
+    monkeypatch.setattr(adapter, "_token_request_json", fail)
+
+    with caplog.at_level(logging.WARNING):
+        token = await adapter._get_access_token(force_refresh=True)
+
+    assert token == "stale-token"
+    assert any("SCHWAB-TOKEN-STALE" in r.getMessage() for r in caplog.records)
 
 
 @pytest.mark.asyncio
