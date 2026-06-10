@@ -4290,7 +4290,9 @@ class StrategyEngineState:
         )
         self._record_bot_handoff_symbols(newly_confirmed)
         self.confirmed_scanner.update_live_prices(snapshot_lookup)
-        self.confirmed_scanner.prune_faded_candidates()
+        faded_confirmed_symbols = self.confirmed_scanner.prune_faded_candidates() or []
+        if faded_confirmed_symbols:
+            self._discard_bot_handoff_symbols(faded_confirmed_symbols)
 
         self.all_confirmed = [
             stock

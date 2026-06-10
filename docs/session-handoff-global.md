@@ -1,5 +1,18 @@
 # Session Handoff - Global
 
+### 2026-06-10 ~23:55 UTC - momentum scanner 30% fade removal implemented
+
+**Change:** confirmed momentum-scanner symbols now remain handed to bots initially, but if their refreshed live `change_pct` drops below `30.0%`, the scanner removes them from confirmed state and the strategy engine removes them from active bot handoff/watchlists before rebuilding bot live symbols. Exactly `30.0%` remains eligible. A later valid momentum alert can re-confirm the same symbol and hand it back to bots through the normal alert-confirmation path.
+
+**Scope boundary:** scanner/bot handoff only. No OMS, broker routing, exits, positions, order lifecycle, or risk logic changed. Open-position/runtime active-symbol protection remains owned by existing bot runtime behavior.
+
+**Tests:** focused scanner and handoff tests passed:
+- `python -m pytest tests/unit/test_strategy_core.py -k "confirmed_scanner_removes_faded_candidates or confirmed_scanner_keeps_candidates_at_thirty_percent_floor or single_candidate_gets_full_rank_score" -q` -> 3 passed.
+- `python -m pytest tests/unit/test_strategy_engine_service.py -k "faded_confirmed_symbols or removes_seeded_faded_confirmed_symbols or global_manual_stop_blocks_handoff or snapshot_batch_retains_removed_symbols" -q` -> 4 passed.
+- `python -m py_compile src/project_mai_tai/strategy_core/config.py src/project_mai_tai/strategy_core/momentum_confirmed.py src/project_mai_tai/services/strategy_engine_app.py tests/unit/test_strategy_core.py tests/unit/test_strategy_engine_service.py` -> passed.
+
+**Known unrelated test state:** full `tests/unit/test_strategy_core.py` still has 3 unrelated Schwab native entry test failures where tests expect `_evaluate_paths()` to return 4 values. Full `tests/unit/test_strategy_engine_service.py` exceeded the 4-minute local timeout.
+
 ### 2026-06-10 ~23:30 UTC - schwab_1m_v2 watchlist session-reset fix merged/deployed
 
 **Issue:** `schwab_1m_v2` could carry previous-session live symbols after the 04:00 ET scanner roll. The isolated V2 service seeded from the latest `mai_tai:strategy-state` snapshot and applied any non-empty symbol set without checking whether the snapshot belonged to the current scanner session. It also ignored empty scanner snapshots (`if not symbols: return`), so a legitimate new-day reset never cleared V2's old watchlist. Selection used `set(sorted(symbols)[:max_watchlist])`, which biased the first 25 alphabetically instead of scanner priority.

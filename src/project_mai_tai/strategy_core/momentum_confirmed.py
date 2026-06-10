@@ -316,23 +316,44 @@ class MomentumConfirmedScanner:
         self.refresh_catalysts()
 
     def prune_faded_candidates(self, min_change_pct: float | None = None) -> list[str]:
-        threshold = self.config.live_min_change_pct if min_change_pct is None else min_change_pct
+        threshold = (
+            self.config.confirmed_fade_remove_below_change_pct
+            if min_change_pct is None
+            else min_change_pct
+        )
         if threshold <= 0:
             return []
 
-        faded = [
-            str(stock.get("ticker", "")).upper()
-            for stock in self._confirmed
-            if float(stock.get("change_pct", 0) or 0) < threshold
-        ]
-        if faded:
-            logger.debug(
-                "[CONFIRMED] retained %s faded candidates below %.1f%% for session continuity: %s",
-                len(faded),
-                threshold,
-                ", ".join(faded),
-            )
-        return []
+        retained: list[dict[str, object]] = []
+        faded: list[str] = []
+        for stock in self._confirmed:
+            ticker = str(stock.get("ticker", "")).upper()
+            if not ticker:
+                continue
+            if float(stock.get("change_pct", 0) or 0) < threshold:
+                faded.append(ticker)
+                continue
+            retained.append(stock)
+
+        if not faded:
+            return []
+
+        self._confirmed = retained
+        for ticker in faded:
+            self.allow_reconfirmation(ticker)
+            if ticker in self._tracking:
+                self._tracking[ticker]["first_spike_time"] = ""
+                self._tracking[ticker]["first_spike_price"] = 0.0
+                self._tracking[ticker]["first_spike_volume"] = 0
+                self._tracking[ticker]["confirmed_at"] = ""
+                self._tracking[ticker]["confirmed_price"] = 0.0
+        logger.info(
+            "[CONFIRMED] removed %s faded candidates below %.1f%%: %s",
+            len(faded),
+            threshold,
+            ", ".join(faded),
+        )
+        return faded
 
     def allow_reconfirmation(self, ticker: str) -> None:
         if ticker in self._tracking:

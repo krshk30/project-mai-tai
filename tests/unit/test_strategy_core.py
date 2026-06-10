@@ -795,47 +795,94 @@ def test_top_gainer_changes_use_eastern_time_labels() -> None:
     assert str(changes[0]["time"]).endswith("ET")
 
 
-def test_confirmed_scanner_retains_faded_candidates_for_session_continuity() -> None:
+def test_confirmed_scanner_removes_faded_candidates_and_allows_reconfirmation() -> None:
     confirmed_scanner = MomentumConfirmedScanner(
         MomentumConfirmedConfig(
             confirmed_min_volume=1_000,
             confirmed_max_float=1_000_000,
-            live_min_change_pct=20.0,
+            confirmed_fade_remove_below_change_pct=30.0,
         )
     )
     confirmed_scanner.seed_confirmed_candidates(
         [
             {
-                "ticker": "POLA",
+                "ticker": "UGRO",
                 "confirmed_at": "08:00:00 AM ET",
-                "entry_price": 2.30,
-                "price": 2.32,
-                "change_pct": 19.4,
+                "entry_price": 1.32,
+                "price": 1.32,
+                "change_pct": 32.0,
                 "volume": 900_000,
                 "rvol": 8.0,
                 "shares_outstanding": 1_000_000,
+                "prev_close": 1.0,
                 "confirmation_path": "PATH_B_2SQ",
             }
         ]
     )
-    confirmed_scanner._tracking["POLA"] = {
+    confirmed_scanner._tracking["UGRO"] = {
         "has_volume_spike": True,
         "first_spike_time": "07:45:00 AM ET",
-        "first_spike_price": 2.1,
+        "first_spike_price": 1.2,
         "first_spike_volume": 500_000,
-        "squeezes": [{"time": "08:00:00 AM ET", "price": 2.32, "volume": 900_000}],
+        "squeezes": [{"time": "08:00:00 AM ET", "price": 1.32, "volume": 900_000}],
         "confirmed": True,
         "confirmed_at": "08:00:00 AM ET",
-        "confirmed_price": 2.32,
+        "confirmed_price": 1.32,
     }
+
+    confirmed_scanner.update_live_prices(
+        {"UGRO": snapshot(ticker="UGRO", price=1.299, volume=950_000, change_pct=29.9)}
+    )
+    dropped = confirmed_scanner.prune_faded_candidates()
+
+    assert dropped == ["UGRO"]
+    assert confirmed_scanner.get_all_confirmed() == []
+    assert confirmed_scanner._tracking["UGRO"]["confirmed"] is False
+    assert confirmed_scanner._tracking["UGRO"]["has_volume_spike"] is False
+    assert confirmed_scanner._tracking["UGRO"]["first_spike_time"] == ""
+    assert confirmed_scanner._tracking["UGRO"]["confirmed_at"] == ""
+    assert confirmed_scanner._tracking["UGRO"]["squeezes"] == []
+
+    reconfirmed = confirmed_scanner.process_alerts(
+        [
+            {
+                "ticker": "UGRO",
+                "type": "SQUEEZE_5MIN",
+                "price": 1.35,
+                "volume": 980_000,
+                "time": "08:05:00 AM ET",
+                "details": {"change_pct": 35.0},
+            }
+        ],
+        {"UGRO": ReferenceData(shares_outstanding=1_000_000, avg_daily_volume=250_000)},
+        {"UGRO": snapshot(ticker="UGRO", price=1.35, volume=980_000, change_pct=35.0)},
+    )
+
+    assert [item["ticker"] for item in reconfirmed] == ["UGRO"]
+    assert [item["ticker"] for item in confirmed_scanner.get_all_confirmed()] == ["UGRO"]
+
+
+def test_confirmed_scanner_keeps_candidates_at_thirty_percent_floor() -> None:
+    confirmed_scanner = MomentumConfirmedScanner(
+        MomentumConfirmedConfig(confirmed_fade_remove_below_change_pct=30.0)
+    )
+    confirmed_scanner.seed_confirmed_candidates(
+        [
+            {
+                "ticker": "HOLD",
+                "confirmed_at": "08:00:00 AM ET",
+                "price": 1.30,
+                "change_pct": 30.0,
+                "volume": 900_000,
+                "prev_close": 1.0,
+            }
+        ]
+    )
 
     dropped = confirmed_scanner.prune_faded_candidates()
 
     assert dropped == []
-    assert [item["ticker"] for item in confirmed_scanner.get_all_confirmed()] == ["POLA"]
-    assert confirmed_scanner._tracking["POLA"]["confirmed"] is True
-    assert confirmed_scanner._tracking["POLA"]["has_volume_spike"] is True
-    assert confirmed_scanner._tracking["POLA"]["squeezes"] == [{"time": "08:00:00 AM ET", "price": 2.32, "volume": 900_000}]
+    assert [item["ticker"] for item in confirmed_scanner.get_all_confirmed()] == ["HOLD"]
 
 
 def test_confirmed_scanner_single_candidate_gets_full_rank_score() -> None:

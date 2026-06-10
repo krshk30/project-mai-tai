@@ -141,9 +141,17 @@ def build_test_session_factory() -> sessionmaker[Session]:
     return sessionmaker(bind=engine, expire_on_commit=False)
 
 
-def make_snapshot_payload(*, symbol: str, price: float, volume: int) -> MarketSnapshotPayload:
+def make_snapshot_payload(
+    *,
+    symbol: str,
+    price: float,
+    volume: int,
+    previous_close: float | None = None,
+    change_pct: float = 12.5,
+) -> MarketSnapshotPayload:
     return MarketSnapshotPayload(
         symbol=symbol,
+        previous_close=Decimal(str(previous_close)) if previous_close is not None else None,
         day_close=Decimal("2.10"),
         day_volume=volume,
         day_high=Decimal(str(price)),
@@ -153,7 +161,7 @@ def make_snapshot_payload(*, symbol: str, price: float, volume: int) -> MarketSn
         minute_high=Decimal(str(price)),
         minute_vwap=Decimal("2.22"),
         last_trade_price=Decimal(str(price)),
-        todays_change_percent=Decimal("12.5"),
+        todays_change_percent=Decimal(str(change_pct)),
     )
 
 
@@ -2097,6 +2105,84 @@ def test_snapshot_batch_retains_removed_symbols_in_bot_watchlists_for_session_co
     assert state.bots["runner"]._candidates == {"ELAB": second_confirmed[0]}
 
 
+def test_snapshot_batch_removes_faded_confirmed_symbols_from_scanner_and_bot_handoff(monkeypatch) -> None:
+    state = StrategyEngineState(
+        settings=make_test_settings(
+            strategy_macd_1m_enabled=True,
+            strategy_tos_enabled=True,
+            strategy_runner_enabled=True,
+        ),
+        now_provider=fixed_now,
+    )
+    state.confirmed_scanner.seed_confirmed_candidates(
+        [
+            {
+                "ticker": "ELAB",
+                "rank_score": 80.0,
+                "change_pct": 40.0,
+                "price": 1.40,
+                "prev_close": 1.0,
+                "confirmed_at": "09:45:00 AM ET",
+            },
+            {
+                "ticker": "UGRO",
+                "rank_score": 70.0,
+                "change_pct": 32.0,
+                "price": 1.32,
+                "prev_close": 1.0,
+                "confirmed_at": "09:50:00 AM ET",
+            },
+        ]
+    )
+
+    monkeypatch.setattr(state.alert_engine, "check_alerts", lambda snapshots, reference_data: [])
+    monkeypatch.setattr(
+        state.confirmed_scanner,
+        "process_alerts",
+        lambda alerts, reference_data, snapshot_lookup: [],
+    )
+
+    state.process_snapshot_batch(
+        [
+            snapshot_from_payload(
+                make_snapshot_payload(symbol="ELAB", price=1.40, volume=7_200_000, previous_close=1.0)
+            ),
+            snapshot_from_payload(
+                make_snapshot_payload(symbol="UGRO", price=1.32, volume=900_000, previous_close=1.0)
+            ),
+        ],
+        {
+            "ELAB": ReferenceData(shares_outstanding=541_500, avg_daily_volume=600_000),
+            "UGRO": ReferenceData(shares_outstanding=50_000, avg_daily_volume=390_000),
+        },
+    )
+
+    for code in ("macd_30s", "macd_1m", "tos"):
+        assert state.bots[code].watchlist == {"ELAB", "UGRO"}
+
+    summary = state.process_snapshot_batch(
+        [
+            snapshot_from_payload(
+                make_snapshot_payload(symbol="ELAB", price=1.41, volume=7_400_000, previous_close=1.0)
+            ),
+            snapshot_from_payload(
+                make_snapshot_payload(symbol="UGRO", price=1.299, volume=950_000, previous_close=1.0)
+            ),
+        ],
+        {
+            "ELAB": ReferenceData(shares_outstanding=541_500, avg_daily_volume=600_000),
+            "UGRO": ReferenceData(shares_outstanding=50_000, avg_daily_volume=390_000),
+        },
+    )
+
+    assert [item["ticker"] for item in summary["all_confirmed"]] == ["ELAB"]
+    assert summary["watchlist"] == ["ELAB"]
+    assert [item["ticker"] for item in state.confirmed_scanner.get_all_confirmed()] == ["ELAB"]
+    for code in ("macd_30s", "macd_1m", "tos"):
+        assert state.bot_handoff_symbols_by_strategy[code] == {"ELAB"}
+        assert state.bots[code].watchlist == {"ELAB"}
+
+
 def test_snapshot_batch_keeps_low_score_confirmed_visible_but_out_of_watchlist(monkeypatch) -> None:
     state = StrategyEngineState(
         settings=make_test_settings(
@@ -2432,7 +2518,7 @@ def test_state_ignores_order_updates_for_unknown_strategy_code() -> None:
     assert "UGRO" not in state.bots["macd_30s"].positions.get_all_positions()
 
 
-def test_snapshot_batch_keeps_faded_confirmed_symbols_in_bot_watchlists_for_session_continuity() -> None:
+def test_snapshot_batch_removes_seeded_faded_confirmed_symbols_from_bot_watchlists() -> None:
     state = StrategyEngineState(
         settings=make_test_settings(
             strategy_macd_1m_enabled=True,
@@ -2480,10 +2566,11 @@ def test_snapshot_batch_keeps_faded_confirmed_symbols_in_bot_watchlists_for_sess
         {"POLA": ReferenceData(shares_outstanding=1_000_000, avg_daily_volume=200_000)},
     )
 
-    assert [item["ticker"] for item in state.confirmed_scanner.get_all_confirmed()] == ["POLA"]
+    assert state.confirmed_scanner.get_all_confirmed() == []
     for code in ("macd_30s", "macd_1m", "tos", "runner"):
-        assert state.bots[code].watchlist == {"POLA"}
-    assert set(state.bots["runner"]._candidates) == {"POLA"}
+        assert state.bots[code].watchlist == set()
+        assert "POLA" not in state.bot_handoff_symbols_by_strategy[code]
+    assert state.bots["runner"]._candidates == {}
 
 
 def test_bot_runtime_clears_ghost_position_on_no_position_reject() -> None:

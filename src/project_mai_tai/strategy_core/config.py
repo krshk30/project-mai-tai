@@ -42,6 +42,7 @@ class MomentumConfirmedConfig:
     confirmed_max_float: int = 50_000_000
     rank_min_score: float = 50.0
     live_min_change_pct: float = 20.0
+    confirmed_fade_remove_below_change_pct: float = 30.0
     extreme_mover_min_day_change_pct: float = 30.0
     confirmed_min_float_turnover_small: float = 0.07
     confirmed_min_float_turnover_mid: float = 0.10
