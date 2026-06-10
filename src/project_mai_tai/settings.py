@@ -316,6 +316,18 @@ class Settings(BaseSettings):
     schwab_order_fill_timeout_seconds: int = 10
     schwab_order_poll_interval_seconds: float = 0.5
     schwab_token_refresh_margin_seconds: int = 60
+    # Dedicated token refresher (P0, runs in the control service). Owns keeping the
+    # on-disk access_token fresh, independent of any bot/broker-sync/account hash.
+    schwab_token_refresher_enabled: bool = True
+    schwab_token_refresher_check_interval_seconds: int = 60
+    schwab_token_refresher_dead_token_backoff_seconds: int = 30
+    schwab_token_refresher_max_dead_token_retries: int = 5
+    # Single-writer invariant: once the dedicated refresher owns token freshness,
+    # set this False so the OMS adapter becomes a PURE READER (on expiry it reloads
+    # the refresher's token from disk instead of running its own refresh grant).
+    # Default True preserves current behavior; flip False at deploy AFTER the
+    # refresher is confirmed refreshing (no-gap cutover).
+    schwab_adapter_token_refresh_enabled: bool = True
     schwab_access_token: str | None = None
     schwab_access_token_expires_at: str | None = None
     schwab_refresh_token: str | None = None

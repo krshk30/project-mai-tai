@@ -52,8 +52,10 @@ from project_mai_tai.events import (
     StrategyStateSnapshotEvent,
     stream_name,
 )
+from project_mai_tai.broker_adapters.schwab_token_manager import atomic_write_json
 from project_mai_tai.log import configure_logging
 from project_mai_tai.runtime_registry import configured_strategy_registrations
+from project_mai_tai.services.schwab_token_refresher import SchwabTokenRefresher
 from project_mai_tai.services.strategy_engine_app import current_scanner_session_start_utc
 from project_mai_tai.shadow import LegacyShadowClient
 from project_mai_tai.settings import Settings, get_settings
@@ -195,8 +197,7 @@ def _persist_schwab_token_store(settings: Settings, payload: dict[str, Any]) -> 
         "updated_at": datetime.now(UTC).isoformat(),
     }
     path = Path(token_store_path).expanduser()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(document, indent=2, sort_keys=True), encoding="utf-8")
+    atomic_write_json(path, document)
 
 
 def _within_current_eastern_day(timestamp: datetime | None, now: datetime | None = None) -> bool:
@@ -3362,9 +3363,21 @@ def build_app(
             redis=redis,
             legacy_client=legacy_client,
         )
-        yield
-        if redis_client is None:
-            await redis.aclose()
+        # Dedicated Schwab token refresher (P0): the sole owner of on-disk
+        # access_token freshness, independent of any bot/broker-sync/account hash.
+        token_refresher = SchwabTokenRefresher(active_settings)
+        app.state.schwab_token_refresher = token_refresher
+        refresher_task = asyncio.create_task(token_refresher.run())
+        try:
+            yield
+        finally:
+            refresher_task.cancel()
+            try:
+                await refresher_task
+            except asyncio.CancelledError:
+                pass
+            if redis_client is None:
+                await redis.aclose()
 
     app = FastAPI(
         title="Project Mai Tai Control Plane",
