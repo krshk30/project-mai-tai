@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import base64
-import gzip
 import json
 import logging
 from dataclasses import dataclass
@@ -18,6 +16,7 @@ from project_mai_tai.broker_adapters.protocols import (
     ExecutionReport,
     OrderRequest,
 )
+from project_mai_tai.broker_adapters import schwab_token_manager as token_manager
 from project_mai_tai.settings import Settings
 
 
@@ -83,6 +82,7 @@ class SchwabBrokerAdapter:
         self.fill_timeout_seconds = settings.schwab_order_fill_timeout_seconds
         self.poll_interval_seconds = settings.schwab_order_poll_interval_seconds
         self.refresh_margin_seconds = max(0, settings.schwab_token_refresh_margin_seconds)
+        self._adapter_refresh_enabled = settings.schwab_adapter_token_refresh_enabled
         self.client_id = settings.schwab_client_id
         self.client_secret = settings.schwab_client_secret
         self._token_store_path = (
@@ -581,6 +581,32 @@ class SchwabBrokerAdapter:
             if not force_refresh and self._access_token and not self._access_token_needs_refresh():
                 return self._access_token
 
+            if not self._adapter_refresh_enabled:
+                # Single-writer / pure-reader mode: the dedicated refresher (control
+                # service) owns token freshness. Reload from disk instead of running
+                # our own refresh grant — this adapter never writes the token store.
+                self._load_token_store()
+                if self._access_token:
+                    if (
+                        self._access_token_expires_at is not None
+                        and datetime.now(UTC) >= self._access_token_expires_at
+                    ):
+                        # Loud diagnosis: in pure-reader mode a past-expiry on-disk
+                        # token means the dedicated refresher is not keeping it fresh.
+                        # Surface it before returning so a refresher outage reads as a
+                        # named warning, not a silent downstream 401 storm.
+                        logger.warning(
+                            "[SCHWAB-TOKEN-STALE] on-disk access_token is past expires_at "
+                            "(%s) in refresher-owned mode — is the dedicated refresher down? "
+                            "returning it anyway",
+                            self._access_token_expires_at.isoformat(),
+                        )
+                    self.last_error = ""
+                    return self._access_token
+                message = "no Schwab access_token in token store (refresher-owned mode)"
+                self.last_error = message
+                raise RuntimeError(message)
+
             if not self.client_id or not self.client_secret or not self._refresh_token:
                 if self._access_token and not force_refresh:
                     return self._access_token
@@ -594,29 +620,39 @@ class SchwabBrokerAdapter:
                     "refresh_token": self._refresh_token,
                 }
             )
-            if status_code >= 400 or not isinstance(payload, dict):
-                message = f"failed refreshing Schwab token: {self._extract_error_reason(payload)}"
-                self.last_error = message
-                raise RuntimeError(message)
+            if token_manager.is_dead_token_payload(payload):
+                # Dead-token signature (invalid_grant / unsupported_token_type). A
+                # control-service re-auth may have just written a fresh refresh_token
+                # to disk; reload and retry the grant ONCE before giving up. This is
+                # the #2 defensive secondary recovery (the dedicated refresher is the
+                # primary owner). Bounded to a single retry — no hot-spin.
+                self._load_token_store()
+                logger.warning(
+                    "[SCHWAB-TOKEN-RELOADED] reloaded token store after dead-token grant; "
+                    "retrying refresh once"
+                )
+                status_code, _headers, payload = await self._token_request_json(
+                    form_data={
+                        "grant_type": "refresh_token",
+                        "refresh_token": self._refresh_token,
+                    }
+                )
+            try:
+                result = token_manager.parse_token_grant_response(
+                    payload,
+                    status_code=status_code,
+                    previous_refresh_token=self._refresh_token,
+                )
+            except token_manager.SchwabTokenError as exc:
+                self.last_error = str(exc)
+                raise
 
-            access_token = str(payload.get("access_token", "")).strip()
-            if not access_token:
-                message = "Schwab token refresh returned no access_token"
-                self.last_error = message
-                raise RuntimeError(message)
-
-            self._access_token = access_token
-            refreshed_token = str(payload.get("refresh_token", "")).strip()
-            if refreshed_token:
-                self._refresh_token = refreshed_token
-            expires_in = int(payload.get("expires_in", 0) or 0)
-            if expires_in > 0:
-                self._access_token_expires_at = datetime.now(UTC) + timedelta(seconds=expires_in)
-            else:
-                self._access_token_expires_at = None
-            self._save_token_store(payload)
+            self._access_token = result.access_token
+            self._refresh_token = result.refresh_token
+            self._access_token_expires_at = result.expires_at
+            self._save_token_store(result.raw)
             self.last_error = ""
-            return access_token
+            return result.access_token
 
     def _access_token_needs_refresh(self) -> bool:
         if not self._access_token:
@@ -652,23 +688,12 @@ class SchwabBrokerAdapter:
         *,
         form_data: dict[str, str],
     ) -> tuple[int, dict[str, str], object]:
-        if not self.client_id or not self.client_secret:
-            raise RuntimeError("missing Schwab client_id or client_secret")
-        basic_auth = base64.b64encode(
-            f"{self.client_id}:{self.client_secret}".encode("utf-8")
-        ).decode("ascii")
-        headers = {
-            "Authorization": f"Basic {basic_auth}",
-            "Accept": "application/json",
-            "Content-Type": "application/x-www-form-urlencoded",
-        }
-        data = urlencode(form_data).encode("utf-8")
-        return await asyncio.to_thread(
-            self._blocking_request_json,
-            self.token_url,
-            "POST",
-            headers,
-            data,
+        return await token_manager.token_grant_request(
+            token_url=self.token_url,
+            client_id=self.client_id,
+            client_secret=self.client_secret,
+            form_data=form_data,
+            request_timeout_seconds=self.request_timeout_seconds,
         )
 
     def _blocking_request_json(
@@ -858,14 +883,8 @@ class SchwabBrokerAdapter:
         return "DAY"
 
     def _load_token_store(self) -> None:
-        if self._token_store_path is None or not self._token_store_path.exists():
-            return
-        try:
-            payload = json.loads(self._token_store_path.read_text(encoding="utf-8"))
-        except Exception:
-            logger.exception("failed reading Schwab token store %s", self._token_store_path)
-            return
-        if not isinstance(payload, dict):
+        payload = token_manager.read_token_store(self._token_store_path)
+        if payload is None:
             return
         self._access_token = str(payload.get("access_token", "")).strip() or self._access_token
         self._refresh_token = str(payload.get("refresh_token", "")).strip() or self._refresh_token
@@ -889,39 +908,15 @@ class SchwabBrokerAdapter:
             "updated_at": datetime.now(UTC).isoformat(),
         }
         try:
-            self._token_store_path.parent.mkdir(parents=True, exist_ok=True)
-            self._token_store_path.write_text(
-                json.dumps(document, indent=2, sort_keys=True),
-                encoding="utf-8",
-            )
+            token_manager.atomic_write_json(self._token_store_path, document)
         except Exception:
             logger.exception("failed writing Schwab token store %s", self._token_store_path)
 
     def _extract_error_reason(self, payload: object) -> str:
-        if isinstance(payload, dict):
-            error = str(payload.get("error", "") or "").strip()
-            error_description = str(payload.get("error_description", "") or "").strip()
-            if error and error_description:
-                return f"{error}: {error_description}"
-            for key in ("message", "error", "error_description", "statusDescription", "description"):
-                value = payload.get(key)
-                if value:
-                    return str(value)
-        if payload is None:
-            return "unknown Schwab error"
-        return str(payload)
+        return token_manager.extract_error_reason(payload)
 
     def _parse_datetime(self, value: object) -> datetime | None:
-        if value in {None, ""}:
-            return None
-        try:
-            normalized = str(value).replace("Z", "+00:00")
-            parsed = datetime.fromisoformat(normalized)
-        except ValueError:
-            return None
-        if parsed.tzinfo is None:
-            return parsed.replace(tzinfo=UTC)
-        return parsed
+        return token_manager.parse_datetime(value)
 
     def _decimal_or_zero(self, value: object) -> Decimal:
         result = self._decimal_or_none(value)
@@ -942,20 +937,7 @@ class SchwabBrokerAdapter:
         return float(decimal_value)
 
     def _decode_json(self, raw: str) -> object:
-        if not raw:
-            return {}
-        try:
-            return json.loads(raw)
-        except json.JSONDecodeError:
-            return {"message": raw}
+        return token_manager.decode_json(raw)
 
     def _decode_http_body(self, raw: bytes, headers: dict[str, str]) -> str:
-        if not raw:
-            return ""
-        encoding = str(headers.get("Content-Encoding", "") or "").strip().lower()
-        if encoding == "gzip" or raw[:2] == b"\x1f\x8b":
-            try:
-                raw = gzip.decompress(raw)
-            except OSError:
-                pass
-        return raw.decode("utf-8", errors="replace")
+        return token_manager.decode_http_body(raw, headers)
