@@ -1,6 +1,6 @@
 # Session Handoff - Global
 
-### 2026-06-10 ~23:30 UTC - schwab_1m_v2 watchlist session-reset fix ready/deploying
+### 2026-06-10 ~23:30 UTC - schwab_1m_v2 watchlist session-reset fix merged/deployed
 
 **Issue:** `schwab_1m_v2` could carry previous-session live symbols after the 04:00 ET scanner roll. The isolated V2 service seeded from the latest `mai_tai:strategy-state` snapshot and applied any non-empty symbol set without checking whether the snapshot belonged to the current scanner session. It also ignored empty scanner snapshots (`if not symbols: return`), so a legitimate new-day reset never cleared V2's old watchlist. Selection used `set(sorted(symbols)[:max_watchlist])`, which biased the first 25 alphabetically instead of scanner priority.
 
@@ -10,9 +10,9 @@
 - Preserve scanner priority: `top_confirmed`, then `all_confirmed`, then `watchlist`; support both `ticker` and `symbol` keys.
 - Keep protected symbols with open V2 positions or in-flight V2 open intents even if the scanner list clears.
 
-**Tests:** `python -m pytest tests/unit/test_schwab_1m_v2_bot.py -q` -> 27 passed. `python -m pytest tests/unit/test_schwab_1m_v2_loop_resilience.py -q` -> 9 passed.
+**Tests:** `python -m pytest tests/unit/test_schwab_1m_v2_bot.py -q` -> 27 passed. `python -m pytest tests/unit/test_schwab_1m_v2_loop_resilience.py -q` -> 9 passed. Combined local and VPS targeted runs passed: 36 passed.
 
-**Deploy scope:** restart only `project-mai-tai-schwab-1m-v2.service`. No strategy-engine / OMS / market-data restart is required for this V2-only fix.
+**Deploy/merge status:** code commit `463e424` was deployed to the VPS and fast-forwarded into GitHub `main`. VPS `/home/trader/project-mai-tai` is on `main`, `HEAD == origin/main == 463e424`, and `project-mai-tai-schwab-1m-v2.service` is active. The only service restart performed was `project-mai-tai-schwab-1m-v2.service`; no strategy-engine / OMS / market-data restart was required.
 
 ### ✅ 2026-06-10 ~20:10–22:00 UTC — P0 DEPLOYED + SURVIVAL-TESTED (both proofs PASS). TOKEN-REFRESH SPOF **CLOSED**. Bridge REMOVED. READ FIRST.
 
