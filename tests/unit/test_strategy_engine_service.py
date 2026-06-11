@@ -881,7 +881,7 @@ def test_snapshot_batch_keeps_single_confirmed_name_in_watchlist(monkeypatch) ->
             "confirmed_at": "10:00:00 AM ET",
             "entry_price": 2.25,
             "price": 2.4,
-            "change_pct": 24.5,
+                "change_pct": 34.5,
             "volume": 900_000,
             "rvol": 6.2,
             "shares_outstanding": 50_000,
@@ -1267,7 +1267,7 @@ def test_retention_cooldown_keeps_feed_alive_but_blocks_entries(monkeypatch: pyt
             "confirmed_at": "10:00:00 AM ET",
             "entry_price": 2.25,
             "price": 2.40,
-            "change_pct": 24.5,
+                "change_pct": 34.5,
             "volume": 900_000,
             "rvol": 6.2,
             "shares_outstanding": 50_000,
@@ -1432,7 +1432,7 @@ def test_retention_drops_symbol_without_indicators_after_inactivity(monkeypatch:
             "confirmed_at": "10:00:00 AM ET",
             "entry_price": 2.25,
             "price": 2.40,
-            "change_pct": 24.5,
+            "change_pct": 34.5,
             "volume": 900_000,
             "rvol": 6.2,
             "shares_outstanding": 50_000,
@@ -2181,6 +2181,125 @@ def test_snapshot_batch_removes_faded_confirmed_symbols_from_scanner_and_bot_han
     for code in ("macd_30s", "macd_1m", "tos"):
         assert state.bot_handoff_symbols_by_strategy[code] == {"ELAB"}
         assert state.bots[code].watchlist == {"ELAB"}
+
+
+def test_snapshot_batch_purges_faded_symbols_from_retained_bot_lifecycle(monkeypatch) -> None:
+    state = StrategyEngineState(
+        settings=make_test_settings(
+            strategy_macd_1m_enabled=True,
+            scanner_feed_retention_enabled=True,
+        ),
+        now_provider=fixed_now,
+    )
+    state.confirmed_scanner.seed_confirmed_candidates(
+        [
+            {
+                "ticker": "ELAB",
+                "rank_score": 80.0,
+                "change_pct": 40.0,
+                "price": 1.40,
+                "prev_close": 1.0,
+                "confirmed_at": "09:45:00 AM ET",
+            },
+            {
+                "ticker": "UGRO",
+                "rank_score": 70.0,
+                "change_pct": 32.0,
+                "price": 1.32,
+                "prev_close": 1.0,
+                "confirmed_at": "09:50:00 AM ET",
+            },
+        ]
+    )
+    monkeypatch.setattr(state.alert_engine, "check_alerts", lambda snapshots, reference_data: [])
+    monkeypatch.setattr(
+        state.confirmed_scanner,
+        "process_alerts",
+        lambda alerts, reference_data, snapshot_lookup: [],
+    )
+
+    state.process_snapshot_batch(
+        [
+            snapshot_from_payload(
+                make_snapshot_payload(symbol="ELAB", price=1.40, volume=7_200_000, previous_close=1.0)
+            ),
+            snapshot_from_payload(
+                make_snapshot_payload(symbol="UGRO", price=1.32, volume=900_000, previous_close=1.0)
+            ),
+        ],
+        {
+            "ELAB": ReferenceData(shares_outstanding=541_500, avg_daily_volume=600_000),
+            "UGRO": ReferenceData(shares_outstanding=50_000, avg_daily_volume=390_000),
+        },
+    )
+    assert state.bots["macd_30s"].watchlist == {"ELAB", "UGRO"}
+    assert set(state.bots["macd_30s"].lifecycle_states) == {"ELAB", "UGRO"}
+
+    summary = state.process_snapshot_batch(
+        [
+            snapshot_from_payload(
+                make_snapshot_payload(symbol="ELAB", price=1.41, volume=7_400_000, previous_close=1.0)
+            ),
+            snapshot_from_payload(
+                make_snapshot_payload(symbol="UGRO", price=1.299, volume=950_000, previous_close=1.0)
+            ),
+        ],
+        {
+            "ELAB": ReferenceData(shares_outstanding=541_500, avg_daily_volume=600_000),
+            "UGRO": ReferenceData(shares_outstanding=50_000, avg_daily_volume=390_000),
+        },
+    )
+
+    assert [item["ticker"] for item in summary["all_confirmed"]] == ["ELAB"]
+    assert summary["watchlist"] == ["ELAB"]
+    assert state.bot_handoff_symbols_by_strategy["macd_30s"] == {"ELAB"}
+    assert state.bots["macd_30s"].watchlist == {"ELAB"}
+    assert set(state.bots["macd_30s"].lifecycle_states) == {"ELAB"}
+    assert "UGRO" not in state.feed_retention_states
+
+
+def test_snapshot_batch_keeps_faded_position_symbol_active_for_exits(monkeypatch) -> None:
+    state = StrategyEngineState(
+        settings=make_test_settings(scanner_feed_retention_enabled=True),
+        now_provider=fixed_now,
+    )
+    state.confirmed_scanner.seed_confirmed_candidates(
+        [
+            {
+                "ticker": "UGRO",
+                "rank_score": 70.0,
+                "change_pct": 32.0,
+                "price": 1.32,
+                "prev_close": 1.0,
+                "confirmed_at": "09:50:00 AM ET",
+            },
+        ]
+    )
+    monkeypatch.setattr(state.alert_engine, "check_alerts", lambda snapshots, reference_data: [])
+    monkeypatch.setattr(
+        state.confirmed_scanner,
+        "process_alerts",
+        lambda alerts, reference_data, snapshot_lookup: [],
+    )
+
+    state.process_snapshot_batch(
+        [snapshot_from_payload(make_snapshot_payload(symbol="UGRO", price=1.32, volume=900_000, previous_close=1.0))],
+        {"UGRO": ReferenceData(shares_outstanding=50_000, avg_daily_volume=390_000)},
+    )
+    bot = state.bots["macd_30s"]
+    bot.positions.open_position("UGRO", 1.32, quantity=10, path="P3_SURGE")
+
+    summary = state.process_snapshot_batch(
+        [snapshot_from_payload(make_snapshot_payload(symbol="UGRO", price=1.299, volume=950_000, previous_close=1.0))],
+        {"UGRO": ReferenceData(shares_outstanding=50_000, avg_daily_volume=390_000)},
+    )
+
+    assert summary["all_confirmed"] == []
+    assert state.bot_handoff_symbols_by_strategy["macd_30s"] == set()
+    assert bot._desired_watchlist_symbols == set()
+    assert bot.has_position("UGRO") is True
+    assert "UGRO" in bot.active_symbols()
+    assert "UGRO" in summary["watchlist"]
 
 
 def test_snapshot_batch_keeps_low_score_confirmed_visible_but_out_of_watchlist(monkeypatch) -> None:
