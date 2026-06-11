@@ -13628,3 +13628,56 @@ Notes:
   - verify `project-mai-tai-control.service` is active
   - verify `https://project-mai-tai.live/` renders the compact five-section Control Plane
   - verify `/api/overview` still returns successfully.
+
+## 2026-06-11 16:09 ET: Control Plane compact UI deployed
+
+- Deployed SHA: `a0ee58484b894a94588d584a30962cd5495e9188`.
+- VPS SHA after deploy: `a0ee58484b894a94588d584a30962cd5495e9188`.
+- PR: `#278` (`codex/control-plane-compact-redesign`), squash-merged to `main`.
+- Workflow: GitHub Actions `Deploy Service`, run `27374281648`.
+- Service target: `control`.
+- Services restarted:
+  - `project-mai-tai-control.service` only.
+- Services intentionally not restarted:
+  - `project-mai-tai-strategy.service`
+  - `project-mai-tai-oms.service`
+  - `project-mai-tai-market-data.service`
+  - `project-mai-tai-reconciler.service`
+  - `project-mai-tai-schwab-1m-v2.service`
+- Restart window:
+  - `2026-06-11 20:09:17 UTC` / `2026-06-11 04:09:17 PM ET`.
+- Market-hours note:
+  - control-only deploy; no live strategy/OMS/market-data restart was performed.
+- Local/GitHub validation state:
+  - focused Control Plane render tests passed locally.
+  - GitHub full `Validate` is still failing from the current-main unit-test baseline; not caused by this UI-only change.
+- Post-deploy validation:
+  - VPS checkout was on `main` and matched deployed SHA `a0ee58484b894a94588d584a30962cd5495e9188`.
+  - `project-mai-tai-control.service` returned `active`.
+  - `/health` returned `status=healthy` with database and Redis connected.
+  - `/api/overview` returned `status=healthy`, service list:
+    - `market-data-gateway`
+    - `oms-risk`
+    - `reconciler`
+    - `schwab-1m-v2`
+    - `strategy-engine`
+  - `/api/overview` exposed `schwab_token_refresher`.
+  - production `/` rendered the compact page with:
+    - approved theme token `--bg:#0d1117`
+    - `Live bots`
+    - `Service health`
+    - `Reconciliation`
+    - `Incidents`
+    - `/bot/1m-schwab-v2`
+    - `/bot/30s-polygon`
+  - production `/` no longer rendered:
+    - `Ranked Scanner View`
+    - `TOS Parity`
+    - `Orders & Fills`
+- Result:
+  - accepted.
+- Residual risks:
+  - existing unrelated `/bot/30s` per-bot page test failures remain.
+  - existing current-main broader unit-test baseline remains red.
+- Next owner:
+  - UI deploy is complete; any follow-up should target the unrelated test baseline or per-bot `/bot/30s` issues separately.
