@@ -857,6 +857,7 @@ class ControlPlaneRepository:
             "recent_fills": db_state["recent_fills"],
             "recent_trade_coach_reviews": db_state["recent_trade_coach_reviews"],
             "recent_bar_decisions": db_state["recent_bar_decisions"],
+            "latest_strategy_bars": db_state["latest_strategy_bars"],
             "virtual_positions": db_state["virtual_positions"],
             "account_positions": db_state["account_positions"],
             "reconciliation": db_state["reconciliation"],
@@ -2438,6 +2439,7 @@ class ControlPlaneRepository:
         recent_fills: list[dict[str, Any]] = []
         recent_trade_coach_reviews: list[dict[str, Any]] = []
         recent_bar_decisions: list[dict[str, Any]] = []
+        latest_strategy_bars: dict[str, dict[str, Any]] = {}
         open_orders: list[dict[str, Any]] = []
         virtual_positions: list[dict[str, Any]] = []
         account_positions: list[dict[str, Any]] = []
@@ -2814,6 +2816,31 @@ class ControlPlaneRepository:
                             }
                         )
 
+                for row in session.execute(
+                    text(
+                        """
+                        SELECT
+                            strategy_code,
+                            MAX(bar_time) AS latest_bar_time,
+                            COUNT(*) AS bar_count
+                        FROM strategy_bar_history
+                        WHERE bar_time >= :session_start
+                          AND bar_time < :session_end
+                        GROUP BY strategy_code
+                        """
+                    ),
+                    {
+                        "session_start": session_start,
+                        "session_end": session_end,
+                    },
+                ).mappings():
+                    latest_bar_time = row.get("latest_bar_time")
+                    latest_strategy_bars[str(row.get("strategy_code") or "")] = {
+                        "latest_bar_at": _datetime_str(latest_bar_time),
+                        "latest_bar_at_raw": latest_bar_time,
+                        "bar_count": int(row.get("bar_count") or 0),
+                    }
+
                 for position in session.scalars(
                     select(VirtualPosition)
                     .where(VirtualPosition.quantity > 0)
@@ -2977,6 +3004,7 @@ class ControlPlaneRepository:
             "recent_fills": recent_fills,
             "recent_trade_coach_reviews": recent_trade_coach_reviews,
             "recent_bar_decisions": recent_bar_decisions,
+            "latest_strategy_bars": latest_strategy_bars,
             "open_orders": open_orders,
             "virtual_positions": virtual_positions,
             "account_positions": account_positions,
@@ -3474,7 +3502,9 @@ def build_app(
 
     @app.get("/api/overview")
     async def overview() -> dict[str, Any]:
-        return await app.state.repository.load_dashboard_data()
+        data = await app.state.repository.load_dashboard_data()
+        _attach_schwab_token_refresher_status(app, data)
+        return data
 
     @app.get("/api/scanner")
     async def scanner() -> dict[str, Any]:
@@ -3981,12 +4011,33 @@ def build_app(
     @app.get("/", response_class=HTMLResponse)
     async def dashboard() -> str:
         data = await app.state.repository.load_dashboard_data()
+        _attach_schwab_token_refresher_status(app, data)
         return _render_dashboard(data)
 
     return app
 
 
 app = build_app()
+
+
+def _attach_schwab_token_refresher_status(app_obj: Any, data: dict[str, Any]) -> None:
+    refresher = getattr(getattr(app_obj, "state", object()), "schwab_token_refresher", None)
+    if refresher is None or not hasattr(refresher, "status"):
+        return
+    try:
+        data["schwab_token_refresher"] = refresher.status()
+    except Exception:
+        data["schwab_token_refresher"] = {"health": "unknown", "last_error": "status unavailable"}
+
+
+CONTROL_PLANE_ACTIVE_BOT_CODES = ("schwab_1m_v2", "polygon_30s")
+CONTROL_PLANE_DOCK_SERVICES = (
+    "market-data-gateway",
+    "oms-risk",
+    "reconciler",
+    "strategy-engine",
+    "schwab-1m-v2",
+)
 
 
 def run() -> None:
@@ -4000,1009 +4051,553 @@ def run() -> None:
     )
 
 
-def _render_dashboard(data: dict[str, Any]) -> str:
+def _render_compact_dashboard(data: dict[str, Any]) -> str:
     refresh_seconds = 5
-    scanner = data["scanner"]
-    bot_views = data["bots"]
-    bot_nav_html = _build_bot_nav_html([str(bot["strategy_code"]) for bot in bot_views])
-    active_service_count = len(data["services"])
-    healthy_service_count = sum(1 for service in data["services"] if service["status"] == "healthy")
-    starting_service_count = sum(1 for service in data["services"] if service["status"] == "starting")
-    degraded_service_count = active_service_count - healthy_service_count - starting_service_count
-    live_bot_count = sum(1 for bot in bot_views if bot["watchlist_count"] or bot["position_count"] or bot["pending_count"])
-    service_chip_html = "".join(
-        f"""
-        <span class="service-chip">
-          <span class="status-dot status-{escape(service["status"].lower().replace(" ", "_"))}"></span>
-          <span>{escape(service["service_name"])}</span>
-          <strong>{escape(service["status"])}</strong>
-        </span>
-        """
-        for service in data["services"]
-    ) or '<span class="service-chip"><span class="status-dot status-warning"></span><span>No service heartbeats</span></span>'
-    errors_html = "".join(
-        f'<div class="alert">{escape(error)}</div>' for error in data["errors"]
-    ) or '<div class="ok-banner">No current control-plane read errors.</div>'
+    scanner = data.get("scanner", {})
+    services = list(data.get("services", []) or [])
+    service_by_name = {str(service.get("service_name", "")): service for service in services}
+    latest_strategy_bars = dict(data.get("latest_strategy_bars", {}) or {})
+    token_status = dict(data.get("schwab_token_refresher", {}) or {})
+    active_bots = [
+        bot
+        for bot in list(data.get("bots", []) or [])
+        if str(bot.get("strategy_code", "")) in CONTROL_PLANE_ACTIVE_BOT_CODES
+    ]
+    bot_by_code = {str(bot.get("strategy_code", "")): bot for bot in active_bots}
+    ordered_bots = [
+        bot_by_code[code]
+        for code in CONTROL_PLANE_ACTIVE_BOT_CODES
+        if code in bot_by_code
+    ]
 
-    scanner_rows = "".join(
-        f"""
-        <tr>
-          <td>{item["rank"]}</td>
-          <td><strong>{escape(item["ticker"])}</strong></td>
-          <td>{escape(item["confirmation_path"] or "-")}</td>
-          <td>{item["rank_score"]:.0f}</td>
-          <td>{item["price"]:.2f}</td>
-          <td>{item["change_pct"]:+.1f}%</td>
-          <td>{_short_volume(item["volume"])}</td>
-          <td>{item["rvol"]:.1f}x</td>
-          <td>{item["spread_pct"]:.2f}%</td>
-          <td>{item["squeeze_count"]}</td>
-          <td>{escape(item["first_spike_time"] or "-")}</td>
-          <td>{escape(", ".join(item["watched_by"]) or "-")}</td>
-        </tr>
-        """
-        for item in scanner["top_confirmed"]
-    ) or _empty_row(12, "No confirmed candidates yet")
-    handoff_rows = "".join(
-        f"""
-        <tr>
-          <td>{item["handoff_rank"]}</td>
-          <td><strong>{escape(item["ticker"])}</strong></td>
-          <td>{escape(", ".join(item["watched_by"]) or "-")}</td>
-          <td>{"yes" if item.get("is_top5") else "no"}</td>
-          <td>{item["rank_score"]:.0f}</td>
-          <td>{item["price"]:.2f}</td>
-          <td>{item["change_pct"]:+.1f}%</td>
-          <td>{escape(item["confirmation_path"] or "-")}</td>
-        </tr>
-        """
-        for item in scanner["bot_handoff"]
-    ) or _empty_row(8, "No symbols currently handed to bots")
+    service_statuses = [
+        _compact_service_status(service_by_name.get(name), token_status=token_status)
+        for name in CONTROL_PLANE_DOCK_SERVICES
+    ]
+    healthy_services = sum(1 for item in service_statuses if item["tone"] == "good")
+    degraded_services = [
+        item["label"]
+        for item in service_statuses
+        if item["tone"] != "good"
+    ]
+    fleet_tone = "good" if not degraded_services else "warn"
+    status_dot_tone = "good" if not degraded_services else "warn"
+    scanner_ranked = _safe_int(scanner.get("top_confirmed_count"))
+    scanner_handed = _safe_int(scanner.get("bot_handoff_count"))
+    scanner_status = str(scanner.get("status") or "Idle")
+    scanner_active = scanner_ranked > 0 or scanner_handed > 0 or scanner_status.lower() == "active"
+    live_symbols = max(
+        _safe_int(data.get("market_data", {}).get("active_subscription_symbols")),
+        _safe_int(scanner.get("active_subscription_symbols")),
+        _safe_int(scanner.get("heartbeat_active_symbols")),
+    )
+    open_positions = sum(_safe_int(bot.get("position_count")) for bot in ordered_bots)
+    latest_reconciliation = data.get("reconciliation", {}).get("latest_run") or {}
+    reconciliation_summary = latest_reconciliation.get("summary", {}) if isinstance(latest_reconciliation, dict) else {}
+    cutover_confidence = _safe_int(reconciliation_summary.get("cutover_confidence"), 0)
+    critical_findings = _safe_int(reconciliation_summary.get("critical_findings"), 0)
+    warning_findings = _safe_int(reconciliation_summary.get("warning_findings"), 0)
+    total_findings = _safe_int(reconciliation_summary.get("total_findings"), 0)
 
+    dock_html = "".join(
+        f"""
+        <span class="pill {item["tone"]}"><span class="dot {item["tone"]}"></span>{escape(item["label"])}</span>
+        """
+        for item in service_statuses
+    )
     bot_cards = "".join(
-        f"""
-        <article class="bot-card">
-          <div class="bot-head">
-            <div>
-              <h3>{escape(bot["display_name"])}</h3>
-              <div class="sub">{escape(bot["strategy_code"])} / {escape(bot["account_display_name"] or "-")}</div>
-            </div>
-            {_status_badge(bot["wiring_status"])}
-          </div>
-          <div class="bot-metrics">
-            <div><span class="mini-label">Eligible Feed</span><strong>{bot["watchlist_count"]}</strong></div>
-            <div><span class="mini-label">Positions</span><strong>{bot["position_count"]}</strong></div>
-            <div><span class="mini-label">Pending</span><strong>{bot["pending_count"]}</strong></div>
-          </div>
-          <div class="bot-lines">
-            <p><strong>Execution:</strong> {escape(bot["execution_mode"])} via {escape(bot["provider"])}</p>
-            <p><strong>Account:</strong> {escape(bot["account_display_name"] or "-")}</p>
-            <p><strong>Data Health:</strong> {escape(str(bot.get("data_health", {}).get("status", "healthy")).upper())}</p>
-            <p><strong>Live Symbols:</strong> {escape(", ".join(bot["watchlist"][:5]) or "None")}</p>
-            <p><strong>Positions:</strong> {escape(_position_preview(bot["positions"]))}</p>
-            <p><strong>Recent Intents:</strong> {escape(_intent_preview(bot["recent_intents"]))}</p>
-          </div>
-        </article>
-        """
-        for bot in bot_views
-    ) or '<div class="muted-box">No bot runtime snapshots available yet.</div>'
-
-    parity_bots = [bot for bot in bot_views if bot.get("tos_parity", {}).get("enabled")]
-    parity_rows = "".join(
-        f"""
-        <tr>
-          <td><strong>{escape(bot["display_name"])}</strong></td>
-          <td>{_status_badge(bot["tos_parity"]["status"])}</td>
-          <td>{escape(bot["tos_parity"]["comparison_target"])}</td>
-          <td>{len(bot["tos_parity"]["snapshots"])}</td>
-          <td>{escape(", ".join(item["symbol"] for item in bot["tos_parity"]["snapshots"][:4]) or "None")}</td>
-          <td>{escape(bot["tos_parity"]["snapshots"][0]["last_bar_at"] if bot["tos_parity"]["snapshots"] else "Awaiting closed 1m bar")}</td>
-          <td>{escape(bot["tos_parity"]["summary"])}</td>
-        </tr>
-        """
-        for bot in parity_bots
-    ) or _empty_row(7, "No TOS parity-ready bot snapshots yet")
-
-    services_rows = "".join(
-        f"""
-        <tr>
-          <td>{escape(service["service_name"])}</td>
-          <td>{_status_badge(service["status"])}</td>
-          <td>{escape(service["instance_name"])}</td>
-          <td>{escape(service["observed_at"])}</td>
-          <td>{escape(", ".join(f"{key}={value}" for key, value in service["details"].items()) or "-")}</td>
-        </tr>
-        """
-        for service in data["services"]
-    ) or _empty_row(5, "No service heartbeats yet")
-
-    intents_rows = "".join(
-        f"""
-        <tr>
-          <td>{escape(item["strategy_code"])}</td>
-          <td>{escape(item["symbol"])}</td>
-          <td>{escape(item["intent_type"])}</td>
-          <td>{escape(item["side"])}</td>
-          <td>{escape(item["quantity"])}</td>
-          <td>{_status_badge(item["status"])}</td>
-          <td>{escape(item["updated_at"])}</td>
-        </tr>
-        """
-        for item in data["recent_intents"]
-    ) or _empty_row(7, "No trade intents recorded yet")
-
-    orders_rows = "".join(
-        f"""
-        <tr>
-          <td>{escape(item["strategy_code"])}</td>
-          <td>{escape(item.get("intent_type", ""))}</td>
-          <td>{escape(item["symbol"])}</td>
-          <td>{escape(item["side"])}</td>
-          <td>{escape(item["quantity"])}</td>
-          <td>{_status_badge(item["status"])}</td>
-          <td>{escape(item.get("reason", ""))}</td>
-          <td><code>{escape(item["client_order_id"])}</code></td>
-          <td>{escape(item["updated_at"])}</td>
-        </tr>
-        """
-        for item in data["recent_orders"]
-    ) or _empty_row(9, "No broker orders recorded yet")
-
-    fills_rows = "".join(
-        f"""
-        <tr>
-          <td>{escape(item["strategy_code"])}</td>
-          <td>{escape(item["symbol"])}</td>
-          <td>{escape(item["side"])}</td>
-          <td>{escape(item["quantity"])}</td>
-          <td>{escape(item["price"])}</td>
-          <td>{escape(item["filled_at"])}</td>
-        </tr>
-        """
-        for item in data["recent_fills"]
-    ) or _empty_row(6, "No fills recorded yet")
-
-    virtual_positions_rows = "".join(
-        f"""
-        <tr>
-          <td>{escape(item["strategy_code"])}</td>
-          <td>{escape(item["broker_account_name"])}</td>
-          <td>{escape(item["symbol"])}</td>
-          <td>{escape(item["quantity"])}</td>
-          <td>{escape(item["average_price"])}</td>
-          <td>{escape(item["realized_pnl"])}</td>
-          <td>{escape(item["updated_at"])}</td>
-        </tr>
-        """
-        for item in data["virtual_positions"]
-    ) or _empty_row(7, "No virtual positions open")
-
-    account_positions_rows = "".join(
-        f"""
-        <tr>
-          <td>{escape(item["broker_account_name"])}</td>
-          <td>{escape(item["symbol"])}</td>
-          <td>{escape(item["quantity"])}</td>
-          <td>{escape(item["average_price"])}</td>
-          <td>{escape(item["market_value"] or "-")}</td>
-          <td>{escape(item["updated_at"])}</td>
-        </tr>
-        """
-        for item in data["account_positions"]
-    ) or _empty_row(6, "No account positions open")
-
-    incidents_rows = "".join(
-        f"""
-        <tr>
-          <td>{escape(item["service_name"])}</td>
-          <td>{_status_badge(item["severity"])}</td>
-          <td>{escape(item["title"])}</td>
-          <td>{_status_badge(item["status"])}</td>
-          <td>{escape(item["opened_at"])}</td>
-        </tr>
-        """
-        for item in data["incidents"]
-    ) or _empty_row(5, "No incidents logged")
-
-    reconciliation_rows = "".join(
-        f"""
-        <tr>
-          <td>{_status_badge(item["severity"])}</td>
-          <td>{escape(item["finding_type"])}</td>
-          <td>{escape(item["symbol"] or "-")}</td>
-          <td>{escape(item["title"])}</td>
-          <td>{escape(item["created_at"])}</td>
-        </tr>
-        """
-        for item in data["reconciliation"]["findings"]
-    ) or _empty_row(5, "No reconciliation findings in the latest run")
-
-    latest_snapshot = data["market_data"]["latest_snapshot_batch"] or {}
-    snapshot_summary = (
-        f'{latest_snapshot.get("snapshot_count", 0)} snapshots / '
-        f'{latest_snapshot.get("reference_count", 0)} refs'
-        if latest_snapshot
-        else "No snapshot batches yet"
+        _compact_bot_card(
+            bot,
+            service_by_name=service_by_name,
+            latest_strategy_bars=latest_strategy_bars,
+        )
+        for bot in ordered_bots
+    ) or '<div class="empty">No active bot runtime snapshots available yet.</div>'
+    service_rows = "".join(
+        _compact_service_row(service, token_status=token_status)
+        for service in services
+        if str(service.get("service_name", "")) in CONTROL_PLANE_DOCK_SERVICES
     )
-    subscription_symbols = data["market_data"]["subscription_symbols"][:12]
-    subscription_summary = ", ".join(subscription_symbols) or "No dynamic subscriptions yet"
-    latest_reconciliation = data["reconciliation"]["latest_run"] or {}
-    latest_reconciliation_summary = latest_reconciliation.get("summary", {})
-    cutover_confidence = latest_reconciliation_summary.get("cutover_confidence", 0)
-    latest_fill = data["recent_fills"][0] if data["recent_fills"] else None
-    latest_fill_summary = (
-        f'{latest_fill["strategy_code"]} {latest_fill["side"]} {latest_fill["symbol"]} @ {latest_fill["price"]}'
-        if latest_fill
-        else "No fills yet"
-    )
-    health_summary = (
-        f"{healthy_service_count}/{active_service_count} healthy"
-        + (f" · {starting_service_count} starting" if starting_service_count else "")
-        + (f" · {degraded_service_count} attention" if degraded_service_count else "")
-    )
-    ops_summary = (
-        f'{data["counts"]["open_incidents"]} incidents · '
-        f'{data["counts"]["latest_reconciliation_findings"]} findings · '
-        f'refresh {refresh_seconds}s'
-    )
-    orderflow_summary = (
-        f'{len(data["recent_intents"])} intents · '
-        f'{len(data["recent_orders"])} orders · '
-        f'{len(data["recent_fills"])} fills'
-    )
-    position_summary = (
-        f'{len(data["virtual_positions"])} virtual · '
-        f'{len(data["account_positions"])} broker-level · '
-        f'{len(data["incidents"])} incidents'
-    )
-    health_basis_summary = (
-        f"{healthy_service_count}/{active_service_count} services healthy · "
-        f"db {'connected' if not any(error.startswith('database:') for error in data['errors']) else 'attention'} · "
-        f"redis {'connected' if not any(error.startswith('redis:') for error in data['errors']) else 'attention'} · "
-        f"{data['counts']['open_incidents']} incidents"
-    )
+    service_rows = service_rows or '<tr><td colspan="4" class="empty">No service heartbeats yet.</td></tr>'
+    incident_rows = _compact_incident_rows(data)
+    recon_note = _compact_reconciliation_note(data.get("reconciliation", {}))
+    confidence_width = max(0, min(100, cutover_confidence))
 
     return f"""
     <html>
       <head>
-        <title>Project Mai Tai Control Plane</title>
+        <title>Mai Tai Control Plane</title>
         <meta http-equiv="refresh" content="{refresh_seconds}">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <style>
           :root {{
-            --ink: #122433;
-            --muted: #61758a;
-            --line: rgba(18, 36, 51, 0.12);
-            --panel: rgba(255, 255, 255, 0.9);
-            --bg-top: #f6efe1;
-            --bg-bottom: #edf7fb;
-            --accent: #0f7f66;
-            --warn: #d48000;
-            --danger: #c0392b;
+            --bg:#0d1117;
+            --panel:#151b24;
+            --panel-2:#1a212c;
+            --line:#232c38;
+            --line-soft:#1e2630;
+            --ink:#e6edf3;
+            --ink-dim:#8b97a6;
+            --ink-faint:#5e6a78;
+            --good:#3fb6a8;
+            --good-bg:rgba(63,182,168,.12);
+            --warn:#d99a3a;
+            --warn-bg:rgba(217,154,58,.13);
+            --bad:#d9534f;
+            --bad-bg:rgba(217,83,79,.13);
+            --accent:#4a9cd6;
+            --radius:10px;
+            --mono:"SFMono-Regular",ui-monospace,"JetBrains Mono",Menlo,Consolas,monospace;
+            --sans:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
           }}
-          * {{ box-sizing: border-box; }}
-          body {{
-            margin: 0;
-            color: var(--ink);
-            font-family: Georgia, "Times New Roman", serif;
-            background:
-              radial-gradient(circle at top right, rgba(15, 127, 102, 0.12), transparent 28%),
-              linear-gradient(180deg, var(--bg-top), var(--bg-bottom));
+          *{{box-sizing:border-box;margin:0;padding:0;}}
+          body{{
+            background:var(--bg);
+            color:var(--ink);
+            font-family:var(--sans);
+            font-size:14px;
+            line-height:1.5;
+            padding:22px 26px 60px;
+            -webkit-font-smoothing:antialiased;
           }}
-          .shell {{
-            max-width: 1280px;
-            margin: 0 auto;
-            padding: 24px;
-          }}
-          .nav {{
-            display: flex;
-            flex-wrap: wrap;
-            gap: 10px;
-            margin: 0 0 20px 0;
-          }}
-          .nav a {{
-            text-decoration: none;
-            color: var(--ink);
-            border: 1px solid var(--line);
-            background: rgba(255,255,255,0.72);
-            padding: 10px 14px;
-            border-radius: 999px;
-            font-size: 13px;
-          }}
-          .hero, .section, .table-card {{
-            background: var(--panel);
-            border: 1px solid var(--line);
-            border-radius: 22px;
-            box-shadow: 0 18px 42px rgba(18, 36, 51, 0.08);
-          }}
-          .hero {{
-            padding: 22px 24px;
-            margin-bottom: 16px;
-          }}
-          .hero-head {{
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-start;
-            gap: 16px;
-            flex-wrap: wrap;
-          }}
-          .hero-copy {{
-            max-width: 560px;
-          }}
-          .eyebrow {{
-            color: var(--accent);
-            font-size: 13px;
-            letter-spacing: 0.08em;
-            text-transform: uppercase;
-            margin-bottom: 10px;
-          }}
-          h1, h2 {{
-            margin: 0 0 10px 0;
-          }}
-          p {{
-            margin: 0;
-            color: var(--muted);
-            line-height: 1.45;
-          }}
-          .cards {{
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-            gap: 14px;
-            margin-top: 22px;
-          }}
-          .card {{
-            background: rgba(255, 255, 255, 0.8);
-            border: 1px solid var(--line);
-            border-radius: 18px;
-            padding: 16px;
-          }}
-          .label {{
-            font-size: 12px;
-            letter-spacing: 0.06em;
-            text-transform: uppercase;
-            color: var(--muted);
-            margin-bottom: 6px;
-          }}
-          .value {{
-            font-size: 28px;
-            font-weight: bold;
-          }}
-          .grid-2 {{
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-            gap: 16px;
-            margin-top: 16px;
-          }}
-          .ops-strip {{
-            display: grid;
-            gap: 10px;
-            margin: 0;
-            padding: 12px 16px;
-            background: rgba(255,255,255,0.76);
-            border: 1px solid var(--line);
-            border-radius: 18px;
-            box-shadow: 0 12px 28px rgba(18, 36, 51, 0.06);
-            min-width: min(100%, 560px);
-          }}
-          .ops-strip-top {{
-            display: flex;
-            flex-wrap: wrap;
-            justify-content: space-between;
-            gap: 10px;
-            align-items: center;
-          }}
-          .ops-strip-title {{
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            font-size: 14px;
-            color: var(--muted);
-          }}
-          .ops-strip-title strong {{
-            color: var(--ink);
-            font-size: 15px;
-          }}
-          .service-strip {{
-            display: flex;
-            flex-wrap: wrap;
-            gap: 8px;
-          }}
-          .service-chip {{
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            padding: 8px 10px;
-            border-radius: 999px;
-            border: 1px solid var(--line);
-            background: rgba(255,255,255,0.78);
-            font-size: 12px;
-            color: var(--muted);
-          }}
-          .service-chip strong {{
-            color: var(--ink);
-            font-size: 11px;
-            text-transform: uppercase;
-            letter-spacing: 0.04em;
-          }}
-          .status-dot {{
-            width: 10px;
-            height: 10px;
-            border-radius: 999px;
-            display: inline-block;
-            flex: 0 0 auto;
-          }}
-          .fold-panel {{
-            margin-top: 16px;
-            background: var(--panel);
-            border: 1px solid var(--line);
-            border-radius: 22px;
-            box-shadow: 0 18px 42px rgba(18, 36, 51, 0.08);
-            overflow: hidden;
-          }}
-          .fold-panel summary {{
-            list-style: none;
-            cursor: pointer;
-            padding: 16px 20px;
-          }}
-          .fold-panel summary::-webkit-details-marker {{
-            display: none;
-          }}
-          .fold-summary {{
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            gap: 12px;
-          }}
-          .fold-title {{
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            font-size: 18px;
-          }}
-          .fold-title small {{
-            color: var(--muted);
-            font-size: 13px;
-            font-weight: normal;
-          }}
-          .fold-meta {{
-            color: var(--muted);
-            font-size: 13px;
-            text-align: right;
-          }}
-          .fold-content {{
-            padding: 0 20px 20px 20px;
-          }}
-          .details-grid {{
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-            gap: 16px;
-          }}
-          .bot-grid {{
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-            gap: 14px;
-          }}
-          .bot-card {{
-            background: rgba(255,255,255,0.78);
-            border: 1px solid var(--line);
-            border-radius: 18px;
-            padding: 16px;
-          }}
-          .bot-head {{
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-start;
-            gap: 10px;
-            margin-bottom: 12px;
-          }}
-          .bot-head h3 {{
-            margin: 0 0 4px 0;
-          }}
-          .bot-metrics {{
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 8px;
-            margin-bottom: 12px;
-          }}
-          .bot-metrics > div {{
-            background: rgba(18, 36, 51, 0.04);
-            border-radius: 12px;
-            padding: 10px;
-          }}
-          .mini-label {{
-            display: block;
-            color: var(--muted);
-            font-size: 11px;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            margin-bottom: 4px;
-          }}
-          .bot-lines p {{
-            margin: 0 0 8px 0;
-            font-size: 14px;
-          }}
-          .section {{
-            padding: 20px;
-          }}
-          .section-header {{
-            display: flex;
-            justify-content: space-between;
-            align-items: baseline;
-            gap: 12px;
-            margin-bottom: 12px;
-          }}
-          .sub {{
-            color: var(--muted);
-            font-size: 14px;
-          }}
-          .table-card {{
-            overflow: hidden;
-          }}
-          table {{
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 14px;
-          }}
-          th, td {{
-            padding: 12px 14px;
-            border-bottom: 1px solid var(--line);
-            text-align: left;
-            vertical-align: top;
-          }}
-          th {{
-            background: rgba(18, 36, 51, 0.04);
-            color: var(--muted);
-            font-size: 12px;
-            letter-spacing: 0.06em;
-            text-transform: uppercase;
-          }}
-          tr:last-child td {{
-            border-bottom: none;
-          }}
-          .pill {{
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            padding: 4px 10px;
-            border-radius: 999px;
-            font-size: 12px;
-            font-weight: bold;
-          }}
-          .status-healthy, .status-filled, .status-pass, .status-open, .status-ready {{
-            background: rgba(15, 127, 102, 0.12);
-            color: var(--accent);
-          }}
-          .status-dot.status-healthy, .status-dot.status-filled, .status-dot.status-pass, .status-dot.status-open, .status-dot.status-ready {{
-            background: var(--accent);
-            color: transparent;
-          }}
-          .status-starting, .status-accepted, .status-submitted, .status-warning, .status-warming {{
-            background: rgba(212, 128, 0, 0.12);
-            color: var(--warn);
-          }}
-          .status-dot.status-starting, .status-dot.status-accepted, .status-dot.status-submitted, .status-dot.status-warning, .status-dot.status-warming {{
-            background: var(--warn);
-            color: transparent;
-          }}
-          .status-rejected, .status-degraded, .status-error, .status-closed, .status-critical {{
-            background: rgba(192, 57, 43, 0.12);
-            color: var(--danger);
-          }}
-          .status-dot.status-rejected, .status-dot.status-degraded, .status-dot.status-error, .status-dot.status-closed, .status-dot.status-critical {{
-            background: var(--danger);
-            color: transparent;
-          }}
-          .status-pending, .status-cancelled, .status-idle {{
-            background: rgba(18, 36, 51, 0.1);
-            color: var(--ink);
-          }}
-          .status-dot.status-pending, .status-dot.status-cancelled, .status-dot.status-idle {{
-            background: var(--ink);
-            color: transparent;
-          }}
-          .muted-box {{
-            color: var(--muted);
-            font-size: 14px;
-            line-height: 1.5;
-          }}
-          .alert {{
-            padding: 10px 12px;
-            border-left: 4px solid var(--danger);
-            background: rgba(192, 57, 43, 0.08);
-            margin-bottom: 8px;
-            border-radius: 10px;
-          }}
-          .ok-banner {{
-            padding: 10px 12px;
-            border-left: 4px solid var(--accent);
-            background: rgba(15, 127, 102, 0.08);
-            border-radius: 10px;
-          }}
-          code {{
-            background: rgba(18, 36, 51, 0.08);
-            padding: 2px 6px;
-            border-radius: 6px;
-          }}
+          .wrap{{max-width:1180px;margin:0 auto;}}
+          .topbar{{display:flex;align-items:center;justify-content:space-between;gap:24px;flex-wrap:wrap;margin-bottom:8px;}}
+          .brand h1{{font-size:22px;font-weight:700;letter-spacing:-.01em;}}
+          .brand .sub{{color:var(--ink-dim);font-size:12.5px;margin-top:1px;}}
+          .brand .sub b{{color:var(--good);font-weight:600;}}
+          .dock{{display:flex;align-items:center;gap:12px;flex-wrap:wrap;background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:10px 16px;}}
+          .dock-title{{font-weight:600;font-size:13px;display:flex;align-items:center;gap:8px;}}
+          .dock-meta{{color:var(--ink-faint);font-size:11px;font-family:var(--mono);}}
+          .pill{{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:11px;font-weight:600;padding:3px 9px;border-radius:20px;letter-spacing:.02em;white-space:nowrap;}}
+          .pill.good{{background:var(--good-bg);color:var(--good);}}
+          .pill.warn{{background:var(--warn-bg);color:var(--warn);}}
+          .pill.bad{{background:var(--bad-bg);color:var(--bad);}}
+          .dot{{width:7px;height:7px;border-radius:50%;display:inline-block;}}
+          .dot.good{{background:var(--good);}} .dot.warn{{background:var(--warn);}} .dot.bad{{background:var(--bad);}}
+          .strip{{display:grid;grid-template-columns:repeat(5,1fr);gap:1px;background:var(--line);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;margin:18px 0;}}
+          .stat{{background:var(--panel);padding:13px 16px;}}
+          .label{{font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--ink-faint);font-weight:600;}}
+          .val{{font-size:22px;font-weight:700;font-family:var(--mono);margin-top:5px;line-height:1;}}
+          .val.good{{color:var(--good);}} .val.warn{{color:var(--warn);}} .val.bad{{color:var(--bad);}}
+          .note{{font-size:11px;color:var(--ink-dim);margin-top:5px;}}
+          .grid{{display:grid;gap:16px;}}
+          .cols-2{{grid-template-columns:1.15fr .85fr;}}
+          section.card{{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:18px 20px;}}
+          .sec-head{{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:14px;}}
+          .sec-head h2{{font-size:13px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--ink);}}
+          .hint{{font-size:11.5px;color:var(--ink-faint);}}
+          a{{color:var(--accent);text-decoration:none;font-weight:600;}}
+          a:hover{{text-decoration:underline;}}
+          .fleet{{display:grid;grid-template-columns:1fr 1fr;gap:14px;}}
+          .bot{{background:var(--panel-2);border:1px solid var(--line);border-radius:8px;padding:14px 16px;}}
+          .bot-top{{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:12px;}}
+          .bot-name{{font-weight:700;font-size:15px;}}
+          .bot-route{{font-family:var(--mono);font-size:11px;color:var(--ink-dim);margin-top:2px;}}
+          .bot-metrics{{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;}}
+          .metric .m-label{{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-faint);font-weight:600;}}
+          .metric .m-val{{font-family:var(--mono);font-size:14px;margin-top:3px;font-weight:600;}}
+          .metric .m-val.good{{color:var(--good);}} .metric .m-val.warn{{color:var(--warn);}} .metric .m-val.bad{{color:var(--bad);}}
+          .bot-health-row{{display:flex;gap:8px;margin-top:13px;padding-top:12px;border-top:1px solid var(--line-soft);flex-wrap:wrap;}}
+          table{{width:100%;border-collapse:collapse;}}
+          th{{text-align:left;font-size:10px;letter-spacing:.07em;text-transform:uppercase;color:var(--ink-faint);font-weight:600;padding:0 12px 9px;border-bottom:1px solid var(--line);}}
+          td{{padding:11px 12px;border-bottom:1px solid var(--line-soft);font-size:13px;vertical-align:middle;}}
+          tr:last-child td{{border-bottom:none;}}
+          .svc-name{{font-weight:600;font-family:var(--mono);font-size:12.5px;}}
+          .svc-health{{display:flex;gap:6px;flex-wrap:wrap;}}
+          .chip{{font-family:var(--mono);font-size:10.5px;padding:2px 8px;border-radius:5px;background:var(--panel-2);color:var(--ink-dim);border:1px solid var(--line);font-weight:600;}}
+          .chip.good{{color:var(--good);border-color:rgba(63,182,168,.3);}}
+          .chip.warn{{color:var(--warn);border-color:rgba(217,154,58,.3);}}
+          .chip.bad{{color:var(--bad);border-color:rgba(217,83,79,.35);}}
+          .age{{font-family:var(--mono);font-size:11px;color:var(--ink-faint);}}
+          .recon-rows{{display:flex;flex-direction:column;gap:11px;}}
+          .recon-line{{display:flex;justify-content:space-between;align-items:center;font-size:13px;gap:14px;}}
+          .recon-line .k{{color:var(--ink-dim);}}
+          .recon-line .v{{font-family:var(--mono);font-weight:600;}}
+          .conf-bar{{height:6px;background:var(--panel-2);border-radius:4px;overflow:hidden;margin-top:6px;}}
+          .conf-fill{{height:100%;background:linear-gradient(90deg,var(--warn),var(--good));border-radius:4px;}}
+          .inc{{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--line-soft);}}
+          .inc:last-child{{border-bottom:none;}}
+          .sev{{font-family:var(--mono);font-size:10px;font-weight:700;padding:2px 7px;border-radius:4px;flex-shrink:0;}}
+          .sev.warn{{background:var(--warn-bg);color:var(--warn);}} .sev.crit{{background:var(--bad-bg);color:var(--bad);}}
+          .inc-body{{font-size:12.5px;flex:1;min-width:0;}}
+          .inc-svc{{font-family:var(--mono);font-size:11px;color:var(--ink-faint);}}
+          .inc-foot{{margin-top:10px;font-size:11.5px;color:var(--ink-faint);}}
+          .empty{{color:var(--ink-faint);font-size:12.5px;font-style:italic;padding:8px 0;}}
+          @media(max-width:840px){{.strip{{grid-template-columns:repeat(2,1fr);}}.cols-2{{grid-template-columns:1fr;}}.fleet{{grid-template-columns:1fr;}}}}
         </style>
       </head>
       <body>
-        <div class="shell">
-          <section class="hero">
-            <div class="hero-head">
-              <div class="hero-copy">
-                <div class="eyebrow">Mai Tai</div>
-                <h1>Mai Tai Project</h1>
-                <p>Paper trading control plane.</p>
-              </div>
-              <section class="ops-strip">
-                <div class="ops-strip-top">
-                  <div class="ops-strip-title">
-                    <span class="status-dot status-{escape(data["status"].lower().replace(" ", "_"))}"></span>
-                    <strong>Mai Tai System Dock</strong>
-                    <span>{escape(health_summary)}</span>
-                  </div>
-                  <div class="fold-meta">{escape(ops_summary)} · {escape(data["generated_at"])}</div>
-                </div>
-                <div class="service-strip">{service_chip_html}</div>
-              </section>
+        <div class="wrap">
+          <div class="topbar">
+            <div class="brand">
+              <h1>Mai Tai</h1>
+              <div class="sub">Paper trading control plane &middot; <b>v2 live</b> as sole Schwab bot</div>
             </div>
-            <div class="cards">
-              <div class="card">
-                <div class="label">Health</div>
-                <div class="value">{data["status"].upper()}</div>
-                <p>{escape(health_basis_summary)}</p>
-              </div>
-              <div class="card">
-                <div class="label">Ranked Scanner</div>
-                <div class="value">{scanner["top_confirmed_count"]}</div>
-                <p>Score stays visible here only</p>
-              </div>
-              <div class="card">
-                <div class="label">Handed To Bots</div>
-                <div class="value">{scanner["bot_handoff_count"]}</div>
-                <p>{escape(", ".join(scanner["watchlist"][:4]) or "No active symbols")}</p>
-              </div>
-              <div class="card">
-                <div class="label">Live Symbols</div>
-                <div class="value">{data["market_data"]["active_subscription_symbols"]}</div>
-                <p>{escape(subscription_summary)}</p>
-              </div>
-              <div class="card">
-                <div class="label">Pending Intents</div>
-                <div class="value">{data["counts"]["pending_intents"]}</div>
-                <p>{orderflow_summary}</p>
-              </div>
-              <div class="card">
-                <div class="label">Open Positions</div>
-                <div class="value">{data["counts"]["open_virtual_positions"]}</div>
-                <p>{position_summary}</p>
-              </div>
-              <div class="card">
-                <div class="label">Latest Fill</div>
-                <div class="value">{len(data["recent_fills"])}</div>
-                <p>{escape(latest_fill_summary)}</p>
-              </div>
-              <div class="card">
-                <div class="label">Cutover Confidence</div>
-                <div class="value">{cutover_confidence}/100</div>
-                <p>{escape(latest_reconciliation.get("completed_at", "No reconciliation run yet"))}</p>
-              </div>
-              <div class="card">
-                <div class="label">Bots With Activity</div>
-                <div class="value">{live_bot_count}</div>
-                <p>of {len(bot_views)} strategy runtimes</p>
-              </div>
+            <div class="dock">
+              <span class="dock-title"><span class="dot {status_dot_tone}"></span> System</span>
+              {dock_html}
+              <span class="dock-meta">refresh {refresh_seconds}s &middot; {escape(str(data.get("generated_at") or ""))}</span>
             </div>
+          </div>
+
+          <div class="strip">
+            <div class="stat"><div class="label">Fleet health</div><div class="val {fleet_tone}">{healthy_services} / {len(service_statuses)}</div><div class="note">{escape(", ".join(degraded_services[:2]) if degraded_services else "all monitored services healthy")}</div></div>
+            <div class="stat"><div class="label">Scanner</div><div class="val {"good" if scanner_active else "warn"}">{escape("Active" if scanner_active else "Idle")}</div><div class="note">{scanner_ranked} ranked &middot; {scanner_handed} handed</div></div>
+            <div class="stat"><div class="label">Live symbols</div><div class="val">{live_symbols}</div><div class="note">in the live data pipeline</div></div>
+            <div class="stat"><div class="label">Open positions</div><div class="val">{open_positions}</div><div class="note">across active bots</div></div>
+            <div class="stat"><div class="label">Cutover confidence</div><div class="val {_confidence_tone(cutover_confidence)}">{cutover_confidence}</div><div class="note">shared-account safety</div></div>
+          </div>
+
+          <section class="card" style="margin-bottom:16px;">
+            <div class="sec-head">
+              <h2>Live bots</h2>
+              <span class="hint">{len(ordered_bots)} active runtimes &middot; trade detail on each bot&apos;s page</span>
+            </div>
+            <div class="fleet">{bot_cards}</div>
           </section>
 
-          <nav class="nav">{bot_nav_html}</nav>
-
-          <details class="fold-panel" open>
-            <summary>
-              <div class="fold-summary">
-                <div class="fold-title">📈 Overview <small>scanner flow, subscriptions, and top confirmed names</small></div>
-                <div class="fold-meta">{scanner["top_confirmed_count"]} confirmed · {scanner["watchlist_count"]} watchlist · {scanner["active_subscription_symbols"]} live symbols</div>
-              </div>
-            </summary>
-            <div class="fold-content">
-              <div class="details-grid">
-                <section class="section">
-                  <div class="section-header">
-                    <div>
-                      <h2>Overview</h2>
-                    <div class="sub">Critical scanner state and the live symbol set.</div>
-                    </div>
-                  </div>
-                  <div class="muted-box">
-                    <p><strong>Scanner Status:</strong> {escape(scanner["status"])}</p>
-                    <p><strong>Ranked Scanner Count:</strong> {scanner["top_confirmed_count"]}</p>
-                    <p><strong>Handed To Bots:</strong> {scanner["bot_handoff_count"]}</p>
-                    <p><strong>Active Subscriptions:</strong> {scanner["active_subscription_symbols"]}</p>
-                    <p><strong>Latest Snapshot:</strong> {escape(snapshot_summary)}</p>
-                    <p><strong>Latest Fill:</strong> {escape(latest_fill_summary)}</p>
-                  </div>
-                </section>
-
-                <section class="section">
-                  <div class="section-header">
-                    <div>
-                      <h2>Live Symbols</h2>
-                      <div class="sub">Symbols currently pushed into the live tick pipeline.</div>
-                    </div>
-                  </div>
-                  <div class="muted-box">
-                    <p><strong>Snapshot Completed:</strong> {escape(latest_snapshot.get("completed_at", "No snapshot timestamp yet"))}</p>
-                    <p><strong>Subscribed Symbols:</strong> {escape(", ".join(scanner["subscription_symbols"][:20]) or "None")}</p>
-                  </div>
-                </section>
-              </div>
-
-              <section class="section">
-                <div class="section-header">
-                  <div>
-                    <h2>Ranked Scanner View</h2>
-                    <div class="sub">Momentum-confirmed names ranked for visibility only. Score does not gate bot handoff.</div>
-                  </div>
-                </div>
-                <div class="table-card">
-                  <table>
-                    <thead>
-                      <tr><th>Rank</th><th>Ticker</th><th>Path</th><th>Score</th><th>Price</th><th>Change</th><th>Volume</th><th>RVOL</th><th>Spread</th><th>Squeezes</th><th>First Spike</th><th>Feed To</th></tr>
-                    </thead>
-                    <tbody>{scanner_rows}</tbody>
-                  </table>
-                </div>
-              </section>
-
-              <section class="section">
-                <div class="section-header">
-                  <div>
-                    <h2>Handed To Bots</h2>
-                    <div class="sub">Current symbols flowing from the momentum scanner into active bot watchlists.</div>
-                  </div>
-                </div>
-                <div class="table-card">
-                  <table>
-                    <thead>
-                      <tr><th>#</th><th>Ticker</th><th>Feed To</th><th>Ranked View</th><th>Score</th><th>Price</th><th>Change</th><th>Path</th></tr>
-                    </thead>
-                    <tbody>{handoff_rows}</tbody>
-                  </table>
-                </div>
-              </section>
-            </div>
-          </details>
-
-          <section class="section" id="bots">
-            <div class="section-header">
-              <div>
-                <h2>Bot Deck</h2>
-                <div class="sub">Active strategy runtimes configured in this environment.</div>
-              </div>
-            </div>
-            <div class="bot-grid">{bot_cards}</div>
-          </section>
-
-          <section class="section">
-            <div class="section-header">
-              <div>
-                <h2>TOS Parity</h2>
-                <div class="sub">Closed 1m indicator values published by Mai Tai for side-by-side comparison with thinkorswim charts.</div>
-              </div>
-            </div>
-            <div class="table-card">
+          <div class="grid cols-2" style="margin-bottom:16px;">
+            <section class="card">
+              <div class="sec-head"><h2>Service health</h2><span class="hint">latest heartbeat per service</span></div>
               <table>
-                <thead>
-                  <tr><th>Bot</th><th>Status</th><th>Target</th><th>Snapshots</th><th>Symbols</th><th>Latest Bar</th><th>Summary</th></tr>
-                </thead>
-                <tbody>{parity_rows}</tbody>
+                <thead><tr><th>Service</th><th>Status</th><th>Key health</th><th>Age</th></tr></thead>
+                <tbody>{service_rows}</tbody>
               </table>
-            </div>
+            </section>
+
+            <section class="card">
+              <div class="sec-head"><h2>Reconciliation</h2><span class="hint">shared-account safety</span></div>
+              <div class="recon-rows">
+                <div class="recon-line"><span class="k">Status</span><span class="v" style="color:var(--{_status_color_var(str(latest_reconciliation.get("status", "not-run")))})">{escape(str(latest_reconciliation.get("status", "not-run")))}</span></div>
+                <div class="recon-line"><span class="k">Total findings</span><span class="v">{total_findings}</span></div>
+                <div class="recon-line"><span class="k">Critical</span><span class="v" style="color:var(--{"bad" if critical_findings else "ink-dim"})">{critical_findings}</span></div>
+                <div class="recon-line"><span class="k">Warnings</span><span class="v" style="color:var(--{"warn" if warning_findings else "ink-dim"})">{warning_findings}</span></div>
+                <div>
+                  <div class="recon-line"><span class="k">Cutover confidence</span><span class="v" style="color:var(--{_status_color_var(_confidence_tone(cutover_confidence))})">{cutover_confidence} / 100</span></div>
+                  <div class="conf-bar"><div class="conf-fill" style="width:{confidence_width}%"></div></div>
+                </div>
+                <div class="recon-line" style="font-size:11.5px;color:var(--ink-faint);padding-top:2px;"><span>{escape(recon_note)}</span></div>
+              </div>
+            </section>
+          </div>
+
+          <section class="card">
+            <div class="sec-head"><h2>Incidents</h2><span class="hint">control-plane &amp; runtime issues that need attention</span></div>
+            {incident_rows}
           </section>
-
-          <details class="fold-panel">
-            <summary>
-              <div class="fold-summary">
-                <div class="fold-title">🩺 System & Health <small>services and runtime diagnostics</small></div>
-                <div class="fold-meta">{escape(health_summary)} · {escape(ops_summary)}</div>
-              </div>
-            </summary>
-            <div class="fold-content">
-              <section class="section">
-                <div class="section-header">
-                  <div>
-                    <h2>Service Health</h2>
-                    <div class="sub">Latest heartbeat per service from Redis streams.</div>
-                  </div>
-                </div>
-                <div class="table-card">
-                  <table>
-                    <thead>
-                      <tr><th>Service</th><th>Status</th><th>Instance</th><th>Observed</th><th>Details</th></tr>
-                    </thead>
-                    <tbody>{services_rows}</tbody>
-                  </table>
-                </div>
-                <div style="margin-top: 16px;">{errors_html}</div>
-              </section>
-            </div>
-          </details>
-
-          <details class="fold-panel" id="reconciliation">
-            <summary>
-              <div class="fold-summary">
-                <div class="fold-title">🔎 Reconciliation <small>shared-account integrity and cutover safety</small></div>
-                <div class="fold-meta">{latest_reconciliation_summary.get("total_findings", 0)} findings · {latest_reconciliation_summary.get("critical_findings", 0)} critical · confidence {cutover_confidence}/100</div>
-              </div>
-            </summary>
-            <div class="fold-content">
-              <div class="details-grid">
-                <section class="section">
-                  <div class="section-header">
-                    <div>
-                      <h2>Reconciliation</h2>
-                      <div class="sub">Latest shared-account consistency check across OMS state and attributed positions.</div>
-                    </div>
-                  </div>
-                  <div class="muted-box">
-                    <p><strong>Status:</strong> {escape(latest_reconciliation.get("status", "not-run"))}</p>
-                    <p><strong>Started:</strong> {escape(latest_reconciliation.get("started_at", ""))}</p>
-                    <p><strong>Completed:</strong> {escape(latest_reconciliation.get("completed_at", ""))}</p>
-                    <p><strong>Total Findings:</strong> {latest_reconciliation_summary.get("total_findings", 0)}</p>
-                    <p><strong>Critical Findings:</strong> {latest_reconciliation_summary.get("critical_findings", 0)}</p>
-                    <p><strong>Warning Findings:</strong> {latest_reconciliation_summary.get("warning_findings", 0)}</p>
-                  </div>
-                </section>
-
-                <section class="section">
-                  <div class="section-header">
-                    <div>
-                      <h2>Latest Findings</h2>
-                      <div class="sub">Current blockers to shared-account correctness and safe cutover.</div>
-                    </div>
-                  </div>
-                  <div class="table-card">
-                    <table>
-                      <thead>
-                        <tr><th>Severity</th><th>Type</th><th>Symbol</th><th>Title</th><th>Detected</th></tr>
-                      </thead>
-                      <tbody>{reconciliation_rows}</tbody>
-                    </table>
-                  </div>
-                </section>
-              </div>
-            </div>
-          </details>
-
-          <details class="fold-panel" id="orders">
-            <summary>
-              <div class="fold-summary">
-                <div class="fold-title">🧾 Orders & Fills <small>intent, order, and fill flow</small></div>
-                <div class="fold-meta">{escape(orderflow_summary)} · latest fill {escape(latest_fill_summary)}</div>
-              </div>
-            </summary>
-            <div class="fold-content">
-              <div class="details-grid">
-                <section class="section">
-                  <div class="section-header">
-                    <div>
-                      <h2>Recent Intents</h2>
-                      <div class="sub">Latest strategy decisions accepted by the event bus.</div>
-                    </div>
-                  </div>
-                  <div class="table-card">
-                    <table>
-                      <thead>
-                        <tr><th>Strategy</th><th>Symbol</th><th>Type</th><th>Side</th><th>Qty</th><th>Status</th><th>Updated</th></tr>
-                      </thead>
-                      <tbody>{intents_rows}</tbody>
-                    </table>
-                  </div>
-                </section>
-
-                <section class="section">
-                  <div class="section-header">
-                    <div>
-                      <h2>Recent Orders</h2>
-                      <div class="sub">Durable OMS order state keyed by client order id.</div>
-                    </div>
-                  </div>
-                  <div class="table-card">
-                    <table>
-                      <thead>
-                        <tr><th>Strategy</th><th>Type</th><th>Symbol</th><th>Side</th><th>Qty</th><th>Status</th><th>Reason</th><th>Client Id</th><th>Updated</th></tr>
-                      </thead>
-                      <tbody>{orders_rows}</tbody>
-                    </table>
-                  </div>
-                </section>
-
-                <section class="section">
-                  <div class="section-header">
-                    <div>
-                      <h2>Recent Fills</h2>
-                      <div class="sub">Execution reports persisted by the OMS layer.</div>
-                    </div>
-                  </div>
-                  <div class="table-card">
-                    <table>
-                      <thead>
-                        <tr><th>Strategy</th><th>Symbol</th><th>Side</th><th>Qty</th><th>Price</th><th>Filled</th></tr>
-                      </thead>
-                      <tbody>{fills_rows}</tbody>
-                    </table>
-                  </div>
-                </section>
-              </div>
-            </div>
-          </details>
-
-          <details class="fold-panel" id="positions">
-            <summary>
-              <div class="fold-summary">
-                <div class="fold-title">📦 Positions & Incidents <small>virtual positions, broker positions, and logged issues</small></div>
-                <div class="fold-meta">{escape(position_summary)}</div>
-              </div>
-            </summary>
-            <div class="fold-content">
-              <div class="details-grid">
-                <section class="section">
-                  <div class="section-header">
-                    <div>
-                      <h2>Virtual Positions</h2>
-                      <div class="sub">Strategy-attributed holdings inside each broker account.</div>
-                    </div>
-                  </div>
-                  <div class="table-card">
-                    <table>
-                      <thead>
-                        <tr><th>Strategy</th><th>Account</th><th>Symbol</th><th>Qty</th><th>Avg Px</th><th>Realized PnL</th><th>Updated</th></tr>
-                      </thead>
-                      <tbody>{virtual_positions_rows}</tbody>
-                    </table>
-                  </div>
-                </section>
-
-                <section class="section">
-                  <div class="section-header">
-                    <div>
-                      <h2>Account Positions</h2>
-                      <div class="sub">Broker-account level holdings for reconciliation and operator checks.</div>
-                    </div>
-                  </div>
-                  <div class="table-card">
-                    <table>
-                      <thead>
-                        <tr><th>Account</th><th>Symbol</th><th>Qty</th><th>Avg Px</th><th>Market Value</th><th>Updated</th></tr>
-                      </thead>
-                      <tbody>{account_positions_rows}</tbody>
-                    </table>
-                  </div>
-                </section>
-
-                <section class="section">
-                  <div class="section-header">
-                    <div>
-                      <h2>Incidents</h2>
-                      <div class="sub">Any control-plane or runtime issues that have been logged.</div>
-                    </div>
-                  </div>
-                  <div class="table-card">
-                    <table>
-                      <thead>
-                        <tr><th>Service</th><th>Severity</th><th>Title</th><th>Status</th><th>Opened</th></tr>
-                      </thead>
-                      <tbody>{incidents_rows}</tbody>
-                    </table>
-                  </div>
-                </section>
-              </div>
-            </div>
-          </details>
         </div>
       </body>
     </html>
     """
 
+
+def _compact_service_status(service: dict[str, Any] | None, *, token_status: dict[str, Any]) -> dict[str, str]:
+    label = "missing"
+    status = "missing"
+    if service is not None:
+        label = _short_service_label(str(service.get("service_name") or "service"))
+        status = str(service.get("effective_status", service.get("status", "unknown")) or "unknown")
+    if service is not None and str(service.get("service_name")) == "oms-risk" and token_status:
+        token_health = str(token_status.get("health") or "unknown")
+        if token_health in {"degraded-persistent", "dead_token", "error"}:
+            status = "degraded"
+    return {"label": label, "status": status, "tone": _tone_for_status(status)}
+
+
+def _compact_bot_page_url(code: str) -> str:
+    return {
+        "schwab_1m_v2": "/bot/1m-schwab-v2",
+        "polygon_30s": "/bot/30s-polygon",
+    }.get(code, "/")
+
+
+def _compact_bot_route_line(code: str, bot: dict[str, Any]) -> str:
+    if code == "schwab_1m_v2":
+        return "live · schwab streamer · sole session"
+    if code == "polygon_30s":
+        return "live · webull · polygon feed"
+    return f'{bot.get("execution_mode", "-")} · {bot.get("provider", "-")} · {bot.get("account_display_name", "-")}'
+
+
+def _compact_bot_card(
+    bot: dict[str, Any],
+    *,
+    service_by_name: dict[str, dict[str, Any]],
+    latest_strategy_bars: dict[str, dict[str, Any]],
+) -> str:
+    code = str(bot.get("strategy_code") or "")
+    service = service_by_name.get("schwab-1m-v2") if code == "schwab_1m_v2" else None
+    details = dict(service.get("details", {}) if service else {})
+    data_health = dict(bot.get("data_health", {}) or {})
+    data_flow = str(details.get("data_flow") or data_health.get("status") or "healthy")
+    flow_tone = _tone_for_data_flow(data_flow)
+    latest_bar = dict(latest_strategy_bars.get(code, {}) or {})
+    lag_seconds = _seconds_since_datetime_value(latest_bar.get("latest_bar_at_raw"))
+    lag_label = _format_lag(lag_seconds)
+    lag_tone = "good" if lag_seconds is not None and lag_seconds <= 20 else "warn" if lag_seconds is not None and lag_seconds <= 180 else "bad"
+    if lag_seconds is None:
+        lag_tone = "warn"
+    loop_health = str(
+        details.get("loop_health")
+        or bot.get("loop_health")
+        or data_health.get("loop_health")
+        or data_health.get("status")
+        or "healthy"
+    )
+    loop_tone = _tone_for_status(loop_health)
+    streamer = str(details.get("streamer_connected") or details.get("streamer_enabled") or "")
+    if code == "polygon_30s":
+        stream_tone = lag_tone if lag_tone != "good" else "good"
+        stream_label = "lag elevated" if lag_tone != "good" else "feed: polygon"
+    else:
+        stream_tone = _tone_for_status(streamer)
+        stream_label = "streamer: connected" if streamer == "true" else "streamer: not exposed" if not streamer else f"streamer: {streamer}"
+    exceptions = str(details.get("loop_exceptions_total") or details.get("exceptions_total") or "0")
+    exception_tone = "warn" if exceptions not in {"", "0"} else ""
+    name = str(bot.get("display_name") or code.replace("_", " ").title())
+    route = _compact_bot_route_line(code, bot)
+    bot_page_url = _compact_bot_page_url(code)
+    return f"""
+    <div class="bot">
+      <div class="bot-top">
+        <div>
+          <div class="bot-name"><a href="{escape(bot_page_url)}">{escape(name)}</a></div>
+          <div class="bot-route">{escape(route)}</div>
+        </div>
+        <span class="pill good"><span class="dot good"></span>LIVE</span>
+      </div>
+      <div class="bot-metrics">
+        <div class="metric"><div class="m-label">Data flow</div><div class="m-val {flow_tone}">{escape(_friendly_data_flow(data_flow))}</div></div>
+        <div class="metric"><div class="m-label">Live symbols</div><div class="m-val">{_safe_int(bot.get("watchlist_count"))}</div></div>
+        <div class="metric"><div class="m-label">Persist lag</div><div class="m-val {lag_tone}">{escape(lag_label)}</div></div>
+      </div>
+      <div class="bot-health-row">
+        <span class="chip {loop_tone}">loop_health: {escape(loop_health)}</span>
+        <span class="chip {stream_tone}">{escape(stream_label)}</span>
+        <span class="chip {exception_tone}">{escape(exceptions)} exceptions</span>
+      </div>
+    </div>
+    """
+
+
+def _compact_service_row(service: dict[str, Any], *, token_status: dict[str, Any]) -> str:
+    service_name = str(service.get("service_name") or "service")
+    status = str(service.get("effective_status", service.get("status", "unknown")) or "unknown")
+    details = dict(service.get("details", {}) or {})
+    badges = _compact_service_badges(service_name, details, token_status=token_status)
+    age = _format_lag(_seconds_since_datetime_value(service.get("observed_at_raw")))
+    return f"""
+    <tr>
+      <td class="svc-name">{escape(service_name)}</td>
+      <td>{_compact_pill(status)}</td>
+      <td><div class="svc-health">{badges}</div></td>
+      <td class="age">{escape(age)}</td>
+    </tr>
+    """
+
+
+def _compact_token_service_row(token_status: dict[str, Any]) -> str:
+    health = str(token_status.get("health") or "unknown")
+    details = []
+    details.append(_compact_chip(f"token: {health}", health))
+    if token_status.get("dead_token_retries") not in {None, "", 0, "0"}:
+        details.append(_compact_chip(f"dead retries: {token_status.get('dead_token_retries')}", "warn"))
+    last_refresh = str(token_status.get("last_refresh_at") or "")
+    if last_refresh:
+        details.append(_compact_chip("refresh observed", "healthy"))
+    if token_status.get("last_error"):
+        details.append(_compact_chip("error present", "bad"))
+    return f"""
+    <tr>
+      <td class="svc-name">schwab-token-refresher</td>
+      <td>{_compact_pill(health)}</td>
+      <td><div class="svc-health">{''.join(details)}</div></td>
+      <td class="age">{escape(last_refresh or "-")}</td>
+    </tr>
+    """
+
+
+def _compact_service_badges(service_name: str, details: dict[str, Any], *, token_status: dict[str, Any]) -> str:
+    badges: list[str] = []
+    if service_name == "strategy-engine":
+        badges.append(_compact_chip(f"main_loop: {details.get('main_loop_health', 'not exposed')}", str(details.get("main_loop_health") or "warn")))
+        if token_status:
+            token_label = _compact_token_health_label(str(token_status.get("health") or "unknown"))
+            badges.append(_compact_chip(f"token: {token_label}", str(token_status.get("health") or "unknown")))
+        exceptions = str(details.get("main_loop_exceptions_total") or "0")
+        if exceptions not in {"", "0"}:
+            badges.append(_compact_chip(f"exceptions: {exceptions}", "warn"))
+        failing = str(details.get("main_loop_failing_steps") or "")
+        if failing:
+            badges.append(_compact_chip(f"failing: {failing}", "bad"))
+    elif service_name == "schwab-1m-v2":
+        badges.append(_compact_chip(f"loop: {details.get('loop_health', 'not exposed')}", str(details.get("loop_health") or "warn")))
+        streamer = str(details.get("streamer_connected") or details.get("streamer_enabled") or "")
+        if streamer:
+            streamer_label = "streamer: up" if streamer == "true" else f"streamer: {streamer}"
+            badges.append(_compact_chip(streamer_label, streamer))
+        badges.append(_compact_chip(f"flow: {details.get('data_flow', 'not exposed')}", _tone_for_data_flow(str(details.get("data_flow") or ""))))
+        failing = str(details.get("loop_failing_tasks") or "")
+        if failing:
+            badges.append(_compact_chip(f"failing: {failing}", "bad"))
+    elif service_name == "market-data-gateway":
+        active_symbols = str(details.get("active_symbols") or "0")
+        badges.append(_compact_chip(f"{active_symbols} active symbols", "healthy"))
+    elif service_name == "oms-risk":
+        if token_status:
+            token_label = _compact_token_health_label(str(token_status.get("health") or "unknown"))
+            badges.append(_compact_chip(f"token: {token_label}", str(token_status.get("health") or "unknown")))
+        else:
+            badges.append(_compact_chip("token: not exposed", "warn"))
+        provider_count = str(details.get("provider_count") or details.get("providers") or "")
+        if provider_count:
+            badges.append(_compact_chip(f"{provider_count} providers", "healthy"))
+    elif service_name == "reconciler":
+        findings = str(details.get("findings") or details.get("total_findings") or "")
+        if findings:
+            badges.append(_compact_chip(f"{findings} findings", "warn"))
+    if not badges:
+        badges.append(_compact_chip("heartbeat present", "healthy"))
+    return "".join(badges)
+
+
+def _compact_token_health_label(health: str) -> str:
+    value = str(health or "unknown").lower()
+    if value in {"healthy", "live", "refreshed"}:
+        return "live"
+    return value.replace("_", "-")
+
+
+def _compact_incident_rows(data: dict[str, Any]) -> str:
+    rows: list[str] = []
+    for error in list(data.get("errors", []) or [])[:3]:
+        rows.append(
+            f"""
+            <div class="inc"><span class="sev crit">CRIT</span><div class="inc-body">{escape(str(error))} <span class="inc-svc">control-plane</span></div></div>
+            """
+        )
+    for item in list(data.get("incidents", []) or [])[:10]:
+        severity = str(item.get("severity") or "warning").lower()
+        sev_class = "crit" if severity in {"critical", "error"} else "warn"
+        sev_label = "CRIT" if sev_class == "crit" else "WARN"
+        rows.append(
+            f"""
+            <div class="inc">
+              <span class="sev {sev_class}">{sev_label}</span>
+              <div class="inc-body">{escape(str(item.get("title") or "-"))} <span class="inc-svc">{escape(str(item.get("service_name") or "system"))} &middot; {escape(str(item.get("opened_at") or ""))}</span></div>
+            </div>
+            """
+        )
+    if not rows:
+        rows.append('<div class="empty">No incidents logged.</div>')
+    total = len(data.get("incidents", []) or []) + len(data.get("errors", []) or [])
+    rows.append(f'<div class="inc-foot">{total} visible incidents &middot; <a href="/api/reconciliation">view all</a></div>')
+    return "".join(rows)
+
+
+def _compact_reconciliation_note(reconciliation: dict[str, Any]) -> str:
+    findings = list(reconciliation.get("findings", []) or [])
+    for finding in findings:
+        text = f'{finding.get("symbol", "")} {finding.get("title", "")}'.strip()
+        if "CYN" in text.upper():
+            return "CYN frozen position finding is protected; do not touch CYN."
+    if findings:
+        first = findings[0]
+        return str(first.get("title") or first.get("finding_type") or "reconciliation finding present")
+    return "No reconciliation findings in the latest visible run."
+
+
+def _compact_pill(status: str) -> str:
+    tone = _tone_for_status(status)
+    return f'<span class="pill {tone}"><span class="dot {tone}"></span>{escape(str(status or "unknown"))}</span>'
+
+
+def _compact_chip(label: str, status: str = "") -> str:
+    tone = _tone_for_status(status)
+    return f'<span class="chip {tone}">{escape(label)}</span>'
+
+
+def _tone_for_status(status: str) -> str:
+    value = str(status or "").lower().replace("_", "-")
+    if value in {"good", "healthy", "live", "connected", "true", "flowing", "ok", "completed", "refreshed", "skipped-fresh"}:
+        return "good"
+    if value in {"starting", "warming", "pending", "idle", "unknown", "missing", "not exposed", "not-exposed", "recovering", "warn", "warning"}:
+        return "warn"
+    if value in {"bad", "degraded", "critical", "error", "false", "stalled-rth", "degraded-persistent", "dead-token", "dead_token"}:
+        return "bad"
+    return "warn" if value else "warn"
+
+
+def _tone_for_data_flow(value: str) -> str:
+    flow = str(value or "").lower().replace("_", "-")
+    if flow in {"flowing", "healthy"}:
+        return "good"
+    if "offhours" in flow or flow in {"not exposed", "not-exposed", ""}:
+        return "warn"
+    if "stalled" in flow or "error" in flow:
+        return "bad"
+    return _tone_for_status(flow)
+
+
+def _friendly_data_flow(value: str) -> str:
+    raw = str(value or "not exposed")
+    return raw.replace("_", " ").replace("-", " ").title()
+
+
+def _confidence_tone(value: int) -> str:
+    if value >= 60:
+        return "good"
+    if value >= 40:
+        return "warn"
+    return "bad"
+
+
+def _status_color_var(status: str) -> str:
+    tone = _tone_for_status(status)
+    return {"good": "good", "warn": "warn", "bad": "bad"}.get(tone, "ink-dim")
+
+
+def _short_service_label(service_name: str) -> str:
+    return {
+        "market-data-gateway": "market-data",
+        "oms-risk": "oms-risk",
+        "reconciler": "reconciler",
+        "strategy-engine": "strategy-engine",
+        "schwab-1m-v2": "schwab-1m-v2",
+    }.get(service_name, service_name)
+
+
+def _seconds_since_datetime_value(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    dt: datetime | None
+    if isinstance(value, datetime):
+        dt = value
+    elif isinstance(value, str):
+        try:
+            dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return _seconds_since_eastern_label(value)
+    else:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return max(0.0, (utcnow() - dt.astimezone(UTC)).total_seconds())
+
+
+def _format_lag(seconds: float | None) -> str:
+    if seconds is None:
+        return "-"
+    if seconds < 60:
+        return f"{seconds:.0f}s"
+    minutes = seconds / 60
+    if minutes < 60:
+        return f"{minutes:.1f}m"
+    return f"{minutes / 60:.1f}h"
+
+
+def _render_dashboard(data: dict[str, Any]) -> str:
+    return _render_compact_dashboard(data)
 
 BOT_PAGE_META = {
     "macd_30s": {
