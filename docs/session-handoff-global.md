@@ -1,5 +1,19 @@
 # Session Handoff - Global
 
+### 2026-06-11 premarket strategy wedge - root cause was Redis `XREAD BLOCK 0` in market-data drain
+
+**Symptom:** after the `04:00 AM ET` scanner/session roll, the strategy engine stopped heartbeating and the scanner/watchlists went blank. Manual restart recovered the service, but production lost the `08:00-10:30 UTC` window for strategy bars/intents.
+
+**Evidence:** VPS was deployed at `51a4ad0` when the incident happened. Strategy log rolled the scanner session at `2026-06-11 08:00:18 UTC`, then processed empty snapshot batches through `08:00:26 UTC`. DB `dashboard_snapshots` showed the last `scanner_cycle_history` at `2026-06-11 08:00:26.145 UTC`, `cycle_count=13`, empty watchlist/all-confirmed/top-confirmed. DB showed `0` `strategy_bar_history` rows and `0` `trade_intents` from `08:00:00-10:30:00 UTC`. Systemd stop at `10:29:41 UTC` timed out and required SIGKILL at `10:30:11 UTC`, matching a blocked await/socket call rather than a Python exception.
+
+**Root cause:** `StrategyEngineService._drain_market_data_stream()` set `block_ms = 0` for follow-up Redis reads, assuming that meant non-blocking. Redis `XREAD BLOCK 0` means wait forever. The 04:00 session reset cleared subscriptions/watchlist to `[]`; after the last pending market-data entry was drained, the next follow-up read executed `XREAD BLOCK 0` on an empty stream and the main loop slept forever. The fade/session cleanup exposed the old drain bug by creating the empty-stream condition; it was not a scanner-rule failure.
+
+**Fix:** follow-up market-data drain reads now pass `block_ms=None`, and `_read_stream_group()` omits the Redis `BLOCK` argument when `block_ms is None`. Regression test added: `test_market_data_drain_followup_read_is_nonblocking`.
+
+**Validation:** `pytest tests/unit/test_strategy_engine_service.py::test_market_data_drain_yields_when_schwab_priority_work_is_queued tests/unit/test_strategy_engine_service.py::test_market_data_drain_followup_read_is_nonblocking -q` -> `2 passed`.
+
+**Deployment status:** hotfix branch `codex/redis-xread-block0-hotfix`; deploy/restart pending at the moment this note was written.
+
 ### 2026-06-10 ~23:55 UTC - momentum scanner 30% fade removal implemented
 
 **Change:** confirmed momentum-scanner symbols now remain handed to bots initially, but if their refreshed live `change_pct` drops below `30.0%`, the scanner removes them from confirmed state and the strategy engine removes them from active bot handoff/watchlists before rebuilding bot live symbols. Exactly `30.0%` remains eligible. A later valid momentum alert can re-confirm the same symbol and hand it back to bots through the normal alert-confirmation path.

@@ -6121,7 +6121,7 @@ async def test_market_data_drain_yields_when_schwab_priority_work_is_queued() ->
     )
     service.state.bots["schwab_1m"].set_watchlist(["AMST"])
     service._stream_offsets = {service._market_data_stream: "0-0"}
-    read_calls: list[int] = []
+    read_calls: list[int | None] = []
 
     async def fake_read_stream_group(streams, *, block_ms):
         read_calls.append(block_ms)
@@ -6147,6 +6147,32 @@ async def test_market_data_drain_yields_when_schwab_priority_work_is_queued() ->
     assert processed == 500
     assert read_calls == [1000]
     assert service._schwab_bar_queue.qsize() == 1
+
+
+@pytest.mark.asyncio
+async def test_market_data_drain_followup_read_is_nonblocking() -> None:
+    service = StrategyEngineService(
+        settings=make_test_settings(
+            redis_stream_prefix="test",
+            dashboard_snapshot_persistence_enabled=False,
+            strategy_history_persistence_enabled=False,
+        ),
+        redis_client=FakeRedis(),
+    )
+    service._stream_offsets = {service._market_data_stream: "0-0"}
+    read_calls: list[int | None] = []
+
+    async def fake_read_stream_group(streams, *, block_ms):
+        del streams
+        read_calls.append(block_ms)
+        return 1 if len(read_calls) == 1 else 0
+
+    service._read_stream_group = fake_read_stream_group  # type: ignore[method-assign]
+
+    processed = await service._drain_market_data_stream(first_block_ms=1000)
+
+    assert processed == 1
+    assert read_calls == [1000, None]
 
 
 @pytest.mark.asyncio

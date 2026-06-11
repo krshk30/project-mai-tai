@@ -5812,7 +5812,7 @@ class StrategyEngineService:
         self,
         streams: Sequence[str],
         *,
-        block_ms: int,
+        block_ms: int | None,
     ) -> int:
         """Read up to _MARKET_DATA_XREAD_COUNT events. Returns count read."""
         offsets = {
@@ -5823,10 +5823,14 @@ class StrategyEngineService:
         if not offsets:
             return 0
         try:
+            read_kwargs: dict[str, object] = {
+                "count": self._MARKET_DATA_XREAD_COUNT,
+            }
+            if block_ms is not None:
+                read_kwargs["block"] = block_ms
             messages = await self.redis.xread(
                 offsets,
-                block=block_ms,
-                count=self._MARKET_DATA_XREAD_COUNT,
+                **read_kwargs,
             )
         except Exception:
             self.logger.exception("redis xread failed for streams: %s", ",".join(offsets))
@@ -5848,20 +5852,20 @@ class StrategyEngineService:
         """Drain market-data aggressively. Returns total events processed.
 
         First xread waits up to first_block_ms for events; subsequent
-        passes use block=0 (non-blocking) and stop the moment the stream
+        passes omit BLOCK (non-blocking) and stop the moment the stream
         is empty. Bounded by _MARKET_DATA_DRAIN_BUDGET so a single hot
         symbol cannot starve the rest of the main loop. If Schwab trade/live
         bar work is already queued, yield back after the current xread batch so
         canonical Schwab bars do not wait behind thousands of Redis messages.
         """
         events_processed = 0
-        block_ms = first_block_ms
+        block_ms: int | None = first_block_ms
         while events_processed < self._MARKET_DATA_DRAIN_BUDGET:
             count = await self._read_stream_group(
                 [self._market_data_stream],
                 block_ms=block_ms,
             )
-            block_ms = 0  # subsequent passes never wait
+            block_ms = None  # subsequent passes must omit Redis BLOCK
             if count == 0:
                 break
             events_processed += count
