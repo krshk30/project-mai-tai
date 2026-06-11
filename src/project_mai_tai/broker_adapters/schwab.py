@@ -34,6 +34,22 @@ def configured_schwab_accounts(settings: Settings) -> dict[str, SchwabAccountCon
     shared_tos_runner_hash = (settings.schwab_tos_runner_account_hash or shared_hash).strip()
 
     def add(account_name: str, account_hash: str | None) -> None:
+        # v2-scoped guard (P1 Phase 1): paper:schwab_1m_v2 must NEVER bind a real Schwab
+        # account hash. v2 is paper-validated via the simulated provider; real-Schwab is a
+        # deliberate go-live opt-in (rename to live:schwab_1m_v2 + provider=schwab + wire the
+        # hash THEN, attended). Refuse it here so a future hash wiring can't accidentally put
+        # paper v2 on the real account — paper-safety is structural, not the prior accidental
+        # missing-entry.
+        #
+        # Scoped to v2 ONLY today, but Phase 2 (broaden refusal to all paper: accounts) is
+        # now UNBLOCKED by P0: the dedicated token refresher in the control service owns
+        # access-token freshness independent of broker registrations, so refusing paper:
+        # accounts here removes no refresh trigger. (The earlier "retired paper:macd_30s /
+        # paper:schwab_1m position-sync keeps the refresher alive, so don't broaden before
+        # P0" rationale was RETRACTED 2026-06-09 — those bots are disabled and register
+        # nothing; the refresher is the sole token owner.)
+        if account_name == settings.strategy_schwab_1m_v2_account_name:
+            return
         resolved = (account_hash or shared_hash).strip() if account_hash is not None else shared_hash
         if not resolved:
             return
@@ -42,6 +58,9 @@ def configured_schwab_accounts(settings: Settings) -> dict[str, SchwabAccountCon
     add(settings.strategy_macd_30s_account_name, settings.schwab_macd_30s_account_hash)
     add(settings.strategy_schwab_1m_account_name, settings.schwab_schwab_1m_account_hash)
     add(settings.strategy_macd_1m_account_name, settings.schwab_macd_1m_account_hash)
+    # v2 listed explicitly so the guard above is exercised + testable: this add() is
+    # deliberately REFUSED (returns without registering).
+    add(settings.strategy_schwab_1m_v2_account_name, settings.schwab_account_hash)
     add(settings.strategy_tos_account_name, shared_tos_runner_hash)
     add(settings.strategy_runner_account_name, shared_tos_runner_hash)
     return configured
