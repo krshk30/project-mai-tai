@@ -161,7 +161,11 @@ class Settings(BaseSettings):
     strategy_schwab_1m_v2_quote_poll_interval_seconds: float = 5.0
     strategy_schwab_1m_v2_max_watchlist_size: int = 25
     strategy_schwab_1m_v2_account_name: str = "paper:schwab_1m_v2"
-    strategy_schwab_1m_v2_broker_provider: str | None = "schwab"
+    # Deliberate paper routing (P1 Phase 1): route v2's orders to the SIMULATED provider so
+    # it cannot reach the real Schwab account. Real-Schwab is a deliberate go-live step
+    # (rename to live:schwab_1m_v2 + provider=schwab + wire the account hash THEN). Was
+    # "schwab" — a latent-live default saved only by an accidental missing account-hash entry.
+    strategy_schwab_1m_v2_broker_provider: str | None = "simulated"
     strategy_schwab_1m_v2_default_quantity: int = 100
     # Cold-start warmup lookback (calendar days). The first poll per symbol
     # (since=0) requests this many days back so the indicator-seed batch
