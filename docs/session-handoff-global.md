@@ -12,7 +12,7 @@
 
 **Validation:** `pytest tests/unit/test_strategy_engine_service.py::test_market_data_drain_yields_when_schwab_priority_work_is_queued tests/unit/test_strategy_engine_service.py::test_market_data_drain_followup_read_is_nonblocking -q` -> `2 passed`.
 
-**Deployment status:** deployed and verified. Code hotfix commit `c08d5be` was deployed, then doc sync commit `7c30687` was fast-forwarded to GitHub `main`, VPS `/home/trader/project-mai-tai`, and the hotfix worktree. Only `project-mai-tai-strategy.service` was restarted for the code hotfix; post-restart logs showed fresh snapshot batches through `2026-06-11 10:55:33 UTC` and Redis `strategy-state` had a fresh non-empty watchlist.
+**Deployment status:** deployed and verified. Code hotfix commit `c08d5be` was deployed, then doc sync commits through `41e1c49` were fast-forwarded to GitHub `main`, VPS `/home/trader/project-mai-tai`, and the hotfix worktree. Only `project-mai-tai-strategy.service` was restarted for the code hotfix; post-restart logs showed fresh snapshot batches through `2026-06-11 10:55:33 UTC` and Redis `strategy-state` had a fresh non-empty watchlist.
 
 ### 2026-06-10 ~23:55 UTC - momentum scanner 30% fade removal implemented
 
