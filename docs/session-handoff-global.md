@@ -13580,3 +13580,51 @@ Notes:
 - Coordination note:
   - a PR comment was added on `#87` documenting that the stuck `Validate` runs are not expected to self-resolve into useful signal today
   - keep `#87` as the single gating PR for this workstream so other agents do not fork into independent restart / `#85` actions before the baseline branch lands
+
+## 2026-06-11: Control Plane compact UI redesign ready for control-only deploy
+
+- Deploy owner: Codex.
+- Local code owner: Codex.
+- Active workstream: Control Plane UI compaction / Workstream B visibility.
+- Expected service target: `control`.
+- Live-session restart required: no strategy/OMS/market-data restart; only `project-mai-tai-control.service` should restart.
+- Scope:
+  - redesigned the `/` Control Plane page to match the approved `control-plane-redesign.html` instrument-panel mock
+  - kept the page to the requested five operator sections:
+    - header + system dock
+    - five-tile status strip
+    - compact active live-bot cards
+    - service health + reconciliation
+    - incidents
+  - filtered active bot cards to `schwab_1m_v2` and `polygon_30s`
+  - removed old Control Plane homepage sections:
+    - overview block
+    - ranked scanner table
+    - handed-to-bots table
+    - old bot deck
+    - TOS parity
+    - orders/fills
+    - positions
+  - surfaced Workstream B health fields as readable badges:
+    - `strategy-engine` `main_loop_health`
+    - `schwab-1m-v2` `loop_health`, `loop_failing_tasks`, `data_flow`, streamer state
+    - Schwab token refresher state as token badges instead of a separate service row
+  - added latest persisted bar lag by strategy for the compact bot cards.
+- Local validation:
+  - `python -m py_compile src/project_mai_tai/services/control_plane.py`
+  - `python -m pytest tests/unit/test_control_plane.py::test_control_plane_treats_fresh_market_data_as_live_when_heartbeat_lags tests/unit/test_control_plane.py::test_compact_control_plane_renders_only_active_bots_with_current_theme -q`
+    - `2 passed`
+  - broader control-plane slice:
+    - `python -m pytest tests/unit/test_control_plane.py tests/unit/test_control_plane_listening_status.py -q`
+    - result: `55 passed, 2 failed`
+    - failures are existing `/bot/30s` per-bot page issues outside this Control Plane redesign:
+      - `test_bot_page_renders_trade_forensics_report_from_completed_cycles`
+      - `test_bot_page_live_symbols_only_show_current_confirmed_handoff`
+- Pre-deploy blockers:
+  - none for the Control Plane homepage deploy
+  - do not use this change to restart strategy, OMS, or market-data.
+- Post-deploy validator:
+  - verify VPS checkout is on deployed `main`
+  - verify `project-mai-tai-control.service` is active
+  - verify `https://project-mai-tai.live/` renders the compact five-section Control Plane
+  - verify `/api/overview` still returns successfully.

@@ -2970,18 +2970,156 @@ def test_control_plane_treats_fresh_market_data_as_live_when_heartbeat_lags() ->
 
         dashboard = client.get("/")
         assert dashboard.status_code == 200
-        assert "Mai Tai Project" in dashboard.text
-        assert "Mai Tai System Dock" in dashboard.text
-        assert "Overview" in dashboard.text
-        assert "Ranked Scanner View" in dashboard.text
-        assert "Handed To Bots" in dashboard.text
-        assert "Bot Deck" in dashboard.text
-        assert "Active strategy runtimes configured in this environment." in dashboard.text
-        assert "UGRO" in dashboard.text
-        assert "Schwab 30 Sec Bot" in dashboard.text
-        assert "paper/alpaca" in dashboard.text
-        assert "TOS Parity" in dashboard.text
-        assert "thinkorswim_1m" in dashboard.text
+        assert "Paper trading control plane" in dashboard.text
+        assert "System" in dashboard.text
+        assert "Fleet health" in dashboard.text
+        assert "Scanner" in dashboard.text
+        assert "Live bots" in dashboard.text
+        assert "Service health" in dashboard.text
+        assert "Reconciliation" in dashboard.text
+        assert "Incidents" in dashboard.text
+        assert "Ranked Scanner View" not in dashboard.text
+        assert "Handed To Bots" not in dashboard.text
+        assert "Bot Deck" not in dashboard.text
+        assert "Schwab 30 Sec Bot" not in dashboard.text
+        assert "TOS Parity" not in dashboard.text
+        assert "thinkorswim_1m" not in dashboard.text
+
+
+def test_compact_control_plane_renders_only_active_bots_with_current_theme() -> None:
+    observed_at = datetime.now(UTC)
+    html = control_plane_module._render_dashboard(
+        {
+            "generated_at": "2026-06-11T10:00:00Z",
+            "status": "healthy",
+            "scanner": {
+                "status": "active",
+                "top_confirmed_count": 4,
+                "bot_handoff_count": 3,
+                "active_subscription_symbols": 3,
+                "heartbeat_active_symbols": 3,
+            },
+            "market_data": {"active_subscription_symbols": 3},
+            "bots": [
+                {
+                    "strategy_code": "schwab_1m_v2",
+                    "display_name": "Schwab 1m v2",
+                    "execution_mode": "paper",
+                    "provider": "schwab",
+                    "account_display_name": "live:schwab_1m_v2",
+                    "watchlist_count": 2,
+                    "position_count": 1,
+                },
+                {
+                    "strategy_code": "polygon_30s",
+                    "display_name": "Polygon 30s",
+                    "execution_mode": "paper",
+                    "provider": "polygon",
+                    "account_display_name": "live:polygon_30s",
+                    "watchlist_count": 1,
+                    "position_count": 0,
+                },
+                {
+                    "strategy_code": "macd_30s",
+                    "display_name": "Retired Schwab 30s",
+                    "execution_mode": "paper",
+                    "provider": "schwab",
+                    "account_display_name": "paper:macd_30s",
+                    "watchlist_count": 9,
+                    "position_count": 0,
+                },
+            ],
+            "services": [
+                {
+                    "service_name": "strategy-engine",
+                    "status": "healthy",
+                    "effective_status": "healthy",
+                    "observed_at_raw": observed_at,
+                    "details": {
+                        "main_loop_health": "healthy",
+                        "main_loop_exceptions_total": 0,
+                        "main_loop_failing_steps": "",
+                    },
+                },
+                {
+                    "service_name": "schwab-1m-v2",
+                    "status": "healthy",
+                    "effective_status": "healthy",
+                    "observed_at_raw": observed_at,
+                    "details": {
+                        "loop_health": "healthy",
+                        "loop_failing_tasks": "",
+                        "data_flow": "flowing",
+                        "streamer_connected": "true",
+                    },
+                },
+                {
+                    "service_name": "market-data-gateway",
+                    "status": "healthy",
+                    "effective_status": "healthy",
+                    "observed_at_raw": observed_at,
+                    "details": {"active_symbols": 3},
+                },
+                {
+                    "service_name": "oms-risk",
+                    "status": "healthy",
+                    "effective_status": "healthy",
+                    "observed_at_raw": observed_at,
+                    "details": {},
+                },
+                {
+                    "service_name": "reconciler",
+                    "status": "healthy",
+                    "effective_status": "healthy",
+                    "observed_at_raw": observed_at,
+                    "details": {},
+                },
+            ],
+            "latest_strategy_bars": {
+                "schwab_1m_v2": {
+                    "latest_bar_at": "2026-06-11T09:59:00Z",
+                    "latest_bar_at_raw": observed_at,
+                    "bar_count": 20,
+                },
+                "polygon_30s": {
+                    "latest_bar_at": "2026-06-11T09:59:30Z",
+                    "latest_bar_at_raw": observed_at,
+                    "bar_count": 40,
+                },
+            },
+            "reconciliation": {
+                "latest_run": {
+                    "status": "completed",
+                    "summary": {
+                        "cutover_confidence": 85,
+                        "critical_findings": 0,
+                        "warning_findings": 0,
+                        "total_findings": 0,
+                    },
+                },
+                "findings": [],
+            },
+            "incidents": [],
+            "errors": [],
+            "schwab_token_refresher": {
+                "health": "healthy",
+                "dead_token_retries": 0,
+                "last_refresh_at": "2026-06-11T09:58:00Z",
+            },
+        }
+    )
+
+    assert "--bg:#0d1117" in html
+    assert "--panel:#151b24" in html
+    assert "--good:#3fb6a8" in html
+    assert "href=\"/bot/1m-schwab-v2\"" in html
+    assert "href=\"/bot/30s-polygon\"" in html
+    assert "href=\"/bot/schwab_1m_v2\"" not in html
+    assert "Schwab 1m v2" in html
+    assert "Polygon 30s" in html
+    assert "Retired Schwab 30s" not in html
+    assert "Ranked Scanner View" not in html
+    assert "Orders &amp; Fills" not in html
 
 
 def test_control_plane_blacklist_routes_filter_scanner_outputs() -> None:
