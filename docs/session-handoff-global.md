@@ -1,5 +1,21 @@
 # Session Handoff - Global
 
+### 2026-06-11 premarket scanner fade gap - bot lifecycle retention kept faded symbols tradable
+
+**Symptom:** the momentum scanner showed `6` confirmed names, but Schwab 1m V2 / aggregate bot watchlist showed `10` symbols. The extra live symbols were `MTEN`, `PPBT`, `RKDA`, and `WBX`.
+
+**Evidence:** latest VPS scanner-cycle snapshot at `2026-06-11 11:40:55 UTC` showed `all_confirmed_tickers=["WTO","QH","PPCB","GLXG","CCHH","EDHL"]` and `bot_handoff_symbols_by_strategy={"polygon_30s":["CCHH","EDHL","GLXG","PPCB","QH","WTO"]}`, but aggregate `watchlist=["CCHH","EDHL","GLXG","MTEN","PPBT","PPCB","QH","RKDA","WBX","WTO"]`. Strategy logs showed the fade rule firing for the extra names, for example `MTEN` removed below `30.0%` at `10:53:34 UTC`, `WBX` at `11:04:05 UTC`, `PPBT` at `11:11:51 UTC`, and `RKDA` at `11:26:31/11:30:08 UTC`. Logs also showed later intents from some faded names, proving this was not only a UI-count mismatch.
+
+**Root cause:** the 30% fade rule removed symbols from scanner confirmed state and from `bot_handoff_symbols_by_strategy`, but bot runtime lifecycle state was left intact. With scanner feed retention enabled, `StrategyBotRuntime.set_watchlist()` updates desired handoff symbols but does not evict old lifecycle states. `_sync_watchlist_from_lifecycle()` then re-adds any lifecycle symbol whose state `keeps_feed()`, so faded symbols could remain in `bot.active_symbols()` and continue to receive entry evaluation.
+
+**Fix:** added a protected-symbol-safe purge path. When `prune_faded_candidates()` returns faded symbols, the strategy now removes them from bot handoff and calls `discard_watchlist_symbols()` on runtimes. That method clears desired watchlist/prewarm membership and removes lifecycle state for symbols that do not have a position, pending open, pending close, or pending scale. The strategy also clears non-protected faded symbols from feed-retention aggregate state, market-data archive, and Schwab prewarm tracking. Protected position/pending symbols remain active so exits, scale/floor handling, and risk state are not broken.
+
+**Validation:** focused tests passed:
+- `python -m pytest tests/unit/test_strategy_engine_service.py::test_session_roll_clears_bot_desired_watchlist_symbols_and_lifecycle tests/unit/test_strategy_engine_service.py::test_retention_cooldown_keeps_feed_alive_but_blocks_entries tests/unit/test_strategy_engine_service.py::test_retention_drops_symbol_without_indicators_after_inactivity tests/unit/test_strategy_engine_service.py::test_snapshot_batch_removes_faded_confirmed_symbols_from_scanner_and_bot_handoff tests/unit/test_strategy_engine_service.py::test_snapshot_batch_purges_faded_symbols_from_retained_bot_lifecycle tests/unit/test_strategy_engine_service.py::test_snapshot_batch_keeps_faded_position_symbol_active_for_exits tests/unit/test_strategy_engine_service.py::test_snapshot_batch_removes_seeded_faded_confirmed_symbols_from_bot_watchlists tests/unit/test_strategy_core.py::test_confirmed_scanner_removes_faded_candidates_and_allows_reconfirmation` -> `8 passed`.
+- `python -m pytest tests/unit/test_schwab_1m_v2_bot.py tests/unit/test_bot_handoff_restore_seed.py` -> `28 passed`.
+
+**Known test note:** full `tests/unit/test_strategy_engine_service.py` exceeded the local 3-minute timeout. A broad `-k "retention"` selection also picked up unrelated `test_scanner_cycle_history_retention_and_dedup`, which failed due scanner-history snapshot ordering/retention behavior unrelated to this fade/lifecycle fix.
+
 ### 2026-06-11 premarket strategy wedge - root cause was Redis `XREAD BLOCK 0` in market-data drain
 
 **Symptom:** after the `04:00 AM ET` scanner/session roll, the strategy engine stopped heartbeating and the scanner/watchlists went blank. Manual restart recovered the service, but production lost the `08:00-10:30 UTC` window for strategy bars/intents.

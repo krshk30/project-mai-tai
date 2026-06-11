@@ -365,6 +365,33 @@ class StrategyBotRuntime:
         self._sync_watchlist_from_lifecycle()
         self._prune_runtime_state()
 
+    def discard_watchlist_symbols(self, symbols: Iterable[str]) -> None:
+        discard_symbols = {
+            str(symbol).upper()
+            for symbol in symbols
+            if str(symbol).strip()
+        }
+        if not discard_symbols:
+            return
+
+        self._desired_watchlist_symbols.difference_update(discard_symbols)
+        self.prewarm_symbols.difference_update(discard_symbols)
+        unprotected_symbols = {
+            symbol
+            for symbol in discard_symbols
+            if not self._symbol_requires_feed(symbol)
+        }
+        if not self.lifecycle_policy.config.enabled:
+            self.watchlist.difference_update(unprotected_symbols)
+            self.entry_blocked_symbols = self._blocked_lifecycle_symbols()
+            self._prune_runtime_state()
+            return
+
+        for symbol in unprotected_symbols:
+            self.lifecycle_states.pop(symbol, None)
+        self._sync_watchlist_from_lifecycle()
+        self._prune_runtime_state()
+
     def set_prewarm_symbols(self, symbols: Iterable[str]) -> None:
         self.prewarm_symbols = {
             str(symbol).upper()
@@ -4293,6 +4320,7 @@ class StrategyEngineState:
         faded_confirmed_symbols = self.confirmed_scanner.prune_faded_candidates() or []
         if faded_confirmed_symbols:
             self._discard_bot_handoff_symbols(faded_confirmed_symbols)
+            self._purge_faded_symbols_from_bot_watchlists(faded_confirmed_symbols)
 
         self.all_confirmed = [
             stock
@@ -4915,6 +4943,43 @@ class StrategyEngineState:
         self._ensure_bot_handoff_state()
         for code, _ in self._iter_target_bots(strategy_codes=strategy_codes):
             self.bot_handoff_symbols_by_strategy.setdefault(code, set()).difference_update(symbols)
+
+    def _purge_faded_symbols_from_bot_watchlists(
+        self,
+        items: Iterable[object],
+        *,
+        strategy_codes: Sequence[str] | None = None,
+    ) -> None:
+        symbols = set(self._normalize_symbol_items(items))
+        if not symbols:
+            return
+        for _code, bot in self._iter_target_bots(strategy_codes=strategy_codes):
+            discard_watchlist_symbols = getattr(bot, "discard_watchlist_symbols", None)
+            if callable(discard_watchlist_symbols):
+                discard_watchlist_symbols(symbols)
+        protected_symbols = {
+            symbol
+            for symbol in symbols
+            if any(
+                isinstance(bot, StrategyBotRuntime) and bot._symbol_requires_feed(symbol)
+                for _code, bot in self._iter_target_bots(strategy_codes=strategy_codes)
+            )
+        }
+        removable_symbols = symbols - protected_symbols
+        if not removable_symbols:
+            return
+        self.market_data_archive_symbols = [
+            symbol for symbol in self.market_data_archive_symbols if symbol not in removable_symbols
+        ]
+        for symbol in removable_symbols:
+            self._market_data_archive_added_at.pop(symbol, None)
+            self.feed_retention_states.pop(symbol, None)
+        self.schwab_prewarm_symbols = [
+            symbol for symbol in self.schwab_prewarm_symbols if symbol not in removable_symbols
+        ]
+        for symbol in removable_symbols:
+            self._schwab_prewarm_added_at.pop(symbol, None)
+        self._sync_schwab_prewarm_symbols()
 
     def _restore_bot_handoff_symbols(
         self,
