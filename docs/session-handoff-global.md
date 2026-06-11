@@ -1,5 +1,32 @@
 # Session Handoff - Global
 
+### ✅ 2026-06-11 ~20:19 UTC — P1 PHASE 1 LANDED + DEPLOYED (after-close, attended). schwab_1m_v2 is now STRUCTURALLY paper — cannot reach the real Schwab account. Next = P1 Phase 2 + dashboard-visibility half.
+
+**The accidental real-account exposure is closed.** v2's paper safety was previously *accidental* (broker_provider defaulted to `"schwab"` → would resolve the shared REAL hash; saved only by a missing `configured_schwab_accounts` entry). Now it is **structural**, via two v2-scoped layers (PR #276, merged `1b0a5e5`, on main inside `24e6bac`):
+1. `settings.py`: `strategy_schwab_1m_v2_broker_provider` default `"schwab"` → `"simulated"` (orders route to `SimulatedBrokerAdapter`).
+2. `broker_adapters/schwab.py`: `configured_schwab_accounts` refuses `paper:schwab_1m_v2` specifically (a real hash can never bind to it). The explicit `add()` for v2 is kept so the guard is exercised + testable.
+
+**Re-land provenance:** revert-the-revert of the SPOF-revert #270 (`2a567f4`) → **byte-identical** to the originally-approved diff (`d9f4f1e`), + a comment-only follow-up refreshing the guard's comment to post-P0 truth (Phase 2 is now UNBLOCKED; the old "retired bots keep the refresher alive — don't broaden before P0" rationale was retracted 06-09). **Why safe now (was the #270 SPOF):** P0's dedicated refresher owns token freshness independent of broker registrations, so flipping v2 off `schwab` no longer removes any refresh trigger. Verified the re-land onto current main (`24e6bac`, incl. P0 refactor + the `c08d5be` drain hotfix): auto-merged no conflicts, all anchors intact. Tests: 4/4 new + 36/36 v2 (bot+loop-resilience), by-name regression clean.
+
+**Deploy sequence (after-close, attended, account-flat):** backup env (`…env.bak-p1-deploy-2026-06-11`) → set `MAI_TAI_STRATEGY_SCHWAB_1M_V2_BROKER_PROVIDER=simulated` (belt+suspenders on the code default) → **restart OMS + v2 ONLY** (started 20:19:13; strategy + control deliberately untouched). VPS was already on `24e6bac` (other-actor pull) so no git pull was needed — only the restart was required to make the running OMS/v2 pick up the new routing.
+
+**Post-deploy verification:**
+- **(a) Token unaffected (pure-reader proven):** token mtime stayed `19:55` across the OMS restart (OMS adapter does not write); refresher (control service, untouched) keeps owning freshness. Cadence continuation verified on the next ~20:25 refresh.
+- **(b) Routing flipped:** **0 `missing Schwab account hash` rejects for v2 since the restart** (that path is no longer reachable). Today pre-restart there were 35 such rejects on the old `schwab` routing. First live **sim-fill** (order→fill→position) awaits the next *natural* v2 signal — after-close signals are sparse, so likely first observable at tomorrow's pre-market. Not forced.
+- **(c) v2 healthy:** clean re-warm (11/11), streamer `LOGIN-OK` holding, heartbeat `healthy / streamer_connected / loop_health=healthy / data_flow=flowing`, account-flat, CYN protected.
+
+**Sim-fill scope note (record where fills are first reported):** `SimulatedBrokerAdapter` fills are IDEALIZED — instant full fill at `reference_price`, **no slippage / partials / rejects / latency**. So sim-fills prove the **pipe end-to-end** (first execution exercise v2 has ever had), NOT realistic execution; sim P&L is an **optimistic upper bound**, especially for v2's illiquid pennies. Realistic execution waits for the real-Schwab go-live (rename `paper:`→`live:` + provider=schwab + wire hash, attended) or a future slippage-modeling sink.
+
+**➡️ NEXT:** **P1 Phase 2** (broaden the hash-guard refusal to all `paper:` accounts — now unblocked by P0) + the **dashboard-visibility half** (surface the `[SCHWAB-TOKEN-*]` markers / `main_loop_health` / `loop_health` as badges). Both design-first.
+
+**Tomorrow's pre-flight additions:** (1) did strategy-engine survive the 08:00 UTC roll (drain-fix `c08d5be`'s first clean live roll test — no wedge, bars/intents flowing post-roll)? (2) confirm the first v2 **sim-fill** on a real pre-market signal.
+
+**Small-items list:** (a) GLXG-class bar-persist `UniqueViolation` at the REST/streamer seam → make v2 bar persist idempotent/UPSERT (small follow-up, not urgent). (b) AZI/BATL persist-lag-transient watch stays at **2** occurrences (GLXG is a different class — a dup-insert, not lag — correctly not counted toward the "3rd → add bounded persist-retry" trigger).
+
+**Context (other-actor deploys today, NOT mine):** the `c08d5be` XREAD-BLOCK drain wedge fix (08:00 roll incident, strategy restarted ~10:52), the `#277` scanner-fade-purge fix (strategy restarted 16:17), and the control-plane redesign (`a0ee584`, control restarted 20:13) all landed via other sessions on this VPS. My P1 deploy touched **only OMS + v2**.
+
+**Constraints unchanged:** `schwab_1m`/`macd_30s` dormant (do NOT re-enable), Schwab adapter pure-reader, refresher sole token owner, PR #227 stays, #238 untouched, v2 streamer flag ON (sole Schwab streamer), CYN untouched, polygon parked, v2 PAPER.
+
 ### 2026-06-11 premarket scanner fade gap - bot lifecycle retention kept faded symbols tradable
 
 **Symptom:** the momentum scanner showed `6` confirmed names, but Schwab 1m V2 / aggregate bot watchlist showed `10` symbols. The extra live symbols were `MTEN`, `PPBT`, `RKDA`, and `WBX`.
