@@ -34,14 +34,20 @@ def configured_schwab_accounts(settings: Settings) -> dict[str, SchwabAccountCon
     shared_tos_runner_hash = (settings.schwab_tos_runner_account_hash or shared_hash).strip()
 
     def add(account_name: str, account_hash: str | None) -> None:
-        # Phase-1 v2-scoped guard (P1): paper:schwab_1m_v2 must NEVER bind a real Schwab
+        # v2-scoped guard (P1 Phase 1): paper:schwab_1m_v2 must NEVER bind a real Schwab
         # account hash. v2 is paper-validated via the simulated provider; real-Schwab is a
-        # deliberate go-live step (rename to live:schwab_1m_v2 + provider=schwab + wire the
-        # hash THEN). Refuse it here so a future hash wiring can't accidentally put paper v2
-        # on the real account — making the paper-safety structural, not the prior accidental
-        # missing-entry. v2-SCOPED ONLY: the retired paper:macd_30s/paper:schwab_1m stay
-        # registered — their position-sync triggers the shared token refresh until the
-        # dedicated refresher (P0) lands. Do NOT broaden to all paper: accounts before P0.
+        # deliberate go-live opt-in (rename to live:schwab_1m_v2 + provider=schwab + wire the
+        # hash THEN, attended). Refuse it here so a future hash wiring can't accidentally put
+        # paper v2 on the real account — paper-safety is structural, not the prior accidental
+        # missing-entry.
+        #
+        # Scoped to v2 ONLY today, but Phase 2 (broaden refusal to all paper: accounts) is
+        # now UNBLOCKED by P0: the dedicated token refresher in the control service owns
+        # access-token freshness independent of broker registrations, so refusing paper:
+        # accounts here removes no refresh trigger. (The earlier "retired paper:macd_30s /
+        # paper:schwab_1m position-sync keeps the refresher alive, so don't broaden before
+        # P0" rationale was RETRACTED 2026-06-09 — those bots are disabled and register
+        # nothing; the refresher is the sole token owner.)
         if account_name == settings.strategy_schwab_1m_v2_account_name:
             return
         resolved = (account_hash or shared_hash).strip() if account_hash is not None else shared_hash
