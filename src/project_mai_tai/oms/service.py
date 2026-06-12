@@ -1817,6 +1817,7 @@ class OmsRiskService:
                 status=report.event_type,
                 order_type=request.order_type,
                 time_in_force=request.time_in_force,
+                reject_reason=report.reason if report.event_type == "rejected" else None,
             )
             payload = {
                 "client_order_id": report.client_order_id,
