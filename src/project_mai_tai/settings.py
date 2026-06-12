@@ -187,6 +187,15 @@ class Settings(BaseSettings):
     strategy_schwab_1m_v2_streamer_enabled: bool = False
     strategy_schwab_1m_v2_streamer_reconnect_base_secs: float = 1.0
     strategy_schwab_1m_v2_streamer_reconnect_max_secs: float = 30.0
+    # --- Tick capture (LEVELONE_EQUITIES) for exit replay. Default OFF: ships
+    # dormant; no LEVELONE SUBS is sent and CHART_EQUITY behavior is identical.
+    # Flip ONLY attended, after-close (it adds a second service subscription on
+    # v2's existing streamer session). Capture is a pure observer — never feeds
+    # the strategy. See docs/v2-tick-capture-design.md.
+    strategy_schwab_1m_v2_tick_capture_enabled: bool = False
+    strategy_schwab_1m_v2_tick_flush_interval_secs: float = 2.0
+    strategy_schwab_1m_v2_tick_flush_batch_size: int = 500
+    strategy_schwab_1m_v2_tick_max_buffer: int = 50_000
     # --- SPOF Workstream A (v2 follow-up): loop-resilience knobs ---
     # See docs/schwab-1m-v2-loop-resilience-design.md. Per-task backstop so an
     # unanticipated exception can't silently kill a v2 task loop.

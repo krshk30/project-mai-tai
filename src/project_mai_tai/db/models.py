@@ -5,9 +5,11 @@ from decimal import Decimal
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     Numeric,
     String,
@@ -15,6 +17,7 @@ from sqlalchemy import (
     UniqueConstraint,
     text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 from sqlalchemy.types import JSON, Uuid
@@ -435,6 +438,70 @@ class StrategyBarHistory(Base):
         server_default=func.now(),
         onupdate=utcnow,
     )
+
+
+class MarketTradeTick(Base):
+    """Append-only Schwab trade ticks (LEVELONE_EQUITIES) for exit replay.
+
+    Capture-only; no strategy/OMS dependency reads this in the live path. Dedup
+    on (provider, service, symbol, event_ts, raw_hash) — distinct field-update
+    payloads at the same event_ts are kept (different raw_hash); exact re-sends
+    collapse. Indexed on (symbol, event_ts) for the replay walk.
+    """
+
+    __tablename__ = "market_trade_ticks"
+    __table_args__ = (
+        UniqueConstraint(
+            "provider", "service", "symbol", "event_ts", "raw_hash",
+            name="uq_market_trade_ticks_dedupe",
+        ),
+        Index("ix_market_trade_ticks_symbol_event_ts", "symbol", "event_ts"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    provider: Mapped[str] = mapped_column(Text)
+    service: Mapped[str] = mapped_column(Text)
+    symbol: Mapped[str] = mapped_column(Text)
+    event_ts: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    received_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, server_default=func.now()
+    )
+    price: Mapped[Decimal] = mapped_column(Numeric(18, 6))
+    size: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cumulative_volume: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    raw: Mapped[dict[str, object]] = mapped_column(JSONB)
+    raw_hash: Mapped[str] = mapped_column(Text)
+
+
+class MarketQuoteTick(Base):
+    """Append-only Schwab quote ticks (LEVELONE_EQUITIES). See MarketTradeTick."""
+
+    __tablename__ = "market_quote_ticks"
+    __table_args__ = (
+        UniqueConstraint(
+            "provider", "service", "symbol", "event_ts", "raw_hash",
+            name="uq_market_quote_ticks_dedupe",
+        ),
+        Index("ix_market_quote_ticks_symbol_event_ts", "symbol", "event_ts"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    provider: Mapped[str] = mapped_column(Text)
+    service: Mapped[str] = mapped_column(Text)
+    symbol: Mapped[str] = mapped_column(Text)
+    event_ts: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    received_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, server_default=func.now()
+    )
+    bid_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 6), nullable=True)
+    ask_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 6), nullable=True)
+    last_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 6), nullable=True)
+    bid_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ask_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cumulative_volume: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    raw: Mapped[dict[str, object]] = mapped_column(JSONB)
+    raw_hash: Mapped[str] = mapped_column(Text)
 
 
 class ScannerBlacklistEntry(Base):

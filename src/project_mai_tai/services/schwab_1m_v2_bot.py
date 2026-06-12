@@ -58,6 +58,7 @@ from project_mai_tai.market_data.schwab_v2_rest_client import (
     SchwabV2RestClient,
 )
 from project_mai_tai.market_data.schwab_v2_streamer import SchwabV2Streamer
+from project_mai_tai.market_data.schwab_v2_tick_writer import SchwabV2TickWriter
 from project_mai_tai.settings import Settings, get_settings
 from project_mai_tai.strategy_core.schwab_1m_v2 import (
     SERVICE_NAME,
@@ -306,9 +307,24 @@ class SchwabV2BotService:
             on_quote=self._handle_quote,
             loop_health=self._loop_health,
         )
+        # Tick capture (LEVELONE) — pure observer, default OFF. Built before the
+        # streamer so its on_tick can be wired in. Needs a session_factory; build
+        # one eagerly if the bar-persist path hasn't lazily created it yet.
+        self.tick_writer: SchwabV2TickWriter | None = None
+        if bool(getattr(self.settings, "strategy_schwab_1m_v2_tick_capture_enabled", False)):
+            if self.session_factory is None:
+                try:
+                    self.session_factory = build_session_factory(self.settings)
+                except Exception:
+                    logger.exception(
+                        "schwab_1m_v2 tick capture: session_factory unavailable; "
+                        "ticks will not persist"
+                    )
+            self.tick_writer = SchwabV2TickWriter(self.settings, self.session_factory)
         self.streamer = SchwabV2Streamer(
             self.settings,
             on_chart_bar=self._handle_bar_from_streamer,
+            on_tick=self.tick_writer.on_tick if self.tick_writer is not None else None,
         )
 
         loop = asyncio.get_running_loop()
@@ -340,6 +356,14 @@ class SchwabV2BotService:
                     "[V2-WS-INIT] schwab_v2 streamer enabled, REST polling "
                     "continues for cold-start warmup + reconnect gap-fill"
                 )
+            if self.tick_writer is not None:
+                self._tasks["tick_writer"] = asyncio.create_task(self.tick_writer.run())
+                logger.info(
+                    "[V2-TICK-INIT] schwab_v2 LEVELONE tick capture enabled "
+                    "(observer-only; flush_interval=%ss batch=%s)",
+                    self.settings.strategy_schwab_1m_v2_tick_flush_interval_secs,
+                    self.settings.strategy_schwab_1m_v2_tick_flush_batch_size,
+                )
         # Liveness supervisor is started last and never watches itself.
         self._tasks["liveness"] = asyncio.create_task(self._task_liveness_loop())
 
@@ -352,6 +376,8 @@ class SchwabV2BotService:
             await asyncio.gather(*self._tasks.values(), return_exceptions=True)
             if self.streamer is not None:
                 await self.streamer.stop()
+            if self.tick_writer is not None:
+                await self.tick_writer.stop()
             if self.rest_client is not None:
                 await self.rest_client.stop()
             if self.redis is not None:
@@ -527,6 +553,16 @@ class SchwabV2BotService:
             "bars_processed": str(sum(self._bar_counts.values())),
             "rest_bars_gated_total": str(self._rest_bars_gated),
             "rest_bars_gap_fill_total": str(self._rest_bars_gap_fill),
+            "tick_capture": str(self.tick_writer is not None).lower(),
+            **(
+                {
+                    "ticks_written": str(self.tick_writer.stats()["ticks_written"]),
+                    "ticks_buffered": str(self.tick_writer.stats()["buffered"]),
+                    "ticks_dropped": str(self.tick_writer.stats()["dropped"]),
+                }
+                if self.tick_writer is not None
+                else {}
+            ),
             **watchdog_detail,
             # SPOF Workstream A (v2): dedicated loop-resilience health, alongside
             # data_flow — NOT folded into the shared status Literal.
