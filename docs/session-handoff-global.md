@@ -1,5 +1,22 @@
 # Session Handoff - Global
 
+### ⏸️ 2026-06-11 EOD — TICK-CAPTURE feature DESIGNED + IMPLEMENTED, **HELD for review** (PR #282, NOT merged, NOT deployed). Plus tomorrow's agenda.
+
+**Why:** today's overnight audit proved 1m bar fidelity is perfect (24/24 byte-exact) but flagged that **intrabar stop/target ordering needs tick data** — when a 1m candle touches both `+target%` and `-stop%`, only ticks can prove which hit first. This feature captures that. It is the **data prerequisite for the replay study.**
+
+**PR #282 (`codex/v2-tick-capture`, OPEN, held):** durable Schwab tick storage + replay. **Data capture + replay evidence ONLY — no strategy/entry/exit/OMS change.** Ships **dormant behind a default-OFF flag** (`MAI_TAI_STRATEGY_SCHWAB_1M_V2_TICK_CAPTURE_ENABLED=false`); flag OFF ⇒ no LEVELONE SUBS, CHART_EQUITY behavior byte-identical.
+- **Tables:** `market_trade_ticks`, `market_quote_ticks` (append-only; dedupe `(provider,service,symbol,event_ts,raw_hash)`; `(symbol,event_ts)` index). Alembic `20260611_0007` + ORM models.
+- **Source decision (the crux):** LEVELONE_EQUITIES added as a **second subscription on v2's EXISTING streamer session** (one OAuth session → no new collision; rejected reviving the off-limits shared `schwab_streamer.py` = 2nd session, and a new isolated LEVELONE service = same collision). TIMESALE avoided (unreliable here). CHART_EQUITY bar path untouched; LEVELONE is a pure tee → `on_tick`.
+- **Writer** `schwab_v2_tick_writer.py`: batched, off-event-loop (`to_thread`), `ON CONFLICT DO NOTHING`, bounded buffer (drops-oldest + counts; never backpressures the feed). Heartbeat: `ticks_written/buffered/dropped`.
+- **Replay** `scripts/replay_exit_from_ticks.py`: first-tick walk; returns `UNRESOLVED_NO_TICKS` (never a guess). **Retention** `scripts/prune_market_ticks.py` (`--keep-days`, cron) + partition follow-up noted.
+- **Design:** `docs/v2-tick-capture-design.md` (in the PR). **Tests:** 7 new green (extraction, flag-OFF-identical, LEVELONE-tees-without-touching-bar-feed, writer overflow); existing v2 suite (36) unchanged.
+- **Deploy gate (tomorrow, attended, after-close, NOT before the 08:00 roll):** `alembic upgrade head` (additive, 2 empty tables) → deploy code flag-OFF (dormant; confirm v2 healthy) → after-close flip flag + restart v2 only → verify LEVELONE acks on the same session + **CHART_EQUITY bars keep flowing** + `ticks_written` climbs → RTH row-count + a replay on a known both-hit candle. Rollback = flag OFF + restart.
+
+**📋 TOMORROW'S AGENDA (2026-06-12):**
+1. **7 AM pre-flight:** (a) did strategy-engine survive the **08:00 UTC roll** — the drain-fix `c08d5be` first live test (no wedge, bars/intents post-roll)? (b) first v2 **sim-fill** (~11:00 UTC when the universe prints) — order→fill→position, not the old hash-reject. (c) **refresher cadence** — token mtime advancing ~30 min, 0 bad markers. (d) standing: GLXG persist-seam UPSERT small-item; AZI/BATL persist-lag watch still at 2.
+2. **Review + deploy PR #282** (tick capture) — attended, after-close, per the gate above.
+3. **Replay-study design** (expectancy / MFE / MAE / slippage-haircut) — now standing on tonight's verified bars + audited signals + (once deployed) tick data. Caveat to bake in: signals were OMS-rejected and sim fills are idealized → models opportunity, not realized P&L.
+
 ### ✅ 2026-06-11 ~20:19 UTC — P1 PHASE 1 LANDED + DEPLOYED (after-close, attended). schwab_1m_v2 is now STRUCTURALLY paper — cannot reach the real Schwab account. Next = P1 Phase 2 + dashboard-visibility half.
 
 **The accidental real-account exposure is closed.** v2's paper safety was previously *accidental* (broker_provider defaulted to `"schwab"` → would resolve the shared REAL hash; saved only by a missing `configured_schwab_accounts` entry). Now it is **structural**, via two v2-scoped layers (PR #276, merged `1b0a5e5`, on main inside `24e6bac`):
