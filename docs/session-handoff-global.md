@@ -1,5 +1,21 @@
 # Session Handoff - Global
 
+### ✅ 2026-06-12 ~20:05 UTC — AFTER-CLOSE DEPLOY: #284 (sim-fill fix) + #282 (tick capture, DORMANT). Verified. READ FIRST.
+
+Attended after-close deploy (gate: 20:04 UTC, account-flat). Bundle = **#284 + #282 → restart v2 + OMS** (strategy + control untouched). Alembic `20260518_0006 → 20260611_0007` applied (two empty tick tables + 6 indexes).
+
+**#284 — reference_price sim-fill fix (LIVE).** Pre-flight 06-12 found v2's first sim order rejected *"missing reference_price"* (the adapter fills at `reference_price`; v2 emitted `entry_price`; P1's test masked it by injecting the field). Fix: v2 emitter now sets `reference_price` = **signal bar close** (== entry_price; deterministic/reproducible so sim fills and the replay study agree by construction). + OMS now persists the broker reject reason to `broker_orders.payload.reject_reason` (was empty, slowed diagnosis). Real-emit-path test (drives a genuine signal, feeds the strategy's OWN metadata verbatim → sim fill) guards the masking gap. **➡️ TOMORROW'S PRE-FLIGHT HEADLINE: next natural v2 signal → sim FILL (not reject) + `virtual_positions` row + fill price == signal bar close.** (Today's signals were all reject-but-record; replay study uses signals+bars so nothing lost.)
+
+**#282 — LEVELONE tick capture (DEPLOYED DORMANT).** Default-OFF flag (`…TICK_CAPTURE_ENABLED` unset → False). Verified dormant: `tick_capture=false` in heartbeat, no `[V2-TICK-INIT]`, **V2-WS-SUB services = CHART_EQUITY only (no LEVELONE_EQUITIES SUBS)**, CHART_EQUITY bar feed identical, tables empty. Capture is a pure observer (LEVELONE as a 2nd subscription on v2's existing session; batched off-event-loop writer; tee can't touch bar assembly). **Activation is a SEPARATE later attended flip** (flag ON + restart v2, during/then-verify an RTH window — NOT before an 08:00 roll), with its own RTH verify. **First-active-days watch: DB growth rate (`market_*_ticks`) + any bar-persist latency movement.** Retention: `scripts/prune_market_ticks.py --keep-days 14` (cron) + partition follow-up.
+
+**Post-deploy verification (all ✅):** (a) token mtime unchanged across the OMS restart (pure-reader) then refreshed 20:07:53 (cadence intact), 0 bad markers; (b) #282 dormant proof above; (c) v2 re-warmed 7/7, streamer holding, OMS healthy, 0 errors either service, account-flat, CYN intact. Services: v2+OMS restarted 20:05 (NR=0); strategy (06-11 16:17) + control (06-11 20:13) untouched.
+
+**Standing small-items:** GLXG-class persist `UniqueViolation` ticked to 2 today (benign REST/streamer dup race; the "v2 persist UPSERT" follow-up — NOT fixed by #284/#282). AZI/BATL persist-lag watch stays at 2.
+
+**Replay study (#285 design merged, decisions recorded):** Phase 1 (bar-only) can be implemented read-only at any time — MFE/MAE-first + a small target/stop grid (stop 5/10% × target 10/20%), horizons 5/15/30/60, OMS-exit modeling deferred (the forward test measures it natively now #284 fills), page-one "directional not statistical at current N" rider mandatory. Phase 2 (tick-resolved) waits on tick-capture activation.
+
+**Constraints unchanged:** schwab_1m/macd_30s dormant, adapter pure-reader, refresher sole token owner, #227 stays, #238 untouched, v2 streamer flag ON, CYN untouched, polygon parked, v2 PAPER.
+
 ### ⏸️ 2026-06-11 EOD — TICK-CAPTURE feature DESIGNED + IMPLEMENTED, **HELD for review** (PR #282, NOT merged, NOT deployed). Plus tomorrow's agenda.
 
 **Why:** today's overnight audit proved 1m bar fidelity is perfect (24/24 byte-exact) but flagged that **intrabar stop/target ordering needs tick data** — when a 1m candle touches both `+target%` and `-stop%`, only ticks can prove which hit first. This feature captures that. It is the **data prerequisite for the replay study.**
