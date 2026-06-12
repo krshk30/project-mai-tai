@@ -58,19 +58,24 @@ def test_concurrent_dup_persist_loses_no_writes(caplog) -> None:
     sf, engine = _pg()
     stub = _Stub(sf)
     ts = 1700000000000  # fixed synthetic minute
+    n_threads = 8       # wide enough that >=2 reliably SELECT before any INSERT commits
     _cleanup(engine)
     try:
         with caplog.at_level(logging.ERROR, logger=LOGGER):
-            for i in range(25):
+            for i in range(30):
                 bar = _bar(ts, 5.0 + i * 0.01)
-                barrier = threading.Barrier(2)
+                _cleanup(engine)  # force every iteration to race the INSERT path (not UPDATE)
+                barrier = threading.Barrier(n_threads)
 
                 def worker():
-                    barrier.wait()  # both threads hit the DB together
+                    barrier.wait()  # all threads hit the DB together
                     SchwabV2BotService._persist_bar(stub, TEST_SYMBOL, bar)
 
-                t1, t2 = threading.Thread(target=worker), threading.Thread(target=worker)
-                t1.start(); t2.start(); t1.join(); t2.join()
+                threads = [threading.Thread(target=worker) for _ in range(n_threads)]
+                for t in threads:
+                    t.start()
+                for t in threads:
+                    t.join()
 
         persist_errors = [r for r in caplog.records if "failed to persist bar history" in r.getMessage()]
         assert persist_errors == [], (
