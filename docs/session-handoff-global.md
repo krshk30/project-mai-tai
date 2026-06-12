@@ -1,5 +1,21 @@
 # Session Handoff - Global
 
+### 2026-06-12 weekend — Replay Study Phase 1 SHIPPED (#287) + persist UPSERT fix in review (#288)
+
+**Replay Study Phase 1 (#287, MERGED `e8e3015`).** Read-only, bar-only, on all 624 v2 signals to date (05-22→06-12, 617 vendor-sourced / 0 uncovered). `analysis/replay_study.py` + `analysis/reports/replay-study-2026-06-12.md`. Findings (**DIRECTIONAL, not statistical at this N**):
+- **MFE/MAE (lead):** median signal goes adverse ≳ favorable (no free median edge) but a **fat right tail** (p90 MFE 38% @60m) — opportunity is in the tail, not the median.
+- **Grid (secondary) + honesty layer:** idealized edge is thin and **does NOT survive realistic cost** — only stop10/target20 clears the assumed 1% spread (+0.45%); **no cell survives 2% slippage**. For illiquid pennies execution cost is decisive.
+- **MACD Cross > VWAP Breakout** (positive every cell vs negative stop5 cells) — first real modification evidence; wider stops + asymmetric targets shape best.
+- **➡️ FORWARD-TEST CENTRAL QUESTION (carry):** do the strategy's **real OMS exits capture the tail better than the crude grid policies**? Current measured state: the grid does **not** survive 2% slippage — the forward test (now v2 fills via #284) is what answers whether actual exits + the fat-tail timing beat that. **Phase 2** (after tick-capture activation) grounds the spread from quote ticks (the decisive input) + resolves the 3 ambiguous candles.
+
+**Persist UPSERT fix (#288, OPEN — review → weekend-window deploy).** `_persist_bar` non-atomic SELECT-then-INSERT → `INSERT ... ON CONFLICT DO UPDATE` (the GLXG-class dup, ~2/day; hardens persist before tick capture raises concurrency). On conflict refreshes OHLCV only (decision_* preserved). Integration test (`tests/integration/test_v2_persist_upsert.py`, Postgres-gated) reproduces the race: **fails on old code, passes on new** — validated against a **throwaway `mai_tai_test` DB** (created→migrated→dropped; **production tables untouched**, 0 test rows). Deploy = **v2 restart only**, weekend window, attended; **Monday verify: daily UniqueViolations → 0.**
+
+**NOT this weekend:** tick-capture activation (needs live RTH ticks → Monday-or-later attended flip per the runbook).
+
+**Monday pre-flight (carry-forward):** headline = **first v2 sim FILL** (next natural signal → filled, `virtual_positions` row, fill price == signal bar close); + 08:00 roll (drain-fix); + refresher cadence; + **UniqueViolations → 0** (if UPSERT deployed); + standard health.
+
+**Constraints unchanged:** schwab_1m/macd_30s dormant, adapter pure-reader, refresher sole token owner, #227/#238, streamer flag ON, CYN untouched, polygon parked, v2 PAPER. Weekend deploys allowed (market closed) but attended + reviewed.
+
 ### ✅ 2026-06-12 ~20:05 UTC — AFTER-CLOSE DEPLOY: #284 (sim-fill fix) + #282 (tick capture, DORMANT). Verified. READ FIRST.
 
 Attended after-close deploy (gate: 20:04 UTC, account-flat). Bundle = **#284 + #282 → restart v2 + OMS** (strategy + control untouched). Alembic `20260518_0006 → 20260611_0007` applied (two empty tick tables + 6 indexes).
