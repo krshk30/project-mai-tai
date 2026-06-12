@@ -25,10 +25,12 @@ import logging
 import signal
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
+from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from redis.asyncio import Redis
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session, sessionmaker
 
 from project_mai_tai.db.models import (
@@ -1087,11 +1089,17 @@ class SchwabV2BotService:
         await self._maybe_emit(draft)
 
     def _persist_bar(self, symbol: str, bar: ChartBar) -> None:
-        """Upsert (strategy_code, symbol, interval_secs, bar_time) into
-        strategy_bar_history. Mirrors the shape the existing strategy-engine
-        writes so the dashboard's decision-tape query treats v2 bars
-        identically. decision_status stays '' until the strategy emits
-        signals.
+        """Atomic upsert into strategy_bar_history on
+        (strategy_code, symbol, interval_secs, bar_time).
+
+        Uses INSERT ... ON CONFLICT DO UPDATE so concurrent REST + streamer
+        writes of the SAME bar can't collide. The prior SELECT-then-INSERT was
+        non-atomic: when both writers passed the SELECT (saw no row) before
+        either INSERTed, the second INSERT raised UniqueViolation — the
+        GLXG-class dup at the REST/streamer seam. On conflict only the OHLCV is
+        refreshed (decision_* / position_* left untouched), exactly matching the
+        previous UPDATE branch. Mirrors the strategy-engine bar shape so the
+        dashboard decision-tape query treats v2 bars identically.
         """
         if self.session_factory is None:
             return
@@ -1104,38 +1112,34 @@ class SchwabV2BotService:
             return
 
         bar_time = datetime.fromtimestamp(bar.timestamp_ms / 1000.0, UTC)
-
+        ohlcv = {
+            "open_price": Decimal(str(bar.open)),
+            "high_price": Decimal(str(bar.high)),
+            "low_price": Decimal(str(bar.low)),
+            "close_price": Decimal(str(bar.close)),
+            "volume": volume,
+            "trade_count": trade_count,
+        }
+        stmt = (
+            pg_insert(StrategyBarHistory)
+            .values(
+                id=uuid4(),
+                strategy_code=STRATEGY_CODE,
+                symbol=symbol,
+                interval_secs=INTERVAL_SECS,
+                bar_time=bar_time,
+                position_state="flat",
+                indicators_json={},
+                **ohlcv,
+            )
+            .on_conflict_do_update(
+                constraint="uq_strategy_bar_history_strategy_symbol_interval_time",
+                set_=ohlcv,
+            )
+        )
         try:
             with self.session_factory() as session:
-                record = session.scalar(
-                    select(StrategyBarHistory).where(
-                        StrategyBarHistory.strategy_code == STRATEGY_CODE,
-                        StrategyBarHistory.symbol == symbol,
-                        StrategyBarHistory.interval_secs == INTERVAL_SECS,
-                        StrategyBarHistory.bar_time == bar_time,
-                    )
-                )
-                if record is None:
-                    record = StrategyBarHistory(
-                        strategy_code=STRATEGY_CODE,
-                        symbol=symbol,
-                        interval_secs=INTERVAL_SECS,
-                        bar_time=bar_time,
-                        open_price=Decimal(str(bar.open)),
-                        high_price=Decimal(str(bar.high)),
-                        low_price=Decimal(str(bar.low)),
-                        close_price=Decimal(str(bar.close)),
-                        volume=volume,
-                        trade_count=trade_count,
-                    )
-                    session.add(record)
-                else:
-                    record.open_price = Decimal(str(bar.open))
-                    record.high_price = Decimal(str(bar.high))
-                    record.low_price = Decimal(str(bar.low))
-                    record.close_price = Decimal(str(bar.close))
-                    record.volume = volume
-                    record.trade_count = trade_count
+                session.execute(stmt)
                 session.commit()
         except Exception:
             logger.exception(
