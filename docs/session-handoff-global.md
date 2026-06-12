@@ -1,5 +1,25 @@
 # Session Handoff - Global
 
+### 2026-06-12 weekend — v2 ENTRY-CRITERIA reference doc shipped (#291); strategy-rule-modification workstream OPENING
+
+**`docs/schwab-1m-v2-entry-criteria.md` (#291, merged `5c76b25`)** — code-faithful reference of v2's
+entry rules (v1.32) for operator **rule validation (add/remove)**. Captures: indicators (MACD
+12/26/9 SMA-seeded, stoch-5 FullK, EMA-9 trend, 20-bar avg-vol, 04:00-ET session VWAP); 135-bar
+warmup; the 2 paths (Path-1 MACD-Cross, Path-2 VWAP-Breakout — note Path-2 only needs `macd>signal`,
+can fire `macd<0`); the **7 base gates** + toggles (trend ON, macd-strength `hist%≥0.02` ON,
+green-bar ON, rel-vol `>1.5×` ON, abs-vol `>5000`, **stoch-overbought OFF**, time-of-day OFF);
+cross-on-transition semantics; suppressors (freshness 180s + C2 carryforward, position, cooldown-5);
+and a 14-item rules-to-validate checklist. **Entry side ONLY — OMS owns all exits.**
+
+**➡️ NEXT (operator-driven): strategy-rule changes.** The operator is reviewing the checklist to
+add/remove/tune rules (candidates flagged in the doc: macd-strength 0.02% is tiny; stoch-overbought
+ceiling OFF; Path-2 `macd<0` allowed; no time-of-day blackout). **Any rule change = entry-logic edit
+in `strategy_core/schwab_1m_v2.py`** → design-first + a probe/real-emit test + after-close attended
+deploy (v2 restart). Pairs with the operator's TOS spot-check (5 audit signals) + go-live-numbers
+writing. **Replay Phase 1 informs** (directional): MACD-Cross > VWAP-Breakout, median has no free
+edge (tail-driven), nothing survives 2% slippage — so tightening gates / adding a `macd>0` or
+overbought ceiling are natural candidates, but validate against forward-test data before committing.
+
 ### 2026-06-12 weekend — Replay Study Phase 1 SHIPPED (#287) + persist UPSERT fix in review (#288)
 
 **Replay Study Phase 1 (#287, MERGED `e8e3015`).** Read-only, bar-only, on all 624 v2 signals to date (05-22→06-12, 617 vendor-sourced / 0 uncovered). `analysis/replay_study.py` + `analysis/reports/replay-study-2026-06-12.md`. Findings (**DIRECTIONAL, not statistical at this N**):
