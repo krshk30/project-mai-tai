@@ -22,6 +22,7 @@ wait, no round-robin queue. That drops the v2 persist-lag floor from
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import itertools
 import json
 import logging
@@ -46,6 +47,53 @@ logger = logging.getLogger(__name__)
 
 ChartBarCallback = Callable[[str, ChartBar], Awaitable[None]]
 DisconnectCallback = Callable[[], Awaitable[None]]
+
+
+@dataclass
+class SchwabTick:
+    """A captured LEVELONE_EQUITIES tick (trade or quote). Capture-only — never
+    consumed by the strategy. A single LEVELONE content record can yield a trade
+    tick, a quote tick, or both.
+    """
+
+    kind: str            # "trade" | "quote"
+    service: str
+    symbol: str
+    event_ts_ms: int
+    raw: dict[str, object]
+    raw_hash: str
+    # trade fields
+    price: float | None = None
+    size: int | None = None
+    cumulative_volume: int | None = None
+    # quote fields
+    bid_price: float | None = None
+    ask_price: float | None = None
+    last_price: float | None = None
+    bid_size: int | None = None
+    ask_size: int | None = None
+    last_size: int | None = None
+
+
+TickCallback = Callable[[SchwabTick], Awaitable[None]]
+
+
+def _float_or_none(value: object) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
+def _int_or_none(value: object) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        return int(float(value))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
 
 
 @dataclass
@@ -75,6 +123,12 @@ class SchwabV2Streamer:
     #   0=key (symbol), 1=sequence, 2=open, 3=high, 4=low, 5=close,
     #   6=volume, 7=chart_time_ms, 8=chart_day
     CHART_EQUITY_FIELDS = "0,1,2,3,4,5,6,7,8"
+    # LEVELONE_EQUITIES (tick capture only — gated behind tick-capture flag).
+    # Field codes (verified against the existing schwab_streamer.py + live capture):
+    #   0=key, 1=bid, 2=ask, 3=last, 4=bid_size, 5=ask_size,
+    #   8=cumulative_volume, 9=last_size, 35=trade_time_ms
+    LEVELONE_EQUITIES_SERVICE = "LEVELONE_EQUITIES"
+    LEVELONE_EQUITIES_FIELDS = "0,1,2,3,4,5,8,9,35"
 
     def __init__(
         self,
@@ -82,10 +136,12 @@ class SchwabV2Streamer:
         *,
         on_chart_bar: ChartBarCallback,
         on_disconnect: DisconnectCallback | None = None,
+        on_tick: TickCallback | None = None,
     ) -> None:
         self.settings = settings
         self._on_chart_bar = on_chart_bar
         self._on_disconnect = on_disconnect
+        self._on_tick = on_tick
         self._desired_symbols: set[str] = set()
         self._requested_symbols: set[str] = set()
         self._stop_event = asyncio.Event()
@@ -109,6 +165,15 @@ class SchwabV2Streamer:
     @property
     def connected(self) -> bool:
         return self._connected
+
+    @property
+    def _tick_capture(self) -> bool:
+        """LEVELONE tick capture is active only when a writer callback was wired
+        AND the tick-capture flag is on. Default off -> no LEVELONE SUBS is sent,
+        the LEVELONE branch is unreachable, CHART_EQUITY behavior is identical."""
+        return self._on_tick is not None and bool(
+            getattr(self.settings, "strategy_schwab_1m_v2_tick_capture_enabled", False)
+        )
 
     def set_desired_symbols(self, symbols: set[str]) -> None:
         normalized = {s.strip().upper() for s in symbols if s.strip()}
@@ -253,39 +318,58 @@ class SchwabV2Streamer:
                     code,
                     str(content.get("msg") or content.get("message") or "?"),
                 )
-        # Data records — CHART_EQUITY only.
+        # Data records. CHART_EQUITY drives the bar feed (unchanged). LEVELONE
+        # (only when tick capture is on) is TEED to on_tick for durable capture;
+        # it never touches the bar feed, _last_bar_ts_ms, or strategy state.
         for item in payload.get("data", []):
             if not isinstance(item, dict):
                 continue
-            if str(item.get("service", "")).upper() != self.CHART_EQUITY_SERVICE:
-                continue
-            for content in item.get("content", []):
-                if not isinstance(content, dict):
-                    continue
-                bar = self._extract_chart_bar(content)
-                if bar is None:
-                    continue
-                # Dedupe: skip same-or-older buckets. CHART_EQUITY's
-                # contract is that each emit is a FINAL snapshot for the
-                # closed minute, so re-emits of the same bucket are
-                # redundant — letting them through would flip
-                # `state.bars[-1]` under the strategy's update-in-place
-                # path without re-running cross detection, which is
-                # wasted work and a source of cross-feed seam noise.
-                # Tightened from `<` to `<=` per W3 in the code review;
-                # see Day 2 entry in `docs/session-handoff-schwab-1m-v2.md`.
-                prev = self._last_bar_ts_ms.get(bar.symbol, 0)
-                if bar.timestamp_ms <= prev:
-                    continue
-                self._last_bar_ts_ms[bar.symbol] = bar.timestamp_ms
-                self._last_bar_received_monotonic = asyncio.get_running_loop().time()
-                try:
-                    await self._on_chart_bar(bar.symbol, bar)
-                except Exception:
-                    logger.exception(
-                        "schwab_v2_streamer on_chart_bar raised for %s",
-                        bar.symbol,
-                    )
+            service = str(item.get("service", "")).upper()
+            if service == self.CHART_EQUITY_SERVICE:
+                for content in item.get("content", []):
+                    if not isinstance(content, dict):
+                        continue
+                    bar = self._extract_chart_bar(content)
+                    if bar is None:
+                        continue
+                    # Dedupe: skip same-or-older buckets. CHART_EQUITY's
+                    # contract is that each emit is a FINAL snapshot for the
+                    # closed minute, so re-emits of the same bucket are
+                    # redundant — letting them through would flip
+                    # `state.bars[-1]` under the strategy's update-in-place
+                    # path without re-running cross detection, which is
+                    # wasted work and a source of cross-feed seam noise.
+                    # Tightened from `<` to `<=` per W3 in the code review;
+                    # see Day 2 entry in `docs/session-handoff-schwab-1m-v2.md`.
+                    prev = self._last_bar_ts_ms.get(bar.symbol, 0)
+                    if bar.timestamp_ms <= prev:
+                        continue
+                    self._last_bar_ts_ms[bar.symbol] = bar.timestamp_ms
+                    self._last_bar_received_monotonic = asyncio.get_running_loop().time()
+                    try:
+                        await self._on_chart_bar(bar.symbol, bar)
+                    except Exception:
+                        logger.exception(
+                            "schwab_v2_streamer on_chart_bar raised for %s",
+                            bar.symbol,
+                        )
+            elif (
+                service == self.LEVELONE_EQUITIES_SERVICE
+                and self._tick_capture
+                and self._on_tick is not None
+            ):
+                item_ts_ms = _int_or_none(item.get("timestamp"))
+                for content in item.get("content", []):
+                    if not isinstance(content, dict):
+                        continue
+                    for tick in self._extract_level_one_ticks(content, item_ts_ms):
+                        try:
+                            await self._on_tick(tick)
+                        except Exception:
+                            logger.exception(
+                                "schwab_v2_streamer on_tick raised for %s",
+                                tick.symbol,
+                            )
 
     # -------------------------------------------------------- subscription
 
@@ -300,32 +384,50 @@ class SchwabV2Streamer:
             await self._send_subscription(ws, command=command, symbols=sorted(to_add))
         self._requested_symbols = desired
 
+    def _build_service_request(
+        self, *, service: str, fields: str, command: str, symbols: list[str]
+    ) -> dict[str, object]:
+        assert self._creds is not None
+        req: dict[str, object] = {
+            "service": service,
+            "requestid": str(next(self._request_id_counter)),
+            "command": command,
+            "SchwabClientCustomerId": self._creds.customer_id,
+            "SchwabClientCorrelId": self._creds.correl_id,
+            "parameters": {"keys": ",".join(symbols)},
+        }
+        if command != "UNSUBS":
+            req["parameters"]["fields"] = fields  # type: ignore[index]
+        return req
+
     async def _send_subscription(
         self, ws: object, *, command: str, symbols: list[str]
     ) -> None:
         if not symbols or self._creds is None:
             return
-        request: dict[str, object] = {
-            "requests": [
-                {
-                    "service": self.CHART_EQUITY_SERVICE,
-                    "requestid": str(next(self._request_id_counter)),
-                    "command": command,
-                    "SchwabClientCustomerId": self._creds.customer_id,
-                    "SchwabClientCorrelId": self._creds.correl_id,
-                    "parameters": {
-                        "keys": ",".join(symbols),
-                    },
-                }
-            ]
-        }
-        if command != "UNSUBS":
-            request["requests"][0]["parameters"]["fields"] = self.CHART_EQUITY_FIELDS  # type: ignore[index]
-        await ws.send(json.dumps(request))  # type: ignore[attr-defined]
+        # CHART_EQUITY always; LEVELONE_EQUITIES too (same session, same symbols)
+        # only when tick capture is active. Both ride one frame; distinct
+        # requestids keep them independent. CHART_EQUITY framing is unchanged
+        # from the pre-tick-capture path.
+        requests = [
+            self._build_service_request(
+                service=self.CHART_EQUITY_SERVICE, fields=self.CHART_EQUITY_FIELDS,
+                command=command, symbols=symbols,
+            )
+        ]
+        if self._tick_capture:
+            requests.append(
+                self._build_service_request(
+                    service=self.LEVELONE_EQUITIES_SERVICE, fields=self.LEVELONE_EQUITIES_FIELDS,
+                    command=command, symbols=symbols,
+                )
+            )
+        await ws.send(json.dumps({"requests": requests}))  # type: ignore[attr-defined]
         logger.info(
-            "[V2-WS-SUB] cmd=%s count=%d sample=%s",
+            "[V2-WS-SUB] cmd=%s count=%d services=%s sample=%s",
             command,
             len(symbols),
+            "+".join(str(r["service"]) for r in requests),
             ",".join(symbols[:5]),
         )
 
@@ -484,6 +586,53 @@ class SchwabV2Streamer:
         )
 
     @staticmethod
+    def _extract_level_one_ticks(
+        content: dict[str, object], item_ts_ms: int | None
+    ) -> list[SchwabTick]:
+        """Parse one LEVELONE_EQUITIES content record into 0–2 ticks (a trade
+        and/or a quote). Fields: 0=key, 1=bid, 2=ask, 3=last, 4=bid_size,
+        5=ask_size, 8=cumulative_volume, 9=last_size, 35=trade_time_ms.
+        Capture-only; no dedupe here (the DB unique constraint dedups exact
+        re-sends; distinct field updates are intentionally all kept)."""
+        symbol = str(content.get("key") or content.get("0") or "").upper()
+        if not symbol:
+            return []
+        raw_hash = hashlib.sha1(
+            json.dumps(content, sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest()
+        bid = _float_or_none(content.get("1"))
+        ask = _float_or_none(content.get("2"))
+        last = _float_or_none(content.get("3"))
+        bid_size = _int_or_none(content.get("4"))
+        ask_size = _int_or_none(content.get("5"))
+        cum_vol = _int_or_none(content.get("8"))
+        last_size = _int_or_none(content.get("9"))
+        trade_time_ms = _int_or_none(content.get("35"))
+        ticks: list[SchwabTick] = []
+        if last is not None and last > 0:
+            event_ts = trade_time_ms or item_ts_ms
+            if event_ts is not None:
+                ticks.append(
+                    SchwabTick(
+                        kind="trade", service="LEVELONE_EQUITIES", symbol=symbol,
+                        event_ts_ms=int(event_ts), raw=content, raw_hash=raw_hash,
+                        price=last, size=last_size, cumulative_volume=cum_vol,
+                    )
+                )
+        if (bid is not None and bid > 0) or (ask is not None and ask > 0):
+            if item_ts_ms is not None:
+                ticks.append(
+                    SchwabTick(
+                        kind="quote", service="LEVELONE_EQUITIES", symbol=symbol,
+                        event_ts_ms=int(item_ts_ms), raw=content, raw_hash=raw_hash,
+                        bid_price=bid, ask_price=ask, last_price=last,
+                        bid_size=bid_size, ask_size=ask_size, last_size=last_size,
+                        cumulative_volume=cum_vol,
+                    )
+                )
+        return ticks
+
+    @staticmethod
     def _decode(raw: str | bytes) -> dict[str, object]:
         if isinstance(raw, bytes):
             try:
@@ -497,4 +646,10 @@ class SchwabV2Streamer:
         return data if isinstance(data, dict) else {}
 
 
-__all__ = ["SchwabV2Streamer", "ChartBarCallback", "DisconnectCallback"]
+__all__ = [
+    "SchwabV2Streamer",
+    "ChartBarCallback",
+    "DisconnectCallback",
+    "TickCallback",
+    "SchwabTick",
+]
