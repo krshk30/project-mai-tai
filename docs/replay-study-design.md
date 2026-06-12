@@ -11,6 +11,12 @@ track record: today's signals were OMS-rejected (no real fills), sim fills are i
 entry reference is the signal bar close (optimistic). The study models **opportunity with stated
 haircuts**, and is explicit about every idealization.
 
+**⚠️ Sample-size rider — MUST lead page one of every report:** at the current signal count
+(~35/day, tens total) every number here is **directional, not statistical**. It shapes hypotheses
+and priorities (which path/session/policy looks promising), NOT a validated edge — expectancy and
+win-rate have wide confidence intervals at this N. Statistical claims wait until the forward test
+(now that #284 makes v2 fill) accumulates a real sample.
+
 ## Foundation it builds on (already verified)
 
 - **Bars** — Phase A proved v2's stored 1m bars are byte-exact vs Schwab vendor data (24/24).
@@ -51,9 +57,12 @@ Per signal, from forward bars over each horizon H:
   covers BOTH levels (bar-unresolvable → Phase 2).
 
 Expectancy under **exit policies** (each stated, none claimed realistic):
-1. **Fixed target/stop** (e.g. +2% / −1.5%): bar-only resolves all non-ambiguous candles; ambiguous
-   ones are reported separately as a **bounded range** (best case = target-first, worst = stop-first)
-   — never a point estimate that hides the ambiguity.
+1. **Fixed target/stop grid** — stop ∈ {5%, 10%} × target ∈ {10%, 20%} (4 cells; these penny names
+   move 10–50% intraday, so tight bands are unrealistic). Bar-only resolves all non-ambiguous
+   candles; ambiguous ones are a **bounded range** (best = target-first, worst = stop-first) — never
+   a point estimate that hides the ambiguity. The report **LEADS with the parameter-free MFE/MAE
+   distributions** and presents the grid as secondary — MFE/MAE doesn't depend on chosen bands, the
+   grid does.
 2. **Time-stop** (exit at close of t+H): unambiguous from bars; a clean lower-bar on "do signals
    carry".
 3. **MFE-capture fractions** (e.g. could you have captured 50% of MFE before MAE): characterizes the
@@ -96,10 +105,12 @@ slippage means realized results will be materially worse than idealized.*
 - **Phase 2** follows once #282 (tick capture) is deployed and has captured ≥1 RTH day.
 - Same gates as the audit: read-only, findings not trades, scripts + report via PR.
 
-## Open questions for review
+## Resolved (2026-06-12 review)
 
-1. Default target%/stop% for the fixed policy (the requirement cited +2% / −1.5% — use those?).
-2. Horizon set (5/15/30/60 min ok, or include EOD)?
-3. Is the strategy's actual OMS exit-rule modelling wanted in v1, or correctly deferred to v2 of the
-   study (my rec: defer — it's a large faithful-simulation effort; the transparent policies answer
-   "do the signals carry?" first)?
+1. **Target/stop = a small grid: stop ∈ {5%, 10%} × target ∈ {10%, 20%}**; the report **leads with
+   the parameter-free MFE/MAE distributions** (grid is secondary, band-dependent).
+2. **Horizons = 5 / 15 / 30 / 60 min.**
+3. **Actual-OMS-exit modelling DEFERRED** — the forward test (now that #284 makes v2 fill) measures
+   real exits natively; Phase 1 answers "do the signals carry?" with the transparent policies above.
+4. **Sample-size framing mandatory on page one** (the rider in Purpose): directional, not
+   statistical, at current N.
