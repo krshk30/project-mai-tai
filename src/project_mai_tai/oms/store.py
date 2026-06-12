@@ -296,7 +296,13 @@ class OmsStore:
         status: str = "pending",
         order_type: str = "market",
         time_in_force: str = "day",
+        reject_reason: str | None = None,
     ) -> BrokerOrder:
+        # Persist the broker reject reason onto the order payload so a rejected
+        # order is self-explanatory on the row, not only in broker_order_events.
+        payload = dict(metadata)
+        if reject_reason:
+            payload["reject_reason"] = reject_reason
         order = session.scalar(select(BrokerOrder).where(BrokerOrder.client_order_id == client_order_id))
         if order is None:
             order = BrokerOrder(
@@ -311,7 +317,7 @@ class OmsStore:
                 time_in_force=time_in_force,
                 quantity=quantity,
                 status=status,
-                payload=dict(metadata),
+                payload=payload,
                 submitted_at=utcnow(),
             )
             session.add(order)
@@ -320,7 +326,7 @@ class OmsStore:
 
         order.status = status
         order.broker_order_id = broker_order_id or order.broker_order_id
-        order.payload = dict(metadata)
+        order.payload = payload
         if order.submitted_at is None:
             order.submitted_at = utcnow()
         session.flush()
@@ -387,7 +393,10 @@ class OmsStore:
         if not preserve_status:
             order.status = report.event_type
         order.broker_order_id = report.broker_order_id or order.broker_order_id
-        order.payload = dict(metadata)
+        payload = dict(metadata)
+        if report.event_type == "rejected" and report.reason:
+            payload["reject_reason"] = report.reason
+        order.payload = payload
         if order.submitted_at is None:
             order.submitted_at = report.reported_at
         return order

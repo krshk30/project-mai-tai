@@ -703,6 +703,16 @@ class SchwabV2Strategy:
             metadata={
                 "path": path_name,
                 "entry_price": f"{cur.close:.4f}",
+                # reference_price is consumed by the execution sink (the
+                # SimulatedBrokerAdapter fills at it; without it the order is
+                # rejected "missing reference_price"). v2 uses the signal bar
+                # CLOSE (== entry_price): deterministic and reproducible from
+                # stored bars, so live sim fills and the replay study agree by
+                # construction. Idealized by design (exact signal price, no
+                # slippage) — realism comes from the future tick-based slippage
+                # sink, not this field. This is execution metadata, NOT a gate;
+                # the entry decision above is unchanged.
+                "reference_price": f"{cur.close:.4f}",
                 "macd_value": f"{macd_line:.6f}",
                 "macd_signal": f"{signal_line:.6f}",
                 "macd_hist": f"{histogram:.6f}",
