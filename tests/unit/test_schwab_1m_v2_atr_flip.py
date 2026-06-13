@@ -1,0 +1,328 @@
+"""Track 1 — ATR-Flip (P3-B) v2 entry path tests.
+
+Load-bearing test = `test_atr_indicator_parity_vs_oracle`: it pins the production
+INCREMENTAL ATR state machine (`SchwabV2Strategy._update_atr_state`) against the
+parity-confirmed BATCH indicator from `analysis/atr_flip.py::compute_atr_trail`
+(the TOS replica the operator validated). The batch function is **vendored
+verbatim below** as `_oracle_compute_atr_trail` — the analysis module lives on a
+separate (held) branch and pulls DB/REST imports, so a frozen copy keeps this test
+self-contained and dependency-free. If the production port ever drifts from the
+validated math, this test fails. Provenance: analysis/atr_flip.py compute_atr_trail
++ _short_segments/extract_signals(variant="B") from analysis/path3_backtest.py.
+
+Other tests mirror test_v2_reference_price.py discipline: a REAL emit path drives
+engineered bars and feeds the strategy's OWN metadata (verbatim) through the
+SimulatedBrokerAdapter; nothing hand-injected.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from decimal import Decimal
+
+import pytest
+
+from project_mai_tai.broker_adapters.protocols import OrderRequest
+from project_mai_tai.broker_adapters.simulated import SimulatedBrokerAdapter
+from project_mai_tai.events import TradeIntentPayload
+from project_mai_tai.market_data.schwab_v2_rest_client import ChartBar
+from project_mai_tai.settings import Settings
+from project_mai_tai.strategy_core.schwab_1m_v2 import (
+    OHLCVBar,
+    SchwabV2Strategy,
+    SymbolState,
+)
+
+ATR_PERIOD = 5
+ATR_FACTOR = 3.5
+
+
+# ====================== FROZEN ORACLE (verbatim analysis/atr_flip.py) ==========
+# Trail kept UNROUNDED (the analysis _row rounded only for display; the internal
+# cur_trail it ratchets on is unrounded — we mirror the unrounded internal math
+# for a strict 1e-9 parity comparison).
+@dataclass
+class _OBar:
+    ts: int
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: int
+
+
+def _oracle_compute_atr_trail(bars, *, period=ATR_PERIOD, factor=ATR_FACTOR):
+    n = len(bars)
+    hl = [b.high - b.low for b in bars]
+
+    def sma(arr, i, p):
+        return sum(arr[i - p + 1:i + 1]) / p if i >= p - 1 else None
+
+    tr = [None] * n
+    for i in range(1, n):
+        s = sma(hl, i, period)
+        if s is None:
+            continue
+        prev, cur = bars[i - 1], bars[i]
+        hilo = min(hl[i], 1.5 * s)
+        href = (cur.high - prev.close) if cur.low <= prev.high \
+            else (cur.high - prev.close) - 0.5 * (cur.low - prev.high)
+        lref = (prev.close - cur.low) if cur.high >= prev.low \
+            else (prev.close - cur.low) - 0.5 * (prev.low - cur.high)
+        tr[i] = max(hilo, href, lref)
+
+    valid = [i for i in range(n) if tr[i] is not None]
+    w = [None] * n
+    if len(valid) >= period:
+        seed_idx = valid[:period]
+        prev_w = sum(tr[i] for i in seed_idx) / period
+        start = seed_idx[-1]
+        w[start] = prev_w
+        for i in range(start + 1, n):
+            if tr[i] is None:
+                continue
+            prev_w = prev_w + (tr[i] - prev_w) / period
+            w[i] = prev_w
+    loss = [factor * w[i] if w[i] is not None else None for i in range(n)]
+
+    rows = []
+    cur_state = None
+    cur_trail = None
+    age = 0
+    for i in range(n):
+        b = bars[i]
+        flip = None
+        if loss[i] is None:
+            rows.append({"trail": None, "state": None, "flip": None, "state_age": None})
+            continue
+        if cur_state is None:
+            cur_state, cur_trail, age = "long", b.close - loss[i], 0
+        else:
+            age += 1
+            if cur_state == "long":
+                if b.close > cur_trail:
+                    cur_trail = max(cur_trail, b.close - loss[i])
+                else:
+                    cur_state, cur_trail, flip, age = "short", b.close + loss[i], "SELL", 0
+            else:
+                if b.close < cur_trail:
+                    cur_trail = min(cur_trail, b.close + loss[i])
+                else:
+                    cur_state, cur_trail, flip, age = "long", b.close - loss[i], "BUY", 0
+        rows.append({"trail": cur_trail, "state": cur_state, "flip": flip, "state_age": age})
+    return rows
+
+
+def _oracle_b_signals(bars, rows):
+    """extract_signals(variant='B'): first HIGH>=prior-trail per short segment."""
+    n = len(bars)
+    # maximal short-state runs
+    segs, i = [], 0
+    while i < n:
+        if rows[i]["state"] == "short":
+            j = i
+            while j + 1 < n and rows[j + 1]["state"] == "short":
+                j += 1
+            segs.append((i, j))
+            i = j + 1
+        else:
+            i += 1
+    out = []
+    for (s, e) in segs:
+        for k in range(s + 1, e + 2):
+            if k >= n:
+                break
+            tp = rows[k - 1]["trail"]
+            if tp is not None and bars[k].high >= tp:
+                out.append((k, tp))
+                break
+    return out
+# ===============================================================================
+
+
+def _gen_session_bars(n: int, base_ms: int) -> list[tuple]:
+    """Deterministic single-session OHLCV. Every bar is RED (close <= open) so the
+    Paths-1/2 require_green_bar gate can never fire — isolating the ATR path. A
+    wide triangle wave (8.0..12.0, a 50% swing — penny-mover scale) clears the
+    ATRFactor-3.5 stop so the state flips long↔short repeatedly, and upper wicks
+    drive trail touches on the up-legs."""
+    bars = []
+    period = 24
+    for i in range(n):
+        phase = i % period
+        tri = (phase / 12.0) if phase <= 12 else (2.0 - phase / 12.0)   # 0..1..0
+        close = 8.0 + 4.0 * tri                            # 8.0 .. 12.0 .. 8.0
+        open_ = close + 0.06                               # RED bar (open > close)
+        high = max(open_, close) + 0.15 + 0.02 * (i % 5)   # wick up (drives touches)
+        low = min(open_, close) - 0.10
+        ts = base_ms + i * 60_000
+        bars.append((ts, round(open_, 4), round(high, 4), round(low, 4),
+                     round(close, 4), 10_000))
+    return bars
+
+
+def _mid_session_base_ms() -> int:
+    """A fixed ms safely inside one 04:00–20:00 ET session (no anchor crossing)."""
+    return int(datetime(2026, 6, 12, 15, 0, tzinfo=UTC).timestamp() * 1000)  # 11:00 ET
+
+
+# --------------------------------------------------------------------------- (1)
+
+def test_atr_indicator_parity_vs_oracle() -> None:
+    """THE load-bearing test: incremental production state == validated batch
+    oracle, bar for bar — trail (1e-9), state, state_age, flip — AND the set of
+    variant-B touch entries matches extract_signals('B') exactly (one per short
+    segment, at the correct trail level)."""
+    raw = _gen_session_bars(120, _mid_session_base_ms())
+    obars = [_OBar(*r) for r in raw]
+    rows = _oracle_compute_atr_trail(obars)
+    oracle_b = _oracle_b_signals(obars, rows)
+
+    strat = SchwabV2Strategy(Settings())
+    state = SymbolState(symbol="TEST")
+    touches: list[tuple[int, float]] = []
+    for idx, r in enumerate(raw):
+        ts, o, h, low, c, v = r
+        sig = strat._update_atr_state(state, OHLCVBar(ts, o, h, low, c, v))
+        exp = rows[idx]
+        if exp["trail"] is None:
+            assert sig is None, f"bar {idx}: oracle undefined but strategy emitted {sig}"
+            continue
+        assert sig is not None, f"bar {idx}: oracle defined but strategy None"
+        assert abs(sig["trail"] - exp["trail"]) < 1e-9, f"bar {idx} trail drift"
+        assert sig["state"] == exp["state"], f"bar {idx} state"
+        assert sig["state_age"] == exp["state_age"], f"bar {idx} age"
+        assert sig["flip"] == exp["flip"], f"bar {idx} flip"
+        if sig["touch"]:
+            touches.append((idx, sig["touch_price"]))
+
+    # touch parity: same entry bars, same trail levels (4dp, as emitted)
+    assert [i for i, _ in touches] == [i for i, _ in oracle_b], "B touch bar set drift"
+    for (si, sp), (oi, op) in zip(touches, oracle_b):
+        assert round(sp, 4) == round(op, 4), f"touch {si} price {sp} != oracle {op}"
+    assert len(oracle_b) >= 2, "fixture should exercise multiple short segments"
+
+
+# --------------------------------------------------------------------------- (2)
+
+def _build_short_then_fresh_touch(strat: SchwabV2Strategy, *, final_vol: int):
+    """135+ warmup RED bars that settle into a SHORT segment with no touch yet,
+    then a fresh final bar whose HIGH reaches the resting trail (a real B touch).
+    Returns (all_chartbars, trail_level T). Deterministic, computed via the real
+    indicator so the on_bar replay reproduces the same T."""
+    now_ms = int(datetime.now(UTC).timestamp() * 1000)
+    n_warm = 150
+    # Declining closes → state flips short early and stays short; small upper
+    # wicks stay below the (close+loss) trail so no touch fires during warmup.
+    warm = []
+    for i in range(n_warm):
+        close = 12.0 - 0.02 * i
+        open_ = close + 0.05                       # RED
+        high = close + 0.04                        # below trail → no warmup touch
+        low = close - 0.06
+        ts = now_ms - (n_warm - i) * 60_000
+        warm.append((ts, open_, high, low, close, 10_000))
+
+    # Replay warmup through the REAL indicator to read the resting trail T.
+    probe = SymbolState(symbol="WARM")
+    for (ts, o, h, low, c, v) in warm:
+        strat._update_atr_state(probe, OHLCVBar(ts, o, h, low, c, v))
+    assert probe.atr_state == "short", "warmup must end in a short segment"
+    assert not probe.atr_fired_in_short_seg, "no touch should have fired in warmup"
+    T = probe.atr_trail
+
+    # Fresh final bar: HIGH reaches T (touch), close stays < T and RED (no flip,
+    # Paths-1/2 blocked). volume per the caller.
+    final = (now_ms, T + 0.02, T + 0.05, T - 0.50, T - 0.20, final_vol)
+    raw = warm + [final]
+    chart = [ChartBar("TEST", o, h, low, c, v, ts) for (ts, o, h, low, c, v) in raw]
+    return chart, T
+
+
+@pytest.mark.asyncio
+async def test_atr_real_emit_path_fills_at_trail() -> None:
+    strat = SchwabV2Strategy(Settings())
+    strat._atr_enabled = True           # flag ON (default OFF ships dormant)
+    strat._atr_variant = "B"
+    chart, T = _build_short_then_fresh_touch(strat, final_vol=100_000)
+
+    draft = None
+    for cb in chart:
+        draft = strat.on_bar("TEST", cb)
+    assert draft is not None, "the fresh final-bar touch must emit"
+    assert draft.metadata["path"] == "ATR Flip"
+    assert draft.metadata["atr_variant"] == "B"
+    assert draft.quantity == Decimal("10")
+    ref = Decimal(draft.metadata["reference_price"])
+    assert ref == Decimal(f"{T:.4f}")          # fills at the touched trail level
+
+    # Strategy's OWN metadata (verbatim) must fill on the simulated adapter.
+    payload = TradeIntentPayload(
+        strategy_code="schwab_1m_v2", broker_account_name="paper:schwab_1m_v2",
+        symbol=draft.symbol, side=draft.side, quantity=draft.quantity,
+        intent_type=draft.intent_type, reason=draft.reason, metadata=dict(draft.metadata),
+    )
+    request = OrderRequest(
+        client_order_id="schwab_1m_v2-TEST-atr-1",
+        broker_account_name=payload.broker_account_name, strategy_code=payload.strategy_code,
+        symbol=payload.symbol, side=payload.side, intent_type=payload.intent_type,
+        quantity=payload.quantity, reason=payload.reason, metadata=dict(payload.metadata),
+    )
+    adapter = SimulatedBrokerAdapter()
+    reports = await adapter.submit_order(request)
+    types = {r.event_type for r in reports}
+    assert "filled" in types and "rejected" not in types
+    filled = next(r for r in reports if r.event_type == "filled")
+    assert filled.fill_price == ref
+
+
+# --------------------------------------------------------------------------- (3)
+
+def test_atr_dormant_when_flag_off() -> None:
+    """Flag OFF (default): the SAME fresh touch emits nothing — the indicator
+    state is computed but no intent fires."""
+    strat = SchwabV2Strategy(Settings())
+    assert strat._atr_enabled is False           # default ships dormant
+    chart, _T = _build_short_then_fresh_touch(strat, final_vol=100_000)
+    drafts = [strat.on_bar("TEST", cb) for cb in chart]
+    assert all(d is None for d in drafts), "dormant flag must emit nothing"
+    # but the indicator state IS warm (computed every bar)
+    assert strat.watchlist_state("TEST").atr_state in ("long", "short")
+
+
+def test_atr_on_does_not_perturb_paths_1_2() -> None:
+    """A genuine MACD-Cross signal emits byte-identical metadata whether the ATR
+    flag is off or on (precedence MACD>VWAP>ATR; write-disjoint state)."""
+    now_ms = int(datetime.now(UTC).timestamp() * 1000)   # shared so bar_time_ms matches
+
+    def drive(atr_on: bool):
+        strat = SchwabV2Strategy(Settings())
+        strat._atr_enabled = atr_on
+        n_flat = 135
+        for i in range(n_flat):
+            ts = now_ms - (n_flat - i + 1) * 60_000
+            strat.on_bar("TEST", ChartBar("TEST", 10.0, 10.0, 10.0, 10.0, 1000, ts))
+        final = ChartBar("TEST", 10.0, 11.0, 10.0, 11.0, 100_000, now_ms)
+        return strat.on_bar("TEST", final)
+
+    off = drive(False)
+    on = drive(True)
+    assert off is not None and on is not None
+    assert off.metadata["path"] == "MACD Cross" == on.metadata["path"]
+    assert off.metadata == on.metadata           # byte-identical
+    assert off.quantity == on.quantity
+
+
+# --------------------------------------------------------------------------- (5)
+
+def test_atr_liquidity_floor_is_the_only_filter() -> None:
+    """vol <= floor → no emit; vol > floor → emit. (Floor default 5000.)"""
+    strat_lo = SchwabV2Strategy(Settings())
+    strat_lo._atr_enabled = True
+    chart_lo, _ = _build_short_then_fresh_touch(strat_lo, final_vol=5000)   # == floor
+    assert [strat_lo.on_bar("TEST", cb) for cb in chart_lo][-1] is None
+
+    strat_hi = SchwabV2Strategy(Settings())
+    strat_hi._atr_enabled = True
+    chart_hi, _ = _build_short_then_fresh_touch(strat_hi, final_vol=5001)   # > floor
+    assert [strat_hi.on_bar("TEST", cb) for cb in chart_hi][-1] is not None
