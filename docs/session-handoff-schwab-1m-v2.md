@@ -13,6 +13,35 @@ reconsider — that's how regressions cross-contaminate.
 
 ## Status
 
+- **2026-06-13** — **Weekend build (3 tracks), all dormant/read-only, gated for review.**
+  - **Track 1 — ATR-Flip (P3-B) entry path: BUILT, PR #296 (branch `codex/v2-atr-flip-entry`,
+    HELD, not merged).** Third v2 entry path "ATR Flip" alongside Paths 1/2: variant B (intrabar
+    touch of the resting ATR trail) + liquidity floor (vol>5000) as the ONLY filter; variant A
+    default-off for live A/B. **Default flag OFF → ships dormant**, qty 10. Design (operator-
+    approved) `docs/schwab-1m-v2-atr-flip-entry-design.md`. Key call: **incremental ATR state on
+    `SymbolState`, reset at the 04:00-ET session anchor** (the 300-bar deque can't reach the anchor
+    mid-session, but `on_bar` sees every warmup+live bar → matches the validated session-sliced
+    backtest). Indicator = `analysis/atr_flip.py::compute_atr_trail` ported verbatim. ATR fields
+    write-disjoint from Paths 1/2; precedence MACD>VWAP>ATR; dormant=warm (computed every bar,
+    emits nothing until flag on). `reference_price` = the touched trail level. 5 tests pass incl.
+    the LOAD-BEARING `test_atr_indicator_parity_vs_oracle` (incremental == frozen verbatim oracle,
+    bar-for-bar). Settings: `…atr_flip_enabled/variant/quantity/vol_floor/period/factor/probe`.
+  - **Track 2 — v2↔OMS exits Step A SCOPING: shipped, PR #297 (`codex/v2-exit-scoping`, HELD).**
+    Read-only `docs/v2-exit-wiring-scoping.md` — maps the momentum-bot exit chain (order-events→
+    PositionTracker→ExitEngine→close/scale-intent, verified file:lines) and the v2 gap inventory
+    (no ExitEngine/PositionTracker/fill-binding/exit-config/eval-loop; not in the engine bot
+    registry). Three candidate wiring approaches laid out NEUTRALLY (no recommendation). **Step B
+    (choose the wiring) is the operator's next decision** — §6 open questions. Do NOT design/build
+    the integration yet.
+  - **Track 3 — tick capture activation: runbook CONFIRMED READY, no code, no flip.** All artifacts
+    present (migration `20260611_0007_market_ticks.py`, `scripts/prune_market_ticks.py`,
+    `scripts/replay_exit_from_ticks.py`, db models, flag). Activation runbook = `docs/v2-tick-
+    capture-design.md` §125-134. Monday market-hours attended flip only.
+  - **Deploy plan:** weekend after-close attended, all flags OFF (verify dormant). Monday (attended,
+    paper): flip tick-capture → (v2 exits if Track 2 lands) → ATR-Flip; watch live triggers. NO
+    credentials, paper throughout. **v2 still runs NO managed exits** (Track 2) — an ATR-Flip paper
+    position has nothing to close it until Track 2 lands; that's the top dependency.
+
 - **2026-05-26** — REST warmup window widened + data-flow watchdog shipped
   (PR #225, VPS `0650a99`, deployed 12:06 UTC). Fixes v2 going dark after the
   long weekend: the fixed `now-24h` warmup window returned empty Schwab
