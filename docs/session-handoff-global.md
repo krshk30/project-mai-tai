@@ -1,5 +1,13 @@
 # Session Handoff - Global
 
+### 🔴 TOP PRIORITY OPEN ITEM (2026-06-13) — schwab_1m_v2 RUNS NO MANAGED EXITS IN PRODUCTION. Above Path 3 + the re-score.
+
+**Discovered while extracting the exit ladder (#294).** `schwab_1m_v2` emits **open intents ONLY** and imports neither `ExitEngine` nor `PositionTracker`; its intent metadata carries **no exit/stop fields** (only `path/entry_price/reference_price/macd_*/...`). The full scale/floor/hard-stop/tier exit ladder runs in `strategy_engine_app.py` for the **momentum bots (macd_30s/schwab_1m/polygon_30s)** — **NOT for v2.** So a v2 position, once opened, has **no scale-outs, no breakeven floor, no −1.5% hard stop, no MACD/stoch exit** — nothing closes it. **An entry strategy with no exit management is not a complete system, and Monday's first sim FILL (#284) lands directly into this gap.** This outranks Path 3 and the re-score. Decide the exit design for v2 (wire the existing ExitEngine into the v2 service, or OMS-side management for v2 positions, or v2 emits scale/close intents) — design-first; until then v2 "trades" are entries with undefined exits. (Paper/sim today = no real risk, but the validation is incomplete without exits.)
+
+**Exit-ladder reference (#294, doc `docs/oms-exit-logic-reference.md`):** the canonical extraction — scale ladder (NORMAL +2%→50%, +4%-after→25% of remainder, fast +4%→75%; DEGRADED variant), floor ratchet (peak-based, ratchet-up: 1%→BE, 2%→+0.5%, 3%→+1.5%, 4%+→trail peak−1.5%), hard stop (entry−1.5% fixed; strategy-side + OMS broker native stop guard, session-bounded), tier MACD/stoch exits (bar-close, stricter at higher tier), no EOD/time exit, precedence hard>floor>scale>tier, quote-vs-bar cadence, file+function map. **The system scalps +2–4% partials with a breakeven floor — it never holds for +10%, so the Phase-1 +10% lens was the wrong test** (its "cost-negative" verdict was a lens artifact).
+
+**Re-score backtest (next, read-only):** replay this exact ladder over stored bars for Path 1 / Path 2 / Path 3 (all ATR variants) → realized P&L per path. Caveats baked in: models the OLD-bot ladder applied to these entries (NOT what v2 does today — a positive result = "these entries + this ladder would pay," not "v2 is profitable"); both-hit (scale tier vs stop in one candle) → bounded ranges; idealized fills + MORE exit fills (partials) = more cost surface → Phase-2 measured-spread decisive; directional-not-statistical. **Path 3 (#293) HELD — Phase-1 work intact.**
+
 ### 2026-06-12 weekend — v2 ENTRY-CRITERIA reference doc shipped (#291); strategy-rule-modification workstream OPENING
 
 **`docs/schwab-1m-v2-entry-criteria.md` (#291, merged `5c76b25`)** — code-faithful reference of v2's
