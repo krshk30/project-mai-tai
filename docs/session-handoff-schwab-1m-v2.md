@@ -13,9 +13,28 @@ reconsider — that's how regressions cross-contaminate.
 
 ## Status
 
-- **2026-06-13** — **Weekend build (3 tracks), all dormant/read-only, gated for review.**
-  - **Track 1 — ATR-Flip (P3-B) entry path: BUILT, PR #296 (branch `codex/v2-atr-flip-entry`,
-    HELD, not merged).** Third v2 entry path "ATR Flip" alongside Paths 1/2: variant B (intrabar
+- **2026-06-13 23:14 UTC — ✅ Track 1 DEPLOYED DORMANT (attended, weekend, after-close).** PR #296
+  admin-squash-merged (main `d6baf67`); VPS pulled `4540645`→`d6baf67` (ff-only, the 4 prior commits
+  were docs-only); **v2-only restart** at 23:14:29 (OMS/strategy/control untouched — verified their
+  start timestamps unchanged). **Dormancy verified:** deployed `atr_flip_enabled=False` (code default,
+  NO env override — running config is OFF); **zero "ATR Flip" intents, zero `[V2-ATR-PROBE]`** (ATR
+  probe unset; only MACD probe is `*`); ATR code ran clean on warmup replay (CAST 1509 / VSME 4120
+  bars) with **no errors/tracebacks post-restart**; Paths 1/2 unchanged (`[V2-MACD-PROBE]` + C2
+  `[V2-PENDING-CROSS-SET]` computing normally — not ATR); streamer reconnected (`[V2-WS-LOGIN-OK]` +
+  SUBS CAST,VSME 23:14:37-38); token mtime advancing 22:44→23:14 (control-service refresher, untouched);
+  NRestarts=0; CYN protected-env intact. (A stale 2026-06-10 `[V2-LOOP-DEGRADED]`/heartbeat traceback
+  surfaced in an undated grep — confirmed STALE by date-filtering; nothing post-restart.)
+  - **⚠️ CARRY TO MONDAY PRE-FLIGHT — v2 holding 2 UNMANAGED paper positions (the no-exits gap):**
+    `paper:schwab_1m_v2` **CAST 10 (filled Fri 06-12 23:25 UTC) + VSME 10 (filled Fri 20:53 UTC)** —
+    Paths-1/2 entries with no managed exit (Track 2 / TOP open item) sitting open over the weekend.
+    Deliberately NOT flattened (operator call): they're the live no-exits-gap evidence for the Track-2
+    priority, and flattening is out-of-scope state mutation. **Monday: confirm NO double-open on
+    CAST/VSME after the restart (re-entry gate held — `pos_qty=10` re-read confirmed at deploy), and
+    decide flatten timing as part of Track-2 work.** Account-flat deploy-gate was waived for these
+    (static sim holdings, restart provably doesn't touch them; gate's intent = no live in-flight
+    orders, satisfied).
+  - **Track 1 — ATR-Flip (P3-B) entry path: BUILT, PR #296 (MERGED `d6baf67`; deployed dormant — see
+    above).** Third v2 entry path "ATR Flip" alongside Paths 1/2: variant B (intrabar
     touch of the resting ATR trail) + liquidity floor (vol>5000) as the ONLY filter; variant A
     default-off for live A/B. **Default flag OFF → ships dormant**, qty 10. Design (operator-
     approved) `docs/schwab-1m-v2-atr-flip-entry-design.md`. Key call: **incremental ATR state on
