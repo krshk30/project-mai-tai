@@ -215,6 +215,24 @@ class Settings(BaseSettings):
     # MACD/EMA/VWAP/stoch against TOS for the same minute. Diagnostic-only
     # — never changes strategy behavior. Default empty = no probe.
     strategy_schwab_1m_v2_macd_probe_symbols: str = ""
+    # --- Track 1: ATR-Flip touch entry (P3-B) — third v2 entry path. Default OFF
+    # → ships DORMANT (the indicator state is computed every bar to stay warm, but
+    # NO "ATR Flip" intent is emitted until this flag is on). Variant B (intrabar
+    # touch of the resting trail) is the validated path; variant A (confirmed BUY
+    # flip, entry at close) is kept default-off for live A/B comparison. The
+    # liquidity floor (vol_floor) is the ONLY filter — none of the Paths 1/2 gates
+    # apply (operator's "just the script"). Indicator math = analysis/atr_flip.py
+    # (modified TR, ATRPeriod 5, ATRFactor 3.5, Wilders), ported verbatim. See
+    # docs/schwab-1m-v2-atr-flip-entry-design.md.
+    strategy_schwab_1m_v2_atr_flip_enabled: bool = False
+    strategy_schwab_1m_v2_atr_flip_variant: str = "B"          # "A" or "B"
+    strategy_schwab_1m_v2_atr_flip_quantity: int = 10          # live-paper size
+    strategy_schwab_1m_v2_atr_flip_vol_floor: int = 5000       # the only filter
+    strategy_schwab_1m_v2_atr_flip_period: int = 5             # ATRPeriod (parity)
+    strategy_schwab_1m_v2_atr_flip_factor: float = 3.5         # ATRFactor (parity)
+    # CSV of symbols (or "*") for which `[V2-ATR-PROBE]` logs each evaluated bar's
+    # ATR state (tr/loss/trail/state/touch). Diagnostic-only; default empty = off.
+    strategy_schwab_1m_v2_atr_flip_probe_symbols: str = ""
     strategy_macd_30s_reclaim_excluded_symbols: str = "JEM,CYCN,BFRG,UCAR,BBGI"
     # Maximum age (seconds) for the `scanner_confirmed_last_nonempty` snapshot
     # to be eligible for startup restore. Older snapshots are skipped, so

@@ -160,6 +160,24 @@ class SymbolState:
     pending_path_macd: bool = False
     pending_path_vwap: bool = False
     pending_cross_bar_ts_ms: int = 0
+    # --- Track 1: ATR-Flip touch entry (P3-B). All ATR-scoped, reset at the
+    # 04:00-ET session anchor (the same anchor VWAP uses). These are
+    # WRITE-DISJOINT from every field above — the ATR path never reads or
+    # mutates prev_macd/prev_signal/prev_close/prev_vwap, the VWAP
+    # accumulators, or the pending-cross fields; it only shares the read-only
+    # `bars` deque and the `position_qty`/`cooldown_bars_remaining` gates. See
+    # docs/schwab-1m-v2-atr-flip-entry-design.md §3.
+    atr_session_anchor_ms: int = 0
+    atr_hl: Deque[float] = field(default_factory=lambda: deque(maxlen=5))
+    atr_prev_bar: OHLCVBar | None = None       # previous SESSION bar (TR needs it)
+    atr_wilders: float | None = None           # running Wilders(TR, period)
+    atr_tr_seed: list = field(default_factory=list)  # first ≤period session TRs (SMA seed)
+    atr_state: str | None = None               # 'long' | 'short' | None
+    atr_trail: float | None = None             # current trail level
+    atr_prev_trail: float | None = None        # prior bar's trail (touch compares HIGH vs this)
+    atr_prev_state: str | None = None          # prior bar's state (touch only while short)
+    atr_state_age: int = 0                     # bars since last flip
+    atr_fired_in_short_seg: bool = False       # one-entry-per-short-segment guard (offline B `break`)
 
 
 @dataclass
@@ -305,6 +323,36 @@ class SchwabV2Strategy:
             if self._macd_probe_all or not raw_probe
             else {s.strip().upper() for s in raw_probe.split(",") if s.strip()}
         )
+        # --- Track 1: ATR-Flip config (read from settings; see settings.py). The
+        # indicator state is computed every bar to stay warm; emit is gated by the
+        # enable flag, so OFF = dormant (state computed, nothing emitted).
+        self._atr_enabled = bool(
+            getattr(self.settings, "strategy_schwab_1m_v2_atr_flip_enabled", False)
+        )
+        self._atr_variant = str(
+            getattr(self.settings, "strategy_schwab_1m_v2_atr_flip_variant", "B") or "B"
+        ).strip().upper()
+        self._atr_qty = max(
+            1, int(getattr(self.settings, "strategy_schwab_1m_v2_atr_flip_quantity", 10))
+        )
+        self._atr_vol_floor = int(
+            getattr(self.settings, "strategy_schwab_1m_v2_atr_flip_vol_floor", 5000)
+        )
+        self._atr_period = max(
+            1, int(getattr(self.settings, "strategy_schwab_1m_v2_atr_flip_period", 5))
+        )
+        self._atr_factor = float(
+            getattr(self.settings, "strategy_schwab_1m_v2_atr_flip_factor", 3.5)
+        )
+        raw_atr_probe = str(
+            getattr(self.settings, "strategy_schwab_1m_v2_atr_flip_probe_symbols", "") or ""
+        ).strip()
+        self._atr_probe_all = raw_atr_probe == "*"
+        self._atr_probe_symbols: set[str] = (
+            set()
+            if self._atr_probe_all or not raw_atr_probe
+            else {s.strip().upper() for s in raw_atr_probe.split(",") if s.strip()}
+        )
 
     def watchlist_state(self, symbol: str) -> SymbolState:
         state = self._symbol_states.get(symbol)
@@ -397,6 +445,199 @@ class SchwabV2Strategy:
             return state.vwap_sum_pv / state.vwap_sum_v
         return fallback
 
+    # ------------------------------------------------------ ATR Flip (Track 1)
+
+    def _update_atr_state(self, state: SymbolState, cur: OHLCVBar) -> dict | None:
+        """Advance the ATR-trailing-stop flip state by one bar; return this
+        bar's signal {touch, touch_price, flip, trail, loss, state, state_age}
+        or None until the trail is defined.
+
+        Incremental port of analysis/atr_flip.py::compute_atr_trail (modified
+        true range, Wilders(period), ATRFactor). State resets at the 04:00-ET
+        session anchor — the SAME anchor VWAP uses — so the live series matches
+        the validated session-sliced backtest. Pinned to that offline function
+        as an oracle by the determinism test. Only mutates atr_* fields (write-
+        disjoint from Paths 1/2; see docs/schwab-1m-v2-atr-flip-entry-design.md).
+        """
+        period = self._atr_period
+        factor = self._atr_factor
+
+        # Session reset (mirror VWAP's anchor roll → reproduces fetch_day's slice).
+        anchor = session_start_ts_ms(cur.timestamp_ms)
+        if anchor != state.atr_session_anchor_ms:
+            state.atr_session_anchor_ms = anchor
+            state.atr_hl = deque(maxlen=period)
+            state.atr_prev_bar = None
+            state.atr_wilders = None
+            state.atr_tr_seed = []
+            state.atr_state = None
+            state.atr_trail = None
+            state.atr_prev_trail = None
+            state.atr_prev_state = None
+            state.atr_state_age = 0
+            state.atr_fired_in_short_seg = False
+
+        # --- modified true range (needs prior SESSION bar + SMA(high-low, period)) ---
+        hl_cur = cur.high - cur.low
+        state.atr_hl.append(hl_cur)
+        prev = state.atr_prev_bar
+        tr: float | None = None
+        if len(state.atr_hl) == period and prev is not None:
+            s = sum(state.atr_hl) / period
+            hilo = min(hl_cur, 1.5 * s)
+            href = (
+                (cur.high - prev.close)
+                if cur.low <= prev.high
+                else (cur.high - prev.close) - 0.5 * (cur.low - prev.high)
+            )
+            lref = (
+                (prev.close - cur.low)
+                if cur.high >= prev.low
+                else (prev.close - cur.low) - 0.5 * (prev.low - cur.high)
+            )
+            tr = max(hilo, href, lref)
+
+        # --- Wilders(tr, period) seeded with the SMA of the first `period` valid TRs ---
+        if tr is not None:
+            if state.atr_wilders is None:
+                state.atr_tr_seed.append(tr)
+                if len(state.atr_tr_seed) == period:
+                    state.atr_wilders = sum(state.atr_tr_seed) / period
+            else:
+                state.atr_wilders = state.atr_wilders + (tr - state.atr_wilders) / period
+        loss = factor * state.atr_wilders if state.atr_wilders is not None else None
+
+        # Roll prev bar AFTER computing TR (next bar's TR needs THIS bar as prev).
+        state.atr_prev_bar = cur
+
+        if loss is None:
+            return None  # trail not defined yet
+
+        # --- touch detection (variant B): while the PRIOR bar was short, the
+        # first bar whose HIGH reaches the prior resting trail. Bar-close
+        # approximation of the intrabar stop-buy; entry = that trail level.
+        # One entry per short segment (offline B `break`).
+        touch = False
+        touch_price: float | None = None
+        if (
+            state.atr_prev_state == "short"
+            and state.atr_prev_trail is not None
+            and cur.high >= state.atr_prev_trail
+            and not state.atr_fired_in_short_seg
+        ):
+            touch = True
+            touch_price = state.atr_prev_trail
+            state.atr_fired_in_short_seg = True
+
+        # --- flip state machine (close vs PRIOR trail) ---
+        flip: str | None = None
+        close = cur.close
+        if state.atr_state is None:
+            state.atr_state, state.atr_trail, state.atr_state_age = "long", close - loss, 0
+        else:
+            state.atr_state_age += 1
+            if state.atr_state == "long":
+                if close > state.atr_trail:
+                    state.atr_trail = max(state.atr_trail, close - loss)
+                else:
+                    state.atr_state, state.atr_trail = "short", close + loss
+                    flip, state.atr_state_age = "SELL", 0
+                    state.atr_fired_in_short_seg = False  # a fresh short segment opens
+            else:  # short
+                if close < state.atr_trail:
+                    state.atr_trail = min(state.atr_trail, close + loss)
+                else:
+                    state.atr_state, state.atr_trail = "long", close - loss
+                    flip, state.atr_state_age = "BUY", 0
+
+        # Roll prev trail/state to THIS bar's values for the next bar's touch test.
+        state.atr_prev_trail = state.atr_trail
+        state.atr_prev_state = state.atr_state
+
+        if self._atr_probe_all or state.symbol in self._atr_probe_symbols:
+            logger.info(
+                "[V2-ATR-PROBE] sym=%s ts_ms=%d close=%.6f high=%.6f low=%.6f "
+                "tr=%s loss=%.6f trail=%.6f state=%s age=%d touch=%s flip=%s "
+                "vol=%d fired_seg=%s",
+                state.symbol, cur.timestamp_ms, cur.close, cur.high, cur.low,
+                "none" if tr is None else f"{tr:.6f}", loss, state.atr_trail,
+                state.atr_state, state.atr_state_age, str(touch).lower(),
+                flip or "none", int(cur.volume),
+                str(state.atr_fired_in_short_seg).lower(),
+            )
+
+        return {
+            "touch": touch,
+            "touch_price": touch_price,
+            "flip": flip,
+            "trail": state.atr_trail,
+            "loss": loss,
+            "state": state.atr_state,
+            "state_age": state.atr_state_age,
+        }
+
+    def _maybe_atr_emit(
+        self,
+        state: SymbolState,
+        cur: OHLCVBar,
+        atr_signal: dict | None,
+        bar_is_fresh: bool,
+    ) -> TradeIntentDraft | None:
+        """Emit an "ATR Flip" open intent if the flag is on and this bar produced
+        an entry signal for the configured variant. Reached only when flat + no
+        cooldown + Paths 1/2 didn't fire (shared gates). The liquidity floor is
+        the ONLY filter (operator's "just the script"). OFF flag = dormant: the
+        indicator state above is still computed every bar, but nothing emits."""
+        if not self._atr_enabled or atr_signal is None:
+            return None
+        if not bar_is_fresh:
+            return None  # never fire on a replayed historical touch
+        if cur.volume <= self._atr_vol_floor:
+            return None  # the only filter: bar volume > floor
+
+        # Variant B (default, validated): intrabar touch of the resting trail;
+        # entry at that trail level (== the backtest's `tp`, by construction, so
+        # live sim and replay agree). Variant A (default-off, for live A/B
+        # comparison): confirmed BUY flip; entry at the flip bar close.
+        if self._atr_variant == "A":
+            if atr_signal.get("flip") != "BUY":
+                return None
+            entry = float(cur.close)
+        else:  # "B"
+            if not atr_signal.get("touch") or atr_signal.get("touch_price") is None:
+                return None
+            entry = float(atr_signal["touch_price"])
+
+        state.last_entry_price = entry
+        trail = atr_signal.get("trail")
+        loss = atr_signal.get("loss")
+        return TradeIntentDraft(
+            symbol=state.symbol,
+            side="buy",
+            intent_type="open",
+            quantity=Decimal(str(self._atr_qty)),
+            reason=f"schwab_1m_v2 ATR Flip {self._atr_variant}",
+            metadata={
+                "path": "ATR Flip",
+                "entry_price": f"{entry:.4f}",
+                # reference_price = the fill level (SimulatedBrokerAdapter fills
+                # at it). Variant B fills at the touched trail (idealized, no
+                # slippage) — identical to the backtest entry by construction;
+                # variant A fills at the flip bar close. See design §4.
+                "reference_price": f"{entry:.4f}",
+                "atr_variant": self._atr_variant,
+                "atr_trail": f"{trail:.4f}" if trail is not None else "",
+                "atr_loss": f"{loss:.6f}" if loss is not None else "",
+                "atr_state": str(atr_signal.get("state")),
+                "atr_state_age": str(atr_signal.get("state_age")),
+                "bar_high": f"{cur.high:.4f}",
+                "volume": str(cur.volume),
+                "source": "schwab_1m_v2",
+                "strategy_version": STRATEGY_VERSION,
+                "bar_time_ms": str(cur.timestamp_ms),
+            },
+        )
+
     # ------------------------------------------------------------- evaluate
 
     def _evaluate_completed_bar(
@@ -407,6 +648,16 @@ class SchwabV2Strategy:
         # state would double-fire otherwise).
         if not is_new_bar:
             return None
+
+        # Track 1: update the ATR-Flip indicator state on EVERY new bar, BEFORE
+        # the MACD-warmup guard below. The ATR indicator has its own short
+        # warmup (~period+1 session bars) and must stay continuous + warm
+        # independent of the 135-bar MACD settling allowance, so a Monday
+        # flag-flip fires on a correct series immediately. This only mutates the
+        # write-disjoint atr_* fields (no effect on Paths 1/2); the resulting
+        # touch/flip signal is consumed in the emit region below, and only when
+        # the enable flag is on. Returns the per-bar signal (or None).
+        atr_signal = self._update_atr_state(state, state.bars[-1])
 
         # Bootstrap: need enough history for the slowest indicator chain
         # PLUS the settling allowance — see `macd_warmup_settling_bars`
@@ -686,7 +937,11 @@ class SchwabV2Strategy:
         if state.cooldown_bars_remaining > 0:
             return None
         if not (path_macd or path_vwap):
-            return None
+            # Paths 1/2 did not fire. Consider the ATR-Flip path (precedence
+            # MACD > VWAP > ATR Flip — ATR is only reached when neither fired,
+            # so it can never alter a Paths-1/2 outcome). The flat + no-cooldown
+            # gates above are SHARED, so an ATR entry respects them identically.
+            return self._maybe_atr_emit(state, cur, atr_signal, bar_is_fresh)
 
         path_name = "MACD Cross" if path_macd else "VWAP Breakout"
         quantity = max(
