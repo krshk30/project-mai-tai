@@ -1,5 +1,47 @@
 # Session Handoff - Global
 
+### 📅 MONDAY 2026-06-15 PLAN (Track-2 Phase-2 slice-3 trigger fix is the morning's real deliverable)
+
+**Context:** Slices 1-3 of the v2 OMS exit ladder are BUILT + HELD (PRs #305/#306/#308; all behind
+`oms_v2_exit_management_enabled`=OFF, nothing merged/deployed). The slice-3 paper-isolation survival
+gate is GREEN. **But a probe found a TRIGGER-SOURCE FLAW:** slice 3's hard stop triggers on the
+**bid/ask QUOTE**, which is far too sparse for v2's pennies (Schwab LEVELONE archive 2026-06-08:
+~1 quote/min, **p95 gaps 45-122s**; TRADES are 3-10× denser + move-aligned). **Operator-LOCKED fix:**
+move the v2 hard stop off the bid onto the **freshest TRADE** (freshest-trade-wins: existing Massive
+`_latest_trades_by_symbol` → Track-3 Schwab fallback for thin/OTC). Floor/scale stay quote-or-trade.
+
+**Phase 1 — Pre-flight (~4:00 AM ET):** standard health + the weekend's two deploys: Phase-1 shared-lib
+survived overnight under a live session (exits computing, no errors, NRestarts=0); two-deploy weekend
+survival (Track-1 v2 Sat + Phase-1 engine Sun); **08:00 ET roll** clean + token-refresher cadence
+advancing + UniqueViolations→0; **no double-open on CAST/VSME** post-restart (decide flatten timing as
+Track-2 work, not ad hoc); watch for the first v2 sim fill.
+
+**Phase 2 — The Massive-feed probe (~8:07 AM ET) — THE DECIDING MEASUREMENT (scheduled cron, read-only).**
+Moved from 4:30→8:07 ET so v2's symbols are actually printing (gapper burst = valid coverage window).
+~10-min sample of `mai_tai:market-data`: per-symbol quote vs trade rates + gaps, cross-referenced to
+v2's LIVE watchlist for **Massive coverage**. Decides: existing Massive trade cache sufficient, OR
+Track-3 Schwab needed for thin/OTC names. Massive caveats: `include_otc=false` (OTC invisible),
+api.massive.com timeouts, stream empty on weekends (must run live). **Backup:** if Claude's session
+didn't survive the weekend, operator says "run the probe" in the 8:00-9:00 AM ET window.
+
+**Phase 3 — Tick-capture activation (market hours, attended):** flip the tick-capture flag (#282,
+deployed dormant); verify LEVELONE subs + ticks landing + bar-persist latency unaffected. This is the
+Track-3 source the slice-3 fix MAY need — useful to have live before deciding the trade source.
+
+**Phase 4 — Revise slice-3 trigger (after the probe):** hard stop → freshest trade (locked). Probe
+decides source: Massive dense+covers → trigger off existing `_latest_trades_by_symbol` (cheap, PR held);
+Massive thin → Track-3 Schwab feed path (bigger — propose design, hold). Floor/scale unchanged.
+Operator reviews the diff.
+
+**Phase 5 — Slice-3 deploy path (later window, NOT rushed):** only after the trigger fix is reviewed →
+merge stack (1→2→3) → deploy dormant (flag OFF, attended after-close, verify inert) → re-confirm the
+paper-isolation gate in production → attended market-hours flag-flip to watch a real v2 position managed
+end-to-end on simulated. Gated on the trigger fix + isolation re-proof, not a clock.
+
+**Critical path:** Phase-1 health → 08:00 roll → 08:07 ET Massive probe (the decision) → tick activation
+→ revise slice-3 trigger → operator review → deploy path on its own window. (Probe scheduled as a
+session-only cron `040047b4`, ~12:07 UTC; operator leaving the session open so it fires automatically.)
+
 ### ✅ 2026-06-14 — Track-2 Phase-1 (shared ExitEngine lib) DEPLOYED + VERIFIED CLEAN in production
 
 Behavior-neutral extraction of the exit ladder (`ExitEngine` + `Position` math + `TradingConfig`) into a
