@@ -1,7 +1,20 @@
 from __future__ import annotations
 
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 from project_mai_tai.exit_logic.config import TradingConfig
-from project_mai_tai.strategy_core.time_utils import now_eastern_str
+
+_EASTERN_TZ = ZoneInfo("America/New_York")
+
+
+def _now_eastern_str() -> str:
+    """Local replica of strategy_core.time_utils.now_eastern_str (identical output)
+    so exit_logic stays a PURE LEAF — importing it must never pull in strategy_core,
+    which would create a circular import (strategy_core/__init__ → position_tracker →
+    exit_logic.position). Enforced by the leaf guard in test_exit_logic_parity.py.
+    """
+    return datetime.now(_EASTERN_TZ).strftime("%I:%M:%S %p ET")
 
 
 class Position:
@@ -22,7 +35,7 @@ class Position:
         self.entry_price = entry_price
         self.quantity = quantity
         self.original_quantity = quantity
-        self.entry_time = entry_time or now_eastern_str()
+        self.entry_time = entry_time or _now_eastern_str()
         self.entry_path = path
         self.scale_profile = str(scale_profile or "NORMAL").upper()
 

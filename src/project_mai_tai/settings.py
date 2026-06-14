@@ -413,6 +413,14 @@ class Settings(BaseSettings):
     webull_account_id: str | None = None
     oms_broker_sync_interval_seconds: int = 5
     oms_working_order_refresh_seconds: int = 5
+    # Track-2 Phase-2: OMS-side managed exits for schwab_1m_v2 positions. The
+    # SINGLE flag across all Phase-2 slices. Default OFF → ships DORMANT: the OMS
+    # does NOT create/update `oms_managed_positions` rows for v2 fills and emits
+    # no v2 exit orders; behavior is identical to today (v2 positions stay
+    # unmanaged). Slice 1 (this) = position-state plumbing only, no sells. The
+    # sell-emitting risk legs (slice 3) gate additionally on the paper-isolation
+    # re-proof. See docs/v2-exit-phase2-slice1-position-state-design.md.
+    oms_v2_exit_management_enabled: bool = False
     # Stuck-intent cancellation (2026-05-18 incident: pre-market intents
     # for AUUD/QNCX/SBFM kept retrying for 4.5 hours and 400+ attempts
     # each because the OMS had no max-age cap, no quote-drift sanity, and

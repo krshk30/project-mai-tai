@@ -899,6 +899,65 @@ class OmsRiskService:
             stop=stop,
         )
 
+    def _apply_managed_position_after_fill(
+        self,
+        *,
+        session: Session,
+        strategy_code: str,
+        broker_account_name: str,
+        symbol: str,
+        side: str,
+        intent_type: str,
+        quantity: Decimal,
+        price: Decimal,
+        metadata: dict[str, str],
+    ) -> None:
+        """Track-2 Phase-2 Slice-1: maintain the OMS-owned `oms_managed_positions`
+        ladder state from v2's own fills. SOLE WRITER — only this OMS path writes
+        the table. Slice 1 does NOT emit exits; it only records/closes state.
+        Gated OFF by default (`oms_v2_exit_management_enabled`) → fully dormant.
+        """
+        if not bool(getattr(self.settings, "oms_v2_exit_management_enabled", False)):
+            return
+        if strategy_code != "schwab_1m_v2":
+            return
+        s = str(side).lower()
+        it = str(intent_type).lower()
+        if s == "buy" and it == "open":
+            existing = self.store.get_open_managed_position(
+                session, broker_account_name=broker_account_name, symbol=symbol
+            )
+            if existing is not None:
+                return  # idempotent: already managing this symbol
+            entry_path = str(metadata.get("path", "")).strip()
+            self.store.create_managed_position(
+                session,
+                strategy_code=strategy_code,
+                broker_account_name=broker_account_name,
+                symbol=symbol,
+                entry_price=price,
+                quantity=int(quantity),
+                entry_path=entry_path,
+                config_name="make_v2_variant",
+            )
+            logger.info(
+                "[OMS-V2-MANAGED-OPEN] sym=%s acct=%s qty=%s entry=%s path=%s",
+                symbol, broker_account_name, int(quantity), price, entry_path,
+            )
+        elif s == "sell":
+            # External flatten (slice 1 emits no sells itself): keep the row honest.
+            row = self.store.get_open_managed_position(
+                session, broker_account_name=broker_account_name, symbol=symbol
+            )
+            if row is None:
+                return
+            row.current_quantity = max(0, int(row.current_quantity) - int(quantity))
+            if row.current_quantity <= 0:
+                self.store.close_managed_position(session, row)
+                logger.info("[OMS-V2-MANAGED-CLOSE] sym=%s acct=%s flat", symbol, broker_account_name)
+            else:
+                session.flush()
+
     async def _has_active_native_stop_guard_order(
         self,
         *,
@@ -1069,6 +1128,17 @@ class OmsRiskService:
                                 intent_type=intent.intent_type,
                                 metadata={str(k): str(v) for k, v in (order.payload or {}).items()},
                             )
+                        )
+                        self._apply_managed_position_after_fill(
+                            session=session,
+                            strategy_code=strategy.code if strategy is not None else "",
+                            broker_account_name=account.name,
+                            symbol=order.symbol,
+                            side=order.side,
+                            intent_type=intent.intent_type,
+                            quantity=fill.quantity,
+                            price=fill.price,
+                            metadata={str(k): str(v) for k, v in (order.payload or {}).items()},
                         )
 
                     intent_status = report.event_type
@@ -1868,6 +1938,17 @@ class OmsRiskService:
                         intent_type=request.intent_type,
                         metadata=dict(request.metadata),
                     )
+                )
+                self._apply_managed_position_after_fill(
+                    session=session,
+                    strategy_code=intent_event.payload.strategy_code,
+                    broker_account_name=intent_event.payload.broker_account_name,
+                    symbol=request.symbol,
+                    side=request.side,
+                    intent_type=request.intent_type,
+                    quantity=fill.quantity,
+                    price=fill.price,
+                    metadata=dict(request.metadata),
                 )
 
             intent_status = report.event_type
