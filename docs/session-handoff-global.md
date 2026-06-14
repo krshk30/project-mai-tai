@@ -1,5 +1,21 @@
 # Session Handoff - Global
 
+### ✅ 2026-06-14 — Track-2 Phase-1 (shared ExitEngine lib) DEPLOYED + VERIFIED CLEAN in production
+
+Behavior-neutral extraction of the exit ladder (`ExitEngine` + `Position` math + `TradingConfig`) into a
+neutral leaf package `project_mai_tai/exit_logic/`, with `strategy_core` re-export shims. PR #301 (`380b465`),
+attended weekend deploy, **strategy-engine restart only** (oms/control/v2 untouched; v2 ATR still dormant;
+token refresher untouched). Pre-deploy gate GREEN: after-close, momentum bots flat (macd_30s/schwab_1m
+disabled, polygon shadow). **Choreography all green:** (3) pre-restart import check in the VPS venv —
+`strategy_core.X is exit_logic.X` True/True/True, `ExitEngine.__module__==exit_logic.engine` — cleared the
+only realistic failure mode BEFORE touching the engine; (4) restart strategy-engine only; (5) **LIVE GOLDEN
+PARITY: PASS** — the full golden battery (captured on clean main pre-move) reproduces byte-for-byte in the
+prod venv; engine active, fresh heartbeat, `snapshot batch processed` cycling (main loop alive, not zombied).
+Rollback was revert+restart (unused). **Phase 2 (OMS-side v2 exits: `oms_managed_positions`, per-quote risk
+legs, gateway-consumer bridge, paper-isolation re-proof — design #299) is now UNBLOCKED — all new code on
+the frozen lib.** Held design PRs: #299 (Phase-2 design), #300 (Phase-1 design). Note: the 3 pre-existing
+`_evaluate_paths` test failures (backlog above) are unrelated and were verified pre-existing.
+
 ### 🔴 TOP PRIORITY OPEN ITEM (2026-06-13) — schwab_1m_v2 RUNS NO MANAGED EXITS IN PRODUCTION. Above Path 3 + the re-score.
 
 **Discovered while extracting the exit ladder (#294).** `schwab_1m_v2` emits **open intents ONLY** and imports neither `ExitEngine` nor `PositionTracker`; its intent metadata carries **no exit/stop fields** (only `path/entry_price/reference_price/macd_*/...`). The full scale/floor/hard-stop/tier exit ladder runs in `strategy_engine_app.py` for the **momentum bots (macd_30s/schwab_1m/polygon_30s)** — **NOT for v2.** So a v2 position, once opened, has **no scale-outs, no breakeven floor, no −1.5% hard stop, no MACD/stoch exit** — nothing closes it. **An entry strategy with no exit management is not a complete system, and Monday's first sim FILL (#284) lands directly into this gap.** This outranks Path 3 and the re-score. Decide the exit design for v2 (wire the existing ExitEngine into the v2 service, or OMS-side management for v2 positions, or v2 emits scale/close intents) — design-first; until then v2 "trades" are entries with undefined exits. (Paper/sim today = no real risk, but the validation is incomplete without exits.)
