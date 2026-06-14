@@ -807,3 +807,18 @@ class OmsStore:
         row.status = "closed"
         row.current_quantity = 0
         session.flush()
+
+    def list_open_managed_symbols(
+        self,
+        session: Session,
+        *,
+        broker_account_name: str,
+    ) -> set[str]:
+        """Open managed-position symbols for an account (slice-3 startup rehydrate)."""
+        rows = session.scalars(
+            select(OmsManagedPosition.symbol).where(
+                OmsManagedPosition.broker_account_name == broker_account_name,
+                OmsManagedPosition.status == "open",
+            )
+        ).all()
+        return {str(s) for s in rows}
