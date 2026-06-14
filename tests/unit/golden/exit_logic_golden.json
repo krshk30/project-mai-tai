@@ -1,0 +1,1715 @@
+{
+  "apply_scale_after_PCT2": {
+    "bars_since_entry": 0,
+    "current_price": 10.2,
+    "current_profit_pct": 2.0,
+    "entry_price": 10.0,
+    "entry_time": "2026-01-01 10:00:00",
+    "floor_pct": 0.0,
+    "floor_price": 10.0,
+    "original_quantity": 100,
+    "peak_profit_pct": 2.0,
+    "quantity": 50,
+    "scale_pnl": 9.999999999999964,
+    "scale_profile": "NORMAL",
+    "scales_done": [
+      "PCT2"
+    ],
+    "ticker": "TEST",
+    "tier": 2
+  },
+  "check_exit_cases": [
+    {
+      "engine": "base",
+      "indicators": {
+        "stoch_k_below_exit": true,
+        "stoch_k_falling": true
+      },
+      "signal": {
+        "action": "CLOSE",
+        "price": 10.069999999999999,
+        "profit_pct": 0.6999999999999851,
+        "reason": "STOCHK_TIER1",
+        "ticker": "TEST",
+        "tier": 1
+      },
+      "tier": 1
+    },
+    {
+      "engine": "base",
+      "indicators": {
+        "macd_cross_below": true
+      },
+      "signal": {
+        "action": "CLOSE",
+        "price": 10.069999999999999,
+        "profit_pct": 0.6999999999999851,
+        "reason": "MACD_BEAR_T1",
+        "ticker": "TEST",
+        "tier": 1
+      },
+      "tier": 1
+    },
+    {
+      "engine": "base",
+      "indicators": {
+        "price_above_ema9": true,
+        "stoch_k_below_exit": true,
+        "stoch_k_falling": true
+      },
+      "signal": {
+        "action": "CLOSE",
+        "price": 10.069999999999999,
+        "profit_pct": 0.6999999999999851,
+        "reason": "STOCHK_TIER1",
+        "ticker": "TEST",
+        "tier": 1
+      },
+      "tier": 1
+    },
+    {
+      "engine": "base",
+      "indicators": {
+        "price_above_ema9": false,
+        "stoch_k_below_exit": true,
+        "stoch_k_falling": true
+      },
+      "signal": {
+        "action": "CLOSE",
+        "price": 10.069999999999999,
+        "profit_pct": 0.6999999999999851,
+        "reason": "STOCHK_TIER1",
+        "ticker": "TEST",
+        "tier": 1
+      },
+      "tier": 1
+    },
+    {
+      "engine": "base",
+      "indicators": {
+        "stoch_k_below_exit": false,
+        "stoch_k_falling": true
+      },
+      "signal": null,
+      "tier": 1
+    },
+    {
+      "engine": "base",
+      "indicators": {
+        "stoch_d": 35,
+        "stoch_k": 50,
+        "stoch_k_below_exit": true,
+        "stoch_k_falling": true,
+        "stoch_k_prev": 40,
+        "stoch_k_prev2": 30
+      },
+      "signal": {
+        "action": "CLOSE",
+        "price": 10.069999999999999,
+        "profit_pct": 0.6999999999999851,
+        "reason": "STOCHK_TIER1",
+        "ticker": "TEST",
+        "tier": 1
+      },
+      "tier": 1
+    },
+    {
+      "engine": "base",
+      "indicators": {},
+      "signal": null,
+      "tier": 1
+    },
+    {
+      "engine": "30s_health",
+      "indicators": {
+        "stoch_k_below_exit": true,
+        "stoch_k_falling": true
+      },
+      "signal": {
+        "action": "CLOSE",
+        "price": 10.069999999999999,
+        "profit_pct": 0.6999999999999851,
+        "reason": "STOCHK_TIER1",
+        "ticker": "TEST",
+        "tier": 1
+      },
+      "tier": 1
+    },
+    {
+      "engine": "30s_health",
+      "indicators": {
+        "macd_cross_below": true
+      },
+      "signal": {
+        "action": "CLOSE",
+        "price": 10.069999999999999,
+        "profit_pct": 0.6999999999999851,
+        "reason": "MACD_BEAR_T1",
+        "ticker": "TEST",
+        "tier": 1
+      },
+      "tier": 1
+    },
+    {
+      "engine": "30s_health",
+      "indicators": {
+        "price_above_ema9": true,
+        "stoch_k_below_exit": true,
+        "stoch_k_falling": true
+      },
+      "signal": {
+        "action": "CLOSE",
+        "price": 10.069999999999999,
+        "profit_pct": 0.6999999999999851,
+        "reason": "STOCHK_TIER1",
+        "ticker": "TEST",
+        "tier": 1
+      },
+      "tier": 1
+    },
+    {
+      "engine": "30s_health",
+      "indicators": {
+        "price_above_ema9": false,
+        "stoch_k_below_exit": true,
+        "stoch_k_falling": true
+      },
+      "signal": {
+        "action": "CLOSE",
+        "price": 10.069999999999999,
+        "profit_pct": 0.6999999999999851,
+        "reason": "STOCHK_TIER1",
+        "ticker": "TEST",
+        "tier": 1
+      },
+      "tier": 1
+    },
+    {
+      "engine": "30s_health",
+      "indicators": {
+        "stoch_k_below_exit": false,
+        "stoch_k_falling": true
+      },
+      "signal": null,
+      "tier": 1
+    },
+    {
+      "engine": "30s_health",
+      "indicators": {
+        "stoch_d": 35,
+        "stoch_k": 50,
+        "stoch_k_below_exit": true,
+        "stoch_k_falling": true,
+        "stoch_k_prev": 40,
+        "stoch_k_prev2": 30
+      },
+      "signal": null,
+      "tier": 1
+    },
+    {
+      "engine": "30s_health",
+      "indicators": {},
+      "signal": null,
+      "tier": 1
+    },
+    {
+      "engine": "base",
+      "indicators": {
+        "stoch_k_below_exit": true,
+        "stoch_k_falling": true
+      },
+      "signal": {
+        "action": "CLOSE",
+        "price": 10.069999999999999,
+        "profit_pct": 0.6999999999999851,
+        "reason": "STOCHK_TIER2",
+        "ticker": "TEST",
+        "tier": 2
+      },
+      "tier": 2
+    },
+    {
+      "engine": "base",
+      "indicators": {
+        "macd_cross_below": true
+      },
+      "signal": {
+        "action": "CLOSE",
+        "price": 10.069999999999999,
+        "profit_pct": 0.6999999999999851,
+        "reason": "MACD_BEAR_T2",
+        "ticker": "TEST",
+        "tier": 2
+      },
+      "tier": 2
+    },
+    {
+      "engine": "base",
+      "indicators": {
+        "price_above_ema9": true,
+        "stoch_k_below_exit": true,
+        "stoch_k_falling": true
+      },
+      "signal": null,
+      "tier": 2
+    },
+    {
+      "engine": "base",
+      "indicators": {
+        "price_above_ema9": false,
+        "stoch_k_below_exit": true,
+        "stoch_k_falling": true
+      },
+      "signal": {
+        "action": "CLOSE",
+        "price": 10.069999999999999,
+        "profit_pct": 0.6999999999999851,
+        "reason": "STOCHK_TIER2",
+        "ticker": "TEST",
+        "tier": 2
+      },
+      "tier": 2
+    },
+    {
+      "engine": "base",
+      "indicators": {
+        "stoch_k_below_exit": false,
+        "stoch_k_falling": true
+      },
+      "signal": null,
+      "tier": 2
+    },
+    {
+      "engine": "base",
+      "indicators": {
+        "stoch_d": 35,
+        "stoch_k": 50,
+        "stoch_k_below_exit": true,
+        "stoch_k_falling": true,
+        "stoch_k_prev": 40,
+        "stoch_k_prev2": 30
+      },
+      "signal": {
+        "action": "CLOSE",
+        "price": 10.069999999999999,
+        "profit_pct": 0.6999999999999851,
+        "reason": "STOCHK_TIER2",
+        "ticker": "TEST",
+        "tier": 2
+      },
+      "tier": 2
+    },
+    {
+      "engine": "base",
+      "indicators": {},
+      "signal": null,
+      "tier": 2
+    },
+    {
+      "engine": "30s_health",
+      "indicators": {
+        "stoch_k_below_exit": true,
+        "stoch_k_falling": true
+      },
+      "signal": {
+        "action": "CLOSE",
+        "price": 10.069999999999999,
+        "profit_pct": 0.6999999999999851,
+        "reason": "STOCHK_TIER2",
+        "ticker": "TEST",
+        "tier": 2
+      },
+      "tier": 2
+    },
+    {
+      "engine": "30s_health",
+      "indicators": {
+        "macd_cross_below": true
+      },
+      "signal": {
+        "action": "CLOSE",
+        "price": 10.069999999999999,
+        "profit_pct": 0.6999999999999851,
+        "reason": "MACD_BEAR_T2",
+        "ticker": "TEST",
+        "tier": 2
+      },
+      "tier": 2
+    },
+    {
+      "engine": "30s_health",
+      "indicators": {
+        "price_above_ema9": true,
+        "stoch_k_below_exit": true,
+        "stoch_k_falling": true
+      },
+      "signal": null,
+      "tier": 2
+    },
+    {
+      "engine": "30s_health",
+      "indicators": {
+        "price_above_ema9": false,
+        "stoch_k_below_exit": true,
+        "stoch_k_falling": true
+      },
+      "signal": {
+        "action": "CLOSE",
+        "price": 10.069999999999999,
+        "profit_pct": 0.6999999999999851,
+        "reason": "STOCHK_TIER2",
+        "ticker": "TEST",
+        "tier": 2
+      },
+      "tier": 2
+    },
+    {
+      "engine": "30s_health",
+      "indicators": {
+        "stoch_k_below_exit": false,
+        "stoch_k_falling": true
+      },
+      "signal": null,
+      "tier": 2
+    },
+    {
+      "engine": "30s_health",
+      "indicators": {
+        "stoch_d": 35,
+        "stoch_k": 50,
+        "stoch_k_below_exit": true,
+        "stoch_k_falling": true,
+        "stoch_k_prev": 40,
+        "stoch_k_prev2": 30
+      },
+      "signal": null,
+      "tier": 2
+    },
+    {
+      "engine": "30s_health",
+      "indicators": {},
+      "signal": null,
+      "tier": 2
+    },
+    {
+      "engine": "base",
+      "indicators": {
+        "stoch_k_below_exit": true,
+        "stoch_k_falling": true
+      },
+      "signal": {
+        "action": "CLOSE",
+        "price": 10.069999999999999,
+        "profit_pct": 0.6999999999999851,
+        "reason": "FLOOR_BREACH",
+        "ticker": "TEST",
+        "tier": 3
+      },
+      "tier": 3
+    },
+    {
+      "engine": "base",
+      "indicators": {
+        "macd_cross_below": true
+      },
+      "signal": {
+        "action": "CLOSE",
+        "price": 10.069999999999999,
+        "profit_pct": 0.6999999999999851,
+        "reason": "FLOOR_BREACH",
+        "ticker": "TEST",
+        "tier": 3
+      },
+      "tier": 3
+    },
+    {
+      "engine": "base",
+      "indicators": {
+        "price_above_ema9": true,
+        "stoch_k_below_exit": true,
+        "stoch_k_falling": true
+      },
+      "signal": {
+        "action": "CLOSE",
+        "price": 10.069999999999999,
+        "profit_pct": 0.6999999999999851,
+        "reason": "FLOOR_BREACH",
+        "ticker": "TEST",
+        "tier": 3
+      },
+      "tier": 3
+    },
+    {
+      "engine": "base",
+      "indicators": {
+        "price_above_ema9": false,
+        "stoch_k_below_exit": true,
+        "stoch_k_falling": true
+      },
+      "signal": {
+        "action": "CLOSE",
+        "price": 10.069999999999999,
+        "profit_pct": 0.6999999999999851,
+        "reason": "FLOOR_BREACH",
+        "ticker": "TEST",
+        "tier": 3
+      },
+      "tier": 3
+    },
+    {
+      "engine": "base",
+      "indicators": {
+        "stoch_k_below_exit": false,
+        "stoch_k_falling": true
+      },
+      "signal": {
+        "action": "CLOSE",
+        "price": 10.069999999999999,
+        "profit_pct": 0.6999999999999851,
+        "reason": "FLOOR_BREACH",
+        "ticker": "TEST",
+        "tier": 3
+      },
+      "tier": 3
+    },
+    {
+      "engine": "base",
+      "indicators": {
+        "stoch_d": 35,
+        "stoch_k": 50,
+        "stoch_k_below_exit": true,
+        "stoch_k_falling": true,
+        "stoch_k_prev": 40,
+        "stoch_k_prev2": 30
+      },
+      "signal": {
+        "action": "CLOSE",
+        "price": 10.069999999999999,
+        "profit_pct": 0.6999999999999851,
+        "reason": "FLOOR_BREACH",
+        "ticker": "TEST",
+        "tier": 3
+      },
+      "tier": 3
+    },
+    {
+      "engine": "base",
+      "indicators": {},
+      "signal": null,
+      "tier": 3
+    },
+    {
+      "engine": "30s_health",
+      "indicators": {
+        "stoch_k_below_exit": true,
+        "stoch_k_falling": true
+      },
+      "signal": {
+        "action": "CLOSE",
+        "price": 10.069999999999999,
+        "profit_pct": 0.6999999999999851,
+        "reason": "FLOOR_BREACH",
+        "ticker": "TEST",
+        "tier": 3
+      },
+      "tier": 3
+    },
+    {
+      "engine": "30s_health",
+      "indicators": {
+        "macd_cross_below": true
+      },
+      "signal": {
+        "action": "CLOSE",
+        "price": 10.069999999999999,
+        "profit_pct": 0.6999999999999851,
+        "reason": "FLOOR_BREACH",
+        "ticker": "TEST",
+        "tier": 3
+      },
+      "tier": 3
+    },
+    {
+      "engine": "30s_health",
+      "indicators": {
+        "price_above_ema9": true,
+        "stoch_k_below_exit": true,
+        "stoch_k_falling": true
+      },
+      "signal": {
+        "action": "CLOSE",
+        "price": 10.069999999999999,
+        "profit_pct": 0.6999999999999851,
+        "reason": "FLOOR_BREACH",
+        "ticker": "TEST",
+        "tier": 3
+      },
+      "tier": 3
+    },
+    {
+      "engine": "30s_health",
+      "indicators": {
+        "price_above_ema9": false,
+        "stoch_k_below_exit": true,
+        "stoch_k_falling": true
+      },
+      "signal": {
+        "action": "CLOSE",
+        "price": 10.069999999999999,
+        "profit_pct": 0.6999999999999851,
+        "reason": "FLOOR_BREACH",
+        "ticker": "TEST",
+        "tier": 3
+      },
+      "tier": 3
+    },
+    {
+      "engine": "30s_health",
+      "indicators": {
+        "stoch_k_below_exit": false,
+        "stoch_k_falling": true
+      },
+      "signal": {
+        "action": "CLOSE",
+        "price": 10.069999999999999,
+        "profit_pct": 0.6999999999999851,
+        "reason": "FLOOR_BREACH",
+        "ticker": "TEST",
+        "tier": 3
+      },
+      "tier": 3
+    },
+    {
+      "engine": "30s_health",
+      "indicators": {
+        "stoch_d": 35,
+        "stoch_k": 50,
+        "stoch_k_below_exit": true,
+        "stoch_k_falling": true,
+        "stoch_k_prev": 40,
+        "stoch_k_prev2": 30
+      },
+      "signal": {
+        "action": "CLOSE",
+        "price": 10.069999999999999,
+        "profit_pct": 0.6999999999999851,
+        "reason": "FLOOR_BREACH",
+        "ticker": "TEST",
+        "tier": 3
+      },
+      "tier": 3
+    },
+    {
+      "engine": "30s_health",
+      "indicators": {},
+      "signal": null,
+      "tier": 3
+    }
+  ],
+  "check_hard_stop_cases": [
+    {
+      "price": 9.86,
+      "signal": null
+    },
+    {
+      "price": 9.85,
+      "signal": {
+        "action": "CLOSE",
+        "price": 9.85,
+        "profit_pct": -1.5000000000000036,
+        "reason": "HARD_STOP",
+        "ticker": "TEST",
+        "tier": 1
+      }
+    },
+    {
+      "price": 9.84,
+      "signal": {
+        "action": "CLOSE",
+        "price": 9.84,
+        "profit_pct": -1.6000000000000014,
+        "reason": "HARD_STOP",
+        "ticker": "TEST",
+        "tier": 1
+      }
+    },
+    {
+      "price": 10.0,
+      "signal": null
+    }
+  ],
+  "check_intrabar_exit_cases": [
+    {
+      "case": "floor_breach",
+      "signal": null
+    },
+    {
+      "case": "scale_PCT2",
+      "signal": null
+    },
+    {
+      "case": "none",
+      "signal": null
+    }
+  ],
+  "get_scale_action_cases": [
+    {
+      "action": null,
+      "profile": "NORMAL",
+      "profit_pct": 0.5,
+      "scales_done": []
+    },
+    {
+      "action": null,
+      "profile": "NORMAL",
+      "profit_pct": 0.5,
+      "scales_done": [
+        "PCT2"
+      ]
+    },
+    {
+      "action": null,
+      "profile": "NORMAL",
+      "profit_pct": 0.5,
+      "scales_done": [
+        "FAST4"
+      ]
+    },
+    {
+      "action": null,
+      "profile": "NORMAL",
+      "profit_pct": 0.5,
+      "scales_done": [
+        "PCT1"
+      ]
+    },
+    {
+      "action": null,
+      "profile": "NORMAL",
+      "profit_pct": 0.5,
+      "scales_done": [
+        "PCT2",
+        "PCT4_AFTER2"
+      ]
+    },
+    {
+      "action": null,
+      "profile": "NORMAL",
+      "profit_pct": 1.0,
+      "scales_done": []
+    },
+    {
+      "action": null,
+      "profile": "NORMAL",
+      "profit_pct": 1.0,
+      "scales_done": [
+        "PCT2"
+      ]
+    },
+    {
+      "action": null,
+      "profile": "NORMAL",
+      "profit_pct": 1.0,
+      "scales_done": [
+        "FAST4"
+      ]
+    },
+    {
+      "action": null,
+      "profile": "NORMAL",
+      "profit_pct": 1.0,
+      "scales_done": [
+        "PCT1"
+      ]
+    },
+    {
+      "action": null,
+      "profile": "NORMAL",
+      "profit_pct": 1.0,
+      "scales_done": [
+        "PCT2",
+        "PCT4_AFTER2"
+      ]
+    },
+    {
+      "action": null,
+      "profile": "NORMAL",
+      "profit_pct": 1.5,
+      "scales_done": []
+    },
+    {
+      "action": null,
+      "profile": "NORMAL",
+      "profit_pct": 1.5,
+      "scales_done": [
+        "PCT2"
+      ]
+    },
+    {
+      "action": null,
+      "profile": "NORMAL",
+      "profit_pct": 1.5,
+      "scales_done": [
+        "FAST4"
+      ]
+    },
+    {
+      "action": null,
+      "profile": "NORMAL",
+      "profit_pct": 1.5,
+      "scales_done": [
+        "PCT1"
+      ]
+    },
+    {
+      "action": null,
+      "profile": "NORMAL",
+      "profit_pct": 1.5,
+      "scales_done": [
+        "PCT2",
+        "PCT4_AFTER2"
+      ]
+    },
+    {
+      "action": null,
+      "profile": "NORMAL",
+      "profit_pct": 2.0,
+      "scales_done": []
+    },
+    {
+      "action": null,
+      "profile": "NORMAL",
+      "profit_pct": 2.0,
+      "scales_done": [
+        "PCT2"
+      ]
+    },
+    {
+      "action": null,
+      "profile": "NORMAL",
+      "profit_pct": 2.0,
+      "scales_done": [
+        "FAST4"
+      ]
+    },
+    {
+      "action": null,
+      "profile": "NORMAL",
+      "profit_pct": 2.0,
+      "scales_done": [
+        "PCT1"
+      ]
+    },
+    {
+      "action": null,
+      "profile": "NORMAL",
+      "profit_pct": 2.0,
+      "scales_done": [
+        "PCT2",
+        "PCT4_AFTER2"
+      ]
+    },
+    {
+      "action": {
+        "level": "PCT2",
+        "sell_pct": 50.0,
+        "sell_qty": 50
+      },
+      "profile": "NORMAL",
+      "profit_pct": 3.0,
+      "scales_done": []
+    },
+    {
+      "action": null,
+      "profile": "NORMAL",
+      "profit_pct": 3.0,
+      "scales_done": [
+        "PCT2"
+      ]
+    },
+    {
+      "action": null,
+      "profile": "NORMAL",
+      "profit_pct": 3.0,
+      "scales_done": [
+        "FAST4"
+      ]
+    },
+    {
+      "action": {
+        "level": "PCT2",
+        "sell_pct": 50.0,
+        "sell_qty": 50
+      },
+      "profile": "NORMAL",
+      "profit_pct": 3.0,
+      "scales_done": [
+        "PCT1"
+      ]
+    },
+    {
+      "action": null,
+      "profile": "NORMAL",
+      "profit_pct": 3.0,
+      "scales_done": [
+        "PCT2",
+        "PCT4_AFTER2"
+      ]
+    },
+    {
+      "action": {
+        "level": "FAST4",
+        "sell_pct": 75.0,
+        "sell_qty": 75
+      },
+      "profile": "NORMAL",
+      "profit_pct": 4.0,
+      "scales_done": []
+    },
+    {
+      "action": {
+        "level": "PCT4_AFTER2",
+        "sell_pct": 25.0,
+        "sell_qty": 25
+      },
+      "profile": "NORMAL",
+      "profit_pct": 4.0,
+      "scales_done": [
+        "PCT2"
+      ]
+    },
+    {
+      "action": null,
+      "profile": "NORMAL",
+      "profit_pct": 4.0,
+      "scales_done": [
+        "FAST4"
+      ]
+    },
+    {
+      "action": {
+        "level": "FAST4",
+        "sell_pct": 75.0,
+        "sell_qty": 75
+      },
+      "profile": "NORMAL",
+      "profit_pct": 4.0,
+      "scales_done": [
+        "PCT1"
+      ]
+    },
+    {
+      "action": null,
+      "profile": "NORMAL",
+      "profit_pct": 4.0,
+      "scales_done": [
+        "PCT2",
+        "PCT4_AFTER2"
+      ]
+    },
+    {
+      "action": {
+        "level": "FAST4",
+        "sell_pct": 75.0,
+        "sell_qty": 75
+      },
+      "profile": "NORMAL",
+      "profit_pct": 5.0,
+      "scales_done": []
+    },
+    {
+      "action": {
+        "level": "PCT4_AFTER2",
+        "sell_pct": 25.0,
+        "sell_qty": 25
+      },
+      "profile": "NORMAL",
+      "profit_pct": 5.0,
+      "scales_done": [
+        "PCT2"
+      ]
+    },
+    {
+      "action": null,
+      "profile": "NORMAL",
+      "profit_pct": 5.0,
+      "scales_done": [
+        "FAST4"
+      ]
+    },
+    {
+      "action": {
+        "level": "FAST4",
+        "sell_pct": 75.0,
+        "sell_qty": 75
+      },
+      "profile": "NORMAL",
+      "profit_pct": 5.0,
+      "scales_done": [
+        "PCT1"
+      ]
+    },
+    {
+      "action": null,
+      "profile": "NORMAL",
+      "profit_pct": 5.0,
+      "scales_done": [
+        "PCT2",
+        "PCT4_AFTER2"
+      ]
+    },
+    {
+      "action": null,
+      "profile": "DEGRADED",
+      "profit_pct": 0.5,
+      "scales_done": []
+    },
+    {
+      "action": null,
+      "profile": "DEGRADED",
+      "profit_pct": 0.5,
+      "scales_done": [
+        "PCT2"
+      ]
+    },
+    {
+      "action": null,
+      "profile": "DEGRADED",
+      "profit_pct": 0.5,
+      "scales_done": [
+        "FAST4"
+      ]
+    },
+    {
+      "action": null,
+      "profile": "DEGRADED",
+      "profit_pct": 0.5,
+      "scales_done": [
+        "PCT1"
+      ]
+    },
+    {
+      "action": null,
+      "profile": "DEGRADED",
+      "profit_pct": 0.5,
+      "scales_done": [
+        "PCT2",
+        "PCT4_AFTER2"
+      ]
+    },
+    {
+      "action": null,
+      "profile": "DEGRADED",
+      "profit_pct": 1.0,
+      "scales_done": []
+    },
+    {
+      "action": null,
+      "profile": "DEGRADED",
+      "profit_pct": 1.0,
+      "scales_done": [
+        "PCT2"
+      ]
+    },
+    {
+      "action": null,
+      "profile": "DEGRADED",
+      "profit_pct": 1.0,
+      "scales_done": [
+        "FAST4"
+      ]
+    },
+    {
+      "action": null,
+      "profile": "DEGRADED",
+      "profit_pct": 1.0,
+      "scales_done": [
+        "PCT1"
+      ]
+    },
+    {
+      "action": null,
+      "profile": "DEGRADED",
+      "profit_pct": 1.0,
+      "scales_done": [
+        "PCT2",
+        "PCT4_AFTER2"
+      ]
+    },
+    {
+      "action": {
+        "level": "PCT1",
+        "sell_pct": 25.0,
+        "sell_qty": 25
+      },
+      "profile": "DEGRADED",
+      "profit_pct": 1.5,
+      "scales_done": []
+    },
+    {
+      "action": {
+        "level": "PCT1",
+        "sell_pct": 25.0,
+        "sell_qty": 25
+      },
+      "profile": "DEGRADED",
+      "profit_pct": 1.5,
+      "scales_done": [
+        "PCT2"
+      ]
+    },
+    {
+      "action": {
+        "level": "PCT1",
+        "sell_pct": 25.0,
+        "sell_qty": 25
+      },
+      "profile": "DEGRADED",
+      "profit_pct": 1.5,
+      "scales_done": [
+        "FAST4"
+      ]
+    },
+    {
+      "action": null,
+      "profile": "DEGRADED",
+      "profit_pct": 1.5,
+      "scales_done": [
+        "PCT1"
+      ]
+    },
+    {
+      "action": {
+        "level": "PCT1",
+        "sell_pct": 25.0,
+        "sell_qty": 25
+      },
+      "profile": "DEGRADED",
+      "profit_pct": 1.5,
+      "scales_done": [
+        "PCT2",
+        "PCT4_AFTER2"
+      ]
+    },
+    {
+      "action": {
+        "level": "PCT1",
+        "sell_pct": 25.0,
+        "sell_qty": 25
+      },
+      "profile": "DEGRADED",
+      "profit_pct": 2.0,
+      "scales_done": []
+    },
+    {
+      "action": {
+        "level": "PCT1",
+        "sell_pct": 25.0,
+        "sell_qty": 25
+      },
+      "profile": "DEGRADED",
+      "profit_pct": 2.0,
+      "scales_done": [
+        "PCT2"
+      ]
+    },
+    {
+      "action": {
+        "level": "PCT1",
+        "sell_pct": 25.0,
+        "sell_qty": 25
+      },
+      "profile": "DEGRADED",
+      "profit_pct": 2.0,
+      "scales_done": [
+        "FAST4"
+      ]
+    },
+    {
+      "action": null,
+      "profile": "DEGRADED",
+      "profit_pct": 2.0,
+      "scales_done": [
+        "PCT1"
+      ]
+    },
+    {
+      "action": {
+        "level": "PCT1",
+        "sell_pct": 25.0,
+        "sell_qty": 25
+      },
+      "profile": "DEGRADED",
+      "profit_pct": 2.0,
+      "scales_done": [
+        "PCT2",
+        "PCT4_AFTER2"
+      ]
+    },
+    {
+      "action": {
+        "level": "PCT1",
+        "sell_pct": 25.0,
+        "sell_qty": 25
+      },
+      "profile": "DEGRADED",
+      "profit_pct": 3.0,
+      "scales_done": []
+    },
+    {
+      "action": {
+        "level": "PCT1",
+        "sell_pct": 25.0,
+        "sell_qty": 25
+      },
+      "profile": "DEGRADED",
+      "profit_pct": 3.0,
+      "scales_done": [
+        "PCT2"
+      ]
+    },
+    {
+      "action": {
+        "level": "PCT1",
+        "sell_pct": 25.0,
+        "sell_qty": 25
+      },
+      "profile": "DEGRADED",
+      "profit_pct": 3.0,
+      "scales_done": [
+        "FAST4"
+      ]
+    },
+    {
+      "action": {
+        "level": "PCT2",
+        "sell_pct": 25.0,
+        "sell_qty": 25
+      },
+      "profile": "DEGRADED",
+      "profit_pct": 3.0,
+      "scales_done": [
+        "PCT1"
+      ]
+    },
+    {
+      "action": {
+        "level": "PCT1",
+        "sell_pct": 25.0,
+        "sell_qty": 25
+      },
+      "profile": "DEGRADED",
+      "profit_pct": 3.0,
+      "scales_done": [
+        "PCT2",
+        "PCT4_AFTER2"
+      ]
+    },
+    {
+      "action": {
+        "level": "PCT1",
+        "sell_pct": 25.0,
+        "sell_qty": 25
+      },
+      "profile": "DEGRADED",
+      "profit_pct": 4.0,
+      "scales_done": []
+    },
+    {
+      "action": {
+        "level": "PCT1",
+        "sell_pct": 25.0,
+        "sell_qty": 25
+      },
+      "profile": "DEGRADED",
+      "profit_pct": 4.0,
+      "scales_done": [
+        "PCT2"
+      ]
+    },
+    {
+      "action": {
+        "level": "PCT1",
+        "sell_pct": 25.0,
+        "sell_qty": 25
+      },
+      "profile": "DEGRADED",
+      "profit_pct": 4.0,
+      "scales_done": [
+        "FAST4"
+      ]
+    },
+    {
+      "action": {
+        "level": "PCT2",
+        "sell_pct": 25.0,
+        "sell_qty": 25
+      },
+      "profile": "DEGRADED",
+      "profit_pct": 4.0,
+      "scales_done": [
+        "PCT1"
+      ]
+    },
+    {
+      "action": {
+        "level": "PCT1",
+        "sell_pct": 25.0,
+        "sell_qty": 25
+      },
+      "profile": "DEGRADED",
+      "profit_pct": 4.0,
+      "scales_done": [
+        "PCT2",
+        "PCT4_AFTER2"
+      ]
+    },
+    {
+      "action": {
+        "level": "PCT1",
+        "sell_pct": 25.0,
+        "sell_qty": 25
+      },
+      "profile": "DEGRADED",
+      "profit_pct": 5.0,
+      "scales_done": []
+    },
+    {
+      "action": {
+        "level": "PCT1",
+        "sell_pct": 25.0,
+        "sell_qty": 25
+      },
+      "profile": "DEGRADED",
+      "profit_pct": 5.0,
+      "scales_done": [
+        "PCT2"
+      ]
+    },
+    {
+      "action": {
+        "level": "PCT1",
+        "sell_pct": 25.0,
+        "sell_qty": 25
+      },
+      "profile": "DEGRADED",
+      "profit_pct": 5.0,
+      "scales_done": [
+        "FAST4"
+      ]
+    },
+    {
+      "action": {
+        "level": "PCT2",
+        "sell_pct": 25.0,
+        "sell_qty": 25
+      },
+      "profile": "DEGRADED",
+      "profit_pct": 5.0,
+      "scales_done": [
+        "PCT1"
+      ]
+    },
+    {
+      "action": {
+        "level": "PCT1",
+        "sell_pct": 25.0,
+        "sell_qty": 25
+      },
+      "profile": "DEGRADED",
+      "profit_pct": 5.0,
+      "scales_done": [
+        "PCT2",
+        "PCT4_AFTER2"
+      ]
+    }
+  ],
+  "is_floor_breached_cases": [
+    {
+      "breached": false,
+      "floor_pct": 0.0,
+      "floor_price": 10.0,
+      "now_pct": 2.0,
+      "peak_pct": 2.0
+    },
+    {
+      "breached": false,
+      "floor_pct": 0.0,
+      "floor_price": 10.0,
+      "now_pct": 0.4,
+      "peak_pct": 2.0
+    },
+    {
+      "breached": false,
+      "floor_pct": 0.0,
+      "floor_price": 10.0,
+      "now_pct": 0.6,
+      "peak_pct": 2.0
+    },
+    {
+      "breached": false,
+      "floor_pct": 2.5000000000000036,
+      "floor_price": 10.250000000000002,
+      "now_pct": 2.6,
+      "peak_pct": 4.0
+    },
+    {
+      "breached": true,
+      "floor_pct": 2.5000000000000036,
+      "floor_price": 10.250000000000002,
+      "now_pct": 2.4,
+      "peak_pct": 4.0
+    },
+    {
+      "breached": false,
+      "floor_pct": -999.0,
+      "floor_price": 0.0,
+      "now_pct": 0.0,
+      "peak_pct": 0.5
+    }
+  ],
+  "update_price_series_NORMAL": [
+    {
+      "bars_since_entry": 0,
+      "current_price": 10.049999999999999,
+      "current_profit_pct": 0.5,
+      "entry_price": 10.0,
+      "entry_time": "2026-01-01 10:00:00",
+      "floor_pct": null,
+      "floor_price": null,
+      "in_pct": 0.5,
+      "original_quantity": 100,
+      "peak_profit_pct": 0.5,
+      "quantity": 100,
+      "scale_profile": "NORMAL",
+      "scales_done": [],
+      "ticker": "TEST",
+      "tier": 1
+    },
+    {
+      "bars_since_entry": 0,
+      "current_price": 10.1,
+      "current_profit_pct": 1.0,
+      "entry_price": 10.0,
+      "entry_time": "2026-01-01 10:00:00",
+      "floor_pct": null,
+      "floor_price": null,
+      "in_pct": 1.0,
+      "original_quantity": 100,
+      "peak_profit_pct": 1.0,
+      "quantity": 100,
+      "scale_profile": "NORMAL",
+      "scales_done": [],
+      "ticker": "TEST",
+      "tier": 1
+    },
+    {
+      "bars_since_entry": 0,
+      "current_price": 10.149999999999999,
+      "current_profit_pct": 1.5,
+      "entry_price": 10.0,
+      "entry_time": "2026-01-01 10:00:00",
+      "floor_pct": 0.0,
+      "floor_price": 10.0,
+      "in_pct": 1.5,
+      "original_quantity": 100,
+      "peak_profit_pct": 1.5,
+      "quantity": 100,
+      "scale_profile": "NORMAL",
+      "scales_done": [],
+      "ticker": "TEST",
+      "tier": 2
+    },
+    {
+      "bars_since_entry": 0,
+      "current_price": 10.2,
+      "current_profit_pct": 2.0,
+      "entry_price": 10.0,
+      "entry_time": "2026-01-01 10:00:00",
+      "floor_pct": 0.0,
+      "floor_price": 10.0,
+      "in_pct": 2.0,
+      "original_quantity": 100,
+      "peak_profit_pct": 2.0,
+      "quantity": 100,
+      "scale_profile": "NORMAL",
+      "scales_done": [],
+      "ticker": "TEST",
+      "tier": 2
+    },
+    {
+      "bars_since_entry": 0,
+      "current_price": 10.25,
+      "current_profit_pct": 2.5,
+      "entry_price": 10.0,
+      "entry_time": "2026-01-01 10:00:00",
+      "floor_pct": 0.5,
+      "floor_price": 10.05,
+      "in_pct": 2.5,
+      "original_quantity": 100,
+      "peak_profit_pct": 2.5,
+      "quantity": 100,
+      "scale_profile": "NORMAL",
+      "scales_done": [],
+      "ticker": "TEST",
+      "tier": 2
+    },
+    {
+      "bars_since_entry": 0,
+      "current_price": 10.3,
+      "current_profit_pct": 3.0,
+      "entry_price": 10.0,
+      "entry_time": "2026-01-01 10:00:00",
+      "floor_pct": 1.5,
+      "floor_price": 10.15,
+      "in_pct": 3.0,
+      "original_quantity": 100,
+      "peak_profit_pct": 3.0,
+      "quantity": 100,
+      "scale_profile": "NORMAL",
+      "scales_done": [],
+      "ticker": "TEST",
+      "tier": 3
+    },
+    {
+      "bars_since_entry": 0,
+      "current_price": 10.35,
+      "current_profit_pct": 3.5,
+      "entry_price": 10.0,
+      "entry_time": "2026-01-01 10:00:00",
+      "floor_pct": 1.5,
+      "floor_price": 10.15,
+      "in_pct": 3.5,
+      "original_quantity": 100,
+      "peak_profit_pct": 3.5,
+      "quantity": 100,
+      "scale_profile": "NORMAL",
+      "scales_done": [],
+      "ticker": "TEST",
+      "tier": 3
+    },
+    {
+      "bars_since_entry": 0,
+      "current_price": 10.4,
+      "current_profit_pct": 4.0,
+      "entry_price": 10.0,
+      "entry_time": "2026-01-01 10:00:00",
+      "floor_pct": 2.5,
+      "floor_price": 10.25,
+      "in_pct": 4.0,
+      "original_quantity": 100,
+      "peak_profit_pct": 4.0,
+      "quantity": 100,
+      "scale_profile": "NORMAL",
+      "scales_done": [],
+      "ticker": "TEST",
+      "tier": 3
+    },
+    {
+      "bars_since_entry": 0,
+      "current_price": 10.5,
+      "current_profit_pct": 5.0,
+      "entry_price": 10.0,
+      "entry_time": "2026-01-01 10:00:00",
+      "floor_pct": 3.5,
+      "floor_price": 10.35,
+      "in_pct": 5.0,
+      "original_quantity": 100,
+      "peak_profit_pct": 5.0,
+      "quantity": 100,
+      "scale_profile": "NORMAL",
+      "scales_done": [],
+      "ticker": "TEST",
+      "tier": 3
+    },
+    {
+      "bars_since_entry": 0,
+      "current_price": 10.600000000000001,
+      "current_profit_pct": 6.0,
+      "entry_price": 10.0,
+      "entry_time": "2026-01-01 10:00:00",
+      "floor_pct": 4.5,
+      "floor_price": 10.45,
+      "in_pct": 6.0,
+      "original_quantity": 100,
+      "peak_profit_pct": 6.0,
+      "quantity": 100,
+      "scale_profile": "NORMAL",
+      "scales_done": [],
+      "ticker": "TEST",
+      "tier": 3
+    },
+    {
+      "bars_since_entry": 0,
+      "current_price": 10.45,
+      "current_profit_pct": 4.5,
+      "entry_price": 10.0,
+      "entry_time": "2026-01-01 10:00:00",
+      "floor_pct": 4.5,
+      "floor_price": 10.45,
+      "in_pct": 4.5,
+      "original_quantity": 100,
+      "peak_profit_pct": 6.0,
+      "quantity": 100,
+      "scale_profile": "NORMAL",
+      "scales_done": [],
+      "ticker": "TEST",
+      "tier": 3
+    },
+    {
+      "bars_since_entry": 0,
+      "current_price": 10.3,
+      "current_profit_pct": 3.0,
+      "entry_price": 10.0,
+      "entry_time": "2026-01-01 10:00:00",
+      "floor_pct": 4.5,
+      "floor_price": 10.45,
+      "in_pct": 3.0,
+      "original_quantity": 100,
+      "peak_profit_pct": 6.0,
+      "quantity": 100,
+      "scale_profile": "NORMAL",
+      "scales_done": [],
+      "ticker": "TEST",
+      "tier": 3
+    },
+    {
+      "bars_since_entry": 0,
+      "current_price": 10.2,
+      "current_profit_pct": 2.0,
+      "entry_price": 10.0,
+      "entry_time": "2026-01-01 10:00:00",
+      "floor_pct": 4.5,
+      "floor_price": 10.45,
+      "in_pct": 2.0,
+      "original_quantity": 100,
+      "peak_profit_pct": 6.0,
+      "quantity": 100,
+      "scale_profile": "NORMAL",
+      "scales_done": [],
+      "ticker": "TEST",
+      "tier": 3
+    },
+    {
+      "bars_since_entry": 0,
+      "current_price": 10.1,
+      "current_profit_pct": 1.0,
+      "entry_price": 10.0,
+      "entry_time": "2026-01-01 10:00:00",
+      "floor_pct": 4.5,
+      "floor_price": 10.45,
+      "in_pct": 1.0,
+      "original_quantity": 100,
+      "peak_profit_pct": 6.0,
+      "quantity": 100,
+      "scale_profile": "NORMAL",
+      "scales_done": [],
+      "ticker": "TEST",
+      "tier": 3
+    },
+    {
+      "bars_since_entry": 0,
+      "current_price": 9.95,
+      "current_profit_pct": -0.5,
+      "entry_price": 10.0,
+      "entry_time": "2026-01-01 10:00:00",
+      "floor_pct": 4.5,
+      "floor_price": 10.45,
+      "in_pct": -0.5,
+      "original_quantity": 100,
+      "peak_profit_pct": 6.0,
+      "quantity": 100,
+      "scale_profile": "NORMAL",
+      "scales_done": [],
+      "ticker": "TEST",
+      "tier": 3
+    }
+  ],
+  "update_price_series_reclaim_floor": [
+    {
+      "bars_since_entry": 0,
+      "current_price": 10.1,
+      "current_profit_pct": 1.0,
+      "entry_price": 10.0,
+      "entry_time": "2026-01-01 10:00:00",
+      "floor_pct": null,
+      "floor_price": null,
+      "in_pct": 1.0,
+      "original_quantity": 100,
+      "peak_profit_pct": 1.0,
+      "quantity": 100,
+      "scale_profile": "NORMAL",
+      "scales_done": [],
+      "ticker": "TEST",
+      "tier": 1
+    },
+    {
+      "bars_since_entry": 0,
+      "current_price": 10.2,
+      "current_profit_pct": 2.0,
+      "entry_price": 10.0,
+      "entry_time": "2026-01-01 10:00:00",
+      "floor_pct": 0.25,
+      "floor_price": 10.025,
+      "in_pct": 2.0,
+      "original_quantity": 100,
+      "peak_profit_pct": 2.0,
+      "quantity": 100,
+      "scale_profile": "NORMAL",
+      "scales_done": [],
+      "ticker": "TEST",
+      "tier": 2
+    },
+    {
+      "bars_since_entry": 0,
+      "current_price": 10.3,
+      "current_profit_pct": 3.0,
+      "entry_price": 10.0,
+      "entry_time": "2026-01-01 10:00:00",
+      "floor_pct": 1.5,
+      "floor_price": 10.15,
+      "in_pct": 3.0,
+      "original_quantity": 100,
+      "peak_profit_pct": 3.0,
+      "quantity": 100,
+      "scale_profile": "NORMAL",
+      "scales_done": [],
+      "ticker": "TEST",
+      "tier": 3
+    },
+    {
+      "bars_since_entry": 0,
+      "current_price": 10.4,
+      "current_profit_pct": 4.0,
+      "entry_price": 10.0,
+      "entry_time": "2026-01-01 10:00:00",
+      "floor_pct": 2.5,
+      "floor_price": 10.25,
+      "in_pct": 4.0,
+      "original_quantity": 100,
+      "peak_profit_pct": 4.0,
+      "quantity": 100,
+      "scale_profile": "NORMAL",
+      "scales_done": [],
+      "ticker": "TEST",
+      "tier": 3
+    },
+    {
+      "bars_since_entry": 0,
+      "current_price": 10.2,
+      "current_profit_pct": 2.0,
+      "entry_price": 10.0,
+      "entry_time": "2026-01-01 10:00:00",
+      "floor_pct": 2.5,
+      "floor_price": 10.25,
+      "in_pct": 2.0,
+      "original_quantity": 100,
+      "peak_profit_pct": 4.0,
+      "quantity": 100,
+      "scale_profile": "NORMAL",
+      "scales_done": [],
+      "ticker": "TEST",
+      "tier": 3
+    }
+  ]
+}
