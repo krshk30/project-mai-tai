@@ -8,6 +8,23 @@
 
 **Re-score backtest (next, read-only):** replay this exact ladder over stored bars for Path 1 / Path 2 / Path 3 (all ATR variants) → realized P&L per path. Caveats baked in: models the OLD-bot ladder applied to these entries (NOT what v2 does today — a positive result = "these entries + this ladder would pay," not "v2 is profitable"); both-hit (scale tier vs stop in one candle) → bounded ranges; idealized fills + MORE exit fills (partials) = more cost surface → Phase-2 measured-spread decisive; directional-not-statistical. **Path 3 (#293) HELD — Phase-1 work intact.**
 
+### 📌 TRACKED BACKLOG (2026-06-14) — 3 pre-existing `_evaluate_paths` test failures (triage before go-live)
+
+Surfaced (not caused) during Track-2 Phase-1. **3 failing tests in `tests/unit/test_strategy_core.py`:**
+`test_schwab_native_p1_cross_blocks_when_relative_volume_is_too_weak`,
+`..._absolute_p1_volume_floor_not_met`, `..._dollar_volume_floor_not_met`. **Error** (`:1842`):
+`ValueError: too many values to unpack (expected 4)` at
+`_, _, details, _ = engine._evaluate_paths("ELAB", indicators, 60)` — the entry engine's
+`_evaluate_paths()` returns a tuple of length ≠ 4 vs the test's expected 4 (entry-engine **arity
+drift**). **Verified PRE-EXISTING** — `git stash -u` the exit_logic extraction → identical failures on
+clean `origin/main`; Phase 1 touched only the EXIT ladder (`ExitEngine`/`Position`/`TradingConfig`),
+not `_evaluate_paths` (ENTRY-side). **Open triage:** REAL entry-engine bug (return shape changed, a
+caller/test not updated → entries mis-evaluated live?) vs STALE test (intentional signature change,
+test needs updating)? Resolve by reading `_evaluate_paths`'s current return + its production call
+sites. **Priority: not urgent, but triage BEFORE go-live** — it touches the live ENTRY path; don't
+carry it into a credentialed launch as unexamined baseline noise. **Do NOT fix ad hoc** — separate
+task, not part of any current track. (Memory: `project-mai-tai-evaluate-paths-test-failures`.)
+
 ### 2026-06-12 weekend — v2 ENTRY-CRITERIA reference doc shipped (#291); strategy-rule-modification workstream OPENING
 
 **`docs/schwab-1m-v2-entry-criteria.md` (#291, merged `5c76b25`)** — code-faithful reference of v2's
