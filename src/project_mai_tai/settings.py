@@ -421,6 +421,11 @@ class Settings(BaseSettings):
     # sell-emitting risk legs (slice 3) gate additionally on the paper-isolation
     # re-proof. See docs/v2-exit-phase2-slice1-position-state-design.md.
     oms_v2_exit_management_enabled: bool = False
+    # Slice-3: max age (ms) of the cached quote that the v2 exit ladder will act on.
+    # A staler quote is skipped so a gap never mis-triggers an exit. 5s tolerates
+    # normal gateway quote cadence while still skipping real gaps. Hard stop runs on
+    # ANY fresh quote (NOT RTH-gated) — v2's edge is pre/after-market.
+    oms_v2_exit_quote_max_age_ms: int = 5000
     # Stuck-intent cancellation (2026-05-18 incident: pre-market intents
     # for AUUD/QNCX/SBFM kept retrying for 4.5 hours and 400+ attempts
     # each because the OMS had no max-age cap, no quote-drift sanity, and
