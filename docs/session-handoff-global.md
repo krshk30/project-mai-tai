@@ -1,5 +1,30 @@
 # Session Handoff - Global
 
+### 🎯 AUTHORITATIVE PATH-TO-SCHWAB-v2-LIVE-CREDENTIALS LIST (2026-06-15, operator-reconciled)
+
+The single source of truth for what gates wiring v2 to a REAL Schwab account (rename `paper:`→`live:` +
+provider=schwab + wire hash). v2 is structurally paper today (P1 Phase 1) — these clear BEFORE that step.
+
+**🔴 GO-LIVE BLOCKERS (must clear):**
+1. **Forward-test expectancy gate** — is v2 actually profitable? Sim-fills are IDEALIZED (no slippage/partials)
+   = pipe validation, NOT a track record. (handoff:259 forward-test central question.)
+2. **Replay Phase 2 (measured-spread) + tick-capture-live** — the decisive realism input (does v2 survive real
+   spread). Tick-capture (#282) is DEPLOYED DORMANT → a separate attended flip is the prerequisite.
+3. **v2 entry-criteria rules settled** — operator is actively tuning add/remove rules ([[project-mai-tai-v2-entry-criteria]]);
+   don't go live mid-tuning.
+- ~~Scale/floor exit legs proven live~~ ✅ **SATISFIED 2026-06-15 (CUPR — two ATR-Flip round-trips ran
+  SCALE_PCT2 + SCALE_PCT4_AFTER2 + FLOOR_BREACH, all simulated).** The whole exit ladder is now live-proven
+  (hard-stop + scales + floor). Dropped from blockers.
+
+**🟡 NON-BLOCKING (hardening / cosmetic / ops — clear opportunistically, not gating):**
+- **P1 Phase 2** (broaden the `paper:` hash-refusal to ALL paper accounts) + **dashboard-visibility half**
+  (surface `[SCHWAB-TOKEN-*]`/`loop_health` as badges) — v2 already isolated (Phase 1); the visibility half
+  is real ops-readiness worth having before running real money. (handoff:319.)
+- slice-4 tier MACD/stoch exits · CAST/VSME flatten timing · bar_counts cosmetic · "Polygon tick" dashboard
+  mislabel · `_evaluate_paths` triage (**momentum-bot engine, NOT v2 — not on the v2 critical path**).
+- **Parked (off the active list):** polygon_30s credentials (needs tuning first).
+
+
 ### ✅ 2026-06-15 — TWO v2 ENTRY-GATING ISSUES — FIXED, DEPLOYED + LIVE-PROVEN (main `97825a5`)
 
 Found while diagnosing why v2 missed QTEX's ATR-Flip BUY at 17:17Z (1:17 PM ET) that TOS's identical study
@@ -39,7 +64,13 @@ cause (signal survives a mid-session seed). The miss was a GATING bug. Two issue
   post-restart (not the seeded 250) until live bars catch up. Trading logic reads `state.bars` (seeded)
   correctly — this is a dashboard papercut only. Fix later by deriving `bar_counts` from `len(state.bars)`
   or incrementing in the seed. (Parking lot also holds: slice-4 tier MACD/stoch exits, CAST/VSME flatten
-  timing, `_evaluate_paths` triage, polygon_30s creds/100%-reject, Replay Phase 2 measured-spread.)
+  timing, `_evaluate_paths` triage [momentum-bot engine, NOT v2 — not a v2-go-live blocker], polygon_30s
+  creds/100%-reject [parked, needs tuning], Replay Phase 2 measured-spread.)
+- **📋 PARKING-LOT — "Polygon tick" dashboard mislabel (COSMETIC):** the v2 bot page shows liveness as
+  "Ns since last Polygon tick" though v2 is **Schwab-fed** (its 60s bars build from Schwab CHART_EQUITY,
+  not Polygon). Root: the dashboard derives the label from the **broker provider**, not
+  `market_data_provider_for_strategy`. One-line fix (label off the market-data provider). Surfaced as a
+  read-only clarification this session; recorded here so it's not lost. Non-blocking.
 
 See [[project-mai-tai-v2-entry-warmup-gate]].
 
@@ -66,9 +97,11 @@ After the dormant deploy below, activated the exit ladder attended, gated on the
   non-simulated provider; SchwabBrokerAdapter never touched.** The OMS-side v2 exit ladder is VALIDATED
   end-to-end in production — **v2's "no managed exits" gap is CLOSED.** (Watcher script had a latent
   f-string quoting bug that crashed at the first OPEN log — no data lost, DB captured the full lifecycle.)
-  - **Scale-out (+2%/+4%) + breakeven-floor legs: pending only a live GREEN position to demo — NOT a
-    blocker.** They use the IDENTICAL `_emit_v2_managed_sell` emit+routing path proven here (unit + golden
-    tested); this round-trip peaked +0.50% so they didn't arm. DB records the next green one; no watcher needed.
+  - **✅ Scale-out (+2%/+4%) + breakeven-floor legs PROVEN LIVE (CUPR, 2026-06-15) — blocker SATISFIED.**
+    TWO ATR-Flip round-trips, both full ladder, all filled on SIMULATED: 18:44 ATR Flip @$8.29 →
+    `SCALE_PCT2` (5) → `SCALE_PCT4_AFTER2` (1) → `FLOOR_BREACH` (4), scale_pnl 1.16, peak 4.34%; 19:28
+    ATR Flip @$7.61 → same legs, scale_pnl 1.06, peak 4.65%. So the WHOLE exit ladder is now live-proven:
+    hard-stop (VSME/MTEN/CAST) + scale-outs + breakeven-floor (CUPR) + simulated routing held throughout.
 - **✅ ATR-Flip (P3) ACTIVATED 16:14Z (attended):** `strategy_schwab_1m_v2_atr_flip_enabled=true` (variant B
   touch, vol-floor 5000, period 5 / factor 3.5 — as deployed), restarted **v2 ONLY** (OMS 2121312 + strategy
   2104716 unchanged); v2 clean boot NRestarts=0, ATR+register ON in v2 env, exit flag still ON OMS-side; no
