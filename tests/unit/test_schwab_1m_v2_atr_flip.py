@@ -326,3 +326,117 @@ def test_atr_liquidity_floor_is_the_only_filter() -> None:
     strat_hi._atr_enabled = True
     chart_hi, _ = _build_short_then_fresh_touch(strat_hi, final_vol=5001)   # > floor
     assert [strat_hi.on_bar("TEST", cb) for cb in chart_hi][-1] is not None
+
+
+# ============ Fix (a): ATR fires at its OWN warmup, not MACD's 135-bar gate =====
+# docs/v2-atr-early-warmup-fix-design.md. The QTEX 2026-06-15 miss: a correct ATR
+# touch at ~67 bars was suppressed by the line-676 min_bars=135 MACD guard, which
+# sits ABOVE the ATR emit. These pin the under-warmed (< 135 bars) ATR path.
+
+MIN_BARS = 135  # macd_slow(26)+macd_signal(9)+settling(100); the guard threshold
+
+
+def _build_short_then_fresh_touch_n(
+    strat: SchwabV2Strategy, *, n_warm: int, final_vol: int
+):
+    """Same construction as `_build_short_then_fresh_touch` but with a caller-set
+    warmup length, so we can build an UNDER-WARMED (< MIN_BARS) short-segment +
+    fresh touch. Declining RED closes flip short early and stay short; small upper
+    wicks stay below the trail (no warmup touch); a fresh final bar's HIGH reaches
+    the resting trail T."""
+    now_ms = int(datetime.now(UTC).timestamp() * 1000)
+    warm = []
+    for i in range(n_warm):
+        close = 12.0 - 0.02 * i
+        open_ = close + 0.05                       # RED
+        high = close + 0.04                        # below trail → no warmup touch
+        low = close - 0.06
+        ts = now_ms - (n_warm - i) * 60_000
+        warm.append((ts, open_, high, low, close, 10_000))
+
+    probe = SymbolState(symbol="WARM")
+    for (ts, o, h, low, c, v) in warm:
+        strat._update_atr_state(probe, OHLCVBar(ts, o, h, low, c, v))
+    assert probe.atr_state == "short", "warmup must end in a short segment"
+    assert not probe.atr_fired_in_short_seg, "no touch should have fired in warmup"
+    T = probe.atr_trail
+
+    final = (now_ms, T + 0.02, T + 0.05, T - 0.50, T - 0.20, final_vol)
+    raw = warm + [final]
+    chart = [ChartBar("TEST", o, h, low, c, v, ts) for (ts, o, h, low, c, v) in raw]
+    return chart, T
+
+
+# --------------------------------------------------------------------------- (6)
+
+@pytest.mark.asyncio
+async def test_atr_fires_under_warmed_below_min_bars() -> None:
+    """THE fix: with only ~41 bars (< MIN_BARS=135), a fresh ATR-Flip touch now
+    EMITS (the ATR trail is warm after its own ~2*period warmup). This is the QTEX
+    scenario — pre-fix the line-676 guard bailed and returned None."""
+    strat = SchwabV2Strategy(Settings())
+    strat._atr_enabled = True
+    chart, T = _build_short_then_fresh_touch_n(strat, n_warm=40, final_vol=100_000)
+    assert len(chart) < MIN_BARS, "fixture must be under-warmed for the test to matter"
+
+    draft = None
+    for cb in chart:
+        draft = strat.on_bar("TEST", cb)
+    assert draft is not None, "under-warmed fresh touch must now emit"
+    assert draft.metadata["path"] == "ATR Flip"
+    assert Decimal(draft.metadata["reference_price"]) == Decimal(f"{T:.4f}")
+
+
+def test_atr_under_warmed_respects_flat_and_cooldown() -> None:
+    """The under-warmed branch honors the SAME entry gates as the warm path:
+    an open position OR an active cooldown suppresses the emit."""
+    # Flat gate: position open → no emit.
+    strat = SchwabV2Strategy(Settings())
+    strat._atr_enabled = True
+    chart, _ = _build_short_then_fresh_touch_n(strat, n_warm=40, final_vol=100_000)
+    for cb in chart[:-1]:
+        strat.on_bar("TEST", cb)
+    strat.watchlist_state("TEST").position_qty = 10        # not flat
+    assert strat.on_bar("TEST", chart[-1]) is None
+
+    # Cooldown gate: cooldown active → no emit.
+    strat2 = SchwabV2Strategy(Settings())
+    strat2._atr_enabled = True
+    chart2, _ = _build_short_then_fresh_touch_n(strat2, n_warm=40, final_vol=100_000)
+    for cb in chart2[:-1]:
+        strat2.on_bar("TEST", cb)
+    strat2.watchlist_state("TEST").cooldown_bars_remaining = 3
+    assert strat2.on_bar("TEST", chart2[-1]) is None
+
+
+def test_atr_under_warmed_no_emit_on_stale_bar() -> None:
+    """Replayed/stale history must NOT emit even under-warmed (the bar_is_fresh
+    gate still applies) — only a FRESH under-warmed touch fires."""
+    strat = SchwabV2Strategy(Settings())
+    strat._atr_enabled = True
+    chart, _ = _build_short_then_fresh_touch_n(strat, n_warm=40, final_vol=100_000)
+    # Rewrite the final bar's timestamp far in the past → stale (not fresh).
+    stale_final = ChartBar(
+        "TEST", chart[-1].open, chart[-1].high, chart[-1].low, chart[-1].close,
+        chart[-1].volume, chart[-1].timestamp_ms - 3_600_000,
+    )
+    chart = chart[:-1] + [stale_final]
+    drafts = [strat.on_bar("TEST", cb) for cb in chart]
+    assert drafts[-1] is None, "a stale under-warmed touch must not emit"
+
+
+def test_macd_vwap_still_silent_under_warmed() -> None:
+    """The fix unblocks ONLY ATR under-warmed — MACD/VWAP stay protected by the
+    135-bar guard. The SAME flat-then-green cross that fires "MACD Cross" at
+    n_flat=135 (see test_atr_on_does_not_perturb_paths_1_2) emits NOTHING at 40
+    bars. ATR is disabled here so it can't mask the result — isolating the MACD/
+    VWAP gate (the flat 10.0 bars otherwise drive a degenerate ATR oscillation)."""
+    now_ms = int(datetime.now(UTC).timestamp() * 1000)
+    strat = SchwabV2Strategy(Settings())
+    strat._atr_enabled = False                             # isolate MACD/VWAP
+    n_flat = 40                                            # < MIN_BARS
+    for i in range(n_flat):
+        ts = now_ms - (n_flat - i + 1) * 60_000
+        strat.on_bar("TEST", ChartBar("TEST", 10.0, 10.0, 10.0, 10.0, 1000, ts))
+    draft = strat.on_bar("TEST", ChartBar("TEST", 10.0, 11.0, 10.0, 11.0, 100_000, now_ms))
+    assert draft is None, "MACD/VWAP must stay silent below the 135-bar guard"
