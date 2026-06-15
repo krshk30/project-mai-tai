@@ -1,6 +1,6 @@
 # Session Handoff - Global
 
-### 🔴 2026-06-15 — TWO TRACKED v2 ENTRY-GATING ISSUES (design-first; do NOT hot-patch the live entry path)
+### ✅ 2026-06-15 — TWO v2 ENTRY-GATING ISSUES — FIXED, DEPLOYED + LIVE-PROVEN (main `97825a5`)
 
 Found while diagnosing why v2 missed QTEX's ATR-Flip BUY at 17:17Z (1:17 PM ET) that TOS's identical study
 (modified ATR 5/3.5/WILDERS) flagged. **Full diagnosis: the ATR signal was CORRECT** — v2's algorithm,
@@ -23,12 +23,25 @@ cause (signal survives a mid-session seed). The miss was a GATING bug. Two issue
   only ~67 bars at the 17:17 touch) and post-restart symbols are BLIND to ATR-Flip for ~135 live bars even
   though the ATR indicator is warm + correct.
 
-**Fix directions (design-first, NOT live): (a)** move the ATR emit ABOVE the min_bars guard with its own
-~6-bar threshold — pending scope that ATR firing under-warmed reads no half-warm MACD/stoch/VWAP value;
-**(b)** make REST warmup actually backfill `state.bars` (root: Schwab same-day intraday limits, line 320) so
-restarts don't impose the 135-min blackout. **ATR-Flip LEFT ON** (correct once a symbol crosses 135 bars; it
-WILL fire on warm symbols) — but **any live ATR result must be read knowing it misses fresh/post-restart
-symbols until fixed.** See [[project-mai-tai-v2-entry-warmup-gate]].
+**✅ BOTH FIXES DEPLOYED + LIVE-PROVEN (2026-06-15 19:11Z, attended, v2-only restart; main `97825a5`):**
+- **Fix (a) = #313** (`a026b1f`): the ATR emit moved ABOVE the min_bars guard with its own ~10-bar threshold
+  (ATR path reads only OHLCV+atr_* — zero MACD/stoch/VWAP reads, proven); warm path byte-identical.
+- **Fix (b) = #314** (`97825a5`): `_seed_strategy_bars_from_db` hydrates `state.bars` from
+  `strategy_bar_history` (last 250) on cold-start; the LOAD-BEARING pending-cross clear prevents a phantom
+  entry from a replayed cross. (Chose DB-seed over fighting the Schwab same-day-intraday limit.)
+- **LIVE PROOF:** restart 19:11:31Z → db-seed log `state.bars=250` for all 9 warm symbols at +2s (WLDS=5,
+  bounded); NO spurious entry on the seed (stale crosses SET→EXPIRED gap≫180s + the clear); **MTEN VWAP
+  Breakout fired at +32s** (vs old +135min = past close = impossible today) → filled + managed by the live
+  OMS exit ladder. OMS+strategy MainPIDs unchanged. **The ~135-min restart blackout is ELIMINATED for all
+  3 entry paths (MACD/VWAP/ATR); ATR-Flip now fires at its own warmup.**
+- **📋 PARKING-LOT follow-up (low-priority, COSMETIC — do NOT build now):** the seed feeds `strategy.on_bar`
+  directly and does NOT increment the bot's `_bar_counts`, so the heartbeat `bar_counts` shows LIVE-ONLY
+  post-restart (not the seeded 250) until live bars catch up. Trading logic reads `state.bars` (seeded)
+  correctly — this is a dashboard papercut only. Fix later by deriving `bar_counts` from `len(state.bars)`
+  or incrementing in the seed. (Parking lot also holds: slice-4 tier MACD/stoch exits, CAST/VSME flatten
+  timing, `_evaluate_paths` triage, polygon_30s creds/100%-reject, Replay Phase 2 measured-spread.)
+
+See [[project-mai-tai-v2-entry-warmup-gate]].
 
 ### ✅ 2026-06-15 (mid-session, attended) — v2 OMS EXITS ACTIVATED (`oms_v2_exit_management_enabled=true`)
 
