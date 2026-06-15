@@ -45,6 +45,8 @@ from project_mai_tai.events import (
     HeartbeatEvent,
     HeartbeatPayload,
     IsolatedBotStateEvent,
+    MarketDataSubscriptionEvent,
+    MarketDataSubscriptionPayload,
     StrategyBotStatePayload,
     StrategyStateSnapshotEvent,
     stream_name,
@@ -197,6 +199,9 @@ class SchwabV2BotService:
         )
         self._strategy_state_last_id = "$"
         self._watchlist: set[str] = set()
+        # Track-2 Phase-2 Slice-2: last symbol list published to the gateway as a
+        # subscription consumer (debounce). None = nothing published yet.
+        self._last_gateway_symbols: list[str] | None = None
         self._bar_counts: dict[str, int] = {}
         self._last_tick_at: dict[str, str] = {}
         self._last_bar_at: dict[str, str] = {}
@@ -775,6 +780,7 @@ class SchwabV2BotService:
         for entry_id, data in seed:
             self._strategy_state_last_id = entry_id
             self._apply_strategy_state_event(data, max_watchlist=max_watchlist)
+        await self._sync_gateway_subscription()  # slice-2: register v2 symbols (gated/inert)
 
         # Step 2: tail for new snapshots (backstopped — xread + apply contained).
         await run_resilient_loop(
@@ -799,6 +805,46 @@ class SchwabV2BotService:
             for entry_id, data in entries:
                 self._strategy_state_last_id = entry_id
                 self._apply_strategy_state_event(data, max_watchlist=max_watchlist)
+        await self._sync_gateway_subscription()  # slice-2: keep v2 gateway subs current (gated/inert)
+
+    async def _sync_gateway_subscription(self) -> None:
+        """Track-2 Phase-2 Slice-2: register v2's watchlist as a market-data
+        gateway subscription CONSUMER (`consumer_name=SERVICE_NAME`), so the
+        gateway streams quotes for v2's symbols and the OMS quote cache covers
+        them — a GUARANTEE the in-practice overlap doesn't give (the gateway
+        otherwise subscribes only the momentum bots' retained symbols, which can
+        diverge from v2's broader scanner pool). Mirrors the strategy-engine's
+        `_sync_market_data_subscriptions` (mode=replace, debounced).
+
+        Gated OFF by default (`oms_v2_exit_management_enabled`) → INERT: v2
+        publishes nothing, registers no consumer, streams no extra symbols —
+        identical to today (the OMS doesn't use v2 quotes until slice 3 anyway).
+        """
+        if not bool(getattr(self.settings, "oms_v2_exit_management_enabled", False)):
+            return
+        if self.redis is None:
+            return
+        desired = sorted(self._watchlist)
+        if desired == self._last_gateway_symbols:
+            return  # debounce — only publish on change
+        self._last_gateway_symbols = desired
+        event = MarketDataSubscriptionEvent(
+            source_service=SERVICE_NAME,
+            payload=MarketDataSubscriptionPayload(
+                consumer_name=SERVICE_NAME,
+                mode="replace",
+                symbols=desired,
+            ),
+        )
+        await self.redis.xadd(
+            stream_name(self.settings.redis_stream_prefix, "market-data-subscriptions"),
+            {"data": event.model_dump_json()},
+            maxlen=self.settings.redis_market_data_subscription_stream_maxlen,
+            approximate=True,
+        )
+        logger.info(
+            "[V2-GATEWAY-SUBSCRIBE] consumer=%s symbols=%d", SERVICE_NAME, len(desired)
+        )
 
     def _apply_strategy_state_event(
         self, data: object, *, max_watchlist: int
