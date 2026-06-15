@@ -820,7 +820,12 @@ class SchwabV2BotService:
         publishes nothing, registers no consumer, streams no extra symbols —
         identical to today (the OMS doesn't use v2 quotes until slice 3 anyway).
         """
-        if not bool(getattr(self.settings, "oms_v2_exit_management_enabled", False)):
+        # Register when the dedicated coverage flag OR the exit flag is on. Decoupled
+        # so coverage can be deployed + verified live before exits arm; the OR ensures
+        # exits can never run without the OMS feed covering v2's symbols.
+        register = bool(getattr(self.settings, "strategy_schwab_1m_v2_gateway_register_enabled", False))
+        exits = bool(getattr(self.settings, "oms_v2_exit_management_enabled", False))
+        if not (register or exits):
             return
         if self.redis is None:
             return

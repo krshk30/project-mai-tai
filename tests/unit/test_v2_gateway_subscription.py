@@ -28,8 +28,13 @@ class _FakeRedis:
 
 
 class _Harness:
-    def __init__(self, *, enabled: bool, watchlist: set[str]) -> None:
-        self.settings = Settings(oms_v2_exit_management_enabled=enabled)
+    # `enabled` = the exit flag; `register` = the dedicated coverage flag (decoupled).
+    # _sync_gateway_subscription registers when EITHER is on.
+    def __init__(self, *, enabled: bool = False, register: bool = False, watchlist: set[str]) -> None:
+        self.settings = Settings(
+            oms_v2_exit_management_enabled=enabled,
+            strategy_schwab_1m_v2_gateway_register_enabled=register,
+        )
         self.redis = _FakeRedis()
         self._watchlist = set(watchlist)
         self._last_gateway_symbols = None
@@ -46,11 +51,23 @@ def _decode(call) -> MarketDataSubscriptionEvent:
 # --------------------------------------------------------------------------- (1)
 
 @pytest.mark.asyncio
-async def test_dormant_when_flag_off() -> None:
-    h = _Harness(enabled=False, watchlist={"VSME", "CAST"})
+async def test_dormant_when_both_flags_off() -> None:
+    h = _Harness(enabled=False, register=False, watchlist={"VSME", "CAST"})
     await _sync(h)
     assert h.redis.calls == []                 # nothing published — inert
     assert h._last_gateway_symbols is None     # state untouched
+
+
+@pytest.mark.asyncio
+async def test_registers_via_own_flag_with_exits_off() -> None:
+    """The decouple: coverage registers on its OWN flag, exits OFF — so coverage
+    can be deployed + re-probed live before exits ever arm."""
+    h = _Harness(enabled=False, register=True, watchlist={"VSME", "CAST"})
+    await _sync(h)
+    assert len(h.redis.calls) == 1
+    ev = _decode(h.redis.calls[0])
+    assert ev.payload.consumer_name == "schwab-1m-v2"
+    assert ev.payload.mode == "replace" and ev.payload.symbols == ["CAST", "VSME"]
 
 
 # --------------------------------------------------------------------------- (2)
