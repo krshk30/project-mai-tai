@@ -187,6 +187,15 @@ class Settings(BaseSettings):
     strategy_schwab_1m_v2_streamer_enabled: bool = False
     strategy_schwab_1m_v2_streamer_reconnect_base_secs: float = 1.0
     strategy_schwab_1m_v2_streamer_reconnect_max_secs: float = 30.0
+    # Track-2 Phase-2 Slice-2: v2 registers its watchlist as a market-data gateway
+    # CONSUMER so the OMS quote/trade cache covers v2's symbols. DECOUPLED from the
+    # exit flag (`oms_v2_exit_management_enabled`) so coverage can be deployed +
+    # verified live BEFORE exits ever arm — the re-probe needs the registration
+    # active while exits stay OFF. `_sync_gateway_subscription` registers when THIS
+    # flag OR the exit flag is on (exits can never run without coverage). Default
+    # OFF → dormant (v2 publishes no subscription; OMS feed unchanged). Live coverage
+    # pre-check (2026-06-15) confirmed registration → full v2-watchlist coverage.
+    strategy_schwab_1m_v2_gateway_register_enabled: bool = False
     # --- Tick capture (LEVELONE_EQUITIES) for exit replay. Default OFF: ships
     # dormant; no LEVELONE SUBS is sent and CHART_EQUITY behavior is identical.
     # Flip ONLY attended, after-close (it adds a second service subscription on
@@ -421,6 +430,11 @@ class Settings(BaseSettings):
     # sell-emitting risk legs (slice 3) gate additionally on the paper-isolation
     # re-proof. See docs/v2-exit-phase2-slice1-position-state-design.md.
     oms_v2_exit_management_enabled: bool = False
+    # Slice-3: max age (ms) of the cached quote that the v2 exit ladder will act on.
+    # A staler quote is skipped so a gap never mis-triggers an exit. 5s tolerates
+    # normal gateway quote cadence while still skipping real gaps. Hard stop runs on
+    # ANY fresh quote (NOT RTH-gated) — v2's edge is pre/after-market.
+    oms_v2_exit_quote_max_age_ms: int = 5000
     # Stuck-intent cancellation (2026-05-18 incident: pre-market intents
     # for AUUD/QNCX/SBFM kept retrying for 4.5 hours and 400+ attempts
     # each because the OMS had no max-age cap, no quote-drift sanity, and

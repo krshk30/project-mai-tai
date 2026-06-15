@@ -22,6 +22,9 @@ from project_mai_tai.broker_adapters.simulated import SimulatedBrokerAdapter
 from project_mai_tai.broker_adapters.webull import WebullBrokerAdapter
 from project_mai_tai.db.session import build_session_factory
 from project_mai_tai.db.models import BrokerAccount, BrokerOrder, Strategy, StrategyBarHistory, TradeIntent
+from project_mai_tai.exit_logic.config import TradingConfig
+from project_mai_tai.exit_logic.engine import ExitEngine
+from project_mai_tai.exit_logic.position import Position
 from project_mai_tai.events import (
     HeartbeatEvent,
     HeartbeatPayload,
@@ -137,6 +140,13 @@ class OmsRiskService:
         self._armed_hard_stops: dict[tuple[str, str, str], ArmedHardStop] = {}
         self._latest_quotes_by_symbol: dict[str, dict[str, object]] = {}
         self._latest_trades_by_symbol: dict[str, dict[str, object]] = {}
+        # Track-2 Phase-2 Slice-3: OMS-managed v2 exit ladder. `_managed_v2_symbols`
+        # is the hot-path guard — a quote only opens a session/evaluates when its
+        # symbol has an OPEN v2 managed row. Populated by the slice-1 fill hook
+        # (gated) + rehydrated at startup; empty when the flag is OFF (inert).
+        self._managed_v2_symbols: set[str] = set()
+        self._v2_exit_config: TradingConfig = TradingConfig().make_v2_variant()
+        self._v2_exit_engine: ExitEngine = ExitEngine(self._v2_exit_config)
 
     async def run(self) -> None:
         stop_event = asyncio.Event()
@@ -151,6 +161,7 @@ class OmsRiskService:
             seed_summary["strategies"],
             seed_summary["broker_accounts"],
         )
+        self._rehydrate_managed_v2_symbols()  # slice-3: re-arm quote eval for open v2 rows
         await self._publish_heartbeat(
             "starting",
             {
@@ -940,12 +951,18 @@ class OmsRiskService:
                 entry_path=entry_path,
                 config_name="make_v2_variant",
             )
+            self._managed_v2_symbols.add(symbol)  # slice-3: arm quote-path eval
             logger.info(
                 "[OMS-V2-MANAGED-OPEN] sym=%s acct=%s qty=%s entry=%s path=%s",
                 symbol, broker_account_name, int(quantity), price, entry_path,
             )
         elif s == "sell":
-            # External flatten (slice 1 emits no sells itself): keep the row honest.
+            # Slice 3 OWNS the row update for its own emitted exits (it closes/
+            # decrements + persists ladder state synchronously in the quote eval).
+            # Skip those fills here so we don't double-handle the row.
+            if str(metadata.get("oms_v2_managed_exit", "")).strip().lower() == "true":
+                return
+            # External flatten (operator-initiated): keep the row honest.
             row = self.store.get_open_managed_position(
                 session, broker_account_name=broker_account_name, symbol=symbol
             )
@@ -954,9 +971,214 @@ class OmsRiskService:
             row.current_quantity = max(0, int(row.current_quantity) - int(quantity))
             if row.current_quantity <= 0:
                 self.store.close_managed_position(session, row)
+                self._managed_v2_symbols.discard(symbol)  # slice-3: disarm eval
                 logger.info("[OMS-V2-MANAGED-CLOSE] sym=%s acct=%s flat", symbol, broker_account_name)
             else:
                 session.flush()
+
+    # ---- Track-2 Phase-2 Slice-3: OMS-managed v2 exit ladder (quote-driven) ----
+
+    def _rehydrate_managed_v2_symbols(self) -> None:
+        """At startup, repopulate the hot-path guard from open managed rows so a
+        restart keeps protecting positions opened before it. Inert when OFF."""
+        if not bool(getattr(self.settings, "oms_v2_exit_management_enabled", False)):
+            return
+        acct = self.settings.strategy_schwab_1m_v2_account_name
+        try:
+            with self.session_factory() as session:
+                self._managed_v2_symbols = set(
+                    self.store.list_open_managed_symbols(session, broker_account_name=acct)
+                )
+        except Exception as exc:  # noqa: BLE001
+            self.logger.warning("v2 managed-symbol rehydrate failed: %s", exc)
+            return
+        if self._managed_v2_symbols:
+            self.logger.info(
+                "[OMS-V2-MANAGED-REHYDRATE] armed %d symbol(s): %s",
+                len(self._managed_v2_symbols), ",".join(sorted(self._managed_v2_symbols)),
+            )
+
+    def _hydrate_v2_position(self, row) -> Position:
+        """Rebuild an exit_logic.Position from a managed row, restoring the
+        accumulated ladder state (peak/tier/floor/scales) so the ratchet CONTINUES
+        — never resets — across quotes. Floor params from make_v2_variant."""
+        cfg = self._v2_exit_config
+        p = Position(
+            ticker=row.symbol,
+            entry_price=float(row.entry_price),
+            quantity=int(row.current_quantity),
+            entry_time=str(row.entry_time),
+            path=row.entry_path or "",
+            scale_profile="NORMAL",
+            floor_lock_at_1pct_peak_pct=cfg.profit_floor_lock_at_1pct_peak_pct,
+            floor_lock_at_2pct_peak_pct=cfg.profit_floor_lock_at_2pct_peak_pct,
+            floor_lock_at_3pct_peak_pct=cfg.profit_floor_lock_at_3pct_peak_pct,
+            floor_trail_buffer_over_4pct_pct=cfg.profit_floor_trail_buffer_over_4pct_pct,
+        )
+        p.peak_profit_pct = float(row.peak_profit_pct or 0.0)
+        p.tier = int(row.tier or 1)
+        p.floor_pct = float(row.floor_pct) if row.floor_pct is not None else -999.0
+        p.floor_price = float(row.floor_price) if row.floor_price is not None else 0.0
+        p.scales_done = list(row.scales_done or [])
+        p.scale_pnl = float(row.scale_pnl or 0.0)
+        return p
+
+    def _v2_scale_level_price(self, entry_price: float, level: str) -> float:
+        cfg = self._v2_exit_config
+        pct = {
+            "PCT2": cfg.scale_normal2_pct,
+            "FAST4": cfg.scale_fast4_pct,
+            "PCT4_AFTER2": cfg.scale_4after2_pct,
+        }.get(str(level))
+        return entry_price if pct is None else entry_price * (1.0 + float(pct) / 100.0)
+
+    async def _evaluate_v2_managed_exit(self, symbol: str) -> None:
+        """Run the v2 exit ladder for one symbol on the latest quote. DECISION uses
+        the live bid; FILL reference_price is the leg LEVEL (decision B — stop/floor/
+        scale level) so live-paper agrees with the re-score by construction. Precedence
+        hard>floor>scale, one action per quote. Sole-writer of the managed row; the
+        quote->Position state-update is co-located here (deferred from slice 1)."""
+        if not bool(getattr(self.settings, "oms_v2_exit_management_enabled", False)):
+            return
+        quote = self._latest_quotes_by_symbol.get(symbol)
+        if not quote:
+            return
+        received_at = quote.get("received_at")
+        if isinstance(received_at, datetime):
+            age_ms = (utcnow() - received_at).total_seconds() * 1000.0
+            if age_ms > float(getattr(self.settings, "oms_v2_exit_quote_max_age_ms", 5000)):
+                return  # stale quote — never act on a gap
+        bid = float(quote.get("bid") or 0.0)
+        if bid <= 0:
+            return
+        acct = self.settings.strategy_schwab_1m_v2_account_name
+        events: list = []
+        try:
+            with self.session_factory() as session:
+                row = self.store.get_open_managed_position(
+                    session, broker_account_name=acct, symbol=symbol
+                )
+                if row is None:
+                    self._managed_v2_symbols.discard(symbol)
+                    return
+                entry_price = float(row.entry_price)
+                position = self._hydrate_v2_position(row)
+                position.update_price(bid)
+
+                hard = self._v2_exit_engine.check_hard_stop(position, bid)
+                intrabar = None if hard is not None else self._v2_exit_engine.check_intrabar_exit(position)
+
+                if hard is not None:
+                    ref = entry_price * (1.0 - float(self._v2_exit_config.stop_loss_pct) / 100.0)
+                    events = await self._emit_v2_managed_sell(
+                        session, row, intent_type="close", quantity=int(position.quantity),
+                        reference_price=ref, reason="oms_v2_managed_exit:HARD_STOP",
+                    )
+                    self.store.close_managed_position(session, row)
+                    self._managed_v2_symbols.discard(symbol)
+                elif intrabar is not None and intrabar.get("action") == "CLOSE":
+                    ref = float(position.floor_price) or bid
+                    events = await self._emit_v2_managed_sell(
+                        session, row, intent_type="close", quantity=int(position.quantity),
+                        reference_price=ref, reason="oms_v2_managed_exit:FLOOR_BREACH",
+                    )
+                    self.store.close_managed_position(session, row)
+                    self._managed_v2_symbols.discard(symbol)
+                elif intrabar is not None and intrabar.get("action") == "SCALE" and int(intrabar.get("sell_qty") or 0) > 0:
+                    sell_qty = int(intrabar["sell_qty"])
+                    level = str(intrabar.get("level") or "")
+                    ref = self._v2_scale_level_price(entry_price, level)
+                    events = await self._emit_v2_managed_sell(
+                        session, row, intent_type="scale", quantity=sell_qty,
+                        reference_price=ref, reason=f"oms_v2_managed_exit:SCALE_{level}",
+                    )
+                    position.apply_scale(level, sell_qty, exit_price=ref)
+                    self.store.update_managed_position_from_position(session, row, position)
+                else:
+                    # no exit this quote — co-located quote->Position state update
+                    self.store.update_managed_position_from_position(session, row, position)
+
+                session.commit()
+        except Exception as exc:  # noqa: BLE001 — the quote path must never die
+            self.logger.warning("v2 managed-exit eval failed for %s: %s", symbol, exc)
+            return
+        for ev in events:
+            await self._publish_order_event(ev)
+
+    async def _emit_v2_managed_sell(
+        self,
+        session: Session,
+        row,
+        *,
+        intent_type: str,
+        quantity: int,
+        reference_price: float,
+        reason: str,
+    ) -> list:
+        """THE SINGLE place a v2 managed-exit SELL is built. The order's
+        broker_account_name is ALWAYS the managed row's account — the safe-by-
+        construction invariant that pins routing to the simulated adapter
+        (paper-isolation; proven by test_v2_exit_paper_isolation)."""
+        strategy = session.scalar(select(Strategy).where(Strategy.code == row.strategy_code))
+        broker_account = session.scalar(
+            select(BrokerAccount).where(BrokerAccount.name == row.broker_account_name)
+        )
+        if strategy is None or broker_account is None:
+            self.logger.warning(
+                "[OMS-V2-MANAGED-EXIT] missing strategy/account %s/%s — no exit emitted",
+                row.strategy_code, row.broker_account_name,
+            )
+            return []
+        metadata = {
+            "oms_v2_managed_exit": "true",
+            "reference_price": f"{float(reference_price):.4f}",
+            "order_type": "market",
+            "time_in_force": "day",
+        }
+        event = TradeIntentEvent(
+            source_service=SERVICE_NAME,
+            payload=TradeIntentPayload(
+                strategy_code=row.strategy_code,
+                broker_account_name=row.broker_account_name,  # <-- THE INVARIANT
+                symbol=row.symbol,
+                side="sell",
+                quantity=Decimal(str(quantity)),
+                intent_type=intent_type,
+                reason=reason,
+                metadata=dict(metadata),
+            ),
+        )
+        intent = self.store.create_trade_intent(
+            session, strategy=strategy, broker_account=broker_account, event=event
+        )
+        self._record_internal_risk_pass(
+            session, intent=intent, strategy=strategy, broker_account=broker_account,
+            metadata=dict(metadata), reason="oms_v2_managed_exit",
+        )
+        request = OrderRequest(
+            client_order_id=self._build_client_order_id(event),
+            broker_account_name=row.broker_account_name,  # <-- THE INVARIANT
+            strategy_code=row.strategy_code,
+            symbol=row.symbol,
+            side="sell",
+            intent_type=intent_type,
+            quantity=Decimal(str(quantity)),
+            reason=reason,
+            metadata=dict(metadata),
+            order_type="market",
+            time_in_force="day",
+        )
+        reports = await self.broker_adapter.submit_order(request)
+        events = await self._record_order_reports(
+            session=session, intent=intent, strategy_id=strategy.id,
+            broker_account_id=broker_account.id, intent_event=event,
+            request=request, reports=reports,
+        )
+        self.logger.info(
+            "[OMS-V2-MANAGED-EXIT] %s sym=%s acct=%s qty=%s ref=%.4f",
+            reason, row.symbol, row.broker_account_name, quantity, float(reference_price),
+        )
+        return events
 
     async def _has_active_native_stop_guard_order(
         self,
@@ -1405,6 +1627,11 @@ class OmsRiskService:
         if self._armed_hard_stops:
             await self._evaluate_hard_stop_market_event(symbol)
         await self._cancel_drifted_working_orders(symbol)
+        # Slice-3: run the v2 exit ladder on this quote, but ONLY for symbols with an
+        # open v2 managed row (the in-memory guard keeps the hot path free of DB hits
+        # for everything else; empty set when the flag is OFF → no-op).
+        if symbol in self._managed_v2_symbols:
+            await self._evaluate_v2_managed_exit(symbol)
 
     async def _handle_trade_tick_event(self, event: TradeTickEvent) -> None:
         symbol = str(event.payload.symbol).upper()
