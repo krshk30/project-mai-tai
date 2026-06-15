@@ -14,6 +14,7 @@ from project_mai_tai.db.models import (
     BrokerOrder,
     BrokerOrderEvent,
     Fill,
+    OmsManagedPosition,
     RiskCheck,
     SchwabIneligibleToday,
     Strategy,
@@ -724,3 +725,85 @@ class OmsStore:
                 position.opened_at = None
         if hasattr(position, "source_updated_at"):
             position.source_updated_at = reported_at
+
+    # ---- Track-2 Phase-2: OMS-managed v2 exit positions (OMS is sole writer) ----
+
+    def get_open_managed_position(
+        self,
+        session: Session,
+        *,
+        broker_account_name: str,
+        symbol: str,
+    ) -> OmsManagedPosition | None:
+        return session.scalar(
+            select(OmsManagedPosition)
+            .where(
+                OmsManagedPosition.broker_account_name == broker_account_name,
+                OmsManagedPosition.symbol == symbol,
+                OmsManagedPosition.status == "open",
+            )
+            .order_by(desc(OmsManagedPosition.created_at))
+        )
+
+    def create_managed_position(
+        self,
+        session: Session,
+        *,
+        strategy_code: str,
+        broker_account_name: str,
+        symbol: str,
+        entry_price: Decimal,
+        quantity: int,
+        entry_path: str = "",
+        entry_time: datetime | None = None,
+        config_name: str = "make_v2_variant",
+    ) -> OmsManagedPosition:
+        """Create the managed-position row for a fresh v2 open fill. Ladder state
+        starts at a fresh Position (peak/current 0, tier 1, no floor). OMS-only."""
+        row = OmsManagedPosition(
+            strategy_code=strategy_code,
+            broker_account_name=broker_account_name,
+            symbol=symbol,
+            entry_price=entry_price,
+            original_quantity=int(quantity),
+            current_quantity=int(quantity),
+            entry_path=entry_path or "",
+            entry_time=entry_time or utcnow(),
+            peak_profit_pct=Decimal("0"),
+            current_profit_pct=Decimal("0"),
+            tier=1,
+            floor_pct=None,
+            floor_price=None,
+            scales_done=[],
+            scale_pnl=Decimal("0"),
+            config_name=config_name,
+            status="open",
+        )
+        session.add(row)
+        session.flush()
+        return row
+
+    def update_managed_position_from_position(
+        self,
+        session: Session,
+        row: OmsManagedPosition,
+        position: object,
+    ) -> None:
+        """Persist ladder state from a hydrated `exit_logic.Position` (duck-typed).
+        No emit — pure state write. Maps Position's -999 floor sentinel to NULL."""
+        row.current_quantity = int(getattr(position, "quantity", row.current_quantity))
+        row.peak_profit_pct = Decimal(str(getattr(position, "peak_profit_pct", 0.0)))
+        row.current_profit_pct = Decimal(str(getattr(position, "current_profit_pct", 0.0)))
+        row.tier = int(getattr(position, "tier", row.tier))
+        floor_pct = getattr(position, "floor_pct", -999.0)
+        floor_price = getattr(position, "floor_price", 0.0)
+        row.floor_pct = None if floor_pct is None or floor_pct <= -999 else Decimal(str(floor_pct))
+        row.floor_price = None if not floor_price or floor_price <= 0 else Decimal(str(floor_price))
+        row.scales_done = list(getattr(position, "scales_done", []) or [])
+        row.scale_pnl = Decimal(str(getattr(position, "scale_pnl", 0.0)))
+        session.flush()
+
+    def close_managed_position(self, session: Session, row: OmsManagedPosition) -> None:
+        row.status = "closed"
+        row.current_quantity = 0
+        session.flush()

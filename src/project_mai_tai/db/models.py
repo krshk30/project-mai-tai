@@ -522,3 +522,51 @@ class ScannerBlacklistEntry(Base):
         server_default=func.now(),
         onupdate=utcnow,
     )
+
+
+class OmsManagedPosition(Base):
+    """OMS-owned ladder state for schwab_1m_v2 positions (Track-2 Phase-2).
+
+    The OMS is the SOLE writer of these rows (single-writer discipline — the
+    reason for a separate table, not extending virtual_positions). One open row
+    per (broker_account_name, symbol). Mirrors `exit_logic.Position` so a Position
+    can be hydrated/persisted each evaluation. Uses TEXT natural keys (no FKs) and
+    JSON (not JSONB) for SQLite-test renderability. Inert when
+    `oms_v2_exit_management_enabled` is OFF (no rows written).
+    """
+
+    __tablename__ = "oms_managed_positions"
+    __table_args__ = (
+        Index(
+            "uq_oms_managed_positions_open_symbol",
+            "broker_account_name",
+            "symbol",
+            unique=True,
+            postgresql_where=text("status = 'open'"),
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(), primary_key=True, default=uuid4)
+    strategy_code: Mapped[str] = mapped_column(String(64), index=True)
+    broker_account_name: Mapped[str] = mapped_column(String(128), index=True)
+    symbol: Mapped[str] = mapped_column(String(16), index=True)
+    entry_price: Mapped[Decimal] = mapped_column(Numeric(18, 8))
+    original_quantity: Mapped[int] = mapped_column(Integer)
+    current_quantity: Mapped[int] = mapped_column(Integer)
+    entry_path: Mapped[str] = mapped_column(String(32), default="")
+    entry_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    peak_profit_pct: Mapped[Decimal] = mapped_column(Numeric(18, 6), default=Decimal("0"))
+    current_profit_pct: Mapped[Decimal] = mapped_column(Numeric(18, 6), default=Decimal("0"))
+    tier: Mapped[int] = mapped_column(Integer, default=1)
+    floor_pct: Mapped[Decimal | None] = mapped_column(Numeric(18, 6), nullable=True)
+    floor_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 8), nullable=True)
+    scales_done: Mapped[list] = mapped_column(JSON, default=list)
+    scale_pnl: Mapped[Decimal] = mapped_column(Numeric(18, 8), default=Decimal("0"))
+    config_name: Mapped[str] = mapped_column(String(32), default="make_v2_variant")
+    status: Mapped[str] = mapped_column(String(16), default="open", index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, server_default=func.now(), onupdate=utcnow
+    )

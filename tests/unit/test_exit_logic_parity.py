@@ -194,8 +194,12 @@ def test_import_graph_leaf_guard() -> None:
     pkg = pathlib.Path(__file__).resolve().parents[2] / "src" / "project_mai_tai" / "exit_logic"
     if not pkg.exists():
         pytest.skip("exit_logic not present yet (pre-move golden-capture phase)")
+    # `strategy_core` is forbidden too: exit_logic must be a PURE LEAF. The back-edge
+    # exit_logic.position → strategy_core.time_utils caused a circular import
+    # (strategy_core/__init__ → position_tracker → exit_logic.position); now stdlib-only.
     forbidden = ("strategy_engine_app", "schwab_streamer", "schwab_native_30s",
-                 "bar_builder", "polygon_30s", "market_data", "services.", ".db.", "db.models", "gateway")
+                 "bar_builder", "polygon_30s", "market_data", "services.", ".db.", "db.models",
+                 "gateway", "strategy_core")
     offenders = []
     for py in pkg.glob("*.py"):
         tree = ast.parse(py.read_text())

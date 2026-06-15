@@ -326,6 +326,33 @@ class TradingConfig:
         )
         return TradingConfig(**fields)
 
+    def make_v2_variant(
+        self,
+        *,
+        quantity: int = 10,
+        bar_interval_secs: int = 60,
+        dry_run: bool | None = None,
+    ) -> "TradingConfig":
+        """Exit-ladder config for schwab_1m_v2 OMS-managed exits (Track-2 Phase-2).
+
+        DELIBERATELY base defaults — 1.5% hard stop + the base scale/floor ladder —
+        to reproduce the validated re-score ladder EXACTLY (stop 1.5%; scale +2%→50%
+        / +4%→25% / fast +4%→75%; floor 1%→BE / 2%→0.5 / 3%→1.5 / 4%→trail−1.5).
+        Note: `make_1m_variant` overrides `stop_loss_pct=1.0`, which would DIVERGE
+        from the validated 1.5% — so v2 gets its own isolated variant instead, and
+        changing it never affects the momentum-bot variants. Size 10 / 60s.
+        """
+        fields = asdict(self)
+        fields.update(
+            {
+                "dry_run": self.dry_run if dry_run is None else dry_run,
+                "default_quantity": quantity,
+                "bar_interval_secs": bar_interval_secs,
+                "entry_vwap_mode": "session_aware",
+            }
+        )
+        return TradingConfig(**fields)
+
     def make_30s_variant(
         self,
         *,
