@@ -1,5 +1,34 @@
 # Session Handoff - Global
 
+### ✅ 2026-06-15 — Massive-feed probe RAN; bid→trade fix DROPPED; coverage concern dissolved (slice 3 stands)
+
+The 08:08-08:17 ET live probe of the OMS's actual feed (`mai_tai:market-data` = Massive/Polygon) **flipped
+the premise twice:**
+1. **Massive is DENSE for covered symbols** — quotes AND trades 100-2100/min, **p95 sub-second** (CAST
+   2103 q/min p95 0.15s; NIXX/VSME/GELS similar). The "bid/ask too sparse" finding came from the SCHWAB
+   LEVELONE archive (the WRONG feed). On the OMS's real feed the bid was never the problem →
+   **the bid→trade trigger fix is UNNECESSARY and DROPPED** (#307's trigger-fix superseded).
+2. **The apparent 4/6 coverage gap (BYAH/GLXG zero ticks) was a CONFOUND** — slice-2's gateway-register
+   is HELD/not live, so the OMS feed didn't carry v2's full watchlist. Historical check: v2's actual
+   fills (broker_orders filled, 30d) = **6 fills, 0% in OTC/structurally-uncovered names**; BYAH/GLXG
+   have 3000+ REAL-volume polygon_30s bars TODAY → **listed, not OTC, just quiet during the sample.**
+   → **Structural coverage concern dissolved. Neither Option A (Track-3) nor B (coverage-gate) is a blocker.**
+
+**⚠️ Flag-coupling wrinkle (confirmed `schwab_1m_v2_bot.py:823`):** slice-2's `_sync_gateway_subscription`
+is gated on the SAME `oms_v2_exit_management_enabled` flag as the slice-3 sells → "deploy slice-2 dormant
+(flag OFF)" does NOT register v2 with the gateway. **Fix = decouple slice-2's register onto its own flag
+(or always-on; harmless when exits off).**
+
+**FINALIZED PLAN (held for the deploy-sequence review):** (1) fast pre-check = MANUAL gateway-consumer
+test (publish v2 watchlist to `market-data-subscriptions` as consumer="schwab-1m-v2", resample, withdraw
+— no deploy/flag-flip, reversible, live session) → confirm "slice-2 fixes coverage"; (2) small slice-2
+revision = decouple the register flag; (3) deploy slices 1-2-3 dormant (register ON, exits OFF); (4)
+reprobe coverage live; (5) IF confirmed → attended exit-flag activation, watch a real v2 position managed
+end-to-end on simulated. **slice 3 #308 stands as built** (bid-triggered quote ladder + GREEN survival
+gate). Option B = cheap optional safety (0% OTC fills); Option A = parked (revisit only on a real live
+gap). Stack #305/#306/#308 + designs HELD; nothing merged/deployed.
+
+
 ### 📅 MONDAY 2026-06-15 PLAN (Track-2 Phase-2 slice-3 trigger fix is the morning's real deliverable)
 
 **Context:** Slices 1-3 of the v2 OMS exit ladder are BUILT + HELD (PRs #305/#306/#308; all behind
