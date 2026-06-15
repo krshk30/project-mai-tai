@@ -1,5 +1,110 @@
 # Session Handoff - Global
 
+### 🔴 2026-06-15 — TWO TRACKED v2 ENTRY-GATING ISSUES (design-first; do NOT hot-patch the live entry path)
+
+Found while diagnosing why v2 missed QTEX's ATR-Flip BUY at 17:17Z (1:17 PM ET) that TOS's identical study
+(modified ATR 5/3.5/WILDERS) flagged. **Full diagnosis: the ATR signal was CORRECT** — v2's algorithm,
+run over v2's actual QTEX bars, reproduces the TOS flip bar-for-bar at 17:17Z (short since 17:06 → high
+2.300 ≥ trail 2.2524 → variant-B touch + BUY); volume 605k cleared the 5000 floor; seed/anchor is NOT the
+cause (signal survives a mid-session seed). The miss was a GATING bug. Two issues:
+
+- **ISSUE #1 — post-restart ~135-bar entry BLACKOUT affecting ALL v2 paths.** `_evaluate_completed_bar`
+  (`strategy_core/schwab_1m_v2.py:676`) bails `if len(state.bars) < min_bars` where
+  `min_bars = macd_slow(26)+macd_signal(9)+settling(100) = 135`. **`state.bars` is effectively LIVE-ONLY
+  after a restart** (directly measured: 17:56Z bar_counts were 101–110 for all symbols ≈ minutes since the
+  16:14 restart; the 7-day REST warmup does NOT meaningfully backfill the strategy buffer). So a mid-session
+  v2 restart **blinds MACD + VWAP + ATR for ~135 minutes (>2h)**. The 16:14Z restart → no symbol could fire
+  until ~18:29Z. **Operational impact: restarting v2 mid-session = >2h of zero entries.** (Also partly
+  explains the morning "dryspell" — each restart imposes this.) This is why the operator's "45-min warmup"
+  intuition felt right: the strategy buffer behaves live-only.
+- **ISSUE #2 — ATR-Flip is MIS-GATED behind MACD's 135-bar settling.** ATR-Flip needs only ~6 bars (its own
+  short warmup, `schwab_1m_v2.py:653-654`), but its EMIT sits BELOW the line-676 min_bars guard, so it
+  inherits MACD's 135-bar requirement. Fresh-scanned symbols (enter mid-session, e.g. QTEX added 14:59Z →
+  only ~67 bars at the 17:17 touch) and post-restart symbols are BLIND to ATR-Flip for ~135 live bars even
+  though the ATR indicator is warm + correct.
+
+**Fix directions (design-first, NOT live): (a)** move the ATR emit ABOVE the min_bars guard with its own
+~6-bar threshold — pending scope that ATR firing under-warmed reads no half-warm MACD/stoch/VWAP value;
+**(b)** make REST warmup actually backfill `state.bars` (root: Schwab same-day intraday limits, line 320) so
+restarts don't impose the 135-min blackout. **ATR-Flip LEFT ON** (correct once a symbol crosses 135 bars; it
+WILL fire on warm symbols) — but **any live ATR result must be read knowing it misses fresh/post-restart
+symbols until fixed.** See [[project-mai-tai-v2-entry-warmup-gate]].
+
+### ✅ 2026-06-15 (mid-session, attended) — v2 OMS EXITS ACTIVATED (`oms_v2_exit_management_enabled=true`)
+
+After the dormant deploy below, activated the exit ladder attended, gated on the paper-isolation re-proof:
+- **GATE 1 (paper-isolation) GREEN against deployed `88e908b`:** survival test 3/3 pass; live config
+  `provider_for_account("paper:schwab_1m_v2")="simulated"` + v2 NOT in `configured_schwab_accounts`
+  (only macd_1m/macd_30s/schwab_1m/tos_runner_shared); single-emit invariant confirmed —
+  `_emit_v2_managed_sell` pins both intent + OrderRequest `broker_account_name=row.broker_account_name`.
+- **Pre-activation snapshot:** live RTH feed, OMS+v2 healthy, dormant intact (table=0, register ON).
+  **No live v2 positions** — `SimulatedBrokerAdapter._positions` is IN-MEMORY (no DB persist), so the
+  13:39:58Z restart reset all prior sim positions (CAST/VSME Fri + today's 5 fills); `virtual_positions`
+  synced to 0. CAST/VSME stranding moot (flat by construction). Managed rows come from NEW fills only
+  (`_apply_managed_position_after_fill` uses fill qty+price, independent of virtual_positions).
+- **Activated:** appended `MAI_TAI_OMS_V2_EXIT_MANAGEMENT_ENABLED=true`, restarted **OMS only** (v2 MainPID
+  2119252 + strategy 2104716 BOTH unchanged); OMS `/proc/PID/environ` confirms both flags ON; clean boot,
+  table still 0.
+- **✅ STEP 4 PROVEN (16:01Z) — full managed round-trip on VSME:** v2 BUY filled @ $3.015 qty10 (simulated,
+  16:01:02Z) → OMS created managed row + hydrated Position + ran ladder on quotes → peaked +0.50% (floor
+  never armed, <1%), no scale (<2%) → **HARD_STOP** at ref $2.9698 (=entry −1.5%) → close sell filled on
+  **simulated** (16:01:36Z) → row current_quantity=0 status=closed. Exit via single `_emit_v2_managed_sell`,
+  reason `oms_v2_managed_exit:HARD_STOP`. **LIVE paper-isolation HELD: 0 v2 orders ever routed to a
+  non-simulated provider; SchwabBrokerAdapter never touched.** The OMS-side v2 exit ladder is VALIDATED
+  end-to-end in production — **v2's "no managed exits" gap is CLOSED.** (Watcher script had a latent
+  f-string quoting bug that crashed at the first OPEN log — no data lost, DB captured the full lifecycle.)
+  - **Scale-out (+2%/+4%) + breakeven-floor legs: pending only a live GREEN position to demo — NOT a
+    blocker.** They use the IDENTICAL `_emit_v2_managed_sell` emit+routing path proven here (unit + golden
+    tested); this round-trip peaked +0.50% so they didn't arm. DB records the next green one; no watcher needed.
+- **✅ ATR-Flip (P3) ACTIVATED 16:14Z (attended):** `strategy_schwab_1m_v2_atr_flip_enabled=true` (variant B
+  touch, vol-floor 5000, period 5 / factor 3.5 — as deployed), restarted **v2 ONLY** (OMS 2121312 + strategy
+  2104716 unchanged); v2 clean boot NRestarts=0, ATR+register ON in v2 env, exit flag still ON OMS-side; no
+  errors; bars flowing (warm via REST in-memory warmup — DB persist understates buffer per 300s limit). No
+  probe symbol set → no direct ATR readout; warm inferred. **First-ever live fire of ATR-Flip — never
+  triggered in prod (parity-oracle-validated only).** Watcher armed (entry_path="ATR Flip" detector) for the
+  COMBINED proof: ATR entry→managed row→ladder→simulated exit. **SCOPE: validates ATR FIRES + gets MANAGED
+  live — does NOT validate P3-B profitability (needs measured-spread Replay Phase 2, parked).** Rollback =
+  ATR flag false + restart v2 (entries stop; exits unaffected).
+- **Tier MACD/stoch exits = slice-4 deferred fast-follow** (OMS doesn't compute indicators).
+- **Rollback (verified-ready):** set `oms_v2_exit_management_enabled` false + restart OMS → table inert,
+  no schema change; exits route simulated by construction regardless.
+
+### ✅ 2026-06-15 (mid-session) — SLICES 1-2-3 + DECOUPLE MERGED + DORMANT DEPLOY LIVE (register ON / exits OFF)
+
+The full v2 OMS-exit stack is on `main` (`88e908b`) and **deployed dormant** on the VPS. Done this session:
+- **Merged the stack:** #305 (slice-1 oms_managed_positions) → #306 (slice-2 gateway register) →
+  **#312** (slice-3 quote ladder + decouple, via **clean cherry-pick** of 5efa409+4fe5893 — the stacked
+  squash-merge of #305/#306 rewrote SHAs so #308/#311 couldn't 3-way merge; cherry-picking their diffs
+  onto current main applied clean). #308/#311 closed as superseded. 26 slice tests green on the combined branch.
+- **Migration 0008 applied to prod** — validated on a throwaway `mai_tai_test` first (full chain 0007→0008
+  clean, table + 6 indexes incl. partial-unique `WHERE status='open'`), then prod (`alembic_version=0008`,
+  table present, 0 rows). **Confirmed additive/non-locking:** upgrade is `create_table`+`create_index` on the
+  NEW table only — zero ALTER/lock on live tables.
+- **Pre-restart import check GREEN** (OmsManagedPosition + slice-3 OMS methods + bot sync method + store API
+  all resolve from repo src; settings expose both flags).
+- **Env:** `MAI_TAI_STRATEGY_SCHWAB_1M_V2_GATEWAY_REGISTER_ENABLED=true` appended (line 113); exit flag
+  ABSENT=False. Settings-via-EnvironmentFile confirms **register=True, exit=False**.
+- **Restarted OMS + v2 ONLY** — strategy-engine MainPID UNCHANGED (2104716), both units active/running
+  NRestarts=0 ExecMainStatus=0.
+- **Dormant verification POSITIVE:** v2 published its gateway consumer subscription at 13:39:58Z
+  (`consumer_name=schwab-1m-v2, mode=replace, symbols=[AHMA,BYAH,CAST,CUPR,DXST,GELS,GLXG,JRSH,VSME]`);
+  `oms_managed_positions`=0; no managed-exit log lines; no errors/tracebacks. **Exits structurally inert**
+  (`_managed_v2_symbols` empty when flag OFF → line-1633 guard no-ops).
+- **Live coverage re-probe DONE** (10-min sample of `mai_tai:market-data`, 13:41:48–13:51:48Z): **7/9
+  PRESENT, sub-second cadence** (AHMA/CAST/CUPR/DXST/GELS/JRSH/VSME, p95 ≤0.2s). BYAH+GLXG ABSENT —
+  **evidence-confirmed in-window quiet, NOT a coverage gap:** both have real polygon_30s bars+volume
+  today (BYAH 63 bars 3.2M vol last 13:36Z; GLXG 97 bars 4.2M vol last 11:59Z) but no Polygon print
+  *inside* the 13:41–13:51 window; contrast CUPR last-print 13:50:30Z (in-window) → PRESENT. Slice-2
+  registration works as designed (publish included both; gateway honored it; Massive had nothing to
+  forward in-window). Matches the earlier "just quiet during the sample" finding.
+  - **Activation caveat (note, not blocker):** a v2 position in a momentarily-quiet name has stale
+    quotes → the quote-driven ladder won't evaluate until the next print. Bounded by the OMS 5s-staleness
+    reject + ladder-on-any-fresh-quote (locked); 0% of v2's 30d fills are in structurally-uncovered names.
+
+**NEXT (separate gated step):** exit-flag activation — re-confirm paper-isolation survival, flip
+`oms_v2_exit_management_enabled` attended, watch one real v2 position managed end-to-end on simulated.
+CAST/VSME flatten timing = separate Track-2 decision.
+
 ### ✅ 2026-06-15 — Massive-feed probe RAN; bid→trade fix DROPPED; coverage concern dissolved (slice 3 stands)
 
 The 08:08-08:17 ET live probe of the OMS's actual feed (`mai_tai:market-data` = Massive/Polygon) **flipped
