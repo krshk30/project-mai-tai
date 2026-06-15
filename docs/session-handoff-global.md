@@ -8,8 +8,9 @@ provider=schwab + wire hash). v2 is structurally paper today (P1 Phase 1) — th
 **🔴 GO-LIVE BLOCKERS (must clear):**
 1. **Forward-test expectancy gate** — is v2 actually profitable? Sim-fills are IDEALIZED (no slippage/partials)
    = pipe validation, NOT a track record. (handoff:259 forward-test central question.)
-2. **Replay Phase 2 (measured-spread) + tick-capture-live** — the decisive realism input (does v2 survive real
-   spread). Tick-capture (#282) is DEPLOYED DORMANT → a separate attended flip is the prerequisite.
+2. **Replay Phase 2 (measured-spread)** — the decisive realism input (does v2 survive real spread).
+   ✅ **Tick-capture (#282) ACTIVATED 2026-06-15 19:57Z — the data clock is now RUNNING** (no longer dormant);
+   accumulate ~a week+ of RTH ticks before Phase 2 has a statistically-useful sample.
 3. **v2 entry-criteria rules settled** — operator is actively tuning add/remove rules ([[project-mai-tai-v2-entry-criteria]]);
    don't go live mid-tuning.
 - ~~Scale/floor exit legs proven live~~ ✅ **SATISFIED 2026-06-15 (CUPR — two ATR-Flip round-trips ran
@@ -23,6 +24,22 @@ provider=schwab + wire hash). v2 is structurally paper today (P1 Phase 1) — th
 - slice-4 tier MACD/stoch exits · CAST/VSME flatten timing · bar_counts cosmetic · "Polygon tick" dashboard
   mislabel · `_evaluate_paths` triage (**momentum-bot engine, NOT v2 — not on the v2 critical path**).
 - **Parked (off the active list):** polygon_30s credentials (needs tuning first).
+
+### ✅ 2026-06-15 19:57Z — TICK-CAPTURE (#282) ACTIVATED (live, observer-only) + retention timer scheduled
+
+Flipped attended in RTH to start the **Replay Phase 2 data clock** (capture-only — advances no blocker itself).
+- **Flip:** `MAI_TAI_STRATEGY_SCHWAB_1M_V2_TICK_CAPTURE_ENABLED=true` (flush 2s / batch 500 / max-buf 50k
+  defaults), **v2-only restart** (OMS 2121312 + strategy 2104716 unchanged). Verified: `[V2-TICK-INIT]`;
+  `[V2-WS-SUB] services=CHART_EQUITY+LEVELONE_EQUITIES` (dual SUBS, 10 syms); heartbeat `tick_capture:"true"`,
+  `ticks_written` climbing, `ticks_dropped:0`; rows landing in BOTH `market_trade_ticks` + `market_quote_ticks`.
+  **Non-perturbation held:** CHART_EQUITY bars normal cadence, bar-persist unaffected, no errors.
+- **🔧 Retention NOW HANDLED (the gap that was found unscheduled):** systemd timer
+  `project-mai-tai-prune-ticks.timer` → `.service` runs `scripts/prune_market_ticks.py --keep-days 14` daily
+  at **09:00 UTC** (after the 08:00 scanner roll). Verified scheduled (`list-timers` NEXT=2026-06-16 09:00 UTC)
+  AND the real oneshot ran clean (Result=success, exit 0, deleted 0 — nothing >14d yet). So the tables won't
+  grow unbounded over the unattended capture window. Units: `/etc/systemd/system/project-mai-tai-prune-ticks.{service,timer}`.
+- **First-days watch:** `market_*_ticks` growth rate + bar-persist latency. **Rollback:** flag false + restart v2
+  → capture stops, tables inert. **NEXT:** after ~a week+ of RTH accumulation, stand up Replay Phase 2.
 
 
 ### ✅ 2026-06-15 — TWO v2 ENTRY-GATING ISSUES — FIXED, DEPLOYED + LIVE-PROVEN (main `97825a5`)
