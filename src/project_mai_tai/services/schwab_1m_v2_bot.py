@@ -74,6 +74,10 @@ from project_mai_tai.strategy_core.schwab_1m_v2 import (
 logger = logging.getLogger(__name__)
 
 INTERVAL_SECS = 60
+# Fix (b): number of persisted 60s bars to replay into the strategy buffer on a
+# symbol's cold-start. >= the 135-bar MACD settling with headroom, and bounded so
+# the seed + early live bars sit comfortably under the strategy's deque(maxlen=300).
+DB_SEED_BAR_LIMIT = 250
 STATE_PUBLISH_INTERVAL_SECONDS = 5
 POSITION_POLL_INTERVAL_SECONDS = 5
 # Max bar age (seconds) for DB-persistence. Older bars are warmup feeds
@@ -220,6 +224,14 @@ class SchwabV2BotService:
         # in timestamp order only those bars strictly newer than the
         # latest bar already in `state.bars`.
         self._streamer_pending: dict[str, list[ChartBar]] = {}
+        # Fix (b): symbols whose strategy bar buffer has been hydrated from
+        # `strategy_bar_history` on cold-start (see `_seed_strategy_bars_from_db`).
+        # Without this, `state.bars` is live-only after a restart (the C3 dedup
+        # gate skips the REST warmup batch once the streamer out-timestamps it),
+        # so MACD/VWAP/ATR are blind for ~135 minutes (the line-676 min_bars
+        # guard). Seeding clears that blackout. Pruned with the watchlist so a
+        # re-added symbol re-seeds.
+        self._db_seeded: set[str] = set()
         # C3 routing counters — exposed via heartbeat for observability.
         # `rest_bars_gated` increments on REST bars suppressed because
         # streamer is healthy and already has the bucket. `rest_bars_gap_fill`
@@ -874,11 +886,13 @@ class SchwabV2BotService:
         selected = set(symbols[:max_watchlist]) | protected
         if selected == self._watchlist:
             return
+        new_symbols = selected - self._watchlist
         self._watchlist = selected
         # Drop warmup state for symbols that left the watchlist. If they
         # re-join later, REST needs to refetch the batch and the
         # buffer-and-replay path runs again.
         self._rest_warmup_done &= selected
+        self._db_seeded &= selected
         # Drop any buffered streamer bars for symbols no longer on the
         # watchlist — the streamer will be told to UNSUBS them below,
         # and stale buffers would replay after a re-join with bars
@@ -904,6 +918,12 @@ class SchwabV2BotService:
             # ordering. See docs/session-handoff-schwab-1m-v2.md
             # 2026-05-23 entry for the race analysis.
             self.streamer.set_desired_symbols(selected)
+        # Fix (b): hydrate the strategy bar buffer for newly-joined symbols from
+        # persisted history so MACD/VWAP/ATR clear their warmup at once instead
+        # of waiting ~135 live bars. Runs once per symbol; replayed bars carry
+        # historical timestamps (not fresh) so no entry fires on the seed.
+        for sym in sorted(new_symbols):
+            self._seed_strategy_bars_from_db(sym)
         logger.info(
             "schwab_1m_v2 watchlist updated count=%d sample=%s warmed=%d",
             len(selected),
@@ -1074,6 +1094,81 @@ class SchwabV2BotService:
                 len(fresh),
                 symbol,
             )
+
+    def _seed_strategy_bars_from_db(self, symbol: str) -> None:
+        """Fix (b): hydrate `state.bars` from `strategy_bar_history` on cold-start.
+
+        Replays the last DB_SEED_BAR_LIMIT persisted 60s bars (ascending) through
+        the strategy so MACD/VWAP/stoch clear their warmup immediately — killing
+        the ~135-minute post-restart entry blackout (the line-676 min_bars guard
+        otherwise blinds ALL paths until `state.bars` refills live-only, which the
+        C3 dedup gate forces). Seed bars carry historical timestamps so
+        `bar_is_fresh` is False → no intent fires on the replay. Cross-session is
+        safe: VWAP/ATR self-reset at the 04:00-ET anchor; MACD wants the continuity.
+
+        SAFETY (the load-bearing bit): after the replay, CLEAR the pending-cross
+        stash. A native MACD/VWAP cross on the LAST seed bar would otherwise be
+        consumed by the first live bar (gap <= pending_cross_max_gap_secs) and fire
+        a PHANTOM entry from replayed history — worse than the blackout. The prev_*
+        memos are KEPT (that's the point — live crosses then detect correctly).
+        Runs once per symbol (`_db_seeded`, pruned with the watchlist).
+        """
+        if self.session_factory is None or symbol in self._db_seeded:
+            return
+        self._db_seeded.add(symbol)
+        try:
+            with self.session_factory() as session:
+                rows = (
+                    session.execute(
+                        select(StrategyBarHistory)
+                        .where(
+                            StrategyBarHistory.strategy_code == STRATEGY_CODE,
+                            StrategyBarHistory.symbol == symbol,
+                            StrategyBarHistory.interval_secs == INTERVAL_SECS,
+                        )
+                        .order_by(StrategyBarHistory.bar_time.desc())
+                        .limit(DB_SEED_BAR_LIMIT)
+                    )
+                    .scalars()
+                    .all()
+                )
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "schwab_1m_v2 db-seed query failed for %s; falling back to "
+                "live-only warmup",
+                symbol,
+                exc_info=True,
+            )
+            return
+        if not rows:
+            return
+        for row in reversed(rows):  # ascending (oldest first)
+            bt = row.bar_time
+            if bt.tzinfo is None:  # defensive: treat a naive timestamp as UTC
+                bt = bt.replace(tzinfo=UTC)
+            ts_ms = int(bt.timestamp() * 1000)
+            self.strategy.on_bar(
+                symbol,
+                ChartBar(
+                    symbol,
+                    float(row.open_price),
+                    float(row.high_price),
+                    float(row.low_price),
+                    float(row.close_price),
+                    int(row.volume),
+                    ts_ms,
+                ),
+            )
+        st = self.strategy.watchlist_state(symbol)
+        st.pending_path_macd = False
+        st.pending_path_vwap = False
+        st.pending_cross_bar_ts_ms = 0
+        logger.info(
+            "schwab_1m_v2 db-seed: %s hydrated %d bars (state.bars=%d)",
+            symbol,
+            len(rows),
+            len(st.bars),
+        )
 
     def _should_skip_rest_strategy_feed(self, symbol: str, bar: ChartBar) -> bool:
         """C3 gating: when streamer is connected and has already
