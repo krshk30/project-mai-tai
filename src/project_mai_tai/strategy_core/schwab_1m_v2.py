@@ -674,7 +674,27 @@ class SchwabV2Strategy:
             self.cfg.stoch_length,
         )
         if len(state.bars) < min_bars:
-            return None
+            # MACD/VWAP are under-warmed here and the guard above is what keeps
+            # their seed-biased values from being read. ATR-Flip, however, has
+            # its own short warmup (`atr_signal` is None until the trail is
+            # defined ~2*period bars) and reads ONLY OHLCV + atr_* state — zero
+            # MACD/stoch/VWAP/EMA reads — so it can fire now instead of waiting
+            # ~135 bars (the bug that blinded fresh-scanned/post-restart symbols
+            # like QTEX; see docs/v2-atr-early-warmup-fix-design.md). Honor the
+            # SAME entry gates as the warm path (flat + no cooldown) and tick the
+            # cooldown so an ATR entry's cooldown elapses on schedule.
+            if state.cooldown_bars_remaining > 0:
+                state.cooldown_bars_remaining -= 1
+            if state.position_qty > 0 or state.cooldown_bars_remaining > 0:
+                return None
+            if atr_signal is None:
+                return None  # ATR trail not defined yet
+            cur_uw = state.bars[-1]
+            now_ms = int(datetime.now(UTC).timestamp() * 1000)
+            fresh_uw = (
+                (now_ms - cur_uw.timestamp_ms) / 1000.0
+            ) <= MAX_BAR_AGE_SECONDS_FOR_EMIT
+            return self._maybe_atr_emit(state, cur_uw, atr_signal, fresh_uw)
 
         # Decrement cooldown on every new bar (independent of whether we
         # would have signaled). v1.32 spec: cooldown ticks down each bar.
