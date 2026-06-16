@@ -48,7 +48,13 @@ def configured_schwab_accounts(settings: Settings) -> dict[str, SchwabAccountCon
         # paper:schwab_1m position-sync keeps the refresher alive, so don't broaden before
         # P0" rationale was RETRACTED 2026-06-09 — those bots are disabled and register
         # nothing; the refresher is the sole token owner.)
-        if account_name == settings.strategy_schwab_1m_v2_account_name:
+        # The refusal is GATED on the go-live opt-in: by default v2 is refused
+        # (structural paper-safety); when strategy_schwab_1m_v2_go_live_enabled is
+        # True the hash binds and v2 routes to the real Schwab account. Flipping
+        # the flag back to False + restart instantly re-isolates v2 (rollback).
+        if account_name == settings.strategy_schwab_1m_v2_account_name and not bool(
+            getattr(settings, "strategy_schwab_1m_v2_go_live_enabled", False)
+        ):
             return
         resolved = (account_hash or shared_hash).strip() if account_hash is not None else shared_hash
         if not resolved:

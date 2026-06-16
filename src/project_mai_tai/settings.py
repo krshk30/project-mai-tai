@@ -234,6 +234,18 @@ class Settings(BaseSettings):
     # (modified TR, ATRPeriod 5, ATRFactor 3.5, Wilders), ported verbatim. See
     # docs/schwab-1m-v2-atr-flip-entry-design.md.
     strategy_schwab_1m_v2_atr_flip_enabled: bool = False
+    # ATR-ONLY go-live mode: hard-disable Paths 1/2 (MACD Cross / VWAP Breakout)
+    # so ONLY screened-ATR can emit. P1/P2 take precedence over ATR
+    # (schwab_1m_v2.py) and are the 7wk-validated losers — under live credentials
+    # they must never trade ahead of ATR. Default False = current behavior
+    # (reversible kill: flip back to False + restart restores P1/P2).
+    strategy_schwab_1m_v2_atr_only_mode: bool = False
+    # GO-LIVE opt-in: when False (default), the configured_schwab_accounts guard
+    # REFUSES to bind a real Schwab hash to the v2 account (structural paper-safety,
+    # P1 Phase 1). When True, v2's account registers the real hash so orders route
+    # to Schwab. Reversible kill: flip back to False + restart → v2 re-isolated to
+    # paper. Pair with broker_provider=schwab + account_name=live:schwab_1m_v2.
+    strategy_schwab_1m_v2_go_live_enabled: bool = False
     strategy_schwab_1m_v2_atr_flip_variant: str = "B"          # "A" or "B"
     strategy_schwab_1m_v2_atr_flip_quantity: int = 10          # live-paper size
     strategy_schwab_1m_v2_atr_flip_vol_floor: int = 5000       # the only filter

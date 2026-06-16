@@ -1297,6 +1297,20 @@ class SchwabV2BotService:
     async def _maybe_emit(self, draft) -> None:  # type: ignore[no-untyped-def]
         if draft is None:
             return
+        # ATR-ONLY belt-and-suspenders: even if some path computed a non-ATR open,
+        # refuse to emit it at the chokepoint. Paths 1/2 are the 7wk losers and
+        # must never reach the broker under live credentials. Defense-in-depth on
+        # top of the strategy-level disable; drops loudly so any leak is visible.
+        if bool(getattr(self.settings, "strategy_schwab_1m_v2_atr_only_mode", False)):
+            reason = str(getattr(draft, "reason", ""))
+            if getattr(draft, "intent_type", "") == "open" and "ATR Flip" not in reason:
+                logger.error(
+                    "schwab_1m_v2 ATR-ONLY mode DROPPED non-ATR open intent "
+                    "(symbol=%s reason=%s) — Paths 1/2 must not fire under go-live",
+                    getattr(draft, "symbol", "?"),
+                    reason,
+                )
+                return
         if self.intent_emitter is None:
             logger.warning("schwab_1m_v2 intent dropped — emitter not initialized")
             return

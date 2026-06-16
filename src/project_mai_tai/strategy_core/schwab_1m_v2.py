@@ -329,6 +329,12 @@ class SchwabV2Strategy:
         self._atr_enabled = bool(
             getattr(self.settings, "strategy_schwab_1m_v2_atr_flip_enabled", False)
         )
+        # ATR-ONLY go-live mode (see settings). When True, Paths 1/2 (MACD Cross /
+        # VWAP Breakout) are hard-disabled at the entry chokepoint so only the
+        # screened-ATR path can emit. Default False = current behavior.
+        self._atr_only_mode = bool(
+            getattr(self.settings, "strategy_schwab_1m_v2_atr_only_mode", False)
+        )
         self._atr_variant = str(
             getattr(self.settings, "strategy_schwab_1m_v2_atr_flip_variant", "B") or "B"
         ).strip().upper()
@@ -973,6 +979,14 @@ class SchwabV2Strategy:
             return None
         if state.cooldown_bars_remaining > 0:
             return None
+        if self._atr_only_mode:
+            # ATR-ONLY chokepoint: hard-disable Paths 1/2 regardless of native OR
+            # pending-cross resolution above. They precede ATR and are the 7wk
+            # losers — under live credentials they must never emit. Forcing both
+            # False routes every fresh bar to _maybe_atr_emit ONLY. Provable: with
+            # this flag on, the MACD/VWAP emit block below is unreachable.
+            path_macd = False
+            path_vwap = False
         if not (path_macd or path_vwap):
             # Paths 1/2 did not fire. Consider the ATR-Flip path (precedence
             # MACD > VWAP > ATR Flip — ATR is only reached when neither fired,
