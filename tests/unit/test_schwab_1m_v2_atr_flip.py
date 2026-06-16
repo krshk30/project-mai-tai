@@ -440,3 +440,65 @@ def test_macd_vwap_still_silent_under_warmed() -> None:
         strat.on_bar("TEST", ChartBar("TEST", 10.0, 10.0, 10.0, 10.0, 1000, ts))
     draft = strat.on_bar("TEST", ChartBar("TEST", 10.0, 11.0, 10.0, 11.0, 100_000, now_ms))
     assert draft is None, "MACD/VWAP must stay silent below the 135-bar guard"
+
+
+# ============ Track-B: ATR fresh-flip qualifier (atr_state_age ceiling) ==========
+# docs/v2-atr-fresh-flip-qualifier-design.md. ATR losers fire LATE in a long short
+# segment (state_age ~16 = dead-cat bounce); winners fire fresh (~2-3). Gate screens
+# state_age >= ceiling. ATR-Flip ONLY; OFF by default = behavior-neutral.
+
+def test_atr_fresh_flip_gate_off_is_parity() -> None:
+    """Gate OFF (default) → ATR fires exactly as today (behavior-neutral)."""
+    strat = SchwabV2Strategy(Settings())
+    strat._atr_enabled = True
+    assert strat._atr_use_max_state_age is False          # default off
+    chart, _T = _build_short_then_fresh_touch(strat, final_vol=100_000)
+    draft = [strat.on_bar("TEST", cb) for cb in chart][-1]
+    assert draft is not None and draft.metadata["path"] == "ATR Flip"
+
+
+def test_atr_fresh_flip_screens_late_keeps_below_ceiling() -> None:
+    """Gate ON: a LATE-segment touch (state_age ≥ ceiling) is screened; the SAME
+    touch fires when the ceiling sits above its age (the fresh-keeps boundary)."""
+    # Capture the fixture touch's state_age (gate off). The 150-bar decline makes a
+    # long short segment → a high-age "dead-cat" touch.
+    s0 = SchwabV2Strategy(Settings()); s0._atr_enabled = True
+    chart, _T = _build_short_then_fresh_touch(s0, final_vol=100_000)
+    d0 = [s0.on_bar("TEST", cb) for cb in chart][-1]
+    assert d0 is not None
+    age = int(d0.metadata["atr_state_age"])
+    assert age >= 5, "fixture should be a LATE (high-age) touch"
+
+    # Gate ON at the default ceiling 5 → the late touch is SCREENED.
+    s1 = SchwabV2Strategy(Settings()); s1._atr_enabled = True
+    s1._atr_use_max_state_age = True; s1._atr_max_state_age = 5
+    chart1, _ = _build_short_then_fresh_touch(s1, final_vol=100_000)
+    assert [s1.on_bar("TEST", cb) for cb in chart1][-1] is None
+
+    # Gate ON with the ceiling ABOVE the age → kept (fires).
+    s2 = SchwabV2Strategy(Settings()); s2._atr_enabled = True
+    s2._atr_use_max_state_age = True; s2._atr_max_state_age = age + 1
+    chart2, _ = _build_short_then_fresh_touch(s2, final_vol=100_000)
+    d2 = [s2.on_bar("TEST", cb) for cb in chart2][-1]
+    assert d2 is not None and d2.metadata["path"] == "ATR Flip"
+
+
+def test_atr_fresh_flip_does_not_touch_p1_p2() -> None:
+    """ATR-only: a MACD-Cross entry is byte-identical with the ATR gate off vs on."""
+    now_ms = int(datetime.now(UTC).timestamp() * 1000)
+
+    def drive(gate_on: bool):
+        strat = SchwabV2Strategy(Settings())
+        strat._atr_enabled = True
+        strat._atr_use_max_state_age = gate_on
+        strat._atr_max_state_age = 5
+        n_flat = 135
+        for i in range(n_flat):
+            ts = now_ms - (n_flat - i + 1) * 60_000
+            strat.on_bar("TEST", ChartBar("TEST", 10.0, 10.0, 10.0, 10.0, 1000, ts))
+        return strat.on_bar("TEST", ChartBar("TEST", 10.0, 11.0, 10.0, 11.0, 100_000, now_ms))
+
+    off = drive(False); on = drive(True)
+    assert off is not None and on is not None
+    assert off.metadata["path"] == "MACD Cross" == on.metadata["path"]
+    assert off.metadata == on.metadata          # ATR gate did not perturb P1/P2

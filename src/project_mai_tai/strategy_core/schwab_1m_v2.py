@@ -344,6 +344,13 @@ class SchwabV2Strategy:
         self._atr_factor = float(
             getattr(self.settings, "strategy_schwab_1m_v2_atr_flip_factor", 3.5)
         )
+        # Track-B fresh-flip qualifier (ATR-Flip only; OFF = behavior-neutral).
+        self._atr_use_max_state_age = bool(
+            getattr(self.settings, "strategy_schwab_1m_v2_atr_flip_use_max_state_age", False)
+        )
+        self._atr_max_state_age = max(
+            1, int(getattr(self.settings, "strategy_schwab_1m_v2_atr_flip_max_state_age", 5))
+        )
         raw_atr_probe = str(
             getattr(self.settings, "strategy_schwab_1m_v2_atr_flip_probe_symbols", "") or ""
         ).strip()
@@ -594,6 +601,16 @@ class SchwabV2Strategy:
             return None  # never fire on a replayed historical touch
         if cur.volume <= self._atr_vol_floor:
             return None  # the only filter: bar volume > floor
+
+        # Track-B fresh-flip qualifier (ATR-Flip ONLY; OFF by default = behavior-
+        # neutral). Losers fire LATE in a long short segment (atr_state_age ~16 =
+        # dead-cat bounce); winners fire fresh (~2-3). Screen high-age flips.
+        # 7-week rotating-sample: age<5 lifts 46%->63% win (idealized); see
+        # docs/v2-atr-fresh-flip-qualifier-design.md.
+        if self._atr_use_max_state_age:
+            age = atr_signal.get("state_age")
+            if age is not None and int(age) >= self._atr_max_state_age:
+                return None
 
         # Variant B (default, validated): intrabar touch of the resting trail;
         # entry at that trail level (== the backtest's `tp`, by construction, so
