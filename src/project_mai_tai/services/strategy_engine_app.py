@@ -1804,6 +1804,32 @@ class StrategyBotRuntime:
         )
         return True
 
+    def purge_non_protected_session_state(self) -> set[str]:
+        """Session-roll hard-purge with a load-bearing carve-out.
+
+        `_roll_day_if_needed()` clears all lifecycle/watchlist state, but it is a
+        no-op when a pre-roll async tick/fill already advanced `_active_day` to
+        today (the 04:00 watchlist-staleness race: the roll's clear never runs,
+        so the broker-blocked resync's re-promoted stale symbols survive). This
+        selectively clears `lifecycle_states` / `_desired_watchlist_symbols` for
+        symbols that no longer require a feed, while PRESERVING any symbol with an
+        open position or in-flight open/close/scale (`_symbol_requires_feed`) so a
+        live position's feed and exit ladder survive the roll. Returns the purged
+        symbols. Idempotent / safe to call when there is nothing to purge.
+        """
+        candidates = set(self.lifecycle_states) | set(self._desired_watchlist_symbols)
+        purgeable = {symbol for symbol in candidates if not self._symbol_requires_feed(symbol)}
+        if not purgeable:
+            return set()
+        for symbol in purgeable:
+            self.lifecycle_states.pop(symbol, None)
+        self._desired_watchlist_symbols.difference_update(purgeable)
+        # Rebuild the watchlist from the surviving lifecycle + positions/pending
+        # (positions and in-flight orders are re-included here too — belt and
+        # suspenders alongside the _symbol_requires_feed carve-out above).
+        self._sync_watchlist_from_lifecycle()
+        return purgeable
+
     def has_position(self, ticker: str) -> bool:
         return self.positions.has_position(ticker) or ticker in self.pending_open_symbols
 
@@ -5442,6 +5468,16 @@ class StrategyEngineState:
             roll_day = getattr(bot, "_roll_day_if_needed", None)
             if roll_day is not None:
                 roll_day()
+        # Hard-purge non-protected lifecycle/watchlist symbols at the session roll.
+        # `_roll_day_if_needed` above is a NO-OP whenever a pre-roll async tick/fill
+        # already advanced the bot's `_active_day` to today (the 04:00 staleness
+        # race), so this is what actually evicts yesterday's stale symbols — while
+        # preserving open positions / pending exits. Runs on the scanner-session
+        # guard (advanced only here), so it fires reliably exactly once per roll.
+        for bot in self.bots.values():
+            purge = getattr(bot, "purge_non_protected_session_state", None)
+            if purge is not None:
+                purge()
         self._resync_bot_watchlists_from_current_confirmed()
         self._active_scanner_session_start = current_session_start
         return True
@@ -6442,6 +6478,12 @@ class StrategyEngineService:
                 for item in event.payload.reference_data
             }
             self._preload_manual_stop_state()
+            # Roll the scanner session (and hard-purge stale watchlist state) BEFORE
+            # the broker-blocked resync. Otherwise the resync re-promotes yesterday's
+            # handoff symbols into bot lifecycle ~ms ahead of the in-batch roll (the
+            # 04:00 staleness race). Rolling first means the resync reads a clean,
+            # post-roll handoff. No-op on non-boundary batches (scanner-session guard).
+            self.state._roll_scanner_session_if_needed()
             self.state.set_broker_blocked_symbols_by_strategy(
                 self._load_schwab_ineligible_symbols_by_strategy()
             )
