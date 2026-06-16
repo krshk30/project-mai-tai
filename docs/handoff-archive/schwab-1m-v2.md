@@ -1,5 +1,9 @@
 # Session Handoff — schwab_1m_v2 (isolated bot)
 
+> **ARCHIVE / topic-history.** Active entry point is [`../session-handoff.md`](../session-handoff.md); current
+> v2 state lives there (blocker list + live ops + recent activity). This file is the v2-isolated bot's deep
+> design/status history. Monthly archives: [`2026-06`](2026-06.md) · [`2026-05`](2026-05.md) · [`2026-04`](2026-04.md).
+
 ## Why this doc exists
 
 `schwab_1m_v2` is a deliberately-isolated parallel 1-minute bot built to
