@@ -242,6 +242,12 @@ class Settings(BaseSettings):
     # CSV of symbols (or "*") for which `[V2-ATR-PROBE]` logs each evaluated bar's
     # ATR state (tr/loss/trail/state/touch). Diagnostic-only; default empty = off.
     strategy_schwab_1m_v2_atr_flip_probe_symbols: str = ""
+    # Track-B fresh-flip qualifier (ATR-Flip ONLY). ATR losers fire LATE in a long
+    # short segment (atr_state_age ~16 = dead-cat bounce); winners fire fresh (~2-3).
+    # When enabled, screen flips with state_age >= the ceiling. Default OFF =
+    # behavior-neutral. 7-week rotating-sample data picked 5 (46%->63% win idealized).
+    strategy_schwab_1m_v2_atr_flip_use_max_state_age: bool = False
+    strategy_schwab_1m_v2_atr_flip_max_state_age: int = 5
     strategy_macd_30s_reclaim_excluded_symbols: str = "JEM,CYCN,BFRG,UCAR,BBGI"
     # Maximum age (seconds) for the `scanner_confirmed_last_nonempty` snapshot
     # to be eligible for startup restore. Older snapshots are skipped, so
