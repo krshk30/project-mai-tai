@@ -75,6 +75,13 @@ provider=schwab + wire hash). v2 is structurally paper today (P1 Phase 1) — th
 
 ## 🗓️ RECENT ACTIVITY (newest first — full text in [`handoff-archive/2026-06.md`](handoff-archive/2026-06.md))
 
+- **2026-06-16 — Go-live workstreams scoped (design-first).** WS1 04:00 race fix: design reviewed, both gates
+  PASS (purge predicate exhaustive incl. v2 self-protection; repro test reproduces the race) — **CLEARED, now
+  building** (reorder + hard-purge on `_roll_scanner_session_if_needed`; merged repro test; 03:55 clear-stale-only).
+  See `v2-0400-watchlist-race-fix-design.md` §10. WS2 go-live config **LOCKED**: ATR-only (disable P1/P2 — code,
+  they precede ATR), qty 10, **per-symbol=1 already enforced** (`schwab_1m_v2.py:972`, in-flight counted; momentum
+  `:2191/:2283`), **total exposure UNCAPPED** (Option A — operator's deliberate choice: qty10 × distinct symbols;
+  concurrency item CLOSED). See `v2-paper-to-live-credential-transition-scoping.md`.
 - **2026-06-16 — ATR qualifier MECHANISM ✅ VALIDATED/COMPLETE (live, both directions, day one).** KEPT a fresh
   winner — **CRE age 0 → scaled +$1.44** (PCT2+PCT4+floor). SCREENED a late loser — **SUGP 08:55 ET age 27**
   (would-be entry $2.4801) → would have **stopped −1.5% on the very next bar** (08:56 low $2.34, price fell to

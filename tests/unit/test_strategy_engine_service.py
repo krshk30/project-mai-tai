@@ -46,6 +46,7 @@ from project_mai_tai.services.strategy_engine_app import (
     StrategyEngineState,
     current_scanner_session_start_utc,
     order_routing_metadata,
+    session_day_eastern_str,
     snapshot_from_payload,
 )
 from project_mai_tai.settings import Settings
@@ -1128,6 +1129,54 @@ def test_session_roll_clears_bot_desired_watchlist_symbols_and_lifecycle() -> No
     assert bot.prewarm_symbols == set()
     assert state.bot_handoff_symbols_by_strategy["macd_30s"] == set()
     assert state.bot_handoff_history_by_strategy["macd_30s"] == set()
+
+
+def test_session_roll_hard_purges_stale_but_preserves_positions_under_active_day_no_op() -> None:
+    """REAL-RACE reproduction (2026-06-16): the bug the isolated roll test above
+    MISSES. A pre-roll async tick/fill advances the bot's `_active_day` to today,
+    so `_roll_day_if_needed()` is a NO-OP inside the session roll — and yesterday's
+    re-promoted lifecycle symbols survive. The hard-purge must still evict the
+    stale non-protected symbols WHILE PRESERVING open positions / pending exits.
+
+    Asserts BOTH halves through the no-op path: stale purged AND protected kept.
+    Without the hard-purge this fails (MOBX/stale survive); with it, only the
+    protected symbols remain.
+    """
+    now_box = {"value": datetime(2026, 5, 18, 20, 43, tzinfo=EASTERN_TZ)}
+    state = StrategyEngineState(
+        settings=make_test_settings(
+            strategy_macd_30s_enabled=True,
+            scanner_feed_retention_enabled=True,
+        ),
+        now_provider=lambda: now_box["value"],
+    )
+    # Yesterday-EOD restore promotes 3 stale symbols into lifecycle.
+    state.bot_handoff_symbols_by_strategy["macd_30s"] = {"AEHL", "GOVX", "MOBX"}
+    state.bot_handoff_history_by_strategy["macd_30s"] = {"AEHL", "GOVX", "MOBX"}
+    state._resync_bot_watchlists_from_current_confirmed()
+    bot = state.bots["macd_30s"]
+    assert set(bot.lifecycle_states.keys()) == {"AEHL", "GOVX", "MOBX"}
+
+    # Protect two of them: AEHL has an open position; GOVX has an in-flight scale.
+    bot.restore_position(symbol="AEHL", quantity=10, average_price=1.50)
+    bot.pending_scale_levels.add(("GOVX", "SCALE_PCT2"))
+    # MOBX is stale with no position / no in-flight order → must be purged.
+
+    # Cross 04:00 ET, but simulate a pre-roll tick having ALREADY advanced
+    # `_active_day` to today → `_roll_day_if_needed()` will be a no-op.
+    now_box["value"] = datetime(2026, 5, 19, 4, 1, tzinfo=EASTERN_TZ)
+    bot._active_day = session_day_eastern_str(now_box["value"])
+
+    assert state._roll_scanner_session_if_needed() is True
+
+    # The day-roll was a no-op (we pre-advanced _active_day), so ONLY the
+    # hard-purge cleared state. Stale non-protected symbol is gone:
+    assert "MOBX" not in bot.lifecycle_states
+    assert "MOBX" not in bot.watchlist
+    # Load-bearing carve-out: open position + pending scale PRESERVED.
+    assert bot.positions.has_position("AEHL")
+    assert "AEHL" in bot.watchlist
+    assert "GOVX" in bot.watchlist
 
 
 def test_seeded_snapshot_skipped_when_persisted_at_exceeds_max_age(monkeypatch) -> None:
