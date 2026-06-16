@@ -19,17 +19,21 @@ The single source of truth for what gates wiring v2 to a REAL Schwab account (re
 provider=schwab + wire hash). v2 is structurally paper today (P1 Phase 1) — these clear BEFORE that step.
 
 **🔴 GO-LIVE BLOCKERS (must clear):**
-1. **Forward-test expectancy gate** — is v2 actually profitable? Sim-fills are IDEALIZED (no slippage/partials)
-   = pipe validation, NOT a track record.
+1. **Forward-test expectancy gate (= screened-ATR PROFITABILITY) — OPEN, the remaining ATR gate.** Is
+   screened-ATR actually profitable *after real spread*? Needs (a) a REAL sample (the ~63% kept-win over many
+   trades — NOT 2 events) and (b) the **Schwab-tick spread-adjusted P&L** (still accumulating; idealized sim-fills
+   are pipe validation, NOT a track record / NOT the arbiter). This is the credential gate. **Distinct from the
+   qualifier MECHANISM, which is now validated/complete (see blocker 3 + 2026-06-16 entry).**
 2. **Replay Phase 2 (measured-spread)** — the decisive realism input (does v2 survive real spread).
    ✅ **Tick-capture (#282) ACTIVATED 2026-06-15 19:57Z — the data clock is RUNNING**; accumulate ~a week+ of
    RTH ticks before Phase 2 has a useful sample. Design: [`v2-tick-capture-design.md`](v2-tick-capture-design.md).
 3. **v2 entry-criteria rules settled** — ([[project-mai-tai-v2-entry-criteria]];
    [`schwab-1m-v2-entry-criteria.md`](schwab-1m-v2-entry-criteria.md)). **Narrowed to ATR-ONLY:** P1/P2 are
    idealized losers even gated (~26% win/7wk); schwab P3/P4/P5 are a separate retired-engine system not in v2.
-   v2's credible path = **screened-ATR + the live exit ladder**. The **ATR fresh-flip qualifier** (atr_state_age<5)
-   is BUILT + ENABLED + forward-testing — the load-bearing piece. Design:
-   [`v2-atr-fresh-flip-qualifier-design.md`](v2-atr-fresh-flip-qualifier-design.md).
+   v2's credible path = **screened-ATR + the live exit ladder**. The **ATR fresh-flip qualifier** (atr_state_age<5):
+   **MECHANISM ✅ VALIDATED/COMPLETE (2026-06-16, live both directions)** — it keeps fresh winners + screens late
+   losers exactly as designed (proof below). **PROFITABILITY-after-spread is the remaining gate (= blocker 1).**
+   Design: [`v2-atr-fresh-flip-qualifier-design.md`](v2-atr-fresh-flip-qualifier-design.md).
 4. **04:00 ET watchlist-staleness race — fix BEFORE credentials** (diagnosed 2026-06-16, NOT fixed). Bot
    watchlists carry yesterday's symbols + today's pick at the 04:00 boundary; harmless today (Polygon
    credential-less, v2 paper/sim), but **live+credentialed v2 could enter yesterday's stale symbols at the open.**
@@ -52,8 +56,10 @@ provider=schwab + wire hash). v2 is structurally paper today (P1 Phase 1) — th
 ## 🟢 CURRENT IN-FLIGHT / LIVE OPS STATE (as of 2026-06-16)
 
 - **ATR fresh-flip qualifier: ENABLED live** (`…ATR_FLIP_USE_MAX_STATE_AGE=true`, ceiling 5), ATR-Flip only,
-  P1/P2 untouched. Forward-testing the screened-ATR win% toward the ~63% idealized target (7wk: ~86% of screened
-  are losers, ~63% of kept win — NOT 100%; spread-adjusted Schwab-tick P&L is the credential arbiter).
+  P1/P2 untouched. **MECHANISM = ✅ VALIDATED/COMPLETE** (live both directions, day one — see 2026-06-16 entry).
+  **PROFITABILITY = 🔶 ACCUMULATING/OPEN** — needs the real ~63%-kept-win sample (not 2 events) + spread-adjusted
+  Schwab-tick P&L (the credential arbiter; idealized numbers are not it). Gate integrity holding (all live fires
+  age<5, no slips). Watcher still armed for ongoing fires (see below).
 - **Forward-test watcher ARMED on the VPS** — `/tmp/atr_fwd_watch.py` → logs `/tmp/atr_fwd.log`; reports the
   first live screened-ATR entries at ~7:00 ET (v2 has NO time gate — dead-zone 0/0 — so it fires pre-market
   from ~7:00 ET, not 9:30). Flags any live fire with `atr_state_age ≥ 5` as **GATE-BROKEN**.
@@ -69,7 +75,14 @@ provider=schwab + wire hash). v2 is structurally paper today (P1 Phase 1) — th
 
 ## 🗓️ RECENT ACTIVITY (newest first — full text in [`handoff-archive/2026-06.md`](handoff-archive/2026-06.md))
 
-- **2026-06-16 — Handoff restructured** into this active doc + monthly archives (this change).
+- **2026-06-16 — ATR qualifier MECHANISM ✅ VALIDATED/COMPLETE (live, both directions, day one).** KEPT a fresh
+  winner — **CRE age 0 → scaled +$1.44** (PCT2+PCT4+floor). SCREENED a late loser — **SUGP 08:55 ET age 27**
+  (would-be entry $2.4801) → would have **stopped −1.5% on the very next bar** (08:56 low $2.34, price fell to
+  $2.23 by 09:03). Confirmed via natural experiment: **replay qualifier-OFF = 1 ATR fire (age 27); live qualifier-ON
+  = 0 fires** — the difference is exactly that screen. Gate integrity holds (all live fires age<5, correct gate
+  confirmed; ruled out vol_floor/in-position/cooldown/P1-P2). **Mechanism done; PROFITABILITY-after-spread remains
+  OPEN (blocker 1).** Reconstruction: `/tmp/sugp_atr_probe.py`.
+- **2026-06-16 — Handoff restructured** into this active doc + monthly archives.
 - **2026-06-16 — Secondary ATR qualifier TESTED & REJECTED** (rel_vol + below-VWAP floor). 7wk backtest
   (771 entries): on the age-kept set it screens MORE WINNERS than losers in all 15 configs; below-VWAP "tell"
   inverts (ATR-Flip is a below-VWAP bounce). Age-gate alone is the complete ATR screen. No second gate.
