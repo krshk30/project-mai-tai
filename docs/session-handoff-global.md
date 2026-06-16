@@ -11,8 +11,12 @@ provider=schwab + wire hash). v2 is structurally paper today (P1 Phase 1) — th
 2. **Replay Phase 2 (measured-spread)** — the decisive realism input (does v2 survive real spread).
    ✅ **Tick-capture (#282) ACTIVATED 2026-06-15 19:57Z — the data clock is now RUNNING** (no longer dormant);
    accumulate ~a week+ of RTH ticks before Phase 2 has a statistically-useful sample.
-3. **v2 entry-criteria rules settled** — operator is actively tuning add/remove rules ([[project-mai-tai-v2-entry-criteria]]);
-   don't go live mid-tuning.
+3. **v2 entry-criteria rules settled** — ([[project-mai-tai-v2-entry-criteria]]). **2026-06-15 investigation
+   narrowed go-live to ATR-ONLY:** P1/P2 are idealized losers even gated (~26% win/7wk; best gating caps ~40%);
+   schwab P3/P4/P5 are a separate retired-engine system not in v2. v2's credible path = **screened-ATR + the
+   live exit ladder.** The **ATR fresh-flip qualifier** (atr_state_age<5, Track-B: 46%→63% win idealized) is
+   BUILT + DORMANT-DEPLOYED (see entry below) — the load-bearing piece; **enable + forward-test is the
+   remaining step** before the expectancy call.
 - ~~Scale/floor exit legs proven live~~ ✅ **SATISFIED 2026-06-15 (CUPR — two ATR-Flip round-trips ran
   SCALE_PCT2 + SCALE_PCT4_AFTER2 + FLOOR_BREACH, all simulated).** The whole exit ladder is now live-proven
   (hard-stop + scales + floor). Dropped from blockers.
@@ -24,6 +28,30 @@ provider=schwab + wire hash). v2 is structurally paper today (P1 Phase 1) — th
 - slice-4 tier MACD/stoch exits · CAST/VSME flatten timing · bar_counts cosmetic · "Polygon tick" dashboard
   mislabel · `_evaluate_paths` triage (**momentum-bot engine, NOT v2 — not on the v2 critical path**).
 - **Parked (off the active list):** polygon_30s credentials (needs tuning first).
+
+### ✅ 2026-06-15 — ATR FRESH-FLIP QUALIFIER BUILT + DORMANT-DEPLOYED (main `3b25757`; PR #320, design #319)
+
+The load-bearing build on the ATR-only go-live path. **Track-B finding (read-only, v2's real engine over a
+rotating top-movers 7-week polygon_30s sample, 740 ATR entries):** `atr_state_age` is ATR's cleanest loser
+separator — winners fire FRESH (~2-3 bars), losers fire LATE (~16 bars = dead-cat bounce); **+44 pts** (3×
+P1/P2's best). Threshold validation picked **age<5**: lifts ATR **46%→63% win (idealized)**, keeps 66% of
+entries, screened set **86% losers**.
+- **Implementation:** config-gated gate in `_maybe_atr_emit` screening `atr_state_age >= ceiling` — **ATR-Flip
+  ONLY** (P1/P2 byte-identical off-vs-on, tested). Settings `strategy_schwab_1m_v2_atr_flip_use_max_state_age`
+  (default **False** = behavior-neutral) + `..._max_state_age` (default **5**). Primary signal already in the
+  emitted metadata (no new capture). Tests: gate-off parity (9 existing ATR tests green) + screens-late/
+  keeps-below-ceiling + P1/P2-untouched.
+- **🔴 Critical (in code + docs):** do NOT apply a stoch cap to ATR — its losers are *lower* stoch
+  (reversal-into-strength), OPPOSITE of P1/P2. Per-path gates.
+- **Deployed DORMANT** (flag absent=False; v2-only restart; OMS 2121312 + strategy 2104716 unchanged; clean,
+  no errors). Flag-off parity = zero behavior change.
+- **➡️ NEXT (separate attended step):** flip `MAI_TAI_STRATEGY_SCHWAB_1M_V2_ATR_FLIP_USE_MAX_STATE_AGE=true`
+  attended → **forward-test screened-ATR** (does the late-bounce loser-screen hold live; does win% lift toward
+  ~63%). That window **double-duties**: validates the qualifier live AND accumulates the **Schwab tick /
+  real-spread P&L** on the screened entries that the go-live expectancy decision needs.
+- **Secondary, lower-priority (separate design-first):** add stoch/rel_vol/ema9_dist to ATR metadata
+  (diagnosability + the weaker secondary qualifiers). Design ref: `docs/v2-atr-fresh-flip-qualifier-design.md`.
+- Caveats: idealized/Polygon/30s-both-hit — Schwab ticks the arbiter; threshold 5 confirms forward.
 
 ### ✅ 2026-06-15 19:57Z — TICK-CAPTURE (#282) ACTIVATED (live, observer-only) + retention timer scheduled
 
