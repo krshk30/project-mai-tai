@@ -623,3 +623,27 @@ def test_atr_only_mode_emit_guard_drops_non_atr_open() -> None:
     )
     asyncio.run(bot._maybe_emit(atr))
     bot.intent_emitter.emit.assert_awaited_once()  # ATR open PASSES
+
+
+def test_v2_watchlist_hard_excludes_protected_cyn() -> None:
+    """GO-LIVE CYN gate (watchlist layer): even if the scanner confirms CYN, v2's
+    watchlist build hard-excludes protected symbols so v2 never evaluates/subscribes
+    it. (OMS order-path reject of any CYN intent is the independent second layer.)"""
+    from datetime import datetime, timezone
+
+    from project_mai_tai.events import (
+        StrategyStateSnapshotEvent,
+        StrategyStateSnapshotPayload,
+    )
+
+    bot = SchwabV2BotService(
+        Settings(protected_symbols="CYN", strategy_schwab_1m_v2_go_live_enabled=True)
+    )
+    event = StrategyStateSnapshotEvent(
+        source_service="strategy-engine",
+        produced_at=datetime.now(timezone.utc),
+        payload=StrategyStateSnapshotPayload(watchlist=["AAA", "CYN", "BBB"]),
+    )
+    bot._apply_strategy_state_event({"data": event.model_dump_json()}, max_watchlist=50)
+    assert "CYN" not in bot._watchlist          # protected symbol excluded
+    assert {"AAA", "BBB"} <= bot._watchlist     # normal movers retained

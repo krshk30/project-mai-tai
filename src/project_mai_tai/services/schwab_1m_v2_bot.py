@@ -884,6 +884,15 @@ class SchwabV2BotService:
         symbols = self._extract_confirmed_symbols(event)
         protected = self._protected_symbols()
         selected = set(symbols[:max_watchlist]) | protected
+        # HARD-EXCLUDE operator-protected symbols (e.g. CYN) from v2's watchlist so
+        # v2 never evaluates, subscribes, or signals on them — defense-in-depth on
+        # top of the OMS protected-symbol order reject. CYN is the operator's
+        # standing real-account position v2 must NEVER touch under live credentials.
+        # Subtracted AFTER the union so it wins even if a protected symbol somehow
+        # appeared in the confirmed list or the position-protection set.
+        protected_exclude = set(self.settings.protected_symbol_set)
+        if protected_exclude:
+            selected -= protected_exclude
         if selected == self._watchlist:
             return
         new_symbols = selected - self._watchlist
