@@ -3973,3 +3973,11 @@ def test_interval_label_prefers_strategy_name_over_stale_interval() -> None:
     assert f("schwab_1m_v2", 0) == 60
     assert f("macd_1m", 30) == 60
     assert f("unknown_bot", 45) == 45
+
+
+def test_display_order_reason_surfaces_true_broker_reject_and_cancel() -> None:
+    f = control_plane_module._display_order_reason
+    assert f({"status": "rejected", "reject_reason": "Opening transactions for this security must be placed with a broker. Contact us", "reason": "schwab_1m_v2 ATR Flip B"}) == "Opening transactions for this security must be placed with a broker. Contact us"
+    assert f({"status": "cancelled", "cancel_code": "SETUP_INVALID", "cancel_detail": "latest bar idle path=none != intent path=ATR Flip", "reason": "ATR Flip B"}) == "SETUP_INVALID: latest bar idle path=none != intent path=ATR Flip"
+    assert f({"status": "filled", "reason": "VWAP Breakout"}) == "VWAP Breakout"
+    assert f({"status": "rejected", "reason": "ATR Flip B"}) == "ATR Flip B"
