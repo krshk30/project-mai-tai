@@ -2112,12 +2112,12 @@ class ControlPlaneRepository:
                     reason = f"live in bot; waiting for next {bar_label} to evaluate"
             elif last_tick_label:
                 reason = (
-                    f"live in bot; receiving {market_data_source} ticks, "
-                    f"waiting for first {bar_label}"
+                    f"live in bot; HYDRATING - receiving {market_data_source} ticks, "
+                    f"no completed {bar_label} yet"
                 )
             elif bar_count > 0:
                 reason = (
-                    f"live in bot; historical warmup loaded, waiting for fresh "
+                    f"live in bot; HYDRATING - history seeded, awaiting fresh "
                     f"{market_data_source} ticks"
                 )
             else:
@@ -2313,14 +2313,17 @@ class ControlPlaneRepository:
 
     @staticmethod
     def _interval_label_seconds(strategy_code: str, interval_secs: int) -> int:
+        # The strategy code names the bar cadence authoritatively (e.g. polygon_30s
+        # builds 30s bars). Prefer it so a stale/default runtime interval_secs cannot
+        # mislabel the decision tape (polygon_30s was showing "60s").
+        normalized = str(strategy_code or "").strip().lower()
+        if "30s" in normalized:
+            return 30
+        if "1m" in normalized or "60s" in normalized:
+            return 60
         resolved = int(interval_secs or 0)
         if resolved > 0:
             return resolved
-        normalized = str(strategy_code or "").strip().lower()
-        if "1m" in normalized:
-            return 60
-        if "30s" in normalized:
-            return 30
         return 0
 
     def _build_tos_parity_view(
