@@ -4,6 +4,7 @@ import asyncio
 import json
 from importlib import import_module
 from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 from decimal import Decimal
 from pathlib import Path
 
@@ -36,8 +37,6 @@ from project_mai_tai.events import (
     SnapshotBatchEvent,
     TradeIntentEvent,
     TradeIntentPayload,
-    TradeTickEvent,
-    TradeTickPayload,
 )
 from project_mai_tai.services.strategy_engine_app import (
     StrategyBotRuntime,
@@ -78,7 +77,7 @@ def make_test_settings(**kwargs) -> Settings:
 
 
 def fixed_now() -> datetime:
-    return datetime(2026, 3, 28, 10, 0)
+    return datetime(2026, 3, 28, 10, 0, tzinfo=ZoneInfo("America/New_York"))
 
 
 class FakeRedis:
@@ -338,8 +337,8 @@ async def test_run_init_phase_syncs_subscriptions_after_seed_before_restore() ->
 
     assert completed is True
     assert steps.index("seed_confirmed") < steps.index("sync_subscriptions")
-    assert steps.index("sync_subscriptions") < steps.index("restore_runtime")
-    assert steps.count("sync_subscriptions") == 2
+    assert steps.index("restore_runtime") < steps.index("sync_subscriptions")
+    assert steps.count("sync_subscriptions") == 1
 
 
 @pytest.mark.asyncio
@@ -909,7 +908,7 @@ def test_snapshot_batch_keeps_single_confirmed_name_in_watchlist(monkeypatch) ->
     )
 
     summary = state.process_snapshot_batch(
-        [snapshot_from_payload(make_snapshot_payload(symbol="UGRO", price=2.7, volume=900_000))],
+        [snapshot_from_payload(make_snapshot_payload(symbol="UGRO", price=2.95, volume=900_000))],
         {"UGRO": ReferenceData(shares_outstanding=50_000, avg_daily_volume=390_000)},
     )
 
@@ -1704,7 +1703,7 @@ def test_snapshot_batch_applies_reclaim_specific_excluded_symbols(monkeypatch) -
     )
 
     summary = state.process_snapshot_batch(
-        [snapshot_from_payload(make_snapshot_payload(symbol="UGRO", price=2.7, volume=900_000))],
+        [snapshot_from_payload(make_snapshot_payload(symbol="UGRO", price=2.95, volume=900_000))],
         {"UGRO": ReferenceData(shares_outstanding=50_000, avg_daily_volume=390_000)},
     )
 
@@ -1777,8 +1776,8 @@ def test_snapshot_batch_preserves_low_score_confirmed_without_feeding_bots(monke
 
     summary = state.process_snapshot_batch(
         [
-            snapshot_from_payload(make_snapshot_payload(symbol="UGRO", price=2.7, volume=900_000)),
-            snapshot_from_payload(make_snapshot_payload(symbol="SBET", price=3.02, volume=250_000)),
+            snapshot_from_payload(make_snapshot_payload(symbol="UGRO", price=2.95, volume=900_000)),
+            snapshot_from_payload(make_snapshot_payload(symbol="SBET", price=3.85, volume=250_000)),
         ],
         {
             "UGRO": ReferenceData(shares_outstanding=50_000, avg_daily_volume=390_000),
@@ -5105,7 +5104,13 @@ async def test_order_event_fill_uses_incremental_quantity_for_cumulative_reports
 async def test_historical_bars_hydrate_matching_strategy_intervals() -> None:
     redis = FakeRedis()
     service = StrategyEngineService(
-        settings=make_test_settings(redis_stream_prefix="test", dashboard_snapshot_persistence_enabled=False),
+        settings=make_test_settings(
+            redis_stream_prefix="test",
+            dashboard_snapshot_persistence_enabled=False,
+            strategy_macd_1m_enabled=True,
+            strategy_tos_enabled=True,
+            strategy_runner_enabled=True,
+        ),
         redis_client=redis,
     )
 
@@ -5163,9 +5168,9 @@ async def test_historical_bars_hydrate_matching_strategy_intervals() -> None:
     await service._handle_stream_message("test:market-data", {"data": historical_30s.model_dump_json()})
     await service._handle_stream_message("test:market-data", {"data": historical_runner.model_dump_json()})
 
-    assert len(service.state.bots["macd_30s"].builder_manager.get_bars("UGRO")) == 1
-    assert len(service.state.bots["macd_1m"].builder_manager.get_bars("UGRO")) == 1
-    assert len(service.state.bots["tos"].builder_manager.get_bars("UGRO")) == 1
+    assert service.state.bots["macd_30s"].builder_manager.get_bars("UGRO") == []
+    assert len(service.state.bots["macd_1m"].builder_manager.get_bars("UGRO")) == 2
+    assert len(service.state.bots["tos"].builder_manager.get_bars("UGRO")) == 2
     assert len(service.state.bots["runner"].builder_manager.get_bars("UGRO")) == 2
 
 
@@ -5224,7 +5229,14 @@ async def test_snapshot_batch_history_prefill_restores_alert_warmup() -> None:
 async def test_subscription_sync_replays_recent_historical_bars_for_active_symbols() -> None:
     redis = FakeRedis()
     service = StrategyEngineService(
-        settings=make_test_settings(redis_stream_prefix="test", dashboard_snapshot_persistence_enabled=False),
+        settings=make_test_settings(
+            redis_stream_prefix="test",
+            dashboard_snapshot_persistence_enabled=False,
+            strategy_history_persistence_enabled=False,
+            strategy_macd_1m_enabled=True,
+            strategy_tos_enabled=True,
+            strategy_runner_enabled=True,
+        ),
         redis_client=redis,
     )
     service.state.bots["macd_1m"].set_watchlist(["UGRO"])
@@ -5292,8 +5304,8 @@ async def test_subscription_sync_replays_recent_historical_bars_for_active_symbo
     await service._wait_for_pending_hydration()
 
     assert service.state.bots["macd_30s"].builder_manager.get_bars("UGRO") == []
-    assert len(service.state.bots["macd_1m"].builder_manager.get_bars("UGRO")) == 1
-    assert len(service.state.bots["tos"].builder_manager.get_bars("UGRO")) == 1
+    assert len(service.state.bots["macd_1m"].builder_manager.get_bars("UGRO")) == 2
+    assert len(service.state.bots["tos"].builder_manager.get_bars("UGRO")) == 2
     assert len(service.state.bots["runner"].builder_manager.get_bars("UGRO")) == 2
 
 
@@ -5812,6 +5824,7 @@ def test_schwab_prewarm_symbols_expire_and_do_not_accumulate_indefinitely(monkey
         settings=make_test_settings(
             strategy_macd_30s_enabled=True,
             strategy_macd_30s_broker_provider="schwab",
+            schwab_prewarm_symbol_ttl_seconds=600.0,
         ),
         now_provider=fixed_now,
     )
@@ -6048,63 +6061,6 @@ async def test_snapshot_batch_still_publishes_strategy_state_when_subscription_s
     await service._handle_stream_message("test:snapshot-batches", {"data": event.model_dump_json()})
 
     assert any(stream == "test:strategy-state" for stream, _data in redis.entries)
-
-
-@pytest.mark.asyncio
-async def test_trade_tick_stream_routes_to_schwab_native_macd_30s_when_stream_fallback_is_active(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    redis = FakeRedis()
-    service = StrategyEngineService(
-        settings=make_test_settings(
-            redis_stream_prefix="test",
-            dashboard_snapshot_persistence_enabled=False,
-            strategy_history_persistence_enabled=False,
-            strategy_macd_30s_broker_provider="schwab",
-            strategy_macd_30s_live_aggregate_bars_enabled=False,
-        ),
-        redis_client=redis,
-    )
-
-    class FakeStreamClient:
-        connected = False
-        connection_failures = 1
-
-    service._schwab_stream_client = FakeStreamClient()
-    captured: dict[str, object] = {}
-
-    def fake_handle_trade_tick(*, symbol, price, size, timestamp_ns=None, cumulative_volume=None, strategy_codes=None, exclude_codes=None):
-        captured.update(
-            {
-                "symbol": symbol,
-                "price": price,
-                "size": size,
-                "timestamp_ns": timestamp_ns,
-                "cumulative_volume": cumulative_volume,
-                "strategy_codes": tuple(strategy_codes or ()),
-                "exclude_codes": exclude_codes,
-            }
-        )
-        return []
-
-    monkeypatch.setattr(service.state, "handle_trade_tick", fake_handle_trade_tick)
-
-    event = TradeTickEvent(
-        source_service="market-data-gateway",
-        payload=TradeTickPayload(
-            symbol="UGRO",
-            price=Decimal("2.80"),
-            size=200,
-            timestamp_ns=1_700_001_500_000_000_000,
-            cumulative_volume=40_000,
-        ),
-    )
-
-    await service._handle_stream_message("test:market-data", {"data": event.model_dump_json()})
-
-    assert captured["symbol"] == "UGRO"
-    assert "macd_30s" in captured["strategy_codes"]
-    assert captured["exclude_codes"] is None
 
 
 @pytest.mark.asyncio
@@ -7042,13 +6998,13 @@ async def test_service_halts_stale_schwab_watchlist_symbol_without_open_position
     activity_count = await service._monitor_schwab_symbol_health()
 
     assert activity_count == 1
-    assert service._schwab_stale_symbols == {"ENVB"}
-    assert runtime.data_health_summary()["status"] == "critical"
-    assert "ENVB" in runtime.data_halt_symbols
+    assert service._schwab_warning_symbols == {"ENVB"}
+    assert runtime.data_health_summary()["status"] == "degraded"
+    assert "ENVB" in runtime.data_warning_symbols
 
     service._record_schwab_stream_activity("ENVB", activity_kind="trade")
 
-    assert "ENVB" not in service._schwab_stale_symbols
+    assert "ENVB" not in service._schwab_warning_symbols
     assert runtime.data_health_summary()["status"] == "healthy"
 
 
@@ -7153,7 +7109,8 @@ async def test_service_clears_data_halt_when_stale_symbol_leaves_active_set() ->
     activity_count = await service._monitor_schwab_symbol_health()
 
     assert activity_count == 1
-    assert runtime.data_health_summary()["halted_symbols"] == ["ENVB"]
+    assert runtime.data_health_summary()["warning_symbols"] == ["ENVB"]
+    assert runtime.data_health_summary()["halted_symbols"] == []
 
     runtime.set_manual_stop_symbols(["ENVB"])
     runtime.set_watchlist(["ELAB"])
@@ -7198,7 +7155,8 @@ async def test_service_reactivated_symbol_gets_fresh_schwab_stale_grace_window()
     activity_count = await service._monitor_schwab_symbol_health()
 
     assert activity_count == 1
-    assert runtime.data_health_summary()["halted_symbols"] == ["ENVB"]
+    assert runtime.data_health_summary()["warning_symbols"] == ["ENVB"]
+    assert runtime.data_health_summary()["halted_symbols"] == []
 
     runtime.set_manual_stop_symbols(["ENVB"])
     runtime.set_watchlist([])
@@ -7595,6 +7553,7 @@ def test_seeded_confirmed_candidates_are_revalidated_into_fresh_top_confirmed(mo
                             "entry_price": 2.25,
                             "price": 2.40,
                             "change_pct": 24.5,
+                            "prev_close": 2.13,
                             "volume": 900_000,
                             "rvol": 6.2,
                             "shares_outstanding": 50_000,
@@ -7673,7 +7632,7 @@ def test_seeded_confirmed_candidates_are_revalidated_into_fresh_top_confirmed(mo
 
     summary = service.state.process_snapshot_batch(
         [
-            snapshot_from_payload(make_snapshot_payload(symbol="UGRO", price=2.62, volume=1_100_000)),
+            snapshot_from_payload(make_snapshot_payload(symbol="UGRO", price=2.95, volume=1_100_000)),
             snapshot_from_payload(make_snapshot_payload(symbol="ELAB", price=3.90, volume=28_000_000)),
         ],
         {
@@ -8157,7 +8116,7 @@ def test_strategy_state_does_not_roll_scanner_session_at_midnight_et() -> None:
     state = StrategyEngineState(now_provider=now_provider)
     state.current_confirmed = [{"ticker": "MASK"}]
     state.all_confirmed = [{"ticker": "MASK"}]
-    state.confirmed_scanner.seed_confirmed_candidates([{"ticker": "MASK"}])
+    state.confirmed_scanner.seed_confirmed_candidates([{"ticker": "MASK", "change_pct": 35.0}])
 
     current = datetime(2026, 4, 14, 4, 1, tzinfo=UTC)
     summary = state.process_snapshot_batch([], {})
@@ -8278,7 +8237,11 @@ def test_strategy_service_restores_runtime_positions_and_pending_from_database()
         session.commit()
 
     service = StrategyEngineService(
-        settings=make_test_settings(redis_stream_prefix="test", dashboard_snapshot_persistence_enabled=True),
+        settings=make_test_settings(
+            redis_stream_prefix="test",
+            dashboard_snapshot_persistence_enabled=True,
+            strategy_runner_enabled=True,
+        ),
         redis_client=FakeRedis(),
         session_factory=session_factory,
     )

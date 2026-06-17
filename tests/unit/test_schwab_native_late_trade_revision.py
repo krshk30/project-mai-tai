@@ -16,6 +16,7 @@ diagnosed in docs/session-handoff-global.md.
 """
 from __future__ import annotations
 
+from project_mai_tai.strategy_core.models import OHLCVBar
 from project_mai_tai.strategy_core.schwab_native_30s import SchwabNativeBarBuilder
 
 # Pick a bucket-aligned epoch in seconds so bucket arithmetic is predictable.
@@ -234,7 +235,6 @@ def test_no_revision_signal_when_trade_lands_in_a_fresh_bucket() -> None:
 
 def _make_aggregate_bar(*, bucket_start_s: int, open_p: float, high_p: float,
                        low_p: float, close_p: float, volume: int) -> "OHLCVBar":
-    from project_mai_tai.strategy_core.models import OHLCVBar
     return OHLCVBar(
         open=open_p, high=high_p, low=low_p, close=close_p,
         volume=volume, timestamp=float(bucket_start_s), trade_count=1,

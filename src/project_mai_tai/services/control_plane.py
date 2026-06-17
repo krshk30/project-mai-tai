@@ -3980,9 +3980,6 @@ def build_app(
     ) -> str:
         data = await app.state.repository.load_bot_dashboard_data()
         default_start_text, default_end_text, default_start, default_end = _default_review_filter_dates()
-        range_start = _parse_review_filter_date(start_date) or default_start
-        range_end_start = _parse_review_filter_date(end_date) or default_end
-        range_end = range_end_start + timedelta(days=1) if (end_date or "").strip() else default_end
         review_history = app.state.repository.load_trade_coach_review_history()
         regime_profiles = app.state.repository.load_trade_coach_regime_profiles(review_history)
         return _render_trade_coach_review_center(
@@ -5536,8 +5533,14 @@ def _render_bot_detail_page(
     # this, those bots' Live Symbols panel renders empty even when their
     # watchlist is populated. Skip symbols that are manually stopped.
     manual_stop_set = {str(symbol).upper() for symbol in manual_stop_symbols}
+    non_active_retention = {
+        str(row.get("ticker") or row.get("symbol") or "").upper()
+        for row in retention_rows
+        if str(row.get("state") or "").lower() not in ("", "active")
+    }
+    non_active_retention.discard("")
     for ticker in sorted(bot_watchlist):
-        if ticker in active_symbols or ticker in manual_stop_set:
+        if ticker in active_symbols or ticker in manual_stop_set or ticker in non_active_retention:
             continue
         active_symbols.append(ticker)
     open_symbols = {

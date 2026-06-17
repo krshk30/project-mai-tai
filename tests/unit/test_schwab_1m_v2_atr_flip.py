@@ -494,7 +494,8 @@ def test_atr_fresh_flip_screens_late_keeps_below_ceiling() -> None:
     touch fires when the ceiling sits above its age (the fresh-keeps boundary)."""
     # Capture the fixture touch's state_age (gate off). The 150-bar decline makes a
     # long short segment → a high-age "dead-cat" touch.
-    s0 = SchwabV2Strategy(Settings()); s0._atr_enabled = True
+    s0 = SchwabV2Strategy(Settings())
+    s0._atr_enabled = True
     chart, _T = _build_short_then_fresh_touch(s0, final_vol=100_000)
     d0 = [s0.on_bar("TEST", cb) for cb in chart][-1]
     assert d0 is not None
@@ -502,14 +503,18 @@ def test_atr_fresh_flip_screens_late_keeps_below_ceiling() -> None:
     assert age >= 5, "fixture should be a LATE (high-age) touch"
 
     # Gate ON at the default ceiling 5 → the late touch is SCREENED.
-    s1 = SchwabV2Strategy(Settings()); s1._atr_enabled = True
-    s1._atr_use_max_state_age = True; s1._atr_max_state_age = 5
+    s1 = SchwabV2Strategy(Settings())
+    s1._atr_enabled = True
+    s1._atr_use_max_state_age = True
+    s1._atr_max_state_age = 5
     chart1, _ = _build_short_then_fresh_touch(s1, final_vol=100_000)
     assert [s1.on_bar("TEST", cb) for cb in chart1][-1] is None
 
     # Gate ON with the ceiling ABOVE the age → kept (fires).
-    s2 = SchwabV2Strategy(Settings()); s2._atr_enabled = True
-    s2._atr_use_max_state_age = True; s2._atr_max_state_age = age + 1
+    s2 = SchwabV2Strategy(Settings())
+    s2._atr_enabled = True
+    s2._atr_use_max_state_age = True
+    s2._atr_max_state_age = age + 1
     chart2, _ = _build_short_then_fresh_touch(s2, final_vol=100_000)
     d2 = [s2.on_bar("TEST", cb) for cb in chart2][-1]
     assert d2 is not None and d2.metadata["path"] == "ATR Flip"
@@ -530,7 +535,8 @@ def test_atr_fresh_flip_does_not_touch_p1_p2() -> None:
             strat.on_bar("TEST", ChartBar("TEST", 10.0, 10.0, 10.0, 10.0, 1000, ts))
         return strat.on_bar("TEST", ChartBar("TEST", 10.0, 11.0, 10.0, 11.0, 100_000, now_ms))
 
-    off = drive(False); on = drive(True)
+    off = drive(False)
+    on = drive(True)
     assert off is not None and on is not None
     assert off.metadata["path"] == "MACD Cross" == on.metadata["path"]
     assert off.metadata == on.metadata          # ATR gate did not perturb P1/P2

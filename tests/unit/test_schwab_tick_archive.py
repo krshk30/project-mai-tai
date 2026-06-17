@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
 
 from project_mai_tai.market_data.models import QuoteTickRecord, TradeTickRecord
 from project_mai_tai.market_data.schwab_tick_archive import (
