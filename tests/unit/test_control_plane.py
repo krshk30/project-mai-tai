@@ -2461,7 +2461,7 @@ def test_bot_page_renders_simple_trade_summary_table() -> None:
 
 
 def test_bot_page_renders_trade_forensics_report_from_completed_cycles() -> None:
-    settings = Settings(redis_stream_prefix="test", oms_adapter="alpaca_paper")
+    settings = Settings(redis_stream_prefix="test", oms_adapter="alpaca_paper", dashboard_trade_forensics_enabled=True, dashboard_trade_forensics_lookback_days=3)
     session_factory = build_test_session_factory()
     seed_database(session_factory)
     today_start = current_scanner_session_start_utc()
@@ -3850,11 +3850,11 @@ def _make_listening_data(
         control_plane_module.EASTERN_TZ
     )
     if decision_age_seconds is not None:
-        latest_decision_at = (
+        _latest_decision_at = (
             now_et - timedelta(seconds=decision_age_seconds)
         ).strftime("%Y-%m-%d %I:%M:%S %p ET")
     else:
-        latest_decision_at = ""
+        _latest_decision_at = ""
 
     details: dict[str, str] = {}
     if engine_started_iso is not None:

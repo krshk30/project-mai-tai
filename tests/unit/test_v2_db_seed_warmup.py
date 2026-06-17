@@ -12,7 +12,7 @@ JSON, not JSONB, so it renders — unlike the market_trade_ticks tables).
 """
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from decimal import Decimal
 
 from sqlalchemy import create_engine

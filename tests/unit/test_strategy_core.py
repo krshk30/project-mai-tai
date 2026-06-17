@@ -1783,7 +1783,7 @@ def test_schwab_native_p1_cross_blocks_when_relative_volume_is_too_weak() -> Non
     )
 
     signal = engine.check_entry("ELAB", indicators, bar_index=60, position_tracker=None)
-    _, _, details, _ = engine._evaluate_paths("ELAB", indicators, 60)
+    _, _, details, _, _, _ = engine._evaluate_paths("ELAB", indicators, 60)
 
     assert signal is None
     assert "P1:vol20" in details
@@ -1811,7 +1811,7 @@ def test_schwab_native_p1_cross_blocks_when_absolute_p1_volume_floor_not_met() -
     )
 
     signal = engine.check_entry("ELAB", indicators, bar_index=60, position_tracker=None)
-    _, _, details, _ = engine._evaluate_paths("ELAB", indicators, 60)
+    _, _, details, _, _, _ = engine._evaluate_paths("ELAB", indicators, 60)
 
     assert signal is None
     assert "P1:p1_vol" in details
@@ -1839,7 +1839,7 @@ def test_schwab_native_p1_cross_blocks_when_dollar_volume_floor_not_met() -> Non
     )
 
     signal = engine.check_entry("ELAB", indicators, bar_index=60, position_tracker=None)
-    _, _, details, _ = engine._evaluate_paths("ELAB", indicators, 60)
+    _, _, details, _, _, _ = engine._evaluate_paths("ELAB", indicators, 60)
 
     assert signal is None
     assert "P1:p1_dollar" in details

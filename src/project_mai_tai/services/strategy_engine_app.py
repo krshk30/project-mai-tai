@@ -8,7 +8,7 @@ from collections.abc import Callable, Coroutine, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from time import perf_counter, time_ns
+from time import time_ns
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -21,7 +21,6 @@ from project_mai_tai.db.models import (
     BrokerOrder,
     DashboardSnapshot,
     ScannerBlacklistEntry,
-    SchwabIneligibleToday,
     Strategy,
     StrategyBarHistory,
     SystemIncident,
@@ -2539,7 +2538,7 @@ class StrategyBotRuntime:
                     ),
                 }
             )
-        metadata.update(order_routing_metadata(price=routed_price, side="buy"))
+        metadata.update(order_routing_metadata(price=routed_price, side="buy", now=self.now_provider()))
         if routed_price_source:
             metadata["price_source"] = routed_price_source
         return TradeIntentEvent(
@@ -2634,7 +2633,7 @@ class StrategyBotRuntime:
                     )
                 )
             else:
-                metadata.update(order_routing_metadata(price=routed_price, side="sell"))
+                metadata.update(order_routing_metadata(price=routed_price, side="sell", now=self.now_provider()))
         if routed_price_source:
             metadata["price_source"] = routed_price_source
         return TradeIntentEvent(
@@ -2678,7 +2677,7 @@ class StrategyBotRuntime:
             "reference_price": reference_price,
         }
         if routed_price:
-            metadata.update(order_routing_metadata(price=routed_price, side="sell"))
+            metadata.update(order_routing_metadata(price=routed_price, side="sell", now=self.now_provider()))
         if routed_price_source:
             metadata["price_source"] = routed_price_source
         return TradeIntentEvent(
@@ -8413,8 +8412,9 @@ class StrategyEngineService:
                     self._schwab_symbol_last_advancing_bar_at[normalized] = observed_at
         else:
             self._schwab_symbol_last_stream_quote_at[normalized] = observed_at
-        if normalized in self._schwab_stale_symbols:
+        if normalized in self._schwab_stale_symbols or normalized in self._schwab_warning_symbols:
             self._schwab_stale_symbols.discard(normalized)
+            self._schwab_warning_symbols.discard(normalized)
             self.logger.info(
                 "Schwab stream recovered for %s via live %s update",
                 normalized,

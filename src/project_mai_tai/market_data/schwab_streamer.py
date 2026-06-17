@@ -392,7 +392,7 @@ class SchwabStreamerClient:
                 reconnect_delay = 0.5
                 if not self._stop_event.is_set():
                     logger.info("Schwab streamer socket closed cleanly; reconnecting")
-            except Exception as exc:
+            except Exception:
                 self._connected = False
                 self._connection_failures += 1
                 self._last_error = traceback.format_exc(limit=1).strip().splitlines()[-1]

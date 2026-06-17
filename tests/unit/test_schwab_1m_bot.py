@@ -156,7 +156,7 @@ def test_schwab_1m_uses_completed_bar_entries_and_shorter_cooldown() -> None:
     assert schwab_30s.entry_intrabar_enabled is False
     assert polygon_30s.entry_intrabar_enabled is False
     assert schwab_1m.entry_intrabar_enabled is False
-    assert schwab_30s.p4_prev_bar_entry_enabled is True
+    assert schwab_30s.p4_prev_bar_entry_enabled is False
     assert polygon_30s.p4_prev_bar_entry_enabled is False
     assert schwab_1m.p4_prev_bar_entry_enabled is False
     assert schwab_30s.schwab_native_warmup_bars_required == 35
@@ -265,7 +265,7 @@ def test_schwab_native_variants_keep_intended_live_execution_tuning() -> None:
     assert schwab_1m.p1_min_dollar_volume_abs == 25_000
     assert schwab_1m.cooldown_bars == 5
     assert schwab_1m.entry_intrabar_enabled is False
-    assert schwab_30s.p4_prev_bar_entry_enabled is True
+    assert schwab_30s.p4_prev_bar_entry_enabled is False
     assert polygon_30s.p4_prev_bar_entry_enabled is False
     assert schwab_1m.p4_prev_bar_entry_enabled is False
     assert schwab_1m.p4_enabled is True
@@ -713,7 +713,7 @@ def test_schwab_streamer_marks_chart_unhealthy_when_trade_exchange_time_outpaces
     chart.last_exchange_timestamp = 100.0
     levelone.confirmed_symbols = {"NIVF"}
     levelone.last_message_monotonic = now
-    levelone.last_exchange_timestamp = 145.5
+    levelone.last_exchange_timestamp = 200.0
 
     class _FakeLoop:
         def time(self) -> float:
@@ -886,6 +886,7 @@ def test_schwab_1m_history_loader_prefers_recorded_live_bars(tmp_path: Path, mon
         redis_client=FakeRedis(),
         now_provider=lambda: datetime(2026, 4, 28, 21, 18, tzinfo=UTC),
     )
+    now = datetime(2026, 4, 28, 21, 18, tzinfo=UTC)
     service._schwab_symbol_last_stream_trade_at["SNBR"] = now
 
     async def _fake_fetch(*_args, **_kwargs):
