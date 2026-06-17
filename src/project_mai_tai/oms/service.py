@@ -133,8 +133,13 @@ class OmsRiskService:
         self.strategy_registrations = strategy_registration_map(self.settings)
         self.instance_name = socket.gethostname()
         self.logger = logging.getLogger(SERVICE_NAME)
-        self._stream_offsets = {
+        # Track-2 intrabar fix: intents and market-data ticks are consumed on SEPARATE
+        # loops/tasks so a slow broker-sync REST on the control loop can never starve
+        # quote-driven exit evaluation. Each stream tracks its own offset.
+        self._intent_offsets = {
             stream_name(self.settings.redis_stream_prefix, "strategy-intents"): "$",
+        }
+        self._market_offsets = {
             stream_name(self.settings.redis_stream_prefix, "market-data"): "$",
         }
         self._armed_hard_stops: dict[tuple[str, str, str], ArmedHardStop] = {}
@@ -151,9 +156,6 @@ class OmsRiskService:
     async def run(self) -> None:
         stop_event = asyncio.Event()
         _install_signal_handlers(stop_event)
-        heartbeat_interval_secs = max(1, self.settings.service_heartbeat_interval_seconds)
-        last_heartbeat = asyncio.get_running_loop().time()
-        last_broker_sync = 0.0
 
         seed_summary = self.seed_runtime_metadata()
         self.logger.info(
@@ -169,6 +171,40 @@ class OmsRiskService:
                 "providers": ",".join(self.settings.active_broker_providers),
             },
         )
+        # Track-2 intrabar fix: a DEDICATED tick consumer evaluates quote-driven exits
+        # within milliseconds of the live tick. It is decoupled from the control loop so
+        # the periodic broker-sync REST (and intent processing) can NEVER starve it — the
+        # root cause of the 2026-06-17 LNAI scale that fired ~70s late at 4.345 instead of
+        # ~4.45. The consumer coalesces each read burst last-quote-wins per symbol and the
+        # eval rejects event-time-stale quotes, so the call is always made on the FRESHEST
+        # price, never a backlogged one.
+        tick_task = asyncio.create_task(self._run_tick_consumer(stop_event))
+        try:
+            await self._run_control_loop(stop_event)
+        finally:
+            stop_event.set()
+            tick_task.cancel()
+            try:
+                await tick_task
+            except asyncio.CancelledError:
+                pass
+
+        await self._publish_heartbeat(
+            "stopping",
+            {
+                "adapter": self.settings.oms_adapter_label,
+                "providers": ",".join(self.settings.active_broker_providers),
+            },
+        )
+        await self.redis.aclose()
+
+    async def _run_control_loop(self, stop_event: asyncio.Event) -> None:
+        """Intents + periodic broker-sync + heartbeat. Reads ONLY the strategy-intents
+        stream; market-data ticks are handled by `_run_tick_consumer` on its own task so
+        a slow broker-sync here cannot delay an exit decision."""
+        heartbeat_interval_secs = max(1, self.settings.service_heartbeat_interval_seconds)
+        last_heartbeat = asyncio.get_running_loop().time()
+        last_broker_sync = 0.0
         while not stop_event.is_set():
             loop_now = asyncio.get_running_loop().time()
             broker_sync_interval_secs = await self._broker_sync_interval_seconds()
@@ -178,7 +214,7 @@ class OmsRiskService:
             )
             try:
                 messages = await self.redis.xread(
-                    self._stream_offsets,
+                    self._intent_offsets,
                     block=max(100, int(read_timeout_secs * 1000)),
                     count=50,
                 )
@@ -190,7 +226,7 @@ class OmsRiskService:
             if messages:
                 for stream, entries in messages:
                     for message_id, fields in entries:
-                        self._stream_offsets[stream] = message_id
+                        self._intent_offsets[stream] = message_id
                         await self._handle_stream_message(fields)
 
             now = asyncio.get_running_loop().time()
@@ -210,14 +246,80 @@ class OmsRiskService:
                 await self._publish_heartbeat("healthy", heartbeat_details)
                 last_heartbeat = now
 
-        await self._publish_heartbeat(
-            "stopping",
-            {
-                "adapter": self.settings.oms_adapter_label,
-                "providers": ",".join(self.settings.active_broker_providers),
-            },
-        )
-        await self.redis.aclose()
+    async def _run_tick_consumer(self, stop_event: asyncio.Event) -> None:
+        """Dedicated market-data consumer — the tick-by-tick guarantee. Reads the
+        market-data stream on its own task (never interleaved with broker-sync REST) and
+        coalesces each read burst LAST-QUOTE-WINS per symbol, so a tick storm cannot build
+        a serial backlog: the exit ladder always decides on the freshest quote within ms
+        of arrival. Trades are dispatched in arrival order (armed-hard-stop fidelity)."""
+        while not stop_event.is_set():
+            try:
+                messages = await self.redis.xread(
+                    self._market_offsets,
+                    block=200,
+                    count=500,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                self.logger.exception("failed reading market-data stream")
+                await asyncio.sleep(1)
+                continue
+            if not messages:
+                continue
+            payloads: list[dict] = []
+            for stream, entries in messages:
+                for message_id, fields in entries:
+                    self._market_offsets[stream] = message_id
+                    data = fields.get("data")
+                    if not data:
+                        continue
+                    try:
+                        payloads.append(json.loads(data))
+                    except Exception:
+                        continue
+            for event in self._coalesce_ticks(payloads):
+                try:
+                    if isinstance(event, TradeTickEvent):
+                        await self._handle_trade_tick_event(event)
+                    else:
+                        await self._handle_quote_tick_event(event)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    self.logger.exception("failed handling market-data tick")
+
+    @staticmethod
+    def _coalesce_ticks(payloads: list[dict]) -> list[object]:
+        """Collapse a read burst to the work actually worth doing: the NEWEST quote per
+        symbol (the profit/floor ladder only cares about the current price, so acting on
+        stale intermediate quotes just adds latency), while every trade tick is preserved
+        in arrival order (armed-hard-stop fidelity). Returns validated event objects in
+        dispatch order; the per-symbol quote slot is emitted at its first-seen position
+        but carries the last-seen payload — last-quote-wins."""
+        latest_quote_by_symbol: dict[str, dict] = {}
+        order: list[tuple[str, object]] = []  # ("quote", symbol) | ("trade", payload)
+        for payload in payloads:
+            event_type = str(payload.get("event_type", "")).strip().lower()
+            symbol = str((payload.get("payload") or {}).get("symbol", "")).upper()
+            if not symbol:
+                continue
+            if event_type == "quote_tick":
+                if symbol not in latest_quote_by_symbol:
+                    order.append(("quote", symbol))
+                latest_quote_by_symbol[symbol] = payload
+            elif event_type == "trade_tick":
+                order.append(("trade", payload))
+        events: list[object] = []
+        for kind, item in order:
+            try:
+                if kind == "trade":
+                    events.append(TradeTickEvent.model_validate(item))
+                else:
+                    events.append(QuoteTickEvent.model_validate(latest_quote_by_symbol[item]))
+            except Exception:
+                continue
+        return events
 
     async def _handle_stream_message(self, fields: dict[str, str]) -> None:
         data = fields.get("data")
@@ -1619,10 +1721,14 @@ class OmsRiskService:
 
     async def _handle_quote_tick_event(self, event: QuoteTickEvent) -> None:
         symbol = str(event.payload.symbol).upper()
+        # Event-time, not processing-time: stamp with the producer's `produced_at` so the
+        # downstream staleness guard measures TRUE price age. (Same host as market-data →
+        # no clock skew.) Previously this was utcnow() at processing time, which made the
+        # guard blind to consumption lag and let the LNAI exit act on a 70s-old quote.
         self._latest_quotes_by_symbol[symbol] = {
             "bid": float(event.payload.bid_price),
             "ask": float(event.payload.ask_price),
-            "received_at": utcnow(),
+            "received_at": self._event_time(event),
         }
         if self._armed_hard_stops:
             await self._evaluate_hard_stop_market_event(symbol)
@@ -1637,9 +1743,18 @@ class OmsRiskService:
         symbol = str(event.payload.symbol).upper()
         self._latest_trades_by_symbol[symbol] = {
             "price": float(event.payload.price),
-            "received_at": utcnow(),
+            "received_at": self._event_time(event),
         }
         await self._evaluate_hard_stop_market_event(symbol)
+
+    @staticmethod
+    def _event_time(event: object) -> datetime:
+        """Producer publish time for staleness measurement, falling back to now() if the
+        envelope lacks a usable timestamp (so a missing field can never wedge the path)."""
+        produced_at = getattr(event, "produced_at", None)
+        if isinstance(produced_at, datetime):
+            return produced_at
+        return utcnow()
 
     async def _evaluate_hard_stop_market_event(self, symbol: str) -> None:
         normalized_symbol = str(symbol).upper()

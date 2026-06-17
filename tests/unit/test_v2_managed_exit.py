@@ -8,7 +8,7 @@ the leg level. Precedence hard>floor>scale, one action/quote, sole-writer row.
 """
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -19,6 +19,12 @@ from sqlalchemy.pool import StaticPool
 from project_mai_tai.broker_adapters.simulated import SimulatedBrokerAdapter
 from project_mai_tai.db.base import Base
 from project_mai_tai.db.models import BrokerOrder, OmsManagedPosition, TradeIntent
+from project_mai_tai.events import (
+    QuoteTickEvent,
+    QuoteTickPayload,
+    TradeTickEvent,
+    TradeTickPayload,
+)
 from project_mai_tai.oms.service import OmsRiskService
 from project_mai_tai.settings import Settings
 
@@ -219,3 +225,79 @@ async def test_stale_quote_skipped() -> None:
     await svc._evaluate_v2_managed_exit(SYM)
     assert _sell_intents(sf) == []                # never acted on a stale quote
     assert _row(sf).status == "open"
+
+
+# ---- Track-2 intrabar fix: event-time staleness + last-quote-wins coalescing -------
+
+def _qp(bid: float, symbol: str = SYM) -> dict:
+    return QuoteTickEvent(
+        source_service="md",
+        payload=QuoteTickPayload(symbol=symbol, bid_price=Decimal(str(bid)), ask_price=Decimal(str(bid + 0.01))),
+    ).model_dump(mode="json")
+
+
+def _tp(price: float, symbol: str = SYM) -> dict:
+    return TradeTickEvent(
+        source_service="md",
+        payload=TradeTickPayload(symbol=symbol, price=Decimal(str(price)), size=100),
+    ).model_dump(mode="json")
+
+
+# --------------------------------------------------------------------------- (8)
+
+@pytest.mark.asyncio
+async def test_handle_quote_uses_event_time_for_staleness() -> None:
+    """The 2026-06-17 LNAI bug: received_at was processing-time, so a 70s-backlogged quote
+    sailed through the 5s guard and the scale filled into a vanished spike. Now received_at
+    is the producer's event time, so a stale event is rejected and a fresh one acts."""
+    sf = _make_sf()
+    svc = _svc(sf)
+    _arm(svc, sf, entry=10.0, qty=100)
+
+    stale = QuoteTickEvent(
+        source_service="md",
+        produced_at=datetime.now(UTC) - timedelta(seconds=70),
+        payload=QuoteTickPayload(symbol=SYM, bid_price=Decimal("9.80"), ask_price=Decimal("9.81")),
+    )
+    await svc._handle_quote_tick_event(stale)
+    assert svc._latest_quotes_by_symbol[SYM]["received_at"] == stale.produced_at  # event time, not now()
+    assert _sell_intents(sf) == []                # 70s-old event rejected by the guard
+    assert _row(sf).status == "open"
+
+    fresh = QuoteTickEvent(
+        source_service="md",
+        payload=QuoteTickPayload(symbol=SYM, bid_price=Decimal("9.80"), ask_price=Decimal("9.81")),
+    )
+    await svc._handle_quote_tick_event(fresh)
+    assert len(_sell_intents(sf)) == 1            # fresh event acts → hard stop closes
+
+
+# --------------------------------------------------------------------------- (9)
+
+def test_coalesce_last_quote_wins() -> None:
+    """A burst of quotes for one symbol collapses to the FRESHEST — so the ladder decides
+    on the current price, never a stale intermediate spike that already reversed."""
+    events = OmsRiskService._coalesce_ticks([_qp(10.10), _qp(10.25), _qp(10.05)])
+    quotes = [e for e in events if isinstance(e, QuoteTickEvent)]
+    assert len(quotes) == 1
+    assert float(quotes[0].payload.bid_price) == 10.05            # last (freshest) wins
+
+
+def test_coalesce_keeps_one_freshest_quote_per_symbol() -> None:
+    events = OmsRiskService._coalesce_ticks([_qp(10.1, "AAA"), _qp(10.2, "BBB"), _qp(10.9, "AAA")])
+    by_symbol = {e.payload.symbol: float(e.payload.bid_price) for e in events if isinstance(e, QuoteTickEvent)}
+    assert by_symbol == {"AAA": 10.9, "BBB": 10.2}
+
+
+def test_coalesce_preserves_all_trades_in_order() -> None:
+    """Trades are NOT coalesced (armed-hard-stop fidelity) — every one survives, in order."""
+    events = OmsRiskService._coalesce_ticks([_tp(10.1), _tp(10.2), _tp(10.0)])
+    prices = [float(e.payload.price) for e in events if isinstance(e, TradeTickEvent)]
+    assert prices == [10.1, 10.2, 10.0]
+
+
+def test_coalesce_ignores_unknown_and_symbolless() -> None:
+    events = OmsRiskService._coalesce_ticks(
+        [{"event_type": "heartbeat"}, {"event_type": "quote_tick", "payload": {}}, _qp(10.25)]
+    )
+    assert len(events) == 1 and float(events[0].payload.bid_price) == 10.25
