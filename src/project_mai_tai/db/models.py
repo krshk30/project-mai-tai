@@ -469,7 +469,7 @@ class MarketTradeTick(Base):
     price: Mapped[Decimal] = mapped_column(Numeric(18, 6))
     size: Mapped[int | None] = mapped_column(Integer, nullable=True)
     cumulative_volume: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    raw: Mapped[dict[str, object]] = mapped_column(JSONB)
+    raw: Mapped[dict[str, object]] = mapped_column(JSONB().with_variant(JSON(), "sqlite"))
     raw_hash: Mapped[str] = mapped_column(Text)
 
 
@@ -500,7 +500,7 @@ class MarketQuoteTick(Base):
     ask_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
     last_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
     cumulative_volume: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    raw: Mapped[dict[str, object]] = mapped_column(JSONB)
+    raw: Mapped[dict[str, object]] = mapped_column(JSONB().with_variant(JSON(), "sqlite"))
     raw_hash: Mapped[str] = mapped_column(Text)
 
 
