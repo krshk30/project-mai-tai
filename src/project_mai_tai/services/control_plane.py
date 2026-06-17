@@ -2113,11 +2113,11 @@ class ControlPlaneRepository:
             elif last_tick_label:
                 reason = (
                     f"live in bot; HYDRATING - receiving {market_data_source} ticks, "
-                    f"no completed {bar_label} yet"
+                    f"building first {bar_label}"
                 )
             elif bar_count > 0:
                 reason = (
-                    f"live in bot; HYDRATING - history seeded, awaiting fresh "
+                    f"live in bot; HYDRATING - seeded from history, awaiting fresh "
                     f"{market_data_source} ticks"
                 )
             else:
