@@ -3961,3 +3961,23 @@ def test_listening_status_missing_engine_started_falls_back_to_stale(monkeypatch
     )
     result = _build_bot_listening_status(data, bot, recent_decisions)
     assert result["state"] == "STALE", result
+
+
+def test_display_order_reason_surfaces_true_broker_reject_and_cancel() -> None:
+    """Rejected/cancelled orders show Schwab's actual reason, not the suppressed
+    intent reason (the broker-payload filter otherwise hides it)."""
+    f = control_plane_module._display_order_reason
+    assert f({
+        "status": "rejected",
+        "reject_reason": "Opening transactions for this security must be placed with a broker. Contact us",
+        "reason": "schwab_1m_v2 ATR Flip B",
+    }) == "Opening transactions for this security must be placed with a broker. Contact us"
+    assert f({
+        "status": "cancelled",
+        "cancel_code": "SETUP_INVALID",
+        "cancel_detail": "latest bar idle path=none != intent path=ATR Flip",
+        "reason": "schwab_1m_v2 ATR Flip B",
+    }) == "SETUP_INVALID: latest bar idle path=none != intent path=ATR Flip"
+    # graceful fallback: no broker reason -> existing behavior, no regression
+    assert f({"status": "filled", "reason": "VWAP Breakout"}) == "VWAP Breakout"
+    assert f({"status": "rejected", "reason": "ATR Flip B"}) == "ATR Flip B"
