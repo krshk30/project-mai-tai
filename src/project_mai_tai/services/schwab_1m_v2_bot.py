@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import signal
+import time
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from uuid import uuid4
@@ -41,6 +42,7 @@ from project_mai_tai.db.models import (
     VirtualPosition,
 )
 from project_mai_tai.db.session import build_session_factory
+from project_mai_tai.oms.store import OmsStore
 from project_mai_tai.events import (
     HeartbeatEvent,
     HeartbeatPayload,
@@ -64,6 +66,7 @@ from project_mai_tai.market_data.schwab_v2_rest_client import (
 from project_mai_tai.market_data.schwab_v2_streamer import SchwabV2Streamer
 from project_mai_tai.market_data.schwab_v2_tick_writer import SchwabV2TickWriter
 from project_mai_tai.settings import Settings, get_settings
+from project_mai_tai.strategy_core.time_utils import session_day_eastern_str
 from project_mai_tai.strategy_core.schwab_1m_v2 import (
     SERVICE_NAME,
     STRATEGY_CODE,
@@ -203,6 +206,11 @@ class SchwabV2BotService:
         )
         self._strategy_state_last_id = "$"
         self._watchlist: set[str] = set()
+        # Symbols Schwab refused to OPEN today (cached <=60s; see
+        # `_schwab_ineligible_symbols`). Evicted from the watchlist so v2 stops
+        # emitting intents for names the broker already bounced.
+        self._schwab_ineligible_cache: set[str] = set()
+        self._schwab_ineligible_loaded_monotonic: float | None = None
         # Track-2 Phase-2 Slice-2: last symbol list published to the gateway as a
         # subscription consumer (debounce). None = nothing published yet.
         self._last_gateway_symbols: list[str] | None = None
@@ -893,6 +901,15 @@ class SchwabV2BotService:
         protected_exclude = set(self.settings.protected_symbol_set)
         if protected_exclude:
             selected -= protected_exclude
+        # Stop EMITTING for symbols Schwab already refused to OPEN today
+        # ("must be placed with a broker" — foreign/manual-handling names). The
+        # OMS also blocks re-submission per account, but the isolated bot would
+        # otherwise re-fire an intent on every flip; evicting from the watchlist
+        # halts it at the source. Mirrors the main engine's
+        # `_load_schwab_ineligible_symbols_by_strategy` eviction.
+        ineligible_exclude = self._schwab_ineligible_symbols()
+        if ineligible_exclude:
+            selected -= ineligible_exclude
         if selected == self._watchlist:
             return
         new_symbols = selected - self._watchlist
@@ -939,6 +956,48 @@ class SchwabV2BotService:
             ",".join(sorted(selected)[:5]),
             len(self._rest_warmup_done),
         )
+
+    def _schwab_ineligible_symbols(self) -> set[str]:
+        """Symbols Schwab refused to OPEN today ("must be placed with a broker").
+
+        v2 must stop putting these on its watchlist so it stops EMITTING intents for
+        them — otherwise the ATR path re-fires every flip and the OMS rejects each as
+        `schwab_ineligible_cached`. Mirrors the main engine's
+        `_load_schwab_ineligible_symbols_by_strategy`, scoped to v2's one account.
+        The OMS still blocks re-submission immediately; this halts the bot at the
+        source. Cached <=60s to avoid a DB read per snapshot (eviction lag is
+        harmless given the OMS block). Empty in simulated/paper mode (no Schwab
+        rejects are recorded for the paper account); auto-clears daily via the
+        `session_date`-keyed `schwab_ineligible_today` table.
+        """
+        if self.session_factory is None:
+            return set()
+        now_m = time.monotonic()
+        if (
+            self._schwab_ineligible_loaded_monotonic is not None
+            and now_m - self._schwab_ineligible_loaded_monotonic < 60.0
+        ):
+            return self._schwab_ineligible_cache
+        account_name = self.settings.strategy_schwab_1m_v2_account_name
+        blocked: set[str] = set()
+        try:
+            with self.session_factory() as session:
+                account_id = session.scalar(
+                    select(BrokerAccount.id).where(BrokerAccount.name == account_name)
+                )
+                if account_id is not None:
+                    by_account = OmsStore().list_schwab_ineligible_symbols_by_account(
+                        session,
+                        broker_account_ids=[account_id],
+                        session_date=session_day_eastern_str(datetime.now(UTC)),
+                    )
+                    blocked = by_account.get(account_id, set())
+        except Exception:  # noqa: BLE001
+            logger.exception("schwab_1m_v2 failed loading Schwab ineligible symbols")
+            return self._schwab_ineligible_cache
+        self._schwab_ineligible_cache = blocked
+        self._schwab_ineligible_loaded_monotonic = now_m
+        return blocked
 
     @staticmethod
     def _extract_confirmed_symbols(event: StrategyStateSnapshotEvent) -> list[str]:
