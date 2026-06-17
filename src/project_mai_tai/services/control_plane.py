@@ -2113,11 +2113,11 @@ class ControlPlaneRepository:
             elif last_tick_label:
                 reason = (
                     f"live in bot; HYDRATING - receiving {market_data_source} ticks, "
-                    f"no completed {bar_label} yet"
+                    f"building first {bar_label}"
                 )
             elif bar_count > 0:
                 reason = (
-                    f"live in bot; HYDRATING - history seeded, awaiting fresh "
+                    f"live in bot; HYDRATING - seeded from history, awaiting fresh "
                     f"{market_data_source} ticks"
                 )
             else:
@@ -2656,6 +2656,9 @@ class ControlPlaneRepository:
                                 latest_event_payload.get("reason"),
                                 intent_reason,
                             ),
+                            "reject_reason": str((order.payload or {}).get("reject_reason") or "").strip(),
+                            "cancel_code": str((order.payload or {}).get("abandon_reason_code") or "").strip(),
+                            "cancel_detail": str((order.payload or {}).get("abandon_reason_detail") or "").strip(),
                             "path": display_order_path(
                                 {
                                     "path": str(intent_metadata.get("path") or ""),
@@ -9128,6 +9131,16 @@ def _dedupe_decision_events(items: list[dict[str, Any]]) -> list[dict[str, Any]]
 
 
 def _display_order_reason(item: dict[str, Any]) -> str:
+    status = str(item.get("status", "") or "").strip().lower()
+    if status == "rejected":
+        rr = str(item.get("reject_reason", "") or "").strip()
+        if rr:
+            return rr
+    if status in ("cancelled", "canceled"):
+        code = str(item.get("cancel_code", "") or "").strip()
+        detail = str(item.get("cancel_detail", "") or "").strip()
+        if code:
+            return f"{code}: {detail}" if detail else code
     reason = str(item.get("reason", "") or "").strip()
     if reason and not looks_like_broker_payload_text(reason):
         return reason
