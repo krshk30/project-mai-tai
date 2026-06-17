@@ -3,9 +3,8 @@
 > **This is the single entry point.** It stays small and current. Full dated history lives in
 > [`handoff-archive/`](handoff-archive/) by month. To onboard an agent: *"Read `docs/session-handoff.md`."*
 >
-> **Structure:** blocker list + live ops state + recent activity here → deep history in the archives →
-> design/reference docs linked throughout. Supersedes the monolithic `session-handoff-global.md` (kept as a
-> frozen backup, to be retired once this structure is confirmed). The v2-isolated bot's deep history is
+> **Structure:** status + open items + live ops state + recent activity here → deep history in the archives →
+> design/reference docs linked throughout. The v2-isolated bot's deep history is
 > [`handoff-archive/schwab-1m-v2.md`](handoff-archive/schwab-1m-v2.md).
 >
 > **Maintenance rule:** new work appends to **Recent activity** below; monthly, roll entries older than ~2
@@ -13,96 +12,102 @@
 
 ---
 
-## 🎯 AUTHORITATIVE PATH-TO-SCHWAB-v2-LIVE-CREDENTIALS LIST (2026-06-15, operator-reconciled)
+## 🚦 STATUS — v2 IS LIVE (2026-06-17, ATR-only, real Schwab account)
 
-The single source of truth for what gates wiring v2 to a REAL Schwab account (rename `paper:`→`live:` +
-provider=schwab + wire hash). v2 is structurally paper today (P1 Phase 1) — these clear BEFORE that step.
+v2 went **live-credentialed** on **2026-06-17** as a **reasoned, operator-accepted risk** (profitability-after-spread
+was/is still accumulating — see open items). Running config, ground-truthed from `/proc/<pid>/environ` + DB on deploy:
 
-**🔴 GO-LIVE BLOCKERS (must clear):**
-1. **Forward-test expectancy gate (= screened-ATR PROFITABILITY) — OPEN, the remaining ATR gate.** Is
-   screened-ATR actually profitable *after real spread*? Needs (a) a REAL sample (the ~63% kept-win over many
-   trades — NOT 2 events) and (b) the **Schwab-tick spread-adjusted P&L** (still accumulating; idealized sim-fills
-   are pipe validation, NOT a track record / NOT the arbiter). This is the credential gate. **Distinct from the
-   qualifier MECHANISM, which is now validated/complete (see blocker 3 + 2026-06-16 entry).**
-2. **Replay Phase 2 (measured-spread)** — the decisive realism input (does v2 survive real spread).
-   ✅ **Tick-capture (#282) ACTIVATED 2026-06-15 19:57Z — the data clock is RUNNING**; accumulate ~a week+ of
-   RTH ticks before Phase 2 has a useful sample. Design: [`v2-tick-capture-design.md`](v2-tick-capture-design.md).
-3. **v2 entry-criteria rules settled** — ([[project-mai-tai-v2-entry-criteria]];
-   [`schwab-1m-v2-entry-criteria.md`](schwab-1m-v2-entry-criteria.md)). **Narrowed to ATR-ONLY:** P1/P2 are
-   idealized losers even gated (~26% win/7wk); schwab P3/P4/P5 are a separate retired-engine system not in v2.
-   v2's credible path = **screened-ATR + the live exit ladder**. The **ATR fresh-flip qualifier** (atr_state_age<5):
-   **MECHANISM ✅ VALIDATED/COMPLETE (2026-06-16, live both directions)** — it keeps fresh winners + screens late
-   losers exactly as designed (proof below). **PROFITABILITY-after-spread is the remaining gate (= blocker 1).**
-   Design: [`v2-atr-fresh-flip-qualifier-design.md`](v2-atr-fresh-flip-qualifier-design.md).
-4. **04:00 ET watchlist-staleness race — fix BEFORE credentials** (diagnosed 2026-06-16, NOT fixed). Bot
-   watchlists carry yesterday's symbols + today's pick at the 04:00 boundary; harmless today (Polygon
-   credential-less, v2 paper/sim), but **live+credentialed v2 could enter yesterday's stale symbols at the open.**
-   Two-part design-first fix (ordering+hard-purge **and** 03:55 timing-separation). Full diagnosis:
-   [`handoff-archive/2026-06.md`](handoff-archive/2026-06.md) → "04:00 WATCHLIST-STALENESS RACE";
-   memory [[project-mai-tai-0400-watchlist-staleness-race]].
-- ~~Scale/floor exit legs proven live~~ ✅ **SATISFIED 2026-06-15** (CUPR — two ATR-Flip round-trips ran
-  SCALE_PCT2 + SCALE_PCT4_AFTER2 + FLOOR_BREACH, all simulated). Whole exit ladder live-proven.
+- **`broker_provider=schwab`, `account_name=live:schwab_1m_v2`**, real shared hash bound (the only `live:` Schwab key);
+  `go_live_enabled=true`, `atr_only_mode=true` (P1/P2 disabled at two layers), qty 10, ATR fresh-flip qualifier on (age<5).
+- **CYN is PROTECTED** — `MAI_TAI_PROTECTED_SYMBOLS=CYN` → `protected_symbol_set={CYN}` in the running config; the real
+  account **holds 8000 sh CYN @ $2.57** (operator's manual position). 3-layer block + watchlist exclusion + #326. v2
+  has never emitted/ordered/filled CYN (verified). `oms_managed_positions` CYN rows = 0 (bot does not manage it).
+- **Rollback (tested):** `systemctl stop project-mai-tai-schwab-1m-v2.service` halts new entries instantly (OMS +
+  market-data keep managing exits). Re-isolate to paper = `GO_LIVE_ENABLED=false` + `BROKER_PROVIDER=simulated` + restart.
+  Env backup: `/etc/project-mai-tai/project-mai-tai.env.bak.pre-golive.20260617T003247Z`.
 
-**🟡 NON-BLOCKING (hardening / cosmetic / ops — clear opportunistically):**
-- **P1 Phase 2** (broaden `paper:` hash-refusal to ALL paper accounts) + **dashboard-visibility half** (surface
-  `[SCHWAB-TOKEN-*]`/`loop_health` as badges) — v2 already isolated (Phase 1); visibility worth having pre-live.
-- slice-4 tier MACD/stoch exits · CAST/VSME flatten timing · bar_counts cosmetic · "Polygon tick" dashboard
-  mislabel · `_evaluate_paths` triage (**momentum-bot engine, NOT v2 — not on the v2 critical path**;
-  memory [[project-mai-tai-evaluate-paths-test-failures]]).
-- **Parked:** polygon_30s credentials (needs tuning first).
+**What "live" has and hasn't proven yet:** the execution path is proven **to Schwab acceptance** (06-17: LNAI order
+accepted by Schwab, working order, broker_order_id assigned). It is **NOT yet proven to a real FILL** — see open items.
 
 ---
 
-## 🟢 CURRENT IN-FLIGHT / LIVE OPS STATE (as of 2026-06-16)
+## 🔴 OPEN ITEMS — DO NOT LOSE (future-you: read these)
 
-- **ATR fresh-flip qualifier: ENABLED live** (`…ATR_FLIP_USE_MAX_STATE_AGE=true`, ceiling 5), ATR-Flip only,
-  P1/P2 untouched. **MECHANISM = ✅ VALIDATED/COMPLETE** (live both directions, day one — see 2026-06-16 entry).
-  **PROFITABILITY = 🔶 ACCUMULATING/OPEN** — needs the real ~63%-kept-win sample (not 2 events) + spread-adjusted
-  Schwab-tick P&L (the credential arbiter; idealized numbers are not it). Gate integrity holding (all live fires
-  age<5, no slips). Watcher still armed for ongoing fires (see below).
-- **Forward-test watcher ARMED on the VPS** — `/tmp/atr_fwd_watch.py` → logs `/tmp/atr_fwd.log`; reports the
-  first live screened-ATR entries at ~7:00 ET (v2 has NO time gate — dead-zone 0/0 — so it fires pre-market
-  from ~7:00 ET, not 9:30). Flags any live fire with `atr_state_age ≥ 5` as **GATE-BROKEN**.
-- **Baseline service PIDs (prove unchanged after any restart):** strategy **2104716**, OMS **2121312**.
-- **Tick-capture retention:** prune-ticks timer now **--keep-days 30** (was 14); first effective deletion
-  ~2026-07-15. Targets `market_*_ticks` only — does NOT touch bar history.
-- **Backtest artifacts (VPS):** `/tmp/atr_secondary_bt.py`, `/tmp/atr_secondary_rows.csv`.
-- **Deploy discipline:** PR + Validate mandatory, direct push forbidden; attended + explicit-GO before any
-  live-money merge/restart; restart ONLY named services and capture PIDs. See
-  [[project-mai-tai-multi-agent-deploy-rules]], [`vps-deployment.md`](vps-deployment.md).
+1. **RESTART-WHILE-HOLDING is UNTESTED.** The 06-17 mid-session restart recovery test (below) was run **FLAT**. We have
+   **not** verified how v2 recovers a restart **while holding an open position** — i.e. position reconciliation across
+   restart, exit-ladder continuity, and whether the held position's exit metadata/floor/stops survive. **Test this before
+   relying on restart safety during a live trade.** (Recovery-while-flat = ~17s, proven; while-holding = unknown.)
+2. **CI `validate` is PERMANENTLY RED — it cannot gate.** Every push fails `validate` on a **test-harness incompatibility**,
+   not real regressions: ~150 tests raise `sqlalchemy CompileError ... can't render element of type JSONB` (table
+   `market_trade_ticks`, column `raw`) under the **SQLite** test DB (JSONB is Postgres-only), plus a few stale assertion
+   failures (`ENVB`/`MASK`/`tos_intrabar`). **Consequence: all merges require `--admin` (standing auth), and CI provides
+   NO safety net — a genuinely-breaking change could slip through.** Mitigation today = run the *targeted* test file + ruff
+   locally before merge (e.g. #326 was verified `test_schwab_1m_v2_bot.py` 31-pass + ruff clean). **Real fix:** make those
+   models render on SQLite (JSON variant) or skip-on-SQLite, so `validate` goes green and can gate again.
+3. **First real ATR FILL still PENDING.** 06-17 fired 4 live qty-10 ATR orders (08:05–08:17 ET): **NIVF/YMAT/EHGO REJECTED**
+   by Schwab — *"Opening transactions for this security must be placed with a broker. Contact us"*; **LNAI** Schwab-**ACCEPTED**
+   then **OUR-side CANCELLED** (`abandon_reason_code=SETUP_INVALID` — ATR setup reverted next bar). **All $0 filled, no
+   position.** So the headline behavioral proof (real fill @ qty10 → managed exit) awaits a flip on an **API-eligible**
+   symbol whose setup holds. Detail: [`handoff-archive/2026-06.md`](handoff-archive/2026-06.md) → 2026-06-17.
+4. **Schwab API-open RESTRICTION narrows the live universe.** 3 of 4 06-17 names were Schwab-refused for API opening
+   (foreign/manual-handling). A meaningful share of the momentum scanner's small-caps are likely un-openable via the v2
+   live API path — the tradeable universe is **narrower than the scanner surfaces**. #326 now auto-evicts these.
+5. **Profitability-after-spread — the open validation gate (now POST-go-live).** Still needs a real kept-win sample (not
+   2 events) + Schwab-tick spread-adjusted P&L. Idealized sim-fills are pipe validation, NOT a track record. Replay
+   Phase 2 data clock running since 2026-06-15 (#282); needs ~a week+ of RTH ticks.
+
+---
+
+## ✅ CLEARED (was a go-live blocker)
+
+- **04:00 ET watchlist-staleness race — FIXED (#324, deployed) + VERIFIED LIVE 2026-06-17.** At the 08:00 UTC / 04:00 ET
+  roll: `bot day-roll fired` (08:00:00.654) → `scanner session-roll fired` (08:00:01.106) → scanner reset; v2 watchlist
+  → count=0 with yesterday's 5 symbols UNSUBSCRIBED. **Zero stale symbols survived; no re-promotion race; no errors.**
+- **Whole exit ladder live-proven** (2026-06-15, CUPR — scale/floor legs on simulated).
+- **ATR fresh-flip qualifier MECHANISM** ✅ validated/complete (2026-06-16, live both directions).
+
+---
+
+## 🟢 LIVE OPS STATE (as of 2026-06-17)
+
+- **Service PIDs (prove unchanged after any restart):** strategy **2207786**, OMS **2207792**, v2 **2252021**
+  (v2 last restarted for #326 deploy at ~13:06 UTC 06-17). *(Pre-go-live baselines 2104716/2121312 are retired.)*
+- **#326 — Schwab-ineligible watchlist eviction: DEPLOYED + restart-verified 2026-06-17.** v2 now evicts symbols Schwab
+  refused to open today (`schwab_ineligible_today`, per-account, 60s-cached) from its watchlist, so it stops *emitting*
+  for them (the OMS already blocked *re-submission*; this halts the bot at the source — parity with the old schwab_1m
+  bot). Proven on the fresh boot: scanner confirmed 6, v2 watchlist = 3 (CLWT/EHGO/YMAT evicted = exactly today's
+  ineligible set). ⚠️ **Known ≤60s stale-carryover window at the 04:00 roll** (cache TTL not coordinated with session
+  roll) — benign (over-conservative, self-corrects, 3h pre-trade); optional hardening = key the cache on session_date.
+- **Mid-session RESTART recovery (FLAT) — measured 2026-06-17:** WS re-subscribe **~4s**; `state.bars` hydrated via
+  DB-seed **~2s** (Fix-b) + REST warmup **~17s** (all `warmed=3/3`); buffered streamer bars drained. **Effectively blind
+  ~17s, NOT the old ~135-min blackout** — DB-seed + REST warmup backfill the strategy buffer. (Supersedes the 135-min
+  worst-case in [[project-mai-tai-v2-entry-warmup-gate]] for the DB-history case.) **Note:** the snapshot `bar_counts`
+  telemetry resets to live-only on restart (≠ the eval buffer `state.bars`, which is the warm one).
+- **Forward-test watcher** `/tmp/atr_fwd_watch.py` → `/tmp/atr_fwd.log` (flags any live fire age≥5 as GATE-BROKEN).
+- **Go-live confirm captures (VPS):** `/tmp/v2_golive_cp1.txt` (04:00 roll), `/tmp/v2_golive_cp2.txt` (7AM session),
+  `/tmp/v2_golive_firstfill.txt` (first-fill watch; transient timers `v2-golive-cp{1,2}`, watch fired + exited).
+- **Tick-capture retention:** prune-ticks `--keep-days 30`; first effective deletion ~2026-07-15; `market_*_ticks` only.
+- **Deploy discipline:** PR + Validate mandatory (but see open item #2 — CI red → admin-merge), direct push forbidden;
+  attended + explicit-GO before any live-money merge/restart; restart ONLY named services + capture PIDs.
+  See [[project-mai-tai-multi-agent-deploy-rules]], [`vps-deployment.md`](vps-deployment.md).
 
 ---
 
 ## 🗓️ RECENT ACTIVITY (newest first — full text in [`handoff-archive/2026-06.md`](handoff-archive/2026-06.md))
 
-- **2026-06-16 — Go-live workstreams scoped (design-first).** WS1 04:00 race fix: design reviewed, both gates
-  PASS (purge predicate exhaustive incl. v2 self-protection; repro test reproduces the race) — **CLEARED, now
-  building** (reorder + hard-purge on `_roll_scanner_session_if_needed`; merged repro test; 03:55 clear-stale-only).
-  See `v2-0400-watchlist-race-fix-design.md` §10. WS2 go-live config **LOCKED**: ATR-only (disable P1/P2 — code,
-  they precede ATR), qty 10, **per-symbol=1 already enforced** (`schwab_1m_v2.py:972`, in-flight counted; momentum
-  `:2191/:2283`), **total exposure UNCAPPED** (Option A — operator's deliberate choice: qty10 × distinct symbols;
-  concurrency item CLOSED). See `v2-paper-to-live-credential-transition-scoping.md`.
-- **2026-06-16 — ATR qualifier MECHANISM ✅ VALIDATED/COMPLETE (live, both directions, day one).** KEPT a fresh
-  winner — **CRE age 0 → scaled +$1.44** (PCT2+PCT4+floor). SCREENED a late loser — **SUGP 08:55 ET age 27**
-  (would-be entry $2.4801) → would have **stopped −1.5% on the very next bar** (08:56 low $2.34, price fell to
-  $2.23 by 09:03). Confirmed via natural experiment: **replay qualifier-OFF = 1 ATR fire (age 27); live qualifier-ON
-  = 0 fires** — the difference is exactly that screen. Gate integrity holds (all live fires age<5, correct gate
-  confirmed; ruled out vol_floor/in-position/cooldown/P1-P2). **Mechanism done; PROFITABILITY-after-spread remains
-  OPEN (blocker 1).** Reconstruction: `/tmp/sugp_atr_probe.py`.
-- **2026-06-16 — Handoff restructured** into this active doc + monthly archives.
-- **2026-06-16 — Secondary ATR qualifier TESTED & REJECTED** (rel_vol + below-VWAP floor). 7wk backtest
-  (771 entries): on the age-kept set it screens MORE WINNERS than losers in all 15 configs; below-VWAP "tell"
-  inverts (ATR-Flip is a below-VWAP bounce). Age-gate alone is the complete ATR screen. No second gate.
-- **2026-06-16 — Age-gate VALIDATED vs real 06-15 trades** — 89% of screened are losers (incl. the 2 biggest),
-  kept set 67% win, one winner wrongly screened (CUPR +2.10 = expected ~11% cost). Performs to 7wk profile.
-- **2026-06-16 — 04:00 watchlist-staleness race DIAGNOSED** (go-live blocker #4; see blocker list above).
-- **2026-06-15 — ATR fresh-flip qualifier BUILT + DORMANT-DEPLOYED** then enabled (#320). Design
-  [`v2-atr-fresh-flip-qualifier-design.md`](v2-atr-fresh-flip-qualifier-design.md).
-- **2026-06-15 — Tick-capture (#282) ACTIVATED** (Replay-Phase-2 data clock running).
-- **2026-06-15 — Two v2 entry-gating issues FIXED + LIVE-PROVEN** (warmup early-fire + DB-seed). Designs
-  [`v2-atr-early-warmup-fix-design.md`](v2-atr-early-warmup-fix-design.md),
-  [`v2-warmup-db-seed-fix-design.md`](v2-warmup-db-seed-fix-design.md).
-- **2026-06-15 — v2 OMS EXITS ACTIVATED** (mid-session, attended) — exit ladder live on simulated.
+- **2026-06-17 — #326 (Schwab-ineligible eviction) built → reviewed → DEPLOYED → restart-verified.** Ported the old
+  schwab_1m bot's watchlist eviction into the isolated v2 bot (`_schwab_ineligible_symbols`, 60s cache, OmsStore loader,
+  session_date parity with the OMS write-side). Merged `fe76f06`; v2 restarted; eviction proven on fresh boot.
+- **2026-06-17 — Mid-session restart recovery profiled (FLAT):** ~17s blind, comes back with scanner-set-minus-ineligible.
+  **restart-while-HOLDING still untested (open item #1).**
+- **2026-06-17 — v2 GO-LIVE deployed (attended, reasoned risk).** PR #325 merged (`cbd1a09`); env set (ATR-only +
+  go-live + `live:schwab_1m_v2` + schwab); strategy/OMS/v2 restarted clean; all gates verified. **Morning verdict:**
+  04:00 roll/race-fix ✅; isolation ✅ (zero P1/P2, zero CYN); **4 ATR orders all $0** (3 Schwab-REJECTED foreign-restricted,
+  1 LNAI accepted-then-our-cancel) → first real fill pending (open item #3); Schwab API-open restriction finding (open #4).
+- **2026-06-16 — Go-live workstreams scoped; ATR qualifier MECHANISM validated; secondary qualifier rejected; age-gate
+  validated; 04:00 race diagnosed; handoff restructured.** (Full detail in the archive.)
+- **2026-06-15 — ATR qualifier built+enabled (#320); tick-capture activated (#282); warmup early-fire + DB-seed fixes
+  live-proven; v2 OMS exits activated.**
 
 ---
 
@@ -110,7 +115,7 @@ provider=schwab + wire hash). v2 is structurally paper today (P1 Phase 1) — th
 
 | file | covers |
 |---|---|
-| [`handoff-archive/2026-06.md`](handoff-archive/2026-06.md) | OMS exits, ATR qualifier, age-gate validation, 04:00 race, tick-capture (34 entries) |
+| [`handoff-archive/2026-06.md`](handoff-archive/2026-06.md) | go-live + morning verdict + #326 + restart recovery, OMS exits, ATR qualifier, age-gate, 04:00 race, tick-capture |
 | [`handoff-archive/2026-05.md`](handoff-archive/2026-05.md) | v2 build-out — bar-build, ATR-flip design, exit-engine groundwork, regression battles (56 entries) |
 | [`handoff-archive/2026-04.md`](handoff-archive/2026-04.md) | earliest — token-SPOF saga, early v2 scaffolding, streamer fixes (3 entries) |
 | [`handoff-archive/schwab-1m-v2.md`](handoff-archive/schwab-1m-v2.md) | the v2-isolated bot's own deep design/status history |
@@ -122,16 +127,15 @@ provider=schwab + wire hash). v2 is structurally paper today (P1 Phase 1) — th
 
 - **Entry rules:** [`schwab-1m-v2-entry-criteria.md`](schwab-1m-v2-entry-criteria.md) ·
   [`schwab-1m-v2-atr-flip-entry-design.md`](schwab-1m-v2-atr-flip-entry-design.md) ·
-  [`schwab-1m-entry-gates-extracted.md`](schwab-1m-entry-gates-extracted.md) ·
-  [`v2-entry-gate-port-design.md`](v2-entry-gate-port-design.md)
+  [`schwab-1m-entry-gates-extracted.md`](schwab-1m-entry-gates-extracted.md)
 - **ATR qualifier + warmup:** [`v2-atr-fresh-flip-qualifier-design.md`](v2-atr-fresh-flip-qualifier-design.md) ·
   [`v2-atr-early-warmup-fix-design.md`](v2-atr-early-warmup-fix-design.md) ·
   [`v2-warmup-db-seed-fix-design.md`](v2-warmup-db-seed-fix-design.md)
-- **Exits / ticks / pricing:** [`v2-exit-phase2-slice2-quote-bridge-design.md`](v2-exit-phase2-slice2-quote-bridge-design.md) ·
-  [`v2-tick-capture-design.md`](v2-tick-capture-design.md) ·
+- **Go-live / race fix:** [`v2-paper-to-live-credential-transition-scoping.md`](v2-paper-to-live-credential-transition-scoping.md) ·
+  [`v2-0400-watchlist-race-fix-design.md`](v2-0400-watchlist-race-fix-design.md)
+- **Exits / ticks / pricing:** [`v2-tick-capture-design.md`](v2-tick-capture-design.md) ·
   [`v2-reference-price-fix-design.md`](v2-reference-price-fix-design.md)
 - **Resilience / ops:** [`schwab-1m-v2-loop-resilience-design.md`](schwab-1m-v2-loop-resilience-design.md) ·
-  [`strategy-engine-main-loop-resilience-design.md`](strategy-engine-main-loop-resilience-design.md) ·
   [`vps-deployment.md`](vps-deployment.md)
 
 ## 🧠 MEMORY POINTERS (auto-load each session; listed for cross-reference)
