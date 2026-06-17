@@ -3961,3 +3961,15 @@ def test_listening_status_missing_engine_started_falls_back_to_stale(monkeypatch
     )
     result = _build_bot_listening_status(data, bot, recent_decisions)
     assert result["state"] == "STALE", result
+
+
+def test_interval_label_prefers_strategy_name_over_stale_interval() -> None:
+    """Decision-tape bar label uses the strategy name's cadence (polygon_30s=30s)
+    so a stale/default runtime interval_secs can't mislabel it (was showing 60s)."""
+    f = control_plane_module.ControlPlaneRepository._interval_label_seconds
+    assert f("polygon_30s", 60) == 30
+    assert f("polygon_30s", 0) == 30
+    assert f("macd_30s", 0) == 30
+    assert f("schwab_1m_v2", 0) == 60
+    assert f("macd_1m", 30) == 60
+    assert f("unknown_bot", 45) == 45
