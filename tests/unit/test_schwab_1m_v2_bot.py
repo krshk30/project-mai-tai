@@ -647,3 +647,30 @@ def test_v2_watchlist_hard_excludes_protected_cyn() -> None:
     bot._apply_strategy_state_event({"data": event.model_dump_json()}, max_watchlist=50)
     assert "CYN" not in bot._watchlist          # protected symbol excluded
     assert {"AAA", "BBB"} <= bot._watchlist     # normal movers retained
+
+
+def test_v2_excludes_schwab_ineligible_symbols_from_watchlist(monkeypatch) -> None:
+    """Symbols Schwab refused to OPEN today are evicted from v2's watchlist so the
+    isolated bot stops emitting intents for them (parity with the old schwab_1m bot
+    via the main engine's _load_schwab_ineligible_symbols_by_strategy eviction)."""
+    bot = _bot()
+    from project_mai_tai.events import (
+        StrategyStateSnapshotEvent,
+        StrategyStateSnapshotPayload,
+    )
+
+    monkeypatch.setattr(bot, "_schwab_ineligible_symbols", lambda: {"DDD"})
+    event = StrategyStateSnapshotEvent(
+        source_service="strategy-engine",
+        payload=StrategyStateSnapshotPayload(watchlist=["AAA", "BBB", "DDD"]),
+    )
+    bot._apply_strategy_state_event({"data": event.model_dump_json()}, max_watchlist=25)
+
+    assert bot._watchlist == {"AAA", "BBB"}
+    assert "DDD" not in bot._watchlist
+
+
+def test_v2_schwab_ineligible_is_safe_noop_without_session_factory() -> None:
+    """The loader returns empty (no raise) when there's no DB handle."""
+    bot = _bot()  # _bot() constructs with session_factory=None
+    assert bot._schwab_ineligible_symbols() == set()
