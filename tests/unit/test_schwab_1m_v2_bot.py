@@ -596,3 +596,54 @@ def test_strategy_on_bar_drops_out_of_order_bar_defense_in_depth() -> None:
     assert result is None
     assert len(state.bars) == 1
     assert state.bars[-1].timestamp_ms == t_base
+
+
+def test_atr_only_mode_emit_guard_drops_non_atr_open() -> None:
+    """GO-LIVE belt-and-suspenders: ATR-only mode drops any non-ATR open intent at
+    the bot's emit chokepoint, so Paths 1/2 can never reach the broker even if some
+    path computed one. ATR-Flip opens pass through unchanged."""
+    from decimal import Decimal
+    from unittest.mock import AsyncMock
+
+    from project_mai_tai.strategy_core.schwab_1m_v2 import TradeIntentDraft
+
+    bot = SchwabV2BotService(Settings(strategy_schwab_1m_v2_atr_only_mode=True))
+    bot.intent_emitter = AsyncMock()
+
+    macd = TradeIntentDraft(
+        symbol="TEST", side="buy", intent_type="open", quantity=Decimal("10"),
+        reason="schwab_1m_v2 MACD Cross", metadata={"path": "MACD Cross"},
+    )
+    asyncio.run(bot._maybe_emit(macd))
+    bot.intent_emitter.emit.assert_not_awaited()  # P1/P2 open DROPPED
+
+    atr = TradeIntentDraft(
+        symbol="TEST", side="buy", intent_type="open", quantity=Decimal("10"),
+        reason="schwab_1m_v2 ATR Flip B", metadata={"path": "ATR Flip"},
+    )
+    asyncio.run(bot._maybe_emit(atr))
+    bot.intent_emitter.emit.assert_awaited_once()  # ATR open PASSES
+
+
+def test_v2_watchlist_hard_excludes_protected_cyn() -> None:
+    """GO-LIVE CYN gate (watchlist layer): even if the scanner confirms CYN, v2's
+    watchlist build hard-excludes protected symbols so v2 never evaluates/subscribes
+    it. (OMS order-path reject of any CYN intent is the independent second layer.)"""
+    from datetime import datetime, timezone
+
+    from project_mai_tai.events import (
+        StrategyStateSnapshotEvent,
+        StrategyStateSnapshotPayload,
+    )
+
+    bot = SchwabV2BotService(
+        Settings(protected_symbols="CYN", strategy_schwab_1m_v2_go_live_enabled=True)
+    )
+    event = StrategyStateSnapshotEvent(
+        source_service="strategy-engine",
+        produced_at=datetime.now(timezone.utc),
+        payload=StrategyStateSnapshotPayload(watchlist=["AAA", "CYN", "BBB"]),
+    )
+    bot._apply_strategy_state_event({"data": event.model_dump_json()}, max_watchlist=50)
+    assert "CYN" not in bot._watchlist          # protected symbol excluded
+    assert {"AAA", "BBB"} <= bot._watchlist     # normal movers retained

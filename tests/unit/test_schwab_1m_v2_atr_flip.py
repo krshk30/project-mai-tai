@@ -313,6 +313,38 @@ def test_atr_on_does_not_perturb_paths_1_2() -> None:
     assert off.quantity == on.quantity
 
 
+def test_atr_only_mode_hard_disables_paths_1_2() -> None:
+    """GO-LIVE LOAD-BEARING: with atr_only_mode ON, the SAME MACD-Cross scenario
+    that fires a 'MACD Cross' intent (control) emits NO Paths-1/2 intent — P1/P2
+    are the 7wk losers and must never fire under live credentials. Proves the
+    strategy-level chokepoint disable holds."""
+    now_ms = int(datetime.now(UTC).timestamp() * 1000)
+
+    def drive(atr_only: bool):
+        s = Settings()
+        # ATR enabled in both arms (go-live has ATR on); only the P1/P2 disable toggles.
+        object.__setattr__(s, "strategy_schwab_1m_v2_atr_flip_enabled", True)
+        object.__setattr__(s, "strategy_schwab_1m_v2_atr_only_mode", atr_only)
+        strat = SchwabV2Strategy(s)
+        n_flat = 135
+        for i in range(n_flat):
+            ts = now_ms - (n_flat - i + 1) * 60_000
+            strat.on_bar("TEST", ChartBar("TEST", 10.0, 10.0, 10.0, 10.0, 1000, ts))
+        final = ChartBar("TEST", 10.0, 11.0, 10.0, 11.0, 100_000, now_ms)
+        return strat.on_bar("TEST", final)
+
+    # Control: P1/P2 live → this scenario fires a MACD Cross.
+    control = drive(atr_only=False)
+    assert control is not None and control.metadata["path"] == "MACD Cross"
+
+    # ATR-only: the SAME scenario must NOT emit any MACD/VWAP intent.
+    atr_only = drive(atr_only=True)
+    if atr_only is not None:
+        assert "ATR Flip" in atr_only.reason
+        assert atr_only.metadata.get("path") not in ("MACD Cross", "VWAP Breakout")
+    # (None is also acceptable — it means no entry fired at all, P1/P2 suppressed.)
+
+
 # --------------------------------------------------------------------------- (5)
 
 def test_atr_liquidity_floor_is_the_only_filter() -> None:

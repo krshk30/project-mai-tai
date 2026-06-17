@@ -44,6 +44,29 @@ def test_configured_schwab_accounts_refuses_v2_but_keeps_retired_bots() -> None:
     assert settings.strategy_schwab_1m_account_name in accounts
 
 
+def test_v2_go_live_opt_in_binds_real_hash() -> None:
+    """GO-LIVE opt-in: with strategy_schwab_1m_v2_go_live_enabled=True and the
+    account renamed to live:, the guard no longer refuses and v2 binds the real
+    Schwab hash → orders route to the real account. Reversible: flag back to
+    False re-isolates (the rollback)."""
+    live = Settings(
+        schwab_account_hash="REALHASH-2EE5A4",
+        strategy_schwab_1m_v2_account_name="live:schwab_1m_v2",
+        strategy_schwab_1m_v2_go_live_enabled=True,
+    )
+    accounts = configured_schwab_accounts(live)
+    assert "live:schwab_1m_v2" in accounts
+    assert accounts["live:schwab_1m_v2"].account_hash == "REALHASH-2EE5A4"
+
+    # Flag back OFF (the rollback) → refused again even with the live: name.
+    isolated = Settings(
+        schwab_account_hash="REALHASH-2EE5A4",
+        strategy_schwab_1m_v2_account_name="live:schwab_1m_v2",
+        strategy_schwab_1m_v2_go_live_enabled=False,
+    )
+    assert "live:schwab_1m_v2" not in configured_schwab_accounts(isolated)
+
+
 def test_v2_inert_on_sim_even_if_a_real_hash_entry_would_exist() -> None:
     # Two layers make a would-be real-hash entry inert for v2:
     #   (1) the hash-guard prevents the entry being registered at all, and
