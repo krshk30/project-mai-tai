@@ -109,6 +109,11 @@ class ArmedHardStop:
     initial_panic_buffer_pct: float
     close_in_flight: bool = False
     last_trigger_attempt_at: datetime | None = None
+    # Trailing-stop ratchet (ORB TRAIL-8%). Default 0.0 => fixed stop, byte-identical
+    # to prior behavior. When >0 the stop ratchets up trail_pct% below the
+    # high-water-mark and never down.
+    trail_pct: float = 0.0
+    high_water_mark: Decimal | None = None
 
 
 class OmsRiskService:
@@ -1768,6 +1773,7 @@ class OmsRiskService:
         for stop in matching_stops:
             if stop.close_in_flight:
                 continue
+            self._ratchet_trailing_stop(stop)  # raise the trailing stop on favorable moves (inert when trail_pct=0)
             if self._is_hard_stop_trigger_throttled(stop):
                 continue
             trigger_price, trigger_source = self._resolve_hard_stop_trigger_price(stop)
@@ -1805,6 +1811,41 @@ class OmsRiskService:
         if fresh_last is not None:
             return fresh_last, "last"
         return None, None
+
+    @staticmethod
+    def _ratcheted_trailing_stop(
+        stop_price: Decimal, high_water_mark: Decimal, observed_price: Decimal, trail_pct: float
+    ) -> tuple[Decimal, Decimal]:
+        """Pure ratchet math. Returns (new_stop_price, new_high_water_mark); the
+        stop only ever rises. ``trail_pct <= 0`` is inert (returns inputs)."""
+        if trail_pct <= 0 or observed_price <= high_water_mark:
+            return stop_price, high_water_mark
+        candidate = observed_price * (Decimal("1") - Decimal(str(trail_pct)) / Decimal("100"))
+        return (candidate if candidate > stop_price else stop_price), observed_price
+
+    def _ratchet_trailing_stop(self, stop: ArmedHardStop) -> None:
+        """Raise a trailing stop toward ``trail_pct`` below the high-water-mark of the
+        freshest favorable price (bid/last). No-op for fixed stops (trail_pct=0)."""
+        if stop.trail_pct <= 0:
+            return
+        max_age_ms = max(0, stop.quote_max_age_ms)
+        observed: list[Decimal] = []
+        quote = self._latest_quotes_by_symbol.get(stop.symbol)
+        if quote is not None and quote.get("bid") is not None:
+            received_at = quote.get("received_at")
+            if isinstance(received_at, datetime) and (utcnow() - received_at).total_seconds() * 1000 <= max_age_ms:
+                observed.append(Decimal(str(quote["bid"])))
+        trade = self._latest_trades_by_symbol.get(stop.symbol)
+        if trade is not None and trade.get("price") is not None:
+            received_at = trade.get("received_at")
+            if isinstance(received_at, datetime) and (utcnow() - received_at).total_seconds() * 1000 <= max_age_ms:
+                observed.append(Decimal(str(trade["price"])))
+        if not observed:
+            return
+        hwm = stop.high_water_mark if stop.high_water_mark is not None else stop.entry_price
+        stop.stop_price, stop.high_water_mark = self._ratcheted_trailing_stop(
+            stop.stop_price, hwm, max(observed), stop.trail_pct
+        )
 
     def _is_hard_stop_trigger_throttled(self, stop: ArmedHardStop) -> bool:
         if stop.last_trigger_attempt_at is None:
@@ -1946,6 +1987,26 @@ class OmsRiskService:
                 weighted_cost = existing.entry_price * existing.quantity + price * quantity
                 entry_price = weighted_cost / total_quantity if total_quantity > 0 else price
             stop_price = entry_price * (Decimal("1") - (Decimal(str(stop_loss_pct)) / Decimal("100")))
+            # Trailing-stop ratchet (ORB TRAIL-8%). Absent metadata => trail_pct 0.0
+            # => fixed stop, byte-identical to prior behavior. On a scale-in we
+            # preserve the existing ratchet (don't reset the HWM or lower the stop).
+            try:
+                trail_pct = float(metadata.get("trail_pct", 0) or 0)
+            except (TypeError, ValueError):
+                trail_pct = 0.0
+            if existing is not None and trail_pct <= 0:
+                trail_pct = float(existing.trail_pct)
+            if trail_pct > 0:
+                prior_hwm = (
+                    existing.high_water_mark
+                    if existing is not None and existing.high_water_mark is not None
+                    else entry_price
+                )
+                high_water_mark: Decimal | None = max(entry_price, prior_hwm)
+                if existing is not None and existing.stop_price > stop_price:
+                    stop_price = existing.stop_price
+            else:
+                high_water_mark = None
             self._armed_hard_stops[key] = ArmedHardStop(
                 strategy_code=strategy_code,
                 broker_account_name=broker_account_name,
@@ -1958,6 +2019,8 @@ class OmsRiskService:
                 initial_panic_buffer_pct=initial_panic_buffer_pct,
                 close_in_flight=False,
                 last_trigger_attempt_at=None,
+                trail_pct=trail_pct,
+                high_water_mark=high_water_mark,
             )
             return
 
