@@ -125,23 +125,24 @@ accepted by Schwab, working order, broker_order_id assigned). It is **NOT yet pr
 
 ## 🗓️ RECENT ACTIVITY (newest first — full text in [`handoff-archive/2026-06.md`](handoff-archive/2026-06.md))
 
-- **2026-06-18 — ORB opening-range path: entry thesis-check + multi-day EXIT-rule research (read-only).**
-  New proposed P6 "OPEN" entry (5-min OR breakout-close + vol≥1.5× + VWAP/EMA, width<12%, cutoff 10:30).
+- **2026-06-18 — ORB opening-range path (P6 "OPEN") — RESEARCH COMPLETE, settled config → deployment scoping.**
   Full writeup: [`orb-opening-range-exit-research.md`](orb-opening-range-exit-research.md); engine
-  [`scripts/orb_exit_backtest.py`](../scripts/orb_exit_backtest.py) (VPS `/tmp/orb_master.py`, cache
-  `/tmp/orb_bars.pkl`). **Key data finding:** stored `schwab_1m_v2` bars are watchlist-gated → winners
-  (CRVO 09:35, ATPC 09:51) promoted *after* breakout, so their 09:30 OR is missing → **must source from
-  Schwab REST pricehistory** (validated vs Pine). Live prerequisite: scanner must surface candidates
-  pre-09:30. **Exit sweep (7 days, 35 entries, RGNT-06-15 excluded):** the operator's **trailing-% hard
-  stop BEATS the EMA/multi-layer exits on the robust metrics** — TRAIL-8% win 63% (vs C-2×EMA9 46%),
-  TRAIL-3% median-capture 0.41 (vs 0.04), give-back 4–8% (vs 12.5%). **TRAIL-8% = best all-rounder.**
-  C wins only on monster-driven total return. The **COMBO (TRAIL-8% OR 2×EMA9, first-to-fire) does NOT
-  beat pure TRAIL-8%** — "whichever fires first" can only exit *earlier*, so it can't add C's
-  monster-holding. Multi-layer "2-of-3" (E2) underperforms (ingredients correlated). **Gap-through caveat
-  on the record:** trailing is a hard intrabar stop → exposed to gap-through slippage (cf. the CDT −3.7%
-  incident); fills modeled at the stop are optimistic on thin books, so the trailing edge may erode live.
-  **Leading candidate, NOT a verdict** (35 trades); 20–30-day extension in progress. Live needs the
-  TIMESALE/intrabar layer.
+  [`scripts/orb_exit_backtest.py`](../scripts/orb_exit_backtest.py) (cache `/tmp/orb_bars.pkl`).
+  **SETTLED: ENTRY = PRIOR** (5-min OR from 09:30 · close>OR_high · vol≥1.5× · close>VWAP · close>EMA9 ·
+  width<12% · cutoff 10:30 · one/symbol); **EXIT = TRAIL-8%** (ratchets from HWM). **Data:** stored
+  `schwab_1m_v2` bars are watchlist-gated (winners promoted post-breakout) → must source from **Schwab REST
+  pricehistory** (validated vs Pine); live prereq = scanner surfaces candidates pre-09:30. **EXIT study
+  (25 days, 159 entries, RGNT-06-15 out):** TRAIL-8% the **only** exit with positive median capture (+0.22)
+  + highest win 55%; **TRAIL-3% overfit** (7d 0.41 → 25d −0.20); COMBO/multi-layer/EMA all lose. **ENTRY
+  study:** a 09:25/7-min/frozen-high sharpening **failed to beat PRIOR** — structure worse net expectancy
+  (avg 2.5 vs 3.4), **VWAP/EMA filter INERT** on it (rejected 1 of 492 → precision gap is structural not
+  the filter), **volume sweep no sweet spot**, and **without INHD(+314%)/QUCY(+82%) the new structure
+  collapses 2.5→1.7 while PRIOR is robust 3.4→3.1.** **Honest framing:** ORB is a **thin-edge,
+  runner-dependent** strategy (best ~3.4%/take, 55% win, +0.22 median capture; profit in the tail) —
+  **leading candidate for live, NOT a verdict.** **Gap-through caveat kept:** TRAIL-8% is a hard intrabar
+  stop, modeled fills optimistic on thin books. **Next:** scope intrabar-on-LEVELONE for ORB (per-path
+  isolation + ORB policy + gap-through frequency), then forward-validation, then small attended go-live.
+  (PR #337 = the 7-day writeup + engine; this entry supersedes it with the settled conclusion.)
 - **2026-06-17 (late) — TIMESALE capture (#335) + tick-confirmation research day.** Audit found our trade ticks are
   LEVELONE quote-snapshots not true trades (Schwab has no historical T&S). Built additive capture-only TIMESALE_EQUITY
   (#335, merged + deployed flag-OFF/inert); **enable pending attended next-open (open item #7).** Also de-flaked 2

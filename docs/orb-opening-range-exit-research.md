@@ -1,112 +1,119 @@
-# ORB Opening-Range Breakout — Entry thesis-check + EXIT-rule research
+# ORB Opening-Range Breakout (P6 "OPEN") — research COMPLETE, settled config
 
-> **Status: RESEARCH / thesis-check. NOT built, NOT live.** A proposed new entry path (P6 "OPEN")
-> plus a multi-day exit-rule sweep. Needs more days before any of this becomes a config. Companion to
-> the one-page proposal `orb-opening-path-spec.md`. Run/owned read-only; live ATR/execution untouched.
+> **Status: RESEARCH COMPLETE → deployment-readiness scoping.** The entry and exit are settled below.
+> This is a **leading candidate for live, NOT a proven verdict** — it still needs intrabar execution and
+> forward validation before any go-live (see §8). All work read-only / bar-close backtest on historical
+> 1-min data. Companion: `orb-opening-path-spec.md`. Engine: [`scripts/orb_exit_backtest.py`](../scripts/orb_exit_backtest.py).
 
-Backtest engine: [`scripts/orb_exit_backtest.py`](../scripts/orb_exit_backtest.py) (also on VPS at
-`/tmp/orb_master.py`; bar cache `/tmp/orb_bars.pkl`). Bar-close backtest on historical 1-min data — fine
-for *selecting* a rule; the live version still needs the TIMESALE/intrabar execution layer.
+## ✅ SETTLED CONFIG
+- **ENTRY = PRIOR:** 5-min opening range from **09:30** · enter on first bar that **closes > OR_high** ·
+  **vol ≥ 1.5× OR_avg** · **close > VWAP** · **close > EMA9** · **skip if OR_width% > 12%** (chop) ·
+  **cutoff 10:30** · **one trade per symbol** per session.
+- **EXIT = TRAIL-8%:** stop starts 8% below entry, **ratchets up 8% below the high-water-mark, never down.**
 
----
+## 1. The proposal & the data fix
+ORB on the qualified small-cap scanner names, 09:25–10:30 ET. **Decisive data finding:** the bot's stored
+`schwab_1m_v2` bars are **watchlist-gated** — winners are promoted *after* their breakout (CRVO first
+stored bar 09:35, ATPC 09:51), so their 09:30 opening range **does not exist** in stored bars, biasing any
+stored-bar backtest against the winners. **All backtests source 1-min bars from Schwab REST pricehistory**
+(`needExtendedHoursData=true`), validated exactly against the operator's TradingView/Pine reference (CRVO
+OR_low 4.610, breakout 5.330). **Live prerequisite:** the scanner must surface candidates **before 09:30**
+or the bot can't measure the opening range.
 
-## 1. The proposal (entry)
+## 2. Method
+- Universe: all names the bot engaged (≥2 intents) per day, via REST. 7-day sweep (35 entries) then a
+  **25-day extension (2026-05-11 … 06-18, 159 entries)** for de-monstered robustness.
+- **RGNT-06-15 excluded** everywhere (a +209%-MFE freak; exception-list mechanism, extensible). RGNT-06-11
+  is a separate legitimate entry, kept.
+- Judge on **win% + median capture (Ret÷MFE) + avg return + give-back** — **not** total return
+  (monster-driven) and **not** hit-rate alone (it misled twice).
 
-Opening-range breakout on the qualified small-cap scanner names, 09:25–10:30 ET:
-- **OR** = high/low of the first 5 one-minute bars (09:30–09:34).
-- **Entry (long)** on the first bar after 09:34 that **closes** > OR_high **and** volume ≥ 1.5× OR_avg
-  **and** close > VWAP **and** close > EMA9; **skip** if OR_width% > 12% (chop) or < 2% (too tight);
-  cutoff 10:30; one trade/side/session. Entry = breakout-bar close.
-- This BASE entry was validated on 06-18 (4/4: took CRVO/ATPC, skipped CAST/WKSP) and is **held fixed**
-  for the exit research so exit differences are clean.
+## 3. EXIT study → TRAIL-8% is the settled winner
 
-## 2. ⚠️ Decisive data finding — use REST, not the stored bars
+7-day finding held and **strengthened on 25 days**. Master (25 days, 159 entries, RGNT out):
 
-The bot's stored `schwab_1m_v2` bars are **watchlist-gated**: a symbol only has bars while it was on the
-v2 watchlist. The day's *winners are promoted late* (CRVO first stored bar 09:35, ATPC 09:51 — at/after
-their breakouts), so their 09:30–09:34 opening ranges **do not exist** in stored bars. The faders were on
-the watchlist from the open, so they're fully covered → a stored-bar backtest is **biased against the
-winners**. Fix: pull 1-min bars from **Schwab REST pricehistory** (`needExtendedHoursData=true`), which
-serves the full opening range for any symbol regardless of watchlist. REST validated exactly against the
-operator's TradingView/Pine reference on 06-18 (CRVO OR_low 4.610, breakout 5.330).
+| Exit | Win% | Avg% | **Med Cap** | Give-back |
+|---|---|---|---|---|
+| **TRAIL-8%** | **55** | 3.4 | **+0.22** | 7.4 |
+| C — 2×EMA9 | 43 | 3.5 | −0.11 | 9.0 |
+| B — VWAP | 43 | 3.6 | −0.12 | 9.3 |
+| TRAIL-5% | 45 | 1.9 | −0.06 | 5.5 |
+| COMBO (T8 OR 2×EMA9) | 47 | 2.1 | −0.06 | 6.8 |
+| TRAIL-3% | 42 | 1.0 | −0.20 | 3.7 |
+| A — EMA9 / E2 / E3 / D / F | 36–40 | 0.9–3.3 | −0.13 … −0.26 | — |
 
-**Structural implication for going live:** for ORB to work, the **scanner must surface candidates before
-09:30** — today the bot wasn't watching CRVO until it had already run, so even a perfect rule couldn't
-have traded it from the live feed.
+- **TRAIL-8% is the only exit with positive median capture (+0.22)** across 159 trades and the highest
+  win% (55%) by a wide margin.
+- **TRAIL-3% was overfit** — the 7-day capture leader (0.41) collapsed to −0.20 on 25 days (the tight stop
+  gets shaken out across choppier days). The **room (8%) is what's robust.**
+- **COMBO (TRAIL-8% OR 2×EMA9, first-to-fire) does NOT beat pure TRAIL-8%** — "whichever fires first" can
+  only exit *earlier*, never hold longer, so it can't add C's monster-holding.
+- **Multi-layer "2-of-3" (E2)** underperforms — its ingredients (swing-break / volume-dry / red-bar) are
+  correlated, so it fires about as early as a single EMA9 cross.
+- C/B-VWAP win only on monster-driven *total* return; they bleed the median trade.
 
-## 3. Method (exit sweep)
+## 4. ENTRY study → PRIOR wins; the 09:25/7-min sharpening failed to beat it
 
-- **Universe:** all names the bot engaged (≥2 intents) per day over the last 7 trading days
-  (06-10…06-18), reconstructed via REST → 126 symbol-days, 98 with full OR coverage, **35 entries**.
-- **Entry fixed** at BASE; only the **exit** varies (clean isolation; one variable at a time).
-- **RGNT (06-15) excluded** from every number via an exception list — it was a +209%-MFE freak that all
-  loose exits held (~+158%), distorting totals. (RGNT's 06-11 entry is a separate, legitimate trade, kept.)
-- **Metrics:** Win%, Avg/Total return, **Median Capture (Ret÷MFE)**, **Avg give-back (MFE−Ret)**.
-  Judge on win% + median capture + give-back (robust); **total return is monster-driven, least robust.**
+Tested whether a 09:25 / 7-min baseline / frozen-high / no-VWAP-EMA structure beats PRIOR. Three levers,
+all dead ends (exit fixed at TRAIL-8%, one change at a time):
 
-## 4. MASTER EXIT COMPARISON (RGNT-06-15 excluded, 35 trades, same basis)
+| Variant | Win% | Avg Ret% | Med Cap | Scratch% | Hit@20% |
+|---|---|---|---|---|---|
+| **PRIOR** (5m/09:30/VWAP+EMA) | **55** | **3.4** | **+0.22** | **51** | 41% |
+| NEW-7min (no filter) | 47 | 2.5 | −0.04 | 62 | 43% |
+| HYBRID (7m/frozen + VWAP+EMA) | 47 | 2.5 | −0.05 | 61 | 43% |
+| NEW7 vol 2.0× / 2.5× / 3.0× / 4.0× | 47/48/49/40 | 2.2/2.1/2.3/1.9 | ≈−0.05 | 59–64 | 41/40/39/37% |
 
-| Exit | Win% | Avg% | Total% | **Med Cap** | **Give-back** | CRVO | ATPC | Total (RGNT *in*) |
-|---|---|---|---|---|---|---|---|---|
-| **TRAIL-3%** | 54 | 3.5 | 124 | **0.41** | **4.1** | +21%(.84) | +19%(.73) | new |
-| **TRAIL-8%** | **63** | 5.7 | 200 | 0.36 | 8.3 | +15%(.60) | +17%(.62) | new |
-| D — give-back | 57 | 1.5 | 54 | 0.33 | 4.6 | +6%(.22) | +11%(.42) | 162 |
-| F — ladder | 57 | 2.5 | 88 | 0.26 | 10.0 | +6%(.23) | +5%(.18) | 143 |
-| TRAIL-5% | 49 | 3.5 | 124 | 0.23 | 6.4 | +19%(.75) | +19%(.73) | new |
-| **COMBO (T8 OR 2×EMA9)** | 54 | 5.1 | 179 | 0.22 | 7.6 | +15%(.60) | +17%(.62) | new |
-| E2 — 2of3 | 54 | 3.7 | 128 | 0.15 | 8.8 | +2%(.10) | +4%(.16) | 236 |
-| B — VWAP | 49 | 5.6 | 195 | 0.13 | 12.2 | +6%(.22) | +11%(.42) | 353 |
-| C — 2×EMA9 | 46 | 7.6 | 265 | 0.04 | 12.5 | +20%(.52) | +17%(.44) | 422 |
-| A — EMA9 | 43 | 3.2 | 111 | −0.02 | 10.4 | +2%(.10) | +4%(.16) | 270 |
-| B — EMA20 | 43 | 5.3 | 184 | −0.04 | 15.2 | +20%(.52) | +8%(.21) | 335 |
-| E3 — 3of3 | 40 | 8.9 | 312 | −0.13 | 16.5 | +2%(.10) | +62%(.72) | 470 |
+- **Structure:** the 09:25/7-min/frozen trigger catches marginally more runners (and gets CRVO/QUCY
+  *earlier & cheaper*, and catches INHD/EZGO that PRIOR width-caps) **but** floods in faders — worse net
+  expectancy (avg 2.5 vs 3.4, win 47 vs 55, median capture negative). Higher recall did **not** pay.
+- **Hybrid (VWAP/EMA added back) is INERT** on this structure — it rejected **1 breakout out of 492**.
+  A frozen-high volume breakout is intrinsically already above VWAP/EMA9. The earlier "dropping VWAP/EMA
+  hurt precision" attribution was a **confound** — the precision gap is **structural**, not the filter.
+- **Volume sweep — no sweet spot:** raising the multiple (1.5→4.0×) cuts trades **indiscriminately** —
+  scratch% stays ~60%, avg return *falls*, hit-rate bleeds at every step. Volume does not separate
+  runners from faders here.
+- **Without-monsters clincher:** strip INHD (+314%) and QUCY (+82%) and the new structure **collapses
+  (avg 2.5 → 1.7)** while PRIOR is **robust (3.4 → 3.1)**. The new trigger's edge was 2 names.
 
-## 5. Verdict
+**Decision:** no variant beats PRIOR on net expectancy, and the new structure leans on 2 monsters →
+**ENTRY = PRIOR. Stop adding levers.**
 
-1. **The operator's trailing-% hard stop BEATS the EMA exits on the robust metrics, decisively.**
-   TRAIL-8% wins win% (63% vs C 46%); TRAIL-3% wins median capture (0.41 vs C 0.04); both win give-back
-   (4–8% vs 12.5%). C's *only* win is total return (265% vs 200%), which is monster-driven and fragile.
-2. **TRAIL-8% is the best all-rounder** — the only exit top-tier on both axes (#1 win%, #2 median
-   capture, respectable #3 total). **TRAIL-3%** maximises capture/consistency but **shakes out of slow
-   grinders** (stopped CCTG at −3% before its +64% run). **TRAIL-5% is no-man's-land** (worst of the three).
-3. **The COMBO (TRAIL-8% OR 2×EMA9, first to fire) does NOT beat pure TRAIL-8%.** It tracks TRAIL-8%
-   (the trailing stop fires first nearly always), and where the 2×EMA9 leg binds it exits *earlier* —
-   slightly lower give-back (7.6 vs 8.3) but **worse** win% (54 vs 63) and capture (0.22 vs 0.36).
-   **Logical reason:** "whichever fires first" (OR) can only make exits *earlier, never later*, so it
-   **cannot** add C's monster-holding (which comes from C being a *later* exit on clean trends). To get
-   "both," you'd need different logic (trailing as a floor while *holding to a target/EMA on strong
-   trends*), not first-to-fire.
-4. **The earlier multi-layer "2-of-3" (E2) was a misread of the operator's idea and underperforms** —
-   its three ingredients (swing-break / volume-dry / red-bar) are correlated, so it fires about as early
-   as EMA9 on the runners. Not recommended.
+## 5. Per-runner (illustrative — the structure's local wins that still didn't win in aggregate)
+| Runner (day) | gain% | PRIOR | NEW-7/HYBRID |
+|---|---|---|---|
+| CRVO 06-18 | 57 | 09:35 @5.33 +15% | 09:34 @4.97 +23% |
+| QUCY 05-15 | 64 | 09:44 @2.97 +53% | 09:32 @2.60 +82% |
+| INHD 06-08 | 314 | SKIP (width-cap) | 09:32 @1.25 +64% |
+| EZGO 06-17 | 18 | SKIP (width-cap) | 09:33 @1.45 +27% |
 
-**Leading candidate: TRAIL-8%** (or TRAIL-3% if weighting capture over catching sustained grinders).
+## 6. Honest framing (do not oversell)
+ORB is a **thin-edge, runner-dependent strategy.** Best achievable is **~3.4% avg/take, 55% win, +0.22
+median capture** — profit lives in the **tail**, most entries are scratches. It is a **leading candidate
+for live, NOT a proven verdict.** Known residual cost: the 12% width cap rejects rare monsters (INHD
++314%) — accepted, since removing it admitted big losers.
 
-## 6. Per-runner (which exit held each; ret% / capture)
-
-| Runner | Best trailing | C (2×EMA9) | A (EMA9) | E3 (loosest) | COMBO | Read |
-|---|---|---|---|---|---|---|
-| **CRVO** 06-18 | T3% +21%(.84) | +20%(.52) | +2%(.10) | +2%(.10) | +15%(.60) | trailing wins the choppy pop |
-| **ATPC** 06-18 | T3/5% +19%(.73) | +17%(.44) | +4%(.16) | **+62%(.72)** | +17%(.62) | sustained → only E3 caught the extended run |
-| **CCTG** 06-16 | T8% +50%(.78); **T3% −3%** | +65%(.60) | +69%(.64) | +23%(.21) | +50%(.78) | grinder → 3% shook out, 8% held |
-| **CAST** 06-12 | T8% +15% | +7% | +3% | **+159%(1.00)** | +15% | rare sustained monster → only loosest caught it |
-
-**The irreducible tradeoff:** tight = consistent + locks the typical move; loose = rare monster capture +
-bleeds everything else. No single exit dominates; the right one depends on whether a runner *sustains*.
+**Gap-through caveat (kept on record):** TRAIL-8% is a **hard intrabar stop**, so it is exposed to
+gap-through slippage (cf. the CDT −3.7% incident, 2026-06-18). Backtest fills are modeled at the stop
+(open on a gap-down) — **optimistic on thin microcap books**, so the live trailing edge may erode. The
+live version needs the **intrabar execution layer** (bar-close entry is late on a fast open) and
+**forward validation** before go-live.
 
 ## 7. Guardrails
-- RGNT-06-15 excluded from every number (n=35). Totals still monster-driven (E3/C lean on
-  CCTG/MTEN/GLXG/CAST-06-12/ATPC-extended) → trust win% + median capture + give-back.
-- Trailing is a **hard intrabar stop** → exposed to gap-through slippage (cf. the CDT −3.7% incident);
-  fills modeled at the stop (open on a gap-down), optimistic on thin books. EMA exits act on close and
-  dodge that — the trailing edge could erode somewhat live.
-- 35 trades / 7 days = **leading candidate, not a verdict.** Exit timing is sensitive to EMA precision
-  (mine vs Pine) — spot-check before committing. Live needs the TIMESALE/intrabar layer.
-- One parameter at a time; don't co-optimize entry + exit.
+- One change at a time (entry varied, exit fixed at TRAIL-8%; then exit varied, entry fixed).
+- RGNT-06-15 excluded from every number; new outliers (INHD/QUCY) reported with/without.
+- 25 days is real but finite — **leading candidate, not a verdict.** Totals remain monster-sensitive →
+  trust win% + median capture + avg return.
+- Skipping faders counts equal to catching runners.
 
-## 8. Next steps
-1. Extend to ~20–30 days to de-monster the sample and confirm TRAIL-8% holds.
-2. Spot-check TRAIL-8%/C exits against the operator's TradingView EMA.
-3. Confirm the scanner can promote candidates **pre-09:30** (the live prerequisite).
-4. If chasing "discipline + monster-holding," design a *hold-to-target-on-strong-trend* rule (trailing
-   floor + ride), not the first-to-fire OR — which structurally can't hold longer.
+## 8. Next steps (deployment readiness)
+1. **Scope intrabar execution for ORB** on the current LEVELONE feed (no TIMESALE dependency — the 8%
+   trail forgives coarse data; ORB is time-separated from P1/P4/P5/ATR). Per-path isolation, ORB policy,
+   gap-through frequency. (Design/read-only first.)
+2. **Forward validation** of PRIOR+TRAIL-8% before any go-live.
+3. Go-live (later): small, attended, sized for a thin-tail edge.
+
+## Scripts
+- [`scripts/orb_exit_backtest.py`](../scripts/orb_exit_backtest.py) — exit-sweep engine (REST pricehistory + bar cache).
+- Entry study (structure / hybrid / volume sweep) + the 25-day extension run from the same cached bars
+  (VPS `/tmp/orb_*.py`, cache `/tmp/orb_bars.pkl`).
