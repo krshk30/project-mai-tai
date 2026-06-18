@@ -156,6 +156,23 @@ class Settings(BaseSettings):
     # OAuth token but has a dedicated REST-poll client, bar builder, strategy
     # body, and service process. Strategy body is a placeholder until the
     # operator's spec arrives.
+    # ORB (P6 "OPEN") — opening-range breakout, default OFF / flag-gated / inert.
+    # Settled config: ENTRY 5-min OR from 09:30 (close>OR_high, vol>=1.5x, >VWAP,
+    # >EMA9, width<12%, cutoff 10:30, one/symbol, ONLY pre-09:25-confirmed names);
+    # EXIT TRAIL-8% (ratchets from HWM). Logic in strategy_core/orb_intrabar.py;
+    # see docs/orb-intrabar-production-wiring-design.md. With orb_enabled=False the
+    # wiring is never reached (backward-compatible by construction; parity EXACT).
+    orb_enabled: bool = False
+    orb_execution_mode: str = "bar_close"   # "bar_close" (parity) | "intrabar"
+    orb_or_minutes: int = 5
+    orb_vol_mult: float = 1.5
+    orb_width_max_pct: float = 12.0
+    orb_width_min_pct: float = 2.0
+    orb_cutoff_minutes: int = 60            # last entry = open + 60m = 10:30 ET
+    orb_trail_pct: float = 8.0
+    orb_universe_lead_minutes: int = 5      # confirmed by open - 5m = 09:25
+    orb_broker_account_name: str = "paper:orb"
+
     strategy_schwab_1m_v2_enabled: bool = False
     strategy_schwab_1m_v2_bar_poll_interval_seconds: float = 15.0
     strategy_schwab_1m_v2_quote_poll_interval_seconds: float = 5.0
