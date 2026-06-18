@@ -1,4 +1,4 @@
-"""ORB (P6 "OPEN") isolated bot — scaffold + gateway data layer (3a) + entry brain (3b).
+"""ORB (P6 "OPEN") isolated bot — scaffold + gateway data (3a) + entry brain (3b) + heartbeat (3c).
 
 Runs as its OWN process/event loop (escapes the shared strategy-engine 1 Hz-loop
 contention by construction) and consumes the EXISTING market-data gateway as a
@@ -31,8 +31,10 @@ from sqlalchemy.orm import Session, sessionmaker
 from project_mai_tai.db.models import DashboardSnapshot
 from project_mai_tai.db.session import build_session_factory
 from project_mai_tai.events import (
+    IsolatedBotStateEvent,
     MarketDataSubscriptionEvent,
     MarketDataSubscriptionPayload,
+    StrategyBotStatePayload,
     TradeIntentEvent,
     TradeIntentPayload,
     stream_name,
@@ -60,6 +62,8 @@ class _SymbolState:
     or_evaluated: bool = False
     opening_range: OpeningRange | None = None
     traded: bool = False
+    entry_price: float | None = None
+    last_bar_at: str = ""
 
 
 class OrbService:
@@ -88,6 +92,7 @@ class OrbService:
             universe_lead_minutes=int(self.settings.orb_universe_lead_minutes),
         )
         self._mode = ExecutionMode(str(self.settings.orb_execution_mode))
+        self._loop_count = 0
 
     # ----- lifecycle -----
     async def run(self) -> None:
@@ -102,6 +107,9 @@ class OrbService:
                 await self._sync_gateway_subscription(self._refresh_universe())
                 await self._drain_market_data()
                 await self._publish_pending_intents()
+                if self._loop_count % 5 == 0:  # ~5s heartbeat (dashboard cadence)
+                    await self._publish_heartbeat()
+                self._loop_count += 1
                 await asyncio.sleep(1)
         except asyncio.CancelledError:
             logger.info("[ORB] cancelled; shutting down")
@@ -232,6 +240,7 @@ class OrbService:
         or_end = open_utc + timedelta(minutes=self._cfg.or_minutes)
         cutoff = open_utc + timedelta(minutes=self._cfg.cutoff_minutes)
         st = self._states.setdefault(symbol, _SymbolState())
+        st.last_bar_at = bar.timestamp.isoformat()
         if bar.timestamp < or_end:
             st.or_bars.append(bar)  # building the opening range (09:30-09:34)
             return
@@ -246,6 +255,7 @@ class OrbService:
         if bar_confirms_breakout(st.opening_range, bar, self._cfg):
             entry = entry_fill_price(st.opening_range, bar, self._mode)
             st.traded = True  # one trade per symbol per session
+            st.entry_price = entry
             self._pending_intents.append((symbol, entry))
             logger.info(
                 "[ORB-BREAKOUT] %s entry=%.4f OR_high=%.4f mode=%s",
@@ -290,6 +300,60 @@ class OrbService:
                 approximate=True,
             )
             logger.info("[ORB-OPEN] %s entry=%.4f trail_pct=%s", symbol, entry_price, self.settings.orb_trail_pct)
+
+    # ----- observability: isolated heartbeat (dashboard renders ORB from this stream) -----
+    def _build_heartbeat_payload(self) -> StrategyBotStatePayload:
+        decisions: list[dict] = []
+        bar_counts: dict[str, int] = {}
+        last_tick: dict[str, str] = {}
+        positions: list[dict] = []
+        for sym, st in sorted(self._states.items()):
+            bar_counts[sym] = len(st.or_bars)
+            if st.last_bar_at:
+                last_tick[sym] = st.last_bar_at
+            if st.traded:
+                status = "entered"
+            elif not st.or_evaluated:
+                status = "building_or"
+            elif st.opening_range is None:
+                status = "skipped"  # not in pre-09:25 universe / width-capped / no coverage
+            else:
+                status = "armed"
+            row: dict = {"ticker": sym, "status": status}
+            if st.opening_range is not None:
+                row["or_high"] = st.opening_range.high
+                row["or_low"] = st.opening_range.low
+                row["or_width_pct"] = round(st.opening_range.width_pct, 2)
+            decisions.append(row)
+            if st.traded and st.entry_price is not None:
+                positions.append({
+                    "symbol": sym,
+                    "entry_price": st.entry_price,
+                    "stop_loss_pct": float(self.settings.orb_trail_pct),
+                    "trail_pct": float(self.settings.orb_trail_pct),
+                    "exit_owner": "oms_trail8",  # the OMS owns the live TRAIL-8% stop
+                })
+        return StrategyBotStatePayload(
+            strategy_code=SERVICE_NAME,
+            account_name=str(self.settings.orb_broker_account_name),
+            watchlist=sorted(self._universe),
+            data_health={"status": "healthy", "universe_size": len(self._universe)},
+            recent_decisions=decisions,
+            positions=positions,
+            bar_counts=bar_counts,
+            last_tick_at=last_tick,
+        )
+
+    async def _publish_heartbeat(self) -> None:
+        event = IsolatedBotStateEvent(
+            source_service=SERVICE_NAME, payload=self._build_heartbeat_payload()
+        )
+        await self.redis.xadd(
+            stream_name(self.settings.redis_stream_prefix, "strategy-state-isolated"),
+            {"data": event.model_dump_json()},
+            maxlen=self.settings.redis_strategy_state_isolated_stream_maxlen,
+            approximate=True,
+        )
 
 
 async def main() -> None:
