@@ -116,6 +116,32 @@ def configured_strategy_registrations(settings: Settings) -> tuple[StrategyRegis
                 },
             )
         )
+    if settings.orb_enabled:
+        registrations.append(
+            StrategyRegistration(
+                code="orb",
+                display_name="Mai Tai ORB Bot (P6 OPEN)",
+                account_name=settings.orb_broker_account_name,
+                interval_secs=60,
+                runtime_kind="orb",
+                execution_mode=settings.execution_mode_for_provider(
+                    settings.provider_for_strategy("orb")
+                ),
+                metadata={
+                    "account_name": settings.orb_broker_account_name,
+                    # ORB routes to a paper account; show the raw name so the
+                    # dashboard does not flip "paper:" -> "live:" (schwab rule).
+                    "account_display_name": settings.orb_broker_account_name,
+                    "interval_secs": 60,
+                    "runtime_kind": "orb",
+                    "provider": settings.provider_for_strategy("orb"),
+                    # Isolated process (project-mai-tai-orb); the strategy-engine
+                    # must not run it. Registered here only so the control-plane
+                    # dashboard renders its card + detail page.
+                    "isolated_service": True,
+                },
+            )
+        )
     if settings.strategy_macd_30s_probe_enabled:
         registrations.append(
             StrategyRegistration(
