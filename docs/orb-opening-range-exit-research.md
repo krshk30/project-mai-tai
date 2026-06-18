@@ -113,7 +113,31 @@ live version needs the **intrabar execution layer** (bar-close entry is late on 
 2. **Forward validation** of PRIOR+TRAIL-8% before any go-live.
 3. Go-live (later): small, attended, sized for a thin-tail edge.
 
+## 9. Intrabar execution build + results (2026-06-18 pt2)
+The flag-gated ORB intrabar layer was built and validated on stored bars (backtest logic; not yet
+production-wired). Findings:
+- **PARITY — EXACT ✅:** intrabar module in `bar_close` mode == canonical ORB on **159/159 trades** (all 25
+  days), 0 mismatches. Backward-compatible by construction; default-off is inert.
+- **Gap-through frequency (TRAIL-8%, hard intrabar stop):** a 1-min bar dropping >8% below prior close while
+  in a position = **15 / 4,372 held bars = 0.34% of bars; 9.4% of trades**; median overshoot 9.6% (~1.6%
+  beyond the stop), worst 14–16%. **Rare and bounded → a LEVELONE-fed OMS can run the exit without TIMESALE.**
+- **Intrabar benefit is UNMEASURABLE on stored data (don't oversell):** OHLC-proxy says +4.4pp/trade but is
+  optimistic (ideal fill at OR_high). The more-faithful captured-tick replay *contradicts* it — the ticks are
+  **watchlist-gated** (start when the bot subscribed the name, i.e. at/after breakout), so "first tick ≥
+  OR_high" chases: CRVO +15.7% ≈ bar-close +15.1% (marginal), ATPC fills at 3.95 (late-chase artifact, −7.1%).
+  **The real benefit answer requires the small attended live run.**
+
+## 10. ⚠️ The coverage gate (the binding constraint for go-live)
+A coverage skip-guard (arm ORB only if the live feed saw the OR window 09:30–09:34; else skip — no chasing)
+is **correct and necessary**, but on the 3 days with tick data it would **ARM 0 / SKIP 10** of the ORB
+takers: **every ORB winner was subscribed at/after its breakout, never during its opening range.** The bot
+*does* run a pre-open scan (~6 names/day) but it surfaces the **fader watchlist** (06-18: WKSP/CAST/CDT/LNKS/
+BYAH/APWC), NOT the runners (CRVO/ATPC surfaced at breakout). So under current scanner timing ORB fires ~0
+useful trades and a live run has nothing to test. **The binding gate is the scanner's pre-open candidate
+SELECTION** — it must surface the runner-candidates by ~09:25. This is NOT an over-flag and NOT the intrabar
+wiring; it is the prerequisite for ORB to trade at all. Resolve before production-wiring + live run.
+
 ## Scripts
 - [`scripts/orb_exit_backtest.py`](../scripts/orb_exit_backtest.py) — exit-sweep engine (REST pricehistory + bar cache).
-- Entry study (structure / hybrid / volume sweep) + the 25-day extension run from the same cached bars
-  (VPS `/tmp/orb_*.py`, cache `/tmp/orb_bars.pkl`).
+- Entry study (structure / hybrid / volume sweep), 25-day extension, intrabar parity/benefit, coverage guard —
+  run from the same cached bars (VPS `/tmp/orb_*.py`, cache `/tmp/orb_bars.pkl`).
