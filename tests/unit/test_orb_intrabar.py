@@ -17,8 +17,8 @@ CFG = OrbConfig()
 OPEN = datetime(2026, 6, 18, 13, 30, tzinfo=timezone.utc)  # 09:30 ET
 
 
-def _bar(i, o, h, l, c, v, vwap=None, ema9=None):
-    return OrbBar(OPEN + timedelta(minutes=i), o, h, l, c, v, vwap, ema9)
+def _bar(i, o, h, low, c, v, vwap=None, ema9=None):
+    return OrbBar(OPEN + timedelta(minutes=i), o, h, low, c, v, vwap, ema9)
 
 
 # ---- opening range ----
