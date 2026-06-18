@@ -142,3 +142,70 @@ async def test_tick_writer_buffers_and_drops_on_overflow():
         await w.on_tick(mk(i))
     st = w.stats()
     assert st["buffered"] == 3 and st["dropped"] == 2
+
+
+# ----- TIMESALE_EQUITY (true trades) capture — additive, separate flag -----
+
+def test_extract_timesale_trade():
+    content = {"key": "GLXG", "1": 1781175600123, "2": 1.215, "3": 400, "4": 99}
+    t = SchwabV2Streamer._extract_timesale_tick(content, item_ts_ms=1781175600500)
+    assert t is not None
+    assert t.kind == "trade" and t.service == "TIMESALE_EQUITY"
+    assert t.symbol == "GLXG" and t.price == 1.215 and t.size == 400
+    assert t.event_ts_ms == 1781175600123  # field 1 (trade time) wins
+
+
+def test_extract_timesale_fallback_ts_and_rejects():
+    # no field-1 time -> falls back to item timestamp
+    t = SchwabV2Streamer._extract_timesale_tick({"key": "X", "2": 2.0, "3": 1}, item_ts_ms=777)
+    assert t is not None and t.event_ts_ms == 777
+    # no symbol, no price, or no usable ts -> None
+    assert SchwabV2Streamer._extract_timesale_tick({"2": 2.0}, item_ts_ms=1) is None
+    assert SchwabV2Streamer._extract_timesale_tick({"key": "X", "3": 1}, item_ts_ms=1) is None
+    assert SchwabV2Streamer._extract_timesale_tick({"key": "X", "2": 2.0}, item_ts_ms=None) is None
+
+
+def test_timesale_capture_property_gating_and_independence():
+    async def ot(t):  # noqa: ANN001
+        return None
+    # default off
+    assert SchwabV2Streamer(Settings(), on_chart_bar=_noop_bar, on_tick=ot)._timesale_capture is False
+    # on only when its OWN flag is set; independent of LEVELONE tick_capture
+    s_on = SchwabV2Streamer(
+        Settings(strategy_schwab_1m_v2_timesale_capture_enabled=True),
+        on_chart_bar=_noop_bar, on_tick=ot,
+    )
+    assert s_on._timesale_capture is True and s_on._tick_capture is False
+    # no on_tick wired -> capture impossible even with flag on
+    assert SchwabV2Streamer(
+        Settings(strategy_schwab_1m_v2_timesale_capture_enabled=True),
+        on_chart_bar=_noop_bar, on_tick=None,
+    )._timesale_capture is False
+
+
+@pytest.mark.asyncio
+async def test_timesale_branch_off_is_inert():
+    ticks = []
+    async def ot(t):  # noqa: ANN001
+        ticks.append(t)
+    s = SchwabV2Streamer(Settings(), on_chart_bar=_noop_bar, on_tick=ot)  # both flags off
+    msg = {"data": [{"service": "TIMESALE_EQUITY", "timestamp": 1, "content": [
+        {"key": "G", "1": 1, "2": 1.0, "3": 5}]}]}
+    await s._handle_message(json.dumps(msg))
+    assert ticks == []  # TIMESALE branch unreachable when flag off
+
+
+@pytest.mark.asyncio
+async def test_timesale_branch_on_tees_trade():
+    ticks = []
+    async def ot(t):  # noqa: ANN001
+        ticks.append(t)
+    s = SchwabV2Streamer(
+        Settings(strategy_schwab_1m_v2_timesale_capture_enabled=True),
+        on_chart_bar=_noop_bar, on_tick=ot,
+    )
+    msg = {"data": [{"service": "TIMESALE_EQUITY", "timestamp": 999, "content": [
+        {"key": "G", "1": 12345, "2": 1.5, "3": 5}]}]}
+    await s._handle_message(json.dumps(msg))
+    assert len(ticks) == 1
+    assert ticks[0].service == "TIMESALE_EQUITY" and ticks[0].price == 1.5 and ticks[0].kind == "trade"

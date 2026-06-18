@@ -7081,7 +7081,17 @@ async def test_service_does_not_halt_flat_schwab_symbol_outside_trading_hours(
 
 
 @pytest.mark.asyncio
-async def test_service_clears_data_halt_when_stale_symbol_leaves_active_set() -> None:
+async def test_service_clears_data_halt_when_stale_symbol_leaves_active_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Freeze the clock to a trading-hours moment (10:00 ET, within macd_30s's
+    # 04:00-20:00 window) so `_schwab_symbol_should_enforce_data_halt` enforces
+    # the data-halt regardless of wall-clock — otherwise this test is time-dependent
+    # and fails when CI runs outside trading hours.
+    now = datetime(2026, 6, 17, 14, 0, tzinfo=UTC)
+    monkeypatch.setattr(
+        "project_mai_tai.services.strategy_engine_app.utcnow", lambda: now
+    )
     settings = make_test_settings(
         strategy_macd_30s_broker_provider="schwab",
         redis_stream_prefix="test",
@@ -7094,7 +7104,7 @@ async def test_service_clears_data_halt_when_stale_symbol_leaves_active_set() ->
     service = StrategyEngineService(settings=settings, redis_client=FakeRedis())
     runtime = service.state.bots["macd_30s"]
     runtime.set_watchlist(["ENVB"])
-    old = datetime.now(UTC) - timedelta(seconds=40)
+    old = now - timedelta(seconds=40)
     service._schwab_symbol_last_stream_trade_at["ENVB"] = old
     service._schwab_symbol_last_stream_quote_at["ENVB"] = old
 
@@ -7114,7 +7124,7 @@ async def test_service_clears_data_halt_when_stale_symbol_leaves_active_set() ->
 
     runtime.set_manual_stop_symbols(["ENVB"])
     runtime.set_watchlist(["ELAB"])
-    recent = datetime.now(UTC)
+    recent = now
     service._schwab_symbol_last_stream_trade_at["ELAB"] = recent
     service._schwab_symbol_last_stream_quote_at["ELAB"] = recent
 
@@ -7127,7 +7137,15 @@ async def test_service_clears_data_halt_when_stale_symbol_leaves_active_set() ->
 
 
 @pytest.mark.asyncio
-async def test_service_reactivated_symbol_gets_fresh_schwab_stale_grace_window() -> None:
+async def test_service_reactivated_symbol_gets_fresh_schwab_stale_grace_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Freeze the clock to trading hours (10:00 ET) so the data-halt is enforced
+    # regardless of wall-clock (see the companion test above).
+    now = datetime(2026, 6, 17, 14, 0, tzinfo=UTC)
+    monkeypatch.setattr(
+        "project_mai_tai.services.strategy_engine_app.utcnow", lambda: now
+    )
     settings = make_test_settings(
         strategy_macd_30s_broker_provider="schwab",
         redis_stream_prefix="test",
@@ -7140,7 +7158,7 @@ async def test_service_reactivated_symbol_gets_fresh_schwab_stale_grace_window()
     service = StrategyEngineService(settings=settings, redis_client=FakeRedis())
     runtime = service.state.bots["macd_30s"]
     runtime.set_watchlist(["ENVB"])
-    old = datetime.now(UTC) - timedelta(seconds=40)
+    old = now - timedelta(seconds=40)
     service._schwab_symbol_last_stream_trade_at["ENVB"] = old
     service._schwab_symbol_last_stream_quote_at["ENVB"] = old
 
