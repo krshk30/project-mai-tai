@@ -3947,6 +3947,10 @@ def build_app(
     async def bot_webull_30s_page_alias() -> str:
         return await _render_bot_page_with_trade_coach("polygon_30s")
 
+    @app.get("/bot/orb", response_class=HTMLResponse)
+    async def bot_orb_page() -> str:
+        return await _render_bot_page_with_trade_coach("orb")
+
     @app.get("/bot/30s-probe", response_class=HTMLResponse)
     async def bot_30s_probe_page() -> str:
         return await _render_bot_page_with_trade_coach("macd_30s_probe")
@@ -4033,7 +4037,7 @@ def _attach_schwab_token_refresher_status(app_obj: Any, data: dict[str, Any]) ->
         data["schwab_token_refresher"] = {"health": "unknown", "last_error": "status unavailable"}
 
 
-CONTROL_PLANE_ACTIVE_BOT_CODES = ("schwab_1m_v2", "polygon_30s")
+CONTROL_PLANE_ACTIVE_BOT_CODES = ("schwab_1m_v2", "polygon_30s", "orb")
 CONTROL_PLANE_DOCK_SERVICES = (
     "market-data-gateway",
     "oms-risk",
@@ -4311,6 +4315,7 @@ def _compact_bot_page_url(code: str) -> str:
     return {
         "schwab_1m_v2": "/bot/1m-schwab-v2",
         "polygon_30s": "/bot/30s-polygon",
+        "orb": "/bot/orb",
     }.get(code, "/")
 
 
@@ -4319,6 +4324,10 @@ def _compact_bot_route_line(code: str, bot: dict[str, Any]) -> str:
         return "live · schwab streamer · sole session"
     if code == "polygon_30s":
         return "live · webull · polygon feed"
+    if code == "orb":
+        account = str(bot.get("account_name") or "-")
+        mode = "paper" if account.startswith("paper:") else "live"
+        return f'{mode} · ORB (P6 OPEN) · {account}'
     return f'{bot.get("execution_mode", "-")} · {bot.get("provider", "-")} · {bot.get("account_display_name", "-")}'
 
 
@@ -4360,6 +4369,10 @@ def _compact_bot_card(
     name = str(bot.get("display_name") or code.replace("_", " ").title())
     route = _compact_bot_route_line(code, bot)
     bot_page_url = _compact_bot_page_url(code)
+    # Paper vs live badge — paper-routed accounts (e.g. "paper:orb") must not read as LIVE.
+    is_paper = str(bot.get("account_name") or "").startswith("paper:")
+    mode_tone = "warn" if is_paper else "good"
+    mode_label = "PAPER" if is_paper else "LIVE"
     return f"""
     <div class="bot">
       <div class="bot-top">
@@ -4367,7 +4380,7 @@ def _compact_bot_card(
           <div class="bot-name"><a href="{escape(bot_page_url)}">{escape(name)}</a></div>
           <div class="bot-route">{escape(route)}</div>
         </div>
-        <span class="pill good"><span class="dot good"></span>LIVE</span>
+        <span class="pill {mode_tone}"><span class="dot {mode_tone}"></span>{mode_label}</span>
       </div>
       <div class="bot-metrics">
         <div class="metric"><div class="m-label">Data flow</div><div class="m-val {flow_tone}">{escape(_friendly_data_flow(data_flow))}</div></div>
@@ -4665,6 +4678,13 @@ BOT_PAGE_META = {
         "badge": "RUN",
         "color": "#e91e63",
         "path": "/bot/runner",
+    },
+    "orb": {
+        "title": "Mai Tai ORB Bot (P6 OPEN)",
+        "nav_title": "Mai Tai ORB",
+        "badge": "ORB",
+        "color": "#8e44ad",
+        "path": "/bot/orb",
     },
 }
 
