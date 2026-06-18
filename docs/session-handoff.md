@@ -125,6 +125,24 @@ accepted by Schwab, working order, broker_order_id assigned). It is **NOT yet pr
 
 ## 🗓️ RECENT ACTIVITY (newest first — full text in [`handoff-archive/2026-06.md`](handoff-archive/2026-06.md))
 
+- **2026-06-18 (late) — ORB (P6 "OPEN") BUILT + DEPLOYED PAPER.** Deployed after-close (Juneteenth+weekend → validate
+  over the weekend; **real-money flip = separate later gate**, Mon 2026-06-22 qty 10 target). On `main`: **#344**
+  (consolidated stack 3a service + 3b entry + 3c heartbeat), **#340** (OMS bid-only TRAIL-8% ratchet, inert at
+  trail_pct=0), **#345** (dashboard render allowlists + paper-aware PAPER/LIVE pill), **#346** (register `orb` in
+  `runtime_registry`, gated, isolated). `project-mai-tai-orb.service` **active+enabled, NRestarts=0**, heartbeat
+  publishing, `account_name=paper:orb`. **Verified rendering** (control-plane :8100): `/api/bots` lists `orb`; compact
+  dashboard shows the ORB card with a **PAPER badge**; `/bot/orb` detail page = HTTP 200. Architecture: isolated bot
+  (own process like v2) consuming the EXISTING market-data gateway (Polygon/Massive trades, NOT Schwab); universe =
+  premarket two-squeeze `momentum_confirmed` (no seed hookup). **Dashboard-render lesson:** a 3c heartbeat is NOT enough —
+  `_build_bot_views` builds `data["bots"]` from `configured_strategy_registrations`, not the stream, so a card needs
+  THREE layers (registration + render allowlists + paper pill). **Caveats:** each `Deploy Main` showed red "failure" =
+  benign reconciler/CYN health-gate (services all healthy, code landed); new systemd unit isn't in `install_units`
+  allowlist (installed by hand once); `--delete-branch` on stacked #339 closed the dependent #341 → recovered via a
+  consolidated local merge (#344). **OPEN:** the `confirmed_at` pre-09:25 universe mapping is the #1 Monday watch
+  (eyeball the armed heartbeat watchlist pre-open — safe-fails to sit-out); restart-while-holding UNTESTED (shares v2's
+  open item #1); kill-switch = bot-kill keeps OMS TRAIL-8% but OMS-restart drops the native stop → flatten manually.
+  Memory: [`project_mai_tai_orb.md`](.). Entry-rule ref `docs/schwab-1m-v2-entry-criteria.md` sibling
+  `docs/orb-opening-range-exit-research.md`.
 - **2026-06-18 — ORB opening-range path (P6 "OPEN") — RESEARCH COMPLETE, settled config → deployment scoping.**
   Full writeup: [`orb-opening-range-exit-research.md`](orb-opening-range-exit-research.md); engine
   [`scripts/orb_exit_backtest.py`](../scripts/orb_exit_backtest.py) (cache `/tmp/orb_bars.pkl`).
