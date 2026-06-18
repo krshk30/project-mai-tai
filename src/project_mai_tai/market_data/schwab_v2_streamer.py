@@ -129,6 +129,12 @@ class SchwabV2Streamer:
     #   8=cumulative_volume, 9=last_size, 35=trade_time_ms
     LEVELONE_EQUITIES_SERVICE = "LEVELONE_EQUITIES"
     LEVELONE_EQUITIES_FIELDS = "0,1,2,3,4,5,8,9,35"
+    # TIMESALE_EQUITY (true time-&-sales — trade-by-trade; tick capture only, gated
+    # behind a SEPARATE flag, ADDITIVE to LEVELONE — does not remove or alter it).
+    # Field codes (Schwab TIMESALE_EQUITY schema):
+    #   0=key (symbol), 1=trade_time_ms, 2=last_price, 3=last_size, 4=last_sequence
+    TIMESALE_EQUITY_SERVICE = "TIMESALE_EQUITY"
+    TIMESALE_EQUITY_FIELDS = "0,1,2,3,4"
 
     def __init__(
         self,
@@ -173,6 +179,16 @@ class SchwabV2Streamer:
         the LEVELONE branch is unreachable, CHART_EQUITY behavior is identical."""
         return self._on_tick is not None and bool(
             getattr(self.settings, "strategy_schwab_1m_v2_tick_capture_enabled", False)
+        )
+
+    @property
+    def _timesale_capture(self) -> bool:
+        """TIMESALE (true trade-by-trade) capture is active only when a writer callback
+        was wired AND the timesale-capture flag is on. SEPARATE from LEVELONE tick
+        capture (additive). Default off -> no TIMESALE SUBS is sent, the TIMESALE branch
+        is unreachable, and CHART_EQUITY + LEVELONE behavior is identical."""
+        return self._on_tick is not None and bool(
+            getattr(self.settings, "strategy_schwab_1m_v2_timesale_capture_enabled", False)
         )
 
     def set_desired_symbols(self, symbols: set[str]) -> None:
@@ -370,6 +386,25 @@ class SchwabV2Streamer:
                                 "schwab_v2_streamer on_tick raised for %s",
                                 tick.symbol,
                             )
+            elif (
+                service == self.TIMESALE_EQUITY_SERVICE
+                and self._timesale_capture
+                and self._on_tick is not None
+            ):
+                item_ts_ms = _int_or_none(item.get("timestamp"))
+                for content in item.get("content", []):
+                    if not isinstance(content, dict):
+                        continue
+                    tick = self._extract_timesale_tick(content, item_ts_ms)
+                    if tick is None:
+                        continue
+                    try:
+                        await self._on_tick(tick)
+                    except Exception:
+                        logger.exception(
+                            "schwab_v2_streamer on_tick (timesale) raised for %s",
+                            tick.symbol,
+                        )
 
     # -------------------------------------------------------- subscription
 
@@ -419,6 +454,13 @@ class SchwabV2Streamer:
             requests.append(
                 self._build_service_request(
                     service=self.LEVELONE_EQUITIES_SERVICE, fields=self.LEVELONE_EQUITIES_FIELDS,
+                    command=command, symbols=symbols,
+                )
+            )
+        if self._timesale_capture:
+            requests.append(
+                self._build_service_request(
+                    service=self.TIMESALE_EQUITY_SERVICE, fields=self.TIMESALE_EQUITY_FIELDS,
                     command=command, symbols=symbols,
                 )
             )
@@ -631,6 +673,32 @@ class SchwabV2Streamer:
                     )
                 )
         return ticks
+
+    @staticmethod
+    def _extract_timesale_tick(
+        content: dict[str, object], item_ts_ms: int | None
+    ) -> "SchwabTick | None":
+        """Parse one TIMESALE_EQUITY content record into a single TRADE tick (true
+        time-&-sales). Fields: 0=key, 1=trade_time_ms, 2=last_price, 3=last_size,
+        4=sequence. Capture-only; the DB unique constraint dedups exact re-sends."""
+        symbol = str(content.get("key") or content.get("0") or "").upper()
+        if not symbol:
+            return None
+        price = _float_or_none(content.get("2"))
+        if price is None or price <= 0:
+            return None
+        size = _int_or_none(content.get("3"))
+        event_ts = _int_or_none(content.get("1")) or item_ts_ms
+        if event_ts is None:
+            return None
+        raw_hash = hashlib.sha1(
+            json.dumps(content, sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest()
+        return SchwabTick(
+            kind="trade", service="TIMESALE_EQUITY", symbol=symbol,
+            event_ts_ms=int(event_ts), raw=content, raw_hash=raw_hash,
+            price=price, size=size,
+        )
 
     @staticmethod
     def _decode(raw: str | bytes) -> dict[str, object]:

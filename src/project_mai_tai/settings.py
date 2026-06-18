@@ -202,6 +202,11 @@ class Settings(BaseSettings):
     # v2's existing streamer session). Capture is a pure observer — never feeds
     # the strategy. See docs/v2-tick-capture-design.md.
     strategy_schwab_1m_v2_tick_capture_enabled: bool = False
+    # TIMESALE_EQUITY (true trade-by-trade) capture — ADDITIVE to LEVELONE, capture-only
+    # (the SchwabV2TickWriter tee; shares nothing with the strategy/bar feed or execution).
+    # Default off -> no TIMESALE subscription, byte-identical to today. See
+    # docs/timesale-capture-design.md / /home/trader/timesale-capture-design.md.
+    strategy_schwab_1m_v2_timesale_capture_enabled: bool = False
     strategy_schwab_1m_v2_tick_flush_interval_secs: float = 2.0
     strategy_schwab_1m_v2_tick_flush_batch_size: int = 500
     strategy_schwab_1m_v2_tick_max_buffer: int = 50_000
