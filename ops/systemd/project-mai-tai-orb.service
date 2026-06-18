@@ -1,0 +1,25 @@
+[Unit]
+Description=Project Mai Tai ORB (P6 OPEN) isolated bot
+After=network-online.target postgresql.service redis-server.service project-mai-tai-market-data.service
+Wants=network-online.target
+PartOf=project-mai-tai.target
+
+[Service]
+Type=simple
+User=trader
+Group=trader
+WorkingDirectory=/home/trader/project-mai-tai
+EnvironmentFile=/etc/project-mai-tai/project-mai-tai.env
+ExecStart=/home/trader/project-mai-tai/.venv/bin/mai-tai-orb
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+UMask=0027
+StandardOutput=append:/var/log/project-mai-tai/orb.log
+StandardError=append:/var/log/project-mai-tai/orb.log
+SyslogIdentifier=project-mai-tai-orb
+
+[Install]
+WantedBy=project-mai-tai.target
