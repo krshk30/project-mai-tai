@@ -60,6 +60,21 @@ accepted by Schwab, working order, broker_order_id assigned). It is **NOT yet pr
    restart). Also: **`deploy_preflight` blocks every in-window OMS deploy on the protected-CYN holding** (CYN
    `position_quantity_mismatch` critical + "1 open position" + reconciler-degraded cascade — all benign) and its 5.0s
    HTTP timeout is too tight for the 5.4s `/api/overview` — whitelist `MAI_TAI_PROTECTED_SYMBOLS` + bump the timeout.
+7. **⏸️ TIMESALE capture ENABLE is PENDING (attended, next-session open).** PR #335 (`59500bc`) added additive,
+   capture-only TIMESALE_EQUITY (true trades) to the v2 streamer — **MERGED + DEPLOYED with the flag OFF (inert,
+   byte-identical; v2 PID 2252021→2319110, clean)**. Why pending: our `market_trade_ticks` are LEVELONE quote-snapshots
+   (throttled), NOT true trades; TIMESALE was never subscribed (0 rows); Schwab has **no historical T&S endpoint** so it
+   must accrue LIVE. ENABLE = set `MAI_TAI_STRATEGY_SCHWAB_1M_V2_TIMESALE_CAPTURE_ENABLED=true` + restart schwab-1m-v2 —
+   but do it ATTENDED at the next open (after-hours has no v2 watchlist → can't read the SUBS/entitlement; arming
+   unattended risks a flap on the shared CHART_EQUITY streamer that feeds the live ATR bot; zero capture lost — first
+   real trades are next RTH). Watch `[V2-WS-SUB]` (services incl TIMESALE_EQUITY) + any `[V2-WS-RESP-ERR]
+   service=TIMESALE_EQUITY` (= not entitled) + reconnect/flap; flag-disable ready. Design: `docs/timesale-capture-design.md`.
+8. **Tick-confirmation entry research (parallel track, NOT deployed).** After a setup bar, enter only if upticks>downticks
+   in the next ~15s. HELPS P5 (6.4:1)/P1 (8.5:1), HURTS P4-burst. P4 is NOT a loss engine (+$7.11 2-day; the real bleeder
+   is **P1 MACD-cross −$14.53**); mixed (P4-base + P1/P5-tick) = +$3.41. Tonight's ticks are LEVELONE-grade (see #7);
+   DECIDER = a faithful 10-day TIMESALE test ~early July ([[project-mai-tai-tick-confirmation]]). Docs in `/home/trader/`:
+   tick_confirmation_findings, combined_tickconfirm_2day, p5_3path_baseline_2day, p4_tickconfirm_optionB_plan,
+   intrabar-execution-design, timesale-capture-design.
 
 ---
 
@@ -85,8 +100,8 @@ accepted by Schwab, working order, broker_order_id assigned). It is **NOT yet pr
 ## 🟢 LIVE OPS STATE (as of 2026-06-17)
 
 - **Service PIDs (prove unchanged after any restart):** strategy **2299529**, OMS **2299517** (both rotated at the #333
-  tick-consumer deploy ~19:30Z 06-17 — stop-strategy/restart-oms/start-strategy), v2 **2252021** (last restarted for #326
-  at ~13:06 UTC 06-17). *(Pre-#333 OMS 2207792 / strategy 2207786 and pre-go-live 2104716/2121312 are retired.)*
+  tick-consumer deploy ~19:30Z 06-17), v2 **2319110** (rotated at the #335 TIMESALE deploy ~00:3xZ 06-18, flag OFF/inert).
+  *(Retired: v2 2252021 [#326], OMS 2207792 / strategy 2207786 [#333], pre-go-live 2104716/2121312.)*
 - **#326 — Schwab-ineligible watchlist eviction: DEPLOYED + restart-verified 2026-06-17.** v2 now evicts symbols Schwab
   refused to open today (`schwab_ineligible_today`, per-account, 60s-cached) from its watchlist, so it stops *emitting*
   for them (the OMS already blocked *re-submission*; this halts the bot at the source — parity with the old schwab_1m
@@ -110,6 +125,13 @@ accepted by Schwab, working order, broker_order_id assigned). It is **NOT yet pr
 
 ## 🗓️ RECENT ACTIVITY (newest first — full text in [`handoff-archive/2026-06.md`](handoff-archive/2026-06.md))
 
+- **2026-06-17 (late) — TIMESALE capture (#335) + tick-confirmation research day.** Audit found our trade ticks are
+  LEVELONE quote-snapshots not true trades (Schwab has no historical T&S). Built additive capture-only TIMESALE_EQUITY
+  (#335, merged + deployed flag-OFF/inert); **enable pending attended next-open (open item #7).** Also de-flaked 2
+  time-dependent strategy-engine data-halt tests (trading-hours gate vs CI-run-time → frozen clock) to keep CI real-green.
+  Research (NOT deployed): tick-confirmation per-path (P5/P1 help, P4 doesn't; P4 not a loss engine, P1 the bleeder;
+  mixed +$3.41), ATR intrabar false-flip cost ≈ cancels benefit, intrabar-execution + timesale design docs. Open item #8 +
+  [[project-mai-tai-tick-confirmation]]; docs in `/home/trader/*.md`.
 - **2026-06-17 — OMS tick-by-tick exit consumer (#333) diagnosed → built → CI-green → DEPLOYED live.** From the live LNAI
   scale that filled ~70s late at 4.345: root-caused to quote-consumption lag (broker-sync REST inline-blocking the
   shared read loop) + processing-time staleness stamping; fixed with a dedicated `_run_tick_consumer` task +
