@@ -1825,26 +1825,28 @@ class OmsRiskService:
 
     def _ratchet_trailing_stop(self, stop: ArmedHardStop) -> None:
         """Raise a trailing stop toward ``trail_pct`` below the high-water-mark of the
-        freshest favorable price (bid/last). No-op for fixed stops (trail_pct=0)."""
+        freshest BID. No-op for fixed stops (trail_pct=0).
+
+        BID-ONLY (deliberate): the breach trigger fires on the bid, so the ratchet
+        must track the bid too. Tracking the *last* trade instead would, on a
+        wide-spread thin microcap (spread > trail_pct), ratchet the stop up off a
+        high last print and then immediately trigger on a much-lower bid — running
+        the trail tighter than the backtested TRAIL-8% width (the TRAIL-3%-overfit
+        failure mode already ruled out). Keeping ratchet and trigger on the same
+        reference preserves the robust 8% room that made TRAIL-8% win."""
         if stop.trail_pct <= 0:
             return
-        max_age_ms = max(0, stop.quote_max_age_ms)
-        observed: list[Decimal] = []
         quote = self._latest_quotes_by_symbol.get(stop.symbol)
-        if quote is not None and quote.get("bid") is not None:
-            received_at = quote.get("received_at")
-            if isinstance(received_at, datetime) and (utcnow() - received_at).total_seconds() * 1000 <= max_age_ms:
-                observed.append(Decimal(str(quote["bid"])))
-        trade = self._latest_trades_by_symbol.get(stop.symbol)
-        if trade is not None and trade.get("price") is not None:
-            received_at = trade.get("received_at")
-            if isinstance(received_at, datetime) and (utcnow() - received_at).total_seconds() * 1000 <= max_age_ms:
-                observed.append(Decimal(str(trade["price"])))
-        if not observed:
+        if quote is None or quote.get("bid") is None:
+            return
+        received_at = quote.get("received_at")
+        if not isinstance(received_at, datetime):
+            return
+        if (utcnow() - received_at).total_seconds() * 1000 > max(0, stop.quote_max_age_ms):
             return
         hwm = stop.high_water_mark if stop.high_water_mark is not None else stop.entry_price
         stop.stop_price, stop.high_water_mark = self._ratcheted_trailing_stop(
-            stop.stop_price, hwm, max(observed), stop.trail_pct
+            stop.stop_price, hwm, Decimal(str(quote["bid"])), stop.trail_pct
         )
 
     def _is_hard_stop_trigger_throttled(self, stop: ArmedHardStop) -> bool:
