@@ -97,11 +97,14 @@ accepted by Schwab, working order, broker_order_id assigned). It is **NOT yet pr
 
 ---
 
-## 🟢 LIVE OPS STATE (as of 2026-06-17)
+## 🟢 LIVE OPS STATE (as of 2026-06-19)
 
-- **Service PIDs (prove unchanged after any restart):** strategy **2299529**, OMS **2299517** (both rotated at the #333
-  tick-consumer deploy ~19:30Z 06-17), v2 **2319110** (rotated at the #335 TIMESALE deploy ~00:3xZ 06-18, flag OFF/inert).
-  *(Retired: v2 2252021 [#326], OMS 2207792 / strategy 2207786 [#333], pre-go-live 2104716/2121312.)*
+- **2026-06-19 Deploy Main (Juneteenth holiday override) rotated all 5 CORE PIDs** — strategy **2415361** + OMS / control /
+  market-data / reconciler (all `since` ~13:29Z, NRestarts=0). **v2 UNCHANGED = 2319110 (untouched, still current).**
+  polygon_30s flipped to `paper:polygon_30s` + `simulated`, `MAI_TAI_STRATEGY_PERSIST_OFFLOAD_ENABLED=true` ACTIVE. The
+  offload path validates Mon premarket (closed market = no bars yet). Re-fetch any PID via `systemctl show <svc> -p MainPID --value`.
+- **Service PIDs (06-17 set):** v2 **2319110** still current (#335 TIMESALE, flag OFF/inert); strategy 2299529 / OMS 2299517
+  (#333) **RETIRED by the 06-19 deploy → now 2415361 etc.** *(Retired earlier: v2 2252021 [#326], OMS 2207792 / strategy 2207786 [#333], pre-go-live 2104716/2121312.)*
 - **#326 — Schwab-ineligible watchlist eviction: DEPLOYED + restart-verified 2026-06-17.** v2 now evicts symbols Schwab
   refused to open today (`schwab_ineligible_today`, per-account, 60s-cached) from its watchlist, so it stops *emitting*
   for them (the OMS already blocked *re-submission*; this halts the bot at the source — parity with the old schwab_1m
@@ -124,6 +127,36 @@ accepted by Schwab, working order, broker_order_id assigned). It is **NOT yet pr
 ---
 
 ## 🗓️ RECENT ACTIVITY (newest first — full text in [`handoff-archive/2026-06.md`](handoff-archive/2026-06.md))
+
+- **2026-06-19 (Juneteenth, market closed) — POLYGON 30s: freeze root-caused + 3 fixes DEPLOYED, freeze fix ACTIVE.**
+  Read-only diagnosis (PROVEN): the **strategy-engine asyncio event loop freezes 50–345s at peak-volume windows** (RTH
+  open + 4pm close), process-wide, localized to strategy-engine (stalled bars carried real volume → feed fine; **v2/ATR
+  are a SEPARATE service, not this loop**). Root cause = **synchronous bar persistence (`_persist_bar_history` /
+  `_persist_revised_closed_bar`) doing SELECT+commit on the event loop** inside the ≤5000-event drain (revise path scales
+  with tick volume). Proof: snapshot-batch cadence stopped 96s then 53s on 06-16 19:56–20:03, bars drained in catch-up
+  bursts (CRVO 345s lag). Data integrity CLEAN (OHLCV 0 corrupt across 643k rows/39d; stalls = lateness NOT loss; ~4.5%
+  synthetic zero-vol bars = backtest caveat). Dashboard "Persist lag" was a MISLABEL (it's bar AGE = now−latest_bar, not
+  write-lag → off-hours always elevated/red). **Three held PRs built, diff-reviewed, merged (non-admin squash) +
+  DEPLOYED Sunday-eve via Deploy Main** (holiday override `allow_live_restart=true` — the calendar guard false-blocks on
+  Juneteenth; verified FLAT first: 0 virtual positions / 0 working orders / only protected CYN):
+  - **#348** display-only relabel `Persist lag → Bar age` (chip `lag elevated → bars stale`).
+  - **#349** polygon_30s default → `paper:polygon_30s` + `simulated` (was live:/webull, uncredentialed → shadow-reject
+    footgun; 06-18 = 262 intents ALL rejected / 0 fills). Routes to SimulatedBrokerAdapter (fills in sim). VPS env flipped
+    + 2 stale default-pinning tests updated. **Note: `shadow` is a display label, does NOT gate execution.**
+  - **#350** flag-gated **batched persist offload** (the freeze fix): persists capture-at-call → buffer → flushed off-loop
+    via `asyncio.to_thread` BEFORE intents publish (+ iteration safety-net + shutdown). **Default OFF = byte-identical**;
+    8 new + 217 service tests green; full correctness audit in the PR (one ordered session + flush-before-publish =
+    read-after-write safe; per-item commit/rollback isolates failures; persist-path only).
+  - **Env now:** `paper:polygon_30s` · `simulated` · `MAI_TAI_STRATEGY_PERSIST_OFFLOAD_ENABLED=true` (ACTIVE, confirmed
+    via settings-load). 5 core services restarted (NRestarts=0, 0 errors, heartbeat advancing); v2/orb untouched;
+    dashboard = "Bar age" + shadow/simulated.
+  - **⚠️ Offload path NOT yet exercised with live bars** (market closed until Mon ~4am ET premarket). **Monday watch (no
+    restart):** at 09:30 open + 4pm close run `pidstat -p <strategy_pid> 1` + time the drain. Worked → no 50–345s snapshot
+    gap, CPU idle-during-DB. Still freezes → CPU-pegged = CPU-bound (#2) not DB-I/O (#1) → pivot. Memory [[project-mai-tai-polygon-freeze]].
+  - **Server cleanup INVENTORY (read-only, nothing deleted):** NO logrotate on `/var/log/project-mai-tai/*.log` (1.4GB
+    unbounded); DB 3.6GB — `reconciliation_findings` 1GB/2.4M rows + `strategy_bar_history` 1.7GB UNBOUNDED (only tick
+    tables pruned @30d); schwab_ticks JSONL 1.3GB static (stopped 06-08). Disk 14% fine; **4GB RAM is the constraint**
+    (ties to freeze DB contention). Retention strategy proposed, awaiting operator approval.
 
 - **2026-06-18 (late) — ORB (P6 "OPEN") BUILT + DEPLOYED PAPER.** Deployed after-close (Juneteenth+weekend → validate
   over the weekend; **real-money flip = separate later gate**, Mon 2026-06-22 qty 10 target). On `main`: **#344**
