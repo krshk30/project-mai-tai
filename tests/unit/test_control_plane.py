@@ -2084,10 +2084,15 @@ def test_polygon_bot_page_uses_polygon_data_halt_wording() -> None:
 
 
 def test_polygon_bot_legacy_webull_routes_remain_compatible() -> None:
+    # This test covers the legacy webull URL routes + live/webull wiring display,
+    # so configure webull explicitly (the default is now paper:polygon_30s +
+    # simulated, which renders as shadow/simulated).
     settings = Settings(
         redis_stream_prefix="test",
         oms_adapter="alpaca_paper",
         strategy_polygon_30s_enabled=True,
+        strategy_polygon_30s_account_name="live:polygon_30s",
+        strategy_polygon_30s_broker_provider="webull",
     )
     session_factory = build_test_session_factory()
     seed_database(session_factory)
