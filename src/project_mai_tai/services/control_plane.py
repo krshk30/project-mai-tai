@@ -4344,6 +4344,11 @@ def _compact_bot_card(
     data_flow = str(details.get("data_flow") or data_health.get("status") or "healthy")
     flow_tone = _tone_for_data_flow(data_flow)
     latest_bar = dict(latest_strategy_bars.get(code, {}) or {})
+    # NOTE: this is BAR AGE (now - latest bar's timestamp) -- how long since the
+    # bot last produced a bar -- NOT the DB write-lag (created_at - bar_time).
+    # Off-hours/quiet it is naturally large because no new bars form. The
+    # user-facing label below says "Bar age" to reflect this. Surfacing the
+    # true write-lag would require plumbing created_at into latest_strategy_bars.
     lag_seconds = _seconds_since_datetime_value(latest_bar.get("latest_bar_at_raw"))
     lag_label = _format_lag(lag_seconds)
     lag_tone = "good" if lag_seconds is not None and lag_seconds <= 20 else "warn" if lag_seconds is not None and lag_seconds <= 180 else "bad"
@@ -4360,7 +4365,7 @@ def _compact_bot_card(
     streamer = str(details.get("streamer_connected") or details.get("streamer_enabled") or "")
     if code == "polygon_30s":
         stream_tone = lag_tone if lag_tone != "good" else "good"
-        stream_label = "lag elevated" if lag_tone != "good" else "feed: polygon"
+        stream_label = "bars stale" if lag_tone != "good" else "feed: polygon"
     else:
         stream_tone = _tone_for_status(streamer)
         stream_label = "streamer: connected" if streamer == "true" else "streamer: not exposed" if not streamer else f"streamer: {streamer}"
@@ -4385,7 +4390,7 @@ def _compact_bot_card(
       <div class="bot-metrics">
         <div class="metric"><div class="m-label">Data flow</div><div class="m-val {flow_tone}">{escape(_friendly_data_flow(data_flow))}</div></div>
         <div class="metric"><div class="m-label">Live symbols</div><div class="m-val">{_safe_int(bot.get("watchlist_count"))}</div></div>
-        <div class="metric"><div class="m-label">Persist lag</div><div class="m-val {lag_tone}">{escape(lag_label)}</div></div>
+        <div class="metric"><div class="m-label">Bar age</div><div class="m-val {lag_tone}">{escape(lag_label)}</div></div>
       </div>
       <div class="bot-health-row">
         <span class="chip {loop_tone}">loop_health: {escape(loop_health)}</span>
