@@ -505,6 +505,12 @@ class Settings(BaseSettings):
     dashboard_trade_forensics_lookback_days: int = 2
     dashboard_trade_forensics_cache_ttl_seconds: float = 30.0
     strategy_history_persistence_enabled: bool = True
+    # When True, strategy-engine bar persistence (strategy_bar_history writes)
+    # is buffered in-memory and flushed off the event loop via
+    # asyncio.to_thread BEFORE the corresponding intents are published, instead
+    # of running the SELECT+upsert+commit synchronously inside the event loop.
+    # Default OFF: behaviour is byte-identical to the synchronous inline path.
+    strategy_persist_offload_enabled: bool = False
     service_heartbeat_interval_seconds: int = 15
     reconciliation_interval_seconds: int = 30
     reconciliation_stuck_order_seconds: int = 180

@@ -273,6 +273,7 @@ class StrategyBotRuntime:
         indicator_engine: IndicatorEngine | SchwabNativeIndicatorEngine | Polygon30sIndicatorEngine | None = None,
         entry_engine: EntryEngine | SchwabNativeEntryEngine | Polygon30sEntryEngine | None = None,
         retention_config: FeedRetentionConfig | None = None,
+        persist_offload_enabled: bool = False,
     ):
         self.definition = definition
         self.now_provider = now_provider or now_eastern
@@ -332,6 +333,12 @@ class StrategyBotRuntime:
         self._live_aggregate_skipped_bucket_start: dict[str, float] = {}
         self._live_aggregate_trade_tick_counts: dict[str, dict[float, int]] = {}
         self._history_seed_attempted: set[str] = set()
+        # Batched persist offload (flag-gated, default off). When enabled, the
+        # two persist methods capture a fully-resolved payload at call time and
+        # append it here instead of touching the DB; flush_pending_persists()
+        # runs the buffered SELECT+upsert+commit off the event loop.
+        self._persist_offload_enabled = bool(persist_offload_enabled)
+        self._pending_persist_writes: list[tuple[str, dict[str, object]]] = []
 
     @staticmethod
     def _positions_file_for_strategy(strategy_code: str) -> str:
@@ -3053,52 +3060,90 @@ class StrategyBotRuntime:
         position_state, position_quantity = self._position_snapshot(symbol)
         indicator_payload = self._build_history_indicator_payload(indicators)
 
-        try:
-            with self.session_factory() as session:
-                record = session.scalar(
-                    select(StrategyBarHistory).where(
-                        StrategyBarHistory.strategy_code.in_(strategy_code_candidates(self.definition.code)),
-                        StrategyBarHistory.symbol == symbol,
-                        StrategyBarHistory.interval_secs == self.definition.interval_secs,
-                        StrategyBarHistory.bar_time == bar_time,
-                    )
-                )
-                if record is None:
-                    record = StrategyBarHistory(
-                        strategy_code=self.definition.code,
-                        symbol=symbol,
-                        interval_secs=self.definition.interval_secs,
-                        bar_time=bar_time,
-                        open_price=Decimal(str(last_bar.open)),
-                        high_price=Decimal(str(last_bar.high)),
-                        low_price=Decimal(str(last_bar.low)),
-                        close_price=Decimal(str(last_bar.close)),
-                        volume=int(last_bar.volume),
-                        trade_count=int(last_bar.trade_count),
-                    )
-                    session.add(record)
+        # Capture-at-enqueue: snapshot every value the DB write needs so the
+        # worker thread never reads mutable runtime/builder state later.
+        payload: dict[str, object] = {
+            "symbol": symbol,
+            "strategy_code": self.definition.code,
+            "interval_secs": self.definition.interval_secs,
+            "bar_time": bar_time,
+            "open": Decimal(str(last_bar.open)),
+            "high": Decimal(str(last_bar.high)),
+            "low": Decimal(str(last_bar.low)),
+            "close": Decimal(str(last_bar.close)),
+            "volume": int(last_bar.volume),
+            "trade_count": int(last_bar.trade_count),
+            "position_state": position_state,
+            "position_quantity": position_quantity,
+            "decision_status": str((decision or {}).get("status", "")),
+            "decision_reason": str((decision or {}).get("reason", "")),
+            "decision_path": str((decision or {}).get("path", "")),
+            "decision_score": str((decision or {}).get("score", "")),
+            "decision_score_details": str((decision or {}).get("score_details", "")),
+            "indicators_json": indicator_payload,
+        }
 
-                record.open_price = Decimal(str(last_bar.open))
-                record.high_price = Decimal(str(last_bar.high))
-                record.low_price = Decimal(str(last_bar.low))
-                record.close_price = Decimal(str(last_bar.close))
-                record.volume = int(last_bar.volume)
-                record.trade_count = int(last_bar.trade_count)
-                record.position_state = position_state
-                record.position_quantity = position_quantity
-                record.decision_status = str((decision or {}).get("status", ""))
-                record.decision_reason = str((decision or {}).get("reason", ""))
-                record.decision_path = str((decision or {}).get("path", ""))
-                record.decision_score = str((decision or {}).get("score", ""))
-                record.decision_score_details = str((decision or {}).get("score_details", ""))
-                record.indicators_json = indicator_payload
-                session.commit()
-        except Exception:
-            logger.exception(
-                "failed to persist strategy bar history for %s %s",
-                self.definition.code,
-                symbol,
+        if not self._persist_offload_enabled:
+            try:
+                with self.session_factory() as session:
+                    self._write_bar_history_record(payload, session)
+                    session.commit()
+            except Exception:
+                logger.exception(
+                    "failed to persist strategy bar history for %s %s",
+                    self.definition.code,
+                    symbol,
+                )
+            return
+
+        self._pending_persist_writes.append(("bar", payload))
+
+    def _write_bar_history_record(self, payload: dict[str, object], session: Session) -> None:
+        """Run the bar-history SELECT + upsert against ``session`` (no commit).
+
+        Logic moved verbatim from the inline ``_persist_bar_history`` path; the
+        caller owns the commit so the same code serves both the synchronous
+        inline path and the off-loop batched flush.
+        """
+        symbol = payload["symbol"]
+        bar_time = payload["bar_time"]
+        record = session.scalar(
+            select(StrategyBarHistory).where(
+                StrategyBarHistory.strategy_code.in_(strategy_code_candidates(self.definition.code)),
+                StrategyBarHistory.symbol == symbol,
+                StrategyBarHistory.interval_secs == payload["interval_secs"],
+                StrategyBarHistory.bar_time == bar_time,
             )
+        )
+        if record is None:
+            record = StrategyBarHistory(
+                strategy_code=payload["strategy_code"],
+                symbol=symbol,
+                interval_secs=payload["interval_secs"],
+                bar_time=bar_time,
+                open_price=payload["open"],
+                high_price=payload["high"],
+                low_price=payload["low"],
+                close_price=payload["close"],
+                volume=payload["volume"],
+                trade_count=payload["trade_count"],
+            )
+            session.add(record)
+
+        record.open_price = payload["open"]
+        record.high_price = payload["high"]
+        record.low_price = payload["low"]
+        record.close_price = payload["close"]
+        record.volume = payload["volume"]
+        record.trade_count = payload["trade_count"]
+        record.position_state = payload["position_state"]
+        record.position_quantity = payload["position_quantity"]
+        record.decision_status = payload["decision_status"]
+        record.decision_reason = payload["decision_reason"]
+        record.decision_path = payload["decision_path"]
+        record.decision_score = payload["decision_score"]
+        record.decision_score_details = payload["decision_score_details"]
+        record.indicators_json = payload["indicators_json"]
 
     def _persist_revised_closed_bar(
         self,
@@ -3110,89 +3155,172 @@ class StrategyBotRuntime:
             return
 
         bar_time = datetime.fromtimestamp(float(bar.timestamp), UTC)
-        try:
-            with self.session_factory() as session:
-                record = session.scalar(
-                    select(StrategyBarHistory).where(
-                        StrategyBarHistory.strategy_code.in_(strategy_code_candidates(self.definition.code)),
-                        StrategyBarHistory.symbol == symbol,
-                        StrategyBarHistory.interval_secs == self.definition.interval_secs,
-                        StrategyBarHistory.bar_time == bar_time,
-                    )
-                )
-                record_action = "update"
-                vol_before = int(record.volume) if record is not None else None
-                if record is None:
-                    record_action = "insert"
-                    position_state, position_quantity = self._position_snapshot(symbol)
-                    # 2026-05-18 fix: this insert happens when the live
-                    # _persist_completed_bar never ran for this bar (e.g.,
-                    # restart during the close window, or the bar lived in
-                    # the builder's history but the engine missed
-                    # _evaluate_completed_bar). Stamp a sentinel decision so
-                    # the decision tape clearly shows "this row exists
-                    # because a late tick filled in the OHLCV -- no entry
-                    # decision was ever made" instead of an empty row.
-                    record = StrategyBarHistory(
-                        strategy_code=self.definition.code,
-                        symbol=symbol,
-                        interval_secs=self.definition.interval_secs,
-                        bar_time=bar_time,
-                        position_state=position_state,
-                        position_quantity=position_quantity,
-                        decision_status="late_revision",
-                        decision_reason=(
-                            "Bar persisted via late-trade revision path; "
-                            "no entry decision was recorded at the bar's "
-                            "original close (likely restart or missed close event)"
-                        ),
-                    )
-                    session.add(record)
+        # Capture-at-enqueue: snapshot the bar values and the position state now
+        # (position_state/quantity is only used on the INSERT branch, but it
+        # reads mutable runtime state so must be captured at call time rather
+        # than at off-loop write time).
+        position_state, position_quantity = self._position_snapshot(symbol)
+        payload: dict[str, object] = {
+            "symbol": symbol,
+            "strategy_code": self.definition.code,
+            "interval_secs": self.definition.interval_secs,
+            "bar_time": bar_time,
+            "open": Decimal(str(bar.open)),
+            "high": Decimal(str(bar.high)),
+            "low": Decimal(str(bar.low)),
+            "close": Decimal(str(bar.close)),
+            "volume": int(bar.volume),
+            "trade_count": int(bar.trade_count),
+            "position_state": position_state,
+            "position_quantity": position_quantity,
+        }
 
-                record.open_price = Decimal(str(bar.open))
-                record.high_price = Decimal(str(bar.high))
-                record.low_price = Decimal(str(bar.low))
-                record.close_price = Decimal(str(bar.close))
-                record.volume = int(bar.volume)
-                record.trade_count = int(bar.trade_count)
-                # NB: decision_status / decision_reason / decision_path /
-                # decision_score are intentionally NOT overwritten on
-                # update. If the row already exists, it had a real entry
-                # decision recorded at the bar's original close; preserve
-                # it. The revision only updates OHLCV / volume / trade_count.
-                session.commit()
-                persist_lag_secs = (datetime.now(UTC) - bar_time).total_seconds()
-                logger.info(
-                    "[STRATEGY-REVISE-PERSIST] strategy=%s symbol=%s bar_ts=%s action=%s vol_before=%s vol_after=%d trade_count=%d persist_lag_secs=%.1f",
+        if not self._persist_offload_enabled:
+            try:
+                with self.session_factory() as session:
+                    self._write_revised_bar_record(payload, session)
+                    session.commit()
+                    self._log_revise_persist(payload)
+            except Exception:
+                logger.exception(
+                    "failed to persist revised strategy bar history for %s %s",
                     self.definition.code,
                     symbol,
-                    bar_time.isoformat(),
-                    record_action,
-                    vol_before,
-                    int(bar.volume),
-                    int(bar.trade_count),
-                    persist_lag_secs,
                 )
-                if persist_lag_secs > 120.0:
-                    # Issue #145: bar updated more than 2 minutes after it was
-                    # supposed to close. MOBX 2026-05-14 showed updated_at
-                    # ~10 minutes after bar_time when the stall happened.
-                    logger.warning(
-                        "[STRATEGY-REVISE-PERSIST-LAG] strategy=%s symbol=%s bar_ts=%s persist_lag_secs=%.1f action=%s vol_after=%d "
-                        "— bar revised long after its scheduled close, likely a check_bar_closes stall",
-                        self.definition.code,
-                        symbol,
-                        bar_time.isoformat(),
-                        persist_lag_secs,
-                        record_action,
-                        int(bar.volume),
-                    )
-        except Exception:
-            logger.exception(
-                "failed to persist revised strategy bar history for %s %s",
-                self.definition.code,
-                symbol,
+            return
+
+        self._pending_persist_writes.append(("revise", payload))
+
+    def _write_revised_bar_record(self, payload: dict[str, object], session: Session) -> None:
+        """Run the revised-bar SELECT + upsert against ``session`` (no commit).
+
+        Logic moved verbatim from the inline ``_persist_revised_closed_bar``
+        path, preserving the insert/update decision-field rules. The caller owns
+        the commit and the ``[STRATEGY-REVISE-PERSIST]`` logging. ``record_action``
+        and ``vol_before`` are stashed back into ``payload`` so the logging
+        helper can report them after the commit succeeds.
+        """
+        symbol = payload["symbol"]
+        bar_time = payload["bar_time"]
+        record = session.scalar(
+            select(StrategyBarHistory).where(
+                StrategyBarHistory.strategy_code.in_(strategy_code_candidates(self.definition.code)),
+                StrategyBarHistory.symbol == symbol,
+                StrategyBarHistory.interval_secs == payload["interval_secs"],
+                StrategyBarHistory.bar_time == bar_time,
             )
+        )
+        record_action = "update"
+        vol_before = int(record.volume) if record is not None else None
+        if record is None:
+            record_action = "insert"
+            # 2026-05-18 fix: this insert happens when the live
+            # _persist_completed_bar never ran for this bar (e.g.,
+            # restart during the close window, or the bar lived in
+            # the builder's history but the engine missed
+            # _evaluate_completed_bar). Stamp a sentinel decision so
+            # the decision tape clearly shows "this row exists
+            # because a late tick filled in the OHLCV -- no entry
+            # decision was ever made" instead of an empty row.
+            record = StrategyBarHistory(
+                strategy_code=payload["strategy_code"],
+                symbol=symbol,
+                interval_secs=payload["interval_secs"],
+                bar_time=bar_time,
+                position_state=payload["position_state"],
+                position_quantity=payload["position_quantity"],
+                decision_status="late_revision",
+                decision_reason=(
+                    "Bar persisted via late-trade revision path; "
+                    "no entry decision was recorded at the bar's "
+                    "original close (likely restart or missed close event)"
+                ),
+            )
+            session.add(record)
+
+        record.open_price = payload["open"]
+        record.high_price = payload["high"]
+        record.low_price = payload["low"]
+        record.close_price = payload["close"]
+        record.volume = payload["volume"]
+        record.trade_count = payload["trade_count"]
+        # NB: decision_status / decision_reason / decision_path /
+        # decision_score are intentionally NOT overwritten on
+        # update. If the row already exists, it had a real entry
+        # decision recorded at the bar's original close; preserve
+        # it. The revision only updates OHLCV / volume / trade_count.
+        payload["record_action"] = record_action
+        payload["vol_before"] = vol_before
+
+    def _log_revise_persist(self, payload: dict[str, object]) -> None:
+        bar_time = payload["bar_time"]
+        record_action = payload.get("record_action", "update")
+        vol_before = payload.get("vol_before")
+        persist_lag_secs = (datetime.now(UTC) - bar_time).total_seconds()
+        logger.info(
+            "[STRATEGY-REVISE-PERSIST] strategy=%s symbol=%s bar_ts=%s action=%s vol_before=%s vol_after=%d trade_count=%d persist_lag_secs=%.1f",
+            self.definition.code,
+            payload["symbol"],
+            bar_time.isoformat(),
+            record_action,
+            vol_before,
+            int(payload["volume"]),
+            int(payload["trade_count"]),
+            persist_lag_secs,
+        )
+        if persist_lag_secs > 120.0:
+            # Issue #145: bar updated more than 2 minutes after it was
+            # supposed to close. MOBX 2026-05-14 showed updated_at
+            # ~10 minutes after bar_time when the stall happened.
+            logger.warning(
+                "[STRATEGY-REVISE-PERSIST-LAG] strategy=%s symbol=%s bar_ts=%s persist_lag_secs=%.1f action=%s vol_after=%d "
+                "— bar revised long after its scheduled close, likely a check_bar_closes stall",
+                self.definition.code,
+                payload["symbol"],
+                bar_time.isoformat(),
+                persist_lag_secs,
+                record_action,
+                int(payload["volume"]),
+            )
+
+    def flush_pending_persists(self) -> None:
+        """Flush buffered persist writes off the event loop (one session).
+
+        Runs the buffered SELECT+upsert+commit for each enqueued write IN ORDER
+        under a single session so a revise sees the base row it depends on. Per
+        item is isolated by try/except + per-item commit so one bad row never
+        loses the others — matching the per-call swallow behaviour of the inline
+        path. Intended to be invoked via ``asyncio.to_thread`` so the whole
+        method (including DB I/O) runs on a worker thread, not the event loop.
+        """
+        if not self._pending_persist_writes:
+            return
+        if self.session_factory is None:
+            self._pending_persist_writes = []
+            return
+        # Snapshot + clear first so writes enqueued during the flush survive to
+        # the next flush instead of being dropped.
+        writes = self._pending_persist_writes
+        self._pending_persist_writes = []
+        with self.session_factory() as session:
+            for kind, payload in writes:
+                try:
+                    if kind == "bar":
+                        self._write_bar_history_record(payload, session)
+                        session.commit()
+                    else:
+                        self._write_revised_bar_record(payload, session)
+                        session.commit()
+                        self._log_revise_persist(payload)
+                except Exception:
+                    logger.exception(
+                        "failed to flush buffered %s persist for %s %s",
+                        kind,
+                        self.definition.code,
+                        payload.get("symbol"),
+                    )
+                    session.rollback()
+                    continue
 
     def _position_snapshot(self, symbol: str) -> tuple[str, int]:
         position = self.positions.get_position(symbol)
@@ -3938,6 +4066,7 @@ class StrategyEngineState:
                 live_aggregate_fallback_enabled=False,
                 indicator_overlay_provider=macd_1m_indicator_overlay_provider,
                 retention_config=one_minute_retention,
+                persist_offload_enabled=self.settings.strategy_persist_offload_enabled,
             )
         if self.settings.strategy_schwab_1m_enabled and "schwab_1m" in registrations:
             self.bots["schwab_1m"] = StrategyBotRuntime(
@@ -3966,6 +4095,7 @@ class StrategyEngineState:
                     now_provider=resolved_now_provider,
                 ),
                 retention_config=one_minute_retention,
+                persist_offload_enabled=self.settings.strategy_persist_offload_enabled,
             )
         if self.settings.strategy_tos_enabled and "tos" in registrations:
             self.bots["tos"] = StrategyBotRuntime(
@@ -3984,6 +4114,7 @@ class StrategyEngineState:
                 use_live_aggregate_bars=False,
                 live_aggregate_fallback_enabled=False,
                 retention_config=one_minute_retention,
+                persist_offload_enabled=self.settings.strategy_persist_offload_enabled,
             )
         if self.settings.strategy_runner_enabled and "runner" in registrations:
             self.bots["runner"] = RunnerStrategyRuntime(
@@ -4045,6 +4176,7 @@ class StrategyEngineState:
                     now_provider=resolved_now_provider,
                 ),
                 retention_config=macd_30s_retention,
+                persist_offload_enabled=self.settings.strategy_persist_offload_enabled,
             )
         if self.settings.strategy_polygon_30s_enabled and "polygon_30s" in registrations:
             self.bots["polygon_30s"] = StrategyBotRuntime(
@@ -4076,6 +4208,7 @@ class StrategyEngineState:
                     now_provider=resolved_now_provider,
                 ),
                 retention_config=macd_30s_retention,
+                persist_offload_enabled=self.settings.strategy_persist_offload_enabled,
             )
         if self.settings.strategy_macd_30s_probe_enabled and "macd_30s_probe" in registrations:
             self.bots["macd_30s_probe"] = StrategyBotRuntime(
@@ -4095,6 +4228,7 @@ class StrategyEngineState:
                 live_aggregate_stale_after_seconds=self.settings.strategy_macd_30s_live_aggregate_stale_after_seconds,
                 indicator_overlay_provider=macd_30s_indicator_overlay_provider,
                 retention_config=macd_30s_retention,
+                persist_offload_enabled=self.settings.strategy_persist_offload_enabled,
             )
         if self.settings.strategy_macd_30s_reclaim_enabled and "macd_30s_reclaim" in registrations:
             self.bots["macd_30s_reclaim"] = StrategyBotRuntime(
@@ -4114,6 +4248,7 @@ class StrategyEngineState:
                 live_aggregate_stale_after_seconds=self.settings.strategy_macd_30s_live_aggregate_stale_after_seconds,
                 indicator_overlay_provider=macd_30s_indicator_overlay_provider,
                 retention_config=macd_30s_retention,
+                persist_offload_enabled=self.settings.strategy_persist_offload_enabled,
             )
         if self.settings.strategy_macd_30s_retest_enabled and "macd_30s_retest" in registrations:
             self.bots["macd_30s_retest"] = StrategyBotRuntime(
@@ -4133,6 +4268,7 @@ class StrategyEngineState:
                 live_aggregate_stale_after_seconds=self.settings.strategy_macd_30s_live_aggregate_stale_after_seconds,
                 indicator_overlay_provider=macd_30s_indicator_overlay_provider,
                 retention_config=macd_30s_retention,
+                persist_offload_enabled=self.settings.strategy_persist_offload_enabled,
             )
         self._ensure_bot_handoff_state()
 
@@ -4535,6 +4671,19 @@ class StrategyEngineState:
             intents.extend(bot_intents)
             completed_count += bot_completed_count
         return intents, completed_count
+
+    def flush_pending_persists(self) -> None:
+        """Flush each bot's buffered persist writes (batched-offload path).
+
+        No-op for bots that don't buffer (e.g. RunnerStrategyRuntime). Designed
+        to run via ``asyncio.to_thread`` so the bots' DB I/O stays off the event
+        loop.
+        """
+        for bot in self.bots.values():
+            flush_pending_persists = getattr(bot, "flush_pending_persists", None)
+            if flush_pending_persists is None:
+                continue
+            flush_pending_persists()
 
     def seed_bars(
         self,
@@ -6045,6 +6194,21 @@ class StrategyEngineService:
 
         await self._shutdown_cleanup()
 
+    async def _flush_pending_persists(self) -> None:
+        """Flush buffered bar-persist writes off the event loop (gated, no-op off).
+
+        Runs the per-bot SELECT+upsert+commit on a worker thread via
+        ``asyncio.to_thread`` so the event loop never blocks on DB I/O. MUST be
+        invoked before publishing intents so a persisted bar is committed before
+        its intent reaches OMS (OMS Tier-3 revalidation reads strategy_bar_history).
+        When ``strategy_persist_offload_enabled`` is False the buffers are always
+        empty (the persist methods write inline), so this is a cheap no-op and is
+        only invoked when the flag is on.
+        """
+        if not self.settings.strategy_persist_offload_enabled:
+            return
+        await asyncio.to_thread(self.state.flush_pending_persists)
+
     async def _run_main_loop_iteration(
         self,
         *,
@@ -6081,6 +6245,9 @@ class StrategyEngineService:
             default=(0, 0),
         )
         bar_close_intents, completed_bar_count = self.state.flush_completed_bars()
+        # Flush buffered bar persists BEFORE publishing so each bar is committed
+        # before its intent reaches OMS (gated; no-op when offload disabled).
+        await self._flush_pending_persists()
         for intent in bar_close_intents:
             await self._publish_intent(intent)
         if bar_close_intents:
@@ -6165,6 +6332,11 @@ class StrategyEngineService:
             self._sync_runtime_data_health_incidents()
             await self._publish_heartbeat("healthy")
             last_heartbeat_at = utcnow()
+
+        # Safety net: flush anything enqueued during this iteration (e.g. via a
+        # publish-site whose intent list was empty, so no per-site flush ran) so
+        # nothing survives the iteration unflushed. Gated; no-op when off.
+        await self._flush_pending_persists()
 
         # A full clean iteration clears the outer-backstop failure streak.
         self._record_main_loop_step_success("main_loop_body")
@@ -6346,6 +6518,13 @@ class StrategyEngineService:
             self.logger.warning("publish_heartbeat('stopping') timed out; proceeding with shutdown")
         except Exception:
             self.logger.debug("publish_heartbeat('stopping') raised", exc_info=True)
+        # Flush any buffered bar persists before teardown so nothing enqueued
+        # during the final iteration is lost (gated; no-op when offload off).
+        if self.settings.strategy_persist_offload_enabled:
+            try:
+                self.state.flush_pending_persists()
+            except Exception:
+                self.logger.debug("flush_pending_persists during shutdown raised", exc_info=True)
         if self._schwab_stream_client is not None:
             try:
                 await asyncio.wait_for(self._schwab_stream_client.stop(), timeout=10.0)
@@ -6526,6 +6705,7 @@ class StrategyEngineService:
                 cumulative_volume=event.payload.cumulative_volume,
                 strategy_codes=strategy_codes,
             )
+            await self._flush_pending_persists()
             for intent in intents:
                 await self._publish_intent(intent)
             if intents:
@@ -6576,6 +6756,7 @@ class StrategyEngineService:
                 ),
                 strategy_codes=strategy_codes,
             )
+            await self._flush_pending_persists()
             for intent in intents:
                 await self._publish_intent(intent)
             if intents:
@@ -7717,6 +7898,7 @@ class StrategyEngineService:
                     live_bar_source="history",
                     strategy_codes=("schwab_1m",),
                 )
+                await self._flush_pending_persists()
                 for intent in intents:
                     await self._publish_intent(intent)
             self._remember_schwab_1m_history_replay_authority(
@@ -7847,6 +8029,7 @@ class StrategyEngineService:
                     live_bar_source="history",
                     strategy_codes=("schwab_1m",),
                 )
+                await self._flush_pending_persists()
                 for intent in intents:
                     await self._publish_intent(intent)
                 intent_count += len(intents)
@@ -8308,6 +8491,7 @@ class StrategyEngineService:
                 live_bar_source="live",
                 strategy_codes=strategy_codes,
             )
+            await self._flush_pending_persists()
             for intent in intents:
                 await self._publish_intent(intent)
             intent_count += len(intents)
@@ -8351,6 +8535,7 @@ class StrategyEngineService:
                 cumulative_volume=trade.cumulative_volume,
                 strategy_codes=self.state.schwab_stream_strategy_codes(),
             )
+            await self._flush_pending_persists()
             for intent in intents:
                 await self._publish_intent(intent)
             intent_count += len(intents)
