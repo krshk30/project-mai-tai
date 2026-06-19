@@ -365,13 +365,18 @@ class Settings(BaseSettings):
     alpaca_cancel_confirm_timeout_seconds: float = 5.0
     strategy_macd_30s_account_name: str = "paper:macd_30s"
     strategy_macd_30s_broker_provider: str | None = None
+    # Default to PAPER + simulated execution (mirrors orb/schwab_1m_v2). The bot
+    # was historically wired live:polygon_30s + webull but Webull has no API
+    # credentials, so it only ever shadow-rejected; paper:+simulated makes
+    # trades actually execute in simulation and removes the live-wired-but-
+    # uncredentialed footgun. (Live env still overrides via env vars.)
     strategy_polygon_30s_account_name: str = _legacy_strategy_alias_field(
-        "live:polygon_30s",
+        "paper:polygon_30s",
         "strategy_polygon_30s_account_name",
         "strategy_webull_30s_account_name",
     )
     strategy_polygon_30s_broker_provider: str | None = _legacy_strategy_alias_field(
-        "webull",
+        "simulated",
         "strategy_polygon_30s_broker_provider",
         "strategy_webull_30s_broker_provider",
     )

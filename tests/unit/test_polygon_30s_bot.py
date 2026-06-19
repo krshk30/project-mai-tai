@@ -66,7 +66,12 @@ def build_recent_polygon_seed_bars(*, start: datetime, count: int = 55) -> list[
     ]
 
 
-def test_runtime_registry_registers_polygon_30s_as_live_polygon_strategy() -> None:
+def test_runtime_registry_registers_polygon_30s_as_paper_simulated_by_default() -> None:
+    # polygon_30s now DEFAULTS to paper:polygon_30s + simulated (see settings.py):
+    # Webull has no API creds so the bot only ever shadow-rejected; the paper
+    # default makes trades execute in simulation and removes the live-wired
+    # footgun. The legacy webull wiring still works when configured explicitly
+    # (see test_polygon_bot_legacy_webull_routes_remain_compatible).
     settings = Settings(
         oms_adapter="schwab",
         strategy_polygon_30s_enabled=True,
@@ -78,10 +83,10 @@ def test_runtime_registry_registers_polygon_30s_as_live_polygon_strategy() -> No
 
     assert registrations["macd_30s"].display_name == "Schwab 30 Sec Bot"
     assert registrations["polygon_30s"].display_name == "Polygon 30 Sec Bot"
-    assert registrations["polygon_30s"].execution_mode == "live"
-    assert registrations["polygon_30s"].metadata["provider"] == "webull"
+    assert registrations["polygon_30s"].execution_mode == "shadow"
+    assert registrations["polygon_30s"].metadata["provider"] == "simulated"
     assert registrations["polygon_30s"].metadata["market_data_provider"] == "polygon"
-    assert broker_accounts[settings.strategy_polygon_30s_account_name].provider == "webull"
+    assert broker_accounts[settings.strategy_polygon_30s_account_name].provider == "simulated"
 
 
 def test_strategy_state_routes_polygon_30s_through_polygon_market_data_path() -> None:
