@@ -56,6 +56,37 @@ logger = logging.getLogger(SERVICE_NAME)
 _ET = ZoneInfo("America/New_York")
 
 
+def _normalize_trade_ts_ns(value: int | float | str | None) -> int | None:
+    """Coerce a gateway ``trade_tick.timestamp_ns`` to true nanoseconds.
+
+    The market-data gateway labels the field ``timestamp_ns`` but the magnitude
+    varies by source: Massive/Polygon trade ticks carry MILLISECONDS (13-digit,
+    e.g. ``1782135713372``) while Schwab-sourced ticks carry real nanoseconds
+    (19-digit). The strategy-engine already normalizes by magnitude
+    (``StrategyEngineService._normalize_tick_timestamp_ns``); ORB must do the same.
+    Without this, a millisecond value run through ``ms / 1e9`` lands at ~1970
+    (``1782135713372 / 1e9`` ≈ 1782 s), and the session-anchored
+    ``OrbTickAggregator`` drops every tick (bucket < session_open, minute never
+    rolls) — so no opening-range bar ever forms and ORB silently never trades.
+    Mirror the strategy-engine magnitude ladder so any source resolves to ns.
+    """
+    if not value:
+        return None
+    try:
+        v = int(value)
+    except (TypeError, ValueError):
+        return None
+    if v >= 1_000_000_000_000_000_000:  # already nanoseconds (>= ~2001 in ns)
+        return v
+    if v >= 1_000_000_000_000_000:  # microseconds
+        return v * 1_000
+    if v >= 1_000_000_000_000:  # milliseconds (the Massive/Polygon case)
+        return v * 1_000_000
+    if v >= 1_000_000_000:  # seconds
+        return v * 1_000_000_000
+    return None
+
+
 @dataclass
 class _SymbolState:
     or_bars: list[OrbBar] = field(default_factory=list)
@@ -217,7 +248,7 @@ class OrbService:
             size = float(payload.get("size", 0) or 0)
         except (KeyError, TypeError, ValueError):
             return
-        ts_ns = payload.get("timestamp_ns")
+        ts_ns = _normalize_trade_ts_ns(payload.get("timestamp_ns"))
         ts = datetime.fromtimestamp(ts_ns / 1e9, tz=UTC) if ts_ns else datetime.now(UTC)
         agg = self._aggregators.get(symbol)
         if agg is None:
