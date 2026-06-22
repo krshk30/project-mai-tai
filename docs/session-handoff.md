@@ -86,6 +86,12 @@ accepted by Schwab, working order, broker_order_id assigned). It is **NOT yet pr
    09:30–09:34), an OR builds, a breakout evaluates (`[ORB-BREAKOUT]`).** **Real-money flip (qty 10, was targeted 06-22)
    stays BLOCKED until that passes.** Cloud /schedule can't reach the VPS → validate attended/VPS at the open.
    [[project-mai-tai-orb]]
+9. **Extended-hours ATR order ROUTING — follow-on to #358 (2026-06-22).** The OMS fix #358 stopped the
+   `SETUP_INVALID` cancellation that made v2 ATR silently RTH-only (the guard now fails open for the tape-less v2
+   bot). **But the after-hours order still has to FILL:** if v2 routes a **market** order, extended hours often
+   requires a **limit** order, so an un-cancelled after-hours ATR intent may still not fill. Verify the next time an
+   after-hours ATR fires whether it actually fills; if not, scope extended-hours limit-order routing for v2. Also a
+   deliberate-risk note: after-hours ATR = thinner/gappier real-money fills — consider whether to gate it on/off.
 
 ---
 
@@ -139,6 +145,13 @@ accepted by Schwab, working order, broker_order_id assigned). It is **NOT yet pr
 
 ## 🗓️ RECENT ACTIVITY (newest first — full text in [`handoff-archive/2026-06.md`](handoff-archive/2026-06.md))
 
+- **2026-06-22 (Mon EOD) — Polygon data-capture infra SHIPPED · #350 close-verdict CPU-bound · OMS after-hours-ATR fix · ATR oracle landed.**
+  - **🟢 Central Polygon tick/bar capture — MERGED + DURABLE.** #354 (`market_capture_app` service, Restart=always — raw Polygon trades+quotes from the gateway stream, ms→ns normalized) + #355 (`/v3/trades` historical backfill) + #356 (daily 21:00Z post-close gather of the FULL scanner-qualified universe: trades+quotes+**1-min bars** via Massive REST → `market_capture_bars`). 14-day prune covers all 3 tables. **Chose REST-gather over widening the live stream — deliberately, to NOT burden the #350 CPU-bound strategy-engine** (all consumers drain the shared stream). No-stored-raw-ticks gap closed; Massive REST entitlement CONFIRMED (trades/quotes/1-min-aggs). [[project-mai-tai-market-capture]]
+  - **🔴 #350 freeze VALIDATION (both windows) = NOT a full fix, it's CPU-BOUND.** Open 63s gap (09:43 ET) + close **76s gap (16:02 ET)**, CPU pegged **~100% user-space, %wait≈0** during both. The DB-offload IS active + removed the I/O-wait stall, but the loop still saturates one core ~60-76s at peak windows. **PIVOT (armed tomorrow): py-spy the indicator-recompute hotspot.** [[project-mai-tai-polygon-freeze]]
+  - **🟡 OMS fix #358 (`f427434`) DEPLOYED — v2 ATR after-hours UNBLOCKED.** Root cause: the Tier-3 setup-revalidation guard (`_intent_setup_invalid_reason`, PR #178) abandoned every v2 ATR-Flip intent that didn't fill instantly, because the isolated v2 bot writes NO decision tape (all v2 bars `decision_status=''` → always `idle != signal` → `SETUP_INVALID`). RTH fills in ~2s before the guard; after-4PM thin liquidity → guard cancels → **ATR was silently RTH-only** (3 good after-4PM setups cancelled today). Fix = **fail-open when the bar has no decision_status** (momentum bots unaffected; 44/44 OMS tests + 2 regression green; OMS-only restart, flat-confirmed). **⚠️ BEHAVIOR CHANGE: v2 ATR now fills after-hours (real money) — see OPEN #9.**
+  - **ATR oracle landed (#357)** — `analysis/atr_flip.py::compute_atr_trail` (the reference the live v2 `_update_atr_state` is pinned to) was off-main; landed code-only + import test. Determinism test still passes (live v2 == oracle, no drift).
+  - **Read-only research:** TIMESALE_EQUITY is a **dead Schwab service** (not an entitlement — Schwab has no equity T&S; flag rolled back) → true T&S = Polygon. **Intrabar-ALONE = WASH** on today's 8 ATR trades (bot already books the trail touch-price). **Hold-confirmation = nets POSITIVE** (real-tick replay: best net_hold/10s skips 3/5 false-flip losers, keeps winners, +$0.75) — **promising NOT proven** (1 loser-heavy day). Intrabar is the plumbing hold-confirmation needs (build together, design-first, default-off, more days). [[project-mai-tai-tick-confirmation]]
+  - **🔜 ARMED for tomorrow 2026-06-23 09:30 ET open (autonomous VPS capture PID 2603075):** (1) **ORB full validation** (OR builds? breakout evaluates? → unblocks the real-money flip) + (2) **#350 CPU profiling** (py-spy). Reported separately ~09:53 ET.
 - **2026-06-22 (Mon) — ORB fix shipped · #350 freeze verdict = CPU-bound · TIMESALE = dead Schwab service.**
   (1) **ORB** found silently inert (1970-timestamp bug) → **#352 merged + deployed + mechanically validated** (see OPEN
   ITEM #8); full OR/breakout validation = tomorrow's open; real-money flip stays blocked. (2) **#350 freeze fix —
