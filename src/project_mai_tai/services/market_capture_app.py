@@ -119,22 +119,31 @@ class MarketCaptureService:
         )
         try:
             while True:
-                resp = await self.redis.xread({stream: self._md_offset}, count=batch, block=1000)
-                for _stream, entries in resp or []:
-                    for entry_id, fields in entries:
-                        self._md_offset = entry_id
-                        self._ingest(fields.get("data"))
-                now = loop.time()
-                buffered = len(self._trades) + len(self._quotes)
-                if buffered >= batch or (buffered and now - last_flush >= flush_secs):
-                    await self._flush()
-                    last_flush = now
-                loop_count += 1
-                if stats_every and loop_count % stats_every == 0:
-                    logger.info(
-                        "[CAPTURE] rows_written=%d buffered=%d dropped=%d",
-                        self._rows_written, buffered, self._dropped,
-                    )
+                try:
+                    resp = await self.redis.xread({stream: self._md_offset}, count=batch, block=1000)
+                    for _stream, entries in resp or []:
+                        for entry_id, fields in entries:
+                            self._md_offset = entry_id
+                            self._ingest(fields.get("data"))
+                    now = loop.time()
+                    buffered = len(self._trades) + len(self._quotes)
+                    if buffered >= batch or (buffered and now - last_flush >= flush_secs):
+                        await self._flush()
+                        last_flush = now
+                    loop_count += 1
+                    if stats_every and loop_count % stats_every == 0:
+                        logger.info(
+                            "[CAPTURE] rows_written=%d buffered=%d dropped=%d",
+                            self._rows_written, buffered, self._dropped,
+                        )
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    # A transient redis/DB blip must not kill the capture loop —
+                    # log, back off, and resume (the systemd unit also restarts,
+                    # but this keeps a single run alive across hiccups).
+                    logger.exception("[CAPTURE] loop iteration failed; backing off 2s")
+                    await asyncio.sleep(2.0)
         except asyncio.CancelledError:
             await self._flush()
             logger.info("[CAPTURE] cancelled; flushed (rows_written=%d)", self._rows_written)
