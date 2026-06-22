@@ -1,5 +1,5 @@
 [Unit]
-Description=Prune central market-capture tables (market_capture_trades/quotes) older than 14 days
+Description=Prune central market-capture tables (trades/quotes/bars) older than 14 days
 After=network-online.target
 
 [Service]
@@ -7,4 +7,4 @@ Type=oneshot
 User=trader
 WorkingDirectory=/home/trader/project-mai-tai
 EnvironmentFile=/etc/project-mai-tai/project-mai-tai.env
-ExecStart=/home/trader/project-mai-tai/.venv/bin/python scripts/prune_market_ticks.py --keep-days 14 --tables market_capture_trades,market_capture_quotes
+ExecStart=/home/trader/project-mai-tai/.venv/bin/python scripts/prune_market_ticks.py --keep-days 14 --tables market_capture_trades,market_capture_quotes,market_capture_bars
