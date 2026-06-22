@@ -228,6 +228,19 @@ class Settings(BaseSettings):
     strategy_schwab_1m_v2_tick_flush_interval_secs: float = 2.0
     strategy_schwab_1m_v2_tick_flush_batch_size: int = 500
     strategy_schwab_1m_v2_tick_max_buffer: int = 50_000
+
+    # --- Central market-data capture (GLOBAL, bot-agnostic; market_capture_app) ---
+    # A flag-gated, read-only consumer of the shared `mai_tai:market-data` stream
+    # that persists raw Polygon/Massive trades + L1 quotes into market_capture_*
+    # for any bot to backtest. Additive/isolated: no trading-path/gateway/bot
+    # changes. Default off -> run() returns immediately. Batched off-loop writes
+    # (#350 pattern). See docs/market-capture-design.md.
+    market_capture_enabled: bool = False
+    market_capture_batch_size: int = 1000
+    market_capture_flush_secs: float = 2.0
+    market_capture_provider_tag: str = "massive"
+    # Stats log cadence (loop iterations) for the verify window.
+    market_capture_stats_every: int = 30
     # --- SPOF Workstream A (v2 follow-up): loop-resilience knobs ---
     # See docs/schwab-1m-v2-loop-resilience-design.md. Per-task backstop so an
     # unanticipated exception can't silently kill a v2 task loop.
