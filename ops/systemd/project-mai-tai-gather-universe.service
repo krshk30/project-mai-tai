@@ -1,0 +1,13 @@
+[Unit]
+Description=Daily post-close REST gather of the scanner-qualified Polygon universe (trades/quotes/1-min bars)
+After=network-online.target postgresql.service
+
+[Service]
+Type=oneshot
+User=trader
+WorkingDirectory=/home/trader/project-mai-tai
+EnvironmentFile=/etc/project-mai-tai/project-mai-tai.env
+# Gather today's (UTC) trading day. Idempotent (skips symbols already present);
+# safe to re-run. Universe is resolved dynamically from that day's polygon_30s set.
+ExecStart=/bin/sh -c '/home/trader/project-mai-tai/.venv/bin/python scripts/gather_polygon_universe.py --date $(date -u +%%F)'
+TimeoutStartSec=3600

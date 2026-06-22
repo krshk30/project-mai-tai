@@ -557,6 +557,37 @@ class MarketCaptureQuote(Base):
     ask_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
+class MarketCaptureBar(Base):
+    """GLOBAL, bot-agnostic 1-minute OHLCV bars for the daily scanner-qualified
+    universe. Gathered post-close via Massive REST list_aggs (NOT the live stream
+    — recoverable + zero stream/bot impact). ``event_ts`` = bar START (normalized
+    ns). interval_secs distinguishes the resolution (60 today; lets other
+    resolutions share the table later). See market_capture_trades for the
+    append-only / no-raw-blob rationale."""
+
+    __tablename__ = "market_capture_bars"
+    __table_args__ = (
+        Index("ix_market_capture_bars_symbol_event_ts", "symbol", "event_ts"),
+        Index("ix_market_capture_bars_received_at", "received_at"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    provider: Mapped[str] = mapped_column(Text)
+    symbol: Mapped[str] = mapped_column(Text)
+    event_ts: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    interval_secs: Mapped[int] = mapped_column(Integer)
+    received_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, server_default=func.now()
+    )
+    open: Mapped[Decimal] = mapped_column(Numeric(18, 6))
+    high: Mapped[Decimal] = mapped_column(Numeric(18, 6))
+    low: Mapped[Decimal] = mapped_column(Numeric(18, 6))
+    close: Mapped[Decimal] = mapped_column(Numeric(18, 6))
+    volume: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    vwap: Mapped[Decimal | None] = mapped_column(Numeric(18, 6), nullable=True)
+    transactions: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
 class ScannerBlacklistEntry(Base):
     __tablename__ = "scanner_blacklist_entries"
 

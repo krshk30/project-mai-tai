@@ -44,7 +44,7 @@ def main() -> int:
     tables = tuple(t.strip() for t in args.tables.split(",") if t.strip())
     _ALLOWED = {
         "market_trade_ticks", "market_quote_ticks",
-        "market_capture_trades", "market_capture_quotes",
+        "market_capture_trades", "market_capture_quotes", "market_capture_bars",
     }
     for t in tables:
         if t not in _ALLOWED:  # guard against SQL injection via --tables
