@@ -75,6 +75,17 @@ accepted by Schwab, working order, broker_order_id assigned). It is **NOT yet pr
    DECIDER = a faithful 10-day TIMESALE test ~early July ([[project-mai-tai-tick-confirmation]]). Docs in `/home/trader/`:
    tick_confirmation_findings, combined_tickconfirm_2day, p5_3path_baseline_2day, p4_tickconfirm_optionB_plan,
    intrabar-execution-design, timesale-capture-design.
+8. **ORB (P6 OPEN) — fix #352 DEPLOYED, FULL validation gated to the NEXT RTH OPEN.** ORB was **silently inert since
+   deploy**: the gateway `trade_tick.timestamp_ns` carries **milliseconds** for Polygon/Massive ticks but ORB read it as
+   nanoseconds (`ts/1e9`) → every tick stamped **1970** → the session-anchored aggregator dropped all → **0 OR bars, 0
+   trades** (heartbeat `bar_counts:{}`/`last_tick_at:{}` while the stream had live ticks). The strategy-engine already
+   defends with `_normalize_tick_timestamp_ns`; ORB didn't. **PR #352 (`f404544`) MERGED + DEPLOYED 2026-06-22 10:39 ET**
+   (ORB-side `_normalize_trade_ts_ns` magnitude ladder; CI green, editable-install git-pull + ORB-only restart, fleet
+   untouched). **Mechanical fix VALIDATED same-session** (heartbeat `last_tick_at` now shows 2026 timestamps, bars
+   complete). **⏳ REMAINING GATE — validate at 2026-06-23 09:30–09:40 ET: `bar_counts` POPULATES (or_bars fill
+   09:30–09:34), an OR builds, a breakout evaluates (`[ORB-BREAKOUT]`).** **Real-money flip (qty 10, was targeted 06-22)
+   stays BLOCKED until that passes.** Cloud /schedule can't reach the VPS → validate attended/VPS at the open.
+   [[project-mai-tai-orb]]
 
 ---
 
@@ -128,6 +139,20 @@ accepted by Schwab, working order, broker_order_id assigned). It is **NOT yet pr
 
 ## 🗓️ RECENT ACTIVITY (newest first — full text in [`handoff-archive/2026-06.md`](handoff-archive/2026-06.md))
 
+- **2026-06-22 (Mon) — ORB fix shipped · #350 freeze verdict = CPU-bound · TIMESALE = dead Schwab service.**
+  (1) **ORB** found silently inert (1970-timestamp bug) → **#352 merged + deployed + mechanically validated** (see OPEN
+  ITEM #8); full OR/breakout validation = tomorrow's open; real-money flip stays blocked. (2) **#350 freeze fix —
+  OPEN-window verdict = NOT fully fixed, it's CPU-BOUND.** The DB-offload is ACTIVE and removed the I/O-wait stall, but a
+  **63s snapshot-batch gap recurred 09:43 ET with CPU pegged ~100% USER-space (`%wait≈0`)** → remaining freeze is
+  CPU-bound (likely synchronous indicator recompute on the loop), NOT DB-I/O. **PIVOT = profile the strategy-engine CPU
+  hotspot at peak-volume windows** (py-spy on indicator recompute). Close-window confirmation pending ~16:12 ET. (3)
+  **TIMESALE capture** enabled 08:47 ET → **Schwab REJECTED (code-11)**. Disambiguated via `GET /trader/v1/userPreference`
+  (we HOLD the NP + level2 Market-Data bundle → **not an entitlement wall**) + the schwab-py service catalog (**Schwab's
+  streamer defines NO TIMESALE service** — equity streams are only CHART_EQUITY/LEVELONE_EQUITIES/NYSE_BOOK/NASDAQ_BOOK/
+  SCREENER_EQUITY; TIMESALE_EQUITY is a legacy TDA name dropped in the migration). **Schwab cannot provide equity
+  time-&-sales at all** — not renameable, not requestable. Flag left ON (benign/inert, operator choice; not a bug — do
+  NOT re-flag the code-11). **Consequence: the July tick-confirm decider must source true trades from Polygon/Massive,
+  NOT Schwab.** [[project-mai-tai-orb]] · [[project-mai-tai-tick-confirmation]]
 - **2026-06-19 (Juneteenth, market closed) — POLYGON 30s: freeze root-caused + 3 fixes DEPLOYED, freeze fix ACTIVE.**
   Read-only diagnosis (PROVEN): the **strategy-engine asyncio event loop freezes 50–345s at peak-volume windows** (RTH
   open + 4pm close), process-wide, localized to strategy-engine (stalled bars carried real volume → feed fine; **v2/ATR
