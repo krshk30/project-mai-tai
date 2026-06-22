@@ -3476,3 +3476,65 @@ async def test_oms_service_abandons_intent_when_setup_no_longer_matches() -> Non
         assert orders[0].payload.get("abandon_reason_code") == "SETUP_INVALID"
 
     assert [request.intent_type for request in adapter.submit_requests] == ["open", "cancel"]
+
+
+class _FakeIntent:
+    def __init__(self, path: str, symbol: str = "SKYQ", intent_type: str = "open") -> None:
+        self.intent_type = intent_type
+        self.symbol = symbol
+        self.payload = {"metadata": {"path": path}}
+
+
+class _FakeStrategy:
+    def __init__(self, code: str) -> None:
+        self.code = code
+
+
+def _bar(code: str, sym: str, status: str, path: str, bar_time: datetime) -> StrategyBarHistory:
+    return StrategyBarHistory(
+        strategy_code=code, symbol=sym, interval_secs=60, bar_time=bar_time,
+        open_price=Decimal("1"), high_price=Decimal("1"), low_price=Decimal("1"),
+        close_price=Decimal("1"), volume=100, decision_status=status, decision_path=path,
+    )
+
+
+def _svc(session_factory):
+    return OmsRiskService(
+        settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
+        redis_client=FakeRedis(),
+        session_factory=session_factory,
+    )
+
+
+def test_setup_revalidation_failopen_for_tapeless_v2_atr() -> None:
+    # Regression: the isolated schwab_1m_v2 bot persists OHLCV bars but writes NO
+    # decision tape (decision_status=''). The Tier-3 setup-revalidation guard must
+    # FAIL OPEN for such strategies — otherwise it abandoned every v2 ATR-Flip
+    # intent that did not fill instantly (i.e. all after-hours fills).
+    sf = build_test_session_factory()
+    svc = _svc(sf)
+    intent = _FakeIntent("ATR Flip", symbol="SKYQ")
+    strat = _FakeStrategy("schwab_1m_v2")
+    with sf() as s:
+        s.add(_bar("schwab_1m_v2", "SKYQ", "", "", datetime(2026, 6, 22, 20, 11, tzinfo=UTC)))
+        s.commit()
+        assert svc._intent_setup_invalid_reason(s, intent=intent, strategy=strat) is None
+
+
+def test_setup_revalidation_still_guards_tape_writing_momentum_bots() -> None:
+    # The guard must STILL protect the momentum bots (which DO write the tape):
+    # a non-signal latest bar -> abandon; a matching signal bar -> keep.
+    sf = build_test_session_factory()
+    svc = _svc(sf)
+    intent = _FakeIntent("P1_CROSS", symbol="GOVX")
+    strat = _FakeStrategy("macd_30s")
+    with sf() as s:
+        s.add(_bar("macd_30s", "GOVX", "idle", "", datetime(2026, 6, 22, 14, 0, tzinfo=UTC)))
+        s.commit()
+        assert svc._intent_setup_invalid_reason(s, intent=intent, strategy=strat) is not None
+    sf2 = build_test_session_factory()
+    svc2 = _svc(sf2)
+    with sf2() as s:
+        s.add(_bar("macd_30s", "GOVX", "signal", "P1_CROSS", datetime(2026, 6, 22, 14, 0, tzinfo=UTC)))
+        s.commit()
+        assert svc2._intent_setup_invalid_reason(s, intent=intent, strategy=strat) is None
