@@ -504,6 +504,59 @@ class MarketQuoteTick(Base):
     raw_hash: Mapped[str] = mapped_column(Text)
 
 
+class MarketCaptureTrade(Base):
+    """GLOBAL, bot-agnostic capture of raw Polygon/Massive TRADE prints from the
+    market-data gateway stream. Written by the central ``market_capture_app``
+    consumer (NOT any bot). Append-only, no ``raw`` blob (parsed columns only —
+    keeps the high-volume table ~half the size), no unique-dedupe constraint
+    (the live feed has no trade id/sequence; restart-replay dupes are rare and
+    de-duped at backtest time) so inserts stay cheap at 50-150+/sec. ``event_ts``
+    is normalized to true ns before storage (see market_data.tick_time)."""
+
+    __tablename__ = "market_capture_trades"
+    __table_args__ = (
+        Index("ix_market_capture_trades_symbol_event_ts", "symbol", "event_ts"),
+        Index("ix_market_capture_trades_received_at", "received_at"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    provider: Mapped[str] = mapped_column(Text)
+    symbol: Mapped[str] = mapped_column(Text)
+    event_ts: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    received_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, server_default=func.now()
+    )
+    price: Mapped[Decimal] = mapped_column(Numeric(18, 6))
+    size: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    exchange: Mapped[str | None] = mapped_column(Text, nullable=True)
+    conditions: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cumulative_volume: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+
+
+class MarketCaptureQuote(Base):
+    """GLOBAL, bot-agnostic capture of raw Polygon/Massive L1 QUOTE ticks (bid/ask)
+    from the market-data gateway stream. See MarketCaptureTrade. Quotes carry no
+    payload timestamp, so ``event_ts`` is stamped from the event ``produced_at``."""
+
+    __tablename__ = "market_capture_quotes"
+    __table_args__ = (
+        Index("ix_market_capture_quotes_symbol_event_ts", "symbol", "event_ts"),
+        Index("ix_market_capture_quotes_received_at", "received_at"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    provider: Mapped[str] = mapped_column(Text)
+    symbol: Mapped[str] = mapped_column(Text)
+    event_ts: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    received_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, server_default=func.now()
+    )
+    bid_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 6), nullable=True)
+    ask_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 6), nullable=True)
+    bid_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ask_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
 class ScannerBlacklistEntry(Base):
     __tablename__ = "scanner_blacklist_entries"
 

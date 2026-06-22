@@ -34,11 +34,24 @@ def main() -> int:
     ap.add_argument("--batch", type=int, default=50_000)
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--dsn", default=None)
+    ap.add_argument(
+        "--tables",
+        default=",".join(TABLES),
+        help="comma-separated table names to prune (default: the Schwab tick tables)",
+    )
     args = ap.parse_args()
     cutoff_sql = f"now() - interval '{int(args.keep_days)} days'"
+    tables = tuple(t.strip() for t in args.tables.split(",") if t.strip())
+    _ALLOWED = {
+        "market_trade_ticks", "market_quote_ticks",
+        "market_capture_trades", "market_capture_quotes",
+    }
+    for t in tables:
+        if t not in _ALLOWED:  # guard against SQL injection via --tables
+            raise SystemExit(f"refusing to prune unknown table: {t!r}")
 
     with psycopg.connect(_dsn(args.dsn)) as conn:
-        for table in TABLES:
+        for table in tables:
             with conn.cursor() as cur:
                 cur.execute(f"SELECT count(*) FROM {table} WHERE received_at < {cutoff_sql}")
                 stale = cur.fetchone()[0]
