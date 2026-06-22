@@ -2490,6 +2490,17 @@ class OmsRiskService:
             return None
         decision_status = str(record.decision_status or "").strip()
         decision_path = str(record.decision_path or "").strip()
+        if not decision_status:
+            # FAIL OPEN: the strategy records no decision tape. The isolated
+            # schwab_1m_v2 bot persists OHLCV bars but never writes
+            # decision_status/decision_path, so this revalidation can only judge
+            # tape-writing strategies (the momentum bots it was built for). For a
+            # tape-less strategy every bar reads as 'idle' != 'signal', which made
+            # this guard ABANDON every v2 ATR-Flip intent that did not fill
+            # instantly — i.e. all after-hours fills (thin liquidity -> the order
+            # reaches the cancel-and-replace cycle -> SETUP_INVALID). We cannot
+            # revalidate what isn't recorded, so do NOT abandon a good order.
+            return None
         if decision_status == "signal" and decision_path == intent_path:
             return None
         bar_et = record.bar_time.astimezone(SESSION_TZ).strftime("%H:%M:%S") if record.bar_time else "?"
