@@ -161,8 +161,12 @@ def _copy(cur, table, cols, rows, batch):
 
 
 def _gather_one(client, conn, table, symbol, day, bounds, kind, force, dry, batch) -> tuple[int, int]:
+    # Bars are fetched full-day (list_aggs is per-day) regardless of any intraday
+    # trades/quotes window, so their existence/delete must be full-day too — else
+    # a windowed re-run would re-fetch and DUPLICATE the full-day bar set.
+    eff_bounds = None if kind == "bars" else bounds
     with conn.cursor() as cur:
-        existing = _existing(cur, table, symbol, day, bounds)
+        existing = _existing(cur, table, symbol, day, eff_bounds)
     if existing and not force:
         print(f"  {symbol} {day} {kind}: SKIP ({existing} rows present)")
         return (0, 0)
@@ -214,7 +218,7 @@ def _gather_one(client, conn, table, symbol, day, bounds, kind, force, dry, batc
         return (fetched, 0)
     with conn.cursor() as cur:
         if force and existing:
-            print(f"  {symbol} {day} {kind}: --force deleted {_delete(cur, table, symbol, day, bounds)}")
+            print(f"  {symbol} {day} {kind}: --force deleted {_delete(cur, table, symbol, day, eff_bounds)}")
         written = _copy(cur, table, cols, rows, batch)
         conn.commit()
     print(f"  {symbol} {day} {kind}: fetched {fetched} -> wrote {written}")
