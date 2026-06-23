@@ -605,10 +605,17 @@ def test_atr_only_mode_emit_guard_drops_non_atr_open() -> None:
     from decimal import Decimal
     from unittest.mock import AsyncMock
 
+    from project_mai_tai.market_data.schwab_v2_rest_client import Quote
     from project_mai_tai.strategy_core.schwab_1m_v2 import TradeIntentDraft
 
     bot = SchwabV2BotService(Settings(strategy_schwab_1m_v2_atr_only_mode=True))
     bot.intent_emitter = AsyncMock()
+    # An open intent needs a cached ask to route in extended hours (the bot seeds
+    # this in _handle_quote before any signal fires); seed one so this guard test
+    # is deterministic regardless of the wall-clock session it runs in.
+    bot._last_quote_by_symbol["TEST"] = Quote(
+        symbol="TEST", bid_price=1.0, ask_price=1.0, last_price=1.0, quote_time_ms=0,
+    )
 
     macd = TradeIntentDraft(
         symbol="TEST", side="buy", intent_type="open", quantity=Decimal("10"),

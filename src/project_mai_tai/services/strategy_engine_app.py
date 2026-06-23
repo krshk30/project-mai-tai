@@ -106,6 +106,11 @@ from project_mai_tai.strategy_core import (
 from project_mai_tai.strategy_core.time_utils import now_eastern
 from project_mai_tai.strategy_core.time_utils import session_day_eastern_str
 from project_mai_tai.strategy_core.bar_builder import BarBuilderManager
+from project_mai_tai.strategy_core.order_routing import (
+    _format_limit_price,
+    extended_hours_session,
+    order_routing_metadata,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -143,15 +148,6 @@ def utcnow() -> datetime:
     return datetime.now(UTC)
 
 
-def _format_limit_price(value: float | str | Decimal | None) -> str | None:
-    if value is None:
-        return None
-    try:
-        return format(Decimal(str(value)).quantize(Decimal("0.01")), "f")
-    except Exception:
-        return None
-
-
 def _panic_limit_price(value: float | str | Decimal | None, buffer_pct: float) -> str | None:
     if value is None:
         return None
@@ -174,30 +170,6 @@ def _coerce_float(*values: object) -> float | None:
         except (TypeError, ValueError):
             continue
     return None
-
-
-def extended_hours_session(now: datetime | None = None) -> str | None:
-    current = (now or utcnow()).astimezone(EASTERN_TZ)
-    regular_open = current.replace(hour=9, minute=30, second=0, microsecond=0)
-    regular_close = current.replace(hour=16, minute=0, second=0, microsecond=0)
-    if regular_open <= current < regular_close:
-        return None
-    return "AM" if current < regular_open else "PM"
-
-
-def order_routing_metadata(*, price: str, side: str, now: datetime | None = None) -> dict[str, str]:
-    session = extended_hours_session(now)
-    if session is None:
-        return {}
-    return {
-        "session": session,
-        "order_type": "limit",
-        "time_in_force": "day",
-        "extended_hours": "true",
-        "limit_price": price,
-        "reference_price": price,
-        "price_source": "ask" if side == "buy" else "bid",
-    }
 
 
 def stop_guard_order_routing_metadata(
