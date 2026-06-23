@@ -1,0 +1,143 @@
+"""Webull OpenAPI SANDBOX probe — learn the response shapes before building the adapter.
+
+Why: the SDK ships no typed response models for orders/positions; `get_response` returns a
+raw JSON body. We must see the ACTUAL field names (order id, status, fill price/time, the
+instrument-lookup result) from a real call before we write real-money response parsing.
+
+SAFETY:
+- SANDBOX ONLY. Refuses to run unless --host is given AND --i-understand-sandbox is passed.
+- Places a BUY LIMIT far BELOW market (won't fill), reads it back, then CANCELS it.
+- Credentials come from env only (never args/chat): MAI_TAI_WEBULL_APP_KEY / _SECRET /
+  _ACCOUNT_ID / _REGION_ID. Nothing is written anywhere; raw responses are printed for us
+  to read the shapes.
+
+Usage (on the box, after sandbox creds are in env):
+  python scripts/webull_sandbox_probe.py --host <sandbox-host> --symbol AAPL \
+      --i-understand-sandbox
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+
+
+def _dump(label, obj):
+    print(f"\n===== {label} =====")
+    for attr in ("status", "code", "headers"):
+        if hasattr(obj, attr):
+            print(f"  {attr}: {getattr(obj, attr)}")
+    body = getattr(obj, "body", None)
+    if body is None and hasattr(obj, "json"):
+        try:
+            body = obj.json()
+        except Exception:
+            body = None
+    try:
+        print("  body:", json.dumps(body if body is not None else vars(obj), default=str, indent=2)[:4000])
+    except Exception:
+        print("  raw:", repr(obj)[:2000])
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--host", required=True, help="Webull SANDBOX host (e.g. uat/sandbox endpoint)")
+    ap.add_argument("--symbol", default="AAPL")
+    ap.add_argument("--i-understand-sandbox", action="store_true", required=False)
+    args = ap.parse_args()
+    if not args.i_understand_sandbox:
+        print("Refusing: pass --i-understand-sandbox to confirm this hits a SANDBOX host only.")
+        return 2
+
+    app_key = os.environ.get("MAI_TAI_WEBULL_APP_KEY", "")
+    app_secret = os.environ.get("MAI_TAI_WEBULL_APP_SECRET", "")
+    account_id = os.environ.get("MAI_TAI_WEBULL_ACCOUNT_ID", "")
+    region_id = os.environ.get("MAI_TAI_WEBULL_REGION_ID", "us")
+    if not (app_key and app_secret and account_id):
+        print("Missing MAI_TAI_WEBULL_APP_KEY/_SECRET/_ACCOUNT_ID in env. Put sandbox creds in env first.")
+        return 2
+
+    from webull.core.client import ApiClient
+    from webull.trade.common.order_side import OrderSide
+    from webull.trade.common.order_tif import OrderTIF
+    from webull.trade.common.order_type import OrderType
+    from webull.trade.request.place_order_request import PlaceOrderRequest
+    from webull.trade.request.v2.get_order_detail_request import OrderDetailRequest
+    from webull.trade.request.v2.cancel_order_request import CancelOrderRequest
+    from webull.trade.request.get_account_positions_request import AccountPositionsRequest
+
+    client = ApiClient(app_key, app_secret, region_id)
+    client.add_endpoint(region_id, args.host)  # <- SANDBOX host only
+
+    # 1) instrument resolution (symbol -> instrument_id): try the trade instruments lookup,
+    #    dump whatever comes back so we learn the field names.
+    instrument_id = None
+    try:
+        from webull.trade.request.get_tradeable_instruments_request import (  # type: ignore
+            GetTradeableInstrumentsRequest,
+        )
+        req = GetTradeableInstrumentsRequest()
+        for setter, val in (("set_symbols", args.symbol), ("set_category", "US_STOCK")):
+            if hasattr(req, setter):
+                getattr(req, setter)(val)
+        resp = client.get_response(req)
+        _dump(f"INSTRUMENT LOOKUP ({args.symbol})", resp)
+        print("  >>> read the instrument_id field name from the body above and set it below if needed")
+    except Exception as exc:
+        print(f"instrument lookup raised (try a different lookup request): {exc!r}")
+
+    iid = os.environ.get("WEBULL_PROBE_INSTRUMENT_ID") or instrument_id
+    client_order_id = "orbprobe-" + args.symbol.lower()
+
+    # 2) place a far-below-market BUY LIMIT (won't fill), qty 1
+    try:
+        po = PlaceOrderRequest()
+        po.set_account_id(account_id)
+        po.set_client_order_id(client_order_id)
+        if iid:
+            po.set_instrument_id(iid)
+        po.set_side(OrderSide.BUY.name)
+        po.set_order_type(OrderType.LIMIT.name)
+        po.set_limit_price("1.00")     # far below market for a liquid name -> rests, no fill
+        po.set_qty("1")
+        po.set_tif(OrderTIF.DAY.name)
+        resp = client.get_response(po)
+        _dump("PLACE ORDER (far-below-market limit, qty 1)", resp)
+    except Exception as exc:
+        print(f"place order raised: {exc!r}")
+
+    # 3) order detail (fill price/time/status field names)
+    try:
+        od = OrderDetailRequest()
+        od.set_account_id(account_id)
+        od.set_client_order_id(client_order_id)
+        _dump("ORDER DETAIL", client.get_response(od))
+    except Exception as exc:
+        print(f"order detail raised: {exc!r}")
+
+    # 4) positions (shape for position sync)
+    try:
+        ap_req = AccountPositionsRequest()
+        ap_req.set_account_id(account_id)
+        if hasattr(ap_req, "set_page_size"):
+            ap_req.set_page_size(50)
+        _dump("ACCOUNT POSITIONS", client.get_response(ap_req))
+    except Exception as exc:
+        print(f"positions raised: {exc!r}")
+
+    # 5) cancel the probe order (leave nothing resting)
+    try:
+        co = CancelOrderRequest()
+        co.set_account_id(account_id)
+        co.set_client_order_id(client_order_id)
+        _dump("CANCEL ORDER", client.get_response(co))
+    except Exception as exc:
+        print(f"cancel raised: {exc!r}")
+
+    print("\nDONE. Paste the body shapes (NOT the creds) back so the adapter parser is built against reality.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
