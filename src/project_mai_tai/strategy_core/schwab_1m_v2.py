@@ -178,6 +178,10 @@ class SymbolState:
     atr_prev_state: str | None = None          # prior bar's state (touch only while short)
     atr_state_age: int = 0                     # bars since last flip
     atr_fired_in_short_seg: bool = False       # one-entry-per-short-segment guard (offline B `break`)
+    # Hold-confirmation: at most one pending intrabar touch awaiting its N-second
+    # net_delta verdict. Set in on_quote when a quote crosses the resting trail;
+    # resolved in on_quote (window elapsed) or on_bar (heartbeat/flip-invalidation).
+    atr_hold_pending: "PendingHold | None" = None
 
 
 @dataclass
@@ -188,6 +192,20 @@ class TradeIntentDraft:
     quantity: Decimal
     reason: str
     metadata: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass
+class PendingHold:
+    """An intrabar trail-touch awaiting its N-second hold verdict. `last_px` is the
+    most-recent quote price in the window (the net_delta endpoint); `n_ticks` counts
+    quotes seen (coverage guard). Anchored at the touch INSTANT (matches the backtest
+    window), not bar-close."""
+    touch_price: float        # the resting trail that was touched (== backtest tp)
+    touch_ms: int             # quote event time of the touch instant
+    deadline_ms: int          # touch_ms + N*1000
+    seg_age: int              # atr_state_age at the touch (for the fresh-flip qualifier)
+    last_px: float            # latest in-window quote price (net_delta endpoint)
+    n_ticks: int = 1          # quotes accumulated in the window (incl. the touch tick)
 
 
 def session_start_ts_ms(bar_ts_ms: int) -> int:
@@ -357,6 +375,21 @@ class SchwabV2Strategy:
         self._atr_max_state_age = max(
             1, int(getattr(self.settings, "strategy_schwab_1m_v2_atr_flip_max_state_age", 5))
         )
+        # --- Hold-confirmation (intrabar net_delta gate; ATR variant-B only).
+        # Default OFF = inert: on_quote returns None as today, no pending holds, the
+        # bar-close ATR emit is unchanged. See docs/intrabar-hold-confirmation-design.md.
+        self._hold_confirm_enabled = bool(
+            getattr(self.settings, "strategy_schwab_1m_v2_hold_confirm_enabled", False)
+        )
+        self._hold_confirm_n_secs = max(
+            1, int(getattr(self.settings, "strategy_schwab_1m_v2_hold_confirm_n_seconds", 20))
+        )
+        self._hold_confirm_bps = float(
+            getattr(self.settings, "strategy_schwab_1m_v2_hold_confirm_net_delta_bps", 5.0)
+        )
+        self._hold_confirm_min_ticks = max(
+            2, int(getattr(self.settings, "strategy_schwab_1m_v2_hold_confirm_min_ticks", 5))
+        )
         raw_atr_probe = str(
             getattr(self.settings, "strategy_schwab_1m_v2_atr_flip_probe_symbols", "") or ""
         ).strip()
@@ -432,14 +465,163 @@ class SchwabV2Strategy:
         if is_new_bar:
             self._update_vwap_accumulators(state, ohlcv)
 
-        return self._evaluate_completed_bar(state, is_new_bar=is_new_bar)
+        eval_draft = self._evaluate_completed_bar(state, is_new_bar=is_new_bar)
+        # Heartbeat resolution for a pending hold: settle a thin-feed window whose
+        # deadline elapsed without a quote, or drop one whose segment flipped. Runs
+        # after _evaluate_completed_bar so _update_atr_state has rolled atr_prev_state.
+        # No-op (returns None) when hold-confirm is off — atr_hold_pending is never set.
+        hold_draft = self._resolve_hold_on_bar(state)
+        return eval_draft or hold_draft
 
     def on_quote(self, symbol: str, quote: Quote) -> TradeIntentDraft | None:
-        # v1.32 spec: bar-close evaluation only. Quotes update freshness
-        # but never fire entry signals.
+        # v1.32 base: quotes update freshness but never fire entries. Hold-
+        # confirmation (default OFF) layers the intrabar trail-touch + N-second
+        # net_delta gate on top; with the flag off this is byte-identical to the
+        # original no-op. ATR variant-B only (A enters at flip-bar close, not a
+        # touch). See docs/intrabar-hold-confirmation-design.md.
         state = self.watchlist_state(symbol)
         state.last_quote = quote
+        if not (self._hold_confirm_enabled and self._atr_enabled and self._atr_variant == "B"):
+            return None
+
+        px = float(getattr(quote, "last_price", 0.0) or 0.0)
+        if px <= 0.0:
+            # No last print this snapshot; fall back to mid so the window still
+            # advances on quote-only updates.
+            bid = float(getattr(quote, "bid_price", 0.0) or 0.0)
+            ask = float(getattr(quote, "ask_price", 0.0) or 0.0)
+            px = (bid + ask) / 2.0 if (bid > 0.0 and ask > 0.0) else 0.0
+        now_ms = int(getattr(quote, "quote_time_ms", 0) or 0)
+        if now_ms <= 0:
+            now_ms = int(datetime.now(UTC).timestamp() * 1000)
+        if px <= 0.0:
+            return None  # unusable snapshot; cannot judge or arm
+
+        # 1) Resolve / accumulate an existing pending hold.
+        ph = state.atr_hold_pending
+        if ph is not None:
+            ph.last_px = px
+            ph.n_ticks += 1
+            if now_ms < ph.deadline_ms:
+                return None  # still inside the window
+            return self._resolve_hold(state, ph, now_ms)
+
+        # 2) Detect a fresh INTRABAR touch of the resting (last-closed-bar) trail
+        #    while the prior bar was short, once per short segment, only when flat
+        #    + no cooldown (the shared entry gates).
+        if (
+            state.atr_prev_state == "short"
+            and state.atr_prev_trail is not None
+            and not state.atr_fired_in_short_seg
+            and state.position_qty == 0
+            and state.cooldown_bars_remaining == 0
+            and px >= state.atr_prev_trail
+        ):
+            state.atr_fired_in_short_seg = True  # claim the segment (suppresses bar-close emit)
+            state.atr_hold_pending = PendingHold(
+                touch_price=float(state.atr_prev_trail),
+                touch_ms=now_ms,
+                deadline_ms=now_ms + self._hold_confirm_n_secs * 1000,
+                seg_age=int(state.atr_state_age),
+                last_px=px,
+                n_ticks=1,
+            )
         return None
+
+    def _resolve_hold(
+        self, state: SymbolState, ph: PendingHold, now_ms: int
+    ) -> TradeIntentDraft | None:
+        """Window elapsed: apply the net_delta verdict. Coverage guard (<min_ticks)
+        falls back to ENTER (matches the backtest BAR_CLOSE_FALLBACK). Always clears
+        the pending hold; always logs for live slippage/decision telemetry."""
+        state.atr_hold_pending = None
+        net_bps = (
+            (ph.last_px - ph.touch_price) / ph.touch_price * 1e4 if ph.touch_price else 0.0
+        )
+        # Re-check the shared entry gates at resolution (state may have moved).
+        if state.position_qty > 0 or state.cooldown_bars_remaining > 0:
+            self._log_hold(state, ph, "skip_gated", net_bps)
+            return None
+        if ph.n_ticks < self._hold_confirm_min_ticks:
+            self._log_hold(state, ph, "fallback_thin", net_bps)
+            return self._build_hold_draft(state, ph, "fallback_thin", net_bps)
+        if net_bps >= self._hold_confirm_bps:
+            self._log_hold(state, ph, "confirm", net_bps)
+            return self._build_hold_draft(state, ph, "confirm", net_bps)
+        self._log_hold(state, ph, "skip", net_bps)
+        return None
+
+    def _resolve_hold_on_bar(self, state: SymbolState) -> TradeIntentDraft | None:
+        """Heartbeat resolution: on every completed bar, settle a pending hold whose
+        window elapsed without a triggering quote (thin feed), and DROP a hold whose
+        short segment has flipped away (setup invalidated). Runs AFTER _update_atr_state
+        so atr_prev_state reflects this bar."""
+        ph = state.atr_hold_pending
+        if ph is None:
+            return None
+        if state.atr_prev_state != "short":
+            state.atr_hold_pending = None
+            self._log_hold(state, ph, "drop_flip", 0.0)
+            return None
+        now_ms = int(datetime.now(UTC).timestamp() * 1000)
+        if now_ms < ph.deadline_ms:
+            return None  # still inside the window; on_quote will resolve it
+        return self._resolve_hold(state, ph, now_ms)
+
+    def _build_hold_draft(
+        self, state: SymbolState, ph: PendingHold, mode: str, net_bps: float
+    ) -> TradeIntentDraft | None:
+        """Build the ATR-Flip open intent for a confirmed/fallback hold. Applies the
+        SAME liquidity + fresh-flip gates as the bar-close path (_maybe_atr_emit), using
+        the last completed bar's volume and the touch-time segment age. Entry/reference
+        price = touch_price (idealized, == backtest tp); the order is a market order
+        downstream exactly as today, so the realised fill is touch+drift (drift logged)."""
+        if state.bars and state.bars[-1].volume <= self._atr_vol_floor:
+            self._log_hold(state, ph, mode + "_volfloor_skip", net_bps)
+            return None
+        if self._atr_use_max_state_age and ph.seg_age >= self._atr_max_state_age:
+            self._log_hold(state, ph, mode + "_age_skip", net_bps)
+            return None
+        entry = ph.touch_price
+        state.last_entry_price = entry
+        trail = state.atr_trail
+        return TradeIntentDraft(
+            symbol=state.symbol,
+            side="buy",
+            intent_type="open",
+            quantity=Decimal(str(self._atr_qty)),
+            reason=f"schwab_1m_v2 ATR Flip {self._atr_variant} [hold:{mode}]",
+            metadata={
+                "path": "ATR Flip",
+                "entry_price": f"{entry:.4f}",
+                "reference_price": f"{entry:.4f}",
+                "atr_variant": self._atr_variant,
+                "atr_trail": f"{trail:.4f}" if trail is not None else "",
+                "atr_state": str(state.atr_state),
+                "atr_state_age": str(ph.seg_age),
+                "source": "schwab_1m_v2",
+                "strategy_version": STRATEGY_VERSION,
+                # hold-confirmation telemetry (slippage/decision audit)
+                "hold_mode": mode,
+                "hold_net_bps": f"{net_bps:.2f}",
+                "hold_n_ticks": str(ph.n_ticks),
+                "hold_touch_price": f"{ph.touch_price:.4f}",
+                "hold_resolution_px": f"{ph.last_px:.4f}",
+                "hold_touch_ms": str(ph.touch_ms),
+            },
+        )
+
+    def _log_hold(
+        self, state: SymbolState, ph: PendingHold, decision: str, net_bps: float
+    ) -> None:
+        # Always-on telemetry: captures the live touch->resolution drift = the
+        # slippage the offline backtest could not see. One line per resolved hold.
+        logger.info(
+            "[V2-HOLD] sym=%s decision=%s touch=%.4f resolution=%.4f net_bps=%.2f "
+            "n_ticks=%d seg_age=%d win_s=%d",
+            state.symbol, decision, ph.touch_price, ph.last_px, net_bps,
+            ph.n_ticks, ph.seg_age, self._hold_confirm_n_secs,
+        )
 
     # ---------------------------------------------------------------- VWAP
 

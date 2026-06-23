@@ -296,6 +296,19 @@ class Settings(BaseSettings):
     # behavior-neutral. 7-week rotating-sample data picked 5 (46%->63% win idealized).
     strategy_schwab_1m_v2_atr_flip_use_max_state_age: bool = False
     strategy_schwab_1m_v2_atr_flip_max_state_age: int = 5
+    # Hold-confirmation (intrabar, ATR variant-B only). After an INTRABAR trail-touch,
+    # watch the next N seconds of LEVELONE quotes and emit the entry only if the move
+    # holds (net_delta: last quote >= touch +net_delta_bps). Screens false-flip wick
+    # touches that revert. Coverage guard: <min_ticks in the window -> fall back to
+    # entering (matches the offline backtest's BAR_CLOSE_FALLBACK). Default OFF = inert
+    # (on_quote returns None as today; no pending holds; bar-close emit unchanged).
+    # Validated offline: net_delta @ N=20s, save:kill ~3.3 (10-day) / ~6.5 (covered
+    # names), 82-86% winner-retention; reproduces on the live Schwab LEVELONE feed for
+    # subscribed names. See docs/intrabar-hold-confirmation-design.md.
+    strategy_schwab_1m_v2_hold_confirm_enabled: bool = False
+    strategy_schwab_1m_v2_hold_confirm_n_seconds: int = 20
+    strategy_schwab_1m_v2_hold_confirm_net_delta_bps: float = 5.0
+    strategy_schwab_1m_v2_hold_confirm_min_ticks: int = 5
     strategy_macd_30s_reclaim_excluded_symbols: str = "JEM,CYCN,BFRG,UCAR,BBGI"
     # Maximum age (seconds) for the `scanner_confirmed_last_nonempty` snapshot
     # to be eligible for startup restore. Older snapshots are skipped, so
