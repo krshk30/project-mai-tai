@@ -42,12 +42,18 @@ def _dump(label, obj):
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--host", required=True, help="Webull SANDBOX host (e.g. uat/sandbox endpoint)")
+    ap.add_argument("--host", required=True, help="Webull API host (sandbox or prod)")
     ap.add_argument("--symbol", default="AAPL")
-    ap.add_argument("--i-understand-sandbox", action="store_true", required=False)
+    # READ-ONLY by default: instrument lookup + positions + order history only — places NOTHING.
+    # Placing the far-below-market test order is opt-in and requires explicit confirmation,
+    # so this is safe to run with PRODUCTION credentials.
+    ap.add_argument("--place-test-order", action="store_true",
+                    help="ALSO place a far-below-market limit (qty 1) then cancel it — real order if prod host")
+    ap.add_argument("--i-understand-live", action="store_true",
+                    help="required with --place-test-order to acknowledge it may be a real order")
     args = ap.parse_args()
-    if not args.i_understand_sandbox:
-        print("Refusing: pass --i-understand-sandbox to confirm this hits a SANDBOX host only.")
+    if args.place_test_order and not args.i_understand_live:
+        print("Refusing --place-test-order without --i-understand-live (it may place a REAL order).")
         return 2
 
     app_key = os.environ.get("MAI_TAI_WEBULL_APP_KEY", "")
@@ -88,9 +94,25 @@ def main() -> int:
         print(f"instrument lookup raised (try a different lookup request): {exc!r}")
 
     iid = os.environ.get("WEBULL_PROBE_INSTRUMENT_ID") or instrument_id
-    client_order_id = "orbprobe-" + args.symbol.lower()
 
-    # 2) place a far-below-market BUY LIMIT (won't fill), qty 1
+    # 2) READ-ONLY: positions (shape for position sync) — places nothing.
+    try:
+        ap_req = AccountPositionsRequest()
+        ap_req.set_account_id(account_id)
+        if hasattr(ap_req, "set_page_size"):
+            ap_req.set_page_size(50)
+        _dump("ACCOUNT POSITIONS (read-only)", client.get_response(ap_req))
+    except Exception as exc:
+        print(f"positions raised: {exc!r}")
+
+    if not args.place_test_order:
+        print("\nREAD-ONLY probe done (no order placed). To also learn the order/fill/cancel "
+              "shapes, re-run attended with: --place-test-order --i-understand-live")
+        print("Paste the body shapes (NOT the creds) back so the adapter parser is built against reality.")
+        return 0
+
+    # 3) opt-in: place a far-below-market BUY LIMIT (qty 1, won't fill), read it, cancel it.
+    client_order_id = "orbprobe-" + args.symbol.lower()
     try:
         po = PlaceOrderRequest()
         po.set_account_id(account_id)
@@ -102,12 +124,10 @@ def main() -> int:
         po.set_limit_price("1.00")     # far below market for a liquid name -> rests, no fill
         po.set_qty("1")
         po.set_tif(OrderTIF.DAY.name)
-        resp = client.get_response(po)
-        _dump("PLACE ORDER (far-below-market limit, qty 1)", resp)
+        _dump("PLACE ORDER (far-below-market limit, qty 1)", client.get_response(po))
     except Exception as exc:
         print(f"place order raised: {exc!r}")
 
-    # 3) order detail (fill price/time/status field names)
     try:
         od = OrderDetailRequest()
         od.set_account_id(account_id)
@@ -116,22 +136,11 @@ def main() -> int:
     except Exception as exc:
         print(f"order detail raised: {exc!r}")
 
-    # 4) positions (shape for position sync)
-    try:
-        ap_req = AccountPositionsRequest()
-        ap_req.set_account_id(account_id)
-        if hasattr(ap_req, "set_page_size"):
-            ap_req.set_page_size(50)
-        _dump("ACCOUNT POSITIONS", client.get_response(ap_req))
-    except Exception as exc:
-        print(f"positions raised: {exc!r}")
-
-    # 5) cancel the probe order (leave nothing resting)
     try:
         co = CancelOrderRequest()
         co.set_account_id(account_id)
         co.set_client_order_id(client_order_id)
-        _dump("CANCEL ORDER", client.get_response(co))
+        _dump("CANCEL ORDER (leaves nothing resting)", client.get_response(co))
     except Exception as exc:
         print(f"cancel raised: {exc!r}")
 
