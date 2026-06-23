@@ -95,9 +95,19 @@ class _SymbolState:
     traded: bool = False
     entry_price: float | None = None
     last_bar_at: str = ""
+    # intrabar-reclaim mode only: start (ms UTC) of the current uninterrupted hold
+    # above OR_high; reset to None whenever a tick prints back below OR_high.
+    reclaim_cross_ms: int | None = None
+    # ms UTC of the reclaim-confirm (entry emit) — fill-instrumentation timestamp.
+    reclaim_emit_ms: int | None = None
 
 
 class OrbService:
+    # Class-level defaults so instances built via __new__ (some unit tests) read the
+    # legacy path; __init__ overrides them from settings.
+    _reclaim_mode: bool = False
+    _reclaim_hold_ms: int = 25_000
+
     def __init__(
         self,
         settings: Settings | None = None,
@@ -113,6 +123,10 @@ class OrbService:
         self._states: dict[str, _SymbolState] = {}
         self._universe: set[str] = set()
         self._pending_intents: list[tuple[str, float]] = []
+        # Flag-gated intrabar-reclaim live test: cap-off + reclaim@OR_high + N% trail.
+        # Default False -> every reclaim branch is skipped and ORB is byte-identical.
+        self._reclaim_mode = bool(getattr(self.settings, "orb_intrabar_reclaim_enabled", False))
+        self._reclaim_hold_ms = int(getattr(self.settings, "orb_reclaim_hold_secs", 25)) * 1000
         self._cfg = OrbConfig(
             or_minutes=int(self.settings.orb_or_minutes),
             vol_mult=float(self.settings.orb_vol_mult),
@@ -257,6 +271,8 @@ class OrbService:
         bar = agg.add_tick(ts, price, size)
         if bar is not None:
             self._on_bar(symbol, bar)
+        if self._reclaim_mode:
+            self._check_reclaim(symbol, price, ts)
 
     @staticmethod
     def _session_open_utc() -> datetime:
@@ -274,13 +290,29 @@ class OrbService:
         st.last_bar_at = bar.timestamp.isoformat()
         if bar.timestamp < or_end:
             st.or_bars.append(bar)  # building the opening range (09:30-09:34)
+            # Reclaim mode arms as soon as the OR's bars are all in, so the tick-level
+            # reclaim can fire from 09:35 — and with NO width cap (cap-off).
+            if (
+                self._reclaim_mode
+                and not st.or_evaluated
+                and len(st.or_bars) >= self._cfg.or_minutes
+                and symbol in self._universe
+            ):
+                st.or_evaluated = True
+                st.opening_range = self._build_or_no_cap(st.or_bars)
             return
         if not st.or_evaluated:
             st.or_evaluated = True
             # ARM only pre-09:25-universe names; build_opening_range returns None on
             # insufficient coverage or width > cap (skip-this-symbol).
             if symbol in self._universe:
-                st.opening_range = build_opening_range(st.or_bars, self._cfg)
+                st.opening_range = (
+                    self._build_or_no_cap(st.or_bars)
+                    if self._reclaim_mode
+                    else build_opening_range(st.or_bars, self._cfg)
+                )
+        if self._reclaim_mode:
+            return  # entry is tick-driven (_check_reclaim); no bar-close breakout
         if st.opening_range is None or st.traded or bar.timestamp > cutoff:
             return
         if bar_confirms_breakout(st.opening_range, bar, self._cfg):
@@ -293,17 +325,84 @@ class OrbService:
                 symbol, entry, st.opening_range.high, self._mode.value,
             )
 
+    def _build_or_no_cap(self, or_bars: list[OrbBar]) -> OpeningRange | None:
+        """Opening range with the 2-12% width band REMOVED (cap-off). Only gate is
+        in-time coverage (>= or_minutes bars), so high-volatility wide-range names
+        still arm — the whole point of the cap-off test."""
+        if len(or_bars) < self._cfg.or_minutes:
+            return None
+        high = max(b.high for b in or_bars)
+        low = min(b.low for b in or_bars)
+        avg_volume = sum(b.volume for b in or_bars) / len(or_bars)
+        return OpeningRange(high=high, low=low, avg_volume=avg_volume)
+
+    def _check_reclaim(self, symbol: str, price: float, ts: datetime) -> None:
+        """Intrabar reclaim entry (cap-off mode). Once the OR is armed, a tick at/above
+        OR_high starts a hold timer; if price stays >= OR_high for orb_reclaim_hold_secs,
+        emit ONE open intent as a resting LIMIT at OR_high. A tick back below OR_high
+        resets the timer (a pullback before the reclaim is fine — the sustained reclaim
+        is the confirmation). Entries only in (OR-end, cutoff]."""
+        st = self._states.get(symbol)
+        if st is None or st.opening_range is None or st.traded:
+            return
+        open_utc = self._session_open_utc()
+        or_end = open_utc + timedelta(minutes=self._cfg.or_minutes)
+        cutoff = open_utc + timedelta(minutes=self._cfg.cutoff_minutes)
+        if ts < or_end or ts > cutoff:
+            return
+        or_high = st.opening_range.high
+        ts_ms = int(ts.timestamp() * 1000)
+        if price >= or_high:
+            if st.reclaim_cross_ms is None:
+                st.reclaim_cross_ms = ts_ms
+                logger.info("[ORB-RECLAIM-CROSS] %s price=%.4f OR_high=%.4f", symbol, price, or_high)
+            elif ts_ms - st.reclaim_cross_ms >= self._reclaim_hold_ms:
+                st.traded = True  # one trade per symbol per session
+                st.entry_price = or_high
+                st.reclaim_emit_ms = ts_ms  # fill-instrumentation: confirm time
+                self._pending_intents.append((symbol, or_high))
+                logger.info(
+                    "[ORB-RECLAIM-ENTRY] %s intended=%.4f held=%.0fs",
+                    symbol, or_high, self._reclaim_hold_ms / 1000,
+                )
+        else:
+            st.reclaim_cross_ms = None  # hold broke — wait for the next reclaim
+
     def _build_open_intent(self, symbol: str, entry_price: float) -> TradeIntentEvent:
-        pct = str(self.settings.orb_trail_pct)
-        metadata = {
-            "stop_guard_enabled": "true",
-            "stop_loss_pct": pct,   # initial stop = trail% below entry
-            "trail_pct": pct,       # ratchet — drives the OMS TRAIL-8% trailing stop (#340)
-            "stop_guard_quote_max_age_ms": "2000",
-            "stop_guard_initial_panic_buffer_pct": "1.5",
-            "orb_entry": "true",
-            "execution_mode": self._mode.value,
-        }
+        if self._reclaim_mode:
+            st = self._states.get(symbol)
+            emit_ms = st.reclaim_emit_ms if st is not None else None
+            pct = str(self.settings.orb_reclaim_trail_pct)
+            qty = int(self.settings.orb_reclaim_quantity)
+            metadata = {
+                "stop_guard_enabled": "true",
+                "stop_loss_pct": pct,   # initial stop = trail% below entry
+                "trail_pct": pct,       # ratchet — drives the OMS trailing stop (#340)
+                "stop_guard_quote_max_age_ms": "2000",
+                "stop_guard_initial_panic_buffer_pct": "1.5",
+                "orb_entry": "true",
+                "execution_mode": "intrabar_reclaim",
+                # RESTING LIMIT at OR_high — the entry mechanism under test.
+                "order_type": "limit",
+                "limit_price": f"{entry_price:.4f}",
+                "reference_price": f"{entry_price:.4f}",
+                # fill instrumentation: intended price + reclaim-confirm time, so
+                # slippage (actual fill - OR_high) and time-to-fill are recoverable.
+                "orb_intended_or_high": f"{entry_price:.4f}",
+                "orb_reclaim_emit_ms": str(emit_ms) if emit_ms is not None else "",
+            }
+        else:
+            pct = str(self.settings.orb_trail_pct)
+            qty = int(self.settings.orb_quantity)
+            metadata = {
+                "stop_guard_enabled": "true",
+                "stop_loss_pct": pct,   # initial stop = trail% below entry
+                "trail_pct": pct,       # ratchet — drives the OMS TRAIL-8% trailing stop (#340)
+                "stop_guard_quote_max_age_ms": "2000",
+                "stop_guard_initial_panic_buffer_pct": "1.5",
+                "orb_entry": "true",
+                "execution_mode": self._mode.value,
+            }
         return TradeIntentEvent(
             source_service=SERVICE_NAME,
             payload=TradeIntentPayload(
@@ -311,7 +410,7 @@ class OrbService:
                 broker_account_name=str(self.settings.orb_broker_account_name),
                 symbol=symbol,
                 side="buy",
-                quantity=Decimal(str(int(self.settings.orb_quantity))),
+                quantity=Decimal(str(qty)),
                 intent_type="open",
                 reason="ORB_OPEN",
                 metadata=metadata,
@@ -330,7 +429,16 @@ class OrbService:
                 maxlen=self.settings.redis_strategy_intent_stream_maxlen,
                 approximate=True,
             )
-            logger.info("[ORB-OPEN] %s entry=%.4f trail_pct=%s", symbol, entry_price, self.settings.orb_trail_pct)
+            trail = (
+                self.settings.orb_reclaim_trail_pct
+                if self._reclaim_mode
+                else self.settings.orb_trail_pct
+            )
+            logger.info(
+                "[ORB-OPEN] %s entry=%.4f trail_pct=%s mode=%s",
+                symbol, entry_price, trail,
+                "intrabar_reclaim" if self._reclaim_mode else self._mode.value,
+            )
 
     # ----- observability: isolated heartbeat (dashboard renders ORB from this stream) -----
     def _build_heartbeat_payload(self) -> StrategyBotStatePayload:
@@ -357,12 +465,18 @@ class OrbService:
                 row["or_width_pct"] = round(st.opening_range.width_pct, 2)
             decisions.append(row)
             if st.traded and st.entry_price is not None:
+                trail = (
+                    float(self.settings.orb_reclaim_trail_pct)
+                    if self._reclaim_mode
+                    else float(self.settings.orb_trail_pct)
+                )
                 positions.append({
                     "symbol": sym,
                     "entry_price": st.entry_price,
-                    "stop_loss_pct": float(self.settings.orb_trail_pct),
-                    "trail_pct": float(self.settings.orb_trail_pct),
-                    "exit_owner": "oms_trail8",  # the OMS owns the live TRAIL-8% stop
+                    "stop_loss_pct": trail,
+                    "trail_pct": trail,
+                    # the OMS owns the live trailing stop (8% legacy / 3% reclaim test)
+                    "exit_owner": f"oms_trail{int(trail)}",
                 })
         return StrategyBotStatePayload(
             strategy_code=SERVICE_NAME,
