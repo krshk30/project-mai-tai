@@ -67,6 +67,11 @@ from project_mai_tai.market_data.schwab_v2_streamer import SchwabV2Streamer
 from project_mai_tai.market_data.schwab_v2_tick_writer import SchwabV2TickWriter
 from project_mai_tai.settings import Settings, get_settings
 from project_mai_tai.strategy_core.time_utils import session_day_eastern_str
+from project_mai_tai.strategy_core.order_routing import (
+    _format_limit_price,
+    extended_hours_session,
+    order_routing_metadata,
+)
 from project_mai_tai.strategy_core.schwab_1m_v2 import (
     SERVICE_NAME,
     STRATEGY_CODE,
@@ -257,6 +262,10 @@ class SchwabV2BotService:
         self._started_at_ms: int = int(datetime.now(UTC).timestamp() * 1000)
         self._last_bar_processed_at_ms: int = 0
         self._last_quote_at_ms: dict[str, int] = {}
+        # Latest quote (bid/ask) per symbol — fed by _handle_quote, read at emit to
+        # source the extended-hours limit price (mirrors legacy _resolve_routed_price,
+        # which routes entries at the live ask). RTH ignores it (order stays market).
+        self._last_quote_by_symbol: dict[str, Quote] = {}
         self._last_data_flow: str | None = None
         self._data_health: dict[str, object] = {
             "status": "starting",
@@ -1295,6 +1304,7 @@ class SchwabV2BotService:
         # (holiday-safe), so this is the discriminator for whether a bar
         # stall is a real fault vs a quiet/closed market.
         self._last_quote_at_ms[symbol] = int(now.timestamp() * 1000)
+        self._last_quote_by_symbol[str(symbol).upper()] = quote
         try:
             draft = self.strategy.on_quote(symbol, quote)
         except Exception:
@@ -1382,10 +1392,44 @@ class SchwabV2BotService:
         if self.intent_emitter is None:
             logger.warning("schwab_1m_v2 intent dropped — emitter not initialized")
             return
+        if not self._apply_extended_hours_routing(draft, datetime.now(UTC)):
+            return
         try:
             await self.intent_emitter.emit(draft)
         except Exception:
             logger.exception("schwab_1m_v2 emit failed")
+
+    def _apply_extended_hours_routing(self, draft, now: datetime) -> bool:  # type: ignore[no-untyped-def]
+        """Restore the legacy entry handoff: in extended hours, merge
+        ``order_routing_metadata`` (session=AM/PM + order_type=limit +
+        limit_price=ask) onto open intents so they can fill pre/post-market —
+        mirroring the macd_30s / schwab_1m path verbatim (no buffer, no new
+        pricing). The limit price is the live ask, exactly like legacy
+        ``_resolve_routed_price``; if there is no ask quote in extended hours we
+        skip the entry (legacy's block), since a limit with no price is invalid.
+
+        RTH is byte-identical to today: ``order_routing_metadata`` returns ``{}``
+        when the session is regular, so the order stays market/NORMAL and this
+        method never touches the draft. Returns False only to skip the emit.
+        """
+        if getattr(draft, "intent_type", "") != "open":
+            return True
+        if extended_hours_session(now) is None:
+            return True  # regular session — unchanged (market/NORMAL)
+        symbol = str(getattr(draft, "symbol", "")).upper()
+        side = str(getattr(draft, "side", "buy"))
+        quote = self._last_quote_by_symbol.get(symbol)
+        quote_field = "ask_price" if side == "buy" else "bid_price"
+        price = _format_limit_price(getattr(quote, quote_field, None)) if quote is not None else None
+        if price is None:
+            logger.warning(
+                "schwab_1m_v2 skipping extended-hours %s entry for %s — no %s quote "
+                "(mirrors legacy _resolve_routed_price block)",
+                side, symbol, quote_field,
+            )
+            return False
+        draft.metadata.update(order_routing_metadata(price=price, side=side, now=now))
+        return True
 
 
 async def main() -> None:
