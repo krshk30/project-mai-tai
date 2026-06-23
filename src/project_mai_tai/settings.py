@@ -173,6 +173,16 @@ class Settings(BaseSettings):
     orb_universe_lead_minutes: int = 5      # confirmed by open - 5m = 09:25
     orb_broker_account_name: str = "paper:orb"
     orb_quantity: int = 10
+    # --- Intrabar-reclaim live test (cap-off + 3% trail), flag-gated, default OFF ---
+    # When True: entry is the intrabar reclaim-of-OR_high (price crosses OR_high and
+    # HOLDS for orb_reclaim_hold_secs) placed as a RESTING LIMIT at OR_high; the 12%
+    # width cap is removed (any width arms); exit trail = orb_reclaim_trail_pct; size
+    # = orb_reclaim_quantity. With it False, ORB is byte-identical to the settled
+    # bar-close/TRAIL-8%/12%-cap path above. See docs/orb-reclaim-capoff-trail-design.md.
+    orb_intrabar_reclaim_enabled: bool = False
+    orb_reclaim_trail_pct: float = 3.0
+    orb_reclaim_quantity: int = 5
+    orb_reclaim_hold_secs: int = 25
 
     strategy_schwab_1m_v2_enabled: bool = False
     strategy_schwab_1m_v2_bar_poll_interval_seconds: float = 15.0
