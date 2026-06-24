@@ -26,6 +26,16 @@ class _Resp:
         self.body = body
 
 
+class _JsonResp:
+    """Mimics a live requests.Response: body via .json(), no .body attribute."""
+
+    def __init__(self, payload: object) -> None:
+        self._payload = payload
+
+    def json(self) -> object:
+        return self._payload
+
+
 class _Req:
     """Generic setter-bag standing in for an SDK request object."""
 
@@ -138,13 +148,14 @@ def _order(**kw) -> OrderRequest:
 # --------------------------------------------------------------------------- tests
 @pytest.mark.asyncio
 async def test_submit_limit_order_accepted(fake_sdk) -> None:
-    client = _FakeClient({"place": {"order_id": "WB-77"}})
+    # Confirmed: place response returns only {client_order_id}; broker order_id comes later.
+    client = _FakeClient({"place": {"client_order_id": "orb-AAPL-open-1"}})
     adapter = _adapter(client)
     reports = await adapter.submit_order(_order())
     assert len(reports) == 1
     rep = reports[0]
     assert rep.event_type == "accepted"
-    assert rep.broker_order_id == "WB-77"
+    assert rep.broker_order_id is None  # not in the place response (normal)
     placed = client.last["place"].values
     assert placed["account_id"] == "ACC1"
     assert placed["instrument_id"] == "913256135"  # resolved from symbol
@@ -153,6 +164,7 @@ async def test_submit_limit_order_accepted(fake_sdk) -> None:
     assert placed["qty"] == "5"
     assert placed["limit_price"] == "2.83"
     assert placed["tif"] == "DAY"
+    assert placed["extended_hours_trading"] is False  # required field, always set
 
 
 @pytest.mark.asyncio
@@ -175,26 +187,47 @@ async def test_submit_rejected_on_server_exception(fake_sdk) -> None:
 
 @pytest.mark.asyncio
 async def test_fetch_order_update_filled(fake_sdk) -> None:
+    # Confirmed shape: order_id top-level; status/fill inside items[0].
     client = _FakeClient(
-        {"detail": {"status": "FILLED", "order_id": "WB-77", "filled_qty": "5", "avg_fill_price": "2.85"}}
+        {
+            "detail": {
+                "order_id": "WB-77",
+                "client_order_id": "orb-AAPL-open-1",
+                "items": [{"order_status": "FILLED", "filled_qty": "5", "avg_fill_price": "2.85"}],
+            }
+        }
     )
     adapter = _adapter(client)
     rep = await adapter.fetch_order_update(_order())
     assert rep is not None
     assert rep.event_type == "filled"
+    assert rep.broker_order_id == "WB-77"
     assert rep.filled_quantity == Decimal("5")
     assert rep.fill_price == Decimal("2.85")
     assert rep.broker_fill_id == "WB-77:5"
 
 
 @pytest.mark.asyncio
-async def test_fetch_order_update_partial_and_cancelled(fake_sdk) -> None:
-    adapter = _adapter(_FakeClient({"detail": {"status": "PARTIAL_FILLED", "filled_qty": "2"}}))
+async def test_fetch_order_update_partial_and_failed(fake_sdk) -> None:
+    adapter = _adapter(_FakeClient({"detail": {"order_id": "X", "items": [{"order_status": "PARTIAL_FILLED", "filled_qty": "2"}]}}))
     rep = await adapter.fetch_order_update(_order())
     assert rep.event_type == "partially_filled"
-    adapter2 = _adapter(_FakeClient({"detail": {"status": "CANCELLED"}}))
+    # Live: a rejected order shows order_status FAILED.
+    adapter2 = _adapter(_FakeClient({"detail": {"order_id": "X", "items": [{"order_status": "FAILED"}]}}))
     rep2 = await adapter2.fetch_order_update(_order())
-    assert rep2.event_type == "cancelled"
+    assert rep2.event_type == "rejected"
+
+
+@pytest.mark.asyncio
+async def test_fetch_order_update_parses_requests_response(fake_sdk) -> None:
+    # Live calls return a requests.Response (body via .json(), no .body attr).
+    class _C:
+        def get_response(self, req):
+            return _JsonResp({"order_id": "WB-9", "items": [{"order_status": "SUBMITTED", "filled_qty": "0"}]})
+
+    rep = await _adapter(_C()).fetch_order_update(_order())
+    assert rep.event_type == "accepted"
+    assert rep.broker_order_id == "WB-9"
 
 
 @pytest.mark.asyncio
