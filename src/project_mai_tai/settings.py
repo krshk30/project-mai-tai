@@ -547,6 +547,14 @@ class Settings(BaseSettings):
     # of running the SELECT+upsert+commit synchronously inside the event loop.
     # Default OFF: behaviour is byte-identical to the synchronous inline path.
     strategy_persist_offload_enabled: bool = False
+    # Debounce the dashboard/scanner snapshot DB persist (the per-message
+    # _replace_dashboard_snapshot encode+commit that saturated the loop at the
+    # close — #350). 0.0 = OFF = persist on every call (byte-identical to today).
+    # When > 0, coalesce per snapshot_type to at most one persist per this many
+    # seconds, trailing-edge (the LATEST snapshot is always written; intermediates
+    # are dropped; force-flushed on shutdown and day-roll). Live Redis state
+    # publishing is unaffected — only the Postgres persist is throttled.
+    snapshot_persist_throttle_secs: float = 0.0
     service_heartbeat_interval_seconds: int = 15
     reconciliation_interval_seconds: int = 30
     reconciliation_stuck_order_seconds: int = 180
