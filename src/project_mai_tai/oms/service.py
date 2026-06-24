@@ -1870,6 +1870,15 @@ class OmsRiskService:
             return
         stop.last_trigger_attempt_at = utcnow()
         stop.close_in_flight = True
+        self.logger.info(
+            "[HARD-STOP TRIGGERED] %s %s qty=%s stop=%.4f trigger=%.4f source=%s -> submitting close",
+            stop.strategy_code,
+            stop.symbol,
+            stop.quantity,
+            float(stop.stop_price),
+            float(trigger_price),
+            trigger_source,
+        )
         event = TradeIntentEvent(
             source_service=SERVICE_NAME,
             payload=TradeIntentPayload(
@@ -2024,6 +2033,16 @@ class OmsRiskService:
                 trail_pct=trail_pct,
                 high_water_mark=high_water_mark,
             )
+            self.logger.info(
+                "[HARD-STOP ARMED] %s %s qty=%s entry=%.4f stop=%.4f stop_loss_pct=%s trail_pct=%s",
+                strategy_code,
+                normalized_symbol,
+                total_quantity,
+                float(entry_price),
+                float(stop_price),
+                stop_loss_pct,
+                trail_pct,
+            )
             return
 
         existing = self._armed_hard_stops.get(key)
@@ -2033,8 +2052,19 @@ class OmsRiskService:
             remaining_quantity = max(Decimal("0"), existing.quantity - quantity)
             if remaining_quantity <= 0:
                 self._armed_hard_stops.pop(key, None)
+                self.logger.info(
+                    "[HARD-STOP CLEARED] %s %s (position flat)",
+                    strategy_code,
+                    normalized_symbol,
+                )
                 return
             existing.quantity = remaining_quantity
+            self.logger.info(
+                "[HARD-STOP DECREMENT] %s %s remaining_qty=%s",
+                strategy_code,
+                normalized_symbol,
+                remaining_quantity,
+            )
 
     def _update_hard_stop_registry_from_order_status(
         self,
