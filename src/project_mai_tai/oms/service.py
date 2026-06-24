@@ -1369,7 +1369,14 @@ class OmsRiskService:
             published_events: list[OrderEventEvent] = []
             for order in open_orders:
                 account = account_lookup.get(order.broker_account_id)
-                if account is None or not order.broker_order_id:
+                # Poll if we can identify the order at the broker by EITHER id. Webull's
+                # place response returns only a client_order_id (broker_order_id arrives
+                # later via order-detail), so gating on broker_order_id alone meant Webull
+                # fills were never polled -> the fill went undetected and the hard stop
+                # never armed (naked position). fetch_order_update keys on client_order_id,
+                # so client_order_id is sufficient; Alpaca/Schwab always have a
+                # broker_order_id by this point, so this is behaviour-identical for them.
+                if account is None or not (order.broker_order_id or order.client_order_id):
                     continue
 
                 intent = session.get(TradeIntent, order.intent_id) if order.intent_id else None
