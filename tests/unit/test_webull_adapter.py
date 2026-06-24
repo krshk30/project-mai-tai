@@ -165,6 +165,29 @@ async def test_submit_limit_order_accepted(fake_sdk) -> None:
     assert placed["tif"] == "DAY"
 
 
+def test_round_to_tick_grid() -> None:
+    # px >= $1 -> 0.01 tick; ORB emits 4-decimal prices that Webull rejects (417) off-grid.
+    assert str(WebullBrokerAdapter._round_to_tick(Decimal("1.6500"))) == "1.65"
+    assert str(WebullBrokerAdapter._round_to_tick(Decimal("1.6549"))) == "1.65"
+    assert str(WebullBrokerAdapter._round_to_tick(Decimal("1.6550"))) == "1.66"
+    assert str(WebullBrokerAdapter._round_to_tick(Decimal("12.3456"))) == "12.35"
+    # sub-dollar -> 0.0001 tick (preserved)
+    assert str(WebullBrokerAdapter._round_to_tick(Decimal("0.5432"))) == "0.5432"
+    assert str(WebullBrokerAdapter._round_to_tick(Decimal("0.54325"))) == "0.5433"
+
+
+@pytest.mark.asyncio
+async def test_submit_limit_order_rounds_offgrid_price(fake_sdk) -> None:
+    client = _FakeClient({"place": {"order_id": "WB-78"}})
+    adapter = _adapter(client)
+    # ORB-style 4-decimal price on a >$1 stock must be snapped to the 0.01 grid.
+    reports = await adapter.submit_order(
+        _order(metadata={"order_type": "limit", "limit_price": "1.6500"})
+    )
+    assert reports[0].event_type == "accepted"
+    assert client.last["place"].values["limit_price"] == "1.65"
+
+
 @pytest.mark.asyncio
 async def test_submit_rejected_when_account_unmapped(fake_sdk) -> None:
     adapter = _adapter(_FakeClient({}))
