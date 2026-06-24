@@ -199,13 +199,21 @@ async def test_fetch_order_update_partial_and_cancelled(fake_sdk) -> None:
 
 @pytest.mark.asyncio
 async def test_list_positions_maps_holdings(fake_sdk) -> None:
+    # Confirmed live margin-account holdings shape (qty / unit_cost / market_value).
     client = _FakeClient(
         {
             "positions": {
                 "has_next": False,
                 "holdings": [
-                    {"symbol": "AAPL", "quantity": "5", "cost_price": "2.80", "market_value": "14.25"},
-                    {"symbol": "ZZZZ", "quantity": "0"},  # flat -> skipped
+                    {
+                        "instrument_id": "913323184",
+                        "symbol": "QNRX",
+                        "qty": "500",
+                        "unit_cost": "4.42",
+                        "last_price": "4.09",
+                        "market_value": "2045.00",
+                    },
+                    {"symbol": "ZZZZ", "qty": "0"},  # flat -> skipped
                 ],
             }
         }
@@ -213,10 +221,10 @@ async def test_list_positions_maps_holdings(fake_sdk) -> None:
     adapter = _adapter(client)
     snaps = await adapter.list_account_positions("live:orb")
     assert len(snaps) == 1
-    assert snaps[0].symbol == "AAPL"
-    assert snaps[0].quantity == Decimal("5")
-    assert snaps[0].average_price == Decimal("2.80")
-    assert snaps[0].market_value == Decimal("14.25")
+    assert snaps[0].symbol == "QNRX"
+    assert snaps[0].quantity == Decimal("500")
+    assert snaps[0].average_price == Decimal("4.42")
+    assert snaps[0].market_value == Decimal("2045.00")
 
 
 @pytest.mark.asyncio

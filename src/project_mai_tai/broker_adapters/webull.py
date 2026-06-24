@@ -348,8 +348,11 @@ class WebullBrokerAdapter:
         quantity = self._decimal_or_none(raw, "quantity", "qty", "position", "shares") or Decimal("0")
         if quantity == 0:
             return None
+        # Confirmed live shape (margin account holdings): unit_cost + market_value + last_price.
         average_price = (
-            self._decimal_or_none(raw, "cost_price", "costPrice", "average_cost", "avg_cost", "avg_price")
+            self._decimal_or_none(
+                raw, "unit_cost", "unitCost", "cost_price", "costPrice", "average_cost", "avg_cost", "avg_price"
+            )
             or Decimal("0")
         )
         market_value = self._decimal_or_none(raw, "market_value", "marketValue", "last_price")
