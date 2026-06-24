@@ -36,6 +36,7 @@ from project_mai_tai.events import (
     TradeTickEvent,
     stream_name,
 )
+from project_mai_tai.log import configure_logging
 from project_mai_tai.oms.store import OmsStore
 from project_mai_tai.runtime_registry import configured_broker_account_registrations, strategy_registration_map
 from project_mai_tai.runtime_seed import seed_runtime_metadata
@@ -137,7 +138,11 @@ class OmsRiskService:
         self.store = store or OmsStore()
         self.strategy_registrations = strategy_registration_map(self.settings)
         self.instance_name = socket.gethostname()
-        self.logger = logging.getLogger(SERVICE_NAME)
+        # Configure root logging so the OMS emits INFO (fills, [HARD-STOP ARMED/
+        # TRIGGERED/CLEARED], exits) — not just default-WARNING. Without this the
+        # entrypoint never configured logging, so every INFO line (incl. real-money
+        # stop arm/trigger) was silently dropped.
+        self.logger = configure_logging(SERVICE_NAME, self.settings.log_level)
         # Track-2 intrabar fix: intents and market-data ticks are consumed on SEPARATE
         # loops/tasks so a slow broker-sync REST on the control loop can never starve
         # quote-driven exit evaluation. Each stream tracks its own offset.
