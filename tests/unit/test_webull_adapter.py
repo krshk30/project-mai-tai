@@ -236,6 +236,16 @@ async def test_instrument_cache_resolves_once(fake_sdk) -> None:
     assert adapter._instrument_cache == {"AAPL": "913256135"}
 
 
+def test_real_constructor_normalizes_host() -> None:
+    # Exercises __init__ (not __new__) so missing-method regressions are caught here.
+    from project_mai_tai.settings import Settings
+
+    adapter = WebullBrokerAdapter(Settings(webull_base_url="https://api.webull.com/"))
+    assert adapter.host == "api.webull.com"
+    assert WebullBrokerAdapter._normalize_host(None) == ""
+    assert WebullBrokerAdapter._normalize_host("api.webull.com") == "api.webull.com"
+
+
 def test_configured_webull_accounts_empty_without_account_id() -> None:
     from project_mai_tai.settings import Settings
 

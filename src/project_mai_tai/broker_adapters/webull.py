@@ -396,6 +396,15 @@ class WebullBrokerAdapter:
         return None
 
     @staticmethod
+    def _normalize_host(base_url: str | None) -> str:
+        """Reduce an env base_url to the bare host the SDK's add_endpoint expects."""
+        host = (base_url or "").strip()
+        if not host:
+            return ""
+        host = host.split("://", 1)[-1]  # drop scheme if present
+        return host.split("/", 1)[0].strip()  # drop any path / trailing slash
+
+    @staticmethod
     def _body(response: object) -> object:
         return getattr(response, "body", response)
 
