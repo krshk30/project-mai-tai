@@ -173,6 +173,10 @@ class Settings(BaseSettings):
     orb_universe_lead_minutes: int = 5      # confirmed by open - 5m = 09:25
     orb_broker_account_name: str = "paper:orb"
     orb_quantity: int = 10
+    # Broker provider for the ORB account. None -> resolved_broker_provider (default,
+    # behaviour-identical to pre-wiring). Set to "webull" + flip orb_broker_account_name
+    # to the live account to route ORB to the real Webull account.
+    orb_broker_provider: str | None = None
     # --- Intrabar-reclaim live test (cap-off + 3% trail), flag-gated, default OFF ---
     # When True: entry is the intrabar reclaim-of-OR_high (price crosses OR_high and
     # HOLDS for orb_reclaim_hold_secs) placed as a RESTING LIMIT at OR_high; the 12%
@@ -706,6 +710,10 @@ class Settings(BaseSettings):
             override = self._normalize_provider_name(self.strategy_tos_broker_provider)
             if override is not None:
                 return override
+        if normalized_code == "orb":
+            override = self._normalize_provider_name(self.orb_broker_provider)
+            if override is not None:
+                return override
         return self.resolved_broker_provider
 
     def provider_for_account(self, account_name: str) -> str:
@@ -720,6 +728,8 @@ class Settings(BaseSettings):
             return self.provider_for_strategy("schwab_1m_v2")
         if normalized_account == self.strategy_tos_account_name:
             return self.provider_for_strategy("tos")
+        if normalized_account == self.orb_broker_account_name:
+            return self.provider_for_strategy("orb")
         return self.resolved_broker_provider
 
     def display_account_name(self, account_name: str) -> str:
