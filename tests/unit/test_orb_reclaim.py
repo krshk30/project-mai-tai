@@ -51,7 +51,7 @@ def test_flag_off_legacy_intent_unchanged():
 def test_flag_off_check_reclaim_is_inert():
     # When off, the tick hook is never invoked; even if called, mode flag stops entries.
     svc = _svc(orb_intrabar_reclaim_enabled=False)
-    st = _armed(svc, "HSCS", 2.83, 2.52)
+    _armed(svc, "HSCS", 2.83, 2.52)  # arm state for side effects; return unused here
     # _check_reclaim is only called under self._reclaim_mode in the drain path; calling
     # it directly should still not create an entry because the mode is off everywhere.
     assert svc._reclaim_mode is False
