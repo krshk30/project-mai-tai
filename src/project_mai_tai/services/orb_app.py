@@ -100,6 +100,8 @@ class _SymbolState:
     reclaim_cross_ms: int | None = None
     # ms UTC of the reclaim-confirm (entry emit) — fill-instrumentation timestamp.
     reclaim_emit_ms: int | None = None
+    # running-high mode only: highest 1-min bar-high seen since 09:25 (the breakout level).
+    running_high: float | None = None
 
 
 class OrbService:
@@ -107,6 +109,7 @@ class OrbService:
     # legacy path; __init__ overrides them from settings.
     _reclaim_mode: bool = False
     _reclaim_hold_ms: int = 25_000
+    _running_high_mode: bool = False
 
     def __init__(
         self,
@@ -127,6 +130,13 @@ class OrbService:
         # Default False -> every reclaim branch is skipped and ORB is byte-identical.
         self._reclaim_mode = bool(getattr(self.settings, "orb_intrabar_reclaim_enabled", False))
         self._reclaim_hold_ms = int(getattr(self.settings, "orb_reclaim_hold_secs", 25)) * 1000
+        # Running-high breakout mode (operator-validated). Mutually exclusive with reclaim:
+        # only active when reclaim is OFF. Default False -> byte-identical to existing paths.
+        self._running_high_mode = bool(
+            getattr(self.settings, "orb_running_high_enabled", False)
+        ) and not self._reclaim_mode
+        self._rh_gap_cap_pct = float(getattr(self.settings, "orb_running_high_gap_cap_pct", 1.5))
+        self._rh_window_min = int(getattr(self.settings, "orb_running_high_window_minutes", 30))
         self._cfg = OrbConfig(
             or_minutes=int(self.settings.orb_or_minutes),
             vol_mult=float(self.settings.orb_vol_mult),
@@ -266,7 +276,10 @@ class OrbService:
         ts = datetime.fromtimestamp(ts_ns / 1e9, tz=UTC) if ts_ns else datetime.now(UTC)
         agg = self._aggregators.get(symbol)
         if agg is None:
-            agg = OrbTickAggregator(session_open=self._session_open_utc())
+            # Running-high mode seeds the reference from 09:25 (pre-09:30) bars, so anchor
+            # the aggregator at 09:25; all other modes anchor at the 09:30 session open.
+            anchor = self._observe_open_utc() if self._running_high_mode else self._session_open_utc()
+            agg = OrbTickAggregator(session_open=anchor)
             self._aggregators[symbol] = agg
         bar = agg.add_tick(ts, price, size)
         if bar is not None:
@@ -279,8 +292,50 @@ class OrbService:
         now_et = datetime.now(_ET)
         return now_et.replace(hour=9, minute=30, second=0, microsecond=0).astimezone(UTC)
 
+    @staticmethod
+    def _observe_open_utc() -> datetime:
+        """09:25 ET — the running-high observation anchor (reference builds from here)."""
+        now_et = datetime.now(_ET)
+        return now_et.replace(hour=9, minute=25, second=0, microsecond=0).astimezone(UTC)
+
+    def _on_bar_running_high(self, symbol: str, bar: OrbBar) -> None:
+        """Running-high breakout entry (operator-validated). Reference = highest 1-min
+        bar-high since 09:25; enter when a bar breaks it within 09:30..open+window, at the
+        breakout level, only if the fill is within gap_cap% of the broken high. v1 = one
+        entry per symbol (re-entry is a follow-up). Exit = OMS trail orb_reclaim_trail_pct."""
+        observe_open = self._observe_open_utc()
+        if bar.timestamp < observe_open:
+            return
+        open_utc = self._session_open_utc()
+        cutoff = open_utc + timedelta(minutes=self._rh_window_min)
+        st = self._states.setdefault(symbol, _SymbolState())
+        st.last_bar_at = bar.timestamp.isoformat()
+        if st.running_high is None:
+            st.running_high = bar.high          # first observed bar seeds the reference
+            return
+        if (
+            not st.traded
+            and symbol in self._universe
+            and open_utc <= bar.timestamp <= cutoff
+            and bar.high > st.running_high
+        ):
+            level = st.running_high
+            fill = level if bar.open <= level else bar.open   # gap-up fills at the open
+            if fill <= level * (1.0 + self._rh_gap_cap_pct / 100.0):
+                st.traded = True               # one entry per symbol (v1)
+                st.entry_price = fill
+                self._pending_intents.append((symbol, fill))
+                logger.info(
+                    "[ORB-RH-ENTRY] %s entry=%.4f broke_high=%.4f gap=%.2f%%",
+                    symbol, fill, level, (fill / level - 1.0) * 100.0,
+                )
+        st.running_high = max(st.running_high, bar.high)
+
     # ----- the entry brain: OR build -> breakout -> arm-on-window-open -> open intent -----
     def _on_bar(self, symbol: str, bar: OrbBar) -> None:
+        if self._running_high_mode:
+            self._on_bar_running_high(symbol, bar)
+            return
         open_utc = self._session_open_utc()
         if bar.timestamp < open_utc:
             return  # pre-open bar — not part of the opening range
@@ -369,7 +424,23 @@ class OrbService:
             st.reclaim_cross_ms = None  # hold broke — wait for the next reclaim
 
     def _build_open_intent(self, symbol: str, entry_price: float) -> TradeIntentEvent:
-        if self._reclaim_mode:
+        if self._running_high_mode:
+            pct = str(self.settings.orb_reclaim_trail_pct)   # 3% trail (shared setting)
+            qty = int(self.settings.orb_reclaim_quantity)     # qty 5 (shared setting)
+            metadata = {
+                "stop_guard_enabled": "true",
+                "stop_loss_pct": pct,
+                "trail_pct": pct,                 # OMS trailing stop (#340)
+                "stop_guard_quote_max_age_ms": "2000",
+                "stop_guard_initial_panic_buffer_pct": "1.5",
+                "orb_entry": "true",
+                "execution_mode": "running_high_breakout",
+                "order_type": "limit",            # resting limit at the breakout level
+                "limit_price": f"{entry_price:.4f}",
+                "reference_price": f"{entry_price:.4f}",
+                "orb_intended_break_level": f"{entry_price:.4f}",
+            }
+        elif self._reclaim_mode:
             st = self._states.get(symbol)
             emit_ms = st.reclaim_emit_ms if st is not None else None
             pct = str(self.settings.orb_reclaim_trail_pct)
@@ -452,6 +523,8 @@ class OrbService:
                 last_tick[sym] = st.last_bar_at
             if st.traded:
                 status = "entered"
+            elif self._running_high_mode:
+                status = "watching" if st.running_high is not None else "building_or"
             elif not st.or_evaluated:
                 status = "building_or"
             elif st.opening_range is None:

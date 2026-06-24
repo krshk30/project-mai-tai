@@ -187,6 +187,17 @@ class Settings(BaseSettings):
     orb_reclaim_trail_pct: float = 3.0
     orb_reclaim_quantity: int = 5
     orb_reclaim_hold_secs: int = 25
+    # --- Running-high breakout mode (operator-validated 2026-06-24), flag-gated, default OFF ---
+    # When True (and reclaim OFF): observe from 09:25, reference = running highest 1-min
+    # bar-high since 09:25; from 09:30 to (open + orb_running_high_window_minutes), enter when a
+    # bar's high breaks the running high, at the breakout level, only if the fill is within
+    # orb_running_high_gap_cap_pct of the broken high (else skip = don't chase). Exit = OMS
+    # trail orb_reclaim_trail_pct; size = orb_reclaim_quantity. v1 = SINGLE entry per symbol
+    # (re-entry is a follow-up needing OMS position-sync). With False, ORB is byte-identical to
+    # the bar-close/reclaim paths above. See ORB_RULES.md.
+    orb_running_high_enabled: bool = False
+    orb_running_high_window_minutes: int = 30   # entries only 09:30 .. open+30 = 10:00 ET
+    orb_running_high_gap_cap_pct: float = 1.5
 
     strategy_schwab_1m_v2_enabled: bool = False
     strategy_schwab_1m_v2_bar_poll_interval_seconds: float = 15.0
