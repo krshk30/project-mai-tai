@@ -5866,6 +5866,10 @@ class StrategyEngineState:
 
 
 class StrategyEngineService:
+    # Class-level default so instances built via __new__ (some unit tests) read the
+    # off/byte-identical snapshot-persist path; __init__ overrides from settings.
+    _snapshot_throttle_secs: float = 0.0
+
     def __init__(
         self,
         settings: Settings | None = None,
@@ -5999,6 +6003,15 @@ class StrategyEngineService:
             1.0,
             float(getattr(self.settings, "strategy_main_loop_step_timeout_seconds", 30.0) or 30.0),
         )
+        # Snapshot-persist debounce (#350). 0.0 => off => persist every call
+        # (byte-identical). When > 0, _replace_dashboard_snapshot coalesces per
+        # snapshot_type; _flush_pending_snapshots() drains the trailing snapshot
+        # each loop iteration and is force-flushed on shutdown / day-roll.
+        self._snapshot_throttle_secs = max(
+            0.0, float(getattr(self.settings, "snapshot_persist_throttle_secs", 0.0) or 0.0)
+        )
+        self._snapshot_last_persist_at: dict[str, datetime] = {}
+        self._snapshot_pending: dict[str, dict[str, object]] = {}
         self._main_loop_fault_injection_remaining = max(
             0,
             int(getattr(self.settings, "strategy_main_loop_fault_injection_count", 0) or 0),
@@ -6198,6 +6211,10 @@ class StrategyEngineService:
         contained failure still lets the rest of the iteration — crucially the
         heartbeat and the non-Schwab bots' market-data drain — run.
         """
+        # Trailing-edge drain of any debounced snapshot whose window has elapsed
+        # (#350). No-op when throttling is off or nothing is pending. Runs every
+        # iteration (~<=1s cadence) so a coalesced snapshot is never stale long.
+        self._flush_pending_snapshots()
         priority_count = await self._read_stream_group(self._priority_streams, block_ms=1)
         # Drain market-data aggressively per main-loop iteration. Bounded
         # by _MARKET_DATA_DRAIN_BUDGET so flush_completed_bars and the
@@ -6301,6 +6318,9 @@ class StrategyEngineService:
                 )
                 await self._sync_subscription_targets()
                 await self._publish_strategy_state_snapshot()
+                # Force-flush so the freshly-rolled (often empty) snapshot persists
+                # NOW rather than waiting out the debounce window (#350).
+                self._flush_pending_snapshots(force=True)
             self._sync_runtime_data_health_incidents()
             await self._publish_heartbeat("healthy")
             last_heartbeat_at = utcnow()
@@ -6497,6 +6517,12 @@ class StrategyEngineService:
                 self.state.flush_pending_persists()
             except Exception:
                 self.logger.debug("flush_pending_persists during shutdown raised", exc_info=True)
+        # Force-persist the latest debounced dashboard/scanner snapshot so the
+        # dashboard isn't left on a stale row after shutdown (#350; no-op off).
+        try:
+            self._flush_pending_snapshots(force=True)
+        except Exception:
+            self.logger.debug("flush_pending_snapshots during shutdown raised", exc_info=True)
         if self._schwab_stream_client is not None:
             try:
                 await asyncio.wait_for(self._schwab_stream_client.stop(), timeout=10.0)
@@ -10057,6 +10083,51 @@ class StrategyEngineService:
             runtime.pending_scale_levels = set(pending_scale)  # type: ignore[attr-defined]
 
     def _replace_dashboard_snapshot(self, snapshot_type: str, payload: dict[str, object]) -> None:
+        """Persist the latest snapshot for ``snapshot_type`` (replace prior row).
+
+        With ``snapshot_persist_throttle_secs <= 0`` this persists immediately —
+        byte-identical to the original per-call behaviour. With it > 0 the DB
+        encode+commit is debounced per snapshot_type to at most one per window;
+        the LATEST payload is always kept as pending (trailing-edge) and drained
+        by ``_flush_pending_snapshots`` (each loop iteration, and force-flushed on
+        shutdown / day-roll), so the dashboard never sticks on a stale snapshot.
+        Live Redis state publishing is unaffected — only this Postgres persist.
+        """
+        if self.session_factory is None:
+            return
+        if self._snapshot_throttle_secs <= 0:
+            self._do_replace_dashboard_snapshot(snapshot_type, payload)
+            return
+        now = utcnow()
+        last = self._snapshot_last_persist_at.get(snapshot_type)
+        if last is None or (now - last).total_seconds() >= self._snapshot_throttle_secs:
+            self._snapshot_last_persist_at[snapshot_type] = now
+            self._snapshot_pending.pop(snapshot_type, None)
+            self._do_replace_dashboard_snapshot(snapshot_type, payload)
+        else:
+            # Within the window: coalesce — keep ONLY the latest (trailing-edge).
+            self._snapshot_pending[snapshot_type] = payload
+
+    def _flush_pending_snapshots(self, *, force: bool = False) -> None:
+        """Drain coalesced snapshots. Each loop iteration: persist any pending whose
+        throttle window has elapsed (trailing-edge, so a stalled dashboard catches up
+        within ~1 iteration once messages stop). ``force=True`` (shutdown / day-roll)
+        persists everything pending regardless of window — the latest is never lost."""
+        if not getattr(self, "_snapshot_pending", None):
+            return
+        now = utcnow()
+        for snapshot_type in list(self._snapshot_pending.keys()):
+            last = self._snapshot_last_persist_at.get(snapshot_type)
+            due = force or last is None or (now - last).total_seconds() >= self._snapshot_throttle_secs
+            if not due:
+                continue
+            payload = self._snapshot_pending.pop(snapshot_type, None)
+            if payload is None:
+                continue
+            self._snapshot_last_persist_at[snapshot_type] = now
+            self._do_replace_dashboard_snapshot(snapshot_type, payload)
+
+    def _do_replace_dashboard_snapshot(self, snapshot_type: str, payload: dict[str, object]) -> None:
         if self.session_factory is None:
             return
 
