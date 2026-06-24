@@ -1,0 +1,248 @@
+"""Unit tests for the Webull live broker adapter.
+
+The Webull SDK is imported lazily inside the adapter and is NOT a CI dependency, so we
+register fake ``webull.*`` modules in ``sys.modules`` and inject a fake client. Tests cover
+request construction + response mapping against the shapes the on-box probe confirmed (reads)
+and the defensive parsing for the order shapes still to be confirmed by a funded test order.
+"""
+from __future__ import annotations
+
+import sys
+import types
+from decimal import Decimal
+
+import pytest
+
+from project_mai_tai.broker_adapters.protocols import OrderRequest
+from project_mai_tai.broker_adapters.webull import (
+    WebullAccountConfig,
+    WebullBrokerAdapter,
+)
+
+
+# --------------------------------------------------------------------------- fakes
+class _Resp:
+    def __init__(self, body: object) -> None:
+        self.body = body
+
+
+class _Req:
+    """Generic setter-bag standing in for an SDK request object."""
+
+    _kind = "?"
+
+    def __init__(self) -> None:
+        self.values: dict[str, object] = {}
+
+    def __getattr__(self, name: str):
+        if name.startswith("set_"):
+            field = name[4:]
+            return lambda value: self.values.__setitem__(field, value)
+        raise AttributeError(name)
+
+
+def _make_req(kind: str):
+    return type(kind, (_Req,), {"_kind": kind})
+
+
+class _FakeClient:
+    """Dispatches get_response by request kind; records the last request per kind."""
+
+    def __init__(self, bodies: dict[str, object]) -> None:
+        self._bodies = bodies
+        self.last: dict[str, _Req] = {}
+        self.raises: dict[str, Exception] = {}
+
+    def get_response(self, req: _Req) -> _Resp:
+        self.last[req._kind] = req
+        if req._kind in self.raises:
+            raise self.raises[req._kind]
+        return _Resp(self._bodies.get(req._kind))
+
+
+class _ServerException(Exception):
+    def __init__(self, code: str, msg: str, http: int) -> None:
+        super().__init__(code)
+        self.error_code = code
+        self.error_msg = msg
+        self.http_status = http
+
+
+@pytest.fixture
+def fake_sdk(monkeypatch):
+    """Register fake webull.* modules so the adapter's lazy imports resolve."""
+
+    def reg(path: str, **attrs):
+        mod = types.ModuleType(path)
+        for k, v in attrs.items():
+            setattr(mod, k, v)
+        monkeypatch.setitem(sys.modules, path, mod)
+        return mod
+
+    for pkg in ("webull", "webull.trade", "webull.trade.request", "webull.data", "webull.data.quotes"):
+        reg(pkg)
+    reg("webull.trade.request.place_order_request", PlaceOrderRequest=_make_req("place"))
+    reg("webull.trade.request.get_order_detail_request", OrderDetailRequest=_make_req("detail"))
+    reg("webull.trade.request.get_account_positions_request", AccountPositionsRequest=_make_req("positions"))
+    reg("webull.trade.request.cancel_order_request", CancelOrderRequest=_make_req("cancel"))
+
+    class _Instrument:
+        body = [{"symbol": "AAPL", "instrument_id": "913256135"}]
+
+        def __init__(self, client) -> None:
+            self._client = client
+
+        def get_instrument(self, symbols=None, category=None):
+            return _Resp(type(self).body)
+
+    reg("webull.data.quotes.instrument", Instrument=_Instrument)
+    return None
+
+
+def _adapter(client, **overrides) -> WebullBrokerAdapter:
+    adapter = WebullBrokerAdapter.__new__(WebullBrokerAdapter)
+    adapter.settings = None
+    adapter.region_id = "us"
+    adapter.host = "api.webull.com"
+    adapter.app_key = "ak"
+    adapter.app_secret = "as"
+    adapter.accounts_by_name = {"live:orb": WebullAccountConfig(account_id="ACC1")}
+    adapter._client = client
+    import threading
+
+    adapter._client_lock = threading.Lock()
+    adapter._instrument_cache = {}
+    adapter._instrument_lock = threading.Lock()
+    for k, v in overrides.items():
+        setattr(adapter, k, v)
+    return adapter
+
+
+def _order(**kw) -> OrderRequest:
+    base = dict(
+        client_order_id="orb-AAPL-open-1",
+        broker_account_name="live:orb",
+        strategy_code="orb",
+        symbol="AAPL",
+        side="buy",
+        intent_type="open",
+        quantity=Decimal("5"),
+        reason="ORB_RECLAIM",
+        metadata={"order_type": "limit", "limit_price": "2.83"},
+        order_type="limit",
+    )
+    base.update(kw)
+    return OrderRequest(**base)
+
+
+# --------------------------------------------------------------------------- tests
+@pytest.mark.asyncio
+async def test_submit_limit_order_accepted(fake_sdk) -> None:
+    client = _FakeClient({"place": {"order_id": "WB-77"}})
+    adapter = _adapter(client)
+    reports = await adapter.submit_order(_order())
+    assert len(reports) == 1
+    rep = reports[0]
+    assert rep.event_type == "accepted"
+    assert rep.broker_order_id == "WB-77"
+    placed = client.last["place"].values
+    assert placed["account_id"] == "ACC1"
+    assert placed["instrument_id"] == "913256135"  # resolved from symbol
+    assert placed["side"] == "BUY"
+    assert placed["order_type"] == "LIMIT"
+    assert placed["qty"] == "5"
+    assert placed["limit_price"] == "2.83"
+    assert placed["tif"] == "DAY"
+
+
+@pytest.mark.asyncio
+async def test_submit_rejected_when_account_unmapped(fake_sdk) -> None:
+    adapter = _adapter(_FakeClient({}))
+    reports = await adapter.submit_order(_order(broker_account_name="paper:orb"))
+    assert reports[0].event_type == "rejected"
+    assert "no Webull account id" in reports[0].reason
+
+
+@pytest.mark.asyncio
+async def test_submit_rejected_on_server_exception(fake_sdk) -> None:
+    client = _FakeClient({"place": {}})
+    client.raises["place"] = _ServerException("INVALID_TOKEN", "permission denied", 401)
+    adapter = _adapter(client)
+    reports = await adapter.submit_order(_order())
+    assert reports[0].event_type == "rejected"
+    assert "INVALID_TOKEN" in reports[0].reason and "401" in reports[0].reason
+
+
+@pytest.mark.asyncio
+async def test_fetch_order_update_filled(fake_sdk) -> None:
+    client = _FakeClient(
+        {"detail": {"status": "FILLED", "order_id": "WB-77", "filled_qty": "5", "avg_fill_price": "2.85"}}
+    )
+    adapter = _adapter(client)
+    rep = await adapter.fetch_order_update(_order())
+    assert rep is not None
+    assert rep.event_type == "filled"
+    assert rep.filled_quantity == Decimal("5")
+    assert rep.fill_price == Decimal("2.85")
+    assert rep.broker_fill_id == "WB-77:5"
+
+
+@pytest.mark.asyncio
+async def test_fetch_order_update_partial_and_cancelled(fake_sdk) -> None:
+    adapter = _adapter(_FakeClient({"detail": {"status": "PARTIAL_FILLED", "filled_qty": "2"}}))
+    rep = await adapter.fetch_order_update(_order())
+    assert rep.event_type == "partially_filled"
+    adapter2 = _adapter(_FakeClient({"detail": {"status": "CANCELLED"}}))
+    rep2 = await adapter2.fetch_order_update(_order())
+    assert rep2.event_type == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_list_positions_maps_holdings(fake_sdk) -> None:
+    client = _FakeClient(
+        {
+            "positions": {
+                "has_next": False,
+                "holdings": [
+                    {"symbol": "AAPL", "quantity": "5", "cost_price": "2.80", "market_value": "14.25"},
+                    {"symbol": "ZZZZ", "quantity": "0"},  # flat -> skipped
+                ],
+            }
+        }
+    )
+    adapter = _adapter(client)
+    snaps = await adapter.list_account_positions("live:orb")
+    assert len(snaps) == 1
+    assert snaps[0].symbol == "AAPL"
+    assert snaps[0].quantity == Decimal("5")
+    assert snaps[0].average_price == Decimal("2.80")
+    assert snaps[0].market_value == Decimal("14.25")
+
+
+@pytest.mark.asyncio
+async def test_cancel_intent(fake_sdk) -> None:
+    client = _FakeClient({"cancel": {}})
+    adapter = _adapter(client)
+    reports = await adapter.submit_order(_order(intent_type="cancel", side="sell"))
+    assert reports[0].event_type == "cancelled"
+    assert client.last["cancel"].values["client_order_id"] == "orb-AAPL-open-1"
+
+
+@pytest.mark.asyncio
+async def test_instrument_cache_resolves_once(fake_sdk) -> None:
+    client = _FakeClient({"place": {"order_id": "1"}})
+    adapter = _adapter(client)
+    await adapter.submit_order(_order())
+    assert adapter._instrument_cache == {"AAPL": "913256135"}
+
+
+def test_configured_webull_accounts_empty_without_account_id() -> None:
+    from project_mai_tai.settings import Settings
+
+    assert configured_empty(Settings(webull_account_id=None)) == {}
+
+
+def configured_empty(settings):
+    from project_mai_tai.broker_adapters.webull import configured_webull_accounts
+
+    return configured_webull_accounts(settings)

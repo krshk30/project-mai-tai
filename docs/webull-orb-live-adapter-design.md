@@ -64,6 +64,23 @@ against reality. Also confirms the **sandbox host** and the instrument-lookup sh
 - Real-money safety gate: reclaim emits → **trail attaches on fill** → kill-switch/flatten on a
   real Webull position. qty 5. First real open only after all green.
 
+## Build status (2026-06-24)
+Probe-confirmed on the box (IP-whitelisted), adapter built:
+- **Auth WORKS.** Root cause of the earlier 403 was a **wrong env account_id** (`CVV7L5G4`) +
+  **wrong host** — NOT 2FA. Correct host = **`api.webull.com`** (the SDK's native host; the
+  US `us-oauth-open-api.webull.com` edge-403s this SDK). Correct account_id =
+  **`5HHC7DGUUIS02IEGTNQE978BI8`** (account_number `CVT3Z8K9`) from `GetAppSubscriptions`.
+  Both env values fixed on the box.
+- **Confirmed read shapes:** account profile (`account_type:"CASH"`), balance, positions
+  (`{has_next, holdings:[]}`), orders (`{hasNext, pageSize}`), and symbol→instrument_id via
+  `data.quotes.Instrument.get_instrument` (AAPL→`913256135`). Adapter (`webull.py`) + unit
+  tests built against these. SDK imported lazily (no CI dep); sync calls wrapped in `to_thread`.
+- **STILL CONFIRM-AT-TEST (defensive parsing, marked in code):** place/order-detail/holdings
+  RESPONSE field names — account was UNFUNDED at build (balance 0.00), so the far-from-market
+  test order could not run. Confirm these via a funded test order BEFORE go-live.
+- **NOT in this change:** wiring `live:orb`→webull (isolated-bot routing; `provider_for_account`
+  has no ORB branch yet) and installing `webull-openapi-python-sdk` in the production venv.
+
 ## Gaps / dependencies
 - New dep `webull-openapi-python-sdk` (pulls grpcio/paho-mqtt/cryptography — vet).
 - Operator's Webull account must be OpenAPI-approved (external, ~1–2 days).
