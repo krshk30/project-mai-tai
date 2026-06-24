@@ -148,6 +148,11 @@ class OrbService:
         )
         self._mode = ExecutionMode(str(self.settings.orb_execution_mode))
         self._loop_count = 0
+        # ET session date — when it rolls, per-symbol state + aggregators are reset so the
+        # next session starts clean (running_high re-seeds from 09:25, traded flags clear,
+        # aggregators rebuild with the new session anchor). Without this, a bot left running
+        # across midnight carries the prior day's state into the new session.
+        self._session_date = datetime.now(_ET).date()
 
     # ----- lifecycle -----
     async def run(self) -> None:
@@ -159,6 +164,7 @@ class OrbService:
         logger.info("[ORB] starting — isolated bot, market-data gateway consumer")
         try:
             while True:
+                self._maybe_roll_session()
                 await self._sync_gateway_subscription(self._refresh_universe())
                 await self._drain_market_data()
                 await self._publish_pending_intents()
@@ -169,6 +175,19 @@ class OrbService:
         except asyncio.CancelledError:
             logger.info("[ORB] cancelled; shutting down")
             raise
+
+    def _maybe_roll_session(self) -> None:
+        """Reset per-symbol state + aggregators when the ET date rolls, so each session
+        starts clean (no prior-day running_high / traded flag / stale-symbol carryover).
+        No-op within the same session; only fires on a date change."""
+        today = datetime.now(_ET).date()
+        if today == self._session_date:
+            return
+        prior = self._session_date
+        self._session_date = today
+        self._states.clear()
+        self._aggregators.clear()
+        logger.info("[ORB] day-roll reset %s -> %s: cleared per-symbol state + aggregators", prior, today)
 
     # ----- universe: pre-09:25 confirmed names (the binding rule) -----
     def _refresh_universe(self) -> list[str]:
