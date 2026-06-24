@@ -24,7 +24,7 @@ import logging
 import threading
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 from project_mai_tai.broker_adapters.protocols import (
     BrokerPositionSnapshot,
@@ -152,10 +152,10 @@ class WebullBrokerAdapter:
             po.set_category("US_STOCK")
         limit_price = self._meta_price(request, "limit_price", "reference_price")
         if self._order_type(request) in {"LIMIT", "STOP_LIMIT"} and limit_price is not None:
-            po.set_limit_price(str(limit_price))
+            po.set_limit_price(str(self._round_to_tick(limit_price)))
         stop_price = self._meta_price(request, "stop_price")
         if self._order_type(request) in {"STOP", "STOP_LIMIT"} and stop_price is not None:
-            po.set_stop_price(str(stop_price))
+            po.set_stop_price(str(self._round_to_tick(stop_price)))
         # extended_hours_trading is REQUIRED by the API (null -> ILLEGAL_PARAMETER 417);
         # always set it, defaulting to RTH-only (False). (Verified on the live test order.)
         if hasattr(po, "set_extended_hours_trading"):
@@ -402,6 +402,15 @@ class WebullBrokerAdapter:
                 except (InvalidOperation, ValueError):
                     continue
         return None
+
+    @staticmethod
+    def _round_to_tick(price: Decimal) -> Decimal:
+        """Snap a price to Webull's tick grid. Webull rejects off-grid prices with
+        ILLEGAL_PARAMETER (http 417): tick is $0.01 for px >= $1, and $0.0001 below $1.
+        Strategies (e.g. ORB) emit 4-decimal prices (f"{px:.4f}"), which are illegal for
+        any stock >= $1 — round here so the broker always accepts the order."""
+        tick = Decimal("0.01") if price >= Decimal("1") else Decimal("0.0001")
+        return price.quantize(tick, rounding=ROUND_HALF_UP)
 
     @staticmethod
     def _normalize_host(base_url: str | None) -> str:
