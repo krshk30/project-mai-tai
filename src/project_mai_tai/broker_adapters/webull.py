@@ -156,15 +156,16 @@ class WebullBrokerAdapter:
         stop_price = self._meta_price(request, "stop_price")
         if self._order_type(request) in {"STOP", "STOP_LIMIT"} and stop_price is not None:
             po.set_stop_price(str(stop_price))
-        ext = str(request.metadata.get("extended_hours", request.metadata.get("session", ""))).strip().lower()
-        if hasattr(po, "set_extended_hours_trading") and ext in {"true", "1", "yes", "am", "pm", "extended"}:
-            po.set_extended_hours_trading(True)
+        # extended_hours_trading is REQUIRED by the API (null -> ILLEGAL_PARAMETER 417);
+        # always set it, defaulting to RTH-only (False). (Verified on the live test order.)
+        if hasattr(po, "set_extended_hours_trading"):
+            ext = str(request.metadata.get("extended_hours", request.metadata.get("session", ""))).strip().lower()
+            po.set_extended_hours_trading(ext in {"true", "1", "yes", "am", "pm", "extended"})
 
         body = self._body(client.get_response(po))
-        # CONFIRM-AT-TEST: order-id field name in the place response.
-        broker_order_id = self._first_str(body, "order_id", "orderId", "client_order_id", "clientOrderId")
-        if broker_order_id is None:
-            logger.warning("Webull place-order: no order id in body=%r", body)
+        # Confirmed live: the place response returns only {client_order_id}; the broker
+        # order_id appears in the order-detail (fetch_order_update). A None here is normal.
+        broker_order_id = self._first_str(body, "order_id", "orderId")
         # A resting limit (ORB reclaim) is acknowledged; the OMS polls fetch_order_update for
         # the fill — so we return "accepted" and do not block waiting on a terminal state.
         return [
@@ -194,21 +195,25 @@ class WebullBrokerAdapter:
         od.set_account_id(account.account_id)
         od.set_client_order_id(request.client_order_id)
         body = self._body(client.get_response(od))
-        order = body[0] if isinstance(body, list) and body else body
-        if not isinstance(order, dict):
+        if not isinstance(body, dict):
             logger.warning("Webull order-detail: unexpected body=%r", body)
             return None
 
-        event_type = self._map_status(order)
-        # CONFIRM-AT-TEST: filled-qty / fill-price / order-id field names in the detail body.
+        # Confirmed live shape (real AZI fills 2026-06-24): order_id is TOP-LEVEL; status +
+        # fill live in items[0] as order_status / filled_qty / filled_price.
+        items = body.get("items") if isinstance(body.get("items"), list) else []
+        item = items[0] if items and isinstance(items[0], dict) else {}
+        broker_order_id = self._first_str(body, "order_id", "orderId")
+        event_type = self._map_status(item)
         filled_quantity = (
-            self._decimal_or_none(order, "filled_qty", "filledQty", "filled_quantity", "filledQuantity")
+            self._decimal_or_none(item, "filled_qty", "filledQty", "filled_quantity", "filledQuantity")
             or Decimal("0")
         )
+        # filled_price = the CONFIRMED real fill-price field (was the naked-position bug:
+        # a wrong field -> fill_price None -> OMS arms NO trailing stop).
         fill_price = self._decimal_or_none(
-            order, "avg_fill_price", "avgFillPrice", "filled_avg_price", "average_filled_price", "avg_price"
+            item, "filled_price", "filledPrice", "avg_fill_price", "avgFillPrice", "avg_price"
         )
-        broker_order_id = self._first_str(order, "order_id", "orderId", "client_order_id", "clientOrderId")
         return ExecutionReport(
             event_type=event_type,  # type: ignore[arg-type]
             client_order_id=request.client_order_id,
@@ -220,7 +225,7 @@ class WebullBrokerAdapter:
             quantity=request.quantity,
             filled_quantity=filled_quantity,
             fill_price=fill_price,
-            reason=str(order.get("failure_reason") or order.get("failureReason") or request.reason),
+            reason=str(item.get("failure_reason") or item.get("failureReason") or request.reason),
             metadata=dict(request.metadata),
         )
 
@@ -348,8 +353,11 @@ class WebullBrokerAdapter:
         quantity = self._decimal_or_none(raw, "quantity", "qty", "position", "shares") or Decimal("0")
         if quantity == 0:
             return None
+        # Confirmed live holdings shape: unit_cost (not cost_price/avg_cost).
         average_price = (
-            self._decimal_or_none(raw, "cost_price", "costPrice", "average_cost", "avg_cost", "avg_price")
+            self._decimal_or_none(
+                raw, "unit_cost", "unitCost", "cost_price", "costPrice", "average_cost", "avg_cost", "avg_price"
+            )
             or Decimal("0")
         )
         market_value = self._decimal_or_none(raw, "market_value", "marketValue", "last_price")
@@ -406,7 +414,18 @@ class WebullBrokerAdapter:
 
     @staticmethod
     def _body(response: object) -> object:
-        return getattr(response, "body", response)
+        # Live SDK calls return a requests.Response (parse via .json(); no .body attr).
+        # Some wrappers expose .body directly. Handle both (this was why NO live response
+        # parsed before — .body is None on a requests.Response).
+        body = getattr(response, "body", None)
+        if body is not None:
+            return body
+        if hasattr(response, "json"):
+            try:
+                return response.json()
+            except Exception:  # noqa: BLE001
+                return None
+        return response
 
     @staticmethod
     def _first_str(body: object, *keys: str) -> str | None:
