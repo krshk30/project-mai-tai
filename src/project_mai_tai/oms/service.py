@@ -1393,7 +1393,7 @@ class OmsRiskService:
                     intent_type=intent.intent_type,  # type: ignore[arg-type]
                     quantity=order.quantity,
                     reason=intent.reason,
-                    metadata={**{str(k): str(v) for k, v in (order.payload or {}).items()}, "broker_order_id": order.broker_order_id},
+                    metadata={**{str(k): str(v) for k, v in (order.payload or {}).items()}, "broker_order_id": order.broker_order_id or ""},
                     order_type=str((order.payload or {}).get("order_type", order.order_type)),
                     time_in_force=str((order.payload or {}).get("time_in_force", order.time_in_force)),
                 )
