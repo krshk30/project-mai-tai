@@ -199,6 +199,18 @@ class Settings(BaseSettings):
     orb_running_high_window_minutes: int = 30   # entries only 09:30 .. open+30 = 10:00 ET
     orb_running_high_gap_cap_pct: float = 1.5
 
+    # OMS-quote-priced ORB entry (Piece 1 of the OMS-pricing port; see
+    # docs/orb-oms-quote-priced-entry-design.md). With it False, ORB is byte-identical:
+    # the bot ships its signal-time break-level limit and the OMS passes it through.
+    # With it True, the bot OMITS limit_price/reference_price (fail-closed: a stale price
+    # is structurally unshippable) and the OMS re-prices the entry from its OWN live quote
+    # (Polygon NBBO) at placement: limit = min(ask + 1 tick, break_level*(1+gap_cap)); it
+    # ABANDONS (no submit) on no-fresh-quote / ask-past-gap-cap / missing-bound. ORB-only,
+    # entry-side only; the exit/stop path and other bots are untouched. NOTE: requires BOTH
+    # the orb AND oms services restarted together when toggled (cross-process flag).
+    orb_oms_quote_priced_entry_enabled: bool = False
+    orb_oms_quote_priced_max_age_ms: int = 2000   # tunable: max ask staleness to price off
+
     strategy_schwab_1m_v2_enabled: bool = False
     strategy_schwab_1m_v2_bar_poll_interval_seconds: float = 15.0
     strategy_schwab_1m_v2_quote_poll_interval_seconds: float = 5.0
