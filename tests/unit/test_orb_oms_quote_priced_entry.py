@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from project_mai_tai.db.base import Base
-from project_mai_tai.db.models import BrokerOrder, TradeIntent
+from project_mai_tai.db.models import BrokerOrder
 from project_mai_tai.events import TradeIntentEvent, TradeIntentPayload
 from project_mai_tai.oms.service import OmsRiskService
 from project_mai_tai.services.orb_app import OrbService
