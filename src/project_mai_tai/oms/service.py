@@ -6,7 +6,7 @@ import logging
 import socket
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal
+from decimal import ROUND_DOWN, Decimal
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
@@ -2334,7 +2334,8 @@ class OmsRiskService:
         # ask <= bound: marketable buy limit at ask + 1 tick, never exceeding the bound (Q3).
         tick = Decimal("0.01") if ask >= 1.0 else Decimal("0.0001")
         limit = min(Decimal(str(ask)) + tick, Decimal(str(bound)))
-        limit_s = format(limit.quantize(tick), "f")
+        # ROUND_DOWN so tick-alignment can never push the limit back above the gap-cap bound.
+        limit_s = format(limit.quantize(tick, rounding=ROUND_DOWN), "f")
         md["limit_price"] = limit_s
         md["reference_price"] = limit_s
         md["oms_quote_priced"] = "true"
