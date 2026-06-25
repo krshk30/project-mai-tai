@@ -137,6 +137,13 @@ class OrbService:
         ) and not self._reclaim_mode
         self._rh_gap_cap_pct = float(getattr(self.settings, "orb_running_high_gap_cap_pct", 1.5))
         self._rh_window_min = int(getattr(self.settings, "orb_running_high_window_minutes", 30))
+        # OMS-quote-priced entry (Piece 1). When True, the bot OMITS limit_price/reference_price
+        # from open intents (fail-closed: a stale signal-time price is structurally unshippable)
+        # and hands the OMS the bound (orb_intended_break_level) + gap_cap + price_source so the
+        # OMS re-prices off its live quote at placement. Default False -> byte-identical emit.
+        self._oms_quote_priced = bool(
+            getattr(self.settings, "orb_oms_quote_priced_entry_enabled", False)
+        )
         self._cfg = OrbConfig(
             or_minutes=int(self.settings.orb_or_minutes),
             vol_mult=float(self.settings.orb_vol_mult),
@@ -455,10 +462,19 @@ class OrbService:
                 "orb_entry": "true",
                 "execution_mode": "running_high_breakout",
                 "order_type": "limit",            # resting limit at the breakout level
-                "limit_price": f"{entry_price:.4f}",
-                "reference_price": f"{entry_price:.4f}",
                 "orb_intended_break_level": f"{entry_price:.4f}",
             }
+            if self._oms_quote_priced:
+                # Fail-closed: omit limit_price/reference_price so a stale signal-time price
+                # cannot be shipped even if the OMS path is bypassed (the adapter falls back
+                # to reference_price, so it too must be absent). The OMS re-prices off its live
+                # quote at placement, bounded by orb_intended_break_level + gap_cap.
+                metadata["price_source"] = "ask"
+                metadata["orb_gap_cap_pct"] = f"{self._rh_gap_cap_pct}"
+            else:
+                # Byte-identical legacy: ship the signal-time break level as the limit.
+                metadata["limit_price"] = f"{entry_price:.4f}"
+                metadata["reference_price"] = f"{entry_price:.4f}"
         elif self._reclaim_mode:
             st = self._states.get(symbol)
             emit_ms = st.reclaim_emit_ms if st is not None else None

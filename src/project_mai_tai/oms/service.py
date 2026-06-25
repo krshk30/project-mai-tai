@@ -569,6 +569,19 @@ class OmsRiskService:
                 )
                 intent.quantity = request_quantity
 
+            # Piece 1: ORB entry priced off the OMS live quote at placement (flag-gated;
+            # no-op when off / non-ORB). Mutates event.payload.metadata's limit in place,
+            # or returns a rejected event (abandon) which short-circuits before any submit.
+            orb_abandon_event = self._apply_orb_quote_priced_entry(
+                session=session, event=event, intent=intent
+            )
+            if orb_abandon_event is not None:
+                session.commit()
+                for prior_event in pre_submit_events:
+                    await self._publish_order_event(prior_event)
+                await self._publish_order_event(orb_abandon_event)
+                return [*pre_submit_events, orb_abandon_event]
+
             client_order_id = self._build_client_order_id(event)
             request = OrderRequest(
                 client_order_id=client_order_id,
@@ -2208,6 +2221,130 @@ class OmsRiskService:
                 metadata=dict(report.metadata),
             ),
         )
+
+    def _orb_quote_priced_entry_applies(self, event: TradeIntentEvent) -> bool:
+        """Piece 1 gate: only the flag-on ORB entry buy with the quote-priced contract
+        (order_type=limit + price_source=ask). Everything else is a no-op -> byte-identical."""
+        md = event.payload.metadata
+        return (
+            bool(getattr(self.settings, "orb_oms_quote_priced_entry_enabled", False))
+            and event.payload.strategy_code == "orb"
+            and event.payload.intent_type == "open"
+            and event.payload.side == "buy"
+            and str(md.get("order_type", "")).lower() == "limit"
+            and str(md.get("price_source", "")).lower() == "ask"
+        )
+
+    def _fresh_ask(self, symbol: str, max_age_ms: int) -> float | None:
+        """The live ask from the OMS quote book (Polygon NBBO) if fresh enough, else None.
+        NOTE (standing): no Webull quote entitlement -> ORB prices/stops off Polygon
+        consolidated NBBO while executing on Webull; first suspect if thin-name fills look off."""
+        quote = self._latest_quotes_by_symbol.get(symbol)
+        if not quote:
+            return None
+        received_at = quote.get("received_at")
+        ask = quote.get("ask")
+        if ask in (None, 0) or not isinstance(received_at, datetime):
+            return None
+        if (utcnow() - received_at).total_seconds() * 1000.0 > max(0, max_age_ms):
+            return None
+        ask_f = float(ask)
+        return ask_f if ask_f > 0 else None
+
+    def _abandon_orb_entry(
+        self,
+        *,
+        event: TradeIntentEvent,
+        intent: TradeIntent,
+        reason_code: str,
+        reason_detail: str,
+    ) -> OrderEventEvent:
+        """Pre-submission abandon for the quote-priced ORB entry (no broker order exists yet).
+        Stamps the reason onto the intent metadata for later winners-missed vs fakeouts-dodged
+        analysis, marks the intent rejected, logs [OMS-ABANDON-INTENT], and returns the event."""
+        md = event.payload.metadata
+        md["abandon_intent"] = "true"
+        md["abandon_reason_code"] = reason_code
+        md["abandon_reason_detail"] = reason_detail
+        md["oms_quote_priced"] = "abandoned"
+        self.store.mark_intent_status(intent, "rejected")
+        self.logger.info(
+            "[OMS-ABANDON-INTENT] code=%s symbol=%s strategy=%s side=%s reason=%s",
+            reason_code,
+            event.payload.symbol,
+            event.payload.strategy_code,
+            event.payload.side,
+            reason_detail,
+        )
+        return self._build_rejected_event(event, intent.id, reason=reason_code)
+
+    def _apply_orb_quote_priced_entry(
+        self,
+        *,
+        session: Session,
+        event: TradeIntentEvent,
+        intent: TradeIntent,
+    ) -> OrderEventEvent | None:
+        """Piece 1: price the ORB entry limit off the OMS's own live quote at placement.
+
+        Returns None to PROCEED (after mutating the limit in event.payload.metadata), or a
+        rejected OrderEventEvent to ABANDON (short-circuit before any broker submit). No-op
+        (returns None, no mutation) when the flag is off or the intent is not a quote-priced
+        ORB entry -> byte-identical. ``session`` is unused today but kept for symmetry with
+        the other pre-submit helpers and future per-symbol lookups.
+        """
+        del session  # reserved; abandon marks intent in the caller's open session
+        if not self._orb_quote_priced_entry_applies(event):
+            return None
+        md = event.payload.metadata
+        symbol = str(event.payload.symbol).upper()
+        # Bound base is mandatory (fail-closed): without it we cannot bound the chase.
+        try:
+            break_level = float(md["orb_intended_break_level"])
+        except (KeyError, TypeError, ValueError):
+            return self._abandon_orb_entry(
+                event=event, intent=intent, reason_code="MISSING_BOUND",
+                reason_detail="orb_intended_break_level absent/invalid; cannot bound quote-priced entry",
+            )
+        if break_level <= 0:
+            return self._abandon_orb_entry(
+                event=event, intent=intent, reason_code="MISSING_BOUND",
+                reason_detail=f"orb_intended_break_level non-positive ({break_level})",
+            )
+        try:
+            gap_cap_pct = float(md.get("orb_gap_cap_pct", 0.0))
+        except (TypeError, ValueError):
+            gap_cap_pct = 0.0
+        bound = break_level * (1.0 + gap_cap_pct / 100.0)
+        max_age_ms = int(getattr(self.settings, "orb_oms_quote_priced_max_age_ms", 2000))
+        ask = self._fresh_ask(symbol, max_age_ms)
+        if ask is None:
+            return self._abandon_orb_entry(
+                event=event, intent=intent, reason_code="NO_FRESH_QUOTE",
+                reason_detail=f"no fresh ask within {max_age_ms}ms for {symbol}",
+            )
+        if ask > bound:
+            return self._abandon_orb_entry(
+                event=event, intent=intent, reason_code="ASK_PAST_GAP_CAP",
+                reason_detail=(
+                    f"ask {ask:.4f} past gap-cap bound {bound:.4f} "
+                    f"(break {break_level:.4f} +{gap_cap_pct}%)"
+                ),
+            )
+        # ask <= bound: marketable buy limit at ask + 1 tick, never exceeding the bound (Q3).
+        tick = Decimal("0.01") if ask >= 1.0 else Decimal("0.0001")
+        limit = min(Decimal(str(ask)) + tick, Decimal(str(bound)))
+        limit_s = format(limit.quantize(tick), "f")
+        md["limit_price"] = limit_s
+        md["reference_price"] = limit_s
+        md["oms_quote_priced"] = "true"
+        md["oms_quote_ask"] = f"{ask:.4f}"
+        md["oms_quote_bound"] = f"{bound:.4f}"
+        self.logger.info(
+            "[OMS-ORB-QUOTE-PRICED] symbol=%s ask=%.4f break=%.4f bound=%.4f limit=%s",
+            symbol, ask, break_level, bound, limit_s,
+        )
+        return None
 
     def _build_rejected_event(
         self,
