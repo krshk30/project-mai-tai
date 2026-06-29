@@ -188,6 +188,70 @@ async def test_submit_limit_order_rounds_offgrid_price(fake_sdk) -> None:
     assert client.last["place"].values["limit_price"] == "1.65"
 
 
+def _stop_order(**kw) -> OrderRequest:
+    """A native-stop-guard sell, mirroring the OMS _arm_or_rearm_native_stop_guard intent."""
+    base = dict(
+        side="sell",
+        intent_type="close",
+        reason="HARD_STOP_NATIVE_BACKUP",
+        metadata={"order_type": "STOP", "stop_price": "1.6774", "native_stop_guard": "true"},
+        order_type="STOP",
+    )
+    base.update(kw)
+    return _order(**base)
+
+
+@pytest.mark.asyncio
+async def test_native_stop_map_off_sends_raw_stop(fake_sdk) -> None:
+    # Default (flag off) = byte-identical to today: sends the literal "STOP" (Webull 417s it),
+    # stop_price still set + tick-rounded. This is the pre-fix behaviour we must preserve.
+    client = _FakeClient({"place": {"order_id": "WB-S"}})
+    adapter = _adapter(client)  # _native_stop_map_enabled unset -> False
+    await adapter.submit_order(_stop_order())
+    placed = client.last["place"].values
+    assert placed["order_type"] == "STOP"
+    assert placed["stop_price"] == "1.68"  # 1.6774 snapped to the 0.01 grid
+
+
+@pytest.mark.asyncio
+async def test_native_stop_map_on_maps_stop_to_stop_loss(fake_sdk) -> None:
+    # Flag on: STOP -> STOP_LOSS (Webull's accepted market-on-trigger enum), stop_price
+    # carried + rounded, no limit_price, and RTH-only (market orders cannot be extended).
+    client = _FakeClient({"place": {"order_id": "WB-S"}})
+    adapter = _adapter(client, _native_stop_map_enabled=True)
+    await adapter.submit_order(_stop_order())
+    placed = client.last["place"].values
+    assert placed["order_type"] == "STOP_LOSS"
+    assert placed["stop_price"] == "1.68"
+    assert placed["extended_hours_trading"] is False
+    assert "limit_price" not in placed
+
+
+@pytest.mark.asyncio
+async def test_native_stop_map_on_maps_stop_limit_to_stop_loss_limit(fake_sdk) -> None:
+    client = _FakeClient({"place": {"order_id": "WB-S"}})
+    adapter = _adapter(client, _native_stop_map_enabled=True)
+    await adapter.submit_order(_stop_order(
+        metadata={"order_type": "STOP_LIMIT", "stop_price": "1.65", "limit_price": "1.64"},
+        order_type="STOP_LIMIT",
+    ))
+    placed = client.last["place"].values
+    assert placed["order_type"] == "STOP_LOSS_LIMIT"
+    assert placed["stop_price"] == "1.65"
+    assert placed["limit_price"] == "1.64"
+
+
+@pytest.mark.asyncio
+async def test_native_stop_map_on_leaves_limit_unchanged(fake_sdk) -> None:
+    # The mapping only touches STOP/STOP_LIMIT; ordinary entries/exits are unaffected.
+    client = _FakeClient({"place": {"order_id": "WB-L"}})
+    adapter = _adapter(client, _native_stop_map_enabled=True)
+    await adapter.submit_order(_order())  # a LIMIT buy
+    placed = client.last["place"].values
+    assert placed["order_type"] == "LIMIT"
+    assert placed["limit_price"] == "2.83"
+
+
 @pytest.mark.asyncio
 async def test_submit_rejected_when_account_unmapped(fake_sdk) -> None:
     adapter = _adapter(_FakeClient({}))

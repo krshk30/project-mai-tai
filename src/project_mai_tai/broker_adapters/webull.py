@@ -89,6 +89,12 @@ class WebullBrokerAdapter:
         self.host = self._normalize_host(settings.webull_base_url)
         self.app_key = (settings.webull_app_key or "").strip()
         self.app_secret = (settings.webull_app_secret or "").strip()
+        # When True, map broker-neutral STOP/STOP_LIMIT -> Webull STOP_LOSS/STOP_LOSS_LIMIT
+        # so the native broker-resident stop guard is accepted (not 417-rejected). Default
+        # OFF = byte-identical to today. See docs/webull-native-stop-order-type-fix-design.md.
+        self._native_stop_map_enabled = bool(
+            getattr(settings, "webull_native_stop_order_type_map_enabled", False)
+        )
         self.accounts_by_name = (
             accounts_by_name if accounts_by_name is not None else configured_webull_accounts(settings)
         )
@@ -145,22 +151,30 @@ class WebullBrokerAdapter:
         po.set_client_order_id(request.client_order_id)
         po.set_instrument_id(instrument_id)
         po.set_side("BUY" if request.side == "buy" else "SELL")
-        po.set_order_type(self._order_type(request))
+        order_type = self._order_type(request)
+        po.set_order_type(order_type)
         po.set_qty(str(int(request.quantity)) if request.quantity == request.quantity.to_integral_value() else str(request.quantity))
         po.set_tif(self._tif(request))
         if hasattr(po, "set_category"):
             po.set_category("US_STOCK")
+        # Price gates include BOTH the broker-neutral tokens (flag-off path) and Webull's
+        # mapped enums (flag-on path), so set_stop_price/set_limit_price stay consistent
+        # with whatever _order_type() returned.
         limit_price = self._meta_price(request, "limit_price", "reference_price")
-        if self._order_type(request) in {"LIMIT", "STOP_LIMIT"} and limit_price is not None:
+        if order_type in {"LIMIT", "STOP_LIMIT", "STOP_LOSS_LIMIT", "ENHANCED_LIMIT", "AT_AUCTION_LIMIT"} and limit_price is not None:
             po.set_limit_price(str(self._round_to_tick(limit_price)))
         stop_price = self._meta_price(request, "stop_price")
-        if self._order_type(request) in {"STOP", "STOP_LIMIT"} and stop_price is not None:
+        if order_type in {"STOP", "STOP_LIMIT", "STOP_LOSS", "STOP_LOSS_LIMIT"} and stop_price is not None:
             po.set_stop_price(str(self._round_to_tick(stop_price)))
         # extended_hours_trading is REQUIRED by the API (null -> ILLEGAL_PARAMETER 417);
         # always set it, defaulting to RTH-only (False). (Verified on the live test order.)
         if hasattr(po, "set_extended_hours_trading"):
             ext = str(request.metadata.get("extended_hours", request.metadata.get("session", ""))).strip().lower()
-            po.set_extended_hours_trading(ext in {"true", "1", "yes", "am", "pm", "extended"})
+            ext_flag = ext in {"true", "1", "yes", "am", "pm", "extended"}
+            # A STOP_LOSS is market-on-trigger; Webull requires market orders to be RTH-only.
+            if order_type == "STOP_LOSS":
+                ext_flag = False
+            po.set_extended_hours_trading(ext_flag)
 
         body = self._body(client.get_response(po))
         # Confirmed live: the place response returns only {client_order_id}; the broker
@@ -382,10 +396,14 @@ class WebullBrokerAdapter:
             return "rejected"
         return "accepted"
 
-    @staticmethod
-    def _order_type(request: OrderRequest) -> str:
-        raw = str(request.metadata.get("order_type", request.order_type)).strip().upper()
-        return raw or "MARKET"
+    def _order_type(self, request: OrderRequest) -> str:
+        raw = str(request.metadata.get("order_type", request.order_type)).strip().upper() or "MARKET"
+        # Webull's OpenAPI stop enums are STOP_LOSS / STOP_LOSS_LIMIT (the literal "STOP"
+        # is rejected with ILLEGAL_PARAMETER 417). Map at the adapter boundary; the OMS
+        # stays broker-neutral (schwab/alpaca accept "STOP"). Gated; default-off = unchanged.
+        if getattr(self, "_native_stop_map_enabled", False):
+            raw = {"STOP": "STOP_LOSS", "STOP_LIMIT": "STOP_LOSS_LIMIT"}.get(raw, raw)
+        return raw
 
     @staticmethod
     def _tif(request: OrderRequest) -> str:
