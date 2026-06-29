@@ -529,6 +529,13 @@ class Settings(BaseSettings):
     webull_app_key: str | None = None
     webull_app_secret: str | None = None
     webull_account_id: str | None = None
+    # Map the OMS's broker-neutral order_type tokens to Webull's OpenAPI stop enums
+    # (STOP -> STOP_LOSS, STOP_LIMIT -> STOP_LOSS_LIMIT). Webull rejects the literal
+    # "STOP" with ILLEGAL_PARAMETER (417), so the native broker-resident stop guard
+    # never rests. Default OFF = byte-identical to today (still sends "STOP" -> 417);
+    # enabling switches ORB's RTH stop-exit from the in-memory trail to the broker
+    # STOP_LOSS market order. See docs/webull-native-stop-order-type-fix-design.md.
+    webull_native_stop_order_type_map_enabled: bool = False
     oms_broker_sync_interval_seconds: int = 5
     oms_working_order_refresh_seconds: int = 5
     # Track-2 Phase-2: OMS-side managed exits for schwab_1m_v2 positions. The
