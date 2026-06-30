@@ -110,6 +110,15 @@ class OrbService:
     _reclaim_mode: bool = False
     _reclaim_hold_ms: int = 25_000
     _running_high_mode: bool = False
+    # Market-data consume-loop throughput (mirrors strategy-engine #175/#179). The open
+    # burst spans the WHOLE scanner universe and exceeded 700 ticks/s on 2026-06-30; a
+    # single count=500 xread per 1s loop fell ~3x behind (effective ~196/s), surfacing the
+    # 09:30 bar + its entry ~1:47 late. Drain-to-budget + non-blocking follow-up passes +
+    # universe-DB-read off the hot path keep ORB caught up through the open.
+    _MARKET_DATA_XREAD_COUNT: int = 1000
+    _MARKET_DATA_DRAIN_BUDGET: int = 20_000
+    _UNIVERSE_REFRESH_SECS: float = 5.0
+    _HEARTBEAT_SECS: float = 5.0
 
     def __init__(
         self,
@@ -154,7 +163,10 @@ class OrbService:
             universe_lead_minutes=int(self.settings.orb_universe_lead_minutes),
         )
         self._mode = ExecutionMode(str(self.settings.orb_execution_mode))
-        self._loop_count = 0
+        # Timers so the universe DB read + heartbeat run on wall-clock cadence, NOT every
+        # tick-drain iteration (which now spins fast while catching up at the open).
+        self._last_universe_refresh_at: datetime | None = None
+        self._last_heartbeat_at: datetime | None = None
         # ET session date — when it rolls, per-symbol state + aggregators are reset so the
         # next session starts clean (running_high re-seeds from 09:25, traded flags clear,
         # aggregators rebuild with the new session anchor). Without this, a bot left running
@@ -172,13 +184,28 @@ class OrbService:
         try:
             while True:
                 self._maybe_roll_session()
-                await self._sync_gateway_subscription(self._refresh_universe())
-                await self._drain_market_data()
+                now = datetime.now(UTC)
+                # Universe = a DashboardSnapshot DB read; keep it OFF the per-tick hot path
+                # (it changes rarely: 09:25 freeze + promotions). Refresh on a timer.
+                if (
+                    self._last_universe_refresh_at is None
+                    or (now - self._last_universe_refresh_at).total_seconds() >= self._UNIVERSE_REFRESH_SECS
+                ):
+                    await self._sync_gateway_subscription(self._refresh_universe())
+                    self._last_universe_refresh_at = now
+                processed = await self._drain_market_data()
                 await self._publish_pending_intents()
-                if self._loop_count % 5 == 0:  # ~5s heartbeat (dashboard cadence)
+                if (
+                    self._last_heartbeat_at is None
+                    or (now - self._last_heartbeat_at).total_seconds() >= self._HEARTBEAT_SECS
+                ):
                     await self._publish_heartbeat()
-                self._loop_count += 1
-                await asyncio.sleep(1)
+                    self._last_heartbeat_at = now
+                # Backlogged (drain hit the budget) -> loop immediately to catch up. Caught
+                # up -> the drain's first-pass BLOCK already paced us; sleep only when there
+                # was genuinely nothing to do (no symbols yet / empty stream).
+                if processed == 0:
+                    await asyncio.sleep(1)
         except asyncio.CancelledError:
             logger.info("[ORB] cancelled; shutting down")
             raise
@@ -266,18 +293,37 @@ class OrbService:
         logger.info("[ORB-GATEWAY-SUBSCRIBE] consumer=%s symbols=%d", SERVICE_NAME, len(desired))
 
     # ----- market-data drain -> aggregate -> bar -----
-    async def _drain_market_data(self) -> None:
+    async def _drain_market_data(self) -> int:
+        """Drain the market-data stream to a budget (mirrors strategy-engine #175/#179).
+
+        The first xread BLOCKs briefly to wait for ticks; subsequent passes are
+        NON-blocking and stop the instant the stream is empty (a pass returns fewer than
+        ``count``). Bounded by ``_MARKET_DATA_DRAIN_BUDGET`` so one hot symbol can't starve
+        the loop. Returns the number of ticks processed so the caller can loop immediately
+        (no sleep) while still backlogged — keeping ORB caught up through the open burst
+        instead of falling minutes behind (the 2026-06-30 ~1:47 CELZ entry lag)."""
         if not self._last_gateway_symbols:
-            return
-        response = await self.redis.xread(
-            {stream_name(self.settings.redis_stream_prefix, "market-data"): self._md_offset},
-            count=500,
-            block=500,
-        )
-        for _stream, entries in response or []:
-            for entry_id, fields in entries:
-                self._md_offset = entry_id
-                self._handle_market_data(fields)
+            return 0
+        stream = stream_name(self.settings.redis_stream_prefix, "market-data")
+        processed = 0
+        block: int | None = 500  # first pass waits for ticks; follow-up passes don't
+        while processed < self._MARKET_DATA_DRAIN_BUDGET:
+            response = await self.redis.xread(
+                {stream: self._md_offset}, count=self._MARKET_DATA_XREAD_COUNT, block=block
+            )
+            block = None
+            if not response:
+                break
+            batch = 0
+            for _stream, entries in response:
+                for entry_id, fields in entries:
+                    self._md_offset = entry_id
+                    self._handle_market_data(fields)
+                    batch += 1
+            processed += batch
+            if batch < self._MARKET_DATA_XREAD_COUNT:
+                break  # drained the stream this pass — caught up
+        return processed
 
     def _handle_market_data(self, fields: dict) -> None:
         raw = fields.get("data")
