@@ -92,6 +92,16 @@ class _SymbolState:
     or_bars: list[OrbBar] = field(default_factory=list)
     or_evaluated: bool = False
     opening_range: OpeningRange | None = None
+    # 2026-06-30 phantom-fix: entry state reflects CONFIRMED FILLS, not emits.
+    #   attempts   = entry tries this window (cap 2 = original + reclaim, then suppressed),
+    #   pending    = an emit is in flight awaiting the OMS fill/abandon outcome,
+    #   traded     = holding a confirmed fill,
+    #   entry_price= the REAL fill price, set on the fill event (NOT on emit).
+    # An OMS-abandoned try leaves NO phantom + re-enters (until the cap), instead of the
+    # old traded=True-on-emit that suppressed re-entry + showed a phantom vs a flat broker.
+    # Reconciled by _handle_order_event off the order-events stream.
+    attempts: int = 0
+    pending: bool = False
     traded: bool = False
     entry_price: float | None = None
     last_bar_at: str = ""
@@ -119,6 +129,10 @@ class OrbService:
     _MARKET_DATA_DRAIN_BUDGET: int = 20_000
     _UNIVERSE_REFRESH_SECS: float = 5.0
     _HEARTBEAT_SECS: float = 5.0
+    # Max entry tries per symbol per 09:30-10:00 window (original break + one reclaim),
+    # then suppressed — whether they filled or abandoned. The same fill-counted state the
+    # future bracket's 2-entry cap will key on.
+    _ENTRY_ATTEMPT_CAP: int = 2
 
     def __init__(
         self,
@@ -132,6 +146,7 @@ class OrbService:
         self._aggregators: dict[str, OrbTickAggregator] = {}
         self._last_gateway_symbols: list[str] = []
         self._md_offset: str = "$"  # tail new ticks only
+        self._oe_offset: str = "$"  # order-events: tail new fill/abandon outcomes only
         self._states: dict[str, _SymbolState] = {}
         self._universe: set[str] = set()
         self._pending_intents: list[tuple[str, float]] = []
@@ -194,6 +209,7 @@ class OrbService:
                     await self._sync_gateway_subscription(self._refresh_universe())
                     self._last_universe_refresh_at = now
                 processed = await self._drain_market_data()
+                await self._drain_order_events()  # reconcile fills/abandons (phantom-fix)
                 await self._publish_pending_intents()
                 if (
                     self._last_heartbeat_at is None
@@ -359,6 +375,62 @@ class OrbService:
         if self._reclaim_mode:
             self._check_reclaim(symbol, price, ts)
 
+    # ----- entry-state gate + fill/abandon reconciliation (2026-06-30 phantom-fix) -----
+    def _can_enter(self, st: _SymbolState) -> bool:
+        """May we emit an entry for this symbol now? No emit while one is in flight
+        (``pending``) or while holding a confirmed fill (``traded``), and only up to the
+        per-symbol per-window attempt cap (original + reclaim)."""
+        return not st.pending and not st.traded and st.attempts < self._ENTRY_ATTEMPT_CAP
+
+    async def _drain_order_events(self) -> None:
+        """Reconcile ORB's per-symbol entry state against the OMS fill/abandon outcomes so
+        state reflects CONFIRMED FILLS, not emits. Non-blocking; order-events are sparse."""
+        stream = stream_name(self.settings.redis_stream_prefix, "order-events")
+        response = await self.redis.xread({stream: self._oe_offset}, count=500)
+        for _stream, entries in response or []:
+            for entry_id, fields in entries:
+                self._oe_offset = entry_id
+                self._handle_order_event(fields)
+
+    def _handle_order_event(self, fields: dict) -> None:
+        raw = fields.get("data")
+        if not raw:
+            return
+        try:
+            payload = (json.loads(raw) or {}).get("payload") or {}
+        except (ValueError, TypeError):
+            return
+        # ORB's own OPEN orders only.
+        if str(payload.get("strategy_code", "")) != SERVICE_NAME:
+            return
+        if str(payload.get("intent_type", "")) != "open":
+            return
+        st = self._states.get(str(payload.get("symbol", "")).upper())
+        if st is None:
+            return
+        status = str(payload.get("status", ""))
+        symbol = str(payload.get("symbol", "")).upper()
+        if status in ("filled", "partially_filled"):
+            st.pending = False
+            st.traded = True  # confirmed fill -> holding the position (OMS owns the exit)
+            fp = payload.get("fill_price")
+            if fp not in (None, ""):
+                try:
+                    st.entry_price = float(fp)
+                except (TypeError, ValueError):
+                    pass
+            logger.info("[ORB-ENTRY-FILLED] %s fill=%s attempt=%d/%d",
+                        symbol, payload.get("fill_price"), st.attempts, self._ENTRY_ATTEMPT_CAP)
+        elif status in ("rejected", "cancelled"):
+            # OMS abandoned/rejected the open -> NOT a fill: clear the (never-held) phantom
+            # and re-open the symbol for another try until the attempt cap is hit.
+            st.pending = False
+            st.entry_price = None
+            reason = (payload.get("metadata") or {}).get("abandon_reason_code") or payload.get("reason") or status
+            logger.info("[ORB-ENTRY-RESET] %s status=%s reason=%s attempt=%d/%d -> %s",
+                        symbol, status, reason, st.attempts, self._ENTRY_ATTEMPT_CAP,
+                        "re-enterable" if st.attempts < self._ENTRY_ATTEMPT_CAP else "suppressed(cap)")
+
     @staticmethod
     def _session_open_utc() -> datetime:
         now_et = datetime.now(_ET)
@@ -386,7 +458,7 @@ class OrbService:
             st.running_high = bar.high          # first observed bar seeds the reference
             return
         if (
-            not st.traded
+            self._can_enter(st)
             and symbol in self._universe
             and open_utc <= bar.timestamp <= cutoff
             and bar.high > st.running_high
@@ -394,12 +466,13 @@ class OrbService:
             level = st.running_high
             fill = level if bar.open <= level else bar.open   # gap-up fills at the open
             if fill <= level * (1.0 + self._rh_gap_cap_pct / 100.0):
-                st.traded = True               # one entry per symbol (v1)
-                st.entry_price = fill
+                st.pending = True              # emit in flight; confirmed on the fill event
+                st.attempts += 1
                 self._pending_intents.append((symbol, fill))
                 logger.info(
-                    "[ORB-RH-ENTRY] %s entry=%.4f broke_high=%.4f gap=%.2f%%",
+                    "[ORB-RH-ENTRY] %s entry=%.4f broke_high=%.4f gap=%.2f%% attempt=%d/%d",
                     symbol, fill, level, (fill / level - 1.0) * 100.0,
+                    st.attempts, self._ENTRY_ATTEMPT_CAP,
                 )
         st.running_high = max(st.running_high, bar.high)
 
@@ -440,12 +513,12 @@ class OrbService:
                 )
         if self._reclaim_mode:
             return  # entry is tick-driven (_check_reclaim); no bar-close breakout
-        if st.opening_range is None or st.traded or bar.timestamp > cutoff:
+        if st.opening_range is None or not self._can_enter(st) or bar.timestamp > cutoff:
             return
         if bar_confirms_breakout(st.opening_range, bar, self._cfg):
             entry = entry_fill_price(st.opening_range, bar, self._mode)
-            st.traded = True  # one trade per symbol per session
-            st.entry_price = entry
+            st.pending = True  # emit in flight; confirmed on the fill event
+            st.attempts += 1
             self._pending_intents.append((symbol, entry))
             logger.info(
                 "[ORB-BREAKOUT] %s entry=%.4f OR_high=%.4f mode=%s",
@@ -470,7 +543,7 @@ class OrbService:
         resets the timer (a pullback before the reclaim is fine — the sustained reclaim
         is the confirmation). Entries only in (OR-end, cutoff]."""
         st = self._states.get(symbol)
-        if st is None or st.opening_range is None or st.traded:
+        if st is None or st.opening_range is None or not self._can_enter(st):
             return
         open_utc = self._session_open_utc()
         or_end = open_utc + timedelta(minutes=self._cfg.or_minutes)
@@ -484,8 +557,8 @@ class OrbService:
                 st.reclaim_cross_ms = ts_ms
                 logger.info("[ORB-RECLAIM-CROSS] %s price=%.4f OR_high=%.4f", symbol, price, or_high)
             elif ts_ms - st.reclaim_cross_ms >= self._reclaim_hold_ms:
-                st.traded = True  # one trade per symbol per session
-                st.entry_price = or_high
+                st.pending = True  # emit in flight; confirmed on the fill event
+                st.attempts += 1
                 st.reclaim_emit_ms = ts_ms  # fill-instrumentation: confirm time
                 self._pending_intents.append((symbol, or_high))
                 logger.info(
