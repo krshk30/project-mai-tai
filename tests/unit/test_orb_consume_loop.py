@@ -5,7 +5,6 @@ The bug: a single ``xread(count=500)`` per 1s loop fell ~3x behind the open burs
 late. The fix mirrors strategy-engine #175/#179: drain-to-budget with non-blocking
 follow-up passes so ORB keeps up. These tests pin that drain behaviour.
 """
-import asyncio
 import json
 from unittest.mock import MagicMock
 
