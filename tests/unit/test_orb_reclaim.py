@@ -82,7 +82,7 @@ def test_reclaim_cross_hold_then_one_entry():
     svc._check_reclaim("HSCS", 3.10, _t(svc, 11, 20))    # +20s, still above
     assert st.traded is False                            # not yet 25s
     svc._check_reclaim("HSCS", 3.05, _t(svc, 11, 26))    # +26s -> ENTRY
-    assert st.traded is True
+    assert st.pending is True and st.attempts == 1       # emitted; confirmed on the fill event
     assert svc._pending_intents == [("HSCS", 2.83)]
     assert st.reclaim_emit_ms == int(_t(svc, 11, 26).timestamp() * 1000)
     # one-trade-per-symbol: further ticks do nothing

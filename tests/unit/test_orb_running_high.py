@@ -50,9 +50,9 @@ def test_entry_on_break_of_running_high():
     # 09:30 bar breaks 10.50 (open below the level -> fill AT the breakout level 10.50)
     svc._on_bar("FOO", _bar(svc, 0, 10.40, 11.00))
     st = svc._states["FOO"]
-    assert st.traded is True
-    assert abs(st.entry_price - 10.50) < 1e-9        # filled at the broken high
-    assert svc._pending_intents == [("FOO", 10.50)]
+    assert st.pending is True and st.attempts == 1   # emitted; confirmed on the fill event
+    assert st.traded is False and st.entry_price is None  # no phantom position until a real fill
+    assert svc._pending_intents == [("FOO", 10.50)]  # intent fired at the broken high
 
 
 def test_gap_cap_skips_a_spike_too_far_above():
