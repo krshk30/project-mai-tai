@@ -28,7 +28,7 @@ from redis.asyncio import Redis
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
-from project_mai_tai.db.models import DashboardSnapshot
+from project_mai_tai.db.models import BrokerOrder, BrokerOrderEvent, DashboardSnapshot, Strategy
 from project_mai_tai.db.session import build_session_factory
 from project_mai_tai.events import (
     IsolatedBotStateEvent,
@@ -99,11 +99,17 @@ class _SymbolState:
     #   entry_price= the REAL fill price, set on the fill event (NOT on emit).
     # An OMS-abandoned try leaves NO phantom + re-enters (until the cap), instead of the
     # old traded=True-on-emit that suppressed re-entry + showed a phantom vs a flat broker.
-    # Reconciled by _handle_order_event off the order-events stream.
+    # Reconciled by _reconcile_orders off broker_order_events (DB); held_qty mirrors traded.
     attempts: int = 0
     pending: bool = False
     traded: bool = False
     entry_price: float | None = None
+    # held_qty tracks the REAL position from broker fills (buy adds, sell reduces). traded
+    # mirrors held_qty>0 so it clears on a flat exit -> a re-break can reclaim (the CANF case).
+    held_qty: float = 0.0
+    # when the current pending emit went out — used to time out a stuck pending if the OMS
+    # abandons pre-order (e.g. ASK_PAST_GAP_CAP) and emits NO terminal broker_order_events row.
+    pending_since: datetime | None = None
     last_bar_at: str = ""
     # intrabar-reclaim mode only: start (ms UTC) of the current uninterrupted hold
     # above OR_high; reset to None whenever a tick prints back below OR_high.
@@ -133,6 +139,10 @@ class OrbService:
     # then suppressed — whether they filled or abandoned. The same fill-counted state the
     # future bracket's 2-entry cap will key on.
     _ENTRY_ATTEMPT_CAP: int = 2
+    # Clear a stuck pending if no terminal broker_order_events row arrives within this window.
+    # Some OMS abandons (ASK_PAST_GAP_CAP pre-order) emit NO DB row, so without this a
+    # pending emit would block re-entry forever. Set above oms_intent_max_age_seconds (30).
+    _PENDING_ABANDON_TIMEOUT_SECS: float = 45.0
 
     def __init__(
         self,
@@ -146,7 +156,9 @@ class OrbService:
         self._aggregators: dict[str, OrbTickAggregator] = {}
         self._last_gateway_symbols: list[str] = []
         self._md_offset: str = "$"  # tail new ticks only
-        self._oe_offset: str = "$"  # order-events: tail new fill/abandon outcomes only
+        # Order reconcile reads broker_order_events (DB) — the redis order-events stream is
+        # unfed in prod. Cursor starts at boot so we only process events from now forward.
+        self._oe_cursor: datetime = datetime.now(UTC)
         self._states: dict[str, _SymbolState] = {}
         self._universe: set[str] = set()
         self._pending_intents: list[tuple[str, float]] = []
@@ -209,7 +221,7 @@ class OrbService:
                     await self._sync_gateway_subscription(self._refresh_universe())
                     self._last_universe_refresh_at = now
                 processed = await self._drain_market_data()
-                await self._drain_order_events()  # reconcile fills/abandons (phantom-fix)
+                await self._reconcile_orders()  # DB reconcile: fills/exits/abandons (phantom-fix)
                 await self._publish_pending_intents()
                 if (
                     self._last_heartbeat_at is None
@@ -237,6 +249,7 @@ class OrbService:
         self._session_date = today
         self._states.clear()
         self._aggregators.clear()
+        self._oe_cursor = datetime.now(UTC)  # don't replay yesterday's order events into fresh state
         logger.info("[ORB] day-roll reset %s -> %s: cleared per-symbol state + aggregators", prior, today)
 
     # ----- universe: pre-09:25 confirmed names (the binding rule) -----
@@ -382,54 +395,121 @@ class OrbService:
         per-symbol per-window attempt cap (original + reclaim)."""
         return not st.pending and not st.traded and st.attempts < self._ENTRY_ATTEMPT_CAP
 
-    async def _drain_order_events(self) -> None:
-        """Reconcile ORB's per-symbol entry state against the OMS fill/abandon outcomes so
-        state reflects CONFIRMED FILLS, not emits. Non-blocking; order-events are sparse."""
-        stream = stream_name(self.settings.redis_stream_prefix, "order-events")
-        response = await self.redis.xread({stream: self._oe_offset}, count=500)
-        for _stream, entries in response or []:
-            for entry_id, fields in entries:
-                self._oe_offset = entry_id
-                self._handle_order_event(fields)
-
-    def _handle_order_event(self, fields: dict) -> None:
-        raw = fields.get("data")
-        if not raw:
+    async def _reconcile_orders(self) -> None:
+        """Reconcile ORB's per-symbol entry state against CONFIRMED broker outcomes recorded
+        in ``broker_order_events`` (the DB path — the redis order-events stream is unfed in
+        prod, so #388's stream consumer was DOA). Tracks held qty across BUY (open) and SELL
+        (close) fills so ``traded`` mirrors a REAL position and CLEARS on a flat exit, which is
+        what re-enables a reclaim after a filled-then-exited entry (the CANF case). Abandons
+        clear ``pending`` without a fill. ``attempts`` is NEVER touched here — only ORB emits
+        burn attempts — so OMS quote-drift-cancel churn cannot exhaust the cap. Sparse; polled
+        off the hot path (sync DB read, mirrors the universe-snapshot read)."""
+        if self.session_factory is None:
             return
         try:
-            payload = (json.loads(raw) or {}).get("payload") or {}
-        except (ValueError, TypeError):
-            return
-        # ORB's own OPEN orders only.
-        if str(payload.get("strategy_code", "")) != SERVICE_NAME:
-            return
-        if str(payload.get("intent_type", "")) != "open":
-            return
-        st = self._states.get(str(payload.get("symbol", "")).upper())
+            rows = self._fetch_order_events_since(self._oe_cursor)
+        except Exception:
+            logger.exception("[ORB] order-event reconcile query failed")
+            rows = []
+        for event_at, event_type, symbol, side, quantity, payload in rows:
+            self._oe_cursor = event_at
+            self._apply_order_event(
+                symbol=str(symbol or "").upper(),
+                side=str(side or ""),
+                event_type=str(event_type or ""),
+                quantity=float(quantity or 0.0),
+                payload=payload if isinstance(payload, dict) else {},
+            )
+        self._expire_stale_pending()
+
+    def _fetch_order_events_since(self, cursor: datetime) -> list:
+        """ORB order-events after ``cursor``, joined to broker_orders for symbol/side/qty."""
+        with self.session_factory() as session:
+            return session.execute(
+                select(
+                    BrokerOrderEvent.event_at,
+                    BrokerOrderEvent.event_type,
+                    BrokerOrder.symbol,
+                    BrokerOrder.side,
+                    BrokerOrder.quantity,
+                    BrokerOrderEvent.payload,
+                )
+                .join(BrokerOrder, BrokerOrder.id == BrokerOrderEvent.order_id)
+                .join(Strategy, Strategy.id == BrokerOrder.strategy_id)
+                .where(Strategy.code == SERVICE_NAME)
+                .where(BrokerOrderEvent.event_at > cursor)
+                .order_by(BrokerOrderEvent.event_at)
+            ).all()
+
+    def _apply_order_event(
+        self, *, symbol: str, side: str, event_type: str, quantity: float, payload: dict
+    ) -> None:
+        st = self._states.get(symbol)
         if st is None:
-            return
-        status = str(payload.get("status", ""))
-        symbol = str(payload.get("symbol", "")).upper()
-        if status in ("filled", "partially_filled"):
+            return  # symbol not tracked this session (e.g. cleared post day-roll)
+        is_open = side.lower() == "buy"   # ORB is long-only: buy=entry/open, sell=exit/close
+        filled = event_type in ("filled", "partially_filled")
+        abandoned = event_type in ("rejected", "cancelled")
+        if is_open and filled:
+            st.held_qty += quantity
+            st.traded = True                     # confirmed fill -> holding (OMS owns the exit)
             st.pending = False
-            st.traded = True  # confirmed fill -> holding the position (OMS owns the exit)
-            fp = payload.get("fill_price")
-            if fp not in (None, ""):
-                try:
-                    st.entry_price = float(fp)
-                except (TypeError, ValueError):
-                    pass
-            logger.info("[ORB-ENTRY-FILLED] %s fill=%s attempt=%d/%d",
-                        symbol, payload.get("fill_price"), st.attempts, self._ENTRY_ATTEMPT_CAP)
-        elif status in ("rejected", "cancelled"):
-            # OMS abandoned/rejected the open -> NOT a fill: clear the (never-held) phantom
-            # and re-open the symbol for another try until the attempt cap is hit.
+            st.pending_since = None
+            fill_px = self._fill_price_from_payload(payload)
+            if fill_px is not None:
+                st.entry_price = fill_px
+            logger.info("[ORB-ENTRY-FILLED] %s qty=%.0f held=%.0f entry=%s attempt=%d/%d",
+                        symbol, quantity, st.held_qty, st.entry_price,
+                        st.attempts, self._ENTRY_ATTEMPT_CAP)
+        elif is_open and abandoned:
+            # NOT a fill -> clear the (never-held) pending; re-enterable until the cap.
             st.pending = False
-            st.entry_price = None
-            reason = (payload.get("metadata") or {}).get("abandon_reason_code") or payload.get("reason") or status
-            logger.info("[ORB-ENTRY-RESET] %s status=%s reason=%s attempt=%d/%d -> %s",
-                        symbol, status, reason, st.attempts, self._ENTRY_ATTEMPT_CAP,
+            st.pending_since = None
+            reason = (payload.get("metadata") or {}).get("abandon_reason_code") or payload.get("reason") or event_type
+            logger.info("[ORB-ENTRY-RESET] %s reason=%s attempt=%d/%d -> %s",
+                        symbol, reason, st.attempts, self._ENTRY_ATTEMPT_CAP,
                         "re-enterable" if st.attempts < self._ENTRY_ATTEMPT_CAP else "suppressed(cap)")
+        elif (not is_open) and filled:
+            # exit fill -> reduce held; when flat, clear traded so a re-break can RECLAIM.
+            st.held_qty = max(0.0, st.held_qty - quantity)
+            if st.held_qty <= 1e-9:
+                st.traded = False
+                st.entry_price = None
+                logger.info("[ORB-POSITION-FLAT] %s exited; re-enterable=%s attempt=%d/%d",
+                            symbol, st.attempts < self._ENTRY_ATTEMPT_CAP,
+                            st.attempts, self._ENTRY_ATTEMPT_CAP)
+        # 'accepted' / a rejected EXIT / anything else -> no entry-state change (conservative)
+
+    def _expire_stale_pending(self) -> None:
+        """Clear a pending emit that never got a terminal broker_order_events row (some OMS
+        abandons, e.g. ASK_PAST_GAP_CAP pre-order, emit none). Without this, that symbol would
+        block re-entry for the rest of the window. Re-enterable until the attempt cap."""
+        now = datetime.now(UTC)
+        for sym, st in self._states.items():
+            if (
+                st.pending
+                and st.pending_since is not None
+                and (now - st.pending_since).total_seconds() > self._PENDING_ABANDON_TIMEOUT_SECS
+            ):
+                st.pending = False
+                st.pending_since = None
+                logger.info("[ORB-ENTRY-RESET] %s reason=pending_timeout attempt=%d/%d -> %s",
+                            sym, st.attempts, self._ENTRY_ATTEMPT_CAP,
+                            "re-enterable" if st.attempts < self._ENTRY_ATTEMPT_CAP else "suppressed(cap)")
+
+    @staticmethod
+    def _fill_price_from_payload(payload: dict) -> float | None:
+        """Best-effort entry price for display (the OMS owns the real position/exit)."""
+        meta = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+        for src in (payload, meta):
+            for key in ("fill_price", "limit_price", "reference_price"):
+                v = src.get(key)
+                if v not in (None, ""):
+                    try:
+                        return float(v)
+                    except (TypeError, ValueError):
+                        pass
+        return None
 
     @staticmethod
     def _session_open_utc() -> datetime:
@@ -647,6 +727,9 @@ class OrbService:
             return
         pending, self._pending_intents = self._pending_intents, []
         for symbol, entry_price in pending:
+            st = self._states.get(symbol)
+            if st is not None:
+                st.pending_since = datetime.now(UTC)  # start the stuck-pending timeout clock
             event = self._build_open_intent(symbol, entry_price)
             await self.redis.xadd(
                 stream_name(self.settings.redis_stream_prefix, "strategy-intents"),
