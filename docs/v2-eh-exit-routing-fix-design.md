@@ -108,7 +108,11 @@ exit — fail-safe, never worse than today.
 
 **Buffer setting (new, single, tunable):** `oms_v2_exit_eh_protective_limit_buffer_pct`, default **0.5**
 (%). Governs the **protective** legs (hard-stop + floor) only; scale partials price at the bid (no
-setting). 0.5% crosses through a reasonable resting bid while capping thin-book damage.
+setting). 0.5% crosses through a reasonable resting bid while capping thin-book damage. It is a pydantic
+`Settings` field (`env_prefix="MAI_TAI_"`), so it is **env-tunable with no code change** — set
+`MAI_TAI_OMS_V2_EXIT_EH_PROTECTIVE_LIMIT_BUFFER_PCT=0.5` in the VPS env file at deploy (operator wants to
+tune from Monday's live fills via an env-edit + OMS restart, not a PR). Verified: env `0.7` → Settings
+reads `0.7`; unset → `0.5`.
 
 ### Pseudocode (the only changed block)
 ```python
@@ -193,8 +197,10 @@ tuning without code changes.
 2. CI `validate` GREEN (unit + ruff). Merge only on genuine green (no admin-bypass).
 3. Attended, fleet-flat: confirm v2 FLAT (no open `oms_managed_positions`) at the restart moment.
    Re-run the running-tree-vs-origin/main drift check at pull time.
-4. `git pull` + restart **OMS only** (isolated; v2/strategy/ORB untouched — the exit path is OMS-side).
-   Capture new OMS PID; 0 tracebacks; `/proc` confirms.
+4. Add `MAI_TAI_OMS_V2_EXIT_EH_PROTECTIVE_LIMIT_BUFFER_PCT=0.5` to `/etc/project-mai-tai/project-mai-tai.env`
+   (env backup first), then `git pull` + restart **OMS only** (isolated; v2/strategy/ORB untouched — the
+   exit path is OMS-side). Capture new OMS PID; 0 tracebacks; confirm the env var in `/proc/<pid>/environ`
+   AND cross-check the loaded value via the settings/log.
 5. **Verdict window = Monday 07-06 pre-market (07:00–09:30 ET), attended.** If v2 takes a pre-market
    entry, watch the exit emit as `order_type=limit session=AM` and confirm it FILLS (not the CELZ/CLRO
    `-N MKT` churn). Rollback = revert commit + OMS restart.
