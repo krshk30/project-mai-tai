@@ -301,3 +301,132 @@ def test_coalesce_ignores_unknown_and_symbolless() -> None:
         [{"event_type": "heartbeat"}, {"event_type": "quote_tick", "payload": {}}, _qp(10.25)]
     )
     assert len(events) == 1 and float(events[0].payload.bid_price) == 10.25
+
+
+# ---- Extended-hours exit routing (2026-07-05 CLRO/CELZ stuck-exit fix) --------------
+# In RTH the exit stays MARKET/NORMAL (byte-identical). In extended hours it routes a
+# LIMIT + session=AM|PM so it can actually fill. Protective legs (hard-stop/floor) use a
+# marketable buffer below the bid; scale partials price at the bid. reference_price (leg
+# level) is unchanged, so the SimulatedBrokerAdapter (fills at reference_price) is
+# behaviorally identical — these assert the emitted INTENT METADATA (the live route).
+
+from project_mai_tai.oms.service import (  # noqa: E402
+    _extended_hours_session,
+    _format_limit_price,
+    _panic_limit_price,
+)
+
+
+def _meta(intent: TradeIntent) -> dict:
+    return intent.payload["metadata"]
+
+
+def _force_session(monkeypatch, value: str | None) -> None:
+    monkeypatch.setattr("project_mai_tai.oms.service._extended_hours_session", lambda now=None: value)
+
+
+# --------------------------------------------------------------------------- (E1)
+
+@pytest.mark.asyncio
+async def test_rth_exit_stays_market_byte_identical(monkeypatch) -> None:
+    _force_session(monkeypatch, None)                # regular trading hours
+    sf = _make_sf()
+    svc = _svc(sf)
+    _arm(svc, sf, entry=10.0, qty=100)
+    _quote(svc, bid=9.80)                            # hard stop
+    await svc._evaluate_v2_managed_exit(SYM)
+
+    m = _meta(_sell_intents(sf)[0])
+    assert m["order_type"] == "market"               # unchanged
+    assert "session" not in m and "limit_price" not in m
+    assert m["reference_price"] == "9.8500"          # leg level, unchanged
+
+
+# --------------------------------------------------------------------------- (E2)
+
+@pytest.mark.asyncio
+async def test_pm_hard_stop_routes_buffered_marketable_limit(monkeypatch) -> None:
+    _force_session(monkeypatch, "PM")                # after-hours
+    sf = _make_sf()
+    svc = _svc(sf)
+    _arm(svc, sf, entry=10.0, qty=100)
+    _quote(svc, bid=9.80)                            # hard stop, live bid 9.80
+    await svc._evaluate_v2_managed_exit(SYM)
+
+    m = _meta(_sell_intents(sf)[0])
+    assert m["order_type"] == "limit"
+    assert m["session"] == "PM" and m["extended_hours"] == "true"
+    assert m["price_source"] == "bid"
+    assert m["limit_price"] == _panic_limit_price(9.80, 0.5) == "9.75"   # bid x (1-0.5%)
+    assert m["reference_price"] == "9.8500"          # leg level PRESERVED (sim/re-score parity)
+
+
+# --------------------------------------------------------------------------- (E3)
+
+@pytest.mark.asyncio
+async def test_am_floor_breach_routes_buffered_marketable_limit(monkeypatch) -> None:
+    _force_session(monkeypatch, "AM")                # pre-market
+    sf = _make_sf()
+    svc = _svc(sf)
+    _arm(svc, sf, entry=10.0, qty=50,
+         peak_profit_pct=Decimal("3"), tier=3, floor_pct=Decimal("1.5"),
+         floor_price=Decimal("10.15"), scales_done=["PCT2"])
+    _quote(svc, bid=10.10)                           # floor breach, live bid 10.10
+    await svc._evaluate_v2_managed_exit(SYM)
+
+    m = _meta(_sell_intents(sf)[0])
+    assert m["order_type"] == "limit" and m["session"] == "AM"
+    assert m["limit_price"] == _panic_limit_price(10.10, 0.5) == "10.05"
+    assert m["reference_price"] == "10.1500"         # floor level PRESERVED
+
+
+# --------------------------------------------------------------------------- (E4)
+
+@pytest.mark.asyncio
+async def test_pm_scale_routes_at_bid_zero_buffer(monkeypatch) -> None:
+    _force_session(monkeypatch, "PM")
+    sf = _make_sf()
+    svc = _svc(sf)
+    _arm(svc, sf, entry=10.0, qty=100)
+    _quote(svc, bid=10.25)                           # +2.5% → PCT2 scale, live bid 10.25
+    await svc._evaluate_v2_managed_exit(SYM)
+
+    m = _meta(_sell_intents(sf)[0])
+    assert m["order_type"] == "limit" and m["session"] == "PM"
+    assert m["price_source"] == "bid"
+    assert m["limit_price"] == _format_limit_price(10.25) == "10.25"     # AT the bid, NOT buffered
+    assert m["reference_price"] == "10.2000"         # +2% leg level PRESERVED
+
+
+# --------------------------------------------------------------------------- (E5)
+
+@pytest.mark.asyncio
+async def test_eh_missing_bid_falls_back_to_market(monkeypatch) -> None:
+    """Fail-safe: EH but no usable bid at emit → stays MARKET (never blocks the exit).
+    The eval guards bid>0, so this exercises _emit_v2_managed_sell directly with bid=None."""
+    _force_session(monkeypatch, "PM")
+    sf = _make_sf()
+    svc = _svc(sf)
+    _arm(svc, sf, entry=10.0, qty=100)
+    with sf() as s:
+        row = svc.store.get_open_managed_position(s, broker_account_name=ACCT, symbol=SYM)
+        events = await svc._emit_v2_managed_sell(
+            s, row, intent_type="close", quantity=100,
+            reference_price=9.85, reason="oms_v2_managed_exit:HARD_STOP", bid=None,
+        )
+        s.commit()
+    assert events
+    m = _meta(_sell_intents(sf)[0])
+    assert m["order_type"] == "market"               # fail-safe: no bid → market, not blocked
+    assert "session" not in m
+
+
+# --------------------------------------------------------------------------- (E6)
+
+def test_extended_hours_session_boundaries() -> None:
+    """The session helper the exit routing keys off (America/New_York)."""
+    from zoneinfo import ZoneInfo
+    et = ZoneInfo("America/New_York")
+    assert _extended_hours_session(datetime(2026, 7, 6, 8, 0, tzinfo=et)) == "AM"    # pre-market
+    assert _extended_hours_session(datetime(2026, 7, 6, 14, 0, tzinfo=et)) is None   # RTH
+    assert _extended_hours_session(datetime(2026, 7, 6, 16, 30, tzinfo=et)) == "PM"  # after-hours

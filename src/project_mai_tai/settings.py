@@ -551,6 +551,16 @@ class Settings(BaseSettings):
     # normal gateway quote cadence while still skipping real gaps. Hard stop runs on
     # ANY fresh quote (NOT RTH-gated) — v2's edge is pre/after-market.
     oms_v2_exit_quote_max_age_ms: int = 5000
+    # Extended-hours exit routing (2026-07-05, CLRO/CELZ stuck-exit fix). In
+    # regular trading hours v2 exits stay MARKET/NORMAL (byte-identical). In
+    # extended hours (AM/PM) they route as a LIMIT with session=AM|PM so they can
+    # actually fill (a MARKET order cannot route in EH). Protective legs (hard
+    # stop + floor) price a MARKETABLE limit buffered below the live bid so they
+    # reliably cross the spread even against a slightly stale snapshot bid; the
+    # buffer is a disaster-floor (fills AT the bid, not at the buffer). Scale
+    # partials price at the bid (zero buffer) — patient profit-taking, harmless
+    # if it doesn't fill this quote. See docs/v2-eh-exit-routing-fix-design.md.
+    oms_v2_exit_eh_protective_limit_buffer_pct: float = 0.5
     # Stuck-intent cancellation (2026-05-18 incident: pre-market intents
     # for AUUD/QNCX/SBFM kept retrying for 4.5 hours and 400+ attempts
     # each because the OMS had no max-age cap, no quote-drift sanity, and
