@@ -1197,7 +1197,7 @@ class OmsRiskService:
                     ref = entry_price * (1.0 - float(self._v2_exit_config.stop_loss_pct) / 100.0)
                     events = await self._emit_v2_managed_sell(
                         session, row, intent_type="close", quantity=int(position.quantity),
-                        reference_price=ref, reason="oms_v2_managed_exit:HARD_STOP",
+                        reference_price=ref, reason="oms_v2_managed_exit:HARD_STOP", bid=bid,
                     )
                     self.store.close_managed_position(session, row)
                     self._managed_v2_symbols.discard(symbol)
@@ -1205,7 +1205,7 @@ class OmsRiskService:
                     ref = float(position.floor_price) or bid
                     events = await self._emit_v2_managed_sell(
                         session, row, intent_type="close", quantity=int(position.quantity),
-                        reference_price=ref, reason="oms_v2_managed_exit:FLOOR_BREACH",
+                        reference_price=ref, reason="oms_v2_managed_exit:FLOOR_BREACH", bid=bid,
                     )
                     self.store.close_managed_position(session, row)
                     self._managed_v2_symbols.discard(symbol)
@@ -1215,7 +1215,7 @@ class OmsRiskService:
                     ref = self._v2_scale_level_price(entry_price, level)
                     events = await self._emit_v2_managed_sell(
                         session, row, intent_type="scale", quantity=sell_qty,
-                        reference_price=ref, reason=f"oms_v2_managed_exit:SCALE_{level}",
+                        reference_price=ref, reason=f"oms_v2_managed_exit:SCALE_{level}", bid=bid,
                     )
                     position.apply_scale(level, sell_qty, exit_price=ref)
                     self.store.update_managed_position_from_position(session, row, position)
@@ -1239,11 +1239,21 @@ class OmsRiskService:
         quantity: int,
         reference_price: float,
         reason: str,
+        bid: float | None = None,
     ) -> list:
         """THE SINGLE place a v2 managed-exit SELL is built. The order's
         broker_account_name is ALWAYS the managed row's account — the safe-by-
         construction invariant that pins routing to the simulated adapter
-        (paper-isolation; proven by test_v2_exit_paper_isolation)."""
+        (paper-isolation; proven by test_v2_exit_paper_isolation).
+
+        Extended-hours routing (2026-07-05): in RTH the order stays MARKET/NORMAL
+        (byte-identical). In extended hours a MARKET order cannot fill, so route a
+        LIMIT with session=AM|PM off the live ``bid``: protective legs (hard-stop /
+        floor, intent_type="close") price a MARKETABLE buffered limit so they
+        reliably cross the spread; scale partials price AT the bid (patient). The
+        leg-level ``reference_price`` is left unchanged so the [OMS-V2-MANAGED-EXIT]
+        log and the live-paper re-score stay identical; ``limit_price`` drives the
+        live order (adapter prefers limit_price, falls back to reference_price)."""
         strategy = session.scalar(select(Strategy).where(Strategy.code == row.strategy_code))
         broker_account = session.scalar(
             select(BrokerAccount).where(BrokerAccount.name == row.broker_account_name)
@@ -1260,6 +1270,27 @@ class OmsRiskService:
             "order_type": "market",
             "time_in_force": "day",
         }
+        order_type = "market"
+        session_code = _extended_hours_session()
+        if session_code is not None and bid and bid > 0:
+            if intent_type == "scale":
+                routed = _format_limit_price(bid)  # profit-taking: at the bid, zero buffer
+            else:  # "close" = hard-stop / floor: buffered marketable limit that must fill
+                buffer_pct = float(
+                    getattr(self.settings, "oms_v2_exit_eh_protective_limit_buffer_pct", 0.5)
+                )
+                routed = _panic_limit_price(bid, buffer_pct)
+            if routed is not None:
+                order_type = "limit"
+                metadata.update(
+                    {
+                        "order_type": "limit",
+                        "limit_price": routed,
+                        "price_source": "bid",
+                        "session": session_code,
+                        "extended_hours": "true",
+                    }
+                )
         event = TradeIntentEvent(
             source_service=SERVICE_NAME,
             payload=TradeIntentPayload(
@@ -1290,7 +1321,7 @@ class OmsRiskService:
             quantity=Decimal(str(quantity)),
             reason=reason,
             metadata=dict(metadata),
-            order_type="market",
+            order_type=order_type,
             time_in_force="day",
         )
         reports = await self.broker_adapter.submit_order(request)
