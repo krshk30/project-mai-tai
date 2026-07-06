@@ -788,10 +788,18 @@ class OmsStore:
         session: Session,
         row: OmsManagedPosition,
         position: object,
+        *,
+        write_quantity: bool = True,
     ) -> None:
         """Persist ladder state from a hydrated `exit_logic.Position` (duck-typed).
-        No emit — pure state write. Maps Position's -999 floor sentinel to NULL."""
-        row.current_quantity = int(getattr(position, "quantity", row.current_quantity))
+        No emit — pure state write. Maps Position's -999 floor sentinel to NULL.
+
+        `write_quantity=False` (#6 close-on-fill mode) persists ladder PRICE-state only and
+        leaves `current_quantity` untouched — the held quantity is fill-gated (decremented
+        solely by confirmed fills in `_apply_managed_position_after_fill`), so a
+        submitted-but-unfilled exit never marks the row down before the broker fills."""
+        if write_quantity:
+            row.current_quantity = int(getattr(position, "quantity", row.current_quantity))
         row.peak_profit_pct = Decimal(str(getattr(position, "peak_profit_pct", 0.0)))
         row.current_profit_pct = Decimal(str(getattr(position, "current_profit_pct", 0.0)))
         row.tier = int(getattr(position, "tier", row.tier))

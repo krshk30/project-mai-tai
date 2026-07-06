@@ -1131,11 +1131,15 @@ class OmsRiskService:
                 symbol, broker_account_name, int(quantity), price, entry_path,
             )
         elif s == "sell":
-            # Slice 3 OWNS the row update for its own emitted exits (it closes/
-            # decrements + persists ladder state synchronously in the quote eval).
-            # Skip those fills here so we don't double-handle the row.
+            # #6: when close-on-fill is ON, the managed-exit row is closed HERE, on the
+            # CONFIRMED fill (current_quantity decrement + close-at-0) — NOT on submit in
+            # the quote eval. So managed-exit sell fills fall through to the shared
+            # decrement/close below (the same path external flattens already use).
+            # Legacy (flag OFF): slice-3 closed the row on submit → skip to avoid
+            # double-handling (rollback lever).
             if str(metadata.get("oms_v2_managed_exit", "")).strip().lower() == "true":
-                return
+                if not bool(getattr(self.settings, "oms_v2_exit_close_on_fill_enabled", True)):
+                    return
             # External flatten (operator-initiated): keep the row honest.
             row = self.store.get_open_managed_position(
                 session, broker_account_name=broker_account_name, symbol=symbol
@@ -1226,6 +1230,8 @@ class OmsRiskService:
         if bid <= 0:
             return
         acct = self.settings.strategy_schwab_1m_v2_account_name
+        # #6 (CLRO desync fix): mark closed on the confirmed FILL, not on submit. Default on.
+        close_on_fill = bool(getattr(self.settings, "oms_v2_exit_close_on_fill_enabled", True))
         events: list = []
         try:
             with self.session_factory() as session:
@@ -1239,6 +1245,27 @@ class OmsRiskService:
                 position = self._hydrate_v2_position(row)
                 position.update_price(bid)
 
+                # #6 dedup guard: if an exit order is already working for this symbol, do NOT
+                # re-emit. The position stays open + monitored + broker-consistent; the fill
+                # (or a later cancel -> retry) drives the close. Replaces the old
+                # close-on-submit that used to stop re-eval. Ladder price-state still refreshes
+                # (write_quantity=False so the held qty stays fill-gated).
+                if close_on_fill:
+                    broker_account = session.scalar(
+                        select(BrokerAccount).where(BrokerAccount.name == row.broker_account_name)
+                    )
+                    if broker_account is not None and self.store.get_open_exit_reserved_quantity(
+                        session,
+                        broker_account_id=broker_account.id,
+                        symbol=symbol,
+                        include_native_stop_guard=False,
+                    ) > 0:
+                        self.store.update_managed_position_from_position(
+                            session, row, position, write_quantity=False
+                        )
+                        session.commit()
+                        return
+
                 hard = self._v2_exit_engine.check_hard_stop(position, bid)
                 intrabar = None if hard is not None else self._v2_exit_engine.check_intrabar_exit(position)
 
@@ -1248,16 +1275,28 @@ class OmsRiskService:
                         session, row, intent_type="close", quantity=int(position.quantity),
                         reference_price=ref, reason="oms_v2_managed_exit:HARD_STOP", bid=bid,
                     )
-                    self.store.close_managed_position(session, row)
-                    self._managed_v2_symbols.discard(symbol)
+                    if close_on_fill:
+                        # #6: do NOT close on submit — the confirmed fill closes the row.
+                        # Persist price-state only; keep the position monitored/protected.
+                        self.store.update_managed_position_from_position(
+                            session, row, position, write_quantity=False
+                        )
+                    else:
+                        self.store.close_managed_position(session, row)
+                        self._managed_v2_symbols.discard(symbol)
                 elif intrabar is not None and intrabar.get("action") == "CLOSE":
                     ref = float(position.floor_price) or bid
                     events = await self._emit_v2_managed_sell(
                         session, row, intent_type="close", quantity=int(position.quantity),
                         reference_price=ref, reason="oms_v2_managed_exit:FLOOR_BREACH", bid=bid,
                     )
-                    self.store.close_managed_position(session, row)
-                    self._managed_v2_symbols.discard(symbol)
+                    if close_on_fill:
+                        self.store.update_managed_position_from_position(
+                            session, row, position, write_quantity=False
+                        )
+                    else:
+                        self.store.close_managed_position(session, row)
+                        self._managed_v2_symbols.discard(symbol)
                 elif intrabar is not None and intrabar.get("action") == "SCALE" and int(intrabar.get("sell_qty") or 0) > 0:
                     sell_qty = int(intrabar["sell_qty"])
                     level = str(intrabar.get("level") or "")
@@ -1267,7 +1306,11 @@ class OmsRiskService:
                         reference_price=ref, reason=f"oms_v2_managed_exit:SCALE_{level}", bid=bid,
                     )
                     position.apply_scale(level, sell_qty, exit_price=ref)
-                    self.store.update_managed_position_from_position(session, row, position)
+                    # #6: fill-gate the scale quantity (write_quantity=False) — the scale fill
+                    # decrements current_quantity; on submit persist only the ladder state.
+                    self.store.update_managed_position_from_position(
+                        session, row, position, write_quantity=not close_on_fill
+                    )
                 else:
                     # no exit this quote — co-located quote->Position state update
                     self.store.update_managed_position_from_position(session, row, position)
