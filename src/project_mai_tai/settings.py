@@ -538,6 +538,19 @@ class Settings(BaseSettings):
     webull_native_stop_order_type_map_enabled: bool = False
     oms_broker_sync_interval_seconds: int = 5
     oms_working_order_refresh_seconds: int = 5
+    # --- OMS DB-timeout hardening (SPOF cure) ---
+    # Bounds EVERY OMS DB call so a stalled connection RAISES within seconds
+    # instead of hanging the asyncio event loop forever (the 2026-07-01/02 zombie:
+    # a sync `session.flush()` in sync_account_positions hung on `psycopg wait`
+    # with no timeout and froze the whole loop). OMS-scoped on purpose — other
+    # services have legit slow queries and keep the untimed engine. Set
+    # `MAI_TAI_OMS_DB_TIMEOUTS_ENABLED=false` to revert to the untimed engine.
+    oms_db_timeouts_enabled: bool = True
+    oms_db_statement_timeout_ms: int = 5000  # per-statement; every OMS query is sub-second normally (100x+ headroom)
+    oms_db_lock_timeout_ms: int = 3000
+    oms_db_connect_timeout_s: int = 5
+    oms_db_pool_timeout_s: int = 5  # bounds waiting for a free pooled connection (both tasks share the pool)
+    oms_db_pool_recycle_s: int = 1800
     # Track-2 Phase-2: OMS-side managed exits for schwab_1m_v2 positions. The
     # SINGLE flag across all Phase-2 slices. Default OFF → ships DORMANT: the OMS
     # does NOT create/update `oms_managed_positions` rows for v2 fills and emits

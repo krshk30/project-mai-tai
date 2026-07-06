@@ -20,7 +20,7 @@ from project_mai_tai.broker_adapters.routing import RoutingBrokerAdapter
 from project_mai_tai.broker_adapters.schwab import SchwabBrokerAdapter
 from project_mai_tai.broker_adapters.simulated import SimulatedBrokerAdapter
 from project_mai_tai.broker_adapters.webull import WebullBrokerAdapter
-from project_mai_tai.db.session import build_session_factory
+from project_mai_tai.db.session import build_oms_session_factory
 from project_mai_tai.db.models import BrokerAccount, BrokerOrder, Strategy, StrategyBarHistory, TradeIntent
 from project_mai_tai.exit_logic.config import TradingConfig
 from project_mai_tai.exit_logic.engine import ExitEngine
@@ -133,7 +133,7 @@ class OmsRiskService:
     ):
         self.settings = settings or get_settings()
         self.redis = redis_client or Redis.from_url(self.settings.redis_url, decode_responses=True)
-        self.session_factory = session_factory or build_session_factory(self.settings)
+        self.session_factory = session_factory or build_oms_session_factory(self.settings)
         self.broker_adapter = broker_adapter or self._build_broker_adapter()
         self.store = store or OmsStore()
         self.strategy_registrations = strategy_registration_map(self.settings)
@@ -162,6 +162,28 @@ class OmsRiskService:
         self._managed_v2_symbols: set[str] = set()
         self._v2_exit_config: TradingConfig = TradingConfig().make_v2_variant()
         self._v2_exit_engine: ExitEngine = ExitEngine(self._v2_exit_config)
+
+    async def _run_db(self, fn, *, commit: bool = True):
+        """Run a PURE-SYNC unit of DB work on a worker thread, off the event loop.
+
+        SPOF cure (requirement 1): even a timeout-bounded stall (Fix 1) hangs a
+        throwaway worker thread — never the shared asyncio loop — so the tick
+        consumer, heartbeat, and other tasks keep running. The session is opened,
+        used, committed, and closed ENTIRELY inside the thread (`fn` receives it
+        and must not let it escape), so SQLAlchemy's per-thread-session contract
+        holds and no session ever crosses threads. Broker `await`s must stay
+        OUTSIDE `fn` (they belong on the loop; the adapters already offload their
+        own REST). On exception the context manager rolls back and the error
+        propagates to the caller (bounded by Fix 1), where each hot handler
+        already log-skip-continues (Fix 4)."""
+        def _unit():
+            with self.session_factory() as session:
+                result = fn(session)
+                if commit:
+                    session.commit()
+                return result
+
+        return await asyncio.to_thread(_unit)
 
     async def run(self) -> None:
         stop_event = asyncio.Event()
@@ -217,7 +239,17 @@ class OmsRiskService:
         last_broker_sync = 0.0
         while not stop_event.is_set():
             loop_now = asyncio.get_running_loop().time()
-            broker_sync_interval_secs = await self._broker_sync_interval_seconds()
+            try:
+                broker_sync_interval_secs = await self._broker_sync_interval_seconds()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # Best-effort cadence optimizer — a DB stall/timeout here must
+                # never break the loop or skip the heartbeat below (which is what
+                # keeps the watchdog informed during a DB outage). Fall back to the
+                # default interval. (Un-wrapped, this was a fatal control-loop gap.)
+                self.logger.warning("broker-sync interval check failed; using default cadence")
+                broker_sync_interval_secs = max(1.0, float(self.settings.oms_broker_sync_interval_seconds))
             read_timeout_secs = min(
                 heartbeat_interval_secs,
                 max(0.1, broker_sync_interval_secs - (loop_now - last_broker_sync)),
@@ -237,7 +269,16 @@ class OmsRiskService:
                 for stream, entries in messages:
                     for message_id, fields in entries:
                         self._intent_offsets[stream] = message_id
-                        await self._handle_stream_message(fields)
+                        try:
+                            await self._handle_stream_message(fields)
+                        except asyncio.CancelledError:
+                            raise
+                        except Exception:
+                            # A bad intent (or a Fix-1 timeout-exception raised
+                            # during intent processing) must skip-continue, NOT
+                            # propagate to run() and exit the whole service — the
+                            # fatal control-loop gap the SPOF audit identified.
+                            self.logger.exception("failed handling strategy intent message")
 
             now = asyncio.get_running_loop().time()
             if now - last_broker_sync >= broker_sync_interval_secs:
@@ -253,7 +294,15 @@ class OmsRiskService:
                     "adapter": self.settings.oms_adapter_label,
                     "providers": ",".join(self.settings.active_broker_providers),
                 }
-                await self._publish_heartbeat("healthy", heartbeat_details)
+                try:
+                    await self._publish_heartbeat("healthy", heartbeat_details)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    # The heartbeat is the watchdog's liveness signal — a transient
+                    # publish error must not exit the loop. Advance the stamp anyway
+                    # so we don't tight-loop; the next interval retries.
+                    self.logger.exception("failed publishing heartbeat")
                 last_heartbeat = now
 
     async def _run_tick_consumer(self, stop_event: asyncio.Event) -> None:
@@ -646,7 +695,7 @@ class OmsRiskService:
         for order_event in published_events:
             await self._publish_order_event(order_event)
 
-        await self.sync_broker_state(account_names=[event.payload.broker_account_name])
+        await self._reconcile_after_intent(event.payload.broker_account_name)
         return published_events
 
     async def _process_cancel_intent(
@@ -1343,7 +1392,7 @@ class OmsRiskService:
         broker_account_name: str,
         symbol: str,
     ) -> bool:
-        with self.session_factory() as session:
+        def _unit(session) -> bool:
             strategy = session.scalar(select(Strategy).where(Strategy.code == strategy_code))
             broker_account = session.scalar(select(BrokerAccount).where(BrokerAccount.name == broker_account_name))
             if strategy is None or broker_account is None:
@@ -1356,6 +1405,30 @@ class OmsRiskService:
             )
             return native_order is not None
 
+        # Off-loop (Fix 2): this pre-close dedup check sits on the hard-stop path
+        # (A1). A stall here must never freeze the loop; and per Fix 3 the caller
+        # treats a raised timeout as "proceed to fire the stop".
+        return await self._run_db(_unit, commit=False)
+
+    async def _reconcile_after_intent(self, broker_account_name: str) -> None:
+        """Best-effort post-intent broker→DB reconcile (Fix 3b).
+
+        By the time this runs the order has ALREADY been submitted and committed,
+        and the broker is the source of truth. A stall/failure here must NOT unwind
+        the submitted (possibly protective) order or propagate to the caller — the
+        next periodic ``sync_broker_orders`` back-fills the DB from the broker. So a
+        hung reconcile degrades bookkeeping only, it never blocks or unwinds a stop."""
+        try:
+            await self.sync_broker_state(account_names=[broker_account_name])
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            self.logger.warning(
+                "post-intent broker-state reconcile failed for %s (order already "
+                "submitted; next periodic sync reconciles)",
+                broker_account_name,
+            )
+
     async def sync_broker_state(self, *, account_names: list[str] | None = None) -> dict[str, int]:
         order_summary = await self.sync_broker_orders(account_names=account_names)
         position_summary = await self.sync_broker_positions(account_names=account_names)
@@ -1367,32 +1440,52 @@ class OmsRiskService:
         }
 
     async def sync_broker_positions(self, *, account_names: list[str] | None = None) -> dict[str, int]:
-        with self.session_factory() as session:
+        # SPOF fix (Fix 2): this is the method BOTH 2026-07-01/02 zombies hung in
+        # — `sync_account_positions -> session.flush()` ran on the event loop and
+        # hung on a stalled connection. Split into phases so the DB work runs OFF
+        # the loop via `_run_db` while the broker REST `await`s stay ON the loop
+        # (the adapter already offloads them). Behavior is identical when healthy:
+        # same accounts, same per-account sync, same virtual-clear, same commit
+        # boundary (nothing is committed unless all broker fetches succeed).
+        # Phase 1 (DB, off-loop): resolve target accounts as (id, name) tuples.
+        def _load_accounts(session) -> list[tuple[UUID, str]]:
             if account_names is None:
-                broker_accounts = self.store.list_active_broker_accounts(session)
+                accounts = self.store.list_active_broker_accounts(session)
             else:
-                broker_accounts = self.store.list_named_broker_accounts(session, account_names)
+                accounts = self.store.list_named_broker_accounts(session, account_names)
+            return [(account.id, account.name) for account in accounts]
 
-            synced_accounts = 0
+        accounts = await self._run_db(_load_accounts, commit=False)
+
+        # Phase 2 (broker REST, on-loop): fetch each account's live positions.
+        fetched: list[tuple[UUID, list]] = []
+        for account_id, account_name in accounts:
+            snapshots = await self.broker_adapter.list_account_positions(account_name)
+            fetched.append((account_id, snapshots))
+
+        # Phase 3 (DB writes, off-loop): persist snapshots + clear unbacked
+        # virtuals, committed inside the worker thread (the flush that froze the
+        # loop now cannot).
+        account_ids = [account_id for account_id, _ in accounts]
+
+        def _persist(session) -> int:
             synced_positions = 0
-            for broker_account in broker_accounts:
-                snapshots = await self.broker_adapter.list_account_positions(broker_account.name)
+            for account_id, snapshots in fetched:
                 synced_positions += self.store.sync_account_positions(
                     session,
-                    broker_account_id=broker_account.id,
+                    broker_account_id=account_id,
                     snapshots=snapshots,
                 )
-                synced_accounts += 1
-
             self.store.clear_virtual_positions_without_account_backing(
                 session,
-                broker_account_ids=[account.id for account in broker_accounts],
+                broker_account_ids=account_ids,
             )
+            return synced_positions
 
-            session.commit()
+        synced_positions = await self._run_db(_persist)
 
         return {
-            "accounts": synced_accounts,
+            "accounts": len(accounts),
             "positions": synced_positions,
         }
 
@@ -1760,13 +1853,15 @@ class OmsRiskService:
         return default_interval
 
     async def _has_active_stop_guard_orders(self) -> bool:
-        with self.session_factory() as session:
+        def _unit(session) -> bool:
             broker_accounts = self.store.list_active_broker_accounts(session)
             open_orders = self.store.list_open_orders(
                 session,
                 broker_account_ids=[account.id for account in broker_accounts],
             )
             return any(self._is_stop_guard_order(order) for order in open_orders)
+
+        return await self._run_db(_unit, commit=False)
 
     @staticmethod
     def _hard_stop_key(strategy_code: str, broker_account_name: str, symbol: str) -> tuple[str, str, str]:
@@ -1917,13 +2012,31 @@ class OmsRiskService:
         trigger_price: Decimal,
         trigger_source: str,
     ) -> None:
-        if _is_regular_market_session() and await self._has_active_native_stop_guard_order(
-            strategy_code=stop.strategy_code,
-            broker_account_name=stop.broker_account_name,
-            symbol=stop.symbol,
-        ):
-            stop.last_trigger_attempt_at = utcnow()
-            return
+        if _is_regular_market_session():
+            try:
+                has_native_guard = await self._has_active_native_stop_guard_order(
+                    strategy_code=stop.strategy_code,
+                    broker_account_name=stop.broker_account_name,
+                    symbol=stop.symbol,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # Fix 3: the pre-close native-guard dedup check is an OPTIMIZATION,
+                # not a safety gate. If it stalls/times out (DB hung), PROCEED to
+                # fire the protective close — a DB stall must NEVER abort real-money
+                # stop protection. Worst case is a duplicate close the periodic sync
+                # reconciles, which is strictly safer than a missed stop.
+                self.logger.warning(
+                    "[HARD-STOP] native-guard pre-check failed (DB stall?) for %s %s — "
+                    "proceeding to submit the protective close",
+                    stop.strategy_code,
+                    stop.symbol,
+                )
+                has_native_guard = False
+            if has_native_guard:
+                stop.last_trigger_attempt_at = utcnow()
+                return
         stop.last_trigger_attempt_at = utcnow()
         stop.close_in_flight = True
         self.logger.info(
