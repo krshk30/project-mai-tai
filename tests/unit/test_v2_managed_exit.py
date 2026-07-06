@@ -16,6 +16,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from project_mai_tai.broker_adapters.protocols import ExecutionReport
 from project_mai_tai.broker_adapters.simulated import SimulatedBrokerAdapter
 from project_mai_tai.db.base import Base
 from project_mai_tai.db.models import BrokerOrder, OmsManagedPosition, TradeIntent
@@ -48,8 +49,11 @@ def _make_sf() -> sessionmaker:
     return sessionmaker(bind=engine, expire_on_commit=False)
 
 
-def _svc(sf, *, enabled: bool = True, adapter=None) -> OmsRiskService:
-    settings = Settings(oms_v2_exit_management_enabled=enabled)
+def _svc(sf, *, enabled: bool = True, close_on_fill: bool = True, adapter=None) -> OmsRiskService:
+    settings = Settings(
+        oms_v2_exit_management_enabled=enabled,
+        oms_v2_exit_close_on_fill_enabled=close_on_fill,
+    )
     svc = OmsRiskService(
         settings, redis_client=_FakeRedis(), session_factory=sf,
         broker_adapter=adapter or SimulatedBrokerAdapter(),
@@ -430,3 +434,157 @@ def test_extended_hours_session_boundaries() -> None:
     assert _extended_hours_session(datetime(2026, 7, 6, 8, 0, tzinfo=et)) == "AM"    # pre-market
     assert _extended_hours_session(datetime(2026, 7, 6, 14, 0, tzinfo=et)) is None   # RTH
     assert _extended_hours_session(datetime(2026, 7, 6, 16, 30, tzinfo=et)) == "PM"  # after-hours
+
+
+# ---- #6: mark closed on FILL not submit (CLRO closed-on-submit desync fix) --------------
+# Root cause: the eval used to close the managed row on the exit SUBMIT. If the exit never
+# filled (CLRO: EH market order that couldn't cross), the OMS showed flat while the broker
+# still held the shares -> stranded, unmonitored, reconciler mismatch. #6 fill-gates the
+# close: the row transitions to closed ONLY on a confirmed fill; a working-but-unfilled exit
+# leaves the row open + monitored + broker-consistent, and does not re-emit (dedup guard).
+
+class _NoFillAdapter:
+    """Submits the exit (accepted / working) but NEVER returns a fill — the CLRO case
+    (a resting limit that doesn't cross, or an EH order that can't fill)."""
+
+    def __init__(self) -> None:
+        self.submitted: list = []
+
+    async def submit_order(self, request):
+        self.submitted.append(request)
+        return [ExecutionReport(
+            event_type="accepted", client_order_id=request.client_order_id,
+            broker_order_id="wrk-1", symbol=request.symbol, side=request.side,
+            intent_type=request.intent_type, quantity=request.quantity,
+            reason=request.reason, metadata=dict(request.metadata),
+        )]
+
+    async def fetch_order_update(self, request):
+        return None                       # still working; no fill
+
+    async def list_account_positions(self, broker_account_name: str):
+        return []
+
+
+class _PartialFillAdapter:
+    """Fills only part of the exit on submit (e.g. 6 of 10)."""
+
+    def __init__(self, fill_qty: int) -> None:
+        self.fill_qty = fill_qty
+
+    async def submit_order(self, request):
+        return [ExecutionReport(
+            event_type="partially_filled", client_order_id=request.client_order_id,
+            broker_order_id="wrk-1", broker_fill_id="f1", symbol=request.symbol, side=request.side,
+            intent_type=request.intent_type, quantity=request.quantity,
+            filled_quantity=Decimal(str(self.fill_qty)), fill_price=Decimal("9.85"),
+            reason=request.reason, metadata=dict(request.metadata),
+        )]
+
+    async def fetch_order_update(self, request):
+        return None
+
+    async def list_account_positions(self, broker_account_name: str):
+        return []
+
+
+# --------------------------------------------------------------------------- (#6-1) MUST-PASS
+@pytest.mark.asyncio
+async def test_clro_never_fills_stays_open_monitored_no_reemit() -> None:
+    """THE invariant proof (analog of the SPOF stop-decouple test): an exit that SUBMITS
+    but NEVER fills must leave the position OPEN, quantity intact, still monitored, and must
+    NOT re-emit on the next quote — so the OMS record stays consistent with the broker."""
+    sf = _make_sf()
+    adapter = _NoFillAdapter()
+    svc = _svc(sf, adapter=adapter)
+    _arm(svc, sf, entry=10.0, qty=100)
+
+    _quote(svc, bid=9.80)                              # hard stop
+    await svc._evaluate_v2_managed_exit(SYM)
+
+    assert len(adapter.submitted) == 1                 # exit submitted...
+    r = _row(sf)
+    assert r.status == "open"                          # ...but NOT marked closed on submit
+    assert r.current_quantity == 100                   # broker still holds 100 -> record honest
+    assert SYM in svc._managed_v2_symbols              # still monitored / protected
+    assert _sell_order_count(sf) == 1                  # one working exit order
+
+    # next quote: the dedup guard prevents a re-emit storm while the exit is working
+    _quote(svc, bid=9.75)
+    await svc._evaluate_v2_managed_exit(SYM)
+    assert len(adapter.submitted) == 1                 # NO second exit emitted
+    r2 = _row(sf)
+    assert r2.status == "open" and r2.current_quantity == 100
+    assert SYM in svc._managed_v2_symbols
+
+
+# --------------------------------------------------------------------------- (#6-2)
+@pytest.mark.asyncio
+async def test_partial_fill_decrements_not_flat() -> None:
+    """Partial fill: exit 10, fills 6 -> position is 4 (NOT 0, NOT 10). Fill-gated qty."""
+    sf = _make_sf()
+    svc = _svc(sf, adapter=_PartialFillAdapter(fill_qty=6))
+    _arm(svc, sf, entry=10.0, qty=10)
+
+    _quote(svc, bid=9.80)                              # hard stop -> close 10, fills 6
+    await svc._evaluate_v2_managed_exit(SYM)
+
+    r = _row(sf)
+    assert r.status == "open" and r.current_quantity == 4   # 10 - 6 confirmed fill
+    assert SYM in svc._managed_v2_symbols              # remaining 4 still monitored
+
+
+# --------------------------------------------------------------------------- (#6-3)
+@pytest.mark.asyncio
+async def test_retry_after_working_exit_cancelled() -> None:
+    """Once the working exit terminates without a full fill (cancelled), the guard clears
+    and the next quote re-emits (retry) — the position is not left un-exited forever."""
+    sf = _make_sf()
+    adapter = _NoFillAdapter()
+    svc = _svc(sf, adapter=adapter)
+    _arm(svc, sf, entry=10.0, qty=100)
+    _quote(svc, bid=9.80)
+    await svc._evaluate_v2_managed_exit(SYM)
+    assert len(adapter.submitted) == 1
+
+    # simulate the working exit going terminal (cancelled) -> no longer an open exit order
+    with sf() as s:
+        for o in s.scalars(select(BrokerOrder).where(BrokerOrder.symbol == SYM, BrokerOrder.side == "sell")):
+            o.status = "cancelled"
+        s.commit()
+
+    _quote(svc, bid=9.75)
+    await svc._evaluate_v2_managed_exit(SYM)
+    assert len(adapter.submitted) == 2                 # re-emitted after the guard cleared
+    assert _row(sf).status == "open" and _row(sf).current_quantity == 100
+
+
+# --------------------------------------------------------------------------- (#6-4)
+@pytest.mark.asyncio
+async def test_happy_path_immediate_fill_closes_on_fill() -> None:
+    """Paper / immediate-fill: the sim adapter fills inline -> the fill handler closes the row
+    in the same eval. Behaviour-identical to pre-#6 for the immediate-fill case."""
+    sf = _make_sf()
+    svc = _svc(sf)                                     # SimulatedBrokerAdapter fills inline
+    _arm(svc, sf, entry=10.0, qty=100)
+    _quote(svc, bid=9.80)
+    await svc._evaluate_v2_managed_exit(SYM)
+    r = _row(sf)
+    assert r.status == "closed" and r.current_quantity == 0
+    assert SYM not in svc._managed_v2_symbols
+
+
+# --------------------------------------------------------------------------- (#6-5) rollback lever
+@pytest.mark.asyncio
+async def test_legacy_flag_off_closes_on_submit() -> None:
+    """Rollback lever: with close-on-fill OFF, the legacy close-on-submit behaviour is
+    preserved — the row closes on submit even though the exit never filled (the old bug,
+    intentionally reachable so a rollback is byte-identical to prior production)."""
+    sf = _make_sf()
+    svc = _svc(sf, close_on_fill=False, adapter=_NoFillAdapter())
+    _arm(svc, sf, entry=10.0, qty=100)
+    _quote(svc, bid=9.80)
+    await svc._evaluate_v2_managed_exit(SYM)
+    r = _row(sf)
+    assert r.status == "closed" and r.current_quantity == 0    # legacy: closed on submit
+    assert SYM not in svc._managed_v2_symbols

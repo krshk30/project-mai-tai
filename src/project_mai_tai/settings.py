@@ -559,6 +559,11 @@ class Settings(BaseSettings):
     # sell-emitting risk legs (slice 3) gate additionally on the paper-isolation
     # re-proof. See docs/v2-exit-phase2-slice1-position-state-design.md.
     oms_v2_exit_management_enabled: bool = False
+    # #6 (CLRO desync fix): mark a v2 managed position closed on the confirmed FILL, not on
+    # exit-order SUBMIT. Default TRUE = fill-gated (current_quantity decrements only on
+    # confirmed fills; status->closed only at qty 0; a submitted-but-unfilled exit leaves the
+    # row open+monitored+broker-consistent). FALSE = legacy close-on-submit (rollback lever).
+    oms_v2_exit_close_on_fill_enabled: bool = True
     # Slice-3: max age (ms) of the cached quote that the v2 exit ladder will act on.
     # A staler quote is skipped so a gap never mis-triggers an exit. 5s tolerates
     # normal gateway quote cadence while still skipping real gaps. Hard stop runs on
