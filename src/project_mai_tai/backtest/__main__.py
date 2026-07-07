@@ -65,10 +65,13 @@ def _run_v2(src, a, y, m, d):
 
 def main() -> None:
     p = argparse.ArgumentParser(prog="python -m project_mai_tai.backtest")
-    p.add_argument("symbol")
+    p.add_argument("symbol", nargs="?", help="omit with --sheet")
     p.add_argument("date", help="ET session date, YYYY-MM-DD")
     p.add_argument("--strategy", choices=["orb", "v2"], default="orb")
     p.add_argument("--mode", choices=["bar_close", "intrabar"], default="intrabar")
+    p.add_argument("--sheet", action="store_true",
+                   help="render the full daily sheet for ALL qualified names (every name gets a "
+                        "reason: SKIP-no-feed / 0t-no-signal — no silent absence)")
     p.add_argument("--capped", action="store_true", help="ORB live-achievable 2-cap (else thesis)")
     p.add_argument("--qty", type=int, default=5)
     p.add_argument("--trail", type=float, default=3.0)
@@ -76,6 +79,12 @@ def main() -> None:
     a = p.parse_args()
     y, m, d = (int(x) for x in a.date.split("-"))
     src = DbMarketDataSource(build_session_factory(get_settings()))
+    if a.sheet:
+        from project_mai_tai.backtest.daily_sheet import render_orb_sheet, render_v2_sheet
+        print((render_v2_sheet if a.strategy == "v2" else render_orb_sheet)(src, y, m, d))
+        return
+    if not a.symbol:
+        p.error("symbol is required unless --sheet is given")
     (_run_v2 if a.strategy == "v2" else _run_orb)(src, a, y, m, d)
 
 

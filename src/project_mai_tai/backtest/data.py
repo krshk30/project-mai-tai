@@ -160,6 +160,38 @@ class DbMarketDataSource:
         return [Quote(ts=ts, bid=float(b), ask=float(a), last=float(lp) if lp is not None else None)
                 for ts, b, a, lp in rows if b is not None and a is not None]
 
+    def v2_qualified_symbols(self, start: datetime, end: datetime) -> list[str]:
+        """v2-qualified for a day = names v2 TRACKED (built Schwab bars) UNION TRADED
+        (broker_orders). The daily sheet enumerates this so every qualified name appears with a
+        reason (never a silent absence like the CLRO omission)."""
+        with self._sf() as s:
+            rows = s.execute(
+                text(
+                    "SELECT DISTINCT symbol FROM strategy_bar_history "
+                    "WHERE strategy_code='schwab_1m_v2' AND bar_time>=:lo AND bar_time<:hi "
+                    "UNION SELECT DISTINCT bo.symbol FROM broker_orders bo "
+                    "JOIN strategies st ON st.id=bo.strategy_id "
+                    "WHERE st.code='schwab_1m_v2' AND bo.submitted_at>=:lo AND bo.submitted_at<:hi"
+                ),
+                {"lo": start, "hi": end},
+            ).all()
+        return sorted(r[0] for r in rows)
+
+    def orb_qualified_symbols(self, start: datetime, end: datetime, *, min_trades: int = 500) -> list[str]:
+        """ORB-qualified for the window = market_capture symbols with >= min_trades in the ORB
+        window (the captured scanner universe) UNION ORB-traded names."""
+        with self._sf() as s:
+            rows = s.execute(
+                text(
+                    "SELECT symbol FROM market_capture_trades WHERE event_ts>=:lo AND event_ts<:hi "
+                    "GROUP BY symbol HAVING count(*)>=:mt "
+                    "UNION SELECT bo.symbol FROM broker_orders bo JOIN strategies st ON st.id=bo.strategy_id "
+                    "WHERE st.code='orb' AND bo.submitted_at>=:lo AND bo.submitted_at<:hi"
+                ),
+                {"lo": start, "hi": end, "mt": min_trades},
+            ).all()
+        return sorted(r[0] for r in rows)
+
 
 class FixtureMarketDataSource:
     """Reads committed gzipped-CSV golden fixtures (NO DB) so the golden-case suite runs in CI.

@@ -49,6 +49,7 @@ class Trade:
     qty: int
     pnl: float
     exit_reason: str
+    level: float | None = None   # the running-high that was broken (informational, for validation)
 
 
 def _run_trail_exit(quotes, start_idx, fill_price, trail_pct, book, latency_s):
@@ -104,7 +105,7 @@ def simulate_bar_close(bars, quotes, *, gap_cap_pct, trail_pct, qty,
         start = bisect_left(book._ts, fill_ts)
         xts, xprice, xreason, _ = _run_trail_exit(quotes, start, fill, trail_pct, book, latency_s)
         pnl = (xprice - fill) * qty if xprice is not None else 0.0
-        trades.append(Trade(fill_ts, fill, xts, xprice, qty, pnl, xreason))
+        trades.append(Trade(fill_ts, fill, xts, xprice, qty, pnl, xreason, brk.level))
         flat_after = xts
     return trades
 
@@ -148,7 +149,7 @@ def simulate_intrabar(trades, quotes, *, gap_cap_pct, trail_pct, qty,
                 start = bisect_left(book._ts, fill_ts)
                 xts, xprice, xreason, _ = _run_trail_exit(quotes, start, fill, trail_pct, book, latency_s)
                 pnl = (xprice - fill) * qty if xprice is not None else 0.0
-                out.append(Trade(fill_ts, fill, xts, xprice, qty, pnl, xreason))
+                out.append(Trade(fill_ts, fill, xts, xprice, qty, pnl, xreason, level))
                 # advance running_high through the hold; resume after the exit (can't re-enter
                 # while holding). running_high sitting at the hold's peak => re-entry needs a new high.
                 while i < n and (xts is None or trades[i].ts <= xts):

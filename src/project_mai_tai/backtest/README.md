@@ -7,9 +7,15 @@ phantom re-entries — 93/−$39 shown for a real 23/+$1.91; SDOT never chart-ch
 
 ## Run it (the only supported entry point)
 ```
+# one symbol:
 python -m project_mai_tai.backtest SYMBOL YYYY-MM-DD [--strategy orb|v2] [--mode bar_close|intrabar] [--capped]
+# full daily sheet (ALL qualified names, each with a reason — no silent absence):
+python -m project_mai_tai.backtest YYYY-MM-DD --strategy orb|v2 --sheet
 ```
-ORB reports P&L across the **measured per-broker latency band** — never a single point.
+ORB reports P&L across the **measured per-broker latency band** — never a single point. `--sheet`
+enumerates the qualified universe (v2 = tracked∪traded; ORB = window-captured∪traded) and prints
+every name with trades OR an explicit reason (SKIP-no-feed / 0t-no-signal). Run after close for a
+final sheet (intraday capture is still filling in).
 
 ## Why it is trustworthy (validated against ground truth, not assumed)
 - **Decision source = `market_capture_trades`** (the live gateway stream the bot actually saw),
