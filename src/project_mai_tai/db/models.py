@@ -654,3 +654,55 @@ class OmsManagedPosition(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, server_default=func.now(), onupdate=utcnow
     )
+
+
+class OmsArmedStop(Base):
+    """Durable mirror of the OMS in-memory `_armed_hard_stops` registry (F2).
+
+    Purpose: survive an OMS restart while ORB holds. `_armed_hard_stops` is
+    process-memory only; before F2 a restart left an ORB position with NO stop
+    (naked) because the registry was never rebuilt on boot. This table is the
+    persisted mirror: written on arm / ratchet / decrement / close, rehydrated at
+    boot BEFORE the tick consumer starts (protected-before-serving).
+
+    OMS-OWNED BY CONSTRUCTION: only the OMS's own fills (an intent it emitted with
+    `stop_guard_enabled`) create a row (via `_update_hard_stop_registry_from_fill`).
+    A manual broker holding never appears here. One row per
+    (broker_account_name, strategy_code, symbol) — the same natural key as
+    `_hard_stop_key`. TEXT keys (no FK), matching `oms_managed_positions`.
+
+    `stop_price` + `high_water_mark` store the FULL-FIDELITY ratcheted level (not
+    entry+trail% to be re-derived) so a rehydrated stop resumes exactly where the
+    trail had ratcheted, never looser. `last_trigger_attempt_at` is deliberately
+    NOT persisted (transient throttle state, irrelevant to restart protection).
+    """
+
+    __tablename__ = "oms_armed_stops"
+    __table_args__ = (
+        UniqueConstraint(
+            "broker_account_name",
+            "strategy_code",
+            "symbol",
+            name="uq_oms_armed_stops_key",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(), primary_key=True, default=uuid4)
+    strategy_code: Mapped[str] = mapped_column(String(64), index=True)
+    broker_account_name: Mapped[str] = mapped_column(String(128), index=True)
+    symbol: Mapped[str] = mapped_column(String(16), index=True)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(18, 8))
+    entry_price: Mapped[Decimal] = mapped_column(Numeric(18, 8))
+    stop_loss_pct: Mapped[float] = mapped_column(Numeric(18, 6))
+    stop_price: Mapped[Decimal] = mapped_column(Numeric(18, 8))
+    quote_max_age_ms: Mapped[int] = mapped_column(Integer)
+    initial_panic_buffer_pct: Mapped[float] = mapped_column(Numeric(18, 6))
+    trail_pct: Mapped[float] = mapped_column(Numeric(18, 6), server_default="0", default=0.0)
+    high_water_mark: Mapped[Decimal | None] = mapped_column(Numeric(18, 8), nullable=True)
+    close_in_flight: Mapped[bool] = mapped_column(Boolean, server_default="false", default=False)
+    armed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, server_default=func.now(), onupdate=utcnow
+    )

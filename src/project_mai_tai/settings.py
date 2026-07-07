@@ -564,6 +564,13 @@ class Settings(BaseSettings):
     # confirmed fills; status->closed only at qty 0; a submitted-but-unfilled exit leaves the
     # row open+monitored+broker-consistent). FALSE = legacy close-on-submit (rollback lever).
     oms_v2_exit_close_on_fill_enabled: bool = True
+    # F2 (restart-while-holding): persist the in-memory `_armed_hard_stops` registry to the
+    # durable `oms_armed_stops` table (mirror on arm/ratchet/decrement/close), rehydrate it on
+    # boot, and reconcile OMS-owned positions BEFORE serving ticks. Fixes the pre-F2 gap where
+    # an ORB position went NAKED across an OMS restart (in-memory-only stop, no boot rebuild).
+    # Default TRUE = protection persists + rehydrates. FALSE = pre-F2 in-memory-only behaviour
+    # (no mirror writes, empty rehydrate, no boot reconcile; table ignored) — the rollback lever.
+    oms_armed_stop_persistence_enabled: bool = True
     # Slice-3: max age (ms) of the cached quote that the v2 exit ladder will act on.
     # A staler quote is skipped so a gap never mis-triggers an exit. 5s tolerates
     # normal gateway quote cadence while still skipping real gaps. Hard stop runs on
