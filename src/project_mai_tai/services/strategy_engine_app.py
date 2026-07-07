@@ -27,7 +27,7 @@ from project_mai_tai.db.models import (
     TradeIntent,
     VirtualPosition,
 )
-from project_mai_tai.db.session import build_session_factory
+from project_mai_tai.db.session import build_timed_session_factory
 from project_mai_tai.broker_adapters.schwab import SchwabBrokerAdapter
 from project_mai_tai.events import (
     HeartbeatEvent,
@@ -5886,7 +5886,7 @@ class StrategyEngineService:
         self.session_factory = (
             session_factory
             if session_factory is not None
-            else build_session_factory(self.settings)
+            else build_timed_session_factory(self.settings, service="strategy_engine", profile="slow")
             if persistence_enabled
             else None
         )

@@ -9,7 +9,7 @@ from project_mai_tai.ai_trade_coach import TradeCoachClient
 from project_mai_tai.ai_trade_coach import TradeCoachConfig
 from project_mai_tai.ai_trade_coach import TradeCoachRepository
 from project_mai_tai.ai_trade_coach import TradeCoachService
-from project_mai_tai.db.session import build_session_factory
+from project_mai_tai.db.session import build_timed_session_factory
 from project_mai_tai.log import configure_logging
 from project_mai_tai.services.runtime import _install_signal_handlers
 from project_mai_tai.services.strategy_engine_app import current_scanner_session_start_utc
@@ -78,7 +78,7 @@ class TradeCoachApp:
             max_similar_trades=self.settings.trade_coach_max_similar_trades,
         )
         self.repository = TradeCoachRepository(
-            session_factory=build_session_factory(self.settings),
+            session_factory=build_timed_session_factory(self.settings, service="trade_coach", profile="slow"),
             config=config,
         )
         self.service = TradeCoachService(

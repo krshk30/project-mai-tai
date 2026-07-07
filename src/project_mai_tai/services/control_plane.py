@@ -41,7 +41,7 @@ from project_mai_tai.db.models import (
     TradeIntent,
     VirtualPosition,
 )
-from project_mai_tai.db.session import build_session_factory
+from project_mai_tai.db.session import build_timed_session_factory
 from project_mai_tai.events import (
     HeartbeatEvent,
     IsolatedBotStateEvent,
@@ -3386,7 +3386,7 @@ def build_app(
     legacy_client: LegacyShadowClient | None = None,
 ) -> FastAPI:
     active_settings = settings or get_settings()
-    active_session_factory = session_factory or build_session_factory(active_settings)
+    active_session_factory = session_factory or build_timed_session_factory(active_settings, service="control", profile="slow")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):

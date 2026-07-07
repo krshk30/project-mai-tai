@@ -25,7 +25,7 @@ from project_mai_tai.db.models import (
     TradeIntent,
     VirtualPosition,
 )
-from project_mai_tai.db.session import build_session_factory
+from project_mai_tai.db.session import build_timed_session_factory
 from project_mai_tai.events import HeartbeatEvent, HeartbeatPayload, stream_name
 from project_mai_tai.services.runtime import _install_signal_handlers
 from project_mai_tai.settings import Settings, get_settings
@@ -63,7 +63,7 @@ class ReconciliationService:
     ):
         self.settings = settings or get_settings()
         self.redis = redis_client or Redis.from_url(self.settings.redis_url, decode_responses=True)
-        self.session_factory = session_factory or build_session_factory(self.settings)
+        self.session_factory = session_factory or build_timed_session_factory(self.settings, service="reconciler", profile="slow")
         self.instance_name = socket.gethostname()
         self.logger = logging.getLogger(SERVICE_NAME)
 

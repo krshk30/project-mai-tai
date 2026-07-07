@@ -38,7 +38,7 @@ from sqlalchemy import insert
 from sqlalchemy.orm import Session, sessionmaker
 
 from project_mai_tai.db.models import MarketCaptureQuote, MarketCaptureTrade
-from project_mai_tai.db.session import build_session_factory
+from project_mai_tai.db.session import build_timed_session_factory
 from project_mai_tai.events import stream_name
 from project_mai_tai.market_data.tick_time import normalize_ts_ns, ns_to_datetime
 from project_mai_tai.settings import Settings, get_settings
@@ -105,7 +105,7 @@ class MarketCaptureService:
             logger.info("[CAPTURE] disabled (market_capture_enabled=false); not starting")
             return
         if self.session_factory is None:
-            self.session_factory = build_session_factory(self.settings)
+            self.session_factory = build_timed_session_factory(self.settings, service="market_capture", profile="slow")
         stream = stream_name(self.settings.redis_stream_prefix, "market-data")
         batch = int(getattr(self.settings, "market_capture_batch_size", 1000))
         flush_secs = float(getattr(self.settings, "market_capture_flush_secs", 2.0))
