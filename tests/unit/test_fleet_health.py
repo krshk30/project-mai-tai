@@ -47,3 +47,21 @@ def test_slowing_bars_with_live_feed_is_amber():
 def test_no_bars_is_amber_not_red():
     # Can't assess (no data) is AMBER (look), never RED (don't cry wolf).
     assert fhc.classify_bar_freshness(None, 5)[0] == "AMBER"
+
+
+# --- check #2: oms-order-lifecycle (alive-but-not-executing) ------------------ #
+
+def test_no_stuck_intents_is_green_quiet_or_executing():
+    # THE no-false-alarm guard: no stuck intents -> GREEN, whether the market is quiet
+    # (no intents) or the OMS is executing normally.
+    assert fhc.classify_order_lifecycle(0, None)[0] == "GREEN"
+
+
+def test_stuck_intents_is_red_alive_but_not_executing():
+    level, detail = fhc.classify_order_lifecycle(3, 12)
+    assert level == "RED"
+    assert "not-executing" in detail or "not executing" in detail
+
+
+def test_unreadable_intents_is_amber_not_red():
+    assert fhc.classify_order_lifecycle(None, None)[0] == "AMBER"
