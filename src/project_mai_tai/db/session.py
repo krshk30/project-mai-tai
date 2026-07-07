@@ -75,3 +75,51 @@ def build_oms_session_factory(settings: Settings) -> sessionmaker[Session]:
         pool_recycle_s=settings.oms_db_pool_recycle_s,
     )
     return sessionmaker(bind=engine, expire_on_commit=False)
+
+
+def build_timed_session_factory(
+    settings: Settings, *, service: str, profile: str = "fast"
+) -> sessionmaker[Session]:
+    """PR-E: fleet-wide DB-timeout rollout for the NON-OMS services.
+
+    Rolls #391's timeout treatment (Postgres ``statement_timeout``/``lock_timeout`` +
+    connect/pool timeouts) to every long-running service so a stalled DB connection RAISES
+    within seconds instead of hanging the service unbounded (the same latent class the OMS
+    had). Timeouts ONLY — no off-loop/executor restructuring (that was OMS-specific, closed
+    at Option C).
+
+    ``profile``: ``"fast"`` (~5s) for latency-critical asyncio bots (small indexed queries —
+    free their loop quickly); ``"slow"`` (~60s) for services with legitimately long queries
+    (reconciler scans, strategy-engine bulk, market-capture inserts, the ~5.4s control
+    ``/api/overview``) — generous enough to never cut a legit query, still finite.
+
+    Falls back to the untimed :func:`build_session_factory` (byte-identical) when: the fleet
+    flag is off (rollback lever), ``service`` is in the per-service disabled list (per-service
+    rollback), or the URL is not Postgres (the timeouts are Postgres GUCs — keeps SQLite test
+    paths safe). Never changes ``build_session_factory`` or the OMS factory."""
+    disabled = {
+        s.strip() for s in str(settings.service_db_timeouts_disabled_services).split(",") if s.strip()
+    }
+    if (
+        not settings.service_db_timeouts_enabled
+        or service in disabled
+        or not str(settings.database_url).startswith("postgresql")
+    ):
+        return build_session_factory(settings)
+    if profile == "slow":
+        statement_timeout_ms = settings.service_db_slow_statement_timeout_ms
+        lock_timeout_ms = settings.service_db_slow_lock_timeout_ms
+        pool_timeout_s = settings.service_db_slow_pool_timeout_s
+    else:  # "fast"
+        statement_timeout_ms = settings.service_db_fast_statement_timeout_ms
+        lock_timeout_ms = settings.service_db_fast_lock_timeout_ms
+        pool_timeout_s = settings.service_db_fast_pool_timeout_s
+    engine = build_engine(
+        settings.database_url,
+        connect_timeout_s=settings.service_db_connect_timeout_s,
+        statement_timeout_ms=statement_timeout_ms,
+        lock_timeout_ms=lock_timeout_ms,
+        pool_timeout_s=pool_timeout_s,
+        pool_recycle_s=settings.service_db_pool_recycle_s,
+    )
+    return sessionmaker(bind=engine, expire_on_commit=False)

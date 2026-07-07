@@ -29,7 +29,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from project_mai_tai.db.models import BrokerOrder, BrokerOrderEvent, DashboardSnapshot, Strategy
-from project_mai_tai.db.session import build_session_factory
+from project_mai_tai.db.session import build_timed_session_factory
 from project_mai_tai.events import (
     IsolatedBotStateEvent,
     MarketDataSubscriptionEvent,
@@ -206,7 +206,7 @@ class OrbService:
             logger.info("[ORB] disabled (orb_enabled=false); not starting")
             return
         if self.session_factory is None:
-            self.session_factory = build_session_factory(self.settings)
+            self.session_factory = build_timed_session_factory(self.settings, service="orb", profile="fast")
         logger.info("[ORB] starting — isolated bot, market-data gateway consumer")
         try:
             while True:

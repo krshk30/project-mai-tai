@@ -551,6 +551,27 @@ class Settings(BaseSettings):
     oms_db_connect_timeout_s: int = 5
     oms_db_pool_timeout_s: int = 5  # bounds waiting for a free pooled connection (both tasks share the pool)
     oms_db_pool_recycle_s: int = 1800
+    # PR-E: roll #391's DB-timeout treatment fleet-wide to the NON-OMS services (they still
+    # used the untimed factory -> a stalled DB connection could hang them unbounded, the same
+    # latent class the OMS had). Timeouts ONLY (bound hangs) — no off-loop restructuring.
+    service_db_timeouts_enabled: bool = True  # fleet master flag (rollback lever: false = all untimed)
+    # Per-service rollback: comma-separated service names to EXCLUDE (leave untimed) even when the
+    # fleet flag is on — e.g. "reconciler,control". Env: MAI_TAI_SERVICE_DB_TIMEOUTS_DISABLED_SERVICES.
+    service_db_timeouts_disabled_services: str = ""
+    # FAST profile — latency-critical asyncio services with small/indexed queries (the live-money
+    # bots): a stalled connection must free their loop quickly. Mirrors the OMS #391 bound.
+    service_db_fast_statement_timeout_ms: int = 5000
+    service_db_fast_lock_timeout_ms: int = 3000
+    service_db_fast_pool_timeout_s: int = 5
+    # SLOW profile — services with legitimately long queries (reconciler scans, strategy-engine
+    # bar-history/scanner-snapshot bulk, market-capture bulk inserts, the ~5.4s control /api/overview):
+    # generous enough to NEVER cut a legit query, still finite so a dead connection can't hang forever.
+    service_db_slow_statement_timeout_ms: int = 60000
+    service_db_slow_lock_timeout_ms: int = 10000
+    service_db_slow_pool_timeout_s: int = 10
+    # Shared by both profiles.
+    service_db_connect_timeout_s: int = 5
+    service_db_pool_recycle_s: int = 1800
     # Track-2 Phase-2: OMS-side managed exits for schwab_1m_v2 positions. The
     # SINGLE flag across all Phase-2 slices. Default OFF → ships DORMANT: the OMS
     # does NOT create/update `oms_managed_positions` rows for v2 fills and emits

@@ -41,7 +41,7 @@ from project_mai_tai.db.models import (
     TradeIntent,
     VirtualPosition,
 )
-from project_mai_tai.db.session import build_session_factory
+from project_mai_tai.db.session import build_timed_session_factory
 from project_mai_tai.oms.store import OmsStore
 from project_mai_tai.events import (
     HeartbeatEvent,
@@ -325,7 +325,7 @@ class SchwabV2BotService:
         self.redis = Redis.from_url(self.settings.redis_url, decode_responses=True)
         if self.session_factory is None:
             try:
-                self.session_factory = build_session_factory(self.settings)
+                self.session_factory = build_timed_session_factory(self.settings, service="schwab_1m_v2", profile="fast")
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
                     "schwab_1m_v2 session_factory unavailable, bar persistence "
@@ -350,7 +350,7 @@ class SchwabV2BotService:
         if bool(getattr(self.settings, "strategy_schwab_1m_v2_tick_capture_enabled", False)):
             if self.session_factory is None:
                 try:
-                    self.session_factory = build_session_factory(self.settings)
+                    self.session_factory = build_timed_session_factory(self.settings, service="schwab_1m_v2", profile="fast")
                 except Exception:
                     logger.exception(
                         "schwab_1m_v2 tick capture: session_factory unavailable; "

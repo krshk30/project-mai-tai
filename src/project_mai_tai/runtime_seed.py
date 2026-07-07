@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from sqlalchemy.orm import Session, sessionmaker
 
-from project_mai_tai.db.session import build_session_factory
+from project_mai_tai.db.session import build_timed_session_factory
 from project_mai_tai.oms.store import OmsStore
 from project_mai_tai.runtime_registry import (
     configured_broker_account_registrations,
@@ -27,7 +27,7 @@ def seed_runtime_metadata(
 ) -> RuntimeSeedSummary:
     active_settings = settings or get_settings()
     active_store = store or OmsStore()
-    factory = session_factory or build_session_factory(active_settings)
+    factory = session_factory or build_timed_session_factory(active_settings, service="runtime_seed", profile="fast")
 
     strategy_registrations = configured_strategy_registrations(active_settings)
     broker_account_registrations = configured_broker_account_registrations(active_settings)
