@@ -34,9 +34,11 @@ send_ntfy() {  # $1=title $2=priority $3=tags $4=body
 }
 
 if [ "$SELFTEST" -eq 1 ]; then
-  send_ntfy "🔴 mai-tai FUNCTION UNHEALTHY [SELFTEST]" "urgent" "rotating_light" \
-    "[SELFTEST] fleet function-health RED — check: ssh mai-tai-vps 'cat $OUT/latest.txt'"
-  echo "$STAMP  SELFTEST push sent" >> "$OUT/cron.log"
+  # Benign GREEN confirmation — a selftest verifies the end-to-end alerting path LANDS; it
+  # must NOT look like a real alarm (default priority so it reliably lands, not min).
+  send_ntfy "✅ mai-tai function-health SELFTEST" "default" "white_check_mark" \
+    "[SELFTEST] end-to-end alerting path OK — benign confirmation, no action needed."
+  echo "$STAMP  SELFTEST green-confirmation push sent" >> "$OUT/cron.log"
   exit 0
 fi
 
