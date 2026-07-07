@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+from datetime import UTC, datetime
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -24,6 +25,7 @@ from project_mai_tai.broker_adapters.protocols import BrokerPositionSnapshot
 from project_mai_tai.db import session as db_session
 from project_mai_tai.db.base import Base
 from project_mai_tai.db.models import BrokerAccount
+from project_mai_tai.events import QuoteTickEvent, QuoteTickPayload
 from project_mai_tai.oms.service import ArmedHardStop, OmsRiskService
 from project_mai_tai.oms.store import OmsStore
 from project_mai_tai.settings import Settings
@@ -359,3 +361,127 @@ def test_control_loop_survives_bad_intent_and_db_outage_and_heartbeats():
     # The loop neither raised nor exited when the intent handler AND both DB calls
     # failed — and the heartbeat still fired (watchdog stays informed → not a zombie).
     assert beats == ["healthy"]
+
+
+# --------------------------------------------------------------------------- #
+# PR-A — tick-path DB off-load (the two per-tick freeze drivers)
+#   _evaluate_v2_managed_exit (read + no-exit/dedup write) and
+#   _cancel_drifted_working_orders now run their DB off the event loop via _run_db,
+#   keeping broker awaits + in-memory dict mutations on-loop. The mandatory
+#   stop-decoupling proof: a stall in ANY off-loaded unit can never block/abort the
+#   protective stop, and no dict-mutation race is introduced.
+# --------------------------------------------------------------------------- #
+def _v2_tick_settings() -> SimpleNamespace:
+    return SimpleNamespace(
+        oms_quote_drift_cancel_tolerance_cents=1.0,
+        oms_v2_exit_management_enabled=True,
+        strategy_schwab_1m_v2_account_name="live:schwab_1m_v2",
+        oms_v2_exit_quote_max_age_ms=5000,
+        oms_v2_exit_close_on_fill_enabled=True,
+    )
+
+
+def test_pra_armed_stop_fires_even_when_tickpath_db_units_stall(monkeypatch):
+    """STOP-DECOUPLING PROOF (PR-A): with EVERY off-loaded DB unit stalling
+    (TimeoutError — Fix-1 surfaces a hung psycopg connection this way), a quote that
+    breaches the stop STILL submits the protective close. The stop is evaluated
+    UPSTREAM of the off-loaded tick-path DB, the stalls run on worker threads, and both
+    tick methods swallow-and-continue — so a DB stall can neither block nor abort
+    real-money stop protection, nor skip the downstream v2 hard-stop eval."""
+    import project_mai_tai.oms.service as svc_mod
+    monkeypatch.setattr(svc_mod, "_is_regular_market_session", lambda *a, **k: True)
+
+    svc = _bare_service()
+    svc.settings = _v2_tick_settings()
+    svc._latest_quotes_by_symbol = {}
+    svc._latest_trades_by_symbol = {}
+    stop = _armed_stop()  # KIDZ, stop_price 1.182
+    svc._armed_hard_stops = {
+        svc._hard_stop_key(stop.strategy_code, stop.broker_account_name, stop.symbol): stop
+    }
+    svc._managed_v2_symbols = {stop.symbol}  # so step 4 (v2 exit) also runs and stalls
+
+    async def hung_run_db(fn, *, commit=True):
+        raise TimeoutError("tick-path DB unit hung on psycopg wait")
+
+    svc._run_db = hung_run_db  # every off-loaded unit stalls (read/write, v2 + drift-cancel)
+
+    submitted: list = []
+
+    async def fake_process_trade_intent(event):
+        submitted.append(event)
+        return [SimpleNamespace(payload=SimpleNamespace(status="filled", reason="HARD_STOP"))]
+
+    svc.process_trade_intent = fake_process_trade_intent
+
+    event = QuoteTickEvent(
+        source_service="market-data",
+        payload=QuoteTickPayload(
+            symbol=stop.symbol, bid_price=Decimal("1.18"), ask_price=Decimal("1.19")
+        ),
+    )
+    # Must complete without raising (both tick methods swallow the stalled DB) ...
+    asyncio.run(svc._handle_quote_tick_event(event))
+    # ... and the protective close was still submitted.
+    assert len(submitted) == 1, "protective close was NOT submitted when tick-path DB units stalled"
+    assert submitted[0].payload.reason == "HARD_STOP"
+
+
+def test_pra_v2_exit_db_runs_off_loop_while_dict_mutation_stays_on_loop():
+    """OFF-LOAD + NO-RACE PROOF (PR-A): the v2 managed-exit DB unit executes on a WORKER
+    thread (off the event loop), while the `_managed_v2_symbols` mutation stays on the
+    LOOP thread — so no off-loaded unit ever races the stop path on a shared dict."""
+    session_factory = build_test_session_factory()
+    svc = _bare_service()
+    svc.session_factory = session_factory
+    svc.store = OmsStore()
+    svc.settings = _v2_tick_settings()
+    svc._latest_quotes_by_symbol = {
+        "KIDZ": {"bid": 1.25, "ask": 1.26, "received_at": datetime.now(UTC)}
+    }
+    svc._latest_trades_by_symbol = {}
+
+    main_ident = threading.get_ident()
+    db_idents: list[int] = []
+    real_run_db = svc._run_db  # bound real _run_db (thread-offloading)
+
+    async def spy_run_db(fn, *, commit=True):
+        def wrapped(session):
+            db_idents.append(threading.get_ident())
+            return fn(session)
+
+        return await real_run_db(wrapped, commit=commit)
+
+    svc._run_db = spy_run_db
+
+    discard_idents: list[int] = []
+
+    class _TrackSet(set):
+        def discard(self, value):
+            discard_idents.append(threading.get_ident())
+            super().discard(value)
+
+    svc._managed_v2_symbols = _TrackSet({"KIDZ"})
+
+    # No managed row exists → the off-loop READ returns None → discard runs on-loop.
+    asyncio.run(svc._evaluate_v2_managed_exit("KIDZ"))
+
+    assert db_idents, "the v2 read unit did not go through _run_db"
+    assert all(ident != main_ident for ident in db_idents), "DB unit ran ON the event-loop thread"
+    assert discard_idents == [main_ident], "_managed_v2_symbols mutation left the loop thread (race!)"
+
+
+def test_pra_drift_cancel_never_dies_on_a_db_stall():
+    """PR-A never-die guard: a stalled DB unit in the drift-cancel path is swallowed
+    (loop survives) so it can never propagate or skip the downstream v2 hard-stop eval
+    that runs later in the same quote handler."""
+    svc = _bare_service()
+    svc.settings = SimpleNamespace(oms_quote_drift_cancel_tolerance_cents=1.0)
+    svc._latest_quotes_by_symbol = {"KIDZ": {"bid": 1.20, "ask": 1.50}}
+
+    async def hung_run_db(fn, *, commit=True):
+        raise TimeoutError("drift-cancel DB unit hung on psycopg wait")
+
+    svc._run_db = hung_run_db
+    # Must return normally (guard swallows), never raise.
+    assert asyncio.run(svc._cancel_drifted_working_orders("KIDZ")) is None

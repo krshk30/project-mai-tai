@@ -117,6 +117,51 @@ class ArmedHardStop:
     high_water_mark: Decimal | None = None
 
 
+@dataclass(frozen=True)
+class _V2ManagedSnapshot:
+    """Plain-data read of an open v2 managed row, taken INSIDE an off-loop DB unit
+    so neither the ORM row nor its Session ever crosses the worker-thread boundary
+    (the `_run_db` contract). Field names mirror `OmsManagedPosition` so
+    `_hydrate_v2_position` works unchanged on this snapshot (duck-typed)."""
+
+    symbol: str
+    entry_price: float
+    current_quantity: int
+    entry_time: str
+    entry_path: str
+    peak_profit_pct: float
+    tier: int
+    floor_pct: float | None
+    floor_price: float | None
+    scales_done: list
+    scale_pnl: float
+    dedup_active: bool
+
+
+@dataclass(frozen=True)
+class _DriftCancelCandidate:
+    """Plain-data snapshot of a working order whose quote has drifted past its
+    limit. Collected inside an off-loop read unit; the broker cancel runs on-loop;
+    the DB write-back re-fetches order/intent by id in a second off-loop unit. No
+    ORM object crosses a thread."""
+
+    order_id: UUID
+    intent_id: UUID
+    client_order_id: str
+    broker_account_name: str
+    strategy_code: str
+    symbol: str
+    side: str
+    quantity: Decimal
+    order_type: str
+    time_in_force: str
+    existing_metadata: dict
+    broker_order_id: str
+    limit_price: str
+    intent_created_at: datetime | None
+    drift: float
+
+
 class OmsRiskService:
     NO_POSITION_REASONS = ("cannot be sold short", "insufficient qty", "no broker position available to sell")
     NOT_TRADABLE_REASONS = ("is not tradable",)
@@ -1215,7 +1260,15 @@ class OmsRiskService:
         the live bid; FILL reference_price is the leg LEVEL (decision B — stop/floor/
         scale level) so live-paper agrees with the re-score by construction. Precedence
         hard>floor>scale, one action per quote. Sole-writer of the managed row; the
-        quote->Position state-update is co-located here (deferred from slice 1)."""
+        quote->Position state-update is co-located here (deferred from slice 1).
+
+        PR-A off-load: the per-tick READ and the no-exit / dedup price-state WRITE are
+        the high-frequency freeze driver — they carry no broker await and no in-memory
+        dict mutation, so they run OFF the event loop via ``_run_db``. Decisions
+        (hydrate/ratchet) and the ``_managed_v2_symbols`` guard mutation stay on-loop.
+        The RARE exit-emit (``_emit_v2_exit_on_loop``) keeps its on-loop session — it
+        reaches the shared, dict-mutating, broker-awaiting ``_record_order_reports``
+        (owned by PR-D); it is bounded to ~5s by #391 Fix-1 and fires only on an exit."""
         if not bool(getattr(self.settings, "oms_v2_exit_management_enabled", False)):
             return
         quote = self._latest_quotes_by_symbol.get(symbol)
@@ -1232,6 +1285,146 @@ class OmsRiskService:
         acct = self.settings.strategy_schwab_1m_v2_account_name
         # #6 (CLRO desync fix): mark closed on the confirmed FILL, not on submit. Default on.
         close_on_fill = bool(getattr(self.settings, "oms_v2_exit_close_on_fill_enabled", True))
+        try:
+            # Phase 1 — READ (off-loop): snapshot the open row + dedup state. Neither the
+            # ORM row nor its Session escapes the worker thread. None => no open row.
+            snapshot = await self._run_db(
+                lambda session: self._read_v2_managed_snapshot(session, acct, symbol, close_on_fill),
+                commit=False,
+            )
+            if snapshot is None:
+                self._managed_v2_symbols.discard(symbol)  # dict mutation stays on-loop
+                return
+
+            # Phase 2 — DECIDE (on-loop, pure): hydrate + ratchet off the snapshot.
+            entry_price = snapshot.entry_price
+            position = self._hydrate_v2_position(snapshot)
+            position.update_price(bid)
+
+            # #6 dedup guard: an exit order already works for this symbol -> keep the
+            # position open + monitored + broker-consistent; refresh ladder PRICE-state
+            # only (write_quantity=False, held qty stays fill-gated) and do NOT re-emit.
+            if snapshot.dedup_active:
+                await self._run_db(
+                    lambda session: self._persist_v2_price_state(
+                        session, acct, symbol, position, write_quantity=False
+                    ),
+                    commit=True,
+                )
+                return
+
+            hard = self._v2_exit_engine.check_hard_stop(position, bid)
+            intrabar = None if hard is not None else self._v2_exit_engine.check_intrabar_exit(position)
+
+            if hard is not None:
+                ref = entry_price * (1.0 - float(self._v2_exit_config.stop_loss_pct) / 100.0)
+                await self._emit_v2_exit_on_loop(
+                    acct, symbol, position, entry_price, kind="HARD",
+                    reference_price=ref, reason="oms_v2_managed_exit:HARD_STOP",
+                    bid=bid, close_on_fill=close_on_fill,
+                )
+            elif intrabar is not None and intrabar.get("action") == "CLOSE":
+                ref = float(position.floor_price) or bid
+                await self._emit_v2_exit_on_loop(
+                    acct, symbol, position, entry_price, kind="FLOOR",
+                    reference_price=ref, reason="oms_v2_managed_exit:FLOOR_BREACH",
+                    bid=bid, close_on_fill=close_on_fill,
+                )
+            elif intrabar is not None and intrabar.get("action") == "SCALE" and int(intrabar.get("sell_qty") or 0) > 0:
+                sell_qty = int(intrabar["sell_qty"])
+                level = str(intrabar.get("level") or "")
+                ref = self._v2_scale_level_price(entry_price, level)
+                await self._emit_v2_exit_on_loop(
+                    acct, symbol, position, entry_price, kind="SCALE",
+                    reference_price=ref, reason=f"oms_v2_managed_exit:SCALE_{level}",
+                    bid=bid, close_on_fill=close_on_fill, sell_qty=sell_qty, level=level,
+                )
+            else:
+                # no exit this quote — co-located quote->Position state update (off-loop write)
+                await self._run_db(
+                    lambda session: self._persist_v2_price_state(
+                        session, acct, symbol, position, write_quantity=True
+                    ),
+                    commit=True,
+                )
+        except Exception as exc:  # noqa: BLE001 — the quote path must never die
+            self.logger.warning("v2 managed-exit eval failed for %s: %s", symbol, exc)
+            return
+
+    def _read_v2_managed_snapshot(
+        self, session: Session, acct: str, symbol: str, close_on_fill: bool
+    ) -> _V2ManagedSnapshot | None:
+        """Off-loop READ unit: snapshot the open managed row + whether an exit order is
+        already working (dedup). Returns None when there is no open row. Pure DB read —
+        no ORM object leaves this function (the `_run_db` contract)."""
+        row = self.store.get_open_managed_position(
+            session, broker_account_name=acct, symbol=symbol
+        )
+        if row is None:
+            return None
+        dedup_active = False
+        if close_on_fill:
+            broker_account = session.scalar(
+                select(BrokerAccount).where(BrokerAccount.name == row.broker_account_name)
+            )
+            if broker_account is not None and self.store.get_open_exit_reserved_quantity(
+                session,
+                broker_account_id=broker_account.id,
+                symbol=symbol,
+                include_native_stop_guard=False,
+            ) > 0:
+                dedup_active = True
+        return _V2ManagedSnapshot(
+            symbol=row.symbol,
+            entry_price=float(row.entry_price),
+            current_quantity=int(row.current_quantity),
+            entry_time=str(row.entry_time),
+            entry_path=row.entry_path or "",
+            peak_profit_pct=float(row.peak_profit_pct or 0.0),
+            tier=int(row.tier or 1),
+            floor_pct=(float(row.floor_pct) if row.floor_pct is not None else None),
+            floor_price=(float(row.floor_price) if row.floor_price is not None else None),
+            scales_done=list(row.scales_done or []),
+            scale_pnl=float(row.scale_pnl or 0.0),
+            dedup_active=dedup_active,
+        )
+
+    def _persist_v2_price_state(
+        self, session: Session, acct: str, symbol: str, position: Position, *, write_quantity: bool
+    ) -> None:
+        """Off-loop WRITE unit: persist ladder state for the still-open managed row.
+        Re-fetches the row in this fresh session (no ORM crosses threads); no-op if the
+        row has since closed (safe under the single-loop-thread model)."""
+        row = self.store.get_open_managed_position(
+            session, broker_account_name=acct, symbol=symbol
+        )
+        if row is None:
+            return
+        self.store.update_managed_position_from_position(
+            session, row, position, write_quantity=write_quantity
+        )
+
+    async def _emit_v2_exit_on_loop(
+        self,
+        acct: str,
+        symbol: str,
+        position: Position,
+        entry_price: float,
+        *,
+        kind: str,
+        reference_price: float,
+        reason: str,
+        bid: float,
+        close_on_fill: bool,
+        sell_qty: int | None = None,
+        level: str | None = None,
+    ) -> None:
+        """The RARE v2 exit-emit, kept ON-LOOP (single session, one commit) exactly as
+        before PR-A: it reaches the shared ``_record_order_reports``, which mutates
+        ``_armed_hard_stops`` and awaits a broker submit, so it must not run in a worker
+        thread. Bounded to ~5s by #391 Fix-1; fires only when an exit actually triggers.
+        Behaviour of the per-kind write/close/scale + publish is byte-identical to the
+        pre-split inline branches."""
         events: list = []
         try:
             with self.session_factory() as session:
@@ -1241,39 +1434,21 @@ class OmsRiskService:
                 if row is None:
                     self._managed_v2_symbols.discard(symbol)
                     return
-                entry_price = float(row.entry_price)
-                position = self._hydrate_v2_position(row)
-                position.update_price(bid)
-
-                # #6 dedup guard: if an exit order is already working for this symbol, do NOT
-                # re-emit. The position stays open + monitored + broker-consistent; the fill
-                # (or a later cancel -> retry) drives the close. Replaces the old
-                # close-on-submit that used to stop re-eval. Ladder price-state still refreshes
-                # (write_quantity=False so the held qty stays fill-gated).
-                if close_on_fill:
-                    broker_account = session.scalar(
-                        select(BrokerAccount).where(BrokerAccount.name == row.broker_account_name)
+                if kind == "SCALE":
+                    events = await self._emit_v2_managed_sell(
+                        session, row, intent_type="scale", quantity=int(sell_qty or 0),
+                        reference_price=reference_price, reason=reason, bid=bid,
                     )
-                    if broker_account is not None and self.store.get_open_exit_reserved_quantity(
-                        session,
-                        broker_account_id=broker_account.id,
-                        symbol=symbol,
-                        include_native_stop_guard=False,
-                    ) > 0:
-                        self.store.update_managed_position_from_position(
-                            session, row, position, write_quantity=False
-                        )
-                        session.commit()
-                        return
-
-                hard = self._v2_exit_engine.check_hard_stop(position, bid)
-                intrabar = None if hard is not None else self._v2_exit_engine.check_intrabar_exit(position)
-
-                if hard is not None:
-                    ref = entry_price * (1.0 - float(self._v2_exit_config.stop_loss_pct) / 100.0)
+                    position.apply_scale(str(level or ""), int(sell_qty or 0), exit_price=reference_price)
+                    # #6: fill-gate the scale quantity (write_quantity=False) — the scale fill
+                    # decrements current_quantity; on submit persist only the ladder state.
+                    self.store.update_managed_position_from_position(
+                        session, row, position, write_quantity=not close_on_fill
+                    )
+                else:  # HARD / FLOOR — full close
                     events = await self._emit_v2_managed_sell(
                         session, row, intent_type="close", quantity=int(position.quantity),
-                        reference_price=ref, reason="oms_v2_managed_exit:HARD_STOP", bid=bid,
+                        reference_price=reference_price, reason=reason, bid=bid,
                     )
                     if close_on_fill:
                         # #6: do NOT close on submit — the confirmed fill closes the row.
@@ -1284,40 +1459,9 @@ class OmsRiskService:
                     else:
                         self.store.close_managed_position(session, row)
                         self._managed_v2_symbols.discard(symbol)
-                elif intrabar is not None and intrabar.get("action") == "CLOSE":
-                    ref = float(position.floor_price) or bid
-                    events = await self._emit_v2_managed_sell(
-                        session, row, intent_type="close", quantity=int(position.quantity),
-                        reference_price=ref, reason="oms_v2_managed_exit:FLOOR_BREACH", bid=bid,
-                    )
-                    if close_on_fill:
-                        self.store.update_managed_position_from_position(
-                            session, row, position, write_quantity=False
-                        )
-                    else:
-                        self.store.close_managed_position(session, row)
-                        self._managed_v2_symbols.discard(symbol)
-                elif intrabar is not None and intrabar.get("action") == "SCALE" and int(intrabar.get("sell_qty") or 0) > 0:
-                    sell_qty = int(intrabar["sell_qty"])
-                    level = str(intrabar.get("level") or "")
-                    ref = self._v2_scale_level_price(entry_price, level)
-                    events = await self._emit_v2_managed_sell(
-                        session, row, intent_type="scale", quantity=sell_qty,
-                        reference_price=ref, reason=f"oms_v2_managed_exit:SCALE_{level}", bid=bid,
-                    )
-                    position.apply_scale(level, sell_qty, exit_price=ref)
-                    # #6: fill-gate the scale quantity (write_quantity=False) — the scale fill
-                    # decrements current_quantity; on submit persist only the ladder state.
-                    self.store.update_managed_position_from_position(
-                        session, row, position, write_quantity=not close_on_fill
-                    )
-                else:
-                    # no exit this quote — co-located quote->Position state update
-                    self.store.update_managed_position_from_position(session, row, position)
-
                 session.commit()
         except Exception as exc:  # noqa: BLE001 — the quote path must never die
-            self.logger.warning("v2 managed-exit eval failed for %s: %s", symbol, exc)
+            self.logger.warning("v2 managed-exit emit failed for %s: %s", symbol, exc)
             return
         for ev in events:
             await self._publish_order_event(ev)
@@ -2983,61 +3127,192 @@ class OmsRiskService:
         return []
 
     async def _cancel_drifted_working_orders(self, symbol: str) -> None:
-        """Tier 1: cancel working limit orders the instant the quote drifts past the limit."""
+        """Tier 1: cancel working limit orders the instant the quote drifts past the limit.
+
+        PR-A off-load: the candidate READ and the cancel WRITE-BACK both run OFF the
+        event loop via ``_run_db`` — this path mutates no in-memory dict, so it splits
+        cleanly (unlike the v2 exit-emit). Only the per-order broker cancel await stays
+        on-loop. Broker-agnostic: covers ORB (Webull) and v2 (Schwab) working limits."""
         tolerance_dollars = self._quote_drift_tolerance_dollars()
         if tolerance_dollars <= 0:
             return
         quote = self._latest_quotes_by_symbol.get(symbol.upper())
         if not quote:
             return
-        with self.session_factory() as session:
-            orders = session.scalars(
-                select(BrokerOrder)
-                .where(BrokerOrder.status.in_(self.store.OPEN_ORDER_STATUSES))
-                .where(BrokerOrder.symbol == symbol.upper())
-            ).all()
-            if not orders:
-                return
-            account_lookup = {
-                account.id: account
-                for account in self.store.list_active_broker_accounts(session)
-            }
-            strategy_lookup = {
-                strategy.id: strategy
-                for strategy in session.scalars(select(Strategy)).all()
-            }
-            cancelled_any = False
-            for order in orders:
-                if order.intent_id is None:
-                    continue
-                drift = self._quote_drift_dollars_against(order, quote)
-                if drift is None or drift <= tolerance_dollars:
-                    continue
-                intent = session.get(TradeIntent, order.intent_id)
-                if intent is None:
-                    continue
-                if str(intent.intent_type).lower() != "open":
-                    continue  # don't auto-cancel close/scale chases here
-                account = account_lookup.get(order.broker_account_id)
-                if account is None:
-                    continue
-                strategy = strategy_lookup.get(order.strategy_id)
-                detail = (
-                    f"quote drift {drift * 100:.1f}c past limit "
-                    f"(tolerance {tolerance_dollars * 100:.1f}c); ask/bid moved away"
+        try:
+            await self._run_drift_cancel(symbol.upper(), quote, tolerance_dollars)
+        except Exception as exc:  # noqa: BLE001 — the quote path must never die; a stall here
+            # must NEVER skip the downstream v2 hard-stop eval that runs later in the same
+            # quote handler (loop-hardening; the happy path is unchanged).
+            self.logger.warning("quote-drift cancel failed for %s: %s", symbol, exc)
+
+    async def _run_drift_cancel(self, symbol: str, quote: dict, tolerance_dollars: float) -> None:
+        """The drift-cancel phases (off-loop read -> on-loop broker cancels -> off-loop
+        write-back), split out so ``_cancel_drifted_working_orders`` can wrap them in the
+        never-die guard. ``symbol`` arrives already upper-cased."""
+        # Phase 1 — READ (off-loop): drift-eligible candidates as plain snapshots.
+        candidates = await self._run_db(
+            lambda session: self._collect_drift_cancel_candidates(
+                session, symbol, quote, tolerance_dollars
+            ),
+            commit=False,
+        )
+        if not candidates:
+            return
+        # Phase 2 — BROKER (on-loop): submit each cancel, collect the reports.
+        results: list[tuple[_DriftCancelCandidate, ExecutionReport | None, str]] = []
+        for candidate in candidates:
+            reason_detail = (
+                f"quote drift {candidate.drift * 100:.1f}c past limit "
+                f"(tolerance {tolerance_dollars * 100:.1f}c); ask/bid moved away"
+            )
+            cancel_request = OrderRequest(
+                client_order_id=candidate.client_order_id,
+                broker_account_name=candidate.broker_account_name,
+                strategy_code=candidate.strategy_code,
+                symbol=candidate.symbol,
+                side=candidate.side,  # type: ignore[arg-type]
+                intent_type="cancel",
+                quantity=candidate.quantity,
+                reason="QUOTE_DRIFT_CANCEL",
+                metadata={
+                    **candidate.existing_metadata,
+                    "broker_order_id": candidate.broker_order_id,
+                    "target_client_order_id": candidate.client_order_id,
+                    "abandon_intent": "true",
+                    "abandon_reason_code": "QUOTE_DRIFT_CANCEL",
+                    "abandon_reason_detail": reason_detail,
+                },
+                order_type=candidate.order_type,
+                time_in_force=candidate.time_in_force,
+            )
+            cancel_reports = await self.broker_adapter.submit_order(cancel_request)
+            cancelled_report = next(
+                (item for item in cancel_reports if item.event_type == "cancelled"), None
+            )
+            results.append((candidate, cancelled_report, reason_detail))
+        # Phase 3 — WRITE-BACK (off-loop): record cancels + always abandon the intents.
+        await self._run_db(
+            lambda session: self._apply_drift_cancel_writes(session, results), commit=True
+        )
+        # Logging on-loop — parity with the prior [OMS-ABANDON-INTENT] line (always emitted).
+        for candidate, _report, reason_detail in results:
+            self.logger.info(
+                "[OMS-ABANDON-INTENT] code=%s symbol=%s strategy=%s side=%s "
+                "intent_age_s=%.1f limit=%s reason=%s",
+                "QUOTE_DRIFT_CANCEL",
+                candidate.symbol,
+                candidate.strategy_code or "?",
+                candidate.side,
+                self._drift_candidate_intent_age_secs(candidate),
+                candidate.limit_price,
+                reason_detail,
+            )
+
+    def _collect_drift_cancel_candidates(
+        self, session: Session, symbol: str, quote: dict, tolerance_dollars: float
+    ) -> list[_DriftCancelCandidate]:
+        """Off-loop READ unit: working orders for `symbol` whose quote has drifted past
+        the limit beyond tolerance, as plain snapshots (no ORM crosses the thread).
+        Mirrors the prior in-line filter exactly: open-intent only; stop-guard / non-limit
+        orders are excluded by ``_quote_drift_dollars_against`` returning None."""
+        orders = session.scalars(
+            select(BrokerOrder)
+            .where(BrokerOrder.status.in_(self.store.OPEN_ORDER_STATUSES))
+            .where(BrokerOrder.symbol == symbol)
+        ).all()
+        if not orders:
+            return []
+        account_lookup = {
+            account.id: account for account in self.store.list_active_broker_accounts(session)
+        }
+        strategy_lookup = {
+            strategy.id: strategy for strategy in session.scalars(select(Strategy)).all()
+        }
+        candidates: list[_DriftCancelCandidate] = []
+        for order in orders:
+            if order.intent_id is None:
+                continue
+            drift = self._quote_drift_dollars_against(order, quote)
+            if drift is None or drift <= tolerance_dollars:
+                continue
+            intent = session.get(TradeIntent, order.intent_id)
+            if intent is None:
+                continue
+            if str(intent.intent_type).lower() != "open":
+                continue  # don't auto-cancel close/scale chases here
+            account = account_lookup.get(order.broker_account_id)
+            if account is None:
+                continue
+            strategy = strategy_lookup.get(order.strategy_id)
+            candidates.append(
+                _DriftCancelCandidate(
+                    order_id=order.id,
+                    intent_id=order.intent_id,
+                    client_order_id=order.client_order_id,
+                    broker_account_name=account.name,
+                    strategy_code=(strategy.code if strategy is not None else ""),
+                    symbol=order.symbol,
+                    side=order.side,
+                    quantity=order.quantity,
+                    order_type=order.order_type,
+                    time_in_force=order.time_in_force,
+                    existing_metadata={str(k): str(v) for k, v in (order.payload or {}).items()},
+                    broker_order_id=order.broker_order_id or "",
+                    limit_price=str((order.payload or {}).get("limit_price", "")),
+                    intent_created_at=intent.created_at,
+                    drift=drift,
                 )
-                await self._cancel_working_order_and_abandon_intent(
-                    session=session,
+            )
+        return candidates
+
+    def _apply_drift_cancel_writes(
+        self,
+        session: Session,
+        results: list[tuple[_DriftCancelCandidate, ExecutionReport | None, str]],
+    ) -> None:
+        """Off-loop WRITE unit: for each drift-cancel candidate, record the broker cancel
+        report (when one was returned) and ALWAYS abandon the intent — byte-for-byte the
+        DB writes the prior ``_cancel_working_order_and_abandon_intent`` performed, minus
+        its (now on-loop) broker await and logging. Re-fetches order/intent by id."""
+        for candidate, cancelled_report, reason_detail in results:
+            order = session.get(BrokerOrder, candidate.order_id)
+            intent = session.get(TradeIntent, candidate.intent_id)
+            if intent is None:
+                continue
+            if cancelled_report is not None and order is not None:
+                cancel_metadata = {
+                    **candidate.existing_metadata,
+                    **{str(k): str(v) for k, v in cancelled_report.metadata.items()},
+                    "abandon_intent": "true",
+                    "abandon_reason_code": "QUOTE_DRIFT_CANCEL",
+                    "abandon_reason_detail": reason_detail,
+                }
+                self.store.update_order_from_report(
+                    order, report=cancelled_report, metadata=cancel_metadata
+                )
+                self.store.append_order_event(
+                    session,
                     order=order,
-                    intent=intent,
-                    strategy=strategy,
-                    broker_account=account,
-                    reason_code="QUOTE_DRIFT_CANCEL",
-                    reason_detail=detail,
+                    report=cancelled_report,
+                    payload={
+                        "client_order_id": cancelled_report.client_order_id,
+                        "broker_order_id": cancelled_report.broker_order_id,
+                        "broker_fill_id": cancelled_report.broker_fill_id,
+                        "metadata": dict(cancelled_report.metadata),
+                        "reason": cancelled_report.reason,
+                        "internal": "QUOTE_DRIFT_CANCEL",
+                    },
                 )
-                cancelled_any = True
-            if cancelled_any:
-                session.commit()
+            self.store.mark_intent_status(intent, "cancelled")
+
+    def _drift_candidate_intent_age_secs(self, candidate: _DriftCancelCandidate) -> float:
+        created = candidate.intent_created_at
+        if created is None:
+            return 0.0
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=UTC)
+        return max(0.0, (utcnow() - created).total_seconds())
 
     def _refresh_after_seconds(self, order: BrokerOrder) -> float:
         if self._is_stop_guard_order(order):
