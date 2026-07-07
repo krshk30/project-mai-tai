@@ -14,6 +14,7 @@ from project_mai_tai.db.models import (
     BrokerOrder,
     BrokerOrderEvent,
     Fill,
+    OmsArmedStop,
     OmsManagedPosition,
     RiskCheck,
     SchwabIneligibleToday,
@@ -830,3 +831,111 @@ class OmsStore:
             )
         ).all()
         return {str(s) for s in rows}
+
+    # ---- F2: durable armed-stop registry mirror (restart-while-holding) ----
+
+    def upsert_armed_stop(
+        self,
+        session: Session,
+        *,
+        strategy_code: str,
+        broker_account_name: str,
+        symbol: str,
+        quantity: Decimal,
+        entry_price: Decimal,
+        stop_loss_pct: float,
+        stop_price: Decimal,
+        quote_max_age_ms: int,
+        initial_panic_buffer_pct: float,
+        trail_pct: float,
+        high_water_mark: Decimal | None,
+        close_in_flight: bool,
+    ) -> None:
+        """Mirror one in-memory `_armed_hard_stops` entry to the durable table
+        (insert or update by the natural key). No commit (the caller's unit commits)."""
+        row = session.scalar(
+            select(OmsArmedStop).where(
+                OmsArmedStop.broker_account_name == broker_account_name,
+                OmsArmedStop.strategy_code == strategy_code,
+                OmsArmedStop.symbol == symbol,
+            )
+        )
+        if row is None:
+            row = OmsArmedStop(
+                strategy_code=strategy_code,
+                broker_account_name=broker_account_name,
+                symbol=symbol,
+            )
+            session.add(row)
+        row.quantity = quantity
+        row.entry_price = entry_price
+        row.stop_loss_pct = stop_loss_pct
+        row.stop_price = stop_price
+        row.quote_max_age_ms = quote_max_age_ms
+        row.initial_panic_buffer_pct = initial_panic_buffer_pct
+        row.trail_pct = trail_pct
+        row.high_water_mark = high_water_mark
+        row.close_in_flight = close_in_flight
+        session.flush()
+
+    def delete_armed_stop(
+        self,
+        session: Session,
+        *,
+        strategy_code: str,
+        broker_account_name: str,
+        symbol: str,
+    ) -> None:
+        """Remove the durable mirror row for a closed/cleared stop (no commit)."""
+        row = session.scalar(
+            select(OmsArmedStop).where(
+                OmsArmedStop.broker_account_name == broker_account_name,
+                OmsArmedStop.strategy_code == strategy_code,
+                OmsArmedStop.symbol == symbol,
+            )
+        )
+        if row is not None:
+            session.delete(row)
+            session.flush()
+
+    def list_armed_stops(self, session: Session) -> list[OmsArmedStop]:
+        """All durable armed-stop rows — read at boot to rehydrate `_armed_hard_stops`."""
+        return list(session.scalars(select(OmsArmedStop)).all())
+
+    def list_owned_open_positions(
+        self, session: Session
+    ) -> list[tuple[str, str, str, Decimal]]:
+        """OMS-owned open positions from the per-strategy virtual ledger, as
+        (strategy_code, broker_account_name, symbol, quantity) with quantity != 0.
+
+        This IS the OMS-ownership definition for the boot reconcile: a manual broker
+        holding has NO virtual_positions row for a bot strategy, so it never appears
+        here — the scoping invariant enforced by construction."""
+        rows = session.execute(
+            select(
+                Strategy.code,
+                BrokerAccount.name,
+                VirtualPosition.symbol,
+                VirtualPosition.quantity,
+            )
+            .join(Strategy, Strategy.id == VirtualPosition.strategy_id)
+            .join(BrokerAccount, BrokerAccount.id == VirtualPosition.broker_account_id)
+            .where(VirtualPosition.quantity != 0)
+        ).all()
+        return [(str(c), str(n), str(s), Decimal(str(q))) for c, n, s, q in rows]
+
+    def get_account_position_qty_by_name(
+        self, session: Session, *, broker_account_name: str, symbol: str
+    ) -> Decimal:
+        """Broker-truth quantity for (account, symbol) from account_positions (mirror
+        refreshed by sync_broker_positions). 0 if no row. Used by the boot reconcile to
+        confirm an OMS-owned position is actually backed at the broker."""
+        qty = session.scalar(
+            select(AccountPosition.quantity)
+            .join(BrokerAccount, BrokerAccount.id == AccountPosition.broker_account_id)
+            .where(
+                BrokerAccount.name == broker_account_name,
+                AccountPosition.symbol == symbol,
+            )
+        )
+        return Decimal(str(qty)) if qty is not None else Decimal("0")

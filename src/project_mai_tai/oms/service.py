@@ -164,6 +164,9 @@ class _DriftCancelCandidate:
 
 class OmsRiskService:
     NO_POSITION_REASONS = ("cannot be sold short", "insufficient qty", "no broker position available to sell")
+    # F2 default so instances created without __init__ (test helpers) safely skip the
+    # armed-stop persistence hot-path logic; __init__ overrides from settings in production.
+    _armed_stop_persistence_enabled: bool = False
     NOT_TRADABLE_REASONS = ("is not tradable",)
     NATIVE_STOP_GUARD_REASON = "HARD_STOP_NATIVE_BACKUP"
 
@@ -198,6 +201,15 @@ class OmsRiskService:
             stream_name(self.settings.redis_stream_prefix, "market-data"): "$",
         }
         self._armed_hard_stops: dict[tuple[str, str, str], ArmedHardStop] = {}
+        # F2 (restart-while-holding): the in-memory registry above is process-memory only.
+        # `_armed_stop_dirty` tracks keys whose durable `oms_armed_stops` mirror row is
+        # stale; they are flushed off-loop after the stop-eval / the braid so a restart
+        # can rehydrate protection (ORB was NAKED across restarts before this).
+        self._armed_stop_dirty: set[tuple[str, str, str]] = set()
+        self._armed_stop_persistence_enabled: bool = bool(
+            getattr(self.settings, "oms_armed_stop_persistence_enabled", True)
+        )
+        self._boot_protection_alerts: int = 0
         self._latest_quotes_by_symbol: dict[str, dict[str, object]] = {}
         self._latest_trades_by_symbol: dict[str, dict[str, object]] = {}
         # Track-2 Phase-2 Slice-3: OMS-managed v2 exit ladder. `_managed_v2_symbols`
@@ -241,6 +253,7 @@ class OmsRiskService:
             seed_summary["broker_accounts"],
         )
         self._rehydrate_managed_v2_symbols()  # slice-3: re-arm quote eval for open v2 rows
+        await self._rehydrate_armed_hard_stops()  # F2: rebuild the ORB stop registry from the durable mirror
         await self._publish_heartbeat(
             "starting",
             {
@@ -248,6 +261,10 @@ class OmsRiskService:
                 "providers": ",".join(self.settings.active_broker_providers),
             },
         )
+        # F2 (protected-before-serving): confirm every OMS-owned held position is protected
+        # + broker-backed BEFORE the tick consumer starts — never serve ticks with an
+        # OMS-owned position unprotected. OMS-owned only (manual holdings untouched).
+        await self._reconcile_protection_before_serving()
         # Track-2 intrabar fix: a DEDICATED tick consumer evaluates quote-driven exits
         # within milliseconds of the live tick. It is decoupled from the control loop so
         # the periodic broker-sync REST (and intent processing) can NEVER starve it — the
@@ -740,6 +757,9 @@ class OmsRiskService:
         for order_event in published_events:
             await self._publish_order_event(order_event)
 
+        # F2: mirror any armed-stop changes made by _record_order_reports (arm on a
+        # buy-open fill, decrement/clear on a sell fill) to the durable table, off-loop.
+        await self._flush_dirty_armed_stops()
         await self._reconcile_after_intent(event.payload.broker_account_name)
         return published_events
 
@@ -1219,6 +1239,168 @@ class OmsRiskService:
             self.logger.info(
                 "[OMS-V2-MANAGED-REHYDRATE] armed %d symbol(s): %s",
                 len(self._managed_v2_symbols), ",".join(sorted(self._managed_v2_symbols)),
+            )
+
+    # ------------------------------------------------------------------ #
+    # F2: durable armed-stop mirror — persist / rehydrate / boot reconcile
+    # ------------------------------------------------------------------ #
+    @staticmethod
+    def _armed_stop_row_kwargs(stop: ArmedHardStop) -> dict:
+        """Persistable fields of an ArmedHardStop (transient throttle state excluded)."""
+        return {
+            "quantity": stop.quantity,
+            "entry_price": stop.entry_price,
+            "stop_loss_pct": float(stop.stop_loss_pct),
+            "stop_price": stop.stop_price,
+            "quote_max_age_ms": int(stop.quote_max_age_ms),
+            "initial_panic_buffer_pct": float(stop.initial_panic_buffer_pct),
+            "trail_pct": float(stop.trail_pct),
+            "high_water_mark": stop.high_water_mark,
+            "close_in_flight": bool(stop.close_in_flight),
+        }
+
+    def _persist_armed_stop_snapshot(self, session: Session, snapshot: list) -> None:
+        """Off-loop WRITE unit: upsert present keys, delete absent ones — mirroring the
+        in-memory registry state captured on-loop before the thread hop."""
+        for (strategy_code, broker_account_name, symbol), kwargs in snapshot:
+            if kwargs is None:
+                self.store.delete_armed_stop(
+                    session, strategy_code=strategy_code,
+                    broker_account_name=broker_account_name, symbol=symbol,
+                )
+            else:
+                self.store.upsert_armed_stop(
+                    session, strategy_code=strategy_code,
+                    broker_account_name=broker_account_name, symbol=symbol, **kwargs,
+                )
+
+    async def _flush_dirty_armed_stops(self) -> None:
+        """Persist dirtied armed-stop keys to the durable mirror OFF the loop (best-effort).
+        The in-memory stop is authoritative for live triggering; the mirror exists only for
+        restart-recovery, so a failed/slow flush never affects protection (and the boot
+        reconcile is the safety net). Snapshots on-loop so no dict is read from the thread."""
+        if not self._armed_stop_persistence_enabled or not self._armed_stop_dirty:
+            return
+        keys = list(self._armed_stop_dirty)
+        self._armed_stop_dirty.clear()
+        snapshot: list = []
+        for key in keys:
+            stop = self._armed_hard_stops.get(key)
+            snapshot.append((key, self._armed_stop_row_kwargs(stop) if stop is not None else None))
+        try:
+            await self._run_db(
+                lambda session: self._persist_armed_stop_snapshot(session, snapshot), commit=True
+            )
+        except Exception as exc:  # noqa: BLE001 — mirror is best-effort; reconcile is the net
+            self.logger.warning("armed-stop mirror flush failed (best-effort): %s", exc)
+            self._armed_stop_dirty.update(keys)  # retry on the next flush
+
+    @staticmethod
+    def _armed_stop_row_to_dict(row) -> dict:
+        """Convert a durable OmsArmedStop ORM row to primitives INSIDE the worker thread
+        (so no ORM object escapes the `_run_db` unit)."""
+        return {
+            "strategy_code": str(row.strategy_code),
+            "broker_account_name": str(row.broker_account_name),
+            "symbol": str(row.symbol).upper(),
+            "quantity": Decimal(str(row.quantity)),
+            "entry_price": Decimal(str(row.entry_price)),
+            "stop_loss_pct": float(row.stop_loss_pct),
+            "stop_price": Decimal(str(row.stop_price)),
+            "quote_max_age_ms": int(row.quote_max_age_ms),
+            "initial_panic_buffer_pct": float(row.initial_panic_buffer_pct),
+            "trail_pct": float(row.trail_pct),
+            "high_water_mark": (Decimal(str(row.high_water_mark)) if row.high_water_mark is not None else None),
+            "close_in_flight": bool(row.close_in_flight),
+        }
+
+    async def _rehydrate_armed_hard_stops(self) -> None:
+        """Boot: rebuild the in-memory `_armed_hard_stops` registry from the durable mirror
+        so an ORB position stays PROTECTED across a restart (the pre-F2 naked gap). Off-loop
+        read; the dict assignment (registry mutation) stays on-loop."""
+        if not self._armed_stop_persistence_enabled:
+            return
+        try:
+            rows = await self._run_db(
+                lambda session: [
+                    self._armed_stop_row_to_dict(r) for r in self.store.list_armed_stops(session)
+                ],
+                commit=False,
+            )
+        except Exception as exc:  # noqa: BLE001
+            self.logger.warning("armed-stop rehydrate read failed: %s", exc)
+            return
+        for d in rows:
+            key = self._hard_stop_key(d["strategy_code"], d["broker_account_name"], d["symbol"])
+            self._armed_hard_stops[key] = ArmedHardStop(
+                strategy_code=d["strategy_code"], broker_account_name=d["broker_account_name"],
+                symbol=d["symbol"], quantity=d["quantity"], entry_price=d["entry_price"],
+                stop_loss_pct=d["stop_loss_pct"], stop_price=d["stop_price"],
+                quote_max_age_ms=d["quote_max_age_ms"], initial_panic_buffer_pct=d["initial_panic_buffer_pct"],
+                close_in_flight=d["close_in_flight"], last_trigger_attempt_at=None,
+                trail_pct=d["trail_pct"], high_water_mark=d["high_water_mark"],
+            )
+        if rows:
+            self.logger.info(
+                "[OMS-ARMED-STOP-REHYDRATE] restored %d armed stop(s): %s",
+                len(rows), ",".join(sorted(str(d["symbol"]) for d in rows)),
+            )
+
+    def _read_owned_positions_with_broker_qty(self, session: Session) -> list:
+        """Off-loop READ unit: OMS-owned open positions (per-strategy virtual ledger) with
+        their current broker-truth quantity. OMS-owned by construction — a manual holding
+        has no virtual_positions row, so it is never returned (scoping invariant)."""
+        out: list = []
+        for sc, ban, sym, qty in self.store.list_owned_open_positions(session):
+            if qty <= 0:
+                continue
+            broker_qty = self.store.get_account_position_qty_by_name(
+                session, broker_account_name=ban, symbol=sym
+            )
+            out.append((sc, ban, str(sym).upper(), Decimal(str(qty)), Decimal(str(broker_qty))))
+        return out
+
+    async def _reconcile_protection_before_serving(self) -> None:
+        """PROTECTED-BEFORE-SERVING: before the tick consumer starts, confirm every
+        OMS-OWNED open position is protected (a rehydrated stop / managed row) AND backed at
+        the broker. OMS-owned ONLY (manual holdings are invisible — no virtual_positions row,
+        never touched: the scoping invariant). Loud-logs the INVERSE mismatch only: an OMS
+        record present but the position missing/short at the broker, or an owned position
+        with no rehydrated protection. Never arms/sells/flags a holding it did not place."""
+        if not self._armed_stop_persistence_enabled:
+            return
+        try:
+            await self.sync_broker_positions()  # refresh account_positions (off-loop, #391)
+        except Exception as exc:  # noqa: BLE001
+            self.logger.warning("boot reconcile: broker position sync failed: %s", exc)
+        try:
+            owned = await self._run_db(self._read_owned_positions_with_broker_qty, commit=False)
+        except Exception as exc:  # noqa: BLE001
+            self.logger.warning("boot reconcile: owned-position read failed: %s", exc)
+            return
+        alerts = 0
+        for sc, ban, sym, owned_qty, broker_qty in owned:
+            key = self._hard_stop_key(sc, ban, sym)
+            protected = key in self._armed_hard_stops or sym in self._managed_v2_symbols
+            if not protected:
+                alerts += 1
+                self.logger.error(
+                    "[OMS-BOOT-PROTECTION-ALERT] NAKED OMS-owned position %s %s qty=%s has NO "
+                    "rehydrated stop after restart — investigate",
+                    ban, sym, owned_qty,
+                )
+            if broker_qty < owned_qty:
+                alerts += 1
+                self.logger.error(
+                    "[OMS-BOOT-PROTECTION-ALERT] VANISHED OMS-owned position %s %s expected "
+                    "qty=%s but broker shows %s — investigate",
+                    ban, sym, owned_qty, broker_qty,
+                )
+        self._boot_protection_alerts = alerts
+        if alerts == 0:
+            self.logger.info(
+                "[OMS-BOOT-PROTECTION] all %d OMS-owned position(s) protected + broker-backed",
+                len(owned),
             )
 
     def _hydrate_v2_position(self, row) -> Position:
@@ -1924,6 +2106,9 @@ class OmsRiskService:
         for order_event in published_events:
             await self._publish_order_event(order_event)
 
+        # F2: mirror armed-stop changes made during the per-order sync (arm/decrement/
+        # clear/rearm) to the durable table, off-loop after the session closed.
+        await self._flush_dirty_armed_stops()
         return {
             "orders": synced_orders,
             "terminal_orders": terminal_orders,
@@ -2120,6 +2305,10 @@ class OmsRiskService:
             if Decimal(str(trigger_price)) > stop.stop_price:
                 continue
             await self._trigger_hard_stop(stop, trigger_price=Decimal(str(trigger_price)), trigger_source=trigger_source)
+        # F2: persist any ratcheted/cleared stops OFF the loop, AFTER every trigger decision
+        # above — so the mirror stays fresh for restart-recovery without ever delaying a
+        # stop (the in-memory stop is authoritative). No-op when nothing dirtied.
+        await self._flush_dirty_armed_stops()
 
     def _resolve_hard_stop_trigger_price(self, stop: ArmedHardStop) -> tuple[float | None, str | None]:
         max_age_ms = max(0, stop.quote_max_age_ms)
@@ -2183,9 +2372,17 @@ class OmsRiskService:
         if (utcnow() - received_at).total_seconds() * 1000 > max(0, stop.quote_max_age_ms):
             return
         hwm = stop.high_water_mark if stop.high_water_mark is not None else stop.entry_price
+        prev_stop_price, prev_hwm = stop.stop_price, stop.high_water_mark
         stop.stop_price, stop.high_water_mark = self._ratcheted_trailing_stop(
             stop.stop_price, hwm, Decimal(str(quote["bid"])), stop.trail_pct
         )
+        # F2: persist the ratcheted level (full fidelity) only when it actually moved.
+        if self._armed_stop_persistence_enabled and (
+            stop.stop_price != prev_stop_price or stop.high_water_mark != prev_hwm
+        ):
+            self._armed_stop_dirty.add(
+                self._hard_stop_key(stop.strategy_code, stop.broker_account_name, stop.symbol)
+            )
 
     def _is_hard_stop_trigger_throttled(self, stop: ArmedHardStop) -> bool:
         if stop.last_trigger_attempt_at is None:
@@ -2255,17 +2452,17 @@ class OmsRiskService:
         order_events = await self.process_trade_intent(event)
         if any(item.payload.status in {"accepted", "submitted", "partially_filled", "filled"} for item in order_events):
             if any(item.payload.status == "filled" for item in order_events):
-                self._armed_hard_stops.pop(
-                    self._hard_stop_key(stop.strategy_code, stop.broker_account_name, stop.symbol),
-                    None,
-                )
+                _popkey = self._hard_stop_key(stop.strategy_code, stop.broker_account_name, stop.symbol)
+                self._armed_hard_stops.pop(_popkey, None)
+                if self._armed_stop_persistence_enabled:
+                    self._armed_stop_dirty.add(_popkey)  # F2: flush deletes the mirror row
             return
         stop.close_in_flight = False
         if any(item.payload.reason in self.NO_POSITION_REASONS for item in order_events):
-            self._armed_hard_stops.pop(
-                self._hard_stop_key(stop.strategy_code, stop.broker_account_name, stop.symbol),
-                None,
-            )
+            _popkey = self._hard_stop_key(stop.strategy_code, stop.broker_account_name, stop.symbol)
+            self._armed_hard_stops.pop(_popkey, None)
+            if self._armed_stop_persistence_enabled:
+                self._armed_stop_dirty.add(_popkey)  # F2: flush deletes the mirror row
 
     def _build_hard_stop_metadata(
         self,
@@ -2319,6 +2516,11 @@ class OmsRiskService:
     ) -> None:
         normalized_symbol = str(symbol).upper()
         key = self._hard_stop_key(strategy_code, broker_account_name, normalized_symbol)
+        # F2: this call may mutate the registry for `key` — mark it for durable mirroring.
+        # Over-marking (a no-op path) is harmless: the flush reflects the ACTUAL dict state
+        # (upsert if present, delete if absent). The dict remains the source of truth.
+        if self._armed_stop_persistence_enabled:
+            self._armed_stop_dirty.add(key)
         if str(side).lower() == "buy" and str(intent_type).lower() == "open":
             if str(metadata.get("stop_guard_enabled", "")).lower() != "true":
                 return
@@ -2433,6 +2635,8 @@ class OmsRiskService:
         reason: str,
     ) -> None:
         key = self._hard_stop_key(strategy_code, broker_account_name, symbol)
+        if self._armed_stop_persistence_enabled:
+            self._armed_stop_dirty.add(key)  # F2: mirror the resulting state (see _from_fill)
         stop = self._armed_hard_stops.get(key)
         if stop is None:
             return
