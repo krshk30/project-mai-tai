@@ -1,0 +1,49 @@
+"""F3 fleet function-health — unit-tests the pure verdict logic of the independent
+check script (ops/health/fleet_health_check.py). Loaded by path (the script is stdlib-only
+and imports NO app code, so it stays independent/unhangable); we test only its decision
+functions, not the psql/redis I/O. The load-bearing property proven here is the
+NO-FALSE-ALARM discipline: stale bars are RED only when the upstream feed is simultaneously
+live (a frozen loop) — never on a quiet market / feed outage."""
+from __future__ import annotations
+
+import importlib.util
+from pathlib import Path
+
+_MOD_PATH = Path(__file__).resolve().parents[2] / "ops" / "health" / "fleet_health_check.py"
+
+
+def _load():
+    spec = importlib.util.spec_from_file_location("fleet_health_check", _MOD_PATH)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+fhc = _load()
+
+
+def test_fresh_bars_with_live_feed_is_green():
+    level, _ = fhc.classify_bar_freshness(30, 3)
+    assert level == "GREEN"
+
+
+def test_stale_bars_with_LIVE_feed_is_red_frozen_loop():
+    level, detail = fhc.classify_bar_freshness(300, 5)
+    assert level == "RED"
+    assert "FROZEN" in detail
+
+
+def test_stale_bars_with_QUIET_feed_is_green_no_false_alarm():
+    # THE no-false-alarm guarantee: bars stale but the upstream feed is quiet/stale is a
+    # quiet market or a feed outage — NOT a strategy fault. Must never RED.
+    assert fhc.classify_bar_freshness(600, 400)[0] == "GREEN"   # feed stale
+    assert fhc.classify_bar_freshness(600, None)[0] == "GREEN"  # no recent trades at all
+
+
+def test_slowing_bars_with_live_feed_is_amber():
+    assert fhc.classify_bar_freshness(150, 5)[0] == "AMBER"
+
+
+def test_no_bars_is_amber_not_red():
+    # Can't assess (no data) is AMBER (look), never RED (don't cry wolf).
+    assert fhc.classify_bar_freshness(None, 5)[0] == "AMBER"
