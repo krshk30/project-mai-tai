@@ -20,7 +20,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Protocol
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from project_mai_tai.db.models import (
@@ -44,6 +44,19 @@ class Quote:
     ts: datetime
     bid: float
     ask: float
+    last: float | None = None   # populated for Schwab LEVELONE quotes (hold-confirm uses last/mid)
+
+
+@dataclass(frozen=True)
+class SchwabBar:
+    """A strategy_bar_history (Schwab CHART_EQUITY) 1-min bar. Duck-compatible with
+    analysis.atr_flip.Bar (ts=epoch ms, o/h/l/c, volume) for compute_atr_trail."""
+    ts: int
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: int
 
 
 @dataclass(frozen=True)
@@ -115,6 +128,38 @@ class DbMarketDataSource:
             for ts, o, h, lo, c, v in rows
         ]
 
+    def schwab_bars(self, symbol: str, start: datetime, end: datetime) -> list[SchwabBar]:
+        """v2/ATR decision bars — Schwab CHART_EQUITY 1-min from strategy_bar_history (the feed
+        v2 actually saw; the anchor confirmed 1.1887 is Schwab, not massive)."""
+        with self._sf() as s:
+            rows = s.execute(
+                text(
+                    "SELECT extract(epoch from bar_time)*1000 AS ts, open_price, high_price, "
+                    "low_price, close_price, volume FROM strategy_bar_history "
+                    "WHERE strategy_code='schwab_1m_v2' AND interval_secs=60 AND symbol=:sym "
+                    "AND bar_time>=:lo AND bar_time<:hi ORDER BY bar_time"
+                ),
+                {"sym": symbol, "lo": start, "hi": end},
+            ).all()
+        return [SchwabBar(int(ts), float(o), float(h), float(lo), float(c), int(v or 0))
+                for ts, o, h, lo, c, v in rows]
+
+    def schwab_quotes(self, symbol: str, start: datetime, end: datetime) -> list[Quote]:
+        """v2 entry-fill + hold-window feed — Schwab LEVELONE NBBO (provider schwab). Sparse
+        (why the live hold-confirm mostly hits fallback_thin). Distinct from massive `quotes()`."""
+        with self._sf() as s:
+            rows = s.execute(
+                text(
+                    "SELECT event_ts, bid_price, ask_price, last_price FROM market_quote_ticks "
+                    "WHERE provider='schwab' AND symbol=:sym AND event_ts>=:lo AND event_ts<:hi "
+                    "ORDER BY event_ts, id"
+                ),
+                {"sym": symbol, "lo": start, "hi": end},
+            ).all()
+        # LEVELONE snapshots can carry NULL bid/ask (trade-only updates) — skip those.
+        return [Quote(ts=ts, bid=float(b), ask=float(a), last=float(lp) if lp is not None else None)
+                for ts, b, a, lp in rows if b is not None and a is not None]
+
 
 class FixtureMarketDataSource:
     """Reads committed gzipped-CSV golden fixtures (NO DB) so the golden-case suite runs in CI.
@@ -146,6 +191,22 @@ class FixtureMarketDataSource:
 
     def captured_bars(self, symbol: str, start: datetime, end: datetime) -> list[CapturedBar]:
         return []  # REST-aggregate parity reference is DB-only; not needed for the golden gates
+
+    def schwab_bars(self, symbol: str, start: datetime, end: datetime) -> list[SchwabBar]:
+        out = []
+        with gzip.open(self._dir / f"{symbol}_{start:%Y%m%d}_schwab_bars.csv.gz", "rt", newline="") as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for r in reader:
+                ts = int(r[0])
+                if int(start.timestamp() * 1000) <= ts < int(end.timestamp() * 1000):
+                    out.append(SchwabBar(ts, float(r[1]), float(r[2]), float(r[3]), float(r[4]), int(r[5])))
+        return out
+
+    def schwab_quotes(self, symbol: str, start: datetime, end: datetime) -> list[Quote]:
+        def ctor(ts, r):
+            return Quote(ts, float(r[1]), float(r[2]), float(r[3]) if r[3] not in ("", "None") else None)
+        return self._read(symbol, start, end, "schwab_quotes", ctor)
 
 
 def build_bars(trades: Sequence[Trade], session_open: datetime) -> list[OrbBar]:
