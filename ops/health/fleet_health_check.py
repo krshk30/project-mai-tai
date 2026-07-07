@@ -123,6 +123,60 @@ def classify_bar_freshness(
 
 # --- checks (I/O + decision) -------------------------------------------------- #
 
+def classify_order_lifecycle(
+    stuck_count: int | None,
+    oldest_stuck_min: float | None,
+) -> tuple[str, str]:
+    """OMS order-lifecycle verdict — the alive-but-not-executing detector.
+
+    The OMS creates a trade_intents row when it CONSUMES an intent, then resolves it to a
+    terminal status (filled/rejected/cancelled/...) or an order within sub-seconds; a healthy
+    OMS also terminalizes orphaned intents each sync cycle. So a trade_intents row that is
+    NON-terminal AND has NO broker_order AND has aged well past that (>threshold) means the
+    OMS consumed the intent but never placed or resolved it — it is beating but not executing
+    (the 07-01 class the liveness watchdog can't see: dead-OMS = no heartbeat = watchdog's job;
+    this is alive-but-stuck). NO recent stuck intents -> GREEN (a quiet market simply produces
+    no intents; that must never red — the key no-false-alarm guard)."""
+    if stuck_count is None:
+        return ("AMBER", "could not read trade_intents (cannot assess)")
+    if stuck_count <= 0:
+        return ("GREEN", "no intents stuck pre-order (OMS executing or idle)")
+    age = f"{oldest_stuck_min:.0f}m" if oldest_stuck_min is not None else "?"
+    return (
+        "RED",
+        f"{stuck_count} intent(s) CONSUMED but stuck non-terminal with NO order "
+        f"(oldest {age}) — OMS alive-but-not-executing / terminalize not running",
+    )
+
+
+def check_oms_order_lifecycle() -> tuple[str, str, str]:
+    """Check #2: the OMS is actually EXECUTING (intent -> order/terminal), not just beating.
+    Ground truth = trade_intents (what the OMS consumed) LEFT JOIN broker_orders (what it
+    placed). Only reds when intents exist AND are stuck — never on a quiet market."""
+    # Stuck = non-terminal status, no broker_order, aged past a generous 10-min bound
+    # (normal resolution is sub-second; a resting LIMIT order has an order row so it is
+    # excluded; a rejected intent is terminal so it is excluded). 6h upper bound skips
+    # ancient rows from a prior day.
+    terminal = "('filled','rejected','cancelled','expired','abandoned')"
+    where = (
+        f"ti.status NOT IN {terminal} "
+        "AND bo.id IS NULL "
+        "AND ti.created_at < now() - interval '10 min' "
+        "AND ti.created_at > now() - interval '6 hours'"
+    )
+    stuck = _scalar_int(
+        "SELECT count(*) FROM trade_intents ti "
+        f"LEFT JOIN broker_orders bo ON bo.intent_id = ti.id WHERE {where}"
+    )
+    oldest = _scalar_int(
+        "SELECT round(extract(epoch FROM (now()-min(ti.created_at)))/60)::int "
+        "FROM trade_intents ti "
+        f"LEFT JOIN broker_orders bo ON bo.intent_id = ti.id WHERE {where}"
+    )
+    level, detail = classify_order_lifecycle(stuck, oldest)
+    return (level, "oms-order-lifecycle", detail)
+
+
 def check_strategy_bar_freshness() -> tuple[str, str, str]:
     """Check #1: strategy-engine is actually producing bars (function), cross-checked
     against the independent Polygon capture (ground truth), not its own snapshot."""
@@ -139,8 +193,9 @@ def check_strategy_bar_freshness() -> tuple[str, str, str]:
 
 
 CHECKS = [
-    check_strategy_bar_freshness,
-    # #2 oms-order-lifecycle, #3 stops-armed — added incrementally after #1 validates.
+    check_strategy_bar_freshness,   # #1 frozen-loop detector
+    check_oms_order_lifecycle,      # #2 alive-but-not-executing detector
+    # #3 stops-armed (off F2's oms_armed_stops) — added incrementally next.
 ]
 
 _RANK = {"GREEN": 0, "AMBER": 1, "RED": 2}
