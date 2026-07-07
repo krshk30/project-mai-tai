@@ -177,6 +177,59 @@ def check_oms_order_lifecycle() -> tuple[str, str, str]:
     return (level, "oms-order-lifecycle", detail)
 
 
+def classify_stops_armed(
+    unprotected_count: int | None,
+    owned_open_count: int | None,
+) -> tuple[str, str]:
+    """Stops-armed verdict — every OMS-OWNED open position must have an armed stop.
+
+    OMS-owned = a per-strategy `virtual_positions` row (the OMS's ledger of what IT placed).
+    A manual holding has NO such row → it is never counted → NEVER trips 'unprotected' (the
+    scoping invariant: it's not the OMS's to protect). Protection = an `oms_armed_stops` row
+    (ORB) OR an open `oms_managed_positions` row (v2's exit ladder). This is the ongoing
+    observability that a stop is always armed on what the OMS holds — the check that would
+    have caught a naked position before F2 fixed the restart gap.
+
+    No-false-alarm guard: 0 unprotected → GREEN whether the fleet is flat (nothing to
+    protect) or every owned position is armed. Flat must be GREEN, never RED."""
+    if unprotected_count is None:
+        return ("AMBER", "could not read positions/stops (cannot assess)")
+    if unprotected_count <= 0:
+        if not owned_open_count:
+            return ("GREEN", "no OMS-owned open positions (flat — nothing to protect)")
+        return ("GREEN", f"all {owned_open_count} OMS-owned open position(s) have an armed stop")
+    return (
+        "RED",
+        f"{unprotected_count} OMS-owned open position(s) have NO armed stop — NAKED "
+        "(unprotected; a manual holding can't trip this — OMS-owned only)",
+    )
+
+
+def check_stops_armed() -> tuple[str, str, str]:
+    """Check #3: every OMS-owned open position is protected by an armed stop. Ground truth =
+    virtual_positions (OMS ownership) LEFT JOIN oms_armed_stops (ORB) + oms_managed_positions
+    (v2 ladder). OMS-owned ONLY — manual positions have no virtual_positions row (invariant)."""
+    # 2-min settle guard on opened_at: skip a just-opened position (its arm is written in the
+    # same fill-processing commit, but this margin guarantees no false RED on the open path).
+    joins = (
+        "FROM virtual_positions vp "
+        "JOIN strategies s ON s.id = vp.strategy_id "
+        "JOIN broker_accounts ba ON ba.id = vp.broker_account_id "
+        "LEFT JOIN oms_armed_stops a "
+        "ON a.strategy_code = s.code AND a.broker_account_name = ba.name AND a.symbol = vp.symbol "
+        "LEFT JOIN oms_managed_positions m "
+        "ON m.broker_account_name = ba.name AND m.symbol = vp.symbol AND m.status = 'open' "
+        "WHERE vp.quantity <> 0 AND vp.opened_at < now() - interval '2 min'"
+    )
+    unprotected = _scalar_int(f"SELECT count(*) {joins} AND a.id IS NULL AND m.id IS NULL")
+    owned_open = _scalar_int(
+        "SELECT count(*) FROM virtual_positions WHERE quantity <> 0 "
+        "AND opened_at < now() - interval '2 min'"
+    )
+    level, detail = classify_stops_armed(unprotected, owned_open)
+    return (level, "stops-armed", detail)
+
+
 def check_strategy_bar_freshness() -> tuple[str, str, str]:
     """Check #1: strategy-engine is actually producing bars (function), cross-checked
     against the independent Polygon capture (ground truth), not its own snapshot."""
@@ -195,7 +248,7 @@ def check_strategy_bar_freshness() -> tuple[str, str, str]:
 CHECKS = [
     check_strategy_bar_freshness,   # #1 frozen-loop detector
     check_oms_order_lifecycle,      # #2 alive-but-not-executing detector
-    # #3 stops-armed (off F2's oms_armed_stops) — added incrementally next.
+    check_stops_armed,              # #3 every OMS-owned open position has an armed stop
 ]
 
 _RANK = {"GREEN": 0, "AMBER": 1, "RED": 2}

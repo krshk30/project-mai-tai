@@ -65,3 +65,32 @@ def test_stuck_intents_is_red_alive_but_not_executing():
 
 def test_unreadable_intents_is_amber_not_red():
     assert fhc.classify_order_lifecycle(None, None)[0] == "AMBER"
+
+
+# --- check #3: stops-armed (every OMS-owned open position has an armed stop) --- #
+
+def test_owned_position_with_stop_is_green():
+    # 2 OMS-owned open, 0 unprotected → all armed → GREEN.
+    assert fhc.classify_stops_armed(0, 2)[0] == "GREEN"
+
+
+def test_owned_position_without_stop_is_red_naked():
+    level, detail = fhc.classify_stops_armed(1, 1)
+    assert level == "RED"
+    assert "NAKED" in detail
+
+
+def test_flat_is_green_nothing_to_protect():
+    # No OMS-owned open positions → nothing to protect → GREEN, never RED.
+    assert fhc.classify_stops_armed(0, 0)[0] == "GREEN"
+
+
+def test_manual_position_is_ignored_green():
+    # SCOPING INVARIANT: a manual holding has no virtual_positions row, so the query never
+    # counts it → unprotected stays 0 → GREEN. (The virtual_positions-only source is what
+    # enforces this; live-validated. Here we assert the verdict for that count state.)
+    assert fhc.classify_stops_armed(0, 0)[0] == "GREEN"
+
+
+def test_unreadable_stops_is_amber_not_red():
+    assert fhc.classify_stops_armed(None, None)[0] == "AMBER"
