@@ -30,8 +30,8 @@ jobs:
       - name: Run unit tests
         run: python -m pytest -p no:cacheprovider tests/unit
 
-      - name: Run integration and replay tests
-        run: python -m pytest -p no:cacheprovider tests/integration tests/replay
+      - name: Run integration, replay, and backtest golden gate
+        run: python -m pytest -p no:cacheprovider tests/integration tests/replay tests/backtest
 
       - name: Run Ruff
         run: python -m ruff check src tests
