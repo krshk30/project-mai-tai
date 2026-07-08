@@ -75,7 +75,36 @@ tick trigger — that IS the ~3s path the backtest models. So the requirement is
    exits, measuring submit→fill latency vs the ~3s assumption, BEFORE any size. If live fills are
    materially slower than 3s on the names that matter, the edge is not bankable and v1 stops here.
 
-## 8. Risks & review points
+## 8. Position sizing (research, 2026-07-08) — price two-tier vs ATR/behavior
+Tested on the gated intrabar-2% config (31 classifiable name-days); P&L is linear in qty so this is
+a clean rescale. Baseline flat qty5. All are **leverage on a modest median edge — the median is the
+signal, and bigger size = bigger swings.**
+
+| rule | avg qty | total $ | median | win% | drop-top |
+|---|--:|--:|--:|--:|--:|
+| flat qty5 (baseline) | 5.0 | +7.2 | +0.25 | 55% | −3.1 |
+| PRICE two-tier (>$5→10 / <$5→20) | 17.4 | +36.1 | +0.70 | 55% | +15.5 |
+| ATR two-tier (slow→10 / high-ATR→20) | 16.8 | +45.8 | +0.70 | 55% | +4.6 |
+| **ATR edge-only (slow EXCLUDED / high-ATR→20)** | 20.0 | **+62.7** | **+1.40** | **67%** | **+21.5** |
+
+- **Price two-tier helps** vs flat, and the sub-$5 (qty20) tier is genuinely NET-POSITIVE
+  (median/share +0.06, win 61%, drop-top +24.3) — because in the ORB universe cheap ≈ high-ATR.
+  The cheap 2× names are a healthy mix (volatile/grinding +, slow ~flat), NOT slow losers — with one
+  exception, **DSY** (slow, $4.27) amplified to −6.20 at qty20.
+- **Swapping the sizing AXIS (price → ATR) is a WASH:** same median (+0.70) and win (55%). ATR fixes
+  the DSY over-sizing (slow→qty10, halved; or excluded) but **creates an SDOT over-sizing** — SDOT is
+  high-ATR *volatile* but a loser, and ATR amplifies it to qty20 (−22.6 vs −11.3 under price). ATR's
+  higher total is PLSM-driven (drop-top +4.6 < price's +15.5).
+- **The real lever is EXCLUDING slow, not the axis.** Per-share edge: volatile +0.10/win70,
+  grinding +0.06/win64, **slow −0.005/win30**. Dropping slow entirely (edge-only) dominates every
+  metric and is drop-one-robust (+21.5). This just **reinforces the §5 ATR gate** (gate out slow, size
+  high-ATR up) — it is NOT an argument for a price rule.
+- **Recommendation:** v1 sizing = **gate out slow (§5) + size the high-ATR names up** (e.g. ~2× the
+  current qty5). Price-tiering within the high-ATR set is optional and marginal (≈ATR-tiering). Size up
+  only as far as the 4×-drawdown on a bad high-ATR name (SDOT: −22.6 @ qty20) is tolerable. Re-check
+  the cheap/high-ATR-tier positivity on the forward-accrual before committing size.
+
+## 9. Risks & review points
 - **Scope is entry + exit**, not an exit tweak — the entry-side change touches `orb_app.py`
   (design-first + real-emit test + after-close restart, per the ORB discipline).
 - **Magnitudes are modest** ($0.05–0.13/share @ qty5) and the total leans on big movers; the median is
@@ -88,8 +117,9 @@ tick trigger — that IS the ~3s path the backtest models. So the requirement is
 - **Native STOP backup:** the 2% trail change must keep the F2 native-stop mirror + `−1.5%`/hard-stop
   safety net coherent (don't widen risk).
 
-## 9. Decision for review
+## 10. Decision for review
 Approve/modify: (a) proceed to build tick-entry + 2%-trail + ATR-gate as one change (design-first per
 piece), (b) the ATR gate threshold + early-window fallback, (c) v1 keeps the market-close exit (verify
-speed) vs jumping to a resting bracket, (d) the paper→qty-1-speed-test sequence before real size.
+speed) vs jumping to a resting bracket, (d) the paper→qty-1-speed-test sequence before real size,
+(e) sizing (§8): gate out slow + size high-ATR up (~2× qty5); price-tiering is optional/marginal.
 **No build starts until this is reviewed and the forward-accrual shows the median holding.**
