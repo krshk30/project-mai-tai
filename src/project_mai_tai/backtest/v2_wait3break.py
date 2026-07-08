@@ -37,10 +37,28 @@ from project_mai_tai.backtest.v2_sim import (
     _v2_cfg,
     detect_atr_touches,
 )
+from project_mai_tai.backtest.data import SchwabBar
 from project_mai_tai.exit_logic.engine import ExitEngine
 
 ET = ZoneInfo("America/New_York")
 WAIT_N = 3
+
+
+def bars_from_trades(trades):
+    """Build 1-min OHLCV SchwabBar bars from a dense trade feed (market_capture_trades) — used for
+    the MASSIVE-fed research run so ALL qualified names are covered (the Schwab CHART_EQUITY feed is
+    too sparse for most names). NOTE: a feed-deviation from live v2 (which computes ATR on Schwab
+    bars) — structural conclusions only, not penny-faithful to live Schwab fills."""
+    buckets: dict[int, list] = {}
+    for t in trades:
+        m = int(t.ts.timestamp() // 60) * 60_000       # minute-start epoch ms
+        buckets.setdefault(m, []).append((t.price, t.size))
+    out = []
+    for m in sorted(buckets):
+        px = [p for p, _ in buckets[m]]
+        vol = sum(s for _, s in buckets[m])
+        out.append(SchwabBar(m, px[0], max(px), min(px), px[-1], int(vol)))
+    return out
 
 # The 6 hard-stop buckets. ("fixed", pct) => stop = entry*(1-pct/100);
 # ("atr", k) => per-trade stop = entry - k*ATR$  (expressed as a per-trade stop_loss_pct).

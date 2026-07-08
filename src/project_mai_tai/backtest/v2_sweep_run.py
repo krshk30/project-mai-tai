@@ -17,6 +17,7 @@ from project_mai_tai.backtest.data import DbMarketDataSource
 from project_mai_tai.backtest.v2_wait3break import (
     STOP_BUCKETS,
     atr_pct_rth,
+    bars_from_trades,
     simulate_wait3break,
 )
 from project_mai_tai.db.session import build_session_factory
@@ -32,22 +33,23 @@ def _window(y, m, d):
     return lo, hi
 
 
-def _run_name(src, sym, lo, hi, qty):
-    sb = src.schwab_bars(sym, lo, hi)
-    sq = src.schwab_quotes(sym, lo, hi)
-    mq = src.quotes(sym, lo, hi)
-    if len(sb) < 10 or len(sq) == 0 or len(mq) == 0:
-        return {"skip": f"no-feed(sb={len(sb)},sq={len(sq)},mq={len(mq)})"}
-    vol = atr_pct_rth(sb)
+def _run_name(src, sym, lo, hi, qty, feed):
+    mq = src.quotes(sym, lo, hi)                    # massive bid/ask (exit feed always)
+    if feed == "massive":
+        bars = bars_from_trades(src.trades(sym, lo, hi))
+        entry_q = mq                               # break-detect + fill on the dense massive feed
+    else:                                          # schwab-fidelity feed
+        bars = src.schwab_bars(sym, lo, hi)
+        entry_q = src.schwab_quotes(sym, lo, hi)
+    if len(bars) < 10 or len(entry_q) == 0 or len(mq) == 0:
+        return {"skip": f"no-feed(bars={len(bars)},eq={len(entry_q)},mq={len(mq)})"}
+    vol = atr_pct_rth(bars)
     per_bucket = {}
     setups = breaks = None
-    trades_ref = None
     for name, mode in STOP_BUCKETS:
-        trades, n_setups, n_breaks = simulate_wait3break(sb, sq, mq, qty=qty, stop_mode=mode)
+        trades, n_setups, n_breaks = simulate_wait3break(bars, entry_q, mq, qty=qty, stop_mode=mode)
         per_bucket[name] = {"pnl": sum(t.pnl for t in trades), "n": len(trades)}
         setups, breaks = n_setups, n_breaks
-        if trades_ref is None:
-            trades_ref = trades
     return {"vol": vol, "setups": setups, "breaks": breaks, "buckets": per_bucket}
 
 
@@ -58,13 +60,17 @@ def _fmt_pnl(v):
 def main():
     argv = sys.argv[1:]
     qty = 10
+    feed = "massive"
     for a in argv:
         if a.startswith("--qty="):
             qty = int(a.split("=", 1)[1])
+        elif a.startswith("--feed="):
+            feed = a.split("=", 1)[1]
     dates = [a for a in argv if a.count("-") == 2 and a[:1].isdigit()]   # YYYY-MM-DD positionals
     if not dates:
-        print("usage: python -m project_mai_tai.backtest.v2_sweep_run YYYY-MM-DD [YYYY-MM-DD ...] [--qty=N]")
+        print("usage: python -m project_mai_tai.backtest.v2_sweep_run YYYY-MM-DD [...] [--qty=N] [--feed=massive|schwab]")
         return
+    print(f"FEED = {feed}  ({'dense market_capture trades -> all names, structural fidelity' if feed=='massive' else 'Schwab CHART_EQUITY -> live fidelity, sparse'})")
     src = DbMarketDataSource(build_session_factory(get_settings()))
 
     all_rows = []       # (date, sym, vol, setups, breaks, {bucket: {pnl,n}})
@@ -80,7 +86,7 @@ def main():
         day_tot = {b: 0.0 for b in BUCKET_NAMES}
         traded_rows = 0
         for sym in syms:
-            r = _run_name(src, sym, lo, hi, qty)
+            r = _run_name(src, sym, lo, hi, qty, feed)
             if "skip" in r:
                 print(f"{sym:<7}{'':>6} {'':>4}{'':>4}  SKIP {r['skip']}")
                 continue
