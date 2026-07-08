@@ -20,9 +20,9 @@ SYM, DATE = "CLRO", "2026-07-06"
 GATE, UNGATE_MIN, GAP, TRAIL = 4.3, 4, 1.5, 2.0
 
 
-def _et(h, m):
+def _et(h, m, s=0):
     y, mo, d = (int(x) for x in DATE.split("-"))
-    return datetime(y, mo, d, h, m, tzinfo=_ET).astimezone(timezone.utc)
+    return datetime(y, mo, d, h, m, s, tzinfo=_ET).astimezone(timezone.utc)
 
 
 def _ns(dt):
