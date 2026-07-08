@@ -49,6 +49,7 @@ from project_mai_tai.strategy_core.orb_intrabar import (
     build_opening_range,
     entry_fill_price,
 )
+from project_mai_tai.strategy_core.orb_tick_entry import OrbTickEntry
 from project_mai_tai.strategy_core.orb_tick_aggregator import OrbTickAggregator
 
 SERVICE_NAME = "orb"
@@ -126,6 +127,10 @@ class OrbService:
     _reclaim_mode: bool = False
     _reclaim_hold_ms: int = 25_000
     _running_high_mode: bool = False
+    _tick_entry_mode: bool = False          # ORB tick-driven entry V1 (default off = byte-identical)
+    _tick_gap_cap_pct: float = 1.5
+    _tick_window_min: int = 30
+    _tick_atr_gate_pct: float = 4.3
     # Market-data consume-loop throughput (mirrors strategy-engine #175/#179). The open
     # burst spans the WHOLE scanner universe and exceeded 700 ticks/s on 2026-06-30; a
     # single count=500 xread per 1s loop fell ~3x behind (effective ~196/s), surfacing the
@@ -173,6 +178,17 @@ class OrbService:
         ) and not self._reclaim_mode
         self._rh_gap_cap_pct = float(getattr(self.settings, "orb_running_high_gap_cap_pct", 1.5))
         self._rh_window_min = int(getattr(self.settings, "orb_running_high_window_minutes", 30))
+        # ORB tick-driven entry V1 (docs/orb-tick-exit-design.md). Enter on the break TICK via the
+        # shared OrbTickEntry leaf, gated to high-ATR names, 2% OMS trail, high-ATR up-sized. Takes
+        # precedence over the bar-close paths in add_tick when enabled. Default False -> byte-identical
+        # (no engine created, no tick path). Mutually exclusive with reclaim.
+        self._tick_entry_mode = bool(
+            getattr(self.settings, "orb_tick_entry_enabled", False)
+        ) and not self._reclaim_mode
+        self._tick_gap_cap_pct = float(getattr(self.settings, "orb_tick_entry_gap_cap_pct", 1.5))
+        self._tick_window_min = int(getattr(self.settings, "orb_tick_entry_window_minutes", 30))
+        self._tick_atr_gate_pct = float(getattr(self.settings, "orb_tick_entry_atr_gate_pct", 4.3))
+        self._tick_engines: dict[str, OrbTickEntry] = {}
         # OMS-quote-priced entry (Piece 1). When True, the bot OMITS limit_price/reference_price
         # from open intents (fail-closed: a stale signal-time price is structurally unshippable)
         # and hands the OMS the bound (orb_intended_break_level) + gap_cap + price_source so the
@@ -379,11 +395,17 @@ class OrbService:
         if agg is None:
             # Running-high mode seeds the reference from 09:25 (pre-09:30) bars, so anchor
             # the aggregator at 09:25; all other modes anchor at the 09:30 session open.
-            anchor = self._observe_open_utc() if self._running_high_mode else self._session_open_utc()
+            anchor = (
+                self._observe_open_utc()
+                if (self._running_high_mode or self._tick_entry_mode)
+                else self._session_open_utc()
+            )
             agg = OrbTickAggregator(session_open=anchor)
             self._aggregators[symbol] = agg
         bar = agg.add_tick(ts, price, size)
-        if bar is not None:
+        if self._tick_entry_mode:
+            self._check_tick_entry(symbol, price, ts, bar)   # tick-driven entry (bar feeds the ATR gate)
+        elif bar is not None:
             self._on_bar(symbol, bar)
         if self._reclaim_mode:
             self._check_reclaim(symbol, price, ts)
@@ -556,6 +578,44 @@ class OrbService:
                 )
         st.running_high = max(st.running_high, bar.high)
 
+    def _check_tick_entry(self, symbol: str, price: float, ts: datetime, completed_bar: OrbBar | None) -> None:
+        """Tick-driven ORB entry V1 (docs/orb-tick-exit-design.md). The shared OrbTickEntry leaf keeps a
+        CONTINUOUS running-high and returns the broken level on a break TICK inside (09:30, cutoff] that
+        passes the causal high-ATR gate (period-5 ATR% over the ORB-window bars so far). On a gated
+        break we emit ONE quote-priced open intent (2% OMS trail, high-ATR up-sized); the OMS re-prices
+        off its live ask bounded by orb_intended_break_level + gap_cap. Exit = the OMS 2% trailing stop.
+        During a hold `_can_enter` gates re-entry, while the engine keeps advancing the running-high so a
+        re-entry needs a genuinely higher high (mirrors the validated backtest)."""
+        eng = self._tick_engines.get(symbol)
+        if eng is None:
+            open_utc = self._session_open_utc()
+            eng = OrbTickEntry(
+                observe_open=self._observe_open_utc(),
+                session_open=open_utc,
+                cutoff=open_utc + timedelta(minutes=self._tick_window_min),
+                atr_gate_pct=self._tick_atr_gate_pct,
+            )
+            self._tick_engines[symbol] = eng
+        if completed_bar is not None:
+            eng.observe_bar(completed_bar)          # causal ATR gate sees only bars closed before this tick
+        level = eng.observe_tick(ts, price)
+        if level is None:
+            return                                  # no break, or the high-ATR gate rejected it
+        st = self._states.setdefault(symbol, _SymbolState())
+        st.last_bar_at = ts.isoformat()
+        if not self._can_enter(st) or symbol not in self._universe:
+            return
+        # coarse gap pre-check on the crossing tick (OMS does the real gap check off the live ask)
+        if price > level * (1.0 + self._tick_gap_cap_pct / 100.0):
+            return
+        st.pending = True                           # emit in flight; confirmed on the fill event
+        st.attempts += 1
+        self._pending_intents.append((symbol, level))
+        logger.info(
+            "[ORB-TICK-ENTRY] %s broke_high=%.4f at=%.4f gate_atr_ge=%.2f%% attempt=%d/%d",
+            symbol, level, price, self._tick_atr_gate_pct, st.attempts, self._ENTRY_ATTEMPT_CAP,
+        )
+
     # ----- the entry brain: OR build -> breakout -> arm-on-window-open -> open intent -----
     def _on_bar(self, symbol: str, bar: OrbBar) -> None:
         if self._running_high_mode:
@@ -649,7 +709,26 @@ class OrbService:
             st.reclaim_cross_ms = None  # hold broke — wait for the next reclaim
 
     def _build_open_intent(self, symbol: str, entry_price: float) -> TradeIntentEvent:
-        if self._running_high_mode:
+        if self._tick_entry_mode:
+            # Tick-driven V1: 2% OMS trail, high-ATR up-sized, quote-priced fail-closed (the OMS
+            # re-prices off its live ask bounded by orb_intended_break_level + gap_cap). entry_price
+            # is the broken running-high level (the intended break). docs/orb-tick-exit-design.md.
+            pct = str(self.settings.orb_tick_entry_trail_pct)
+            qty = int(self.settings.orb_tick_entry_quantity)
+            metadata = {
+                "stop_guard_enabled": "true",
+                "stop_loss_pct": pct,
+                "trail_pct": pct,                 # OMS 2% trailing stop (#340)
+                "stop_guard_quote_max_age_ms": "2000",
+                "stop_guard_initial_panic_buffer_pct": "1.5",
+                "orb_entry": "true",
+                "execution_mode": "tick_entry_breakout",
+                "order_type": "limit",
+                "orb_intended_break_level": f"{entry_price:.4f}",
+                "price_source": "ask",
+                "orb_gap_cap_pct": f"{self._tick_gap_cap_pct}",
+            }
+        elif self._running_high_mode:
             pct = str(self.settings.orb_reclaim_trail_pct)   # 3% trail (shared setting)
             qty = int(self.settings.orb_reclaim_quantity)     # qty 5 (shared setting)
             metadata = {

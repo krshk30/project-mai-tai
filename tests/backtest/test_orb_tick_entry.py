@@ -20,7 +20,7 @@ from project_mai_tai.backtest.atr_oracle import Bar as OracleBar
 from project_mai_tai.backtest.atr_oracle import compute_atr_trail
 from project_mai_tai.backtest.data import FixtureMarketDataSource, build_bars
 from project_mai_tai.backtest.orb_sim import simulate_intrabar, simulate_orb_tick_entry
-from project_mai_tai.strategy_core.orb_tick_entry import OrbTickEntry, atr_pct5
+from project_mai_tai.strategy_core.orb_tick_entry import atr_pct5
 
 FIX = Path(__file__).parent / "fixtures"
 _SRC = FixtureMarketDataSource(FIX)

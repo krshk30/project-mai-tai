@@ -199,6 +199,19 @@ class Settings(BaseSettings):
     orb_running_high_window_minutes: int = 30   # entries only 09:30 .. open+30 = 10:00 ET
     orb_running_high_gap_cap_pct: float = 1.5
 
+    # ORB tick-driven entry V1 (docs/orb-tick-exit-design.md, APPROVED+LOCKED 2026-07-08). Enter on
+    # the break TICK (continuous running-high) — not bar close — gated to high-ATR names (causal
+    # period-5 ATR% >= gate), exit = OMS 2% trail, size the high-ATR names up. Shares the
+    # OrbTickEntry leaf with the backtest (validated by tests/backtest/test_orb_tick_entry.py). With
+    # it False -> byte-identical (no tick path, no engine). Deploy is HELD until the forward-accrual
+    # shows the intrabar-2% median holding (do NOT flip on without that + a qty-1 fill-speed test).
+    orb_tick_entry_enabled: bool = False
+    orb_tick_entry_trail_pct: float = 2.0       # OMS trailing stop for the tick config (vs 3% live)
+    orb_tick_entry_atr_gate_pct: float = 4.3    # high-ATR gate (slow names whipsaw on a 2% trail)
+    orb_tick_entry_quantity: int = 10           # size high-ATR up (~2x the qty5 base); slow excluded
+    orb_tick_entry_window_minutes: int = 30     # entries only 09:30 .. open+30 = 10:00 ET
+    orb_tick_entry_gap_cap_pct: float = 1.5
+
     # OMS-quote-priced ORB entry (Piece 1 of the OMS-pricing port; see
     # docs/orb-oms-quote-priced-entry-design.md). With it False, ORB is byte-identical:
     # the bot ships its signal-time break-level limit and the OMS passes it through.
