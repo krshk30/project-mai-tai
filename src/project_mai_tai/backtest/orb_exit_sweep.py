@@ -22,6 +22,7 @@ import statistics
 from project_mai_tai.backtest.atr_oracle import compute_atr_trail
 from project_mai_tai.backtest.data import DbMarketDataSource, build_bars
 from project_mai_tai.backtest.orb_sim import simulate_bar_close, simulate_intrabar
+from project_mai_tai.backtest.scanner_windows import load_windows
 from project_mai_tai.backtest.v2_wait3break import bars_from_trades
 from project_mai_tai.db.session import build_session_factory
 from project_mai_tai.settings import get_settings
@@ -55,21 +56,28 @@ def _et(y, mo, d, h, m):
 
 def main():
     argv = sys.argv[1:]
-    jsonp = None
+    jsonp, wdir = None, None
     for a in argv:
         if a.startswith("--json="):
             jsonp = a.split("=", 1)[1]
+        elif a.startswith("--windows-dir="):
+            wdir = a.split("=", 1)[1]
     dates = [a for a in argv if a.count("-") == 2 and a[:1].isdigit()]
     src = DbMarketDataSource(build_session_factory(get_settings()))
     out_rows = []
     for date in dates:
         y, mo, d = (int(x) for x in date.split("-"))
         obs, so, cut, end = _et(y, mo, d, 9, 25), _et(y, mo, d, 9, 30), _et(y, mo, d, 10, 0), _et(y, mo, d, 10, 10)
+        wins_by_sym = load_windows(f"{wdir}/windows_{date}.json") if wdir else None
         syms = src.orb_qualified_symbols(obs, end, min_trades=500)
-        print(f"DAY {date}: {len(syms)} ORB-qualified", flush=True)
+        gated = "confirmed-window GATED" if wdir else "NO window gate"
+        print(f"DAY {date}: {len(syms)} ORB-qualified ({gated})", flush=True)
         base = dict(gap_cap_pct=GAP_CAP, qty=QTY, observe_open=obs, session_open=so,
                     cutoff=cut, capped=False, latency_s=LAT)
         for sym in syms:
+            ewin = wins_by_sym.get(sym, []) if wdir else None
+            if wdir and not ewin:
+                continue  # name never scanner-confirmed that day -> live ORB couldn't trade it
             trades = src.trades(sym, obs, end)
             quotes = src.quotes(sym, obs, end)
             if len(trades) < 500 or len(quotes) < 50:
@@ -89,8 +97,8 @@ def main():
                     tp = float(tw)
                 for hd in HARDS:
                     hs = None if hd == "none" else float(hd)
-                    bc = simulate_bar_close(bars, quotes, trail_pct=tp, hard_stop_pct=hs, **base)
-                    ib = simulate_intrabar(trades, quotes, trail_pct=tp, hard_stop_pct=hs, **base)
+                    bc = simulate_bar_close(bars, quotes, trail_pct=tp, hard_stop_pct=hs, entry_windows=ewin, **base)
+                    ib = simulate_intrabar(trades, quotes, trail_pct=tp, hard_stop_pct=hs, entry_windows=ewin, **base)
                     configs[f"t{tw}_h{hd}"] = {
                         "bc": round(sum(t.pnl for t in bc), 3), "bcn": len(bc),
                         "ib": round(sum(t.pnl for t in ib), 3), "ibn": len(ib)}

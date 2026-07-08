@@ -82,12 +82,18 @@ def _run_trail_exit(quotes, start_idx, fill_price, trail_pct, book, latency_s, h
     return None, None, "NO_QUOTES", n
 
 
+def _ts_in_windows(ts, windows):
+    """True if ts falls inside any (start,end) confirmed interval. None = no restriction."""
+    return windows is None or any(a <= ts <= b for a, b in windows)
+
+
 def simulate_bar_close(bars, quotes, *, gap_cap_pct, trail_pct, qty,
                        observe_open, session_open, cutoff, capped,
-                       latency_s=BROKER_LATENCY_S["webull"], hard_stop_pct=None):
+                       latency_s=BROKER_LATENCY_S["webull"], hard_stop_pct=None, entry_windows=None):
     """Return list[Trade]. `quotes` must be sorted by ts. `latency_s` is the PER-BROKER
     decision->fill latency (ORB=Webull ~3s; v2 must pass Schwab's measured value).
-    hard_stop_pct (research): fixed loss floor beneath the trail (None = live)."""
+    hard_stop_pct (research): fixed loss floor beneath the trail (None = live).
+    entry_windows (research): only enter while the name is scanner-CONFIRMED (None = no gate)."""
     book = QuoteBook(quotes)
     tracker = RunningHighTracker(
         observe_open=observe_open, session_open=session_open, cutoff=cutoff, gap_cap_pct=gap_cap_pct
@@ -100,6 +106,8 @@ def simulate_bar_close(bars, quotes, *, gap_cap_pct, trail_pct, qty,
         if brk is None or not brk.gap_ok:
             continue
         decision_ts = bar.timestamp + timedelta(seconds=BAR_SECS)   # bar close
+        if not _ts_in_windows(decision_ts, entry_windows):
+            continue  # name not scanner-confirmed at the breakout -> untradeable
         if flat_after is not None and decision_ts < flat_after:
             continue  # still holding a prior position
         if capped and attempts >= ENTRY_ATTEMPT_CAP:
@@ -120,7 +128,7 @@ def simulate_bar_close(bars, quotes, *, gap_cap_pct, trail_pct, qty,
 
 def simulate_intrabar(trades, quotes, *, gap_cap_pct, trail_pct, qty,
                       observe_open, session_open, cutoff, capped,
-                      latency_s=BROKER_LATENCY_S["webull"], hard_stop_pct=None):
+                      latency_s=BROKER_LATENCY_S["webull"], hard_stop_pct=None, entry_windows=None):
     """INTRABAR mode — the strategy the operator actually wants, now honestly testable.
 
     CONTINUOUS running-high: the level advances every TRADE TICK (`running_high = max(rh,
@@ -147,7 +155,7 @@ def simulate_intrabar(trades, quotes, *, gap_cap_pct, trail_pct, qty,
             running_high = t.price
             i += 1
             continue
-        in_window = session_open <= t.ts <= cutoff
+        in_window = session_open <= t.ts <= cutoff and _ts_in_windows(t.ts, entry_windows)
         if in_window and t.price > running_high and not (capped and attempts >= ENTRY_ATTEMPT_CAP):
             level = running_high                       # the prior high being broken
             attempts += 1                              # EMIT (intrabar break)
