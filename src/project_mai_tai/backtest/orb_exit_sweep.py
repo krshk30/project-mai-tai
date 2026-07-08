@@ -17,14 +17,33 @@ import sys
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
+import statistics
+
+from project_mai_tai.backtest.atr_oracle import compute_atr_trail
 from project_mai_tai.backtest.data import DbMarketDataSource, build_bars
 from project_mai_tai.backtest.orb_sim import simulate_bar_close, simulate_intrabar
-from project_mai_tai.backtest.v2_atr_param_sweep import classify_metrics
 from project_mai_tai.backtest.v2_wait3break import bars_from_trades
 from project_mai_tai.db.session import build_session_factory
 from project_mai_tai.settings import get_settings
 
 _ET = ZoneInfo("America/New_York")
+
+
+def classify_metrics(bars):
+    """Window-appropriate (ORB window ~45min): period-5 ATR% (volatility) + Kaufman ER
+    (directionality) + median price. Needs >=10 bars."""
+    closes = [b.close for b in bars if b.close > 0]
+    if len(closes) < 10:
+        return None
+    rows = compute_atr_trail(bars, period=5, factor=1.0)   # factor 1 -> loss == raw ATR5
+    atrp = [rows[i]["loss"] / bars[i].close * 100 for i in range(len(bars))
+            if rows[i]["loss"] is not None and bars[i].close > 0]
+    if not atrp:
+        return None
+    net = abs(closes[-1] - closes[0])
+    path = sum(abs(closes[i] - closes[i - 1]) for i in range(1, len(closes)))
+    er = net / path if path > 0 else 0.0
+    return {"atr_pct5": statistics.median(atrp), "er": er, "price": statistics.median(closes)}
 TRAILS = ["2", "3", "4", "5", "atr"]   # atr = per-name period-14 ATR%
 HARDS = ["none", "2", "3"]
 GAP_CAP, QTY, LAT = 1.5, 5, 3.0
@@ -65,7 +84,7 @@ def main():
                 if tw == "atr":
                     if not met:
                         continue
-                    tp = met["atr_pct14"]
+                    tp = met["atr_pct5"]
                 else:
                     tp = float(tw)
                 for hd in HARDS:
@@ -80,7 +99,7 @@ def main():
                 continue
             out_rows.append({"date": date, "sym": sym, "metrics": met, "configs": configs})
             b = configs.get("t3_hnone", {})
-            print(f"  {sym:<6} " + (f"atr14%={met['atr_pct14']:.2f} er={met['er']:.2f} price={met['price']:.2f}" if met else "met=NA")
+            print(f"  {sym:<6} " + (f"atr5%={met['atr_pct5']:.2f} er={met['er']:.2f} price={met['price']:.2f}" if met else "met=NA")
                   + f" | live(t3,noHS) bc={b.get('bc',0):+.2f}({b.get('bcn',0)}) ib={b.get('ib',0):+.2f}({b.get('ibn',0)})", flush=True)
     payload = {"trails": TRAILS, "hards": HARDS, "qty": QTY, "lat": LAT, "dates": dates,
                "baseline": "t3_hnone", "rows": out_rows}
