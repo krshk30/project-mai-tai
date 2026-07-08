@@ -155,8 +155,9 @@ def main():
             if not any_entry:
                 continue
             out_rows.append({"date": date, "sym": sym, "metrics": met, "combos": combos})
-            print(f"  {sym:<6} price={met['price']:.2f} atr14%={met['atr_pct14']:.2f} er={met['er']:.2f} "
-                  f"| base(5x3.5) pnl={combos['5x3.5']['pnl']:+.2f} n={combos['5x3.5']['n']}", flush=True)
+            mtxt = (f"price={met['price']:.2f} atr14%={met['atr_pct14']:.2f} er={met['er']:.2f}"
+                    if met else "metrics=NA")
+            print(f"  {sym:<6} {mtxt} | base(5x3.5) pnl={combos['5x3.5']['pnl']:+.2f} n={combos['5x3.5']['n']}", flush=True)
     payload = {"feed": feed, "qty": qty, "dates": dates, "combos": [f"{p}x{f}" for p, f in COMBOS],
                "baseline": "5x3.5", "exit_stop_pct": EXIT_STOP_PCT, "rows": out_rows}
     if jsonp:
