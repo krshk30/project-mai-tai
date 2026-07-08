@@ -21,7 +21,11 @@ import statistics
 
 from project_mai_tai.backtest.atr_oracle import compute_atr_trail
 from project_mai_tai.backtest.data import DbMarketDataSource, build_bars
-from project_mai_tai.backtest.orb_sim import simulate_bar_close, simulate_intrabar
+from project_mai_tai.backtest.orb_sim import (
+    simulate_bar_close,
+    simulate_intrabar,
+    simulate_orb_tick_entry,
+)
 from project_mai_tai.backtest.scanner_windows import load_windows
 from project_mai_tai.backtest.v2_wait3break import bars_from_trades
 from project_mai_tai.db.session import build_session_factory
@@ -56,12 +60,16 @@ def _et(y, mo, d, h, m):
 
 def main():
     argv = sys.argv[1:]
-    jsonp, wdir = None, None
+    jsonp, wdir, engine = None, None, "research"
     for a in argv:
         if a.startswith("--json="):
             jsonp = a.split("=", 1)[1]
         elif a.startswith("--windows-dir="):
             wdir = a.split("=", 1)[1]
+        elif a.startswith("--engine="):
+            engine = a.split("=", 1)[1]     # research=simulate_intrabar; production=OrbTickEntry engine
+    intrabar_fn = simulate_orb_tick_entry if engine == "production" else simulate_intrabar
+    print(f"INTRABAR ENGINE = {engine} ({intrabar_fn.__name__})")
     dates = [a for a in argv if a.count("-") == 2 and a[:1].isdigit()]
     src = DbMarketDataSource(build_session_factory(get_settings()))
     out_rows = []
@@ -98,7 +106,7 @@ def main():
                 for hd in HARDS:
                     hs = None if hd == "none" else float(hd)
                     bc = simulate_bar_close(bars, quotes, trail_pct=tp, hard_stop_pct=hs, entry_windows=ewin, **base)
-                    ib = simulate_intrabar(trades, quotes, trail_pct=tp, hard_stop_pct=hs, entry_windows=ewin, **base)
+                    ib = intrabar_fn(trades, quotes, trail_pct=tp, hard_stop_pct=hs, entry_windows=ewin, **base)
                     configs[f"t{tw}_h{hd}"] = {
                         "bc": round(sum(t.pnl for t in bc), 3), "bcn": len(bc),
                         "ib": round(sum(t.pnl for t in ib), 3), "ibn": len(ib)}
