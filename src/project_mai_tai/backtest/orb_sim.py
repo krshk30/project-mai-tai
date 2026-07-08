@@ -20,6 +20,7 @@ from datetime import datetime, timedelta
 
 from project_mai_tai.backtest.fill import BAR_SECS, BROKER_LATENCY_S, QuoteBook, entry_fill, exit_fill
 from project_mai_tai.backtest.orb_entry import RunningHighTracker
+from project_mai_tai.strategy_core.orb_tick_entry import OrbTickEntry
 
 ENTRY_ATTEMPT_CAP = 2  # live orb_app.py:141
 
@@ -52,21 +53,28 @@ class Trade:
     level: float | None = None   # the running-high that was broken (informational, for validation)
 
 
-def _run_trail_exit(quotes, start_idx, fill_price, trail_pct, book, latency_s):
+def _run_trail_exit(quotes, start_idx, fill_price, trail_pct, book, latency_s, hard_stop_pct=None):
     """Walk the bid path from the fill forward; return (exit_ts, exit_price, reason, next_idx).
     HWM seeded at fill_price (the fake-win guard). Stop = fill*(1-trail%); ratchet on bid.
     The exit is a stop that fires at the trigger and fills `latency_s` later at the then-bid
-    (honest exit slippage — the broker's real decision->fill time)."""
+    (honest exit slippage — the broker's real decision->fill time).
+
+    hard_stop_pct (research): a FIXED loss floor beneath the trail. The effective trigger stop is
+    max(trailing_stop, fill*(1-hard%)), so an immediate fade exits at the hard floor while a runner
+    (trail ratcheted above the floor) is unaffected. None = live behavior (byte-identical)."""
     hwm = fill_price
     stop = fill_price * (1.0 - trail_pct / 100.0)
+    hard_floor = fill_price * (1.0 - hard_stop_pct / 100.0) if hard_stop_pct else None
     i = start_idx
     n = len(quotes)
     while i < n:
         q = quotes[i]
         stop, hwm = _ratcheted_trailing_stop(stop, hwm, q.bid, trail_pct)
-        if q.bid <= stop:
+        eff = stop if hard_floor is None else max(stop, hard_floor)
+        if q.bid <= eff:
             xfill = exit_fill(book, q.ts, latency_s=latency_s)
-            return q.ts, (xfill if xfill is not None else q.bid), "TRAIL_STOP", i
+            reason = "HARD_STOP" if (hard_floor is not None and eff == hard_floor and stop < hard_floor) else "TRAIL_STOP"
+            return q.ts, (xfill if xfill is not None else q.bid), reason, i
         i += 1
     # window ended with no stop hit -> exit at the last bid (WINDOW_END)
     if quotes:
@@ -75,11 +83,18 @@ def _run_trail_exit(quotes, start_idx, fill_price, trail_pct, book, latency_s):
     return None, None, "NO_QUOTES", n
 
 
+def _ts_in_windows(ts, windows):
+    """True if ts falls inside any (start,end) confirmed interval. None = no restriction."""
+    return windows is None or any(a <= ts <= b for a, b in windows)
+
+
 def simulate_bar_close(bars, quotes, *, gap_cap_pct, trail_pct, qty,
                        observe_open, session_open, cutoff, capped,
-                       latency_s=BROKER_LATENCY_S["webull"]):
+                       latency_s=BROKER_LATENCY_S["webull"], hard_stop_pct=None, entry_windows=None):
     """Return list[Trade]. `quotes` must be sorted by ts. `latency_s` is the PER-BROKER
-    decision->fill latency (ORB=Webull ~3s; v2 must pass Schwab's measured value)."""
+    decision->fill latency (ORB=Webull ~3s; v2 must pass Schwab's measured value).
+    hard_stop_pct (research): fixed loss floor beneath the trail (None = live).
+    entry_windows (research): only enter while the name is scanner-CONFIRMED (None = no gate)."""
     book = QuoteBook(quotes)
     tracker = RunningHighTracker(
         observe_open=observe_open, session_open=session_open, cutoff=cutoff, gap_cap_pct=gap_cap_pct
@@ -92,6 +107,8 @@ def simulate_bar_close(bars, quotes, *, gap_cap_pct, trail_pct, qty,
         if brk is None or not brk.gap_ok:
             continue
         decision_ts = bar.timestamp + timedelta(seconds=BAR_SECS)   # bar close
+        if not _ts_in_windows(decision_ts, entry_windows):
+            continue  # name not scanner-confirmed at the breakout -> untradeable
         if flat_after is not None and decision_ts < flat_after:
             continue  # still holding a prior position
         if capped and attempts >= ENTRY_ATTEMPT_CAP:
@@ -103,7 +120,7 @@ def simulate_bar_close(bars, quotes, *, gap_cap_pct, trail_pct, qty,
         fill_ts = decision_ts + timedelta(seconds=latency_s)   # fill completes latency later
         # exit walk from the first quote at/after the fill
         start = bisect_left(book._ts, fill_ts)
-        xts, xprice, xreason, _ = _run_trail_exit(quotes, start, fill, trail_pct, book, latency_s)
+        xts, xprice, xreason, _ = _run_trail_exit(quotes, start, fill, trail_pct, book, latency_s, hard_stop_pct)
         pnl = (xprice - fill) * qty if xprice is not None else 0.0
         trades.append(Trade(fill_ts, fill, xts, xprice, qty, pnl, xreason, brk.level))
         flat_after = xts
@@ -112,7 +129,7 @@ def simulate_bar_close(bars, quotes, *, gap_cap_pct, trail_pct, qty,
 
 def simulate_intrabar(trades, quotes, *, gap_cap_pct, trail_pct, qty,
                       observe_open, session_open, cutoff, capped,
-                      latency_s=BROKER_LATENCY_S["webull"]):
+                      latency_s=BROKER_LATENCY_S["webull"], hard_stop_pct=None, entry_windows=None):
     """INTRABAR mode — the strategy the operator actually wants, now honestly testable.
 
     CONTINUOUS running-high: the level advances every TRADE TICK (`running_high = max(rh,
@@ -139,7 +156,7 @@ def simulate_intrabar(trades, quotes, *, gap_cap_pct, trail_pct, qty,
             running_high = t.price
             i += 1
             continue
-        in_window = session_open <= t.ts <= cutoff
+        in_window = session_open <= t.ts <= cutoff and _ts_in_windows(t.ts, entry_windows)
         if in_window and t.price > running_high and not (capped and attempts >= ENTRY_ATTEMPT_CAP):
             level = running_high                       # the prior high being broken
             attempts += 1                              # EMIT (intrabar break)
@@ -147,7 +164,7 @@ def simulate_intrabar(trades, quotes, *, gap_cap_pct, trail_pct, qty,
             if fill is not None:
                 fill_ts = t.ts + timedelta(seconds=latency_s)
                 start = bisect_left(book._ts, fill_ts)
-                xts, xprice, xreason, _ = _run_trail_exit(quotes, start, fill, trail_pct, book, latency_s)
+                xts, xprice, xreason, _ = _run_trail_exit(quotes, start, fill, trail_pct, book, latency_s, hard_stop_pct)
                 pnl = (xprice - fill) * qty if xprice is not None else 0.0
                 out.append(Trade(fill_ts, fill, xts, xprice, qty, pnl, xreason, level))
                 # advance running_high through the hold; resume after the exit (can't re-enter
@@ -158,6 +175,48 @@ def simulate_intrabar(trades, quotes, *, gap_cap_pct, trail_pct, qty,
                 continue
             # abandon (ASK_PAST_GAP_CAP): stay flat, advance rh past this tick
         running_high = max(running_high, t.price)
+        i += 1
+    return out
+
+
+def simulate_orb_tick_entry(trades, quotes, *, gap_cap_pct, trail_pct, qty,
+                            observe_open, session_open, cutoff, capped,
+                            latency_s=BROKER_LATENCY_S["webull"], hard_stop_pct=None,
+                            entry_windows=None, atr_gate_pct=None, bars=None):
+    """Backtest driver that runs the PRODUCTION `OrbTickEntry` engine for the entry decision, so the
+    back-test validates the real code path (the same engine the live orb_app.py tick handler uses).
+    Exit = the same `_run_trail_exit` 2% ratcheting trail. `bars` (closed 1-min OrbBars) feed the
+    causal high-ATR gate. With atr_gate_pct=None and bars=None this is TRADE-IDENTICAL to
+    `simulate_intrabar` (parity-pinned by tests/backtest/test_orb_tick_entry.py)."""
+    book = QuoteBook(quotes)
+    engine = OrbTickEntry(observe_open=observe_open, session_open=session_open,
+                          cutoff=cutoff, atr_gate_pct=atr_gate_pct)
+    bar_iter = iter(bars or [])
+    next_bar = next(bar_iter, None)
+    out: list[Trade] = []
+    attempts = 0
+    i, n = 0, len(trades)
+    while i < n:
+        t = trades[i]
+        # causal: feed only bars that have CLOSED at/before this tick
+        while next_bar is not None and next_bar.timestamp + timedelta(seconds=BAR_SECS) <= t.ts:
+            engine.observe_bar(next_bar)
+            next_bar = next(bar_iter, None)
+        level = engine.observe_tick(t.ts, t.price)
+        if (level is not None and (entry_windows is None or any(a <= t.ts <= b for a, b in entry_windows))
+                and not (capped and attempts >= ENTRY_ATTEMPT_CAP)):
+            attempts += 1
+            fill = entry_fill(book, t.ts, level, gap_cap_pct)
+            if fill is not None:
+                fill_ts = t.ts + timedelta(seconds=latency_s)
+                start = bisect_left(book._ts, fill_ts)
+                xts, xprice, xreason, _ = _run_trail_exit(quotes, start, fill, trail_pct, book, latency_s, hard_stop_pct)
+                pnl = (xprice - fill) * qty if xprice is not None else 0.0
+                out.append(Trade(fill_ts, fill, xts, xprice, qty, pnl, xreason, level))
+                while i < n and (xts is None or trades[i].ts <= xts):
+                    engine.advance(trades[i].price)
+                    i += 1
+                continue
         i += 1
     return out
 
