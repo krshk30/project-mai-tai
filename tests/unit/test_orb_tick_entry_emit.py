@@ -69,3 +69,12 @@ def test_out_of_universe_is_skipped():
     svc = _svc([])                                # empty pre-09:25 universe
     _run(svc, "MOVR", half_range=0.30)
     assert svc._pending_intents == []
+
+
+def test_ungate_first_minutes_admits_slow_early():
+    """With the ungate window covering the break, a SLOW name that the ATR gate would reject is
+    admitted early (recover the flood-day prize; slow names rarely break that early anyway)."""
+    svc = _svc(["SLOW"])
+    svc._tick_gate_after_secs = 6 * 60.0          # ungate 09:30-09:36 -> the 09:35 break is admitted
+    _run(svc, "SLOW", half_range=0.025)           # slow (gated out without the ungate window)
+    assert svc._pending_intents == [("SLOW", 5.00)], "the ungate window admits an early break on a slow name"

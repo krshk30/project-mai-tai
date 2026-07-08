@@ -50,11 +50,24 @@ Slow names whipsaw on a 2% trail (median −0.03/loss). Gate the new config to v
 - **Threshold (starting):** ATR5% ≥ ~4.3% (the sample's slow/active tertile boundary). **This is a
   small-sample number — ship it as a monitored parameter, not a constant, and recalibrate as the
   forward-accrual sample grows (the daily cron is now feeding it).**
-- **Open question (review):** early-window entries (09:30–09:32) may have <5 bars for ATR5%. Fallback
-  options: (a) require ≥5 ORB-window bars before the tick-entry config is eligible (miss the earliest
-  breaks), or (b) seed ATR from pre-market bars. Recommend (a) for safety; quantify the missed-entry cost.
-- Below threshold (slow) → **keep the current behavior** (bar-close entry, 3% trail) or don't trade —
-  do NOT apply the 2% tick config.
+- **Early-window resolution (R&D 2026-07-08, closes the open question):** the causal period-5 ATR needs
+  ~9 ORB-window bars → not ready until ~**09:34**. R&D quantified the cost and rejected every seed:
+  - **The 09:30–09:34 prize is large and concentrated on flood days:** ~**87% of the hot-day high-ATR
+    edge** (+12.70 of +14.63 over the sample) is in those first 4 minutes. Fail-closed-until-09:34
+    guts the strategy on exactly the days that matter.
+  - **Pre-market / prior-day / shorter-period seeds REJECTED:** premkt@09:30 agrees with RTH@09:34 only
+    **46%** (11/24), and every disagreement is one-directional (premkt says *slow* when RTH says
+    *high-ATR*) — pre-open volatility is systematically ~2–3× lower because **the 09:30 open is a regime
+    change you cannot measure from quiet pre-open data**; a fixed threshold would gate out the hot
+    movers (worst outcome). Only 24/40 name-days even have pre-market data.
+  - **RESOLUTION — ungate the first ~4 min, then gate from 09:34.** Slow names rarely break out that
+    early (1 slow early break across all hot days), so the running-high break is itself the filter.
+    Ungating 09:30–09:34 recovers ~**89%** of the flood-day early edge (+11.30) at a small **−1.40**
+    slow-whipsaw cost. Implemented as its own flag-gated config `orb_tick_entry_gate_after_minutes`
+    (0 = gate from open; 4.0 = the validated recovery). **The causal ATR gate applies unchanged from
+    09:34 onward.**
+- Below threshold (slow), from 09:34 on → **keep the current behavior** (bar-close entry, 3% trail) or
+  don't trade — do NOT apply the 2% tick config.
 
 ## 6. Fast-fill requirement (hard constraint #2)
 The edge assumes the exit fills ~3s after the trigger (the backtest's honest Webull latency; Part 1

@@ -182,15 +182,15 @@ def simulate_intrabar(trades, quotes, *, gap_cap_pct, trail_pct, qty,
 def simulate_orb_tick_entry(trades, quotes, *, gap_cap_pct, trail_pct, qty,
                             observe_open, session_open, cutoff, capped,
                             latency_s=BROKER_LATENCY_S["webull"], hard_stop_pct=None,
-                            entry_windows=None, atr_gate_pct=None, bars=None):
+                            entry_windows=None, atr_gate_pct=None, bars=None, gate_after_secs=0.0):
     """Backtest driver that runs the PRODUCTION `OrbTickEntry` engine for the entry decision, so the
     back-test validates the real code path (the same engine the live orb_app.py tick handler uses).
     Exit = the same `_run_trail_exit` 2% ratcheting trail. `bars` (closed 1-min OrbBars) feed the
     causal high-ATR gate. With atr_gate_pct=None and bars=None this is TRADE-IDENTICAL to
     `simulate_intrabar` (parity-pinned by tests/backtest/test_orb_tick_entry.py)."""
     book = QuoteBook(quotes)
-    engine = OrbTickEntry(observe_open=observe_open, session_open=session_open,
-                          cutoff=cutoff, atr_gate_pct=atr_gate_pct)
+    engine = OrbTickEntry(observe_open=observe_open, session_open=session_open, cutoff=cutoff,
+                          atr_gate_pct=atr_gate_pct, gate_after_secs=gate_after_secs)
     bar_iter = iter(bars or [])
     next_bar = next(bar_iter, None)
     out: list[Trade] = []

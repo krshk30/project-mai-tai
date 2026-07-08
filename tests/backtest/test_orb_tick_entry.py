@@ -91,3 +91,17 @@ def test_high_atr_gate_admits_and_excludes():
     assert len(blocked) == 0, "ATR% 99% gate must block every entry"
     assert len(admitted) >= 1, "a 1% gate must admit CELZ (a high-ATR mover)"
     assert len(admitted) <= len(ungated)
+
+
+def test_ungate_first_minutes_bypasses_gate_early():
+    """gate_after_secs ungates the early window: a blocking gate (99%) with gate_after covering the
+    whole entry window admits every break (== no gate) — the recover-the-flood-day-prize behavior."""
+    dd = _load("CELZ", 2026, 6, 30)
+    kw = dict(**_BASE, capped=False, **_win(dd))
+    ungated = simulate_orb_tick_entry(dd["trades"], dd["quotes"], atr_gate_pct=None, bars=dd["bars"], **kw)
+    blocked = simulate_orb_tick_entry(dd["trades"], dd["quotes"], atr_gate_pct=99.0,
+                                      gate_after_secs=0.0, bars=dd["bars"], **kw)
+    ungate_all = simulate_orb_tick_entry(dd["trades"], dd["quotes"], atr_gate_pct=99.0,
+                                         gate_after_secs=1800.0, bars=dd["bars"], **kw)  # 30min covers cutoff
+    assert len(blocked) == 0
+    assert _sig(ungate_all) == _sig(ungated), "ungate window covering the session == no gate"
