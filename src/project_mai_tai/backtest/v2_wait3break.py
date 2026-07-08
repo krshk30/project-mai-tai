@@ -146,23 +146,32 @@ def _find_setups(bars, *, vol_floor):
 
 
 def simulate_wait3break(schwab_bars, schwab_quotes, massive_quotes, *, qty, stop_mode,
-                        vol_floor=VOL_FLOOR, latency_s=SCHWAB_LATENCY_S):
+                        vol_floor=VOL_FLOOR, latency_s=SCHWAB_LATENCY_S, windows=None):
     """One full entry+exit pass for a single stop bucket. stop_mode = ("fixed", pct) | ("atr", k).
-    Entries recomputed per bucket because the flat-gate couples entry timing to exit timing."""
+    Entries recomputed per bucket because the flat-gate couples entry timing to exit timing.
+
+    `windows` = list of (start_dt, end_dt) confirmed intervals (UTC). When given, an entry is only
+    taken if the BREAK/decision timestamp falls inside a confirmed window (the bot can only place an
+    order while the name is in its universe). None = no restriction (whole-session, the old run)."""
     cfg = _v2_cfg()
     engine = ExitEngine(cfg)
     sbook = _Book(schwab_quotes)
     atr = _atr_series(schwab_bars)
     setups = _find_setups(schwab_bars, vol_floor=vol_floor)
 
+    def _in_win(ts):
+        return windows is None or any(a <= ts <= b for a, b in windows)
+
     trades: list[W3Trade] = []
     n_setups = len(setups)
-    n_breaks = 0
+    n_breaks = 0          # 3-candle high broken (regardless of confirmed state)
+    n_break_in_win = 0    # ... AND the break fell inside a confirmed window (bot-tradeable)
+    n_strict = 0          # ... AND the flip bar too was in the SAME window (whole sequence confirmed)
     flat_after = None
     for bar_idx, threshold, first_watch, watch_end in setups:
         # Break DETECTION on dense 1-min bar highs (the bot sees every bar close); first bar whose
-        # high crosses the 3-candle high is the break bar. TIMING/fill via the intrabar Schwab
-        # quote crossing within that bar; if the sparse feed has none, fall back to that bar's close.
+        # high crosses the 3-candle high is the break bar. TIMING/fill via the intrabar quote
+        # crossing within that bar; if the feed has none, fall back to that bar's close.
         break_bar = next((j for j in range(first_watch, watch_end) if schwab_bars[j].high >= threshold), None)
         if break_bar is None:
             continue                                # high never broken before thesis died
@@ -170,6 +179,11 @@ def simulate_wait3break(schwab_bars, schwab_quotes, massive_quotes, *, qty, stop
         bwin = sbook.slice(_utc(schwab_bars[break_bar].ts), _utc(schwab_bars[break_bar].ts + BAR_MS))
         tq = next((q for q in bwin if _px(q) >= threshold), None)
         break_ts = tq.ts if tq is not None else _utc(schwab_bars[break_bar].ts + BAR_MS)
+        if not _in_win(break_ts):
+            continue                                # name NOT confirmed at the entry moment -> untradeable
+        n_break_in_win += 1
+        if windows is not None and any(a <= _utc(schwab_bars[bar_idx].ts) and break_ts <= b for a, b in windows):
+            n_strict += 1                           # flip bar + break inside one continuous window
         if flat_after is not None and break_ts < flat_after:
             continue                                # still holding a prior position
         entry_ts = break_ts + timedelta(seconds=latency_s)
@@ -194,4 +208,4 @@ def simulate_wait3break(schwab_bars, schwab_quotes, massive_quotes, *, qty, stop
         exit_ts, wavg, pnl, reason, _legs = _run_exit(massive_quotes, start, entry_price, qty, cfg, engine)
         trades.append(W3Trade(entry_ts, entry_price, threshold, exit_ts, wavg, qty, pnl, reason, stop_pct))
         flat_after = exit_ts
-    return trades, n_setups, n_breaks
+    return trades, n_setups, n_breaks, n_break_in_win, n_strict

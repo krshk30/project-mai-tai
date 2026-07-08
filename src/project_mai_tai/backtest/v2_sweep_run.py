@@ -9,11 +9,13 @@ read (1) which buffer works and (2) whether winners cluster volatile-vs-slow.
 """
 from __future__ import annotations
 
+import json
 import sys
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 from project_mai_tai.backtest.data import DbMarketDataSource
+from project_mai_tai.backtest.scanner_windows import load_windows
 from project_mai_tai.backtest.v2_wait3break import (
     STOP_BUCKETS,
     atr_pct_rth,
@@ -33,7 +35,7 @@ def _window(y, m, d):
     return lo, hi
 
 
-def _run_name(src, sym, lo, hi, qty, feed):
+def _run_name(src, sym, lo, hi, qty, feed, windows):
     mq = src.quotes(sym, lo, hi)                    # massive bid/ask (exit feed always)
     if feed == "massive":
         bars = bars_from_trades(src.trades(sym, lo, hi))
@@ -42,103 +44,112 @@ def _run_name(src, sym, lo, hi, qty, feed):
         bars = src.schwab_bars(sym, lo, hi)
         entry_q = src.schwab_quotes(sym, lo, hi)
     if len(bars) < 10 or len(entry_q) == 0 or len(mq) == 0:
-        return {"skip": f"no-feed(bars={len(bars)},eq={len(entry_q)},mq={len(mq)})"}
+        return {"skip": f"no-feed(bars={len(bars)},eq={len(entry_q)},mq={len(mq)})", "windows": windows}
     vol = atr_pct_rth(bars)
     per_bucket = {}
-    setups = breaks = None
+    setups = breaks = brk_in = strict = None
     for name, mode in STOP_BUCKETS:
-        trades, n_setups, n_breaks = simulate_wait3break(bars, entry_q, mq, qty=qty, stop_mode=mode)
+        trades, n_setups, n_breaks, n_brk_in, n_strict = simulate_wait3break(
+            bars, entry_q, mq, qty=qty, stop_mode=mode, windows=windows)
         per_bucket[name] = {"pnl": sum(t.pnl for t in trades), "n": len(trades)}
-        setups, breaks = n_setups, n_breaks
-    return {"vol": vol, "setups": setups, "breaks": breaks, "buckets": per_bucket}
+        setups, breaks, brk_in, strict = n_setups, n_breaks, n_brk_in, n_strict
+    return {"vol": vol, "setups": setups, "breaks": breaks, "brk_in": brk_in,
+            "strict": strict, "buckets": per_bucket, "windows": windows}
 
 
-def _fmt_pnl(v):
-    return f"{v:+8.2f}"
+def _et(dt):
+    return dt.astimezone(_ET).strftime("%H:%M:%S")
+
+
+def _fmt_windows(windows):
+    """(summary_str, detail_str) for a list of (start,end) UTC confirmed intervals."""
+    if not windows:
+        return "0 windows (NEVER confirmed)", ""
+    durs = [(b - a).total_seconds() / 60 for a, b in windows]
+    total, longest = sum(durs), max(durs)
+    summary = f"{len(windows)} win, total {total:.1f}m, longest {longest:.1f}m"
+    detail = "  ".join(f"{_et(a)}-{_et(b)}({d:.1f}m)" for (a, b), d in zip(windows, durs))
+    return summary, detail
 
 
 def main():
     argv = sys.argv[1:]
-    qty = 10
-    feed = "massive"
+    qty, feed, wdir, jsonp = 10, "massive", None, None
     for a in argv:
         if a.startswith("--qty="):
             qty = int(a.split("=", 1)[1])
         elif a.startswith("--feed="):
             feed = a.split("=", 1)[1]
-    dates = [a for a in argv if a.count("-") == 2 and a[:1].isdigit()]   # YYYY-MM-DD positionals
+        elif a.startswith("--windows-dir="):
+            wdir = a.split("=", 1)[1]
+        elif a.startswith("--json="):
+            jsonp = a.split("=", 1)[1]
+    dates = [a for a in argv if a.count("-") == 2 and a[:1].isdigit()]
     if not dates:
-        print("usage: python -m project_mai_tai.backtest.v2_sweep_run YYYY-MM-DD [...] [--qty=N] [--feed=massive|schwab]")
+        print("usage: v2_sweep_run YYYY-MM-DD [...] [--qty=N] [--feed=massive|schwab] "
+              "[--windows-dir=DIR] [--json=OUT]")
         return
-    print(f"FEED = {feed}  ({'dense market_capture trades -> all names, structural fidelity' if feed=='massive' else 'Schwab CHART_EQUITY -> live fidelity, sparse'})")
+    print(f"FEED={feed}  WINDOWS={'CONFIRMED-ONLY (' + wdir + ')' if wdir else 'WHOLE-SESSION (no restriction)'}  qty={qty}")
     src = DbMarketDataSource(build_session_factory(get_settings()))
 
-    all_rows = []       # (date, sym, vol, setups, breaks, {bucket: {pnl,n}})
+    rows = []            # structured per name-day
     bucket_tot = {b: 0.0 for b in BUCKET_NAMES}
     for date in dates:
         y, m, d = (int(x) for x in date.split("-"))
         lo, hi = _window(y, m, d)
+        wins_by_sym = load_windows(f"{wdir}/windows_{date}.json") if wdir else {}
         syms = src.v2_qualified_symbols(lo, hi)
-        print(f"\n{'='*118}\nDAY {date}  qualified v2 names: {len(syms)}  (qty={qty}; entry-feed=Schwab, exit=massive bid)\n{'='*118}")
-        hdr = f"{'SYMBOL':<7}{'ATR%':>6} {'set':>4}{'brk':>4}  " + "".join(f"{b:>9}" for b in BUCKET_NAMES)
-        print(hdr)
-        print("-" * len(hdr))
+        print(f"\n{'='*120}\nDAY {date} — {len(syms)} qualified v2 names (confirmed-window restricted; ET times)\n{'='*120}")
         day_tot = {b: 0.0 for b in BUCKET_NAMES}
-        traded_rows = 0
+        traded = 0
         for sym in syms:
-            r = _run_name(src, sym, lo, hi, qty, feed)
+            wins = wins_by_sym.get(sym, []) if wdir else None
+            r = _run_name(src, sym, lo, hi, qty, feed, wins)
+            wsum, wdet = _fmt_windows(wins if wdir else [])
             if "skip" in r:
-                print(f"{sym:<7}{'':>6} {'':>4}{'':>4}  SKIP {r['skip']}")
+                print(f"\n{sym:<6} SKIP {r['skip']}   [{wsum}]")
                 continue
-            if r["breaks"] == 0:
-                vtxt = f"{r['vol']:.2f}" if r["vol"] is not None else "  -"
-                print(f"{sym:<7}{vtxt:>6} {r['setups']:>4}{r['breaks']:>4}  (no break -> no entry)")
-                all_rows.append((date, sym, r["vol"], r["setups"], r["breaks"], r["buckets"]))
-                continue
-            traded_rows += 1
-            vtxt = f"{r['vol']:.2f}" if r["vol"] is not None else "  -"
-            cells = ""
-            for b in BUCKET_NAMES:
-                pnl = r["buckets"][b]["pnl"]
-                cells += _fmt_pnl(pnl).rjust(9)
-                day_tot[b] += pnl
-                bucket_tot[b] += pnl
-            print(f"{sym:<7}{vtxt:>6} {r['setups']:>4}{r['breaks']:>4}  {cells}")
-            all_rows.append((date, sym, r["vol"], r["setups"], r["breaks"], r["buckets"]))
-        print("-" * len(hdr))
-        tot_cells = "".join(_fmt_pnl(day_tot[b]).rjust(9) for b in BUCKET_NAMES)
-        print(f"{'DAY TOT':<7}{'':>6} {'':>4}{'':>4}  {tot_cells}   (names with >=1 entry: {traded_rows})")
-
-    # ---- combined totals ----
-    print(f"\n{'='*118}\nCOMBINED (all days) — net P&L by hard-stop bucket\n{'='*118}")
-    print("".join(f"{b:>10}" for b in BUCKET_NAMES))
-    print("".join(f"{bucket_tot[b]:>+10.2f}" for b in BUCKET_NAMES))
-
-    # ---- volatility split (test 'winners cluster volatile-vs-slow') ----
-    voled = [row for row in all_rows if row[2] is not None and row[4] > 0]  # has vol + >=1 break
-    if voled:
-        vols = sorted(v for *_x, v, _s, _b, _bk in [(r[0], r[1], r[2], r[3], r[4], r[5]) for r in voled])
-        med = vols[len(vols) // 2]
-        print(f"\n{'='*118}\nVOLATILITY SPLIT — median ATR% across traded name-days = {med:.2f}%  "
-              f"(HI = >= median, 'volatile like CLRO'; LO = < median, 'slow')\n{'='*118}")
-        for label, pred in (("HI-vol (volatile)", lambda v: v >= med), ("LO-vol (slow)", lambda v: v < med)):
-            grp = [r for r in voled if pred(r[2])]
-            print(f"\n{label}:  {len(grp)} name-days")
-            split = {b: 0.0 for b in BUCKET_NAMES}
-            for _dt, _sym, _v, _s, _bk, buckets in grp:
+            vtxt = f"{r['vol']:.2f}%" if r["vol"] is not None else "  -  "
+            print(f"\n{sym:<6} ATR%={vtxt:<7} setups={r['setups']:<2} breaks={r['breaks']:<2} "
+                  f"in-window={r['brk_in']:<2} strict={r['strict']:<2}   [{wsum}]")
+            if wdet:
+                print(f"       windows: {wdet}")
+            if r["brk_in"] == 0:
+                why = ("no ATR flip/setup" if r["setups"] == 0 else
+                       "breaks but ALL outside confirmed windows" if r["breaks"] > 0 else
+                       "3-candle high never broken")
+                print(f"       -> NO tradeable entry ({why})")
+            else:
+                cells = "  ".join(f"{b}:{r['buckets'][b]['pnl']:+.2f}(n{r['buckets'][b]['n']})" for b in BUCKET_NAMES)
+                print(f"       {cells}")
+                traded += 1
                 for b in BUCKET_NAMES:
-                    split[b] += buckets[b]["pnl"]
-            print("  " + "".join(f"{b:>10}" for b in BUCKET_NAMES))
-            print("  " + "".join(f"{split[b]:>+10.2f}" for b in BUCKET_NAMES))
+                    day_tot[b] += r["buckets"][b]["pnl"]
+                    bucket_tot[b] += r["buckets"][b]["pnl"]
+            rows.append({"date": date, "sym": sym, "vol": r["vol"], "setups": r["setups"],
+                         "breaks": r["breaks"], "brk_in": r["brk_in"], "strict": r["strict"],
+                         "buckets": r["buckets"],
+                         "windows": [[a.isoformat(), b.isoformat()] for a, b in (wins or [])]})
+        print(f"\n  DAY {date} TOTAL (names w/ entry: {traded}):  " +
+              "  ".join(f"{b}:{day_tot[b]:+.2f}" for b in BUCKET_NAMES))
 
-    # ---- per-name detail sorted by volatility (clustering visual) ----
-    print(f"\n{'='*118}\nPER NAME-DAY sorted by ATR% (best-bucket net) — clustering view\n{'='*118}")
-    detail = [r for r in all_rows if r[2] is not None and r[4] > 0]
-    detail.sort(key=lambda r: r[2], reverse=True)
-    print(f"{'DATE':<11}{'SYMBOL':<7}{'ATR%':>6}  {'bestBucket':>12}{'bestNet':>10}   {'-1.5% net':>10}")
-    for dt, sym, v, _s, _bk, buckets in detail:
-        best_b = max(BUCKET_NAMES, key=lambda b: buckets[b]["pnl"])
-        print(f"{dt:<11}{sym:<7}{v:>6.2f}  {best_b:>12}{buckets[best_b]['pnl']:>+10.2f}   {buckets['-1.5%']['pnl']:>+10.2f}")
+    print(f"\n{'='*120}\nCOMBINED — net P&L by hard-stop bucket (confirmed-window restricted)\n{'='*120}")
+    print("  ".join(f"{b}:{bucket_tot[b]:+.2f}" for b in BUCKET_NAMES))
+
+    voled = [r for r in rows if r["vol"] is not None and r["brk_in"] > 0]
+    if voled:
+        med = sorted(r["vol"] for r in voled)[len(voled) // 2]
+        print(f"\nVOLATILITY SPLIT — median ATR% (traded name-days) = {med:.2f}%")
+        for label, pred in (("HI-vol", lambda v: v >= med), ("LO-vol", lambda v: v < med)):
+            grp = [r for r in voled if pred(r["vol"])]
+            split = {b: sum(r["buckets"][b]["pnl"] for r in grp) for b in BUCKET_NAMES}
+            print(f"  {label} ({len(grp)} nd): " + "  ".join(f"{b}:{split[b]:+.2f}" for b in BUCKET_NAMES))
+
+    if jsonp:
+        with open(jsonp, "w") as fh:
+            json.dump({"feed": feed, "qty": qty, "dates": dates, "confirmed_only": bool(wdir),
+                       "buckets": BUCKET_NAMES, "combined": bucket_tot, "rows": rows}, fh, indent=1)
+        print(f"\n[json dumped -> {jsonp}]")
 
 
 if __name__ == "__main__":
