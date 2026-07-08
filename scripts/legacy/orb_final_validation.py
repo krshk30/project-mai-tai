@@ -144,7 +144,8 @@ def main():
             at = simulate(tr, q, bars, ewin, win, "atr")
             fx_nd.append(sum(x[4] for x in fx))
             at_nd.append(sum(x[4] for x in at))
-            print(f"{date} {sym:<6} [{tag}] ATR5%={a5:.1f} ER={er:.2f} | first-bar vol={fbv/1000:.0f}K spr={fbs:.2f}%"
+            a5s = f"{a5:.1f}" if a5 is not None else "NA"
+            print(f"{date} {sym:<6} [{tag}] ATR5%={a5s} ER={er:.2f} | first-bar vol={fbv/1000:.0f}K spr={fbs:.2f}%"
                   f"  fixed={sum(x[4] for x in fx):+.2f} atr0.25={sum(x[4] for x in at):+.2f}")
             for lbl, trades in (("fixed", fx), ("atr25", at)):
                 for x in trades:
