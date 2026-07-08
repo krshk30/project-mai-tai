@@ -1,6 +1,8 @@
 # ORB tick-driven entry + 2% trail — DESIGN (design-first; review before any build)
 
-**Status:** DESIGN ONLY. No code beyond the research branch. Review required before implementation.
+**Status:** ✅ **APPROVED + LOCKED 2026-07-08 — no further design changes.** Build split: (1) shadow/paper
+harness = BUILD NOW (risk-free, no real orders); (2) live orb_app.py tick-entry + trail_pct flip = HELD
+until the forward-accrual shows the intrabar-2% median holding. qty-1 fill-speed test only after BOTH hold.
 **Author:** research session 2026-07-08. **Evidence:** the 🎚️ ORB Decision-2 report (40→39 name-day
 confirmed-window-gated sweep) + the BJDX #4 mechanism trace.
 
