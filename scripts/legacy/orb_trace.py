@@ -55,7 +55,8 @@ def trace(src, sym, date):
         return
     bars = build_bars(trades, so)
     atr5, er, tag = behavior(bars)
-    print(f"  behavior: ATR5%={atr5:.2f} (median, full ORB window)  ER={er:.2f}  ->  [{tag.upper()}]"
+    atr5s = f"{atr5:.2f}" if atr5 is not None else "None(sparse)"
+    print(f"  behavior: ATR5%={atr5s} (median, full ORB window)  ER={er:.2f}  ->  [{tag.upper()}]"
           f"  {'(gate would ADMIT from 09:34)' if tag != 'slow' else '(gate would EXCLUDE after 09:34; only ungate-early)'}")
     print(f"  causal ATR%-so-far per minute (gate opens at >= {GATE}%):")
     for mm in range(30, 60):
