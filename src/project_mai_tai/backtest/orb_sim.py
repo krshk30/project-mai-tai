@@ -182,15 +182,24 @@ def simulate_intrabar(trades, quotes, *, gap_cap_pct, trail_pct, qty,
 def simulate_orb_tick_entry(trades, quotes, *, gap_cap_pct, trail_pct, qty,
                             observe_open, session_open, cutoff, capped,
                             latency_s=BROKER_LATENCY_S["webull"], hard_stop_pct=None,
-                            entry_windows=None, atr_gate_pct=None, bars=None, gate_after_secs=0.0):
+                            entry_windows=None, atr_gate_pct=None, bars=None, gate_after_secs=0.0,
+                            liq_min_volume=None, liq_max_spread_pct=1.0, first_bar_secs=60.0):
     """Backtest driver that runs the PRODUCTION `OrbTickEntry` engine for the entry decision, so the
     back-test validates the real code path (the same engine the live orb_app.py tick handler uses).
     Exit = the same `_run_trail_exit` 2% ratcheting trail. `bars` (closed 1-min OrbBars) feed the
-    causal high-ATR gate. With atr_gate_pct=None and bars=None this is TRADE-IDENTICAL to
-    `simulate_intrabar` (parity-pinned by tests/backtest/test_orb_tick_entry.py)."""
+    causal high-ATR gate; `liq_min_volume`/`liq_max_spread_pct` the first-bar liquidity gate. With
+    atr_gate_pct=None, liq_min_volume=None and bars=None this is TRADE-IDENTICAL to `simulate_intrabar`
+    (parity-pinned by tests/backtest/test_orb_tick_entry.py)."""
     book = QuoteBook(quotes)
     engine = OrbTickEntry(observe_open=observe_open, session_open=session_open, cutoff=cutoff,
-                          atr_gate_pct=atr_gate_pct, gate_after_secs=gate_after_secs)
+                          atr_gate_pct=atr_gate_pct, gate_after_secs=gate_after_secs,
+                          liq_min_volume=liq_min_volume, liq_max_spread_pct=liq_max_spread_pct,
+                          first_bar_secs=first_bar_secs)
+    if liq_min_volume is not None:      # pre-feed first-bar quotes for the liquidity gate (spread)
+        fb_close = session_open + timedelta(seconds=first_bar_secs)
+        for q in quotes:
+            if session_open <= q.ts < fb_close:
+                engine.observe_quote(q.ts, q.bid, q.ask)
     bar_iter = iter(bars or [])
     next_bar = next(bar_iter, None)
     out: list[Trade] = []
@@ -202,7 +211,7 @@ def simulate_orb_tick_entry(trades, quotes, *, gap_cap_pct, trail_pct, qty,
         while next_bar is not None and next_bar.timestamp + timedelta(seconds=BAR_SECS) <= t.ts:
             engine.observe_bar(next_bar)
             next_bar = next(bar_iter, None)
-        level = engine.observe_tick(t.ts, t.price)
+        level = engine.observe_tick(t.ts, t.price, t.size)
         if (level is not None and (entry_windows is None or any(a <= t.ts <= b for a, b in entry_windows))
                 and not (capped and attempts >= ENTRY_ATTEMPT_CAP)):
             attempts += 1

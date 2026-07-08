@@ -88,6 +88,18 @@ def _normalize_trade_ts_ns(value: int | float | str | None) -> int | None:
     return None
 
 
+def _parse_produced_at(value: str | None) -> datetime | None:
+    """Parse an event-envelope ``produced_at`` ISO timestamp (quotes carry no payload ts) to a
+    tz-aware UTC datetime. Used only by the first-bar liquidity gate."""
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
+
+
 @dataclass
 class _SymbolState:
     or_bars: list[OrbBar] = field(default_factory=list)
@@ -132,6 +144,8 @@ class OrbService:
     _tick_window_min: int = 30
     _tick_atr_gate_pct: float = 4.3
     _tick_gate_after_secs: float = 0.0
+    _tick_liq_min_volume: float | None = None   # first-bar liquidity gate (None = off = byte-identical)
+    _tick_liq_max_spread_pct: float = 1.0
     # Market-data consume-loop throughput (mirrors strategy-engine #175/#179). The open
     # burst spans the WHOLE scanner universe and exceeded 700 ticks/s on 2026-06-30; a
     # single count=500 xread per 1s loop fell ~3x behind (effective ~196/s), surfacing the
@@ -190,6 +204,11 @@ class OrbService:
         self._tick_window_min = int(getattr(self.settings, "orb_tick_entry_window_minutes", 30))
         self._tick_atr_gate_pct = float(getattr(self.settings, "orb_tick_entry_atr_gate_pct", 4.3))
         self._tick_gate_after_secs = float(getattr(self.settings, "orb_tick_entry_gate_after_minutes", 0.0)) * 60.0
+        self._tick_liq_min_volume = (
+            float(getattr(self.settings, "orb_first_bar_liquidity_min_volume", 100000.0))
+            if bool(getattr(self.settings, "orb_first_bar_liquidity_enabled", False)) else None
+        )
+        self._tick_liq_max_spread_pct = float(getattr(self.settings, "orb_first_bar_liquidity_max_spread_pct", 1.0))
         self._tick_engines: dict[str, OrbTickEntry] = {}
         # OMS-quote-priced entry (Piece 1). When True, the bot OMITS limit_price/reference_price
         # from open intents (fail-closed: a stale signal-time price is structurally unshippable)
@@ -380,8 +399,12 @@ class OrbService:
             obj = json.loads(raw)
         except (ValueError, TypeError):
             return
-        if obj.get("event_type") != "trade_tick":
-            return  # quotes/bars not used by the ORB entry path (quotes drive the OMS exit)
+        event_type = obj.get("event_type")
+        if event_type == "quote_tick":
+            self._feed_tick_quote(obj)   # first-bar liquidity gate only (no-op unless the flag is on)
+            return
+        if event_type != "trade_tick":
+            return  # bars not used by the ORB entry path (quotes drive the OMS exit)
         payload = obj.get("payload") or {}
         symbol = str(payload.get("symbol", "")).upper()
         if not symbol or symbol not in self._last_gateway_symbols:
@@ -406,7 +429,7 @@ class OrbService:
             self._aggregators[symbol] = agg
         bar = agg.add_tick(ts, price, size)
         if self._tick_entry_mode:
-            self._check_tick_entry(symbol, price, ts, bar)   # tick-driven entry (bar feeds the ATR gate)
+            self._check_tick_entry(symbol, price, ts, bar, size)   # tick-driven entry (bar feeds the ATR gate)
         elif bar is not None:
             self._on_bar(symbol, bar)
         if self._reclaim_mode:
@@ -580,14 +603,9 @@ class OrbService:
                 )
         st.running_high = max(st.running_high, bar.high)
 
-    def _check_tick_entry(self, symbol: str, price: float, ts: datetime, completed_bar: OrbBar | None) -> None:
-        """Tick-driven ORB entry V1 (docs/orb-tick-exit-design.md). The shared OrbTickEntry leaf keeps a
-        CONTINUOUS running-high and returns the broken level on a break TICK inside (09:30, cutoff] that
-        passes the causal high-ATR gate (period-5 ATR% over the ORB-window bars so far). On a gated
-        break we emit ONE quote-priced open intent (2% OMS trail, high-ATR up-sized); the OMS re-prices
-        off its live ask bounded by orb_intended_break_level + gap_cap. Exit = the OMS 2% trailing stop.
-        During a hold `_can_enter` gates re-entry, while the engine keeps advancing the running-high so a
-        re-entry needs a genuinely higher high (mirrors the validated backtest)."""
+    def _ensure_tick_engine(self, symbol: str) -> OrbTickEntry:
+        """Get/create the per-symbol tick-entry engine (shared by the trade path and the first-bar
+        liquidity-gate quote path)."""
         eng = self._tick_engines.get(symbol)
         if eng is None:
             open_utc = self._session_open_utc()
@@ -597,11 +615,42 @@ class OrbService:
                 cutoff=open_utc + timedelta(minutes=self._tick_window_min),
                 atr_gate_pct=self._tick_atr_gate_pct,
                 gate_after_secs=self._tick_gate_after_secs,
+                liq_min_volume=self._tick_liq_min_volume,
+                liq_max_spread_pct=self._tick_liq_max_spread_pct,
             )
             self._tick_engines[symbol] = eng
+        return eng
+
+    def _feed_tick_quote(self, obj: dict) -> None:
+        """First-bar liquidity gate only: feed NBBO quotes to the per-symbol engine so it can measure
+        the 09:30-09:31 median spread. No-op unless tick-entry + the liquidity gate are both on."""
+        if not self._tick_entry_mode or self._tick_liq_min_volume is None:
+            return
+        payload = obj.get("payload") or {}
+        symbol = str(payload.get("symbol", "")).upper()
+        if not symbol or symbol not in self._last_gateway_symbols:
+            return
+        try:
+            bid, ask = float(payload["bid_price"]), float(payload["ask_price"])
+        except (KeyError, TypeError, ValueError):
+            return
+        ts = _parse_produced_at(obj.get("produced_at"))
+        if ts is not None:
+            self._ensure_tick_engine(symbol).observe_quote(ts, bid, ask)
+
+    def _check_tick_entry(self, symbol: str, price: float, ts: datetime, completed_bar: OrbBar | None,
+                          size: float = 0.0) -> None:
+        """Tick-driven ORB entry V1 (docs/orb-tick-exit-design.md). The shared OrbTickEntry leaf keeps a
+        CONTINUOUS running-high and returns the broken level on a break TICK inside (09:30, cutoff] that
+        passes the causal high-ATR gate (period-5 ATR% over the ORB-window bars so far). On a gated
+        break we emit ONE quote-priced open intent (2% OMS trail, high-ATR up-sized); the OMS re-prices
+        off its live ask bounded by orb_intended_break_level + gap_cap. Exit = the OMS 2% trailing stop.
+        During a hold `_can_enter` gates re-entry, while the engine keeps advancing the running-high so a
+        re-entry needs a genuinely higher high (mirrors the validated backtest)."""
+        eng = self._ensure_tick_engine(symbol)
         if completed_bar is not None:
             eng.observe_bar(completed_bar)          # causal ATR gate sees only bars closed before this tick
-        level = eng.observe_tick(ts, price)
+        level = eng.observe_tick(ts, price, size)
         if level is None:
             return                                  # no break, or the high-ATR gate rejected it
         st = self._states.setdefault(symbol, _SymbolState())

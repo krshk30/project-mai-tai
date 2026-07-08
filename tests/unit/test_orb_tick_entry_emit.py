@@ -78,3 +78,44 @@ def test_ungate_first_minutes_admits_slow_early():
     svc._tick_gate_after_secs = 6 * 60.0          # ungate 09:30-09:36 -> the 09:35 break is admitted
     _run(svc, "SLOW", half_range=0.025)           # slow (gated out without the ungate window)
     assert svc._pending_intents == [("SLOW", 5.00)], "the ungate window admits an early break on a slow name"
+
+
+def _run_liq(svc, sym, fb_vol, spread_pct):
+    """High-ATR name; feed first-bar (09:30-09:31) VOLUME (fb_vol) + a quote at the given spread via the
+    real quote envelope, then a high-ATR break at 09:35 (post first-bar -> liquidity gate applies)."""
+    svc._last_gateway_symbols = {sym}
+    for m, px in enumerate([4.70, 4.80, 4.90, 5.00]):
+        svc._check_tick_entry(sym, px, OBS + timedelta(minutes=m), _bar(m, px, 0.30), 0.0)
+    open_utc = OBS + timedelta(minutes=5)         # 09:30 session open
+    ask = round(5.00 * (1 + spread_pct / 100), 4)
+    svc._feed_tick_quote({"event_type": "quote_tick", "produced_at": (open_utc + timedelta(seconds=1)).isoformat(),
+                          "payload": {"symbol": sym, "bid_price": 5.00, "ask_price": ask}})
+    svc._check_tick_entry(sym, 4.99, open_utc, _bar(5, 4.99, 0.30), fb_vol)   # first-bar volume
+    for m in range(6, 10):
+        svc._check_tick_entry(sym, 4.99, OBS + timedelta(minutes=m), _bar(m, 4.99, 0.30), 0.0)
+    svc._check_tick_entry(sym, 5.05, OBS + timedelta(minutes=10), None, 0.0)  # break at 09:35
+
+
+def _liq_svc():
+    svc = _svc(["LIQ"])
+    svc._tick_liq_min_volume = 100000.0
+    svc._tick_liq_max_spread_pct = 1.0
+    return svc
+
+
+def test_first_bar_liquidity_admits_liquid_name():
+    svc = _liq_svc()
+    _run_liq(svc, "LIQ", fb_vol=200000, spread_pct=0.5)     # thick volume + tight spread
+    assert svc._pending_intents == [("LIQ", 5.00)], "a liquid name (vol>=100K, spread<=1%) must trade"
+
+
+def test_first_bar_liquidity_blocks_thin_volume():
+    svc = _liq_svc()
+    _run_liq(svc, "LIQ", fb_vol=50000, spread_pct=0.5)      # < 100K first-bar volume
+    assert svc._pending_intents == [], "a thin-volume name must be gated out"
+
+
+def test_first_bar_liquidity_blocks_wide_spread():
+    svc = _liq_svc()
+    _run_liq(svc, "LIQ", fb_vol=200000, spread_pct=3.0)     # 3% spread > 1% ceiling (the CCXIW case)
+    assert svc._pending_intents == [], "a wide-spread name (thin pump) must be gated out"

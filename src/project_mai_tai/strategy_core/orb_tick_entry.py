@@ -69,7 +69,9 @@ class OrbTickEntry:
     qualifying entry break, else None. `advance` is the cheap running-high bump used while holding."""
 
     def __init__(self, *, observe_open: datetime, session_open: datetime, cutoff: datetime,
-                 atr_gate_pct: float | None = None, gate_after_secs: float = 0.0) -> None:
+                 atr_gate_pct: float | None = None, gate_after_secs: float = 0.0,
+                 liq_min_volume: float | None = None, liq_max_spread_pct: float = 1.0,
+                 first_bar_secs: float = 60.0) -> None:
         self._observe_open = observe_open
         self._session_open = session_open
         self._cutoff = cutoff
@@ -79,12 +81,29 @@ class OrbTickEntry:
         # rarely break out that early, so the running-high break is the filter there. From
         # session_open + gate_after_secs onward the ATR gate applies normally. 0 = gate from the open.
         self._gate_after = timedelta(seconds=gate_after_secs)
+        # FIRST-BAR LIQUIDITY gate (None = off): the R&D separator between winners and the thin-pump
+        # disasters (e.g. CCXIW: 12K first-bar vol, 8.4% spread -> -6.9). By first-bar close it's known,
+        # so it blocks entries from first_bar_secs onward if 09:30-09:31 volume < min OR median spread >
+        # max. Early (< first-bar-close) entries can't be gated (not yet measured). Known residual: a
+        # LIQUID reversal (SDOT: 606K vol, 0.7% spread, -5.6) passes by design — separate tail-risk.
+        self._liq_min_volume = liq_min_volume
+        self._liq_max_spread_pct = liq_max_spread_pct
+        self._fb_close = session_open + timedelta(seconds=first_bar_secs)
+        self._fb_volume = 0.0
+        self._fb_spreads: list[float] = []
         self.running_high: float | None = None
         self._bars: list[OrbBar] = []
 
     def observe_bar(self, bar: OrbBar) -> None:
         """Feed a CLOSED 1-min ORB-window bar (causal: only bars closed before a tick inform its gate)."""
         self._bars.append(bar)
+
+    def observe_quote(self, ts: datetime, bid: float, ask: float) -> None:
+        """Feed an NBBO quote — accumulates the first-bar median spread for the liquidity gate only."""
+        if self._liq_min_volume is None or ts >= self._fb_close:
+            return
+        if bid > 0 and ask >= bid:
+            self._fb_spreads.append((ask - bid) / ((ask + bid) / 2) * 100.0)
 
     def _gate_passes(self, ts: datetime) -> bool:
         if self._atr_gate_pct is None:
@@ -94,17 +113,28 @@ class OrbTickEntry:
         v = atr_pct5(self._bars)
         return v is not None and v >= self._atr_gate_pct
 
-    def observe_tick(self, ts: datetime, price: float) -> float | None:
+    def _liquidity_ok(self, ts: datetime) -> bool:
+        if self._liq_min_volume is None:
+            return True                              # gate off
+        if ts < self._fb_close:
+            return True                              # first bar not closed yet — not measurable
+        spread_ok = bool(self._fb_spreads) and median(self._fb_spreads) <= self._liq_max_spread_pct
+        return self._fb_volume >= self._liq_min_volume and spread_ok
+
+    def observe_tick(self, ts: datetime, price: float, size: float = 0.0) -> float | None:
         """FLAT-state tick. Advance the continuous running-high; return the broken level if this tick
-        breaks it inside the window AND the high-ATR gate passes, else None. Gap-cap/fill/attempt-cap
-        are the caller's. Byte-identical to simulate_intrabar's running-high/break when gate is off."""
+        breaks it inside the window AND the high-ATR + first-bar-liquidity gates pass, else None.
+        Gap-cap/fill/attempt-cap are the caller's. Byte-identical to simulate_intrabar when gates off."""
         if ts < self._observe_open:
             return None
+        if self._liq_min_volume is not None and self._session_open <= ts < self._fb_close:
+            self._fb_volume += size                  # accumulate first-bar volume for the gate
         if self.running_high is None:
             self.running_high = price          # first observed tick seeds the reference
             return None
         level: float | None = None
-        if self._session_open <= ts <= self._cutoff and price > self.running_high and self._gate_passes(ts):
+        if (self._session_open <= ts <= self._cutoff and price > self.running_high
+                and self._gate_passes(ts) and self._liquidity_ok(ts)):
             level = self.running_high
         self.running_high = max(self.running_high, price)
         return level

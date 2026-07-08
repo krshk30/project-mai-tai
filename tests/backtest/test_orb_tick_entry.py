@@ -10,7 +10,7 @@
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from statistics import median
 
@@ -105,3 +105,17 @@ def test_ungate_first_minutes_bypasses_gate_early():
                                          gate_after_secs=1800.0, bars=dd["bars"], **kw)  # 30min covers cutoff
     assert len(blocked) == 0
     assert _sig(ungate_all) == _sig(ungated), "ungate window covering the session == no gate"
+
+
+def test_first_bar_liquidity_gate():
+    """First-bar liquidity gate: a loose gate == no gate on a liquid name; an impossible volume floor
+    blocks every entry AFTER the first bar closes (early entries can't be measured yet)."""
+    dd = _load("CELZ", 2026, 6, 30)                                  # CELZ is deeply liquid
+    kw = dict(gap_cap_pct=1.5, trail_pct=2.0, qty=5, latency_s=3.0, capped=False, **_win(dd))
+    ungated = simulate_orb_tick_entry(dd["trades"], dd["quotes"], liq_min_volume=None, **kw)
+    loose = simulate_orb_tick_entry(dd["trades"], dd["quotes"], liq_min_volume=1.0, liq_max_spread_pct=100.0, **kw)
+    blocked = simulate_orb_tick_entry(dd["trades"], dd["quotes"], liq_min_volume=1e15, **kw)
+    fb_close = dd["session_open"] + timedelta(seconds=60)
+    assert _sig(loose) == _sig(ungated), "a loose liquidity gate == no gate on a liquid name"
+    assert all(t.entry_ts < fb_close for t in blocked), "impossible floor blocks every post-first-bar entry"
+    assert len(blocked) < len(ungated), "CELZ has post-first-bar entries the floor removes"
