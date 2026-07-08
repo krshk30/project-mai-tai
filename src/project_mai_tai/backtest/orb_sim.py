@@ -52,21 +52,28 @@ class Trade:
     level: float | None = None   # the running-high that was broken (informational, for validation)
 
 
-def _run_trail_exit(quotes, start_idx, fill_price, trail_pct, book, latency_s):
+def _run_trail_exit(quotes, start_idx, fill_price, trail_pct, book, latency_s, hard_stop_pct=None):
     """Walk the bid path from the fill forward; return (exit_ts, exit_price, reason, next_idx).
     HWM seeded at fill_price (the fake-win guard). Stop = fill*(1-trail%); ratchet on bid.
     The exit is a stop that fires at the trigger and fills `latency_s` later at the then-bid
-    (honest exit slippage — the broker's real decision->fill time)."""
+    (honest exit slippage — the broker's real decision->fill time).
+
+    hard_stop_pct (research): a FIXED loss floor beneath the trail. The effective trigger stop is
+    max(trailing_stop, fill*(1-hard%)), so an immediate fade exits at the hard floor while a runner
+    (trail ratcheted above the floor) is unaffected. None = live behavior (byte-identical)."""
     hwm = fill_price
     stop = fill_price * (1.0 - trail_pct / 100.0)
+    hard_floor = fill_price * (1.0 - hard_stop_pct / 100.0) if hard_stop_pct else None
     i = start_idx
     n = len(quotes)
     while i < n:
         q = quotes[i]
         stop, hwm = _ratcheted_trailing_stop(stop, hwm, q.bid, trail_pct)
-        if q.bid <= stop:
+        eff = stop if hard_floor is None else max(stop, hard_floor)
+        if q.bid <= eff:
             xfill = exit_fill(book, q.ts, latency_s=latency_s)
-            return q.ts, (xfill if xfill is not None else q.bid), "TRAIL_STOP", i
+            reason = "HARD_STOP" if (hard_floor is not None and eff == hard_floor and stop < hard_floor) else "TRAIL_STOP"
+            return q.ts, (xfill if xfill is not None else q.bid), reason, i
         i += 1
     # window ended with no stop hit -> exit at the last bid (WINDOW_END)
     if quotes:
@@ -77,9 +84,10 @@ def _run_trail_exit(quotes, start_idx, fill_price, trail_pct, book, latency_s):
 
 def simulate_bar_close(bars, quotes, *, gap_cap_pct, trail_pct, qty,
                        observe_open, session_open, cutoff, capped,
-                       latency_s=BROKER_LATENCY_S["webull"]):
+                       latency_s=BROKER_LATENCY_S["webull"], hard_stop_pct=None):
     """Return list[Trade]. `quotes` must be sorted by ts. `latency_s` is the PER-BROKER
-    decision->fill latency (ORB=Webull ~3s; v2 must pass Schwab's measured value)."""
+    decision->fill latency (ORB=Webull ~3s; v2 must pass Schwab's measured value).
+    hard_stop_pct (research): fixed loss floor beneath the trail (None = live)."""
     book = QuoteBook(quotes)
     tracker = RunningHighTracker(
         observe_open=observe_open, session_open=session_open, cutoff=cutoff, gap_cap_pct=gap_cap_pct
@@ -103,7 +111,7 @@ def simulate_bar_close(bars, quotes, *, gap_cap_pct, trail_pct, qty,
         fill_ts = decision_ts + timedelta(seconds=latency_s)   # fill completes latency later
         # exit walk from the first quote at/after the fill
         start = bisect_left(book._ts, fill_ts)
-        xts, xprice, xreason, _ = _run_trail_exit(quotes, start, fill, trail_pct, book, latency_s)
+        xts, xprice, xreason, _ = _run_trail_exit(quotes, start, fill, trail_pct, book, latency_s, hard_stop_pct)
         pnl = (xprice - fill) * qty if xprice is not None else 0.0
         trades.append(Trade(fill_ts, fill, xts, xprice, qty, pnl, xreason, brk.level))
         flat_after = xts
@@ -112,7 +120,7 @@ def simulate_bar_close(bars, quotes, *, gap_cap_pct, trail_pct, qty,
 
 def simulate_intrabar(trades, quotes, *, gap_cap_pct, trail_pct, qty,
                       observe_open, session_open, cutoff, capped,
-                      latency_s=BROKER_LATENCY_S["webull"]):
+                      latency_s=BROKER_LATENCY_S["webull"], hard_stop_pct=None):
     """INTRABAR mode — the strategy the operator actually wants, now honestly testable.
 
     CONTINUOUS running-high: the level advances every TRADE TICK (`running_high = max(rh,
@@ -147,7 +155,7 @@ def simulate_intrabar(trades, quotes, *, gap_cap_pct, trail_pct, qty,
             if fill is not None:
                 fill_ts = t.ts + timedelta(seconds=latency_s)
                 start = bisect_left(book._ts, fill_ts)
-                xts, xprice, xreason, _ = _run_trail_exit(quotes, start, fill, trail_pct, book, latency_s)
+                xts, xprice, xreason, _ = _run_trail_exit(quotes, start, fill, trail_pct, book, latency_s, hard_stop_pct)
                 pnl = (xprice - fill) * qty if xprice is not None else 0.0
                 out.append(Trade(fill_ts, fill, xts, xprice, qty, pnl, xreason, level))
                 # advance running_high through the hold; resume after the exit (can't re-enter
