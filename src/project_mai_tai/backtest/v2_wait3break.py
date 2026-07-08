@@ -145,13 +145,13 @@ def simulate_wait3break(schwab_bars, schwab_quotes, massive_quotes, *, qty, stop
         # Break DETECTION on dense 1-min bar highs (the bot sees every bar close); first bar whose
         # high crosses the 3-candle high is the break bar. TIMING/fill via the intrabar Schwab
         # quote crossing within that bar; if the sparse feed has none, fall back to that bar's close.
-        break_bar = next((j for j in range(first_watch, watch_end) if bars[j].high >= threshold), None)
+        break_bar = next((j for j in range(first_watch, watch_end) if schwab_bars[j].high >= threshold), None)
         if break_bar is None:
             continue                                # high never broken before thesis died
         n_breaks += 1
-        bwin = sbook.slice(_utc(bars[break_bar].ts), _utc(bars[break_bar].ts + BAR_MS))
+        bwin = sbook.slice(_utc(schwab_bars[break_bar].ts), _utc(schwab_bars[break_bar].ts + BAR_MS))
         tq = next((q for q in bwin if _px(q) >= threshold), None)
-        break_ts = tq.ts if tq is not None else _utc(bars[break_bar].ts + BAR_MS)
+        break_ts = tq.ts if tq is not None else _utc(schwab_bars[break_bar].ts + BAR_MS)
         if flat_after is not None and break_ts < flat_after:
             continue                                # still holding a prior position
         entry_ts = break_ts + timedelta(seconds=latency_s)
