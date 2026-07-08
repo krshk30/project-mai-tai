@@ -99,8 +99,9 @@ def atr_pct_rth(bars) -> float | None:
 
 
 def _find_setups(bars, *, vol_floor):
-    """Yield (touch_bar_idx, threshold, watch_start_ts, watch_end_ts) for each ATR flip that has a
-    valid 3-candle wait window before the long thesis dies (next SELL flip) / session end."""
+    """Yield (touch_bar_idx, threshold, first_watch_bar, watch_end_bar) for each ATR flip that has a
+    valid 3-candle wait window before the long thesis dies (next SELL flip) / session end. The break
+    is watched over bars [first_watch_bar, watch_end_bar)."""
     sells = _sell_flip_bars(bars)
     n = len(bars)
     out = []
@@ -113,16 +114,16 @@ def _find_setups(bars, *, vol_floor):
         threshold = max(bars[bar_idx + k].high for k in range(1, WAIT_N + 1))
         # thesis death = first SELL flip strictly after the flip bar
         next_sell = next((j for j in sells if j > bar_idx), None)
-        watch_start = _utc(bars[last_wait].ts + BAR_MS)     # after the 3rd wait candle closes
+        first_watch = last_wait + 1                 # first bar after the 3 wait candles close
         if next_sell is not None:
             if next_sell <= last_wait:              # thesis died during the wait -> dead setup
                 continue
-            watch_end = _utc(bars[next_sell].ts)    # stop watching once ATR flips short
+            watch_end = next_sell                   # stop watching once ATR flips short
         else:
-            watch_end = _utc(bars[-1].ts + BAR_MS)  # to session end
-        if watch_start >= watch_end:
+            watch_end = n                           # to session end
+        if first_watch >= watch_end:
             continue
-        out.append((bar_idx, threshold, watch_start, watch_end))
+        out.append((bar_idx, threshold, first_watch, watch_end))
     return out
 
 
@@ -140,16 +141,20 @@ def simulate_wait3break(schwab_bars, schwab_quotes, massive_quotes, *, qty, stop
     n_setups = len(setups)
     n_breaks = 0
     flat_after = None
-    for bar_idx, threshold, watch_start, watch_end in setups:
-        # detect the intrabar break on the Schwab quote feed (price crosses the 3-candle high)
-        win = sbook.slice(watch_start, watch_end)
-        break_q = next((q for q in win if _px(q) >= threshold), None)
-        if break_q is None:
-            continue
+    for bar_idx, threshold, first_watch, watch_end in setups:
+        # Break DETECTION on dense 1-min bar highs (the bot sees every bar close); first bar whose
+        # high crosses the 3-candle high is the break bar. TIMING/fill via the intrabar Schwab
+        # quote crossing within that bar; if the sparse feed has none, fall back to that bar's close.
+        break_bar = next((j for j in range(first_watch, watch_end) if bars[j].high >= threshold), None)
+        if break_bar is None:
+            continue                                # high never broken before thesis died
         n_breaks += 1
-        if flat_after is not None and break_q.ts < flat_after:
+        bwin = sbook.slice(_utc(bars[break_bar].ts), _utc(bars[break_bar].ts + BAR_MS))
+        tq = next((q for q in bwin if _px(q) >= threshold), None)
+        break_ts = tq.ts if tq is not None else _utc(bars[break_bar].ts + BAR_MS)
+        if flat_after is not None and break_ts < flat_after:
             continue                                # still holding a prior position
-        entry_ts = break_q.ts + timedelta(seconds=latency_s)
+        entry_ts = break_ts + timedelta(seconds=latency_s)
         fq = sbook.at(entry_ts)
         if fq is None or fq.ask <= 0:
             continue
