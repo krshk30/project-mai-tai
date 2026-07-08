@@ -208,6 +208,11 @@ class Settings(BaseSettings):
     orb_tick_entry_enabled: bool = False
     orb_tick_entry_trail_pct: float = 2.0       # OMS trailing stop for the tick config (vs 3% live)
     orb_tick_entry_atr_gate_pct: float = 4.3    # high-ATR gate (slow names whipsaw on a 2% trail)
+    # UNGATE the first N minutes after 09:30: the causal ATR needs ~9 bars (ready ~09:34) and R&D
+    # showed ~87% of flood-day edge is in 09:30-09:34; slow names rarely break that early so the
+    # running-high break is the filter. 0 = gate from the open (fail-closed early). 4.0 = the R&D
+    # recommendation (recovers ~89% of the flood-day early edge at a ~-1.40 slow-whipsaw cost).
+    orb_tick_entry_gate_after_minutes: float = 0.0
     orb_tick_entry_quantity: int = 10           # size high-ATR up (~2x the qty5 base); slow excluded
     orb_tick_entry_window_minutes: int = 30     # entries only 09:30 .. open+30 = 10:00 ET
     orb_tick_entry_gap_cap_pct: float = 1.5

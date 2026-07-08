@@ -18,7 +18,7 @@ tests/backtest/test_orb_tick_entry.py (strategy_core must not import backtest/ o
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from statistics import median
 
 from project_mai_tai.strategy_core.orb_intrabar import OrbBar
@@ -69,11 +69,16 @@ class OrbTickEntry:
     qualifying entry break, else None. `advance` is the cheap running-high bump used while holding."""
 
     def __init__(self, *, observe_open: datetime, session_open: datetime, cutoff: datetime,
-                 atr_gate_pct: float | None = None) -> None:
+                 atr_gate_pct: float | None = None, gate_after_secs: float = 0.0) -> None:
         self._observe_open = observe_open
         self._session_open = session_open
         self._cutoff = cutoff
         self._atr_gate_pct = atr_gate_pct
+        # UNGATE the first `gate_after_secs` after session_open: the causal ATR needs ~9 ORB-window
+        # bars (ready ~09:34), and R&D showed ~87% of the flood-day edge is in 09:30-09:34; slow names
+        # rarely break out that early, so the running-high break is the filter there. From
+        # session_open + gate_after_secs onward the ATR gate applies normally. 0 = gate from the open.
+        self._gate_after = timedelta(seconds=gate_after_secs)
         self.running_high: float | None = None
         self._bars: list[OrbBar] = []
 
@@ -81,9 +86,11 @@ class OrbTickEntry:
         """Feed a CLOSED 1-min ORB-window bar (causal: only bars closed before a tick inform its gate)."""
         self._bars.append(bar)
 
-    def _gate_passes(self) -> bool:
+    def _gate_passes(self, ts: datetime) -> bool:
         if self._atr_gate_pct is None:
             return True
+        if ts < self._session_open + self._gate_after:
+            return True                              # ungated early window (recover the flood-day prize)
         v = atr_pct5(self._bars)
         return v is not None and v >= self._atr_gate_pct
 
@@ -97,7 +104,7 @@ class OrbTickEntry:
             self.running_high = price          # first observed tick seeds the reference
             return None
         level: float | None = None
-        if self._session_open <= ts <= self._cutoff and price > self.running_high and self._gate_passes():
+        if self._session_open <= ts <= self._cutoff and price > self.running_high and self._gate_passes(ts):
             level = self.running_high
         self.running_high = max(self.running_high, price)
         return level

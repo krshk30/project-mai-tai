@@ -131,6 +131,7 @@ class OrbService:
     _tick_gap_cap_pct: float = 1.5
     _tick_window_min: int = 30
     _tick_atr_gate_pct: float = 4.3
+    _tick_gate_after_secs: float = 0.0
     # Market-data consume-loop throughput (mirrors strategy-engine #175/#179). The open
     # burst spans the WHOLE scanner universe and exceeded 700 ticks/s on 2026-06-30; a
     # single count=500 xread per 1s loop fell ~3x behind (effective ~196/s), surfacing the
@@ -188,6 +189,7 @@ class OrbService:
         self._tick_gap_cap_pct = float(getattr(self.settings, "orb_tick_entry_gap_cap_pct", 1.5))
         self._tick_window_min = int(getattr(self.settings, "orb_tick_entry_window_minutes", 30))
         self._tick_atr_gate_pct = float(getattr(self.settings, "orb_tick_entry_atr_gate_pct", 4.3))
+        self._tick_gate_after_secs = float(getattr(self.settings, "orb_tick_entry_gate_after_minutes", 0.0)) * 60.0
         self._tick_engines: dict[str, OrbTickEntry] = {}
         # OMS-quote-priced entry (Piece 1). When True, the bot OMITS limit_price/reference_price
         # from open intents (fail-closed: a stale signal-time price is structurally unshippable)
@@ -594,6 +596,7 @@ class OrbService:
                 session_open=open_utc,
                 cutoff=open_utc + timedelta(minutes=self._tick_window_min),
                 atr_gate_pct=self._tick_atr_gate_pct,
+                gate_after_secs=self._tick_gate_after_secs,
             )
             self._tick_engines[symbol] = eng
         if completed_bar is not None:
