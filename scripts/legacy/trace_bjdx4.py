@@ -38,16 +38,10 @@ for i, t in enumerate(tr, 1):
     print(f"  #{i} {hhmmss(t.entry_ts)} entry={t.entry_price:.4f} -> exit={t.exit_price:.4f} "
           f"({hhmmss(t.exit_ts)}) pnl={t.pnl:+.2f} {t.exit_reason} ret={((t.exit_price/t.entry_price)-1)*100:+.1f}% level={t.level}")
 
-# pick the ~1.78 entry (or #4)
-target = None
-for i, t in enumerate(tr, 1):
-    if abs(t.entry_price - 1.78) < 0.03:
-        target = (i, t); break
-if target is None and len(tr) >= 4:
-    target = (4, tr[3])
-if target is None:
-    print("no target trade"); raise SystemExit
-idx, t = target
+# pick #4 (the entry 1.78 -> exit 1.65 = -7.3% trade)
+if len(tr) < 4:
+    print("fewer than 4 trades"); raise SystemExit
+idx, t = 4, tr[3]
 print(f"\n===== TRACE entry #{idx}: fill={t.entry_price:.4f} @ {hhmmss(t.entry_ts)}  reported exit={t.exit_price:.4f} @ {hhmmss(t.exit_ts)} =====")
 book = QuoteBook(quotes)
 fill = t.entry_price
@@ -81,11 +75,14 @@ while i < n:
         fq = book.at(q.ts + timedelta(seconds=LAT))
         print(f"\n  TRIGGER at bid={q.bid:.4f} ts={hhmmss(q.ts)}  (stop was {stop:.4f}, hwm peak {hwm:.4f})")
         print(f"  FILL at trigger+{LAT}s -> ts={hhmmss(q.ts+timedelta(seconds=LAT))} bid={fq.bid:.4f}" if fq else "  FILL: no quote")
-        # show the bid path across the latency window
-        print("  bid path trigger .. trigger+{}s:".format(LAT))
+        # show the bid path across the latency window (compressed: only on bid change)
+        print("  bid path trigger .. trigger+{}s (changes only):".format(LAT))
         j = i
+        last = None
         while j < n and quotes[j].ts <= q.ts + timedelta(seconds=LAT + 2):
-            print(f"    {hhmmss(quotes[j].ts)} bid={quotes[j].bid:.4f}")
+            if quotes[j].bid != last:
+                print(f"    {hhmmss(quotes[j].ts)} bid={quotes[j].bid:.4f}")
+                last = quotes[j].bid
             j += 1
         # gap check: was there any quote with bid in (fill_exit, stop_seed_peak]?
         print(f"\n  peak bid during hold={peak:.4f}  3%-trail-from-peak={peak*(1-TRAIL/100):.4f}")
