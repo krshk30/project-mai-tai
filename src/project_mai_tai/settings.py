@@ -213,6 +213,14 @@ class Settings(BaseSettings):
     # running-high break is the filter. 0 = gate from the open (fail-closed early). 4.0 = the R&D
     # recommendation (recovers ~89% of the flood-day early edge at a ~-1.40 slow-whipsaw cost).
     orb_tick_entry_gate_after_minutes: float = 0.0
+    # FIRST-BAR LIQUIDITY gate (off by default): by end of 09:31, require first-bar volume >= min AND
+    # median spread <= max, else don't trade the name that day. R&D separator between winners and the
+    # thin-pump disasters (CCXIW: 12K vol / 8.4% spread -> -6.9). Balanced 100K/1.0% (NOT the aggressive
+    # 0.5% which kept only half the winners). Known residual: SDOT (606K vol, 0.7% spread, -5.6) is a
+    # LIQUID reversal the gate can't catch by design — a separate tail-risk (hard loss-cap candidate).
+    orb_first_bar_liquidity_enabled: bool = False
+    orb_first_bar_liquidity_min_volume: float = 100000.0
+    orb_first_bar_liquidity_max_spread_pct: float = 1.0
     orb_tick_entry_quantity: int = 10           # size high-ATR up (~2x the qty5 base); slow excluded
     orb_tick_entry_window_minutes: int = 30     # entries only 09:30 .. open+30 = 10:00 ET
     orb_tick_entry_gap_cap_pct: float = 1.5
