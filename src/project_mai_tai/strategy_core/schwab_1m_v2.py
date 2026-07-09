@@ -463,11 +463,18 @@ class SchwabV2Strategy:
         [timeout, timeout+poll] window the backtest quantizes to (upper bound)."""
         if prev_qty == 0 and state.position_qty > 0 and state.atr_guard == "PROVISIONAL":
             self._set_atr_guard(state, "CLAIMED")            # our emit filled — segment done
+            logger.info("[V2-REARM] %s emit FILLED -> CLAIMED (one entry per short segment)",
+                        state.symbol)
             return
         if state.atr_guard == "PROVISIONAL" and state.position_qty == 0:
             now_ms = int(datetime.now(UTC).timestamp() * 1000)
             if now_ms - state.atr_emit_ts_ms >= self._atr_rearm_timeout_secs * 1000:
                 self._set_atr_guard(state, "UNCLAIMED")      # emit never filled — re-arm
+                # NOTE residual (schwab-1m-v2-reject-signal-release.md): a fill that opened AND fully
+                # closed within one poll interval is invisible here and also re-arms — measured RARE
+                # (2/26 live fills < 5s lifetime). This log makes any live re-arm observable.
+                logger.info("[V2-REARM] %s PROVISIONAL emit timed out after %.0fs, no fill -> re-armed "
+                            "UNCLAIMED", state.symbol, self._atr_rearm_timeout_secs)
 
     def on_bar(self, symbol: str, bar: ChartBar) -> TradeIntentDraft | None:
         state = self.watchlist_state(symbol)

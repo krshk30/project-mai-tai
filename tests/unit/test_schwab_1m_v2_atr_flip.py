@@ -29,6 +29,7 @@ from project_mai_tai.market_data.schwab_v2_rest_client import ChartBar
 from project_mai_tai.settings import Settings
 from project_mai_tai.strategy_core.schwab_1m_v2 import (
     OHLCVBar,
+    PendingHold,
     SchwabV2Strategy,
     SymbolState,
 )
@@ -652,3 +653,41 @@ def test_shipped_bool_MISSES_the_flip_after_a_spent_touch() -> None:
     assert sig2["flip"] == "BUY"
     d2 = s._maybe_atr_emit(state, fb, sig2, bar_is_fresh=True)
     assert d2 is None, "shipped bug: the spent segment misses the real BUY flip"
+
+
+def test_rearm_armed_hold_blocks_bar_close_touch_same_bar() -> None:
+    """HIGHEST-CONSEQUENCE serialization pin (two drafts in one bar = two orders). Because the flag-ON
+    arm no longer claims, the bar-close touch is gated on `atr_hold_pending is None` so an armed-but-
+    unresolved intrabar hold BLOCKS a bar-close touch in the same bar (the legacy bool used to do this)."""
+    T_now = _now_ms()
+    # WITH an armed hold pending -> the bar-close touch must NOT fire
+    s1 = _rearm_strat(True)
+    st1, n1 = _warm_to_short(s1)
+    T1 = st1.atr_trail
+    st1.atr_hold_pending = PendingHold(touch_price=T1, touch_ms=n1, deadline_ms=n1 + 20_000,
+                                       seg_age=0, last_px=T1, n_ticks=1)
+    assert st1.atr_guard == "UNCLAIMED"
+    sig1 = s1._update_atr_state(st1, OHLCVBar(n1 - 3 * 60_000, T1 + 0.02, T1 + 0.05, T1 - 0.50, T1 - 0.20, 100_000))
+    assert sig1["touch"] is False, "an armed hold must block the bar-close touch (serialization)"
+    # WITHOUT the pending, the SAME bar shape DOES touch -> proves the pending is the gate, not the price
+    s2 = _rearm_strat(True)
+    st2, n2 = _warm_to_short(s2)
+    T2 = st2.atr_trail
+    assert st2.atr_hold_pending is None
+    sig2 = s2._update_atr_state(st2, OHLCVBar(n2 - 3 * 60_000, T2 + 0.02, T2 + 0.05, T2 - 0.50, T2 - 0.20, 100_000))
+    assert sig2["touch"] is True
+    assert T_now  # (silence unused)
+
+
+def test_rearm_KNOWN_RESIDUAL_fast_scratch_between_polls_re_arms() -> None:
+    """DOCUMENTS the accepted residual (schwab-1m-v2-reject-signal-release.md): the fill detection is
+    poll-based, so a fill that OPENED and fully CLOSED within one 5s poll interval is never observed
+    (position_qty reads 0-to-0) and the guard re-arms as if never filled — violating the one-entry
+    invariant on that rare path. Measured RARE: 2/26 live fills had a < 5s lifetime. This pins the KNOWN
+    behavior so it flips visibly when the order-terminal-events fix lands."""
+    s = _rearm_strat(True)
+    st = s.watchlist_state("T")
+    s._set_atr_guard(st, "PROVISIONAL", emit_ts_ms=0)   # emitted long ago; open+close happened between polls
+    st.position_qty = 0                                 # the poll only ever sees flat
+    s.update_position("T", 0)
+    assert st.atr_guard == "UNCLAIMED"                  # re-armed — the residual (a fill was missed)

@@ -138,3 +138,29 @@ in-memory claim is (bool → guard), not its persistence.
 (rehydrate PROVISIONAL from the OMS/intent ledger on boot, like F2's `oms_armed_stops`) — logged as a
 future item, **out of scope** for this PR (it's an existing gap, not a regression). Noted explicitly so
 it is not mistaken for new risk introduced by the re-arm change.
+
+## 11. ⚠ Fill-and-exit inside one poll interval — ACCEPTED RESIDUAL (measured rare)
+
+`_poll_atr_guard` infers a fill from an observed `prev_qty==0 → position_qty>0` transition on the 5s
+poll. **A fill that opens AND fully closes within one poll interval is invisible** (`position_qty` reads
+0→0): no branch matches, the guard stays PROVISIONAL, and at `emit+timeout` it **re-arms as if never
+filled** — violating the one-entry invariant and silently enabling the deferred edge-#2 second leg. The
+cooldown doesn't arm either (the invisible open+close never triggers the observed N→0). **This is NOT
+pre-existing:** the shipped bool claims on arm and stays True through a fast scratch, so shipped never
+re-enters; the releasable guard can.
+
+**Measured (DB, 06-24..07-08, 26 ATR fills):** only **2** had a full lifetime `< 5s` (KIDZ 2s, LHAI 4s —
+penny scratches); the other **24 lived ≥ 5s**. A position lasting ≥5s always contains a poll instant
+(polls are 5s apart) → reliably detected; only sub-5s positions can fall entirely between two polls, and
+even then it's phase-dependent (~60% miss at 2s, ~20% at 4s → **~0.8 expected actual misses across the
+whole sample**). **The backtest fills immediately (no poll), so D3/D5 is NOT confounded** — this is a
+live-only divergence.
+
+**Verdict (operator's rule — rare → document + ship):** accepted residual risk for the flag ship. Bounds:
+- Made **observable**: `[V2-REARM]` logs on both CLAIMED (fill) and the timeout re-arm — watch these at
+  the attended flip.
+- Pinned by a test (`test_rearm_KNOWN_RESIDUAL_fast_scratch_between_polls_re_arms`) so it flips visibly
+  when fixed.
+- **Proper fix** = consume order-terminal events (a fill of an already-closed position → CLAIMED), the
+  **same capability** that fixes the 27 blind-timeout rejects — widened into
+  `schwab-1m-v2-reject-signal-release.md`. Not a correctness gate for this ship; a completeness upgrade.
