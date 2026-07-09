@@ -29,6 +29,7 @@ from project_mai_tai.market_data.schwab_v2_rest_client import ChartBar
 from project_mai_tai.settings import Settings
 from project_mai_tai.strategy_core.schwab_1m_v2 import (
     OHLCVBar,
+    PendingHold,
     SchwabV2Strategy,
     SymbolState,
 )
@@ -540,3 +541,153 @@ def test_atr_fresh_flip_does_not_touch_p1_p2() -> None:
     assert off is not None and on is not None
     assert off.metadata["path"] == "MACD Cross" == on.metadata["path"]
     assert off.metadata == on.metadata          # ATR gate did not perturb P1/P2
+
+
+# ----------------------------------------------------------- ATR re-arm fix (live)
+# The "burn-the-fake, miss-the-real-flip" fix (docs/schwab-1m-v2-atr-flip-rearm-*).
+# Flag-OFF byte-identical is covered by the whole existing suite passing; these pin
+# the flag-ON live machinery: the pending-order guard lifecycle + the re-arm entry.
+
+
+def _rearm_strat(on: bool) -> SchwabV2Strategy:
+    s = SchwabV2Strategy(Settings())
+    s._atr_enabled = True                 # ATR path live (default ships dormant)
+    s._atr_variant = "B"
+    s._atr_rearm_enabled = on
+    return s
+
+
+def _now_ms() -> int:
+    return int(datetime.now(UTC).timestamp() * 1000)
+
+
+def _warm_to_short(strat: SchwabV2Strategy, symbol: str = "TEST"):
+    """Declining RED bars → settle into a SHORT segment with no touch yet (mirrors
+    _build_short_then_fresh_touch's warmup, driven through the real indicator)."""
+    now_ms = _now_ms()
+    state = strat.watchlist_state(symbol)
+    for i in range(150):
+        close = 12.0 - 0.02 * i
+        strat._update_atr_state(
+            state, OHLCVBar(now_ms - (200 - i) * 60_000, close + 0.05, close + 0.04,
+                            close - 0.06, close, 10_000))
+    assert state.atr_state == "short", "warmup must end short"
+    return state, now_ms
+
+
+def test_rearm_poll_fill_promotes_to_claimed() -> None:
+    s = _rearm_strat(True)
+    st = s.watchlist_state("T")
+    s._set_atr_guard(st, "PROVISIONAL", emit_ts_ms=_now_ms())
+    st.position_qty = 0
+    s.update_position("T", 10)                     # prev 0 -> 10 (a fill of our emit)
+    assert st.atr_guard == "CLAIMED"
+
+
+def test_rearm_poll_timeout_rearms_when_never_filled() -> None:
+    s = _rearm_strat(True)
+    st = s.watchlist_state("T")
+    s._set_atr_guard(st, "PROVISIONAL", emit_ts_ms=0)   # emitted "long ago" (epoch)
+    st.position_qty = 0
+    s.update_position("T", 0)                      # still flat, past emit+timeout -> re-arm
+    assert st.atr_guard == "UNCLAIMED"
+
+
+def test_rearm_poll_holds_claim_within_window() -> None:
+    s = _rearm_strat(True)
+    st = s.watchlist_state("T")
+    s._set_atr_guard(st, "PROVISIONAL", emit_ts_ms=_now_ms())   # just emitted
+    st.position_qty = 0
+    s.update_position("T", 0)                      # inside the timeout window -> still working
+    assert st.atr_guard == "PROVISIONAL"
+
+
+def test_rearm_off_update_position_never_touches_guard() -> None:
+    """Byte-identical-off: with the flag off, update_position ignores the guard entirely."""
+    s = _rearm_strat(False)
+    st = s.watchlist_state("T")
+    st.atr_guard, st.atr_emit_ts_ms, st.position_qty = "PROVISIONAL", 0, 0
+    s.update_position("T", 10)
+    assert st.atr_guard == "PROVISIONAL"           # untouched (off path skips _poll_atr_guard)
+
+
+def test_rearm_emit_nofill_timeout_then_real_flip_ENTERS() -> None:
+    """The fix, end-to-end through the live strategy: a variant-B touch emits (guard
+    PROVISIONAL); the order never fills; the 5s poll times it out (re-arm); the
+    subsequent REAL BUY flip is then entered."""
+    s = _rearm_strat(True)
+    state, now_ms = _warm_to_short(s)
+    T = state.atr_trail
+    # (1) touch emits -> PROVISIONAL. The flag-ON path does NOT set the legacy bool.
+    tb = OHLCVBar(now_ms - 3 * 60_000, T + 0.02, T + 0.05, T - 0.50, T - 0.20, 100_000)
+    sig = s._update_atr_state(state, tb)
+    assert sig["touch"] and not state.atr_fired_in_short_seg
+    d1 = s._maybe_atr_emit(state, tb, sig, bar_is_fresh=True)
+    assert d1 is not None and state.atr_guard == "PROVISIONAL"
+    # (2) emit never fills -> the poll re-arms it
+    state.atr_emit_ts_ms = 0
+    s.update_position("TEST", 0)
+    assert state.atr_guard == "UNCLAIMED"
+    # (3) the REAL BUY flip is entered (touch re-fires / backstop)
+    trail = state.atr_trail
+    fb = OHLCVBar(now_ms - 2 * 60_000, trail + 0.10, trail + 0.60, trail + 0.05, trail + 0.50, 100_000)
+    sig2 = s._update_atr_state(state, fb)
+    assert sig2["flip"] == "BUY"
+    d2 = s._maybe_atr_emit(state, fb, sig2, bar_is_fresh=True)
+    assert d2 is not None, "re-arm: the real BUY flip is entered"
+
+
+def test_shipped_bool_MISSES_the_flip_after_a_spent_touch() -> None:
+    """The bug, same fixture with the flag OFF: the first touch spends the segment
+    (bool True); even though the emit never fills, the real BUY flip is un-enterable."""
+    s = _rearm_strat(False)
+    state, now_ms = _warm_to_short(s)
+    T = state.atr_trail
+    tb = OHLCVBar(now_ms - 3 * 60_000, T + 0.02, T + 0.05, T - 0.50, T - 0.20, 100_000)
+    sig = s._update_atr_state(state, tb)
+    assert sig["touch"] and state.atr_fired_in_short_seg   # legacy bool claims on touch
+    assert s._maybe_atr_emit(state, tb, sig, bar_is_fresh=True) is not None
+    trail = state.atr_trail
+    fb = OHLCVBar(now_ms - 2 * 60_000, trail + 0.10, trail + 0.60, trail + 0.05, trail + 0.50, 100_000)
+    sig2 = s._update_atr_state(state, fb)
+    assert sig2["flip"] == "BUY"
+    d2 = s._maybe_atr_emit(state, fb, sig2, bar_is_fresh=True)
+    assert d2 is None, "shipped bug: the spent segment misses the real BUY flip"
+
+
+def test_rearm_armed_hold_blocks_bar_close_touch_same_bar() -> None:
+    """HIGHEST-CONSEQUENCE serialization pin (two drafts in one bar = two orders). Because the flag-ON
+    arm no longer claims, the bar-close touch is gated on `atr_hold_pending is None` so an armed-but-
+    unresolved intrabar hold BLOCKS a bar-close touch in the same bar (the legacy bool used to do this)."""
+    T_now = _now_ms()
+    # WITH an armed hold pending -> the bar-close touch must NOT fire
+    s1 = _rearm_strat(True)
+    st1, n1 = _warm_to_short(s1)
+    T1 = st1.atr_trail
+    st1.atr_hold_pending = PendingHold(touch_price=T1, touch_ms=n1, deadline_ms=n1 + 20_000,
+                                       seg_age=0, last_px=T1, n_ticks=1)
+    assert st1.atr_guard == "UNCLAIMED"
+    sig1 = s1._update_atr_state(st1, OHLCVBar(n1 - 3 * 60_000, T1 + 0.02, T1 + 0.05, T1 - 0.50, T1 - 0.20, 100_000))
+    assert sig1["touch"] is False, "an armed hold must block the bar-close touch (serialization)"
+    # WITHOUT the pending, the SAME bar shape DOES touch -> proves the pending is the gate, not the price
+    s2 = _rearm_strat(True)
+    st2, n2 = _warm_to_short(s2)
+    T2 = st2.atr_trail
+    assert st2.atr_hold_pending is None
+    sig2 = s2._update_atr_state(st2, OHLCVBar(n2 - 3 * 60_000, T2 + 0.02, T2 + 0.05, T2 - 0.50, T2 - 0.20, 100_000))
+    assert sig2["touch"] is True
+    assert T_now  # (silence unused)
+
+
+def test_rearm_KNOWN_RESIDUAL_fast_scratch_between_polls_re_arms() -> None:
+    """DOCUMENTS the accepted residual (schwab-1m-v2-reject-signal-release.md): the fill detection is
+    poll-based, so a fill that OPENED and fully CLOSED within one 5s poll interval is never observed
+    (position_qty reads 0-to-0) and the guard re-arms as if never filled — violating the one-entry
+    invariant on that rare path. Measured RARE: 2/26 live fills had a < 5s lifetime. This pins the KNOWN
+    behavior so it flips visibly when the order-terminal-events fix lands."""
+    s = _rearm_strat(True)
+    st = s.watchlist_state("T")
+    s._set_atr_guard(st, "PROVISIONAL", emit_ts_ms=0)   # emitted long ago; open+close happened between polls
+    st.position_qty = 0                                 # the poll only ever sees flat
+    s.update_position("T", 0)
+    assert st.atr_guard == "UNCLAIMED"                  # re-armed — the residual (a fill was missed)
