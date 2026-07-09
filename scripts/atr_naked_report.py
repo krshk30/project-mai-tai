@@ -6,13 +6,15 @@ import statistics as st
 import sys
 from collections import defaultdict
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 QTY = 10
 CFGS = ["+2%", "+3%", "flip_only"]
+_ET = ZoneInfo("America/New_York")
 
 
 def _t(iso):
-    return datetime.fromisoformat(iso)
+    return datetime.fromisoformat(iso).astimezone(_ET)   # ALWAYS report ET
 
 
 def _rows(data):
@@ -30,7 +32,7 @@ def _rows(data):
                     "exit_t": _t(ex["ts"]).strftime("%H:%M"), "exit_px": ex["px"], "reason": ex["reason"],
                     "pnl_pct": pnl_pct, "pnl_d": QTY * (ex["px"] - ep),
                     "mfe": tr["mfe_pct"], "mae": tr["mae_pct"], "spread": tr.get("spread"),
-                    "seg": tr.get("short_seg_bars"),
+                    "seg": tr.get("short_seg_bars"), "secs_to_tgt": ex.get("secs_to_tgt"),
                     "hold_s": (_t(ex["ts"]) - _t(tr["entry_ts"])).total_seconds()})
     return out
 
@@ -96,6 +98,15 @@ def main():
         print(f"{cfg:<10}{s['n']:>4}{s['net']:>+9.2f}{s['win']:>6.1f}{s['aw']:>+7.2f}{s['al']:>+7.2f}"
               f"{s['payoff']:>7.2f}{s['exp']:>+7.3f}{s['be']:>7.1f}{s['median']:>+7.2f}  {s['n_target']:>7}   "
               f"-{s['drop_sym']} -> {s['drop_net']:+.2f}")
+
+    # feed-gap watch: target "hit" within 60s of entry = the massive bid was already >= target at entry
+    # (Schwab-ask entry vs massive-bid exit mismatch) — flag, don't hide.
+    for cfg in ("+2%", "+3%"):
+        inst = [x for x in rows if x["cfg"] == cfg and x["reason"] == "TARGET"
+                and x["secs_to_tgt"] is not None and x["secs_to_tgt"] < 60]
+        tot = [x for x in rows if x["cfg"] == cfg and x["reason"] == "TARGET"]
+        print(f"\n⚠ {cfg}: {len(inst)}/{len(tot)} TARGET hits within 60s of entry "
+              f"(possible ask/bid feed-gap): {sorted({x['sym'] for x in inst})}")
 
     # noise-vs-reversal: flip_only ATR_FLIP exits bucketed by short-segment length
     print("\n=== FLIP-SHORT EXIT QUALITY (flip_only, ATR_FLIP exits by short-segment length) ===")

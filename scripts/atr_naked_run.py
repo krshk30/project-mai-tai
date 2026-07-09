@@ -81,9 +81,14 @@ def simulate_atr_naked(bars, sq, mq):
         start_idx = mbook.index_at_or_after(entry_ts)
         exits = {}
         for label, tgt in CONFIGS:
-            hit = _first_bid_ge(mq, start_idx, flip_ts, entry_px * (1 + tgt / 100)) if tgt else None
+            tp = entry_px * (1 + tgt / 100) if tgt else None
+            hit = _first_bid_ge(mq, start_idx, flip_ts, tp) if tgt else None
             if hit is not None:
-                exits[label] = {"ts": hit[0].isoformat(), "px": round(hit[1], 4), "reason": "TARGET"}
+                # close AT the target (a +2%/+3% limit fills at the target), NOT the overshooting bid.
+                # `secs_to_tgt` surfaces feed-gap artifacts (target "hit" instantly = ask/bid feed mismatch).
+                secs = (hit[0] - entry_ts).total_seconds()
+                exits[label] = {"ts": hit[0].isoformat(), "px": round(tp, 4), "reason": "TARGET",
+                                "secs_to_tgt": round(secs, 1)}
             else:
                 bq = mbook.at(flip_ts)
                 px = bq.bid if (bq and bq.bid > 0) else entry_px
