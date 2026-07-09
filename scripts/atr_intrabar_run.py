@@ -1,10 +1,10 @@
 """ATR INTRABAR naked test (RESEARCH; off the main engine, nothing shipped/live).
 
-Intrabar stop-and-reverse on Polygon TICKS: bar-based ATR trail (period 5, factor 3.5, Wilders); the FLIP
-fires INTRABAR when a trade PRINT crosses the resting trail (a live stop order). Enter LONG at the ASK at
-the trigger; exit at the BID on the intrabar flip-short, or a profit target (+2% / +3% / no-target).
-Window 09:00-16:00 ET. Universe = existing v2 pull, gated to names >=30% day-change AT 9 AM (else excluded
-- logged). Feed = Polygon full tape (bars+trades+quotes). Off-hours, niced.
+Intrabar stop-and-reverse on Polygon TICKS: bar-based ATR trail (period 5, factor 3.5, Wilders); the
+FLIP fires INTRABAR when a trade PRINT crosses the resting trail (a live stop order). Enter LONG at the
+ASK at the trigger; exit at the BID on the intrabar flip-short, or a profit target (+2% / +3% / none).
+Window 09:00-16:00 ET. Universe = existing v2 pull, gated to names >=30% day-change AT 9 AM (else
+excluded, logged). Feed = Polygon full tape (bars+trades+quotes). Off-hours, niced.
 
     python -m scripts.atr_intrabar_run --range 2026-06-25 2026-07-09 --json=OUT.json
 """
@@ -69,12 +69,18 @@ def intrabar_flips(bars, prints):
             continue
         for ms, px in sorted(pbybar.get(i, [])):
             if state == "short" and px > trail:
-                flips.append((ms, "BUY", i)); state, trail = "long", px - loss[i]
+                flips.append((ms, "BUY", i))
+                state, trail = "long", px - loss[i]
             elif state == "long" and px < trail:
-                flips.append((ms, "SELL", i)); state, trail = "short", px + loss[i]
+                flips.append((ms, "SELL", i))
+                state, trail = "short", px + loss[i]
         trail = (max(trail, bars[i].close - loss[i]) if state == "long"
                  else min(trail, bars[i].close + loss[i]))
     return flips
+
+
+def _iso(ms):
+    return datetime.fromtimestamp(ms / 1000, timezone.utc).isoformat()
 
 
 def simulate(bars, prints, qms, qbid, qask, hi_ms):
@@ -82,9 +88,8 @@ def simulate(bars, prints, qms, qbid, qask, hi_ms):
     flips = intrabar_flips(bars, prints)
     pms = [p[0] for p in prints]
     ppx = [p[1] for p in prints]
-    buys = [(k, f) for k, f in enumerate(flips) if f[1] == "BUY"]
     out = []
-    for k, (bms, _, bbar) in buys:
+    for k, (bms, _side, _bar) in [(k, f) for k, f in enumerate(flips) if f[1] == "BUY"]:
         nxt = next((f for f in flips[k + 1:] if f[1] == "SELL"), None)
         sell_ms = nxt[0] if nxt else hi_ms
         sell_bar = nxt[2] if nxt else len(bars) - 1
@@ -93,10 +98,9 @@ def simulate(bars, prints, qms, qbid, qask, hi_ms):
             continue
         entry = qask[ai]
         spread = round(qask[ai] - qbid[ai], 4) if qbid[ai] > 0 else None
-        # excursion entry->sell from prints
         seg = [ppx[j] for j in range(bisect.bisect_left(pms, bms), bisect.bisect_right(pms, sell_ms))]
-        hi = max(seg, default=entry); lo = min(seg, default=entry)
-        # short-seg bars: the SELL flip's short segment length (to the next BUY)
+        hi = max(seg, default=entry)
+        lo = min(seg, default=entry)
         nb = next((f[2] for f in flips[k + 1:] if f[1] == "BUY"), None)
         seg_bars = (nb - sell_bar) if (nxt and nb) else (None if not nxt else len(bars) - sell_bar)
         exits = {}
@@ -108,7 +112,8 @@ def simulate(bars, prints, qms, qbid, qask, hi_ms):
                     if qms[qi] > sell_ms:
                         break
                     if qbid[qi] >= tp:
-                        hit = (qms[qi], round(tp, 4)); break
+                        hit = (qms[qi], round(tp, 4))
+                        break
             if hit:
                 exits[lab] = {"ts": _iso(hit[0]), "px": hit[1], "reason": "TARGET",
                               "secs_to_tgt": round((hit[0] - bms) / 1000, 1)}
@@ -124,14 +129,11 @@ def simulate(bars, prints, qms, qbid, qask, hi_ms):
     return out
 
 
-def _iso(ms):
-    return datetime.fromtimestamp(ms / 1000, timezone.utc).isoformat()
-
-
 def _dates(argv):
     ds = [a for a in argv if a.count("-") == 2 and a[:1].isdigit()]
     if len(ds) == 2 and "--range" in argv:
-        s = datetime.strptime(ds[0], "%Y-%m-%d").date(); e = datetime.strptime(ds[1], "%Y-%m-%d").date()
+        s = datetime.strptime(ds[0], "%Y-%m-%d").date()
+        e = datetime.strptime(ds[1], "%Y-%m-%d").date()
         out, cur = [], s
         while cur <= e:
             if cur.weekday() < 5:
@@ -141,12 +143,26 @@ def _dates(argv):
     return ds
 
 
+def _fetch_quotes(sym, lo_ms, hi_ms):
+    qms, qbid, qask = [], [], []
+    for q in c.list_quotes(sym, timestamp_gte=lo_ms * 1_000_000, timestamp_lte=hi_ms * 1_000_000,
+                           limit=50000):
+        b = float(getattr(q, "bid_price", 0) or 0)
+        a = float(getattr(q, "ask_price", 0) or 0)
+        if b > 0 and a > 0:
+            qms.append(tns(q) // 1_000_000)
+            qbid.append(b)
+            qask.append(a)
+    order = sorted(range(len(qms)), key=lambda i: qms[i])
+    return [qms[i] for i in order], [qbid[i] for i in order], [qask[i] for i in order]
+
+
 def main():
     argv = sys.argv[1:]
     jsonp = next((a.split("=", 1)[1] for a in argv if a.startswith("--json=")), "atr_intrabar.json")
     src = DbMarketDataSource(build_session_factory(get_settings()))
-    out = {"qty": QTY, "window": "09:00-16:00 ET", "gate": ">=30% day-change at 9AM", "name_days": [],
-           "universe_log": [], "excluded": []}
+    out = {"qty": QTY, "window": "09:00-16:00 ET", "gate": ">=30% day-change at 9AM",
+           "name_days": [], "universe_log": [], "excluded": []}
     for date in _dates(argv):
         lo_ms, hi_ms = win(date)
         lo = datetime.fromtimestamp(lo_ms / 1000, timezone.utc)
@@ -154,37 +170,36 @@ def main():
         try:
             cand = src.v2_qualified_symbols(lo, hi)
         except Exception as e:                                       # noqa: BLE001
-            print(f"{date}: universe err {e}", flush=True); continue
+            print(f"{date}: universe err {e}", flush=True)
+            continue
         kept = []
         for sym in cand:
             try:
                 pc = prior_close(sym, date)
-                aggs = sorted(c.list_aggs(sym, 1, "minute", date, date, limit=50000), key=lambda a: a.timestamp)
+                aggs = sorted(c.list_aggs(sym, 1, "minute", date, date, limit=50000),
+                              key=lambda a: a.timestamp)
                 bars = [Bar(a.timestamp, a.open, a.high, a.low, a.close, int(a.volume or 0))
                         for a in aggs if lo_ms <= a.timestamp <= hi_ms]
                 if not pc or not bars:
-                    out["excluded"].append({"date": date, "sym": sym, "why": "no prior-close/bars"}); continue
+                    out["excluded"].append({"date": date, "sym": sym, "why": "no prior-close/bars"})
+                    continue
                 chg = 100 * (bars[0].open - pc) / pc
                 if chg < MIN_CHG_9AM:
                     out["excluded"].append({"date": date, "sym": sym, "chg_9am": round(chg, 1),
-                                            "why": "<30% at 9AM"}); continue
+                                            "why": "<30% at 9AM"})
+                    continue
                 trades = sorted((tns(t) // 1_000_000, float(t.price))
                                 for t in c.list_trades(sym, timestamp_gte=lo_ms * 1_000_000,
                                                        timestamp_lte=hi_ms * 1_000_000, limit=50000))
-                qms, qbid, qask = [], [], []
-                for q in c.list_quotes(sym, timestamp_gte=lo_ms * 1_000_000, timestamp_lte=hi_ms * 1_000_000,
-                                       limit=50000):
-                    b = float(getattr(q, "bid_price", 0) or 0); a = float(getattr(q, "ask_price", 0) or 0)
-                    if b > 0 and a > 0:
-                        qms.append(tns(q) // 1_000_000); qbid.append(b); qask.append(a)
+                qms, qbid, qask = _fetch_quotes(sym, lo_ms, hi_ms)
                 if not trades or not qms:
-                    out["excluded"].append({"date": date, "sym": sym, "why": "no ticks"}); continue
-                order = sorted(range(len(qms)), key=lambda i: qms[i])
-                qms = [qms[i] for i in order]; qbid = [qbid[i] for i in order]; qask = [qask[i] for i in order]
+                    out["excluded"].append({"date": date, "sym": sym, "why": "no ticks"})
+                    continue
                 trs = simulate(bars, trades, qms, qbid, qask, hi_ms)
                 kept.append({"sym": sym, "chg_9am": round(chg, 1)})
                 if trs:
-                    out["name_days"].append({"date": date, "sym": sym, "chg_9am": round(chg, 1), "trades": trs})
+                    out["name_days"].append({"date": date, "sym": sym, "chg_9am": round(chg, 1),
+                                             "trades": trs})
                 print(f"  {date} {sym}: +{chg:.0f}% @9AM, {len(trs)} intrabar trades", flush=True)
             except Exception as e:                                   # noqa: BLE001
                 print(f"  {date} {sym}: err {e}", flush=True)
