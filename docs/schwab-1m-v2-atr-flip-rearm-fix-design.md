@@ -1,151 +1,170 @@
-# schwab_1m_v2 ATR-Flip — "burn-the-fake, miss-the-real-flip" fix (DESIGN — review before code)
+# schwab_1m_v2 ATR-Flip — "burn-the-fake, miss-the-real-flip" fix (DESIGN v2 — review before code)
 
-**Status:** DESIGN-FIRST, no code yet. Live-money strategy change → design → backtest-reproduce →
-fix → validate → attended deploy. Operator review at each gate.
+**Status:** DESIGN-FIRST, **no code written.** Live-money strategy change. Its own **new PR** — NOT
+PR #403 (that's ORB: different bot/broker/strategy; mixing breaks one-change-at-a-time). Sequence:
+design → your review → backtest-faithful + RED test → live fix → GREEN → attended deploy.
 
-**Found by:** operator chart-reading of NVVE 2026-07-08 (a bar's HIGH grazes the ATR line then fades —
-no cross — the bot fires the *fake*, then the *real* flip comes and we're already spent → miss).
-Confirmed 3 ways: chart, live DB (one NVVE ATR emit 13:19 = the fake, rejected; **zero at 13:29** = the
-real flip), and code.
-
----
-
-## 1. Root cause (exact, in `schwab_1m_v2.py`)
-
-The ATR-Flip entry is **variant B (touch)**: it fires when a bar HIGH (or intrabar quote) reaches the
-prior-bar trail while short — *anticipating* the flip — gated by a 20s hold-confirmation. Two spots
-interact to lose the real flip:
-
-**(a) `atr_fired_in_short_seg` is claimed on the TOUCH, not on a successful entry.**
-- `on_quote` L520 and `_update_atr_state` L725 set `atr_fired_in_short_seg = True` the moment a touch
-  arms a hold — *before* the verdict.
-- It only resets on a **SELL flip** (new short segment: L673 anchor, L740 flip) — **never on a
-  rejected hold.**
-
-**(b) `_resolve_hold` REJECT path (L551–552) returns None without resetting the guard.**
-- False touch → arm → 20s later price fell back → `net_bps < threshold` → **skip (reject)** → but
-  `atr_fired_in_short_seg` stays **True**.
-- The guard now blocks every later touch in this short segment (L515, L721).
-
-**(c) The confirmed BUY flip emits NOTHING (L744–746).** Variant B has *no* flip-close entry — the flip
-only mutates state. So once the touch is consumed, the real flip produces no entry.
-
-**(d) Bonus miss path — `_resolve_hold_on_bar` L562–565 `drop_flip`.** If a hold is pending when the bar
-flips long, the hold is **dropped ("setup invalidated")** — i.e. the price sustained up and actually
-*flipped* (the strongest possible confirmation) and we throw the entry away.
-
-**Net:** a graze-and-fade before the true flip permanently consumes the segment's one entry, and the
-true flip is un-enterable. Systematic on any choppy pre-flip name — a strong candidate for a chunk of
-the v2 "death-by-hard-stop / breakeven-negative" pattern.
+**Found by** operator chart-reading NVVE 2026-07-08: a bar HIGH grazes the ATR line then fades (no
+cross) → bot fires the *fake* → the *real* flip comes → we're spent → **miss.** Confirmed: chart; live
+DB (NVVE = one ATR emit 13:19 = the fake, **rejected**; **zero at 13:29** = the real flip); and code.
 
 ---
 
-## 2. Requirement
+## 1. Root cause — verified by reading the LIVE code directly (`schwab_1m_v2.py`, not `_touches`)
 
-1. **Keep rejecting false touches** (the hold-confirm already does this correctly — don't regress it).
-2. **Never miss the confirmed BUY flip.** The short→long flip (close crosses the trail — the dots on
-   the operator's TOS chart) is the ground-truth signal; it must always produce an entry when flat +
-   off-cooldown, regardless of prior rejected touches this segment.
-3. **No double-entry / no churn.** One position per flip; existing cooldown (5 bars) still applies.
-4. **Flag-gated + off-by-default byte-identical**, per live-money discipline.
+The ATR-Flip entry is **variant B (touch)**. Two live paths detect the touch, both guarded by one flag:
+- **Intrabar** (`on_quote` L512–528): a quote crosses the resting trail while short → arms a 20s
+  hold-confirm; **sets `atr_fired_in_short_seg = True` on the ARM** (L520).
+- **Bar-close** (`_update_atr_state` L717–725): `cur.high >= prev_trail` while short → touch; same flag.
+
+The flag `atr_fired_in_short_seg` **only resets on a SELL flip** (L673 anchor, L740 fresh short seg).
+The three failure points:
+- **(a) `_resolve_hold` REJECT (L551–552)** returns None but **does NOT reset the flag** → the segment
+  is permanently "spent" after one *rejected* touch.
+- **(b) The confirmed BUY flip emits nothing in variant B.** `_maybe_atr_emit` variant-B (L811–814)
+  fires only on `touch`; the BUY flip (L744–746) just mutates state. Once the touch is spent → no entry.
+- **(c) `_resolve_hold_on_bar` `drop_flip` (L562–565):** a hold pending when the bar flips long is
+  **dropped** — i.e. the price sustained up and *actually flipped* (the strongest confirmation) and we
+  throw the entry away.
+
+**Verified interactions (per your instruction #1):**
+- **Cooldown / one-position:** the ATR emit is reached only when **flat + no cooldown** — gated at the
+  caller (L891–894 under-warm path; same in the warm path) and re-checked inside `_resolve_hold`
+  (L542). Cooldown = 5 bars, decremented every bar (L892/L906). So any fix in `_maybe_atr_emit`
+  inherits flat+cooldown for free.
+- **Key simplifier:** **variant A ALREADY fires the flip-close entry** (L807–810: `flip=="BUY"` →
+  entry at `cur.close`). So the fix is not new machinery — it's *"let variant B fall back to variant
+  A's flip-close entry when its touch didn't enter this segment."*
+- **Oracle pin:** `_update_atr_state` matches `compute_atr_trail` (determinism test). The **flip TIMES
+  do not change** — only whether we *enter* on them. So the ATR-line pin is untouched by this fix.
 
 ---
 
-## 3. Current live-vs-backtest divergence (must fix too)
+## 2. Frequency (per your instruction #2) — Polygon 5/3.5, 392 confirmed name-days, ~10 days
 
-The v2 **backtest** (`backtest/v2_sim.py` / `v2_atr_param_sweep.py::_touches`) is a **separate
-implementation** from the live strategy and has **drifted**:
-- It **fills every touch** (no hold-confirm model) → it invents trades the live bot rejects (this is why
-  the NVVE backtest showed a −$1.40 fill at 13:19 that the live bot *rejected*).
-- Its own `fired` guard also resets only on SELL → same miss, plus the extra fills.
+| metric | value |
+|---|---|
+| real BUY flips | **5,197** |
+| flips preceded by an earlier graze (fires variant-B first) | **1,270 = 24%** |
+| daily range | **22–27%** (steady, not a tail) |
 
-So "test the fix in the backtest" is only trustworthy once the backtest **mirrors** the live decision.
-Two ways (recommend the first, like ORB PR #403):
-- **(SoT) Extract the ATR-Flip entry decision into a shared leaf** in `strategy_core/` that BOTH
-  `schwab_1m_v2.py` and the backtest import — single source of truth (⚠ the file's "touch ONLY this
-  file" rule needs the operator's blessing to extend to a shared leaf; ORB already set this precedent).
-- **(Port)** Pragmatic first step: port the hold-confirm verdict + the flip-backstop into `simulate_v2`
-  so it *behaves* identically, pinned by a parity test. Less ideal (two copies) but unblocks validation.
+**~1 in 4 real ATR flips is at-risk**: an earlier graze fires the touch first, and under the current
+guard, *if that graze's hold-confirm rejects, the real flip is un-enterable.* The actual miss rate is
+the subset whose graze rejects (a false touch) — and the hold-confirm exists precisely to reject false
+touches, so a large share of the 24% become real misses. This is a **material, systematic** entry
+defect, and it strongly implicates the "v2 death-by-hard-stop / breakeven-negative" verdicts (§9).
 
 ---
 
-## 4. Proposed fix (strategy) — two changes, guard redefinition
+## 3. Architectural decision (settled): keep the two impls **for this PR**, extract the shared module **next**
 
-**Change 1 — reset the guard on a rejected/dropped hold.** Redefine `atr_fired_in_short_seg` to mean
-*"an entry has SUCCEEDED (or a hold is genuinely pending) this segment"*, not *"a touch was attempted."*
-- On a hold that resolves to **skip / skip_gated** (`_resolve_hold` L544, L551) and on **`drop_flip`**
-  (`_resolve_hold_on_bar` L562) → set `atr_fired_in_short_seg = False` so a later touch can re-arm.
-- Keep it True on **confirm / fallback_thin** (a real entry) and while a hold is **pending** (so the
-  bar-close touch L721 doesn't double-arm during the window).
+Your framing is exactly right — ORB has one shared `orb_tick_entry.py` (can't drift); v2 has two impls
+(`schwab_1m_v2.py` + `_touches`/`v2_sim`) pinned by parity, and **parity mistook agreement for
+correctness** (both share this defect). Long-term the v2 entry SHOULD be one shared module.
 
-**Change 2 — flip-close backstop (the actual "don't miss the real flip").** On the confirmed **BUY
-flip** (L744–746), if `atr_fired_in_short_seg` is False AND no hold is pending AND flat + off-cooldown
-→ **emit the ATR-Flip entry at the flip-bar close** (variant-A-style backstop). This guarantees the real
-flip is taken even if every touch this segment was rejected or none occurred.
-- Reuse `_build_hold_draft`-style intent construction with a new mode tag e.g. `"flip_close"` for
-  telemetry.
-- Also handles path (d): if a hold is pending at the flip, resolve it as **confirm** (the flip *is* the
-  confirmation) instead of `drop_flip` — OR simply clear the pending and let the backstop fire (choose
-  one to avoid double-emit; see edge cases).
+**Decision: do NOT extract the shared module inside this bugfix PR.** Rationale:
+- Extracting the ATR entry (deeply woven into `SymbolState` + the `on_bar`/`on_quote` flow +
+  hold-confirm timing) into a pure leaf, **byte-identical**, is a large behavior-sensitive refactor of a
+  **live-money** strategy. Bundling it with the bugfix violates one-change-at-a-time *within* the PR and
+  balloons risk/review.
+- **But we honor the anti-drift intent:** the bugfix PR fixes **live + backtest together** (same logical
+  change, no window where they diverge) AND **re-pins the parity/golden test to the CORRECTED behavior**
+  (§7) — so parity can no longer certify the bug.
+- **Follow-up (separate PR, logged):** extract `strategy_core/atr_flip_entry.py` as the single shared
+  entry module (consumed by both live + backtest, ORB-style), done **characterization-first**
+  (green on current behavior → refactor → prove identical). That permanently eliminates the drift class.
 
-**Why a backstop rather than only re-arm:** re-arm alone still leaves a gap (the flip can occur with no
-touch pending, e.g. the last graze's hold rejected at 13:28:40 and the flip is 13:29:00). The flip-close
-backstop closes that gap deterministically. Re-arm (Change 1) still helps by allowing the *earlier*
-confirmed touch to enter ahead of the flip when the move is real.
+Net: **one PR, one logical change (live + backtest), parity re-pinned to correct** now; **shared-module
+extraction next**, characterization-tested.
+
+---
+
+## 4. The fix (three coordinated changes, all flag-gated)
+
+New sub-flag **`strategy_schwab_1m_v2_atr_flip_rearm_enabled`** (default **False** = byte-identical).
+
+- **C1 — re-arm on rejection.** In `_resolve_hold`, on **skip / skip_gated** (L544/L551) and in
+  `_resolve_hold_on_bar` on **`drop_flip`** (L562), set `atr_fired_in_short_seg = False`. Redefine the
+  flag to mean *"an entry SUCCEEDED, or a hold is genuinely pending"* — not *"a touch was attempted."*
+- **C2 — variant-B flip-close backstop.** In `_maybe_atr_emit`, for variant B, if
+  `atr_signal["flip"] == "BUY"` AND `not atr_fired_in_short_seg` AND no hold pending → emit at
+  `cur.close` (reuse variant A's L810 path, tagged `mode="flip_close"`). Guarantees the real flip is
+  taken when flat + off-cooldown + no prior successful entry.
+- **C3 — flip-while-pending = confirm, not drop.** When a hold is pending and the bar flips long,
+  **clear the pending and let C2 fire the flip-close** (single entry path; do NOT also resolve the hold
+  → avoids double-emit). Replaces the `drop_flip` miss.
+
+Centralize the flag writes behind one helper `_claim_segment(state, on)` so all 6 touch-points
+(on_quote arm, resolve skip/reject, on_bar touch, both flip resets) stay consistent (the #237
+overlapping-path lesson).
 
 ---
 
 ## 5. Edge-case + overlapping-path audit
 
-| # | Edge case | Handling |
+| # | Case | Handling |
 |---|---|---|
-| 1 | Touch entered (holding) then the flip comes | flip-emit gated by `position_qty > 0` → no double-enter |
-| 2 | Touch entered, scratched (hard-stop) BEFORE the flip, then flip | flat again → flip backstop re-enters; **cooldown (5 bars) gates churn** — verify cooldown covers it, else add a same-segment "already entered once" cap |
-| 3 | Hold pending AT the flip bar | resolve as `confirm` OR clear+let backstop fire — pick ONE (proposal: clear pending on flip, fire the backstop; single code path, no double) |
-| 4 | Many grazes in one segment | at most one hold per 20s (pending blocks new arm); re-arm only after each verdict → bounded, no thrash |
-| 5 | `fallback_thin` (coverage < min_ticks) currently ENTERS (L547) | leave as-is this PR (separate "Path-B leak" decision); guard stays True on it (a real entry) |
-| 6 | Variant A (not B) | unaffected — A already enters at flip-close; the backstop must be **B-only** so A is byte-identical |
-| 7 | Flag OFF | byte-identical — all new logic behind `hold_confirm_enabled`/`atr_variant=="B"` (already the gate at L484) + a new sub-flag for the backstop so it can be rolled independently |
-| 8 | Session anchor reset mid-hold (04:00) | anchor reset already clears the guard (L673); ensure it also clears any pending hold |
-
-**Overlapping-path audit:** the touch guard is read/written in 4 places (on_quote arm L520, resolve
-L537/L551, on_bar touch L725, flip resets L673/L740). The redefinition must be consistent across ALL of
-them — a single helper `_claim_segment(state, on: bool)` to centralize, so no path is missed (this was
-the #237 streamer-regression lesson: audit every path that touches the mutated state).
+| 1 | Touch confirmed → holding → flip comes | flip backstop gated by `position_qty>0` → no double |
+| 2 | Touch entered, **scratched** (hard-stop) before flip, then flip | flat again → **cooldown (5 bars) gates churn**; OPEN Q: also cap one *successful* entry per short segment? |
+| 3 | Hold pending AT the flip bar | C3: clear pending, C2 fires once (no double) |
+| 4 | Many grazes in one segment | ≤1 hold / 20s (pending blocks new arm); re-arm only after each verdict → bounded |
+| 5 | `fallback_thin` (coverage < min_ticks) currently ENTERS (L547) | leave as-is (separate Path-B decision); counts as a real entry → flag stays True |
+| 6 | Variant A | untouched — the backstop is **B-only**; A stays byte-identical |
+| 7 | Flag OFF | byte-identical: C1/C2/C3 all behind `rearm_enabled` |
+| 8 | 04:00 session anchor mid-hold | anchor reset already clears the flag (L673); also clear any pending hold there |
 
 ---
 
-## 6. Validation plan (failing-test-first)
+## 6. Backtest faithfulness (the measuring instrument) — fix FIRST, in this PR
 
-1. **Reproduce the miss (RED):** a unit test on the NVVE 07-08 bar/quote sequence (or a synthetic
-   graze-then-flip fixture) asserting the CURRENT behavior: fake touch taken/rejected at the graze, and
-   **no entry at the real BUY flip** — i.e. the bug, pinned.
-2. **Backtest faithfulness (RED→GREEN):** a parity test that `simulate_v2` (with the hold-confirm model)
-   reproduces the live decision on the fixture (rejects the fake, currently misses the flip).
-3. **Apply the fix → GREEN:** the same fixture now enters at the confirmed flip (12:26 / 13:29), still
-   rejects the fake, no double-entry.
-4. **Determinism/oracle pin unchanged:** `_update_atr_state` still matches `compute_atr_trail`
-   (the flip TIMES don't change — only whether we ENTER on them).
-5. **Byte-identical when off:** full v2 suite green with the backstop flag OFF.
-6. **Re-run the 07-08 v2 sheet** post-fix: NVVE should now show the real 13:29 flip entry (or a clean
-   flat if gated), and the fake 13:19 should NOT be a fill.
+`v2_sim`/`_touches` currently **fills every touch (no hold-confirm)** → it invents trades the bot
+rejects (the NVVE −$1.40 at 13:19). Before validating the live fix, the backtest must **model the
+hold-confirm rejection** (the 20s net_delta verdict → skip false touches) AND the C1/C2/C3 re-arm.
+Then the backtest measures what the bot actually does. (This is why it's step 1 of the PR.)
 
 ---
 
-## 7. Rollout
+## 7. Validation — failing-test-first, and **re-pin parity to CORRECT behavior**
 
-- New sub-flag `strategy_schwab_1m_v2_atr_flip_rearm_enabled` (default **False** = byte-identical).
-- Ship the backtest-faithfulness + tests first (no live behavior change), review the reproduced miss.
-- Then the strategy fix behind the flag; validate in backtest on multiple days (not just NVVE).
-- **Attended deploy** (fleet-flat, v2-only choreography), operator GO, per the live-money discipline.
-- Rollback = flag False + restart.
+1. **RED:** on the NVVE 07-08 fixture (graze-then-flip): assert the *current* behavior — fake taken/
+   rejected at the graze, **no entry at the real BUY flip.** Pins the bug.
+2. **Backtest-faithful:** `simulate_v2` with the hold-confirm model reproduces the live decision on the
+   fixture (rejects the fake, currently misses the flip).
+3. **Apply the fix → GREEN:** same fixture now enters at the confirmed flip (13:29), still rejects the
+   fake, no double-entry.
+4. ⚠ **Re-pin the "v2 touch parity" golden test to the CORRECTED behavior** (real flip fires) — NOT to
+   whatever the code emits post-change. Parity-to-a-bug is exactly what hid this; the golden must encode
+   *intended* behavior, verified by hand against the chart, not the code's output.
+5. **Byte-identical off:** full v2 suite green with `rearm_enabled=False`; oracle/determinism pin
+   unchanged.
+6. Re-run the 07-08 v2 sheet: NVVE now shows the 13:29 flip entry (or a clean flat if gated), no 13:19
+   fill.
 
 ---
 
-## 8. Open questions for the operator (before code)
+## 8. Rollout
 
-1. **SoT vs Port** for the backtest (§3): extract a shared ATR-entry leaf (best, needs the
-   "touch-only-this-file" waiver), or port the hold-confirm into the backtest (faster, two copies)?
-2. **Edge #2 (scratch-then-flip re-entry):** cap at one entry per short segment even for the backstop,
-   or allow re-entry after a scratched touch (cooldown-gated)? (Churn vs. missing a second leg.)
-3. **`fallback_thin` (Path-B, edge #5):** leave in this PR, or fold the known "Path-B leak" decision in?
+- Flag `strategy_schwab_1m_v2_atr_flip_rearm_enabled` default **False**. Golden green, CI pass.
+- Ship backtest-faithful + RED test first (no live behavior change) → you review the reproduced miss →
+  then the live fix behind the flag → validate on multiple days.
+- **Attended deploy** (fleet-flat, v2-only choreography), operator GO. Rollback = flag False + restart.
+- **Nothing deploys until reviewed.**
+
+---
+
+## 9. After the fix — re-run D3 and D5 on the CORRECTED entry
+
+The "no edge" verdicts for D3/D5 were measured on the **broken** entry (24% of flips missed, fakes
+filled in backtest). Once the entry is corrected + the backtest is faithful, **re-run D3 and D5** — the
+edge conclusions must be re-measured on the fixed entry, not carried forward.
+
+---
+
+## 10. Open questions for your review (before any code)
+
+1. **Edge #2:** after a touch enters then scratches, allow the flip backstop to re-enter (cooldown-
+   gated) or cap at one *successful* entry per short segment? (Catch-second-leg vs. churn.)
+2. **`fallback_thin` / Path-B (edge #5):** leave in this PR, or fold the pending "Path-B leak" decision
+   in now?
+3. **Confirm the architectural call (§3):** two-impls-fixed-together + parity-re-pinned now, shared
+   `atr_flip_entry.py` extraction as the next (characterization-first) PR — agree?
