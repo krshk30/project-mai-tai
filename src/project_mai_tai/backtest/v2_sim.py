@@ -38,6 +38,7 @@ class V2Trade:
     pnl: float
     exit_reason: str
     n_legs: int
+    path: str = "?"          # entry path: "A" hold-confirm | "B" fallback/bar-close | "reclaim" flip-close backstop
 
 
 def _v2_cfg():
@@ -237,11 +238,13 @@ def simulate_v2(schwab_bars, schwab_quotes, massive_quotes, *, qty=10, vol_floor
             continue
         if mode == "bar_close":
             decision_ts = _utc(bar.ts + BAR_MS)
+            path = "B"                         # bar-close entry
         else:  # intrabar hold-confirm
             win = sbook.slice(_utc(bar.ts), _utc(bar.ts + BAR_MS))
             touch_q = next((q for q in win if _px(q) >= touch_price), None)
             if touch_q is None:                # sparse feed, no intrabar cross -> bar-close settle
                 decision_ts = _utc(bar.ts + BAR_MS)
+                path = "B"
             else:
                 t1 = touch_q.ts + timedelta(seconds=HOLD_N_SECONDS)
                 window = sbook.slice(touch_q.ts, t1)
@@ -251,6 +254,7 @@ def simulate_v2(schwab_bars, schwab_quotes, massive_quotes, *, qty=10, vol_floor
                 if not (n_ticks < HOLD_MIN_TICKS or net_bps >= HOLD_BPS):
                     continue                   # skip (not thin, not confirmed)
                 decision_ts = t1               # fallback_thin OR confirm -> ENTER at window end
+                path = "B" if n_ticks < HOLD_MIN_TICKS else "A"   # thin fallback (precedence) vs confirm
         if flat_after is not None and decision_ts < flat_after:
             continue                           # still holding a prior position
         fq = sbook.at(decision_ts + timedelta(seconds=latency_s))
@@ -260,7 +264,7 @@ def simulate_v2(schwab_bars, schwab_quotes, massive_quotes, *, qty=10, vol_floor
         entry_price = fq.ask                   # honest Schwab ask (market buy)
         start = mbook.index_at_or_after(entry_ts)
         exit_ts, wavg, pnl, reason, n_legs = _run_exit(massive_quotes, start, entry_price, qty, cfg, engine)
-        trades.append(V2Trade(entry_ts, entry_price, touch_price, exit_ts, wavg, qty, pnl, reason, n_legs))
+        trades.append(V2Trade(entry_ts, entry_price, touch_price, exit_ts, wavg, qty, pnl, reason, n_legs, path))
         flat_after = exit_ts
     return trades
 
@@ -296,7 +300,7 @@ def _simulate_v2_rearm(schwab_bars, schwab_quotes, massive_quotes, *, qty, vol_f
         if guard == "PROVISIONAL" and prov_release_ts is not None and now_ts >= prov_release_ts:
             guard, prov_release_ts = "UNCLAIMED", None
 
-    def _enter(decision_ts, touch_price, bar_i):
+    def _enter(decision_ts, touch_price, bar_i, path):
         """Attempt an entry at decision_ts. Returns ('fill', V2Trade) | ('nofill', None) | ('holding', None)."""
         nonlocal flat_after
         if flat_after is not None and decision_ts < flat_after:
@@ -311,11 +315,11 @@ def _simulate_v2_rearm(schwab_bars, schwab_quotes, massive_quotes, *, qty, vol_f
         start = mbook.index_at_or_after(entry_ts)
         exit_ts, wavg, pnl, reason, n_legs = _run_exit(massive_quotes, start, entry_price, qty, cfg, engine)
         flat_after = exit_ts
-        return "fill", V2Trade(entry_ts, entry_price, touch_price, exit_ts, wavg, qty, pnl, reason, n_legs)
+        return "fill", V2Trade(entry_ts, entry_price, touch_price, exit_ts, wavg, qty, pnl, reason, n_legs, path)
 
-    def _resolve_emit(decision_ts, touch_price, bar_i):
+    def _resolve_emit(decision_ts, touch_price, bar_i, path):
         nonlocal guard, prov_release_ts
-        outcome, tr = _enter(decision_ts, touch_price, bar_i)
+        outcome, tr = _enter(decision_ts, touch_price, bar_i, path)
         if outcome == "fill":
             trades.append(tr)
             guard = "CLAIMED"
@@ -336,12 +340,12 @@ def _simulate_v2_rearm(schwab_bars, schwab_quotes, massive_quotes, *, qty, vol_f
             if verdict != "skip":
                 _release_if_expired(decision_ts)            # explicit re-arm at this decision point
                 if guard == "UNCLAIMED":                    # pure read
-                    _resolve_emit(decision_ts, prev["trail"], i)
+                    _resolve_emit(decision_ts, prev["trail"], i, "A" if verdict == "confirm" else "B")
             # skip -> no claim; a later graze/flip re-arms
         # (2) BUY flip backstop -> flip-close entry when the segment is free at the flip
         if cur["flip"] == "BUY" and bar.volume > vol_floor:
             decision_ts = _utc(bar.ts + BAR_MS)
             _release_if_expired(decision_ts)                # explicit re-arm at this decision point
             if guard == "UNCLAIMED":                        # pure read
-                _resolve_emit(decision_ts, cur["trail"], i)
+                _resolve_emit(decision_ts, cur["trail"], i, "reclaim")
     return trades
