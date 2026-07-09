@@ -40,19 +40,34 @@ The three failure points:
 
 ---
 
-## 2. Frequency (per your instruction #2) — Polygon 5/3.5, 392 confirmed name-days, ~10 days
+## 2. Frequency + TRUE COST (per your instruction #2) — Polygon bars+trades, hold-confirm MODELED, ~10 days
 
-| metric | value |
-|---|---|
-| real BUY flips | **5,197** |
-| flips preceded by an earlier graze (fires variant-B first) | **1,270 = 24%** |
-| daily range | **22–27%** (steady, not a tail) |
+Of **5,191** real BUY flips, **1,267 (24%)** are graze-first (at-risk). Modeling the live hold-confirm
+verdict (20s net_delta + tick coverage) on the FIRST graze of each:
 
-**~1 in 4 real ATR flips is at-risk**: an earlier graze fires the touch first, and under the current
-guard, *if that graze's hold-confirm rejects, the real flip is un-enterable.* The actual miss rate is
-the subset whose graze rejects (a false touch) — and the hold-confirm exists precisely to reject false
-touches, so a large share of the 24% become real misses. This is a **material, systematic** entry
-defect, and it strongly implicates the "v2 death-by-hard-stop / breakeven-negative" verdicts (§9).
+| verdict of the first graze | count | share of grazes |
+|---|--:|--:|
+| **confirm** — real touch, entered EARLY | 226 | 18% |
+| **fallback_thin** — Path-B bar-close fill (NOT a miss; excluded) | 390 | 31% |
+| **REJECT → real flip MISSED** | **651** | **51%** |
+
+**→ TRUE COST = 651 missed real flips / 10 days = 12.5% of ALL ATR BUY flips (~65/day).**
+
+**Frame it precisely — this is missed SIGNAL, not missed profit.** We do NOT know those 651 flips were
+winners. The correct claim: **the D3/D5 "no-edge" verdict was measured with 12.5% of real flips ABSENT,
+so it is uninterpretable.** The fix makes the *measurement* honest; the re-run (§9) decides whether the
+flip actually has edge. This is **not** "the fix recovers 12.5% of edge."
+
+**The 18% "confirm" cases matter:** variant B's touch-anticipation genuinely *works* when the move is
+real (early entry on a sustained touch). So the fix is **"stop it burning the segment on a fake,"**
+NOT "kill variant B."
+
+**⚠ Path-B masking interaction — LOAD-BEARING ordering (see the Path-B ticket,
+`schwab-1m-v2-path-b-decision.md`):** the 390 `fallback_thin` fills mean the known Path-B leak has been
+**masking this re-arm bug 31% of the time** — the two defects partially cancel. If Path-B is ever closed
+(hold-confirm made a hard gate) **before** the re-arm fix lands, those 390 fills become misses too:
+**651 + 390 = 1,041 ≈ 20% of all signal.** Therefore **fix re-arm FIRST, then revisit Path-B — never the
+reverse.**
 
 ---
 
@@ -154,9 +169,11 @@ Then the backtest measures what the bot actually does. (This is why it's step 1 
 
 ## 9. After the fix — re-run D3 and D5 on the CORRECTED entry
 
-The "no edge" verdicts for D3/D5 were measured on the **broken** entry (24% of flips missed, fakes
-filled in backtest). Once the entry is corrected + the backtest is faithful, **re-run D3 and D5** — the
-edge conclusions must be re-measured on the fixed entry, not carried forward.
+The D3/D5 "no-edge" verdicts were measured with **12.5% of real flips absent** (missed) and the backtest
+**filling fakes the bot rejects** — so they are **uninterpretable**, not "13% too low." Once the entry
+is corrected AND the backtest is faithful, **re-run D3 and D5** on the fixed entry. The re-run — not this
+fix — is what decides whether the ATR flip has edge. Do NOT carry the old verdicts forward, and do NOT
+claim the fix "adds X% edge": it makes the measurement honest; the edge question is then open again.
 
 ---
 
