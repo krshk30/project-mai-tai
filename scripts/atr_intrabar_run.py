@@ -36,9 +36,10 @@ def tns(x):
 
 def win(date):
     y, m, d = (int(x) for x in date.split("-"))
-    lo = datetime(y, m, d, 9, 0, tzinfo=ET).astimezone(timezone.utc)
+    warm = datetime(y, m, d, 7, 0, tzinfo=ET).astimezone(timezone.utc)    # trail warm-up (pre-market)
+    trade = datetime(y, m, d, 9, 0, tzinfo=ET).astimezone(timezone.utc)   # trading starts 9AM
     hi = datetime(y, m, d, 16, 0, tzinfo=ET).astimezone(timezone.utc)
-    return int(lo.timestamp() * 1000), int(hi.timestamp() * 1000)
+    return int(warm.timestamp() * 1000), int(trade.timestamp() * 1000), int(hi.timestamp() * 1000)
 
 
 def prior_close(sym, date):
@@ -67,15 +68,24 @@ def intrabar_flips(bars, prints):
         if state is None:
             state, trail = "long", bars[i].close - loss[i]
             continue
+        # RESTING trail is FIXED for the whole bar (a live stop rests until the next bar). ONE flip max.
+        flipped = False
         for ms, px in sorted(pbybar.get(i, [])):
             if state == "short" and px > trail:
                 flips.append((ms, "BUY", i))
-                state, trail = "long", px - loss[i]
-            elif state == "long" and px < trail:
+                state = "long"
+                flipped = True
+                break
+            if state == "long" and px < trail:
                 flips.append((ms, "SELL", i))
-                state, trail = "short", px + loss[i]
-        trail = (max(trail, bars[i].close - loss[i]) if state == "long"
-                 else min(trail, bars[i].close + loss[i]))
+                state = "short"
+                flipped = True
+                break
+        # new trail set at bar close (fresh on a flip, else ratchet in the trend direction)
+        if state == "long":
+            trail = (bars[i].close - loss[i]) if flipped else max(trail, bars[i].close - loss[i])
+        else:
+            trail = (bars[i].close + loss[i]) if flipped else min(trail, bars[i].close + loss[i])
     return flips
 
 
@@ -83,13 +93,14 @@ def _iso(ms):
     return datetime.fromtimestamp(ms / 1000, timezone.utc).isoformat()
 
 
-def simulate(bars, prints, qms, qbid, qask, hi_ms):
-    """One trade per intrabar BUY flip -> next SELL flip (bid) or target. ask entry / bid exit."""
+def simulate(bars, prints, qms, qbid, qask, trade_ms, hi_ms):
+    """One trade per intrabar BUY flip (from 9AM) -> next SELL flip (bid) or target. ask entry / bid exit."""
     flips = intrabar_flips(bars, prints)
     pms = [p[0] for p in prints]
     ppx = [p[1] for p in prints]
     out = []
-    for k, (bms, _side, _bar) in [(k, f) for k, f in enumerate(flips) if f[1] == "BUY"]:
+    for k, (bms, _side, _bar) in [(k, f) for k, f in enumerate(flips)
+                                  if f[1] == "BUY" and f[0] >= trade_ms]:
         nxt = next((f for f in flips[k + 1:] if f[1] == "SELL"), None)
         sell_ms = nxt[0] if nxt else hi_ms
         sell_bar = nxt[2] if nxt else len(bars) - 1
@@ -164,8 +175,8 @@ def main():
     out = {"qty": QTY, "window": "09:00-16:00 ET", "gate": ">=30% day-change at 9AM",
            "name_days": [], "universe_log": [], "excluded": []}
     for date in _dates(argv):
-        lo_ms, hi_ms = win(date)
-        lo = datetime.fromtimestamp(lo_ms / 1000, timezone.utc)
+        warm_ms, trade_ms, hi_ms = win(date)
+        lo = datetime.fromtimestamp(trade_ms / 1000, timezone.utc)
         hi = datetime.fromtimestamp(hi_ms / 1000, timezone.utc)
         try:
             cand = src.v2_qualified_symbols(lo, hi)
@@ -179,23 +190,24 @@ def main():
                 aggs = sorted(c.list_aggs(sym, 1, "minute", date, date, limit=50000),
                               key=lambda a: a.timestamp)
                 bars = [Bar(a.timestamp, a.open, a.high, a.low, a.close, int(a.volume or 0))
-                        for a in aggs if lo_ms <= a.timestamp <= hi_ms]
-                if not pc or not bars:
+                        for a in aggs if warm_ms <= a.timestamp <= hi_ms]   # trail warmed from 07:00
+                bar9 = next((b for b in bars if b.ts >= trade_ms), None)     # the 9AM bar
+                if not pc or not bars or bar9 is None:
                     out["excluded"].append({"date": date, "sym": sym, "why": "no prior-close/bars"})
                     continue
-                chg = 100 * (bars[0].open - pc) / pc
+                chg = 100 * (bar9.open - pc) / pc
                 if chg < MIN_CHG_9AM:
                     out["excluded"].append({"date": date, "sym": sym, "chg_9am": round(chg, 1),
                                             "why": "<30% at 9AM"})
                     continue
                 trades = sorted((tns(t) // 1_000_000, float(t.price))
-                                for t in c.list_trades(sym, timestamp_gte=lo_ms * 1_000_000,
+                                for t in c.list_trades(sym, timestamp_gte=warm_ms * 1_000_000,
                                                        timestamp_lte=hi_ms * 1_000_000, limit=50000))
-                qms, qbid, qask = _fetch_quotes(sym, lo_ms, hi_ms)
+                qms, qbid, qask = _fetch_quotes(sym, trade_ms, hi_ms)
                 if not trades or not qms:
                     out["excluded"].append({"date": date, "sym": sym, "why": "no ticks"})
                     continue
-                trs = simulate(bars, trades, qms, qbid, qask, hi_ms)
+                trs = simulate(bars, trades, qms, qbid, qask, trade_ms, hi_ms)
                 kept.append({"sym": sym, "chg_9am": round(chg, 1)})
                 if trs:
                     out["name_days"].append({"date": date, "sym": sym, "chg_9am": round(chg, 1),
