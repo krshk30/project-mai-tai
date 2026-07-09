@@ -133,10 +133,19 @@ def simulate(bars, prints, qms, qbid, qask, trade_ms, hi_ms):
                 bpx = qbid[si] if (si >= 0 and qbid[si] > 0) else entry
                 exits[lab] = {"ts": _iso(sell_ms), "px": round(bpx, 4),
                               "reason": "ATR_FLIP" if nxt else "EOD"}
+        bid_at = {}
+        for tsec in (180, 300, 600):                        # bid at entry+3/5/10 min (for time-stop tests)
+            tms = bms + tsec * 1000
+            if tms <= sell_ms:
+                qi = bisect.bisect_right(qms, tms) - 1
+                bid_at[str(tsec)] = round(qbid[qi], 4) if (qi >= 0 and qbid[qi] > 0) else None
+            else:
+                bid_at[str(tsec)] = None                    # flip came before this mark
         out.append({"entry_ts": _iso(bms), "entry_px": round(entry, 4), "spread": spread,
                     "mfe_pct": round(100 * (hi - entry) / entry, 3),
                     "mae_pct": round(100 * (lo - entry) / entry, 3),
-                    "short_seg_bars": seg_bars, "exits": exits})
+                    "short_seg_bars": seg_bars, "sell_ts": _iso(sell_ms), "bid_at": bid_at,
+                    "exits": exits})
     return out
 
 
