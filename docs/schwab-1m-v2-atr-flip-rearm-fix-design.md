@@ -134,9 +134,14 @@ Transitions: PROVISIONAL → **CLAIMED** on fill; PROVISIONAL → **UNCLAIMED (r
 no-fill (broker reject / cancel / hold-confirm skip / drop_flip) → re-arm. This is what stops
 "missed-entry fixed" from becoming "double-entry created" (which costs money).
 
-⚠ **Open design point (verify in build):** does `schwab_1m_v2` consume order-terminal events to trigger
-PROVISIONAL→UNCLAIMED? If yes, drive it off that. If NOT, release on a bounded timeout (emit produced no
-`position_qty` within N s / M bars) — explicit, no silent leak. TBD which.
+**RESOLVED — release mechanism:** `update_position` (L413) shows the strategy learns of fills **only by
+position-polling**; it does NOT consume order-terminal (reject/cancel) events. So:
+- **Synchronous release** on hold-confirm **skip** and **drop_flip** (known in-method) → UNCLAIMED now.
+- **Bounded-timeout release** for the emit→fill window: after a PROVISIONAL emit, if `position_qty`
+  stays 0 for **M bars** (proposal M=2; Schwab fill latency ~0s and a broker reject is known within a
+  poll), release to UNCLAIMED. Explicit, no silent leak, no order-event dependency. **M is the only new
+  tunable** — pin it in the fixture tests. This is what covers the restricted-name emit-without-fill
+  case (AZI/TC/DXF/JEM class) without waiting for a SELL flip.
 
 **Backstop:** in `_maybe_atr_emit` variant B, if `flip=="BUY"` AND guard is UNCLAIMED AND flat +
 off-cooldown → emit the flip-close (reuse variant A's L810 path, `mode="flip_close"`). Guarantees the
