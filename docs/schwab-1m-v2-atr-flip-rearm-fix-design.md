@@ -62,12 +62,27 @@ flip actually has edge. This is **not** "the fix recovers 12.5% of edge."
 real (early entry on a sustained touch). So the fix is **"stop it burning the segment on a fake,"**
 NOT "kill variant B."
 
-**⚠ Path-B masking interaction — LOAD-BEARING ordering (see the Path-B ticket,
-`schwab-1m-v2-path-b-decision.md`):** the 390 `fallback_thin` fills mean the known Path-B leak has been
-**masking this re-arm bug 31% of the time** — the two defects partially cancel. If Path-B is ever closed
-(hold-confirm made a hard gate) **before** the re-arm fix lands, those 390 fills become misses too:
-**651 + 390 = 1,041 ≈ 20% of all signal.** Therefore **fix re-arm FIRST, then revisit Path-B — never the
-reverse.**
+**⚠⚠ 651 is a DENSE-POLYGON UPPER BOUND, not the live count.** The live bot + the v2 backtest run on the
+**sparse Schwab feed**, where many of those grazes have thin coverage and hit `fallback_thin` → ENTER
+(not skip). So the live skip-miss count is **well below 651**. From the **DB (06-24..07-08)**: 55 ATR
+emits → 26 filled, **27 rejected + 2 cancelled = 29 emits (53%) opened NO position.** The 651 does not
+travel unqualified.
+
+**⚠ Second, independent source of misses (DB-confirmed).** The 29 non-filling emits cluster in
+**API-open-restricted names** (AZI 5/5 rejected, CUPR/JEM/TDTH 2/2, TC/DXF/EHGO/DGNX/DSY/UPC/BTCT/LGCL/
+IOTR/BYAH/NVVE 0-filled). Every one **claimed its segment on an emit that could never fill** → the
+segment's real flip was missed. This is NOT the hold-confirm-skip path — it's **emit-without-fill** —
+and it's exactly why the fix must be stated as an *invariant* (§4), not a per-path patch.
+
+**⚠ D3/D5 corruption is a MIX, not "12.5% of flips absent."** On the Schwab-feed backtest it's *fake
+grazes entering via `fallback_thin`* + *some real flips missed* + *restricted-name emits consuming
+segments*. Different mechanism than the Polygon counterfactual — still **invalid**, but do not describe
+it as "12.5% missing." The re-run (§9) is what re-measures on the corrected entry.
+
+**⚠ Path-B masking — LOAD-BEARING ordering (see the Path-B ticket, `schwab-1m-v2-path-b-decision.md`):**
+`fallback_thin` fills have been **masking the re-arm bug** — the two defects partially cancel. If Path-B
+is ever closed (hold-confirm made a hard gate) **before** the re-arm fix lands, those masked fills become
+misses too. **Fix re-arm FIRST, then revisit Path-B — never the reverse.**
 
 ---
 
@@ -94,24 +109,41 @@ extraction next**, characterization-tested.
 
 ---
 
-## 4. The fix (three coordinated changes, all flag-gated)
+## 4. The fix — ONE INVARIANT (+ backstop), flag-gated
 
 New sub-flag **`strategy_schwab_1m_v2_atr_flip_rearm_enabled`** (default **False** = byte-identical).
 
-- **C1 — re-arm on rejection.** In `_resolve_hold`, on **skip / skip_gated** (L544/L551) and in
-  `_resolve_hold_on_bar` on **`drop_flip`** (L562), set `atr_fired_in_short_seg = False`. Redefine the
-  flag to mean *"an entry SUCCEEDED, or a hold is genuinely pending"* — not *"a touch was attempted."*
-- **C2 — variant-B flip-close backstop.** In `_maybe_atr_emit`, for variant B, if
-  `atr_signal["flip"] == "BUY"` AND `not atr_fired_in_short_seg` AND no hold pending → emit at
-  `cur.close` (reuse variant A's L810 path, tagged `mode="flip_close"`). Guarantees the real flip is
-  taken when flat + off-cooldown + no prior successful entry.
-- **C3 — flip-while-pending = confirm, not drop.** When a hold is pending and the bar flips long,
-  **clear the pending and let C2 fire the flip-close** (single entry path; do NOT also resolve the hold
-  → avoids double-emit). Replaces the `drop_flip` miss.
+**THE INVARIANT (replaces the old 3-rule patch):**
+> **The segment guard is claimed only when a position is actually OPENED (a fill).**
 
-Centralize the flag writes behind one helper `_claim_segment(state, on)` so all 6 touch-points
-(on_quote arm, resolve skip/reject, on_bar touch, both flip resets) stay consistent (the #237
-overlapping-path lesson).
+Hold-confirm reject, emit-without-fill (restricted names), `drop_flip` — all are *"claimed by something
+that wasn't an entry"* and must NOT consume the segment. One statement covers both miss sources (§2),
+tighter than enumerating rejection paths.
+
+**But claiming strictly on-fill leaves a double-entry gap** (a working order isn't yet a position, so the
+caller's flat/cooldown checks don't cover it). So the guard is a **3-state pending-order lifecycle**, not
+a bool:
+
+| guard state | set when | meaning |
+|---|---|---|
+| **UNCLAIMED** | initial / after release / new short seg | free to arm a touch or take the flip backstop |
+| **PROVISIONAL** | an emit is sent (touch-confirm / fallback_thin / flip-close) | a working order exists → do NOT re-emit (prevents double-entry) |
+| **CLAIMED** | a FILL lands (`position_qty > 0`) | segment done — one position |
+
+Transitions: PROVISIONAL → **CLAIMED** on fill; PROVISIONAL → **UNCLAIMED (released)** on terminal
+no-fill (broker reject / cancel / hold-confirm skip / drop_flip) → re-arm. This is what stops
+"missed-entry fixed" from becoming "double-entry created" (which costs money).
+
+⚠ **Open design point (verify in build):** does `schwab_1m_v2` consume order-terminal events to trigger
+PROVISIONAL→UNCLAIMED? If yes, drive it off that. If NOT, release on a bounded timeout (emit produced no
+`position_qty` within N s / M bars) — explicit, no silent leak. TBD which.
+
+**Backstop:** in `_maybe_atr_emit` variant B, if `flip=="BUY"` AND guard is UNCLAIMED AND flat +
+off-cooldown → emit the flip-close (reuse variant A's L810 path, `mode="flip_close"`). Guarantees the
+real flip is taken when nothing entered the segment.
+
+Centralize all guard writes behind one helper `_claim_segment(state, to_state)` so every touch-point
+stays consistent (the #237 overlapping-path lesson).
 
 ---
 
@@ -139,14 +171,27 @@ Then the backtest measures what the bot actually does. (This is why it's step 1 
 
 ---
 
-## 7. Validation — failing-test-first, and **re-pin parity to CORRECT behavior**
+## 7. Validation — RED suite (a)+(b)+(c), and **re-pin parity to CORRECT behavior**
 
-1. **RED:** on the NVVE 07-08 fixture (graze-then-flip): assert the *current* behavior — fake taken/
-   rejected at the graze, **no entry at the real BUY flip.** Pins the bug.
-2. **Backtest-faithful:** `simulate_v2` with the hold-confirm model reproduces the live decision on the
-   fixture (rejects the fake, currently misses the flip).
-3. **Apply the fix → GREEN:** same fixture now enters at the confirmed flip (13:29), still rejects the
-   fake, no double-entry.
+RED first (assert intended behavior; fails on current code; GREEN after fix). Synthetic proves branch
+isolation; **real data proves truth** (a synthetic-only suite is how parity-to-a-bug happened):
+
+- **(a) Core re-arm bug — synthetic fixture.** Dense graze → net_bps < 5 → **hold-confirm skip** → real
+  BUY flip. RED: current code consumes the segment on the skip, misses the flip. GREEN: guard released
+  on skip (UNCLAIMED) → flip-close backstop enters; no double-entry.
+- **(b) Guard-on-fill invariant — synthetic fixture.** An emit that resolves to **no fill** (broker
+  reject / cancel) must NOT consume the segment. RED: current code claims on emit → flip missed. GREEN:
+  PROVISIONAL released on terminal no-fill → flip taken. (The restricted-name / NVVE-live mechanism.)
+- **(c) Real-data golden regression.** Pull ONE actual name-day from the graze-first set, **hand-verify
+  the flip times against the TOS chart**, pin it as a golden. RED now, GREEN after fix. Truth, not
+  coder-intent.
+- **Backtest-faithful (step 1):** confirm `simulate_v2` already models the hold-confirm skip (it does,
+  L205–206) and extend it to the pending-order lifecycle so it reproduces the live emit/fill outcome
+  (incl. restricted-name no-fills) — pinned by (c).
+- ⚠ **Re-pin the "v2 touch parity" golden to the CORRECTED behavior** (real flip fires), hand-verified
+  vs the chart — NEVER to the code's post-change output. Parity-to-a-bug is what hid this.
+- **Byte-identical off:** full v2 suite green with `rearm_enabled=False`; oracle/determinism pin
+  unchanged (flip TIMES don't move — only whether we enter).
 4. ⚠ **Re-pin the "v2 touch parity" golden test to the CORRECTED behavior** (real flip fires) — NOT to
    whatever the code emits post-change. Parity-to-a-bug is exactly what hid this; the golden must encode
    *intended* behavior, verified by hand against the chart, not the code's output.
