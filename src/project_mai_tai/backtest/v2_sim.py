@@ -11,7 +11,7 @@ ExitEngine ladder — hard -1.5% / floor tiers / scales — MARKET fills at the 
 from __future__ import annotations
 
 from bisect import bisect_left, bisect_right
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 
 from project_mai_tai.backtest.atr_oracle import ATR_FACTOR, ATR_PERIOD, compute_atr_trail
@@ -200,7 +200,8 @@ def _hold_verdict(sbook, bar, touch_price, mode):
 
 def simulate_v2(schwab_bars, schwab_quotes, massive_quotes, *, qty=10, vol_floor=VOL_FLOOR,
                 mode="intrabar", latency_s=SCHWAB_LATENCY_S, rearm=False, rearm_timeout_secs=12.0,
-                rearm_poll_interval_secs=POSITION_POLL_INTERVAL_SECS, reject_bar_idxs=None):
+                rearm_poll_interval_secs=POSITION_POLL_INTERVAL_SECS, reject_bar_idxs=None,
+                stop_loss_pct=None):
     """mode='intrabar' = live hold-confirm path (the leak path); mode='bar_close' = variant-B
     touch at bar close (hold-confirm OFF, comparison). Entry fill = Schwab ask; exit = massive-bid
     ExitEngine ladder. One position at a time (flat gate).
@@ -225,6 +226,8 @@ def simulate_v2(schwab_bars, schwab_quotes, massive_quotes, *, qty=10, vol_floor
                                   reject_bar_idxs=set(reject_bar_idxs or ()))
     reject = set(reject_bar_idxs or ())
     cfg = _v2_cfg()
+    if stop_loss_pct is not None:              # research: hard-stop sweep (test 5)
+        cfg = replace(cfg, stop_loss_pct=stop_loss_pct)
     engine = ExitEngine(cfg)
     sbook = _Book(schwab_quotes)
     mbook = _Book(massive_quotes)
