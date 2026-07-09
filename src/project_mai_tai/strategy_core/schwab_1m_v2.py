@@ -178,6 +178,13 @@ class SymbolState:
     atr_prev_state: str | None = None          # prior bar's state (touch only while short)
     atr_state_age: int = 0                     # bars since last flip
     atr_fired_in_short_seg: bool = False       # one-entry-per-short-segment guard (offline B `break`)
+    # ATR re-arm lifecycle (flag-gated; INERT when strategy_..._atr_flip_rearm_enabled is
+    # off). Layered ALONGSIDE atr_fired_in_short_seg: the bool remains the flag-OFF path,
+    # this guard is the flag-ON path. The bool's removal is a gated follow-up once the flag
+    # is proven — two fields for one concept is the drift condition to retire. See
+    # docs/schwab-1m-v2-guard-bool-removal.md.
+    atr_guard: str = "UNCLAIMED"               # "UNCLAIMED" | "PROVISIONAL" (emit working) | "CLAIMED" (filled)
+    atr_emit_ts_ms: int = 0                    # wall-clock of the last PROVISIONAL emit (timeout release)
     # Hold-confirmation: at most one pending intrabar touch awaiting its N-second
     # net_delta verdict. Set in on_quote when a quote crosses the resting trail;
     # resolved in on_quote (window elapsed) or on_bar (heartbeat/flip-invalidation).
@@ -375,6 +382,17 @@ class SchwabV2Strategy:
         self._atr_max_state_age = max(
             1, int(getattr(self.settings, "strategy_schwab_1m_v2_atr_flip_max_state_age", 5))
         )
+        # ATR RE-ARM fix (variant-B): claim the segment only when a position OPENS (a fill),
+        # so a hold-confirm skip / emit-without-fill releases it and the real BUY flip is
+        # enterable. Default OFF = byte-identical to the atr_fired_in_short_seg bool. The
+        # emit->fill release is time-based and rides the 5s position poll (update_position).
+        # See docs/schwab-1m-v2-atr-flip-rearm-LIVE-impl-plan.md.
+        self._atr_rearm_enabled = bool(
+            getattr(self.settings, "strategy_schwab_1m_v2_atr_flip_rearm_enabled", False)
+        )
+        self._atr_rearm_timeout_secs = float(
+            getattr(self.settings, "strategy_schwab_1m_v2_atr_flip_rearm_timeout_secs", 12.0)
+        )
         # --- Hold-confirmation (intrabar net_delta gate; ATR variant-B only).
         # Default OFF = inert: on_quote returns None as today, no pending holds, the
         # bar-close ATR emit is unchanged. See docs/intrabar-hold-confirmation-design.md.
@@ -426,6 +444,30 @@ class SchwabV2Strategy:
                 symbol,
                 self.cfg.cooldown_bars,
             )
+        if self._atr_rearm_enabled:
+            self._poll_atr_guard(state, prev)
+
+    def _set_atr_guard(self, state: SymbolState, to_state: str, *, emit_ts_ms: int = 0) -> None:
+        """Centralized ATR re-arm guard write (the #237 overlapping-path lesson — every
+        UNCLAIMED/PROVISIONAL/CLAIMED transition goes through here). `emit_ts_ms` is stamped
+        only on the PROVISIONAL (emit) transition; cleared otherwise."""
+        state.atr_guard = to_state
+        state.atr_emit_ts_ms = emit_ts_ms if to_state == "PROVISIONAL" else 0
+
+    def _poll_atr_guard(self, state: SymbolState, prev_qty: int) -> None:
+        """ATR re-arm lifecycle, driven by the 5s position poll (the strategy is poll-only on
+        positions — no order-terminal events). A fill of OUR working order promotes the segment
+        to CLAIMED (one entry per short segment; persists through a scratch until the next SELL
+        flip). A PROVISIONAL emit that has not filled by emit+timeout re-arms to UNCLAIMED so
+        the next real flip is enterable. Time-based; on the poll grid this realizes the
+        [timeout, timeout+poll] window the backtest quantizes to (upper bound)."""
+        if prev_qty == 0 and state.position_qty > 0 and state.atr_guard == "PROVISIONAL":
+            self._set_atr_guard(state, "CLAIMED")            # our emit filled — segment done
+            return
+        if state.atr_guard == "PROVISIONAL" and state.position_qty == 0:
+            now_ms = int(datetime.now(UTC).timestamp() * 1000)
+            if now_ms - state.atr_emit_ts_ms >= self._atr_rearm_timeout_secs * 1000:
+                self._set_atr_guard(state, "UNCLAIMED")      # emit never filled — re-arm
 
     def on_bar(self, symbol: str, bar: ChartBar) -> TradeIntentDraft | None:
         state = self.watchlist_state(symbol)
@@ -509,15 +551,22 @@ class SchwabV2Strategy:
         # 2) Detect a fresh INTRABAR touch of the resting (last-closed-bar) trail
         #    while the prior bar was short, once per short segment, only when flat
         #    + no cooldown (the shared entry gates).
+        # Segment free? Flag-ON: the guard is UNCLAIMED (the arm does NOT claim — claiming
+        # happens on emit; a skip therefore re-arms). Flag-OFF: the legacy bool.
+        seg_free = (
+            state.atr_guard == "UNCLAIMED" if self._atr_rearm_enabled
+            else not state.atr_fired_in_short_seg
+        )
         if (
             state.atr_prev_state == "short"
             and state.atr_prev_trail is not None
-            and not state.atr_fired_in_short_seg
+            and seg_free
             and state.position_qty == 0
             and state.cooldown_bars_remaining == 0
             and px >= state.atr_prev_trail
         ):
-            state.atr_fired_in_short_seg = True  # claim the segment (suppresses bar-close emit)
+            if not self._atr_rearm_enabled:
+                state.atr_fired_in_short_seg = True  # legacy claim (flag-off; suppresses bar-close emit)
             state.atr_hold_pending = PendingHold(
                 touch_price=float(state.atr_prev_trail),
                 touch_ms=now_ms,
@@ -585,6 +634,9 @@ class SchwabV2Strategy:
         entry = ph.touch_price
         state.last_entry_price = entry
         trail = state.atr_trail
+        if self._atr_rearm_enabled:            # emit -> claim PROVISIONAL (released on no-fill by the poll)
+            self._set_atr_guard(state, "PROVISIONAL",
+                                emit_ts_ms=int(datetime.now(UTC).timestamp() * 1000))
         return TradeIntentDraft(
             symbol=state.symbol,
             side="buy",
@@ -671,6 +723,9 @@ class SchwabV2Strategy:
             state.atr_prev_state = None
             state.atr_state_age = 0
             state.atr_fired_in_short_seg = False
+            if self._atr_rearm_enabled:
+                self._set_atr_guard(state, "UNCLAIMED")
+                state.atr_hold_pending = None
 
         # --- modified true range (needs prior SESSION bar + SMA(high-low, period)) ---
         hl_cur = cur.high - cur.low
@@ -714,15 +769,25 @@ class SchwabV2Strategy:
         # One entry per short segment (offline B `break`).
         touch = False
         touch_price: float | None = None
+        # Segment free for a bar-close touch? Flag-ON: guard UNCLAIMED AND no hold pending
+        # (the pending-None check preserves the serialization the legacy bool gave — an
+        # armed hold must block the bar-close touch, since the arm no longer claims). The
+        # claim happens at emit (_build_hold_draft / _maybe_atr_emit), not here. Flag-OFF:
+        # the legacy bool.
+        seg_free = (
+            (state.atr_guard == "UNCLAIMED" and state.atr_hold_pending is None)
+            if self._atr_rearm_enabled else not state.atr_fired_in_short_seg
+        )
         if (
             state.atr_prev_state == "short"
             and state.atr_prev_trail is not None
             and cur.high >= state.atr_prev_trail
-            and not state.atr_fired_in_short_seg
+            and seg_free
         ):
             touch = True
             touch_price = state.atr_prev_trail
-            state.atr_fired_in_short_seg = True
+            if not self._atr_rearm_enabled:
+                state.atr_fired_in_short_seg = True
 
         # --- flip state machine (close vs PRIOR trail) ---
         flip: str | None = None
@@ -738,6 +803,8 @@ class SchwabV2Strategy:
                     state.atr_state, state.atr_trail = "short", close + loss
                     flip, state.atr_state_age = "SELL", 0
                     state.atr_fired_in_short_seg = False  # a fresh short segment opens
+                    if self._atr_rearm_enabled:
+                        self._set_atr_guard(state, "UNCLAIMED")  # new short segment — re-arm
             else:  # short
                 if close < state.atr_trail:
                     state.atr_trail = min(state.atr_trail, close + loss)
@@ -809,13 +876,26 @@ class SchwabV2Strategy:
                 return None
             entry = float(cur.close)
         else:  # "B"
-            if not atr_signal.get("touch") or atr_signal.get("touch_price") is None:
+            if atr_signal.get("touch") and atr_signal.get("touch_price") is not None:
+                entry = float(atr_signal["touch_price"])
+            elif (
+                self._atr_rearm_enabled
+                and atr_signal.get("flip") == "BUY"
+                and state.atr_guard == "UNCLAIMED"
+            ):
+                # RE-ARM backstop: the segment is free at the REAL BUY flip but no touch
+                # entered it (a prior graze skipped / timed out). Fall back to variant-A's
+                # flip-close entry so the real flip is taken.
+                entry = float(cur.close)
+            else:
                 return None
-            entry = float(atr_signal["touch_price"])
 
         state.last_entry_price = entry
         trail = atr_signal.get("trail")
         loss = atr_signal.get("loss")
+        if self._atr_rearm_enabled:            # emit -> claim PROVISIONAL (released on no-fill by the poll)
+            self._set_atr_guard(state, "PROVISIONAL",
+                                emit_ts_ms=int(datetime.now(UTC).timestamp() * 1000))
         return TradeIntentDraft(
             symbol=state.symbol,
             side="buy",

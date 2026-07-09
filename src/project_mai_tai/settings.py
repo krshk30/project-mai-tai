@@ -333,6 +333,14 @@ class Settings(BaseSettings):
     # behavior-neutral. 7-week rotating-sample data picked 5 (46%->63% win idealized).
     strategy_schwab_1m_v2_atr_flip_use_max_state_age: bool = False
     strategy_schwab_1m_v2_atr_flip_max_state_age: int = 5
+    # ATR-Flip RE-ARM fix (variant-B "burn-the-fake, miss-the-real-flip"). Default OFF =
+    # byte-identical to the shipped one-touch-per-short-segment bool. When ON, the segment
+    # guard is claimed only when a position OPENS (a fill): a hold-confirm skip / emit-
+    # without-fill releases the segment so the subsequent REAL BUY flip is enterable. The
+    # emit->fill release is time-based (wall-clock, not bars) and rides the 5s position
+    # poll. See docs/schwab-1m-v2-atr-flip-rearm-LIVE-impl-plan.md.
+    strategy_schwab_1m_v2_atr_flip_rearm_enabled: bool = False
+    strategy_schwab_1m_v2_atr_flip_rearm_timeout_secs: float = 12.0
     # Hold-confirmation (intrabar, ATR variant-B only). After an INTRABAR trail-touch,
     # watch the next N seconds of LEVELONE quotes and emit the entry only if the move
     # holds (net_delta: last quote >= touch +net_delta_bps). Screens false-flip wick
