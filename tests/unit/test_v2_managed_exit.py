@@ -604,6 +604,7 @@ def _svc_dual(sf) -> OmsRiskService:
         oms_v2_exit_management_enabled=True,
         oms_v2_exit_close_on_fill_enabled=True,
         strategy_schwab_1m_v2_webull_mirror_enabled=True,
+        strategy_schwab_1m_v2_webull_account_name=WEBULL_ACCT,
     )
     svc = OmsRiskService(
         settings, redis_client=_FakeRedis(), session_factory=sf,

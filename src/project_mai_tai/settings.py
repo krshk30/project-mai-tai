@@ -226,7 +226,7 @@ class Settings(BaseSettings):
     # also manages the v2 position on a SECOND (Webull) broker account, so both
     # legs are evaluated per quote. OFF (default) => single-account, byte-identical.
     strategy_schwab_1m_v2_webull_mirror_enabled: bool = False
-    strategy_schwab_1m_v2_webull_account_name: str = "live:v2_webull"
+    strategy_schwab_1m_v2_webull_account_name: str = "live:orb"
     # Cold-start warmup lookback (calendar days). The first poll per symbol
     # (since=0) requests this many days back so the indicator-seed batch
     # always reaches the last completed trading session even across a

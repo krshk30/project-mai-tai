@@ -199,6 +199,29 @@ async def test_mirror_on_creates_webull_leg():
 
 
 @pytest.mark.asyncio
+async def test_mirror_skips_when_webull_account_already_holds_symbol():
+    """Collision guard: v2 SHARES the Webull account with ORB. If that account already holds
+    the symbol (here: an ORB armed native stop), the mirror is SKIPPED — only the primary leg,
+    so v2 never fights ORB for the same name / the same shared broker position."""
+    from project_mai_tai.oms.service import ArmedHardStop
+    adapter = _MirrorAdapter()
+    service = _oms(adapter=adapter, mirror_on=True)
+    # ORB already holds VSME on the shared Webull account (its native hard stop is armed).
+    service._armed_hard_stops[("orb", WEBULL, "VSME")] = ArmedHardStop(
+        strategy_code="orb", broker_account_name=WEBULL, symbol="VSME",
+        quantity=Decimal("5"), entry_price=Decimal("2.50"), stop_loss_pct=1.5,
+        stop_price=Decimal("2.46"), quote_max_age_ms=2000, initial_panic_buffer_pct=0.5,
+    )
+    events = await service.process_trade_intent(_v2_open(symbol="VSME"))
+
+    # Primary leg unaffected; the mirror is SKIPPED -> a single (primary) submit + managed row.
+    assert [e.payload.status for e in events] == ["accepted", "filled"]
+    assert adapter.submits == [(PRIMARY, "VSME")]
+    managed = _managed(service)
+    assert len(managed) == 1 and managed[0].broker_account_name == PRIMARY
+
+
+@pytest.mark.asyncio
 async def test_mirror_webull_reject_does_not_affect_primary():
     """Flag ON, the webull adapter rejects -> the primary leg is fully intact, the mirror
     reject is recorded + swallowed, no crash, no primary managed-row disturbance."""
