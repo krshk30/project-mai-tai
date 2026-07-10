@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    Date,
     DateTime,
     ForeignKey,
     Index,
@@ -705,4 +706,51 @@ class OmsArmedStop(Base):
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, server_default=func.now(), onupdate=utcnow
+    )
+
+
+class ScannerConfirmedEvent(Base):
+    """Research-only capture of the momentum scanner's confirm/evict decisions.
+
+    Append-only. One CONFIRM row per confirmed candidate (carrying the confirm_path /
+    rank_score / the shares_outstanding the scanner gated on as ``float_used``), one
+    FADE row when a confirmed candidate is pruned, one RETENTION_DROP row when a
+    feed-retention symbol falls out of the retained set. Together they reconstruct
+    per-symbol ``[confirmed_at -> fade_at -> retention_drop_at]`` windows for the
+    backtest. Written ONLY when ``scanner_confirmed_capture_enabled`` is set (default
+    False -> no rows, live path byte-identical). Natural-key dedupe on
+    (trade_date, symbol, event_type, event_at). ``reconfirm_seq`` counts prior CONFIRM
+    rows for the (trade_date, symbol) so re-confirmations are distinguishable.
+    """
+
+    __tablename__ = "scanner_confirmed_events"
+    __table_args__ = (
+        UniqueConstraint(
+            "trade_date",
+            "symbol",
+            "event_type",
+            "event_at",
+            name="uq_scanner_confirmed_events_key",
+        ),
+        Index("ix_scanner_confirmed_events_trade_date", "trade_date"),
+        Index("ix_scanner_confirmed_events_symbol", "symbol"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    trade_date: Mapped[date] = mapped_column(Date, nullable=False)
+    symbol: Mapped[str] = mapped_column(String(16), nullable=False)
+    event_type: Mapped[str] = mapped_column(String(24), nullable=False)
+    event_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    confirm_path: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    rank_score: Mapped[Decimal | None] = mapped_column(Numeric(8, 2), nullable=True)
+    force_watchlist: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    price: Mapped[Decimal | None] = mapped_column(Numeric(18, 6), nullable=True)
+    day_volume: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    float_used: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    change_pct: Mapped[Decimal | None] = mapped_column(Numeric(10, 3), nullable=True)
+    reconfirm_seq: Mapped[int] = mapped_column(
+        Integer, default=0, server_default=text("0"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, server_default=func.now(), nullable=False
     )
