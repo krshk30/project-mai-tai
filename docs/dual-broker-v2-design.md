@@ -43,34 +43,35 @@ On a v2 open intent, at OMS `_evaluate_risk`/submit, when `WEBULL_FALLBACK_ENABL
 
 Flag OFF = the fallback branch is never taken; every v2 order routes to Schwab exactly as today (byte-identical).
 
-## 3. Webull account — SHARE `live:orb` (default), separate account as fallback
+## 3. Webull account — SEPARATE `live:v2_webull` (default). NOT `live:orb`.
 
-**Revised 2026-07-10 (operator + code verification):** the OMS **multiplexes exit strategies by strategy, not by
-broker** (see §1) — a v2 leg tagged `(strategy_code=schwab_1m_v2, broker_account_name=live:orb)` gets the v2 CW
-ladder while ORB legs on the same account get the trail, both executing via the Webull adapter. So **reuse the
-existing ORB Webull account `live:orb`** (operator has no separate account, and provisioning one is unnecessary
-for the exit logic). **Enable-time residuals to verify (smaller than a separate-account rewrite):**
-- (i) **Unique `(broker_account_name, symbol)` open-row constraint** (`uq_oms_managed_positions_open_symbol`):
-  ORB + v2 can't both hold the SAME symbol open on `live:orb` at once. Rare (different names); handle the edge
-  (e.g. v2 skips a symbol ORB already holds on the shared account).
-- (ii) **Reconciliation attribution** — the reconciler must tag each leg on `live:orb` to the right strategy.
-- (iii) **ORB's 2-entry cap** (`_ENTRY_ATTEMPT_CAP`, orb_app) is ORB-strategy-internal → v2 legs should NOT
-  consume it; confirm during the build.
-Fallback: if (i)-(iii) prove messy at enable, provision a dedicated `live:v2_webull` account then. Not now.
+**Revised 2026-07-10 (operator, final):** default to a **dedicated `live:v2_webull` Webull account.** The OMS
+*can* multiplex exits by strategy on one account (§1), so sharing is technically possible — BUT the killer is the
+**unique `(broker_account_name, symbol)` open-row constraint** (`uq_oms_managed_positions_open_symbol`): ORB and
+v2 trade **the exact same universe** (momentum gappers / Schwab-ineligible foreign names), so a **live
+shared-symbol collision on `live:orb` is LIKELY, not rare** — both bots would fight for the same open row on the
+same name. A separate account removes that entirely, plus keeps reconciliation attribution, protected symbols,
+and ORB's entry cap cleanly per-strategy. **OPS STEP (before ENABLE, not merge):** provision `live:v2_webull` +
+wire its credentials/hash into the routing map; the account name is a config value. The build (flag-off) does not
+need the account to exist — only the enable does.
 
-## 4. Schema — reassessed (the #5 concern)
+## 4. Schema — GREP-VERIFIED 2026-07-10: NO new field; routing PR earns the #404 rehydrate test
 
-Reusing `broker_account_name` means **the exit-read row is unchanged** → the #5 "broker column touches the live
-exit path" risk is largely dissolved. **VERIFY during build (gates whether ANY schema touch is needed):**
-- (a) Does anything assume a v2 managed row's account == `live:schwab_1m_v2` (hardcoded), rather than reading
-  `broker_account_name`? Grep the exit engine + reconciler + F2 rehydrate.
-- (b) **F2 rehydrate** (`oms_armed_stops` + managed-row boot rehydrate, #394): does it carry/rehydrate
-  `broker_account_name` for a v2-Webull leg, and re-arm the stop on the *correct* broker? For ORB (Webull) the
-  native stop path already exists; confirm it composes with a v2-owned Webull leg.
-- **IF (a) or (b) forces any new/changed persisted field** → that IS a live-exit-path schema touch and MUST earn
-  its merge with a **#404-style rehydrate/survival test**: arm → persist → restart OMS → rehydrate → assert
-  byte-identical exit behaviour with the field present-but-unused (flag off). If no schema change → no such gate
-  needed, but we still prove byte-identical-off behaviourally.
+Both persisted exit rows ALREADY carry the broker axis and rehydrate already reads it:
+- `oms_managed_positions.broker_account_name` (varchar 128, indexed) AND `oms_armed_stops.broker_account_name`
+  (varchar 128, indexed) both exist today.
+- F2 `_rehydrate_armed_hard_stops` **reads** it: `key = _hard_stop_key(strategy_code, broker_account_name, symbol)`
+  and re-arms `ArmedHardStop(broker_account_name=...)`. The v2 CW ladder rehydrates from `oms_managed_positions`
+  (same field); the exit adapter is resolved from it (`_adapter_for_account`, service.py:3854).
+
+→ **NO new schema field is required.** But `broker_account_name` **is read on rehydrate**, so per the merge rule
+the ROUTING PR earns a **#404-style rehydrate/survival test** on two axes:
+1. **Flag OFF = byte-identical:** no v2 order routes to Webull → every v2 leg still writes
+   `broker_account_name = live:schwab_1m_v2` → rehydrate/exit values unchanged vs today. Prove it (behavioural +
+   value-identical).
+2. **Flag ON = correct rehydrate:** a v2-Webull leg (`broker_account_name = live:v2_webull`) arms → persists (both
+   tables) → **restart OMS** → rehydrates → re-arms the CW hard stop on the **Webull** adapter (NOT Schwab) → exit
+   lifecycle intact. arm → persist → restart → rehydrate → assert.
 
 ## 5. Exits on Webull — the load-bearing risk
 
@@ -96,11 +97,15 @@ cancel-on-other-leg, EH sessions. This is where the qty-1 test focuses and where
   persisted field changed, the #404-style rehydrate/survival test.
 - Genuine-green CI, no admin. Attended deploy flag-off (fleet-flat).
 
-## 8. qty-1 Webull plumbing test — gates the ENABLE, not the merge
+## 8. qty-1 Webull plumbing test — exercises EVERY ladder leg (gates the ENABLE, not the merge)
 
-On the shared `live:orb` Webull account: qty-1 v2-style entry → CW exit ladder → confirm each leg fills/cancels
-cleanly (the ORB go-live 4-bug shakeout, expect surprises). **Do NOT enable until this passes.** Merge flag-off
-first; the plumbing test + the after-hours live smoke + the forward-data gate all precede full RTH enable (§10).
+On the separate `live:v2_webull` account, the harness must drive/verify **every CW exit leg on Webull, not just a
+single fill** (operator, 2026-07-10): (1) entry fill; (2) **+2% partial** (sell 50%); (3) **+2% floor** hold on the
+remainder; (4) **2% trailing** stop exit; (5) **−5% hard stop** (native STOP_LOSS mapping #386); (6) **bar-close
+ATR flip** close; plus fill-polling (#375), 4-dec rounding (#374), limit+session for EH. Each leg's submit → fill
+→ cancel-of-siblings must be confirmed on Webull (the ORB go-live 4-bug shakeout, expect surprises). **Do NOT
+enable until every leg passes.** Merge flag-off first; the leg-complete plumbing test + the after-hours live smoke
++ the forward-data gate all precede full RTH enable (§10).
 
 ## 9. Sequence
 
