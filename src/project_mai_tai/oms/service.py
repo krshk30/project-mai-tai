@@ -864,6 +864,27 @@ class OmsRiskService:
                     provider=self.settings.provider_for_account(webull_account_name),
                     environment=self.settings.environment,
                 )
+                # Collision guard: v2 SHARES the Webull account with ORB (operator has no
+                # separate account). If ANY strategy already holds this symbol on that account,
+                # SKIP the mirror — never fight ORB for the same name or the same shared broker
+                # position (the unique (account,symbol) open-managed-row + a doubled broker lot).
+                armed_here = any(
+                    st.broker_account_name == webull_account_name and st.symbol == symbol
+                    for st in self._armed_hard_stops.values()
+                )
+                managed_here = self.store.get_open_managed_position(
+                    session, broker_account_name=webull_account_name, symbol=symbol
+                )
+                held_qty = self.store.get_account_position_qty_by_name(
+                    session, broker_account_name=webull_account_name, symbol=symbol
+                )
+                if armed_here or managed_here is not None or held_qty != 0:
+                    self.logger.info(
+                        "[OMS-V2-MIRROR] skip %s: %s already holds it (armed=%s managed=%s qty=%s) "
+                        "— no collision with ORB",
+                        symbol, webull_account_name, armed_here, managed_here is not None, held_qty,
+                    )
+                    return
                 intent = self.store.create_trade_intent(
                     session,
                     strategy=strategy,
