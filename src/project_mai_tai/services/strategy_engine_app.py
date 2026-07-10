@@ -52,6 +52,7 @@ from project_mai_tai.events import (
 from project_mai_tai.log import configure_logging
 from project_mai_tai.runtime_registry import strategy_registration_map
 from project_mai_tai.services.runtime import _install_signal_handlers
+from project_mai_tai.services.scanner_confirmed_capture import capture_events
 from project_mai_tai.settings import Settings, get_settings
 from project_mai_tai.market_data.models import LiveBarRecord, QuoteTickRecord, TradeTickRecord
 from project_mai_tai.market_data.massive_indicator_provider import MassiveIndicatorProvider
@@ -3965,6 +3966,7 @@ class StrategyEngineState:
             self.feed_retention_policy.config.degraded_enabled,
         )
         self.feed_retention_states: dict[str, RetainedSymbolState] = {}
+        self._prev_scanner_retention_symbols: set[str] = set()
         self.global_manual_stop_symbols: set[str] = set()
         self.manual_stop_symbols_by_strategy: dict[str, set[str]] = {}
         self.bot_handoff_symbols_by_strategy: dict[str, set[str]] = {}
@@ -4525,6 +4527,23 @@ class StrategyEngineState:
         }
         self.retained_watchlist = list(watchlist)
         self.feed_retention_states = self._aggregate_bot_retention_states()
+
+        if getattr(self.settings, "scanner_confirmed_capture_enabled", False):
+            try:
+                current_retention = set(self.feed_retention_states)
+                dropped_retention = self._prev_scanner_retention_symbols - current_retention
+                self._prev_scanner_retention_symbols = current_retention
+                capture_now = now_eastern()
+                capture_events(
+                    self.session_factory,
+                    trade_date=capture_now.date(),
+                    now=capture_now,
+                    all_confirmed=self.all_confirmed,
+                    faded_symbols=faded_confirmed_symbols,
+                    dropped_retention_symbols=dropped_retention,
+                )
+            except Exception:
+                logger.exception("scanner_confirmed_capture hook failed")
 
         return {
             "alerts": alerts,

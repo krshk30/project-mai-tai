@@ -362,6 +362,7 @@ class Settings(BaseSettings):
     # disable the age check.
     strategy_seeded_snapshot_max_age_seconds: float = 3600.0
     scanner_feed_retention_enabled: bool = True
+    scanner_confirmed_capture_enabled: bool = False
     scanner_feed_retention_structure_bars: int = 10
     scanner_feed_retention_no_activity_minutes: int = 20
     scanner_feed_retention_cooldown_volume_ratio: float = 0.4
