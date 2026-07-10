@@ -176,6 +176,31 @@ def test_round_to_tick_grid() -> None:
     assert str(WebullBrokerAdapter._round_to_tick(Decimal("0.54325"))) == "0.5433"
 
 
+@pytest.mark.parametrize(
+    "session,otype,expected",
+    [
+        ("am", "LIMIT", (True, True)),           # pre-market limit -> EH
+        ("pm", "LIMIT", (True, True)),           # post-market limit -> EH
+        ("pre", "LIMIT", (True, True)),
+        ("post", "LIMIT", (True, True)),
+        ("premarket", "LIMIT", (True, True)),
+        ("aftermarket", "LIMIT", (True, True)),
+        ("STOP_LOSS_LIMIT", "STOP_LOSS_LIMIT", (False, False)),  # session token unknown -> RTH
+        ("am", "MARKET", (False, True)),         # EH requested but MARKET -> RTH-only + warning
+        ("pm", "STOP_LOSS", (False, True)),      # EH requested but STOP -> RTH-only + warning
+        ("", "LIMIT", (False, False)),           # no session -> RTH
+        ("rth", "LIMIT", (False, False)),        # unknown token -> RTH
+    ],
+)
+def test_extended_hours_flag(session, otype, expected) -> None:
+    req = OrderRequest(
+        client_order_id="c", broker_account_name="live:orb", strategy_code="s", symbol="F",
+        side="buy", intent_type="open", quantity=Decimal("1"), reason="t",
+        metadata={"session": session}, order_type="limit", time_in_force="day",
+    )
+    assert WebullBrokerAdapter._extended_hours_flag(req, otype) == expected
+
+
 @pytest.mark.asyncio
 async def test_submit_limit_order_rounds_offgrid_price(fake_sdk) -> None:
     client = _FakeClient({"place": {"order_id": "WB-78"}})
