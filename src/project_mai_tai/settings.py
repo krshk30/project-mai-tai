@@ -354,6 +354,18 @@ class Settings(BaseSettings):
     strategy_schwab_1m_v2_hold_confirm_n_seconds: int = 20
     strategy_schwab_1m_v2_hold_confirm_net_delta_bps: float = 5.0
     strategy_schwab_1m_v2_hold_confirm_min_ticks: int = 5
+    # Confirmed-window entry (ATR-Flip variant "CW"; PR #1 of the confirmed-window
+    # ruleset). On a BUY flip, WAIT 3 bars, track the highest high of those 3 bars,
+    # then enter when a later bar's HIGH breaks above it (a SELL flip before the break
+    # cancels the setup). Entry/reference price = that 3-bar-high break level
+    # (idealized, like variant B's touched trail). Bypasses the A/B touch/flip logic
+    # in _maybe_atr_emit. Pair with strategy_schwab_1m_v2_atr_only_mode=True so P1/P2
+    # never trade ahead of it and every fresh flat bar reaches the ATR emit (so the
+    # 3-bar wait counter advances each bar). Default OFF = byte-identical: the branch
+    # is skipped, A/B is unchanged. Reversible kill: flip back to False + restart.
+    # Entry side ONLY — OMS still owns exits (the +2% target / -5% hard stop /
+    # bar-close flip land in PRs #2 and #3). See docs/atr-confirmed-window-forward-test.md.
+    strategy_schwab_1m_v2_confirmed_window_enabled: bool = False
     strategy_macd_30s_reclaim_excluded_symbols: str = "JEM,CYCN,BFRG,UCAR,BBGI"
     # Maximum age (seconds) for the `scanner_confirmed_last_nonempty` snapshot
     # to be eligible for startup restore. Older snapshots are skipped, so
