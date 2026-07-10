@@ -3874,6 +3874,10 @@ class StrategyEngineState:
         session_factory: sessionmaker[Session] | None = None,
     ):
         self.settings = settings or get_settings()
+        # Retained on the state so process_snapshot_batch's scanner-confirmed-capture hook
+        # (gated by scanner_confirmed_capture_enabled) can open a DB session. Without this the
+        # hook raised AttributeError every tick and captured nothing while the flag was on.
+        self.session_factory = session_factory
         self._schwab_stream_bot_codes = self._resolve_schwab_stream_bot_codes()
         self._schwab_native_history_bot_codes = self._resolve_schwab_native_history_bot_codes()
         resolved_now_provider = now_provider or now_eastern

@@ -1286,6 +1286,16 @@ def test_seeded_snapshot_restored_when_within_max_age(monkeypatch) -> None:
     assert service.state.bot_handoff_symbols_by_strategy["macd_30s"] == {"FRESH"}
 
 
+def test_strategy_engine_state_retains_session_factory() -> None:
+    """Regression: process_snapshot_batch's scanner-confirmed-capture hook reads
+    ``self.session_factory``. StrategyEngineState must retain the constructor arg, else the
+    hook raises AttributeError on every snapshot batch and the capture silently no-ops
+    (the bug that left scanner_confirmed_events empty despite the flag being on)."""
+    sentinel = object()
+    state = StrategyEngineState(settings=make_test_settings(), session_factory=sentinel)
+    assert state.session_factory is sentinel
+
+
 def test_retention_cooldown_keeps_feed_alive_but_blocks_entries(monkeypatch: pytest.MonkeyPatch) -> None:
     now_box = {"value": datetime(2026, 4, 17, 10, 0)}
     state = StrategyEngineState(
