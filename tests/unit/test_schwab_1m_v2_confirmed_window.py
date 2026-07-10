@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from decimal import Decimal
+from types import SimpleNamespace
 
 from project_mai_tai.settings import Settings
 from project_mai_tai.strategy_core.schwab_1m_v2 import (
@@ -187,3 +188,49 @@ def test_cw_flip_close_none_on_stale_bar():
     state.position_qty = 10
     state.bars.append(_bar(10.0, ts=_now_ms() - 600_000))  # 10 min old -> stale
     assert strat._maybe_cw_flip_close(state, _sig(flip="SELL", state="short")) is None
+
+
+# ------- PR #4: CW is exclusive with the on_quote hold-confirm TOUCH entry -----------
+
+def _quote(last: float, ms: int = 0):
+    return SimpleNamespace(
+        last_price=last, bid_price=last - 0.01, ask_price=last + 0.01,
+        quote_time_ms=ms or _now_ms(),
+    )
+
+
+def _arm_touch_state(strat, prev_trail: float = 10.0):
+    """Set up the intrabar-touch preconditions on_quote arms a hold from."""
+    state = strat.watchlist_state("TEST")
+    state.atr_prev_state = "short"
+    state.atr_prev_trail = prev_trail
+    state.position_qty = 0
+    state.cooldown_bars_remaining = 0
+    state.atr_fired_in_short_seg = False
+    return state
+
+
+def test_cw_disables_on_quote_hold_confirm_entry():
+    # Both flags on (mirrors the live env: hold_confirm=true). CW must suppress the
+    # quote-path touch entry so it can't fire alongside the CW bar-path wait-3 entry.
+    strat = SchwabV2Strategy(Settings(
+        strategy_schwab_1m_v2_confirmed_window_enabled=True,
+        strategy_schwab_1m_v2_hold_confirm_enabled=True,
+        strategy_schwab_1m_v2_atr_flip_enabled=True,
+    ))
+    state = _arm_touch_state(strat, 10.0)
+    draft = strat.on_quote("TEST", _quote(10.5))  # crosses the resting short trail
+    assert draft is None
+    assert state.atr_hold_pending is None          # CW suppressed the arm
+
+
+def test_hold_confirm_still_arms_when_cw_off():
+    # Byte-identical off: with CW off, the hold-confirm path still arms as before.
+    strat = SchwabV2Strategy(Settings(
+        strategy_schwab_1m_v2_confirmed_window_enabled=False,
+        strategy_schwab_1m_v2_hold_confirm_enabled=True,
+        strategy_schwab_1m_v2_atr_flip_enabled=True,
+    ))
+    state = _arm_touch_state(strat, 10.0)
+    strat.on_quote("TEST", _quote(10.5))
+    assert state.atr_hold_pending is not None       # unchanged behavior
