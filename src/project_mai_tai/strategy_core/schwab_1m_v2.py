@@ -189,6 +189,14 @@ class SymbolState:
     # net_delta verdict. Set in on_quote when a quote crosses the resting trail;
     # resolved in on_quote (window elapsed) or on_bar (heartbeat/flip-invalidation).
     atr_hold_pending: "PendingHold | None" = None
+    # Confirmed-window entry (ATR variant "CW"; flag-gated, INERT when
+    # strategy_schwab_1m_v2_confirmed_window_enabled is off — never read/written on the
+    # A/B path). After a BUY flip we arm and wait 3 bars, tracking the highest high of
+    # those bars, then enter on the first later bar whose HIGH breaks it. Reset at the
+    # 04:00-ET session anchor alongside the other atr_* fields.
+    cw_armed: bool = False                     # a BUY flip fired; waiting/watching for the break
+    cw_bars_waited: int = 0                     # bars since the arming flip (1..3 = wait; >3 = watch)
+    cw_three_bar_high: float = 0.0             # max high over the 3 wait bars = the break trigger
 
 
 @dataclass
@@ -407,6 +415,12 @@ class SchwabV2Strategy:
         )
         self._hold_confirm_min_ticks = max(
             2, int(getattr(self.settings, "strategy_schwab_1m_v2_hold_confirm_min_ticks", 5))
+        )
+        # Confirmed-window entry (variant "CW"). Default OFF = byte-identical: the
+        # branch in _maybe_atr_emit is skipped and the A/B logic is unchanged. See
+        # docs/atr-confirmed-window-forward-test.md.
+        self._cw_enabled = bool(
+            getattr(self.settings, "strategy_schwab_1m_v2_confirmed_window_enabled", False)
         )
         raw_atr_probe = str(
             getattr(self.settings, "strategy_schwab_1m_v2_atr_flip_probe_symbols", "") or ""
@@ -733,6 +747,10 @@ class SchwabV2Strategy:
             if self._atr_rearm_enabled:
                 self._set_atr_guard(state, "UNCLAIMED")
                 state.atr_hold_pending = None
+            # Confirmed-window setup does not carry across the session anchor.
+            state.cw_armed = False
+            state.cw_bars_waited = 0
+            state.cw_three_bar_high = 0.0
 
         # --- modified true range (needs prior SESSION bar + SMA(high-low, period)) ---
         hl_cur = cur.high - cur.low
@@ -861,6 +879,13 @@ class SchwabV2Strategy:
             return None
         if not bar_is_fresh:
             return None  # never fire on a replayed historical touch
+        # Confirmed-window entry (variant "CW"): flag-gated, and when on it OWNS the
+        # ATR entry decision (wait-3-bar break) — the A/B touch/flip logic below is
+        # bypassed. Placed BEFORE the vol floor so the 3-bar wait counter advances on
+        # every fresh flat bar; the floor is re-applied at the break/entry bar inside.
+        # OFF (default) = skipped entirely -> byte-identical to the A/B path.
+        if self._cw_enabled:
+            return self._cw_entry(state, cur, atr_signal)
         if cur.volume <= self._atr_vol_floor:
             return None  # the only filter: bar volume > floor
 
@@ -922,6 +947,84 @@ class SchwabV2Strategy:
                 "atr_loss": f"{loss:.6f}" if loss is not None else "",
                 "atr_state": str(atr_signal.get("state")),
                 "atr_state_age": str(atr_signal.get("state_age")),
+                "bar_high": f"{cur.high:.4f}",
+                "volume": str(cur.volume),
+                "source": "schwab_1m_v2",
+                "strategy_version": STRATEGY_VERSION,
+                "bar_time_ms": str(cur.timestamp_ms),
+            },
+        )
+
+    def _cw_entry(
+        self, state: SymbolState, cur: OHLCVBar, atr_signal: dict
+    ) -> TradeIntentDraft | None:
+        """Confirmed-window entry (variant "CW"). Reached only when the flag is on,
+        from _maybe_atr_emit (so: flat + no cooldown + fresh bar + Paths 1/2 off).
+
+        On a BUY flip we arm and reset the wait; over the next 3 bars we track the
+        highest high; from the 4th bar on we enter the first bar whose HIGH breaks that
+        3-bar high (idealized fill = the break level, like variant B's touched trail). A
+        SELL flip before the break cancels the setup (matches the offline harness's
+        entry window [flip+3 bars .. next SELL flip)). One entry per armed setup; the
+        cooldown after a fill (and the next BUY flip) re-arm it. Byte-neutral when the
+        flag is off — this method is unreachable."""
+        flip = atr_signal.get("flip")
+        if flip == "BUY":
+            # New long segment: arm and (re)start the 3-bar wait.
+            state.cw_armed = True
+            state.cw_bars_waited = 0
+            state.cw_three_bar_high = 0.0
+            return None
+        if flip == "SELL":
+            # Trail flipped short before the break -> setup invalidated.
+            state.cw_armed = False
+            return None
+        if not state.cw_armed:
+            return None
+
+        state.cw_bars_waited += 1
+        if state.cw_bars_waited <= 3:
+            # Wait phase: accumulate the 3-bar high (the break trigger).
+            state.cw_three_bar_high = max(state.cw_three_bar_high, float(cur.high))
+            return None
+
+        # Watch phase: enter on the first bar breaking the 3-bar high, liquidity
+        # permitting. Stay armed on a non-break or a thin bar so a later break enters.
+        if float(cur.high) <= state.cw_three_bar_high:
+            return None
+        if cur.volume <= self._atr_vol_floor:
+            return None  # broke on a sub-floor bar; wait for a liquid break
+
+        entry = float(state.cw_three_bar_high)  # idealized stop-buy fill at the trigger
+        state.cw_armed = False
+        state.last_entry_price = entry
+        trail = atr_signal.get("trail")
+        loss = atr_signal.get("loss")
+        logger.info(
+            "[V2-CW] %s ENTER break=%.4f high=%.4f trail=%s state=%s age=%s vol=%d",
+            state.symbol, entry, cur.high,
+            f"{trail:.4f}" if trail is not None else "none",
+            str(atr_signal.get("state")), str(atr_signal.get("state_age")),
+            int(cur.volume),
+        )
+        return TradeIntentDraft(
+            symbol=state.symbol,
+            side="buy",
+            intent_type="open",
+            quantity=Decimal(str(self._atr_qty)),
+            reason="schwab_1m_v2 ATR Flip CW",
+            metadata={
+                "path": "ATR Flip",
+                "entry_price": f"{entry:.4f}",
+                # reference_price = the 3-bar-high break level (idealized fill, no
+                # slippage), analogous to variant B's touched-trail entry.
+                "reference_price": f"{entry:.4f}",
+                "atr_variant": "CW",
+                "atr_trail": f"{trail:.4f}" if trail is not None else "",
+                "atr_loss": f"{loss:.6f}" if loss is not None else "",
+                "atr_state": str(atr_signal.get("state")),
+                "atr_state_age": str(atr_signal.get("state_age")),
+                "cw_three_bar_high": f"{state.cw_three_bar_high:.4f}",
                 "bar_high": f"{cur.high:.4f}",
                 "volume": str(cur.volume),
                 "source": "schwab_1m_v2",
