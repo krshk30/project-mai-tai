@@ -65,11 +65,47 @@ time) — the old "Schwab ~0s" is an artifact. Columns = broker FILL latency ADD
 | V2 | 50% | +0.43% | −0.69% | −$5.41 |
 | V3 | 57% | +0.93% | −0.51% | −$4.14 |
 
+## ④ FORWARD RUN — 2026-07-09 + 2026-07-10 (real confirm→drop windows, 8 name-days with an ATR entry)
+`smart_exit_universe_20260710T210001Z.log` (21:00 UTC cron). 9 (07-09) + 10 (07-10) confirmed names → **8
+name-days produced ≥1 ATR entry**. First run with 07-10's real FADE drops. **Routing: 7/8 name-days
+Schwab-INELIGIBLE → Webull** (GMM, HAO, JLHL, RPGL, TDTH, VRAX, YMAT; only SUNE → Schwab) — the confirmed
+movers pay the most latency. V3 normalization here = `atr≤0.2` (the run's best sweep point).
+
+**① Idealized (0-lat fantasy):**
+| Variant | n | Win% | Median | Mean | Net$ |
+|---|---|---|---|---|---|
+| BASE | 16 | 75% | +2.00% | +0.50% | +$4.68 |
+| V1 | 16 | 75% | +1.94% | +0.53% | +$4.79 |
+| V2 | 26 | 73% | +1.90% | +0.30% | +$6.11 |
+| **V3** (atr≤0.2) | 25 | **76%** | +1.98% | +0.50% | **+$10.19** |
+
+**② Honest (6.5s floor to BOTH brokers + fill latency added):**
+| Variant | +0s (floor only) | +0.5s | +1s | +2s | +3s | +14s |
+|---|---|---|---|---|---|---|
+| BASE | **−0.85%** | −0.36% | −0.54% | −0.49% | −0.25% | −0.01% |
+| V1 | −0.96% | −0.51% | −0.63% | −0.75% | −0.44% | −0.26% |
+| V2 | −1.24% | −0.83% | −0.83% | −0.77% | −0.58% | −0.74% |
+| V3 | −0.41% | +0.15% | +0.10% | −0.19% | +0.01% | +0.26% |
+
+**③ Realistic broker-split (Webull-routed at floor+3s; Schwab floor-only, still unmeasured → upper bound):**
+| Variant | n | Win% | Median | Mean | Net$ |
+|---|---|---|---|---|---|
+| BASE | 17 | 59% | +2.00% | **−0.34%** | −$2.48 |
+| V1 | 17 | 59% | +0.87% | −0.52% | −$4.49 |
+| V2 | 28 | 57% | +1.06% | −0.64% | −$8.75 |
+| V3 | 27 | 70% | +1.21% | −0.05% | +$0.06 |
+
+**Read:** at the FLOOR ALONE every variant is mean-negative again (BASE −0.85%). V1/V2 are **out** — re-entry
+adds latency-exposed losers (V2 −$8.75). V3 is the only not-clearly-negative one (≈breakeven, +$0.06) but
+"least-bad on 8 name-days" = noise, not edge. **BASE is a fine incumbent — nothing beats it after latency.**
+Consistent with run ①–③ (07-09 4-name): the sign holds on more data. Median +2.00% / mean ~0 → trust the mean.
+
 ## Verdict
-Every variant is **positive at 0 latency (+$6–11) but negative once the ~6.5s the system already runs at is
-charged** (BASE −1.39% at the floor alone; −0.65% realistic split). V3 is consistently the *least* negative but
-still negative. **The median stays pinned near +2% while the mean craters** — the tell that winners become
-losers (operator stopping-rule criterion 4: trust the MEAN; if mean/median diverge in sign, trust the mean).
+Every variant is **positive at 0 latency (+$5–11) but negative once the ~6.5s the system already runs at is
+charged** (BASE −1.39%/−0.85% at the floor alone across both runs; −0.65%/−0.34% realistic split). V3 is
+consistently the *least* negative but not a real edge. **The median stays pinned near +2% while the mean craters**
+— the tell that winners become losers (operator stopping-rule criterion 4: trust the MEAN; if mean/median diverge
+in sign, trust the mean).
 → **The confirmed-window rule is characterized-but-unaffordable at today's latency.** You can't out-exit a bad
 entry — on the raw gapper universe (209 trades, 5 days) every variant lost even harder. The weak link is the
 ENTRY edge surviving latency, not the exit shape.
@@ -84,8 +120,9 @@ ENTRY edge surviving latency, not the exit shape.
 4. Live canary at **qty 4** (2→4, 07-10) — accepted 2× loss exposure for a stronger $ signal.
 
 ## Data sources / how to reproduce
-- Confirmed-set backtest: `python smart_exit_reentry.py confirmed-db 2026-07-09` (VPS, `/home/trader/wt-atr-ab/`,
-  niced, off-hours). Reads real [confirm→drop] windows from `scanner_confirmed_events`.
+- Confirmed-set backtest: `python smart_exit_reentry.py confirmed-db 2026-07-09 2026-07-10` (VPS,
+  `/home/trader/wt-atr-ab/`, niced, off-hours). Reads real [confirm→drop] windows from `scanner_confirmed_events`
+  (multiple dates accumulate the forward series; run ④ logs to `smart_exit_universe_<stamp>.log`).
 - Broker-aware latency: same script; `SYSTEM_FLOOR_S=6.5`, `WEBULL_LAT_S=3.0`, `SCHWAB_INELIGIBLE` set from the
   live `broker_orders` reject history. Nightly universe/confirmed run: cron 21:00 UTC (17:00 ET) → ntfy.
 - Latency measurement: `broker_order_events`/`fills`/`trade_intents` timestamp spans across the 122 v2 fills.
