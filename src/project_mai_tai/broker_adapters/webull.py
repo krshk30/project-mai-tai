@@ -166,14 +166,17 @@ class WebullBrokerAdapter:
         stop_price = self._meta_price(request, "stop_price")
         if order_type in {"STOP", "STOP_LIMIT", "STOP_LOSS", "STOP_LOSS_LIMIT"} and stop_price is not None:
             po.set_stop_price(str(self._round_to_tick(stop_price)))
-        # extended_hours_trading is REQUIRED by the API (null -> ILLEGAL_PARAMETER 417);
-        # always set it, defaulting to RTH-only (False). (Verified on the live test order.)
+        # extended_hours_trading is REQUIRED by the API (null -> ILLEGAL_PARAMETER 417); always
+        # set it. Pre- AND post-market are supported for LIMIT-family orders; a MARKET/STOP_LOSS
+        # in an EH session is downgraded to RTH-only with a warning (it can't fill EH).
         if hasattr(po, "set_extended_hours_trading"):
-            ext = str(request.metadata.get("extended_hours", request.metadata.get("session", ""))).strip().lower()
-            ext_flag = ext in {"true", "1", "yes", "am", "pm", "extended"}
-            # A STOP_LOSS is market-on-trigger; Webull requires market orders to be RTH-only.
-            if order_type == "STOP_LOSS":
-                ext_flag = False
+            ext_flag, ext_requested = self._extended_hours_flag(request, order_type)
+            if ext_requested and not ext_flag:
+                logger.warning(
+                    "Webull extended-hours requested for %s but order_type=%s is not a LIMIT -> "
+                    "submitting RTH-only (EH needs a limit price; market/stop can't trade EH)",
+                    request.symbol, order_type,
+                )
             po.set_extended_hours_trading(ext_flag)
 
         body = self._body(client.get_response(po))
@@ -445,6 +448,30 @@ class WebullBrokerAdapter:
     def _tif(request: OrderRequest) -> str:
         raw = str(request.metadata.get("time_in_force", request.time_in_force)).strip().upper()
         return {"GTC": "GTC", "IOC": "IOC"}.get(raw, "DAY")
+
+    # Extended-hours (pre- AND post-market) support. A caller requests EH via
+    # metadata `session` (am/pm/pre/post/...) or `extended_hours`=true. Webull trades EH
+    # ONLY as a LIMIT-family order: MARKET and STOP_LOSS are market-on-trigger and are
+    # RTH-only (an EH market/stop 417s). We have no Webull market-data entitlement to price
+    # a market order into a limit, so EH is granted only when the caller already supplied a
+    # limit order — the price comes from the OMS/strategy (Polygon NBBO), not this adapter.
+    _EH_SESSION_TOKENS = frozenset(
+        {"am", "pm", "pre", "post", "premarket", "pre-market", "postmarket", "post-market",
+         "aftermarket", "after-market", "extended", "ext", "true", "1", "yes"}
+    )
+    _EH_LIMIT_TYPES = frozenset(
+        {"LIMIT", "STOP_LOSS_LIMIT", "ENHANCED_LIMIT", "AT_AUCTION_LIMIT"}
+    )
+
+    @classmethod
+    def _extended_hours_flag(cls, request: OrderRequest, order_type: str) -> tuple[bool, bool]:
+        """Return (ext_flag, requested). ext_flag = send as an extended-hours order; requested =
+        the caller asked for EH. Granted only for a LIMIT-family order (see the note above)."""
+        token = str(
+            request.metadata.get("extended_hours", request.metadata.get("session", ""))
+        ).strip().lower()
+        requested = token in cls._EH_SESSION_TOKENS
+        return (requested and order_type in cls._EH_LIMIT_TYPES), requested
 
     @staticmethod
     def _meta_price(request: OrderRequest, *keys: str) -> Decimal | None:
