@@ -545,7 +545,15 @@ class SchwabV2Strategy:
         # touch). See docs/intrabar-hold-confirmation-design.md.
         state = self.watchlist_state(symbol)
         state.last_quote = quote
-        if not (self._hold_confirm_enabled and self._atr_enabled and self._atr_variant == "B"):
+        # Confirmed-window (CW) owns the entry via the bar-path wait-3 break. The intrabar
+        # hold-confirm TOUCH entry is a separate signal and must NOT also fire under CW, so
+        # CW disables this quote path entirely — independent of the hold_confirm flag (which
+        # stays true in the live env). No PendingHold is armed under CW, so the on_bar
+        # heartbeat resolver (_resolve_hold_on_bar) also stays inert. Byte-identical when CW
+        # is off. See docs/atr-confirmed-window-forward-test.md.
+        if self._cw_enabled or not (
+            self._hold_confirm_enabled and self._atr_enabled and self._atr_variant == "B"
+        ):
             return None
 
         px = float(getattr(quote, "last_price", 0.0) or 0.0)
