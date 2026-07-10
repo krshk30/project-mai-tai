@@ -12,8 +12,9 @@ strategy's own profitability (net-negative at real latency, per the broker-aware
 question; even a losing strategy cleanly reveals which broker fills better. So the enable is a deliberate,
 cost-accepted evaluation run — SAFETY-gated (plumbing works), not profitability-gated.
 
-**Status:** BUILD approved flag-off. Enable = a separate, staged, safety-gated decision (§11). Target: code-complete
-+ validated by end of next week.
+**Status (2026-07-10):** ✅ **CODE-COMPLETE, flag-off, NOT deployed** (build ledger §14, PRs #422–#430). Runs on the
+operator's existing accounts (Schwab + Webull `live:orb`). **Next:** qty-1 harness on `live:orb` scheduled Mon
+2026-07-13 (pre-market 07:15 ET + RTH 10:15 ET, §10) → then enable is a separate, staged, safety-gated decision (§11).
 
 ---
 
@@ -68,11 +69,18 @@ Schwab-vs-Webull comparison → the retire-the-loser decision.
    `broker_ab_report` MUST read `broker_orders` rejects + reasons (not only `fills`) to surface
    "Webull rejected N% of confirmed names / with reasons X".
 
-## 5. Separate `live:v2_webull` account (NOT `live:orb`)
-Mirroring needs v2's Webull leg on its **own** account: sharing `live:orb` collides (ORB + v2 same universe → the
-per-account unique-open row), and entangles reconciliation / protected symbols / ORB's cap. **OPS STEP (before
-ENABLE, not merge):** provision `live:v2_webull` + wire credentials/hash into the routing map. Build (flag-off)
-doesn't need it to exist.
+## 5. Account = the EXISTING `live:orb` Webull account (+ collision guard) — REVISED 2026-07-10
+> **Superseded the original "separate `live:v2_webull` account" plan.** The operator has **only one Webull
+> account** (ORB's) and one Schwab account — there is no second Webull account to provision, and building for a
+> hypothetical one was a misread. The mirror therefore routes v2's Webull leg to the **existing `live:orb`** account
+> (`strategy_schwab_1m_v2_webull_account_name` default `live:orb`; `configured_webull_accounts` confirms `live:orb`
+> is the sole Webull account). No ops provisioning step remains.
+
+The collision risk that motivated a separate account (ORB + v2 both touching the same Webull account) is handled by
+a **collision guard inside the mirror** (PR #428): before mirroring a v2 open to `live:orb`, skip if that symbol is
+already (a) armed in `_armed_hard_stops` for the account, (b) an open managed position, or (c) a non-zero account
+position. So a symbol ORB already holds is never double-entered, and the OMS scoping invariant (OMS touches only
+positions it placed) keeps the two strategies' positions separately owned on the shared account.
 
 ## 6. Schema — GREP-VERIFIED: NO new field; routing PR earns the #404 rehydrate test
 `broker_account_name` already exists on `oms_managed_positions` AND `oms_armed_stops`, and F2
@@ -100,10 +108,11 @@ limit+session EH). ORB only proved a *single* stop-exit on Webull — the multi-
 cancel-of-siblings, EH) is where surprises live. This is what the qty-1 test (§10) shakes out.
 
 ## 8. Reconciliation / capital / risk — per-account, 2× accepted
-- Reconciler runs per-account; verify it enumerates `live:v2_webull`.
-- **Capital 2×:** each account holds a full-size position on a mirrored US trade. Operator-accepted for the eval.
-  Sizing = per-order qty (currently 4) on each broker; no cross-account netting.
-- Protected symbols per-account (v2-Webull has no manual holdings).
+- Reconciler runs per-account; `live:orb` is already enumerated (ORB uses it).
+- **Capital 2×:** the Schwab leg and the `live:orb` Webull leg each hold a full-size position on a mirrored US
+  trade. Operator-accepted for the eval. Sizing = per-order qty on each broker; no cross-account netting.
+- On `live:orb`, ORB and the v2 mirror **coexist**: the collision guard (§5) prevents double-entry of the same
+  symbol, and the scoping invariant keeps each strategy's positions separately owned.
 - Scoping invariant already per-broker — each leg is a v2-owned position on its account.
 
 ## 9. Flag + merge gate
@@ -112,12 +121,21 @@ cancel-of-siblings, EH) is where surprises live. This is what the qty-1 test (§
 - Genuine-green CI, no admin. Attended flag-off deploy, fleet-flat.
 
 ## 10. qty-1 Webull test — exercises EVERY ladder leg (gates ENABLE, not merge)
-On `live:v2_webull`, drive/verify **every** CW exit leg on Webull (not one fill): entry → +2% partial → +2% floor
-→ 2% trail → −5% hard stop → bar-close flip, plus fill-poll / 4-dec / EH sessions; each leg's submit→fill→
-cancel-of-siblings confirmed. **Do not enable until every leg passes.**
+On `live:orb`, drive/verify **every** CW exit-ladder SHAPE on Webull (not one fill): marketable entry → STOP_LOSS
+hard-stop (accept, no 417) → LIMIT scale/floor → flatten, plus fill-poll / 4-dec / real broker fill-time (#425);
+each leg's submit→fill→cancel-of-siblings confirmed. **Do not enable until every shape passes.**
+
+**Harness: `scripts/v2_webull_qty1_harness.py`** — direct-adapter, qty 1, `--confirm` required; `try/finally`
+ALWAYS cancels resting orders + flattens + verifies FLAT. RTH mode = MARKET entry/flat; **`--session AM|PM`** =
+extended-hours (marketable LIMIT + session token, LIMIT-only per #429) with **`--auto-price`** (live `massive`
+snapshot → ±5% marketable limits). **SCHEDULED (2026-07-10): two one-off systemd timers on the box run it on
+`live:orb` Mon 2026-07-13 — pre-market `@AM` 11:15 UTC (07:15 ET) + RTH `@RTH` 14:15 UTC (10:15 ET, deliberately
+AFTER ORB's 09:30–10:00 window)** via `scripts/run_v2_webull_harness.sh` (systemd oneshot, inherits the OMS
+`EnvironmentFile`, ntfy verdict to `mai-tai-preopen-28806a5a97b7`). Timers:
+`project-mai-tai-webull-harness-{am,rth}.timer` → `project-mai-tai-webull-harness@{AM,RTH}.service`.
 
 ## 11. Enable — STAGED, safety-gated (NOT profitability-gated)
-1. **qty-1 plumbing test** (§10, every leg) passes on `live:v2_webull`.
+1. **qty-1 plumbing test** (§10, every leg) passes on `live:orb` (scheduled Mon 2026-07-13 pre-market + RTH).
 2. **Flag ON → after-hours live smoke:** one real mirrored trade in a **slow / extended-hours** market; watch BOTH
    legs' full entry→CW-exit lifecycle on real money.
 3. **Then RTH:** run the mirror during regular hours → accrue the Schwab-vs-Webull comparison.
@@ -133,10 +151,23 @@ is separate from the broker verdict.
 3. **Webull v2-exit adapter PR** (flag-off): CW ladder on Webull, reusing #386/#375/#374/EH.
 4. **Comparison report** `scripts/broker_ab_report.py` (§4).
 5. **qty-1 harness** (§10).
-6. **Enable** (separate): ops provisions `live:v2_webull` → qty-1 passes → after-hours smoke → RTH → 1-month eval.
+6. **Enable** (separate): qty-1 passes on `live:orb` → attended flag-off deploy (git pull + one OMS restart) →
+   flip `strategy_schwab_1m_v2_webull_mirror_enabled` → after-hours smoke → RTH → 1-month eval → retire the loser.
 
 ## 13. Open questions
-- `live:v2_webull` account handle + credentials (ops, before enable).
-- Confirm the fan-out submits are independent (one broker rejecting/erroring must NOT block the other leg).
+- Confirm the fan-out submits are independent (one broker rejecting/erroring must NOT block the other leg) —
+  handled: the mirror is an all-swallowing independent post-step after the primary commit.
+
+## 14. BUILD LEDGER — code-complete, flag-off, NOT deployed (2026-07-10)
+All merged to main; runs on the operator's existing accounts (Schwab `live:schwab_1m_v2` + Webull `live:orb`);
+flag-off = byte-identical; deploys on the next attended OMS restart on operator GO.
+- **#422** account-aware CW-exit refactor (`_managed_v2_symbols` → `set[(account,symbol)]`, `_v2_accounts()`).
+- **#424** `_maybe_mirror_v2_open` fan-out (independent all-swallowing post-step; mirrors Schwab v2 open → Webull).
+- **#425** Webull `reported_at` from the broker fill timestamp (`last_filled_time`), not poll time.
+- **#427** `scripts/broker_ab_report.py` — Schwab-vs-Webull A/B comparison (read-only).
+- **#426** qty-1 Webull plumbing harness (every ladder shape).
+- **#428** default mirror account → `live:orb` + collision guard (§5).
+- **#429** Webull adapter proper pre- AND post-market (extended-hours) support.
+- **#430** harness extended-hours (AM/PM) mode + `--auto-price` + scheduled runner (§10).
 - Comparison metric weights for the retire decision (slippage vs latency vs fill-rate) — operator to weight at
   month-end.
