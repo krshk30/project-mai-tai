@@ -628,6 +628,17 @@ class Settings(BaseSettings):
     # partials price at the bid (zero buffer) — patient profit-taking, harmless
     # if it doesn't fill this quote. See docs/v2-eh-exit-routing-fix-design.md.
     oms_v2_exit_eh_protective_limit_buffer_pct: float = 0.5
+    # Confirmed-window (variant CW) OMS exit [PR #2/3]. When
+    # strategy_schwab_1m_v2_confirmed_window_enabled is on (the SAME single switch the
+    # CW entry reads, so entry+exit can never diverge), the v2 managed-exit runs the CW
+    # exit INSTEAD of the scale/floor/stoch ladder: a FULL close at +target% (resting-
+    # limit-equivalent; triggers on bid>=entry*(1+target)) OR at -stop% (market/limit at
+    # the breach bid). No scales, no floor ratchet — the bar-close-confirmed flip is the
+    # trend exit (PR #3). Requires oms_v2_exit_management_enabled=True (as live v2
+    # already runs). OFF => the ladder path is byte-identical. Tunable without a code
+    # change. See docs/atr-confirmed-window-forward-test.md.
+    oms_v2_cw_target_pct: float = 2.0
+    oms_v2_cw_hard_stop_pct: float = 5.0
     # Stuck-intent cancellation (2026-05-18 incident: pre-market intents
     # for AUUD/QNCX/SBFM kept retrying for 4.5 hours and 400+ attempts
     # each because the OMS had no max-age cap, no quote-drift sanity, and

@@ -219,6 +219,14 @@ class OmsRiskService:
         self._managed_v2_symbols: set[str] = set()
         self._v2_exit_config: TradingConfig = TradingConfig().make_v2_variant()
         self._v2_exit_engine: ExitEngine = ExitEngine(self._v2_exit_config)
+        # Confirmed-window (variant CW) exit [PR #2/3]. Gated on the SAME switch the
+        # CW entry reads, so entry and exit move together. OFF => the ladder path runs
+        # unchanged. Pcts are OMS-side settings, tunable without a code change.
+        self._cw_exit_enabled: bool = bool(
+            getattr(self.settings, "strategy_schwab_1m_v2_confirmed_window_enabled", False)
+        )
+        self._cw_target_pct: float = float(getattr(self.settings, "oms_v2_cw_target_pct", 2.0))
+        self._cw_stop_pct: float = float(getattr(self.settings, "oms_v2_cw_hard_stop_pct", 5.0))
 
     async def _run_db(self, fn, *, commit: bool = True):
         """Run a PURE-SYNC unit of DB work on a worker thread, off the event loop.
@@ -1493,6 +1501,39 @@ class OmsRiskService:
                     ),
                     commit=True,
                 )
+                return
+
+            # Confirmed-window (variant CW) exit: when on, this REPLACES the scale/floor/
+            # stoch ladder with a full close at +target% OR -stop% (no scales/floor; the
+            # bar-close flip is PR #3). Precedence target>hard on a quote (mutually
+            # exclusive on one bid). OFF => fall through to the unchanged ladder below.
+            if self._cw_exit_enabled:
+                tgt = self._v2_exit_engine.check_full_target(position, bid, self._cw_target_pct)
+                cw_hard = (
+                    None if tgt is not None
+                    else self._v2_exit_engine.check_hard_stop_pct(position, bid, self._cw_stop_pct)
+                )
+                if tgt is not None:
+                    ref = entry_price * (1.0 + self._cw_target_pct / 100.0)
+                    await self._emit_v2_exit_on_loop(
+                        acct, symbol, position, entry_price, kind="HARD",
+                        reference_price=ref, reason="oms_v2_managed_exit:CW_TARGET",
+                        bid=bid, close_on_fill=close_on_fill,
+                    )
+                elif cw_hard is not None:
+                    ref = entry_price * (1.0 - self._cw_stop_pct / 100.0)
+                    await self._emit_v2_exit_on_loop(
+                        acct, symbol, position, entry_price, kind="HARD",
+                        reference_price=ref, reason="oms_v2_managed_exit:CW_HARD_STOP",
+                        bid=bid, close_on_fill=close_on_fill,
+                    )
+                else:
+                    await self._run_db(
+                        lambda session: self._persist_v2_price_state(
+                            session, acct, symbol, position, write_quantity=True
+                        ),
+                        commit=True,
+                    )
                 return
 
             hard = self._v2_exit_engine.check_hard_stop(position, bid)

@@ -114,3 +114,45 @@ class ExitEngine:
                 "profit_pct": position.current_profit_pct,
             }
         return None
+
+    # --- Confirmed-window (variant CW) exit legs. Config-free (the pct is passed in)
+    # so they never touch the shared ladder TradingConfig. Full-close only — the CW
+    # exit is +target% OR -stop% with no scales/floor (the bar-close flip is PR #3).
+    def check_full_target(
+        self, position, current_price: float, target_pct: float
+    ) -> dict[str, float | int | str] | None:
+        """Full CLOSE when the (bid) price reaches entry * (1 + target_pct/100)."""
+        if not position or target_pct <= 0:
+            return None
+        target_price = position.entry_price * (1 + target_pct / 100)
+        if current_price >= target_price:
+            return {
+                "action": "CLOSE",
+                "ticker": position.ticker,
+                "reason": "CW_TARGET",
+                "price": current_price,
+                "tier": position.tier,
+                "profit_pct": position.current_profit_pct,
+            }
+        return None
+
+    def check_hard_stop_pct(
+        self, position, current_price: float, stop_pct: float
+    ) -> dict[str, float | int | str] | None:
+        """Full CLOSE when the (bid) price breaches entry * (1 - stop_pct/100). A
+        pct-explicit sibling of check_hard_stop that does NOT read config.stop_loss_pct
+        (which is the 1.5% ladder value), so CW can run its own -5% without disturbing
+        the ladder."""
+        if not position or stop_pct <= 0:
+            return None
+        stop_price = position.entry_price * (1 - stop_pct / 100)
+        if current_price <= stop_price:
+            return {
+                "action": "CLOSE",
+                "ticker": position.ticker,
+                "reason": "CW_HARD_STOP",
+                "price": current_price,
+                "tier": position.tier,
+                "profit_pct": position.current_profit_pct,
+            }
+        return None
