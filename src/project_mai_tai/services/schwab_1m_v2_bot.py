@@ -1375,6 +1375,25 @@ class SchwabV2BotService:
     async def _maybe_emit(self, draft) -> None:  # type: ignore[no-untyped-def]
         if draft is None:
             return
+        # Confirmed-window (variant CW) bar-close flip: the strategy expresses the trend
+        # exit as a CLOSE draft tagged cw_flip. Publish it as a lightweight `v2_cw_flip`
+        # signal (the OMS closes the managed row) rather than a normal intent — skip the
+        # entry-side ATR-only belt / EH-routing below. Only ever set when CW is enabled;
+        # otherwise no draft carries cw_flip, so this is byte-neutral.
+        if (
+            getattr(draft, "intent_type", "") == "close"
+            and str(getattr(draft, "metadata", {}).get("cw_flip", "")).lower() == "true"
+        ):
+            if self.intent_emitter is None:
+                logger.warning("schwab_1m_v2 cw_flip dropped — emitter not initialized")
+                return
+            try:
+                await self.intent_emitter.emit_cw_flip(
+                    draft.symbol, str(draft.metadata.get("bar_time_ms", ""))
+                )
+            except Exception:
+                logger.exception("schwab_1m_v2 cw_flip emit failed for %s", draft.symbol)
+            return
         # ATR-ONLY belt-and-suspenders: even if some path computed a non-ATR open,
         # refuse to emit it at the chokepoint. Paths 1/2 are the 7wk losers and
         # must never reach the broker under live credentials. Defense-in-depth on

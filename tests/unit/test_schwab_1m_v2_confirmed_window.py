@@ -8,6 +8,7 @@ behavior when the feature is disabled (the branch in _maybe_atr_emit is then unr
 """
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from decimal import Decimal
 
 from project_mai_tai.settings import Settings
@@ -15,6 +16,10 @@ from project_mai_tai.strategy_core.schwab_1m_v2 import (
     OHLCVBar,
     SchwabV2Strategy,
 )
+
+
+def _now_ms() -> int:
+    return int(datetime.now(UTC).timestamp() * 1000)
 
 
 def _strat(**overrides):
@@ -133,3 +138,52 @@ def test_cw_new_buy_flip_rearms_and_resets_trigger():
     assert state.cw_armed is True
     assert state.cw_bars_waited == 0
     assert state.cw_three_bar_high == 0.0
+
+
+# --------------------- PR #3: bar-close flip exit signal (_maybe_cw_flip_close) ------
+
+def _hold(strat, qty=10):
+    state = strat.watchlist_state("TEST")
+    state.position_qty = qty
+    state.bars.append(_bar(10.0, ts=_now_ms()))  # a FRESH held bar
+    return state
+
+
+def test_cw_flip_close_fires_when_holding_on_sell_flip():
+    strat = _strat()
+    state = _hold(strat, qty=10)
+    draft = strat._maybe_cw_flip_close(state, _sig(flip="SELL", state="short"))
+    assert draft is not None
+    assert draft.side == "sell" and draft.intent_type == "close"
+    assert draft.quantity == Decimal("10")
+    assert draft.metadata["cw_flip"] == "true"
+    assert draft.metadata["atr_variant"] == "CW"
+
+
+def test_cw_flip_close_none_when_flat():
+    strat = _strat()
+    state = _hold(strat, qty=0)  # flat
+    assert strat._maybe_cw_flip_close(state, _sig(flip="SELL", state="short")) is None
+
+
+def test_cw_flip_close_none_without_sell_flip():
+    strat = _strat()
+    state = _hold(strat, qty=10)
+    assert strat._maybe_cw_flip_close(state, _sig(flip=None)) is None
+    assert strat._maybe_cw_flip_close(state, _sig(flip="BUY")) is None
+
+
+def test_cw_flip_close_none_when_flag_off():
+    strat = SchwabV2Strategy(Settings())  # CW disabled
+    state = strat.watchlist_state("TEST")
+    state.position_qty = 10
+    state.bars.append(_bar(10.0, ts=_now_ms()))
+    assert strat._maybe_cw_flip_close(state, _sig(flip="SELL", state="short")) is None
+
+
+def test_cw_flip_close_none_on_stale_bar():
+    strat = _strat()
+    state = strat.watchlist_state("TEST")
+    state.position_qty = 10
+    state.bars.append(_bar(10.0, ts=_now_ms() - 600_000))  # 10 min old -> stale
+    assert strat._maybe_cw_flip_close(state, _sig(flip="SELL", state="short")) is None

@@ -227,6 +227,10 @@ class OmsRiskService:
         )
         self._cw_target_pct: float = float(getattr(self.settings, "oms_v2_cw_target_pct", 2.0))
         self._cw_stop_pct: float = float(getattr(self.settings, "oms_v2_cw_hard_stop_pct", 5.0))
+        # (acct, symbol) pairs with a bar-close ATR flip pending (PR #3). Set from the
+        # `v2_cw_flip` signal event; consumed (full close) by the CW exit on the next
+        # quote. In-memory so the hot quote path never does a per-tick Redis read.
+        self._cw_flip_pending: set[tuple[str, str]] = set()
 
     async def _run_db(self, fn, *, commit: bool = True):
         """Run a PURE-SYNC unit of DB work on a worker thread, off the event loop.
@@ -473,6 +477,21 @@ class OmsRiskService:
         if event_type == "trade_tick":
             event = TradeTickEvent.model_validate(payload)
             await self._handle_trade_tick_event(event)
+            return
+        # Confirmed-window bar-close flip signal (PR #3): mark (acct, symbol) pending so
+        # the CW exit closes the managed row on the next quote via its exit machinery.
+        # CW-gated + rare; ordered after the hot quote/trade paths. No-op when CW is off.
+        if event_type == "v2_cw_flip":
+            if self._cw_exit_enabled:
+                sym = str(payload.get("symbol", "")).upper().strip()
+                acct = (
+                    str(payload.get("broker_account_name", "")).strip()
+                    or self.settings.strategy_schwab_1m_v2_account_name
+                )
+                if sym:
+                    self._cw_flip_pending.add((acct, sym))
+                    self.logger.info("[OMS-V2-CW] flip pending armed acct=%s sym=%s", acct, sym)
+            return
 
     async def process_trade_intent(self, event: TradeIntentEvent) -> list[OrderEventEvent]:
         with self.session_factory() as session:
@@ -1484,6 +1503,7 @@ class OmsRiskService:
             )
             if snapshot is None:
                 self._managed_v2_symbols.discard(symbol)  # dict mutation stays on-loop
+                self._cw_flip_pending.discard((acct, symbol))  # no open row -> drop any stale flip
                 return
 
             # Phase 2 — DECIDE (on-loop, pure): hydrate + ratchet off the snapshot.
@@ -1504,10 +1524,13 @@ class OmsRiskService:
                 return
 
             # Confirmed-window (variant CW) exit: when on, this REPLACES the scale/floor/
-            # stoch ladder with a full close at +target% OR -stop% (no scales/floor; the
-            # bar-close flip is PR #3). Precedence target>hard on a quote (mutually
-            # exclusive on one bid). OFF => fall through to the unchanged ladder below.
+            # stoch ladder with a full close at +target% OR -stop% OR a bar-close ATR flip
+            # (no scales/floor). Precedence target > hard > flip: target/hard are mutually
+            # exclusive on one bid; a pending flip that coincides with a +2% bid still
+            # takes the better +2% exit, otherwise it closes at the bid. OFF => fall
+            # through to the unchanged ladder below.
             if self._cw_exit_enabled:
+                flip_pending = (acct, symbol) in self._cw_flip_pending
                 tgt = self._v2_exit_engine.check_full_target(position, bid, self._cw_target_pct)
                 cw_hard = (
                     None if tgt is not None
@@ -1520,6 +1543,7 @@ class OmsRiskService:
                         reference_price=ref, reason="oms_v2_managed_exit:CW_TARGET",
                         bid=bid, close_on_fill=close_on_fill,
                     )
+                    self._cw_flip_pending.discard((acct, symbol))
                 elif cw_hard is not None:
                     ref = entry_price * (1.0 - self._cw_stop_pct / 100.0)
                     await self._emit_v2_exit_on_loop(
@@ -1527,6 +1551,15 @@ class OmsRiskService:
                         reference_price=ref, reason="oms_v2_managed_exit:CW_HARD_STOP",
                         bid=bid, close_on_fill=close_on_fill,
                     )
+                    self._cw_flip_pending.discard((acct, symbol))
+                elif flip_pending:
+                    # bar-close ATR flip: full close at the current bid (trend exit).
+                    await self._emit_v2_exit_on_loop(
+                        acct, symbol, position, entry_price, kind="HARD",
+                        reference_price=bid, reason="oms_v2_managed_exit:CW_FLIP",
+                        bid=bid, close_on_fill=close_on_fill,
+                    )
+                    self._cw_flip_pending.discard((acct, symbol))
                 else:
                     await self._run_db(
                         lambda session: self._persist_v2_price_state(

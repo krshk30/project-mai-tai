@@ -24,6 +24,7 @@ NO imports from: `schwab_native_30s.py`, `bar_builder.py`, `indicators.py`,
 """
 from __future__ import annotations
 
+import json
 import logging
 from collections import deque
 from dataclasses import dataclass, field
@@ -1033,6 +1034,50 @@ class SchwabV2Strategy:
             },
         )
 
+    def _maybe_cw_flip_close(
+        self, state: SymbolState, atr_signal: dict | None
+    ) -> TradeIntentDraft | None:
+        """Confirmed-window bar-close flip exit (variant CW). When CW is on and we HOLD
+        a position, a bar that CLOSES below the ATR trail (atr_signal flip == "SELL") is
+        the trend exit. Return a cw_flip CLOSE draft; the bot service publishes it as a
+        `v2_cw_flip` signal and the OMS closes the managed row on the next quote. Fires
+        once per flip (the SELL flip is a single-bar event). Fresh bars only — never on
+        a replayed historical flip during warmup. OFF or flat => None (byte-neutral)."""
+        if not self._cw_enabled:
+            return None
+        if state.position_qty <= 0:
+            return None
+        if atr_signal is None or atr_signal.get("flip") != "SELL":
+            return None
+        cur = state.bars[-1]
+        now_ms = int(datetime.now(UTC).timestamp() * 1000)
+        if (now_ms - cur.timestamp_ms) / 1000.0 > MAX_BAR_AGE_SECONDS_FOR_EMIT:
+            return None  # stale/replayed bar — never signal an exit on old history
+        trail = atr_signal.get("trail")
+        logger.info(
+            "[V2-CW] %s bar-close SELL flip while holding qty=%d close=%.4f trail=%s "
+            "-> CW_FLIP close signal",
+            state.symbol, state.position_qty, cur.close,
+            f"{trail:.4f}" if trail is not None else "none",
+        )
+        return TradeIntentDraft(
+            symbol=state.symbol,
+            side="sell",
+            intent_type="close",
+            quantity=Decimal(str(int(state.position_qty))),
+            reason="schwab_1m_v2 ATR Flip CW [bar-close flip]",
+            metadata={
+                "cw_flip": "true",
+                "path": "ATR Flip",
+                "atr_variant": "CW",
+                "atr_trail": f"{trail:.4f}" if trail is not None else "",
+                "bar_close": f"{cur.close:.4f}",
+                "bar_time_ms": str(cur.timestamp_ms),
+                "source": "schwab_1m_v2",
+                "strategy_version": STRATEGY_VERSION,
+            },
+        )
+
     # ------------------------------------------------------------- evaluate
 
     def _evaluate_completed_bar(
@@ -1053,6 +1098,15 @@ class SchwabV2Strategy:
         # touch/flip signal is consumed in the emit region below, and only when
         # the enable flag is on. Returns the per-bar signal (or None).
         atr_signal = self._update_atr_state(state, state.bars[-1])
+
+        # Confirmed-window (variant CW) bar-close flip EXIT signal: when CW is on and we
+        # HOLD a position, a bar that closes below the ATR trail (flip == "SELL") is the
+        # trend exit. Emit a lightweight cw_flip CLOSE draft here (before the holding
+        # early-returns below); the bot service turns it into a `v2_cw_flip` signal the
+        # OMS executes through its managed-exit machinery (PR #3). OFF or flat = None.
+        cw_flip_draft = self._maybe_cw_flip_close(state, atr_signal)
+        if cw_flip_draft is not None:
+            return cw_flip_draft
 
         # Bootstrap: need enough history for the slowest indicator chain
         # PLUS the settling allowance — see `macd_warmup_settling_bars`
@@ -1475,6 +1529,29 @@ class SchwabV2IntentEmitter:
             draft.reason,
         )
         return event.event_id
+
+    async def emit_cw_flip(self, symbol: str, bar_time_ms: str) -> None:
+        """Publish a lightweight `v2_cw_flip` signal (NOT a trade_intent) onto the same
+        strategy-intents stream the OMS consumes. The OMS marks the symbol pending and
+        closes the managed row on the next quote via its exit machinery (PR #3). Carries
+        only what the OMS needs to key the pending set; no order fields (the OMS owns the
+        close). Reuses the wired stream + maxlen — no new channel."""
+        await self.redis.xadd(
+            self.stream,
+            {
+                "data": json.dumps(
+                    {
+                        "event_type": "v2_cw_flip",
+                        "symbol": symbol,
+                        "broker_account_name": self.broker_account_name,
+                        "bar_time_ms": str(bar_time_ms),
+                    }
+                )
+            },
+            maxlen=self.settings.redis_strategy_intent_stream_maxlen,
+            approximate=True,
+        )
+        logger.info("schwab_1m_v2 emitted v2_cw_flip signal symbol=%s", symbol)
 
 
 def utc_now_isoformat() -> str:
