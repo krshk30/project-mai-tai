@@ -121,6 +121,77 @@ def test_capture_events_writes_confirm_fade_retention_rows():
     assert dropped["rank_score"] is None
 
 
+class _LatestEventFactory:
+    """Fake factory whose _LATEST_EVENT_SQL query returns a preset latest event_type per symbol.
+
+    Records the params of every INSERT so a test can assert which rows were actually written.
+    """
+
+    def __init__(self, latest_by_symbol: dict[str, str | None]) -> None:
+        self.latest_by_symbol = latest_by_symbol
+        self.inserted: list[dict] = []
+        self.session = MagicMock()
+
+        def _execute(sql, params=None):
+            sql_text = str(sql)
+            result = MagicMock()
+            if "ORDER BY event_at DESC" in sql_text:  # _LATEST_EVENT_SQL
+                result.scalar.return_value = self.latest_by_symbol.get(params["symbol"])
+            elif "count(*)" in sql_text:  # _COUNT_CONFIRM_SQL
+                result.scalar.return_value = 0
+            else:  # _INSERT_SQL
+                self.inserted.append(params)
+                result.scalar.return_value = 0
+            return result
+
+        self.session.execute.side_effect = _execute
+
+    @contextmanager
+    def _ctx(self):
+        yield self.session
+
+    def __call__(self):
+        return self._ctx()
+
+
+def test_repeat_fade_suppressed_when_symbol_already_faded():
+    # The scanner re-surfaces a still-faded symbol each cycle; a FADE must NOT be re-recorded
+    # when the symbol's latest event today is already a down-event (FADE or RETENTION_DROP).
+    now = datetime(2026, 7, 10, 10, 5, 0, tzinfo=EASTERN)
+    factory = _LatestEventFactory({"AAAA": "FADE", "BBBB": "RETENTION_DROP"})
+
+    capture_events(
+        factory,
+        trade_date=now.date(),
+        now=now,
+        all_confirmed=[],
+        faded_symbols=["aaaa", "bbbb"],
+        dropped_retention_symbols=[],
+    )
+
+    assert [p for p in factory.inserted if p["event_type"] == "FADE"] == []
+
+
+def test_fade_recorded_when_symbol_last_confirmed_or_new():
+    # A genuine confirmed->faded transition (latest == CONFIRM) is recorded; so is a symbol's
+    # first-ever fade of the day (no prior event). This keeps legitimate re-fades after a
+    # re-confirmation.
+    now = datetime(2026, 7, 10, 10, 5, 0, tzinfo=EASTERN)
+    factory = _LatestEventFactory({"AAAA": "CONFIRM"})  # BBBB has no prior event -> None
+
+    capture_events(
+        factory,
+        trade_date=now.date(),
+        now=now,
+        all_confirmed=[],
+        faded_symbols=["aaaa", "bbbb"],
+        dropped_retention_symbols=[],
+    )
+
+    faded = {p["symbol"] for p in factory.inserted if p["event_type"] == "FADE"}
+    assert faded == {"AAAA", "BBBB"}
+
+
 def test_capture_events_none_session_factory_is_noop():
     # Must not raise and must not attempt any DB work.
     capture_events(

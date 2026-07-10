@@ -52,6 +52,16 @@ _COUNT_CONFIRM_SQL = text(
     "WHERE trade_date = :trade_date AND symbol = :symbol AND event_type = 'CONFIRM'"
 )
 
+# Latest event type for (trade_date, symbol), used to suppress repeat FADEs: the scanner's
+# prune list re-surfaces a still-faded symbol every scan cycle, so a fade is only genuine when
+# the symbol was last CONFIRMED (a confirmed->faded transition). A CONFIRM inserted earlier in
+# the same transaction is visible here, so a same-cycle re-confirm+fade is still recorded.
+_LATEST_EVENT_SQL = text(
+    "SELECT event_type FROM scanner_confirmed_events "
+    "WHERE trade_date = :trade_date AND symbol = :symbol "
+    "ORDER BY event_at DESC, id DESC LIMIT 1"
+)
+
 
 def _to_decimal(value: object) -> Decimal | None:
     if value is None or value == "":
@@ -189,6 +199,15 @@ def capture_events(
                     )
                 else:
                     params["reconfirm_seq"] = 0
+                if params["event_type"] == "FADE":
+                    # Skip a repeat FADE: only record one when the symbol's latest event today
+                    # is a CONFIRM (or there is none yet) — i.e. a genuine confirmed->faded edge.
+                    latest_event = session.execute(
+                        _LATEST_EVENT_SQL,
+                        {"trade_date": params["trade_date"], "symbol": params["symbol"]},
+                    ).scalar()
+                    if latest_event in ("FADE", "RETENTION_DROP"):
+                        continue
                 session.execute(_INSERT_SQL, params)
             session.commit()
     except Exception:
