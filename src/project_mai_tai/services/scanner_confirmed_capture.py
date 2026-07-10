@@ -38,17 +38,18 @@ _INSERT_SQL = text(
         force_watchlist, price, day_volume, float_used, change_pct, reconfirm_seq
     ) VALUES (
         :trade_date, :symbol, :event_type, :event_at, :confirm_path, :rank_score,
-        :force_watchlist, :price, :day_volume, :float_used, :change_pct,
-        COALESCE(
-            (SELECT count(*) FROM scanner_confirmed_events e
-             WHERE e.trade_date = :trade_date
-               AND e.symbol = :symbol
-               AND e.event_type = 'CONFIRM'),
-            0
-        )
+        :force_watchlist, :price, :day_volume, :float_used, :change_pct, :reconfirm_seq
     )
     ON CONFLICT (trade_date, symbol, event_type, event_at) DO NOTHING
     """
+)
+
+# reconfirm_seq is computed in Python (a separate SELECT) rather than a scalar subquery inside the
+# INSERT VALUES: reusing :trade_date/:symbol in both the VALUES list and a subquery made Postgres
+# deduce inconsistent parameter types (text vs varchar -> AmbiguousParameter). See PR follow-up.
+_COUNT_CONFIRM_SQL = text(
+    "SELECT count(*) FROM scanner_confirmed_events "
+    "WHERE trade_date = :trade_date AND symbol = :symbol AND event_type = 'CONFIRM'"
 )
 
 
@@ -178,6 +179,16 @@ def capture_events(
     try:
         with session_factory() as session:
             for params in rows:
+                if params["event_type"] == "CONFIRM":
+                    params["reconfirm_seq"] = int(
+                        session.execute(
+                            _COUNT_CONFIRM_SQL,
+                            {"trade_date": params["trade_date"], "symbol": params["symbol"]},
+                        ).scalar()
+                        or 0
+                    )
+                else:
+                    params["reconfirm_seq"] = 0
                 session.execute(_INSERT_SQL, params)
             session.commit()
     except Exception:

@@ -25,6 +25,9 @@ class _FakeSessionFactory:
 
         def _execute(_sql, params=None):
             self.executed_params.append(params)
+            result = MagicMock()          # the reconfirm_seq count query calls .scalar()
+            result.scalar.return_value = 0
+            return result
 
         self.session.execute.side_effect = _execute
         self.session.commit.side_effect = self._commit
@@ -80,11 +83,14 @@ def test_capture_events_writes_confirm_fade_retention_rows():
         dropped_retention_symbols=["DDDD"],
     )
 
-    params = factory.executed_params
-    assert len(params) == 4
+    # reconfirm_seq is computed via a separate count query per CONFIRM, so filter to INSERT params
+    # (the count-query params have no "event_type").
+    inserts = [p for p in factory.executed_params if p and "event_type" in p]
+    assert len(inserts) == 4
     assert factory.commits == 1
+    assert all("reconfirm_seq" in p for p in inserts)
 
-    by_symbol = {p["symbol"]: p for p in params}
+    by_symbol = {p["symbol"]: p for p in inserts}
 
     aaaa = by_symbol["AAAA"]
     assert aaaa["event_type"] == "CONFIRM"
@@ -138,8 +144,9 @@ def test_capture_events_unparseable_confirmed_at_falls_back_to_now():
         faded_symbols=[],
         dropped_retention_symbols=[],
     )
-    assert len(factory.executed_params) == 1
-    assert factory.executed_params[0]["event_at"] == now
+    inserts = [p for p in factory.executed_params if p and "event_type" in p]
+    assert len(inserts) == 1
+    assert inserts[0]["event_at"] == now
 
 
 def test_capture_events_swallows_db_errors():
@@ -161,3 +168,14 @@ def test_capture_events_swallows_db_errors():
 def test_scanner_confirmed_capture_flag_defaults_off():
     settings = Settings()
     assert settings.scanner_confirmed_capture_enabled is False
+
+
+def test_insert_sql_has_no_reused_param_subquery():
+    # Regression guard: reconfirm_seq must NOT be a scalar subquery in the INSERT VALUES. Reusing
+    # :trade_date/:symbol in both VALUES and a subquery made Postgres deduce inconsistent param
+    # types (text vs varchar -> AmbiguousParameter), which the mock-based tests could not catch.
+    from project_mai_tai.services.scanner_confirmed_capture import _INSERT_SQL
+
+    sql = str(_INSERT_SQL).lower()
+    assert "select count" not in sql
+    assert ":reconfirm_seq" in sql
