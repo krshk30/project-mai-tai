@@ -70,6 +70,14 @@ earns a **#404-style rehydrate/survival test**:
    → **both** rehydrate on their own accounts → each re-arms its CW stop on the correct adapter → both exit
    lifecycles intact.
 
+## 6b. FINDING (grep, during PR #1): the CW ladder was SINGLE-ACCOUNT-hardcoded
+The v2 CW exit ladder (`_evaluate_v2_managed_exit`) read a hardcoded `strategy_schwab_1m_v2_account_name`, and
+`_managed_v2_symbols` was a symbol-only `set[str]` — so only the ARMED-STOP backup was per-account (F2), NOT the
+full ladder. Mirroring the open alone would leave the Webull leg with only the native −5% stop, no CW ladder.
+**PR #1 (account-aware CW-exit refactor) fixes this:** `_managed_v2_symbols` → `set[(account, symbol)]`, a
+`_v2_accounts()` helper (single account unless the mirror flag is on), and the eval/rehydrate/dispatch iterate
+accounts. Byte-identical when single-account (flag off). This is the prerequisite for the fan-out PR.
+
 ## 7. Exits on Webull — the load-bearing risk
 The v2 CW **multi-leg** ladder (partial +2% / floor / 2% trail / −5% hard stop / bar-close flip) must run on the
 Webull adapter for the Webull leg. Reuse ORB's proven fixes (#386 STOP→STOP_LOSS, #375 fill polling, #374 4-dec,

@@ -216,7 +216,7 @@ class OmsRiskService:
         # is the hot-path guard — a quote only opens a session/evaluates when its
         # symbol has an OPEN v2 managed row. Populated by the slice-1 fill hook
         # (gated) + rehydrated at startup; empty when the flag is OFF (inert).
-        self._managed_v2_symbols: set[str] = set()
+        self._managed_v2_symbols: set[tuple[str, str]] = set()
         self._v2_exit_config: TradingConfig = TradingConfig().make_v2_variant()
         self._v2_exit_engine: ExitEngine = ExitEngine(self._v2_exit_config)
         # Confirmed-window (variant CW) exit [PR #2/3]. Gated on the SAME switch the
@@ -1217,7 +1217,7 @@ class OmsRiskService:
                 entry_path=entry_path,
                 config_name="make_v2_variant",
             )
-            self._managed_v2_symbols.add(symbol)  # slice-3: arm quote-path eval
+            self._managed_v2_symbols.add((broker_account_name, symbol))  # slice-3: arm quote-path eval
             logger.info(
                 "[OMS-V2-MANAGED-OPEN] sym=%s acct=%s qty=%s entry=%s path=%s",
                 symbol, broker_account_name, int(quantity), price, entry_path,
@@ -1241,31 +1241,43 @@ class OmsRiskService:
             row.current_quantity = max(0, int(row.current_quantity) - int(quantity))
             if row.current_quantity <= 0:
                 self.store.close_managed_position(session, row)
-                self._managed_v2_symbols.discard(symbol)  # slice-3: disarm eval
+                self._managed_v2_symbols.discard((broker_account_name, symbol))  # slice-3: disarm eval
                 logger.info("[OMS-V2-MANAGED-CLOSE] sym=%s acct=%s flat", symbol, broker_account_name)
             else:
                 session.flush()
 
     # ---- Track-2 Phase-2 Slice-3: OMS-managed v2 exit ladder (quote-driven) ----
 
+    def _v2_accounts(self) -> list[str]:
+        """v2 broker accounts the CW exit ladder manages. Single (primary Schwab) unless the
+        Webull-mirror flag is on -> then also the Webull account. One account == today (byte-identical)."""
+        accounts = [self.settings.strategy_schwab_1m_v2_account_name]
+        if bool(getattr(self.settings, "strategy_schwab_1m_v2_webull_mirror_enabled", False)):
+            web = self.settings.strategy_schwab_1m_v2_webull_account_name
+            if web and web not in accounts:
+                accounts.append(web)
+        return accounts
+
     def _rehydrate_managed_v2_symbols(self) -> None:
         """At startup, repopulate the hot-path guard from open managed rows so a
         restart keeps protecting positions opened before it. Inert when OFF."""
         if not bool(getattr(self.settings, "oms_v2_exit_management_enabled", False)):
             return
-        acct = self.settings.strategy_schwab_1m_v2_account_name
         try:
+            symbols: set[tuple[str, str]] = set()
             with self.session_factory() as session:
-                self._managed_v2_symbols = set(
-                    self.store.list_open_managed_symbols(session, broker_account_name=acct)
-                )
+                for acct in self._v2_accounts():
+                    for sym in self.store.list_open_managed_symbols(session, broker_account_name=acct):
+                        symbols.add((acct, sym))
+            self._managed_v2_symbols = symbols
         except Exception as exc:  # noqa: BLE001
             self.logger.warning("v2 managed-symbol rehydrate failed: %s", exc)
             return
         if self._managed_v2_symbols:
             self.logger.info(
                 "[OMS-V2-MANAGED-REHYDRATE] armed %d symbol(s): %s",
-                len(self._managed_v2_symbols), ",".join(sorted(self._managed_v2_symbols)),
+                len(self._managed_v2_symbols),
+                ",".join(sorted(f"{a}:{s}" for a, s in self._managed_v2_symbols)),
             )
 
     # ------------------------------------------------------------------ #
@@ -1408,7 +1420,9 @@ class OmsRiskService:
         alerts = 0
         for sc, ban, sym, owned_qty, broker_qty in owned:
             key = self._hard_stop_key(sc, ban, sym)
-            protected = key in self._armed_hard_stops or sym in self._managed_v2_symbols
+            protected = key in self._armed_hard_stops or any(
+                (a, sym) in self._managed_v2_symbols for a in self._v2_accounts()
+            )
             if not protected:
                 alerts += 1
                 self.logger.error(
@@ -1464,7 +1478,7 @@ class OmsRiskService:
         }.get(str(level))
         return entry_price if pct is None else entry_price * (1.0 + float(pct) / 100.0)
 
-    async def _evaluate_v2_managed_exit(self, symbol: str) -> None:
+    async def _evaluate_v2_managed_exit(self, acct: str, symbol: str) -> None:
         """Run the v2 exit ladder for one symbol on the latest quote. DECISION uses
         the live bid; FILL reference_price is the leg LEVEL (decision B — stop/floor/
         scale level) so live-paper agrees with the re-score by construction. Precedence
@@ -1491,7 +1505,6 @@ class OmsRiskService:
         bid = float(quote.get("bid") or 0.0)
         if bid <= 0:
             return
-        acct = self.settings.strategy_schwab_1m_v2_account_name
         # #6 (CLRO desync fix): mark closed on the confirmed FILL, not on submit. Default on.
         close_on_fill = bool(getattr(self.settings, "oms_v2_exit_close_on_fill_enabled", True))
         try:
@@ -1502,7 +1515,7 @@ class OmsRiskService:
                 commit=False,
             )
             if snapshot is None:
-                self._managed_v2_symbols.discard(symbol)  # dict mutation stays on-loop
+                self._managed_v2_symbols.discard((acct, symbol))  # dict mutation stays on-loop
                 self._cw_flip_pending.discard((acct, symbol))  # no open row -> drop any stale flip
                 return
 
@@ -1688,7 +1701,7 @@ class OmsRiskService:
                     session, broker_account_name=acct, symbol=symbol
                 )
                 if row is None:
-                    self._managed_v2_symbols.discard(symbol)
+                    self._managed_v2_symbols.discard((acct, symbol))
                     return
                 if kind == "SCALE":
                     events = await self._emit_v2_managed_sell(
@@ -1714,7 +1727,7 @@ class OmsRiskService:
                         )
                     else:
                         self.store.close_managed_position(session, row)
-                        self._managed_v2_symbols.discard(symbol)
+                        self._managed_v2_symbols.discard((acct, symbol))
                 session.commit()
         except Exception as exc:  # noqa: BLE001 — the quote path must never die
             self.logger.warning("v2 managed-exit emit failed for %s: %s", symbol, exc)
@@ -2338,8 +2351,9 @@ class OmsRiskService:
         # Slice-3: run the v2 exit ladder on this quote, but ONLY for symbols with an
         # open v2 managed row (the in-memory guard keeps the hot path free of DB hits
         # for everything else; empty set when the flag is OFF → no-op).
-        if symbol in self._managed_v2_symbols:
-            await self._evaluate_v2_managed_exit(symbol)
+        for acct in self._v2_accounts():
+            if (acct, symbol) in self._managed_v2_symbols:
+                await self._evaluate_v2_managed_exit(acct, symbol)
 
     async def _handle_trade_tick_event(self, event: TradeTickEvent) -> None:
         symbol = str(event.payload.symbol).upper()

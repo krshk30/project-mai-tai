@@ -222,6 +222,11 @@ class Settings(BaseSettings):
     # "schwab" — a latent-live default saved only by an accidental missing account-hash entry.
     strategy_schwab_1m_v2_broker_provider: str | None = "simulated"
     strategy_schwab_1m_v2_default_quantity: int = 100
+    # Dual-broker v2 fan-out: when the mirror flag is ON, the OMS CW exit ladder
+    # also manages the v2 position on a SECOND (Webull) broker account, so both
+    # legs are evaluated per quote. OFF (default) => single-account, byte-identical.
+    strategy_schwab_1m_v2_webull_mirror_enabled: bool = False
+    strategy_schwab_1m_v2_webull_account_name: str = "live:v2_webull"
     # Cold-start warmup lookback (calendar days). The first poll per symbol
     # (since=0) requests this many days back so the indicator-seed batch
     # always reaches the last completed trading session even across a

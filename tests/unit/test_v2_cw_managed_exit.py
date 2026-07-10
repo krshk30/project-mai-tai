@@ -67,7 +67,7 @@ def _arm(svc, sf, *, entry=10.0, qty=100) -> None:
             symbol=SYM, entry_price=Decimal(str(entry)), quantity=qty, entry_path="ATR Flip",
         )
         s.commit()
-    svc._managed_v2_symbols.add(SYM)
+    svc._managed_v2_symbols.add((ACCT, SYM))
 
 
 def _quote(svc, bid: float) -> None:
@@ -98,7 +98,7 @@ async def test_cw_target_full_close_at_plus_2pct():
     svc = _svc(sf, cw=True)
     _arm(svc, sf, entry=10.0, qty=100)
     _quote(svc, bid=10.25)                       # >= +2% target (10.20)
-    await svc._evaluate_v2_managed_exit(SYM)
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
     intents = _sell_intents(sf)
     assert len(intents) == 1
     i = intents[0]
@@ -114,7 +114,7 @@ async def test_cw_hard_stop_full_close_at_minus_5pct():
     svc = _svc(sf, cw=True)
     _arm(svc, sf, entry=10.0, qty=100)
     _quote(svc, bid=9.40)                          # <= -5% stop (9.50)
-    await svc._evaluate_v2_managed_exit(SYM)
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
     intents = _sell_intents(sf)
     assert len(intents) == 1
     assert intents[0].reason.endswith("CW_HARD_STOP")
@@ -129,7 +129,7 @@ async def test_cw_no_exit_between_bounds_without_flip():
     svc = _svc(sf, cw=True)
     _arm(svc, sf, entry=10.0, qty=100)
     _quote(svc, bid=9.90)                          # -1%
-    await svc._evaluate_v2_managed_exit(SYM)
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
     assert _sell_intents(sf) == []
     assert _row(sf).status == "open"
 
@@ -146,7 +146,7 @@ async def test_cw_flip_full_close_at_bid():
     )
     assert (ACCT, SYM) in svc._cw_flip_pending
     _quote(svc, bid=9.90)                          # inside bounds, but flip pending
-    await svc._evaluate_v2_managed_exit(SYM)
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
     intents = _sell_intents(sf)
     assert len(intents) == 1
     assert intents[0].reason.endswith("CW_FLIP")
@@ -161,7 +161,7 @@ async def test_cw_target_takes_precedence_over_pending_flip():
     _arm(svc, sf, entry=10.0, qty=100)
     svc._cw_flip_pending.add((ACCT, SYM))
     _quote(svc, bid=10.25)                          # +2% AND flip pending -> target wins
-    await svc._evaluate_v2_managed_exit(SYM)
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
     intents = _sell_intents(sf)
     assert len(intents) == 1
     assert intents[0].reason.endswith("CW_TARGET")
