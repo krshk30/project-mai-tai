@@ -289,6 +289,38 @@ async def test_fetch_order_update_filled(fake_sdk) -> None:
 
 
 @pytest.mark.asyncio
+async def test_fetch_order_update_reported_at_is_broker_fill_time(fake_sdk) -> None:
+    # Real broker fill payload carries `last_filled_time` (broker-stamped, ms). reported_at
+    # must be THAT time (Schwab closeTime equivalent), not our poll/receive time, so the
+    # Webull-vs-Schwab fill-latency A/B is a real measurement. Both broker times land in metadata.
+    from datetime import UTC, datetime
+    client = _FakeClient({"detail": {"order_id": "WB-9", "items": [{
+        "order_status": "FILLED", "filled_qty": "5", "filled_price": "5.2674",
+        "last_filled_time": "2026-07-10 13:31:00.394+0000",
+        "place_time": "2026-07-10 13:31:00.352+0000",
+    }]}})
+    rep = await _adapter(client).fetch_order_update(_order())
+    assert rep is not None and rep.event_type == "filled"
+    assert rep.reported_at == datetime(2026, 7, 10, 13, 31, 0, 394000, tzinfo=UTC)
+    assert rep.metadata["webull_broker_filled_time"] == "2026-07-10 13:31:00.394+0000"
+    assert rep.metadata["webull_broker_place_time"] == "2026-07-10 13:31:00.352+0000"
+
+
+@pytest.mark.asyncio
+async def test_fetch_order_update_missing_fill_time_falls_back(fake_sdk) -> None:
+    # No last_filled_time -> reported_at falls back to now() (recent), report still valid
+    # (and the adapter logs an UPPER-BOUND warning).
+    from datetime import UTC, datetime
+    before = datetime.now(UTC)
+    client = _FakeClient({"detail": {"order_id": "WB-10", "items": [
+        {"order_status": "FILLED", "filled_qty": "5", "filled_price": "2.85"}]}})
+    rep = await _adapter(client).fetch_order_update(_order())
+    assert rep is not None and rep.event_type == "filled"
+    assert rep.reported_at is not None and rep.reported_at >= before
+    assert "webull_broker_filled_time" not in rep.metadata
+
+
+@pytest.mark.asyncio
 async def test_fetch_order_update_partial_and_failed(fake_sdk) -> None:
     adapter = _adapter(_FakeClient({"detail": {"order_id": "X", "items": [
         {"order_status": "PARTIAL_FILLED", "filled_qty": "2", "filled_price": "2.80"}]}}))

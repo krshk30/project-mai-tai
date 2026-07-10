@@ -196,6 +196,23 @@ class WebullBrokerAdapter:
             )
         ]
 
+    @staticmethod
+    def _parse_broker_time(value: object) -> datetime | None:
+        """Parse a Webull broker timestamp like '2026-07-10 13:31:00.394+0000' -> aware UTC.
+        Returns None (not now()) when absent/unparseable so the caller can flag an upper-bound."""
+        if not value:
+            return None
+        s = str(value).strip()
+        for fmt in ("%Y-%m-%d %H:%M:%S.%f%z", "%Y-%m-%d %H:%M:%S%z"):
+            try:
+                return datetime.strptime(s, fmt).astimezone(UTC)
+            except ValueError:
+                continue
+        try:  # ISO-8601 fallback (e.g. '2026-07-10T13:31:00.394Z' / '+00:00')
+            return datetime.fromisoformat(s.replace("Z", "+00:00")).astimezone(UTC)
+        except ValueError:
+            return None
+
     def _fetch_order_blocking(
         self, account: WebullAccountConfig, request: OrderRequest
     ) -> ExecutionReport | None:
@@ -228,6 +245,24 @@ class WebullBrokerAdapter:
         fill_price = self._decimal_or_none(
             item, "filled_price", "filledPrice", "avg_fill_price", "avgFillPrice", "avg_price"
         )
+        # REAL broker-side fill timestamp. Confirmed live (GMM 07-10 fills): the item carries
+        # `last_filled_time` = "YYYY-MM-DD HH:MM:SS.mmm+0000" — broker-stamped, ms precision,
+        # ~40ms after `place_time` (so it is the broker's fill clock, NOT our poll/receive
+        # time). This is Schwab `closeTime`'s equivalent -> reported_at, so fills.filled_at is
+        # the BROKER fill time and the Webull-vs-Schwab fill-latency A/B is a real measurement.
+        filled_time = self._parse_broker_time(item.get("last_filled_time") or item.get("lastFilledTime"))
+        reported_at = filled_time or datetime.now(UTC)
+        if filled_quantity and filled_quantity > 0 and filled_time is None:
+            logger.warning(
+                "Webull fill for %s (order %s) has no parseable last_filled_time -> reported_at "
+                "falls back to receive-time; treat THIS fill's latency as an UPPER BOUND",
+                request.symbol, broker_order_id,
+            )
+        metadata = dict(request.metadata)
+        if item.get("last_filled_time"):
+            metadata["webull_broker_filled_time"] = str(item.get("last_filled_time"))
+        if item.get("place_time"):
+            metadata["webull_broker_place_time"] = str(item.get("place_time"))
         return ExecutionReport(
             event_type=event_type,  # type: ignore[arg-type]
             client_order_id=request.client_order_id,
@@ -240,7 +275,8 @@ class WebullBrokerAdapter:
             filled_quantity=filled_quantity,
             fill_price=fill_price,
             reason=str(item.get("failure_reason") or item.get("failureReason") or request.reason),
-            metadata=dict(request.metadata),
+            metadata=metadata,
+            reported_at=reported_at,
         )
 
     def _positions_blocking(
