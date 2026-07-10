@@ -1,137 +1,119 @@
-# Dual-broker v2 — design doc (v0, design-first, for review)
+# Dual-broker v2 — design doc (dual-execution BROKER BAKE-OFF)
 
-**Status:** BUILD approved flag-off (2026-07-10). **ENABLE is a separate gate** keyed on forward data
-(confirmed-window mean **positive** over the stopping-rule window), NOT on the build date. Target:
-code-complete + validated (byte-identical-off proven, qty-1 harness ready) by end of next week.
+**Purpose (revised 2026-07-10, operator):** this is **not** a foreign-name router — it is a **broker A/B
+evaluation.** Mirror every v2 trade to **BOTH** broker accounts (Schwab + Webull) **at the same instant**, run each
+leg's CW exit independently, and record per-broker execution (fill price, slippage, submit→fill latency, P&L). After
+~a month of head-to-head on the **US names both brokers accept**, decide which broker executes better and **retire
+the loser** (operator expects to keep Schwab/TOS and close Webull if its latency is as bad as suspected — but wants
+it *measured*, not assumed).
 
-**Why build now despite the backtest verdict:** the broker-aware backtest showed the confirmed-window rule is
-net-negative at real latency (BASE −0.65% mean on the Webull-routed confirmed set). That kills the *enable*, not
-the *build*. Building flag-off costs only dev time + zero fleet risk; if the forward data (or an entry fix) turns
-the edge positive, the plumbing is ready to flip. Build-ready ≠ enabled.
+**2× exposure is intentional and accepted** ("don't worry about 2× win/lose — I'm evaluating the broker"). The
+strategy's own profitability (net-negative at real latency, per the broker-aware backtest) is a **separate**
+question; even a losing strategy cleanly reveals which broker fills better. So the enable is a deliberate,
+cost-accepted evaluation run — SAFETY-gated (plumbing works), not profitability-gated.
+
+**Status:** BUILD approved flag-off. Enable = a separate, staged, safety-gated decision (§11). Target: code-complete
++ validated by end of next week.
 
 ---
 
-## 1. What already exists (scope-reducing findings)
+## 1. What already exists (why the OMS can carry this)
+- **Per-account everything.** Routing (`_adapter_for_account`, service.py:3854 via `RoutingBrokerAdapter`),
+  managed positions (`oms_managed_positions.broker_account_name`), armed stops (`oms_armed_stops.broker_account_name`),
+  and F2 rehydrate all key on the broker account. Adapters incl. **webull** (`_build_provider_adapter`, 2765).
+- **The unique open-row constraint is per-account:** `uq_oms_managed_positions_open_symbol (broker_account_name,
+  symbol)`. Two *different* accounts holding the **same symbol** = two separate rows → **NO collision.** This is what
+  makes mirroring the same trade to both brokers legal in the schema.
+- **The OMS already multiplexes exits by strategy per leg** (`_armed_hard_stops` = ORB trail; `_managed_v2_symbols`
+  → `_evaluate_v2_managed_exit` = v2 CW ladder). Two v2 legs of the same symbol on two accounts each run their **own**
+  CW ladder on their **own** broker, independently. → **The OMS can run the same trade on two brokers at once.**
 
-- **`oms_managed_positions.broker_account_name`** (varchar 128, indexed) already tags each managed row with its
-  broker account, and the exit path already routes by it: `adapter = self.broker_adapter._adapter_for_account(
-  broker_account_name)` (`oms/service.py:3854`), backed by a `RoutingBrokerAdapter` (`_build_broker_adapter`,
-  2735) that maps provider→adapter (`_build_provider_adapter`: simulated/alpaca/schwab/**webull** at 2765).
-  → **A v2 leg written with `broker_account_name = <v2-webull-acct>` already has its exits routed to Webull.**
-  This is the load-bearing infra and it's already built. **Likely NO new exit-read column is needed.**
-- **#326 Schwab-ineligible cache** (`SCHWAB_INELIGIBLE_REASON_SUBSTRINGS = ("must be placed with a broker",)`,
-  `record_schwab_ineligible_entry` on reject 3162-3163, `get_schwab_ineligible_entry`/`_has_cached_...` 3885-3893)
-  already learns which symbols Schwab rejects, per-account, cached. → **This IS the learn-and-direct-route primitive.**
-- **The OMS already MULTIPLEXES exit strategies by strategy, not by broker.** Two independent registries dispatched
-  per-leg: `_armed_hard_stops` (keyed `(strategy, account, symbol)`) = ORB trail/native-stop; `_managed_v2_symbols`
-  → `_evaluate_v2_managed_exit` = v2 CW ladder. The tick handler runs the exit for whichever registry the leg is in
-  (2335/2342), which follows the placing STRATEGY, independent of the broker adapter. → **v2's CW ladder and ORB's
-  trail coexist on the same Webull account, each on its own leg. No 1:1 exit↔broker requirement** (enables §3's
-  account-sharing).
+## 2. Routing = FAN-OUT (mirror to both, parallel — no round-trip)
+When `WEBULL_MIRROR_ENABLED`, a single v2 open intent is submitted to **BOTH** accounts **simultaneously**:
+- `live:schwab_1m_v2` (Schwab) AND `live:v2_webull` (Webull), fired in parallel — **same instant, no try-then-wait.**
+  This is what fixes the latency worry: Webull isn't waiting on a Schwab reject; both get the order at once.
+- **US names:** both accept → **two legs** = the true head-to-head (same signal, same time, compare fills).
+- **Foreign / Schwab-ineligible names:** Schwab rejects (must-use-a-broker) → **Webull-only leg.** No comparison
+  there, but it still trades. → **The comparison dataset is the US names both brokers fill.**
+- **No eligibility guessing, no double-fill trap** — we *want* both to fill on US names; that's the test.
 
-## 2. Routing design — Schwab-first + learn-and-direct-route (one position, one broker per leg)
+Flag OFF = no fan-out; v2 submits only to Schwab exactly as today (byte-identical).
 
-On a v2 open intent, at OMS `_evaluate_risk`/submit, when `WEBULL_FALLBACK_ENABLED`:
-1. If the symbol is **already cached Schwab-ineligible** (`_has_cached_schwab_ineligible_symbol`) → route **directly
-   to the v2-Webull account** (skip the wasted Schwab reject round-trip). *[learn-and-direct-route]*
-2. Else route to Schwab as today. On a **Schwab reject with the ineligible reason**, the existing code already
-   records the ineligible entry (3162) → **re-submit the same order to the v2-Webull account** (the fallback),
-   and every subsequent order for that symbol that day takes path (1). So the round-trip is paid **once per name
-   per day**, not per order.
-3. The resulting fill writes a managed row with `broker_account_name = <v2-webull-acct>` → exits auto-route to
-   Webull via the existing `_adapter_for_account`. **One position, one broker per leg. No double-posting.**
+## 3. Two managed legs per trade
+Each fill writes its own managed row (`broker_account_name` = the Schwab acct OR the Webull acct), its own armed
+stop, its own CW ladder state. Exits route per-row to the correct adapter. Schema already supports it (§1). Each
+leg rehydrates independently on restart from its own account rows.
 
-Flag OFF = the fallback branch is never taken; every v2 order routes to Schwab exactly as today (byte-identical).
+## 4. Comparison telemetry — the actual deliverable
+The point of the whole build is the month-end verdict, so we capture per-broker, per-trade:
+- **Fill price vs signal reference** (slippage) — the headline broker-quality metric.
+- **Submit→fill latency** — measured, not assumed (Webull's real number vs Schwab's).
+- **Per-leg realized P&L** and fill/reject/partial counts.
+Sources already tag the broker (`fills.broker_account_id`, `broker_orders`), so this is largely a **reporting
+script** (`scripts/broker_ab_report.py`) that diffs the two legs of each mirrored trade. Deliver a weekly/monthly
+Schwab-vs-Webull comparison → the retire-the-loser decision.
 
-## 3. Webull account — SEPARATE `live:v2_webull` (default). NOT `live:orb`.
+## 5. Separate `live:v2_webull` account (NOT `live:orb`)
+Mirroring needs v2's Webull leg on its **own** account: sharing `live:orb` collides (ORB + v2 same universe → the
+per-account unique-open row), and entangles reconciliation / protected symbols / ORB's cap. **OPS STEP (before
+ENABLE, not merge):** provision `live:v2_webull` + wire credentials/hash into the routing map. Build (flag-off)
+doesn't need it to exist.
 
-**Revised 2026-07-10 (operator, final):** default to a **dedicated `live:v2_webull` Webull account.** The OMS
-*can* multiplex exits by strategy on one account (§1), so sharing is technically possible — BUT the killer is the
-**unique `(broker_account_name, symbol)` open-row constraint** (`uq_oms_managed_positions_open_symbol`): ORB and
-v2 trade **the exact same universe** (momentum gappers / Schwab-ineligible foreign names), so a **live
-shared-symbol collision on `live:orb` is LIKELY, not rare** — both bots would fight for the same open row on the
-same name. A separate account removes that entirely, plus keeps reconciliation attribution, protected symbols,
-and ORB's entry cap cleanly per-strategy. **OPS STEP (before ENABLE, not merge):** provision `live:v2_webull` +
-wire its credentials/hash into the routing map; the account name is a config value. The build (flag-off) does not
-need the account to exist — only the enable does.
+## 6. Schema — GREP-VERIFIED: NO new field; routing PR earns the #404 rehydrate test
+`broker_account_name` already exists on `oms_managed_positions` AND `oms_armed_stops`, and F2
+`_rehydrate_armed_hard_stops` already reads it (`_hard_stop_key(strategy, account, symbol)` → re-arms
+`ArmedHardStop(broker_account_name=...)`). → **No new field.** Because it IS read on rehydrate, the routing PR
+earns a **#404-style rehydrate/survival test**:
+1. **Flag OFF = byte-identical:** no fan-out → v2 legs only ever on `live:schwab_1m_v2` → rehydrate/exit values
+   unchanged vs today. Prove it.
+2. **Flag ON = both legs rehydrate:** a mirrored trade arms two legs (Schwab + Webull) → persists → **restart OMS**
+   → **both** rehydrate on their own accounts → each re-arms its CW stop on the correct adapter → both exit
+   lifecycles intact.
 
-## 4. Schema — GREP-VERIFIED 2026-07-10: NO new field; routing PR earns the #404 rehydrate test
+## 7. Exits on Webull — the load-bearing risk
+The v2 CW **multi-leg** ladder (partial +2% / floor / 2% trail / −5% hard stop / bar-close flip) must run on the
+Webull adapter for the Webull leg. Reuse ORB's proven fixes (#386 STOP→STOP_LOSS, #375 fill polling, #374 4-dec,
+limit+session EH). ORB only proved a *single* stop-exit on Webull — the multi-leg ladder (partial fills,
+cancel-of-siblings, EH) is where surprises live. This is what the qty-1 test (§10) shakes out.
 
-Both persisted exit rows ALREADY carry the broker axis and rehydrate already reads it:
-- `oms_managed_positions.broker_account_name` (varchar 128, indexed) AND `oms_armed_stops.broker_account_name`
-  (varchar 128, indexed) both exist today.
-- F2 `_rehydrate_armed_hard_stops` **reads** it: `key = _hard_stop_key(strategy_code, broker_account_name, symbol)`
-  and re-arms `ArmedHardStop(broker_account_name=...)`. The v2 CW ladder rehydrates from `oms_managed_positions`
-  (same field); the exit adapter is resolved from it (`_adapter_for_account`, service.py:3854).
+## 8. Reconciliation / capital / risk — per-account, 2× accepted
+- Reconciler runs per-account; verify it enumerates `live:v2_webull`.
+- **Capital 2×:** each account holds a full-size position on a mirrored US trade. Operator-accepted for the eval.
+  Sizing = per-order qty (currently 4) on each broker; no cross-account netting.
+- Protected symbols per-account (v2-Webull has no manual holdings).
+- Scoping invariant already per-broker — each leg is a v2-owned position on its account.
 
-→ **NO new schema field is required.** But `broker_account_name` **is read on rehydrate**, so per the merge rule
-the ROUTING PR earns a **#404-style rehydrate/survival test** on two axes:
-1. **Flag OFF = byte-identical:** no v2 order routes to Webull → every v2 leg still writes
-   `broker_account_name = live:schwab_1m_v2` → rehydrate/exit values unchanged vs today. Prove it (behavioural +
-   value-identical).
-2. **Flag ON = correct rehydrate:** a v2-Webull leg (`broker_account_name = live:v2_webull`) arms → persists (both
-   tables) → **restart OMS** → rehydrates → re-arms the CW hard stop on the **Webull** adapter (NOT Schwab) → exit
-   lifecycle intact. arm → persist → restart → rehydrate → assert.
+## 9. Flag + merge gate
+- `MAI_TAI_..._WEBULL_MIRROR_ENABLED` default **False** → byte-identical off (no fan-out).
+- **Merge gate:** byte-identical-off proven (behavioural + value-identical) + the #404 rehydrate test (§6).
+- Genuine-green CI, no admin. Attended flag-off deploy, fleet-flat.
 
-## 5. Exits on Webull — the load-bearing risk
+## 10. qty-1 Webull test — exercises EVERY ladder leg (gates ENABLE, not merge)
+On `live:v2_webull`, drive/verify **every** CW exit leg on Webull (not one fill): entry → +2% partial → +2% floor
+→ 2% trail → −5% hard stop → bar-close flip, plus fill-poll / 4-dec / EH sessions; each leg's submit→fill→
+cancel-of-siblings confirmed. **Do not enable until every leg passes.**
 
-The CW ladder + hard stop must execute on the Webull adapter for a Webull-held leg. Reuse ORB's proven Webull
-fixes: **#386** STOP→STOP_LOSS mapping, **#375** fill polling by client_order_id, **#374** 4-dec rounding,
-limit+session for extended hours. **RISK:** Webull's exit path is proven for ORB's *single* stop-exit, NOT for
-v2's *multi-leg CW ladder* (partial +2%, floor, 2% trail, −5% hard stop, bar-close flip) — partial fills,
-cancel-on-other-leg, EH sessions. This is where the qty-1 test focuses and where surprises will surface.
+## 11. Enable — STAGED, safety-gated (NOT profitability-gated)
+1. **qty-1 plumbing test** (§10, every leg) passes on `live:v2_webull`.
+2. **Flag ON → after-hours live smoke:** one real mirrored trade in a **slow / extended-hours** market; watch BOTH
+   legs' full entry→CW-exit lifecycle on real money.
+3. **Then RTH:** run the mirror during regular hours → accrue the Schwab-vs-Webull comparison.
+4. **Run ~1 month** on US names → §4 report → **retire the loser.**
+Note: the confirmed-window strategy is net-negative at real latency, so the eval runs at a (2×, accepted) P&L cost.
+That's the price of measuring the brokers; the strategy-profitability decision (mean-positive) runs in parallel and
+is separate from the broker verdict.
 
-## 6. Reconciliation / protected symbols / capital — per-account
+## 12. Sequence
+1. Design (this) → review.
+2. **Fan-out routing PR** (flag-off): mirror v2 opens to both accounts; two managed legs; byte-identical-off + #404
+   rehydrate test.
+3. **Webull v2-exit adapter PR** (flag-off): CW ladder on Webull, reusing #386/#375/#374/EH.
+4. **Comparison report** `scripts/broker_ab_report.py` (§4).
+5. **qty-1 harness** (§10).
+6. **Enable** (separate): ops provisions `live:v2_webull` → qty-1 passes → after-hours smoke → RTH → 1-month eval.
 
-- Scoping invariant already per-broker (OMS only touches positions it placed, per account) — a v2-Webull leg is a
-  v2-owned position on the v2-Webull account; reconciler runs per-account. Verify the reconciler enumerates the
-  new account.
-- Protected symbols apply per-account (the v2-Webull account has no manual holdings initially).
-- Capital/buying-power: the v2-Webull account is a separate pool; sizing unchanged (per-order qty), just executes
-  on whichever broker. No cross-account netting.
-
-## 7. Flag + merge gate
-
-- `MAI_TAI_..._WEBULL_FALLBACK_ENABLED` default **False** → byte-identical off (no fallback branch, no new routing).
-- **Merge gate:** byte-identical-off proven — behaviourally (all v2 orders → Schwab, unchanged) AND, if any
-  persisted field changed, the #404-style rehydrate/survival test.
-- Genuine-green CI, no admin. Attended deploy flag-off (fleet-flat).
-
-## 8. qty-1 Webull plumbing test — exercises EVERY ladder leg (gates the ENABLE, not the merge)
-
-On the separate `live:v2_webull` account, the harness must drive/verify **every CW exit leg on Webull, not just a
-single fill** (operator, 2026-07-10): (1) entry fill; (2) **+2% partial** (sell 50%); (3) **+2% floor** hold on the
-remainder; (4) **2% trailing** stop exit; (5) **−5% hard stop** (native STOP_LOSS mapping #386); (6) **bar-close
-ATR flip** close; plus fill-polling (#375), 4-dec rounding (#374), limit+session for EH. Each leg's submit → fill
-→ cancel-of-siblings must be confirmed on Webull (the ORB go-live 4-bug shakeout, expect surprises). **Do NOT
-enable until every leg passes.** Merge flag-off first; the leg-complete plumbing test + the after-hours live smoke
-+ the forward-data gate all precede full RTH enable (§10).
-
-## 9. Sequence
-
-1. **Design doc** (this) → review.
-2. **Routing + fallback PR** (flag-off): the fallback branch + learn-and-direct-route reusing #326 cache;
-   `broker_account_name` set to the v2-Webull account on fallback fills. Byte-identical-off proven.
-3. **Schema/rehydrate PR** *only if* §4 (a)/(b) forces it — with the #404-style test.
-4. **Webull v2-exit adapter PR** (flag-off): the CW ladder on the Webull adapter, reusing #386/#375/#374/EH.
-5. **qty-1 harness** ready (script, like ORB's).
-6. **Enable** (separate, later): ops provisions the v2-Webull account → qty-1 test passes → forward data clears
-   the stopping rule (**mean positive** over the window) → attended flag flip.
-
-## 10. Enable gate (explicit, decoupled from build) — STAGED (operator plan 2026-07-10)
-
-Flag flips through **staged live validation**, gated on forward data:
-1. **qty-1 plumbing test** (§8) on `live:orb` (Webull): one buy / one sell / one stop — confirm the v2 CW-ladder
-   path fills, stops, and cancels cleanly on Webull (both-broker sanity). Gates the enable, not the merge.
-2. **Flag ON → after-hours live smoke:** send ONE real ATR/CW trade through Webull in a **slow / extended-hours
-   market** (controlled, low-liquidity window) and watch the full entry→CW-exit lifecycle work on real money.
-3. **Then RTH:** only after the after-hours smoke is clean, allow the flag on during regular hours.
-4. **Standing enable condition:** the confirmed-window forward data must show **mean positive** over the
-   stopping-rule window (real-latency fills, not idealized) — else the flag stays off. The current broker-aware
-   backtest says this is net-negative today, so absent an entry-edge change the plumbing simply waits, built and
-   ready. That is the intended, accepted outcome — build-ready ≠ enabled.
-
-## 11. Open questions for review
-- Webull account name/credentials (ops) — confirm the account handle.
-- Confirm §4 (a)/(b) via grep before committing to "no schema change."
-- Canary qty during the forward window (operator wrote qty 10; currently qty 2 — live-money decision, held for GO).
+## 13. Open questions
+- `live:v2_webull` account handle + credentials (ops, before enable).
+- Confirm the fan-out submits are independent (one broker rejecting/erroring must NOT block the other leg).
+- Comparison metric weights for the retire decision (slippage vs latency vs fill-rate) — operator to weight at
+  month-end.
