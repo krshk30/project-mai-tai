@@ -53,6 +53,21 @@ Sources already tag the broker (`fills.broker_account_id`, `broker_orders`), so 
 script** (`scripts/broker_ab_report.py`) that diffs the two legs of each mirrored trade. Deliver a weekly/monthly
 Schwab-vs-Webull comparison → the retire-the-loser decision.
 
+**⚠️ TWO capture requirements (verified during PR #2 — the experiment is only as good as these):**
+1. **REAL broker fill time+price on BOTH legs.** `store.record_fill_if_needed` faithfully persists
+   `price=report.fill_price`, `filled_at=report.reported_at`, `broker_fill_id`. Schwab's adapter sets
+   `reported_at` from `closeTime` (real fill time). **BUT the Webull adapter (`webull.py` `fetch_order_update`)
+   OMITS `reported_at`** → the Webull leg's `fills.filled_at` defaults to record/poll time, NOT the real broker
+   fill timestamp. **REQUIRED FIX before ENABLE (a required experiment-validity item, not a flag-off blocker):**
+   populate Webull `reported_at` from Webull's fill-time field (determine the exact field from a real fill during
+   the qty-1 test / SDK — the adapter already extracts `filled_price`/`filled_qty` from `items[0]`). Without it,
+   the fill-LATENCY half of the A/B is invalid for the Webull leg (the fill-PRICE half is fine).
+2. **Webull REJECT is a RESULT, not just a safety event.** A Schwab-ineligible name rejects on Webull too; that
+   reject IS the answer to "can Webull trade this." The mirror records rejected reports to `broker_orders`
+   (status=rejected + reason) and swallows only the exception path — so the reject lands as data.
+   `broker_ab_report` MUST read `broker_orders` rejects + reasons (not only `fills`) to surface
+   "Webull rejected N% of confirmed names / with reasons X".
+
 ## 5. Separate `live:v2_webull` account (NOT `live:orb`)
 Mirroring needs v2's Webull leg on its **own** account: sharing `live:orb` collides (ORB + v2 same universe → the
 per-account unique-open row), and entangles reconciliation / protected symbols / ORB's cap. **OPS STEP (before
