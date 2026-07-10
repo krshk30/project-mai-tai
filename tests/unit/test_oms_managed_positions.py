@@ -43,7 +43,7 @@ class _Harness:
     def __init__(self, *, enabled: bool) -> None:
         self.settings = Settings(oms_v2_exit_management_enabled=enabled)
         self.store = OmsStore()
-        self._managed_v2_symbols: set[str] = set()  # slice-3: the hook maintains this set
+        self._managed_v2_symbols: set[tuple[str, str]] = set()  # slice-3: the hook maintains this set
 
 
 def _apply(harness: _Harness, session: Session, **kw):

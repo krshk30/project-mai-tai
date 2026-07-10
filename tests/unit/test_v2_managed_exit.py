@@ -75,7 +75,7 @@ def _arm(svc, sf, *, symbol=SYM, entry=10.0, qty=100, **rowkw) -> None:
             setattr(row, k, v)
         s.flush()
         s.commit()
-    svc._managed_v2_symbols.add(symbol)
+    svc._managed_v2_symbols.add((ACCT, symbol))
 
 
 def _quote(svc, bid: float, *, symbol=SYM, age_s: float = 0.0) -> None:
@@ -119,7 +119,7 @@ async def test_hard_stop_emits_full_close_at_stop_level() -> None:
     svc = _svc(sf)
     _arm(svc, sf, entry=10.0, qty=100)
     _quote(svc, bid=9.80)                       # below stop 9.85 = 10*(1-1.5%)
-    await svc._evaluate_v2_managed_exit(SYM)
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
 
     intents = _sell_intents(sf)
     assert len(intents) == 1
@@ -130,7 +130,7 @@ async def test_hard_stop_emits_full_close_at_stop_level() -> None:
     assert _sell_order_count(sf) == 1            # reached the adapter + filled
     r = _row(sf)
     assert r.status == "closed" and r.current_quantity == 0
-    assert SYM not in svc._managed_v2_symbols
+    assert (ACCT, SYM) not in svc._managed_v2_symbols
 
 
 # --------------------------------------------------------------------------- (2)
@@ -141,7 +141,7 @@ async def test_scale_emits_partial_at_scale_level_row_stays_open() -> None:
     svc = _svc(sf)
     _arm(svc, sf, entry=10.0, qty=100)
     _quote(svc, bid=10.25)                      # +2.5% → PCT2 scale (>=2%)
-    await svc._evaluate_v2_managed_exit(SYM)
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
 
     intents = _sell_intents(sf)
     assert len(intents) == 1 and intents[0].intent_type == "scale"
@@ -150,7 +150,7 @@ async def test_scale_emits_partial_at_scale_level_row_stays_open() -> None:
     r = _row(sf)
     assert r.status == "open" and r.current_quantity == 50
     assert "PCT2" in (r.scales_done or [])
-    assert SYM in svc._managed_v2_symbols       # still armed
+    assert (ACCT, SYM) in svc._managed_v2_symbols       # still armed
 
 
 # --------------------------------------------------------------------------- (3)
@@ -164,7 +164,7 @@ async def test_floor_breach_emits_full_close_at_floor_level() -> None:
          peak_profit_pct=Decimal("3"), tier=3, floor_pct=Decimal("1.5"),
          floor_price=Decimal("10.15"), scales_done=["PCT2"])
     _quote(svc, bid=10.10)                      # below floor_price 10.15 → breach
-    await svc._evaluate_v2_managed_exit(SYM)
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
 
     intents = _sell_intents(sf)
     assert len(intents) == 1 and intents[0].intent_type == "close"
@@ -181,7 +181,7 @@ async def test_no_exit_persists_ladder_state_no_order() -> None:
     svc = _svc(sf)
     _arm(svc, sf, entry=10.0, qty=100)
     _quote(svc, bid=10.15)                      # +1.5%: no stop, no floor-breach, no scale (<2%)
-    await svc._evaluate_v2_managed_exit(SYM)
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
 
     assert _sell_intents(sf) == []               # nothing emitted
     r = _row(sf)
@@ -200,7 +200,7 @@ async def test_dormant_when_flag_off() -> None:
     _arm(svc, sf, entry=10.0, qty=100)
     svc._managed_v2_symbols.clear()             # OFF: slice-1 never arms it
     _quote(svc, bid=9.50)                        # would be a hard stop if evaluated
-    await svc._evaluate_v2_managed_exit(SYM)
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
     assert _sell_intents(sf) == []
     assert _row(sf).status == "open"
 
@@ -213,8 +213,8 @@ async def test_no_double_close_on_second_quote() -> None:
     svc = _svc(sf)
     _arm(svc, sf, entry=10.0, qty=100)
     _quote(svc, bid=9.80)
-    await svc._evaluate_v2_managed_exit(SYM)     # closes
-    await svc._evaluate_v2_managed_exit(SYM)     # row closed + symbol dropped → no-op
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)     # closes
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)     # row closed + symbol dropped → no-op
     assert len(_sell_intents(sf)) == 1
 
 
@@ -226,7 +226,7 @@ async def test_stale_quote_skipped() -> None:
     svc = _svc(sf)
     _arm(svc, sf, entry=10.0, qty=100)
     _quote(svc, bid=9.80, age_s=30.0)            # 30s old > 5s window
-    await svc._evaluate_v2_managed_exit(SYM)
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
     assert _sell_intents(sf) == []                # never acted on a stale quote
     assert _row(sf).status == "open"
 
@@ -338,7 +338,7 @@ async def test_rth_exit_stays_market_byte_identical(monkeypatch) -> None:
     svc = _svc(sf)
     _arm(svc, sf, entry=10.0, qty=100)
     _quote(svc, bid=9.80)                            # hard stop
-    await svc._evaluate_v2_managed_exit(SYM)
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
 
     m = _meta(_sell_intents(sf)[0])
     assert m["order_type"] == "market"               # unchanged
@@ -355,7 +355,7 @@ async def test_pm_hard_stop_routes_buffered_marketable_limit(monkeypatch) -> Non
     svc = _svc(sf)
     _arm(svc, sf, entry=10.0, qty=100)
     _quote(svc, bid=9.80)                            # hard stop, live bid 9.80
-    await svc._evaluate_v2_managed_exit(SYM)
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
 
     m = _meta(_sell_intents(sf)[0])
     assert m["order_type"] == "limit"
@@ -376,7 +376,7 @@ async def test_am_floor_breach_routes_buffered_marketable_limit(monkeypatch) -> 
          peak_profit_pct=Decimal("3"), tier=3, floor_pct=Decimal("1.5"),
          floor_price=Decimal("10.15"), scales_done=["PCT2"])
     _quote(svc, bid=10.10)                           # floor breach, live bid 10.10
-    await svc._evaluate_v2_managed_exit(SYM)
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
 
     m = _meta(_sell_intents(sf)[0])
     assert m["order_type"] == "limit" and m["session"] == "AM"
@@ -393,7 +393,7 @@ async def test_pm_scale_routes_at_bid_zero_buffer(monkeypatch) -> None:
     svc = _svc(sf)
     _arm(svc, sf, entry=10.0, qty=100)
     _quote(svc, bid=10.25)                           # +2.5% → PCT2 scale, live bid 10.25
-    await svc._evaluate_v2_managed_exit(SYM)
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
 
     m = _meta(_sell_intents(sf)[0])
     assert m["order_type"] == "limit" and m["session"] == "PM"
@@ -500,22 +500,22 @@ async def test_clro_never_fills_stays_open_monitored_no_reemit() -> None:
     _arm(svc, sf, entry=10.0, qty=100)
 
     _quote(svc, bid=9.80)                              # hard stop
-    await svc._evaluate_v2_managed_exit(SYM)
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
 
     assert len(adapter.submitted) == 1                 # exit submitted...
     r = _row(sf)
     assert r.status == "open"                          # ...but NOT marked closed on submit
     assert r.current_quantity == 100                   # broker still holds 100 -> record honest
-    assert SYM in svc._managed_v2_symbols              # still monitored / protected
+    assert (ACCT, SYM) in svc._managed_v2_symbols              # still monitored / protected
     assert _sell_order_count(sf) == 1                  # one working exit order
 
     # next quote: the dedup guard prevents a re-emit storm while the exit is working
     _quote(svc, bid=9.75)
-    await svc._evaluate_v2_managed_exit(SYM)
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
     assert len(adapter.submitted) == 1                 # NO second exit emitted
     r2 = _row(sf)
     assert r2.status == "open" and r2.current_quantity == 100
-    assert SYM in svc._managed_v2_symbols
+    assert (ACCT, SYM) in svc._managed_v2_symbols
 
 
 # --------------------------------------------------------------------------- (#6-2)
@@ -527,11 +527,11 @@ async def test_partial_fill_decrements_not_flat() -> None:
     _arm(svc, sf, entry=10.0, qty=10)
 
     _quote(svc, bid=9.80)                              # hard stop -> close 10, fills 6
-    await svc._evaluate_v2_managed_exit(SYM)
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
 
     r = _row(sf)
     assert r.status == "open" and r.current_quantity == 4   # 10 - 6 confirmed fill
-    assert SYM in svc._managed_v2_symbols              # remaining 4 still monitored
+    assert (ACCT, SYM) in svc._managed_v2_symbols              # remaining 4 still monitored
 
 
 # --------------------------------------------------------------------------- (#6-3)
@@ -544,7 +544,7 @@ async def test_retry_after_working_exit_cancelled() -> None:
     svc = _svc(sf, adapter=adapter)
     _arm(svc, sf, entry=10.0, qty=100)
     _quote(svc, bid=9.80)
-    await svc._evaluate_v2_managed_exit(SYM)
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
     assert len(adapter.submitted) == 1
 
     # simulate the working exit going terminal (cancelled) -> no longer an open exit order
@@ -554,7 +554,7 @@ async def test_retry_after_working_exit_cancelled() -> None:
         s.commit()
 
     _quote(svc, bid=9.75)
-    await svc._evaluate_v2_managed_exit(SYM)
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
     assert len(adapter.submitted) == 2                 # re-emitted after the guard cleared
     assert _row(sf).status == "open" and _row(sf).current_quantity == 100
 
@@ -568,10 +568,10 @@ async def test_happy_path_immediate_fill_closes_on_fill() -> None:
     svc = _svc(sf)                                     # SimulatedBrokerAdapter fills inline
     _arm(svc, sf, entry=10.0, qty=100)
     _quote(svc, bid=9.80)
-    await svc._evaluate_v2_managed_exit(SYM)
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
     r = _row(sf)
     assert r.status == "closed" and r.current_quantity == 0
-    assert SYM not in svc._managed_v2_symbols
+    assert (ACCT, SYM) not in svc._managed_v2_symbols
 
 
 # --------------------------------------------------------------------------- (#6-5) rollback lever
@@ -584,7 +584,91 @@ async def test_legacy_flag_off_closes_on_submit() -> None:
     svc = _svc(sf, close_on_fill=False, adapter=_NoFillAdapter())
     _arm(svc, sf, entry=10.0, qty=100)
     _quote(svc, bid=9.80)
-    await svc._evaluate_v2_managed_exit(SYM)
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
     r = _row(sf)
     assert r.status == "closed" and r.current_quantity == 0    # legacy: closed on submit
-    assert SYM not in svc._managed_v2_symbols
+    assert (ACCT, SYM) not in svc._managed_v2_symbols
+
+
+# --------------------------------------------------------------------------- (DUAL-BROKER)
+# Account-aware CW/managed-exit path: the guard set + eval are keyed by (account, symbol)
+# so a future v2 Webull-mirror has BOTH legs' ladders evaluated. Flag OFF == single account
+# (byte-identical to prior behaviour); flag ON tracks/exits each account independently.
+
+WEBULL_ACCT = "live:v2_webull"
+
+
+def _svc_dual(sf) -> OmsRiskService:
+    """v2 svc with the Webull-mirror flag ON and BOTH broker accounts seeded."""
+    settings = Settings(
+        oms_v2_exit_management_enabled=True,
+        oms_v2_exit_close_on_fill_enabled=True,
+        strategy_schwab_1m_v2_webull_mirror_enabled=True,
+    )
+    svc = OmsRiskService(
+        settings, redis_client=_FakeRedis(), session_factory=sf,
+        broker_adapter=SimulatedBrokerAdapter(),
+    )
+    with sf() as s:
+        svc.store.ensure_strategy(s, "schwab_1m_v2", name="v2")
+        svc.store.ensure_broker_account(s, ACCT, provider="simulated", environment="test")
+        svc.store.ensure_broker_account(s, WEBULL_ACCT, provider="simulated", environment="test")
+        s.commit()
+    return svc
+
+
+def _arm_on(svc, sf, acct, *, symbol=SYM, entry=10.0, qty=100) -> None:
+    with sf() as s:
+        svc.store.create_managed_position(
+            s, strategy_code="schwab_1m_v2", broker_account_name=acct,
+            symbol=symbol, entry_price=Decimal(str(entry)), quantity=qty, entry_path="MACD Cross",
+        )
+        s.commit()
+    svc._managed_v2_symbols.add((acct, symbol))
+
+
+def _quote_event(symbol: str, bid: float) -> QuoteTickEvent:
+    return QuoteTickEvent(
+        source_service="market-data",
+        payload=QuoteTickPayload(
+            symbol=symbol, bid_price=Decimal(str(bid)), ask_price=Decimal(str(bid + 0.01)),
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_flag_off_single_account_evaluates_as_before() -> None:
+    """(a) mirror flag OFF: _v2_accounts() == [schwab] and a managed symbol on the schwab
+    account is exited exactly as before, driven through the real quote-tick dispatch."""
+    sf = _make_sf()
+    svc = _svc(sf)                                   # flag defaults OFF
+    assert svc._v2_accounts() == [ACCT]
+    _arm(svc, sf, entry=10.0, qty=100)
+    assert svc._managed_v2_symbols == {(ACCT, SYM)}
+    await svc._handle_quote_tick_event(_quote_event(SYM, 9.80))   # hard stop
+    assert _sell_order_count(sf) == 1
+    assert _row(sf).status == "closed"
+    assert (ACCT, SYM) not in svc._managed_v2_symbols            # disarmed
+
+
+@pytest.mark.asyncio
+async def test_flag_on_tracks_and_exits_both_accounts_independently() -> None:
+    """(b) mirror flag ON: _v2_accounts() includes the Webull account, and a managed row on
+    EACH account for the SAME symbol is tracked + exited independently on one quote."""
+    sf = _make_sf()
+    svc = _svc_dual(sf)
+    assert svc._v2_accounts() == [ACCT, WEBULL_ACCT]
+    _arm_on(svc, sf, ACCT, entry=10.0, qty=100)
+    _arm_on(svc, sf, WEBULL_ACCT, entry=10.0, qty=100)
+    assert svc._managed_v2_symbols == {(ACCT, SYM), (WEBULL_ACCT, SYM)}
+
+    await svc._handle_quote_tick_event(_quote_event(SYM, 9.80))   # hard stop on BOTH legs
+
+    with sf() as s:
+        rows = list(s.scalars(
+            select(OmsManagedPosition).where(OmsManagedPosition.symbol == SYM)
+        ).all())
+    assert len(rows) == 2                                         # one row per account
+    assert {r.broker_account_name for r in rows} == {ACCT, WEBULL_ACCT}
+    assert all(r.status == "closed" for r in rows)               # each leg exited
+    assert svc._managed_v2_symbols == set()                      # both disarmed

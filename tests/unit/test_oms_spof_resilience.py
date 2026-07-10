@@ -399,7 +399,7 @@ def test_pra_armed_stop_fires_even_when_tickpath_db_units_stall(monkeypatch):
     svc._armed_hard_stops = {
         svc._hard_stop_key(stop.strategy_code, stop.broker_account_name, stop.symbol): stop
     }
-    svc._managed_v2_symbols = {stop.symbol}  # so step 4 (v2 exit) also runs and stalls
+    svc._managed_v2_symbols = {("live:schwab_1m_v2", stop.symbol)}  # so step 4 (v2 exit) also runs and stalls
 
     async def hung_run_db(fn, *, commit=True):
         raise TimeoutError("tick-path DB unit hung on psycopg wait")
@@ -461,10 +461,10 @@ def test_pra_v2_exit_db_runs_off_loop_while_dict_mutation_stays_on_loop():
             discard_idents.append(threading.get_ident())
             super().discard(value)
 
-    svc._managed_v2_symbols = _TrackSet({"KIDZ"})
+    svc._managed_v2_symbols = _TrackSet({("live:schwab_1m_v2", "KIDZ")})
 
     # No managed row exists → the off-loop READ returns None → discard runs on-loop.
-    asyncio.run(svc._evaluate_v2_managed_exit("KIDZ"))
+    asyncio.run(svc._evaluate_v2_managed_exit("live:schwab_1m_v2", "KIDZ"))
 
     assert db_idents, "the v2 read unit did not go through _run_db"
     assert all(ident != main_ident for ident in db_idents), "DB unit ran ON the event-loop thread"

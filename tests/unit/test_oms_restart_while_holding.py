@@ -223,4 +223,4 @@ def test_tv2_rehydrate_managed_row_still_survives():
         ))
         s.commit()
     svc._rehydrate_managed_v2_symbols()  # the existing v2 rehydrate path
-    assert "LNAI" in svc._managed_v2_symbols, "v2 managed position did NOT survive restart"
+    assert (V2_ACCT, "LNAI") in svc._managed_v2_symbols, "v2 managed position did NOT survive restart"

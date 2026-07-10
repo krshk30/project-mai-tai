@@ -85,7 +85,7 @@ def _arm(svc, sf, *, entry=10.0, qty=100, **rowkw) -> None:
             setattr(row, k, v)
         s.flush()
         s.commit()
-    svc._managed_v2_symbols.add(SYM)
+    svc._managed_v2_symbols.add((V2_ACCT, SYM))
 
 
 def _quote(svc, bid: float) -> None:
@@ -118,7 +118,7 @@ async def test_v2_hard_stop_exit_fills_simulated_schwab_never_called() -> None:
         svc = _svc(sf, settings, router)
         _arm(svc, sf, entry=10.0, qty=100)
         _quote(svc, bid=9.80)                       # hard stop
-        await svc._evaluate_v2_managed_exit(SYM)
+        await svc._evaluate_v2_managed_exit(V2_ACCT, SYM)
 
         # the v2 sell filled on SIMULATED, the row closed
         with sf() as s:
@@ -152,7 +152,7 @@ async def test_v2_scale_exit_also_routes_simulated_never_schwab() -> None:
         svc = _svc(sf, settings, router)
         _arm(svc, sf, entry=10.0, qty=100)
         _quote(svc, bid=10.25)                      # +2.5% → scale
-        await svc._evaluate_v2_managed_exit(SYM)
+        await svc._evaluate_v2_managed_exit(V2_ACCT, SYM)
 
         with sf() as s:
             sell = s.scalar(select(TradeIntent).where(TradeIntent.side == "sell"))
