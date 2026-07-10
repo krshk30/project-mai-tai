@@ -94,7 +94,8 @@ def _ref(i: TradeIntent) -> Decimal:
 
 @pytest.mark.asyncio
 async def test_cw_target_full_close_at_plus_2pct():
-    sf = _make_sf(); svc = _svc(sf, cw=True)
+    sf = _make_sf()
+    svc = _svc(sf, cw=True)
     _arm(svc, sf, entry=10.0, qty=100)
     _quote(svc, bid=10.25)                       # >= +2% target (10.20)
     await svc._evaluate_v2_managed_exit(SYM)
@@ -109,7 +110,8 @@ async def test_cw_target_full_close_at_plus_2pct():
 
 @pytest.mark.asyncio
 async def test_cw_hard_stop_full_close_at_minus_5pct():
-    sf = _make_sf(); svc = _svc(sf, cw=True)
+    sf = _make_sf()
+    svc = _svc(sf, cw=True)
     _arm(svc, sf, entry=10.0, qty=100)
     _quote(svc, bid=9.40)                          # <= -5% stop (9.50)
     await svc._evaluate_v2_managed_exit(SYM)
@@ -123,7 +125,8 @@ async def test_cw_hard_stop_full_close_at_minus_5pct():
 async def test_cw_no_exit_between_bounds_without_flip():
     # -5% < bid < +2% and no flip pending -> the CW exit does NOTHING (proves the
     # scale/floor ladder is NOT running under CW).
-    sf = _make_sf(); svc = _svc(sf, cw=True)
+    sf = _make_sf()
+    svc = _svc(sf, cw=True)
     _arm(svc, sf, entry=10.0, qty=100)
     _quote(svc, bid=9.90)                          # -1%
     await svc._evaluate_v2_managed_exit(SYM)
@@ -133,7 +136,8 @@ async def test_cw_no_exit_between_bounds_without_flip():
 
 @pytest.mark.asyncio
 async def test_cw_flip_full_close_at_bid():
-    sf = _make_sf(); svc = _svc(sf, cw=True)
+    sf = _make_sf()
+    svc = _svc(sf, cw=True)
     _arm(svc, sf, entry=10.0, qty=100)
     # Arm the flip via the dispatcher event, then a quote inside the bounds closes it.
     await svc._handle_stream_message(
@@ -152,7 +156,8 @@ async def test_cw_flip_full_close_at_bid():
 
 @pytest.mark.asyncio
 async def test_cw_target_takes_precedence_over_pending_flip():
-    sf = _make_sf(); svc = _svc(sf, cw=True)
+    sf = _make_sf()
+    svc = _svc(sf, cw=True)
     _arm(svc, sf, entry=10.0, qty=100)
     svc._cw_flip_pending.add((ACCT, SYM))
     _quote(svc, bid=10.25)                          # +2% AND flip pending -> target wins
