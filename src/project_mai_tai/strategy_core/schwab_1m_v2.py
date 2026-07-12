@@ -198,6 +198,14 @@ class SymbolState:
     cw_armed: bool = False                     # a BUY flip fired; waiting/watching for the break
     cw_bars_waited: int = 0                     # bars since the arming flip (1..3 = wait; >3 = watch)
     cw_three_bar_high: float = 0.0             # max high over the 3 wait bars = the break trigger
+    # CW v2 (intrabar break + rule-7 above-line + reclaim); INERT unless
+    # strategy_schwab_1m_v2_cw_v2_enabled is on. Reset with the other cw_* at the 04:00-ET anchor.
+    cw_trigger: float = 0.0                     # v2 trigger = max HIGH of flip bar + next 2 bars
+    cw_flip_level: float = 0.0                  # the short trail crossed at the BUY flip (rule-7 line)
+    cw_entries_this_flip: int = 0               # reclaim counter (cap 2 per BUY-flip segment)
+    cw_bar_low_so_far: float = 0.0             # min quote px of the current forming bar (rule 7)
+    cw_v2_emit_claimed: bool = False            # dedup between an intrabar emit and its fill/close
+    cw_v2_emit_ms: int = 0                      # wall-clock of the last v2 emit (no-fill release)
 
 
 @dataclass
@@ -423,6 +431,10 @@ class SchwabV2Strategy:
         self._cw_enabled = bool(
             getattr(self.settings, "strategy_schwab_1m_v2_confirmed_window_enabled", False)
         )
+        # CW v2 intrabar rule set — only active when BOTH the CW flag and this sub-flag are on.
+        self._cw_v2_enabled = self._cw_enabled and bool(
+            getattr(self.settings, "strategy_schwab_1m_v2_cw_v2_enabled", False)
+        )
         raw_atr_probe = str(
             getattr(self.settings, "strategy_schwab_1m_v2_atr_flip_probe_symbols", "") or ""
         ).strip()
@@ -459,6 +471,11 @@ class SchwabV2Strategy:
                 symbol,
                 self.cfg.cooldown_bars,
             )
+            # CW-v2 reclaim: our position just closed -> release the intrabar emit claim so a
+            # SECOND entry can fire in the SAME long segment (reclaim has no cooldown; the
+            # cw_entries_this_flip<2 cap + arm-on-flip bound it). No-op when the sub-flag is off.
+            if self._cw_v2_enabled:
+                state.cw_v2_emit_claimed = False
         if self._atr_rearm_enabled:
             self._poll_atr_guard(state, prev)
 
@@ -545,6 +562,11 @@ class SchwabV2Strategy:
         # touch). See docs/intrabar-hold-confirmation-design.md.
         state = self.watchlist_state(symbol)
         state.last_quote = quote
+        # CW-v2: intrabar break entry (rule 6/7 + reclaim + ORB skip). When the sub-flag is on it
+        # OWNS the CW entry via this quote path; the bar-close _cw_entry is a no-op. No-op (returns
+        # None like the base) when the sub-flag is off.
+        if self._cw_v2_enabled:
+            return self._cw_v2_quote(state, quote)
         # Confirmed-window (CW) owns the entry via the bar-path wait-3 break. The intrabar
         # hold-confirm TOUCH entry is a separate signal and must NOT also fire under CW, so
         # CW disables this quote path entirely — independent of the hold_confirm flag (which
@@ -760,6 +782,12 @@ class SchwabV2Strategy:
             state.cw_armed = False
             state.cw_bars_waited = 0
             state.cw_three_bar_high = 0.0
+            state.cw_trigger = 0.0
+            state.cw_flip_level = 0.0
+            state.cw_entries_this_flip = 0
+            state.cw_bar_low_so_far = 0.0
+            state.cw_v2_emit_claimed = False
+            state.cw_v2_emit_ms = 0
 
         # --- modified true range (needs prior SESSION bar + SMA(high-low, period)) ---
         hl_cur = cur.high - cur.low
@@ -825,6 +853,7 @@ class SchwabV2Strategy:
 
         # --- flip state machine (close vs PRIOR trail) ---
         flip: str | None = None
+        flip_level: float | None = None    # short trail crossed at a BUY flip (CW-v2 rule-7 line)
         close = cur.close
         if state.atr_state is None:
             state.atr_state, state.atr_trail, state.atr_state_age = "long", close - loss, 0
@@ -843,6 +872,7 @@ class SchwabV2Strategy:
                 if close < state.atr_trail:
                     state.atr_trail = min(state.atr_trail, close + loss)
                 else:
+                    flip_level = state.atr_trail    # the short trail just crossed (rule-7 line)
                     state.atr_state, state.atr_trail = "long", close - loss
                     flip, state.atr_state_age = "BUY", 0
 
@@ -866,6 +896,7 @@ class SchwabV2Strategy:
             "touch": touch,
             "touch_price": touch_price,
             "flip": flip,
+            "flip_level": flip_level,   # CW-v2: short trail crossed at a BUY flip (else None)
             "trail": state.atr_trail,
             "loss": loss,
             "state": state.atr_state,
@@ -977,6 +1008,8 @@ class SchwabV2Strategy:
         entry window [flip+3 bars .. next SELL flip)). One entry per armed setup; the
         cooldown after a fill (and the next BUY flip) re-arm it. Byte-neutral when the
         flag is off — this method is unreachable."""
+        if self._cw_v2_enabled:
+            return None  # CW-v2: the arm/trigger state is tracked in _cw_v2_track; entry is intrabar
         flip = atr_signal.get("flip")
         if flip == "BUY":
             # New long segment: arm and (re)start the 3-bar wait.
@@ -1086,6 +1119,109 @@ class SchwabV2Strategy:
             },
         )
 
+    def _cw_in_orb_window(self, ts_ms: int) -> bool:
+        """True if ts_ms is in 09:30-10:00 ET (the ORB bot owns this volatile window)."""
+        et = datetime.fromtimestamp(ts_ms / 1000.0, UTC).astimezone(EASTERN_TZ)
+        minutes = et.hour * 60 + et.minute
+        return 9 * 60 + 30 <= minutes < 10 * 60
+
+    def _cw_v2_track(self, state: SymbolState, atr_signal: dict | None) -> None:
+        """CW-v2 bar-path state machine (no-op unless the sub-flag is on). Maintains the arm /
+        3-bar trigger (flip bar + next 2 bars) / flip-level on EVERY new bar independent of
+        flat/cooldown/warmup, resets the forming-bar intrabar low, and releases a stale (no-fill)
+        emit claim. The actual ENTRY is intrabar in `on_quote` (_cw_v2_quote). Only mutates cw_*
+        fields (write-disjoint from Paths 1/2 and the A/B path)."""
+        if not self._cw_v2_enabled:
+            return
+        # New bar: reset the forming-bar low; release a stale emit claim that never filled.
+        state.cw_bar_low_so_far = 0.0
+        if state.cw_v2_emit_claimed and state.position_qty == 0:
+            now_ms = int(datetime.now(UTC).timestamp() * 1000)
+            if now_ms - state.cw_v2_emit_ms >= int(self._atr_rearm_timeout_secs * 1000):
+                state.cw_v2_emit_claimed = False
+        if atr_signal is None:
+            return
+        flip = atr_signal.get("flip")
+        if flip == "BUY":
+            state.cw_armed = True
+            state.cw_bars_waited = 0
+            state.cw_trigger = float(state.bars[-1].high)   # flip bar starts the 3-bar trigger
+            fl = atr_signal.get("flip_level")
+            state.cw_flip_level = float(fl) if fl is not None else 0.0
+            state.cw_entries_this_flip = 0
+            return
+        if flip == "SELL":
+            state.cw_armed = False   # segment over (also the flip-close EXIT path)
+            return
+        if not state.cw_armed:
+            return
+        if state.cw_bars_waited < 2:     # accumulate the 2 bars after the flip bar
+            state.cw_bars_waited += 1
+            state.cw_trigger = max(state.cw_trigger, float(state.bars[-1].high))
+        # cw_bars_waited >= 2 => trigger frozen (flip + 2 bars); on_quote watches for the break.
+
+    def _cw_v2_quote(self, state: SymbolState, quote: Quote) -> TradeIntentDraft | None:
+        """CW-v2 intrabar entry: enter the instant a quote price breaks the frozen trigger, gated
+        by rule 7 (whole forming bar above the flip level), the 09:30-10:00 ORB skip, the flat gate,
+        and the 2-per-flip reclaim cap. Cooldown is intentionally NOT gated (reclaim has no
+        cooldown). No-op unless the sub-flag is on. Returns a market-buy open draft or None."""
+        if not self._cw_v2_enabled:
+            return None
+        px = float(getattr(quote, "last_price", 0.0) or 0.0)
+        if px <= 0.0:
+            bid = float(getattr(quote, "bid_price", 0.0) or 0.0)
+            ask = float(getattr(quote, "ask_price", 0.0) or 0.0)
+            px = (bid + ask) / 2.0 if (bid > 0.0 and ask > 0.0) else 0.0
+        if px <= 0.0:
+            return None
+        # Track the forming bar's intrabar low (rule 7). Seeded to 0.0 at each new bar.
+        state.cw_bar_low_so_far = px if state.cw_bar_low_so_far <= 0.0 else min(state.cw_bar_low_so_far, px)
+
+        if not (state.cw_armed and state.cw_bars_waited >= 2):
+            return None
+        if state.position_qty != 0 or state.cw_entries_this_flip >= 2 or state.cw_v2_emit_claimed:
+            return None
+        now_ms = int(getattr(quote, "quote_time_ms", 0) or 0)
+        if now_ms <= 0:
+            now_ms = int(datetime.now(UTC).timestamp() * 1000)
+        if self._cw_in_orb_window(now_ms):
+            return None
+
+        trig = state.cw_trigger
+        fl = state.cw_flip_level
+        if trig <= 0.0 or px <= trig:
+            return None  # rule 6: intrabar break of the trigger
+        if fl <= 0.0 or px <= fl or state.cw_bar_low_so_far <= fl:
+            return None  # rule 7: whole forming bar above the flip level
+
+        state.cw_v2_emit_claimed = True
+        state.cw_v2_emit_ms = now_ms
+        state.cw_entries_this_flip += 1
+        state.last_entry_price = px
+        logger.info(
+            "[V2-CW] %s v2 INTRABAR ENTER px=%.4f trig=%.4f flip_level=%.4f low_sf=%.4f n=%d",
+            state.symbol, px, trig, fl, state.cw_bar_low_so_far, state.cw_entries_this_flip,
+        )
+        return TradeIntentDraft(
+            symbol=state.symbol,
+            side="buy",
+            intent_type="open",
+            quantity=Decimal(str(self._atr_qty)),
+            reason="schwab_1m_v2 ATR Flip CW-v2",
+            metadata={
+                "path": "ATR Flip",
+                "entry_price": f"{px:.4f}",
+                "reference_price": f"{px:.4f}",
+                "atr_variant": "CW-v2",
+                "cw_trigger": f"{trig:.4f}",
+                "cw_flip_level": f"{fl:.4f}",
+                "cw_entry_n": str(state.cw_entries_this_flip),
+                "bar_low_so_far": f"{state.cw_bar_low_so_far:.4f}",
+                "source": "schwab_1m_v2",
+                "strategy_version": STRATEGY_VERSION,
+            },
+        )
+
     # ------------------------------------------------------------- evaluate
 
     def _evaluate_completed_bar(
@@ -1106,6 +1242,11 @@ class SchwabV2Strategy:
         # touch/flip signal is consumed in the emit region below, and only when
         # the enable flag is on. Returns the per-bar signal (or None).
         atr_signal = self._update_atr_state(state, state.bars[-1])
+
+        # CW-v2: advance the intrabar-entry state machine (arm / flip+2 trigger / flip-level /
+        # forming-bar-low reset) on every new bar, independent of flat/cooldown/warmup. No-op
+        # unless the sub-flag is on. The entry itself fires intrabar in on_quote.
+        self._cw_v2_track(state, atr_signal)
 
         # Confirmed-window (variant CW) bar-close flip EXIT signal: when CW is on and we
         # HOLD a position, a bar that closes below the ATR trail (flip == "SELL") is the
