@@ -371,6 +371,15 @@ class Settings(BaseSettings):
     # Entry side ONLY — OMS still owns exits (the +2% target / -5% hard stop /
     # bar-close flip land in PRs #2 and #3). See docs/atr-confirmed-window-forward-test.md.
     strategy_schwab_1m_v2_confirmed_window_enabled: bool = False
+    # CW v2 (operator-validated rule refinements; requires confirmed_window_enabled=True).
+    # Changes the CW ENTRY to: (5) trigger = max HIGH of the flip bar + next 2 bars (spike bar
+    # INCLUDED); (6) enter INTRABAR on the first quote breaking the trigger (not bar-close);
+    # (7) above-line filter — at the break require price AND the forming bar's low-so-far to be
+    # above the flip level (the short trail crossed at the BUY flip); (9) reclaim up to 2 entries
+    # per BUY-flip segment (no cooldown between); plus no entries 09:30-10:00 ET (ORB window).
+    # Exit path (+2%/-5%/flip) and the OMS are UNCHANGED. Default OFF = the shipped bar-close CW is
+    # byte-identical. Reversible kill: flip back to False + restart. See docs/cw-v2-intrabar-rules-design.md.
+    strategy_schwab_1m_v2_cw_v2_enabled: bool = False
     strategy_macd_30s_reclaim_excluded_symbols: str = "JEM,CYCN,BFRG,UCAR,BBGI"
     # Maximum age (seconds) for the `scanner_confirmed_last_nonempty` snapshot
     # to be eligible for startup restore. Older snapshots are skipped, so
