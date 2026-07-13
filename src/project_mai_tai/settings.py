@@ -210,6 +210,12 @@ class Settings(BaseSettings):
     # the orb AND oms services restarted together when toggled (cross-process flag).
     orb_oms_quote_priced_entry_enabled: bool = False
     orb_oms_quote_priced_max_age_ms: int = 2000   # tunable: max ask staleness to price off
+    # Resting stop-buy entry (2026-07-13 R&D): instead of a reactive limit at the break, ORB
+    # emits a RESTING native BUY STOP_LIMIT at the break level (stop=level, limit=level*(1+gap_cap)).
+    # It fills AT the break (not the faded ask ~3-14s late — the honest-fill leak). Running-high
+    # mode only; supersedes the quote-priced limit when on. Default OFF = current behavior.
+    # ⛔ GATE: needs the Webull BUY-stop plumbing validated (validate_buy_stop.py, RTH) before enable.
+    orb_resting_entry_enabled: bool = False
 
     strategy_schwab_1m_v2_enabled: bool = False
     strategy_schwab_1m_v2_bar_poll_interval_seconds: float = 15.0

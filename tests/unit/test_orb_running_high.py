@@ -104,3 +104,27 @@ def test_reclaim_takes_precedence():
     svc = _svc(orb_running_high_enabled=True, orb_intrabar_reclaim_enabled=True)
     assert svc._running_high_mode is False             # mutually exclusive
     assert svc._reclaim_mode is True
+
+
+def test_resting_entry_emits_buy_stop_limit_at_break():
+    """Resting entry (flag ON): a native BUY STOP_LIMIT at the break level — stop=level,
+    limit=level*(1+gap_cap) — NOT the quote-priced limit. Fills AT the break, not the faded ask."""
+    svc = _rh_svc(orb_resting_entry_enabled=True)
+    ev = svc._build_open_intent("FOO", 10.50)
+    md = ev.payload.metadata
+    assert md["order_type"] == "STOP_LIMIT"
+    assert md["stop_price"] == "10.5000"                          # trigger = the broken level
+    assert md["limit_price"] == f"{10.50 * 1.015:.4f}"           # capped at level*(1+gap_cap 1.5%)
+    assert md["reference_price"] == "10.5000"
+    assert md["execution_mode"] == "running_high_breakout"
+    assert ev.payload.side == "buy"
+    assert "price_source" not in md                              # NOT quote-priced
+    assert md["trail_pct"] == str(svc.settings.orb_reclaim_trail_pct)  # exit unchanged (Phase-1)
+
+
+def test_resting_entry_supersedes_quote_priced():
+    """When both flags are on, resting wins (STOP_LIMIT, not the quote-priced ask limit)."""
+    svc = _rh_svc(orb_resting_entry_enabled=True, orb_oms_quote_priced_entry_enabled=True)
+    md = svc._build_open_intent("FOO", 10.50).payload.metadata
+    assert md["order_type"] == "STOP_LIMIT"
+    assert "price_source" not in md
