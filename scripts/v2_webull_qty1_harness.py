@@ -115,9 +115,12 @@ async def _poll(adapter: WebullBrokerAdapter, req: OrderRequest, tries: int = 10
 
 async def _cancel(adapter: WebullBrokerAdapter, account: str, symbol: str, coid: str) -> None:
     try:
-        req = _req(account, symbol, "sell", "cancel", order_type="market",
-                   coid=f"{coid}-cxl")
-        req.metadata["target_client_order_id"] = coid
+        # WebullBrokerAdapter._cancel_blocking cancels on request.client_order_id (it does NOT
+        # read a target_client_order_id from metadata), so the cancel request MUST carry the
+        # resting order's own coid. The old `{coid}-cxl` form cancelled a nonexistent id ->
+        # ORDER_NOT_FOUND, leaving the STOP_LOSS resting and every flatten-sell bouncing as
+        # ORDER_NOT_SUPPORT_REVERSE_OPTION (2026-07-13 AM run stranded a live qty-1 F share).
+        req = _req(account, symbol, "sell", "cancel", order_type="market", coid=coid)
         await adapter.submit_order(req)
         log.info("  cancel submitted for %s", coid)
     except Exception as exc:  # noqa: BLE001
