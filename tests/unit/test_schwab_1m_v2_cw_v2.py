@@ -164,3 +164,73 @@ def test_cw_v2_reclaim_two_then_capped():
     # a fresh BUY flip re-arms the counter
     _feed_bar(strat, state, _bar(20.0, ts=99), _sig(flip="BUY", flip_level=15.0))
     assert state.cw_entries_this_flip == 0 and state.cw_trigger == 20.0
+
+
+# --------------------------------------------------------------- reclaim = new segment high (2026-07-13 fix)
+
+def _release(state):
+    """Simulate the position opening then fully closing -> reclaim claim released, flat."""
+    state.position_qty = 0
+    state.cw_v2_emit_claimed = False
+
+
+def test_cw_v2_reclaim_requires_new_segment_high():
+    """The reclaim (2nd entry) must break a genuine NEW high across ALL bars since the flip —
+    NOT re-cross the flip+2 3-bar trigger. This is the 2026-07-13 SOBR over-trading fix."""
+    strat = _strat()
+    state = strat.watchlist_state("TEST")
+    _arm_to_watch(strat, state)                       # 3-bar trigger 12.0, segment_high 12.0
+    assert strat._cw_v2_quote(state, _quote(12.5)) is not None      # 1st entry breaks 12.0
+    assert state.cw_entries_this_flip == 1
+    _release(state)
+    # the name runs on -> the segment high advances to 15.0 over the next bars
+    _feed_bar(strat, state, _bar(15.0, ts=4), _sig())
+    assert state.cw_segment_high == 15.0
+    # a quote that re-crosses the OLD 3-bar trigger (13.0 > 12.0) but is BELOW the new segment high
+    # must NOT reclaim (the bug: it used to enter here on a mere bounce).
+    assert strat._cw_v2_quote(state, _quote(13.0)) is None
+    assert state.cw_entries_this_flip == 1
+    # only a break of the NEW segment high (>15.0) reclaims.
+    assert strat._cw_v2_quote(state, _quote(15.5)) is not None
+    assert state.cw_entries_this_flip == 2
+
+
+def test_cw_v2_cap_two_per_flip_segment():
+    """Hard cap: no 3rd entry in the same BUY-flip segment, even on a further new high."""
+    strat = _strat()
+    state = strat.watchlist_state("TEST")
+    _arm_to_watch(strat, state)
+    strat._cw_v2_quote(state, _quote(12.5))           # n=1
+    _release(state)
+    _feed_bar(strat, state, _bar(15.0, ts=4), _sig())
+    strat._cw_v2_quote(state, _quote(15.5))           # n=2 (reclaim)
+    assert state.cw_entries_this_flip == 2
+    _release(state)
+    _feed_bar(strat, state, _bar(18.0, ts=5), _sig())  # segment high advances again
+    assert strat._cw_v2_quote(state, _quote(18.5)) is None   # capped at 2 -> no 3rd
+    assert state.cw_entries_this_flip == 2
+
+
+def test_cw_v2_segment_high_advances_every_bar_incl_no_signal():
+    """The reclaim lookback grows on EVERY bar since the flip, even a bar with no ATR signal."""
+    strat = _strat()
+    state = strat.watchlist_state("TEST")
+    _arm_to_watch(strat, state)                       # segment_high 12.0
+    _feed_bar(strat, state, _bar(13.5, ts=4), _sig())
+    assert state.cw_segment_high == 13.5
+    _feed_bar(strat, state, _bar(14.2, ts=5), None)   # NO atr signal this bar
+    assert state.cw_segment_high == 14.2
+
+
+def test_cw_v2_new_buy_flip_reseeds_segment_high_and_cap():
+    """A fresh BUY flip starts a NEW segment: reclaim counter resets and the segment high re-seeds
+    to the flip bar (so the prior segment's high does not carry over)."""
+    strat = _strat()
+    state = strat.watchlist_state("TEST")
+    _arm_to_watch(strat, state)
+    strat._cw_v2_quote(state, _quote(12.5))           # n=1 in segment A
+    _feed_bar(strat, state, _bar(20.0, ts=6), _sig(flip="SELL"))   # segment A ends
+    assert state.cw_armed is False
+    _feed_bar(strat, state, _bar(8.0, ts=7), _sig(flip="BUY", flip_level=6.0))  # new segment B
+    assert state.cw_entries_this_flip == 0            # cap reset
+    assert state.cw_segment_high == 8.0               # re-seeded to the new flip bar (not 20.0)
