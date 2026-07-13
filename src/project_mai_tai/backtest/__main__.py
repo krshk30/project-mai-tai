@@ -21,6 +21,7 @@ from project_mai_tai.backtest.orb_sim import (
     WEBULL_LATENCY_BAND_S,
     simulate_bar_close,
     simulate_intrabar,
+    simulate_resting,
 )
 from project_mai_tai.backtest.v2_sim import simulate_v2
 from project_mai_tai.db.session import build_session_factory
@@ -42,9 +43,12 @@ def _run_orb(src, a, y, m, d):
     print(f"ORB {a.symbol} {a.date}  mode={a.mode}  {'LIVE(2-cap)' if a.capped else 'THESIS(all-breaks)'}")
     print("Webull latency band (measured): P&L is a RANGE, not a point.")
     for lat in WEBULL_LATENCY_BAND_S:
-        fn = simulate_bar_close if a.mode == "bar_close" else simulate_intrabar
-        src_arg = bars if a.mode == "bar_close" else trades
-        ts = fn(src_arg, quotes, latency_s=lat, **base, **win)
+        if a.mode == "resting":
+            ts = simulate_resting(bars, trades, quotes, latency_s=lat, **base, **win)
+        elif a.mode == "bar_close":
+            ts = simulate_bar_close(bars, quotes, latency_s=lat, **base, **win)
+        else:
+            ts = simulate_intrabar(trades, quotes, latency_s=lat, **base, **win)
         print(f"  lat={lat:>4.0f}s: {len(ts):>3} trades  net=${sum(t.pnl for t in ts):+.2f}")
 
 
@@ -68,7 +72,7 @@ def main() -> None:
     p.add_argument("symbol", nargs="?", help="omit with --sheet")
     p.add_argument("date", help="ET session date, YYYY-MM-DD")
     p.add_argument("--strategy", choices=["orb", "v2"], default="orb")
-    p.add_argument("--mode", choices=["bar_close", "intrabar"], default="intrabar")
+    p.add_argument("--mode", choices=["bar_close", "intrabar", "resting"], default="intrabar")
     p.add_argument("--sheet", action="store_true",
                    help="render the full daily sheet for ALL qualified names (every name gets a "
                         "reason: SKIP-no-feed / 0t-no-signal — no silent absence)")

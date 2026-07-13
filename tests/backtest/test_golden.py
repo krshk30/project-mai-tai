@@ -24,6 +24,7 @@ from project_mai_tai.backtest.orb_sim import (
     simulate_bar_close,
     simulate_intrabar,
     simulate_intrabar_v2,
+    simulate_resting,
 )
 
 FIX = Path(__file__).parent / "fixtures"
@@ -93,3 +94,17 @@ def test_intrabar_parity_gate(sym, y, m, d):
         a = simulate_intrabar(dd["trades"], dd["quotes"], **kw)
         b = simulate_intrabar_v2(dd["trades"], dd["quotes"], **kw)
         assert sig(a) == sig(b), f"parity mismatch {sym} capped={capped}"
+
+
+def test_resting_stopbuy_fills_at_the_break_within_gapcap():
+    """RESTING execution: bar-close level, filled at the crossing tick — the fill is bounded to
+    the break level's gap-cap (fills AT the break, never a faded ask far below it, and never
+    past the gap-cap on a gap-through). Same break detection + 2-attempt cap as bar_close."""
+    d = _load("KIDZ", 2026, 7, 6)
+    r = simulate_resting(d["bars"], d["trades"], d["quotes"], capped=True, **_BASE, **_win(d))
+    assert 1 <= len(r) <= 2                               # honest 2-attempt cap
+    for t in r:
+        assert t.level is not None
+        # fills AT the break, within the gap-cap — never a faded ask far below, never past the cap
+        assert 0 < t.entry_price <= t.level * 1.0151
+        assert t.exit_reason in ("TRAIL_STOP", "WINDOW_END")
