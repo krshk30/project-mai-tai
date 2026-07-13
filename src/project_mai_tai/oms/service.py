@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import socket
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -110,6 +111,10 @@ class ArmedHardStop:
     initial_panic_buffer_pct: float
     close_in_flight: bool = False
     last_trigger_attempt_at: datetime | None = None
+    # Bug C reconcile: count consecutive FAILED protective closes; after a threshold the
+    # OMS does a fresh broker read and clears this stop if the broker is flat (position
+    # closed out-of-band), instead of churning closes on a phantom forever.
+    consecutive_close_failures: int = 0
     # Trailing-stop ratchet (ORB TRAIL-8%). Default 0.0 => fixed stop, byte-identical
     # to prior behavior. When >0 the stop ratchets up trail_pct% below the
     # high-water-mark and never down.
@@ -169,6 +174,16 @@ class OmsRiskService:
     _armed_stop_persistence_enabled: bool = False
     NOT_TRADABLE_REASONS = ("is not tradable",)
     NATIVE_STOP_GUARD_REASON = "HARD_STOP_NATIVE_BACKUP"
+    # Webull rejects a client_order_id longer than 40 chars (ILLEGAL_PARAMETER, http 417);
+    # it is the tightest broker cap, so bound every id we mint to it. 2026-07-13 ORB LGPS:
+    # close/guard retries appended `-r<8hex>` each attempt, blew past 40, and every retry
+    # rejected -> the exit could never place. See _build/_replacement_client_order_id.
+    _CLIENT_ORDER_ID_MAX_LEN = 40
+    # After this many consecutive FAILED protective closes, do a fresh broker position read
+    # and clear the armed stop if the broker is flat — a position flattened out-of-band
+    # (manual/external close) otherwise leaves the in-memory stop churning closes on a
+    # phantom forever (2026-07-13 ORB LGPS). Only ever clears on a CONFIRMED-flat read.
+    _HARD_STOP_RECONCILE_AFTER_FAILURES = 3
 
     def __init__(
         self,
@@ -1235,6 +1250,20 @@ class OmsRiskService:
             time_in_force="day",
         )
         reports = await self.broker_adapter.submit_order(request)
+        if self._is_reverse_conflict_reject(reports):
+            # Bug A: a reverse reject on a native-guard (re)arm means the just-cancelled prior
+            # guard / the entry buy has not settled at the broker yet, or the position was
+            # flattened out-of-band — a duplicate protective SELL would exceed the held long.
+            # The IN-MEMORY hard stop (tick-evaluated) is authoritative and unchanged, so this
+            # is benign: record for audit + log a deferral instead of surfacing a failure. The
+            # guard re-arms on the next fill/rearm cycle once the broker settles. (2026-07-13
+            # ORB AGEN/VEEE native-guard reverse rejects.)
+            self.logger.info(
+                "[NATIVE-STOP-GUARD DEFER] %s %s (re)arm reverse-rejected (unsettled cancel/fill "
+                "or position flat) — in-memory stop protects; will retry on the next arm cycle",
+                strategy.code,
+                stop.symbol,
+            )
         published_events.extend(
             await self._record_order_reports(
                 session=session,
@@ -2684,6 +2713,7 @@ class OmsRiskService:
         )
         order_events = await self.process_trade_intent(event)
         if any(item.payload.status in {"accepted", "submitted", "partially_filled", "filled"} for item in order_events):
+            stop.consecutive_close_failures = 0  # the close placed — reset the reconcile counter
             if any(item.payload.status == "filled" for item in order_events):
                 _popkey = self._hard_stop_key(stop.strategy_code, stop.broker_account_name, stop.symbol)
                 self._armed_hard_stops.pop(_popkey, None)
@@ -2696,6 +2726,51 @@ class OmsRiskService:
             self._armed_hard_stops.pop(_popkey, None)
             if self._armed_stop_persistence_enabled:
                 self._armed_stop_dirty.add(_popkey)  # F2: flush deletes the mirror row
+            return
+        # Bug C: the close neither placed nor named a no-position reason (e.g. Webull
+        # ORDER_NOT_SUPPORT_REVERSE_OPTION after the shares were flattened out-of-band).
+        # After a few such failures, confirm against the broker; if flat, clear the stop so
+        # it stops churning closes on a phantom. NEVER clears on an unconfirmed/failed read.
+        stop.consecutive_close_failures += 1
+        if stop.consecutive_close_failures >= self._HARD_STOP_RECONCILE_AFTER_FAILURES:
+            if await self._broker_position_is_flat(stop):
+                _popkey = self._hard_stop_key(stop.strategy_code, stop.broker_account_name, stop.symbol)
+                self._armed_hard_stops.pop(_popkey, None)
+                if self._armed_stop_persistence_enabled:
+                    self._armed_stop_dirty.add(_popkey)  # F2: flush deletes the mirror row
+                self.logger.info(
+                    "[HARD-STOP RECONCILE-FLAT] %s %s broker flat after %d failed closes -> clearing phantom armed stop",
+                    stop.strategy_code, stop.symbol, stop.consecutive_close_failures,
+                )
+            else:
+                # Position still genuinely held — keep protecting; reset so the next burst
+                # of failures re-checks (throttles the broker position reads).
+                stop.consecutive_close_failures = 0
+
+    async def _broker_position_is_flat(self, stop: ArmedHardStop) -> bool:
+        """Fresh broker read: True iff the stop's symbol has ZERO net position on its
+        account. A read failure returns False — NEVER clear a protective stop on an
+        unconfirmed read, that could strip protection from a genuinely-held position."""
+        try:
+            positions = await self.broker_adapter.list_account_positions(stop.broker_account_name)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            self.logger.warning(
+                "[HARD-STOP RECONCILE] position read failed for %s %s — cannot confirm flat, keeping the stop",
+                stop.strategy_code,
+                stop.symbol,
+            )
+            return False
+        for position in positions or []:
+            if str(getattr(position, "symbol", "")).upper() != stop.symbol:
+                continue
+            try:
+                if Decimal(str(getattr(position, "quantity", 0))) != 0:
+                    return False
+            except (TypeError, ValueError, ArithmeticError):
+                return False  # unparseable qty -> treat as possibly-held, do not clear
+        return True
 
     def _build_hard_stop_metadata(
         self,
@@ -2952,7 +3027,10 @@ class OmsRiskService:
 
     def _build_client_order_id(self, event: TradeIntentEvent) -> str:
         intent_id = event.event_id.hex[:12]
-        return f"{event.payload.strategy_code}-{event.payload.symbol}-{event.payload.intent_type}-{intent_id}"
+        coid = f"{event.payload.strategy_code}-{event.payload.symbol}-{event.payload.intent_type}-{intent_id}"
+        # Bound to the broker cap (no-op for real strategy/symbol/type combos, which are
+        # <=38 chars; a safety net so an unusually long code can never emit an over-cap id).
+        return coid[: self._CLIENT_ORDER_ID_MAX_LEN]
 
     def _build_order_event(
         self,
@@ -4019,8 +4097,26 @@ class OmsRiskService:
 
     @staticmethod
     def _replacement_client_order_id(client_order_id: str) -> str:
-        base = str(client_order_id).strip()[:110]
-        return f"{base}-r{uuid4().hex[:8]}"
+        base = str(client_order_id).strip()
+        # Strip any prior retry suffix(es) so repeated retries REPLACE the suffix instead of
+        # ACCUMULATING it — each `-r<8hex>` is 10 chars, and a few retries pushed the id past
+        # Webull's 40-char cap -> ILLEGAL_PARAMETER, so every retry rejected and the order
+        # (close or native guard) could never place (2026-07-13 ORB LGPS reject loop).
+        base = re.sub(r"(-r[0-9a-f]{8})+$", "", base)
+        suffix = f"-r{uuid4().hex[:8]}"
+        base = base[: OmsRiskService._CLIENT_ORDER_ID_MAX_LEN - len(suffix)]
+        return f"{base}{suffix}"
+
+    @staticmethod
+    def _is_reverse_conflict_reject(reports: list[ExecutionReport]) -> bool:
+        """True if any report is a Webull ORDER_NOT_SUPPORT_REVERSE_OPTION rejection — a
+        protective SELL that would exceed the held long (a resting sell still reserves the
+        shares, or the position is already flat)."""
+        return any(
+            report.event_type == "rejected"
+            and "REVERSE" in str(getattr(report, "reason", "") or "").upper()
+            for report in reports
+        )
 
     def _stop_reject_reason(
         self,
