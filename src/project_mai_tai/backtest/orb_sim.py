@@ -162,6 +162,50 @@ def simulate_intrabar(trades, quotes, *, gap_cap_pct, trail_pct, qty,
     return out
 
 
+def simulate_resting(bars, trades, quotes, *, gap_cap_pct, trail_pct, qty,
+                     observe_open, session_open, cutoff, capped,
+                     latency_s=BROKER_LATENCY_S["webull"]):
+    """RESTING stop-buy execution — the live-robust entry (operator-chosen over intrabar).
+
+    Level = the BAR-CLOSE running high (real completed-bar level, NOT the per-tick high that
+    makes intrabar chase micro-spike tops). A native buy-stop-limit rests AT that level; it
+    fills the INSTANT a trade crosses it (intrabar), at the ask of the crossing tick — bounded
+    by the gap-cap (level*(1+cap)), i.e. it can miss on a violent gap-through, never chase.
+    This is the fix for the bar-close leak (bar-close fills the FADED ask 3-14s late). Same
+    2-attempt cap + honest trail exit as the other modes. `trades` and `quotes` sorted by ts."""
+    book = QuoteBook(quotes)
+    tracker = RunningHighTracker(
+        observe_open=observe_open, session_open=session_open, cutoff=cutoff, gap_cap_pct=gap_cap_pct
+    )
+    trade_ts = [t.ts for t in trades]
+    out: list[Trade] = []
+    attempts = 0
+    flat_after: datetime | None = None
+    for bar in bars:
+        brk = tracker.on_bar(bar)
+        if brk is None or not brk.gap_ok:
+            continue
+        close_ts = brk.bar_ts + timedelta(seconds=BAR_SECS)
+        # the resting order fills at the FIRST tick in the break bar that reaches the level
+        lo, hi = bisect_left(trade_ts, brk.bar_ts), bisect_left(trade_ts, close_ts)
+        cross_ts = next((trades[j].ts for j in range(lo, hi) if trades[j].price >= brk.level), close_ts)
+        if flat_after is not None and cross_ts < flat_after:
+            continue
+        if capped and attempts >= ENTRY_ATTEMPT_CAP:
+            continue
+        attempts += 1
+        fill = entry_fill(book, cross_ts, brk.level, gap_cap_pct)   # ask AT the crossing tick
+        if fill is None:
+            continue  # gap-through past the gap-cap -> the resting limit can't fill
+        fill_ts = cross_ts + timedelta(seconds=latency_s)
+        start = bisect_left(book._ts, fill_ts)
+        xts, xprice, xreason, _ = _run_trail_exit(quotes, start, fill, trail_pct, book, latency_s)
+        pnl = (xprice - fill) * qty if xprice is not None else 0.0
+        out.append(Trade(fill_ts, fill, xts, xprice, qty, pnl, xreason, brk.level))
+        flat_after = xts
+    return out
+
+
 def simulate_intrabar_v2(trades, quotes, *, gap_cap_pct, trail_pct, qty,
                          observe_open, session_open, cutoff, capped,
                          latency_s=BROKER_LATENCY_S["webull"]):
