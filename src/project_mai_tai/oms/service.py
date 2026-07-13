@@ -184,6 +184,11 @@ class OmsRiskService:
     # (manual/external close) otherwise leaves the in-memory stop churning closes on a
     # phantom forever (2026-07-13 ORB LGPS). Only ever clears on a CONFIRMED-flat read.
     _HARD_STOP_RECONCILE_AFTER_FAILURES = 3
+    # Same phantom-reconcile threshold for the v2 CW managed-exit path: after this many
+    # consecutive REJECTED full-closes, a fresh broker read clears the managed row iff the
+    # broker is confirmed flat (position closed out-of-band) — else it churns rejected sells
+    # forever because close_on_fill waits for a fill that never comes (2026-07-13 AGEN).
+    _V2_EXIT_RECONCILE_AFTER_FAILURES = 3
 
     def __init__(
         self,
@@ -232,6 +237,9 @@ class OmsRiskService:
         # symbol has an OPEN v2 managed row. Populated by the slice-1 fill hook
         # (gated) + rehydrated at startup; empty when the flag is OFF (inert).
         self._managed_v2_symbols: set[tuple[str, str]] = set()
+        # Phantom-reconcile: consecutive REJECTED v2 full-closes per (acct, symbol). After the
+        # threshold, a fresh broker read clears the row iff confirmed flat (see _emit_v2_exit_on_loop).
+        self._v2_exit_close_failures: dict[tuple[str, str], int] = {}
         self._v2_exit_config: TradingConfig = TradingConfig().make_v2_variant()
         self._v2_exit_engine: ExitEngine = ExitEngine(self._v2_exit_config)
         # Confirmed-window (variant CW) exit [PR #2/3]. Gated on the SAME switch the
@@ -1906,6 +1914,29 @@ class OmsRiskService:
             session, row, position, write_quantity=write_quantity
         )
 
+    async def _v2_close_reconcile_flat(self, session, acct: str, symbol: str, row) -> bool:
+        """Phantom guard for the v2 CW full-close: count consecutive REJECTED closes; at the
+        threshold, confirm against the broker. If FLAT (position closed out-of-band), close the
+        managed row + disarm quote-eval and return True. Otherwise (still held, read failed, or
+        below threshold) return False and keep managing. Clears ONLY on a CONFIRMED-flat read."""
+        key = (acct, symbol)
+        self._v2_exit_close_failures[key] = self._v2_exit_close_failures.get(key, 0) + 1
+        if self._v2_exit_close_failures[key] < self._V2_EXIT_RECONCILE_AFTER_FAILURES:
+            return False
+        if await self._broker_symbol_is_flat(acct, symbol):
+            self.store.close_managed_position(session, row)
+            self._managed_v2_symbols.discard(key)
+            self._cw_flip_pending.discard(key)
+            self._v2_exit_close_failures.pop(key, None)
+            self.logger.info(
+                "[OMS-V2-RECONCILE-FLAT] sym=%s acct=%s broker flat after %d rejected closes -> "
+                "clearing phantom managed row",
+                symbol, acct, self._V2_EXIT_RECONCILE_AFTER_FAILURES,
+            )
+            return True
+        self._v2_exit_close_failures[key] = 0  # genuinely still held -> keep managing, re-count later
+        return False
+
     async def _emit_v2_exit_on_loop(
         self,
         acct: str,
@@ -1952,15 +1983,26 @@ class OmsRiskService:
                         session, row, intent_type="close", quantity=int(position.quantity),
                         reference_price=reference_price, reason=reason, bid=bid,
                     )
-                    if close_on_fill:
-                        # #6: do NOT close on submit — the confirmed fill closes the row.
-                        # Persist price-state only; keep the position monitored/protected.
-                        self.store.update_managed_position_from_position(
-                            session, row, position, write_quantity=False
-                        )
-                    else:
-                        self.store.close_managed_position(session, row)
-                        self._managed_v2_symbols.discard((acct, symbol))
+                    key = (acct, symbol)
+                    rejected = any(
+                        str(getattr(ev.payload, "status", "")).lower() == "rejected" for ev in events
+                    )
+                    # Phantom guard: a rejected full-close may mean the broker is already flat
+                    # (position closed out-of-band). Without this, close_on_fill waits for a fill
+                    # that never comes and the exit churns rejected sells forever (2026-07-13 AGEN).
+                    reconciled = rejected and await self._v2_close_reconcile_flat(session, acct, symbol, row)
+                    if not reconciled:
+                        if not rejected:
+                            self._v2_exit_close_failures.pop(key, None)  # the close placed -> reset counter
+                        if close_on_fill:
+                            # #6: do NOT close on submit — the confirmed fill closes the row.
+                            # Persist price-state only; keep the position monitored/protected.
+                            self.store.update_managed_position_from_position(
+                                session, row, position, write_quantity=False
+                            )
+                        else:
+                            self.store.close_managed_position(session, row)
+                            self._managed_v2_symbols.discard(key)
                 session.commit()
         except Exception as exc:  # noqa: BLE001 — the quote path must never die
             self.logger.warning("v2 managed-exit emit failed for %s: %s", symbol, exc)
@@ -2806,23 +2848,25 @@ class OmsRiskService:
                 # of failures re-checks (throttles the broker position reads).
                 stop.consecutive_close_failures = 0
 
-    async def _broker_position_is_flat(self, stop: ArmedHardStop) -> bool:
-        """Fresh broker read: True iff the stop's symbol has ZERO net position on its
-        account. A read failure returns False — NEVER clear a protective stop on an
-        unconfirmed read, that could strip protection from a genuinely-held position."""
+    async def _broker_symbol_is_flat(self, broker_account_name: str, symbol: str) -> bool:
+        """Fresh broker read: True iff `symbol` has ZERO net position on the account. A read
+        failure returns False — NEVER clear protection / a managed row on an unconfirmed read
+        (that could strip a genuinely-held position). Shared by the ORB hard-stop reconcile
+        (#436) and the v2 CW managed-exit reconcile."""
         try:
-            positions = await self.broker_adapter.list_account_positions(stop.broker_account_name)
+            positions = await self.broker_adapter.list_account_positions(broker_account_name)
         except asyncio.CancelledError:
             raise
         except Exception:
             self.logger.warning(
-                "[HARD-STOP RECONCILE] position read failed for %s %s — cannot confirm flat, keeping the stop",
-                stop.strategy_code,
-                stop.symbol,
+                "[RECONCILE] position read failed for %s %s — cannot confirm flat, keeping it",
+                broker_account_name,
+                symbol,
             )
             return False
+        target = str(symbol).upper()
         for position in positions or []:
-            if str(getattr(position, "symbol", "")).upper() != stop.symbol:
+            if str(getattr(position, "symbol", "")).upper() != target:
                 continue
             try:
                 if Decimal(str(getattr(position, "quantity", 0))) != 0:
@@ -2830,6 +2874,11 @@ class OmsRiskService:
             except (TypeError, ValueError, ArithmeticError):
                 return False  # unparseable qty -> treat as possibly-held, do not clear
         return True
+
+    async def _broker_position_is_flat(self, stop: ArmedHardStop) -> bool:
+        """Fresh broker read for a hard-stop's symbol (delegates to _broker_symbol_is_flat).
+        Read failure -> False; never clears a protective stop on an unconfirmed read."""
+        return await self._broker_symbol_is_flat(stop.broker_account_name, stop.symbol)
 
     def _build_hard_stop_metadata(
         self,
