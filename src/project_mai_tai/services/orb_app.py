@@ -180,6 +180,9 @@ class OrbService:
         self._oms_quote_priced = bool(
             getattr(self.settings, "orb_oms_quote_priced_entry_enabled", False)
         )
+        # Resting stop-buy entry: emit a native BUY STOP_LIMIT at the break level (fills AT the
+        # break, not the faded ask). Running-high mode only; supersedes the quote-priced limit.
+        self._resting_entry = bool(getattr(self.settings, "orb_resting_entry_enabled", False))
         self._cfg = OrbConfig(
             or_minutes=int(self.settings.orb_or_minutes),
             vol_mult=float(self.settings.orb_vol_mult),
@@ -663,7 +666,18 @@ class OrbService:
                 "order_type": "limit",            # resting limit at the breakout level
                 "orb_intended_break_level": f"{entry_price:.4f}",
             }
-            if self._oms_quote_priced:
+            if self._resting_entry:
+                # RESTING native BUY STOP_LIMIT at the break level: trigger (stop) = the broken
+                # level, limit bounds the fill at level*(1+gap_cap) (the gap-cap — never chase a
+                # gap-through). It rests at the broker and fills AT the break, not the faded ask
+                # ~3-14s late. Supersedes the quote-priced limit; the OMS places it as-is
+                # (order_type != limit -> _orb_quote_priced_entry_applies is False -> no reprice).
+                limit_cap = entry_price * (1.0 + self._rh_gap_cap_pct / 100.0)
+                metadata["order_type"] = "STOP_LIMIT"
+                metadata["stop_price"] = f"{entry_price:.4f}"
+                metadata["limit_price"] = f"{limit_cap:.4f}"
+                metadata["reference_price"] = f"{entry_price:.4f}"
+            elif self._oms_quote_priced:
                 # Fail-closed: omit limit_price/reference_price so a stale signal-time price
                 # cannot be shipped even if the OMS path is bypassed (the adapter falls back
                 # to reference_price, so it too must be absent). The OMS re-prices off its live
