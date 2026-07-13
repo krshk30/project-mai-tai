@@ -31,6 +31,7 @@ import argparse
 import asyncio
 import logging
 import sys
+import time
 from decimal import Decimal
 
 from project_mai_tai.broker_adapters.protocols import OrderRequest
@@ -165,9 +166,14 @@ async def run(account: str, symbol: str, confirm: bool, *, session: str = "RTH",
         return 2
     adapter = WebullBrokerAdapter(settings)
 
-    entry_coid = f"v2wq1-{symbol}-entry"
-    stop_coid = f"v2wq1-{symbol}-stop"
-    scale_coid = f"v2wq1-{symbol}-scale"
+    # Client_order_ids must be UNIQUE per run — Webull rejects a reused client_order_id with
+    # TRADE_PLACE_ORDER_REPEAT (http 417), so fixed coids blocked same-day re-runs (e.g. the
+    # scheduled AM run burned F's ids, then a manual re-run / the RTH run couldn't even enter).
+    # Stamp session + a UTC HHMMSS token so AM, RTH, and any ad-hoc re-run get fresh ids.
+    run_tag = f"{session.upper()}{time.strftime('%H%M%S', time.gmtime())}"
+    entry_coid = f"v2wq1-{symbol}-{run_tag}-entry"
+    stop_coid = f"v2wq1-{symbol}-{run_tag}-stop"
+    scale_coid = f"v2wq1-{symbol}-{run_tag}-scale"
     held = False
     resting: list[str] = []
     ok = True
@@ -221,7 +227,7 @@ async def run(account: str, symbol: str, confirm: bool, *, session: str = "RTH",
             await _cancel(adapter, account, symbol, coid)
         if held:
             flat_ot = "limit" if eh else "market"
-            flat_coid = f"v2wq1-{symbol}-flat"
+            flat_coid = f"v2wq1-{symbol}-{run_tag}-flat"
             log.info("[4 FLATTEN] marketable %s sell qty 1 to close%s", flat_ot.upper(),
                      f" @ {flat_limit} +session={sess}" if eh else "")
             try:
