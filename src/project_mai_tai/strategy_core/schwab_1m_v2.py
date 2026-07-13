@@ -204,6 +204,10 @@ class SymbolState:
     cw_flip_level: float = 0.0                  # the short trail crossed at the BUY flip (rule-7 line)
     cw_entries_this_flip: int = 0               # reclaim counter (cap 2 per BUY-flip segment)
     cw_bar_low_so_far: float = 0.0             # min quote px of the current forming bar (rule 7)
+    cw_segment_high: float = 0.0               # running max HIGH of ALL bars since the BUY flip (advances
+    #                                            every bar, like the backtest RunningHighTracker); the
+    #                                            RECLAIM (2nd entry) must break THIS new segment high,
+    #                                            not re-cross the flip+2 3-bar trigger.
     cw_v2_emit_claimed: bool = False            # dedup between an intrabar emit and its fill/close
     cw_v2_emit_ms: int = 0                      # wall-clock of the last v2 emit (no-fill release)
 
@@ -786,6 +790,7 @@ class SchwabV2Strategy:
             state.cw_flip_level = 0.0
             state.cw_entries_this_flip = 0
             state.cw_bar_low_so_far = 0.0
+            state.cw_segment_high = 0.0
             state.cw_v2_emit_claimed = False
             state.cw_v2_emit_ms = 0
 
@@ -1139,6 +1144,11 @@ class SchwabV2Strategy:
             now_ms = int(datetime.now(UTC).timestamp() * 1000)
             if now_ms - state.cw_v2_emit_ms >= int(self._atr_rearm_timeout_secs * 1000):
                 state.cw_v2_emit_claimed = False
+        # Grow the RECLAIM lookback (max HIGH of EVERY bar since the flip) while armed — even on a
+        # bar with no ATR signal — so the reclaim must break a genuine NEW segment high (not just
+        # re-cross the flip+2 3-bar trigger). The BUY-flip branch below re-seeds it at the flip bar.
+        if state.cw_armed and state.bars:
+            state.cw_segment_high = max(state.cw_segment_high, float(state.bars[-1].high))
         if atr_signal is None:
             return
         flip = atr_signal.get("flip")
@@ -1146,6 +1156,7 @@ class SchwabV2Strategy:
             state.cw_armed = True
             state.cw_bars_waited = 0
             state.cw_trigger = float(state.bars[-1].high)   # flip bar starts the 3-bar trigger
+            state.cw_segment_high = float(state.bars[-1].high)  # reclaim lookback starts at the flip bar
             fl = atr_signal.get("flip_level")
             state.cw_flip_level = float(fl) if fl is not None else 0.0
             state.cw_entries_this_flip = 0
@@ -1155,10 +1166,11 @@ class SchwabV2Strategy:
             return
         if not state.cw_armed:
             return
-        if state.cw_bars_waited < 2:     # accumulate the 2 bars after the flip bar
+        if state.cw_bars_waited < 2:     # accumulate the 2 bars after the flip bar (1st-entry trigger)
             state.cw_bars_waited += 1
             state.cw_trigger = max(state.cw_trigger, float(state.bars[-1].high))
-        # cw_bars_waited >= 2 => trigger frozen (flip + 2 bars); on_quote watches for the break.
+        # cw_bars_waited >= 2 => cw_trigger is the flip+2 3-bar max (the 1st-entry break); cw_segment_high
+        # keeps advancing above it (the reclaim break). on_quote picks the right one by entry count.
 
     def _cw_v2_quote(self, state: SymbolState, quote: Quote) -> TradeIntentDraft | None:
         """CW-v2 intrabar entry: enter the instant a quote price breaks the frozen trigger, gated
@@ -1187,10 +1199,12 @@ class SchwabV2Strategy:
         if self._cw_in_orb_window(now_ms):
             return None
 
-        trig = state.cw_trigger
+        # 1st entry (n=0) breaks the flip+2 3-bar trigger; a RECLAIM (n>=1) must break a genuine NEW
+        # segment high (max high of ALL bars since the flip) — NOT re-cross the same 3-bar level.
+        trig = state.cw_trigger if state.cw_entries_this_flip == 0 else state.cw_segment_high
         fl = state.cw_flip_level
         if trig <= 0.0 or px <= trig:
-            return None  # rule 6: intrabar break of the trigger
+            return None  # rule 6: intrabar break of the entry-appropriate trigger
         if fl <= 0.0 or px <= fl or state.cw_bar_low_so_far <= fl:
             return None  # rule 7: whole forming bar above the flip level
 
