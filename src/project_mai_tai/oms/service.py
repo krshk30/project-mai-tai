@@ -246,6 +246,11 @@ class OmsRiskService:
         # `v2_cw_flip` signal event; consumed (full close) by the CW exit on the next
         # quote. In-memory so the hot quote path never does a per-tick Redis read.
         self._cw_flip_pending: set[tuple[str, str]] = set()
+        # Bug A follow-up: native stop-guard (re)arms that reverse-rejected because the
+        # just-cancelled prior guard / entry fill had not settled at the broker. Keyed by
+        # hard-stop key -> (strategy_id, broker_account_id) so the periodic sync can re-arm
+        # them (broker settled by then) WITHOUT blocking the fill transaction at the open.
+        self._native_guard_rearm_pending: dict[tuple[str, str, str], tuple[UUID, UUID]] = {}
 
     async def _run_db(self, fn, *, commit: bool = True):
         """Run a PURE-SYNC unit of DB work on a worker thread, off the event loop.
@@ -378,6 +383,14 @@ class OmsRiskService:
                 else:
                     self.logger.debug("broker state sync complete: %s", sync_summary)
                 last_broker_sync = now
+                # Bug A follow-up: re-arm native stop guards whose immediate arm reverse-
+                # rejected on an unsettled cancel/fill. Non-blocking, on the sync cadence.
+                # getattr guard: __new__-constructed test instances may lack the attribute.
+                if getattr(self, "_native_guard_rearm_pending", None):
+                    try:
+                        await self._retry_pending_native_guard_rearms()
+                    except Exception:
+                        self.logger.exception("failed retrying pending native-stop-guard rearms")
             if now - last_heartbeat >= heartbeat_interval_secs:
                 heartbeat_details = {
                     "adapter": self.settings.oms_adapter_label,
@@ -1250,20 +1263,24 @@ class OmsRiskService:
             time_in_force="day",
         )
         reports = await self.broker_adapter.submit_order(request)
+        rearm_key = self._hard_stop_key(strategy.code, broker_account.name, stop.symbol)
         if self._is_reverse_conflict_reject(reports):
-            # Bug A: a reverse reject on a native-guard (re)arm means the just-cancelled prior
-            # guard / the entry buy has not settled at the broker yet, or the position was
-            # flattened out-of-band — a duplicate protective SELL would exceed the held long.
-            # The IN-MEMORY hard stop (tick-evaluated) is authoritative and unchanged, so this
-            # is benign: record for audit + log a deferral instead of surfacing a failure. The
-            # guard re-arms on the next fill/rearm cycle once the broker settles. (2026-07-13
-            # ORB AGEN/VEEE native-guard reverse rejects.)
+            # Bug A follow-up: a reverse reject means the just-cancelled prior guard / the entry
+            # buy has not settled at the broker yet — a duplicate protective SELL would exceed
+            # the held long. The IN-MEMORY hard stop (tick-evaluated) protects throughout, so
+            # rather than block the fill transaction retrying here (which would stall intent
+            # processing at the open), QUEUE the (re)arm and retry it on the periodic sync
+            # cadence, by which time the broker has settled. (2026-07-13 ORB AGEN/VEEE.)
+            self._native_guard_rearm_pending[rearm_key] = (strategy.id, broker_account.id)
             self.logger.info(
-                "[NATIVE-STOP-GUARD DEFER] %s %s (re)arm reverse-rejected (unsettled cancel/fill "
-                "or position flat) — in-memory stop protects; will retry on the next arm cycle",
+                "[NATIVE-STOP-GUARD DEFER] %s %s (re)arm reverse-rejected — queued for periodic "
+                "re-arm; in-memory stop protects meanwhile",
                 strategy.code,
                 stop.symbol,
             )
+        else:
+            # armed (or any non-reverse outcome) -> nothing pending for this stop.
+            self._native_guard_rearm_pending.pop(rearm_key, None)
         published_events.extend(
             await self._record_order_reports(
                 session=session,
@@ -1349,6 +1366,48 @@ class OmsRiskService:
             broker_account=broker_account,
             stop=stop,
         )
+
+    async def _retry_pending_native_guard_rearms(self) -> None:
+        """Bug A follow-up: re-arm native stop guards whose immediate arm reverse-rejected
+        (unsettled cancel/fill). Runs on the broker-sync cadence — by then the broker has
+        settled — so it never blocks the fill transaction / intent processing at the open.
+
+        Idempotent + self-draining: skips when a live guard already exists, drops the pending
+        entry once the stop is gone, and `_arm_or_rearm_native_stop_guard` itself clears the
+        pending entry on a successful arm (or re-queues it if it reverse-rejects again)."""
+        if not _is_regular_market_session():
+            return
+        for key, (strategy_id, broker_account_id) in list(self._native_guard_rearm_pending.items()):
+            stop = self._armed_hard_stops.get(key)
+            if stop is None or stop.quantity <= 0:
+                self._native_guard_rearm_pending.pop(key, None)  # stop closed -> nothing to arm
+                continue
+            try:
+                with self.session_factory() as session:
+                    strategy = session.get(Strategy, strategy_id)
+                    broker_account = session.get(BrokerAccount, broker_account_id)
+                    if strategy is None or broker_account is None:
+                        self._native_guard_rearm_pending.pop(key, None)
+                        continue
+                    # A live guard already exists (armed elsewhere) -> done, no churn.
+                    if self.store.find_open_native_stop_guard_order(
+                        session,
+                        strategy_id=strategy.id,
+                        broker_account_id=broker_account.id,
+                        symbol=stop.symbol,
+                    ) is not None:
+                        self._native_guard_rearm_pending.pop(key, None)
+                        session.commit()
+                        continue
+                    await self._arm_or_rearm_native_stop_guard(
+                        session=session,
+                        strategy=strategy,
+                        broker_account=broker_account,
+                        stop=stop,
+                    )
+                    session.commit()
+            except Exception:
+                self.logger.exception("[NATIVE-STOP-GUARD] periodic re-arm failed for %s", key)
 
     def _apply_managed_position_after_fill(
         self,

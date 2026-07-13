@@ -168,3 +168,75 @@ def test_broker_position_read_failure_never_clears_the_stop():
 
     svc.broker_adapter = SimpleNamespace(list_account_positions=_boom)
     assert asyncio.run(svc._broker_position_is_flat(_armed_stop())) is False
+
+
+# --------------------------------------------------------------------------- #
+# Bug A follow-up — reverse-rejected native-guard arms are queued + retried on
+# the periodic cadence (non-blocking), instead of only being tolerated.
+# --------------------------------------------------------------------------- #
+from uuid import uuid4  # noqa: E402
+
+from project_mai_tai.broker_adapters.protocols import ExecutionReport  # noqa: E402
+
+
+def _arm_service(*, reverse: bool) -> tuple[OmsRiskService, object, object]:
+    svc = _bare_service()
+    svc._native_guard_rearm_pending = {}
+    strategy = SimpleNamespace(id=uuid4(), code="orb")
+    broker_account = SimpleNamespace(id=uuid4(), name="live:orb")
+
+    svc.store = SimpleNamespace(
+        find_open_native_stop_guard_order=lambda *a, **k: None,  # no existing guard -> no cancel
+        create_trade_intent=lambda *a, **k: SimpleNamespace(id=uuid4()),
+    )
+    svc._record_internal_risk_pass = lambda *a, **k: None
+
+    async def _submit(request):
+        if reverse:
+            return [ExecutionReport(
+                event_type="rejected", client_order_id=request.client_order_id,
+                reason="Webull order rejected: ORDER_NOT_SUPPORT_REVERSE_OPTION (http 417)",
+            )]
+        return [ExecutionReport(event_type="accepted", client_order_id=request.client_order_id)]
+
+    svc.broker_adapter = SimpleNamespace(submit_order=_submit)
+
+    async def _record_order_reports(**_):
+        return []
+
+    svc._record_order_reports = _record_order_reports
+    return svc, strategy, broker_account
+
+
+def test_arm_reverse_reject_queues_pending_rearm(monkeypatch):
+    import project_mai_tai.oms.service as svc_mod
+    monkeypatch.setattr(svc_mod, "_is_regular_market_session", lambda *a, **k: True)
+    svc, strategy, broker_account = _arm_service(reverse=True)
+    stop = _armed_stop()
+    asyncio.run(svc._arm_or_rearm_native_stop_guard(
+        session=SimpleNamespace(), strategy=strategy, broker_account=broker_account, stop=stop))
+    key = svc._hard_stop_key(strategy.code, broker_account.name, stop.symbol)
+    assert svc._native_guard_rearm_pending.get(key) == (strategy.id, broker_account.id)
+
+
+def test_arm_success_clears_pending_rearm(monkeypatch):
+    import project_mai_tai.oms.service as svc_mod
+    monkeypatch.setattr(svc_mod, "_is_regular_market_session", lambda *a, **k: True)
+    svc, strategy, broker_account = _arm_service(reverse=False)
+    stop = _armed_stop()
+    key = svc._hard_stop_key(strategy.code, broker_account.name, stop.symbol)
+    svc._native_guard_rearm_pending[key] = (strategy.id, broker_account.id)  # pre-seed
+    asyncio.run(svc._arm_or_rearm_native_stop_guard(
+        session=SimpleNamespace(), strategy=strategy, broker_account=broker_account, stop=stop))
+    assert key not in svc._native_guard_rearm_pending, "a successful arm must clear the pending entry"
+
+
+def test_retry_drops_pending_when_stop_is_gone(monkeypatch):
+    import project_mai_tai.oms.service as svc_mod
+    monkeypatch.setattr(svc_mod, "_is_regular_market_session", lambda *a, **k: True)
+    svc = _bare_service()
+    svc._armed_hard_stops = {}  # the stop already closed
+    key = ("orb", "live:orb", "LGPS")
+    svc._native_guard_rearm_pending = {key: (uuid4(), uuid4())}
+    asyncio.run(svc._retry_pending_native_guard_rearms())
+    assert key not in svc._native_guard_rearm_pending, "a closed stop's pending re-arm must be dropped"
