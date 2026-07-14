@@ -66,7 +66,11 @@ from project_mai_tai.market_data.schwab_v2_rest_client import (
 from project_mai_tai.market_data.schwab_v2_streamer import SchwabV2Streamer
 from project_mai_tai.market_data.schwab_v2_tick_writer import SchwabV2TickWriter
 from project_mai_tai.settings import Settings, get_settings
-from project_mai_tai.strategy_core.time_utils import session_day_eastern_str
+from project_mai_tai.strategy_core.time_utils import (
+    US_MARKET_HOLIDAYS,
+    is_fillable_et_session,
+    session_day_eastern_str,
+)
 from project_mai_tai.strategy_core.order_routing import (
     _format_limit_price,
     extended_hours_session,
@@ -140,32 +144,19 @@ WATCHDOG_STARTUP_GRACE_SECS = 150.0
 # false-stall bug. Half-days (day after Thanksgiving, Christmas Eve on a
 # weekday; 13:00 ET early close) are intentionally NOT listed — see the
 # decision documented in `_market_session`.
-_US_MARKET_HOLIDAYS: frozenset[date] = frozenset(
-    {
-        # --- 2026 ---
-        date(2026, 1, 1),    # New Year's Day
-        date(2026, 1, 19),   # MLK Jr. Day
-        date(2026, 2, 16),   # Presidents' Day
-        date(2026, 4, 3),    # Good Friday
-        date(2026, 5, 25),   # Memorial Day
-        date(2026, 6, 19),   # Juneteenth
-        date(2026, 7, 3),    # Independence Day (observed; Jul 4 is a Saturday)
-        date(2026, 9, 7),    # Labor Day
-        date(2026, 11, 26),  # Thanksgiving
-        date(2026, 12, 25),  # Christmas
-        # --- 2027 ---
-        date(2027, 1, 1),    # New Year's Day
-        date(2027, 1, 18),   # MLK Jr. Day
-        date(2027, 2, 15),   # Presidents' Day
-        date(2027, 3, 26),   # Good Friday
-        date(2027, 5, 31),   # Memorial Day
-        date(2027, 6, 18),   # Juneteenth (observed; Jun 19 is a Saturday)
-        date(2027, 7, 5),    # Independence Day (observed; Jul 4 is a Sunday)
-        date(2027, 9, 6),    # Labor Day
-        date(2027, 11, 25),  # Thanksgiving
-        date(2027, 12, 24),  # Christmas (observed; Dec 25 is a Saturday)
-    }
-)
+# Full-closure holidays now live in `strategy_core.time_utils` (shared with the
+# OMS fillable-session gate). Alias keeps existing `_US_MARKET_HOLIDAYS` usages.
+_US_MARKET_HOLIDAYS: frozenset[date] = US_MARKET_HOLIDAYS
+
+# Operator trading window (ET): v2 only ENTERS within [start, end). Outside it
+# — before 7 AM, at/after 6 PM, weekends, and full-closure holidays —
+# `_maybe_emit` drops "open" intents. Exits (cw_flip + OMS-managed) are governed
+# separately (the OMS fillable-session gate). Default 07:00–18:00 ET per operator
+# directive 2026-07-14, after a 7:51 PM ET after-hours entry (AGEN/SOBR) left the
+# OMS churning unfillable overnight exits. Overridable via settings of the same
+# name for tuning without a code change.
+V2_ENTRY_WINDOW_START_HOUR_ET = 7
+V2_ENTRY_WINDOW_END_HOUR_ET = 18
 
 
 def _format_eastern(dt: datetime) -> str:
@@ -1372,6 +1363,32 @@ class SchwabV2BotService:
                 bar_time,
             )
 
+    def _entry_window_start_hour_et(self) -> int:
+        return int(
+            getattr(
+                self.settings,
+                "strategy_schwab_1m_v2_entry_window_start_hour_et",
+                V2_ENTRY_WINDOW_START_HOUR_ET,
+            )
+        )
+
+    def _entry_window_end_hour_et(self) -> int:
+        return int(
+            getattr(
+                self.settings,
+                "strategy_schwab_1m_v2_entry_window_end_hour_et",
+                V2_ENTRY_WINDOW_END_HOUR_ET,
+            )
+        )
+
+    def _within_entry_window(self, now: datetime) -> bool:
+        """True iff `now` falls in the operator entry window: a weekday,
+        non-holiday ET day, hour in [start, end). Whole-hour granularity — end=18
+        blocks at 18:00:00 sharp (6 PM), start=7 allows from 07:00:00."""
+        return is_fillable_et_session(
+            now, self._entry_window_start_hour_et(), self._entry_window_end_hour_et()
+        )
+
     async def _maybe_emit(self, draft) -> None:  # type: ignore[no-untyped-def]
         if draft is None:
             return
@@ -1393,6 +1410,26 @@ class SchwabV2BotService:
                 )
             except Exception:
                 logger.exception("schwab_1m_v2 cw_flip emit failed for %s", draft.symbol)
+            return
+        # Trading-window gate: v2 only ENTERS inside the operator's window
+        # (default 7:00 AM–6:00 PM ET, weekdays, non-holiday). Outside it, an
+        # "open" intent is dropped at the chokepoint so v2 never opens a position
+        # it can't manage inside hours — the 2026-07-13 7:51 PM ET after-hours
+        # AGEN/SOBR entries then churned unfillable exits overnight. Exits are
+        # unaffected (cw_flip handled above; OMS owns managed exits). Inside the
+        # window this is byte-neutral.
+        if getattr(draft, "intent_type", "") == "open" and not self._within_entry_window(
+            datetime.now(UTC)
+        ):
+            logger.info(
+                "[V2-ENTRY-WINDOW-BLOCK] dropped open intent symbol=%s reason=%s — "
+                "outside entry window %02d:00–%02d:00 ET (now=%s)",
+                getattr(draft, "symbol", "?"),
+                getattr(draft, "reason", ""),
+                self._entry_window_start_hour_et(),
+                self._entry_window_end_hour_et(),
+                _format_eastern(datetime.now(UTC)),
+            )
             return
         # ATR-ONLY belt-and-suspenders: even if some path computed a non-ATR open,
         # refuse to emit it at the chokepoint. Paths 1/2 are the 7wk losers and

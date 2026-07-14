@@ -43,13 +43,25 @@ from project_mai_tai.runtime_registry import configured_broker_account_registrat
 from project_mai_tai.runtime_seed import seed_runtime_metadata
 from project_mai_tai.services.runtime import _install_signal_handlers
 from project_mai_tai.settings import Settings, get_settings
-from project_mai_tai.strategy_core.time_utils import session_day_eastern_str
+from project_mai_tai.strategy_core.time_utils import (
+    is_fillable_et_session,
+    session_day_eastern_str,
+)
 
 logger = logging.getLogger(__name__)
 
 SERVICE_NAME = "oms-risk"
 SESSION_TZ = ZoneInfo("America/New_York")
 SCHWAB_INELIGIBLE_REASON_SUBSTRINGS = ("must be placed with a broker",)
+
+# Exit fillable-session window (ET). Orders can only fill while the market is in a
+# tradeable session; outside it (8 PM–7 AM, weekends, holidays) placing/refreshing
+# an exit is pure churn (the 2026-07-13 AGEN/SOBR overnight loop: 181 cancel/replace
+# cycles on SOBR). Start 7 = Schwab pre-market fills open ~7 AM ET; end 20 = after-
+# hours fills end ~8 PM ET. Overridable via settings for tuning. See the v2 entry
+# window (7–18) in schwab_1m_v2_bot for the narrower ENTRY gate.
+OMS_FILLABLE_SESSION_START_HOUR_ET = 7
+OMS_FILLABLE_SESSION_END_HOUR_ET = 20
 
 
 def utcnow() -> datetime:
@@ -1719,6 +1731,34 @@ class OmsRiskService:
         }.get(str(level))
         return entry_price if pct is None else entry_price * (1.0 + float(pct) / 100.0)
 
+    def _fillable_session_start_hour_et(self) -> int:
+        return int(
+            getattr(
+                self.settings,
+                "oms_fillable_session_start_hour_et",
+                OMS_FILLABLE_SESSION_START_HOUR_ET,
+            )
+        )
+
+    def _fillable_session_end_hour_et(self) -> int:
+        return int(
+            getattr(
+                self.settings,
+                "oms_fillable_session_end_hour_et",
+                OMS_FILLABLE_SESSION_END_HOUR_ET,
+            )
+        )
+
+    def _market_is_fillable(self, now: datetime | None = None) -> bool:
+        """True while the market is in a session where an order can actually fill
+        (default 7 AM–8 PM ET, weekday, non-holiday). Outside it, exit orders must
+        not be placed or refreshed — they cannot fill, so doing so is pure churn."""
+        return is_fillable_et_session(
+            now or utcnow(),
+            self._fillable_session_start_hour_et(),
+            self._fillable_session_end_hour_et(),
+        )
+
     async def _evaluate_v2_managed_exit(self, acct: str, symbol: str) -> None:
         """Run the v2 exit ladder for one symbol on the latest quote. DECISION uses
         the live bid; FILL reference_price is the leg LEVEL (decision B — stop/floor/
@@ -2413,7 +2453,23 @@ class OmsRiskService:
                     # these guards stop that.
                     abandon_code: str | None = None
                     abandon_detail: str | None = None
-                    if (
+                    # MARKET_CLOSED: when the market is not in a fillable session, a
+                    # working order (open OR close) cannot fill — refreshing it just
+                    # cancel/re-places forever (the 2026-07-13 AGEN/SOBR overnight
+                    # churn: close intents were never abandoned because the guards
+                    # below only covered `open`). Cancel + abandon it and stay quiet;
+                    # for an exit, the managed row stays open and _evaluate_v2_managed_exit
+                    # re-emits a fresh close when the market reopens. Native stop-guard
+                    # orders are exempt — they are the resting overnight protection net.
+                    if not self._is_stop_guard_order(order) and not self._market_is_fillable():
+                        abandon_code = "MARKET_CLOSED"
+                        abandon_detail = (
+                            "market not in a fillable session "
+                            f"({self._fillable_session_start_hour_et():02d}:00–"
+                            f"{self._fillable_session_end_hour_et():02d}:00 ET); "
+                            "parking until it reopens"
+                        )
+                    elif (
                         str(intent.intent_type).lower() == "open"
                         and not self._is_stop_guard_order(order)
                     ):
@@ -2626,6 +2682,12 @@ class OmsRiskService:
         # Slice-3: run the v2 exit ladder on this quote, but ONLY for symbols with an
         # open v2 managed row (the in-memory guard keeps the hot path free of DB hits
         # for everything else; empty set when the flag is OFF → no-op).
+        # Fillable-session gate: outside 7 AM–8 PM ET an exit cannot fill, so do not
+        # emit one — the refresh-loop MARKET_CLOSED abandon (sync_broker_orders) mops
+        # up any working exit, keeping v2 quiet when the market is closed instead of
+        # churning unfillable exits overnight. Management resumes when it reopens.
+        if not self._market_is_fillable():
+            return
         for acct in self._v2_accounts():
             if (acct, symbol) in self._managed_v2_symbols:
                 await self._evaluate_v2_managed_exit(acct, symbol)

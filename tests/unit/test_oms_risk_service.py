@@ -39,6 +39,19 @@ from project_mai_tai.settings import Settings
 from project_mai_tai.strategy_core.time_utils import session_day_eastern_str
 
 
+@pytest.fixture(autouse=True)
+def _market_always_fillable(monkeypatch):
+    """These tests exercise the order-refresh / abandon and exit-ladder logic, not
+    the 7 AM–8 PM ET fillable-session gate. Hold the market open so they are
+    deterministic regardless of the wall-clock run time (else a CI run outside
+    7 AM–8 PM ET, or on a weekend, would trip the MARKET_CLOSED abandon). The gate
+    itself is covered directly in test_oms_fillable_window.py."""
+    monkeypatch.setattr(
+        "project_mai_tai.oms.service.OmsRiskService._market_is_fillable",
+        lambda self, now=None: True,
+    )
+
+
 class FakeRedis:
     def __init__(self) -> None:
         self.entries: list[tuple[str, dict[str, object]]] = []
@@ -3538,3 +3551,125 @@ def test_setup_revalidation_still_guards_tape_writing_momentum_bots() -> None:
         s.add(_bar("macd_30s", "GOVX", "signal", "P1_CROSS", datetime(2026, 6, 22, 14, 0, tzinfo=UTC)))
         s.commit()
         assert svc2._intent_setup_invalid_reason(s, intent=intent, strategy=strat) is None
+
+
+def _seed_stale_close_order(session_factory, *, symbol: str = "SOBR"):
+    """Insert a submitted CLOSE (sell limit) intent + a stale accepted working order
+    — the shape of the 2026-07-13 overnight AGEN/SOBR exit that churned forever."""
+    store = OmsStore()
+    with session_factory() as session:
+        strategy = store.ensure_strategy(
+            session, "schwab_1m_v2", name="Schwab 1m v2", execution_mode="live", metadata_json={}
+        )
+        account = store.ensure_broker_account(
+            session, "live:schwab_1m_v2", provider="schwab", environment="development"
+        )
+        intent = TradeIntent(
+            strategy_id=strategy.id,
+            broker_account_id=account.id,
+            symbol=symbol,
+            side="sell",
+            intent_type="close",
+            quantity=Decimal("2"),
+            reason="CW_HARD_STOP",
+            status="submitted",
+            payload={"metadata": {"order_type": "limit"}},
+        )
+        session.add(intent)
+        session.flush()
+        stale = datetime.now(UTC) - timedelta(seconds=30)  # past the 5s refresh window
+        session.add(
+            BrokerOrder(
+                intent_id=intent.id,
+                strategy_id=strategy.id,
+                broker_account_id=account.id,
+                client_order_id=f"schwab_1m_v2-{symbol}-close-abc123",
+                broker_order_id="ord-123",
+                symbol=symbol,
+                side="sell",
+                order_type="limit",
+                time_in_force="day",
+                quantity=Decimal("2"),
+                status="accepted",
+                payload={
+                    "order_type": "limit",
+                    "time_in_force": "day",
+                    "limit_price": "0.95",
+                    "reference_price": "0.95",
+                    "price_source": "bid",
+                    "session": "AM",
+                },
+                submitted_at=stale,
+                updated_at=stale,
+            )
+        )
+        session.commit()
+
+
+@pytest.mark.asyncio
+async def test_oms_abandons_close_intent_when_market_not_fillable() -> None:
+    """Churn fix: when the market is NOT in a fillable session, a working CLOSE
+    intent is abandoned (MARKET_CLOSED) instead of endlessly cancel/re-placed — the
+    2026-07-13 AGEN/SOBR overnight loop (181 refreshes on SOBR). No replacement order
+    is spawned. The managed row stays open so a fresh exit re-emits when it reopens."""
+    redis = FakeRedis()
+    session_factory = build_test_session_factory()
+    adapter = FakeWorkingOrderRefreshBrokerAdapter()
+    service = OmsRiskService(
+        settings=Settings(
+            redis_stream_prefix="test",
+            oms_adapter="simulated",
+            oms_working_order_refresh_seconds=5,
+        ),
+        redis_client=redis,
+        session_factory=session_factory,
+        broker_adapter=adapter,
+    )
+    service.sync_broker_state = _noop_sync_broker_state  # type: ignore[method-assign]
+    # Market CLOSED regardless of wall-clock run time.
+    service._market_is_fillable = lambda now=None: False  # type: ignore[assignment,method-assign]
+
+    _seed_stale_close_order(session_factory)
+    await service.sync_broker_orders(account_names=["live:schwab_1m_v2"])
+
+    with session_factory() as session:
+        intent = session.scalar(select(TradeIntent).where(TradeIntent.symbol == "SOBR"))
+        orders = session.scalars(select(BrokerOrder).where(BrokerOrder.symbol == "SOBR")).all()
+        assert intent is not None
+        assert intent.status == "cancelled"
+        assert len(orders) == 1  # NO replacement spawned
+        assert orders[0].status == "cancelled"
+        assert orders[0].payload.get("abandon_reason_code") == "MARKET_CLOSED"
+    # Only a cancel went out — no re-placed exit (the churn is stopped).
+    assert [r.intent_type for r in adapter.submit_requests] == ["cancel"]
+
+
+@pytest.mark.asyncio
+async def test_oms_refreshes_close_intent_when_market_fillable() -> None:
+    """Regression: during a fillable session the SAME stale close order refreshes
+    (cancel + replace) as before — the gate only bites when the market is closed."""
+    redis = FakeRedis()
+    session_factory = build_test_session_factory()
+    adapter = FakeWorkingOrderRefreshBrokerAdapter()
+    service = OmsRiskService(
+        settings=Settings(
+            redis_stream_prefix="test",
+            oms_adapter="simulated",
+            oms_working_order_refresh_seconds=5,
+        ),
+        redis_client=redis,
+        session_factory=session_factory,
+        broker_adapter=adapter,
+    )
+    service.sync_broker_state = _noop_sync_broker_state  # type: ignore[method-assign]
+    service._market_is_fillable = lambda now=None: True  # type: ignore[assignment,method-assign]
+
+    _seed_stale_close_order(session_factory)
+    await service.sync_broker_orders(account_names=["live:schwab_1m_v2"])
+
+    # A replacement close was placed (cancel + re-submit), i.e. normal exit management.
+    assert [r.intent_type for r in adapter.submit_requests] == ["cancel", "close"]
+    with session_factory() as session:
+        intent = session.scalar(select(TradeIntent).where(TradeIntent.symbol == "SOBR"))
+        assert intent is not None
+        assert intent.status == "submitted"  # still working, not abandoned
