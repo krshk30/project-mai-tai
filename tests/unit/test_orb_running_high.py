@@ -128,3 +128,25 @@ def test_resting_entry_supersedes_quote_priced():
     md = svc._build_open_intent("FOO", 10.50).payload.metadata
     assert md["order_type"] == "STOP_LIMIT"
     assert "price_source" not in md
+
+
+# --- trail-% display reconciliation (2026-07-14) ---
+
+
+def test_active_trail_pct_running_high_uses_reclaim_setting():
+    # Running-high arms orb_reclaim_trail_pct; the display must show THAT (not orb_trail_pct).
+    svc = _svc(orb_running_high_enabled=True, orb_reclaim_trail_pct=5.0, orb_trail_pct=8.0)
+    assert svc._active_trail_pct() == 5.0
+
+
+def test_active_trail_pct_classic_uses_orb_trail_setting():
+    svc = _svc(orb_reclaim_trail_pct=5.0, orb_trail_pct=8.0)  # running_high off, reclaim off
+    assert svc._active_trail_pct() == 8.0
+
+
+def test_display_trail_matches_intent_trail_for_running_high():
+    # The bug: display showed 8% while the intent/OMS used 3%. Now they must agree.
+    svc = _svc(orb_running_high_enabled=True, orb_reclaim_trail_pct=5.0, orb_trail_pct=8.0)
+    event = svc._build_open_intent("ABC", 10.0)
+    assert event.payload.metadata["trail_pct"] == str(svc.settings.orb_reclaim_trail_pct)
+    assert float(event.payload.metadata["trail_pct"]) == svc._active_trail_pct()

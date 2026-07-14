@@ -651,6 +651,18 @@ class OrbService:
         else:
             st.reclaim_cross_ms = None  # hold broke — wait for the next reclaim
 
+    def _active_trail_pct(self) -> float:
+        """Trailing-stop % the CURRENT entry mode arms — MUST mirror the pct
+        ``_build_open_intent`` puts in the intent (running-high + intrabar-reclaim use
+        ``orb_reclaim_trail_pct``; the classic-OR path uses ``orb_trail_pct``). Single
+        source for the ``[ORB-OPEN]`` log + heartbeat so the DISPLAY can never drift from
+        what the OMS actually enforces. (Pre-2026-07-14 bug: the display keyed on
+        ``_reclaim_mode`` only, so a running-high entry SHOWED ``orb_trail_pct`` while the
+        OMS armed ``orb_reclaim_trail_pct`` — an 8%-vs-3% mislabel on every RH trade.)"""
+        if self._running_high_mode or self._reclaim_mode:
+            return float(self.settings.orb_reclaim_trail_pct)
+        return float(self.settings.orb_trail_pct)
+
     def _build_open_intent(self, symbol: str, entry_price: float) -> TradeIntentEvent:
         if self._running_high_mode:
             pct = str(self.settings.orb_reclaim_trail_pct)   # 3% trail (shared setting)
@@ -751,11 +763,7 @@ class OrbService:
                 maxlen=self.settings.redis_strategy_intent_stream_maxlen,
                 approximate=True,
             )
-            trail = (
-                self.settings.orb_reclaim_trail_pct
-                if self._reclaim_mode
-                else self.settings.orb_trail_pct
-            )
+            trail = self._active_trail_pct()
             logger.info(
                 "[ORB-OPEN] %s entry=%.4f trail_pct=%s mode=%s",
                 symbol, entry_price, trail,
@@ -789,11 +797,7 @@ class OrbService:
                 row["or_width_pct"] = round(st.opening_range.width_pct, 2)
             decisions.append(row)
             if st.traded and st.entry_price is not None:
-                trail = (
-                    float(self.settings.orb_reclaim_trail_pct)
-                    if self._reclaim_mode
-                    else float(self.settings.orb_trail_pct)
-                )
+                trail = self._active_trail_pct()
                 positions.append({
                     "symbol": sym,
                     "entry_price": st.entry_price,
