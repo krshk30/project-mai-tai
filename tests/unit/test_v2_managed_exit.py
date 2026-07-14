@@ -33,6 +33,18 @@ ACCT = "paper:schwab_1m_v2"
 SYM = "VSME"
 
 
+@pytest.fixture(autouse=True)
+def _market_always_fillable(monkeypatch):
+    """These tests exercise the exit ladder through `_handle_quote_tick_event` /
+    `_evaluate_v2_managed_exit`, not the 7 AM–8 PM ET fillable-session gate. Hold the
+    market open so they are deterministic regardless of wall-clock run time (the gate
+    itself is covered in test_oms_fillable_window.py / test_oms_risk_service.py)."""
+    monkeypatch.setattr(
+        "project_mai_tai.oms.service.OmsRiskService._market_is_fillable",
+        lambda self, now=None: True,
+    )
+
+
 class _FakeRedis:
     async def xadd(self, *a, **kw):
         return b"1-1"

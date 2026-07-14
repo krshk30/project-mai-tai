@@ -40,8 +40,22 @@ from project_mai_tai.services.schwab_1m_v2_bot import (
     SchwabV2BotService,
     _current_scanner_session_start_utc,
 )
+import pytest
+
 from project_mai_tai.settings import Settings
 from project_mai_tai.strategy_core.schwab_1m_v2 import SchwabV2Strategy
+
+
+@pytest.fixture(autouse=True)
+def _entry_window_always_open(monkeypatch):
+    """These tests exercise the emit chokepoint / warmup / watchdog, not the
+    7 AM–6 PM ET entry-window gate. Hold the window open so `_maybe_emit` emit
+    tests are deterministic regardless of the wall-clock run time (the gate itself
+    is covered in test_v2_entry_window.py)."""
+    monkeypatch.setattr(
+        "project_mai_tai.services.schwab_1m_v2_bot.SchwabV2BotService._within_entry_window",
+        lambda self, now=None: True,
+    )
 
 
 # ===========================================================================

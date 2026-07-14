@@ -324,6 +324,13 @@ class Settings(BaseSettings):
     # they must never trade ahead of ATR. Default False = current behavior
     # (reversible kill: flip back to False + restart restores P1/P2).
     strategy_schwab_1m_v2_atr_only_mode: bool = False
+    # Trading window (ET, whole-hour) inside which v2 may OPEN a position. Outside
+    # [start, end) — before 7 AM, at/after 6 PM, weekends, holidays — the emit
+    # chokepoint drops "open" intents (2026-07-14 operator rule after a 7:51 PM ET
+    # after-hours entry churned unfillable overnight exits). Exits are governed by
+    # the OMS fillable-session gate (oms_fillable_session_*). end is exclusive.
+    strategy_schwab_1m_v2_entry_window_start_hour_et: int = 7
+    strategy_schwab_1m_v2_entry_window_end_hour_et: int = 18
     # GO-LIVE opt-in: when False (default), the configured_schwab_accounts guard
     # REFUSES to bind a real Schwab hash to the v2 account (structural paper-safety,
     # P1 Phase 1). When True, v2's account registers the real hash so orders route
@@ -579,6 +586,14 @@ class Settings(BaseSettings):
     webull_native_stop_order_type_map_enabled: bool = False
     oms_broker_sync_interval_seconds: int = 5
     oms_working_order_refresh_seconds: int = 5
+    # Fillable-session window (ET, whole-hour): the OMS places/refreshes exit orders
+    # only while an order can actually fill (default 7 AM–8 PM ET = Schwab pre-market
+    # fills open ~7 AM, after-hours end ~8 PM). Outside it a working order (open or
+    # close) is abandoned (MARKET_CLOSED) instead of endlessly cancel/re-placed — the
+    # 2026-07-13 AGEN/SOBR overnight churn. end is exclusive; native stop-guard orders
+    # are exempt (they are the resting overnight protection net).
+    oms_fillable_session_start_hour_et: int = 7
+    oms_fillable_session_end_hour_et: int = 20
     # --- OMS DB-timeout hardening (SPOF cure) ---
     # Bounds EVERY OMS DB call so a stalled connection RAISES within seconds
     # instead of hanging the asyncio event loop forever (the 2026-07-01/02 zombie:
