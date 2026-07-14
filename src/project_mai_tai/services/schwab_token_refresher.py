@@ -187,8 +187,15 @@ class SchwabTokenRefresher:
                 status_code, _headers, payload = await self._grant(refresh_token)
 
         try:
+            # A refresh grant does not return refresh_token_expires_in, so carry the
+            # existing refresh-token expiry clock forward (it is non-rotating; only a
+            # re-auth resets it). Keeps the expiry-warning field alive across refreshes.
             result = parse_token_grant_response(
-                payload, status_code=status_code, previous_refresh_token=refresh_token
+                payload,
+                status_code=status_code,
+                previous_refresh_token=refresh_token,
+                previous_refresh_token_expires_at=parse_datetime(store.get("refresh_token_expires_at")),
+                previous_refresh_token_obtained_at=parse_datetime(store.get("refresh_token_obtained_at")),
             )
         except SchwabTokenError as exc:
             if is_dead_token_payload(getattr(exc, "payload", None)):
