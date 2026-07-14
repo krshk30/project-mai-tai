@@ -24,6 +24,7 @@ from project_mai_tai.broker_adapters.webull import WebullBrokerAdapter
 from project_mai_tai.db.session import build_oms_session_factory
 from project_mai_tai.db.models import BrokerAccount, BrokerOrder, Strategy, StrategyBarHistory, TradeIntent
 from project_mai_tai.exit_logic.config import TradingConfig
+from project_mai_tai.exit_logic.cw_exit import cw_exit_decision
 from project_mai_tai.exit_logic.engine import ExitEngine
 from project_mai_tai.exit_logic.position import Position
 from project_mai_tai.events import (
@@ -262,6 +263,15 @@ class OmsRiskService:
         )
         self._cw_target_pct: float = float(getattr(self.settings, "oms_v2_cw_target_pct", 2.0))
         self._cw_stop_pct: float = float(getattr(self.settings, "oms_v2_cw_hard_stop_pct", 5.0))
+        # CW-v2 floor exit (flag): at +target% arm a floor at +floor_pct% and RIDE; close on
+        # fall-back-to-floor. OFF => byte-identical hard-target close. `_cw_floor_armed` tracks the
+        # armed (acct,symbol) in memory — the floor is fixed at entry*(1+floor_pct/100) so it
+        # re-arms identically after a restart (no durable state). Decision = exit_logic.cw_exit.
+        self._cw_floor_exit_enabled: bool = bool(
+            getattr(self.settings, "oms_v2_cw_floor_exit_enabled", False)
+        )
+        self._cw_floor_pct: float = float(getattr(self.settings, "oms_v2_cw_floor_pct", 2.0))
+        self._cw_floor_armed: set[tuple[str, str]] = set()
         # (acct, symbol) pairs with a bar-close ATR flip pending (PR #3). Set from the
         # `v2_cw_flip` signal event; consumed (full close) by the CW exit on the next
         # quote. In-memory so the hot quote path never does a per-tick Redis read.
@@ -1798,6 +1808,7 @@ class OmsRiskService:
             if snapshot is None:
                 self._managed_v2_symbols.discard((acct, symbol))  # dict mutation stays on-loop
                 self._cw_flip_pending.discard((acct, symbol))  # no open row -> drop any stale flip
+                self._cw_floor_armed.discard((acct, symbol))  # no open row -> drop any armed floor
                 return
 
             # Phase 2 — DECIDE (on-loop, pure): hydrate + ratchet off the snapshot.
@@ -1824,43 +1835,54 @@ class OmsRiskService:
             # takes the better +2% exit, otherwise it closes at the bid. OFF => fall
             # through to the unchanged ladder below.
             if self._cw_exit_enabled:
+                # Decision is the SHARED helper (exit_logic.cw_exit) — same code path as the
+                # backtest so live == backtest. floor OFF => byte-identical to the prior hard-target
+                # close; floor ON => arm a floor at +floor_pct% on reaching +target% and ride.
                 flip_pending = (acct, symbol) in self._cw_flip_pending
-                tgt = self._v2_exit_engine.check_full_target(position, bid, self._cw_target_pct)
-                cw_hard = (
-                    None if tgt is not None
-                    else self._v2_exit_engine.check_hard_stop_pct(position, bid, self._cw_stop_pct)
+                armed = (acct, symbol) in self._cw_floor_armed
+                action, _armed_out = cw_exit_decision(
+                    entry_price, bid, armed,
+                    target_pct=self._cw_target_pct, stop_pct=self._cw_stop_pct,
+                    floor_pct=self._cw_floor_pct, floor_enabled=self._cw_floor_exit_enabled,
+                    flip_pending=flip_pending,
                 )
-                if tgt is not None:
-                    ref = entry_price * (1.0 + self._cw_target_pct / 100.0)
-                    await self._emit_v2_exit_on_loop(
-                        acct, symbol, position, entry_price, kind="HARD",
-                        reference_price=ref, reason="oms_v2_managed_exit:CW_TARGET",
-                        bid=bid, close_on_fill=close_on_fill,
+                if action == "arm":
+                    # reached +target% -> lock the floor, keep riding (NO exit); persist state.
+                    self._cw_floor_armed.add((acct, symbol))
+                    self.logger.info(
+                        "[OMS-V2-CW-FLOOR-ARMED] sym=%s acct=%s bid=%.4f floor=%.4f (ride past +%.1f%%)",
+                        symbol, acct, bid,
+                        entry_price * (1.0 + self._cw_floor_pct / 100.0), self._cw_target_pct,
                     )
-                    self._cw_flip_pending.discard((acct, symbol))
-                elif cw_hard is not None:
-                    ref = entry_price * (1.0 - self._cw_stop_pct / 100.0)
-                    await self._emit_v2_exit_on_loop(
-                        acct, symbol, position, entry_price, kind="HARD",
-                        reference_price=ref, reason="oms_v2_managed_exit:CW_HARD_STOP",
-                        bid=bid, close_on_fill=close_on_fill,
-                    )
-                    self._cw_flip_pending.discard((acct, symbol))
-                elif flip_pending:
-                    # bar-close ATR flip: full close at the current bid (trend exit).
-                    await self._emit_v2_exit_on_loop(
-                        acct, symbol, position, entry_price, kind="HARD",
-                        reference_price=bid, reason="oms_v2_managed_exit:CW_FLIP",
-                        bid=bid, close_on_fill=close_on_fill,
-                    )
-                    self._cw_flip_pending.discard((acct, symbol))
-                else:
                     await self._run_db(
                         lambda session: self._persist_v2_price_state(
                             session, acct, symbol, position, write_quantity=True
                         ),
                         commit=True,
                     )
+                elif action == "hold":
+                    await self._run_db(
+                        lambda session: self._persist_v2_price_state(
+                            session, acct, symbol, position, write_quantity=True
+                        ),
+                        commit=True,
+                    )
+                else:  # target | floor | stop | flip -> full close
+                    if action == "target":
+                        ref, tag = entry_price * (1.0 + self._cw_target_pct / 100.0), "CW_TARGET"
+                    elif action == "floor":
+                        ref, tag = entry_price * (1.0 + self._cw_floor_pct / 100.0), "CW_FLOOR"
+                    elif action == "stop":
+                        ref, tag = entry_price * (1.0 - self._cw_stop_pct / 100.0), "CW_HARD_STOP"
+                    else:  # flip: full close at the current bid (trend exit)
+                        ref, tag = bid, "CW_FLIP"
+                    await self._emit_v2_exit_on_loop(
+                        acct, symbol, position, entry_price, kind="HARD",
+                        reference_price=ref, reason=f"oms_v2_managed_exit:{tag}",
+                        bid=bid, close_on_fill=close_on_fill,
+                    )
+                    self._cw_flip_pending.discard((acct, symbol))
+                    self._cw_floor_armed.discard((acct, symbol))
                 return
 
             hard = self._v2_exit_engine.check_hard_stop(position, bid)
@@ -1967,6 +1989,7 @@ class OmsRiskService:
             self.store.close_managed_position(session, row)
             self._managed_v2_symbols.discard(key)
             self._cw_flip_pending.discard(key)
+            self._cw_floor_armed.discard(key)
             self._v2_exit_close_failures.pop(key, None)
             self.logger.info(
                 "[OMS-V2-RECONCILE-FLAT] sym=%s acct=%s broker flat after %d rejected closes -> "

@@ -234,3 +234,38 @@ def test_cw_v2_new_buy_flip_reseeds_segment_high_and_cap():
     _feed_bar(strat, state, _bar(8.0, ts=7), _sig(flip="BUY", flip_level=6.0))  # new segment B
     assert state.cw_entries_this_flip == 0            # cap reset
     assert state.cw_segment_high == 8.0               # re-seeded to the new flip bar (not 20.0)
+
+
+# --- reclaim 1-bar gap (2026-07-14; backtest: same-bar reclaim bleeds) ---
+
+
+def test_cw_v2_reclaim_gap1_blocks_same_bar_then_allows_next_bar():
+    strat = _strat(strategy_schwab_1m_v2_cw_v2_reclaim_gap_bars=1)
+    state = strat.watchlist_state("TEST")
+    _arm_to_watch(strat, state)
+    assert strat._cw_v2_quote(state, _quote(12.5)) is not None      # entry #1
+    assert state.cw_entries_this_flip == 1
+    state.position_qty = 10
+    strat.update_position("TEST", 0)                                # exit -> release + reset counter
+    assert state.cw_v2_emit_claimed is False
+    assert state.cw_v2_bars_since_exit == 0
+    # SAME bar: reclaim blocked by the 1-bar gap
+    assert strat._cw_v2_quote(state, _quote(12.6)) is None
+    assert state.cw_entries_this_flip == 1
+    # a NEW bar arrives -> bars_since_exit=1 -> reclaim now allowed
+    strat._cw_v2_track(state, _sig())
+    assert state.cw_v2_bars_since_exit == 1
+    assert strat._cw_v2_quote(state, _quote(12.5)) is not None
+    assert state.cw_entries_this_flip == 2
+
+
+def test_cw_v2_reclaim_gap0_allows_same_bar_byte_identical():
+    strat = _strat()  # gap defaults to 0
+    state = strat.watchlist_state("TEST")
+    _arm_to_watch(strat, state)
+    assert strat._cw_v2_quote(state, _quote(12.5)) is not None
+    state.position_qty = 10
+    strat.update_position("TEST", 0)
+    # same-bar reclaim allowed (no gap) — unchanged from before
+    assert strat._cw_v2_quote(state, _quote(12.6)) is not None
+    assert state.cw_entries_this_flip == 2

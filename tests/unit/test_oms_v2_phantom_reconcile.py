@@ -23,6 +23,7 @@ def _svc(*, broker_flat: bool = True, read_raises: bool = False):
     svc._v2_exit_close_failures = {}
     svc._managed_v2_symbols = {(ACCT, SYM)}
     svc._cw_flip_pending = {(ACCT, SYM)}
+    svc._cw_floor_armed = {(ACCT, SYM)}
     closed: list = []
     svc.store = SimpleNamespace(close_managed_position=lambda session, row: closed.append(row))
 

@@ -393,6 +393,11 @@ class Settings(BaseSettings):
     # Exit path (+2%/-5%/flip) and the OMS are UNCHANGED. Default OFF = the shipped bar-close CW is
     # byte-identical. Reversible kill: flip back to False + restart. See docs/cw-v2-intrabar-rules-design.md.
     strategy_schwab_1m_v2_cw_v2_enabled: bool = False
+    # CW-v2 reclaim (2nd entry per BUY-flip) must wait this many NEW bars after the prior exit.
+    # 0 = current behaviour (same-bar reclaim allowed). Backtest 07-09..07-14: 1 was a large
+    # improvement (same-bar reclaim re-enters the just-exited micro-spike and bleeds). Read in
+    # _cw_v2_quote; OFF (0) is byte-identical.
+    strategy_schwab_1m_v2_cw_v2_reclaim_gap_bars: int = 0
     strategy_macd_30s_reclaim_excluded_symbols: str = "JEM,CYCN,BFRG,UCAR,BBGI"
     # Maximum age (seconds) for the `scanner_confirmed_last_nonempty` snapshot
     # to be eligible for startup restore. Older snapshots are skipped, so
@@ -674,6 +679,14 @@ class Settings(BaseSettings):
     # change. See docs/atr-confirmed-window-forward-test.md.
     oms_v2_cw_target_pct: float = 2.0
     oms_v2_cw_hard_stop_pct: float = 5.0
+    # CW-v2 floor exit: when True, instead of a HARD close at +target% the OMS arms a floor at
+    # +floor_pct% once the bid reaches +target% and RIDES; it closes when the bid falls back to the
+    # floor (or -hard_stop% before arming, or a bar-close flip). Lets winners run past +2% instead
+    # of capping there. Backtest 07-09..07-14: floor@+2% + 1-bar reclaim gap + keep -5% was best
+    # (+win-rate, +net). OFF (default) = byte-identical hard-target close. floor_pct defaults to the
+    # target (+2%). Shared decision: exit_logic/cw_exit.py (same code path as the backtest).
+    oms_v2_cw_floor_exit_enabled: bool = False
+    oms_v2_cw_floor_pct: float = 2.0
     # Stuck-intent cancellation (2026-05-18 incident: pre-market intents
     # for AUUD/QNCX/SBFM kept retrying for 4.5 hours and 400+ attempts
     # each because the OMS had no max-age cap, no quote-drift sanity, and
