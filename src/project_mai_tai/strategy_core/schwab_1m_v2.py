@@ -210,6 +210,7 @@ class SymbolState:
     #                                            not re-cross the flip+2 3-bar trigger.
     cw_v2_emit_claimed: bool = False            # dedup between an intrabar emit and its fill/close
     cw_v2_emit_ms: int = 0                      # wall-clock of the last v2 emit (no-fill release)
+    cw_v2_bars_since_exit: int = 0              # NEW bars since the prior exit (reclaim gap; 0=just exited)
 
 
 @dataclass
@@ -439,6 +440,11 @@ class SchwabV2Strategy:
         self._cw_v2_enabled = self._cw_enabled and bool(
             getattr(self.settings, "strategy_schwab_1m_v2_cw_v2_enabled", False)
         )
+        # CW-v2 reclaim gap: the 2nd (reclaim) entry must wait this many NEW bars after the prior
+        # exit (0 = same-bar reclaim, current). Matches the backtest cursor=bars[bar_of(xms)+gap].ts.
+        self._cw_v2_reclaim_gap_bars = int(
+            getattr(self.settings, "strategy_schwab_1m_v2_cw_v2_reclaim_gap_bars", 0) or 0
+        )
         raw_atr_probe = str(
             getattr(self.settings, "strategy_schwab_1m_v2_atr_flip_probe_symbols", "") or ""
         ).strip()
@@ -480,6 +486,7 @@ class SchwabV2Strategy:
             # cw_entries_this_flip<2 cap + arm-on-flip bound it). No-op when the sub-flag is off.
             if self._cw_v2_enabled:
                 state.cw_v2_emit_claimed = False
+                state.cw_v2_bars_since_exit = 0  # reclaim gap: start counting new bars from the exit
         if self._atr_rearm_enabled:
             self._poll_atr_guard(state, prev)
 
@@ -1140,6 +1147,8 @@ class SchwabV2Strategy:
             return
         # New bar: reset the forming-bar low; release a stale emit claim that never filled.
         state.cw_bar_low_so_far = 0.0
+        state.cw_v2_bars_since_exit += 1  # reclaim gap: count NEW bars since the prior exit
+
         if state.cw_v2_emit_claimed and state.position_qty == 0:
             now_ms = int(datetime.now(UTC).timestamp() * 1000)
             if now_ms - state.cw_v2_emit_ms >= int(self._atr_rearm_timeout_secs * 1000):
@@ -1197,6 +1206,12 @@ class SchwabV2Strategy:
         if now_ms <= 0:
             now_ms = int(datetime.now(UTC).timestamp() * 1000)
         if self._cw_in_orb_window(now_ms):
+            return None
+        # Reclaim gap: the 2nd (reclaim) entry must wait `reclaim_gap_bars` NEW bars after the prior
+        # exit — no same-bar reclaim (backtest 07-09..07-14: same-bar reclaim re-enters the just-
+        # exited micro-spike and bleeds). n=0 (first entry) unaffected. 0 = off (byte-identical).
+        if (state.cw_entries_this_flip >= 1 and self._cw_v2_reclaim_gap_bars > 0
+                and state.cw_v2_bars_since_exit < self._cw_v2_reclaim_gap_bars):
             return None
 
         # 1st entry (n=0) breaks the flip+2 3-bar trigger; a RECLAIM (n>=1) must break a genuine NEW

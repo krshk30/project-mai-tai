@@ -43,11 +43,12 @@ def _make_sf() -> sessionmaker:
     return sessionmaker(bind=engine, expire_on_commit=False)
 
 
-def _svc(sf, *, cw: bool = True) -> OmsRiskService:
+def _svc(sf, *, cw: bool = True, floor: bool = False) -> OmsRiskService:
     settings = Settings(
         oms_v2_exit_management_enabled=True,
         oms_v2_exit_close_on_fill_enabled=True,
         strategy_schwab_1m_v2_confirmed_window_enabled=cw,
+        oms_v2_cw_floor_exit_enabled=floor,
     )
     svc = OmsRiskService(
         settings, redis_client=_FakeRedis(), session_factory=sf,
@@ -184,3 +185,40 @@ async def test_dispatcher_arms_pending_only_when_cw_enabled():
                              "broker_account_name": ACCT})}
     )
     assert (ACCT, SYM) not in off._cw_flip_pending
+
+
+# --- CW floor exit (2026-07-14): arm at +2%, ride, close on fall-back-to-floor ---
+
+
+@pytest.mark.asyncio
+async def test_cw_floor_arms_at_target_then_exits_on_fallback():
+    sf = _make_sf()
+    svc = _svc(sf, cw=True, floor=True)
+    _arm(svc, sf, entry=10.0, qty=100)                # target/floor = 10.20
+    _quote(svc, bid=10.25)                            # reaches +2% -> ARM, no exit
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
+    assert _sell_intents(sf) == []
+    assert (ACCT, SYM) in svc._cw_floor_armed
+    assert _row(sf).status == "open"
+    _quote(svc, bid=10.60)                            # rides higher -> still no exit
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
+    assert _sell_intents(sf) == []
+    _quote(svc, bid=10.20)                            # falls back to the +2% floor -> CW_FLOOR
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
+    intents = _sell_intents(sf)
+    assert len(intents) == 1
+    assert intents[0].reason.endswith("CW_FLOOR")
+    assert _ref(intents[0]) == Decimal("10.2000")     # the floor level
+    assert (ACCT, SYM) not in svc._cw_floor_armed
+
+
+@pytest.mark.asyncio
+async def test_cw_floor_off_is_hard_target_byte_identical():
+    sf = _make_sf()
+    svc = _svc(sf, cw=True, floor=False)              # floor OFF -> +2% is a HARD close
+    _arm(svc, sf, entry=10.0, qty=100)
+    _quote(svc, bid=10.25)
+    await svc._evaluate_v2_managed_exit(ACCT, SYM)
+    intents = _sell_intents(sf)
+    assert len(intents) == 1 and intents[0].reason.endswith("CW_TARGET")
+    assert (ACCT, SYM) not in svc._cw_floor_armed
