@@ -62,7 +62,20 @@ accepted by Schwab, working order, broker_order_id assigned). It is **NOT yet pr
 
 ## 🔴 OPEN ITEMS — DO NOT LOSE (future-you: read these)
 
-**🔜 NEXT SESSION — 2026-07-02 — PRIORITY STACK (operator will ping; present by ET + priority when pinged):**
+**🗓️ 2026-07-14 EOD SUMMARY (5 things shipped live today; full detail in Recent Activity below):**
+1. **v2 trading-window + exit-churn fix (#446)** — v2 entries hard-capped **7 AM–6 PM ET**; OMS abandons unfillable `close` intents (`MARKET_CLOSED`) so exits don't churn overnight. Root-caused: NOT a recent regression — v2 (isolated bot) never had the 6 PM cutoff the shared bots enforce via `TradingConfig`; the overnight churn had fired unnoticed for 2+ wks (CLRO 07-02→03 = 3,002 cycles). Closes the long-standing "v2 EH exit routing" item.
+2. **Schwab refresh-token expiry warning (#448)** — captures `refresh_token_expires_at` at re-auth + ntfy cron (AMBER≤48h/RED≤12h). Operator re-authed 07-14 ~07:43 ET; seeded expiry 2026-07-21. [[project_mai_tai_schwab_token_expiry_warning]]
+3. **ORB resting stop-buy entry ENABLED (#450)** — plumbing gate passed (pre-market buy-STOP-LIMIT accepted + held through the 9:30 open + clean cancel). `MAI_TAI_ORB_RESTING_ENTRY_ENABLED=true`. **⏳ FIRST REAL fill = 2026-07-15 09:30.**
+4. **ORB trail reconciled to 5% (#450)** — was silently 3% while logs said 8% (display bug, fixed); operator set 5% (`MAI_TAI_ORB_RECLAIM_TRAIL_PCT=5.0`).
+5. **v2 CW-v2 first live WINS** — NXTC scalped twice on real Schwab fills (6.72→6.85 +1.9%, reclaim 6.94→7.05 +1.6%), both +2% target, 2/flip cap.
+
+**🔜 NEXT SESSION — 2026-07-15 — WATCH (all deployed; nothing to build first):**
+- **ORB resting-entry FIRST real trigger-and-fill @ 09:30 ET** — the test only proved place/persist/cancel (far-above orders can't fill). Watch `[ORB-OPEN] ... trail_pct=5.0`: does it fill AT the break vs gap through the limit? qty 2, young mechanism. Rollback = `MAI_TAI_ORB_RESTING_ENTRY_ENABLED=false` + ORB restart (env bak `.bak.pre-orb-resting-trail5.*`).
+- **v2 CW-v2 forward test** — continue collecting name-days (NXTC 07-14 = first 2 wins); watch flip-exit slippage (exits filled a hair under the idealized +2% targets).
+- **v2 entry-window / OMS churn fix** live-proof — confirm `[V2-ENTRY-WINDOW-BLOCK]` fires pre-7AM/post-6PM and no overnight `MARKET_CLOSED` churn on any held-past-8PM position.
+- **Token warning** armed (no action) — AMBER fires ~day-5; real `refresh_token_expires_in` self-captures on the next re-auth (~07-21).
+
+**🔜 NEXT SESSION — 2026-07-02 — PRIORITY STACK (HISTORICAL — superseded above; kept for context):**
 
 > **ET/time-pinning:** only the **ORB verify (#4) is hard-time-pinned to the 09:30 ET open** (attended). The **09:12 ET readiness cron** auto-fires (green/red ntfy). Everything else (OMS SPOF, watchdog, health system) is build-during-day / attended-deploy — NOT market-window-bound. Sequencing tip: the **watchdog (#2) is quick — stand it up FIRST as a fast safety net WHILE the SPOF fix (#1) is built**, so a re-zombie before #1 lands is caught in minutes.
 
@@ -192,8 +205,9 @@ accepted by Schwab, working order, broker_order_id assigned). It is **NOT yet pr
 
 ---
 
-## 🟢 LIVE OPS STATE (as of 2026-06-25; 2026-07-01 head below)
+## 🟢 LIVE OPS STATE (2026-07-14 EOD head below; older heads kept for history)
 
+- **2026-07-14 EOD head PIDs (after today's 5 deploys, fleet FLAT):** oms **35087** (06:51 ET, #446 window+churn) · schwab-1m-v2 **35100** (06:51 ET, #446; CW-v2 intrabar **qty 2**, entry window **7 AM–6 PM ET**) · orb **64822** (11:46 ET, #450 — **resting stop-buy ENABLED**, trail **5%**, qty 2, running-high+resting) · control **44840** (08:20 ET, #448 token-expiry warning + cron) · strategy **4188365** · reconciler **3631771** · market-data **3631761** — all NRestarts=0, 0 tracebacks, OMS+v2 heartbeats healthy/flowing. Protected: **CYN** (5000 sh live:schwab_1m_v2), **CELZ**. **New live config today:** v2 entry gate 7–18 ET + OMS fillable-exit gate 7–20 ET (`MARKET_CLOSED` abandon); `MAI_TAI_ORB_RESTING_ENTRY_ENABLED=true`, `MAI_TAI_ORB_RECLAIM_TRAIL_PCT=5.0`; Schwab token warning cron (`2 12,13,22,23 * * *`) + seeded `refresh_token_expires_at=2026-07-21T11:43Z`. Env baks: `.bak.pre-orb-resting-trail5.*`. **Manual holdings note:** operator manually closed the stuck AGEN/SOBR after-hours legs 07-14 ~07:01 ET (reconcile clean since). See 2026-07-14 Recent Activity.
 - **2026-07-13 EVENING head PIDs (after the v2 re-activation restart, ~18:52 ET, fleet FLAT):** oms **4188310** (deploys #441 v2-exit phantom reconcile), strategy **4188365**, schwab-1m-v2 **4188364** (deploys #440 CW-v2 reclaim fix; CW-v2 intrabar **qty 2**, ACTIVE), orb **4188363** (**qty 2** via `MAI_TAI_ORB_RECLAIM_QUANTITY=2`; resting entry flag **OFF** — reactive path unchanged), market-data 3631761 — all NRestarts=0, 0 tracebacks, OMS + v2 heartbeats healthy. Protected: **CYN** (5000 sh on live:schwab_1m_v2, frozen), **CELZ**. OMS exit path carries all fixes: #436 (reverse-conflict / 40-char coid / phantom reconcile) + #438 (native-guard re-arm queue) + **#441 (v2 CW-exit phantom reconcile — same class as ORB Bug C, `_v2_close_reconcile_flat`)**. See 2026-07-13 Recent Activity. [[project_mai_tai_oms_orb_exit_fixes]] [[project_mai_tai_v2_cw_v2_fixes_and_stopped]] *(Earlier 07-13 heads: #436 restart ~10:14 ET oms 4132235; #438 Bug-A restart ~10:55 ET oms 4136520 / orb 4136537 / v2 4136538 / strategy 4136539.)*
 - **2026-07-10 v2 CONFIRMED-WINDOW deploy (~00:07 ET, attended, market closed, fleet flat):** v2 now runs the **CW ruleset
   live at canary qty 2** on HEAD `b94ba7d` (full config + rules in the STATUS block above). Kill switch
