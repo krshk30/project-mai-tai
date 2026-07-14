@@ -3986,3 +3986,35 @@ def test_display_order_reason_surfaces_true_broker_reject_and_cancel() -> None:
     assert f({"status": "cancelled", "cancel_code": "SETUP_INVALID", "cancel_detail": "latest bar idle path=none != intent path=ATR Flip", "reason": "ATR Flip B"}) == "SETUP_INVALID: latest bar idle path=none != intent path=ATR Flip"
     assert f({"status": "filled", "reason": "VWAP Breakout"}) == "VWAP Breakout"
     assert f({"status": "rejected", "reason": "ATR Flip B"}) == "ATR Flip B"
+
+
+def test_persist_schwab_token_store_captures_refresh_expiry(tmp_path) -> None:
+    import json
+    settings = Settings(
+        redis_stream_prefix="test", oms_adapter="alpaca_paper",
+        schwab_token_store_path=str(tmp_path / "tok.json"),
+    )
+    control_plane_module._persist_schwab_token_store(
+        settings,
+        {"access_token": "a", "refresh_token": "r", "expires_in": 1800,
+         "refresh_token_expires_in": 604800},
+    )
+    doc = json.loads((tmp_path / "tok.json").read_text(encoding="utf-8"))
+    exp = datetime.fromisoformat(doc["refresh_token_expires_at"])
+    obt = datetime.fromisoformat(doc["refresh_token_obtained_at"])
+    assert abs((exp - obt).total_seconds() - 604800) < 5
+
+
+def test_persist_schwab_token_store_defaults_to_7d_when_missing(tmp_path) -> None:
+    import json
+    settings = Settings(
+        redis_stream_prefix="test", oms_adapter="alpaca_paper",
+        schwab_token_store_path=str(tmp_path / "tok.json"),
+    )
+    control_plane_module._persist_schwab_token_store(
+        settings, {"access_token": "a", "refresh_token": "r", "expires_in": 1800},
+    )
+    doc = json.loads((tmp_path / "tok.json").read_text(encoding="utf-8"))
+    exp = datetime.fromisoformat(doc["refresh_token_expires_at"])
+    obt = datetime.fromisoformat(doc["refresh_token_obtained_at"])
+    assert abs((exp - obt).total_seconds() - 7 * 24 * 3600) < 5

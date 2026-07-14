@@ -9,6 +9,7 @@ from decimal import Decimal
 from html import escape
 from io import StringIO
 import json
+import logging
 from pathlib import Path
 import time
 from typing import Any
@@ -186,16 +187,33 @@ def _persist_schwab_token_store(settings: Settings, payload: dict[str, Any]) -> 
     token_store_path = (settings.schwab_token_store_path or "").strip()
     if not token_store_path:
         raise RuntimeError("MAI_TAI_SCHWAB_TOKEN_STORE_PATH is not configured on the VPS")
+    now = datetime.now(UTC)
     expires_in_raw = payload.get("expires_in")
     expires_in = int(expires_in_raw) if expires_in_raw not in {None, ""} else 1800
+    # Capture the refresh-token expiry clock (~7d, non-rotating) so the expiry-warning
+    # cron can alert BEFORE it dies. Schwab returns refresh_token_expires_in on the
+    # authorization_code grant; fall back to 7 days if absent. obtained_at anchors "when
+    # you last logged in". Logged once so the next real re-auth confirms the true value.
+    rt_expires_in_raw = payload.get("refresh_token_expires_in")
+    rt_expires_in = (
+        int(rt_expires_in_raw) if rt_expires_in_raw not in {None, ""} else 7 * 24 * 3600
+    )
     document = {
         "access_token": str(payload.get("access_token", "")).strip(),
         "refresh_token": str(payload.get("refresh_token", "")).strip(),
-        "expires_at": (datetime.now(UTC) + timedelta(seconds=max(expires_in - 30, 0))).isoformat(),
+        "expires_at": (now + timedelta(seconds=max(expires_in - 30, 0))).isoformat(),
         "token_type": payload.get("token_type"),
         "scope": payload.get("scope"),
-        "updated_at": datetime.now(UTC).isoformat(),
+        "updated_at": now.isoformat(),
+        "refresh_token_expires_at": (now + timedelta(seconds=rt_expires_in)).isoformat(),
+        "refresh_token_obtained_at": now.isoformat(),
     }
+    logging.getLogger(__name__).info(
+        "[SCHWAB-REFRESH-EXPIRY-CAPTURED] refresh_token_expires_in=%s (from_response=%s) -> expires_at=%s",
+        rt_expires_in,
+        rt_expires_in_raw not in {None, ""},
+        document["refresh_token_expires_at"],
+    )
     path = Path(token_store_path).expanduser()
     atomic_write_json(path, document)
 

@@ -219,6 +219,12 @@ class TokenGrantResult:
     token_type: object
     scope: object
     raw: dict[str, object]
+    # Refresh-token expiry clock (~7d, non-rotating). Only a re-auth
+    # (authorization_code grant) carries `refresh_token_expires_in`; the periodic
+    # refresh grant omits it, so these are CARRIED FORWARD from the prior store on
+    # a refresh and only reset on a genuine re-auth. Used by the expiry-warning cron.
+    refresh_token_expires_at: datetime | None = None
+    refresh_token_obtained_at: datetime | None = None
 
 
 def parse_token_grant_response(
@@ -226,6 +232,8 @@ def parse_token_grant_response(
     *,
     status_code: int,
     previous_refresh_token: str,
+    previous_refresh_token_expires_at: datetime | None = None,
+    previous_refresh_token_obtained_at: datetime | None = None,
 ) -> TokenGrantResult:
     """Parse a refresh-grant response into a :class:`TokenGrantResult`.
 
@@ -233,6 +241,10 @@ def parse_token_grant_response(
     :class:`SchwabTokenError` (a RuntimeError) on a >=400 status, a
     non-dict payload, or an empty access token; carries the prior
     refresh_token forward when the response omits a rotated one.
+
+    Refresh-token expiry: if the payload carries ``refresh_token_expires_in`` (>0)
+    — i.e. a re-auth — set a fresh expiry (now + it) and obtained_at=now; otherwise
+    (routine refresh) carry the previous values forward unchanged.
     """
     if status_code >= 400 or not isinstance(payload, dict):
         raise SchwabTokenError(
@@ -242,10 +254,18 @@ def parse_token_grant_response(
     access_token = str(payload.get("access_token", "")).strip()
     if not access_token:
         raise SchwabTokenError("Schwab token refresh returned no access_token", payload=payload)
+    now = datetime.now(UTC)
     rotated = str(payload.get("refresh_token", "")).strip()
     refresh_token = rotated or previous_refresh_token
     expires_in = int(payload.get("expires_in", 0) or 0)
-    expires_at = datetime.now(UTC) + timedelta(seconds=expires_in) if expires_in > 0 else None
+    expires_at = now + timedelta(seconds=expires_in) if expires_in > 0 else None
+    rt_expires_in = int(payload.get("refresh_token_expires_in", 0) or 0)
+    if rt_expires_in > 0:
+        refresh_token_expires_at: datetime | None = now + timedelta(seconds=rt_expires_in)
+        refresh_token_obtained_at: datetime | None = now
+    else:
+        refresh_token_expires_at = previous_refresh_token_expires_at
+        refresh_token_obtained_at = previous_refresh_token_obtained_at
     return TokenGrantResult(
         access_token=access_token,
         refresh_token=refresh_token,
@@ -253,13 +273,15 @@ def parse_token_grant_response(
         token_type=payload.get("token_type"),
         scope=payload.get("scope"),
         raw=payload,
+        refresh_token_expires_at=refresh_token_expires_at,
+        refresh_token_obtained_at=refresh_token_obtained_at,
     )
 
 
 def build_token_store_document(result: TokenGrantResult) -> dict[str, object]:
     """The on-disk token-store document for a refreshed token. Matches the key
     set and shapes the adapter / control re-auth callback already write."""
-    return {
+    document: dict[str, object] = {
         "access_token": result.access_token,
         "refresh_token": result.refresh_token,
         "expires_at": result.expires_at.isoformat() if result.expires_at is not None else None,
@@ -267,3 +289,10 @@ def build_token_store_document(result: TokenGrantResult) -> dict[str, object]:
         "scope": result.scope,
         "updated_at": datetime.now(UTC).isoformat(),
     }
+    # Preserve the refresh-token expiry clock across routine refreshes (only present
+    # once a re-auth has captured it; None-safe for pre-capture stores).
+    if result.refresh_token_expires_at is not None:
+        document["refresh_token_expires_at"] = result.refresh_token_expires_at.isoformat()
+    if result.refresh_token_obtained_at is not None:
+        document["refresh_token_obtained_at"] = result.refresh_token_obtained_at.isoformat()
+    return document

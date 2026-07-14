@@ -106,3 +106,54 @@ def test_build_token_store_document_shape() -> None:
     assert set(doc) == {"access_token", "refresh_token", "expires_at", "token_type", "scope", "updated_at"}
     assert doc["access_token"] == "a"
     assert doc["expires_at"] == "2026-06-10T12:00:00+00:00"
+
+
+# --- refresh-token expiry capture (2026-07-14) ---
+
+
+def test_parse_grant_captures_refresh_token_expires_in() -> None:
+    """An auth-code grant carries refresh_token_expires_in -> fresh expiry + obtained_at."""
+    before = datetime.now(UTC)
+    result = parse_token_grant_response(
+        {"access_token": "a", "refresh_token": "r", "expires_in": 1800,
+         "refresh_token_expires_in": 7 * 24 * 3600},
+        status_code=200,
+        previous_refresh_token="old",
+    )
+    after = datetime.now(UTC)
+    assert result.refresh_token_obtained_at is not None
+    assert before <= result.refresh_token_obtained_at <= after
+    # expires_at ~ now + 7d (allow a few seconds of test execution)
+    delta_days = (result.refresh_token_expires_at - result.refresh_token_obtained_at).total_seconds() / 86400
+    assert abs(delta_days - 7) < 0.001
+
+
+def test_parse_grant_carries_forward_refresh_expiry_when_omitted() -> None:
+    """A routine refresh grant omits refresh_token_expires_in -> carry the prior clock."""
+    prev_exp = datetime(2026, 7, 21, 11, 43, tzinfo=UTC)
+    prev_obt = datetime(2026, 7, 14, 11, 43, tzinfo=UTC)
+    result = parse_token_grant_response(
+        {"access_token": "a", "expires_in": 1800},  # no refresh_token_expires_in
+        status_code=200,
+        previous_refresh_token="r",
+        previous_refresh_token_expires_at=prev_exp,
+        previous_refresh_token_obtained_at=prev_obt,
+    )
+    assert result.refresh_token_expires_at == prev_exp
+    assert result.refresh_token_obtained_at == prev_obt
+
+
+def test_build_doc_includes_refresh_expiry_when_present_and_omits_when_none() -> None:
+    exp = datetime(2026, 7, 21, 11, 43, tzinfo=UTC)
+    with_exp = build_token_store_document(TokenGrantResult(
+        access_token="a", refresh_token="r", expires_at=None, token_type="Bearer",
+        scope="api", raw={}, refresh_token_expires_at=exp,
+        refresh_token_obtained_at=datetime(2026, 7, 14, 11, 43, tzinfo=UTC)))
+    assert with_exp["refresh_token_expires_at"] == exp.isoformat()
+    assert with_exp["refresh_token_obtained_at"] == "2026-07-14T11:43:00+00:00"
+
+    without = build_token_store_document(TokenGrantResult(
+        access_token="a", refresh_token="r", expires_at=None, token_type="Bearer",
+        scope="api", raw={}))  # both refresh-expiry fields default None
+    assert "refresh_token_expires_at" not in without
+    assert "refresh_token_obtained_at" not in without
