@@ -204,6 +204,7 @@ class SymbolState:
     cw_flip_level: float = 0.0                  # the short trail crossed at the BUY flip (rule-7 line)
     cw_entries_this_flip: int = 0               # reclaim counter (cap 2 per BUY-flip segment)
     cw_bar_low_so_far: float = 0.0             # min quote px of the current forming bar (rule 7)
+    cw_orb_block_logged: bool = False          # one [V2-CW-ORB-BLOCK] per flip (this runs per-quote)
     cw_segment_high: float = 0.0               # running max HIGH of ALL bars since the BUY flip (advances
     #                                            every bar, like the backtest RunningHighTracker); the
     #                                            RECLAIM (2nd entry) must break THIS new segment high,
@@ -1172,6 +1173,7 @@ class SchwabV2Strategy:
             state.cw_bars_waited = 0
             state.cw_trigger = float(state.bars[-1].high)   # flip bar starts the 3-bar trigger
             state.cw_segment_high = float(state.bars[-1].high)  # reclaim lookback starts at the flip bar
+            state.cw_orb_block_logged = False   # fresh flip -> re-arm the one-shot ORB-block log
             fl = atr_signal.get("flip_level")
             state.cw_flip_level = float(fl) if fl is not None else 0.0
             state.cw_entries_this_flip = 0
@@ -1217,6 +1219,17 @@ class SchwabV2Strategy:
         if now_ms <= 0:
             now_ms = int(datetime.now(UTC).timestamp() * 1000)
         if self._cw_in_orb_window(now_ms):
+            # 2026-07-15: this block was SILENT — nothing recorded that the ORB window suppressed a
+            # break, so the SOBR chase was invisible until the operator found it on a chart. Log the
+            # FIRST suppressed break per flip only (this runs on every quote; unthrottled it would
+            # flood). This is the marker that shows how often 09:30-10:00 eats a real setup.
+            if not state.cw_orb_block_logged:
+                state.cw_orb_block_logged = True
+                logger.info(
+                    "[V2-CW-ORB-BLOCK] %s break suppressed 09:30-10:00 (ORB owns the window) "
+                    "px=%.4f trig=%.4f — setup stays armed; the segment high must be broken to enter",
+                    state.symbol, px, max(state.cw_segment_high, state.cw_trigger),
+                )
             return None
         # Reclaim gap: the 2nd (reclaim) entry must wait `reclaim_gap_bars` NEW bars after the prior
         # exit — no same-bar reclaim (backtest 07-09..07-14: same-bar reclaim re-enters the just-
@@ -1225,9 +1238,26 @@ class SchwabV2Strategy:
                 and state.cw_v2_bars_since_exit < self._cw_v2_reclaim_gap_bars):
             return None
 
-        # 1st entry (n=0) breaks the flip+2 3-bar trigger; a RECLAIM (n>=1) must break a genuine NEW
-        # segment high (max high of ALL bars since the flip) — NOT re-cross the same 3-bar level.
-        trig = state.cw_trigger if state.cw_entries_this_flip == 0 else state.cw_segment_high
+        # BREAK THE HIGHEST BAR SINCE THE FLIP — for the 1st entry AND for a reclaim.
+        #
+        # 2026-07-15 (SOBR, real money): the 1st entry used the FROZEN flip+2 3-bar trigger, which
+        # never advances. The rule INTENDS "enter AT the break" and that holds while the entry fires
+        # within ms of the cross (KUST: px 1.4950 vs trig 1.4900). But the gates below (ORB window,
+        # entry window, position held, emit claimed) only DEFER — they never disarm — so a setup
+        # broken while gated stays armed and fires the instant the gate lifts, at ANY price above a
+        # level the stock left behind. SOBR: trigger 1.69 set ~09:30, ran to 2.63 (+56%) DURING the
+        # 09:30-10:00 ORB blackout, and at 10:00:07 we bought 2.24 = +32.5% past the trigger, into a
+        # move that was already fading -> -5.25% stop in 46s, peak_profit_pct 0.00. Two more the same
+        # day were saved only by the entry-window gate (px 1.73 vs trig 1.0987 = +57%; 1.70 vs 1.22).
+        #
+        # cw_segment_high is the max high of every CLOSED bar since the flip, so:
+        #   * at arming (bars_waited==2) it EQUALS cw_trigger (same 3 bars) -> a prompt break is
+        #     byte-identical to before;
+        #   * it only ever advances, so a setup that was broken while we were gated now requires a
+        #     break of the NEW high -> we cannot buy the top of a completed move.
+        # This is the operator's rule ("always break the highest bar") and it makes the 1st entry and
+        # the reclaim share one definition. cw_trigger is retained for the log/telemetry.
+        trig = max(state.cw_segment_high, state.cw_trigger)
         fl = state.cw_flip_level
         if trig <= 0.0 or px <= trig:
             return None  # rule 6: intrabar break of the entry-appropriate trigger
