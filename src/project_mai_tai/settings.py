@@ -707,6 +707,16 @@ class Settings(BaseSettings):
     # each because the OMS had no max-age cap, no quote-drift sanity, and
     # no setup re-validation on retry).
     oms_intent_max_age_seconds: int = 30
+    # FALSE-FLAT guard (2026-07-15 ERNA naked position, docs/false-flat-reconcile-design.md).
+    # True  = a reconcile clears protection ONLY on a positively-confirmed flat read; an
+    #         empty/None/failed read is UNKNOWN and never deletes an armed stop or a managed
+    #         row. False = pre-fix semantics (absent/empty read counted as flat) -- rollback
+    #         lever only; it re-opens the naked-position path.
+    oms_reconcile_require_positive_flat: bool = True
+    # Refuse a "flat" read within this many seconds of the fill that established the position
+    # (a broker positions endpoint can lag a fresh fill -- ERNA's stop triggered 61s after the
+    # fill and the read said flat while we held 2 shares). 0 disables the grace.
+    oms_reconcile_fresh_fill_grace_secs: int = 120
     oms_quote_drift_cancel_tolerance_cents: float = 1.0
     oms_intent_setup_revalidation_enabled: bool = True
     oms_stop_guard_refresh_stage_1_seconds: float = 1.0

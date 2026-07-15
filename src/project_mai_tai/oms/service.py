@@ -8,6 +8,7 @@ import socket
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import ROUND_DOWN, Decimal
+from enum import Enum
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
@@ -67,6 +68,21 @@ OMS_FILLABLE_SESSION_END_HOUR_ET = 20
 
 def utcnow() -> datetime:
     return datetime.now(UTC)
+
+
+def _as_utc(value: object) -> datetime | None:
+    """Best-effort UTC datetime from a managed row's entry_time (ORM datetime, ISO string,
+    or None). Used only as the fresh-fill grace anchor: anything unreadable -> None -> no
+    grace, i.e. it degrades to the (still safe) positive-confirmation check."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+    try:
+        parsed = datetime.fromisoformat(str(value))
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
 
 
 def _format_limit_price(value: float | str | Decimal | None) -> str | None:
@@ -133,6 +149,26 @@ class ArmedHardStop:
     # high-water-mark and never down.
     trail_pct: float = 0.0
     high_water_mark: Decimal | None = None
+    # Fresh-fill grace (2026-07-15 ERNA): when this stop was armed off a real fill.
+    # A broker "flat" read within `oms_reconcile_fresh_fill_grace_secs` of arming is NOT
+    # credible (the positions endpoint can lag a fill) and must not delete protection.
+    # In-memory ONLY: the F2 rehydrate path leaves it None, which is correct -- a stop
+    # restored after a restart is by definition not fresh, so it gets no grace.
+    armed_at: datetime | None = None
+
+
+class _PositionRead(Enum):
+    """Tri-state broker position read. The 2026-07-15 naked-position incident (ERNA) came
+    from a bool that could not say "I don't know": a symbol absent from the list, an empty
+    list, and None all collapsed to "flat", so an unconfirmed read DELETED a live stop.
+    UNKNOWN exists so an ambiguous read can never delete protection."""
+
+    FLAT_CONFIRMED = "flat_confirmed"  # POSITIVE: symbol present at qty 0. Unambiguous.
+    FLAT_INFERRED = "flat_inferred"    # symbol absent / list empty. Ambiguous: a genuine close
+                                       # and a silently-failed read look identical -> only
+                                       # trustworthy once the fill is no longer fresh.
+    HELD = "held"                      # POSITIVE: symbol present at qty != 0.
+    UNKNOWN = "unknown"                # read raised / unparseable qty -> NEVER clear on this.
 
 
 @dataclass(frozen=True)
@@ -1985,7 +2021,9 @@ class OmsRiskService:
         self._v2_exit_close_failures[key] = self._v2_exit_close_failures.get(key, 0) + 1
         if self._v2_exit_close_failures[key] < self._V2_EXIT_RECONCILE_AFTER_FAILURES:
             return False
-        if await self._broker_symbol_is_flat(acct, symbol):
+        # Fresh-fill grace anchor for v2 = the managed row's entry_time (when we filled in).
+        entry_at = _as_utc(getattr(row, "entry_time", None))
+        if await self._broker_symbol_is_flat(acct, symbol, established_at=entry_at):
             self.store.close_managed_position(session, row)
             self._managed_v2_symbols.discard(key)
             self._cw_flip_pending.discard(key)
@@ -2945,37 +2983,122 @@ class OmsRiskService:
                 # of failures re-checks (throttles the broker position reads).
                 stop.consecutive_close_failures = 0
 
-    async def _broker_symbol_is_flat(self, broker_account_name: str, symbol: str) -> bool:
-        """Fresh broker read: True iff `symbol` has ZERO net position on the account. A read
-        failure returns False — NEVER clear protection / a managed row on an unconfirmed read
-        (that could strip a genuinely-held position). Shared by the ORB hard-stop reconcile
-        (#436) and the v2 CW managed-exit reconcile."""
+    async def _broker_symbol_position_state(
+        self, broker_account_name: str, symbol: str
+    ) -> _PositionRead:
+        """Fresh broker read -> FLAT | HELD | UNKNOWN. Only a POSITIVE confirmation is FLAT.
+
+        2026-07-15 (ERNA, real money): the predecessor returned a bool with no way to say "I
+        don't know", and the caller DELETED a live armed stop while we held 2 shares -> naked,
+        unclosable position. UNKNOWN exists so a failed/unparseable read can never delete
+        protection. The `[]`/absent cases stay FLAT here on purpose (see the EMPTY branch) and
+        are disarmed by the fresh-fill grace in `_broker_symbol_is_flat` instead.
+
+        Also logs every read (Fix 0 of the design): the 07-15 root cause could only ever be
+        INFERRED because nothing recorded what the broker actually returned."""
         try:
             positions = await self.broker_adapter.list_account_positions(broker_account_name)
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception as exc:  # noqa: BLE001
             self.logger.warning(
-                "[RECONCILE] position read failed for %s %s — cannot confirm flat, keeping it",
-                broker_account_name,
-                symbol,
+                "[RECONCILE-READ] acct=%s sym=%s result=ERROR (%s) -> UNKNOWN, keeping protection",
+                broker_account_name, symbol, exc,
             )
-            return False
+            return _PositionRead.UNKNOWN
+        if not positions:
+            # AMBIGUOUS, and deliberately NOT UNKNOWN. Brokers omit closed positions, so a
+            # genuine out-of-band close on a single-position account returns exactly this --
+            # treating it as UNKNOWN would churn closes forever (the 07-13 AGEN 181x loop that
+            # #436 Bug C fixed). It is also what a silently-failed read looks like. The two are
+            # indistinguishable from the read alone, and a ledger check is circular (the armed
+            # stop IS our belief, and it is what we are deciding to delete). TIME is the only
+            # sound discriminator -> the fresh-fill grace in _broker_symbol_is_flat refuses this
+            # while the fill is recent (the ERNA case) and honours it once it is not.
+            self.logger.warning(
+                "[RECONCILE-READ] acct=%s sym=%s result=EMPTY (n=0) -> FLAT_INFERRED, ambiguous "
+                "(genuine close vs silent read failure) — deferring to the fresh-fill grace",
+                broker_account_name, symbol,
+            )
+            return _PositionRead.FLAT_INFERRED
         target = str(symbol).upper()
-        for position in positions or []:
+        for position in positions:
             if str(getattr(position, "symbol", "")).upper() != target:
                 continue
+            raw = getattr(position, "quantity", 0)
             try:
-                if Decimal(str(getattr(position, "quantity", 0))) != 0:
-                    return False
+                qty = Decimal(str(raw))
             except (TypeError, ValueError, ArithmeticError):
-                return False  # unparseable qty -> treat as possibly-held, do not clear
+                self.logger.warning(
+                    "[RECONCILE-READ] acct=%s sym=%s result=UNPARSEABLE qty=%r -> UNKNOWN",
+                    broker_account_name, symbol, raw,
+                )
+                return _PositionRead.UNKNOWN
+            state = _PositionRead.FLAT_CONFIRMED if qty == 0 else _PositionRead.HELD
+            self.logger.info(
+                "[RECONCILE-READ] acct=%s sym=%s result=%s qty=%s (n=%d, symbol present)",
+                broker_account_name, symbol, state.value.upper(), qty, len(positions),
+            )
+            return state
+        # Absent from a NON-EMPTY read: the broker listed its holdings and ours is not among
+        # them -> positively flat.
+        self.logger.info(
+            "[RECONCILE-READ] acct=%s sym=%s result=FLAT_INFERRED (absent from a read of n=%d) "
+            "— a positions endpoint lagging a fresh fill looks exactly like this",
+            broker_account_name, symbol, len(positions),
+        )
+        return _PositionRead.FLAT_INFERRED
+
+    async def _broker_symbol_is_flat(
+        self,
+        broker_account_name: str,
+        symbol: str,
+        *,
+        established_at: datetime | None = None,
+    ) -> bool:
+        """True ONLY on a positively-confirmed flat. Shared by the ORB hard-stop reconcile
+        (#436) and the v2 CW managed-exit reconcile — both DELETE protection on True, so the
+        bar is deliberately high.
+
+        `established_at` = when we filled into this position. A flat read inside
+        `oms_reconcile_fresh_fill_grace_secs` of it is not credible (a broker positions
+        endpoint can lag a fresh fill) and is refused — the 07-15 ERNA shape, where the stop
+        triggered 61s after the fill and the read said flat while we held 2 shares.
+
+        Rollback: `oms_reconcile_require_positive_flat=false` restores the pre-fix semantics
+        (empty/absent read == flat)."""
+        state = await self._broker_symbol_position_state(broker_account_name, symbol)
+        settings = getattr(self, "settings", None)
+        if not bool(getattr(settings, "oms_reconcile_require_positive_flat", True)):
+            # Pre-fix semantics, exactly: empty/absent/qty-0 => flat; held => not flat; a
+            # raised or unparseable read => not flat (the old code's one correct instinct).
+            # UNKNOWN must NOT map to flat here, or the rollback lever would be MORE dangerous
+            # than the behaviour it restores.
+            return state in (_PositionRead.FLAT_CONFIRMED, _PositionRead.FLAT_INFERRED)
+        if state is _PositionRead.HELD or state is _PositionRead.UNKNOWN:
+            return False
+        if state is _PositionRead.FLAT_CONFIRMED:
+            return True   # positive: the broker named this symbol at qty 0. No grace needed.
+        # FLAT_INFERRED: ambiguous. Trust it only once our fill is no longer fresh.
+        grace_s = float(getattr(settings, "oms_reconcile_fresh_fill_grace_secs", 120) or 0)
+        if established_at is not None and grace_s > 0:
+            age = (datetime.now(UTC) - established_at).total_seconds()
+            if 0 <= age < grace_s:
+                self.logger.warning(
+                    "[RECONCILE-FRESH-FILL] acct=%s sym=%s broker says FLAT %.1fs after we "
+                    "filled (<%.0fs) — refusing to clear protection on a possibly-lagging read",
+                    broker_account_name, symbol, age, grace_s,
+                )
+                return False
         return True
 
     async def _broker_position_is_flat(self, stop: ArmedHardStop) -> bool:
         """Fresh broker read for a hard-stop's symbol (delegates to _broker_symbol_is_flat).
-        Read failure -> False; never clears a protective stop on an unconfirmed read."""
-        return await self._broker_symbol_is_flat(stop.broker_account_name, stop.symbol)
+        Never clears a protective stop on an unconfirmed read, nor within the fresh-fill
+        grace of the fill that armed it."""
+        return await self._broker_symbol_is_flat(
+            stop.broker_account_name, stop.symbol, established_at=stop.armed_at
+        )
 
     def _build_hard_stop_metadata(
         self,
@@ -3103,6 +3226,11 @@ class OmsRiskService:
                 last_trigger_attempt_at=None,
                 trail_pct=trail_pct,
                 high_water_mark=high_water_mark,
+                # Fresh-fill grace anchor: this arm is driven by a real fill. On a scale-in
+                # keep the ORIGINAL arm time -- the grace protects the position, and refreshing
+                # it on every add would extend the window indefinitely on a laddered entry.
+                armed_at=(existing.armed_at if existing is not None and existing.armed_at
+                          else datetime.now(UTC)),
             )
             self.logger.info(
                 "[HARD-STOP ARMED] %s %s qty=%s entry=%.4f stop=%.4f stop_loss_pct=%s trail_pct=%s",
