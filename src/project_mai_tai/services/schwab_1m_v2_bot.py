@@ -156,7 +156,9 @@ _US_MARKET_HOLIDAYS: frozenset[date] = US_MARKET_HOLIDAYS
 # OMS churning unfillable overnight exits. Overridable via settings of the same
 # name for tuning without a code change.
 V2_ENTRY_WINDOW_START_HOUR_ET = 7
-V2_ENTRY_WINDOW_END_HOUR_ET = 18
+V2_ENTRY_WINDOW_START_MINUTE_ET = 0
+V2_ENTRY_WINDOW_END_HOUR_ET = 16
+V2_ENTRY_WINDOW_END_MINUTE_ET = 30
 
 
 def _format_eastern(dt: datetime) -> str:
@@ -1381,12 +1383,34 @@ class SchwabV2BotService:
             )
         )
 
+    def _entry_window_start_minute_et(self) -> int:
+        return int(
+            getattr(
+                self.settings,
+                "strategy_schwab_1m_v2_entry_window_start_minute_et",
+                V2_ENTRY_WINDOW_START_MINUTE_ET,
+            )
+        )
+
+    def _entry_window_end_minute_et(self) -> int:
+        return int(
+            getattr(
+                self.settings,
+                "strategy_schwab_1m_v2_entry_window_end_minute_et",
+                V2_ENTRY_WINDOW_END_MINUTE_ET,
+            )
+        )
+
     def _within_entry_window(self, now: datetime) -> bool:
-        """True iff `now` falls in the operator entry window: a weekday,
-        non-holiday ET day, hour in [start, end). Whole-hour granularity — end=18
-        blocks at 18:00:00 sharp (6 PM), start=7 allows from 07:00:00."""
+        """True iff `now` falls in the operator entry window: a weekday, non-holiday ET
+        day, inside [start, end). Minute granularity — the default 7:00–16:30 allows from
+        07:00:00 and blocks at 16:30:00 sharp (4:30 PM)."""
         return is_fillable_et_session(
-            now, self._entry_window_start_hour_et(), self._entry_window_end_hour_et()
+            now,
+            self._entry_window_start_hour_et(),
+            self._entry_window_end_hour_et(),
+            start_minute=self._entry_window_start_minute_et(),
+            end_minute=self._entry_window_end_minute_et(),
         )
 
     async def _maybe_emit(self, draft) -> None:  # type: ignore[no-untyped-def]
@@ -1412,22 +1436,25 @@ class SchwabV2BotService:
                 logger.exception("schwab_1m_v2 cw_flip emit failed for %s", draft.symbol)
             return
         # Trading-window gate: v2 only ENTERS inside the operator's window
-        # (default 7:00 AM–6:00 PM ET, weekdays, non-holiday). Outside it, an
+        # (default 7:00 AM–4:30 PM ET, weekdays, non-holiday). Outside it, an
         # "open" intent is dropped at the chokepoint so v2 never opens a position
         # it can't manage inside hours — the 2026-07-13 7:51 PM ET after-hours
         # AGEN/SOBR entries then churned unfillable exits overnight. Exits are
-        # unaffected (cw_flip handled above; OMS owns managed exits). Inside the
-        # window this is byte-neutral.
+        # unaffected (cw_flip handled above; OMS owns managed exits), so narrowing
+        # this window can never strand an open position. Inside the window this is
+        # byte-neutral.
         if getattr(draft, "intent_type", "") == "open" and not self._within_entry_window(
             datetime.now(UTC)
         ):
             logger.info(
                 "[V2-ENTRY-WINDOW-BLOCK] dropped open intent symbol=%s reason=%s — "
-                "outside entry window %02d:00–%02d:00 ET (now=%s)",
+                "outside entry window %02d:%02d–%02d:%02d ET (now=%s)",
                 getattr(draft, "symbol", "?"),
                 getattr(draft, "reason", ""),
                 self._entry_window_start_hour_et(),
+                self._entry_window_start_minute_et(),
                 self._entry_window_end_hour_et(),
+                self._entry_window_end_minute_et(),
                 _format_eastern(datetime.now(UTC)),
             )
             return

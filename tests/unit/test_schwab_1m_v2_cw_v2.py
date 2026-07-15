@@ -28,6 +28,14 @@ def _strat(**overrides):
     return SchwabV2Strategy(Settings(**kwargs))
 
 
+def _strat_reclaim(**overrides):
+    """Reclaim is OFF by default from 2026-07-15 (operator rule) but the code path is retained.
+    The reclaim tests below opt in explicitly so they keep guarding that retained path."""
+    kwargs = {"strategy_schwab_1m_v2_cw_v2_reclaim_enabled": True}
+    kwargs.update(overrides)
+    return _strat(**kwargs)
+
+
 def _bar(high: float, *, vol: int = 10_000, low: float | None = None, ts: int = 0) -> OHLCVBar:
     return OHLCVBar(timestamp_ms=ts, open=high - 0.1, high=high,
                     low=high - 0.2 if low is None else low, close=high - 0.05, volume=vol)
@@ -133,7 +141,7 @@ def test_cw_v2_sell_flip_cancels():
 # --------------------------------------------------------------- reclaim (max 2)
 
 def test_cw_v2_reclaim_two_then_capped():
-    strat = _strat()
+    strat = _strat_reclaim()
     state = strat.watchlist_state("TEST")
     _arm_to_watch(strat, state)
 
@@ -177,7 +185,7 @@ def _release(state):
 def test_cw_v2_reclaim_requires_new_segment_high():
     """The reclaim (2nd entry) must break a genuine NEW high across ALL bars since the flip —
     NOT re-cross the flip+2 3-bar trigger. This is the 2026-07-13 SOBR over-trading fix."""
-    strat = _strat()
+    strat = _strat_reclaim()
     state = strat.watchlist_state("TEST")
     _arm_to_watch(strat, state)                       # 3-bar trigger 12.0, segment_high 12.0
     assert strat._cw_v2_quote(state, _quote(12.5)) is not None      # 1st entry breaks 12.0
@@ -197,7 +205,7 @@ def test_cw_v2_reclaim_requires_new_segment_high():
 
 def test_cw_v2_cap_two_per_flip_segment():
     """Hard cap: no 3rd entry in the same BUY-flip segment, even on a further new high."""
-    strat = _strat()
+    strat = _strat_reclaim()
     state = strat.watchlist_state("TEST")
     _arm_to_watch(strat, state)
     strat._cw_v2_quote(state, _quote(12.5))           # n=1
@@ -240,7 +248,7 @@ def test_cw_v2_new_buy_flip_reseeds_segment_high_and_cap():
 
 
 def test_cw_v2_reclaim_gap1_blocks_same_bar_then_allows_next_bar():
-    strat = _strat(strategy_schwab_1m_v2_cw_v2_reclaim_gap_bars=1)
+    strat = _strat_reclaim(strategy_schwab_1m_v2_cw_v2_reclaim_gap_bars=1)
     state = strat.watchlist_state("TEST")
     _arm_to_watch(strat, state)
     assert strat._cw_v2_quote(state, _quote(12.5)) is not None      # entry #1
@@ -260,7 +268,7 @@ def test_cw_v2_reclaim_gap1_blocks_same_bar_then_allows_next_bar():
 
 
 def test_cw_v2_reclaim_gap0_allows_same_bar_byte_identical():
-    strat = _strat()  # gap defaults to 0
+    strat = _strat_reclaim()  # gap defaults to 0
     state = strat.watchlist_state("TEST")
     _arm_to_watch(strat, state)
     assert strat._cw_v2_quote(state, _quote(12.5)) is not None
@@ -269,3 +277,65 @@ def test_cw_v2_reclaim_gap0_allows_same_bar_byte_identical():
     # same-bar reclaim allowed (no gap) — unchanged from before
     assert strat._cw_v2_quote(state, _quote(12.6)) is not None
     assert state.cw_entries_this_flip == 2
+
+
+# --- reclaim master switch (2026-07-15 operator rule: reclaim OFF, code retained) ---
+
+
+def test_cw_v2_reclaim_flag_defaults_off():
+    assert Settings().strategy_schwab_1m_v2_cw_v2_reclaim_enabled is False
+    strat = _strat()
+    assert strat._cw_v2_reclaim_enabled is False
+    assert strat._cw_v2_max_entries_per_flip == 1
+
+
+def test_cw_v2_reclaim_flag_on_restores_two_per_flip():
+    strat = _strat_reclaim()
+    assert strat._cw_v2_reclaim_enabled is True
+    assert strat._cw_v2_max_entries_per_flip == 2
+
+
+def test_cw_v2_reclaim_off_allows_one_entry_per_flip_segment():
+    """THE operator rule: one entry per BUY-flip. The 2nd break — even a genuine NEW segment
+    high, which the reclaim path would have taken — must not enter."""
+    strat = _strat()                                  # reclaim OFF (default)
+    state = strat.watchlist_state("TEST")
+    _arm_to_watch(strat, state)
+    assert strat._cw_v2_quote(state, _quote(12.5)) is not None      # entry #1
+    assert state.cw_entries_this_flip == 1
+    _release(state)                                   # flat again, claim released
+    _feed_bar(strat, state, _bar(15.0, ts=4), _sig())  # segment high advances to 15.0
+    assert strat._cw_v2_quote(state, _quote(15.5)) is None          # NO reclaim
+    assert state.cw_entries_this_flip == 1
+
+
+def test_cw_v2_reclaim_off_still_re_arms_on_a_fresh_buy_flip():
+    """Reclaim-off caps entries per SEGMENT, not per day — a new BUY flip is a new segment
+    and must still be enterable (otherwise the name goes dead after one trade)."""
+    strat = _strat()                                  # reclaim OFF
+    state = strat.watchlist_state("TEST")
+    _arm_to_watch(strat, state)
+    assert strat._cw_v2_quote(state, _quote(12.5)) is not None      # entry #1, segment A
+    _release(state)
+    _feed_bar(strat, state, _bar(20.0, ts=6), _sig(flip="SELL"))    # segment A ends
+    # new segment B: BUY flip + 2 bars -> armed again, counter reset
+    _feed_bar(strat, state, _bar(8.0, ts=7), _sig(flip="BUY", flip_level=6.0))
+    assert state.cw_entries_this_flip == 0
+    _feed_bar(strat, state, _bar(7.5, ts=8), _sig())
+    _feed_bar(strat, state, _bar(7.8, ts=9), _sig())
+    strat._cw_v2_track(state, _sig())                 # watch phase
+    assert strat._cw_v2_quote(state, _quote(8.5)) is not None       # entry in segment B
+    assert state.cw_entries_this_flip == 1
+
+
+def test_cw_v2_reclaim_off_leaves_gap_setting_inert():
+    """The reclaim-gap knob is retained but unreachable while reclaim is off (no 2nd entry)."""
+    strat = _strat(strategy_schwab_1m_v2_cw_v2_reclaim_gap_bars=1)
+    state = strat.watchlist_state("TEST")
+    _arm_to_watch(strat, state)
+    assert strat._cw_v2_quote(state, _quote(12.5)) is not None
+    _release(state)
+    strat._cw_v2_track(state, _sig())                 # a new bar passes the gap
+    _feed_bar(strat, state, _bar(15.0, ts=4), _sig())
+    assert strat._cw_v2_quote(state, _quote(15.5)) is None          # still capped at 1
+    assert state.cw_entries_this_flip == 1
