@@ -2021,6 +2021,10 @@ class OmsRiskService:
         thread. Bounded to ~5s by #391 Fix-1; fires only when an exit actually triggers.
         Behaviour of the per-kind write/close/scale + publish is byte-identical to the
         pre-split inline branches."""
+        # The decision instant: the caller decided to exit on THIS quote and awaited us
+        # directly, so nothing has blocked yet — no session, no DB read, no broker call.
+        # Everything downstream (session open, intent write, submit, record) trails this.
+        decided_at = datetime.now(UTC)
         events: list = []
         try:
             with self.session_factory() as session:
@@ -2034,6 +2038,7 @@ class OmsRiskService:
                     events = await self._emit_v2_managed_sell(
                         session, row, intent_type="scale", quantity=int(sell_qty or 0),
                         reference_price=reference_price, reason=reason, bid=bid,
+                        decided_at=decided_at,
                     )
                     position.apply_scale(str(level or ""), int(sell_qty or 0), exit_price=reference_price)
                     # #6: fill-gate the scale quantity (write_quantity=False) — the scale fill
@@ -2045,6 +2050,7 @@ class OmsRiskService:
                     events = await self._emit_v2_managed_sell(
                         session, row, intent_type="close", quantity=int(position.quantity),
                         reference_price=reference_price, reason=reason, bid=bid,
+                        decided_at=decided_at,
                     )
                     key = (acct, symbol)
                     rejected = any(
@@ -2083,6 +2089,7 @@ class OmsRiskService:
         reference_price: float,
         reason: str,
         bid: float | None = None,
+        decided_at: datetime | None = None,
     ) -> list:
         """THE SINGLE place a v2 managed-exit SELL is built. The order's
         broker_account_name is ALWAYS the managed row's account — the safe-by-
@@ -2173,9 +2180,14 @@ class OmsRiskService:
             broker_account_id=broker_account.id, intent_event=event,
             request=request, reports=reports,
         )
+        # This line is emitted AFTER submit_order + _record_order_reports, so its own
+        # timestamp trails the broker round-trip (measured 2026-07-15: median +1.4s, up
+        # to +4.5s past the fill). decided_at carries the pre-submit decision instant so
+        # exit latency can be measured against it, not against this line's timestamp.
         self.logger.info(
-            "[OMS-V2-MANAGED-EXIT] %s sym=%s acct=%s qty=%s ref=%.4f",
+            "[OMS-V2-MANAGED-EXIT] %s sym=%s acct=%s qty=%s ref=%.4f decided_at=%s",
             reason, row.symbol, row.broker_account_name, quantity, float(reference_price),
+            (decided_at or datetime.now(UTC)).isoformat(timespec="milliseconds"),
         )
         return events
 

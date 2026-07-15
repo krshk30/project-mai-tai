@@ -8,6 +8,7 @@ the leg level. Precedence hard>floor>scale, one action/quote, sole-writer row.
 """
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
@@ -685,3 +686,95 @@ async def test_flag_on_tracks_and_exits_both_accounts_independently() -> None:
     assert {r.broker_account_name for r in rows} == {ACCT, WEBULL_ACCT}
     assert all(r.status == "closed" for r in rows)               # each leg exited
     assert svc._managed_v2_symbols == set()                      # both disarmed
+
+
+# --------------------------------------------------------------------------- decided_at
+# The [OMS-V2-MANAGED-EXIT] line is emitted AFTER submit_order + _record_order_reports,
+# so its own log timestamp trails the broker round-trip. Measured on live fills
+# 2026-07-15: 30/30 markers postdated the broker fill (median +1.4s, max +4.5s), which
+# is what produced the phantom "~3.9s decision lag". decided_at pins the pre-submit
+# decision instant so exit latency stays measurable from the log.
+#
+# caplog can't be used here: OmsRiskService.__init__ -> configure_logging ->
+# logging.basicConfig(force=True) drops caplog's root handler. Capture off the
+# service's own logger instead.
+
+class _SlowFillAdapter:
+    """Fills, but only after a measurable broker round-trip (the real-world case)."""
+
+    def __init__(self, delay_s: float = 0.25) -> None:
+        self.delay_s = delay_s
+        self.submit_started_at: datetime | None = None
+
+    async def submit_order(self, request):
+        import asyncio
+        self.submit_started_at = datetime.now(UTC)
+        await asyncio.sleep(self.delay_s)
+        return [ExecutionReport(
+            event_type="filled", client_order_id=request.client_order_id,
+            broker_order_id="slow-1", broker_fill_id="slow-f1", symbol=request.symbol,
+            side=request.side, intent_type=request.intent_type, quantity=request.quantity,
+            filled_quantity=request.quantity, fill_price=Decimal("9.85"),
+            reason=request.reason, metadata=dict(request.metadata),
+        )]
+
+    async def fetch_order_update(self, request):
+        return None
+
+    async def list_account_positions(self, broker_account_name: str):
+        return []
+
+
+class _Capture(logging.Handler):
+    def __init__(self) -> None:
+        super().__init__(level=logging.INFO)
+        self.records: list[logging.LogRecord] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.records.append(record)
+
+
+def _exit_marker(cap: _Capture) -> logging.LogRecord:
+    hits = [r for r in cap.records if "[OMS-V2-MANAGED-EXIT]" in r.getMessage()
+            and "decided_at=" in r.getMessage()]
+    assert len(hits) == 1, f"expected exactly 1 exit marker, got {len(hits)}"
+    return hits[0]
+
+
+def _decided_at(rec: logging.LogRecord) -> datetime:
+    return datetime.fromisoformat(rec.getMessage().split("decided_at=")[1].split()[0])
+
+
+async def _run_slow_exit(delay: float) -> tuple[_SlowFillAdapter, _Capture]:
+    adapter = _SlowFillAdapter(delay_s=delay)
+    sf = _make_sf()
+    svc = _svc(sf, adapter=adapter)
+    _arm(svc, sf, entry=10.0, qty=100)
+    _quote(svc, bid=9.80)                       # below stop 9.85 = 10*(1-1.5%)
+    cap = _Capture()
+    svc.logger.addHandler(cap)
+    try:
+        await svc._evaluate_v2_managed_exit(ACCT, SYM)
+    finally:
+        svc.logger.removeHandler(cap)
+    return adapter, cap
+
+
+@pytest.mark.asyncio
+async def test_decided_at_precedes_the_broker_submit() -> None:
+    """decided_at must be the DECISION instant — strictly before the broker call —
+    not the moment the log line is written."""
+    adapter, cap = await _run_slow_exit(0.25)
+    assert adapter.submit_started_at is not None, "the exit must have reached the broker"
+    assert _decided_at(_exit_marker(cap)) <= adapter.submit_started_at
+
+
+@pytest.mark.asyncio
+async def test_decided_at_is_earlier_than_the_log_lines_own_timestamp() -> None:
+    """Pins the bug this fixes: the line is written after the round-trip, so its own
+    timestamp is NOT usable as the decision time — decided_at is."""
+    delay = 0.25
+    _, cap = await _run_slow_exit(delay)
+    rec = _exit_marker(cap)
+    logged_at = datetime.fromtimestamp(rec.created, UTC)
+    assert (logged_at - _decided_at(rec)).total_seconds() >= delay
