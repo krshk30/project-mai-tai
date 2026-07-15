@@ -1,0 +1,3 @@
+ticker,entry_price,exit_price,quantity,pnl,pnl_pct,reason,entry_time,exit_time,peak_profit_pct,tier,scales_done,path,scale_profile
+ROLR,7.25,7.31,25,1.5,0.83,STOCHK_TIER1,06:32:58 AM ET,06:32:58 AM ET,0.0,1,,PRETRIGGER_RECLAIM,NORMAL
+ROLR,7.25,7.31,25,1.5,0.83,STOCHK_TIER1,06:36:10 AM ET,06:36:10 AM ET,0.0,1,,PRETRIGGER_RECLAIM,NORMAL
