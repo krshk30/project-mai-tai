@@ -216,6 +216,17 @@ class Settings(BaseSettings):
     # mode only; supersedes the quote-priced limit when on. Default OFF = current behavior.
     # ⛔ GATE: needs the Webull BUY-stop plumbing validated (validate_buy_stop.py, RTH) before enable.
     orb_resting_entry_enabled: bool = False
+    # P0.6 EOD FLATTEN (docs: P0.6-eod-flatten-design). An ORB position held past the close has
+    # NO protection: the native broker STOP is time_in_force=day AND Webull stops are RTH-only, so
+    # it is gone by 16:00; the OMS software stop cannot fill outside the 7:00-20:00 gate. Happened
+    # 3x in 3 weeks (ERNA 07-15, AGEN+LGPS 07-13) -- every one closed by hand. ORB is an
+    # opening-range bot (entries 09:30-10:00): a position open at the close is a failed trade, not
+    # a hold. 15:55 (not 19:55) because the native stop is already gone by 16:00, so 16:00-20:00 is
+    # unprotected AND illiquid -- 15:55 exits while it is still a live backstop.
+    orb_eod_flatten_enabled: bool = False
+    orb_eod_flatten_hour_et: int = 15
+    orb_eod_flatten_minute_et: int = 55
+    orb_eod_flatten_strategies: str = "orb"   # CSV; v2 is deliberately NOT here (see design §9)
 
     strategy_schwab_1m_v2_enabled: bool = False
     strategy_schwab_1m_v2_bar_poll_interval_seconds: float = 15.0

@@ -323,6 +323,9 @@ class OmsRiskService:
         # and what shape does the read take while it doesn't. Per broker -- ERNA was
         # WEBULL; v2 is SCHWAB; the grace lives in a helper shared by both.
         self._settle_watch: dict[tuple[str, str], datetime] = {}
+        # P0.6 EOD flatten: (session_date_et, account, SYMBOL) already flattened, so the
+        # 5s loop submits ONE close per symbol per day rather than one every tick.
+        self._eod_flattened: set[tuple[str, str, str]] = set()
 
     async def _run_db(self, fn, *, commit: bool = True):
         """Run a PURE-SYNC unit of DB work on a worker thread, off the event loop.
@@ -458,6 +461,15 @@ class OmsRiskService:
                 # Bug A follow-up: re-arm native stop guards whose immediate arm reverse-
                 # rejected on an unsettled cancel/fill. Non-blocking, on the sync cadence.
                 # getattr guard: __new__-constructed test instances may lack the attribute.
+                # P0.6: flatten OMS-owned positions before the session ends. On the same 5s
+                # cadence; idempotent per symbol per day. Wrapped -- a flatten error must never
+                # break broker-sync (but it IS logged at error level: see the method).
+                try:
+                    await self._eod_flatten_armed_stops()
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    self.logger.exception("[ORB-EOD-FLATTEN] sweep failed")
                 if getattr(self, "_native_guard_rearm_pending", None):
                     try:
                         await self._retry_pending_native_guard_rearms()
@@ -2922,6 +2934,128 @@ class OmsRiskService:
         if stop.last_trigger_attempt_at is None:
             return False
         return (utcnow() - stop.last_trigger_attempt_at).total_seconds() < 0.25
+
+    def _eod_flatten_due(self, now: datetime | None = None) -> bool:
+        """True once the ET clock has passed the flatten time on a real trading day.
+
+        Weekday/holiday handling comes from the LIVE session helper, not a wall-clock guess.
+        KNOWN LIMIT: a half-day (13:00 close) is NOT modelled -- on those days 15:55 is after the
+        close and the flatten would fire into a closed market. Tracked in the design; the flag
+        should stay off on half-days until the session calendar lands.
+        """
+        et = (now or datetime.now(UTC)).astimezone(SESSION_TZ)
+        if et.weekday() >= 5:
+            return False
+        hh = int(getattr(self.settings, "orb_eod_flatten_hour_et", 15))
+        mm = int(getattr(self.settings, "orb_eod_flatten_minute_et", 55))
+        return (et.hour, et.minute) >= (hh, mm)
+
+    async def _eod_flatten_armed_stops(self) -> None:
+        """P0.6 — close OMS-owned positions before the session ends, so nothing rides overnight.
+
+        WHY THIS EXISTS: an ORB position held past the close has NO protection at all. The native
+        broker STOP is `time_in_force=day` AND Webull stops are RTH-only (no native guard has ever
+        terminated later than 15:16 ET in production), so it is gone by 16:00. The OMS software stop
+        cannot fill outside the 7:00-20:00 fillable gate. Between the close and 07:00 the belt cannot
+        fill and the suspenders have expired. It has happened three times in three weeks (ERNA 07-15,
+        AGEN + LGPS 07-13) and every one was closed by hand.
+
+        WHY 15:55 AND NOT 19:55: the naive read is "flatten before the 20:00 gate shuts". Wrong --
+        the native stop is already gone at 16:00, so 16:00-20:00 is unprotected AND illiquid.
+        15:55 exits while the native stop is still a live backstop and RTH liquidity is best.
+
+        WHY OFF `_armed_hard_stops`: that registry is OMS-owned BY CONSTRUCTION (a stop arms only
+        from a fill on an intent the OMS placed), so the scoping invariant holds for free -- a manual
+        holding is invisible here and can never be flattened. F2's durable mirror means a restart at
+        15:54 does not lose the flatten.
+
+        WHY NOT `_trigger_hard_stop`: during RTH it DEFERS to an active native guard and returns
+        without closing (correct for a trail breach -- the broker-side stop handles it). For an EOD
+        flatten that deferral is exactly wrong: the guard is about to expire, which is the point.
+
+        The guard cancel is NOT done here: `process_trade_intent` already calls
+        `_cancel_native_stop_guard_before_sell` for any sell/close that is not itself a guard. A
+        flatten that skipped it would be reverse-rejected (ORDER_NOT_SUPPORT_REVERSE_OPTION -- the
+        ERNA/NXTC class) and, per P0.1, would fail SILENTLY on the watchdog-refresh path.
+        """
+        if not bool(getattr(self.settings, "orb_eod_flatten_enabled", False)):
+            return
+        if not self._eod_flatten_due():
+            return
+        session_day = datetime.now(UTC).astimezone(SESSION_TZ).strftime("%Y-%m-%d")
+        enabled = {
+            c.strip() for c in
+            str(getattr(self.settings, "orb_eod_flatten_strategies", "orb") or "").split(",")
+            if c.strip()
+        }
+        for stop in list(self._armed_hard_stops.values()):
+            if stop.strategy_code not in enabled or stop.quantity <= 0:
+                continue
+            key = (session_day, stop.broker_account_name, stop.symbol)
+            if key in self._eod_flattened:
+                continue
+            self._eod_flattened.add(key)   # claim BEFORE the await: one close per symbol per day
+            _q = self._latest_quotes_by_symbol.get(stop.symbol) or {}
+            try:
+                bid = Decimal(str(_q.get("bid"))) if _q.get("bid") else None
+            except (TypeError, ValueError, ArithmeticError):
+                bid = None
+            self.logger.info(
+                "[ORB-EOD-FLATTEN] %s %s qty=%s -> closing before the session ends "
+                "(native stop is RTH-only and expires at the close)",
+                stop.strategy_code, stop.symbol, stop.quantity,
+            )
+            event = TradeIntentEvent(
+                source_service=SERVICE_NAME,
+                payload=TradeIntentPayload(
+                    strategy_code=stop.strategy_code,
+                    broker_account_name=stop.broker_account_name,
+                    symbol=stop.symbol,
+                    side="sell",
+                    quantity=stop.quantity,
+                    intent_type="close",
+                    reason="EOD_FLATTEN",
+                    metadata=self._build_hard_stop_metadata(
+                        stop=stop,
+                        trigger_price=bid if bid is not None else stop.stop_price,
+                        trigger_source="eod_flatten",
+                    ),
+                ),
+            )
+            try:
+                order_events = await self.process_trade_intent(event)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                self.logger.error(
+                    "[ORB-EOD-FLATTEN] %s %s CLOSE RAISED (%s) — POSITION MAY RIDE OVERNIGHT "
+                    "UNPROTECTED. Operator action required.",
+                    stop.strategy_code, stop.symbol, exc,
+                )
+                continue
+            placed = any(
+                item.payload.status in {"accepted", "submitted", "partially_filled", "filled"}
+                for item in order_events
+            )
+            if placed:
+                self.logger.info(
+                    "[ORB-EOD-FLATTEN] %s %s close placed", stop.strategy_code, stop.symbol
+                )
+            elif any(item.payload.reason in self.NO_POSITION_REASONS for item in order_events):
+                self.logger.info(
+                    "[ORB-EOD-FLATTEN] %s %s already flat at the broker — nothing to do",
+                    stop.strategy_code, stop.symbol,
+                )
+            else:
+                # LOUD by design. A silently-failed flatten IS the naked-overnight state, and the
+                # only control that has ever caught it is the operator noticing.
+                self.logger.error(
+                    "[ORB-EOD-FLATTEN] %s %s CLOSE DID NOT PLACE (%s) — POSITION MAY RIDE "
+                    "OVERNIGHT UNPROTECTED. Operator action required.",
+                    stop.strategy_code, stop.symbol,
+                    ",".join(sorted({str(i.payload.reason) for i in order_events})) or "no reason",
+                )
+                self._eod_flattened.discard(key)   # allow a retry on the next 5s tick
 
     async def _trigger_hard_stop(
         self,

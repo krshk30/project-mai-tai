@@ -11,8 +11,10 @@ Three defects surfaced when ORB's 3% trailing stops fired on live Webull winners
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
+from zoneinfo import ZoneInfo
 
 from project_mai_tai.oms.service import ArmedHardStop, OmsRiskService
 
@@ -22,6 +24,7 @@ def _bare_service() -> OmsRiskService:
     svc.logger = SimpleNamespace(
         info=lambda *a, **k: None,
         warning=lambda *a, **k: None,
+        error=lambda *a, **k: None,
         exception=lambda *a, **k: None,
         debug=lambda *a, **k: None,
     )
@@ -270,7 +273,6 @@ def _flat_svc(positions, *, grace_secs=120, require_positive=True) -> OmsRiskSer
 
 
 def _stop_armed_secs_ago(secs: float | None) -> ArmedHardStop:
-    from datetime import UTC, datetime, timedelta
     armed_at = None if secs is None else datetime.now(UTC) - timedelta(seconds=secs)
     return ArmedHardStop(
         strategy_code="orb", broker_account_name="live:orb", symbol="ERNA",
@@ -355,7 +357,6 @@ def test_rollback_flag_restores_pre_fix_semantics():
 def test_v2_managed_exit_shares_the_same_guard():
     """The v2 CW managed-exit reconcile calls the SAME helper (service.py:1988). Fixing only
     ORB would be a half fix -- v2 is armed on this bug too."""
-    from datetime import UTC, datetime, timedelta
     svc = _flat_svc([])
     fresh = datetime.now(UTC) - timedelta(seconds=30)
     old = datetime.now(UTC) - timedelta(seconds=900)
@@ -403,7 +404,6 @@ def test_classifier_is_the_single_definition_of_read_shape():
 
 
 def test_probe_reports_visible_latency_and_clears():
-    from datetime import UTC, datetime, timedelta
     svc = _probe_svc()
     svc._settle_watch[("live:orb", "ERNA")] = datetime.now(UTC) - timedelta(seconds=45)
     svc._observe_settlement("live:orb", [SimpleNamespace(symbol="ERNA", quantity=Decimal("2"))])
@@ -413,7 +413,6 @@ def test_probe_reports_visible_latency_and_clears():
 def test_probe_records_the_ambiguous_shape_while_not_yet_visible():
     """This is the ERNA shape: our fill exists, the broker shows nothing. How OFTEN and for
     HOW LONG this occurs is exactly what the grace is calibrated against."""
-    from datetime import UTC, datetime, timedelta
     svc = _probe_svc()
     svc._settle_watch[("live:orb", "ERNA")] = datetime.now(UTC) - timedelta(seconds=20)
     svc._observe_settlement("live:orb", [])                 # empty read, fill 20s old
@@ -422,7 +421,6 @@ def test_probe_records_the_ambiguous_shape_while_not_yet_visible():
 
 def test_probe_is_per_broker_and_does_not_cross_accounts():
     """ERNA was Webull, v2 is Schwab. A Schwab poll must never resolve a Webull watch."""
-    from datetime import UTC, datetime, timedelta
     svc = _probe_svc()
     svc._settle_watch[("live:orb", "ERNA")] = datetime.now(UTC) - timedelta(seconds=10)
     svc._observe_settlement("live:schwab_1m_v2",
@@ -431,7 +429,6 @@ def test_probe_is_per_broker_and_does_not_cross_accounts():
 
 
 def test_probe_times_out_instead_of_leaking():
-    from datetime import UTC, datetime, timedelta
     svc = _probe_svc()
     svc._settle_watch[("live:orb", "ERNA")] = datetime.now(UTC) - timedelta(seconds=400)
     svc._observe_settlement("live:orb", [])
@@ -464,3 +461,134 @@ def test_mirror_refuses_to_fan_out_without_an_explicit_account():
 def test_mirror_default_is_no_longer_orbs_account():
     from project_mai_tai.settings import Settings
     assert Settings().strategy_schwab_1m_v2_webull_account_name == ""
+
+
+# --------------------------------------------------------------------------- #
+# P0.6 — EOD flatten. An ORB position held past the close has NO protection: the native STOP is
+# time_in_force=day AND Webull stops are RTH-only (none has ever terminated later than 15:16 ET),
+# so it is gone by 16:00; the OMS software stop cannot fill outside the 7:00-20:00 gate. 3 in 3
+# weeks (ERNA 07-15, AGEN+LGPS 07-13) -- every one closed by hand.
+# --------------------------------------------------------------------------- #
+_ETZ = ZoneInfo("America/New_York")
+
+
+def _eod_svc(*, enabled=True, strategies="orb") -> OmsRiskService:
+    svc = _bare_service()
+    svc.settings = SimpleNamespace(
+        orb_eod_flatten_enabled=enabled, orb_eod_flatten_hour_et=15,
+        orb_eod_flatten_minute_et=55, orb_eod_flatten_strategies=strategies,
+    )
+    svc._armed_hard_stops = {}
+    svc._eod_flattened = set()
+    svc._latest_quotes_by_symbol = {}
+    svc._armed_stop_persistence_enabled = False
+    svc.submitted = []
+
+    async def _pti(event):
+        svc.submitted.append(event)
+        return [SimpleNamespace(payload=SimpleNamespace(status="filled", reason="ok"))]
+
+    svc.process_trade_intent = _pti
+    return svc
+
+
+def _eod_stop(strategy="orb", sym="ERNA") -> ArmedHardStop:
+    return ArmedHardStop(
+        strategy_code=strategy, broker_account_name="live:orb", symbol=sym,
+        quantity=Decimal("2"), entry_price=Decimal("9.47"), stop_loss_pct=5.0,
+        stop_price=Decimal("9.00"), quote_max_age_ms=2000, initial_panic_buffer_pct=1.5,
+        trail_pct=5.0,
+    )
+
+
+def _at(h, m):  # a Wednesday
+    return datetime(2026, 7, 15, h, m, tzinfo=_ETZ).astimezone(UTC)
+
+
+def test_eod_due_only_after_the_flatten_time_on_a_weekday():
+    svc = _eod_svc()
+    assert svc._eod_flatten_due(_at(15, 54)) is False
+    assert svc._eod_flatten_due(_at(15, 55)) is True
+    assert svc._eod_flatten_due(_at(15, 56)) is True
+    sat = datetime(2026, 7, 18, 16, 0, tzinfo=_ETZ).astimezone(UTC)   # Saturday
+    assert svc._eod_flatten_due(sat) is False
+
+
+def test_eod_flatten_closes_an_armed_orb_position(monkeypatch):
+    svc = _eod_svc()
+    svc._armed_hard_stops["k"] = _eod_stop()
+    monkeypatch.setattr(svc, "_eod_flatten_due", lambda now=None: True)
+    asyncio.run(svc._eod_flatten_armed_stops())
+    assert len(svc.submitted) == 1
+    p = svc.submitted[0].payload
+    assert p.side == "sell" and p.intent_type == "close" and p.reason == "EOD_FLATTEN"
+    assert p.quantity == Decimal("2")
+
+
+def test_eod_flatten_is_idempotent_one_close_per_symbol_per_day(monkeypatch):
+    """The sweep runs on the 5s loop. Without the claim it would submit a close every tick."""
+    svc = _eod_svc()
+    svc._armed_hard_stops["k"] = _eod_stop()
+    monkeypatch.setattr(svc, "_eod_flatten_due", lambda now=None: True)
+    for _ in range(5):
+        asyncio.run(svc._eod_flatten_armed_stops())
+    assert len(svc.submitted) == 1
+
+
+def test_eod_flatten_retries_when_the_close_does_not_place(monkeypatch):
+    """A silently-failed flatten IS the naked-overnight state. It must retry, not give up."""
+    svc = _eod_svc()
+    svc._armed_hard_stops["k"] = _eod_stop()
+    monkeypatch.setattr(svc, "_eod_flatten_due", lambda now=None: True)
+
+    async def _reject(event):
+        svc.submitted.append(event)
+        return [SimpleNamespace(payload=SimpleNamespace(status="rejected", reason="boom"))]
+
+    svc.process_trade_intent = _reject
+    asyncio.run(svc._eod_flatten_armed_stops())
+    asyncio.run(svc._eod_flatten_armed_stops())
+    assert len(svc.submitted) == 2       # claim released -> retried on the next tick
+
+
+def test_eod_flatten_never_touches_a_non_enabled_strategy(monkeypatch):
+    """v2 is deliberately NOT in the CSV (design section 9). ORB's fix must not imply v2 is covered."""
+    svc = _eod_svc(strategies="orb")
+    svc._armed_hard_stops["k"] = _eod_stop(strategy="schwab_1m_v2", sym="CPHI")
+    monkeypatch.setattr(svc, "_eod_flatten_due", lambda now=None: True)
+    asyncio.run(svc._eod_flatten_armed_stops())
+    assert svc.submitted == []
+
+
+def test_eod_flatten_flag_off_is_inert(monkeypatch):
+    svc = _eod_svc(enabled=False)
+    svc._armed_hard_stops["k"] = _eod_stop()
+    monkeypatch.setattr(svc, "_eod_flatten_due", lambda now=None: True)
+    asyncio.run(svc._eod_flatten_armed_stops())
+    assert svc.submitted == []
+
+
+def test_eod_flatten_only_sees_oms_owned_positions():
+    """THE SCOPING INVARIANT. The registry is OMS-owned by construction -- a stop arms only from a
+    fill on an intent the OMS placed. A manual holding is invisible here and can never be flattened."""
+    svc = _eod_svc()
+    assert svc._armed_hard_stops == {}
+    asyncio.run(svc._eod_flatten_armed_stops())
+    assert svc.submitted == []
+
+
+def test_eod_flatten_clears_when_broker_already_flat(monkeypatch):
+    """ERNA/ASTN shape: operator closed it by hand. Must not churn."""
+    svc = _eod_svc()
+    svc._armed_hard_stops["k"] = _eod_stop()
+    monkeypatch.setattr(svc, "_eod_flatten_due", lambda now=None: True)
+
+    async def _noposition(event):
+        svc.submitted.append(event)
+        return [SimpleNamespace(payload=SimpleNamespace(
+            status="rejected", reason=sorted(OmsRiskService.NO_POSITION_REASONS)[0]))]
+
+    svc.process_trade_intent = _noposition
+    asyncio.run(svc._eod_flatten_armed_stops())
+    asyncio.run(svc._eod_flatten_armed_stops())
+    assert len(svc.submitted) == 1       # already flat -> claimed, not retried
