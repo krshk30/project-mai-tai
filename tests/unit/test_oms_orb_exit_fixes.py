@@ -472,14 +472,14 @@ def test_mirror_default_is_no_longer_orbs_account():
 _ETZ = ZoneInfo("America/New_York")
 
 
-def _eod_svc(*, enabled=True, strategies="orb") -> OmsRiskService:
+def _win_svc(*, enabled=True, strategies="orb") -> OmsRiskService:
     svc = _bare_service()
     svc.settings = SimpleNamespace(
-        orb_eod_flatten_enabled=enabled, orb_eod_flatten_hour_et=15,
-        orb_eod_flatten_minute_et=55, orb_eod_flatten_strategies=strategies,
+        orb_window_flatten_enabled=enabled, orb_window_flatten_hour_et=10,
+        orb_window_flatten_minute_et=0, orb_window_flatten_strategies=strategies,
     )
     svc._armed_hard_stops = {}
-    svc._eod_flattened = set()
+    svc._window_flattened = set()
     svc._latest_quotes_by_symbol = {}
     svc._armed_stop_persistence_enabled = False
     svc.submitted = []
@@ -492,7 +492,7 @@ def _eod_svc(*, enabled=True, strategies="orb") -> OmsRiskService:
     return svc
 
 
-def _eod_stop(strategy="orb", sym="ERNA") -> ArmedHardStop:
+def _win_stop(strategy="orb", sym="ERNA") -> ArmedHardStop:
     return ArmedHardStop(
         strategy_code=strategy, broker_account_name="live:orb", symbol=sym,
         quantity=Decimal("2"), entry_price=Decimal("9.47"), stop_loss_pct=5.0,
@@ -505,83 +505,87 @@ def _at(h, m):  # a Wednesday
     return datetime(2026, 7, 15, h, m, tzinfo=_ETZ).astimezone(UTC)
 
 
-def test_eod_due_only_after_the_flatten_time_on_a_weekday():
-    svc = _eod_svc()
-    assert svc._eod_flatten_due(_at(15, 54)) is False
-    assert svc._eod_flatten_due(_at(15, 55)) is True
-    assert svc._eod_flatten_due(_at(15, 56)) is True
+def test_window_due_only_after_the_orb_window_closes_on_a_weekday():
+    """ORB trades 09:30-10:00. After 10:00 it must be flat -- that is the rule. Every ORB entry
+    ever has landed in the first 8 minutes of the session and no completed trade has lasted more
+    than 5.0 minutes, so a 10:00 flatten clips nothing and catches only broken exits."""
+    svc = _win_svc()
+    assert svc._window_flatten_due(_at(9, 45)) is False    # mid-window: leave it alone
+    assert svc._window_flatten_due(_at(9, 59)) is False    # still inside the window
+    assert svc._window_flatten_due(_at(10, 0)) is True     # window shut -> must be flat
+    assert svc._window_flatten_due(_at(10, 1)) is True
     sat = datetime(2026, 7, 18, 16, 0, tzinfo=_ETZ).astimezone(UTC)   # Saturday
-    assert svc._eod_flatten_due(sat) is False
+    assert svc._window_flatten_due(sat) is False
 
 
-def test_eod_flatten_closes_an_armed_orb_position(monkeypatch):
-    svc = _eod_svc()
-    svc._armed_hard_stops["k"] = _eod_stop()
-    monkeypatch.setattr(svc, "_eod_flatten_due", lambda now=None: True)
-    asyncio.run(svc._eod_flatten_armed_stops())
+def test_window_flatten_closes_an_armed_orb_position(monkeypatch):
+    svc = _win_svc()
+    svc._armed_hard_stops["k"] = _win_stop()
+    monkeypatch.setattr(svc, "_window_flatten_due", lambda now=None: True)
+    asyncio.run(svc._window_flatten_armed_stops())
     assert len(svc.submitted) == 1
     p = svc.submitted[0].payload
-    assert p.side == "sell" and p.intent_type == "close" and p.reason == "EOD_FLATTEN"
+    assert p.side == "sell" and p.intent_type == "close" and p.reason == "WINDOW_FLATTEN"
     assert p.quantity == Decimal("2")
 
 
-def test_eod_flatten_is_idempotent_one_close_per_symbol_per_day(monkeypatch):
+def test_window_flatten_is_idempotent_one_close_per_symbol_per_day(monkeypatch):
     """The sweep runs on the 5s loop. Without the claim it would submit a close every tick."""
-    svc = _eod_svc()
-    svc._armed_hard_stops["k"] = _eod_stop()
-    monkeypatch.setattr(svc, "_eod_flatten_due", lambda now=None: True)
+    svc = _win_svc()
+    svc._armed_hard_stops["k"] = _win_stop()
+    monkeypatch.setattr(svc, "_window_flatten_due", lambda now=None: True)
     for _ in range(5):
-        asyncio.run(svc._eod_flatten_armed_stops())
+        asyncio.run(svc._window_flatten_armed_stops())
     assert len(svc.submitted) == 1
 
 
-def test_eod_flatten_retries_when_the_close_does_not_place(monkeypatch):
+def test_window_flatten_retries_when_the_close_does_not_place(monkeypatch):
     """A silently-failed flatten IS the naked-overnight state. It must retry, not give up."""
-    svc = _eod_svc()
-    svc._armed_hard_stops["k"] = _eod_stop()
-    monkeypatch.setattr(svc, "_eod_flatten_due", lambda now=None: True)
+    svc = _win_svc()
+    svc._armed_hard_stops["k"] = _win_stop()
+    monkeypatch.setattr(svc, "_window_flatten_due", lambda now=None: True)
 
     async def _reject(event):
         svc.submitted.append(event)
         return [SimpleNamespace(payload=SimpleNamespace(status="rejected", reason="boom"))]
 
     svc.process_trade_intent = _reject
-    asyncio.run(svc._eod_flatten_armed_stops())
-    asyncio.run(svc._eod_flatten_armed_stops())
+    asyncio.run(svc._window_flatten_armed_stops())
+    asyncio.run(svc._window_flatten_armed_stops())
     assert len(svc.submitted) == 2       # claim released -> retried on the next tick
 
 
-def test_eod_flatten_never_touches_a_non_enabled_strategy(monkeypatch):
+def test_window_flatten_never_touches_a_non_enabled_strategy(monkeypatch):
     """v2 is deliberately NOT in the CSV (design section 9). ORB's fix must not imply v2 is covered."""
-    svc = _eod_svc(strategies="orb")
-    svc._armed_hard_stops["k"] = _eod_stop(strategy="schwab_1m_v2", sym="CPHI")
-    monkeypatch.setattr(svc, "_eod_flatten_due", lambda now=None: True)
-    asyncio.run(svc._eod_flatten_armed_stops())
+    svc = _win_svc(strategies="orb")
+    svc._armed_hard_stops["k"] = _win_stop(strategy="schwab_1m_v2", sym="CPHI")
+    monkeypatch.setattr(svc, "_window_flatten_due", lambda now=None: True)
+    asyncio.run(svc._window_flatten_armed_stops())
     assert svc.submitted == []
 
 
-def test_eod_flatten_flag_off_is_inert(monkeypatch):
-    svc = _eod_svc(enabled=False)
-    svc._armed_hard_stops["k"] = _eod_stop()
-    monkeypatch.setattr(svc, "_eod_flatten_due", lambda now=None: True)
-    asyncio.run(svc._eod_flatten_armed_stops())
+def test_window_flatten_flag_off_is_inert(monkeypatch):
+    svc = _win_svc(enabled=False)
+    svc._armed_hard_stops["k"] = _win_stop()
+    monkeypatch.setattr(svc, "_window_flatten_due", lambda now=None: True)
+    asyncio.run(svc._window_flatten_armed_stops())
     assert svc.submitted == []
 
 
-def test_eod_flatten_only_sees_oms_owned_positions():
+def test_window_flatten_only_sees_oms_owned_positions():
     """THE SCOPING INVARIANT. The registry is OMS-owned by construction -- a stop arms only from a
     fill on an intent the OMS placed. A manual holding is invisible here and can never be flattened."""
-    svc = _eod_svc()
+    svc = _win_svc()
     assert svc._armed_hard_stops == {}
-    asyncio.run(svc._eod_flatten_armed_stops())
+    asyncio.run(svc._window_flatten_armed_stops())
     assert svc.submitted == []
 
 
-def test_eod_flatten_clears_when_broker_already_flat(monkeypatch):
+def test_window_flatten_clears_when_broker_already_flat(monkeypatch):
     """ERNA/ASTN shape: operator closed it by hand. Must not churn."""
-    svc = _eod_svc()
-    svc._armed_hard_stops["k"] = _eod_stop()
-    monkeypatch.setattr(svc, "_eod_flatten_due", lambda now=None: True)
+    svc = _win_svc()
+    svc._armed_hard_stops["k"] = _win_stop()
+    monkeypatch.setattr(svc, "_window_flatten_due", lambda now=None: True)
 
     async def _noposition(event):
         svc.submitted.append(event)
@@ -589,6 +593,6 @@ def test_eod_flatten_clears_when_broker_already_flat(monkeypatch):
             status="rejected", reason=sorted(OmsRiskService.NO_POSITION_REASONS)[0]))]
 
     svc.process_trade_intent = _noposition
-    asyncio.run(svc._eod_flatten_armed_stops())
-    asyncio.run(svc._eod_flatten_armed_stops())
+    asyncio.run(svc._window_flatten_armed_stops())
+    asyncio.run(svc._window_flatten_armed_stops())
     assert len(svc.submitted) == 1       # already flat -> claimed, not retried

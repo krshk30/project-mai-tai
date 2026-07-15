@@ -216,17 +216,23 @@ class Settings(BaseSettings):
     # mode only; supersedes the quote-priced limit when on. Default OFF = current behavior.
     # ⛔ GATE: needs the Webull BUY-stop plumbing validated (validate_buy_stop.py, RTH) before enable.
     orb_resting_entry_enabled: bool = False
-    # P0.6 EOD FLATTEN (docs: P0.6-eod-flatten-design). An ORB position held past the close has
-    # NO protection: the native broker STOP is time_in_force=day AND Webull stops are RTH-only, so
-    # it is gone by 16:00; the OMS software stop cannot fill outside the 7:00-20:00 gate. Happened
-    # 3x in 3 weeks (ERNA 07-15, AGEN+LGPS 07-13) -- every one closed by hand. ORB is an
-    # opening-range bot (entries 09:30-10:00): a position open at the close is a failed trade, not
-    # a hold. 15:55 (not 19:55) because the native stop is already gone by 16:00, so 16:00-20:00 is
-    # unprotected AND illiquid -- 15:55 exits while it is still a live backstop.
-    orb_eod_flatten_enabled: bool = False
-    orb_eod_flatten_hour_et: int = 15
-    orb_eod_flatten_minute_et: int = 55
-    orb_eod_flatten_strategies: str = "orb"   # CSV; v2 is deliberately NOT here (see design §9)
+    # P0.6 WINDOW FLATTEN (docs: P0.6-eod-flatten-design). ORB trades 09:30-10:00. AFTER 10:00 IT
+    # SHOULD BE FLAT -- that is the rule, not a safety net. This enforces it.
+    #
+    # Holding past the window is not a running winner, it is a BROKEN EXIT: no completed ORB trade
+    # has ever lasted more than 5.0 minutes (median <1 min, every entry in the first 8 minutes of
+    # the session), while the only three positions that ever survived the window -- ERNA 07-15,
+    # AGEN + LGPS 07-13 -- all had FAILED exits and all three were closed by hand. So flattening at
+    # 10:00 clips zero winners and catches exactly the broken ones, six hours before the close.
+    #
+    # 10:00, NOT 15:55: an earlier design flattened before the close to beat the RTH-only native
+    # stop expiring. That treated a rule violation as a protection problem. If ORB still holds at
+    # 10:00 the exit machinery has failed and we want a loud alarm NOW -- liquid market, six hours
+    # of runway -- not a tidy-up at 15:55.
+    orb_window_flatten_enabled: bool = False
+    orb_window_flatten_hour_et: int = 10
+    orb_window_flatten_minute_et: int = 0
+    orb_window_flatten_strategies: str = "orb"   # v2 deliberately absent (different window; design 9)
 
     strategy_schwab_1m_v2_enabled: bool = False
     strategy_schwab_1m_v2_bar_poll_interval_seconds: float = 15.0
