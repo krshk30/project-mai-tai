@@ -52,6 +52,55 @@ class of error this file exists to prevent.
 
 ---
 
+## ⭐ LIVE CASE — KUST, 2026-07-15 (real money, qty 2). The ratchet's scenario, observed.
+
+**Operator, watching it live:** *"This is the exact scenario I was talking about. We could have
+taken three percent. When it was three point four, we would have raised the floor to three. Then we
+would have exited that."* **Correct — this is the case where the operator's mechanic fires.** Kept
+as the reference transaction.
+
+Real fills + the captured NBBO tape (`market_capture_quotes`), tick by tick:
+
+| Time (ET) | Bid | vs entry 1.4999 | Bot |
+|---|---|---|---|
+| 08:45:24 | — | — | `[V2-CW] KUST v2 INTRABAR ENTER px=1.4950 trig=1.4900 flip_level=1.4735 low_sf=1.4800 n=1` → **fill 1.4999** |
+| 09:16:46.759 | **1.53** | +2.01% | `[OMS-V2-CW-FLOOR-ARMED] bid=1.5300 floor=1.5299 (ride past +2.0%)` |
+| 09:16:53.076 | 1.54 | +2.67% | ride |
+| **09:16:59.381** | **1.55** | **+3.34%** | ride ← **peak** (`peak_profit_pct=3.340223`) |
+| 09:16:59.795 | 1.54 | +2.67% | ride |
+| 09:17:06.193 | 1.53 | +2.01% | ride |
+| 09:17:07.284 | **1.52** | **+1.34%** | ≤ floor ⇒ `oms_v2_managed_exit:CW_FLOOR ref=1.5299` → **fill 1.5201 = +1.35%** |
+
+**Why it did not sell at 1.55:** nothing in the deployed design ever sells at the peak. The floor is
+**pinned at +2% (1.5299) and never moves**; it armed at 1.53, rode to 1.55, and sold only when the
+bid came back *down* through 1.5299 — giving back the entire 1.53→1.55→1.52 round trip.
+
+**What the operator's mechanic would have done:** peak +3.34% ⇒ `int(3.34) = 3` ⇒ floor jumps to
+**+3% = 1.5449** ⇒ the next tick (1.54 @ 09:16:59.795) is below it ⇒ **exit 1.54 = +2.67%** instead
+of 1.5201 = +1.35%. **+1.32 percentage points — roughly DOUBLE the trade's return** (+$0.04 @qty2).
+Mode G (`peak−0.10%` ⇒ floor 3.24% = 1.5485) exits at the same 1.54.
+
+**⭐ Also vindicates the "slow mover" claim:** 31 minutes from entry to +2%, and it reached +3.34%.
+This is the VMAR-shaped trade from the sweep, occurring live.
+
+### 🆕 TICK-GRID FINDING (new here; the sweep cannot see it)
+
+On a **$1.50** stock one cent is **0.67%**. The +2% floor at **1.5299 sits BETWEEN the 1.52 and 1.53
+ticks**, so the bid jumps 1.53 → 1.52 and **skips it**. The exit therefore can never fill at +2% — it
+fills a **full tick below**. The deployed "+2% floor" is, on this name, a **+1.35% floor**.
+
+Two consequences worth carrying:
+1. **#453 flipped which side of the tick we land on.** The old hard target fired when the bid **rose
+   through** +2% and filled at **1.53 (+2.01%)**; the floor fires when the bid **falls back** and
+   fills at **1.52 (+1.35%)**. On a cheap stock that is a **~1.3-point swing per winner** — and the
+   backtest is blind to it, booking both at exactly 1.5299.
+2. **Trail granularity finer than one tick is meaningless here.** B (1% steps) and G (0.10% trail)
+   both exit at 1.54 on KUST. The sweep's G > B ordering comes from higher-priced names where a cent
+   is a small % — on sub-$2 names the tick dominates, so the operator's simple 1% rule is as good as
+   any finer trail.
+
+---
+
 ## Why the gain is small: the peak distribution
 
 `PEAK%` = the highest bid reached **before** the pullback that exits us. This is the number that
@@ -132,6 +181,24 @@ live helper" for backtest/live parity and the helper was never written. **The tr
 in the 2026-07-14 handoff entry (`+$3.25 / +$3.42 / +$3.70`) came from the pre-refactor local
 implementation and are not reproducible today.** This study re-implements the entry/exit path
 independently rather than repairing that file (operator: leave the engines alone).
+
+---
+
+## Decision status
+
+**2026-07-15, operator:** *"It's a good testing. You can record this particular transaction for our
+reference. I think nothing else to do. We will try to see … whether we can implement or not."*
+⇒ **NOTHING IMPLEMENTED. Decision deferred to the operator.** The live OMS exit and the backtest
+remain identical and untouched. This file is the reference to re-open it from.
+
+**The case for implementing (as it stands today):** free by construction (`max(2%, …)` can never
+book below +2%, confirmed on all 35 sweep winners + KUST); it fires on real slow movers (VMAR 07-14
+backtest, KUST 07-15 live); on KUST it would have roughly doubled the trade. **The case against:**
+tiny in dollars (+$0.04 that trade; +$0.04–$0.33 per 4 days @qty2), it adds a ratchet to a live-money
+exit path that is deliberately stateless today (`cw_exit_decision`'s `armed` is a plain bool so it
+re-arms identically after an OMS restart — a ratcheted floor needs the peak to survive a restart,
+though `oms_managed_positions.peak_profit_pct` already persists it), and it is second-order to the
+entry (50% win vs ~72% needed).
 
 ---
 
