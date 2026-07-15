@@ -341,62 +341,11 @@ def test_cw_v2_reclaim_off_leaves_gap_setting_inert():
     assert state.cw_entries_this_flip == 1
 
 
-# --------------------------------------------------------------- stale-trigger / gated chase
-# 2026-07-15 SOBR (real money): the 1st entry used the FROZEN flip+2 trigger, which never advances.
-# The gates (ORB window / entry window / position held) only DEFER -- they never disarm -- so a setup
-# broken while gated fired the instant the gate lifted, at ANY price above a level the stock had left
-# behind. Trigger 1.69 (~09:30) -> ran to 2.63 (+56%) during the 09:30-10:00 ORB blackout -> bought
-# 2.24 at 10:00:07 (+32.5% past trigger) into a fading move -> -5.25% stop in 46s, peak 0.00%.
-# Fix: break the HIGHEST bar since the flip (cw_segment_high), for the 1st entry too.
+# --------------------------------------------------------------- ORB-block observability
+# Retained from #467 after its trigger change was REVERTED (2026-07-15). The block was silent,
+# which is why the SOBR chase went unseen. This half is read-only and was never in question.
 
-def test_sobr_replay_gated_break_does_not_chase_the_completed_move():
-    """THE REGRESSION ANCHOR. Break happens while the ORB window gates us; price runs far above the
-    frozen trigger; when the gate lifts we must NOT buy the top."""
-    strat = _strat()
-    st = strat.watchlist_state("SOBR")
-    _arm_to_watch(strat, st)                       # trigger = 12.0
-
-    # the break happens DURING the ORB blackout -> gated, no entry
-    assert strat._cw_v2_quote(st, _quote(12.5, ts=ORB_MS)) is None
-
-    # the stock runs hard while we are gated; closed bars carry the new highs
-    _feed_bar(strat, st, _bar(15.0, low=12.4, ts=4), _sig())
-    _feed_bar(strat, st, _bar(15.8, low=14.9, ts=5), _sig())
-    assert st.cw_segment_high == 15.8              # the highest bar since the flip
-    assert st.cw_trigger == 12.0                   # frozen (retained for telemetry)
-
-    # gate lifts. price is 12.9 -- above the STALE trigger but WELL below the real high.
-    # pre-fix this entered at 12.9 (+7.5% past trigger, into a fading move). It must not.
-    assert strat._cw_v2_quote(st, _quote(12.9)) is None
-    assert st.cw_entries_this_flip == 0
-
-
-def test_break_of_the_new_segment_high_still_enters():
-    """The fix must not make us un-tradeable: breaking the ACTUAL highest bar is a real entry."""
-    strat = _strat()
-    st = strat.watchlist_state("SOBR")
-    _arm_to_watch(strat, st)
-    _feed_bar(strat, st, _bar(15.0, low=12.4, ts=4), _sig())
-    strat._cw_v2_track(st, _sig())                 # new forming bar -> reset low-so-far
-    draft = strat._cw_v2_quote(st, _quote(15.2))   # breaks the 15.0 segment high
-    assert draft is not None and draft.side == "buy"
-    assert st.cw_entries_this_flip == 1
-
-
-def test_prompt_break_is_byte_identical_to_the_frozen_trigger():
-    """At arming, segment_high == cw_trigger (same 3 bars), so a break within ms of the cross behaves
-    exactly as before the fix -- the normal path is untouched (cf. KUST: px 1.4950 vs trig 1.4900)."""
-    strat = _strat()
-    st = strat.watchlist_state("TEST")
-    _arm_to_watch(strat, st)
-    assert st.cw_segment_high == st.cw_trigger == 12.0   # the invariant the fix relies on
-    draft = strat._cw_v2_quote(st, _quote(12.01))
-    assert draft is not None and draft.side == "buy"
-
-
-def test_orb_window_block_is_no_longer_silent():
-    """2026-07-15: the ORB block was `return None` with no log, so the SOBR chase was invisible until
-    the operator spotted it on a chart. It must announce itself -- once per flip, not per quote."""
+def test_orb_window_block_is_not_silent():
     strat = _strat()
     st = strat.watchlist_state("SOBR")
     _arm_to_watch(strat, st)
@@ -404,7 +353,20 @@ def test_orb_window_block_is_no_longer_silent():
     strat._cw_v2_quote(st, _quote(12.5, ts=ORB_MS))
     assert st.cw_orb_block_logged is True          # logged
     strat._cw_v2_quote(st, _quote(12.6, ts=ORB_MS))
-    assert st.cw_orb_block_logged is True          # still one-shot (this runs on EVERY quote)
-    # a fresh BUY flip re-arms the one-shot
+    assert st.cw_orb_block_logged is True          # one-shot (runs on EVERY quote)
     _feed_bar(strat, st, _bar(20.0, ts=9), _sig(flip="BUY", flip_level=18.0))
-    assert st.cw_orb_block_logged is False
+    assert st.cw_orb_block_logged is False         # fresh flip re-arms it
+
+
+def test_stale_trigger_behaviour_is_restored():
+    """#467 reverted: the 1st entry is back on the FROZEN flip+2 trigger. This documents the
+    KNOWN bug (SOBR 07-15) that is live again, deliberately, pending a narrower fix."""
+    strat = _strat()
+    st = strat.watchlist_state("SOBR")
+    _arm_to_watch(strat, st)                       # trigger 12.0
+    _feed_bar(strat, st, _bar(15.8, low=12.4, ts=4), _sig())
+    strat._cw_v2_track(st, _sig())
+    assert st.cw_segment_high == 15.8
+    # px 12.9 is above the STALE trigger but far below the real high -> pre-#467 this ENTERS
+    draft = strat._cw_v2_quote(st, _quote(12.9))
+    assert draft is not None                        # the chase is back (known, accepted for now)
