@@ -365,3 +365,102 @@ def test_v2_managed_exit_shares_the_same_guard():
     assert asyncio.run(
         svc._broker_symbol_is_flat("live:schwab_1m_v2", "KUST", established_at=old)
     ) is True
+
+
+# --------------------------------------------------------------------------- #
+# P0.2 settlement probe + mirror fail-safe (2026-07-15)
+#
+# The 120s grace was a GUESS. [RECONCILE-READ] cannot validate it: it only fires after 3
+# consecutive failed closes, so it speaks only once the bug is already biting (measured on the
+# live box: 0 fires vs 4 decided_at markers in the same window). The probe rides the EXISTING
+# 5s position poll and measures fill->visible latency + read SHAPE, per broker, with no fault.
+# ERNA was WEBULL; v2 is SCHWAB; the grace lives in a helper shared by both -> measure both.
+# --------------------------------------------------------------------------- #
+
+def _probe_svc() -> OmsRiskService:
+    svc = _bare_service()
+    svc.settings = SimpleNamespace(
+        oms_settlement_probe_enabled=True, oms_settlement_probe_timeout_secs=300
+    )
+    svc._settle_watch = {}
+    return svc
+
+
+def test_classifier_is_the_single_definition_of_read_shape():
+    """The probe and the live stop path MUST agree on what a read means, or we would be
+    measuring something other than what the grace keys on."""
+    from project_mai_tai.oms.service import _PositionRead
+    c = OmsRiskService._classify_position_read
+    assert c([], "ERNA") is _PositionRead.FLAT_INFERRED                 # empty: ambiguous
+    assert c(None, "ERNA") is _PositionRead.FLAT_INFERRED               # None: ambiguous
+    assert c([SimpleNamespace(symbol="OTHER", quantity=Decimal("5"))], "ERNA") \
+        is _PositionRead.FLAT_INFERRED                                   # absent: ambiguous
+    assert c([SimpleNamespace(symbol="ERNA", quantity=Decimal("0"))], "ERNA") \
+        is _PositionRead.FLAT_CONFIRMED                                  # positive
+    assert c([SimpleNamespace(symbol="ERNA", quantity=Decimal("2"))], "ERNA") \
+        is _PositionRead.HELD
+    assert c([SimpleNamespace(symbol="ERNA", quantity="junk")], "ERNA") is _PositionRead.UNKNOWN
+
+
+def test_probe_reports_visible_latency_and_clears():
+    from datetime import UTC, datetime, timedelta
+    svc = _probe_svc()
+    svc._settle_watch[("live:orb", "ERNA")] = datetime.now(UTC) - timedelta(seconds=45)
+    svc._observe_settlement("live:orb", [SimpleNamespace(symbol="ERNA", quantity=Decimal("2"))])
+    assert ("live:orb", "ERNA") not in svc._settle_watch   # visible -> measured -> done
+
+
+def test_probe_records_the_ambiguous_shape_while_not_yet_visible():
+    """This is the ERNA shape: our fill exists, the broker shows nothing. How OFTEN and for
+    HOW LONG this occurs is exactly what the grace is calibrated against."""
+    from datetime import UTC, datetime, timedelta
+    svc = _probe_svc()
+    svc._settle_watch[("live:orb", "ERNA")] = datetime.now(UTC) - timedelta(seconds=20)
+    svc._observe_settlement("live:orb", [])                 # empty read, fill 20s old
+    assert ("live:orb", "ERNA") in svc._settle_watch        # still pending -> keeps measuring
+
+
+def test_probe_is_per_broker_and_does_not_cross_accounts():
+    """ERNA was Webull, v2 is Schwab. A Schwab poll must never resolve a Webull watch."""
+    from datetime import UTC, datetime, timedelta
+    svc = _probe_svc()
+    svc._settle_watch[("live:orb", "ERNA")] = datetime.now(UTC) - timedelta(seconds=10)
+    svc._observe_settlement("live:schwab_1m_v2",
+                            [SimpleNamespace(symbol="ERNA", quantity=Decimal("2"))])
+    assert ("live:orb", "ERNA") in svc._settle_watch        # untouched by the other broker
+
+
+def test_probe_times_out_instead_of_leaking():
+    from datetime import UTC, datetime, timedelta
+    svc = _probe_svc()
+    svc._settle_watch[("live:orb", "ERNA")] = datetime.now(UTC) - timedelta(seconds=400)
+    svc._observe_settlement("live:orb", [])
+    assert ("live:orb", "ERNA") not in svc._settle_watch    # bounded; never grows forever
+
+
+def test_probe_flag_off_is_inert():
+    svc = _probe_svc()
+    svc.settings.oms_settlement_probe_enabled = False
+    svc._settle_watch_add("live:orb", "ERNA")
+    assert svc._settle_watch == {}
+
+
+def test_mirror_refuses_to_fan_out_without_an_explicit_account():
+    """FAIL-SAFE: the old default was live:orb -- ORB's OWN account. Flag-on + unset must
+    NO-OP, so a flag-flip without provisioning does nothing instead of the wrong thing."""
+    import asyncio as _a
+    svc = _bare_service()
+    svc.settings = SimpleNamespace(
+        strategy_schwab_1m_v2_webull_mirror_enabled=True,
+        strategy_schwab_1m_v2_webull_account_name="",      # never provisioned
+    )
+    event = SimpleNamespace(payload=SimpleNamespace(
+        intent_type="open", side="buy", strategy_code="schwab_1m_v2",
+        broker_account_name="live:schwab_1m_v2", symbol="KUST",
+    ))
+    assert _a.run(svc._maybe_mirror_v2_open(event)) is None   # no-op, no crash, no fan-out
+
+
+def test_mirror_default_is_no_longer_orbs_account():
+    from project_mai_tai.settings import Settings
+    assert Settings().strategy_schwab_1m_v2_webull_account_name == ""

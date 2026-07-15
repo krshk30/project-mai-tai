@@ -317,6 +317,12 @@ class OmsRiskService:
         # hard-stop key -> (strategy_id, broker_account_id) so the periodic sync can re-arm
         # them (broker settled by then) WITHOUT blocking the fill transaction at the open.
         self._native_guard_rearm_pending: dict[tuple[str, str, str], tuple[UUID, UUID]] = {}
+        # P0.2 settlement probe (2026-07-15): (account, SYMBOL) -> when we filled into it.
+        # Read-only. Answers the ONE question the 120s fresh-fill grace was guessed at:
+        # how long after our fill does the broker's positions endpoint actually show it,
+        # and what shape does the read take while it doesn't. Per broker -- ERNA was
+        # WEBULL; v2 is SCHWAB; the grace lives in a helper shared by both.
+        self._settle_watch: dict[tuple[str, str], datetime] = {}
 
     async def _run_db(self, fn, *, commit: bool = True):
         """Run a PURE-SYNC unit of DB work on a worker thread, off the event loop.
@@ -904,6 +910,23 @@ class OmsRiskService:
         primary account). Everything else returns immediately.
         """
         if not bool(getattr(self.settings, "strategy_schwab_1m_v2_webull_mirror_enabled", False)):
+            return
+        # FAIL-SAFE (operator, 2026-07-15): the mirror account must be EXPLICIT. The old default
+        # was "live:orb" -- ORB's own live account -- which contradicts the 07-10 design decision
+        # (a separate live:v2_webull, because ORB and v2 trade the same watchlist through different
+        # exit logic and one account cannot hold two open managed rows for the same symbol).
+        # Flag-off + a wrong default is a landmine, not a safety: flipping the flag without
+        # provisioning would have fanned v2 into ORB's account. Unset -> no-op + warn, so a
+        # flag-flip without provisioning does NOTHING instead of the wrong thing.
+        mirror_account = str(
+            getattr(self.settings, "strategy_schwab_1m_v2_webull_account_name", "") or ""
+        ).strip()
+        if not mirror_account:
+            self.logger.warning(
+                "[V2-MIRROR] mirror flag is ON but strategy_schwab_1m_v2_webull_account_name is "
+                "UNSET — refusing to mirror. Provision a dedicated account (e.g. live:v2_webull); "
+                "do NOT point this at live:orb."
+            )
             return
         if event.payload.intent_type != "open" or event.payload.side != "buy":
             return
@@ -1517,6 +1540,13 @@ class OmsRiskService:
                 config_name="make_v2_variant",
             )
             self._managed_v2_symbols.add((broker_account_name, symbol))  # slice-3: arm quote-path eval
+            # P0.2 SCHWAB settlement anchor. Instrumentation must NEVER be load-bearing on the
+            # live fill path, so this is guarded: a duck-typed caller (tests call this hook with a
+            # deliberate minimal stand-in) or a probe-less build must not be able to break a real
+            # fill. Same principle as the try/except around _observe_settlement.
+            _watch = getattr(self, "_settle_watch_add", None)
+            if _watch is not None:
+                _watch(broker_account_name, symbol)
             logger.info(
                 "[OMS-V2-MANAGED-OPEN] sym=%s acct=%s qty=%s entry=%s path=%s",
                 symbol, broker_account_name, int(quantity), price, entry_path,
@@ -2306,6 +2336,12 @@ class OmsRiskService:
         for account_id, account_name in accounts:
             snapshots = await self.broker_adapter.list_account_positions(account_name)
             fetched.append((account_id, snapshots))
+            # P0.2: read-only settlement probe on the read we ALREADY made (no extra call).
+            # Wrapped: a probe must never be able to break broker-sync.
+            try:
+                self._observe_settlement(account_name, snapshots)
+            except Exception:  # noqa: BLE001 — instrumentation is never load-bearing
+                self.logger.warning("[SETTLE-LAG] probe failed for %s (ignored)", account_name)
 
         # Phase 3 (DB writes, off-loop): persist snapshots + clear unbacked
         # virtuals, committed inside the worker thread (the flush that froze the
@@ -2983,6 +3019,71 @@ class OmsRiskService:
                 # of failures re-checks (throttles the broker position reads).
                 stop.consecutive_close_failures = 0
 
+    @staticmethod
+    def _classify_position_read(positions, symbol: str) -> _PositionRead:
+        """PURE shape classifier — the single definition of what a positions read MEANS.
+        Shared by the live flat-read (`_broker_symbol_position_state`) and the read-only
+        settlement probe, so the thing the grace keys on and the thing we measure can never
+        drift apart."""
+        if not positions:
+            return _PositionRead.FLAT_INFERRED          # empty/None: ambiguous
+        target = str(symbol).upper()
+        for position in positions:
+            if str(getattr(position, "symbol", "")).upper() != target:
+                continue
+            try:
+                qty = Decimal(str(getattr(position, "quantity", 0)))
+            except (TypeError, ValueError, ArithmeticError):
+                return _PositionRead.UNKNOWN
+            return _PositionRead.FLAT_CONFIRMED if qty == 0 else _PositionRead.HELD
+        return _PositionRead.FLAT_INFERRED              # absent from a non-empty read
+
+    def _settle_watch_add(self, broker_account_name: str, symbol: str) -> None:
+        """Anchor a settlement probe at a REAL fill. No-op unless the probe flag is on."""
+        if not bool(getattr(self.settings, "oms_settlement_probe_enabled", True)):
+            return
+        self._settle_watch.setdefault(
+            (str(broker_account_name), str(symbol).upper()), datetime.now(UTC)
+        )
+
+    def _observe_settlement(self, broker_account_name: str, positions) -> None:
+        """READ-ONLY probe, hung on the EXISTING 5s position poll — no extra broker calls.
+
+        Logs, per broker, how long after our own fill the position becomes visible, and the
+        SHAPE of every read until it does. FLAT_INFERRED here is the exact ambiguity the
+        fresh-fill grace exists to disambiguate: an empty/absent read is indistinguishable
+        from a genuine close, so how OFTEN it occurs -- and for how long -- is what tells us
+        whether 120s is right, too tight, or too loose. Latency alone would not.
+        """
+        if not self._settle_watch:
+            return
+        timeout_s = float(getattr(self.settings, "oms_settlement_probe_timeout_secs", 300) or 300)
+        now = datetime.now(UTC)
+        for (acct, sym), anchor in list(self._settle_watch.items()):
+            if acct != broker_account_name:
+                continue
+            age = (now - anchor).total_seconds()
+            shape = self._classify_position_read(positions, sym)
+            if shape is _PositionRead.HELD:
+                self.logger.info(
+                    "[SETTLE-LAG] acct=%s sym=%s VISIBLE after %.1fs (n=%d)",
+                    acct, sym, age, len(positions or []),
+                )
+                self._settle_watch.pop((acct, sym), None)
+            elif age >= timeout_s:
+                self.logger.warning(
+                    "[SETTLE-LAG] acct=%s sym=%s NEVER VISIBLE after %.0fs — last shape=%s "
+                    "(n=%d). Position closed, or this broker never lists it.",
+                    acct, sym, age, shape.value.upper(), len(positions or []),
+                )
+                self._settle_watch.pop((acct, sym), None)
+            else:
+                self.logger.info(
+                    "[SETTLE-PENDING] acct=%s sym=%s age=%.1fs shape=%s (n=%d) — "
+                    "our fill is not visible yet",
+                    acct, sym, age, shape.value.upper(), len(positions or []),
+                )
+
     async def _broker_symbol_position_state(
         self, broker_account_name: str, symbol: str
     ) -> _PositionRead:
@@ -3006,48 +3107,14 @@ class OmsRiskService:
                 broker_account_name, symbol, exc,
             )
             return _PositionRead.UNKNOWN
-        if not positions:
-            # AMBIGUOUS, and deliberately NOT UNKNOWN. Brokers omit closed positions, so a
-            # genuine out-of-band close on a single-position account returns exactly this --
-            # treating it as UNKNOWN would churn closes forever (the 07-13 AGEN 181x loop that
-            # #436 Bug C fixed). It is also what a silently-failed read looks like. The two are
-            # indistinguishable from the read alone, and a ledger check is circular (the armed
-            # stop IS our belief, and it is what we are deciding to delete). TIME is the only
-            # sound discriminator -> the fresh-fill grace in _broker_symbol_is_flat refuses this
-            # while the fill is recent (the ERNA case) and honours it once it is not.
-            self.logger.warning(
-                "[RECONCILE-READ] acct=%s sym=%s result=EMPTY (n=0) -> FLAT_INFERRED, ambiguous "
-                "(genuine close vs silent read failure) — deferring to the fresh-fill grace",
-                broker_account_name, symbol,
-            )
-            return _PositionRead.FLAT_INFERRED
-        target = str(symbol).upper()
-        for position in positions:
-            if str(getattr(position, "symbol", "")).upper() != target:
-                continue
-            raw = getattr(position, "quantity", 0)
-            try:
-                qty = Decimal(str(raw))
-            except (TypeError, ValueError, ArithmeticError):
-                self.logger.warning(
-                    "[RECONCILE-READ] acct=%s sym=%s result=UNPARSEABLE qty=%r -> UNKNOWN",
-                    broker_account_name, symbol, raw,
-                )
-                return _PositionRead.UNKNOWN
-            state = _PositionRead.FLAT_CONFIRMED if qty == 0 else _PositionRead.HELD
-            self.logger.info(
-                "[RECONCILE-READ] acct=%s sym=%s result=%s qty=%s (n=%d, symbol present)",
-                broker_account_name, symbol, state.value.upper(), qty, len(positions),
-            )
-            return state
-        # Absent from a NON-EMPTY read: the broker listed its holdings and ours is not among
-        # them -> positively flat.
+        # Shape decision delegated to the shared pure classifier so the live stop path and the
+        # settlement probe can never disagree about what a read MEANS.
+        state = self._classify_position_read(positions, symbol)
         self.logger.info(
-            "[RECONCILE-READ] acct=%s sym=%s result=FLAT_INFERRED (absent from a read of n=%d) "
-            "— a positions endpoint lagging a fresh fill looks exactly like this",
-            broker_account_name, symbol, len(positions),
+            "[RECONCILE-READ] acct=%s sym=%s result=%s (n=%d)",
+            broker_account_name, symbol, state.value.upper(), len(positions or []),
         )
-        return _PositionRead.FLAT_INFERRED
+        return state
 
     async def _broker_symbol_is_flat(
         self,
@@ -3232,6 +3299,9 @@ class OmsRiskService:
                 armed_at=(existing.armed_at if existing is not None and existing.armed_at
                           else datetime.now(UTC)),
             )
+            _watch = getattr(self, "_settle_watch_add", None)   # P0.2: WEBULL anchor (guarded)
+            if _watch is not None:
+                _watch(broker_account_name, normalized_symbol)
             self.logger.info(
                 "[HARD-STOP ARMED] %s %s qty=%s entry=%.4f stop=%.4f stop_loss_pct=%s trail_pct=%s",
                 strategy_code,
