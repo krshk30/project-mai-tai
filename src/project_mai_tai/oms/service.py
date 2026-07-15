@@ -325,7 +325,7 @@ class OmsRiskService:
         self._settle_watch: dict[tuple[str, str], datetime] = {}
         # P0.6 EOD flatten: (session_date_et, account, SYMBOL) already flattened, so the
         # 5s loop submits ONE close per symbol per day rather than one every tick.
-        self._eod_flattened: set[tuple[str, str, str]] = set()
+        self._window_flattened: set[tuple[str, str, str]] = set()
 
     async def _run_db(self, fn, *, commit: bool = True):
         """Run a PURE-SYNC unit of DB work on a worker thread, off the event loop.
@@ -465,11 +465,11 @@ class OmsRiskService:
                 # cadence; idempotent per symbol per day. Wrapped -- a flatten error must never
                 # break broker-sync (but it IS logged at error level: see the method).
                 try:
-                    await self._eod_flatten_armed_stops()
+                    await self._window_flatten_armed_stops()
                 except asyncio.CancelledError:
                     raise
                 except Exception:
-                    self.logger.exception("[ORB-EOD-FLATTEN] sweep failed")
+                    self.logger.exception("[ORB-WINDOW-FLATTEN] sweep failed")
                 if getattr(self, "_native_guard_rearm_pending", None):
                     try:
                         await self._retry_pending_native_guard_rearms()
@@ -2935,7 +2935,7 @@ class OmsRiskService:
             return False
         return (utcnow() - stop.last_trigger_attempt_at).total_seconds() < 0.25
 
-    def _eod_flatten_due(self, now: datetime | None = None) -> bool:
+    def _window_flatten_due(self, now: datetime | None = None) -> bool:
         """True once the ET clock has passed the flatten time on a real trading day.
 
         Weekday/holiday handling comes from the LIVE session helper, not a wall-clock guess.
@@ -2946,11 +2946,11 @@ class OmsRiskService:
         et = (now or datetime.now(UTC)).astimezone(SESSION_TZ)
         if et.weekday() >= 5:
             return False
-        hh = int(getattr(self.settings, "orb_eod_flatten_hour_et", 15))
-        mm = int(getattr(self.settings, "orb_eod_flatten_minute_et", 55))
+        hh = int(getattr(self.settings, "orb_window_flatten_hour_et", 10))
+        mm = int(getattr(self.settings, "orb_window_flatten_minute_et", 0))
         return (et.hour, et.minute) >= (hh, mm)
 
-    async def _eod_flatten_armed_stops(self) -> None:
+    async def _window_flatten_armed_stops(self) -> None:
         """P0.6 — close OMS-owned positions before the session ends, so nothing rides overnight.
 
         WHY THIS EXISTS: an ORB position held past the close has NO protection at all. The native
@@ -2978,30 +2978,30 @@ class OmsRiskService:
         flatten that skipped it would be reverse-rejected (ORDER_NOT_SUPPORT_REVERSE_OPTION -- the
         ERNA/NXTC class) and, per P0.1, would fail SILENTLY on the watchdog-refresh path.
         """
-        if not bool(getattr(self.settings, "orb_eod_flatten_enabled", False)):
+        if not bool(getattr(self.settings, "orb_window_flatten_enabled", False)):
             return
-        if not self._eod_flatten_due():
+        if not self._window_flatten_due():
             return
         session_day = datetime.now(UTC).astimezone(SESSION_TZ).strftime("%Y-%m-%d")
         enabled = {
             c.strip() for c in
-            str(getattr(self.settings, "orb_eod_flatten_strategies", "orb") or "").split(",")
+            str(getattr(self.settings, "orb_window_flatten_strategies", "orb") or "").split(",")
             if c.strip()
         }
         for stop in list(self._armed_hard_stops.values()):
             if stop.strategy_code not in enabled or stop.quantity <= 0:
                 continue
             key = (session_day, stop.broker_account_name, stop.symbol)
-            if key in self._eod_flattened:
+            if key in self._window_flattened:
                 continue
-            self._eod_flattened.add(key)   # claim BEFORE the await: one close per symbol per day
+            self._window_flattened.add(key)   # claim BEFORE the await: one close per symbol per day
             _q = self._latest_quotes_by_symbol.get(stop.symbol) or {}
             try:
                 bid = Decimal(str(_q.get("bid"))) if _q.get("bid") else None
             except (TypeError, ValueError, ArithmeticError):
                 bid = None
             self.logger.info(
-                "[ORB-EOD-FLATTEN] %s %s qty=%s -> closing before the session ends "
+                "[ORB-WINDOW-FLATTEN] %s %s qty=%s -> closing before the session ends "
                 "(native stop is RTH-only and expires at the close)",
                 stop.strategy_code, stop.symbol, stop.quantity,
             )
@@ -3014,11 +3014,11 @@ class OmsRiskService:
                     side="sell",
                     quantity=stop.quantity,
                     intent_type="close",
-                    reason="EOD_FLATTEN",
+                    reason="WINDOW_FLATTEN",
                     metadata=self._build_hard_stop_metadata(
                         stop=stop,
                         trigger_price=bid if bid is not None else stop.stop_price,
-                        trigger_source="eod_flatten",
+                        trigger_source="window_flatten",
                     ),
                 ),
             )
@@ -3028,7 +3028,7 @@ class OmsRiskService:
                 raise
             except Exception as exc:  # noqa: BLE001
                 self.logger.error(
-                    "[ORB-EOD-FLATTEN] %s %s CLOSE RAISED (%s) — POSITION MAY RIDE OVERNIGHT "
+                    "[ORB-WINDOW-FLATTEN] %s %s CLOSE RAISED (%s) — POSITION MAY RIDE OVERNIGHT "
                     "UNPROTECTED. Operator action required.",
                     stop.strategy_code, stop.symbol, exc,
                 )
@@ -3039,23 +3039,23 @@ class OmsRiskService:
             )
             if placed:
                 self.logger.info(
-                    "[ORB-EOD-FLATTEN] %s %s close placed", stop.strategy_code, stop.symbol
+                    "[ORB-WINDOW-FLATTEN] %s %s close placed", stop.strategy_code, stop.symbol
                 )
             elif any(item.payload.reason in self.NO_POSITION_REASONS for item in order_events):
                 self.logger.info(
-                    "[ORB-EOD-FLATTEN] %s %s already flat at the broker — nothing to do",
+                    "[ORB-WINDOW-FLATTEN] %s %s already flat at the broker — nothing to do",
                     stop.strategy_code, stop.symbol,
                 )
             else:
                 # LOUD by design. A silently-failed flatten IS the naked-overnight state, and the
                 # only control that has ever caught it is the operator noticing.
                 self.logger.error(
-                    "[ORB-EOD-FLATTEN] %s %s CLOSE DID NOT PLACE (%s) — POSITION MAY RIDE "
+                    "[ORB-WINDOW-FLATTEN] %s %s CLOSE DID NOT PLACE (%s) — POSITION MAY RIDE "
                     "OVERNIGHT UNPROTECTED. Operator action required.",
                     stop.strategy_code, stop.symbol,
                     ",".join(sorted({str(i.payload.reason) for i in order_events})) or "no reason",
                 )
-                self._eod_flattened.discard(key)   # allow a retry on the next 5s tick
+                self._window_flattened.discard(key)   # allow a retry on the next 5s tick
 
     async def _trigger_hard_stop(
         self,
