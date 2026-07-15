@@ -1,0 +1,13 @@
+# Normalize line endings in the repo. Added 2026-07-15 after Windows-side tooling
+# rewrote oms/service.py + session-handoff.md with CRLF, turning a 176-line semantic
+# change into a 9022-line diff and making PR #464 -- a live-money stop-path change --
+# effectively unreviewable. Text files are stored LF in git regardless of platform.
+* text=auto eol=lf
+*.py text eol=lf
+*.md text eol=lf
+*.sql text eol=lf
+*.sh text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.csv text eol=lf
