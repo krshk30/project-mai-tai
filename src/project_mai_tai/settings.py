@@ -324,13 +324,20 @@ class Settings(BaseSettings):
     # they must never trade ahead of ATR. Default False = current behavior
     # (reversible kill: flip back to False + restart restores P1/P2).
     strategy_schwab_1m_v2_atr_only_mode: bool = False
-    # Trading window (ET, whole-hour) inside which v2 may OPEN a position. Outside
-    # [start, end) — before 7 AM, at/after 6 PM, weekends, holidays — the emit
+    # Trading window (ET) inside which v2 may OPEN a position. Outside
+    # [start, end) — before 7:00 AM, at/after 4:30 PM, weekends, holidays — the emit
     # chokepoint drops "open" intents (2026-07-14 operator rule after a 7:51 PM ET
     # after-hours entry churned unfillable overnight exits). Exits are governed by
-    # the OMS fillable-session gate (oms_fillable_session_*). end is exclusive.
+    # the OMS fillable-session gate (oms_fillable_session_*) and are NOT narrowed by
+    # this window — a position opened at 4:29 PM can still be exited after 4:30 PM,
+    # so this can never strand a position. end is exclusive.
+    # 2026-07-15 operator rule: entries end at 16:30 (was 18:00) — the last 90 minutes
+    # are after the 4:00 PM RTH close, where CW-v2 entries fill thin and the exit has
+    # to survive into after-hours. Rollback = set the env overrides back to 18/0.
     strategy_schwab_1m_v2_entry_window_start_hour_et: int = 7
-    strategy_schwab_1m_v2_entry_window_end_hour_et: int = 18
+    strategy_schwab_1m_v2_entry_window_start_minute_et: int = 0
+    strategy_schwab_1m_v2_entry_window_end_hour_et: int = 16
+    strategy_schwab_1m_v2_entry_window_end_minute_et: int = 30
     # GO-LIVE opt-in: when False (default), the configured_schwab_accounts guard
     # REFUSES to bind a real Schwab hash to the v2 account (structural paper-safety,
     # P1 Phase 1). When True, v2's account registers the real hash so orders route
@@ -396,8 +403,16 @@ class Settings(BaseSettings):
     # CW-v2 reclaim (2nd entry per BUY-flip) must wait this many NEW bars after the prior exit.
     # 0 = current behaviour (same-bar reclaim allowed). Backtest 07-09..07-14: 1 was a large
     # improvement (same-bar reclaim re-enters the just-exited micro-spike and bleeds). Read in
-    # _cw_v2_quote; OFF (0) is byte-identical.
+    # _cw_v2_quote; OFF (0) is byte-identical. Only consulted when reclaim is ENABLED below.
     strategy_schwab_1m_v2_cw_v2_reclaim_gap_bars: int = 0
+    # CW-v2 RECLAIM master switch (2026-07-15 operator rule: "I don't want reclaim but don't
+    # remove it — add a flag and keep it off"). ON = the shipped behaviour (up to 2 entries per
+    # BUY-flip segment, gated by reclaim_gap_bars). OFF (default) = ONE entry per BUY-flip
+    # segment; the reclaim code path is retained and inert, not deleted.
+    # NOTE: unlike most flags here, OFF is NOT byte-identical to the previously shipped build —
+    # it is a deliberate behaviour change the operator asked for, shipped as the default so the
+    # live rule does not depend on an env var being present. Rollback = set this true + restart.
+    strategy_schwab_1m_v2_cw_v2_reclaim_enabled: bool = False
     strategy_macd_30s_reclaim_excluded_symbols: str = "JEM,CYCN,BFRG,UCAR,BBGI"
     # Maximum age (seconds) for the `scanner_confirmed_last_nonempty` snapshot
     # to be eligible for startup restore. Older snapshots are skipped, so

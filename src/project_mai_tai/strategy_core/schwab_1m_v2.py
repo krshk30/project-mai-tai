@@ -445,6 +445,12 @@ class SchwabV2Strategy:
         self._cw_v2_reclaim_gap_bars = int(
             getattr(self.settings, "strategy_schwab_1m_v2_cw_v2_reclaim_gap_bars", 0) or 0
         )
+        # CW-v2 reclaim master switch (operator rule 2026-07-15: reclaim OFF, code retained).
+        # OFF -> ONE entry per BUY-flip segment; ON -> the shipped 2-per-segment reclaim.
+        self._cw_v2_reclaim_enabled = bool(
+            getattr(self.settings, "strategy_schwab_1m_v2_cw_v2_reclaim_enabled", False)
+        )
+        self._cw_v2_max_entries_per_flip = 2 if self._cw_v2_reclaim_enabled else 1
         raw_atr_probe = str(
             getattr(self.settings, "strategy_schwab_1m_v2_atr_flip_probe_symbols", "") or ""
         ).strip()
@@ -1184,7 +1190,8 @@ class SchwabV2Strategy:
     def _cw_v2_quote(self, state: SymbolState, quote: Quote) -> TradeIntentDraft | None:
         """CW-v2 intrabar entry: enter the instant a quote price breaks the frozen trigger, gated
         by rule 7 (whole forming bar above the flip level), the 09:30-10:00 ORB skip, the flat gate,
-        and the 2-per-flip reclaim cap. Cooldown is intentionally NOT gated (reclaim has no
+        and the per-flip entry cap (`_cw_v2_max_entries_per_flip`: 1 when reclaim is off — the
+        default — else the shipped 2). Cooldown is intentionally NOT gated (reclaim has no
         cooldown). No-op unless the sub-flag is on. Returns a market-buy open draft or None."""
         if not self._cw_v2_enabled:
             return None
@@ -1200,7 +1207,11 @@ class SchwabV2Strategy:
 
         if not (state.cw_armed and state.cw_bars_waited >= 2):
             return None
-        if state.position_qty != 0 or state.cw_entries_this_flip >= 2 or state.cw_v2_emit_claimed:
+        if (
+            state.position_qty != 0
+            or state.cw_entries_this_flip >= self._cw_v2_max_entries_per_flip
+            or state.cw_v2_emit_claimed
+        ):
             return None
         now_ms = int(getattr(quote, "quote_time_ms", 0) or 0)
         if now_ms <= 0:

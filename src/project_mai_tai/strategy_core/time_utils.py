@@ -42,20 +42,31 @@ US_MARKET_HOLIDAYS: frozenset[date] = frozenset(
 
 
 def is_fillable_et_session(
-    now: datetime, start_hour: int, end_hour: int
+    now: datetime,
+    start_hour: int,
+    end_hour: int,
+    *,
+    start_minute: int = 0,
+    end_minute: int = 0,
 ) -> bool:
-    """True iff `now` is a weekday, non-holiday ET day with hour in
-    [start_hour, end_hour). Whole-hour granularity: end_hour=20 blocks at
-    20:00:00 sharp, start_hour=7 allows from 07:00:00. Used as both the v2 entry
-    window (7–18) and the OMS exit fillable-session gate (7–20 = Schwab pre-market
-    fills open ~7 AM ET, after-hours fills end ~8 PM ET). Outside this window an
-    order cannot fill, so placing/refreshing one is pure churn."""
+    """True iff `now` is a weekday, non-holiday ET day inside
+    [start_hour:start_minute, end_hour:end_minute). Used as both the v2 entry window
+    (7:00–16:30) and the OMS exit fillable-session gate (7–20 = Schwab pre-market fills
+    open ~7 AM ET, after-hours fills end ~8 PM ET). Outside this window an order cannot
+    fill, so placing/refreshing one is pure churn.
+
+    The minute bounds are keyword-only and default to 0, so every whole-hour caller is
+    byte-identical to the previous `start_hour <= et.hour < end_hour` form (with
+    minute=0 the minute-of-day compare reduces to exactly that, since et.minute < 60).
+    They exist because the v2 entry window needs a :30 bound (operator rule 2026-07-14:
+    entries 7:00 AM–4:30 PM ET) and hour-only granularity cannot express it."""
     et = now.astimezone(EASTERN_TZ)
     if et.weekday() >= 5:
         return False
     if et.date() in US_MARKET_HOLIDAYS:
         return False
-    return start_hour <= et.hour < end_hour
+    now_min = et.hour * 60 + et.minute
+    return (start_hour * 60 + start_minute) <= now_min < (end_hour * 60 + end_minute)
 
 
 def now_eastern() -> datetime:
