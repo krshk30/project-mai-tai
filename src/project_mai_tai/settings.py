@@ -233,6 +233,12 @@ class Settings(BaseSettings):
     orb_window_flatten_hour_et: int = 10
     orb_window_flatten_minute_et: int = 0
     orb_window_flatten_strategies: str = "orb"   # v2 deliberately absent (different window; design 9)
+    # v2 overnight flatten (safety only): close every OMS-managed v2 position at 19:55 ET so nothing
+    # rides past the 20:00 fillable gate naked (v2 arms zero native stops). Full-qty LIMIT+session close
+    # via the existing v2 exit path (EH-fillable; a market order won't fill in AH). OFF => byte-identical.
+    oms_v2_overnight_flatten_enabled: bool = False
+    oms_v2_overnight_flatten_hour_et: int = 19
+    oms_v2_overnight_flatten_minute_et: int = 55
 
     strategy_schwab_1m_v2_enabled: bool = False
     strategy_schwab_1m_v2_bar_poll_interval_seconds: float = 15.0

@@ -326,6 +326,8 @@ class OmsRiskService:
         # P0.6 EOD flatten: (session_date_et, account, SYMBOL) already flattened, so the
         # 5s loop submits ONE close per symbol per day rather than one every tick.
         self._window_flattened: set[tuple[str, str, str]] = set()
+        # v2 overnight flatten: one close per managed v2 position per day (mirror of the ORB set).
+        self._v2_overnight_flattened: set[tuple[str, str, str]] = set()
 
     async def _run_db(self, fn, *, commit: bool = True):
         """Run a PURE-SYNC unit of DB work on a worker thread, off the event loop.
@@ -470,6 +472,14 @@ class OmsRiskService:
                     raise
                 except Exception:
                     self.logger.exception("[ORB-WINDOW-FLATTEN] sweep failed")
+                # v2 overnight flatten: close managed v2 positions at 19:55 before the 20:00 gate
+                # (v2 has no native stop). Same cadence, idempotent per symbol per day, LOUD on failure.
+                try:
+                    await self._v2_overnight_flatten()
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    self.logger.exception("[OMS-V2-OVERNIGHT-FLATTEN] sweep failed")
                 if getattr(self, "_native_guard_rearm_pending", None):
                     try:
                         await self._retry_pending_native_guard_rearms()
@@ -3056,6 +3066,68 @@ class OmsRiskService:
                     ",".join(sorted({str(i.payload.reason) for i in order_events})) or "no reason",
                 )
                 self._window_flattened.discard(key)   # allow a retry on the next 5s tick
+
+    def _v2_overnight_flatten_due(self, now: datetime | None = None) -> bool:
+        """True once the ET clock passes the v2 overnight-flatten time on a weekday. Same half-day
+        caveat as the ORB window-flatten (keep the flag OFF on half-days until the session calendar
+        lands — 19:55 is after a 13:00 close)."""
+        et = (now or datetime.now(UTC)).astimezone(SESSION_TZ)
+        if et.weekday() >= 5:
+            return False
+        hh = int(getattr(self.settings, "oms_v2_overnight_flatten_hour_et", 19))
+        mm = int(getattr(self.settings, "oms_v2_overnight_flatten_minute_et", 55))
+        return (et.hour, et.minute) >= (hh, mm)
+
+    async def _v2_overnight_flatten(self) -> None:
+        """Safety: close every OMS-managed v2 position at 19:55 ET so nothing rides past the 20:00
+        fillable gate NAKED (v2 arms zero native stops; #464 fixed the false-flat deletion, NOT the
+        clock). Drives off `_managed_v2_symbols` (OMS-owned => manual holdings invisible = scoping
+        invariant). Full-qty close via the existing v2 exit primitive (LIMIT+session, EH-fillable — a
+        market order won't fill in AH). A single close, not a resting stop => NOT the E5 oversell
+        class. Idempotent per symbol per day; LOUD + retry on failure (a failed close IS the naked
+        state). Flag-gated; OFF => never runs."""
+        if not bool(getattr(self.settings, "oms_v2_overnight_flatten_enabled", False)):
+            return
+        if not self._v2_overnight_flatten_due():
+            return
+        session_day = datetime.now(UTC).astimezone(SESSION_TZ).strftime("%Y-%m-%d")
+        close_on_fill = bool(getattr(self.settings, "oms_v2_exit_close_on_fill_enabled", True))
+        for acct, symbol in list(self._managed_v2_symbols):
+            key = (session_day, acct, symbol)
+            if key in self._v2_overnight_flattened:
+                continue
+            snapshot = await self._run_db(
+                lambda session: self._read_v2_managed_snapshot(session, acct, symbol, close_on_fill),
+                commit=False,
+            )
+            if snapshot is None:
+                self._managed_v2_symbols.discard((acct, symbol))
+                continue
+            if snapshot.dedup_active:
+                continue  # an exit order already works — the managed exit owns it
+            quote = self._latest_quotes_by_symbol.get(symbol) or {}
+            bid = float(quote.get("bid") or 0.0)
+            if bid <= 0.0:
+                # Thin AH / no bid: cannot price the EH limit. LOUD, do NOT claim -> retry next loop.
+                self.logger.error(
+                    "[OMS-V2-OVERNIGHT-FLATTEN] %s %s qty=%s NO BID — cannot place close before the "
+                    "20:00 gate; retrying. Operator action may be required.",
+                    acct, symbol, snapshot.current_quantity,
+                )
+                continue
+            self._v2_overnight_flattened.add(key)  # claim BEFORE the await (one close/symbol/day)
+            position = self._hydrate_v2_position(snapshot)
+            position.update_price(bid)
+            self.logger.info(
+                "[OMS-V2-OVERNIGHT-FLATTEN] %s %s qty=%s -> closing before the 20:00 gate "
+                "(no native stop; software fill impossible after 20:00)",
+                acct, symbol, snapshot.current_quantity,
+            )
+            await self._emit_v2_exit_on_loop(
+                acct, symbol, position, snapshot.entry_price,
+                kind="OVERNIGHT_FLATTEN", reference_price=bid, reason="V2_OVERNIGHT_FLATTEN",
+                bid=bid, close_on_fill=close_on_fill,
+            )
 
     async def _trigger_hard_stop(
         self,
