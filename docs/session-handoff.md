@@ -57,17 +57,32 @@ circular. **NEXT: re-measure ORB under the 10:00 cap (%, median-first, drop-one)
 - **Dual-broker topology audit — half-built:** `live:v2_webull` doesn't exist; harness ran once (06-24); ORB→Schwab unbuilt; ~15% of names Schwab-un-openable.
 - ★ **"The control isn't in the code — it's you noticing."** ERNA, ASTN, AGEN, LGPS — **four positions, all closed by hand.**
 
-### 👁️ TODAY'S WATCH (2026-07-16) + the 10:00 ops rules
+### 📋 2026-07-16 DAY PLAN (operator) — capture through 10:00, stop both bots ~10:01, then deploy
 
-**Markers to watch (open → 10:00):**
-- ★ **`[ORB-WINDOW-FLATTEN]` — does it FIRE at 10:00?** First-ever evidence the cap clips anything. **If it fires, the "no ORB trade ever lasted >5min ⇒ clips zero winners" stat dies on its own data.**
-- **`[SETTLE-LAG]` on Webull** — P0.2's scarce half; capture it off **ORB's first fill** (the broker that broke). Feeds the #468 settlement probe's Webull anchor.
-- **`[V2-CW-ORB-BLOCK]`** — the number you've never had (v2 declining an ORB-window name).
+**Nothing deploys before 10:01.** Let the open run, capture everything, stop the bots, clear the queue → that opens the deploy window.
+
+**① UNTIL 10:00 — CAPTURE ONLY, TOUCH NOTHING.** Four instruments produce first-ever data this morning, all before ORB's window closes (so stopping after costs nothing):
+- ★ **`[ORB-WINDOW-FLATTEN]` — does it FIRE at 10:00?** First-ever evidence the cap clips anything. **If it fires, the "no ORB trade >5min ⇒ clips zero winners" stat dies on its own data.**
+- **`[SETTLE-LAG]` on Webull — off ORB's FIRST fill.** P0.2's scarce half; the broker that broke. **This is the only window today that produces it** → the #468 probe's Webull anchor.
+- **`[V2-CW-ORB-BLOCK]`** — the number we've never had: what the blackout costs v2.
 - **`[V2-CW] ENTER` — px vs trig at 10:00** — the stale-trigger chase (#469 revert), knowingly live.
+- **Expect a chased v2 entry at 10:00 — bounded, ~25¢, one per segment. It's DATA, not an incident. DO NOT intervene.** 10:00 is a busy minute by design: ORB force-sells (WINDOW_FLATTEN) as v2's blackout lifts — different bots, different brokers, **no collision**.
 
-**⚠ 10:00 is a busy minute — expected, not a bug:** ORB **force-sells** (WINDOW_FLATTEN) at the same instant v2's entry **blackout lifts and it may chase**. Different bots, different brokers, **no collision** — but if something looks odd at **10:00:01**, that is why.
+**② ~10:01 — STOP BOTH BOTS + CLEAR THE QUEUE (this is where yesterday went wrong):**
+1. **ASSERT, don't print.** Run `ops/health/assert_fleet_flat.sh` — it **exits non-zero on any open row** and **fail-closed on any query error** (yesterday printed `virtual=0 / oms open=1` and the first number got read). `set -e` can't catch a check you never assert on.
+2. **Confirm actually flat** — BOTH `virtual_positions` AND `oms_managed_positions`, both accounts (that's what the script checks; it deliberately skips broker `account_positions` = manual holdings).
+3. **⛔ Do NOT stop the OMS if anything is held.** The OMS owns the exits. Stopping v2 while it holds is survivable (it saved ASTN); stopping the OMS is not.
+4. **Confirm no armed segments** — until P1.4 exists you can't *see* them, but **stopping the v2 process eliminates them** (in-memory state dies with it) → confirm the unit is truly `inactive`, not just flat.
+5. ⇒ **bots stopped = no armed segments = the cap reset can't fire = the deploy window opens.** The stop is about clearing armed state, not the trading.
 
-**⛔⛔ DO NOT RESTART v2 — not "restart when flat", DON'T (until P1.3 + P1.4 land).** P1.3: every OMS/v2 restart **re-issues the per-segment entry cap**, and that reset fires on **armed segments** — which exist with **no position** (so fleet-flat checks miss them) and are **invisible** (P1.4). A restart-while-flat still manufactured the CPHI loss. Flat is NOT safe here.
+**③ AFTER 10:01 — WORK ORDER:**
+1. **P1.4 — armed-segment observability. FIRST (the unblocker).** Fleet-flat checks *positions*; the cap reset fires on armed segments (no position, invisible). Until we can see them, every restart is luck. This makes the rest deployable.
+2. **P1.3 — cap reset. Design-first.** Fail-closed shape: **on boot, mark every reconstructed segment already-used** ⇒ v2 can only enter on flips *after* boot (costs a legit first entry on a pre-restart segment; can NEVER double-enter). Alternative = persist CW segment state (schema change).
+3. **Docstring fix** — one line, no behavior change (`_window_flatten_armed_stops` still argues "WHY 15:55 AND NOT 19:55" while firing at 10:00).
+4. **Tonight, off-hours/niced** (% median-first drop-one): ★ **ORB re-measure under the 10:00 cap** (with vs without — every ORB number is stale until this runs) · **#467 % re-test** (drop-one said neutral-to-positive; honest run before re-deploy) · **P4.1 % re-run** (B−A/G−A were price-weighted illusions).
+5. **Then the real work: the OCO / oversell ROOT** — one item behind two P0s. A resting protective sell reserves the shares → the software exit's market-sell is rejected oversold (NXTC ×3, live 07-14). **Fixing it unlocks v2's native stop (P0.3) AND ORB's GTC guard (P0.6).**
+
+**⛔⛔ DO NOT RESTART v2 — not "restart when flat", DON'T (until P1.3 + P1.4 land).** The cap reset fires on armed segments that exist with no position and are invisible; a restart-while-flat manufactured the CPHI loss. [[project_mai_tai_false_flat_naked_position]]
 
 ---
 
