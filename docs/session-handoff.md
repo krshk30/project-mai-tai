@@ -1,5 +1,10 @@
 # Session Handoff — ACTIVE (read this first)
 
+> **⛔⭐ OUTPUT CONSTRAINT (every study, no exceptions): report per-trade %, MEDIAN-FIRST, with a
+> drop-one. NEVER a bare dollar total.** One VEEE at $25–29 notional outweighs sixteen $1–7 names and
+> flips conclusions (violated twice 07-15 → two wrong answers). This is the single line that saves the
+> most rework. [[project_mai_tai_percentages_not_dollars]]
+
 > **This is the single entry point.** It stays small and current. Full dated history lives in
 > [`handoff-archive/`](handoff-archive/) by month. To onboard an agent: *"Read `docs/session-handoff.md`."*
 >
@@ -9,6 +14,105 @@
 >
 > **Maintenance rule:** new work appends to **Recent activity** below; monthly, roll entries older than ~2
 > weeks into [`handoff-archive/<YYYY-MM>.md`](handoff-archive/). Keep this file under ~400 lines.
+
+---
+
+## ⚠️ 2026-07-16 PRE-OPEN CORRECTIONS (operator ground-truth — READ BEFORE THE OPEN)
+
+The 07-15 EOD summary carried errors + omissions. Corrected here; fix inline as they're worked.
+
+**🟢 #471 (ORB flat-after-10:00) — DELIBERATE STRATEGY, not a closed safety fix (operator-confirmed 07-16).**
+ORB is **blank after 10:00 ET by design.** Verified code (`4507381`): at 10:00 it emits a full-qty
+`side=sell intent_type=close reason=WINDOW_FLATTEN` for every armed ORB stop ⇒ **it CLOSES the position,
+it TRUNCATES.** ⇒ **ALL ORB numbers (+11.2 / median +0.25 / win 55% / drop-top-3) PREDATE the cap and
+are STALE** — they describe a strategy that no longer runs (the edge is many scratches + ONE runner; the
+cap clips the runner — KIDZ 07-06 runner started 09:53). "No trade >5min ⇒ clips zero winners" is
+circular. **NEXT: re-measure ORB under the 10:00 cap (%, median-first, drop-one), off-hours/niced.**
+[[project_mai_tai_orb_overnight_naked]]
+- **⚠ Docstring contradiction — fix on sight (one line, no behavior change):** `_window_flatten_armed_stops`
+  still argues *"WHY 15:55 AND NOT 19:55"* in its docstring while `_window_flatten_due` fires at **10:00**.
+  A future session reads the docstring and assumes the code does 15:55 — exactly the class of thing that
+  cost an hour on 07-16. Reconcile the comment to the shipped 10:00.
+- **⚠ ORB overnight safety is now a SIDE EFFECT, not a guarantee.** The design's 15:55 WAS the safety fix
+  (flatten before the native `time_in_force=day` STOP dies at 16:00). The 10:00 cap is a *strategy* that
+  merely also closes that hole. **If this flag is ever moved later or removed, the overnight-naked exposure
+  returns SILENTLY with it.** Whoever touches `orb_window_flatten_*` is holding TWO things at once (the
+  strategy cap AND ORB's only overnight protection) — do not treat it as just a strategy knob.
+
+**Four errors in the 07-15 EOD:**
+- **#459 is DEPLOYED** (not "merged, not deployed") — EOD said deployed+self-validated; `decided_at=20:37:24.059` is in the ASTN log.
+- **Bug #3 is ANSWERED** (not "loose end / no DEFER log") — the reject arrives on the **watchdog-refresh retry chain**, a path with **no DEFER handler and no queueing**; #438's queue never had a chance.
+- **#461 floor-ratchet is REOPENED** (not "deferred") — B−A / G−A were **price-weighted illusions**; re-run in %.
+- **#464 is HALF closed** — the don't-over-correct half validated on ASTN; the **120s grace is still a GUESS, and still Schwab-anchored, not Webull.**
+
+**Missing entirely (these bite today):**
+- ★ **Stale trigger is LIVE again (#469 revert)** — **v2 will CHASE at 10:00**; today's session won't know why unless it reads this.
+- ★ **#468 settlement probe — deployed + collecting** (in neither closed nor open lists) — **needs a Webull anchor from ORB's first fill today.**
+- ★ **P1.3 cap reset on restart** — every OMS restart re-issues the per-segment entry cap; **LIVE; manufactured the CPHI loss.**
+- ★ **P1.4 armed-segment observability** — fleet-flat checks *positions*; the cap reset fires on **armed segments = invisible.**
+- **P0.4 Schwab token** — refresh_token expires **Mon 2026-07-21 07:43 ET (5 days).**
+- **#467 real status** — reverted on principle, but **drop-one says neutral-to-positive** (median unchanged; VEEE carried the whole −$7). Needs a **% re-test, then re-deploy.**
+- **Oversell/OCO hazard = ONE root under BOTH P0.3 and P0.6** — the single unlock for overnight protection on **both** bots.
+- **Mirror default fixed (in #468)** — a flag-flip can no longer fan v2 into ORB's account (landmine defused).
+- **Dual-broker topology audit — half-built:** `live:v2_webull` doesn't exist; harness ran once (06-24); ORB→Schwab unbuilt; ~15% of names Schwab-un-openable.
+- ★ **"The control isn't in the code — it's you noticing."** ERNA, ASTN, AGEN, LGPS — **four positions, all closed by hand.**
+
+### 📋 2026-07-16 DAY PLAN (operator) — capture through 10:00, stop both bots ~10:01, then deploy
+
+**Nothing deploys before 10:01.** Let the open run, capture everything, stop the bots, clear the queue → that opens the deploy window.
+
+**① UNTIL 10:00 — CAPTURE ONLY, TOUCH NOTHING.** Four instruments produce first-ever data this morning, all before ORB's window closes (so stopping after costs nothing):
+- ★ **`[ORB-WINDOW-FLATTEN]` — does it FIRE at 10:00?** First-ever evidence the cap clips anything. **If it fires, the "no ORB trade >5min ⇒ clips zero winners" stat dies on its own data.**
+- **`[SETTLE-LAG]` on Webull — off ORB's FIRST fill.** P0.2's scarce half; the broker that broke. **This is the only window today that produces it** → the #468 probe's Webull anchor.
+- **`[V2-CW-ORB-BLOCK]`** — the number we've never had: what the blackout costs v2.
+- **`[V2-CW] ENTER` — px vs trig at 10:00** — the stale-trigger chase (#469 revert), knowingly live.
+- **Expect a chased v2 entry at 10:00 — bounded, ~25¢, one per segment. It's DATA, not an incident. DO NOT intervene.** 10:00 is a busy minute by design: ORB force-sells (WINDOW_FLATTEN) as v2's blackout lifts — different bots, different brokers, **no collision**.
+
+**② ~10:01 — STOP BOTH BOTS + CLEAR THE QUEUE (this is where yesterday went wrong):**
+1. **ASSERT, don't print.** Run `ops/health/assert_fleet_flat.sh` — it **exits non-zero on any open row** and **fail-closed on any query error** (yesterday printed `virtual=0 / oms open=1` and the first number got read). `set -e` can't catch a check you never assert on.
+2. **Confirm actually flat** — BOTH `virtual_positions` AND `oms_managed_positions`, both accounts (that's what the script checks; it deliberately skips broker `account_positions` = manual holdings).
+3. **⛔ Do NOT stop the OMS if anything is held.** The OMS owns the exits. Stopping v2 while it holds is survivable (it saved ASTN); stopping the OMS is not.
+4. **Confirm no armed segments** — until P1.4 exists you can't *see* them, but **stopping the v2 process eliminates them** (in-memory state dies with it) → confirm the unit is truly `inactive`, not just flat.
+5. ⇒ **bots stopped = no armed segments = the cap reset can't fire = the deploy window opens.** The stop is about clearing armed state, not the trading.
+
+**③ AFTER 10:01 — WORK ORDER:**
+1. **P1.4 — armed-segment observability. FIRST (the unblocker).** Fleet-flat checks *positions*; the cap reset fires on armed segments (no position, invisible). Until we can see them, every restart is luck. This makes the rest deployable.
+2. **P1.3 — cap reset. Design-first.** Fail-closed shape: **on boot, mark every reconstructed segment already-used** ⇒ v2 can only enter on flips *after* boot (costs a legit first entry on a pre-restart segment; can NEVER double-enter). Alternative = persist CW segment state (schema change).
+3. **Docstring fix** — one line, no behavior change (`_window_flatten_armed_stops` still argues "WHY 15:55 AND NOT 19:55" while firing at 10:00).
+4. **Tonight, off-hours/niced** (% median-first drop-one): ★ **ORB re-measure under the 10:00 cap** (with vs without — every ORB number is stale until this runs) · **#467 % re-test** (drop-one said neutral-to-positive; honest run before re-deploy) · **P4.1 % re-run** (B−A/G−A were price-weighted illusions).
+5. **Then the real work: the OCO / oversell ROOT** — one item behind two P0s. A resting protective sell reserves the shares → the software exit's market-sell is rejected oversold (NXTC ×3, live 07-14). **Fixing it unlocks v2's native stop (P0.3) AND ORB's GTC guard (P0.6).**
+
+**⛔⛔ DO NOT RESTART v2 — not "restart when flat", DON'T (until P1.3 + P1.4 land).** The cap reset fires on armed segments that exist with no position and are invisible; a restart-while-flat manufactured the CPHI loss. [[project_mai_tai_false_flat_naked_position]]
+
+---
+
+## 📊 2026-07-16 OPEN — SESSION RESULTS (day plan executed; bots stopped 10:02 ET, deploy window open)
+
+**⭐ LEAD — RUBI: measure from `fills`, NOT markers (a future session WILL get this backwards).**
+ORB's only fill. Broker fills: **buy 2 @ 5.83 (09:31:00) → sell 2 @ 5.98 (09:37:07) = +2.57% (+$0.30 qty2), ~6-min hold. A WINNER.** The log markers LIED: `[HARD-STOP TRIGGERED] trigger=4.32 source=bid` + `LIMIT 4.26` read like a −26% disaster (I mis-called it live off the markers) — **4.32 was a bad-tick wick; the LIMIT-close refused the bad price and got 5.98** (#383/#386 doing exactly their job — **first live evidence, worth ~26% on this trade**; a market-close eats the tick). ⇒ **always pin ORB/v2 P&L from `fills` + broker stamps, never the marker** — same family as the `[OMS-V2-MANAGED-EXIT]` round-trip-timing lie.
+
+**⭐ #471 counterexample, live & same-day:** RUBI lasted **>5min AND won** — the exact category the *"no ORB trade >5min ⇒ clips zero winners"* premise denies. **The premise's claim is dead.** Nuance holds: RUBI exited 09:37 via its trail, so the flatten wouldn't have clipped it — **the cap's actual COST is still open → tonight's re-measure.**
+
+**⭐ "Below-break bound" reframe (operator): P0 entry-bug → a RE-MEASURE QUESTION.** RUBI filled 5.83 vs 6.43 break = **a 9.3% pullback bought**. Same shape as v2's stale trigger (SOBR 2.24 ← 2.63 = 15% pullback) and **P5** ("skip the spike, buy the resume"). **Three mechanisms accidentally buying dips, all framed as bugs — and "fixing" the first two would convert pullback-buyers into TOP-buyers.** n=1 each (SOBR lost, RUBI won) — not proof, but the accident and the operator's own P5 hypothesis point the same way. ⇒ **does ORB's reactive leak help or hurt? — tonight's re-measure (%, median-first, drop-one). Do NOT "fix" it on RUBI.**
+
+**The four watch instruments:**
+- `[ORB-WINDOW-FLATTEN]`: **0 all day** — no ORB position reached 10:00 → the cap was **UNTESTED** today.
+- `[SETTLE-LAG]` Webull anchor: **RUBI 0.4s** vs ERNA **≥61s** — **two orders of magnitude on n=2** ⇒ the MEDIAN will never size the 120s grace; it can only be judged on the **TAIL**. Keep collecting.
+- `[V2-CW-ORB-BLOCK]`: **ATPC** — first-ever capture (trig 3.60 frozen during the blackout).
+- `[V2-CW]` entries: **v2 took ZERO positions today — BOTH CW emits emitted-without-filling** (pinned from `fills`: no `live:schwab_1m_v2` fill for either, 0 `oms_managed_positions` rows, `pos_qty=0` after each emit). TGHL emitted 1.28 @ 09:07 (price then ran to ~1.40 — **v2 was NOT in it**); ATPC emitted 3.64/trig 3.60 (+1.1%) @ 10:01 (faded/unsubscribed 8s later). **⚠️ CORRECTION: I earlier called TGHL a "+2% v2 win" — that was an inference off the price, never a fill. v2 banked nothing.** ⇒ **RUBI (ORB) was the ONLY real-money trade today.** **🔬 PINNED: both were Schwab API-OPEN REJECTIONS** — `reject_reason: "Opening transactions for this security must be placed with a broker. Contact us"` (broker_orders, TGHL + ATPC). NOT an execution gap. See the dual-broker finding below.
+  - **⭐ LESSON (twice today): I inferred a v2 outcome from the price instead of the fill — the exact failure the RUBI lead warns against, repeated in the same document. Operator caught it. A `[V2-CW] ENTER` marker is an EMIT, not a fill; a position requires a `fills` row.** (And `[V2-CW]…ENTER` literally says "ENTER" while meaning "EMIT" — the 7th lying instrument in this arc, with `[OMS-V2-MANAGED-EXIT]` and RUBI's phantom 4.32.)
+
+**🔴 DUAL-BROKER COVERAGE GAP (real) + a CORRECTED forward-test read — pinned 2026-07-16 (queries, not inference):**
+- **v2 cannot fill the confirmed foreign-microcap universe via Schwab's API.** Buys-only, per day: **07-09 4/4 rejected 0 filled · 07-10 3/3/0 · 07-16 2/2/0** = 100% open-block-rejected on confirmed-only days (per-symbol block; those days' names all Schwab-ineligible). 07-13/14/15 were mostly US-listed → filled. **This is a real COVERAGE gap (2/3 of confirmed-days unfillable) — the dual-broker premise is live.** [[project_mai_tai_v2_real_account_routing_risk]]
+- **⚠️ CORRECTION — the forward test is NOT badly universe-biased (my earlier "structurally biased" was an OVER-CLAIM; retracted).** Live win rate is **50.0% pinned from `fills` (21W/21L, 42 rt/8d)** — real, NOT marker-phantom (settles the ⚠⚠⚠). But **apples-to-apples first-touch (SAME rule both sides): allowed 60.9% (n=48) vs rejected 66.7% (n=15) — ~6pts, within drop-one noise.** The 50-vs-67 I'd cited was a **MEASUREMENT MISMATCH** (live full-ladder-with-costs vs a best-case first-touch proxy), NOT a universe bias. Rejected names perform ~like allowed; the free-loss-filter is roughly **NEUTRAL**.
+- **The real leak is EXECUTION, not universe:** first-touch **61%** → full-ladder **50%** = the **flip + spread + latency (~11pts), on BOTH universes.** Real payoff frame (42): **avg_win +2.48% / avg_loss −4.72% → breakeven ~65.6% (NOT 72%)**; live 50% ⇒ expectancy **−1.12%/trade.** The entry edge is ~breakeven best-case; execution pushes it negative — consistent with "entry weak + the flip/−5% is the leak." *(TGHL self-correction still stands: its first-touch was STOP −5% (dip precedes run), so rejecting it saved a loss — "TGHL would've won" was an inference off the high.)*
+- **Open (not tonight):** dual-broker (route confirmed foreign names → Webull) is a **coverage** play (more marginal-quality trades), not a quality upgrade. The forward-test stopping rule is fine methodologically; the real question is the execution leak (flip/spread/latency) + the ~breakeven entry edge. Register; entry+exit execution is the root.
+
+**Stop executed clean (10:02 ET):** assert flat (twice) → `ops/health/stop_bots_and_clear_queue.sh` → **orb inactive · v2 inactive · oms ACTIVE · queue clear · capture stopped.** Deploy window open. Scripts live-validated (found+fixed a `postgresql+psycopg://` DSN-scheme bug). **Watchdog: nothing to silence** — the named `-watchdog` unit doesn't exist; fleet-health check #1 is `polygon_30s`-only; oms-liveness sees the live OMS. (Cruft to remove: the `v2_cw_first_session_watch` cron.)
+
+**Tonight (off-hours/niced, % median-first drop-one):** ORB re-measure under the 10:00 cap · the reactive-leak help-or-hurt question · #467 % re-test · P4.1 % re-run.
+
+**✅ P1.3 + P1.4 CODED — PR #475 (DRAFT, CI-green) — deploy is a SEPARATE call.** One flag `strategy_schwab_1m_v2_cw_armed_segment_safety_enabled` (default off = byte-identical). **`cw_arm_bar_ts` discriminator** (arm's flip-bar ts: reconstructed `<boot` vs live `>=boot` — race-free, continuous, no latch) + **P1.3** seed-cap of reconstructed segments (`[V2-CW-SEED-CAP]`) + **boot-hold** on `_cw_v2_quote` until self-verify sees zero reconstructed-uncapped (never releases on timeout) + **P1.4** snapshot (`cw_armed_segments`/`entries_held` + `[V2-CW-ARM]/[V2-CW-DISARM]`). 6 state-asserting tests incl the before/after acceptance test; **full unit 1208 passed, ruff clean, flag-off byte-identical.** **⏳ DEPLOY (separate, attended, fleet-down window):** merge → pull → flag on → restart v2 → **verify the after-start snapshot shows 0 `dangerous` segments (P1.3 worked), NOT flatness.** **DEFERRED follow-on (ships independently, no restart):** `ops/health/armed_segments_check` cron = the external pager for the "timeout pages" condition (fed by the snapshot).
 
 ---
 
