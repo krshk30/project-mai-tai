@@ -326,8 +326,6 @@ class OmsRiskService:
         # P0.6 EOD flatten: (session_date_et, account, SYMBOL) already flattened, so the
         # 5s loop submits ONE close per symbol per day rather than one every tick.
         self._window_flattened: set[tuple[str, str, str]] = set()
-        # v2 overnight flatten: one close per managed v2 position per day (mirror of the ORB set).
-        self._v2_overnight_flattened: set[tuple[str, str, str]] = set()
 
     async def _run_db(self, fn, *, commit: bool = True):
         """Run a PURE-SYNC unit of DB work on a worker thread, off the event loop.
@@ -3083,19 +3081,21 @@ class OmsRiskService:
         fillable gate NAKED (v2 arms zero native stops; #464 fixed the false-flat deletion, NOT the
         clock). Drives off `_managed_v2_symbols` (OMS-owned => manual holdings invisible = scoping
         invariant). Full-qty close via the existing v2 exit primitive (LIMIT+session, EH-fillable — a
-        market order won't fill in AH). A single close, not a resting stop => NOT the E5 oversell
-        class. Idempotent per symbol per day; LOUD + retry on failure (a failed close IS the naked
-        state). Flag-gated; OFF => never runs."""
+        market order won't fill in AH). A single close, not a resting stop => NOT the E5 oversell class.
+
+        RETRY-UNTIL-FILLED — there is NO per-day claim (by design). A limit that expires unfilled
+        (thin AH) leaves the position open with no working order, so the next 5s pass RE-EMITS; the
+        flatten keeps trying until it fills or the 20:00 gate closes. Double-submit is prevented by
+        `dedup_active` (a working exit order => skip) — the same guard the managed exit uses. A per-day
+        claim would silently give up on the exact naked-overnight case this exists to prevent.
+        Flag-gated; OFF => never runs. HALF-DAY: 19:55 is after a 13:00 close so there is no session
+        => the LOUD no-bid path fires, which is CORRECT (the position IS naked) — keep the flag ON."""
         if not bool(getattr(self.settings, "oms_v2_overnight_flatten_enabled", False)):
             return
         if not self._v2_overnight_flatten_due():
             return
-        session_day = datetime.now(UTC).astimezone(SESSION_TZ).strftime("%Y-%m-%d")
         close_on_fill = bool(getattr(self.settings, "oms_v2_exit_close_on_fill_enabled", True))
         for acct, symbol in list(self._managed_v2_symbols):
-            key = (session_day, acct, symbol)
-            if key in self._v2_overnight_flattened:
-                continue
             snapshot = await self._run_db(
                 lambda session: self._read_v2_managed_snapshot(session, acct, symbol, close_on_fill),
                 commit=False,
@@ -3104,18 +3104,17 @@ class OmsRiskService:
                 self._managed_v2_symbols.discard((acct, symbol))
                 continue
             if snapshot.dedup_active:
-                continue  # an exit order already works — the managed exit owns it
+                continue  # a close already works — no double-submit (re-emits when it expires)
             quote = self._latest_quotes_by_symbol.get(symbol) or {}
             bid = float(quote.get("bid") or 0.0)
             if bid <= 0.0:
-                # Thin AH / no bid: cannot price the EH limit. LOUD, do NOT claim -> retry next loop.
+                # Thin AH / no bid: cannot price the EH limit. LOUD + retry next loop (never give up).
                 self.logger.error(
                     "[OMS-V2-OVERNIGHT-FLATTEN] %s %s qty=%s NO BID — cannot place close before the "
                     "20:00 gate; retrying. Operator action may be required.",
                     acct, symbol, snapshot.current_quantity,
                 )
                 continue
-            self._v2_overnight_flattened.add(key)  # claim BEFORE the await (one close/symbol/day)
             position = self._hydrate_v2_position(snapshot)
             position.update_price(bid)
             self.logger.info(

@@ -142,25 +142,47 @@ async def test_before_time_no_flatten():
 
 
 @pytest.mark.asyncio
-async def test_no_bid_loud_and_not_claimed():
+async def test_no_bid_loud_no_emit():
     sf = _make_sf()
     svc = _svc(sf)
     _arm(svc, sf)                  # armed, but NO quote => no bid
     _force_due(svc)
     await svc._v2_overnight_flatten()
-    assert _sell_intents(sf) == []                 # cannot place — no emit
-    assert svc._v2_overnight_flattened == set()    # claim NOT held => retries next loop
+    assert _sell_intents(sf) == []                 # cannot place — no emit; retries next loop
 
 
 @pytest.mark.asyncio
-async def test_idempotent_one_close_per_day():
+async def test_retries_when_close_does_not_fill():
+    """THE bug fix: a close that expires unfilled leaves the position OPEN, so the next pass
+    RE-EMITS (there is no per-day claim). The bug was claim-on-emit => one attempt, then silent
+    give-up while the position rides overnight naked."""
+    sf = _make_sf()
+    svc = _svc(sf)
+    _arm(svc, sf, qty=100)
+    _quote(svc, bid=9.80)
+    _force_due(svc)
+    calls: list[str] = []
+
+    async def _noop_emit(acct, symbol, position, entry_price, **kw):
+        calls.append(kw.get("reason", ""))   # emit attempted; position stays OPEN (no fill)
+
+    svc._emit_v2_exit_on_loop = _noop_emit
+    await svc._v2_overnight_flatten()
+    await svc._v2_overnight_flatten()            # still open, no working order => RE-EMIT
+    assert calls == ["V2_OVERNIGHT_FLATTEN", "V2_OVERNIGHT_FLATTEN"]   # retried, not given up
+
+
+@pytest.mark.asyncio
+async def test_no_double_submit_when_closed():
+    """Double-submit is prevented not by a claim but by the real mechanism: the first close fills
+    (close_on_fill) and closes the row, so the second pass reads None and does not re-emit."""
     sf = _make_sf()
     svc = _svc(sf)
     _arm(svc, sf, qty=100)
     _quote(svc, bid=9.80)
     _force_due(svc)
     await svc._v2_overnight_flatten()
-    await svc._v2_overnight_flatten()              # second pass same day
+    await svc._v2_overnight_flatten()              # position now closed => no second emit
     assert len(_sell_intents(sf)) == 1
 
 

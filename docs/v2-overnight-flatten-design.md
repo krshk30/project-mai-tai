@@ -50,11 +50,14 @@ EH fillability (§2), which does not change the non-reserving property.
 ## 5. Failure must be LOUD (the #471 rule)
 
 A flatten that fails is exactly the naked state it exists to prevent. So:
-- **No fresh bid to price the limit** (thin AH) ⇒ log at **error**, **release the idempotency claim**,
-  retry each loop until 20:00. If still unfilled at 20:00 ⇒ **ntfy** (the operator noticing is the
-  current control that has worked). Do NOT treat a failed/unfilled close as flat.
-- **Dedup guard:** if an exit order already works for the symbol (`snapshot.dedup_active`), do NOT
-  re-emit — the managed exit already has it.
+- **No fresh bid to price the limit** (thin AH) ⇒ log at **error** and **retry each loop until 20:00**.
+  If still unfilled at 20:00 ⇒ **ntfy** (the operator noticing is the current control that has worked).
+  Do NOT treat a failed/unfilled close as flat.
+- **⭐ NO per-day claim (retry-until-filled).** The double-submit job is done entirely by
+  `snapshot.dedup_active` — a working exit order ⇒ skip. **A per-day claim (claimed on emit) would
+  silently give up the moment a limit expires unfilled** (position still open, no working order) — the
+  exact naked-overnight case this exists to prevent. So there is no claim: an expired-unfilled close
+  simply re-emits on the next pass.
 - Log `[OMS-V2-OVERNIGHT-FLATTEN] sym qty -> closing (gate closes 20:00)` per symbol.
 
 ## 6. Sketch (grounded in `_evaluate_v2_managed_exit`)
@@ -64,16 +67,13 @@ A flatten that fails is exactly the naked state it exists to prevent. So:
     async def _v2_overnight_flatten():
         if not settings.oms_v2_overnight_flatten_enabled: return
         if not _v2_overnight_flatten_due(): return
-        for (acct, symbol) in list(self._managed_v2_symbols):
-            key = (session_day, acct, symbol)
-            if key in self._v2_overnight_flattened: continue
+        for (acct, symbol) in list(self._managed_v2_symbols):   # NO per-day claim => retry-until-filled
             snapshot = await _run_db(read_v2_managed_snapshot(acct, symbol))   # None => no open row
             if snapshot is None: self._managed_v2_symbols.discard((acct,symbol)); continue
-            if snapshot.dedup_active: continue          # an exit already works
+            if snapshot.dedup_active: continue          # a close already works -> no double-submit
             quote = self._latest_quotes_by_symbol.get(symbol); bid = float(quote.get("bid") or 0)
             if bid <= 0:                                  # can't price the EH limit -> LOUD, retry
                 log.error("[OMS-V2-OVERNIGHT-FLATTEN] %s no bid, cannot place — retrying", symbol); continue
-            self._v2_overnight_flattened.add(key)         # claim BEFORE the await (one/symbol/day)
             position = self._hydrate_v2_position(snapshot); position.update_price(bid)
             await self._emit_v2_exit_on_loop(acct, symbol, position, snapshot.entry_price,
                 kind="overnight_flatten", reference_price=bid, reason="V2_OVERNIGHT_FLATTEN",
