@@ -1,5 +1,10 @@
 # Session Handoff — ACTIVE (read this first)
 
+> **⛔⭐ OUTPUT CONSTRAINT (every study, no exceptions): report per-trade %, MEDIAN-FIRST, with a
+> drop-one. NEVER a bare dollar total.** One VEEE at $25–29 notional outweighs sixteen $1–7 names and
+> flips conclusions (violated twice 07-15 → two wrong answers). This is the single line that saves the
+> most rework. [[project_mai_tai_percentages_not_dollars]]
+
 > **This is the single entry point.** It stays small and current. Full dated history lives in
 > [`handoff-archive/`](handoff-archive/) by month. To onboard an agent: *"Read `docs/session-handoff.md`."*
 >
@@ -9,6 +14,39 @@
 >
 > **Maintenance rule:** new work appends to **Recent activity** below; monthly, roll entries older than ~2
 > weeks into [`handoff-archive/<YYYY-MM>.md`](handoff-archive/). Keep this file under ~400 lines.
+
+---
+
+## ⚠️ 2026-07-16 PRE-OPEN CORRECTIONS (operator ground-truth — READ BEFORE THE OPEN)
+
+The 07-15 EOD summary carried errors + omissions. Corrected here; fix inline as they're worked.
+
+**🟢 #471 (ORB flat-after-10:00) — DELIBERATE STRATEGY, not a closed safety fix (operator-confirmed 07-16).**
+ORB is **blank after 10:00 ET by design.** Verified code (`4507381`): at 10:00 it emits a full-qty
+`side=sell intent_type=close reason=WINDOW_FLATTEN` for every armed ORB stop ⇒ **it CLOSES the position,
+it TRUNCATES.** ⇒ **ALL ORB numbers (+11.2 / median +0.25 / win 55% / drop-top-3) PREDATE the cap and
+are STALE** — they describe a strategy that no longer runs (the edge is many scratches + ONE runner; the
+cap clips the runner — KIDZ 07-06 runner started 09:53). "No trade >5min ⇒ clips zero winners" is
+circular. **NEXT: re-measure ORB under the 10:00 cap (%, median-first, drop-one), off-hours/niced.**
+[[project_mai_tai_orb_overnight_naked]]
+
+**Four errors in the 07-15 EOD:**
+- **#459 is DEPLOYED** (not "merged, not deployed") — EOD said deployed+self-validated; `decided_at=20:37:24.059` is in the ASTN log.
+- **Bug #3 is ANSWERED** (not "loose end / no DEFER log") — the reject arrives on the **watchdog-refresh retry chain**, a path with **no DEFER handler and no queueing**; #438's queue never had a chance.
+- **#461 floor-ratchet is REOPENED** (not "deferred") — B−A / G−A were **price-weighted illusions**; re-run in %.
+- **#464 is HALF closed** — the don't-over-correct half validated on ASTN; the **120s grace is still a GUESS, and still Schwab-anchored, not Webull.**
+
+**Missing entirely (these bite today):**
+- ★ **Stale trigger is LIVE again (#469 revert)** — **v2 will CHASE at 10:00**; today's session won't know why unless it reads this.
+- ★ **#468 settlement probe — deployed + collecting** (in neither closed nor open lists) — **needs a Webull anchor from ORB's first fill today.**
+- ★ **P1.3 cap reset on restart** — every OMS restart re-issues the per-segment entry cap; **LIVE; manufactured the CPHI loss.**
+- ★ **P1.4 armed-segment observability** — fleet-flat checks *positions*; the cap reset fires on **armed segments = invisible.**
+- **P0.4 Schwab token** — refresh_token expires **Mon 2026-07-21 07:43 ET (5 days).**
+- **#467 real status** — reverted on principle, but **drop-one says neutral-to-positive** (median unchanged; VEEE carried the whole −$7). Needs a **% re-test, then re-deploy.**
+- **Oversell/OCO hazard = ONE root under BOTH P0.3 and P0.6** — the single unlock for overnight protection on **both** bots.
+- **Mirror default fixed (in #468)** — a flag-flip can no longer fan v2 into ORB's account (landmine defused).
+- **Dual-broker topology audit — half-built:** `live:v2_webull` doesn't exist; harness ran once (06-24); ORB→Schwab unbuilt; ~15% of names Schwab-un-openable.
+- ★ **"The control isn't in the code — it's you noticing."** ERNA, ASTN, AGEN, LGPS — **four positions, all closed by hand.**
 
 ---
 
