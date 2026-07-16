@@ -2947,9 +2947,9 @@ class OmsRiskService:
         """True once the ET clock has passed the flatten time on a real trading day.
 
         Weekday/holiday handling comes from the LIVE session helper, not a wall-clock guess.
-        KNOWN LIMIT: a half-day (13:00 close) is NOT modelled -- on those days 15:55 is after the
-        close and the flatten would fire into a closed market. Tracked in the design; the flag
-        should stay off on half-days until the session calendar lands.
+        Flatten time is config (`orb_window_flatten_hour_et`/`_minute_et`, default 10:00 ET). At
+        10:00 the half-day (13:00 close) problem is MOOT -- 10:00 is well within RTH on both full and
+        half days, so the flatten always fires into a live, liquid market.
         """
         et = (now or datetime.now(UTC)).astimezone(SESSION_TZ)
         if et.weekday() >= 5:
@@ -2968,9 +2968,12 @@ class OmsRiskService:
         fill and the suspenders have expired. It has happened three times in three weeks (ERNA 07-15,
         AGEN + LGPS 07-13) and every one was closed by hand.
 
-        WHY 15:55 AND NOT 19:55: the naive read is "flatten before the 20:00 gate shuts". Wrong --
-        the native stop is already gone at 16:00, so 16:00-20:00 is unprotected AND illiquid.
-        15:55 exits while the native stop is still a live backstop and RTH liquidity is best.
+        WHY 10:00 (config `orb_window_flatten_*`): ORB trades the 09:30-10:00 opening range and is
+        BLANK after 10:00 BY DESIGN -- a deliberate strategy cap (operator-owned), not merely a
+        protection window. It closes the overnight-naked hole for free: nothing rides past 10:00, so
+        the expired-native-stop / illiquid-16:00-20:00 gap is never reached. (An earlier draft argued
+        15:55 to beat the RTH-only native stop; the data killed it -- no ORB trade ever lasted >5 min,
+        and holding past 10:00 = a broken exit, not a winner.)
 
         WHY OFF `_armed_hard_stops`: that registry is OMS-owned BY CONSTRUCTION (a stop arms only
         from a fill on an intent the OMS placed), so the scoping invariant holds for free -- a manual
