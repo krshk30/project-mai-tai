@@ -29,6 +29,15 @@ are STALE** — they describe a strategy that no longer runs (the edge is many s
 cap clips the runner — KIDZ 07-06 runner started 09:53). "No trade >5min ⇒ clips zero winners" is
 circular. **NEXT: re-measure ORB under the 10:00 cap (%, median-first, drop-one), off-hours/niced.**
 [[project_mai_tai_orb_overnight_naked]]
+- **⚠ Docstring contradiction — fix on sight (one line, no behavior change):** `_window_flatten_armed_stops`
+  still argues *"WHY 15:55 AND NOT 19:55"* in its docstring while `_window_flatten_due` fires at **10:00**.
+  A future session reads the docstring and assumes the code does 15:55 — exactly the class of thing that
+  cost an hour on 07-16. Reconcile the comment to the shipped 10:00.
+- **⚠ ORB overnight safety is now a SIDE EFFECT, not a guarantee.** The design's 15:55 WAS the safety fix
+  (flatten before the native `time_in_force=day` STOP dies at 16:00). The 10:00 cap is a *strategy* that
+  merely also closes that hole. **If this flag is ever moved later or removed, the overnight-naked exposure
+  returns SILENTLY with it.** Whoever touches `orb_window_flatten_*` is holding TWO things at once (the
+  strategy cap AND ORB's only overnight protection) — do not treat it as just a strategy knob.
 
 **Four errors in the 07-15 EOD:**
 - **#459 is DEPLOYED** (not "merged, not deployed") — EOD said deployed+self-validated; `decided_at=20:37:24.059` is in the ASTN log.
@@ -47,6 +56,18 @@ circular. **NEXT: re-measure ORB under the 10:00 cap (%, median-first, drop-one)
 - **Mirror default fixed (in #468)** — a flag-flip can no longer fan v2 into ORB's account (landmine defused).
 - **Dual-broker topology audit — half-built:** `live:v2_webull` doesn't exist; harness ran once (06-24); ORB→Schwab unbuilt; ~15% of names Schwab-un-openable.
 - ★ **"The control isn't in the code — it's you noticing."** ERNA, ASTN, AGEN, LGPS — **four positions, all closed by hand.**
+
+### 👁️ TODAY'S WATCH (2026-07-16) + the 10:00 ops rules
+
+**Markers to watch (open → 10:00):**
+- ★ **`[ORB-WINDOW-FLATTEN]` — does it FIRE at 10:00?** First-ever evidence the cap clips anything. **If it fires, the "no ORB trade ever lasted >5min ⇒ clips zero winners" stat dies on its own data.**
+- **`[SETTLE-LAG]` on Webull** — P0.2's scarce half; capture it off **ORB's first fill** (the broker that broke). Feeds the #468 settlement probe's Webull anchor.
+- **`[V2-CW-ORB-BLOCK]`** — the number you've never had (v2 declining an ORB-window name).
+- **`[V2-CW] ENTER` — px vs trig at 10:00** — the stale-trigger chase (#469 revert), knowingly live.
+
+**⚠ 10:00 is a busy minute — expected, not a bug:** ORB **force-sells** (WINDOW_FLATTEN) at the same instant v2's entry **blackout lifts and it may chase**. Different bots, different brokers, **no collision** — but if something looks odd at **10:00:01**, that is why.
+
+**⛔⛔ DO NOT RESTART v2 — not "restart when flat", DON'T (until P1.3 + P1.4 land).** P1.3: every OMS/v2 restart **re-issues the per-segment entry cap**, and that reset fires on **armed segments** — which exist with **no position** (so fleet-flat checks miss them) and are **invisible** (P1.4). A restart-while-flat still manufactured the CPHI loss. Flat is NOT safe here.
 
 ---
 
