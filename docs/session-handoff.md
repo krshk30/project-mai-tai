@@ -110,7 +110,9 @@ ORB's only fill. Broker fills: **buy 2 @ 5.83 (09:31:00) → sell 2 @ 5.98 (09:3
 
 **Stop executed clean (10:02 ET):** assert flat (twice) → `ops/health/stop_bots_and_clear_queue.sh` → **orb inactive · v2 inactive · oms ACTIVE · queue clear · capture stopped.** Deploy window open. Scripts live-validated (found+fixed a `postgresql+psycopg://` DSN-scheme bug). **Watchdog: nothing to silence** — the named `-watchdog` unit doesn't exist; fleet-health check #1 is `polygon_30s`-only; oms-liveness sees the live OMS. (Cruft to remove: the `v2_cw_first_session_watch` cron.)
 
-**Tonight (off-hours/niced, % median-first drop-one):** ORB re-measure under the 10:00 cap · the reactive-leak help-or-hurt question · #467 % re-test · P4.1 % re-run. **Next work now: P1.4 armed-segment observability (design-first, the unblocker).**
+**Tonight (off-hours/niced, % median-first drop-one):** ORB re-measure under the 10:00 cap · the reactive-leak help-or-hurt question · #467 % re-test · P4.1 % re-run.
+
+**✅ P1.3 + P1.4 CODED — PR #475 (DRAFT, CI-green) — deploy is a SEPARATE call.** One flag `strategy_schwab_1m_v2_cw_armed_segment_safety_enabled` (default off = byte-identical). **`cw_arm_bar_ts` discriminator** (arm's flip-bar ts: reconstructed `<boot` vs live `>=boot` — race-free, continuous, no latch) + **P1.3** seed-cap of reconstructed segments (`[V2-CW-SEED-CAP]`) + **boot-hold** on `_cw_v2_quote` until self-verify sees zero reconstructed-uncapped (never releases on timeout) + **P1.4** snapshot (`cw_armed_segments`/`entries_held` + `[V2-CW-ARM]/[V2-CW-DISARM]`). 6 state-asserting tests incl the before/after acceptance test; **full unit 1208 passed, ruff clean, flag-off byte-identical.** **⏳ DEPLOY (separate, attended, fleet-down window):** merge → pull → flag on → restart v2 → **verify the after-start snapshot shows 0 `dangerous` segments (P1.3 worked), NOT flatness.** **DEFERRED follow-on (ships independently, no restart):** `ops/health/armed_segments_check` cron = the external pager for the "timeout pages" condition (fed by the snapshot).
 
 ---
 
