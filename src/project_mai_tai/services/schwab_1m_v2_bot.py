@@ -666,9 +666,39 @@ class SchwabV2BotService:
                         exc = None
                 self._loop_health.mark_task_died(name, exc=exc)
 
+    def _cw_boot_hold_check(self) -> None:
+        """Boot-hold self-verify (P1.3+P1.4). Runs each state-publish cycle. RELEASES entries once
+        there are zero reconstructed-uncapped ('dangerous') segments; RE-HOLDS + logs at error if a
+        dangerous segment ever appears (a P1.3 miss — this is what "the self-check catches P1.3
+        failing" means). Never releases on a timeout: if dangerous persists it stays held. The
+        external `armed_segments_check` cron does the paging off the published snapshot (dangerous
+        present, entries_held too long, or snapshot stale). The bar-ts discriminator makes this safe
+        to run continuously — a live post-boot flip is never counted dangerous."""
+        strat = self.strategy
+        if not getattr(strat, "_cw_armed_segment_safety_enabled", False):
+            return
+        dangerous = [s for s in strat.cw_armed_segments() if s["dangerous"]]
+        if not dangerous:
+            if strat._entries_held:
+                strat._entries_held = False
+                logger.info(
+                    "[V2-BOOT-HOLD] released — 0 reconstructed-uncapped segments; CW-v2 entries open"
+                )
+            return
+        if not strat._entries_held:
+            strat._entries_held = True
+        logger.error(
+            "[V2-BOOT-HOLD] HELD — reconstructed-uncapped segment(s) survived P1.3: %s "
+            "(CW-v2 entries suppressed; armed_segments_check will page)",
+            ",".join(
+                f"{s['symbol']}(n={s['entries_this_flip']}/{s['max_entries']})" for s in dangerous
+            ),
+        )
+
     async def _publish_bot_state(self) -> None:
         if self.redis is None:
             return
+        self._cw_boot_hold_check()
         payload = StrategyBotStatePayload(
             strategy_code=STRATEGY_CODE,
             account_name=self.settings.strategy_schwab_1m_v2_account_name,
@@ -686,6 +716,8 @@ class SchwabV2BotService:
             indicator_snapshots=[],
             bar_counts=dict(self._bar_counts),
             last_tick_at=dict(self._last_tick_at),
+            cw_armed_segments=self.strategy.cw_armed_segments(),
+            entries_held=bool(getattr(self.strategy, "_entries_held", False)),
         )
         event = IsolatedBotStateEvent(source_service=SERVICE_NAME, payload=payload)
         await self.redis.xadd(
@@ -1233,6 +1265,24 @@ class SchwabV2BotService:
         st.pending_path_macd = False
         st.pending_path_vwap = False
         st.pending_cross_bar_ts_ms = 0
+        # P1.3: a CW-v2 segment reconstructed by this replay carries a historical arm_bar_ts (< boot).
+        # Mark it USED so v2 can only enter on flips AFTER boot — a restart can never re-issue the
+        # per-segment cap (the CPHI class). Flag-gated; costs one legit first-entry on a pre-restart
+        # segment (fail-closed). The boot-hold self-verify catches this failing (segment stays
+        # dangerous => held + paged).
+        if getattr(self.strategy, "_cw_armed_segment_safety_enabled", False):
+            max_e = self.strategy._cw_v2_max_entries_per_flip
+            if (
+                st.cw_armed
+                and 0 < st.cw_arm_bar_ts < self.strategy._boot_ms
+                and st.cw_entries_this_flip < max_e
+            ):
+                st.cw_entries_this_flip = max_e
+                logger.info(
+                    "[V2-CW-SEED-CAP] %s reconstructed armed segment capped "
+                    "(entries->%d, arm_bar_ts=%d)",
+                    symbol, max_e, st.cw_arm_bar_ts,
+                )
         logger.info(
             "schwab_1m_v2 db-seed: %s hydrated %d bars (state.bars=%d)",
             symbol,

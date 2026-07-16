@@ -186,6 +186,11 @@ class StrategyBotStatePayload(BaseModel):
     indicator_snapshots: list[dict[str, Any]] = Field(default_factory=list)
     bar_counts: dict[str, int] = Field(default_factory=dict)
     last_tick_at: dict[str, str] = Field(default_factory=dict)
+    # P1.4 armed-segment observability (default-empty => backward-compatible): every currently-armed
+    # CW-v2 segment + entries_held gate. `dangerous` (reconstructed & uncapped) is the boot-hold/P1.3
+    # signal the armed_segments_check cron pages on.
+    cw_armed_segments: list[dict[str, Any]] = Field(default_factory=list)
+    entries_held: bool = False
 
 
 class StrategyStateSnapshotPayload(BaseModel):
