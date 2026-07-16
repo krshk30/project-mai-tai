@@ -78,6 +78,6 @@ echo ""
 echo "----"
 echo "✅✅ DONE: ORB + v2 stopped & inactive · OMS still up · intent queue cleared."
 echo "   No armed segments exist → the cap reset can't fire → the DEPLOY WINDOW IS OPEN."
-echo "   ⚠ The v2 watchdog ($V2_UNIT-watchdog) will now report stalled_rth — EXPECTED while down (stop it if the RED noise bothers you; restart it with v2)."
+echo "   ✔ Nothing pages on the down bots (verified 2026-07-16): oms-liveness watches the OMS (still up); fleet-health check#1 is polygon_30s-only. There is NO v2 -watchdog unit — no RED to silence."
 echo "   ⛔ Do NOT restart v2 until P1.3 + P1.4 land."
 exit 0
