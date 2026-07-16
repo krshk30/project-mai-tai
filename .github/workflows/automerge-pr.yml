@@ -19,16 +19,11 @@ permissions:
 
 jobs:
   auto_merge:
-    if: |
-      (github.event_name == 'workflow_run' &&
-       github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.event == 'pull_request') ||
-      (github.event_name == 'pull_request_target' &&
-       (
-         github.event.action == 'ready_for_review' ||
-         github.event.action == 'unlabeled' ||
-         github.event.action == 'labeled'
-       ))
+    # DISABLED 2026-07-16 (operator): the default (opt-OUT) auto-merge merged live-money entry-gate
+    # PRs (#467/#475/+1) into main on green despite "don't apply" -- a general green read as a
+    # specific go. Merges into main are now MANUAL. To re-enable, restore the condition below from
+    # git history; to make it opt-IN instead, gate `maybeMerge` on an explicit `auto-merge` label.
+    if: false
     runs-on: ubuntu-latest
     steps:
       - name: Merge eligible PR
