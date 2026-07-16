@@ -434,6 +434,12 @@ class Settings(BaseSettings):
     # it is a deliberate behaviour change the operator asked for, shipped as the default so the
     # live rule does not depend on an env var being present. Rollback = set this true + restart.
     strategy_schwab_1m_v2_cw_v2_reclaim_enabled: bool = False
+    # P1.3 + P1.4 armed-segment safety (ONE flag gates the boot-mark AND the boot-hold; they are one
+    # change). ON: reconstructed CW-v2 segments are capped on db-seed so a restart can't re-issue the
+    # per-segment entry cap (the CPHI class), CW-v2 entries are held on boot until a self-verify
+    # confirms zero reconstructed-uncapped segments, and the armed segments are published for the
+    # armed_segments_check cron. OFF => byte-identical (no marking, no hold, no snapshot field).
+    strategy_schwab_1m_v2_cw_armed_segment_safety_enabled: bool = False
     strategy_macd_30s_reclaim_excluded_symbols: str = "JEM,CYCN,BFRG,UCAR,BBGI"
     # Maximum age (seconds) for the `scanner_confirmed_last_nonempty` snapshot
     # to be eligible for startup restore. Older snapshots are skipped, so

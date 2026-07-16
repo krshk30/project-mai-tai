@@ -212,6 +212,10 @@ class SymbolState:
     cw_v2_emit_claimed: bool = False            # dedup between an intrabar emit and its fill/close
     cw_v2_emit_ms: int = 0                      # wall-clock of the last v2 emit (no-fill release)
     cw_v2_bars_since_exit: int = 0              # NEW bars since the prior exit (reclaim gap; 0=just exited)
+    cw_arm_bar_ts: int = 0                      # ms-UTC of the flip bar that armed this segment. P1.3/P1.4
+    #                                            discriminator: arm_ts < boot => RECONSTRUCTED (mark used);
+    #                                            arm_ts >= boot => a LIVE post-boot flip (legit). Race-free
+    #                                            by construction — no wall-clock, no latch.
 
 
 @dataclass
@@ -452,6 +456,21 @@ class SchwabV2Strategy:
             getattr(self.settings, "strategy_schwab_1m_v2_cw_v2_reclaim_enabled", False)
         )
         self._cw_v2_max_entries_per_flip = 2 if self._cw_v2_reclaim_enabled else 1
+        # P1.3 + P1.4 armed-segment safety — ONE flag gates BOTH the boot-mark (P1.3) and the
+        # boot-hold (they are one change; splitting them creates a cell where the hold reads every
+        # reconstructed segment as dangerous and holds forever). OFF => byte-identical.
+        self._cw_armed_segment_safety_enabled = bool(
+            getattr(
+                self.settings,
+                "strategy_schwab_1m_v2_cw_armed_segment_safety_enabled",
+                False,
+            )
+        )
+        # Boot-hold: hold ALL CW-v2 entries until the bot's one-time verify confirms zero
+        # RECONSTRUCTED-uncapped segments; released by the bot, or held+paged on timeout (never
+        # released silently). `_boot_ms` is the reconstructed-vs-live discriminator reference.
+        self._boot_ms = int(datetime.now(UTC).timestamp() * 1000)
+        self._entries_held = self._cw_armed_segment_safety_enabled
         raw_atr_probe = str(
             getattr(self.settings, "strategy_schwab_1m_v2_atr_flip_probe_symbols", "") or ""
         ).strip()
@@ -1177,9 +1196,20 @@ class SchwabV2Strategy:
             fl = atr_signal.get("flip_level")
             state.cw_flip_level = float(fl) if fl is not None else 0.0
             state.cw_entries_this_flip = 0
+            if self._cw_armed_segment_safety_enabled:
+                # Stamp the arm with the FLIP BAR's ts (not wall-clock): a reconstructed arm carries
+                # a persisted historical ts (< boot); a live flip carries the current bar ts (>= boot).
+                state.cw_arm_bar_ts = int(state.bars[-1].timestamp_ms)
+                logger.info(
+                    "[V2-CW-ARM] %s armed bar_ts=%d trig=%.4f flip_level=%.4f",
+                    state.symbol, state.cw_arm_bar_ts, state.cw_trigger, state.cw_flip_level,
+                )
             return
         if flip == "SELL":
+            if self._cw_armed_segment_safety_enabled and state.cw_armed:
+                logger.info("[V2-CW-DISARM] %s reason=flip", state.symbol)
             state.cw_armed = False   # segment over (also the flip-close EXIT path)
+            state.cw_arm_bar_ts = 0
             return
         if not state.cw_armed:
             return
@@ -1196,6 +1226,11 @@ class SchwabV2Strategy:
         default — else the shipped 2). Cooldown is intentionally NOT gated (reclaim has no
         cooldown). No-op unless the sub-flag is on. Returns a market-buy open draft or None."""
         if not self._cw_v2_enabled:
+            return None
+        if self._entries_held:
+            # Boot-hold (P1.3+P1.4): suppress ALL entries until the bot's one-time verify confirms
+            # zero reconstructed-uncapped segments and releases. Never releases here; the bot owns
+            # release + the timeout page. Detection of a P1.3 miss is the bot's verify, not per-quote.
             return None
         px = float(getattr(quote, "last_price", 0.0) or 0.0)
         if px <= 0.0:
@@ -1276,6 +1311,34 @@ class SchwabV2Strategy:
                 "strategy_version": STRATEGY_VERSION,
             },
         )
+
+    def cw_armed_segments(self) -> list[dict]:
+        """Read-only snapshot of every currently-armed CW-v2 segment (P1.3/P1.4 observability).
+
+        `reconstructed` = armed by a bar predating this process's boot (arm_bar_ts < boot) — a
+        DB-seed replay, not a live flip. `dangerous` = a reconstructed segment not yet capped (the
+        exact state P1.3 must eliminate and the boot-hold must not release over). The
+        reconstructed-vs-live split is by the arm bar's timestamp, so a live post-boot flip
+        (arm_bar_ts >= boot) is NEVER counted dangerous — the discriminator that makes this
+        continuous and race-free."""
+        max_e = self._cw_v2_max_entries_per_flip
+        out: list[dict] = []
+        for sym, st in self._symbol_states.items():
+            if not st.cw_armed:
+                continue
+            reconstructed = 0 < st.cw_arm_bar_ts < self._boot_ms
+            out.append(
+                {
+                    "symbol": sym,
+                    "arm_bar_ts": int(st.cw_arm_bar_ts),
+                    "entries_this_flip": int(st.cw_entries_this_flip),
+                    "max_entries": int(max_e),
+                    "capped": st.cw_entries_this_flip >= max_e,
+                    "reconstructed": reconstructed,
+                    "dangerous": reconstructed and st.cw_entries_this_flip < max_e,
+                }
+            )
+        return out
 
     # ------------------------------------------------------------- evaluate
 
