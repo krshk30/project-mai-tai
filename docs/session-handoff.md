@@ -86,6 +86,27 @@ circular. **NEXT: re-measure ORB under the 10:00 cap (%, median-first, drop-one)
 
 ---
 
+## 📊 2026-07-16 OPEN — SESSION RESULTS (day plan executed; bots stopped 10:02 ET, deploy window open)
+
+**⭐ LEAD — RUBI: measure from `fills`, NOT markers (a future session WILL get this backwards).**
+ORB's only fill. Broker fills: **buy 2 @ 5.83 (09:31:00) → sell 2 @ 5.98 (09:37:07) = +2.57% (+$0.30 qty2), ~6-min hold. A WINNER.** The log markers LIED: `[HARD-STOP TRIGGERED] trigger=4.32 source=bid` + `LIMIT 4.26` read like a −26% disaster (I mis-called it live off the markers) — **4.32 was a bad-tick wick; the LIMIT-close refused the bad price and got 5.98** (#383/#386 doing exactly their job — **first live evidence, worth ~26% on this trade**; a market-close eats the tick). ⇒ **always pin ORB/v2 P&L from `fills` + broker stamps, never the marker** — same family as the `[OMS-V2-MANAGED-EXIT]` round-trip-timing lie.
+
+**⭐ #471 counterexample, live & same-day:** RUBI lasted **>5min AND won** — the exact category the *"no ORB trade >5min ⇒ clips zero winners"* premise denies. **The premise's claim is dead.** Nuance holds: RUBI exited 09:37 via its trail, so the flatten wouldn't have clipped it — **the cap's actual COST is still open → tonight's re-measure.**
+
+**⭐ "Below-break bound" reframe (operator): P0 entry-bug → a RE-MEASURE QUESTION.** RUBI filled 5.83 vs 6.43 break = **a 9.3% pullback bought**. Same shape as v2's stale trigger (SOBR 2.24 ← 2.63 = 15% pullback) and **P5** ("skip the spike, buy the resume"). **Three mechanisms accidentally buying dips, all framed as bugs — and "fixing" the first two would convert pullback-buyers into TOP-buyers.** n=1 each (SOBR lost, RUBI won) — not proof, but the accident and the operator's own P5 hypothesis point the same way. ⇒ **does ORB's reactive leak help or hurt? — tonight's re-measure (%, median-first, drop-one). Do NOT "fix" it on RUBI.**
+
+**The four watch instruments:**
+- `[ORB-WINDOW-FLATTEN]`: **0 all day** — no ORB position reached 10:00 → the cap was **UNTESTED** today.
+- `[SETTLE-LAG]` Webull anchor: **RUBI 0.4s** vs ERNA **≥61s** — **two orders of magnitude on n=2** ⇒ the MEDIAN will never size the 120s grace; it can only be judged on the **TAIL**. Keep collecting.
+- `[V2-CW-ORB-BLOCK]`: **ATPC** — first-ever capture (trig 3.60 frozen during the blackout).
+- `[V2-CW]` 10:00 stale-trigger chase: ATPC **emitted at 3.64/trig 3.60 (+1.1%) but NEVER FILLED** (faded/unsubscribed 8s later) — chase reproduced, no capital committed. Also v2 banked **TGHL** (in 1.28 @ 09:07 → ran ~1.40).
+
+**Stop executed clean (10:02 ET):** assert flat (twice) → `ops/health/stop_bots_and_clear_queue.sh` → **orb inactive · v2 inactive · oms ACTIVE · queue clear · capture stopped.** Deploy window open. Scripts live-validated (found+fixed a `postgresql+psycopg://` DSN-scheme bug). **Watchdog: nothing to silence** — the named `-watchdog` unit doesn't exist; fleet-health check #1 is `polygon_30s`-only; oms-liveness sees the live OMS. (Cruft to remove: the `v2_cw_first_session_watch` cron.)
+
+**Tonight (off-hours/niced, % median-first drop-one):** ORB re-measure under the 10:00 cap · the reactive-leak help-or-hurt question · #467 % re-test · P4.1 % re-run. **Next work now: P1.4 armed-segment observability (design-first, the unblocker).**
+
+---
+
 ## 🚦 STATUS — v2 IS LIVE · NOW ON THE CONFIRMED-WINDOW RULESET (2026-07-10, canary qty 2)
 
 > **⭐ SUPERSEDES the ATR touch/flip framing below (kept for history).** On **2026-07-10 ~00:07 ET** (attended, market
