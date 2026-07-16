@@ -15,19 +15,21 @@
 # Exit:   0 = FLAT (safe to stop bots) · 1 = HELD (do NOT stop the OMS) · 2 = CANNOT VERIFY (fail closed)
 set -uo pipefail
 
-DSN="${1:-${MAI_TAI_DB_URL:-${DATABASE_URL:-}}}"
-[ -n "$DSN" ] || { echo "FATAL: no DSN (pass as arg 1 or set MAI_TAI_DB_URL) — FAIL CLOSED"; exit 2; }
+DSN="${1:-${MAI_TAI_DATABASE_URL:-${MAI_TAI_DB_URL:-${DATABASE_URL:-}}}}"
+[ -n "$DSN" ] || { echo "FATAL: no DSN (pass as arg 1 or set MAI_TAI_DATABASE_URL) — FAIL CLOSED"; exit 2; }
+# psql cannot parse SQLAlchemy driver schemes (postgresql+psycopg://) — normalize to a libpq URL.
+PSQL_DSN="$(printf '%s' "$DSN" | sed -E 's#^postgres(ql)?\+[a-z0-9_]+://#postgresql://#')"
 
 fail=0
 
 assert_zero() {  # assert_zero "<label>" "<count-sql>" "<rows-sql>"
   local label="$1" cntsql="$2" rowsql="$3" n
-  n=$(psql "$DSN" -tAc "$cntsql" 2>/dev/null) \
+  n=$(psql "$PSQL_DSN" -tAc "$cntsql" 2>/dev/null) \
     || { echo "FATAL: count query failed for [$label] — FAIL CLOSED"; exit 2; }
   case "$n" in ''|*[!0-9]*) echo "FATAL: non-numeric count for [$label]='$n' — FAIL CLOSED"; exit 2;; esac
   if [ "$n" -ne 0 ]; then
     echo "❌ HELD: [$label] = $n open row(s):"
-    psql "$DSN" -P pager=off -c "$rowsql" 2>/dev/null || echo "   (row detail unavailable — count is authoritative)"
+    psql "$PSQL_DSN" -P pager=off -c "$rowsql" 2>/dev/null || echo "   (row detail unavailable — count is authoritative)"
     fail=1
   else
     echo "✅ FLAT: [$label]"

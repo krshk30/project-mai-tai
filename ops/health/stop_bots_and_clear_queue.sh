@@ -17,7 +17,7 @@ set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ASSERT="$HERE/assert_fleet_flat.sh"
-DSN="${MAI_TAI_DB_URL:-${DATABASE_URL:-}}"
+DSN="${MAI_TAI_DATABASE_URL:-${MAI_TAI_DB_URL:-${DATABASE_URL:-}}}"
 REDIS="${MAI_TAI_REDIS_URL:-${REDIS_URL:-redis://127.0.0.1:6379}}"
 STREAM="mai_tai:strategy-intents"
 ORB_UNIT="project-mai-tai-orb"
