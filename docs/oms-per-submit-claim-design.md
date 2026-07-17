@@ -75,14 +75,46 @@ Same stickiness, one level up. A close **accepted-and-never-filled** leaves the 
 thing it is backing up is not a backstop.** (It looks narrow in RTH — a market close fills. "Narrow"
 is what ERNA was, and the flatten exists precisely for when things do not work.)
 
-**What clears it on accepted-never-filled? — checked: nothing reliable during RTH.**
-`_collect_drift_cancel_candidates` explicitly skips it:
+**What clears it on accepted-never-filled? — traced, and the first answer was WRONG.**
+Nothing clears it **inline**: `_collect_drift_cancel_candidates` explicitly skips these orders —
 ```python
 if str(intent.intent_type).lower() != "open":
     continue  # don't auto-cancel close/scale chases here
 ```
-Both the flatten and the hard stop emit `intent_type="close"`. `MARKET_CLOSED` does not fire at 10:00
-(inside the 7–20 ET fillable session). ⇒ **confirmed sticky.**
+— and both callers emit `intent_type="close"`; `MARKET_CLOSED` does not fire at 10:00 (inside the 7–20
+ET fillable session). **But `sync_broker_orders` clears it on the next poll.** It polls the live broker
+status of every working order and calls `_update_hard_stop_registry_from_order_status` at **2526** — an
+INDEPENDENT path that does not go through `_record_order_reports`:
+
+| broker status | handler | `close_in_flight` |
+|---|---|---|
+| accepted / submitted / partially_filled | 3566 | stays `True` — **correct, a close IS working** |
+| filled | 3569 | stop popped |
+| cancelled / rejected (plain) | 3572→3576 | **cleared** |
+| cancelled / rejected, no-position reason | 3573 | stop popped |
+
+⇒ **`close_in_flight` is sticky only while the close is genuinely working at the broker. That is not a
+mute — it is correct** (a second close must not go out while one works). **The "the trail is muted
+indefinitely" alarm is RETRACTED.**
+- **The LULD/halt case dissolves too** (it was the strongest version): during a halt the close rests,
+  the flag holds, the trail is muted — **but nothing can trade during a halt anyway**, so the mute
+  costs nothing; when it lifts the order resolves and the flag clears.
+- ⚠️ **What survives is a LATENCY gap, not a mute, and it is small:** the refresh's *cancel* bypasses
+  `_record_order_reports` (it calls `update_order_from_report` + `append_order_event` directly), so
+  clearing waits for the next poll — **live `MAI_TAI_OMS_BROKER_SYNC_INTERVAL_SECONDS=15`** (note: the
+  code default is **5**; the live env overrides it to 15, so the gap is ~3× what the source implies —
+  read the env, not the default). Bounded, self-healing, not a P0.
+
+⭐ **HOW THE ALARM HAPPENED (the durable lesson): I traced `_record_order_reports` + the refresh chain,
+found no clear, and concluded from its absence — while a SECOND caller (2526) existed.
+BEFORE CONCLUDING FROM A MISSING PATH, ENUMERATE THE CALLERS.** This is the fossil audit's lesson run
+in reverse: there a read existed and nothing acted on it; here an action existed and only one of its
+reads was found. Same shape — **absence of evidence read as evidence.**
+[[feedback_fossil_db_columns_trace_read_path]]
+
+**D1 stays dead regardless** — the stickiness was never the real objection. The principle stands on its
+own: **a backstop gated on the optimism of the thing it is backing up is not a backstop**, and `finally`
+is still the only property that cannot stick. D2 never depended on any of this.
 
 ### 4c. ⛔ Dropping `include_native_stop_guard=False` (the v2 variant)
 
@@ -101,7 +133,31 @@ A **submit-scoped, in-memory claim**, released in `finally`:
 ```python
 # OmsRiskService.__init__
 self._submit_in_flight: set[tuple[str, str]] = set()   # (broker_account_name, symbol)
+self._loop: asyncio.AbstractEventLoop | None = None    # bound at run(); the asserted invariant
 ```
+
+**⭐ ASSERT the single-thread invariant — do NOT merely comment it.** This claim is correct ONLY because
+check-and-add is atomic with respect to one event-loop thread. That is an *assumption*, and **an
+assumption nobody asserts can be violated by accident** — the same rule as "a threshold nobody asserts
+can be turned off by accident," one level up. A comment is provably not enough: **three comment-as-bugs
+this week** (`_window_flatten_armed_stops` arguing *"WHY 15:55 AND NOT 19:55"* while firing at 10:00 ·
+the handoff calling #481 pending 8 minutes after it merged · `service.py:474` inverting its own design).
+So the guard asserts, and a future `to_thread`/multi-process refactor **fails LOUD** instead of silently
+racing:
+
+```python
+def _claim_submit(self, key) -> bool:
+    # INVARIANT: single event-loop thread. This set is NOT thread-safe and is not meant to be:
+    # it is a cooperative claim, correct only because no other thread touches it. Assert, don't hope.
+    assert asyncio.get_running_loop() is self._loop, (
+        "_submit_in_flight is single-loop-thread only; a submit claim was touched from another "
+        "loop/thread. This claim does not make the OMS thread-safe."
+    )
+    ...
+```
+⚠️ Review point: `assert` is stripped under `python -O`. Confirm the units do not run optimized (they
+do not today), or use an explicit `if ... raise RuntimeError`. **An assertion that can be compiled out
+is the same disease as a threshold that can be configured out.**
 
 At each of the four call sites, wrapping ONLY the submit await:
 
@@ -133,17 +189,17 @@ next 5s pass, hours before the session ends.
 
 ## 6. What this does NOT fix (state it, do not imply it)
 
-- **It is not a lock.** It is correct only because all four callers run on ONE event loop thread; the
-  check-and-add is atomic w.r.t. that thread. **If the OMS ever becomes multi-threaded or
-  multi-process, this is wrong.** Document it at the definition.
+- **It is not a lock.** Correct only because all four callers run on ONE event-loop thread; check-and-add
+  is atomic w.r.t. that thread. **If the OMS ever becomes multi-threaded or multi-process, this is
+  wrong** — which is why §5 ASSERTS the invariant rather than commenting it.
 - **It does not fix the E5 matched pair** (v2 re-implementing `include_native_stop_guard=False`
   without the `_cancel_native_stop_guard_before_sell` precondition). Separate design.
 - **It does not fix #388-for-v2** (`cw_entries_this_flip` counting emits). Separate design.
-- **It does not address the sticky `close_in_flight` itself.** ⚠️ **OPEN QUESTION for review:** an
-  accepted-never-filled protective close appears to mute the trail at 2851 indefinitely on the
-  EXISTING path, independent of this change. The drift-cancel skips close intents (§4b). Whether the
-  working-order refresh (`_stop_guard_refresh_stage`) rescues it is **NOT verified** — flagged, not
-  claimed. If it does not, that is its own P0.
+- **It does not address `close_in_flight`'s stickiness — and it does not need to. ✅ ANSWERED, NOT a
+  P0** (this was raised as an open question and is now closed; see §4b). `sync_broker_orders` polls the
+  live broker status and clears the flag at **2526** on any terminal non-fill. The flag is sticky only
+  while a close is genuinely working, which is correct. Residual is a **≤15s latency gap** (the
+  refresh's cancel clears on the next poll rather than inline), self-healing.
 
 ## 7. Test plan
 
