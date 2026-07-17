@@ -84,6 +84,87 @@ circular. **NEXT: re-measure ORB under the 10:00 cap (%, median-first, drop-one)
 
 ---
 
+## 🏁 2026-07-17 EOD — THE EXIT-GEOMETRY QUESTION IS CLOSED. THE ENTRY IS THE PROBLEM. (research day, nothing deployed)
+
+**⭐⭐ THE ONE-LINE RESULT: four independent studies say the CW-v2 exit is optimal-enough and the ENTRY
+has no edge no exit geometry recovers.** Fleet FLAT + UNCHANGED all day (OMS 323327 · v2 304206 · ORB
+304293, NRestarts=0). **12 PRs open, ALL `manual-merge`, NONE deployed: #483–#492 + #493 (see below).**
+
+**The exit-geometry arc (all non-circular where possible, tape-based fills, drop-one, CI, cells-searched,
+mean-first — the full discipline):**
+1. **Reach curve** (`reach_curve.py`, 39/42 CW, both cohorts AGREE): a fixed −5% never closes the
+   breakeven gap at any target X=2..15; the "mode moves" (runners run +20–70%) but the gap bottoms ~−4pp
+   and never crosses. [[project_mai_tai_v2_stop_slippage_rootcause]]
+2. **⭐ ATR ↔ reach correlation = DEAD (r=0.085, ρ=0.057, 0.7% of variance).** AGEN is the BIGGEST runner
+   (+71% MFE) at **1.89% ATR** (low); CPHI highest-ATR (8.64%) ran only +13.7%. **"The runners are the
+   high-ATR names" was two names in two lists, and it was false.** ⇒ **you cannot name-target the stop
+   because you cannot name the runner** — the finding of the day. A 3.5×ATR trail widens the stop on
+   exactly the WRONG names (AGEN 1.89%→6.6%, barely wider than −5%; CPHI 8.64%→30%).
+3. **Resting-ATR entry backtest** (`resting_atr_confirmed.py`, variant-B touch, NON-circular 75 confirmed
+   name-days → 92 touches): **NOT an edge.** Fixed-stop sweep with TAPE-BASED exits — a −1% stop actually
+   loses −1.86% (gap slip), effective ratio 1.30:1 not 2:1, real breakeven 43.5%, win 28.3% ⇒ still
+   short 15pp = the same gap as current. Circular (v2's names) and non-circular AGREE (both negative) —
+   first study this week where they agree. **The spread kills the frictionless-breakeven (operator
+   "dies on the spread" ✓).**
+4. **Tick-trail grid** (`tick_trail_sweep.py` touch entry; `tick_trail_real42.py` REAL CW fills):
+   ratcheting per-quote trail, tape exits, 40 cells (trail 1/1.5/2/3/5/8% + ATR 1/2/3.5/5× × target
+   none/5/10/15). **On the resting-ATR entry: WIDER helps, best cell +1.09% but CI STRADDLES 0 =
+   best-of-40 NOISE.** **On the REAL CW entry (n=47): TIGHTER helps, cleanly monotone, best = 1% trail +
+   5% target = −0.70% (CI excl 0, significantly negative, BEATS the current −1.22% but still LOSES).**
+   ⇒ **the two entries want OPPOSITE trail widths (enter-extended→tight, enter-low→wide) but BOTH are
+   significantly negative at every cell.** ATR trails collapse at the wide end (real-CW a5 −8.01%),
+   confirming the ATR misdirection a 3rd time. **A modest exit IMPROVEMENT exists (−1.22→−0.70) but not
+   to profitability.**
+
+**⭐ THE VERDICT (operator, on the record): if the flip-count filter is null, that is the ANSWER TO THE
+MONTH — the entry has no edge and no exit geometry or selection rule recovers it. That is a real result,
+not a failure.** Only the flip-count filter (selection, non-circular, pre-committed, expect null) remains.
+Scripts in `/home/trader/wt-atr-ab/`. [[project_mai_tai_v2_stop_slippage_rootcause]]
+
+**⚠️ CW-ENTRY GRID CAVEAT:** the non-circular CW-break reconstruction FAILED its validation gate (61% px
+match — the CW entry is intrabar + rule-7 + windows + ORB-blackout, not a bar-high break). So the real-CW
+grid ran on v2's ACTUAL 42 fills = **faithful but CIRCULAR**. A full faithful non-circular CW reconstruction
+is an unbuilt follow-up (only worth it if the filter or a re-test shows a live edge).
+
+**★ ENGINEERING SHIPPED TODAY (all PRs `manual-merge`, none merged/deployed — attend the merges):**
+- **#483** docs (OOS kill · P0.3-citation correction · shared-account limitation · injection-seam +
+  env-debt open items · this EOD).
+- **#484** `armed_segments_check` — P1.4's external pager (mutation-tested; caught `BOOT_HOLD_GRACE=1e9`
+  silently disabling a pager with 12/12 green). [[project_mai_tai_fleet_health_system]]
+- **#485** flatten-comment fix + the **flatten-vs-managed-exit race** recorded (dedup is DB-visibility-
+  gated behind a ~4s uncommitted submit; OMS holds ZERO locks). [[project_mai_tai_oms_zombie_blocking_db]]
+- **#486** per-submit-claim DESIGN (the race in #485; a matched pair of two CORRECT guards whose
+  INTERACTION is the bug — the flatten's guard-cancel removes the trail's RTH defer).
+- **#487** safe default `strategy_schwab_1m_account_name` live→paper (a dropped env var no longer routes
+  to a real account). **#490** safe default `schwab_adapter_token_refresh_enabled` True→False (the True
+  default was an expired #274 migration scaffold = the shared-token SPOF; a green suite was SPECIFYING it).
+  ⛔ **#489-adjacent DEFERRED: `strategy_macd_30s_enabled` default** — blocked by the **injection seam**
+  (`settings or get_settings()` across ~15 sites; a scanner path reads the global default, 68 tests split
+  global-vs-injected). Default flips are blocked until the seam closes — filed as an open item.
+- **#488** #388-for-v2 DESIGN (the CW cap counts EMITS not FILLS → a reject burns the segment for the day;
+  v2 HAS a fill channel (`update_position`) but it is optimistically union'd — stop merging the fill-only
+  signal away). **#489** E5 option-1 DESIGN (v2's exit took HALF a matched pair: `include_native_stop_
+  guard=False` without the guard-cancel; a routing fix, prerequisite for P0.3, inert until v2 arms a stop).
+- **#491** renormalize 4 CRLF history CSVs (root-fixed a `git stash pop` blocker that nearly ate an edit).
+- **#492** `backtest/study_report.py` — **the VALUE rules as CODE** (percentages/median-first/drop-one
+  refused at the API; pinned windows; /proc reads; as-of stamps). Prose rules get recorded and violated
+  (the dollar rule broke twice after being written); code rules fire without anyone remembering.
+  [[feedback_percentages_not_dollars]] [[feedback_mutate_the_code_pin_the_threshold]]
+
+**⚠️ LIVE — I MISSED A REAL-MONEY v2 TRADE (recorded so the next session doesn't repeat the pattern):**
+v2 traded **CJMB live 3× today** (09:01 +2.12% WIN, 10:01 −5.09%, 12:28 −2.41%; all real Schwab, netted
+flat). I reported "v2 zero trades today" — checked at **07:42 ET**, first fill **09:01**, carried the stale
+"zero" for six hours. The 09:01 fill is the **first CW-v2 real fill that FILLED AND WON on a Schwab-
+accepted US name** (every confirmed-only day before was 100% open-block-rejected). **RULE: a live-state
+claim has a timestamp and it EXPIRES — attach "as of HH:MM ET" and RE-CHECK.** [[feedback_percentages_not_dollars]]
+
+**⚠️ FOSSIL AUDIT (done first, gates the studies):** `oms_managed_positions` columns — `tier` is
+`peak_profit_pct` in disguise (174/174 derivable); `scales_done`/`scale_pnl` era-split (all pre-CW,
+structurally impossible post-07-10); `current_profit_pct` = the triggering BID not P&L. Nothing outside
+the OMS reads any of them. [[feedback_fossil_db_columns_trace_read_path]]
+
+---
+
 ## 📊 2026-07-16 OPEN — SESSION RESULTS (day plan executed; bots stopped 10:02 ET, deploy window open)
 
 **⭐ LEAD — RUBI: measure from `fills`, NOT markers (a future session WILL get this backwards).**
