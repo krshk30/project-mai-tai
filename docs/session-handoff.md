@@ -184,6 +184,35 @@ accepted by Schwab, working order, broker_order_id assigned). It is **NOT yet pr
 
 ## 🔴 OPEN ITEMS — DO NOT LOSE (future-you: read these)
 
+**🏛️ 2026-07-17 — ARCHITECTURAL: the INJECTION SEAM is a convention, not an invariant → DEFAULT FLIPS
+ARE BLOCKED UNTIL IT IS CLOSED.** `settings.py:1064` is `@lru_cache def get_settings(): return Settings()`
+— a process-global bare Settings (defaults + env). It is consumed as **`settings or get_settings()` across
+~15 sites** (every service: oms, orb, v2, market-data, control-plane, strategy-engine, reconciler,
+market-capture, trade-coach, runtime-seed…). ⇒ **any code path can silently fall back to a global nobody
+injected.** Discovered by accident flipping `strategy_macd_30s_enabled`'s default: 68 tests broke because a
+scanner/dashboard path reads `get_settings()` (sees the DEFAULT) while the test service has injected
+settings (forced the other way) — a SPLIT. Proven by reverting only the default with the fixture kept: the
+68 vanished. **LIVE is inert** (env sets the field on every service, so global==injected) — but that is
+luck of *which fields have env overrides*, not a closed seam. **#487 (account_name) and #490
+(token-refresh) got through only because no `get_settings()` path happens to read those fields.** The next
+default flip that touches a field some global-reader consumes hits the same wall. **Fix (own workstream,
+NOT behind a paper bot): make the injected-settings contract an invariant — either the fallback raises, or
+the ~15 global readers take injected settings.** Until then, every default-flip PR must run the FULL suite
+and expect a global-read split. [[feedback_mutate_the_code_pin_the_threshold]]
+- **✅ Deferred with it: `strategy_macd_30s_enabled` default (True→False).** The safe-default flip is
+  correct and live-inert, but blocked by the seam above (68 tests, not a fixture issue — a code split).
+  Lowest-value of the three dangerous defaults (a disabled PAPER bot waking up). Ships when the seam closes.
+
+**🧹 2026-07-17 — ENVIRONMENT DEBT (flagged twice, nearly ate an edit — worth ~1h before it bites hard):**
+(1) **`data/history/*.csv` are CRLF-normalized on every checkout** → they show dirty in every worktree and
+**blocked a `git stash pop`** mid-session (work stranded in the stash; recovered via `git checkout
+stash@{0} -- <files>`). A `.gitattributes` renormalize + one commit fixes it at the root (same class as
+#465). (2) **`git worktree list` = 83 worktrees** — accumulated cruft; `git worktree prune` + a sweep of
+OneDrive-locked leftovers. (3) **OneDrive locks `git worktree remove`** (transient; `--force` +
+`rm -rf` + `git worktree prune`). ⚠ Also burned once today: **`git checkout <file>` to undo a mutation
+WIPED a live edit** — use `sed` to revert a mutant in place, never `git checkout`, when the file also
+carries unstaged work.
+
 **⛔⭐ 2026-07-17 — ORB OOS KILL: the "+11.2" GATED config is DEAD. Every +11.2 / median +0.25 / win 55% /
 drop-top-3 number is a CIRCULAR-UNIVERSE DOLLAR READING — history, NEVER a claim.**
 `/home/trader/orb-study/orb_oos_study.py` ran **2026-07-09 23:04** over **2026-04-13→07-09**, through the
