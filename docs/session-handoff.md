@@ -27,7 +27,9 @@ ORB is **blank after 10:00 ET by design.** Verified code (`4507381`): at 10:00 i
 it TRUNCATES.** ⇒ **ALL ORB numbers (+11.2 / median +0.25 / win 55% / drop-top-3) PREDATE the cap and
 are STALE** — they describe a strategy that no longer runs (the edge is many scratches + ONE runner; the
 cap clips the runner — KIDZ 07-06 runner started 09:53). "No trade >5min ⇒ clips zero winners" is
-circular. **NEXT: re-measure ORB under the 10:00 cap (%, median-first, drop-one), off-hours/niced.**
+circular. ~~**NEXT: re-measure ORB under the 10:00 cap.**~~ **STRUCK 2026-07-17 — the config it would
+re-measure is DEAD (see the ORB OOS KILL block at the top of Open Items). Re-measuring it under the cap
+measures a dead config twice.**
 [[project_mai_tai_orb_overnight_naked]]
 - **✅ Docstring contradiction FIXED 2026-07-16 (PR #481):** `_window_flatten_due` + `_window_flatten_armed_stops`
   docstrings reconciled to the shipped **10:00** (were arguing *"WHY 15:55 AND NOT 19:55"*). Docstring-only.
@@ -110,8 +112,8 @@ ORB's only fill. Broker fills: **buy 2 @ 5.83 (09:31:00) → sell 2 @ 5.98 (09:3
 
 **✅ OFF-HOURS RESULTS (2026-07-16, flat day → ran mid-session niced; scripts in `wt-atr-ab/`):**
 - **v2 11-POINT DECOMPOSITION** (`decompose_11.py`/`decompose_gap.py`, 42 rt/12 names) — **the fork is answered: NOT the flip, NOT execution.** print first-touch **57%** · ladder **50%** · bid first-touch **45%**; entry-chase median **0.0%**, exit-slippage **+0.09%** (non-factors). The gap (ladder-loss but print-ft-win) = **3 trades (CPHI/SOBR/VEEE); flip=0** (CW_FLIP fired only 2× in 8d, both genuine losses). **The proxy–ladder gap is the print-vs-bid SPREAD** (proxy scores prints, target sells the bid; the ladder's 50% BEATS bid-ft 45% via the floor). ⇒ the 57-61% proxy was print-optimistic; **50% is the realistic number; the ENTRY is the root (50% vs ~66% breakeven).** Byproduct A: the "6s bar-close→emit" **doesn't exist on the live path** — CW-v2 is intrabar, ENTER→emit = 2ms. [[project_mai_tai_v2_stop_slippage_rootcause]]
-- **ORB 10:00-CAP RE-MEASURE** (`orb_cap_remeasure.py`, live bar_close/trail5, 07-01..16) — **~10% reach 10:00 (6/63) ⇒ "clips zero winners" premise EMPIRICALLY FALSE.** The 6 bar_close reachers were RUNNERS; the cap truncated them median **−4.98pp** each (avg −0.14→−0.59). **The cap CLIPS RUNNERS — not free.** ⚠ this is the raw UNGATED running-high ORB (median −2.1%/win36 — bleeds = the PARK conclusion), NOT the "+11.2/median+0.25/win55" GATED intrabar-2% config. [[project_mai_tai_orb_overnight_naked]]
-- **STILL OWED tonight:** re-run the **GATED +11.2 (liquidity-gate + intrabar-2%) config under the cap** (apples-to-apples to the stale numbers) · the ORB reactive-leak help-or-hurt question · #467 % re-test. **P4.1 CLOSED.**
+- **ORB 10:00-CAP RE-MEASURE** (`orb_cap_remeasure.py`, live bar_close/trail5, 07-01..16) — **~10% reach 10:00 (6/63) ⇒ "clips zero winners" premise EMPIRICALLY FALSE.** The 6 bar_close reachers were RUNNERS; the cap truncated them median **−4.98pp** each (avg −0.14→−0.59). **The cap CLIPS RUNNERS — not free.** ⚠ this is the raw UNGATED running-high ORB (median −2.1%/win36 — bleeds = the PARK conclusion), NOT the ~~"+11.2/median+0.25/win55" GATED intrabar-2% config~~ **(⛔ that config is DEAD — OOS-killed 07-09, see the ORB OOS KILL block; the phrasing here implied it was the healthy alternative. It is not.)** [[project_mai_tai_orb_overnight_naked]]
+- **STILL OWED tonight:** ~~re-run the GATED +11.2 config under the cap~~ **STRUCK 2026-07-17 (dead config, see ORB OOS KILL)** · the ORB reactive-leak help-or-hurt question · #467 % re-test. **P4.1 CLOSED.**
 
 **✅ P1.3 + P1.4 SHIPPED + DEPLOYED 2026-07-16 (PR #475 merged).** One flag `strategy_schwab_1m_v2_cw_armed_segment_safety_enabled` (default off = byte-identical). **`cw_arm_bar_ts` discriminator** (arm's flip-bar ts: reconstructed `<boot` vs live `>=boot` — race-free, continuous, no latch) + **P1.3** seed-cap of reconstructed segments (`[V2-CW-SEED-CAP]`) + **boot-hold** on `_cw_v2_quote` until self-verify sees zero reconstructed-uncapped (never releases on timeout) + **P1.4** snapshot (`cw_armed_segments`/`entries_held` + `[V2-CW-ARM]/[V2-CW-DISARM]`). 6 state-asserting tests incl the before/after acceptance test; **full unit 1208 passed, ruff clean, flag-off byte-identical.** **✅ DEPLOYED 13:21 ET (attended, fleet-flat):** v2 PID **304206**, flag in /proc, **`[V2-BOOT-HOLD] released — 0 reconstructed-uncapped segments`** (P1.3 verified); ORB **304293**, OMS **230687** untouched; fleet fully back. **The "DON'T RESTART v2" rule is now LIFTED** — restarts are safe (boot-hold gates entries until verified; a P1.3 miss holds + logs error, never naked). [[feedback_no_restart_v2_p13_cap_reset]] **DEFERRED follow-on (ships independently, no restart):** `ops/health/armed_segments_check` cron = the external pager for the "timeout pages" condition (fed by the snapshot).
 
@@ -181,6 +183,36 @@ accepted by Schwab, working order, broker_order_id assigned). It is **NOT yet pr
 ---
 
 ## 🔴 OPEN ITEMS — DO NOT LOSE (future-you: read these)
+
+**⛔⭐ 2026-07-17 — ORB OOS KILL: the "+11.2" GATED config is DEAD. Every +11.2 / median +0.25 / win 55% /
+drop-top-3 number is a CIRCULAR-UNIVERSE DOLLAR READING — history, NEVER a claim.**
+`/home/trader/orb-study/orb_oos_study.py` ran **2026-07-09 23:04** over **2026-04-13→07-09**, through the
+**production `simulate_orb_tick_entry`** (real code path), liq gate `vol≥100k & spr≤1%`, trail 2%, gap-cap
+1.5%, latency band 3/6/10/14s, crossed+nonpos quotes rejected. **616 name-days** (393 gate-pass, 309 traded).
+**Gate ON — median NEGATIVE at EVERY latency, win ~40%, drop-one worse everywhere:**
+
+| lat | n | median | mean | win% | drop-best | drop-worst |
+|---|---|---|---|---|---|---|
+| 3s | 309 | **−1.156** | +0.079 | 39.2 | −1.204 | −1.154 |
+| 6s | 309 | **−1.082** | +0.131 | 42.1 | −1.090 | −1.042 |
+| 10s | 309 | **−1.118** | +0.172 | 41.4 | −1.161 | −1.102 |
+| 14s | 309 | **−1.154** | −0.216 | 40.5 | −1.175 | −1.136 |
+
+(Ungated is worse: median ≈ −1.6, win ~36% ⇒ **the gate helps a LOSING config lose less** — it is not an edge.)
+
+**⭐ THE RECONCILIATION — the OOS and "+11.2" are the SAME edge read two ways, and only one reading is honest.**
+"+11.2 over 60 nd" was a **DOLLAR TOTAL on a CIRCULAR universe** (only names ORB actually entered, drawn from
+`trade_intents strategy=orb` — you cannot measure an entry edge on the set the entry already selected).
+**Look at the mean column: +0.079/+0.131/+0.172 — POSITIVE while the median is −1.1 and win is 40%.** That is
+[[feedback_percentages_not_dollars]] in one table: outlier-carried, mean-positive, median-negative. The rule
+did not just flag a reporting style — it flagged a **wrong conclusion**.
+
+**⛔ COST OF NOT RECORDING THIS: it has regenerated work TWICE.** The OOS ran **07-09**; the **07-15 EOD** and
+**07-16 EOD** handoffs BOTH still listed "re-measure the GATED +11.2 config" as owed, and it was queued again
+for **07-17** before the operator caught it. **A stale record that generates work is worse than a dirty tree.**
+⇒ **#403's 3 flags are NOT deploy candidates** (draft, do-not-merge, all default OFF, encoding a dead config).
+**Do NOT re-open the +11.2 config without a NEW thesis + a NON-CIRCULAR universe.** The ORB reactive-leak
+help-or-hurt question survives (different question, still open). [[project_mai_tai_orb]]
 
 **⛔ 2026-07-16 — STANDING AUDIT: what else does the dead ladder write? (before trusting it as evidence).**
 `oms_managed_positions.floor_pct`/`floor_price` are **FOSSILS** — written every row by the DEAD tiered
