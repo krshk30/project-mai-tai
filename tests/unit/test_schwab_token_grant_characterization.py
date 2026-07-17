@@ -25,10 +25,24 @@ from project_mai_tai.broker_adapters.schwab import SchwabBrokerAdapter
 from project_mai_tai.settings import Settings
 
 
+def test_safe_default_adapter_token_refresh_is_disabled():
+    """PIN THE SAFE DEFAULT (2026-07-17). A default is what happens when configuration FAILS, and
+    the True path is the shared-token SPOF #274 removed (the 2026-06-03..06-05 ~2.6-day outage). This
+    asserts the VALUE, not a fixture derived from it — so a silent flip back to True fails loudly here
+    instead of resurrecting the SPOF with a green suite. ('every threshold needs a test that pins it')."""
+    assert Settings().schwab_adapter_token_refresh_enabled is False
+
+
 def _adapter(tmp_path: Path, *, store: dict | None = None, **overrides) -> tuple[SchwabBrokerAdapter, Path]:
     token_store_path = tmp_path / "schwab-token-store.json"
     if store is not None:
         token_store_path.write_text(json.dumps(store), encoding="utf-8")
+    # DECLARE the token-refresh mode this fixture exercises, rather than inheriting the settings.py
+    # default (Rule 0: a test whose fixture comes from the thing under test cannot test it — these
+    # characterization tests were silently ASSERTING the old True default; when the safe-default PR
+    # flipped it to False they all broke, which is the tell). Pop-with-default so a pure-reader test
+    # can still override to False (a bare `=True` here + the same key in **overrides is a TypeError).
+    overrides.setdefault("schwab_adapter_token_refresh_enabled", True)
     settings = Settings(
         oms_adapter="schwab",
         schwab_client_id="client-id",
