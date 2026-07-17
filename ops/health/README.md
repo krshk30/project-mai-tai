@@ -39,6 +39,16 @@ never hand-edit the deployed copy.
    seed-caps, so `dangerous` is expected and meaningless. **Reconstructed but capped** → P1.3
    working.
 
+   **⚠ DO NOT read a high armed count as a fault — expect GHOSTS.** The cw_* session reset lives in
+   the **bar** path (`schwab_1m_v2.py` ~L802, keyed on the 04:00-ET anchor of `cur.timestamp_ms`), so
+   a symbol that stops receiving bars **never rolls** and its armed segment persists in
+   `_symbol_states` indefinitely. Yesterday's names drop off today's watchlist → their segments sit
+   `armed` (often `capped:true`) until the process restarts or they are re-confirmed and get a bar,
+   which clears the counter. Observed 2026-07-17: 4 armed segments at 08:35 ET, all armed 18:48–19:42
+   ET the PREVIOUS evening, against a watchlist of 1. They are `reconstructed:false, dangerous:false`
+   ⇒ correctly silent. **The count is noisy; only `dangerous`, the boot-hold, and staleness are
+   faults.**
+
 ## fleet_health_check.py — the F3 framework
 A check registry: each check verdicts GREEN/AMBER/RED against ground truth; `main()` prints one
 `VERDICT:` line per check + an aggregate and exits worst (0/1/2) → the cron routes to ntfy.
