@@ -544,7 +544,15 @@ class Settings(BaseSettings):
         "strategy_polygon_30s_broker_provider",
         "strategy_webull_30s_broker_provider",
     )
-    strategy_schwab_1m_account_name: str = "live:schwab_1m"
+    # SAFE DEFAULT (2026-07-17): was "live:schwab_1m" — a LIVE, real-money account as the fallback
+    # for a dropped env var. A default is what happens when configuration FAILS; it must never fail
+    # toward real money. `paper:` also matches the convention of every neighbouring account default
+    # (e.g. strategy_macd_30s_probe_account_name below). Live-inert: all 6 units set this explicitly,
+    # and strategy_schwab_1m_enabled already defaults False — this is defense in depth, not the only
+    # gate. (Considered: make it REQUIRED (no default, raise if unset) — strictly better, since an
+    # account name is not something to guess. Deferred only because it makes every bare `Settings()`
+    # raise, incl. across the test suite; that is a separate, wider change. See the PR.)
+    strategy_schwab_1m_account_name: str = "paper:schwab_1m"
     strategy_schwab_1m_broker_provider: str | None = "schwab"
     strategy_macd_30s_probe_account_name: str = "paper:macd_30s_probe"
     strategy_macd_30s_reclaim_account_name: str = "paper:macd_30s_reclaim"
