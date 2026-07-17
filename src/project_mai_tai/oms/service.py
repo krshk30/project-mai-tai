@@ -471,7 +471,12 @@ class OmsRiskService:
                 except Exception:
                     self.logger.exception("[ORB-WINDOW-FLATTEN] sweep failed")
                 # v2 overnight flatten: close managed v2 positions at 19:55 before the 20:00 gate
-                # (v2 has no native stop). Same cadence, idempotent per symbol per day, LOUD on failure.
+                # (v2 has no native stop). Same cadence, LOUD on failure. RETRY-UNTIL-FILLED: there
+                # is deliberately NO per-day claim (#478 removed it — a per-day claim silently gave
+                # up when a thin-AH limit expired unfilled, which is the naked-overnight case this
+                # exists to prevent), so this RE-EMITS every pass until it fills or 20:00 closes.
+                # Double-submit is guarded ONLY by `dedup_active` (a working exit order => skip).
+                # See _v2_overnight_flatten's docstring — it is the contract, this line is a pointer.
                 try:
                     await self._v2_overnight_flatten()
                 except asyncio.CancelledError:
@@ -3091,6 +3096,28 @@ class OmsRiskService:
         flatten keeps trying until it fills or the 20:00 gate closes. Double-submit is prevented by
         `dedup_active` (a working exit order => skip) — the same guard the managed exit uses. A per-day
         claim would silently give up on the exact naked-overnight case this exists to prevent.
+
+        ⚠️ KNOWN GAP (traced 2026-07-17, NOT yet fixed — design-first; do not "fix" this inline).
+        `dedup_active` is a DB read, and it is BLIND for the duration of a submit. Flatten-vs-flatten
+        is safe: the control loop awaits this method to completion, and the per-symbol loop awaits
+        `_emit_v2_exit_on_loop` (which commits at the end of its own session), so the next pass always
+        reads a committed order. But `await submit_order` YIELDS the event loop, and
+        `_run_tick_consumer` is a SEPARATE task (see `_run_control_loop`'s docstring — the decoupling
+        is deliberate, so a slow control loop cannot delay an exit decision). In that window the quote
+        handler can reach `_evaluate_v2_managed_exit` (gated only by `_market_is_fillable()`, TRUE at
+        19:55 since the gate is 7–20 ET) whose OWN dedup read cannot see this flatten's UNCOMMITTED
+        order. => FLATTEN-vs-MANAGED-EXIT can double-submit. Window is measured: #459 found the
+        post-submit marker postdates the broker fill stamp by median +1.4s, max +4.5s (30/30). The OMS
+        holds ZERO locks — all safety is single-loop-thread, and this is the seam where that
+        assumption breaks (two callers, shared state, one thread that yields). Narrow (needs the
+        managed exit to also want to sell in that window) but it concentrates on exactly the case this
+        exists for: a thin AH book with the bid gapping through −5%. Bounded, NOT naked: the second
+        sell is rejected oversold — but that means the ONLY thing preventing a real double-sell here
+        is the BROKER's oversold check, an external control we do not own.
+        FIX SHAPE: a per-SUBMIT in-memory claim spanning BOTH callers — set before the await, released
+        on the report. NOT a per-day claim: #478's claim was not wrong in kind, it was wrong in SCOPE
+        (it protected a day when it needed to protect an await). The entry side already has exactly
+        this pattern — `schwab_1m_v2.py::cw_v2_emit_claimed`.
         Flag-gated; OFF => never runs. HALF-DAY: 19:55 is after a 13:00 close so there is no session
         => the LOUD no-bid path fires, which is CORRECT (the position IS naked) — keep the flag ON."""
         if not bool(getattr(self.settings, "oms_v2_overnight_flatten_enabled", False)):
