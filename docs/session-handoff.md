@@ -17,6 +17,43 @@
 
 ---
 
+## 🌙 2026-07-20 EOD — STRATEGY QUESTION SETTLED (entry dead in ALL forms) · OCO BUILD STARTED · tomorrow = validate
+
+**⭐ THE ANSWER TO THE MONTH: the ENTRY has no edge in any form; the forward work is PLUMBING, not strategy.**
+Running-high = OOS-killed · CW = −1.22%/trade (below breakeven) · **flip-count selection = NULL** (07-20) ·
+**classic-ORB 2:1 = NULL** (07-20 — spread eats the idealized edge). The exit-geometry nulls survived a
+universe audit (the 07-17 studies were correctly scanner-gated; the 30/76 no-bar drop is not a runner bias).
+A real result, not a defeat. [[project_mai_tai_orb]] [[project_mai_tai_v2_stop_slippage_rootcause]]
+
+**⭐🏗️ OPERATOR DECISION — build the broker-native OCO bracket (both brokers, no emulation) = the E5 oversell
+DISSOLVE.** Design on main (`docs/oco-bracket-design.md`, PR #495). **Webull OTOCO payload VALIDATED via
+`preview_order` (validate-without-place, ZERO risk) — exact shape pinned; harness `scripts/webull_otoco_preview.py`.**
+⚠ Broker constraint: the combo MASTER MUST be LIMIT/MARKET (a buy-STOP MASTER rejects) ⇒ **ENTRY FORK A/B/C**
+(lean A = MARKET/LIMIT entry + OCO exits; the entry is dead so the OCO's value is the exit pair). **The
+software-exit-defer flip (arming the bracket stands down `_evaluate_v2_managed_exit`) is the ONE dangerous
+switch — HELD for attended qty-1 STEP-1 tomorrow, one broker first.** Full detail + the pinned payload =
+[[project_mai_tai_oco_bracket_build]].
+
+**✅ SHIPPED TONIGHT (after-close-safe: safety defaults, health check, docs/designs — NOTHING touched trading
+logic; fleet unchanged; full `tests/unit` green post-merge 1229):**
+- **#487** account default `strategy_schwab_1m_account_name` live→**paper** (fails safe) · **#490**
+  `schwab_adapter_token_refresh_enabled` True→**False** (a missing env can't re-enable the #274 SPOF). Both
+  merged only after the FULL suite proved no `get_settings()` seam-split (1228/1229 green).
+- **#484** `ops/health/armed_segments_check` — P1.4's external pager (12/12 tests) · **#495** OCO design ·
+  **#496** (rebase of #483) the get_settings() injection-seam note (every default-flip runs the full suite) +
+  shared-account-ledger limitation · **#485/#486/#488/#489/#491** comment fix + 3 design docs + CSV-LF.
+- **RESTING-ENTRY ground-truth:** plain buy-STOP rests+cancels clean RTH (live, verified flat); the real 07-15
+  killer was `STOP_PRICE_MUST_BE_GREATER_THAN_MARKET` (arm the stop while price < break), NOT type/TIF; EH needs
+  the EXT session. [[project_mai_tai_oco_bracket_build]]
+
+**🗓️ 2026-07-21 — VALIDATE ON TODAY'S WORK:** pick the entry fork → build the adapter combo methods (Webull
+place/preview/replace + Schwab OCO `orderStrategyType=OCO`/`TRIGGER`) flag-gated + unit tests → **per-broker
+STEP-1 gate** (preview → rests → atomic-at-fill → one-cancels-other → software-exit-DEFERS → cancel+flat) on a
+LIVE qty-1 position, ATTENDED, ONE broker first. Only after STEP-1 passes does that broker's live routing ship.
+**Token re-auth = the operator's (refresh_token expired 07-21 07:43 ET — do at `/auth/schwab/start`).**
+
+---
+
 ## ✅ 2026-07-20 SESSION-START — STRATEGY QUESTION PAUSED AT AN ANSWER; TODAY IS QUIET
 
 **Nothing deploys today. Everything live is on Friday (07-17) config. The only human action is tonight's
