@@ -17,6 +17,70 @@
 
 ---
 
+## ✅ 2026-07-20 SESSION-START — STRATEGY QUESTION PAUSED AT AN ANSWER; TODAY IS QUIET
+
+**Nothing deploys today. Everything live is on Friday (07-17) config. The only human action is tonight's
+Schwab re-auth.** *(Catch-up: 07-17's findings were captured in memory but never written here until now —
+this block closes that gap so they stop regenerating as "open work." The ORB "+11.2" re-measure was
+re-queued THREE times off the stale record; it is dead — see kill #3.)*
+
+**🟢 LIVE FLEET CONFIG (ground-truthed — pin these):**
+- **ORB** — LIVE webull margin (`live:orb`, D4GUJ…), **qty 2** (`orb_reclaim_quantity=2`), **trail 5%**
+  (`orb_reclaim_trail_pct=5.0`), running-high, 09:30–10:00 window, 10:00 window-flatten ON. ⛔ **`orb_quantity=10`
+  / `orb_trail_pct=8.0` are ENV-SET-AND-NEVER-READ FOSSILS** (they feed the inactive classic-OR path; the live
+  path is the reclaim path). The roster's "qty 5" was itself a stale fossil read — ground-truthed to **2** from
+  `/proc` 07-15; Friday's fill was **buy 2 CJMB**. [[project_mai_tai_fossil_db_columns_trace_read_path]]
+- **v2 (schwab_1m_v2)** — LIVE Schwab isolated (`live:schwab_1m_v2`), **qty 2**, CW ruleset. Restart-safe since
+  07-16 (P1.3+P1.4, PR #475; boot-hold gates entries).
+- **polygon_30s** — PAPER/sim. Protected: **CYN, CELZ**.
+
+**🏁 THE STRATEGY QUESTION — CLOSED, three ways (these are ANSWERS, not open threads):**
+1. **v2 exit geometry — CLOSED four ways (07-17).** Reach curve · **ATR↔reach r=0.085** (ATR does NOT identify
+   the runners ⇒ **the exit cannot be aimed**) · resting-ATR backtest · 40-cell tick-trail grid. Best achievable
+   exit **−0.70%** (CI excl 0) still **LOSES**; the two entries want opposite trail widths, both negative.
+   [[project_mai_tai_v2_stop_slippage_rootcause]]
+2. **The exit is OPTIMAL; the ENTRY is the whole problem — proven on 3 independent instruments** (decompose ·
+   apples-to-apples · the OMS's own `peak_profit_pct` books). Win rate == reach-+2% rate; every v2 winner
+   reached +2%. **The honest frame is the 39 CW-only names, breakeven 67.1%, survives drop-one** — NOT the
+   blended 42, NOT the print-optimistic 57–61% proxy.
+3. **ORB gated "+11.2" — OOS-KILLED (07-17).** 616 name-days, median **−1.08…−1.16% at every latency**, win
+   39–42%, **drop-one worse everywhere**. Every "+11.2 / median +0.25 / win 55% / drop-top-3 +16.8 / 60 nd"
+   number is a **CIRCULAR-UNIVERSE DOLLAR READING = history, never a claim** (it measured only the names ORB
+   already entered). **PR #403's 3 flags are NOT deploy candidates** (draft, do-not-merge, encode a dead
+   config). Running-high entry → PARKED. [[project_mai_tai_orb]]
+
+**⇒ The one remaining idea = the flip-count (selection) filter.** Off-hours only. **Pre-stated expectation:
+null.** If it returns null, that is the MONTH'S RESULT — a real answer (the entry has no edge and no exit or
+selection rule recovers it), not a failure to keep chasing.
+
+**📅 STUDY DATE-BOUNDS (pin on EVERY citation — sliding `CURRENT_DATE-8` windows are why `decompose_11.py`
+isn't reproducible):** v2 decompose = 42 rt / 12 names / 8d ending ~07-16 · OMS-books = 48 managed rows / 8d ·
+ORB OOS = 616 nd, range **04-13→07-09** (ran 07-09 23:04) · ATR↔reach + tick-grid = `/home/trader/wt-atr-ab/`, 07-17.
+
+**🔴 NEW OPEN ITEM — OMS heartbeat flap (found 07-20 RTH; root-cause OFF-HOURS).** 3 watchdog RED trips today
+(**09:11 / 09:39 / 12:07 ET**), each self-recovered <1 min. The loop is ALIVE (steady **24 log-lines/min through
+every flap**, NRestarts=0, heartbeat 3s at check), fleet FLAT, no exit stranded — bounded **#391-family** pattern,
+nets working. **Prime suspect: the OMS syncs ~8 broker accounts every ~15s, 6 of them DEAD** (`live:polygon_30s`,
+`live:webull_30s`, `paper:{macd_30s_reclaim,orb,schwab_1m,schwab_1m_v2}` — Alpaca-no-creds / Schwab-401 /
+`SCHWAB-TOKEN-STALE` on every pass) — failing synchronous broker round-trips plausibly push the heartbeat publish
+past the 180s watchdog threshold. **Fix (off-hours, design-first): prune the dead accounts from the sync loop OR
+fully decouple the heartbeat publish.** Do NOT restart mid-session while a position is held.
+[[project_mai_tai_oms_liveness_watchdog]] [[project_mai_tai_oms_zombie_blocking_db]]
+
+**🗓️ SCHEDULED ACTION (NOT an open item) — Schwab re-auth tonight.** refresh_token expires **2026-07-21
+07:43 ET (~20h at session start).** #448 pager **VERIFIED firing** (AMBER landed on the ntfy topic 12:02 UTC
+today; cron log exit=1 at 08:02 ET). **Operator re-auths manually this evening** at `/auth/schwab/start`
+(refresher self-heals post-#274 — re-auth alone recovers, no restart needed). ⚠ Structural note: the cron runs
+only 08:02 & 18:02 ET (12h apart), so **RED (≤12h) can NEVER fire this cycle** — tonight's 18:02 run = ~13.7h =
+AMBER, and the next run (08:02 tomorrow) is *after* death. AMBER is the last automated warning; the manual
+re-auth is the cover. [[project_mai_tai_schwab_token_expiry_warning]]
+
+**✅ #481 RESOLVED** — merged **2026-07-16 22:34:43Z** (auto-merge is now OFF ⇒ merges into main are manual).
+The "awaiting operator merge" wording in the 07-16 block below was a stale-handoff artifact, not a real
+pending merge.
+
+---
+
 ## ⚠️ 2026-07-16 PRE-OPEN CORRECTIONS (operator ground-truth — READ BEFORE THE OPEN)
 
 The 07-15 EOD summary carried errors + omissions. Corrected here; fix inline as they're worked.
@@ -48,7 +112,7 @@ circular. **NEXT: re-measure ORB under the 10:00 cap (%, median-first, drop-one)
 - ★ **#468 settlement probe — deployed + collecting** (in neither closed nor open lists) — **needs a Webull anchor from ORB's first fill today.**
 - ★ **P1.3 cap reset on restart** — every OMS restart re-issues the per-segment entry cap; **LIVE; manufactured the CPHI loss.**
 - ★ **P1.4 armed-segment observability** — fleet-flat checks *positions*; the cap reset fires on **armed segments = invisible.**
-- **P0.4 Schwab token** — refresh_token expires **Mon 2026-07-21 07:43 ET (5 days).**
+- **P0.4 Schwab token** — refresh_token expires **Mon 2026-07-21 07:43 ET.** *(07-20 UPDATE: now ~20h out; #448 pager verified firing AMBER; operator re-auths manually this evening — see the 07-20 head. Covered.)*
 - **#467 real status** — reverted on principle, but **drop-one says neutral-to-positive** (median unchanged; VEEE carried the whole −$7). Needs a **% re-test, then re-deploy.**
 - **Oversell/OCO hazard = ONE root under BOTH P0.3 and P0.6** — the single unlock for overnight protection on **both** bots.
 - **Mirror default fixed (in #468)** — a flag-flip can no longer fan v2 into ORB's account (landmine defused).
@@ -122,7 +186,7 @@ ORB's only fill. Broker fills: **buy 2 @ 5.83 (09:31:00) → sell 2 @ 5.98 (09:3
 - **2.3 — DEAD, not parked.** 21/22 floor conversion ⇒ the floor isn't leaking wins; the tick-grid skip is 0.19%×6 = pennies.
 - **⭐ FLOOR PHANTOM (grep, code+live-env): the live CW floor is PINNED +2%, and `oms_managed_positions.floor_pct` is a PHANTOM.** `_evaluate_v2_managed_exit`→`cw_exit_decision(floor_pct=2.0 default)` books CW_FLOOR at `entry×1.02` (service.py L1960); the tiered DB `floor_pct`/`floor_price` (AGEN 1.5, ASTN 3.121) are written as a side-effect by the position object's DEAD tiered ladder (`update_price`+`_persist_v2_price_state`) but `cw_exit_decision` NEVER reads them. ⇒ **do NOT read `floor_pct` as the live floor** (it made AGEN/ASTN/KUST look tiered all week). **P4.1's "live pinned +2%" baseline is REAL; the study stands.** [[project_mai_tai_floor_ratchet_study]]
 - **2.4 — DONE (PR #481):** `_window_flatten_due`/`_window_flatten_armed_stops` docstrings reconciled to the shipped **10:00** (were arguing 15:55). Docstring-only.
-- **2.5 — DONE (PR #481):** default (opt-OUT) auto-merge DISABLED (`automerge-pr.yml` job `if: false`) — it had merged live-money PRs #467/#475/+1 on green. Merges into main are now MANUAL. **PR #481 labeled `manual-merge` (won't self-merge); awaiting operator merge — not self-merged.**
+- **2.5 — DONE (PR #481):** default (opt-OUT) auto-merge DISABLED (`automerge-pr.yml` job `if: false`) — it had merged live-money PRs #467/#475/+1 on green. Merges into main are now MANUAL. **PR #481 MERGED 2026-07-16 22:34:43Z (07-20 UPDATE — the earlier "awaiting operator merge" was a stale artifact).**
 
 ---
 
