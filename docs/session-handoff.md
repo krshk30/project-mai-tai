@@ -246,6 +246,35 @@ accepted by Schwab, working order, broker_order_id assigned). It is **NOT yet pr
 
 ## 🔴 OPEN ITEMS — DO NOT LOSE (future-you: read these)
 
+**🏛️ 2026-07-17 — ARCHITECTURAL: the INJECTION SEAM is a convention, not an invariant → DEFAULT FLIPS
+NEED THE FULL SUITE.** `settings.py:~1064` is `@lru_cache def get_settings(): return Settings()` — a
+process-global bare Settings (defaults + env), consumed as **`settings or get_settings()` across ~15 sites**
+(oms, orb, v2, market-data, control-plane, strategy-engine, reconciler, market-capture, trade-coach,
+runtime-seed…). ⇒ **any code path can silently fall back to a global nobody injected.** Discovered flipping
+`strategy_macd_30s_enabled`'s default: 68 tests broke because a scanner/dashboard path reads `get_settings()`
+(sees the DEFAULT) while the test service injected the other way — a SPLIT (reverting only the default with
+the fixture kept made the 68 vanish). **LIVE is inert** (env sets the field on every service, so
+global==injected) — but that is luck of *which fields have env overrides*, not a closed seam. **Every
+default-flip PR must run the FULL `tests/unit` suite (not one file) and expect a global-read split.**
+**Fix (own workstream, NOT behind a paper bot): make the injected-settings contract an invariant — the
+fallback raises, or the ~15 global readers take injected settings.** [[feedback_mutate_the_code_pin_the_threshold]]
+- **✅ 2026-07-20: #487 (account default live→paper) and #490 (token-refresh default True→False) MERGED —
+  full suite green (1228 / 1229 passed), no split; the prediction held (no `get_settings()` reader touches
+  those fields). The seam itself remains OPEN.** `strategy_macd_30s_enabled` (True→False) is still deferred —
+  correct + live-inert but it DOES hit the split (68 tests); ships when the seam closes.
+
+**⚠️ 2026-07-17 — LABELLED LIMITATION (not a bug, likely UNRESOLVABLE — an acceptable answer): ON A SHARED
+BROKER ACCOUNT, OUR POSITION LEDGER IS NOT GROUND TRUTH.** Surfaced by the NXTC 07-14 correction: our `fills`
+said we held 2; Schwab rejected a sell of 2 as **oversold**; nothing of ours reserved the shares. The
+operator hand-trades the same Schwab account, so a manual sale is invisible to us **by construction**. **This
+is the [[project_mai_tai_oms_scoping_invariant]] WORKING, not failing** — the OMS acts only on positions it
+placed and clamps sells to its own ledger, so a manual trade structurally cannot be sold by the bot; the cost
+is that our ledger can be **stale-high** and the symptom is a **bounded, loud** oversold reject. **⇒ Do NOT
+"fix" this. Do NOT reconcile our ledger against broker positions on a shared account** (that is the ERNA path
+— a broker read that says flat deletes our protection; #464 exists because of it). **DO** read an unexplained
+oversold reject as *"the operator may have traded this name"* before suspecting the exit path, and **never
+cite a shared-account symptom as evidence for a code bug** — that is how NXTC carried the P0.3 blocker three days.
+
 **⛔ 2026-07-16 — STANDING AUDIT: what else does the dead ladder write? (before trusting it as evidence).**
 `oms_managed_positions.floor_pct`/`floor_price` are **FOSSILS** — written every row by the DEAD tiered
 ladder inside the position object (`update_price`→`_persist_v2_price_state`), NEVER read by the live
