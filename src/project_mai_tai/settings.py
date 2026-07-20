@@ -581,11 +581,20 @@ class Settings(BaseSettings):
     schwab_token_refresher_dead_token_backoff_seconds: int = 30
     schwab_token_refresher_max_dead_token_retries: int = 5
     # Single-writer invariant: once the dedicated refresher owns token freshness,
-    # set this False so the OMS adapter becomes a PURE READER (on expiry it reloads
-    # the refresher's token from disk instead of running its own refresh grant).
-    # Default True preserves current behavior; flip False at deploy AFTER the
-    # refresher is confirmed refreshing (no-gap cutover).
-    schwab_adapter_token_refresh_enabled: bool = True
+    # When False the OMS adapter is a PURE READER (on expiry it reloads the refresher's
+    # token from disk instead of running its own refresh grant).
+    # SAFE DEFAULT (2026-07-17): flipped True -> False. The old comment read "Default True
+    # preserves current behavior; flip False at deploy AFTER the refresher is confirmed
+    # refreshing (no-gap cutover)" — that was a MIGRATION SCAFFOLD for #274, and the cutover
+    # COMPLETED weeks ago (live env has been `false` since; the control-plane refresher is the
+    # sole owner of token freshness). The True default outlived its reason: it silently held the
+    # PRE-#274 behavior as the fallback, so a dropped env var would resurrect the adapter-side
+    # refresh grant — i.e. the shared-token SPOF whose failure caused the 2026-06-03..06-05
+    # ~2.6-day fleet outage. A default is what happens when configuration FAILS; it must never
+    # fail toward the exact SPOF a P0 removed. Live-inert: all services set this explicitly.
+    # (Open question raised in the PR, not acted on: whether the True PATH should be DELETED
+    # outright — an expired scaffold's endgame is deletion, not a safer default.)
+    schwab_adapter_token_refresh_enabled: bool = False
     schwab_access_token: str | None = None
     schwab_access_token_expires_at: str | None = None
     schwab_refresh_token: str | None = None
