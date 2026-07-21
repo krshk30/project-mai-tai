@@ -280,6 +280,10 @@ class OmsRiskService:
         )
         self._boot_protection_alerts: int = 0
         self._latest_quotes_by_symbol: dict[str, dict[str, object]] = {}
+        # (broker_account_name, symbol) -> when the broker last CONFIRMED both OCO legs open.
+        # Read per quote tick (must stay in-memory: a DB round-trip on that path is the
+        # #391-family freeze driver), written only by the periodic broker sync.
+        self._native_oco_armed_confirmed_at: dict[tuple[str, str], datetime] = {}
         self._latest_trades_by_symbol: dict[str, dict[str, object]] = {}
         # Track-2 Phase-2 Slice-3: OMS-managed v2 exit ladder. `_managed_v2_symbols`
         # is the hot-path guard — a quote only opens a session/evaluates when its
@@ -1876,6 +1880,13 @@ class OmsRiskService:
         (owned by PR-D); it is bounded to ~5s by #391 Fix-1 and fires only on an exit."""
         if not bool(getattr(self.settings, "oms_v2_exit_management_enabled", False)):
             return
+        if self._native_oco_stand_down_active(acct, symbol):
+            # A broker-native OCO owns this exit: target + stop are ONE broker-arbitrated
+            # pair. Running the software ladder here would place a THIRD protective sell
+            # against the same shares -- the NXTC oversell, merely relocated. Fail-open
+            # lives in the predicate: anything short of fresh broker confirmation runs
+            # the ladder instead of skipping it.
+            return
         quote = self._latest_quotes_by_symbol.get(symbol)
         if not quote:
             return
@@ -2309,6 +2320,107 @@ class OmsRiskService:
         # treats a raised timeout as "proceed to fire the stop".
         return await self._run_db(_unit, commit=False)
 
+    def _native_oco_stand_down_active(self, broker_account_name: str, symbol: str) -> bool:
+        """True only when a broker-native OCO bracket is CONFIRMED armed for this position.
+
+        *** THIS IS THE STAND-DOWN, AND IT FAILS OPEN BY DESIGN (operator-confirmed 2026-07-21).
+
+        When it returns True the OMS does NOT run its exit ladder: the broker OCO owns the
+        exit. That makes a WRONG True the worst failure in this system -- the software ladder
+        stands down while no broker bracket is actually working, and the position has no exit
+        at all (the ERNA shape). A wrong False merely risks an oversell, which is loud, logged
+        and reconcilable (the NXTC class we already know how to recover).
+
+        So the asymmetry is deliberate: stand-down requires positive, FRESH confirmation.
+        Anything else -- no entry, a stale entry, a sync that stopped running -- resumes the
+        ladder. This preserves the PRINCIPLE behind `_trigger_hard_stop`'s native-guard defer
+        ("an OPTIMIZATION, not a safety gate"; it fires the stop anyway on a DB stall) rather
+        than copying its mechanism, which would invert the failure direction here.
+
+        Staleness is the fail-open trigger: the confirmation is refreshed by the periodic
+        broker sync, so if that sync stalls, entries age out and the ladder comes back
+        automatically. No liveness signal, no stand-down.
+        """
+        # getattr, not attribute access: this runs on the per-quote-tick path, and an
+        # AttributeError there would propagate into the exit loop. Missing state resolves
+        # to "no confirmation" -> the ladder runs, which is the safe direction.
+        armed = getattr(self, "_native_oco_armed_confirmed_at", None)
+        if not armed:
+            return False
+        confirmed_at = armed.get((broker_account_name, symbol))
+        if confirmed_at is None:
+            return False
+        max_age = float(getattr(self.settings, "oms_native_oco_confirmation_max_age_seconds", 30))
+        age_seconds = (utcnow() - confirmed_at).total_seconds()
+        if age_seconds > max_age:
+            self.logger.warning(
+                "[OMS-OCO-STAND-DOWN-EXPIRED] %s %s - broker confirmation is %.1fs old "
+                "(max %.1fs); RESUMING the software exit ladder (fail-open).",
+                broker_account_name, symbol, age_seconds, max_age,
+            )
+            armed.pop((broker_account_name, symbol), None)
+            return False
+        return True
+
+    async def _refresh_native_oco_armed_state(self, account_names: list[str] | None) -> None:
+        """Re-derive the stand-down set from the BROKER-synced order rows (never memory alone).
+
+        Runs on the periodic sync path (~5s), off-loop, so the per-tick predicate stays a
+        dict lookup. A failure here is safe by construction: entries simply stop being
+        refreshed, age past the max, and the ladder resumes.
+
+        Only positions with BOTH legs open count as armed -- a single open leg means the OCO
+        has resolved (sibling filled or cancelled) and the OMS should take the exit back.
+        """
+        if not bool(getattr(self.settings, "oms_native_oco_stand_down_enabled", False)):
+            self._native_oco_armed_confirmed_at.clear()
+            return
+
+        def _unit(session) -> set[tuple[str, str]]:
+            armed: set[tuple[str, str]] = set()
+            strategy = session.scalar(select(Strategy).where(Strategy.code == "schwab_1m_v2"))
+            if strategy is None:
+                return armed
+            for (acct_name, symbol) in list(self._managed_v2_symbols):
+                broker_account = session.scalar(
+                    select(BrokerAccount).where(BrokerAccount.name == acct_name)
+                )
+                if broker_account is None:
+                    continue
+                legs = self.store.find_open_native_oco_bracket_legs(
+                    session,
+                    strategy_id=strategy.id,
+                    broker_account_id=broker_account.id,
+                    symbol=symbol,
+                )
+                if len(legs) >= 2:
+                    armed.add((acct_name, symbol))
+            return armed
+
+        try:
+            armed = await self._run_db(_unit, commit=False)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # Fail-open: do NOT refresh. Existing entries age out and the ladder resumes.
+            self.logger.warning(
+                "[OMS-OCO-STAND-DOWN] armed-state refresh failed; confirmations will age "
+                "out and the software exit ladder will resume (fail-open)",
+            )
+            return
+
+        now = utcnow()
+        for key in armed:
+            self._native_oco_armed_confirmed_at[key] = now
+        for key in list(self._native_oco_armed_confirmed_at):
+            if key not in armed:
+                # Bracket gone (filled/cancelled) -> hand the ladder straight back.
+                self._native_oco_armed_confirmed_at.pop(key, None)
+                self.logger.info(
+                    "[OMS-OCO-STAND-DOWN-CLEARED] %s %s - no armed OCO pair at the broker; "
+                    "software exit ladder resumes", key[0], key[1],
+                )
+
     async def _reconcile_after_intent(self, broker_account_name: str) -> None:
         """Best-effort post-intent broker→DB reconcile (Fix 3b).
 
@@ -2330,6 +2442,10 @@ class OmsRiskService:
 
     async def sync_broker_state(self, *, account_names: list[str] | None = None) -> dict[str, int]:
         order_summary = await self.sync_broker_orders(account_names=account_names)
+        # Re-derive the OCO stand-down from the rows this sync just refreshed -- the broker
+        # is the source of truth, never in-memory arm state. Safe on the boot path too: a
+        # restart starts with an empty set and only stands down once the broker confirms.
+        await self._refresh_native_oco_armed_state(account_names)
         position_summary = await self.sync_broker_positions(account_names=account_names)
         return {
             "accounts": position_summary["accounts"],

@@ -726,6 +726,13 @@ class Settings(BaseSettings):
     # normal gateway quote cadence while still skipping real gaps. Hard stop runs on
     # ANY fresh quote (NOT RTH-gated) — v2's edge is pre/after-market.
     oms_v2_exit_quote_max_age_ms: int = 5000
+    # Stand down the software exit ladder while a broker-native OCO bracket is armed.
+    # OFF until STEP-1 passes: with it False the ladder runs exactly as it does today.
+    oms_native_oco_stand_down_enabled: bool = False
+    # Fail-open dwell: how stale a broker confirmation may be before the ladder resumes.
+    # 30s = 6 missed 5s syncs. Lower is safer (resumes sooner); it must never be raised
+    # to the point where a dead sync loop can hold the ladder down indefinitely.
+    oms_native_oco_confirmation_max_age_seconds: int = 30
     # Extended-hours exit routing (2026-07-05, CLRO/CELZ stuck-exit fix). In
     # regular trading hours v2 exits stay MARKET/NORMAL (byte-identical). In
     # extended hours (AM/PM) they route as a LIMIT with session=AM|PM so they can
