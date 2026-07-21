@@ -822,13 +822,20 @@ class SchwabBrokerAdapter:
         NOTE the child legs are validated by Schwab against the POST-TRIGGER context, not the
         current market (confirmed in the same preview: the bracket accepted with a protective
         stop far above the live bid, because the children only evaluate once the entry fills)."""
+        # Entry leg may be a STOP (rest above market, trigger on the way up) or a marketable
+        # LIMIT (fill now). Both are valid TRIGGER parents; the exit pair is identical either
+        # way, which is what lets the STEP-1 gate force a fill on demand without changing the
+        # property under test.
+        entry_type = str(request.metadata.get("bracket_entry_type", "STOP")).upper()
         entry_stop = request.metadata.get("stop_price")
+        entry_limit = request.metadata.get("limit_price")
+        entry_px = entry_limit if entry_type == "LIMIT" else entry_stop
         target_price = request.metadata.get("bracket_target_price")
         protect_price = request.metadata.get("bracket_stop_price")
         missing = [
             name
             for name, value in (
-                ("stop_price", entry_stop),
+                ("limit_price" if entry_type == "LIMIT" else "stop_price", entry_px),
                 ("bracket_target_price", target_price),
                 ("bracket_stop_price", protect_price),
             )
@@ -839,11 +846,10 @@ class SchwabBrokerAdapter:
             # naked-position shape this whole structure exists to eliminate.
             raise RuntimeError(f"bracket request missing required metadata: {', '.join(missing)}")
 
-        return {
+        parent: dict[str, object] = {
             "session": "NORMAL",
             "duration": self._map_duration(str(request.metadata.get("time_in_force", request.time_in_force))),
-            "orderType": "STOP",
-            "stopPrice": float(Decimal(str(entry_stop))),
+            "orderType": entry_type,
             "orderStrategyType": "TRIGGER",
             "orderLegCollection": [
                 {
@@ -866,6 +872,11 @@ class SchwabBrokerAdapter:
                 }
             ],
         }
+        if entry_type == "LIMIT":
+            parent["price"] = float(Decimal(str(entry_px)))
+        else:
+            parent["stopPrice"] = float(Decimal(str(entry_px)))
+        return parent
 
     async def preview_bracket_order(self, request: OrderRequest) -> tuple[int, object]:
         """Validate a bracket at the broker WITHOUT placing it (STEP-1 gate item 0).
