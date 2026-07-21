@@ -595,6 +595,9 @@ class Settings(BaseSettings):
     # (Open question raised in the PR, not acted on: whether the True PATH should be DELETED
     # outright — an expired scaffold's endgame is deletion, not a safer default.)
     schwab_adapter_token_refresh_enabled: bool = False
+    # Native OCO bracket (TRIGGER -> OCO exit pair). OFF until STEP-1 passes on this broker:
+    # with it False the adapter's single-leg payload is byte-identical to pre-bracket main.
+    schwab_native_bracket_enabled: bool = False
     schwab_access_token: str | None = None
     schwab_access_token_expires_at: str | None = None
     schwab_refresh_token: str | None = None
@@ -723,6 +726,13 @@ class Settings(BaseSettings):
     # normal gateway quote cadence while still skipping real gaps. Hard stop runs on
     # ANY fresh quote (NOT RTH-gated) — v2's edge is pre/after-market.
     oms_v2_exit_quote_max_age_ms: int = 5000
+    # Stand down the software exit ladder while a broker-native OCO bracket is armed.
+    # OFF until STEP-1 passes: with it False the ladder runs exactly as it does today.
+    oms_native_oco_stand_down_enabled: bool = False
+    # Fail-open dwell: how stale a broker confirmation may be before the ladder resumes.
+    # 30s = 6 missed 5s syncs. Lower is safer (resumes sooner); it must never be raised
+    # to the point where a dead sync loop can hold the ladder down indefinitely.
+    oms_native_oco_confirmation_max_age_seconds: int = 30
     # Extended-hours exit routing (2026-07-05, CLRO/CELZ stuck-exit fix). In
     # regular trading hours v2 exits stay MARKET/NORMAL (byte-identical). In
     # extended hours (AM/PM) they route as a LIMIT with session=AM|PM so they can

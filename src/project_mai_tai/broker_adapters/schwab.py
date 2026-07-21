@@ -146,7 +146,11 @@ class SchwabBrokerAdapter:
             status_code, headers, response = await self._authorized_request_json(
                 "POST",
                 f"/trader/v1/accounts/{quote(account.account_hash, safe='')}/orders",
-                body=self._build_order_payload(request),
+                body=(
+                    self._build_bracket_payload(request)
+                    if self._is_bracket_request(request)
+                    else self._build_order_payload(request)
+                ),
             )
         except RuntimeError as exc:
             return [
@@ -768,6 +772,115 @@ class SchwabBrokerAdapter:
         if order_type == "STOP" and stop_price:
             payload["stopPrice"] = float(Decimal(str(stop_price)))
         return payload
+
+    def _is_bracket_request(self, request: OrderRequest) -> bool:
+        """A bracket is built ONLY when the flag is on AND the caller asked for one.
+
+        Both conditions are required so the single-leg path stays byte-identical with the
+        flag off — an intent that happens to carry bracket metadata must NOT silently
+        become a combo on a box where the flag was never flipped."""
+        if not bool(getattr(self.settings, "schwab_native_bracket_enabled", False)):
+            return False
+        return str(request.metadata.get("bracket", "")).lower() in {"1", "true", "yes"}
+
+    def _bracket_exit_leg(self, request: OrderRequest, *, order_type: str, price: Decimal) -> dict[str, object]:
+        """One child of the OCO pair. Always SELL — this bracket is long-only by design
+        (the -5% protective stop is below market on a long, which is why the exit legs are
+        structurally accept-safe; see docs/oco-bracket-design.md)."""
+        leg: dict[str, object] = {
+            "session": "NORMAL",
+            "duration": self._map_duration(str(request.metadata.get("time_in_force", request.time_in_force))),
+            "orderType": order_type,
+            "orderStrategyType": "SINGLE",
+            "orderLegCollection": [
+                {
+                    "instruction": "SELL",
+                    "quantity": float(request.quantity),
+                    "instrument": {"symbol": request.symbol, "assetType": "EQUITY"},
+                }
+            ],
+        }
+        if order_type == "LIMIT":
+            leg["price"] = float(price)
+        else:
+            leg["stopPrice"] = float(price)
+        return leg
+
+    def _build_bracket_payload(self, request: OrderRequest) -> dict[str, object]:
+        """Native OCO bracket: TRIGGER(entry) -> childOrderStrategies[ OCO(target, protective) ].
+
+        BROKER-VALIDATED 2026-07-21 via POST /previewOrder on the live account: this exact
+        shape returned HTTP 200 `status: "ACCEPTED"` with zero rejects, and Schwab echoed it
+        back as `advancedOrderType: "OTOCO"` — the same structure Webull's OTOCO preview
+        accepted on 2026-07-20. Preview harness: scripts/schwab_oco_preview.py.
+
+        WHY THIS EXISTS (the E5 dissolve): the NXTC oversell was two uncoordinated protective
+        sells reserving the same shares. An OCO makes target+stop ONE broker-arbitrated pair —
+        exactly one fills, the broker cancels the sibling — so there is no second sell to
+        reject. Both exits are broker-side, so they also survive an OMS restart.
+
+        NOTE the child legs are validated by Schwab against the POST-TRIGGER context, not the
+        current market (confirmed in the same preview: the bracket accepted with a protective
+        stop far above the live bid, because the children only evaluate once the entry fills)."""
+        entry_stop = request.metadata.get("stop_price")
+        target_price = request.metadata.get("bracket_target_price")
+        protect_price = request.metadata.get("bracket_stop_price")
+        missing = [
+            name
+            for name, value in (
+                ("stop_price", entry_stop),
+                ("bracket_target_price", target_price),
+                ("bracket_stop_price", protect_price),
+            )
+            if not value
+        ]
+        if missing:
+            # Never emit a half-built bracket: an entry with no attached exits is the
+            # naked-position shape this whole structure exists to eliminate.
+            raise RuntimeError(f"bracket request missing required metadata: {', '.join(missing)}")
+
+        return {
+            "session": "NORMAL",
+            "duration": self._map_duration(str(request.metadata.get("time_in_force", request.time_in_force))),
+            "orderType": "STOP",
+            "stopPrice": float(Decimal(str(entry_stop))),
+            "orderStrategyType": "TRIGGER",
+            "orderLegCollection": [
+                {
+                    "instruction": "BUY",
+                    "quantity": float(request.quantity),
+                    "instrument": {"symbol": request.symbol, "assetType": "EQUITY"},
+                }
+            ],
+            "childOrderStrategies": [
+                {
+                    "orderStrategyType": "OCO",
+                    "childOrderStrategies": [
+                        self._bracket_exit_leg(
+                            request, order_type="LIMIT", price=Decimal(str(target_price))
+                        ),
+                        self._bracket_exit_leg(
+                            request, order_type="STOP", price=Decimal(str(protect_price))
+                        ),
+                    ],
+                }
+            ],
+        }
+
+    async def preview_bracket_order(self, request: OrderRequest) -> tuple[int, object]:
+        """Validate a bracket at the broker WITHOUT placing it (STEP-1 gate item 0).
+
+        Read-only by construction: the only endpoint touched is /previewOrder. Returns the
+        raw (status_code, body) so the caller can read `orderValidationResult.rejects`."""
+        account = self.accounts_by_name.get(request.broker_account_name)
+        if account is None:
+            return 0, {"message": f"missing Schwab account hash for {request.broker_account_name}"}
+        status_code, _headers, response = await self._authorized_request_json(
+            "POST",
+            f"/trader/v1/accounts/{quote(account.account_hash, safe='')}/previewOrder",
+            body=self._build_bracket_payload(request),
+        )
+        return status_code, response
 
     def _execution_report_from_order(
         self,

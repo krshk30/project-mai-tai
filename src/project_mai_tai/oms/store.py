@@ -169,6 +169,37 @@ class OmsStore:
                 return order
         return None
 
+    def find_open_native_oco_bracket_legs(
+        self,
+        session: Session,
+        *,
+        strategy_id: UUID,
+        broker_account_id: UUID,
+        symbol: str,
+    ) -> list[BrokerOrder]:
+        """Open sell legs of a broker-native OCO bracket for one symbol.
+
+        Mirrors ``find_open_native_stop_guard_order`` but returns ALL matching legs,
+        because "is the bracket armed?" is a question about the PAIR: a lone open leg
+        means the OCO has already resolved (its sibling filled or was cancelled), which
+        is precisely when the OMS should take its ladder back."""
+        orders = session.scalars(
+            select(BrokerOrder)
+            .where(
+                BrokerOrder.strategy_id == strategy_id,
+                BrokerOrder.broker_account_id == broker_account_id,
+                BrokerOrder.symbol == symbol,
+                BrokerOrder.side == "sell",
+                BrokerOrder.status.in_(self.OPEN_ORDER_STATUSES),
+            )
+            .order_by(desc(BrokerOrder.updated_at))
+        ).all()
+        return [
+            order
+            for order in orders
+            if str((order.payload or {}).get("native_oco_bracket", "")).strip().lower() == "true"
+        ]
+
     def ensure_strategy(
         self,
         session: Session,
