@@ -17,6 +17,132 @@
 
 ---
 
+## 🏁 2026-07-21 EOD — ⭐ OCO STEP-1 **PASSED LIVE** (the E5 proof) · ⛔ ROOT CAUSE FOUND: backtests used the WRONG BARS
+
+**Two results, and they point opposite ways: the OCO execution work is PROVEN on live money; the
+entry R&D is INVALIDATED because it was computed on bars production never sees.**
+
+---
+
+### ⭐✅ 1. OCO bracket — STEP-1 PASSED on Schwab, attended, live, qty-1 SOFI, total cost ~$0.14
+
+| Item | Result |
+|---|---|
+| 0. Preview accepts the shape | ✅ HTTP 200 / 0 rejects (STOP **and** marketable-LIMIT parents) |
+| 1. Combo rests | ✅ parent `WORKING`, both exits `AWAITING_PARENT_ORDER` — never unattached |
+| 2. Atomic at fill | ✅ ×2 — entry `FILLED`, **both** legs `WORKING` in the same broker read |
+| **3. One-cancels-other** | ✅ **THE E5 PROOF** |
+| 4. Software-exit stand-down | ⛔ **NOT TESTED** — needs the emit wiring |
+| 5. Cancel + flat | ✅ ×3, broker-verified flat |
+
+**Item 3 as it actually happened:** the operator trailed the STOP leg up by hand
+(16.53→16.89→17.11→17.29, each a clean `REPLACED`), then `SELL STOP@17.32` **FILLED** and the broker
+**auto-cancelled the sibling** `SELL LIMIT@17.75`. **One leg fills ⇒ no second sell exists ⇒ the NXTC
+oversell cannot occur.** Proven via the PROTECTIVE leg — the exact order that collided in NXTC.
+**Zero oversell rejections all session** (the 6 rejects were the placement rule *"stop price must be
+below the bid for sell stop orders"*; each failed replace left the prior stop live, so the position
+was never unprotected).
+
+**BONUS:** the `REPLACED` chain proves **broker-side stop replacement works and opens no naked gap** —
+the trailing ratchet `oco-bracket-design.md` flagged as required-but-unbuilt.
+
+**Shipped:** #498 (adapter combo + stand-down + runbook), #499 (STEP-1 harness), #501 (LIMIT parent +
+`--leave-open`). **Deployed with both flags ON since 07:35 ET and verified INERT** (0 OCO markers, 0
+errors, v2 behaviour identical) — nothing emits `bracket` metadata yet, so the live path is unchanged.
+Revert = delete env lines 179-180 (they were ABSENT before) + choreography, fleet flat.
+[[project_mai_tai_oco_bracket_build]]
+
+**NEXT for OCO:** wire the emit (v2→Schwab) → that unlocks item 4's live proof → survival test → only
+then live routing. Webull keeps its own separate STEP-1.
+
+---
+
+### ⛔⭐ 2. ROOT CAUSE — the backtests built signals from POLYGON bars; live v2 decides on SCHWAB bars
+
+**Only 54.2% of ATR flips agree between the two sources** (Schwab 201 flips, Polygon 181, 109 matched
+same-bar same-direction). **~46% of every entry signal we studied is a data-source artifact.**
+Bar-level ATR *state* divergence is **10.4%** over 8,673 matched bars.
+
+**What is NOT broken — each was tested; do not "fix" these:**
+- **The bar BUILD is correct.** Off-by-one test: lag 0 = **median 0.00 bps** close error, lag ±1 = 75-76
+  bps. Perfectly aligned, no boundary/labelling bug.
+- **No timing skew.** Three-clock audit: two trail levels 1.6% apart were crossed **4 seconds apart** on
+  the same tape (RDGT). The wire is fine.
+- **The ATR oracle is correct.** Fed Schwab bars it reproduces the operator's TOS chart flips (CJMB
+  07-17: 08:58/09:56/11:01/12:14) — and his own live fill `2@1.245` sat on the 12:14 Schwab flip that
+  **Polygon never saw**.
+
+**Mechanism:** bar CONTENT differs slightly (Polygon sees ~9% more volume) and the ATR trailing stop is
+**recursive**, so a 12 bps close difference flipped ADVB 07-20 12:47 one way on Schwab and the other on
+Polygon, leaving the trails 7.5% apart. Divergence concentrates on borderline bars (|close-trail|
+median **2.12%** when states disagree vs **4.35%** when they agree) — i.e. exactly where a
+proximity entry rule fires. **Rule to carry: aggregation + recursion amplifies vendor differences;
+point-in-time reads (quotes, fills) do not.** [[project_mai_tai_bar_source_defect]]
+
+**⛔ ORB HAS THE MIRROR PROBLEM** — it runs live on gateway/Polygon bars while its research was
+Schwab-REST-based, and its entry is also a threshold crossing. Separate thread, same crack.
+
+**Blast radius:** every entry-timing result from today is INVALID (proximity sweeps, OOS split, entry
+concepts). **Exit-side work survives** (honest-fill haircut, floor-vs-target, buy-stop slippage) — it is
+quote/fill driven; verify per study rather than assume.
+
+---
+
+### 📉 3. The entry R&D that ran before the defect was found (all superseded, kept for the method)
+
+Full write-up: **`docs/atr-proximity-entry-rnd.md`** (PR #500) + local copy at
+`C:\Users\kkvkr\OneDrive\Documents\mai-tai-reports\`.
+- **OOS walk-forward FAILED**: the in-sample winner (+1.399%, CI excluding zero) went to **-0.500%**
+  out-of-sample. The ORB "+11.2" pattern reproducing exactly. ~222 cells searched.
+- **Honest fills cost -1.0pp** (floor 2) and **-1.9pp** (floor 3) vs the idealized bar-level walk;
+  stops fill -5.3% not -5.0%, and floor-3 stops fill **-7.58%**.
+- **The live 07:00-16:30 window was never applied**; on 07-20, **10 of 15 trades fired outside it**.
+  Applying it moved the chase entry from -0.474% to +0.134%. "Five good trades, not fifty" is measurably right.
+- Entry concepts (in-window, honest): chase **+0.134%** · buy-STOP **-1.961%** (dead, stops -8%) ·
+  buy-LIMIT-below **+0.565%** (best in-sample; **reverses on Schwab bars**).
+- **⭐ OPEN DESIGN ITEM:** the proximity rule has a MAXIMUM but **no MINIMUM** — ADVB 07-20 12:47 jumped
+  **+4.83% in one minute** and closed **0.33%** under the trail, and the rule took it with no cushion.
+  Fix to test: a proximity **BAND** (e.g. 1.0% ≤ prox ≤ 2.0%).
+
+---
+
+### 🟢 4. Schwab REST bar backfill — SCHEDULED, fires 16:35 ET (20:35 UTC) today
+
+`systemd` one-shot **`mai-tai-schwab-backfill.timer`** → `scripts/schwab_backfill.py --days 10`,
+log `/tmp/schwab_backfill.log`, corpus `/var/lib/project-mai-tai/schwab_rest_bars/<date>/<SYM>.json`.
+
+- **FRESH PULL, not a hole-patch.** Splicing REST bars into `strategy_bar_history` would mix two sources
+  in one series, and a recursive ATR would then yield a THIRD answer. `strategy_bar_history` is left
+  untouched — it is an operational log of when the bot was watching, not a market-data archive.
+- **Validated before scheduling:** REST reproduces the bot's bars **exactly on OHLC** (ADVB 07-20 12:47
+  O 7.65 / H 8.05 / L 7.61 / **C 8.0395** both sides; volume differs ~250 on late prints), with far
+  better coverage — **1,185 bars for 07-20 spanning 00:00→19:59 ET**.
+- **Minute bars, no ticks.** So signals come from Schwab bars and fills stay approximated by Polygon
+  quotes; intrabar execution remains a residual gap.
+- Runs after v2's window closes because it shares the **Schwab API quota and token** with the live bot
+  (not a CPU concern — 66 paced calls).
+
+**Why it matters:** the Schwab-bar re-run collapsed to **n=18 / n=10** because 26 of 37 symbol-days had
+>5min gaps. The backfill is what makes a valid re-run possible.
+
+---
+
+### 🗓️ TOMORROW
+1. **Check the backfill** (`/tmp/schwab_backfill.log`) — then re-run the entry corpus on the new bars.
+2. **Wire the OCO emit** (v2→Schwab) → item 4's live proof → survival test.
+3. Consider the proximity **BAND** (min 1.0%) once bars are trustworthy.
+4. ⛔ Do NOT re-tune anything on Polygon bars.
+
+**⚠️ Live state at EOD:** both OCO flags ON and inert; v2 was holding **2 GREE** at 14:12 ET (normal bot
+activity) — check it closed before any restart. Fleet otherwise clean all day; STEP-1 left the account
+flat, broker-verified.
+
+**⛔ PROCESS NOTE:** bash `TZ=America/New_York date` **silently returns UTC** on this box — it produced a
+"11:25 ET" reading that was actually 07:25 ET and nearly slipped the day's plan. Use the PowerShell
+conversion; cross-check against a git commit stamp (`-0400`). [[feedback_report_times_in_et]]
+
+---
+
 ## 🌙 2026-07-20 EOD — STRATEGY QUESTION SETTLED (entry dead in ALL forms) · OCO BUILD STARTED · tomorrow = validate
 
 **⭐ THE ANSWER TO THE MONTH: the ENTRY has no edge in any form; the forward work is PLUMBING, not strategy.**
