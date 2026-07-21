@@ -80,8 +80,8 @@ def test_next_open_fill_uses_the_following_bar_open() -> None:
     assert nxt[0].entry_price == 9.8   # waiting a bar was a DISCOUNT here
 
 
-def _b(o, h, l, c, i=0):
-    return Bar(ts=i * 60000, open=o, high=h, low=l, close=c, volume=1000)
+def _b(o, h, lo, c, i=0):
+    return Bar(ts=i * 60000, open=o, high=h, low=lo, close=c, volume=1000)
 
 
 def test_floor_ladder_locks_the_whole_percent_reached_and_ratchets() -> None:

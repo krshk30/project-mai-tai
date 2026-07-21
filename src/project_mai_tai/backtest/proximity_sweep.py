@@ -33,7 +33,6 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
 from project_mai_tai.backtest.atr_oracle import Bar as OracleBar
-from project_mai_tai.backtest.atr_oracle import compute_atr_trail
 
 PROXIMITY_PCTS = (0.5, 1.0, 1.5, 2.0, 2.5, 3.0)
 FILL_MODES = ("same_bar", "next_open")
