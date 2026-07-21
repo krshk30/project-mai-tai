@@ -84,3 +84,27 @@ def test_rsi_all_gains_is_hundred_and_warmup_is_nan() -> None:
     assert math.isnan(r[13])       # not warm until bar 14
     assert r[14] == 100.0          # no losses at all
     assert r[-1] == 100.0
+
+
+def test_volume_hold_rejects_a_one_bar_spike() -> None:
+    """The whole point of persistence: a spike that evaporates must NOT pass."""
+    from project_mai_tai.backtest.dot_entry import _vol_non_declining
+    # 100, 900 (spike), 200, 210 -> declines after the spike
+    assert _vol_non_declining([100.0, 900.0, 200.0, 210.0], 3) is False
+    # a genuine staircase
+    assert _vol_non_declining([100.0, 150.0, 200.0, 260.0], 3) is True
+    # flat counts as holding (>=), it is not declining
+    assert _vol_non_declining([200.0, 200.0, 200.0, 200.0], 3) is True
+
+
+def test_volume_hold_rejects_any_decline_in_the_window() -> None:
+    from project_mai_tai.backtest.dot_entry import _vol_non_declining
+    assert _vol_non_declining([100.0, 200.0, 190.0, 300.0], 3) is False
+
+
+def test_volume_sustained_tolerates_a_dip_but_needs_the_window_elevated() -> None:
+    from project_mai_tai.backtest.dot_entry import _vol_sustained
+    base = [100.0] * 11          # median baseline = 100
+    assert _vol_sustained(base + [300.0, 250.0, 280.0], 13, 3, 10) is True
+    # one of the last three falls back to baseline -> not sustained
+    assert _vol_sustained(base + [300.0, 90.0, 280.0], 13, 3, 10) is False

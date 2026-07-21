@@ -200,7 +200,47 @@ def make_filter(kind: str, rows: DotRows, volumes: list[float]):
             and _above_prior_max(rows.stoch, 3, i)
             and _above_prior_max(vols, 3, i)
         )
+    if kind == "volume_hold":          # volume persistence ALONE (isolates its contribution)
+        return lambda i: _vol_non_declining(vols, i, 3)
+    if kind == "volume_sustained":     # softer persistence, alone
+        return lambda i: _vol_sustained(vols, i, 3, 10)
+    if kind == "volume_hold_macd":     # persistence + the two oscillators
+        return lambda i: (
+            _vol_non_declining(vols, i, 3)
+            and _green_macd(rows.macd, i)
+            and _green_band(rows.stoch, i)
+        )
     raise ValueError(f"unknown filter kind: {kind}")
 
 
-FILTER_KINDS = ("none", "script", "volume_loose", "volume_strict")
+def _vol_non_declining(vols: list[float], i: int, bars: int = 3) -> bool:
+    """Volume HOLDING UP over `bars`, not a one-bar spike (operator, 2026-07-21).
+
+    `volume_strict` only asks "is THIS bar above the prior 3?" -- a single print spike
+    passes it and then evaporates. This asks for a non-declining staircase across the
+    window: v[i] >= v[i-1] >= ... The operator's "it's kinda holding, increasing, not
+    the declining pattern".
+    """
+    if i - bars < 0:
+        return False
+    seq = vols[i - bars : i + 1]
+    return all(seq[k] >= seq[k - 1] for k in range(1, len(seq)))
+
+
+def _vol_sustained(vols: list[float], i: int, bars: int = 3, lookback: int = 10) -> bool:
+    """Every one of the last `bars` sits above the median of the `lookback` before them.
+
+    Tolerates a dip between bars (real tape is noisy) while still requiring the WHOLE
+    window to be elevated -- a softer reading of "holding up" than the strict staircase.
+    """
+    if i - bars - lookback < 0:
+        return False
+    base = sorted(vols[i - bars - lookback : i - bars + 1])
+    if not base:
+        return False
+    med = base[len(base) // 2]
+    return all(v > med for v in vols[i - bars + 1 : i + 1])
+
+
+FILTER_KINDS = ("none", "script", "volume_loose", "volume_strict",
+                "volume_hold", "volume_sustained", "volume_hold_macd")

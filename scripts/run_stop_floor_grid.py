@@ -33,9 +33,9 @@ from project_mai_tai.backtest.proximity_sweep import (
 from project_mai_tai.db.session import build_session_factory
 from project_mai_tai.settings import get_settings
 
-STOPS = (-3.0, -4.0, -5.0)
-FLOOR_STARTS = (2.0, 3.0, 4.0, 5.0)
-FILTERS = ("none", "volume_strict")
+STOPS = (-5.0,)
+FLOOR_STARTS = (2.0, 3.0)
+FILTERS = ("none", "volume_strict", "volume_hold", "volume_sustained", "volume_hold_macd")
 
 
 def main() -> int:
@@ -106,7 +106,7 @@ def main() -> int:
                     "dropone_mean": [min(means), max(means)],
                     "by_reason": _by_reason(cell)}
 
-    with open("/tmp/stop_floor_grid.json", "w") as fh:
+    with open("/tmp/vol_prox_grid.json", "w") as fh:
         json.dump(out, fh, indent=2, default=str)
     print("\ndetail -> /tmp/stop_floor_grid.json")
     return 0
