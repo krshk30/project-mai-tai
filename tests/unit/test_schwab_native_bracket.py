@@ -125,3 +125,25 @@ def test_incomplete_bracket_raises_rather_than_emitting_a_naked_entry(missing_ke
     with pytest.raises(RuntimeError) as excinfo:
         _adapter(bracket_enabled=True)._build_bracket_payload(request)
     assert missing_key in str(excinfo.value)
+
+
+def test_limit_entry_parent_uses_price_not_stopprice() -> None:
+    """A marketable LIMIT parent is a valid TRIGGER entry; the OCO exit pair is unchanged.
+    Pinned because STEP-1 needs to force a fill on demand without altering what it tests."""
+    req = _bracket_request(metadata={"bracket_entry_type": "LIMIT", "limit_price": "10.05"})
+    payload = _adapter(bracket_enabled=True)._build_bracket_payload(req)
+    assert payload["orderType"] == "LIMIT"
+    assert payload["price"] == 10.05
+    assert "stopPrice" not in payload
+    assert payload["orderStrategyType"] == "TRIGGER"
+    # exit pair identical to the STOP-parent case
+    oco = payload["childOrderStrategies"][0]
+    target, protective = oco["childOrderStrategies"]
+    assert target["price"] == 10.20 and protective["stopPrice"] == 9.50
+
+
+def test_limit_entry_missing_limit_price_raises() -> None:
+    req = _bracket_request(metadata={"bracket_entry_type": "LIMIT", "limit_price": ""})
+    with pytest.raises(RuntimeError) as e:
+        _adapter(bracket_enabled=True)._build_bracket_payload(req)
+    assert "limit_price" in str(e.value)

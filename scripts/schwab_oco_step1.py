@@ -115,7 +115,11 @@ def _describe(orders: list[dict]) -> str:
 # ---------------------------------------------------------------- requests
 
 
-def _bracket_req(coid: str, symbol: str, entry: float, target: float, protect: float) -> OrderRequest:
+def _bracket_req(coid: str, symbol: str, entry: float, target: float, protect: float,
+                  entry_type: str = "STOP") -> OrderRequest:
+    # STOP parent = rests above market (item 1). LIMIT parent = marketable, fills on demand
+    # (item 2) -- how the entry fills is irrelevant to whether the exit pair arms atomically.
+    px_key = "limit_price" if entry_type == "LIMIT" else "stop_price"
     return OrderRequest(
         client_order_id=coid,
         broker_account_name=ACCOUNT,
@@ -127,15 +131,16 @@ def _bracket_req(coid: str, symbol: str, entry: float, target: float, protect: f
         reason="oco-step1-gate",
         metadata={
             "bracket": "true",
-            "order_type": "STOP",
+            "bracket_entry_type": entry_type,
+            "order_type": entry_type,
             "time_in_force": "day",
-            "stop_price": f"{entry:.2f}",
+            px_key: f"{entry:.2f}",
             "bracket_target_price": f"{target:.2f}",
             "bracket_stop_price": f"{protect:.2f}",
             # Tag every leg so the OMS stand-down can recognise the pair (item 4, later).
             "native_oco_bracket": "true",
         },
-        order_type="STOP",
+        order_type=entry_type,
         time_in_force="day",
     )
 
@@ -154,7 +159,7 @@ def _simple_req(coid: str, symbol: str, side: str, intent: str, **meta: str) -> 
 # ---------------------------------------------------------------- stages
 
 
-async def run(stage: str, symbol: str, confirm: bool) -> int:
+async def run(stage: str, symbol: str, confirm: bool, leave_open: bool = False) -> int:
     if symbol.upper() in PROTECTED:
         log.error("%s is PROTECTED (%s) -- refusing.", symbol, ",".join(sorted(PROTECTED)))
         return 2
@@ -174,18 +179,22 @@ async def run(stage: str, symbol: str, confirm: bool) -> int:
         # Item 1: entry FAR above market so it cannot trigger.
         entry = round(ask * 1.50, 2)
     else:
-        # Item 2: entry just above the ask so it fills promptly on a qty-1 lot.
-        entry = round(ask + 0.02, 2)
+        # Item 2: MARKETABLE LIMIT through the ask -> fills immediately. A buy-STOP 2c above a
+        # penny-spread name may simply never trigger (it did not, 18:03 ET), which tests
+        # nothing.
+        entry = round(ask + 0.05, 2)
     target = round(entry * 1.02, 2)   # +2%
     protect = round(entry * 0.95, 2)  # -5%
 
     coid = f"ocostep1-{time.strftime('%H%M%S', time.gmtime())}"
-    plan = (f"BUY {QTY} {symbol} STOP @ {entry:.2f} -> OCO[ SELL LIMIT {target:.2f} | "
-            f"SELL STOP {protect:.2f} ]  coid={coid}")
+    plan = (f"BUY {QTY} {symbol} {'LIMIT' if stage != 'rest' else 'STOP'} @ {entry:.2f} -> "
+            f"OCO[ SELL LIMIT {target:.2f} | SELL STOP {protect:.2f} ]  coid={coid}")
     log.info("[PLAN/%s] %s", stage.upper(), plan)
 
     # Always validate the shape at the broker first -- zero orders placed.
-    status, body = await adapter.preview_bracket_order(_bracket_req(coid, symbol, entry, target, protect))
+    entry_type = "STOP" if stage == "rest" else "LIMIT"
+    status, body = await adapter.preview_bracket_order(
+        _bracket_req(coid, symbol, entry, target, protect, entry_type))
     rejects = []
     if isinstance(body, dict):
         rejects = ((body.get("orderValidationResult") or {}).get("rejects")) or []
@@ -204,7 +213,8 @@ async def run(stage: str, symbol: str, confirm: bool) -> int:
     held = False
     ok = True
     try:
-        reports = await adapter.submit_order(_bracket_req(coid, symbol, entry, target, protect))
+        reports = await adapter.submit_order(
+            _bracket_req(coid, symbol, entry, target, protect, entry_type))
         kinds = ",".join(r.event_type for r in reports)
         rej = ";".join(r.reason or "" for r in reports if r.event_type == "rejected")
         log.info("[PLACE] status=%s reject=%s", kinds, rej or "-")
@@ -262,6 +272,14 @@ async def run(stage: str, symbol: str, confirm: bool) -> int:
         log.exception("harness error: %s", exc)
         ok = False
     finally:
+        if leave_open:
+            orders = await _open_orders(adapter, symbol)
+            working = _working(orders)
+            log.warning("[LEAVE-OPEN] NOT cancelling. Resting now: %s", _describe(working))
+            log.warning("[LEAVE-OPEN] position is protected ONLY by the broker OCO. "
+                        "It MUST be closed before the session ends.")
+            log.info("=== RESULT: bracket left open for the manual ITEM 3 step ===")
+            return 0
         # ITEM 5 + safety: cancel everything we placed; flatten any unexpected fill.
         try:
             orders = await _open_orders(adapter, symbol)
@@ -308,8 +326,13 @@ def main() -> int:
     ap.add_argument("--stage", choices=("rest", "fill"), required=True)
     ap.add_argument("--symbol", required=True, help="liquid, cheap, NOT CYN/CELZ")
     ap.add_argument("--confirm", action="store_true", help="place REAL orders (real money, qty 1)")
+    ap.add_argument("--leave-open", action="store_true",
+                    help="ITEM 3: place the bracket and LEAVE the exit pair resting so the "
+                         "operator can make one leg marketable by hand. Skips cancel+flatten. "
+                         "The position is then protected ONLY by the broker OCO -- it must be "
+                         "closed before the session ends.")
     args = ap.parse_args()
-    return asyncio.run(run(args.stage, args.symbol, args.confirm))
+    return asyncio.run(run(args.stage, args.symbol, args.confirm, args.leave_open))
 
 
 if __name__ == "__main__":
