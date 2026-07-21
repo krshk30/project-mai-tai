@@ -595,6 +595,9 @@ class Settings(BaseSettings):
     # (Open question raised in the PR, not acted on: whether the True PATH should be DELETED
     # outright — an expired scaffold's endgame is deletion, not a safer default.)
     schwab_adapter_token_refresh_enabled: bool = False
+    # Native OCO bracket (TRIGGER -> OCO exit pair). OFF until STEP-1 passes on this broker:
+    # with it False the adapter's single-leg payload is byte-identical to pre-bracket main.
+    schwab_native_bracket_enabled: bool = False
     schwab_access_token: str | None = None
     schwab_access_token_expires_at: str | None = None
     schwab_refresh_token: str | None = None
