@@ -70,6 +70,24 @@ class CapturedBar:
     volume: float
 
 
+# Widest spread a quote may show before it is treated as a bad print rather than a market.
+# CPHI 2026-07-21 10:28 carried a spread of 1,989,900% (bid collapsed to ~0) -- a single crossed
+# or stale print. It did not affect that day's trades, but an unfiltered quote like it silently
+# poisons any spread- or fill-based calculation that touches it. 50% is far above any real spread
+# on these names (measured 0.20-0.89%) and far below the garbage.
+MAX_SANE_SPREAD_PCT = 50.0
+
+
+def _quote_is_sane(q: "Quote") -> bool:
+    """Reject non-positive, crossed, and absurd-spread prints. Read-side rather than at ingest:
+    it repairs the history already captured, and keeps the live capture service untouched."""
+    if q.bid <= 0 or q.ask <= 0:
+        return False
+    if q.ask < q.bid:                     # crossed
+        return False
+    return (q.ask - q.bid) / q.bid * 100.0 <= MAX_SANE_SPREAD_PCT
+
+
 class MarketDataSource(Protocol):
     def trades(self, symbol: str, start: datetime, end: datetime) -> list[Trade]: ...
     def quotes(self, symbol: str, start: datetime, end: datetime) -> list[Quote]: ...
@@ -106,7 +124,8 @@ class DbMarketDataSource:
                 )
                 .order_by(MarketCaptureQuote.event_ts, MarketCaptureQuote.id)
             ).all()
-        return [Quote(ts=ts, bid=float(b), ask=float(a)) for ts, b, a in rows]
+        return [q for q in (Quote(ts=ts, bid=float(b), ask=float(a)) for ts, b, a in rows)
+                if _quote_is_sane(q)]
 
     def captured_bars(self, symbol: str, start: datetime, end: datetime) -> list[CapturedBar]:
         with self._sf() as s:
