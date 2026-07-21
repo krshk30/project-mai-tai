@@ -50,6 +50,9 @@ class ProxTrade:
     reason: str
     proximity_pct: float
     fill_mode: str
+    exit_ts: int | None = None          # epoch ms, for per-trade forensics
+    signal_prox_pct: float | None = None  # how close to the trail the signal bar closed
+    trail_at_signal: float | None = None
 
 
 @dataclass
@@ -277,3 +280,366 @@ def confirmed_windows(session, days: int) -> list[tuple[str, datetime, datetime]
     for symbol, confirm_at in open_confirm.items():
         out.append((symbol, confirm_at, confirm_at + timedelta(hours=8)))
     return out
+
+
+# ------------------------------------------------- HONEST FILLS (quote-based, 2026-07-21)
+#
+# The bar-level `_walk_exit` above is an UPPER BOUND, not an estimate: every one of its
+# idealizations points the same way.
+#   entry at the next bar's OPEN (a trade print)  -> you actually pay the ASK
+#   stop fills exactly at -5%                     -> market-on-touch; SOBR filled -13.2%
+#   floor fills exactly at the floor              -> same, it walks the book
+#   no spread, no latency                         -> measured spreads here are 0.20-0.89%
+#
+# That matters more than any parameter in this study: the surviving OOS signal is
+# +0.353%/trade and the MEDIAN measured spread is ~0.5%. The signal is smaller than one
+# spread crossing. This function measures the haircut instead of assuming it.
+#
+# Model: BUY at the observed ask at (signal bar close + latency). SELL on the observed bid:
+# a floor/stop triggers when the bid TOUCHES the level and fills at the NEXT observed bid --
+# which is what captures gap slip, the thing the bar-level walk cannot see.
+
+
+def _quote_at_or_after(quotes, ts, start_idx=0):
+    """First quote at/after ts. Returns (idx, quote) or (len, None). Quotes are ascending."""
+    i = start_idx
+    n = len(quotes)
+    while i < n and quotes[i].ts < ts:
+        i += 1
+    return (i, quotes[i]) if i < n else (n, None)
+
+
+def simulate_cell_honest(
+    bars: list[OracleBar],
+    rows: list[dict],
+    quotes,
+    *,
+    symbol: str,
+    day: str,
+    threshold_pct: float,
+    stop_pct: float = -5.0,
+    floor_start_pct: float = 2.0,
+    latency_s: float = 1.0,
+    signal_filter=None,
+) -> list[ProxTrade]:
+    """Floor-ladder exit with quote-based fills. Same signals as `simulate_cell`; only the
+    FILLS differ, so subtracting the two isolates the haircut."""
+    from datetime import datetime, timezone
+
+    out: list[ProxTrade] = []
+    if not quotes:
+        return out
+
+    for idx in find_proximity_signals(rows, threshold_pct):
+        if signal_filter is not None and not signal_filter(idx):
+            continue
+        # Decision is known at the signal bar's CLOSE = bar start + 60s, then latency.
+        decide_ts = datetime.fromtimestamp(
+            bars[idx].ts / 1000 + 60 + latency_s, tz=timezone.utc
+        )
+        qi, q = _quote_at_or_after(quotes, decide_ts)
+        if q is None or q.ask <= 0:
+            continue
+        entry = float(q.ask)                     # pay the ask
+        stop_lvl = entry * (1 + stop_pct / 100.0)
+        hwm = entry
+        floor_lvl = None
+        exit_px = None
+        exit_ts_ms = None
+        reason = "EOD"
+
+        # Bar index used only for the ATR flip check; quotes drive the fills.
+        bar_j = idx + 1
+        for k in range(qi + 1, len(quotes)):
+            qq = quotes[k]
+            bid = float(qq.bid)
+            if bid <= 0:
+                continue
+            # Advance the bar cursor so FLIP is checked on the right bar.
+            while bar_j + 1 < len(bars) and bars[bar_j + 1].ts <= qq.ts.timestamp() * 1000:
+                bar_j += 1
+
+            if floor_lvl is not None and bid <= floor_lvl:
+                # Market-on-touch: fill at the NEXT observed bid, not the level. This is
+                # where gap slip shows up.
+                nxt = next((float(x.bid) for x in quotes[k + 1: k + 4] if x.bid > 0), bid)
+                exit_px, reason = nxt, "FLOOR"
+                exit_ts_ms = qq.ts.timestamp() * 1000
+                break
+            if floor_lvl is None and bid <= stop_lvl:
+                nxt = next((float(x.bid) for x in quotes[k + 1: k + 4] if x.bid > 0), bid)
+                exit_px, reason = nxt, "STOP"
+                exit_ts_ms = qq.ts.timestamp() * 1000
+                break
+
+            hwm = max(hwm, bid)
+            gain = (hwm - entry) / entry * 100.0
+            if gain >= floor_start_pct:
+                step = max(floor_start_pct, float(int(gain)))
+                lvl = entry * (1 + step / 100.0)
+                floor_lvl = lvl if floor_lvl is None else max(floor_lvl, lvl)
+
+            if bar_j < len(rows) and rows[bar_j].get("flip") == "SELL":
+                exit_px, reason = bid, "FLIP"
+                exit_ts_ms = qq.ts.timestamp() * 1000
+                break
+
+        if exit_px is None:
+            last = next((float(x.bid) for x in reversed(quotes) if x.bid > 0), entry)
+            exit_px, reason = last, "EOD"
+
+        _tr = rows[idx].get("trail")
+        _cl = rows[idx].get("close")
+        out.append(ProxTrade(
+            symbol=symbol, day=day, entry_ts=bars[idx].ts, entry_price=entry,
+            exit_price=exit_px, pnl_pct=(exit_px - entry) / entry * 100.0,
+            reason=reason, proximity_pct=threshold_pct, fill_mode="honest",
+            exit_ts=int(exit_ts_ms) if exit_ts_ms else None,
+            signal_prox_pct=((_tr - _cl) / _cl * 100.0) if (_tr and _cl) else None,
+            trail_at_signal=_tr,
+        ))
+    return out
+
+
+# ------------------------------------------------- RESTING-LIMIT ENTRY (2026-07-21)
+#
+# WHY. The proximity rule fires on the bar that REACHES the trail -- and that bar is often
+# violent (ADVB 12:47 moved +4.83% in one minute; 14:07 moved +2.75%). Filling at that bar's
+# close means buying AFTER the move: a chase. The operator's diagnosis, and the tape agrees.
+#
+# THE FIX UNDER TEST. Do not react to the bar. Rest a BUY LIMIT at trail*(1-X%) and let price
+# come to you. Filled ONLY if the market actually trades there (ask <= level), at the level.
+# The resting order is re-priced every bar as the trail moves -- i.e. broker-side replace,
+# the same primitive the OCO bracket work proved on 07-20.
+#
+# THE COST THIS MUST ACCOUNT FOR. A resting order that never fills is not free: the setups it
+# misses include the ones that CROSSED (the winners). So every unfilled short segment is
+# classified, and the misses are reported alongside the fills. A resting-entry backtest that
+# only counts fills is a lie by omission.
+#
+# WINDOW. Entries are gated to the LIVE v2 window (07:00-16:30 ET). The prior study had no
+# window filter and 10 of 15 trades on 2026-07-20 fired outside it -- unfillable in production.
+
+ENTRY_WINDOW_START_ET = (7, 0)
+ENTRY_WINDOW_END_ET = (16, 30)
+
+
+def _in_entry_window(ts_ms: int) -> bool:
+    from datetime import datetime, timezone
+    from zoneinfo import ZoneInfo
+    t = datetime.fromtimestamp(ts_ms / 1000, timezone.utc).astimezone(ZoneInfo("America/New_York"))
+    mins = t.hour * 60 + t.minute
+    return (ENTRY_WINDOW_START_ET[0] * 60 + ENTRY_WINDOW_START_ET[1]) <= mins <= \
+           (ENTRY_WINDOW_END_ET[0] * 60 + ENTRY_WINDOW_END_ET[1])
+
+
+def simulate_resting_entry(
+    bars: list[OracleBar],
+    rows: list[dict],
+    quotes,
+    *,
+    symbol: str,
+    day: str,
+    offset_pct: float,
+    stop_pct: float = -5.0,
+    floor_start_pct: float = 2.0,
+) -> tuple[list[ProxTrade], dict]:
+    """Resting BUY LIMIT at trail*(1-offset_pct%), one fill per short segment.
+
+    Returns (trades, accounting) where accounting counts what the resting order MISSED:
+      missed_cross    -- segment ended in a BUY flip we never filled = a potential winner missed
+      avoided_no_cross-- segment ended with no cross and no fill = a loser correctly avoided
+    """
+    trades: list[ProxTrade] = []
+    acct = {"segments": 0, "filled": 0, "missed_cross": 0, "avoided_no_cross": 0,
+            "out_of_window": 0}
+    if not quotes:
+        return trades, acct
+
+    qi = 0
+    seg_open = False
+    seg_filled = False
+    i = 0
+    n = len(bars)
+    while i < n:
+        r = rows[i]
+        state = r.get("state")
+        if state == "short":
+            if not seg_open:
+                seg_open, seg_filled = True, False
+                acct["segments"] += 1
+            trail = r.get("trail")
+            if trail and not seg_filled:
+                if not _in_entry_window(bars[i].ts):
+                    acct["out_of_window"] += 1
+                else:
+                    level = float(trail) * (1.0 - offset_pct / 100.0)
+                    bar_end_ms = bars[i].ts + 60000
+                    while qi < len(quotes) and quotes[qi].ts.timestamp() * 1000 < bars[i].ts:
+                        qi += 1
+                    k = qi
+                    # BUY STOP, not a buy limit. The trail sits ABOVE price while short, so
+                    # trail*(1-X%) is usually ABOVE the ask -- a buy LIMIT there would be
+                    # marketable and fill instantly at a worse price (it did: -9.3% stop fills
+                    # and a 2.9% win rate, the tell). A buy STOP triggers as price RISES to the
+                    # level, which is the "get in during the run-up" behaviour we want, and it
+                    # is the same primitive the OCO work proved live (trigger must be > market
+                    # at placement -- STOP_PRICE_MUST_BE_GREATER_THAN_MARKET).
+                    armed = False
+                    while k < len(quotes) and quotes[k].ts.timestamp() * 1000 < bar_end_ms:
+                        ask_now = float(quotes[k].ask)
+                        if ask_now <= 0:
+                            k += 1
+                            continue
+                        if not armed:
+                            # Only a level ABOVE the market can rest as a stop.
+                            if ask_now < level:
+                                armed = True
+                            else:
+                                break   # already through it: no valid resting placement
+                            k += 1
+                            continue
+                        if ask_now >= level:
+                            # Stop triggers -> becomes a market buy: pay the observed ask,
+                            # which is >= our level. That gap IS the slippage, not assumed away.
+                            entry = ask_now
+                            exit_px, reason, exit_ts = _honest_exit_walk(
+                                bars, rows, quotes, k, i, entry,
+                                stop_pct=stop_pct, floor_start_pct=floor_start_pct)
+                            trades.append(ProxTrade(
+                                symbol=symbol, day=day, entry_ts=bars[i].ts,
+                                entry_price=entry, exit_price=exit_px,
+                                pnl_pct=(exit_px - entry) / entry * 100.0,
+                                reason=reason, proximity_pct=offset_pct,
+                                fill_mode="resting", exit_ts=exit_ts,
+                                trail_at_signal=float(trail)))
+                            seg_filled = True
+                            acct["filled"] += 1
+                            break
+                        k += 1
+        else:
+            if seg_open and not seg_filled:
+                # Segment ended unfilled. A BUY flip means the cross happened without us.
+                if r.get("flip") == "BUY":
+                    acct["missed_cross"] += 1
+                else:
+                    acct["avoided_no_cross"] += 1
+            seg_open = False
+        i += 1
+    if seg_open and not seg_filled:
+        acct["avoided_no_cross"] += 1
+    return trades, acct
+
+
+def _honest_exit_walk(bars, rows, quotes, k0, bar_idx, entry, *, stop_pct, floor_start_pct):
+    """Shared honest exit: floor ladder on the observed bid, market-on-touch fills."""
+    stop_lvl = entry * (1 + stop_pct / 100.0)
+    hwm = entry
+    floor_lvl = None
+    bar_j = bar_idx
+    for k in range(k0 + 1, len(quotes)):
+        qq = quotes[k]
+        bid = float(qq.bid)
+        if bid <= 0:
+            continue
+        while bar_j + 1 < len(bars) and bars[bar_j + 1].ts <= qq.ts.timestamp() * 1000:
+            bar_j += 1
+        if floor_lvl is not None and bid <= floor_lvl:
+            nxt = next((float(x.bid) for x in quotes[k + 1:k + 4] if x.bid > 0), bid)
+            return nxt, "FLOOR", int(qq.ts.timestamp() * 1000)
+        if floor_lvl is None and bid <= stop_lvl:
+            nxt = next((float(x.bid) for x in quotes[k + 1:k + 4] if x.bid > 0), bid)
+            return nxt, "STOP", int(qq.ts.timestamp() * 1000)
+        hwm = max(hwm, bid)
+        gain = (hwm - entry) / entry * 100.0
+        if gain >= floor_start_pct:
+            step = max(floor_start_pct, float(int(gain)))
+            lvl = entry * (1 + step / 100.0)
+            floor_lvl = lvl if floor_lvl is None else max(floor_lvl, lvl)
+        if bar_j < len(rows) and rows[bar_j].get("flip") == "SELL":
+            return bid, "FLIP", int(qq.ts.timestamp() * 1000)
+    last = next((float(x.bid) for x in reversed(quotes) if x.bid > 0), entry)
+    return last, "EOD", None
+
+
+def simulate_limit_pullback_entry(
+    bars: list[OracleBar],
+    rows: list[dict],
+    quotes,
+    *,
+    symbol: str,
+    day: str,
+    proximity_pct: float = 2.0,
+    pullback_pct: float = 1.0,
+    stop_pct: float = -5.0,
+    floor_start_pct: float = 2.0,
+    max_wait_bars: int = 30,
+) -> tuple[list[ProxTrade], dict]:
+    """CONCEPT 3 -- same signal as the chase, better price demanded.
+
+    Identical trigger to `simulate_cell_honest` (proximity to the trail), but instead of
+    buying at the signal bar's close we rest a BUY LIMIT at close*(1-pullback_pct%) and trade
+    ONLY if the market comes down to us. This is what "buy it 1-2% lower" actually requires:
+    a limit BELOW the market, not the buy-stop of concept 2 (which paid a WORSE price and lost
+    ~2pp) .
+
+    The cost is explicit and must be counted: price may never pull back, and the setups that
+    run straight up are exactly the winners. Every unfilled signal is classified by whether it
+    went on to cross.
+
+    Order rests until the short segment ends (a BUY flip = the cross happened without us) or
+    `max_wait_bars`, whichever comes first -- a limit left resting forever is not a strategy.
+    """
+    trades: list[ProxTrade] = []
+    acct = {"signals": 0, "filled": 0, "missed_cross": 0, "no_fill_no_cross": 0,
+            "out_of_window": 0}
+    if not quotes:
+        return trades, acct
+
+    for idx in find_proximity_signals(rows, proximity_pct):
+        acct["signals"] += 1
+        if not _in_entry_window(bars[idx].ts):
+            acct["out_of_window"] += 1
+            continue
+        close_i = rows[idx].get("close")
+        if not close_i:
+            continue
+        level = float(close_i) * (1.0 - pullback_pct / 100.0)
+
+        # Rest from the signal bar's close until the segment ends or the wait expires.
+        start_ms = bars[idx].ts + 60000
+        end_bar = min(len(bars) - 1, idx + max_wait_bars)
+        for j in range(idx + 1, end_bar + 1):
+            if rows[j].get("flip") == "BUY":       # crossed without us
+                end_bar = j
+                break
+        end_ms = bars[end_bar].ts + 60000
+
+        k, _q = _quote_at_or_after(quotes, __import__("datetime").datetime.fromtimestamp(
+            start_ms / 1000, __import__("datetime").timezone.utc))
+        filled = False
+        while k < len(quotes) and quotes[k].ts.timestamp() * 1000 <= end_ms:
+            ask = float(quotes[k].ask)
+            if 0 < ask <= level:
+                # Passive limit: we get OUR price (or better). This is the whole point.
+                entry = level
+                exit_px, reason, exit_ts = _honest_exit_walk(
+                    bars, rows, quotes, k, idx, entry,
+                    stop_pct=stop_pct, floor_start_pct=floor_start_pct)
+                trades.append(ProxTrade(
+                    symbol=symbol, day=day, entry_ts=bars[idx].ts, entry_price=entry,
+                    exit_price=exit_px, pnl_pct=(exit_px - entry) / entry * 100.0,
+                    reason=reason, proximity_pct=proximity_pct, fill_mode="limit_pullback",
+                    exit_ts=exit_ts, trail_at_signal=rows[idx].get("trail")))
+                acct["filled"] += 1
+                filled = True
+                break
+            k += 1
+
+        if not filled:
+            crossed = any(rows[j].get("flip") == "BUY" for j in range(idx + 1, end_bar + 1))
+            if crossed:
+                acct["missed_cross"] += 1
+            else:
+                acct["no_fill_no_cross"] += 1
+    return trades, acct

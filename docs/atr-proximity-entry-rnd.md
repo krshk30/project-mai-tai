@@ -332,11 +332,26 @@ Sign flips (in-sample → OOS) across all 48 cells:
 at n=40–47 in-sample, which was not obviously thin. The problem was not sample size; the filter was
 fitting noise.
 
-**A direct reversal of an in-sample "structural" finding:** in-sample, floor 3% beat floor 2% at
-**6/6** proximities. Out-of-sample, **floor 2% is the more robust family** (5/6 positive in both
-halves vs 3/6). §7 explicitly argued that this kind of monotone structure was more believable than
-any single level. **That reasoning was wrong here** — floor-start was structure, and it still did not
-generalise. Recorded because it is the most transferable lesson in this document.
+**A direct reversal of an in-sample "structural" finding — the head-to-head, unfiltered:**
+
+| Proximity | in f2 | in f3 | IS winner | OOS n | OOS f2 | OOS f3 | **OOS winner** |
+|---|---|---|---|---|---|---|---|
+| 0.5% | +0.264 | +0.707 | floor3 | 10 | **+0.177** | -0.869 | **floor2** |
+| 1.0% | +0.106 | +0.407 | floor3 | 12 | **+0.624** | -0.175 | **floor2** |
+| 1.5% | +0.482 | +0.750 | floor3 | 17 | **+0.735** | -0.182 | **floor2** |
+| 2.0% | +0.475 | +0.922 | floor3 | 22 | **+0.353** | +0.190 | **floor2** |
+| 2.5% | +0.087 | +0.583 | floor3 | 26 | **+0.842** | +0.166 | **floor2** |
+| 3.0% | -0.035 | +0.231 | floor3 | 29 | **+0.536** | +0.019 | **floor2** |
+
+**In-sample floor3 wins 6/6. Out-of-sample floor2 wins 6/6.** A total reversal.
+**OOS average: floor2 +0.545% vs floor3 -0.142%** — floor 3 is NEGATIVE out-of-sample.
+At the locked proximity 2.0%, floor 3 looked twice as good in-sample (+0.922 vs +0.475) and gave back
+**6x more** (-0.73pp vs -0.12pp decay). That is the overfitting signature in a single row.
+
+§7 explicitly argued that this kind of monotone structure was more believable than any single level.
+**That reasoning was wrong here** — floor-start WAS structure, 6/6, and it still did not generalise.
+Recorded because it is the most transferable lesson in this document. **Any lock uses floor 2%;
+§7's floor-3 preference is an in-sample statement that this section supersedes.**
 
 The classic overfitting signature is visible in the ordering: **the more selection choices a cell
 used, the worse it decayed.** Unfiltered cells made the fewest choices and held up best.
@@ -536,3 +551,87 @@ independent cells would produce ~3.
 **That one cell, and the walk-forward's own in-sample winner (which also had a CI excluding zero),
 BOTH failed out-of-sample.** This ledger exists so no number from §4–§7 is ever quoted without the
 search depth attached — and §8 is why that matters.
+
+
+---
+
+## 12. Session addendum (2026-07-21 PM) - execution, not strategy
+
+After the OOS failure the operator redirected: *"it's not about the strategy, it's about our
+execution -- we need to be on the trade earlier."* All numbers below are HONEST fills (ask in /
+bid out, market-on-touch) with the **live 07:00-16:30 ET window applied**, on 92 windows.
+
+### 12.1 The live-window filter was worth ~0.6pp - and the study had been missing it
+
+The study up to this point had **no trading-window filter**. On 2026-07-20, **10 of 15 trades fired
+outside 07:00-16:30** (05:45, 17:48, 19:42 ET...) - times v2 cannot enter
+(`strategy_schwab_1m_v2_entry_window_*` = 07:00-16:30) and Webull stop-market does not work.
+
+| Chase entry, prox 2.0% / floor 2% / stop -5% | n | mean | win |
+|---|---|---|---|
+| all hours | 118 | **-0.474%** | 57.6% |
+| **in-window only** | **54** | **+0.134%** | **68.5%** |
+
+**The out-of-window trades were the losers.** "Five good trades, not fifty" is measurably right, and
+every number in sections 4-8 is contaminated by unfillable trades.
+
+### 12.2 Three entry concepts, measured
+
+| # | Concept | Instrument | n | mean | win | mean STOP fill |
+|---|---|---|---|---|---|---|
+| 1 | bar closes near the trail | market @ bar close | 54 | +0.134% | 68.5% | -5.31% |
+| 2 | buy on strength toward the trail | buy STOP above mkt | 69 | **-1.961%** | 55.1% | **-8.16%** |
+| 3 | **buy a pullback at a better price** | **buy LIMIT below mkt** | **36** | **+0.565%** | **75.0%** | -5.27% |
+
+**Concept 2 is dead**: it buys accelerating momentum and eats the full reversal (stops -8 to -9%). It
+also pays a WORSE price than the chase - trail*(1-1%) sits ABOVE where the chase enters - so it does
+the opposite of what was asked.
+
+**Concept 3 (limit 1% below the signal close) is the best result measured**: +0.565% vs chase +0.134%
+(+0.43pp), win 68.5% -> 75.0%. Winner/loser SIZES are unchanged (+2.34 / -5.27); the gain is that
+**more setups survive** - a cheaper basis means a trade that would have stopped out instead reaches
+the floor. An execution edge, as predicted. Interior optimum: -0.5% -> +0.033, **-1.0% -> +0.565**,
+-2.0% -> -0.189.
+
+WARNING - its cost: 18 of 54 in-window signals never filled, and **every one of them crossed**
+(`no_fill_no_cross = 0`). The pullback rule systematically skips setups that run straight up. It still
+wins on 8 days, but if those runners had been the big winners this reverses.
+
+**CI [-0.53, +1.66] spans zero, n=36. NOT walk-forward validated. Same shape as the +0.935% that died
+out-of-sample this morning. Do not treat it as an edge.**
+
+### 12.3 A bug worth recording (found and fixed same session)
+
+The first concept-2 run reported a **2.9% win rate and -9.3% stop fills** - impossible numbers, and the
+tell that it was a bug not a result. Cause: the trail sits ABOVE price while short, so `trail*(1-X%)`
+is normally **above the ask**; a buy LIMIT there is marketable and fills instantly at a worse price.
+The correct instrument is a buy STOP (arm below, trigger on the way up) - the same constraint the OCO
+work proved live (`STOP_PRICE_MUST_BE_GREATER_THAN_MARKET`). Both semantics now pinned in tests.
+**Lesson: an impossible-looking win rate is a bug signal, not a finding.**
+
+### 12.4 THE OPEN ITEM - the proximity rule has no MINIMUM
+
+Operator forensics on ADVB 2026-07-20 12:47 (config A, -5.47% stop). Tape check 12:46:50-12:48:30:
+**no print above the trail (8.0567); highest was 8.0399.** The entry at 8.04 WAS before the cross, by
+~30s. **But it was only 0.2% below the line.**
+
+| Bar | Close | Proximity |
+|---|---|---|
+| 12:46 | 7.6600 | 5.18% |
+| **12:47** | **8.0300** | **0.33%** <- signal fired |
+
+The bar jumped **+4.83% in one minute** and closed 0.33% under the trail. **The rule accepted it
+because proximity has a MAXIMUM (2%) but no MINIMUM.** We bought sitting on the line with no cushion,
+which is why the stop was hit.
+
+**FIX TO TEST: a proximity BAND (e.g. 1.0% <= prox <= 2.0%)** - enter only with real room below the
+line, rejecting spike bars that close on it. A 1% floor rejects the 12:47 trade outright. Stacks with
+concept 3: the band gives room at SIGNAL time, the limit gives a better FILL.
+
+### 12.5 Next, in order
+
+1. **Walk-forward concept 3 (-1%)** - the same first-5/last-4 split that killed the previous winner.
+   No further variations until this runs.
+2. **Test the proximity band** (min 1.0%), alone and stacked with concept 3.
+3. **Re-run sections 4-8 with the window filter applied** - those conclusions are drawn from data
+   including ~2/3 unfillable trades.

@@ -151,3 +151,119 @@ def test_floor_start_delays_the_first_floor() -> None:
                          stop_pct=-5.0, trail_pct=2.0, floor_start_pct=4.0)
     assert (r2, round(px2, 4)) == ("FLOOR", 10.30)   # floor armed at +3%
     assert (r4, round(px4, 4)) == ("STOP", 9.50)     # never armed -> took the stop
+
+
+class _Q:
+    def __init__(self, ts_ms, bid, ask):
+        from datetime import datetime, timezone
+        self.ts = datetime.fromtimestamp(ts_ms / 1000, timezone.utc)
+        self.bid = bid
+        self.ask = ask
+
+
+def test_resting_buy_stop_arms_below_and_fills_on_the_way_up() -> None:
+    """BUY STOP semantics, not buy limit.
+
+    The trail sits ABOVE price while short, so trail*(1-X%) is normally ABOVE the ask. A buy
+    LIMIT there is marketable and fills instantly at a worse price -- that bug produced a 2.9%
+    win rate and -9.3% stop fills. A buy STOP must ARM while the ask is below the level and
+    trigger only when the ask RISES to it.
+    """
+    from project_mai_tai.backtest.proximity_sweep import simulate_resting_entry
+    base = 1784988000000          # 10:00 ET, inside the live window
+    bars = [Bar(ts=base + i * 60000, open=10, high=10, low=10, close=10, volume=100)
+            for i in range(3)]
+    rows = [{"state": "short", "trail": 10.0, "close": 10.0, "flip": None} for _ in bars]
+
+    # offset 1% -> level 9.90. Ask stays below it: armed, never triggers, NO trade.
+    below = [_Q(base + i * 1000, 9.79, 9.80) for i in range(150)]
+    trades, acct = simulate_resting_entry(bars, rows, below, symbol="X", day="d", offset_pct=1.0)
+    assert trades == []
+    assert acct["filled"] == 0
+
+    # Ask starts below (arms) then rises through 9.90 -> fills at the OBSERVED ask, >= level.
+    rising = [_Q(base + i * 1000, 9.79, 9.80 if i < 5 else 9.93) for i in range(150)]
+    trades2, acct2 = simulate_resting_entry(bars, rows, rising, symbol="X", day="d", offset_pct=1.0)
+    assert len(trades2) == 1
+    assert round(trades2[0].entry_price, 4) == 9.93     # paid the ask, not the level
+    assert acct2["filled"] == 1
+
+
+def test_resting_buy_stop_does_not_place_when_already_through_the_level() -> None:
+    """If the ask is already above the level there is no valid stop placement -- skip, never
+    fill at a worse price (the marketable-limit bug)."""
+    from project_mai_tai.backtest.proximity_sweep import simulate_resting_entry
+    base = 1784988000000
+    bars = [Bar(ts=base + i * 60000, open=10, high=10, low=10, close=10, volume=100)
+            for i in range(3)]
+    rows = [{"state": "short", "trail": 10.0, "close": 10.0, "flip": None} for _ in bars]
+    through = [_Q(base + i * 1000, 9.98, 9.99) for i in range(150)]   # already above 9.90
+    trades, acct = simulate_resting_entry(bars, rows, through, symbol="X", day="d", offset_pct=1.0)
+    assert trades == []
+    assert acct["filled"] == 0
+
+
+def test_resting_entry_counts_a_missed_cross_as_a_miss_not_a_free_skip() -> None:
+    """An unfilled segment that then CROSSES is a missed winner and must be counted."""
+    from project_mai_tai.backtest.proximity_sweep import simulate_resting_entry
+    base = 1784988000000
+    bars = [Bar(ts=base + i * 60000, open=10, high=10, low=10, close=10, volume=100)
+            for i in range(3)]
+    rows = [
+        {"state": "short", "trail": 10.0, "close": 10.0, "flip": None},
+        {"state": "short", "trail": 10.0, "close": 10.0, "flip": None},
+        {"state": "long", "trail": 9.0, "close": 10.5, "flip": "BUY"},   # crossed without us
+    ]
+    quotes = [_Q(base + i * 1000, 9.95, 9.99) for i in range(200)]   # never reaches 9.90
+    trades, acct = simulate_resting_entry(bars, rows, quotes, symbol="X", day="d", offset_pct=1.0)
+    assert trades == []
+    assert acct["missed_cross"] == 1
+    assert acct["avoided_no_cross"] == 0
+
+
+def test_resting_entry_is_gated_to_the_live_window() -> None:
+    """03:00 ET is outside 07:00-16:30: no fill even though the ask is at the level."""
+    from project_mai_tai.backtest.proximity_sweep import simulate_resting_entry
+    base = 1784962800000   # 2026-07-20 03:00 ET
+    bars = [Bar(ts=base + i * 60000, open=10, high=10, low=10, close=10, volume=100)
+            for i in range(3)]
+    rows = [{"state": "short", "trail": 10.0, "close": 10.0, "flip": None} for _ in bars]
+    quotes = [_Q(base + i * 1000, 9.88, 9.90) for i in range(150)]
+    trades, acct = simulate_resting_entry(bars, rows, quotes, symbol="X", day="d", offset_pct=1.0)
+    assert trades == []
+    assert acct["out_of_window"] > 0
+
+
+def test_limit_pullback_fills_at_our_price_when_the_market_comes_down() -> None:
+    from project_mai_tai.backtest.proximity_sweep import simulate_limit_pullback_entry
+    base = 1784988000000                      # 10:00 ET, in-window
+    bars = [Bar(ts=base + i * 60000, open=10, high=10, low=10, close=10, volume=100)
+            for i in range(6)]
+    # signal bar 0: close 10.00, trail 10.15 -> proximity 1.5% (inside a 2% threshold)
+    rows = [{"state": "short", "trail": 10.15, "close": 10.0, "flip": None} for _ in bars]
+    # pullback 1% -> level 9.90. Ask dips to 9.90 in a later bar.
+    q = [_Q(base + 60000 + i * 1000, 9.85, 9.90 if i == 30 else 9.99) for i in range(300)]
+    trades, acct = simulate_limit_pullback_entry(
+        bars, rows, q, symbol="X", day="d", proximity_pct=2.0, pullback_pct=1.0)
+    assert acct["filled"] == 1
+    assert round(trades[0].entry_price, 4) == 9.90     # OUR price, not the market print
+
+
+def test_limit_pullback_records_a_missed_cross_when_price_never_comes_back() -> None:
+    """The cost side: if it runs straight up, we never fill AND we lose the winner."""
+    from project_mai_tai.backtest.proximity_sweep import simulate_limit_pullback_entry
+    base = 1784988000000
+    bars = [Bar(ts=base + i * 60000, open=10, high=10, low=10, close=10, volume=100)
+            for i in range(4)]
+    rows = [
+        {"state": "short", "trail": 10.15, "close": 10.0, "flip": None},
+        {"state": "short", "trail": 10.15, "close": 10.1, "flip": None},
+        {"state": "long", "trail": 9.5, "close": 10.3, "flip": "BUY"},    # crossed without us
+        {"state": "long", "trail": 9.5, "close": 10.4, "flip": None},
+    ]
+    q = [_Q(base + 60000 + i * 1000, 10.05, 10.08) for i in range(200)]   # never hits 9.90
+    trades, acct = simulate_limit_pullback_entry(
+        bars, rows, q, symbol="X", day="d", proximity_pct=2.0, pullback_pct=1.0)
+    assert trades == []
+    assert acct["missed_cross"] == 1
+    assert acct["no_fill_no_cross"] == 0
