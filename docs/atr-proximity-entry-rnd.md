@@ -1,10 +1,13 @@
 # ATR-Proximity Anticipatory Entry — R&D report (2026-07-21)
 
-> **Status: PROMISING, NOT PROVEN. Nothing deployed, nothing routed. No live path imports any of
-> this code.** One configuration produced a positive result with a confidence interval excluding
-> zero, but ~174 cells were searched against a single 9-day dataset — the exact setup that
-> produced the ORB "+11.2" that later died out-of-sample. **The required next step is an
-> out-of-sample test, not more tuning.**
+> **⛔ STATUS: FAILED OUT-OF-SAMPLE. Nothing deployed, nothing routed, nothing deployable.**
+> The in-sample search produced a headline of +0.935%/trade with a CI excluding zero. An honest
+> walk-forward (select on the first 5 days, evaluate once on the last 4) took the selected cell from
+> **+1.399% in-sample to −0.500% out-of-sample**. That is the ORB "+11.2" pattern reproducing exactly.
+>
+> **The in-sample sections (§4–§7) are retained deliberately** — they record what the search found and
+> what it looked like *before* validation, which is the whole lesson. **Read §8 before quoting any
+> number from them.**
 
 - **Code:** PR #500 (`claude/atr-proximity-rnd`) — `src/project_mai_tai/backtest/{dot_entry,proximity_sweep}.py`,
   `scripts/run_proximity_sweep.py`, `scripts/run_stop_floor_grid.py`, 24 unit tests.
@@ -281,13 +284,127 @@ drop-one [+0.88, +1.20], no flip, CI [−0.10, +2.18] — just misses.
 
 ---
 
-## 8. VERDICT
+## 8. Run 5 — OUT-OF-SAMPLE VALIDATION ★ THE DECIDING TEST
 
-**The anticipatory entry is the first configuration this month that is not dead.** That is a real
-change from the standing position ("the entry family has no edge in any form"), and it came from
-changing the **exit geometry**, not just the trigger.
+`scripts/run_oos_split.py`. Split: **in-sample = 07-09, 07-10, 07-13, 07-14, 07-15**;
+**out-of-sample = 07-16, 07-17, 07-20, 07-21**.
 
-What is genuinely supported:
+Two tests were run, and only the second is real.
+
+### TEST A — stability of the recommended config (WEAK)
+
+Not out-of-sample: that config was chosen while looking at all 9 days, so both halves informed the
+choice. It can detect instability; it can never confirm an edge.
+
+| Half | n | Mean | Win % | CI |
+|---|---|---|---|---|
+| First 5 days | 109 | +0.922% | 61.5 | [+0.11, +1.74] |
+| **Last 4 days** | **22** | **+0.190%** | 50.0 | [−1.97, +2.35] |
+
+Positive in both halves but **decayed ~80%**, on only 22 OOS trades. Not falsified, not confirmed.
+
+### TEST B — honest walk-forward (THE REAL TEST)
+
+The whole grid was re-run on the **first half only**; the winner there was selected using nothing
+from the second half, then evaluated on the second half **exactly once**. Minimum n=30 to be
+selectable, so a 12-trade cell could not win.
+
+| | Config | n | Mean | Win % | CI |
+|---|---|---|---|---|---|
+| In-sample | 2.5% / floor 3% / volume_strict | 43 | **+1.399%** | 69.8 | [+0.13, +2.67] **excl 0** |
+| **Out-of-sample** | *same* | 14 | **−0.500%** | 50.0 | [−2.87, +1.87] |
+
+**Decay −1.90pp. VERDICT: FAILED.** The selected cell had a CI excluding zero in-sample and still
+went negative out-of-sample.
+
+### ★ Which parameters overfit — the most useful output of the whole study
+
+Sign flips (in-sample → OOS) across all 48 cells:
+
+| Family | Sign flips (of cells with OOS data) |
+|---|---|
+| `volume_strict` | **9 of 12** |
+| `volume_sustained` | **8 of 9** |
+| `none`, floor 3% | 3 of 6 |
+| **`none`, floor 2%** | **1 of 6** |
+
+**The volume filters are the overfit** — they flip sign almost universally, including `volume_strict`
+at n=40–47 in-sample, which was not obviously thin. The problem was not sample size; the filter was
+fitting noise.
+
+**A direct reversal of an in-sample "structural" finding:** in-sample, floor 3% beat floor 2% at
+**6/6** proximities. Out-of-sample, **floor 2% is the more robust family** (5/6 positive in both
+halves vs 3/6). §7 explicitly argued that this kind of monotone structure was more believable than
+any single level. **That reasoning was wrong here** — floor-start was structure, and it still did not
+generalise. Recorded because it is the most transferable lesson in this document.
+
+The classic overfitting signature is visible in the ordering: **the more selection choices a cell
+used, the worse it decayed.** Unfiltered cells made the fewest choices and held up best.
+
+### The one surviving thread
+
+Unfiltered, floor 2%, positive in BOTH halves, no sign flip:
+
+| Proximity | In-sample | OOS |
+|---|---|---|
+| 1.0% | +0.106 | +0.624 |
+| 1.5% | +0.482 | +0.735 |
+| 2.0% | +0.475 | +0.353 |
+| 2.5% | +0.087 | +0.842 |
+
+Small, consistent, and **the simplest configuration in the entire study** — the opposite of what the
+in-sample search recommended.
+
+### Two caveats against over-reading the OOS result itself
+
+1. **The OOS sample is thin** — 10–29 trades per cell, 22 for the locked config. It can reject a
+   strong claim (and did) but cannot confirm a weak one.
+2. **The OOS period is not just "later," it is quieter** — 109 in-sample trades vs 22 OOS across a
+   5:4 day split. The operator independently observed a slow market with no fleet activity on 07-21.
+   So the OOS window may be a different *regime*, not merely a different sample. This weakens the
+   failure verdict slightly — but the burden of proof is on the edge, not on the test.
+
+---
+
+## 9. VERDICT
+
+**Nothing here is deployable.** The in-sample headline (+0.935%/trade, CI excluding zero) did **not**
+survive contact with unseen data, and the filter work — the part that looked most promising — is
+exactly where the overfitting concentrated.
+
+The standing position from earlier this month is **unchanged**: no entry variant has demonstrated an
+edge that survives validation. This study did not overturn it.
+
+What survived out-of-sample (weak, and the only thread left):
+
+- **Unfiltered, floor 2%, proximity 1.0–2.5%** — small positive means in both halves (+0.09→+0.84%),
+  no sign flips. The simplest configuration tested, and the one the in-sample search ranked *lowest*.
+
+What did NOT survive:
+
+- The recommended config's magnitude (+0.935% → +0.190%, an ~80% decay).
+- Every volume filter (9/12 and 8/9 sign flips).
+- The floor-3% > floor-2% "structure" (6/6 in-sample, reversed out-of-sample).
+
+What remains true as *mechanics* (measured directly, not selected for, so not at risk of the same
+overfitting — but only ever demonstrated on this dataset):
+
+1. The hard +2% target **caps winners**: same 77 winners averaged +2.805% under a ladder vs +2.000%
+   capped — a mechanical fact about the geometry, not a fitted parameter.
+2. A **2% trailing stop is dead** (12/12 negative; it exits 92/111 trades at a median of −0.04%).
+3. **Tighter stops did not help** (−5% ≥ −4% ≥ −3%); the earlier entry did not shrink adverse excursion.
+4. **The oscillator rows contribute ~nothing** — `volume_hold` and `volume_hold_macd` returned
+   identical trades at three thresholds; the thinkScript filter removed only ~9% of signals.
+
+### The methodological lesson (the most valuable output)
+
+In §7 the report argued that *structure* (monotone/interior-optimum patterns across many cells) was
+more believable than any single cell's *level*. **The walk-forward falsified that for floor-start:**
+a 6/6 monotone result reversed out-of-sample. Consistency across cells of a heavily-searched grid is
+**not** independent evidence — the cells share the same data and the same noise. Only unseen data
+distinguishes structure from a shared artefact.
+
+Superseded — what the earlier draft of this document claimed:
 
 1. The hard +2% target was **costing ~0.81pp per winner**; the floor ladder recovers it. (12/12)
 2. A **2% trailing stop is dead.** (12/12 negative)
@@ -305,47 +422,44 @@ What is **NOT** supported:
 - **Any live routing decision.** The sample is far too thin, and the coverage gap is material: only
   97 of 239 confirmed windows had usable tape.
 
-**Honest summary: a coherent, internally consistent positive structure on a small in-sample dataset.
-The structure is more believable than the level. +0.935%/trade is the number to try to KILL next,
-not to trade.**
+**Honest summary: the search found a coherent positive structure in-sample; validation destroyed the
+level and reversed part of the structure. +0.935%/trade was the number to KILL, and it was killed.**
 
 ---
 
-## 9. Proposed follow-up testing (in priority order)
+## 10. Follow-up testing
 
-### P1 — Out-of-sample split ← DO THIS FIRST, BEFORE ANY MORE TUNING
-Lock the recommended config (**2.0% / −5% / floor 3% / no filter**) and test it on days it has never
-seen. Two forms:
-- **Immediate:** first-5-days vs last-4-days split of the current window. Cheap; either survives or not.
-- **Better:** forward-test as `market_capture_*` accumulates (note the **14-day prune** — data ages out,
-  so this must be captured deliberately, not assumed).
+### ✅ P1 — Out-of-sample split — **DONE 2026-07-21. FAILED.** See §8.
+Walk-forward took the selected cell from +1.399% to −0.500%. **Stop searching this dataset.** Every
+further sweep over the same 97 windows fits noise harder; the grid has already been searched ~222
+cells deep against 9 days of 24–30 names.
 
-**Rationale: this is exactly what killed the ORB "+11.2"** — strong in-sample, dead out-of-sample.
-Until this runs, every further sweep just fits the same 97 windows harder. **No parameter tuning
-until P1 completes.**
-
-### P2 — Fix the coverage gap
+### P2 — Fix the coverage gap ← NOW THE HIGHEST-VALUE WORK
 122 of 239 windows were dropped for <20 bars of tape. Determine whether that is genuine illiquidity
 or a capture gap. If capture, the effective sample could roughly double, which matters more than any
 parameter.
 
-### P3 — Sample-size honest re-test of volume persistence
-`volume_hold` shows the best means on n≈13. Re-run once P2 widens the sample; if it holds at n>50 it
-is real, otherwise it was noise.
+### P3 — Forward test, not another split
+Lock **proximity 1.5–2.0% / stop −5% / floor 2% / NO filter** (the only OOS survivor), record it
+now, and evaluate on days that do not exist yet. ⚠ `market_capture_*` has a **14-day prune** —
+forward data must be captured deliberately or it ages out before there is enough of it.
+**No filter, no floor-3: both failed validation. Adding them back requires new evidence, not a re-run.**
 
-### P4 — Only if P1 survives: the live-fidelity questions
+### P4 — Only if P3 shows something: the live-fidelity questions
 - Replace the bar-level exit walk with the tape-level `v2_sim::_run_exit` (observed-bid fills) — the
   bar-level walk is idealized and will overstate.
 - Model the actual entry mechanics (resting order vs marketable), spread, and the measured latency band.
 - Re-examine whether one-entry-per-segment is right, or whether re-arming helps.
 
-### P5 — Deferred / not recommended yet
-Floor 2 vs 3 as a preference call (win-rate vs size); proximity fine-tuning between 1.5 and 2.5.
-Both are noise-level distinctions on the current sample.
+### P5 — Do NOT do these
+- **Re-tuning filters on this dataset.** They are where the overfitting lives (9/12 and 8/9 sign flips).
+- **Floor 2 vs 3 fine-tuning.** The in-sample 6/6 result reversed out-of-sample; it is noise.
+- **Proximity fine-tuning between 1.5 and 2.5.** Noise-level distinctions on this sample.
+- **Another split of the same 9 days.** The data is exhausted; only new data can inform this now.
 
 ---
 
-## 10. Reproduction
+## 11. Reproduction
 
 ```bash
 # On the VPS, NICED (heavy R&D contends with the OMS loop -- the 07-08 stalls)
@@ -353,6 +467,11 @@ sudo systemd-run --uid=trader --quiet --wait --pipe --nice=19 \
   -p EnvironmentFile=/etc/project-mai-tai/project-mai-tai.env \
   --working-directory=/home/trader/project-mai-tai \
   /home/trader/project-mai-tai/.venv/bin/python scripts/run_stop_floor_grid.py --days 9
+```
+
+```bash
+# The out-of-sample validation (section 8) -- the test that matters
+... scripts/run_oos_split.py --days 9 --split 5
 ```
 
 Grid constants live at the top of each runner (`STOPS`, `FLOOR_STARTS`, `FILTERS`,
@@ -408,7 +527,12 @@ one being guessed — and the volume version proved to be the one that matters.
 | 2 | 3 proximity × 3 exit × 4 filter | 36 |
 | 3 | 3 proximity × 3 stop × 4 floor × 2 filter | 72 |
 | 4 | 6 proximity × 1 stop × 2 floor × 5 filter | 60 |
-| | **TOTAL** | **174** |
+| 5 (OOS) | 6 proximity × 2 floor × 4 filter | 48 |
+| | **TOTAL** | **222** |
 
-**Cells with a 95% CI excluding zero: 1.** Chance alone at α=0.05 across 60 independent cells would
-produce ~3. This ledger exists so the single significant cell is never quoted without it.
+**In-sample cells with a 95% CI excluding zero: 1** (of 174). Chance alone at α=0.05 across 60
+independent cells would produce ~3.
+
+**That one cell, and the walk-forward's own in-sample winner (which also had a CI excluding zero),
+BOTH failed out-of-sample.** This ledger exists so no number from §4–§7 is ever quoted without the
+search depth attached — and §8 is why that matters.
