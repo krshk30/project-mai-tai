@@ -110,10 +110,30 @@ class WebullBrokerAdapter:
             return [self._reject(request, self._missing_config_reason(request.broker_account_name))]
         if request.intent_type == "cancel":
             return await self._cancel_order(account, request)
+        if self._is_bracket_request(request):
+            # Native OCO combo: one v3 place_order of MASTER+STOP_PROFIT+STOP_LOSS. Flag-gated;
+            # off => this branch is never taken and the single-leg path below is byte-identical.
+            try:
+                return await asyncio.to_thread(self._submit_bracket_blocking, account, request)
+            except Exception as exc:  # noqa: BLE001 - any SDK/transport error -> reject, never crash OMS
+                return [self._reject(request, self._exc_reason(exc))]
         try:
             return await asyncio.to_thread(self._submit_blocking, account, request)
         except Exception as exc:  # noqa: BLE001 - any SDK/transport error -> reject, never crash OMS
             return [self._reject(request, self._exc_reason(exc))]
+
+    async def preview_bracket_order(self, request: OrderRequest) -> tuple[int, object]:
+        """Validate a combo bracket at the broker WITHOUT placing it (STEP-1 gate item 0).
+
+        Read-only by construction: the only endpoint touched is v3 `preview_order`. Returns the
+        raw (status_code, body) so the caller can inspect the broker's validation result."""
+        account = self.accounts_by_name.get(request.broker_account_name)
+        if account is None:
+            return 0, {"message": self._missing_config_reason(request.broker_account_name)}
+        try:
+            return await asyncio.to_thread(self._preview_bracket_blocking, account, request)
+        except Exception as exc:  # noqa: BLE001
+            return 599, {"message": self._exc_reason(exc)}
 
     async def fetch_order_update(self, request: OrderRequest) -> ExecutionReport | None:
         account = self.accounts_by_name.get(request.broker_account_name)
@@ -185,6 +205,52 @@ class WebullBrokerAdapter:
         broker_order_id = self._first_str(body, "order_id", "orderId")
         # A resting limit (ORB reclaim) is acknowledged; the OMS polls fetch_order_update for
         # the fill — so we return "accepted" and do not block waiting on a terminal state.
+        return [
+            ExecutionReport(
+                event_type="accepted",
+                client_order_id=request.client_order_id,
+                broker_order_id=broker_order_id,
+                symbol=request.symbol,
+                side=request.side,
+                intent_type=request.intent_type,
+                quantity=request.quantity,
+                reason=request.reason,
+                metadata=dict(request.metadata),
+            )
+        ]
+
+    def _preview_bracket_blocking(
+        self, account: WebullAccountConfig, request: OrderRequest
+    ) -> tuple[int, object]:
+        """v3 preview_order (validate WITHOUT placing) for the combo bracket. Uses `symbol`
+        directly per leg -- the v3 combo sample carries symbol+market+instrument_type, so no
+        instrument-id resolution is needed."""
+        client = self._get_client()
+        from webull.trade.trade.v3.order_opration_v3 import OrderOperationV3
+
+        op = OrderOperationV3(client)
+        new_orders = self._build_combo_payload(request)
+        combo_id = self._combo_leg_coid(request.client_order_id, "")
+        response = op.preview_order(account.account_id, new_orders, client_combo_order_id=combo_id)
+        return self._response_status(response), self._body(response)
+
+    def _submit_bracket_blocking(
+        self, account: WebullAccountConfig, request: OrderRequest
+    ) -> list[ExecutionReport]:
+        """v3 place_order for the combo bracket (MASTER+STOP_PROFIT+STOP_LOSS in one group). Like
+        the single-leg path, the place response returns only ids; the OMS polls fetch_order_update
+        for fills, so this returns 'accepted'. CONFIRM-AT-TEST: the exact id field(s) on the combo
+        place response are validated in STEP-1 (kept broad in `_first_str` below)."""
+        client = self._get_client()
+        from webull.trade.trade.v3.order_opration_v3 import OrderOperationV3
+
+        op = OrderOperationV3(client)
+        new_orders = self._build_combo_payload(request)
+        combo_id = self._combo_leg_coid(request.client_order_id, "")
+        body = self._body(op.place_order(account.account_id, new_orders, client_combo_order_id=combo_id))
+        broker_order_id = self._first_str(
+            body, "client_combo_order_id", "combo_id", "comboId", "order_id", "orderId"
+        )
         return [
             ExecutionReport(
                 event_type="accepted",
@@ -492,6 +558,124 @@ class WebullBrokerAdapter:
         any stock >= $1 — round here so the broker always accepts the order."""
         tick = Decimal("0.01") if price >= Decimal("1") else Decimal("0.0001")
         return price.quantize(tick, rounding=ROUND_HALF_UP)
+
+    # ------------------------------------------------------ native OCO combo bracket (write side)
+    def _is_bracket_request(self, request: OrderRequest) -> bool:
+        """Build a combo bracket ONLY when the flag is on AND the caller asked for one, so the
+        single-leg v1 path stays byte-identical with the flag off (mirrors the Schwab adapter's
+        `_is_bracket_request`: an intent that merely carries bracket metadata must NOT silently
+        become a combo on a box where the flag was never flipped)."""
+        if not bool(getattr(self.settings, "webull_native_bracket_enabled", False)):
+            return False
+        return str(request.metadata.get("bracket", "")).lower() in {"1", "true", "yes"}
+
+    @staticmethod
+    def _combo_leg_coid(base: str, suffix: str) -> str:
+        """A unique, <=40-char client_order_id per combo leg. Webull caps the coid at 40 chars and
+        417-rejects a reused id (TRADE_PLACE_ORDER_REPEAT), so each leg gets the group base
+        truncated + a short role suffix -- the three legs never collide and always fit the cap.
+        suffix="" yields the (<=40) group client_combo_order_id."""
+        room = max(0, 40 - len(suffix))
+        return f"{str(base or '')[:room]}{suffix}"
+
+    def _build_combo_payload(self, request: OrderRequest) -> list[dict[str, object]]:
+        """Webull v3 combo bracket = MASTER(entry BUY) + STOP_PROFIT(SELL LIMIT target) +
+        STOP_LOSS(SELL STOP protect), one flat `new_orders` list. MASTER's fill arms the OCO pair
+        -- exactly one of target/stop fills and the broker cancels the sibling = the E5 dissolve
+        (no second uncoordinated protective sell to reject; see docs/oco-bracket-design.md).
+
+        Shape from Webull's official SDK sample (samples/trade/trade_client_v3.py): flat legs
+        tagged by `combo_type`, each carrying symbol+market+instrument_type (NOT an instrument_id),
+        numeric fields as STRINGS, instrument_type wire value "EQUITY", support_trading_session
+        "CORE" (RTH -- matches the RTH-first scope). Fork A: a buy-STOP master rejects on Webull,
+        so MASTER is LIMIT or MARKET only (enforced here -- never emit a shape the broker refuses).
+
+        ⚠ CONFIRM-AT-TEST: the combo ACCEPTANCE and the one-cancels-other behaviour are exactly
+        what Webull STEP-1 validates live (preview item 0, then the attended qty-1 gate); this
+        builds the request shape from the documented sample, it does not prove the account
+        accepts it."""
+        entry_type = str(request.metadata.get("bracket_entry_type", "LIMIT")).upper()
+        if entry_type not in {"LIMIT", "MARKET"}:
+            raise RuntimeError(
+                f"Webull combo MASTER must be LIMIT or MARKET (a buy-STOP master rejects); "
+                f"got {entry_type}"
+            )
+        entry_limit = self._meta_price(request, "limit_price", "reference_price")
+        target_price = self._meta_price(request, "bracket_target_price")
+        protect_price = self._meta_price(request, "bracket_stop_price")
+        required: list[tuple[str, object]] = [
+            ("bracket_target_price", target_price),
+            ("bracket_stop_price", protect_price),
+        ]
+        if entry_type == "LIMIT":
+            required.insert(0, ("limit_price", entry_limit))
+        missing = [name for name, value in required if value is None]
+        if missing:
+            # Never a half-built bracket: an entry with no attached exits is the naked-position
+            # shape this whole structure exists to eliminate.
+            raise RuntimeError(f"bracket request missing required metadata: {', '.join(missing)}")
+
+        qty = (
+            str(int(request.quantity))
+            if request.quantity == request.quantity.to_integral_value()
+            else str(request.quantity)
+        )
+        base_coid = request.client_order_id
+        common: dict[str, object] = {
+            "symbol": request.symbol,
+            "instrument_type": "EQUITY",
+            "market": "US",
+            "quantity": qty,
+            "entrust_type": "QTY",
+            "time_in_force": self._tif(request),
+            "support_trading_session": "CORE",
+        }
+        master: dict[str, object] = {
+            **common,
+            "client_order_id": self._combo_leg_coid(base_coid, "M"),
+            "combo_type": "MASTER",
+            "side": "BUY",
+            "order_type": entry_type,
+        }
+        if entry_type == "LIMIT":
+            master["limit_price"] = str(self._round_to_tick(entry_limit))  # type: ignore[arg-type]
+        target: dict[str, object] = {
+            **common,
+            "client_order_id": self._combo_leg_coid(base_coid, "T"),
+            "combo_type": "STOP_PROFIT",
+            "side": "SELL",
+            "order_type": "LIMIT",
+            "limit_price": str(self._round_to_tick(target_price)),  # type: ignore[arg-type]
+        }
+        protect: dict[str, object] = {
+            **common,
+            "client_order_id": self._combo_leg_coid(base_coid, "S"),
+            "combo_type": "STOP_LOSS",
+            "side": "SELL",
+            "order_type": "STOP_LOSS",
+            "stop_price": str(self._round_to_tick(protect_price)),  # type: ignore[arg-type]
+        }
+        return [master, target, protect]
+
+    @staticmethod
+    def _response_status(response: object) -> int:
+        """Best-effort HTTP status from a Webull SDK response. CONFIRM-AT-TEST: the SDK raises on
+        transport/HTTP errors (caught upstream -> 599), so a returned response is success; default
+        200 when no numeric status attribute is exposed. The validation detail is in the body."""
+        for attr in ("status_code", "code", "status"):
+            val = getattr(response, attr, None)
+            if isinstance(val, int):
+                return val
+        for name in ("get_status_code", "getcode"):
+            getter = getattr(response, name, None)
+            if callable(getter):
+                try:
+                    val = getter()
+                    if isinstance(val, int):
+                        return val
+                except Exception:  # noqa: BLE001
+                    pass
+        return 200
 
     @staticmethod
     def _normalize_host(base_url: str | None) -> str:
