@@ -733,6 +733,11 @@ class Settings(BaseSettings):
     # 30s = 6 missed 5s syncs. Lower is safer (resumes sooner); it must never be raised
     # to the point where a dead sync loop can hold the ladder down indefinitely.
     oms_native_oco_confirmation_max_age_seconds: int = 30
+    # Emit a native OCO bracket on the v2 entry (entry order carries bracket metadata so the
+    # Schwab adapter places TRIGGER->OCO). OFF until STEP-1 item 4 passes attended: with it
+    # False the v2 entry is the unchanged single-leg order. Requires schwab_native_bracket_enabled
+    # on the adapter AND oms_native_oco_stand_down_enabled (else the software ladder collides).
+    oms_v2_emit_native_oco_bracket_enabled: bool = False
     # Extended-hours exit routing (2026-07-05, CLRO/CELZ stuck-exit fix). In
     # regular trading hours v2 exits stay MARKET/NORMAL (byte-identical). In
     # extended hours (AM/PM) they route as a LIMIT with session=AM|PM so they can

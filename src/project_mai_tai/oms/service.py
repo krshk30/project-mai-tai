@@ -849,6 +849,11 @@ class OmsRiskService:
                 await self._publish_order_event(orb_abandon_event)
                 return [*pre_submit_events, orb_abandon_event]
 
+            # Piece: attach native-OCO bracket metadata to the v2 entry (flag-gated; no-op /
+            # byte-identical when off or non-v2-entry). Mutates event.payload.metadata in place
+            # so the same dict copy below carries the bracket fields to the adapter.
+            self._apply_v2_oco_bracket_entry(event=event)
+
             client_order_id = self._build_client_order_id(event)
             request = OrderRequest(
                 client_order_id=client_order_id,
@@ -3877,6 +3882,58 @@ class OmsRiskService:
             reason_detail,
         )
         return self._build_rejected_event(event, intent.id, reason=reason_code)
+
+    def _apply_v2_oco_bracket_entry(self, *, event: TradeIntentEvent) -> None:
+        """Attach native-OCO bracket metadata to a v2 buy-open so the Schwab adapter places a
+        TRIGGER->OCO combo instead of a single-leg order. No-op / byte-identical when the flag
+        is off or this is not a v2 entry.
+
+        The exit legs use the SAME percentages the CW software ladder uses (target +
+        ``oms_v2_cw_target_pct``, protective - ``oms_v2_cw_hard_stop_pct``), so the broker OCO
+        is the same geometry the OMS would otherwise run -- the bracket relocates the exit to
+        the broker, it does not change it. The entry stays whatever the intent asked for
+        (market/limit); ``bracket_entry_type`` mirrors the order_type so a LIMIT entry stays a
+        LIMIT parent.
+
+        ⚠ Emitting the bracket does NOT itself stand the software ladder down -- that is the
+        stand-down's job (`_native_oco_stand_down_active`), keyed on the broker CONFIRMING the
+        legs are live. This only places the combo. The two flags are independent by design so
+        neither silently implies the other.
+        """
+        if not bool(getattr(self.settings, "oms_v2_emit_native_oco_bracket_enabled", False)):
+            return
+        payload = event.payload
+        if payload.strategy_code != "schwab_1m_v2":
+            return
+        if payload.side != "buy" or payload.intent_type != "open":
+            return
+        md = payload.metadata
+        # entry reference: the price the CW entry computed (the break level / fill ref).
+        entry_ref = md.get("entry_price") or md.get("reference_price")
+        try:
+            entry = float(entry_ref)
+        except (TypeError, ValueError):
+            entry = 0.0
+        if entry <= 0:
+            # No usable entry reference -> do NOT emit a half-specified bracket; fall back to
+            # the plain single-leg entry (the adapter also refuses an incomplete bracket).
+            self.logger.warning(
+                "[V2-OCO-EMIT] %s no usable entry reference (entry_price/reference_price); "
+                "placing the plain single-leg entry instead of a bracket", payload.symbol,
+            )
+            return
+        target = entry * (1.0 + self._cw_target_pct / 100.0)
+        protect = entry * (1.0 - self._cw_stop_pct / 100.0)
+        order_type = str(md.get("order_type", "market")).upper()
+        md["bracket"] = "true"
+        md["bracket_entry_type"] = "LIMIT" if order_type == "LIMIT" else "MARKET"
+        md["native_oco_bracket"] = "true"
+        md["bracket_target_price"] = f"{target:.4f}"
+        md["bracket_stop_price"] = f"{protect:.4f}"
+        self.logger.info(
+            "[V2-OCO-EMIT] %s bracket entry=%.4f -> OCO[target=%.4f stop=%.4f] (type=%s)",
+            payload.symbol, entry, target, protect, md["bracket_entry_type"],
+        )
 
     def _apply_orb_quote_priced_entry(
         self,

@@ -874,25 +874,27 @@ class SchwabBrokerAdapter:
         NOTE the child legs are validated by Schwab against the POST-TRIGGER context, not the
         current market (confirmed in the same preview: the bracket accepted with a protective
         stop far above the live bid, because the children only evaluate once the entry fills)."""
-        # Entry leg may be a STOP (rest above market, trigger on the way up) or a marketable
-        # LIMIT (fill now). Both are valid TRIGGER parents; the exit pair is identical either
-        # way, which is what lets the STEP-1 gate force a fill on demand without changing the
-        # property under test.
+        # Entry (TRIGGER parent) may be:
+        #   STOP   — rests above market, triggers on the way up (needs stop_price)
+        #   LIMIT  — marketable, fills now (needs limit_price)
+        #   MARKET — the live v2 CW entry: fills immediately, no price (the emit path)
+        # The exit pair is identical for all three. ⚠ MARKET as an OTOCO parent must be
+        # confirmed via preview in STEP-1 item 4 before live use (STOP+LIMIT were validated
+        # 2026-07-21; MARKET was not).
         entry_type = str(request.metadata.get("bracket_entry_type", "STOP")).upper()
         entry_stop = request.metadata.get("stop_price")
         entry_limit = request.metadata.get("limit_price")
-        entry_px = entry_limit if entry_type == "LIMIT" else entry_stop
+        entry_px = (
+            None if entry_type == "MARKET"
+            else entry_limit if entry_type == "LIMIT"
+            else entry_stop
+        )
         target_price = request.metadata.get("bracket_target_price")
         protect_price = request.metadata.get("bracket_stop_price")
-        missing = [
-            name
-            for name, value in (
-                ("limit_price" if entry_type == "LIMIT" else "stop_price", entry_px),
-                ("bracket_target_price", target_price),
-                ("bracket_stop_price", protect_price),
-            )
-            if not value
-        ]
+        required = [("bracket_target_price", target_price), ("bracket_stop_price", protect_price)]
+        if entry_type != "MARKET":
+            required.insert(0, ("limit_price" if entry_type == "LIMIT" else "stop_price", entry_px))
+        missing = [name for name, value in required if not value]
         if missing:
             # Never emit a half-built bracket: an entry with no attached exits is the
             # naked-position shape this whole structure exists to eliminate.
@@ -926,8 +928,9 @@ class SchwabBrokerAdapter:
         }
         if entry_type == "LIMIT":
             parent["price"] = float(Decimal(str(entry_px)))
-        else:
+        elif entry_type == "STOP":
             parent["stopPrice"] = float(Decimal(str(entry_px)))
+        # MARKET: no price/stopPrice — fills at market on trigger.
         return parent
 
     async def preview_bracket_order(self, request: OrderRequest) -> tuple[int, object]:
