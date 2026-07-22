@@ -598,6 +598,11 @@ class Settings(BaseSettings):
     # Native OCO bracket (TRIGGER -> OCO exit pair). OFF until STEP-1 passes on this broker:
     # with it False the adapter's single-leg payload is byte-identical to pre-bracket main.
     schwab_native_bracket_enabled: bool = False
+    # Webull native OCO combo bracket (v3 MASTER + STOP_PROFIT + STOP_LOSS = the same E5 dissolve
+    # as Schwab's TRIGGER->OCO). OFF until Webull STEP-1 passes attended qty-1 on live:orb: with it
+    # False the adapter's single-leg v1 path is byte-identical to pre-bracket main. Webull's MASTER
+    # must be LIMIT/MARKET (a buy-STOP master rejects) -- the builder enforces it.
+    webull_native_bracket_enabled: bool = False
     schwab_access_token: str | None = None
     schwab_access_token_expires_at: str | None = None
     schwab_refresh_token: str | None = None
