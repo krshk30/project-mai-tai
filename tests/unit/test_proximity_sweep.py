@@ -267,3 +267,16 @@ def test_limit_pullback_records_a_missed_cross_when_price_never_comes_back() -> 
     assert trades == []
     assert acct["missed_cross"] == 1
     assert acct["no_fill_no_cross"] == 0
+
+
+def test_quote_sanity_filter_rejects_bad_prints() -> None:
+    """CPHI 2026-07-21 10:28 showed a 1,989,900% spread. Real spreads on these names are
+    0.20-0.89%, so anything past 50% is a bad print, not a market."""
+    from datetime import datetime, timezone
+    from project_mai_tai.backtest.data import Quote, _quote_is_sane
+    ts = datetime(2026, 7, 21, tzinfo=timezone.utc)
+    assert _quote_is_sane(Quote(ts=ts, bid=1.50, ask=1.51)) is True      # normal
+    assert _quote_is_sane(Quote(ts=ts, bid=1.50, ask=2.20)) is True      # wide but real (46%)
+    assert _quote_is_sane(Quote(ts=ts, bid=0.0001, ask=1.99)) is False   # the CPHI shape
+    assert _quote_is_sane(Quote(ts=ts, bid=0.0, ask=1.50)) is False      # no bid
+    assert _quote_is_sane(Quote(ts=ts, bid=1.60, ask=1.50)) is False     # crossed
