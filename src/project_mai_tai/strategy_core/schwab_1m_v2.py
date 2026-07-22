@@ -1219,6 +1219,32 @@ class SchwabV2Strategy:
         # cw_bars_waited >= 2 => cw_trigger is the flip+2 3-bar max (the 1st-entry break); cw_segment_high
         # keeps advancing above it (the reclaim break). on_quote picks the right one by entry count.
 
+        self._cw_state_probe(state)
+
+    def _cw_state_probe(self, state: SymbolState) -> None:
+        """Per-bar dump of the CW ENTRY-GATE state, gated by the same probe-symbols setting as
+        [V2-MACD-PROBE]. Diagnostic-only; never gates behaviour.
+
+        WHY (2026-07-22): the CW backtest reproduced the bot's 5 real 07-21 trades 5/5, but a
+        1 phantom remained (CPHI 10:55) -- the bot did NOT arm/enter there while the backtest
+        did, and the blocking gate was NOT visible in any log (arms/disarms are logged, but the
+        per-bar armed / entries-this-flip / emit-claimed / cooldown / boot-hold state is not).
+        This exposes exactly the fields that decide whether a quote-path entry can fire, so the
+        next backtest-vs-live diff on such a case is mechanical, not inferential. See
+        docs/atr-30s-and-cw-parity-2026-07-21.md."""
+        if not (self._macd_probe_all or state.symbol in self._macd_probe_symbols):
+            return
+        logger.info(
+            "[V2-CW-STATE-PROBE] sym=%s armed=%s bars_waited=%d trig=%.4f seg_high=%.4f "
+            "flip_level=%.4f entries_this_flip=%d max_per_flip=%d emit_claimed=%s "
+            "bars_since_exit=%d reclaim_gap=%d cooldown=%d entries_held=%s pos_qty=%s",
+            state.symbol, state.cw_armed, state.cw_bars_waited, state.cw_trigger,
+            state.cw_segment_high, state.cw_flip_level, state.cw_entries_this_flip,
+            self._cw_v2_max_entries_per_flip, state.cw_v2_emit_claimed,
+            state.cw_v2_bars_since_exit, self._cw_v2_reclaim_gap_bars,
+            state.cooldown_bars_remaining, self._entries_held, state.position_qty,
+        )
+
     def _cw_v2_quote(self, state: SymbolState, quote: Quote) -> TradeIntentDraft | None:
         """CW-v2 intrabar entry: enter the instant a quote price breaks the frozen trigger, gated
         by rule 7 (whole forming bar above the flip level), the 09:30-10:00 ORB skip, the flat gate,
