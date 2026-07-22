@@ -206,3 +206,24 @@ async def test_fetch_armed_native_oco_raises_on_broker_error(monkeypatch) -> Non
     monkeypatch.setattr(adapter, "_authorized_request_json", boom)
     with pytest.raises(RuntimeError):
         await adapter.fetch_armed_native_oco_symbols("paper:schwab_1m", ["KIDZ"])
+
+
+def test_market_parent_has_no_price_or_stopprice() -> None:
+    """The live v2 CW entry is a MARKET order. A MARKET OTOCO parent needs neither price nor
+    stopPrice; the exit pair is unchanged. (⚠ preview-validate MARKET in STEP-1 before live.)"""
+    req = _bracket_request(metadata={"bracket_entry_type": "MARKET"})
+    payload = _adapter(bracket_enabled=True)._build_bracket_payload(req)
+    assert payload["orderType"] == "MARKET"
+    assert "price" not in payload and "stopPrice" not in payload
+    assert payload["orderStrategyType"] == "TRIGGER"
+    oco = payload["childOrderStrategies"][0]
+    target, protective = oco["childOrderStrategies"]
+    assert target["price"] == 10.20 and protective["stopPrice"] == 9.50
+
+
+def test_market_parent_still_requires_both_exit_prices() -> None:
+    """MARKET drops the entry-price requirement but NOT the exits — a naked entry is forbidden."""
+    req = _bracket_request(metadata={"bracket_entry_type": "MARKET", "bracket_stop_price": ""})
+    with pytest.raises(RuntimeError) as e:
+        _adapter(bracket_enabled=True)._build_bracket_payload(req)
+    assert "bracket_stop_price" in str(e.value)
