@@ -2123,6 +2123,57 @@ class OmsRiskService:
         self._v2_exit_close_failures[key] = 0  # genuinely still held -> keep managing, re-count later
         return False
 
+    async def _reconcile_resolved_oco_flat(self, acct: str, symbol: str) -> bool:
+        """Close a phantom v2 managed row DIRECTLY from a positive broker-flat read, for a symbol
+        whose broker-native OCO just resolved (a leg filled -> broker closed the position).
+
+        ⭐ WHY THIS EXISTS (2026-07-22): the broker-created OCO fill closes the position but never
+        decrements our managed row -- the OMS never placed that sell, so nothing on the order path
+        knows to. Without this, the row's ONLY close-path is the reject-driven
+        `_v2_close_reconcile_flat`: the exit ladder resumes (grace 90s << Schwab's ~6min
+        fill->positions propagation) and churns ~3 rejected closes before the phantom clears. This
+        closes it here instead, on the ~5s off-loop sync, from the SAME positive-flat primitive the
+        reject-path already trusts.
+
+        Returns True when the row is gone (closed here, or already closed); False when it is still
+        held / the read was not a positive flat. FAIL-OPEN by construction: `_broker_symbol_is_flat`
+        returns False on HELD/UNKNOWN/read-error and refuses a flat read inside the fresh-fill
+        grace, so a False here simply leaves the row for the grace backstop + reject self-heal --
+        never the reverse (it can only ever close a row the broker POSITIVELY confirms flat)."""
+        def _read_entry_at(session: Session) -> tuple[bool, datetime | None]:
+            row = self.store.get_open_managed_position(
+                session, broker_account_name=acct, symbol=symbol
+            )
+            if row is None:
+                return (False, None)
+            return (True, _as_utc(getattr(row, "entry_time", None)))
+
+        found, entry_at = await self._run_db(_read_entry_at, commit=False)
+        if not found:
+            return True  # no open row -> already reconciled out
+        if not await self._broker_symbol_is_flat(acct, symbol, established_at=entry_at):
+            return False  # still held / UNKNOWN / fresh fill -> keep managing (fail-open)
+
+        def _close(session: Session) -> None:
+            row = self.store.get_open_managed_position(
+                session, broker_account_name=acct, symbol=symbol
+            )
+            if row is not None:
+                self.store.close_managed_position(session, row)
+
+        await self._run_db(_close, commit=True)
+        key = (acct, symbol)
+        self._managed_v2_symbols.discard(key)
+        self._cw_flip_pending.discard(key)
+        self._cw_floor_armed.discard(key)
+        self._v2_exit_close_failures.pop(key, None)
+        self.logger.info(
+            "[OMS-V2-OCO-RESOLVED-FLAT] sym=%s acct=%s broker-confirmed flat after OCO resolution "
+            "-> closing phantom managed row (no ladder rejects)",
+            symbol, acct,
+        )
+        return True
+
     async def _emit_v2_exit_on_loop(
         self,
         acct: str,
@@ -2470,6 +2521,26 @@ class OmsRiskService:
         for key in list(getattr(self, "_native_oco_resolving", {})):
             if key not in managed:
                 self._native_oco_resolving.pop(key, None)
+
+        # ⭐ Proactively close the phantom row for any STILL-managed symbol whose OCO just resolved,
+        # DIRECTLY from a positive broker-flat read -- instead of waiting for the exit ladder to
+        # resume and self-heal via ~3 rejected closes (the broker-created OCO fill never decrements
+        # the managed row; see _reconcile_resolved_oco_flat). Runs on this same off-loop sync.
+        # FAIL-OPEN: a non-flat/unknown read leaves the row for the grace backstop + reject
+        # self-heal. Default-False flag ships this inert (byte-identical to today's reject path).
+        if bool(getattr(self.settings, "oms_native_oco_resolve_flat_reconcile_enabled", False)):
+            for key in list(getattr(self, "_native_oco_resolving", {})):
+                acct_name, sym = key
+                try:
+                    if await self._reconcile_resolved_oco_flat(acct_name, sym):
+                        self._native_oco_resolving.pop(key, None)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:  # noqa: BLE001 — reconcile is best-effort; never break the sync
+                    self.logger.warning(
+                        "[OMS-V2-OCO-RESOLVED-FLAT] reconcile failed for %s %s; leaving the row "
+                        "for the grace backstop + reject self-heal (fail-open)", acct_name, sym,
+                    )
 
     async def _reconcile_after_intent(self, broker_account_name: str) -> None:
         """Best-effort post-intent broker→DB reconcile (Fix 3b).

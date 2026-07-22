@@ -734,12 +734,25 @@ class Settings(BaseSettings):
     # to the point where a dead sync loop can hold the ladder down indefinitely.
     oms_native_oco_confirmation_max_age_seconds: int = 30
     # After an OCO clears (a leg filled and closed the position), keep the software ladder
-    # deferred this long so the position sync can reconcile the managed row to flat before the
-    # ladder runs -- otherwise the resumed ladder fires a redundant close on a stale position
-    # (rejected, but logs a reject on every OCO resolution). Cleared early once the position
-    # leaves _managed_v2_symbols. 90s covers the observed ~44s reconcile lag with margin; a
-    # position genuinely still held after the grace (rare manual-OCO-cancel) correctly resumes.
+    # deferred this long as a BACKSTOP so a position genuinely still held after the grace (the
+    # rare manual-OCO-cancel case) resumes the ladder rather than deferring forever. The COMMON
+    # resolved-by-fill case is now closed proactively from a positive broker-flat read
+    # (oms_native_oco_resolve_flat_reconcile_enabled) rather than by this timer. NOTE 2026-07-22:
+    # the grace ALONE never eliminated the reject noise -- Schwab's OCO->account_positions
+    # propagation was measured at ~6min live (LABT: stand-down cleared 19:39, broker flat 19:45),
+    # far longer than the 90s here, so the ladder always resumed and fired ~3 rejected closes
+    # before self-healing. The flat-reconcile below is the real fix; this stays a safety backstop.
     oms_native_oco_resolve_grace_seconds: int = 90
+    # ⭐ 2026-07-22 fix for "3 rejected closes on every OCO resolution". A broker-native OCO fill
+    # CLOSES the position but never decrements our managed row (the OMS never placed that sell),
+    # so the row's only other close-path is the reject-driven _v2_close_reconcile_flat -- i.e. the
+    # exit ladder must resume and churn ~3 rejected closes before the phantom clears. When ON, the
+    # ~5s off-loop sync closes the phantom row DIRECTLY from a positive broker-flat read for any
+    # symbol whose OCO just resolved, so the ladder never resumes to fire the rejects. FAIL-OPEN:
+    # UNKNOWN/HELD/read-error keeps the row (the grace backstop + reject self-heal still apply), and
+    # it closes ONLY on the same positive-flat confirmation the reject-path already trusts. Default
+    # False ships inert (byte-identical to today's reject self-heal); flip via env after validation.
+    oms_native_oco_resolve_flat_reconcile_enabled: bool = False
     # Emit a native OCO bracket on the v2 entry (entry order carries bracket metadata so the
     # Schwab adapter places TRIGGER->OCO). OFF until STEP-1 item 4 passes attended: with it
     # False the v2 entry is the unchanged single-leg order. Requires schwab_native_bracket_enabled
