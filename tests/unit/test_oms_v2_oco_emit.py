@@ -41,8 +41,8 @@ def test_emit_attaches_bracket_metadata_with_cw_exit_geometry() -> None:
     assert md["bracket"] == "true"
     assert md["native_oco_bracket"] == "true"
     assert md["bracket_entry_type"] == "MARKET"       # a market entry -> MARKET parent
-    assert md["bracket_target_price"] == "10.2000"    # +2%
-    assert md["bracket_stop_price"] == "9.5000"       # -5%
+    assert md["bracket_target_price"] == "10.20"       # +2%, >$1 -> 2dp
+    assert md["bracket_stop_price"] == "9.50"          # -5%, >$1 -> 2dp
 
 
 def test_emit_mirrors_a_limit_entry_to_a_limit_parent() -> None:
@@ -55,8 +55,8 @@ def test_emit_uses_the_configured_cw_percentages() -> None:
     ev = _event(entry_price="4.00")
     _svc(True, target=3.0, stop=4.0)._apply_v2_oco_bracket_entry(event=ev)
     md = ev.payload.metadata
-    assert md["bracket_target_price"] == "4.1200"     # +3%
-    assert md["bracket_stop_price"] == "3.8400"       # -4%
+    assert md["bracket_target_price"] == "4.12"        # +3%, >$1 -> 2dp
+    assert md["bracket_stop_price"] == "3.84"          # -4%, >$1 -> 2dp
 
 
 def test_flag_off_does_not_mutate_the_event() -> None:
@@ -92,4 +92,19 @@ def test_no_entry_reference_falls_back_to_plain_entry() -> None:
 def test_reference_price_is_accepted_as_the_entry_ref() -> None:
     ev = _event(reference_price="8.00")
     _svc(True)._apply_v2_oco_bracket_entry(event=ev)
-    assert ev.payload.metadata["bracket_target_price"] == "8.1600"
+    assert ev.payload.metadata["bracket_target_price"] == "8.16"  # 8.00*1.02, >$1 -> 2dp
+
+
+def test_emit_rounds_exit_prices_to_schwab_tick_rule() -> None:
+    """Schwab FIRM-REJECTS >2 decimals above $1 (ADVB 2026-07-22 CANCELED_BY_FIRM). Above $1 ->
+    2 decimals; at/below $1 -> 4 decimals."""
+    ev = _event(entry_price="11.11")          # >$1: +2%/-5% must round to 2dp
+    _svc(True)._apply_v2_oco_bracket_entry(event=ev)
+    md = ev.payload.metadata
+    assert md["bracket_target_price"] == "11.33"   # 11.11*1.02=11.3322 -> 2dp
+    assert md["bracket_stop_price"] == "10.55"      # 11.11*0.95=10.5545 -> 2dp
+    assert "." in md["bracket_target_price"] and len(md["bracket_target_price"].split(".")[1]) == 2
+
+    ev2 = _event(entry_price="0.71")          # <=$1: up to 4 decimals allowed
+    _svc(True)._apply_v2_oco_bracket_entry(event=ev2)
+    assert len(ev2.payload.metadata["bracket_target_price"].split(".")[1]) == 4
