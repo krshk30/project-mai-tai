@@ -2363,48 +2363,48 @@ class OmsRiskService:
         return True
 
     async def _refresh_native_oco_armed_state(self, account_names: list[str] | None) -> None:
-        """Re-derive the stand-down set from the BROKER-synced order rows (never memory alone).
+        """Re-derive the stand-down set from the BROKER (never memory, never `broker_orders`).
 
-        Runs on the periodic sync path (~5s), off-loop, so the per-tick predicate stays a
-        dict lookup. A failure here is safe by construction: entries simply stop being
-        refreshed, age past the max, and the ladder resumes.
+        ⭐ WHY THE BROKER, NOT THE DB: OCO child legs are created BY THE BROKER, atomically with
+        the parent -- the OMS never places them, so they never land in `broker_orders`. Asking
+        the DB would always find nothing and the stand-down would never activate = the software
+        ladder keeps running on an OCO'd position = the relocated collision. So this asks the
+        broker directly (adapter `fetch_armed_native_oco_symbols`, the STEP-1-proven
+        childOrderStrategies walk), matching the design's "re-derived from the broker on boot".
 
-        Only positions with BOTH legs open count as armed -- a single open leg means the OCO
-        has resolved (sibling filled or cancelled) and the OMS should take the exit back.
+        Runs on the periodic sync (~5s), off-loop; the per-tick predicate stays a dict lookup.
+        FAIL-OPEN: any error (unreachable broker, adapter without the capability) -> do NOT
+        refresh -> confirmations age out -> the ladder resumes. Only symbols the broker confirms
+        have BOTH exit legs WORKING count as armed.
         """
         if not bool(getattr(self.settings, "oms_native_oco_stand_down_enabled", False)):
             self._native_oco_armed_confirmed_at.clear()
             return
 
-        def _unit(session) -> set[tuple[str, str]]:
-            armed: set[tuple[str, str]] = set()
-            strategy = session.scalar(select(Strategy).where(Strategy.code == "schwab_1m_v2"))
-            if strategy is None:
-                return armed
-            for (acct_name, symbol) in list(self._managed_v2_symbols):
-                broker_account = session.scalar(
-                    select(BrokerAccount).where(BrokerAccount.name == acct_name)
-                )
-                if broker_account is None:
-                    continue
-                legs = self.store.find_open_native_oco_bracket_legs(
-                    session,
-                    strategy_id=strategy.id,
-                    broker_account_id=broker_account.id,
-                    symbol=symbol,
-                )
-                if len(legs) >= 2:
-                    armed.add((acct_name, symbol))
-            return armed
+        adapter = getattr(self, "broker_adapter", None)
+        fn = getattr(adapter, "fetch_armed_native_oco_symbols", None)
+        if fn is None:
+            # No adapter / no capability -> nothing can be confirmed armed -> ladder runs.
+            self._native_oco_armed_confirmed_at.clear()
+            return
 
+        # Group the managed positions by broker account (one broker round-trip per account).
+        by_account: dict[str, list[str]] = {}
+        for (acct_name, symbol) in list(self._managed_v2_symbols):
+            by_account.setdefault(acct_name, []).append(symbol)
+
+        armed: set[tuple[str, str]] = set()
         try:
-            armed = await self._run_db(_unit, commit=False)
+            for acct_name, symbols in by_account.items():
+                confirmed = await fn(acct_name, symbols)
+                for sym in confirmed:
+                    armed.add((acct_name, sym))
         except asyncio.CancelledError:
             raise
         except Exception:
             # Fail-open: do NOT refresh. Existing entries age out and the ladder resumes.
             self.logger.warning(
-                "[OMS-OCO-STAND-DOWN] armed-state refresh failed; confirmations will age "
+                "[OMS-OCO-STAND-DOWN] broker armed-state fetch failed; confirmations will age "
                 "out and the software exit ladder will resume (fail-open)",
             )
             return

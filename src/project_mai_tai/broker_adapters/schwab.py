@@ -123,6 +123,58 @@ class SchwabBrokerAdapter:
         self.last_error = ""
         self._load_token_store()
 
+    async def fetch_armed_native_oco_symbols(
+        self, broker_account_name: str, symbols: list[str]
+    ) -> set[str]:
+        """Symbols with a LIVE native OCO exit pair at the broker (>= 2 WORKING sell legs).
+
+        This is the source of truth for the OMS stand-down: OCO child legs are created BY THE
+        BROKER, so they never appear in `broker_orders` -- the only way to know a bracket is
+        armed is to ask the broker. Walks `childOrderStrategies` (the STEP-1-proven shape).
+
+        "Armed" = the position is held AND both exits are working. So a leg in
+        AWAITING_PARENT_ORDER does NOT count (the entry has not filled; nothing is held yet) --
+        it must be genuinely WORKING/QUEUED/etc. Two such SELL legs = the OCO pair is live.
+
+        Raises on any broker/HTTP error so the caller can FAIL OPEN (resume the software ladder)
+        rather than silently treat an unreachable broker as "no bracket" -- which would also
+        resume the ladder, but loudly here vs silently there. Never returns a partial guess.
+        """
+        account = self.accounts_by_name.get(broker_account_name)
+        if account is None or not symbols:
+            return set()
+        wanted = {str(s).upper() for s in symbols}
+        # A leg only protects a HELD position once it is actually working at the exchange.
+        live = self.ACCEPTED_STATUSES - {"AWAITING_PARENT_ORDER", "AWAITING_RELEASE_TIME"}
+
+        now = datetime.now(UTC)
+        frm = (now - timedelta(hours=12)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        to = (now + timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        status_code, _headers, body = await self._authorized_request_json(
+            "GET",
+            f"/trader/v1/accounts/{quote(account.account_hash, safe='')}/orders"
+            f"?fromEnteredTime={frm}&toEnteredTime={to}&maxResults=500",
+        )
+        if status_code >= 400 or not isinstance(body, list):
+            raise RuntimeError(f"Schwab open-orders fetch failed HTTP {status_code}")
+
+        working_sells: dict[str, int] = {}
+
+        def _walk(order: dict) -> None:
+            legs = order.get("orderLegCollection") or []
+            leg = legs[0] if legs else {}
+            sym = str((leg.get("instrument") or {}).get("symbol") or "").upper()
+            status = str(order.get("status") or "").upper()
+            instruction = str(leg.get("instruction") or "").upper()
+            if sym in wanted and instruction == "SELL" and status in live:
+                working_sells[sym] = working_sells.get(sym, 0) + 1
+            for child in order.get("childOrderStrategies") or []:
+                _walk(child)
+
+        for order in body:
+            _walk(order)
+        return {sym for sym, n in working_sells.items() if n >= 2}
+
     async def submit_order(self, request: OrderRequest) -> list[ExecutionReport]:
         account = self.accounts_by_name.get(request.broker_account_name)
         if account is None:

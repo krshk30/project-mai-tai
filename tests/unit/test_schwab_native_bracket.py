@@ -41,7 +41,7 @@ def _bracket_request(**overrides: object) -> OrderRequest:
     metadata.update(overrides.pop("metadata", {}))  # type: ignore[arg-type]
     return OrderRequest(
         client_order_id="schwab_1m_v2-KIDZ-open-abc123",
-        broker_account_name="live:schwab_1m_v2",
+        broker_account_name="paper:schwab_1m",
         strategy_code="schwab_1m_v2",
         symbol="KIDZ",
         side="buy",
@@ -147,3 +147,62 @@ def test_limit_entry_missing_limit_price_raises() -> None:
     with pytest.raises(RuntimeError) as e:
         _adapter(bracket_enabled=True)._build_bracket_payload(req)
     assert "limit_price" in str(e.value)
+
+
+@pytest.mark.asyncio
+async def test_fetch_armed_native_oco_needs_two_working_sell_legs(monkeypatch) -> None:
+    """Armed = 2 WORKING sell legs at the broker. AWAITING_PARENT_ORDER (entry unfilled, nothing
+    held) does NOT count -- that would stand the ladder down before a position even exists."""
+    adapter = SchwabBrokerAdapter(
+        Settings(oms_adapter="schwab", schwab_access_token="t", schwab_account_hash="h",
+                 schwab_native_bracket_enabled=True)
+    )
+
+    def orders(sym, target_status, stop_status):
+        return [{
+            "orderStrategyType": "TRIGGER",
+            "status": "FILLED",
+            "orderLegCollection": [{"instruction": "BUY",
+                                    "instrument": {"symbol": sym, "assetType": "EQUITY"}}],
+            "childOrderStrategies": [{
+                "orderStrategyType": "OCO",
+                "childOrderStrategies": [
+                    {"status": target_status,
+                     "orderLegCollection": [{"instruction": "SELL",
+                                             "instrument": {"symbol": sym}}]},
+                    {"status": stop_status,
+                     "orderLegCollection": [{"instruction": "SELL",
+                                             "instrument": {"symbol": sym}}]},
+                ],
+            }],
+        }]
+
+    async def fake(method, path, body=None):
+        return 200, {}, fake.body
+    monkeypatch.setattr(adapter, "_authorized_request_json", fake)
+
+    # both legs WORKING -> armed
+    fake.body = orders("KIDZ", "WORKING", "WORKING")
+    assert await adapter.fetch_armed_native_oco_symbols("paper:schwab_1m", ["KIDZ"]) == {"KIDZ"}
+
+    # legs still AWAITING_PARENT_ORDER (entry not filled) -> NOT armed
+    fake.body = orders("KIDZ", "AWAITING_PARENT_ORDER", "AWAITING_PARENT_ORDER")
+    assert await adapter.fetch_armed_native_oco_symbols("paper:schwab_1m", ["KIDZ"]) == set()
+
+    # one leg filled (OCO resolved), one working -> only 1 working sell -> NOT armed
+    fake.body = orders("KIDZ", "FILLED", "WORKING")
+    assert await adapter.fetch_armed_native_oco_symbols("paper:schwab_1m", ["KIDZ"]) == set()
+
+
+@pytest.mark.asyncio
+async def test_fetch_armed_native_oco_raises_on_broker_error(monkeypatch) -> None:
+    """Must raise so the OMS caller fails OPEN (loud), never silently returns 'nothing armed'."""
+    adapter = SchwabBrokerAdapter(
+        Settings(oms_adapter="schwab", schwab_access_token="t", schwab_account_hash="h")
+    )
+
+    async def boom(method, path, body=None):
+        return 500, {}, {"error": "server"}
+    monkeypatch.setattr(adapter, "_authorized_request_json", boom)
+    with pytest.raises(RuntimeError):
+        await adapter.fetch_armed_native_oco_symbols("paper:schwab_1m", ["KIDZ"])
