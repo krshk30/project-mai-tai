@@ -291,6 +291,13 @@ class OmsRiskService:
         # Read per quote tick (must stay in-memory: a DB round-trip on that path is the
         # #391-family freeze driver), written only by the periodic broker sync.
         self._native_oco_armed_confirmed_at: dict[tuple[str, str], datetime] = {}
+        # (broker_account_name, symbol) -> when the OCO cleared (armed -> not armed). Keeps the
+        # software ladder deferred through the RESOLUTION window: an OCO leg filled and closed the
+        # position, but the OMS position state lags the broker fill by ~tens of seconds, so a
+        # resumed ladder would fire a redundant close on a stale "still-held" position (rejected,
+        # harmless, but logs a reject on every OCO resolution). Cleared when the position
+        # reconciles out of _managed_v2_symbols, or after the grace backstop.
+        self._native_oco_resolving: dict[tuple[str, str], datetime] = {}
         self._latest_trades_by_symbol: dict[str, dict[str, object]] = {}
         # Track-2 Phase-2 Slice-3: OMS-managed v2 exit ladder. `_managed_v2_symbols`
         # is the hot-path guard — a quote only opens a session/evaluates when its
@@ -2356,23 +2363,38 @@ class OmsRiskService:
         # getattr, not attribute access: this runs on the per-quote-tick path, and an
         # AttributeError there would propagate into the exit loop. Missing state resolves
         # to "no confirmation" -> the ladder runs, which is the safe direction.
+        key = (broker_account_name, symbol)
         armed = getattr(self, "_native_oco_armed_confirmed_at", None)
-        if not armed:
-            return False
-        confirmed_at = armed.get((broker_account_name, symbol))
-        if confirmed_at is None:
-            return False
-        max_age = float(getattr(self.settings, "oms_native_oco_confirmation_max_age_seconds", 30))
-        age_seconds = (utcnow() - confirmed_at).total_seconds()
-        if age_seconds > max_age:
-            self.logger.warning(
-                "[OMS-OCO-STAND-DOWN-EXPIRED] %s %s - broker confirmation is %.1fs old "
-                "(max %.1fs); RESUMING the software exit ladder (fail-open).",
-                broker_account_name, symbol, age_seconds, max_age,
-            )
-            armed.pop((broker_account_name, symbol), None)
-            return False
-        return True
+        if armed:
+            confirmed_at = armed.get(key)
+            if confirmed_at is not None:
+                max_age = float(
+                    getattr(self.settings, "oms_native_oco_confirmation_max_age_seconds", 30)
+                )
+                age_seconds = (utcnow() - confirmed_at).total_seconds()
+                if age_seconds <= max_age:
+                    return True
+                self.logger.warning(
+                    "[OMS-OCO-STAND-DOWN-EXPIRED] %s %s - broker confirmation is %.1fs old "
+                    "(max %.1fs); RESUMING the software exit ladder (fail-open).",
+                    broker_account_name, symbol, age_seconds, max_age,
+                )
+                armed.pop(key, None)
+
+        # RESOLUTION grace: the OCO just cleared (a leg filled -> position closed), but the OMS
+        # position state lags the broker fill. Keep deferring so the ladder does not fire a
+        # redundant close on a stale "still-held" position (the rejected-sell-on-every-resolution
+        # noise). Cleared early once the position reconciles out of _managed_v2_symbols (in the
+        # refresh); the backstop below caps it so a genuinely-still-held position resumes.
+        resolving = getattr(self, "_native_oco_resolving", None)
+        if resolving:
+            cleared_at = resolving.get(key)
+            if cleared_at is not None:
+                grace = float(getattr(self.settings, "oms_native_oco_resolve_grace_seconds", 90))
+                if (utcnow() - cleared_at).total_seconds() <= grace:
+                    return True
+                resolving.pop(key, None)
+        return False
 
     async def _refresh_native_oco_armed_state(self, account_names: list[str] | None) -> None:
         """Re-derive the stand-down set from the BROKER (never memory, never `broker_orders`).
@@ -2391,6 +2413,7 @@ class OmsRiskService:
         """
         if not bool(getattr(self.settings, "oms_native_oco_stand_down_enabled", False)):
             self._native_oco_armed_confirmed_at.clear()
+            getattr(self, "_native_oco_resolving", {}).clear()
             return
 
         adapter = getattr(self, "broker_adapter", None)
@@ -2398,6 +2421,7 @@ class OmsRiskService:
         if fn is None:
             # No adapter / no capability -> nothing can be confirmed armed -> ladder runs.
             self._native_oco_armed_confirmed_at.clear()
+            getattr(self, "_native_oco_resolving", {}).clear()
             return
 
         # Group the managed positions by broker account (one broker round-trip per account).
@@ -2424,14 +2448,28 @@ class OmsRiskService:
         now = utcnow()
         for key in armed:
             self._native_oco_armed_confirmed_at[key] = now
+            # re-armed -> no longer resolving
+            getattr(self, "_native_oco_resolving", {}).pop(key, None)
         for key in list(self._native_oco_armed_confirmed_at):
             if key not in armed:
-                # Bracket gone (filled/cancelled) -> hand the ladder straight back.
+                # Bracket gone (a leg filled / cancelled). Do NOT hand the ladder straight back:
+                # enter the RESOLUTION grace so the position sync can reconcile the managed row to
+                # flat before the ladder runs (else it fires a redundant close on a stale
+                # position -> a rejected sell on every OCO resolution). The grace clears early
+                # below once the position leaves _managed_v2_symbols.
                 self._native_oco_armed_confirmed_at.pop(key, None)
+                if hasattr(self, "_native_oco_resolving"):
+                    self._native_oco_resolving[key] = now
                 self.logger.info(
-                    "[OMS-OCO-STAND-DOWN-CLEARED] %s %s - no armed OCO pair at the broker; "
-                    "software exit ladder resumes", key[0], key[1],
+                    "[OMS-OCO-STAND-DOWN-CLEARED] %s %s - OCO gone; ladder deferred through the "
+                    "resolution grace while the position reconciles", key[0], key[1],
                 )
+        # Drop resolving entries whose position has reconciled out of the managed set (flat) --
+        # the common resolved-by-fill case, cleared well before the grace backstop.
+        managed = getattr(self, "_managed_v2_symbols", set())
+        for key in list(getattr(self, "_native_oco_resolving", {})):
+            if key not in managed:
+                self._native_oco_resolving.pop(key, None)
 
     async def _reconcile_after_intent(self, broker_account_name: str) -> None:
         """Best-effort post-intent broker→DB reconcile (Fix 3b).
