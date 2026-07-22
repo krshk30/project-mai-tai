@@ -733,6 +733,13 @@ class Settings(BaseSettings):
     # 30s = 6 missed 5s syncs. Lower is safer (resumes sooner); it must never be raised
     # to the point where a dead sync loop can hold the ladder down indefinitely.
     oms_native_oco_confirmation_max_age_seconds: int = 30
+    # After an OCO clears (a leg filled and closed the position), keep the software ladder
+    # deferred this long so the position sync can reconcile the managed row to flat before the
+    # ladder runs -- otherwise the resumed ladder fires a redundant close on a stale position
+    # (rejected, but logs a reject on every OCO resolution). Cleared early once the position
+    # leaves _managed_v2_symbols. 90s covers the observed ~44s reconcile lag with margin; a
+    # position genuinely still held after the grace (rare manual-OCO-cancel) correctly resumes.
+    oms_native_oco_resolve_grace_seconds: int = 90
     # Emit a native OCO bracket on the v2 entry (entry order carries bracket metadata so the
     # Schwab adapter places TRIGGER->OCO). OFF until STEP-1 item 4 passes attended: with it
     # False the v2 entry is the unchanged single-leg order. Requires schwab_native_bracket_enabled

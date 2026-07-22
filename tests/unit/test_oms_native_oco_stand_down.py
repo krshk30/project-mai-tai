@@ -41,6 +41,7 @@ def _service(**overrides: object) -> OmsRiskService:
     service.settings = settings
     service.logger = logging.getLogger("test-oco-stand-down")
     service._native_oco_armed_confirmed_at = {}
+    service._native_oco_resolving = {}
     service._managed_v2_symbols = set()
     return service
 
@@ -162,3 +163,54 @@ async def test_flag_off_clears_all_stand_down_state() -> None:
     await service._refresh_native_oco_armed_state(None)
     assert service._native_oco_armed_confirmed_at == {}
     assert service._native_oco_stand_down_active(ACCT, SYMBOL) is False
+
+
+@pytest.mark.asyncio
+async def test_resolution_grace_keeps_ladder_deferred_until_position_reconciles() -> None:
+    """When the OCO clears (a leg filled -> position closing) the ladder must stay deferred until
+    the position reconciles to flat -- else it fires a redundant close on a stale position (the
+    'rejected sell on every OCO resolution' noise). Common case: cleared early by reconcile."""
+    service = _service()
+    service._managed_v2_symbols = {(ACCT, SYMBOL)}
+    service._native_oco_armed_confirmed_at[(ACCT, SYMBOL)] = utcnow()
+    # sync 1: broker reports armed -> stays armed
+    service.broker_adapter = _StubAdapter(armed={SYMBOL})
+    await service._refresh_native_oco_armed_state(None)
+    assert service._native_oco_stand_down_active(ACCT, SYMBOL) is True
+
+    # sync 2: OCO resolved (leg filled) -> broker reports nothing armed, position not yet flat
+    service.broker_adapter = _StubAdapter(armed=set())
+    await service._refresh_native_oco_armed_state(None)
+    # armed cleared, but RESOLVING grace holds the ladder down (no redundant close)
+    assert (ACCT, SYMBOL) not in service._native_oco_armed_confirmed_at
+    assert (ACCT, SYMBOL) in service._native_oco_resolving
+    assert service._native_oco_stand_down_active(ACCT, SYMBOL) is True
+
+    # sync 3: position reconciled flat (left _managed_v2_symbols) -> resolving cleared, ladder free
+    service._managed_v2_symbols = set()
+    await service._refresh_native_oco_armed_state(None)
+    assert (ACCT, SYMBOL) not in service._native_oco_resolving
+    assert service._native_oco_stand_down_active(ACCT, SYMBOL) is False
+
+
+def test_resolution_grace_backstop_resumes_ladder_if_position_stays_held() -> None:
+    """The rare manual-OCO-cancel case: position genuinely still held after the grace -> the
+    ladder MUST resume (do not defer a real held position forever)."""
+    service = _service()
+    service._managed_v2_symbols = {(ACCT, SYMBOL)}
+    grace = service.settings.oms_native_oco_resolve_grace_seconds
+    service._native_oco_resolving[(ACCT, SYMBOL)] = utcnow() - timedelta(seconds=grace + 1)
+    assert service._native_oco_stand_down_active(ACCT, SYMBOL) is False
+    assert (ACCT, SYMBOL) not in service._native_oco_resolving   # expired entry dropped
+
+
+@pytest.mark.asyncio
+async def test_rearm_removes_a_resolving_entry() -> None:
+    """A symbol that re-arms (new bracket) must leave the resolving set."""
+    service = _service()
+    service._native_oco_resolving[(ACCT, SYMBOL)] = utcnow()
+    service._managed_v2_symbols = {(ACCT, SYMBOL)}
+    service.broker_adapter = _StubAdapter(armed={SYMBOL})   # broker re-reports it armed
+    await service._refresh_native_oco_armed_state(None)
+    assert (ACCT, SYMBOL) not in service._native_oco_resolving
+    assert service._native_oco_stand_down_active(ACCT, SYMBOL) is True
