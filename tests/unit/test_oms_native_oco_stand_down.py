@@ -91,21 +91,66 @@ def test_stand_down_is_scoped_to_the_exact_position() -> None:
     assert service._native_oco_stand_down_active("live:orb", SYMBOL) is False
 
 
+class _StubAdapter:
+    """Minimal broker-adapter stub exposing only the OCO capability."""
+
+    def __init__(self, armed: set[str] | None = None, boom: bool = False) -> None:
+        self._armed = armed or set()
+        self._boom = boom
+        self.calls: list[tuple[str, tuple[str, ...]]] = []
+
+    async def fetch_armed_native_oco_symbols(self, account: str, symbols: list[str]) -> set[str]:
+        self.calls.append((account, tuple(symbols)))
+        if self._boom:
+            raise RuntimeError("broker unreachable")
+        return {s for s in symbols if s in self._armed}
+
+
 @pytest.mark.asyncio
-async def test_refresh_failure_leaves_entries_to_age_out_rather_than_extending_them() -> None:
-    """A DB stall in the refresh must not renew confirmations — it must let them expire."""
+async def test_refresh_confirms_only_broker_armed_symbols() -> None:
+    """The BROKER is the source of truth — a symbol the broker reports armed gets stamped,
+    one it does not report does not. (OCO legs live at the broker, never in broker_orders.)"""
     service = _service()
+    service._managed_v2_symbols = {(ACCT, SYMBOL), (ACCT, "AGEN")}
+    service.broker_adapter = _StubAdapter(armed={SYMBOL})  # KIDZ armed, AGEN not
+    await service._refresh_native_oco_armed_state(None)
+    assert (ACCT, SYMBOL) in service._native_oco_armed_confirmed_at
+    assert (ACCT, "AGEN") not in service._native_oco_armed_confirmed_at
+
+
+@pytest.mark.asyncio
+async def test_refresh_drops_a_symbol_the_broker_no_longer_reports_armed() -> None:
+    """Bracket resolved (filled/cancelled) -> broker stops reporting it -> ladder resumes."""
+    service = _service()
+    service._managed_v2_symbols = {(ACCT, SYMBOL)}
+    service._native_oco_armed_confirmed_at[(ACCT, SYMBOL)] = utcnow() - timedelta(seconds=5)
+    service.broker_adapter = _StubAdapter(armed=set())   # broker reports nothing armed
+    await service._refresh_native_oco_armed_state(None)
+    assert (ACCT, SYMBOL) not in service._native_oco_armed_confirmed_at
+
+
+@pytest.mark.asyncio
+async def test_broker_fetch_failure_leaves_entries_to_age_out_rather_than_extending_them() -> None:
+    """★ FAIL-OPEN: an unreachable broker must NOT renew confirmations — it must let them expire."""
+    service = _service()
+    service._managed_v2_symbols = {(ACCT, SYMBOL)}
     stamped = utcnow() - timedelta(seconds=20)
     service._native_oco_armed_confirmed_at[(ACCT, SYMBOL)] = stamped
-
-    async def _boom(*args: object, **kwargs: object) -> None:
-        raise RuntimeError("DB stalled")
-
-    service._run_db = _boom  # type: ignore[assignment]
+    service.broker_adapter = _StubAdapter(boom=True)
     await service._refresh_native_oco_armed_state(None)
-
     # Unchanged, NOT refreshed: it keeps aging toward the fail-open cutoff.
     assert service._native_oco_armed_confirmed_at[(ACCT, SYMBOL)] == stamped
+
+
+@pytest.mark.asyncio
+async def test_no_adapter_capability_clears_and_runs_the_ladder() -> None:
+    """An adapter without the capability (Webull/Alpaca/sim) -> nothing armed -> ladder runs."""
+    service = _service()
+    service._managed_v2_symbols = {(ACCT, SYMBOL)}
+    service._native_oco_armed_confirmed_at[(ACCT, SYMBOL)] = utcnow()
+    service.broker_adapter = object()   # no fetch_armed_native_oco_symbols
+    await service._refresh_native_oco_armed_state(None)
+    assert service._native_oco_armed_confirmed_at == {}
 
 
 @pytest.mark.asyncio
@@ -113,6 +158,7 @@ async def test_flag_off_clears_all_stand_down_state() -> None:
     """Flag off ⇒ the ladder behaves exactly as it does today, with no residue."""
     service = _service(oms_native_oco_stand_down_enabled=False)
     service._native_oco_armed_confirmed_at[(ACCT, SYMBOL)] = utcnow()
+    service.broker_adapter = _StubAdapter(armed={SYMBOL})
     await service._refresh_native_oco_armed_state(None)
     assert service._native_oco_armed_confirmed_at == {}
     assert service._native_oco_stand_down_active(ACCT, SYMBOL) is False

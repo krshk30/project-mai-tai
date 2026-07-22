@@ -39,6 +39,18 @@ class RoutingBrokerAdapter:
         adapter = self._adapter_for_account(broker_account_name)
         return await adapter.list_account_positions(broker_account_name)
 
+    async def fetch_armed_native_oco_symbols(
+        self, broker_account_name: str, symbols: list[str]
+    ) -> set[str]:
+        """Route to the account's adapter. Optional capability -- an adapter without it (Webull,
+        Alpaca, simulated) means no native OCO to detect, so return empty (the caller then
+        fails open and runs its software ladder)."""
+        adapter = self._adapter_for_account(broker_account_name)
+        fn = getattr(adapter, "fetch_armed_native_oco_symbols", None)
+        if fn is None:
+            return set()
+        return await fn(broker_account_name, symbols)
+
     def _adapter_for_account(self, broker_account_name: str) -> BrokerAdapter:
         provider = self.provider_by_account.get(str(broker_account_name), self.default_provider)
         return self._adapter_for_provider(provider)
