@@ -175,6 +175,69 @@ class SchwabBrokerAdapter:
             _walk(order)
         return {sym for sym, n in working_sells.items() if n >= 2}
 
+    async def fetch_oco_resolved_by_fill_symbols(
+        self,
+        broker_account_name: str,
+        symbols: list[str],
+        *,
+        resolved_within_seconds: float = 600.0,
+    ) -> set[str]:
+        """Symbols whose native OCO exit pair just RESOLVED BY A FILL — a child SELL leg reached
+        FILLED recently. The broker's OWN execution record is authoritative here ("the target/stop
+        sold; the position is flat"), so the caller may close the phantom managed row with none of
+        the positions-endpoint ambiguity that made a FLAT_INFERRED read unsafe (2026-07-15 ERNA:
+        a held position absent from the list read as flat).
+
+        ⭐ RECENCY is the safety hinge. Only a SELL leg whose ``closeTime`` is within
+        ``resolved_within_seconds`` counts, which ties the fill to the bracket that JUST cleared.
+        Without it, a STALE filled sell from an EARLIER bracket on the same symbol (a second
+        intraday trade) would false-positive a currently-HELD position — the exact strand this
+        method exists to avoid. A bracket that resolved by EXPIRY/CANCEL (no fill — e.g. an OCO
+        that timed out at the close) has no FILLED sell and is correctly ABSENT here, so the caller
+        lets the software ladder manage the still-held position.
+
+        Same fail-open contract as ``fetch_armed_native_oco_symbols``: raises on any broker/HTTP
+        error so the caller keeps the phantom row for the grace backstop + reject self-heal rather
+        than acting on a partial guess.
+        """
+        account = self.accounts_by_name.get(broker_account_name)
+        if account is None or not symbols:
+            return set()
+        wanted = {str(s).upper() for s in symbols}
+        now = datetime.now(UTC)
+        frm = (now - timedelta(hours=12)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        to = (now + timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        status_code, _headers, body = await self._authorized_request_json(
+            "GET",
+            f"/trader/v1/accounts/{quote(account.account_hash, safe='')}/orders"
+            f"?fromEnteredTime={frm}&toEnteredTime={to}&maxResults=500",
+        )
+        if status_code >= 400 or not isinstance(body, list):
+            raise RuntimeError(f"Schwab open-orders fetch failed HTTP {status_code}")
+
+        resolved: set[str] = set()
+
+        def _walk(order: dict) -> None:
+            legs = order.get("orderLegCollection") or []
+            leg = legs[0] if legs else {}
+            sym = str((leg.get("instrument") or {}).get("symbol") or "").upper()
+            status = str(order.get("status") or "").upper()
+            instruction = str(leg.get("instruction") or "").upper()
+            if sym in wanted and instruction == "SELL" and status == "FILLED":
+                closed_at = self._parse_datetime(order.get("closeTime"))
+                if closed_at is not None:
+                    if closed_at.tzinfo is None:
+                        closed_at = closed_at.replace(tzinfo=UTC)
+                    age = (now - closed_at).total_seconds()
+                    if 0 <= age <= resolved_within_seconds:
+                        resolved.add(sym)
+            for child in order.get("childOrderStrategies") or []:
+                _walk(child)
+
+        for order in body:
+            _walk(order)
+        return resolved
+
     async def submit_order(self, request: OrderRequest) -> list[ExecutionReport]:
         account = self.accounts_by_name.get(request.broker_account_name)
         if account is None:

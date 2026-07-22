@@ -51,6 +51,18 @@ class RoutingBrokerAdapter:
             return set()
         return await fn(broker_account_name, symbols)
 
+    async def fetch_oco_resolved_by_fill_symbols(
+        self, broker_account_name: str, symbols: list[str]
+    ) -> set[str]:
+        """Route to the account's adapter. Optional capability -- an adapter without it (Webull,
+        Alpaca, simulated) means no native OCO fills to detect, so return empty (the caller then
+        keeps the phantom row for the grace backstop + reject self-heal)."""
+        adapter = self._adapter_for_account(broker_account_name)
+        fn = getattr(adapter, "fetch_oco_resolved_by_fill_symbols", None)
+        if fn is None:
+            return set()
+        return await fn(broker_account_name, symbols)
+
     def _adapter_for_account(self, broker_account_name: str) -> BrokerAdapter:
         provider = self.provider_by_account.get(str(broker_account_name), self.default_provider)
         return self._adapter_for_provider(provider)

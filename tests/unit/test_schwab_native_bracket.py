@@ -11,6 +11,7 @@ suite that never pinned the numbers would not catch it.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -206,6 +207,70 @@ async def test_fetch_armed_native_oco_raises_on_broker_error(monkeypatch) -> Non
     monkeypatch.setattr(adapter, "_authorized_request_json", boom)
     with pytest.raises(RuntimeError):
         await adapter.fetch_armed_native_oco_symbols("paper:schwab_1m", ["KIDZ"])
+
+
+@pytest.mark.asyncio
+async def test_fetch_oco_resolved_by_fill_needs_a_recent_filled_sell(monkeypatch) -> None:
+    """Resolved-by-fill = a child SELL leg reached FILLED RECENTLY. Recency is the safety hinge:
+    it ties the fill to the bracket that JUST cleared, so a STALE filled sell from an earlier
+    intraday bracket cannot false-positive a currently-HELD position (the strand this guards). A
+    bracket that resolved by EXPIRY/CANCEL (no filled leg) is correctly absent -> the caller lets
+    the ladder manage the still-held position (the SMCX-at-close case)."""
+    adapter = SchwabBrokerAdapter(
+        Settings(oms_adapter="schwab", schwab_access_token="t", schwab_account_hash="h",
+                 schwab_native_bracket_enabled=True)
+    )
+    now = datetime.now(UTC)
+
+    def _iso(dt: datetime) -> str:
+        return dt.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+    def orders(sym, sell_status, close_dt, sibling="CANCELED"):
+        return [{
+            "orderStrategyType": "TRIGGER",
+            "status": "FILLED",
+            "orderLegCollection": [{"instruction": "BUY", "instrument": {"symbol": sym}}],
+            "childOrderStrategies": [{
+                "orderStrategyType": "OCO",
+                "childOrderStrategies": [
+                    {"status": sell_status, "closeTime": close_dt,
+                     "orderLegCollection": [{"instruction": "SELL", "instrument": {"symbol": sym}}]},
+                    {"status": sibling,
+                     "orderLegCollection": [{"instruction": "SELL", "instrument": {"symbol": sym}}]},
+                ],
+            }],
+        }]
+
+    async def fake(method, path, body=None):
+        return 200, {}, fake.body
+    monkeypatch.setattr(adapter, "_authorized_request_json", fake)
+
+    # a SELL leg FILLED 30s ago -> resolved by fill
+    fake.body = orders("KIDZ", "FILLED", _iso(now - timedelta(seconds=30)))
+    assert await adapter.fetch_oco_resolved_by_fill_symbols("paper:schwab_1m", ["KIDZ"]) == {"KIDZ"}
+
+    # a STALE FILLED sell (3h ago, an earlier bracket) -> EXCLUDED (would strand a re-held position)
+    fake.body = orders("KIDZ", "FILLED", _iso(now - timedelta(hours=3)))
+    assert await adapter.fetch_oco_resolved_by_fill_symbols("paper:schwab_1m", ["KIDZ"]) == set()
+
+    # resolved by EXPIRY/CANCEL, no filled leg -> EXCLUDED (position still held; SMCX at the close)
+    fake.body = orders("KIDZ", "CANCELED", _iso(now - timedelta(seconds=10)), sibling="EXPIRED")
+    assert await adapter.fetch_oco_resolved_by_fill_symbols("paper:schwab_1m", ["KIDZ"]) == set()
+
+
+@pytest.mark.asyncio
+async def test_fetch_oco_resolved_by_fill_raises_on_broker_error(monkeypatch) -> None:
+    """Same fail-open contract as fetch_armed: raise so the OMS keeps the phantom row for the grace
+    backstop + reject self-heal rather than acting on a partial guess."""
+    adapter = SchwabBrokerAdapter(
+        Settings(oms_adapter="schwab", schwab_access_token="t", schwab_account_hash="h")
+    )
+
+    async def boom(method, path, body=None):
+        return 500, {}, {"error": "server"}
+    monkeypatch.setattr(adapter, "_authorized_request_json", boom)
+    with pytest.raises(RuntimeError):
+        await adapter.fetch_oco_resolved_by_fill_symbols("paper:schwab_1m", ["KIDZ"])
 
 
 def test_market_parent_has_no_price_or_stopprice() -> None:

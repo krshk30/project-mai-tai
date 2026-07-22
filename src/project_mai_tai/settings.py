@@ -747,11 +747,15 @@ class Settings(BaseSettings):
     # CLOSES the position but never decrements our managed row (the OMS never placed that sell),
     # so the row's only other close-path is the reject-driven _v2_close_reconcile_flat -- i.e. the
     # exit ladder must resume and churn ~3 rejected closes before the phantom clears. When ON, the
-    # ~5s off-loop sync closes the phantom row DIRECTLY from a positive broker-flat read for any
-    # symbol whose OCO just resolved, so the ladder never resumes to fire the rejects. FAIL-OPEN:
-    # UNKNOWN/HELD/read-error keeps the row (the grace backstop + reject self-heal still apply), and
-    # it closes ONLY on the same positive-flat confirmation the reject-path already trusts. Default
-    # False ships inert (byte-identical to today's reject self-heal); flip via env after validation.
+    # ~5s off-loop sync closes the phantom row DIRECTLY for any symbol whose OCO resolved BY A FILL,
+    # detected from the broker's OWN execution record (fetch_oco_resolved_by_fill_symbols: a
+    # recently-FILLED child SELL leg), so the ladder never resumes to fire the rejects. Keyed on the
+    # fill record, NOT a positions-endpoint read -- authoritative, with none of the FLAT_INFERRED
+    # ambiguity behind the 07-15 ERNA: a bracket that resolved by expiry/cancel (position still
+    # HELD, e.g. an OCO that timed out at the close) has no filled leg, is skipped, and the ladder
+    # manages it. FAIL-OPEN: any fetch error / adapter without the capability keeps the row for the
+    # grace backstop + reject self-heal. Default False ships inert (byte-identical to today's reject
+    # self-heal); flip via env after validation.
     oms_native_oco_resolve_flat_reconcile_enabled: bool = False
     # Emit a native OCO bracket on the v2 entry (entry order carries bracket metadata so the
     # Schwab adapter places TRIGGER->OCO). OFF until STEP-1 item 4 passes attended: with it
