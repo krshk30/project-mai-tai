@@ -70,6 +70,13 @@ def utcnow() -> datetime:
     return datetime.now(UTC)
 
 
+def _schwab_round(price: float) -> str:
+    """Format a price to Schwab's decimal-precision rule, which FIRM-REJECTS violations:
+    orders above $1 accept at most 2 decimals; at/below $1, at most 4. (ADVB 2026-07-22:
+    a 4-decimal OCO exit leg on an $11 stock was CANCELED_BY_FIRM.)"""
+    return f"{price:.2f}" if price > 1.0 else f"{price:.4f}"
+
+
 def _as_utc(value: object) -> datetime | None:
     """Best-effort UTC datetime from a managed row's entry_time (ORM datetime, ISO string,
     or None). Used only as the fresh-fill grace anchor: anything unreadable -> None -> no
@@ -3928,8 +3935,9 @@ class OmsRiskService:
         md["bracket"] = "true"
         md["bracket_entry_type"] = "LIMIT" if order_type == "LIMIT" else "MARKET"
         md["native_oco_bracket"] = "true"
-        md["bracket_target_price"] = f"{target:.4f}"
-        md["bracket_stop_price"] = f"{protect:.4f}"
+        # Schwab tick rule (firm-rejects otherwise): >$1 -> 2 decimals, <=$1 -> 4 decimals.
+        md["bracket_target_price"] = _schwab_round(target)
+        md["bracket_stop_price"] = _schwab_round(protect)
         self.logger.info(
             "[V2-OCO-EMIT] %s bracket entry=%.4f -> OCO[target=%.4f stop=%.4f] (type=%s)",
             payload.symbol, entry, target, protect, md["bracket_entry_type"],

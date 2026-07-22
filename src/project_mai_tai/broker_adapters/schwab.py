@@ -852,10 +852,13 @@ class SchwabBrokerAdapter:
                 }
             ],
         }
+        # Schwab firm-rejects >2 decimals above $1 (>4 at/below). Round to the tick rule.
+        pf = float(price)
+        px = round(pf, 2) if pf > 1.0 else round(pf, 4)
         if order_type == "LIMIT":
-            leg["price"] = float(price)
+            leg["price"] = px
         else:
-            leg["stopPrice"] = float(price)
+            leg["stopPrice"] = px
         return leg
 
     def _build_bracket_payload(self, request: OrderRequest) -> dict[str, object]:

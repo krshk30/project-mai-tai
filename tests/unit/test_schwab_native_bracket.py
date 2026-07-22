@@ -227,3 +227,14 @@ def test_market_parent_still_requires_both_exit_prices() -> None:
     with pytest.raises(RuntimeError) as e:
         _adapter(bracket_enabled=True)._build_bracket_payload(req)
     assert "bracket_stop_price" in str(e.value)
+
+
+def test_bracket_exit_legs_round_to_schwab_tick_rule() -> None:
+    """Exit legs round to Schwab's decimal rule (defence in depth alongside the emit)."""
+    req = _bracket_request(metadata={"bracket_entry_type": "MARKET",
+                                     "bracket_target_price": "11.3322",
+                                     "bracket_stop_price": "10.5545"})
+    payload = _adapter(bracket_enabled=True)._build_bracket_payload(req)
+    target, protective = payload["childOrderStrategies"][0]["childOrderStrategies"]
+    assert target["price"] == 11.33
+    assert protective["stopPrice"] == 10.55
