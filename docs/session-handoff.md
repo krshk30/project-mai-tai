@@ -17,6 +17,264 @@
 
 ---
 
+## 🌙 2026-07-21 LATE — 30s ATR EXPLORATION **CLOSED NEGATIVE** + CW-v2 backtest PARITY achieved
+
+**Full write-up: [`docs/atr-30s-and-cw-parity-2026-07-21.md`](atr-30s-and-cw-parity-2026-07-21.md)**
+(local copy in `mai-tai-reports/`). Memory: [[project_mai_tai_30s_exploration]]. Summary only here.
+
+**⛔ THE 30s IDEA DOES NOT ESCAPE THE WALL — confirmed 8 days / 279 trades, net negative under EVERY
+exit** (hard-5 −79, hard-3 −64, floor+2 −122). Only **2 of 8 days positive**, each a single monster
+runner (ZYBT +144% 07-20, CPHI +76% 07-21); the other 6 days had no runner and bled. Tested the
+operator's TradingView ATR Trail (14/mult-3/**wick**/RMA) on 30s bars, his live entry (flip → wait 3
+candles → break the 3-bar high → rule 7 → scanner-gated), across an exit grid (hard-5/hard-3/floor+2/
+floor+3/floor→trail combos).
+- **⭐ THE floor+2 TRAP:** best win rate (50%) AND worst total (−122) — caps the runners small while
+  eating −5% stops on choppers = **high win rate, negative expectancy.** Judge on expectancy, not win%.
+- **Same wall as the 1-min work:** runner-dependent, can't select the runner in advance. No exit /
+  factor / timeframe fixes it. **The one game-changer left = SELECTION** (predict the runner first).
+- **Operator instincts VALIDATED (real):** −5% unnecessary (hard-3 ≈ hard-5); ride-to-trail-flip
+  catches the runners the +2% floor throws away; arming above +2% loses; 30s ATR must use 14/3/wick
+  (the live 5/3.5 on 30s = hyper-twitchy garbage).
+- **Data caveats:** Schwab REST has no sub-minute + no Schwab tick archive ⇒ 30s bars built from
+  **Polygon ticks** (diverge from Schwab; operator validates on his own TV chart); fills Polygon-quote
+  (~0.3pp optimistic); runs **mover-biased** (quiet no-tick names excluded ⇒ real worse).
+
+**✅ ENABLING WIN — the CW-v2 1-min backtest now REPRODUCES the bot's 5 real 07-21 trades 5/5** (exit
+reasons 5/5). Fix chain: bar source → Schwab REST backfill (`atr_cw_v2_variants_schwab.py`); ATR seed
+was NOT the issue (trail matched the bot's logged trig/flip_level 44/45); **the fix was the ARM-TIME
+WINDOW GATE** (arm only on flips inside a confirmed window — the bot can only arm on a flip it
+observed). **1 phantom left (CPHI 10:55)** — bot should have armed but didn't; blocking gate not in the
+current logs → close it with a per-bar CW-state probe (INFO-only, like `[V2-MACD-PROBE]`).
+
+---
+
+## 🏁 2026-07-21 EOD — ⭐ OCO STEP-1 **PASSED LIVE** (the E5 proof) · ⛔ ROOT CAUSE FOUND: backtests used the WRONG BARS
+
+**Two results, and they point opposite ways: the OCO execution work is PROVEN on live money; the
+entry R&D is INVALIDATED because it was computed on bars production never sees.**
+
+---
+
+### ⭐✅ 1. OCO bracket — STEP-1 PASSED on Schwab, attended, live, qty-1 SOFI, total cost ~$0.14
+
+| Item | Result |
+|---|---|
+| 0. Preview accepts the shape | ✅ HTTP 200 / 0 rejects (STOP **and** marketable-LIMIT parents) |
+| 1. Combo rests | ✅ parent `WORKING`, both exits `AWAITING_PARENT_ORDER` — never unattached |
+| 2. Atomic at fill | ✅ ×2 — entry `FILLED`, **both** legs `WORKING` in the same broker read |
+| **3. One-cancels-other** | ✅ **THE E5 PROOF** |
+| 4. Software-exit stand-down | ⛔ **NOT TESTED** — needs the emit wiring |
+| 5. Cancel + flat | ✅ ×3, broker-verified flat |
+
+**Item 3 as it actually happened:** the operator trailed the STOP leg up by hand
+(16.53→16.89→17.11→17.29, each a clean `REPLACED`), then `SELL STOP@17.32` **FILLED** and the broker
+**auto-cancelled the sibling** `SELL LIMIT@17.75`. **One leg fills ⇒ no second sell exists ⇒ the NXTC
+oversell cannot occur.** Proven via the PROTECTIVE leg — the exact order that collided in NXTC.
+**Zero oversell rejections all session** (the 6 rejects were the placement rule *"stop price must be
+below the bid for sell stop orders"*; each failed replace left the prior stop live, so the position
+was never unprotected).
+
+**BONUS:** the `REPLACED` chain proves **broker-side stop replacement works and opens no naked gap** —
+the trailing ratchet `oco-bracket-design.md` flagged as required-but-unbuilt.
+
+**Shipped:** #498 (adapter combo + stand-down + runbook), #499 (STEP-1 harness), #501 (LIMIT parent +
+`--leave-open`). **Deployed with both flags ON since 07:35 ET and verified INERT** (0 OCO markers, 0
+errors, v2 behaviour identical) — nothing emits `bracket` metadata yet, so the live path is unchanged.
+Revert = delete env lines 179-180 (they were ABSENT before) + choreography, fleet flat.
+[[project_mai_tai_oco_bracket_build]]
+
+**NEXT for OCO:** wire the emit (v2→Schwab) → that unlocks item 4's live proof → survival test → only
+then live routing. Webull keeps its own separate STEP-1.
+
+---
+
+### ⛔⭐ 2. ROOT CAUSE — the backtests built signals from POLYGON bars; live v2 decides on SCHWAB bars
+
+**Only 54.2% of ATR flips agree between the two sources** (Schwab 201 flips, Polygon 181, 109 matched
+same-bar same-direction). **~46% of every entry signal we studied is a data-source artifact.**
+Bar-level ATR *state* divergence is **10.4%** over 8,673 matched bars.
+
+**What is NOT broken — each was tested; do not "fix" these:**
+- **The bar BUILD is correct.** Off-by-one test: lag 0 = **median 0.00 bps** close error, lag ±1 = 75-76
+  bps. Perfectly aligned, no boundary/labelling bug.
+- **No timing skew.** Three-clock audit: two trail levels 1.6% apart were crossed **4 seconds apart** on
+  the same tape (RDGT). The wire is fine.
+- **The ATR oracle is correct.** Fed Schwab bars it reproduces the operator's TOS chart flips (CJMB
+  07-17: 08:58/09:56/11:01/12:14) — and his own live fill `2@1.245` sat on the 12:14 Schwab flip that
+  **Polygon never saw**.
+
+**Mechanism:** bar CONTENT differs slightly (Polygon sees ~9% more volume) and the ATR trailing stop is
+**recursive**, so a 12 bps close difference flipped ADVB 07-20 12:47 one way on Schwab and the other on
+Polygon, leaving the trails 7.5% apart. Divergence concentrates on borderline bars (|close-trail|
+median **2.12%** when states disagree vs **4.35%** when they agree) — i.e. exactly where a
+proximity entry rule fires. **Rule to carry: aggregation + recursion amplifies vendor differences;
+point-in-time reads (quotes, fills) do not.** [[project_mai_tai_bar_source_defect]]
+
+**⛔ ORB HAS THE MIRROR PROBLEM** — it runs live on gateway/Polygon bars while its research was
+Schwab-REST-based, and its entry is also a threshold crossing. Separate thread, same crack.
+
+**Blast radius:** every entry-timing result from today is INVALID (proximity sweeps, OOS split, entry
+concepts). **Exit-side work survives** (honest-fill haircut, floor-vs-target, buy-stop slippage) — it is
+quote/fill driven; verify per study rather than assume.
+
+---
+
+### 📉 3. The entry R&D that ran before the defect was found (all superseded, kept for the method)
+
+Full write-up: **`docs/atr-proximity-entry-rnd.md`** (PR #500) + local copy at
+`C:\Users\kkvkr\OneDrive\Documents\mai-tai-reports\`.
+- **OOS walk-forward FAILED**: the in-sample winner (+1.399%, CI excluding zero) went to **-0.500%**
+  out-of-sample. The ORB "+11.2" pattern reproducing exactly. ~222 cells searched.
+- **Honest fills cost -1.0pp** (floor 2) and **-1.9pp** (floor 3) vs the idealized bar-level walk;
+  stops fill -5.3% not -5.0%, and floor-3 stops fill **-7.58%**.
+- **The live 07:00-16:30 window was never applied**; on 07-20, **10 of 15 trades fired outside it**.
+  Applying it moved the chase entry from -0.474% to +0.134%. "Five good trades, not fifty" is measurably right.
+- Entry concepts (in-window, honest): chase **+0.134%** · buy-STOP **-1.961%** (dead, stops -8%) ·
+  buy-LIMIT-below **+0.565%** (best in-sample; **reverses on Schwab bars**).
+- **⭐ OPEN DESIGN ITEM:** the proximity rule has a MAXIMUM but **no MINIMUM** — ADVB 07-20 12:47 jumped
+  **+4.83% in one minute** and closed **0.33%** under the trail, and the rule took it with no cushion.
+  Fix to test: a proximity **BAND** (e.g. 1.0% ≤ prox ≤ 2.0%).
+
+---
+
+### 🟢 4. Schwab REST bar backfill — SCHEDULED, fires 16:35 ET (20:35 UTC) today
+
+`systemd` one-shot **`mai-tai-schwab-backfill.timer`** → `scripts/schwab_backfill.py --days 10`,
+log `/tmp/schwab_backfill.log`, corpus `/var/lib/project-mai-tai/schwab_rest_bars/<date>/<SYM>.json`.
+
+- **FRESH PULL, not a hole-patch.** Splicing REST bars into `strategy_bar_history` would mix two sources
+  in one series, and a recursive ATR would then yield a THIRD answer. `strategy_bar_history` is left
+  untouched — it is an operational log of when the bot was watching, not a market-data archive.
+- **Validated before scheduling:** REST reproduces the bot's bars **exactly on OHLC** (ADVB 07-20 12:47
+  O 7.65 / H 8.05 / L 7.61 / **C 8.0395** both sides; volume differs ~250 on late prints), with far
+  better coverage — **1,185 bars for 07-20 spanning 00:00→19:59 ET**.
+- **Minute bars, no ticks.** So signals come from Schwab bars and fills stay approximated by Polygon
+  quotes; intrabar execution remains a residual gap.
+- Runs after v2's window closes because it shares the **Schwab API quota and token** with the live bot
+  (not a CPU concern — 66 paced calls).
+
+**Why it matters:** the Schwab-bar re-run collapsed to **n=18 / n=10** because 26 of 37 symbol-days had
+>5min gaps. The backfill is what makes a valid re-run possible.
+
+---
+
+### 🗓️ TOMORROW
+1. **Check the backfill** (`/tmp/schwab_backfill.log`) — then re-run the entry corpus on the new bars.
+2. **Wire the OCO emit** (v2→Schwab) → item 4's live proof → survival test.
+3. Consider the proximity **BAND** (min 1.0%) once bars are trustworthy.
+4. ⛔ Do NOT re-tune anything on Polygon bars.
+
+**⚠️ Live state at EOD:** both OCO flags ON and inert; v2 was holding **2 GREE** at 14:12 ET (normal bot
+activity) — check it closed before any restart. Fleet otherwise clean all day; STEP-1 left the account
+flat, broker-verified.
+
+**⛔ PROCESS NOTE:** bash `TZ=America/New_York date` **silently returns UTC** on this box — it produced a
+"11:25 ET" reading that was actually 07:25 ET and nearly slipped the day's plan. Use the PowerShell
+conversion; cross-check against a git commit stamp (`-0400`). [[feedback_report_times_in_et]]
+
+---
+
+## 🌙 2026-07-20 EOD — STRATEGY QUESTION SETTLED (entry dead in ALL forms) · OCO BUILD STARTED · tomorrow = validate
+
+**⭐ THE ANSWER TO THE MONTH: the ENTRY has no edge in any form; the forward work is PLUMBING, not strategy.**
+Running-high = OOS-killed · CW = −1.22%/trade (below breakeven) · **flip-count selection = NULL** (07-20) ·
+**classic-ORB 2:1 = NULL** (07-20 — spread eats the idealized edge). The exit-geometry nulls survived a
+universe audit (the 07-17 studies were correctly scanner-gated; the 30/76 no-bar drop is not a runner bias).
+A real result, not a defeat. [[project_mai_tai_orb]] [[project_mai_tai_v2_stop_slippage_rootcause]]
+
+**⭐🏗️ OPERATOR DECISION — build the broker-native OCO bracket (both brokers, no emulation) = the E5 oversell
+DISSOLVE.** Design on main (`docs/oco-bracket-design.md`, PR #495). **Webull OTOCO payload VALIDATED via
+`preview_order` (validate-without-place, ZERO risk) — exact shape pinned; harness `scripts/webull_otoco_preview.py`.**
+⚠ Broker constraint: the combo MASTER MUST be LIMIT/MARKET (a buy-STOP MASTER rejects) ⇒ **ENTRY FORK A/B/C**
+(lean A = MARKET/LIMIT entry + OCO exits; the entry is dead so the OCO's value is the exit pair). **The
+software-exit-defer flip (arming the bracket stands down `_evaluate_v2_managed_exit`) is the ONE dangerous
+switch — HELD for attended qty-1 STEP-1 tomorrow, one broker first.** Full detail + the pinned payload =
+[[project_mai_tai_oco_bracket_build]].
+
+**✅ SHIPPED TONIGHT (after-close-safe: safety defaults, health check, docs/designs — NOTHING touched trading
+logic; fleet unchanged; full `tests/unit` green post-merge 1229):**
+- **#487** account default `strategy_schwab_1m_account_name` live→**paper** (fails safe) · **#490**
+  `schwab_adapter_token_refresh_enabled` True→**False** (a missing env can't re-enable the #274 SPOF). Both
+  merged only after the FULL suite proved no `get_settings()` seam-split (1228/1229 green).
+- **#484** `ops/health/armed_segments_check` — P1.4's external pager (12/12 tests) · **#495** OCO design ·
+  **#496** (rebase of #483) the get_settings() injection-seam note (every default-flip runs the full suite) +
+  shared-account-ledger limitation · **#485/#486/#488/#489/#491** comment fix + 3 design docs + CSV-LF.
+- **RESTING-ENTRY ground-truth:** plain buy-STOP rests+cancels clean RTH (live, verified flat); the real 07-15
+  killer was `STOP_PRICE_MUST_BE_GREATER_THAN_MARKET` (arm the stop while price < break), NOT type/TIF; EH needs
+  the EXT session. [[project_mai_tai_oco_bracket_build]]
+
+**🗓️ 2026-07-21 — VALIDATE ON TODAY'S WORK:** pick the entry fork → build the adapter combo methods (Webull
+place/preview/replace + Schwab OCO `orderStrategyType=OCO`/`TRIGGER`) flag-gated + unit tests → **per-broker
+STEP-1 gate** (preview → rests → atomic-at-fill → one-cancels-other → software-exit-DEFERS → cancel+flat) on a
+LIVE qty-1 position, ATTENDED, ONE broker first. Only after STEP-1 passes does that broker's live routing ship.
+**Token re-auth = the operator's (refresh_token expired 07-21 07:43 ET — do at `/auth/schwab/start`).**
+
+---
+
+## ✅ 2026-07-20 SESSION-START — STRATEGY QUESTION PAUSED AT AN ANSWER; TODAY IS QUIET
+
+**Nothing deploys today. Everything live is on Friday (07-17) config. The only human action is tonight's
+Schwab re-auth.** *(Catch-up: 07-17's findings were captured in memory but never written here until now —
+this block closes that gap so they stop regenerating as "open work." The ORB "+11.2" re-measure was
+re-queued THREE times off the stale record; it is dead — see kill #3.)*
+
+**🟢 LIVE FLEET CONFIG (ground-truthed — pin these):**
+- **ORB** — LIVE webull margin (`live:orb`, D4GUJ…), **qty 2** (`orb_reclaim_quantity=2`), **trail 5%**
+  (`orb_reclaim_trail_pct=5.0`), running-high, 09:30–10:00 window, 10:00 window-flatten ON. ⛔ **`orb_quantity=10`
+  / `orb_trail_pct=8.0` are ENV-SET-AND-NEVER-READ FOSSILS** (they feed the inactive classic-OR path; the live
+  path is the reclaim path). The roster's "qty 5" was itself a stale fossil read — ground-truthed to **2** from
+  `/proc` 07-15; Friday's fill was **buy 2 CJMB**. [[project_mai_tai_fossil_db_columns_trace_read_path]]
+- **v2 (schwab_1m_v2)** — LIVE Schwab isolated (`live:schwab_1m_v2`), **qty 2**, CW ruleset. Restart-safe since
+  07-16 (P1.3+P1.4, PR #475; boot-hold gates entries).
+- **polygon_30s** — PAPER/sim. Protected: **CYN, CELZ**.
+
+**🏁 THE STRATEGY QUESTION — CLOSED, three ways (these are ANSWERS, not open threads):**
+1. **v2 exit geometry — CLOSED four ways (07-17).** Reach curve · **ATR↔reach r=0.085** (ATR does NOT identify
+   the runners ⇒ **the exit cannot be aimed**) · resting-ATR backtest · 40-cell tick-trail grid. Best achievable
+   exit **−0.70%** (CI excl 0) still **LOSES**; the two entries want opposite trail widths, both negative.
+   [[project_mai_tai_v2_stop_slippage_rootcause]]
+2. **The exit is OPTIMAL; the ENTRY is the whole problem — proven on 3 independent instruments** (decompose ·
+   apples-to-apples · the OMS's own `peak_profit_pct` books). Win rate == reach-+2% rate; every v2 winner
+   reached +2%. **The honest frame is the 39 CW-only names, breakeven 67.1%, survives drop-one** — NOT the
+   blended 42, NOT the print-optimistic 57–61% proxy.
+3. **ORB gated "+11.2" — OOS-KILLED (07-17).** 616 name-days, median **−1.08…−1.16% at every latency**, win
+   39–42%, **drop-one worse everywhere**. Every "+11.2 / median +0.25 / win 55% / drop-top-3 +16.8 / 60 nd"
+   number is a **CIRCULAR-UNIVERSE DOLLAR READING = history, never a claim** (it measured only the names ORB
+   already entered). **PR #403's 3 flags are NOT deploy candidates** (draft, do-not-merge, encode a dead
+   config). Running-high entry → PARKED. [[project_mai_tai_orb]]
+
+**⇒ The one remaining idea = the flip-count (selection) filter.** Off-hours only. **Pre-stated expectation:
+null.** If it returns null, that is the MONTH'S RESULT — a real answer (the entry has no edge and no exit or
+selection rule recovers it), not a failure to keep chasing.
+
+**📅 STUDY DATE-BOUNDS (pin on EVERY citation — sliding `CURRENT_DATE-8` windows are why `decompose_11.py`
+isn't reproducible):** v2 decompose = 42 rt / 12 names / 8d ending ~07-16 · OMS-books = 48 managed rows / 8d ·
+ORB OOS = 616 nd, range **04-13→07-09** (ran 07-09 23:04) · ATR↔reach + tick-grid = `/home/trader/wt-atr-ab/`, 07-17.
+
+**🔴 NEW OPEN ITEM — OMS heartbeat flap (found 07-20 RTH; root-cause OFF-HOURS).** 3 watchdog RED trips today
+(**09:11 / 09:39 / 12:07 ET**), each self-recovered <1 min. The loop is ALIVE (steady **24 log-lines/min through
+every flap**, NRestarts=0, heartbeat 3s at check), fleet FLAT, no exit stranded — bounded **#391-family** pattern,
+nets working. **Prime suspect: the OMS syncs ~8 broker accounts every ~15s, 6 of them DEAD** (`live:polygon_30s`,
+`live:webull_30s`, `paper:{macd_30s_reclaim,orb,schwab_1m,schwab_1m_v2}` — Alpaca-no-creds / Schwab-401 /
+`SCHWAB-TOKEN-STALE` on every pass) — failing synchronous broker round-trips plausibly push the heartbeat publish
+past the 180s watchdog threshold. **Fix (off-hours, design-first): prune the dead accounts from the sync loop OR
+fully decouple the heartbeat publish.** Do NOT restart mid-session while a position is held.
+[[project_mai_tai_oms_liveness_watchdog]] [[project_mai_tai_oms_zombie_blocking_db]]
+
+**🗓️ SCHEDULED ACTION (NOT an open item) — Schwab re-auth tonight.** refresh_token expires **2026-07-21
+07:43 ET (~20h at session start).** #448 pager **VERIFIED firing** (AMBER landed on the ntfy topic 12:02 UTC
+today; cron log exit=1 at 08:02 ET). **Operator re-auths manually this evening** at `/auth/schwab/start`
+(refresher self-heals post-#274 — re-auth alone recovers, no restart needed). ⚠ Structural note: the cron runs
+only 08:02 & 18:02 ET (12h apart), so **RED (≤12h) can NEVER fire this cycle** — tonight's 18:02 run = ~13.7h =
+AMBER, and the next run (08:02 tomorrow) is *after* death. AMBER is the last automated warning; the manual
+re-auth is the cover. [[project_mai_tai_schwab_token_expiry_warning]]
+
+**✅ #481 RESOLVED** — merged **2026-07-16 22:34:43Z** (auto-merge is now OFF ⇒ merges into main are manual).
+The "awaiting operator merge" wording in the 07-16 block below was a stale-handoff artifact, not a real
+pending merge.
+
+---
+
 ## ⚠️ 2026-07-16 PRE-OPEN CORRECTIONS (operator ground-truth — READ BEFORE THE OPEN)
 
 The 07-15 EOD summary carried errors + omissions. Corrected here; fix inline as they're worked.
@@ -48,7 +306,7 @@ circular. **NEXT: re-measure ORB under the 10:00 cap (%, median-first, drop-one)
 - ★ **#468 settlement probe — deployed + collecting** (in neither closed nor open lists) — **needs a Webull anchor from ORB's first fill today.**
 - ★ **P1.3 cap reset on restart** — every OMS restart re-issues the per-segment entry cap; **LIVE; manufactured the CPHI loss.**
 - ★ **P1.4 armed-segment observability** — fleet-flat checks *positions*; the cap reset fires on **armed segments = invisible.**
-- **P0.4 Schwab token** — refresh_token expires **Mon 2026-07-21 07:43 ET (5 days).**
+- **P0.4 Schwab token** — refresh_token expires **Mon 2026-07-21 07:43 ET.** *(07-20 UPDATE: now ~20h out; #448 pager verified firing AMBER; operator re-auths manually this evening — see the 07-20 head. Covered.)*
 - **#467 real status** — reverted on principle, but **drop-one says neutral-to-positive** (median unchanged; VEEE carried the whole −$7). Needs a **% re-test, then re-deploy.**
 - **Oversell/OCO hazard = ONE root under BOTH P0.3 and P0.6** — the single unlock for overnight protection on **both** bots.
 - **Mirror default fixed (in #468)** — a flag-flip can no longer fan v2 into ORB's account (landmine defused).
@@ -122,7 +380,7 @@ ORB's only fill. Broker fills: **buy 2 @ 5.83 (09:31:00) → sell 2 @ 5.98 (09:3
 - **2.3 — DEAD, not parked.** 21/22 floor conversion ⇒ the floor isn't leaking wins; the tick-grid skip is 0.19%×6 = pennies.
 - **⭐ FLOOR PHANTOM (grep, code+live-env): the live CW floor is PINNED +2%, and `oms_managed_positions.floor_pct` is a PHANTOM.** `_evaluate_v2_managed_exit`→`cw_exit_decision(floor_pct=2.0 default)` books CW_FLOOR at `entry×1.02` (service.py L1960); the tiered DB `floor_pct`/`floor_price` (AGEN 1.5, ASTN 3.121) are written as a side-effect by the position object's DEAD tiered ladder (`update_price`+`_persist_v2_price_state`) but `cw_exit_decision` NEVER reads them. ⇒ **do NOT read `floor_pct` as the live floor** (it made AGEN/ASTN/KUST look tiered all week). **P4.1's "live pinned +2%" baseline is REAL; the study stands.** [[project_mai_tai_floor_ratchet_study]]
 - **2.4 — DONE (PR #481):** `_window_flatten_due`/`_window_flatten_armed_stops` docstrings reconciled to the shipped **10:00** (were arguing 15:55). Docstring-only.
-- **2.5 — DONE (PR #481):** default (opt-OUT) auto-merge DISABLED (`automerge-pr.yml` job `if: false`) — it had merged live-money PRs #467/#475/+1 on green. Merges into main are now MANUAL. **PR #481 labeled `manual-merge` (won't self-merge); awaiting operator merge — not self-merged.**
+- **2.5 — DONE (PR #481):** default (opt-OUT) auto-merge DISABLED (`automerge-pr.yml` job `if: false`) — it had merged live-money PRs #467/#475/+1 on green. Merges into main are now MANUAL. **PR #481 MERGED 2026-07-16 22:34:43Z (07-20 UPDATE — the earlier "awaiting operator merge" was a stale artifact).**
 
 ---
 
@@ -181,6 +439,35 @@ accepted by Schwab, working order, broker_order_id assigned). It is **NOT yet pr
 ---
 
 ## 🔴 OPEN ITEMS — DO NOT LOSE (future-you: read these)
+
+**🏛️ 2026-07-17 — ARCHITECTURAL: the INJECTION SEAM is a convention, not an invariant → DEFAULT FLIPS
+NEED THE FULL SUITE.** `settings.py:~1064` is `@lru_cache def get_settings(): return Settings()` — a
+process-global bare Settings (defaults + env), consumed as **`settings or get_settings()` across ~15 sites**
+(oms, orb, v2, market-data, control-plane, strategy-engine, reconciler, market-capture, trade-coach,
+runtime-seed…). ⇒ **any code path can silently fall back to a global nobody injected.** Discovered flipping
+`strategy_macd_30s_enabled`'s default: 68 tests broke because a scanner/dashboard path reads `get_settings()`
+(sees the DEFAULT) while the test service injected the other way — a SPLIT (reverting only the default with
+the fixture kept made the 68 vanish). **LIVE is inert** (env sets the field on every service, so
+global==injected) — but that is luck of *which fields have env overrides*, not a closed seam. **Every
+default-flip PR must run the FULL `tests/unit` suite (not one file) and expect a global-read split.**
+**Fix (own workstream, NOT behind a paper bot): make the injected-settings contract an invariant — the
+fallback raises, or the ~15 global readers take injected settings.** [[feedback_mutate_the_code_pin_the_threshold]]
+- **✅ 2026-07-20: #487 (account default live→paper) and #490 (token-refresh default True→False) MERGED —
+  full suite green (1228 / 1229 passed), no split; the prediction held (no `get_settings()` reader touches
+  those fields). The seam itself remains OPEN.** `strategy_macd_30s_enabled` (True→False) is still deferred —
+  correct + live-inert but it DOES hit the split (68 tests); ships when the seam closes.
+
+**⚠️ 2026-07-17 — LABELLED LIMITATION (not a bug, likely UNRESOLVABLE — an acceptable answer): ON A SHARED
+BROKER ACCOUNT, OUR POSITION LEDGER IS NOT GROUND TRUTH.** Surfaced by the NXTC 07-14 correction: our `fills`
+said we held 2; Schwab rejected a sell of 2 as **oversold**; nothing of ours reserved the shares. The
+operator hand-trades the same Schwab account, so a manual sale is invisible to us **by construction**. **This
+is the [[project_mai_tai_oms_scoping_invariant]] WORKING, not failing** — the OMS acts only on positions it
+placed and clamps sells to its own ledger, so a manual trade structurally cannot be sold by the bot; the cost
+is that our ledger can be **stale-high** and the symptom is a **bounded, loud** oversold reject. **⇒ Do NOT
+"fix" this. Do NOT reconcile our ledger against broker positions on a shared account** (that is the ERNA path
+— a broker read that says flat deletes our protection; #464 exists because of it). **DO** read an unexplained
+oversold reject as *"the operator may have traded this name"* before suspecting the exit path, and **never
+cite a shared-account symptom as evidence for a code bug** — that is how NXTC carried the P0.3 blocker three days.
 
 **⛔ 2026-07-16 — STANDING AUDIT: what else does the dead ladder write? (before trusting it as evidence).**
 `oms_managed_positions.floor_pct`/`floor_price` are **FOSSILS** — written every row by the DEAD tiered

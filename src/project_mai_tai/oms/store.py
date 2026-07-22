@@ -169,6 +169,12 @@ class OmsStore:
                 return order
         return None
 
+    # NOTE (2026-07-22): a `find_open_native_oco_bracket_legs` DB query was removed here. OCO
+    # child legs are created BY THE BROKER, so they never appear in `broker_orders` -- querying
+    # the DB for them always returns nothing. The stand-down instead asks the broker directly
+    # (SchwabBrokerAdapter.fetch_armed_native_oco_symbols). Do not reintroduce a DB-side query
+    # for OCO legs; it cannot see them.
+
     def ensure_strategy(
         self,
         session: Session,

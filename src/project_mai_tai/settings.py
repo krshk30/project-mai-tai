@@ -544,7 +544,15 @@ class Settings(BaseSettings):
         "strategy_polygon_30s_broker_provider",
         "strategy_webull_30s_broker_provider",
     )
-    strategy_schwab_1m_account_name: str = "live:schwab_1m"
+    # SAFE DEFAULT (2026-07-17): was "live:schwab_1m" — a LIVE, real-money account as the fallback
+    # for a dropped env var. A default is what happens when configuration FAILS; it must never fail
+    # toward real money. `paper:` also matches the convention of every neighbouring account default
+    # (e.g. strategy_macd_30s_probe_account_name below). Live-inert: all 6 units set this explicitly,
+    # and strategy_schwab_1m_enabled already defaults False — this is defense in depth, not the only
+    # gate. (Considered: make it REQUIRED (no default, raise if unset) — strictly better, since an
+    # account name is not something to guess. Deferred only because it makes every bare `Settings()`
+    # raise, incl. across the test suite; that is a separate, wider change. See the PR.)
+    strategy_schwab_1m_account_name: str = "paper:schwab_1m"
     strategy_schwab_1m_broker_provider: str | None = "schwab"
     strategy_macd_30s_probe_account_name: str = "paper:macd_30s_probe"
     strategy_macd_30s_reclaim_account_name: str = "paper:macd_30s_reclaim"
@@ -573,11 +581,23 @@ class Settings(BaseSettings):
     schwab_token_refresher_dead_token_backoff_seconds: int = 30
     schwab_token_refresher_max_dead_token_retries: int = 5
     # Single-writer invariant: once the dedicated refresher owns token freshness,
-    # set this False so the OMS adapter becomes a PURE READER (on expiry it reloads
-    # the refresher's token from disk instead of running its own refresh grant).
-    # Default True preserves current behavior; flip False at deploy AFTER the
-    # refresher is confirmed refreshing (no-gap cutover).
-    schwab_adapter_token_refresh_enabled: bool = True
+    # When False the OMS adapter is a PURE READER (on expiry it reloads the refresher's
+    # token from disk instead of running its own refresh grant).
+    # SAFE DEFAULT (2026-07-17): flipped True -> False. The old comment read "Default True
+    # preserves current behavior; flip False at deploy AFTER the refresher is confirmed
+    # refreshing (no-gap cutover)" — that was a MIGRATION SCAFFOLD for #274, and the cutover
+    # COMPLETED weeks ago (live env has been `false` since; the control-plane refresher is the
+    # sole owner of token freshness). The True default outlived its reason: it silently held the
+    # PRE-#274 behavior as the fallback, so a dropped env var would resurrect the adapter-side
+    # refresh grant — i.e. the shared-token SPOF whose failure caused the 2026-06-03..06-05
+    # ~2.6-day fleet outage. A default is what happens when configuration FAILS; it must never
+    # fail toward the exact SPOF a P0 removed. Live-inert: all services set this explicitly.
+    # (Open question raised in the PR, not acted on: whether the True PATH should be DELETED
+    # outright — an expired scaffold's endgame is deletion, not a safer default.)
+    schwab_adapter_token_refresh_enabled: bool = False
+    # Native OCO bracket (TRIGGER -> OCO exit pair). OFF until STEP-1 passes on this broker:
+    # with it False the adapter's single-leg payload is byte-identical to pre-bracket main.
+    schwab_native_bracket_enabled: bool = False
     schwab_access_token: str | None = None
     schwab_access_token_expires_at: str | None = None
     schwab_refresh_token: str | None = None
@@ -706,6 +726,18 @@ class Settings(BaseSettings):
     # normal gateway quote cadence while still skipping real gaps. Hard stop runs on
     # ANY fresh quote (NOT RTH-gated) — v2's edge is pre/after-market.
     oms_v2_exit_quote_max_age_ms: int = 5000
+    # Stand down the software exit ladder while a broker-native OCO bracket is armed.
+    # OFF until STEP-1 passes: with it False the ladder runs exactly as it does today.
+    oms_native_oco_stand_down_enabled: bool = False
+    # Fail-open dwell: how stale a broker confirmation may be before the ladder resumes.
+    # 30s = 6 missed 5s syncs. Lower is safer (resumes sooner); it must never be raised
+    # to the point where a dead sync loop can hold the ladder down indefinitely.
+    oms_native_oco_confirmation_max_age_seconds: int = 30
+    # Emit a native OCO bracket on the v2 entry (entry order carries bracket metadata so the
+    # Schwab adapter places TRIGGER->OCO). OFF until STEP-1 item 4 passes attended: with it
+    # False the v2 entry is the unchanged single-leg order. Requires schwab_native_bracket_enabled
+    # on the adapter AND oms_native_oco_stand_down_enabled (else the software ladder collides).
+    oms_v2_emit_native_oco_bracket_enabled: bool = False
     # Extended-hours exit routing (2026-07-05, CLRO/CELZ stuck-exit fix). In
     # regular trading hours v2 exits stay MARKET/NORMAL (byte-identical). In
     # extended hours (AM/PM) they route as a LIMIT with session=AM|PM so they can

@@ -290,6 +290,9 @@ async def test_schwab_adapter_refreshes_and_persists_token_store(
             schwab_client_secret="client-secret",
             schwab_token_store_path=str(token_store_path),
             schwab_account_hash="hash-123",
+            # DECLARE the adapter-refresh-grant mode this test exercises (Rule 0), rather than
+            # inheriting the settings.py default, which is now the safe `False` (pure reader).
+            schwab_adapter_token_refresh_enabled=True,
         )
     )
 

@@ -280,6 +280,10 @@ class OmsRiskService:
         )
         self._boot_protection_alerts: int = 0
         self._latest_quotes_by_symbol: dict[str, dict[str, object]] = {}
+        # (broker_account_name, symbol) -> when the broker last CONFIRMED both OCO legs open.
+        # Read per quote tick (must stay in-memory: a DB round-trip on that path is the
+        # #391-family freeze driver), written only by the periodic broker sync.
+        self._native_oco_armed_confirmed_at: dict[tuple[str, str], datetime] = {}
         self._latest_trades_by_symbol: dict[str, dict[str, object]] = {}
         # Track-2 Phase-2 Slice-3: OMS-managed v2 exit ladder. `_managed_v2_symbols`
         # is the hot-path guard — a quote only opens a session/evaluates when its
@@ -471,7 +475,12 @@ class OmsRiskService:
                 except Exception:
                     self.logger.exception("[ORB-WINDOW-FLATTEN] sweep failed")
                 # v2 overnight flatten: close managed v2 positions at 19:55 before the 20:00 gate
-                # (v2 has no native stop). Same cadence, idempotent per symbol per day, LOUD on failure.
+                # (v2 has no native stop). Same cadence, LOUD on failure. RETRY-UNTIL-FILLED: there
+                # is deliberately NO per-day claim (#478 removed it — a per-day claim silently gave
+                # up when a thin-AH limit expired unfilled, which is the naked-overnight case this
+                # exists to prevent), so this RE-EMITS every pass until it fills or 20:00 closes.
+                # Double-submit is guarded ONLY by `dedup_active` (a working exit order => skip).
+                # See _v2_overnight_flatten's docstring — it is the contract, this line is a pointer.
                 try:
                     await self._v2_overnight_flatten()
                 except asyncio.CancelledError:
@@ -839,6 +848,11 @@ class OmsRiskService:
                     await self._publish_order_event(prior_event)
                 await self._publish_order_event(orb_abandon_event)
                 return [*pre_submit_events, orb_abandon_event]
+
+            # Piece: attach native-OCO bracket metadata to the v2 entry (flag-gated; no-op /
+            # byte-identical when off or non-v2-entry). Mutates event.payload.metadata in place
+            # so the same dict copy below carries the bracket fields to the adapter.
+            self._apply_v2_oco_bracket_entry(event=event)
 
             client_order_id = self._build_client_order_id(event)
             request = OrderRequest(
@@ -1871,6 +1885,13 @@ class OmsRiskService:
         (owned by PR-D); it is bounded to ~5s by #391 Fix-1 and fires only on an exit."""
         if not bool(getattr(self.settings, "oms_v2_exit_management_enabled", False)):
             return
+        if self._native_oco_stand_down_active(acct, symbol):
+            # A broker-native OCO owns this exit: target + stop are ONE broker-arbitrated
+            # pair. Running the software ladder here would place a THIRD protective sell
+            # against the same shares -- the NXTC oversell, merely relocated. Fail-open
+            # lives in the predicate: anything short of fresh broker confirmation runs
+            # the ladder instead of skipping it.
+            return
         quote = self._latest_quotes_by_symbol.get(symbol)
         if not quote:
             return
@@ -2304,6 +2325,107 @@ class OmsRiskService:
         # treats a raised timeout as "proceed to fire the stop".
         return await self._run_db(_unit, commit=False)
 
+    def _native_oco_stand_down_active(self, broker_account_name: str, symbol: str) -> bool:
+        """True only when a broker-native OCO bracket is CONFIRMED armed for this position.
+
+        *** THIS IS THE STAND-DOWN, AND IT FAILS OPEN BY DESIGN (operator-confirmed 2026-07-21).
+
+        When it returns True the OMS does NOT run its exit ladder: the broker OCO owns the
+        exit. That makes a WRONG True the worst failure in this system -- the software ladder
+        stands down while no broker bracket is actually working, and the position has no exit
+        at all (the ERNA shape). A wrong False merely risks an oversell, which is loud, logged
+        and reconcilable (the NXTC class we already know how to recover).
+
+        So the asymmetry is deliberate: stand-down requires positive, FRESH confirmation.
+        Anything else -- no entry, a stale entry, a sync that stopped running -- resumes the
+        ladder. This preserves the PRINCIPLE behind `_trigger_hard_stop`'s native-guard defer
+        ("an OPTIMIZATION, not a safety gate"; it fires the stop anyway on a DB stall) rather
+        than copying its mechanism, which would invert the failure direction here.
+
+        Staleness is the fail-open trigger: the confirmation is refreshed by the periodic
+        broker sync, so if that sync stalls, entries age out and the ladder comes back
+        automatically. No liveness signal, no stand-down.
+        """
+        # getattr, not attribute access: this runs on the per-quote-tick path, and an
+        # AttributeError there would propagate into the exit loop. Missing state resolves
+        # to "no confirmation" -> the ladder runs, which is the safe direction.
+        armed = getattr(self, "_native_oco_armed_confirmed_at", None)
+        if not armed:
+            return False
+        confirmed_at = armed.get((broker_account_name, symbol))
+        if confirmed_at is None:
+            return False
+        max_age = float(getattr(self.settings, "oms_native_oco_confirmation_max_age_seconds", 30))
+        age_seconds = (utcnow() - confirmed_at).total_seconds()
+        if age_seconds > max_age:
+            self.logger.warning(
+                "[OMS-OCO-STAND-DOWN-EXPIRED] %s %s - broker confirmation is %.1fs old "
+                "(max %.1fs); RESUMING the software exit ladder (fail-open).",
+                broker_account_name, symbol, age_seconds, max_age,
+            )
+            armed.pop((broker_account_name, symbol), None)
+            return False
+        return True
+
+    async def _refresh_native_oco_armed_state(self, account_names: list[str] | None) -> None:
+        """Re-derive the stand-down set from the BROKER (never memory, never `broker_orders`).
+
+        ⭐ WHY THE BROKER, NOT THE DB: OCO child legs are created BY THE BROKER, atomically with
+        the parent -- the OMS never places them, so they never land in `broker_orders`. Asking
+        the DB would always find nothing and the stand-down would never activate = the software
+        ladder keeps running on an OCO'd position = the relocated collision. So this asks the
+        broker directly (adapter `fetch_armed_native_oco_symbols`, the STEP-1-proven
+        childOrderStrategies walk), matching the design's "re-derived from the broker on boot".
+
+        Runs on the periodic sync (~5s), off-loop; the per-tick predicate stays a dict lookup.
+        FAIL-OPEN: any error (unreachable broker, adapter without the capability) -> do NOT
+        refresh -> confirmations age out -> the ladder resumes. Only symbols the broker confirms
+        have BOTH exit legs WORKING count as armed.
+        """
+        if not bool(getattr(self.settings, "oms_native_oco_stand_down_enabled", False)):
+            self._native_oco_armed_confirmed_at.clear()
+            return
+
+        adapter = getattr(self, "broker_adapter", None)
+        fn = getattr(adapter, "fetch_armed_native_oco_symbols", None)
+        if fn is None:
+            # No adapter / no capability -> nothing can be confirmed armed -> ladder runs.
+            self._native_oco_armed_confirmed_at.clear()
+            return
+
+        # Group the managed positions by broker account (one broker round-trip per account).
+        by_account: dict[str, list[str]] = {}
+        for (acct_name, symbol) in list(self._managed_v2_symbols):
+            by_account.setdefault(acct_name, []).append(symbol)
+
+        armed: set[tuple[str, str]] = set()
+        try:
+            for acct_name, symbols in by_account.items():
+                confirmed = await fn(acct_name, symbols)
+                for sym in confirmed:
+                    armed.add((acct_name, sym))
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # Fail-open: do NOT refresh. Existing entries age out and the ladder resumes.
+            self.logger.warning(
+                "[OMS-OCO-STAND-DOWN] broker armed-state fetch failed; confirmations will age "
+                "out and the software exit ladder will resume (fail-open)",
+            )
+            return
+
+        now = utcnow()
+        for key in armed:
+            self._native_oco_armed_confirmed_at[key] = now
+        for key in list(self._native_oco_armed_confirmed_at):
+            if key not in armed:
+                # Bracket gone (filled/cancelled) -> hand the ladder straight back.
+                self._native_oco_armed_confirmed_at.pop(key, None)
+                self.logger.info(
+                    "[OMS-OCO-STAND-DOWN-CLEARED] %s %s - no armed OCO pair at the broker; "
+                    "software exit ladder resumes", key[0], key[1],
+                )
+
     async def _reconcile_after_intent(self, broker_account_name: str) -> None:
         """Best-effort post-intent broker→DB reconcile (Fix 3b).
 
@@ -2325,6 +2447,10 @@ class OmsRiskService:
 
     async def sync_broker_state(self, *, account_names: list[str] | None = None) -> dict[str, int]:
         order_summary = await self.sync_broker_orders(account_names=account_names)
+        # Re-derive the OCO stand-down from the rows this sync just refreshed -- the broker
+        # is the source of truth, never in-memory arm state. Safe on the boot path too: a
+        # restart starts with an empty set and only stands down once the broker confirms.
+        await self._refresh_native_oco_armed_state(account_names)
         position_summary = await self.sync_broker_positions(account_names=account_names)
         return {
             "accounts": position_summary["accounts"],
@@ -3091,6 +3217,28 @@ class OmsRiskService:
         flatten keeps trying until it fills or the 20:00 gate closes. Double-submit is prevented by
         `dedup_active` (a working exit order => skip) — the same guard the managed exit uses. A per-day
         claim would silently give up on the exact naked-overnight case this exists to prevent.
+
+        ⚠️ KNOWN GAP (traced 2026-07-17, NOT yet fixed — design-first; do not "fix" this inline).
+        `dedup_active` is a DB read, and it is BLIND for the duration of a submit. Flatten-vs-flatten
+        is safe: the control loop awaits this method to completion, and the per-symbol loop awaits
+        `_emit_v2_exit_on_loop` (which commits at the end of its own session), so the next pass always
+        reads a committed order. But `await submit_order` YIELDS the event loop, and
+        `_run_tick_consumer` is a SEPARATE task (see `_run_control_loop`'s docstring — the decoupling
+        is deliberate, so a slow control loop cannot delay an exit decision). In that window the quote
+        handler can reach `_evaluate_v2_managed_exit` (gated only by `_market_is_fillable()`, TRUE at
+        19:55 since the gate is 7–20 ET) whose OWN dedup read cannot see this flatten's UNCOMMITTED
+        order. => FLATTEN-vs-MANAGED-EXIT can double-submit. Window is measured: #459 found the
+        post-submit marker postdates the broker fill stamp by median +1.4s, max +4.5s (30/30). The OMS
+        holds ZERO locks — all safety is single-loop-thread, and this is the seam where that
+        assumption breaks (two callers, shared state, one thread that yields). Narrow (needs the
+        managed exit to also want to sell in that window) but it concentrates on exactly the case this
+        exists for: a thin AH book with the bid gapping through −5%. Bounded, NOT naked: the second
+        sell is rejected oversold — but that means the ONLY thing preventing a real double-sell here
+        is the BROKER's oversold check, an external control we do not own.
+        FIX SHAPE: a per-SUBMIT in-memory claim spanning BOTH callers — set before the await, released
+        on the report. NOT a per-day claim: #478's claim was not wrong in kind, it was wrong in SCOPE
+        (it protected a day when it needed to protect an await). The entry side already has exactly
+        this pattern — `schwab_1m_v2.py::cw_v2_emit_claimed`.
         Flag-gated; OFF => never runs. HALF-DAY: 19:55 is after a 13:00 close so there is no session
         => the LOUD no-bid path fires, which is CORRECT (the position IS naked) — keep the flag ON."""
         if not bool(getattr(self.settings, "oms_v2_overnight_flatten_enabled", False)):
@@ -3734,6 +3882,58 @@ class OmsRiskService:
             reason_detail,
         )
         return self._build_rejected_event(event, intent.id, reason=reason_code)
+
+    def _apply_v2_oco_bracket_entry(self, *, event: TradeIntentEvent) -> None:
+        """Attach native-OCO bracket metadata to a v2 buy-open so the Schwab adapter places a
+        TRIGGER->OCO combo instead of a single-leg order. No-op / byte-identical when the flag
+        is off or this is not a v2 entry.
+
+        The exit legs use the SAME percentages the CW software ladder uses (target +
+        ``oms_v2_cw_target_pct``, protective - ``oms_v2_cw_hard_stop_pct``), so the broker OCO
+        is the same geometry the OMS would otherwise run -- the bracket relocates the exit to
+        the broker, it does not change it. The entry stays whatever the intent asked for
+        (market/limit); ``bracket_entry_type`` mirrors the order_type so a LIMIT entry stays a
+        LIMIT parent.
+
+        ⚠ Emitting the bracket does NOT itself stand the software ladder down -- that is the
+        stand-down's job (`_native_oco_stand_down_active`), keyed on the broker CONFIRMING the
+        legs are live. This only places the combo. The two flags are independent by design so
+        neither silently implies the other.
+        """
+        if not bool(getattr(self.settings, "oms_v2_emit_native_oco_bracket_enabled", False)):
+            return
+        payload = event.payload
+        if payload.strategy_code != "schwab_1m_v2":
+            return
+        if payload.side != "buy" or payload.intent_type != "open":
+            return
+        md = payload.metadata
+        # entry reference: the price the CW entry computed (the break level / fill ref).
+        entry_ref = md.get("entry_price") or md.get("reference_price")
+        try:
+            entry = float(entry_ref)
+        except (TypeError, ValueError):
+            entry = 0.0
+        if entry <= 0:
+            # No usable entry reference -> do NOT emit a half-specified bracket; fall back to
+            # the plain single-leg entry (the adapter also refuses an incomplete bracket).
+            self.logger.warning(
+                "[V2-OCO-EMIT] %s no usable entry reference (entry_price/reference_price); "
+                "placing the plain single-leg entry instead of a bracket", payload.symbol,
+            )
+            return
+        target = entry * (1.0 + self._cw_target_pct / 100.0)
+        protect = entry * (1.0 - self._cw_stop_pct / 100.0)
+        order_type = str(md.get("order_type", "market")).upper()
+        md["bracket"] = "true"
+        md["bracket_entry_type"] = "LIMIT" if order_type == "LIMIT" else "MARKET"
+        md["native_oco_bracket"] = "true"
+        md["bracket_target_price"] = f"{target:.4f}"
+        md["bracket_stop_price"] = f"{protect:.4f}"
+        self.logger.info(
+            "[V2-OCO-EMIT] %s bracket entry=%.4f -> OCO[target=%.4f stop=%.4f] (type=%s)",
+            payload.symbol, entry, target, protect, md["bracket_entry_type"],
+        )
 
     def _apply_orb_quote_priced_entry(
         self,
