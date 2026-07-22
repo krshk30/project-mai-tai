@@ -8,10 +8,19 @@ from __future__ import annotations
 
 import logging
 from decimal import Decimal
+import pytest
 
 from project_mai_tai.events import TradeIntentEvent, TradeIntentPayload
 from project_mai_tai.oms.service import OmsRiskService
 from project_mai_tai.settings import Settings
+
+
+@pytest.fixture(autouse=True)
+def _force_regular_hours(monkeypatch):
+    """The emit is RTH-only. Force regular hours so the bracket-emitting tests are independent of
+    the wall clock (CI runs at all hours). The RTH-gate tests override this to False."""
+    import project_mai_tai.oms.service as svc
+    monkeypatch.setattr(svc, "_is_regular_market_session", lambda now=None: True)
 
 
 def _svc(enabled: bool, *, target=2.0, stop=5.0) -> OmsRiskService:
@@ -108,3 +117,22 @@ def test_emit_rounds_exit_prices_to_schwab_tick_rule() -> None:
     ev2 = _event(entry_price="0.71")          # <=$1: up to 4 decimals allowed
     _svc(True)._apply_v2_oco_bracket_entry(event=ev2)
     assert len(ev2.payload.metadata["bracket_target_price"].split(".")[1]) == 4
+
+
+def test_emit_skipped_outside_regular_hours(monkeypatch) -> None:
+    """RTH-only: the native OCO is a regular-session construct. Pre/post-market entries must NOT
+    get a bracket -- they fall back to the plain single-leg entry (software ladder owns the exit).
+    v2 enters from 07:00 ET, so this is the pre-market path."""
+    import project_mai_tai.oms.service as svc
+    monkeypatch.setattr(svc, "_is_regular_market_session", lambda now=None: False)
+    ev = _event(entry_price="10.00")
+    _svc(True)._apply_v2_oco_bracket_entry(event=ev)
+    assert "bracket" not in ev.payload.metadata          # no bracket emitted pre-market
+
+
+def test_emit_active_during_regular_hours(monkeypatch) -> None:
+    import project_mai_tai.oms.service as svc
+    monkeypatch.setattr(svc, "_is_regular_market_session", lambda now=None: True)
+    ev = _event(entry_price="10.00")
+    _svc(True)._apply_v2_oco_bracket_entry(event=ev)
+    assert ev.payload.metadata["bracket"] == "true"      # bracket emitted in RTH
