@@ -17,6 +17,37 @@
 
 ---
 
+## 🌙 2026-07-21 LATE — 30s ATR EXPLORATION **CLOSED NEGATIVE** + CW-v2 backtest PARITY achieved
+
+**Full write-up: [`docs/atr-30s-and-cw-parity-2026-07-21.md`](atr-30s-and-cw-parity-2026-07-21.md)**
+(local copy in `mai-tai-reports/`). Memory: [[project_mai_tai_30s_exploration]]. Summary only here.
+
+**⛔ THE 30s IDEA DOES NOT ESCAPE THE WALL — confirmed 8 days / 279 trades, net negative under EVERY
+exit** (hard-5 −79, hard-3 −64, floor+2 −122). Only **2 of 8 days positive**, each a single monster
+runner (ZYBT +144% 07-20, CPHI +76% 07-21); the other 6 days had no runner and bled. Tested the
+operator's TradingView ATR Trail (14/mult-3/**wick**/RMA) on 30s bars, his live entry (flip → wait 3
+candles → break the 3-bar high → rule 7 → scanner-gated), across an exit grid (hard-5/hard-3/floor+2/
+floor+3/floor→trail combos).
+- **⭐ THE floor+2 TRAP:** best win rate (50%) AND worst total (−122) — caps the runners small while
+  eating −5% stops on choppers = **high win rate, negative expectancy.** Judge on expectancy, not win%.
+- **Same wall as the 1-min work:** runner-dependent, can't select the runner in advance. No exit /
+  factor / timeframe fixes it. **The one game-changer left = SELECTION** (predict the runner first).
+- **Operator instincts VALIDATED (real):** −5% unnecessary (hard-3 ≈ hard-5); ride-to-trail-flip
+  catches the runners the +2% floor throws away; arming above +2% loses; 30s ATR must use 14/3/wick
+  (the live 5/3.5 on 30s = hyper-twitchy garbage).
+- **Data caveats:** Schwab REST has no sub-minute + no Schwab tick archive ⇒ 30s bars built from
+  **Polygon ticks** (diverge from Schwab; operator validates on his own TV chart); fills Polygon-quote
+  (~0.3pp optimistic); runs **mover-biased** (quiet no-tick names excluded ⇒ real worse).
+
+**✅ ENABLING WIN — the CW-v2 1-min backtest now REPRODUCES the bot's 5 real 07-21 trades 5/5** (exit
+reasons 5/5). Fix chain: bar source → Schwab REST backfill (`atr_cw_v2_variants_schwab.py`); ATR seed
+was NOT the issue (trail matched the bot's logged trig/flip_level 44/45); **the fix was the ARM-TIME
+WINDOW GATE** (arm only on flips inside a confirmed window — the bot can only arm on a flip it
+observed). **1 phantom left (CPHI 10:55)** — bot should have armed but didn't; blocking gate not in the
+current logs → close it with a per-bar CW-state probe (INFO-only, like `[V2-MACD-PROBE]`).
+
+---
+
 ## 🏁 2026-07-21 EOD — ⭐ OCO STEP-1 **PASSED LIVE** (the E5 proof) · ⛔ ROOT CAUSE FOUND: backtests used the WRONG BARS
 
 **Two results, and they point opposite ways: the OCO execution work is PROVEN on live money; the
