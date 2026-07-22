@@ -214,3 +214,129 @@ async def test_rearm_removes_a_resolving_entry() -> None:
     await service._refresh_native_oco_armed_state(None)
     assert (ACCT, SYMBOL) not in service._native_oco_resolving
     assert service._native_oco_stand_down_active(ACCT, SYMBOL) is True
+
+
+# ---------------------------------------------------------------------------
+# ⭐ 2026-07-22: proactive flat-reconcile of a resolved OCO. The broker-created OCO fill closes
+# the position but never decrements the managed row, so without this the row's only close-path is
+# the reject-driven _v2_close_reconcile_flat -- the ladder resumes and churns ~3 rejected closes
+# first (observed live on BOTH KSCP and LABT; the 90s grace is dwarfed by Schwab's ~6min
+# fill->positions propagation). These pin that when the broker POSITIVELY confirms flat the row is
+# closed on the sync with NO ladder involvement, and that the fix is fail-open + flag-gated.
+# ---------------------------------------------------------------------------
+
+class _RowStore:
+    """Minimal managed-position store: one open row that close() flips shut."""
+
+    def __init__(self, entry_time: object) -> None:
+        self._entry_time = entry_time
+        self.open = True
+        self.closed_calls = 0
+
+    def get_open_managed_position(self, _session: object, *, broker_account_name: str, symbol: str):
+        if not self.open:
+            return None
+        return type("_Row", (), {"entry_time": self._entry_time})()
+
+    def close_managed_position(self, _session: object, _row: object) -> None:
+        self.open = False
+        self.closed_calls += 1
+
+
+def _reconcile_service(*, flat: bool, flag: bool = True, has_row: bool = True) -> OmsRiskService:
+    """A service wired for _reconcile_resolved_oco_flat: a fake store + _run_db that runs the
+    callable inline, and a _broker_symbol_is_flat stub that returns `flat`. Nothing here touches
+    a real DB or broker -- the reconcile ORCHESTRATION is the unit under test; the flat primitive
+    it delegates to is proven by its own tests above."""
+    service = _service(oms_native_oco_resolve_flat_reconcile_enabled=flag)
+    service._cw_flip_pending = set()
+    service._cw_floor_armed = set()
+    service._v2_exit_close_failures = {}
+    store = _RowStore(entry_time=utcnow() - timedelta(minutes=10)) if has_row else _RowStore(None)
+    if not has_row:
+        store.open = False
+    service.store = store  # type: ignore[attr-defined]
+    service._flat_reads: list[tuple[str, str]] = []
+
+    async def _run_db(fn, commit=False):  # type: ignore[no-untyped-def]
+        return fn(object())
+
+    async def _is_flat(acct, symbol, *, established_at=None):  # type: ignore[no-untyped-def]
+        service._flat_reads.append((acct, symbol))
+        return flat
+
+    service._run_db = _run_db  # type: ignore[assignment]
+    service._broker_symbol_is_flat = _is_flat  # type: ignore[assignment]
+    return service
+
+
+@pytest.mark.asyncio
+async def test_flat_reconcile_closes_phantom_row_with_no_ladder_rejects() -> None:
+    """★ THE FIX. Broker POSITIVELY flat after the OCO resolved -> the row is closed on the sync,
+    and the symbol leaves BOTH the managed set and the resolving set -> the ladder never resumes,
+    so it never fires the ~3 rejected closes. This is the whole reason the fix exists."""
+    service = _reconcile_service(flat=True)
+    service._native_oco_resolving[(ACCT, SYMBOL)] = utcnow()
+    service._managed_v2_symbols = {(ACCT, SYMBOL)}
+    service.broker_adapter = _StubAdapter(armed=set())  # nothing armed -> no bail
+
+    await service._refresh_native_oco_armed_state(None)
+
+    assert service.store.closed_calls == 1                         # row closed directly
+    assert (ACCT, SYMBOL) not in service._native_oco_resolving     # resolving cleared
+    assert (ACCT, SYMBOL) not in service._managed_v2_symbols       # left the managed set
+    assert service._native_oco_stand_down_active(ACCT, SYMBOL) is False
+
+
+@pytest.mark.asyncio
+async def test_flat_reconcile_keeps_row_when_broker_not_flat() -> None:
+    """★ FAIL-OPEN. A non-positive-flat read (HELD/UNKNOWN/read-error all surface as False from
+    _broker_symbol_is_flat) must NOT close the row -- it stays managed + resolving, so the grace
+    backstop and the reject self-heal still apply. The fix can only ever REMOVE reject noise, never
+    strand a genuinely-held position."""
+    service = _reconcile_service(flat=False)
+    service._native_oco_resolving[(ACCT, SYMBOL)] = utcnow()
+    service._managed_v2_symbols = {(ACCT, SYMBOL)}
+    service.broker_adapter = _StubAdapter(armed=set())
+
+    await service._refresh_native_oco_armed_state(None)
+
+    assert service.store.closed_calls == 0                         # NOT closed
+    assert (ACCT, SYMBOL) in service._native_oco_resolving         # still deferred
+    assert (ACCT, SYMBOL) in service._managed_v2_symbols
+    assert service._broker_symbol_is_flat is not None              # the read WAS consulted
+    assert service._flat_reads == [(ACCT, SYMBOL)]
+
+
+@pytest.mark.asyncio
+async def test_flat_reconcile_is_flag_gated_and_ships_inert() -> None:
+    """Flag OFF ⇒ byte-identical to today: no broker-flat read, no proactive close. The symbol
+    stays in resolving/managed exactly as before, so the reject self-heal path is unchanged.
+    Pins the VALUE of the gate so a silent default flip would turn this red."""
+    service = _reconcile_service(flat=True, flag=False)
+    assert service.settings.oms_native_oco_resolve_flat_reconcile_enabled is False
+    service._native_oco_resolving[(ACCT, SYMBOL)] = utcnow()
+    service._managed_v2_symbols = {(ACCT, SYMBOL)}
+    service.broker_adapter = _StubAdapter(armed=set())
+
+    await service._refresh_native_oco_armed_state(None)
+
+    assert service.store.closed_calls == 0
+    assert service._flat_reads == []                               # the read was never made
+    assert (ACCT, SYMBOL) in service._native_oco_resolving
+    assert (ACCT, SYMBOL) in service._managed_v2_symbols
+
+
+@pytest.mark.asyncio
+async def test_flat_reconcile_drops_resolving_when_no_open_row() -> None:
+    """If the row has already closed by the time the sync runs (a race with the reject self-heal),
+    the reconcile treats it as done and drops the resolving entry -- no crash, no re-open."""
+    service = _reconcile_service(flat=True, has_row=False)
+    service._native_oco_resolving[(ACCT, SYMBOL)] = utcnow()
+    service._managed_v2_symbols = {(ACCT, SYMBOL)}
+    service.broker_adapter = _StubAdapter(armed=set())
+
+    await service._refresh_native_oco_armed_state(None)
+
+    assert (ACCT, SYMBOL) not in service._native_oco_resolving
+    assert service._flat_reads == []            # no row -> no broker read needed
