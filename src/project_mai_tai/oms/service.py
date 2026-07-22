@@ -3952,6 +3952,20 @@ class OmsRiskService:
             return
         if payload.side != "buy" or payload.intent_type != "open":
             return
+        # ⭐ RTH-ONLY (the native OCO is a regular-session construct). v2 enters from 07:00 ET
+        # but the bracket uses session=NORMAL: a MARKET+STOP OTOCO placed PRE-market would queue
+        # to 09:30 (missing the pre-market entry) or firm-reject. So OUTSIDE regular hours we do
+        # NOT emit the bracket -- the entry is a plain single-leg order and the software CW ladder
+        # (extended-hours-capable via the #390 LIMIT+session-off-bid exit) protects it. The
+        # stand-down then stays inactive (no armed OCO to detect), so the ladder runs. Matches the
+        # design's RTH-first scope and mirrors the native-stop-guard, which is RTH-only for the
+        # identical reason.
+        if not _is_regular_market_session():
+            self.logger.info(
+                "[V2-OCO-EMIT] %s SKIPPED (outside regular hours) -- plain entry, software "
+                "ladder owns the exit", payload.symbol,
+            )
+            return
         md = payload.metadata
         # entry reference: the price the CW entry computed (the break level / fill ref).
         entry_ref = md.get("entry_price") or md.get("reference_price")
