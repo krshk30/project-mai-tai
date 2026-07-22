@@ -17,6 +17,55 @@
 
 ---
 
+## ✅ 2026-07-22 — OCO BUILD CODE-COMPLETE (all flag-gated OFF) · morning open-items CLEARED
+
+**All PRs merged; ZERO open PRs at session end.** The OCO bracket workstream is now code-complete
+end-to-end, every piece flag-gated OFF (nothing live changed; a restart to activate the inert
+diagnostics was deliberately DEFERRED — pulled during RTH, no live-behaviour change, restart at
+next off-hours).
+
+**🏗️ OCO BUILD — code-complete (adapter → harness → LIMIT parent → scripts → stand-down → emit):**
+- **#505 — broker-sourced stand-down (the emit blocker).** The stand-down queried `broker_orders`
+  for OCO legs that CAN NEVER be there (the broker creates the child legs). Rewired to ask the
+  BROKER directly (`SchwabBrokerAdapter.fetch_armed_native_oco_symbols`, walks
+  `childOrderStrategies`, ≥2 WORKING sell legs = armed; AWAITING_PARENT_ORDER does NOT count).
+  Fail-open preserved + mutation-checked. Dead store query removed.
+- **#506 — the v2→Schwab emit.** v2 buy-open now attaches bracket metadata (exit legs = the SAME
+  CW percentages, so the broker OCO is the same geometry). Adapter gained a MARKET parent (live CW
+  entry is MARKET). ⚠ MARKET-as-OTOCO-parent is NOT yet preview-validated — STEP-1 item 4 must
+  preview it. Both flags independent by design (emit ≠ stand-down); running emit WITHOUT stand-down
+  = the relocated collision, so both go on together, attended, at item 4.
+- Flags (all default False): `schwab_native_bracket_enabled`, `oms_native_oco_stand_down_enabled`,
+  `oms_v2_emit_native_oco_bracket_enabled`. [[project_mai_tai_oco_bracket_build]]
+
+**🩺 #507 — [V2-CW-STATE-PROBE]** (diagnostic-only, INFO log, no new flag, gated by the existing
+macd-probe-symbols=`*`): per-bar CW entry-gate state (armed / entries-this-flip / emit-claimed /
+cooldown / boot-hold). Closes the observability gap behind the last CW-parity phantom (CPHI 10:55)
+so the next backtest-vs-live diff is mechanical. **Live once the fleet is restarted off-hours.**
+
+**📄 #508 — two design-first items resolved as docs:**
+- **OMS heartbeat flap** (`docs/oms-heartbeat-decouple-design.md`): mechanism CONFIRMED — heartbeat
+  published in the same loop AFTER the 12-account inline broker sync, so a slow sync delays the
+  liveness signal past 180s. Fix = independent heartbeat task + a main-loop tick counter (so it
+  can't mask a zombie). Design only; hot path → review before any PR. The 6 dead-cred accounts are
+  NOT the cause (fail fast). [[project_mai_tai_oms_liveness_watchdog]]
+- **ORB bar source** (`docs/orb-bar-source-note.md`): corrects the overstated "ORB has the mirror
+  problem" flag. The CANONICAL in-repo ORB backtest already matches live (both Polygon); the risk
+  is confined to Schwab-REST ORB *studies* and is LOW-severity (breakout signal is non-recursive →
+  the 54% ATR amplification does NOT transfer). [[project_mai_tai_bar_source_defect]]
+
+**🧹 #492 merged + 3 stale PRs CLOSED with reasons:** #492 (study_report — the VALUE/median rules as
+CODE) merged. #403 CLOSED (running-high ORB entry OOS-killed, do-not-merge, dead config). #365
+CLOSED (#350 snapshot-freeze fix SHIPPED via the offload flag; design doc historical). #493 CLOSED
+(07-17 EOD content already in the handoff + memory).
+
+**➡️ THE ONE REMAINING OCO STEP — attended STEP-1 item 4** (needs a human at the desk): preview the
+MARKET OTOCO parent → flip all three flags on `live:schwab_1m_v2` qty-1 → confirm on a REAL managed
+position that the stand-down DEFERS (broker OCO owns the exit, no software-ladder collision, no
+oversell) → then survival test → then live routing. Webull keeps its own separate STEP-1.
+
+---
+
 ## 🌙 2026-07-21 LATE — 30s ATR EXPLORATION **CLOSED NEGATIVE** + CW-v2 backtest PARITY achieved
 
 **Full write-up: [`docs/atr-30s-and-cw-parity-2026-07-21.md`](atr-30s-and-cw-parity-2026-07-21.md)**
