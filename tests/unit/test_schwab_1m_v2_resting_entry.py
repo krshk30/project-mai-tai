@@ -33,11 +33,12 @@ def _sig(*, trail=9.5, state="short"):
             "trail": trail, "loss": 0.5, "state": state, "state_age": 3}
 
 
-def _tick(strat, state, *, trail, ts=IN_WIN, st="short", in_window=True):
-    """One bar through the resting manager; returns the drafts it queued this bar. The RTH gate is
-    now WALL-CLOCK (not the bar ts), so the window is injected explicitly via `in_window` -- the bar
-    `ts` no longer controls it (that was the bug: a stale/replayed in-window bar fired pre-market)."""
+def _tick(strat, state, *, trail, ts=IN_WIN, st="short", in_window=True, now_ms=1_000_000):
+    """One bar through the resting manager; returns the drafts it queued this bar. The RTH window is
+    injected via `in_window` (wall-clock, not the bar ts). `now_ms` drives the silence-on-fill grace
+    (also wall-clock, injectable). Default now_ms is non-zero so a flip stamp is truthy."""
     strat._resting_in_window = lambda now=None: in_window
+    strat._now_ms = lambda: now_ms
     state.bars.append(OHLCVBar(timestamp_ms=ts, open=trail + 1, high=trail + 1.2,
                                low=trail - 0.2, close=trail + 0.9, volume=10_000))
     strat._cw_v2_resting_track(state, _sig(trail=trail, state=st))
@@ -76,25 +77,29 @@ def test_band_is_tunable() -> None:
     assert md["stop_price"] == "10.0000" and md["limit_price"] == "10.2000"   # 2% band
 
 
-# --------------------------------------------------------------------------- no-overlap replace
-def test_ratchet_cancels_this_bar_then_replaces_next_bar() -> None:
-    """A short trail ratchets DOWN; a >=0.2% move cancels THIS bar and re-places NEXT bar -- never a
-    cancel AND a place in the same bar (the no-overlap safety invariant)."""
+# --------------------------------------------------------------------------- STABLE-REST cadence
+def test_reprice_only_on_a_large_move() -> None:
+    """⭐ STABLE-REST (the NVVE lesson). The order stays OUT THERE through small wiggles; it re-places
+    only on a >= 1% trail move (cancel one bar, re-place the next -- no overlap). The old code cancelled
+    on every 0.2% wiggle so no order was ever resting when price crossed."""
     strat = _strat()
     st = strat.watchlist_state("TEST")
-    assert _tick(strat, st, trail=9.50)[0].intent_type == "open"      # bar 1: place
-    assert st.resting_active is True
+    assert _tick(strat, st, trail=9.50)[0].intent_type == "open"      # bar 1: place at 9.50
+    assert _tick(strat, st, trail=9.47) == []                        # 0.32% wiggle -> HOLD, no draft
+    out = _tick(strat, st, trail=9.40)                               # 1.05% move -> reprice: CANCEL
+    assert len(out) == 1 and out[0].intent_type == "cancel"
+    assert st.resting_active is False
+    out2 = _tick(strat, st, trail=9.40)                             # next bar: re-place at 9.40
+    assert len(out2) == 1 and out2[0].intent_type == "open"
+    assert out2[0].metadata["stop_price"] == "9.4000"
 
-    # bar 2: trail ratchets down 0.32% (9.50 -> 9.47) -> CANCEL only (no place)
-    out2 = _tick(strat, st, trail=9.47)
-    assert len(out2) == 1 and out2[0].intent_type == "cancel"
-    assert st.resting_active is False                                 # cleared -> next bar re-places
 
-    # bar 3: still short at the new level -> PLACE at 9.47 (no overlap: place is a SEPARATE bar)
-    out3 = _tick(strat, st, trail=9.47)
-    assert len(out3) == 1 and out3[0].intent_type == "open"
-    assert out3[0].metadata["stop_price"] == "9.4700"
-    assert st.resting_active is True and st.resting_level == 9.47
+def test_reprice_threshold_is_tunable() -> None:
+    """Pin the threshold VALUE: at 2%, a 1.05% move must NOT reprice (it holds)."""
+    strat = _strat(strategy_schwab_1m_v2_cw_v2_resting_entry_reprice_pct=2.0)
+    st = strat.watchlist_state("TEST")
+    _tick(strat, st, trail=9.50)                                      # place
+    assert _tick(strat, st, trail=9.40) == []                        # 1.05% < 2% -> HOLD
 
 
 def test_small_trail_move_does_not_replace() -> None:
@@ -104,14 +109,55 @@ def test_small_trail_move_does_not_replace() -> None:
     assert _tick(strat, st, trail=9.495) == []                       # 0.05% move -> leave it, no intent
 
 
-# --------------------------------------------------------------------------- cancel on setup loss
-def test_cancels_when_no_longer_short() -> None:
+# --------------------------------------------------------------- HOLD-THROUGH-FLIP + SILENCE-ON-FILL
+def test_holds_the_order_through_the_up_flip() -> None:
+    """⭐ HOLD-THROUGH-FLIP. The up-flip IS the fill, so state->long must NOT cancel the resting order
+    (the old code did -- a race vs its own fill). It starts a settle grace and leaves the order live."""
     strat = _strat()
     st = strat.watchlist_state("TEST")
-    _tick(strat, st, trail=9.50)                                      # place while short
-    out = _tick(strat, st, trail=9.50, st="long")                    # flipped long -> cancel
+    _tick(strat, st, trail=9.50, now_ms=1000)                        # place while short
+    out = _tick(strat, st, trail=9.50, st="long", now_ms=2000)      # flip to long -> HOLD (no draft)
+    assert out == []                                                 # NOT cancelled
+    assert st.resting_active is True                                 # still resting at the broker
+    assert st.resting_flip_ms == 2000                               # settle grace started
+
+
+def test_silence_on_fill_position_appears_stops_everything() -> None:
+    """⭐ SILENCE-ON-FILL. Once the fill lands (position_qty != 0) the flag + grace clear and nothing
+    is emitted -- the OTOCO exit owns the position. This is what kills the ~30-reject NVVE spam."""
+    strat = _strat()
+    st = strat.watchlist_state("TEST")
+    _tick(strat, st, trail=9.50, now_ms=1000)                        # place
+    _tick(strat, st, trail=9.50, st="long", now_ms=2000)            # flip -> grace
+    st.position_qty = 2                                              # the resting order FILLED
+    out = _tick(strat, st, trail=9.50, st="long", now_ms=3000)
+    assert out == []                                                 # no cancel, no place
+    assert st.resting_active is False and st.resting_flip_ms == 0
+
+
+def test_no_reemit_during_the_fill_settle_grace() -> None:
+    """During the grace the strategy stays SILENT even if the ATR whipsaws back to short -- it must not
+    spam new brackets into the position-sync lag (the NVVE churn-after-fill)."""
+    strat = _strat()
+    st = strat.watchlist_state("TEST")
+    _tick(strat, st, trail=9.50, now_ms=1000)                        # place
+    _tick(strat, st, trail=9.50, st="long", now_ms=2000)            # flip -> grace @2000
+    assert _tick(strat, st, trail=9.30, st="short", now_ms=12000) == []   # 10s in (grace 30s) -> HOLD
+    assert st.resting_active is True                                 # original order still out there
+
+
+def test_grace_expiry_with_no_fill_cancels_then_rearms() -> None:
+    """If the flip did NOT fill us, after the 30s grace we retire the stale order and re-arm on the
+    next short segment."""
+    strat = _strat()
+    st = strat.watchlist_state("TEST")
+    _tick(strat, st, trail=9.50, now_ms=1000)                        # place
+    _tick(strat, st, trail=9.50, st="long", now_ms=2000)            # flip -> grace @2000
+    out = _tick(strat, st, trail=9.50, st="long", now_ms=33000)     # 31s later, still flat -> cancel
     assert len(out) == 1 and out[0].intent_type == "cancel"
-    assert st.resting_active is False
+    assert st.resting_active is False and st.resting_flip_ms == 0
+    out2 = _tick(strat, st, trail=9.30, st="short", now_ms=34000)  # back to short -> re-arm
+    assert len(out2) == 1 and out2[0].intent_type == "open"
 
 
 def test_cancels_when_out_of_window() -> None:

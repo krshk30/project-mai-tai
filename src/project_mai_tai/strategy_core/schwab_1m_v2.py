@@ -221,6 +221,8 @@ class SymbolState:
     # next => never two live buy orders). Reset with the other cw_* at the 04:00-ET anchor.
     resting_active: bool = False               # we believe a resting entry order is live at the broker
     resting_level: float = 0.0                 # the stop price (the ATR line) the resting order sits at
+    resting_flip_ms: int = 0                    # ms-wall-clock the up-flip fired while resting (fill may be
+    #                                             settling); 0 = not pending. Silences re-emits through the lag.
 
 
 @dataclass
@@ -474,6 +476,14 @@ class SchwabV2Strategy:
         self._resting_entry_band_pct = float(
             getattr(self.settings, "strategy_schwab_1m_v2_cw_v2_resting_entry_band_pct", 0.5) or 0.5
         )
+        # STABLE-REST: re-place only on a >= reprice_frac trail move (not every 0.2% wiggle).
+        self._resting_reprice_frac = float(
+            getattr(self.settings, "strategy_schwab_1m_v2_cw_v2_resting_entry_reprice_pct", 1.0) or 1.0
+        ) / 100.0
+        # SILENCE-ON-FILL: hold this long after the up-flip for position_qty to confirm the fill.
+        self._resting_flip_grace_ms = int(float(
+            getattr(self.settings, "strategy_schwab_1m_v2_cw_v2_resting_entry_flip_grace_secs", 30.0) or 30.0
+        ) * 1000)
         self._pending_intents: list[TradeIntentDraft] = []
         # P1.3 + P1.4 armed-segment safety — ONE flag gates BOTH the boot-mark (P1.3) and the
         # boot-hold (they are one change; splitting them creates a cell where the hold reads every
@@ -1368,7 +1378,9 @@ class SchwabV2Strategy:
         )
 
     # ------------------------------------------------------- CW-v2 RESTING flip-entry
-    _RESTING_RATCHET_FRAC = 0.002   # replace only when the ATR trail moves >= 0.2% (limit churn)
+    def _now_ms(self) -> int:
+        """Wall-clock now in ms. A method so tests can control the silence-on-fill grace."""
+        return int(datetime.now(UTC).timestamp() * 1000)
 
     def _resting_in_window(self, now: datetime | None = None) -> bool:
         """RTH gate for the resting entry: 09:30-16:00 ET = the full regular session (matches the OMS
@@ -1425,21 +1437,42 @@ class SchwabV2Strategy:
         ))
 
     def _cw_v2_resting_track(self, state: SymbolState, atr_signal: dict | None) -> None:
-        """Maintain a resting buy-stop-limit at the ATR SHORT trail (place / no-overlap replace /
-        cancel). No-op unless the resting flag is on. Appends AT MOST ONE draft per bar to
-        `_pending_intents` (never a cancel AND a place together) => never two live buy orders =>
-        no double-fill/oversell. Replaces fire on the DOWN-bars that ratchet the short trail; the
-        fill lands on the UP-cross when the order is resting. Cancel resolves at the OMS by the
-        symbol-fallback (a flat symbol has exactly one open order = this one)."""
+        """Maintain a STABLE resting buy-stop-limit at the ATR SHORT trail. Redesigned 2026-07-23 from
+        the live NVVE case (the resting order flickered and missed the cross by ~2%, then spammed ~30
+        rejects after the fill). Three rules:
+          1. STABLE-REST -- re-place only on a >= `_resting_reprice_frac` trail move; otherwise LEAVE
+             the order out there. The old 0.2% ratchet cancelled/re-placed ~every 12s, so no order was
+             ever resting when price actually crossed (we filled 8.40 vs the 8.22 line).
+          2. HOLD-THROUGH-FLIP -- do NOT cancel on state->long. The up-flip IS the fill; let the broker
+             fill the resting order. (The old code cancelled on the flip bar -- a race vs its own fill.)
+          3. SILENCE-ON-FILL -- once the flip fires while resting, a fill may be settling. Hold a grace
+             window for `position_qty` to confirm before touching anything, instead of re-emitting into
+             the position-sync lag.
+        At most ONE draft per bar (never a cancel AND a place) => never two live buy orders."""
         if not (self._resting_entry_enabled and self._cw_v2_enabled):
             return
         if self._entries_held:   # boot-hold suppresses all entries
             return
         if state.position_qty != 0:
-            # A fill (or any held position) closed the loop -> the OTOCO exit owns it; drop the flag.
-            if state.resting_active:
+            # In a position -> the OTOCO exit owns it. Drop the flag + any pending-fill grace.
+            if state.resting_active or state.resting_flip_ms:
                 state.resting_active = False
                 state.resting_level = 0.0
+                state.resting_flip_ms = 0
+            return
+        if not self._resting_in_window():   # wall-clock; never rest on stale/replayed bars
+            if state.resting_active:
+                self._queue_resting_cancel(state, reason="window_closed")
+            state.resting_flip_ms = 0
+            return
+        # SILENCE-ON-FILL: a flip fired while resting -> hold until the position confirms (handled
+        # above) or the grace expires. Never re-emit into the fill-settle lag.
+        if state.resting_flip_ms:
+            if self._now_ms() - state.resting_flip_ms < self._resting_flip_grace_ms:
+                return
+            if state.resting_active:   # grace expired, still flat -> the flip did not fill us
+                self._queue_resting_cancel(state, reason="flip_no_fill")
+            state.resting_flip_ms = 0
             return
         st = str(atr_signal.get("state")) if atr_signal else str(state.atr_state or "")
         try:
@@ -1447,21 +1480,22 @@ class SchwabV2Strategy:
             trail = float(raw) if raw else float(state.atr_trail or 0.0)
         except (TypeError, ValueError):
             trail = float(state.atr_trail or 0.0)
-        in_window = self._resting_in_window()   # wall-clock: never rest on stale/replayed bars
-        setup_ok = st == "short" and trail > 0.0 and in_window
-        if not setup_ok:
-            # Not short / out of window (incl. the flip bar, state->long): retire any resting order.
-            # If it already filled, the cancel harmlessly rejects and position_qty carries the trade.
-            if state.resting_active:
-                self._queue_resting_cancel(state, reason="setup_gone")
+        if st == "short" and trail > 0.0:
+            if not state.resting_active:
+                self._queue_resting_place(state, trail)
+                return
+            # STABLE-REST: re-place only on a meaningful trail move; else leave it out there.
+            if (state.resting_level > 0.0
+                    and abs(trail - state.resting_level) / state.resting_level >= self._resting_reprice_frac):
+                self._queue_resting_cancel(state, reason="reprice")
             return
-        if not state.resting_active:
-            self._queue_resting_place(state, trail)
+        if st == "long":
+            # HOLD-THROUGH-FLIP: the up-flip is the fill. Do NOT cancel; start the settle grace.
+            if state.resting_active and state.resting_flip_ms == 0:
+                state.resting_flip_ms = self._now_ms()
             return
-        if (state.resting_level > 0.0
-                and abs(trail - state.resting_level) / state.resting_level >= self._RESTING_RATCHET_FRAC):
-            # Ratchet: cancel this bar; next bar (resting_active False) re-places at the new level.
-            self._queue_resting_cancel(state, reason="ratchet")
+        # No / unknown signal while flat: HOLD the resting order out there (do nothing).
+        return
 
     def drain_pending_intents(self) -> list[TradeIntentDraft]:
         """Return + clear the resting-entry place/cancel drafts queued this bar. The bot loop emits
