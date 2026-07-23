@@ -941,12 +941,14 @@ class SchwabBrokerAdapter:
         current market (confirmed in the same preview: the bracket accepted with a protective
         stop far above the live bid, because the children only evaluate once the entry fills)."""
         # Entry (TRIGGER parent) may be:
-        #   STOP   — rests above market, triggers on the way up (needs stop_price)
-        #   LIMIT  — marketable, fills now (needs limit_price)
-        #   MARKET — the live v2 CW entry: fills immediately, no price (the emit path)
-        # The exit pair is identical for all three. ⚠ MARKET as an OTOCO parent must be
-        # confirmed via preview in STEP-1 item 4 before live use (STOP+LIMIT were validated
-        # 2026-07-21; MARKET was not).
+        #   STOP        — rests above market, triggers on the way up (needs stop_price)
+        #   LIMIT       — marketable, fills now (needs limit_price)
+        #   MARKET      — the live v2 CW entry: fills immediately, no price (the emit path)
+        #   STOP_LIMIT  — the resting flip-entry: triggers at stop_price, fills only <= limit_price
+        #                 (needs BOTH stop_price and limit_price). Caps breakout-spike slippage; see
+        #                 docs/v2-resting-flip-entry-design.md.
+        # The exit pair is identical for all. ⚠ STOP+LIMIT masters validated 2026-07-21; MARKET and
+        # STOP_LIMIT masters must be preview-confirmed at the broker before live use.
         entry_type = str(request.metadata.get("bracket_entry_type", "STOP")).upper()
         entry_stop = request.metadata.get("stop_price")
         entry_limit = request.metadata.get("limit_price")
@@ -958,7 +960,11 @@ class SchwabBrokerAdapter:
         target_price = request.metadata.get("bracket_target_price")
         protect_price = request.metadata.get("bracket_stop_price")
         required = [("bracket_target_price", target_price), ("bracket_stop_price", protect_price)]
-        if entry_type != "MARKET":
+        if entry_type == "STOP_LIMIT":
+            # A buy stop-limit needs BOTH the trigger (stopPrice) and the fill cap (price).
+            required.insert(0, ("limit_price", entry_limit))
+            required.insert(0, ("stop_price", entry_stop))
+        elif entry_type != "MARKET":
             required.insert(0, ("limit_price" if entry_type == "LIMIT" else "stop_price", entry_px))
         missing = [name for name, value in required if not value]
         if missing:
@@ -996,6 +1002,10 @@ class SchwabBrokerAdapter:
             parent["price"] = float(Decimal(str(entry_px)))
         elif entry_type == "STOP":
             parent["stopPrice"] = float(Decimal(str(entry_px)))
+        elif entry_type == "STOP_LIMIT":
+            # Trigger at stopPrice, then fill only at price (the cap) or better.
+            parent["stopPrice"] = float(Decimal(str(entry_stop)))
+            parent["price"] = float(Decimal(str(entry_limit)))
         # MARKET: no price/stopPrice — fills at market on trigger.
         return parent
 

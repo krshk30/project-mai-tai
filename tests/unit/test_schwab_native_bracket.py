@@ -294,6 +294,38 @@ def test_market_parent_still_requires_both_exit_prices() -> None:
     assert "bracket_stop_price" in str(e.value)
 
 
+def test_stop_limit_master_carries_both_stop_and_limit() -> None:
+    """The resting flip-entry parent is a STOP_LIMIT: triggers at stopPrice, fills only <= price (the
+    band cap). Needs BOTH; the OCO exit pair is unchanged. (docs/v2-resting-flip-entry-design.md.)"""
+    req = _bracket_request(metadata={
+        "bracket_entry_type": "STOP_LIMIT",
+        "stop_price": "10.00",     # the ATR line (trigger)
+        "limit_price": "10.05",    # line * (1 + 0.5% band) -> the slippage cap
+    })
+    payload = _adapter(bracket_enabled=True)._build_bracket_payload(req)
+    assert payload["orderType"] == "STOP_LIMIT"
+    assert payload["stopPrice"] == 10.00   # trigger
+    assert payload["price"] == 10.05       # fill cap
+    assert payload["orderStrategyType"] == "TRIGGER"
+    target, protective = payload["childOrderStrategies"][0]["childOrderStrategies"]
+    assert target["price"] == 10.20 and protective["stopPrice"] == 9.50
+
+
+def test_stop_limit_master_requires_both_stop_and_limit() -> None:
+    """A STOP_LIMIT master with only one of the two prices is a malformed order — refuse it."""
+    adapter = _adapter(bracket_enabled=True)
+    no_limit = _bracket_request(metadata={"bracket_entry_type": "STOP_LIMIT", "stop_price": "10.00"})
+    with pytest.raises(RuntimeError) as e1:
+        adapter._build_bracket_payload(no_limit)
+    assert "limit_price" in str(e1.value)
+    no_stop = _bracket_request(metadata={
+        "bracket_entry_type": "STOP_LIMIT", "stop_price": "", "limit_price": "10.05",
+    })
+    with pytest.raises(RuntimeError) as e2:
+        adapter._build_bracket_payload(no_stop)
+    assert "stop_price" in str(e2.value)
+
+
 def test_bracket_exit_legs_round_to_schwab_tick_rule() -> None:
     """Exit legs round to Schwab's decimal rule (defence in depth alongside the emit)."""
     req = _bracket_request(metadata={"bracket_entry_type": "MARKET",
