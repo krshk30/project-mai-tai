@@ -33,9 +33,11 @@ fired at PLACEMENT not FILL (a resting order rests until the cross, so a submit-
 **FIX = mirror on the FILL** (`sync_broker_orders`, once per fill) as **MARKET master + native-OCO combo**
 (collapse STOP_LIMIT→MARKET, drop resting stop, keep +2%/−5% exits) — the TurboTrader shape Webull actually
 supports. Decisions LOCKED: **master=MARKET** (changeable), **exits anchored to the WEBULL fill via live-ask**.
-Old verbatim `_maybe_mirror_v2_open` deleted; 10 tests + 524 green; I reviewed the diff. **Mirror ARMED on
-`live:orb`** (shared, collision-guarded) — **tomorrow's first v2 RTH fill auto-places a LIVE MARKET+OCO = the
-attended test.** Design: `docs/webull-mirror-on-fill-design.md`. [[project_mai_tai_resting_entry_out_of_window_bug]]
+Old verbatim `_maybe_mirror_v2_open` deleted; 10 tests + 524 green; I reviewed the diff. **Mirror flag turned
+OFF overnight (operator, EOD) — `WEBULL_MIRROR_ENABLED=false`, account `live:orb` preserved.** To re-arm for the
+attended test: set the flag `=true` + restart OMS when the operator is watching; the first v2 RTH fill then
+auto-places a LIVE MARKET+OCO on live:orb. Design: `docs/webull-mirror-on-fill-design.md`.
+[[project_mai_tai_resting_entry_out_of_window_bug]]
 
 **🅲 CI ruff-0.16.0 repo-wide break** — the floating `ruff>=0.6,<1.0` pin grabbed the day-of 0.16.0 release
 (changed I001, failed ~140 untouched files). Pinned `<0.16` in #531. Full 0.16 import-sort migration deferred.
@@ -66,8 +68,9 @@ written from the BUGGY pass — needs correcting/replacing (operator undecided; 
 merge-nothing-else. (2) **replace-throttle → per-1min** (deferred behind Webull). (3) **rename reason label**
 "ATR Flip"→resting/reactive-specific. (4) **replay-harness backtest** (design-first, LATER). (5) **persist OCO
 resolution price** + **SKYQ 16:00-close mechanism**. (6) **pre-market window decision** (07:00 start?). (7) fix
-the DAILY-STRATEGY-LOG 07-23 block. (8) alpaca-cred warnings (benign default-adapter path, deferred). To KILL
-the mirror: `WEBULL_MIRROR_ENABLED=false` + restart. To trade tomorrow: nothing — already ARMED.
+the DAILY-STRATEGY-LOG 07-23 block. (8) alpaca-cred warnings (benign default-adapter path, deferred).
+**Mirror is OFF overnight** (`WEBULL_MIRROR_ENABLED=false`); RE-ARM for the attended test = flag `=true` +
+restart OMS when the operator is watching. v2 (Schwab, both entry modes) trades normally regardless.
 
 ---
 
