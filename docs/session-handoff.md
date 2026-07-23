@@ -17,6 +17,48 @@
 
 ---
 
+## ✅ 2026-07-23 — RESTING FLIP-ENTRY's FIRST LIVE DAY: fully reworked across 6 PRs; first fill NVVE +$0.32 (protected)
+
+The resting flip-entry ran **live resting-only** (reactive OFF) for the first time. The live run surfaced a
+chain of defects backtesting never could — **all fixed + deployed same day**. **Live state at EOD: v2
+resting-only, SHA `05d5900`, pid 1043008, `REPRICE_PCT=0.5`, `MAX_BAR_AGE=180s` (default), account FLAT.**
+Full detail: [[project_mai_tai_resting_entry_out_of_window_bug]].
+
+**⭐ NVVE — first real resting fill, the teacher.** Bought 2 @ 8.40, the **+2% OCO target FILLED @ 8.56 →
++$0.32, PROTECTED, clean exit.** ⛔ I mis-called it "naked / −5% loss" mid-incident — WRONG: the native OCO
+was armed **Schwab-side** (its legs aren't WORKING rows in our `broker_orders`, so absence there ≠ naked);
+operator confirmed it auto-executed on Schwab = the OCO fired. **Lesson: verify broker truth
+(`account_positions`, fresh sync) before ever calling a shared-account position naked.** The real defect: it
+filled **8.40 vs the ~8.22 ATR cross (~2% slippage)** because the "resting" order **flickered** (cancel/replace
+every ~12s), so nothing was resting when price crossed; plus ~30 rejected brackets after the fill.
+
+**FIX STACK — all merged + deployed 07-23:**
+- **#523** wall-clock window gate · **#524** STOP_LIMIT single-leg serialization (the AM "limit cannot be zero"
+  out-of-hours rejects). SHA db16015, choreographed OMS+v2 restart ~10:52 ET.
+- **#526** **stable-rest + hold-through-flip + silence-on-fill** — re-place only on ≥`reprice_pct` (not 0.2%),
+  DON'T cancel on the flip (it IS the fill), hold a grace after the flip for the fill to settle.
+- **#527** **INTENT_MAX_AGE exemption + stop≤ask** — the OMS 30s abandon (PR #178) was killing the now-stable
+  resting order every ~30-58s; exempt STOP/STOP_LIMIT (trigger orders rest by design, **segregate by order
+  TYPE**). + skip the place when `trail ≤ live ask` (the "stop must be above ask" fast-mover reject spam).
+- **#528** **live-bar gate** — only rest on the CURRENT live purple line; skip if the driving bar is >180s old
+  (SKYQ rested off ~3h-old WARMUP-REPLAYED bars the instant it confirmed). Deployed ~13:14 ET (v2-only).
+
+**Operator principles (canonical):** rest on the LIVE purple line only (not replay); it places WHILE SHORT
+anticipating a flip (NOT on a flip); trigger orders may rest, marketable may not; keep OTOCO (atomic) over
+splitting entry/exit (the split reintroduces the naked gap the OCO work removed).
+
+**Also:** cleared the stale failed `webull-harness@AM` unit (10-day-old one-shot, reused-coid 417); **#525**
+made the Phase-3 harness coid unique (retry-safe). Chronic OMS dead-cred Schwab-token noise re-confirmed
+(~1440 tracebacks/hr, 2 dead digests, live v2 account NOT affected) — disable the dead accounts off-market.
+
+**⛔ OPEN (next session):** (1) **up-flip fill validation** — no clean fill on a NON-restricted name yet
+(07-23 universe Schwab-restricted all day); the end-to-end proof is unproven → needs a tradeable name or the
+**Webull mirror**. (2) **selectivity** — it rests on EVERY confirmed short; operator asked whether to skip
+names already ripping/whipsawing. (3) **reprice tuning** (0.5% now vs 1.0%). (4) **Webull Phase 3** attended
+gate (retry-safe now). (5) off-market hygiene: disable dead-cred Schwab accounts; OMS heartbeat-decouple.
+
+---
+
 ## ✅ 2026-07-22 (PM/EVE) — OCO LIVE + fixes · Webull STEP-1 (Ph 0–2) · exit R&D SETTLED · RESTING flip-entry DEPLOYED
 
 Long session. The morning's "code-complete, inert" OCO went **fully LIVE and validated on Schwab v2**, a
