@@ -1370,15 +1370,22 @@ class SchwabV2Strategy:
     # ------------------------------------------------------- CW-v2 RESTING flip-entry
     _RESTING_RATCHET_FRAC = 0.002   # replace only when the ATR trail moves >= 0.2% (limit churn)
 
-    def _resting_in_window(self, ts_ms: int) -> bool:
-        """RTH for the resting entry: 09:30-16:00 ET = the full regular session (matches the OMS OTOCO
-        emit gate `_is_regular_market_session`). UNLIKE the reactive entry it does NOT skip 09:30-10:00:
-        (1) the 9-day study that gave +0.33% gated on the scanner CONFIRM window, not the ORB window --
-        09:30 is the faithful start; (2) the band-limited stop-limit does not chase the volatile open
-        the way the reactive MARKET entry does (the reason for that skip); (3) ORB is a different
-        account (Webull), so no collision. A session=NORMAL OTOCO would queue pre/post-market, so keep
-        it regular-session."""
-        et = datetime.fromtimestamp(ts_ms / 1000.0, UTC).astimezone(EASTERN_TZ)
+    def _resting_in_window(self, now: datetime | None = None) -> bool:
+        """RTH gate for the resting entry: 09:30-16:00 ET = the full regular session (matches the OMS
+        OTOCO emit gate `_is_regular_market_session`). UNLIKE the reactive entry it does NOT skip
+        09:30-10:00: (1) the 9-day study that gave +0.33% gated on the scanner CONFIRM window, not the
+        ORB window -- 09:30 is the faithful start; (2) the band-limited stop-limit does not chase the
+        volatile open the way the reactive MARKET entry does (the reason for that skip); (3) ORB is a
+        different account (Webull), so no collision.
+
+        ⭐ Keyed on the WALL CLOCK, NOT the last bar's timestamp. The prior version read
+        `state.bars[-1].timestamp_ms`: on a quiet pre-market symbol the last bar is the PRIOR session's
+        ~15:59 ET close (in-window), and warmup-replay feeds an entire historical session of in-window
+        bars -- so the gate read True out-of-hours and the resting entry fired at 04:00/07:00 ET on
+        stale price levels, sending session=NORMAL STOP_LIMITs the broker rejected. Wall-clock is the
+        real question ("is it regular-session RIGHT NOW?") and aligns this gate with the OMS one.
+        `now` is injectable for tests."""
+        et = (now or datetime.now(UTC)).astimezone(EASTERN_TZ)
         minutes = et.hour * 60 + et.minute
         return 9 * 60 + 30 <= minutes < 16 * 60
 
@@ -1440,7 +1447,7 @@ class SchwabV2Strategy:
             trail = float(raw) if raw else float(state.atr_trail or 0.0)
         except (TypeError, ValueError):
             trail = float(state.atr_trail or 0.0)
-        in_window = bool(state.bars) and self._resting_in_window(int(state.bars[-1].timestamp_ms))
+        in_window = self._resting_in_window()   # wall-clock: never rest on stale/replayed bars
         setup_ok = st == "short" and trail > 0.0 and in_window
         if not setup_ok:
             # Not short / out of window (incl. the flip bar, state->long): retire any resting order.
