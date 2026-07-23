@@ -4051,7 +4051,19 @@ class OmsRiskService:
         protect = entry * (1.0 - self._cw_stop_pct / 100.0)
         order_type = str(md.get("order_type", "market")).upper()
         md["bracket"] = "true"
-        md["bracket_entry_type"] = "LIMIT" if order_type == "LIMIT" else "MARKET"
+        if order_type == "STOP_LIMIT":
+            # The resting flip-entry: a buy-stop-limit master. The strategy supplies stop_price
+            # (the ATR line = trigger) and limit_price (line*(1+band) = the slippage cap); the
+            # adapter needs BOTH. Round both to the Schwab tick rule (firm-rejects off-tick).
+            md["bracket_entry_type"] = "STOP_LIMIT"
+            if md.get("stop_price"):
+                md["stop_price"] = _schwab_round(float(md["stop_price"]))
+            if md.get("limit_price"):
+                md["limit_price"] = _schwab_round(float(md["limit_price"]))
+        elif order_type == "LIMIT":
+            md["bracket_entry_type"] = "LIMIT"
+        else:
+            md["bracket_entry_type"] = "MARKET"
         md["native_oco_bracket"] = "true"
         # Schwab tick rule (firm-rejects otherwise): >$1 -> 2 decimals, <=$1 -> 4 decimals.
         md["bracket_target_price"] = _schwab_round(target)
