@@ -446,6 +446,19 @@ class Settings(BaseSettings):
     # confirms zero reconstructed-uncapped segments, and the armed segments are published for the
     # armed_segments_check cron. OFF => byte-identical (no marking, no hold, no snapshot field).
     strategy_schwab_1m_v2_cw_armed_segment_safety_enabled: bool = False
+    # ── CW-v2 ENTRY MODE (two independent flags; see docs/v2-resting-flip-entry-design.md) ──
+    # The current REACTIVE entry: ATR flips -> wait 3 bars -> MARKET-buy the break. Default TRUE =
+    # today, byte-identical. Turn OFF to silence the reactive emit (e.g. run resting-only).
+    strategy_schwab_1m_v2_cw_v2_reactive_entry_enabled: bool = True
+    # The new RESTING entry: while SHORT in a CONFIRM window, rest a buy-STOP-LIMIT at the ATR trail
+    # line (+band) that fills AT the cross and auto-arms the +2%/-5% OTOCO. Default FALSE = inert
+    # (no resting order emitted). ON = the strategy manages a resting order (place/replace-on-ratchet/
+    # cancel). Independent of the reactive flag; the OMS one-position-per-symbol rule keeps them from
+    # both holding the same name. Kill = flag OFF + restart (cancel any resting order first).
+    strategy_schwab_1m_v2_cw_v2_resting_entry_enabled: bool = False
+    # The slippage-cap band for the resting buy-stop-limit: limit = line * (1 + band%). 9-day study:
+    # 0.5% = best mean / 92% fill (fills the pullback, not the spike). Tunable without code.
+    strategy_schwab_1m_v2_cw_v2_resting_entry_band_pct: float = 0.5
     strategy_macd_30s_reclaim_excluded_symbols: str = "JEM,CYCN,BFRG,UCAR,BBGI"
     # Maximum age (seconds) for the `scanner_confirmed_last_nonempty` snapshot
     # to be eligible for startup restore. Older snapshots are skipped, so

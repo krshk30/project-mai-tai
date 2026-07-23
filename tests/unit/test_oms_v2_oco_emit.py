@@ -54,6 +54,21 @@ def test_emit_attaches_bracket_metadata_with_cw_exit_geometry() -> None:
     assert md["bracket_stop_price"] == "9.50"          # -5%, >$1 -> 2dp
 
 
+def test_emit_stop_limit_master_for_the_resting_flip_entry() -> None:
+    """The resting flip-entry emits order_type=STOP_LIMIT with stop_price (the ATR line = trigger)
+    and limit_price (line*(1+band) = cap). The emit passes both through, tick-rounded, as a
+    STOP_LIMIT-master OTOCO; target/stop still price off the line (entry_price)."""
+    ev = _event(order_type="STOP_LIMIT", entry_price="10.00", reference_price="10.00",
+                stop_price="10.001", limit_price="10.05")
+    _svc(True)._apply_v2_oco_bracket_entry(event=ev)
+    md = ev.payload.metadata
+    assert md["bracket_entry_type"] == "STOP_LIMIT"
+    assert md["stop_price"] == "10.00"        # trigger, rounded to the >$1 tick
+    assert md["limit_price"] == "10.05"       # cap, rounded
+    assert md["bracket_target_price"] == "10.20"   # +2% off the line
+    assert md["bracket_stop_price"] == "9.50"      # -5% off the line
+
+
 def test_emit_mirrors_a_limit_entry_to_a_limit_parent() -> None:
     ev = _event(entry_price="10.00", order_type="limit")
     _svc(True)._apply_v2_oco_bracket_entry(event=ev)
