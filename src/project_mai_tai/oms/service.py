@@ -959,25 +959,37 @@ class OmsRiskService:
         await self._flush_dirty_armed_stops()
         await self._reconcile_after_intent(event.payload.broker_account_name)
 
-        # PR #2 dual-broker bake-off: mirror the primary Schwab v2 buy-open to a SECOND
-        # (Webull) account as an INDEPENDENT post-step (own session, all-swallowing) so a
-        # Webull failure can NEVER unwind or affect the just-committed primary Schwab leg.
-        # Fully dormant / byte-identical unless the mirror flag is on.
-        await self._maybe_mirror_v2_open(event)
+        # Webull mirror moved OFF the submit path (2026-07-24). The resting v2 entry PLACES
+        # its Schwab order long before the up-cross, so mirroring at placement would enter
+        # Webull early/wrong; a buy-STOP master is also structurally rejected by Webull's
+        # combo builder ("Fork A"). The mirror now fires on the confirmed Schwab FILL from
+        # `sync_broker_orders` as a MARKET master + native-OCO combo. See
+        # docs/webull-mirror-on-fill-design.md.
         return published_events
 
-    async def _maybe_mirror_v2_open(self, event: TradeIntentEvent) -> None:
-        """PR #2: mirror a primary Schwab v2 buy-open to a SECOND (Webull) broker account
-        so both legs run in parallel for a broker comparison. Runs AFTER the primary leg is
-        fully committed + published, in its OWN session, wrapped so any Webull error (e.g. a
-        Schwab-ineligible foreign name reject) is recorded/swallowed and never propagates to
-        the primary. The CW exit ladder is already account-aware (`_v2_accounts()`), so the
-        mirrored managed row gets its full exit ladder automatically — this only creates the
-        second OPEN leg.
+    async def _mirror_v2_fill_to_webull(
+        self,
+        *,
+        symbol: str,
+        quantity,
+        schwab_fill_price: float,
+        source_metadata: dict[str, str],
+    ) -> None:
+        """Mirror a CONFIRMED primary Schwab v2 buy-open FILL to a SECOND (Webull) account as
+        a native-OCO combo (MARKET master + take-profit LIMIT + stop-loss STOP). Fired from the
+        async fill path (`sync_broker_orders`) once per real open — NOT at placement — because
+        the resting v2 entry rests until the up-cross, so mirroring at submit would enter Webull
+        early/wrong, and Webull structurally refuses a buy-STOP master ("Fork A"). Runs in its
+        OWN session, wrapped so any Webull error NEVER unwinds the already-committed Schwab leg.
+        The whole thing is dormant/byte-identical when the mirror flag is off (caller-guarded on
+        strategy/account/side/intent; this method re-checks the flag + account for defence).
 
-        No-op guard (byte-identical when the flag is off): only fires for the flag-on primary
-        Schwab v2 buy-open (strategy_code == "schwab_1m_v2" AND broker_account_name == the v2
-        primary account). Everything else returns immediately.
+        Exit anchor (operator, 2026-07-23): the exits key off the WEBULL fill, proxied by the
+        live ask at submit — a MARKET master fills at/near the ask, so target/stop geometry is
+        correct to within the spread. Fall back to the Schwab fill price when no fresh ask is
+        available. Both the assumed anchor and its source are logged so drift is measurable.
+
+        See docs/webull-mirror-on-fill-design.md.
         """
         if not bool(getattr(self.settings, "strategy_schwab_1m_v2_webull_mirror_enabled", False)):
             return
@@ -985,58 +997,97 @@ class OmsRiskService:
         # was "live:orb" -- ORB's own live account -- which contradicts the 07-10 design decision
         # (a separate live:v2_webull, because ORB and v2 trade the same watchlist through different
         # exit logic and one account cannot hold two open managed rows for the same symbol).
-        # Flag-off + a wrong default is a landmine, not a safety: flipping the flag without
-        # provisioning would have fanned v2 into ORB's account. Unset -> no-op + warn, so a
-        # flag-flip without provisioning does NOTHING instead of the wrong thing.
-        mirror_account = str(
+        # Unset -> no-op + warn, so a flag-flip without provisioning does NOTHING.
+        webull_account_name = str(
             getattr(self.settings, "strategy_schwab_1m_v2_webull_account_name", "") or ""
         ).strip()
-        if not mirror_account:
+        if not webull_account_name:
             self.logger.warning(
-                "[V2-MIRROR] mirror flag is ON but strategy_schwab_1m_v2_webull_account_name is "
-                "UNSET — refusing to mirror. Provision a dedicated account (e.g. live:v2_webull); "
-                "do NOT point this at live:orb."
+                "[OMS-V2-MIRROR] mirror flag is ON but strategy_schwab_1m_v2_webull_account_name "
+                "is UNSET — refusing to mirror %s. Provision a dedicated account (e.g. "
+                "live:v2_webull); do NOT point this at live:orb.",
+                symbol,
             )
             return
-        if event.payload.intent_type != "open" or event.payload.side != "buy":
-            return
-        # A "v2 primary open" is unambiguously identified by BOTH the strategy code and the
-        # primary account name: the isolated v2 bot is the only emitter of strategy_code
-        # "schwab_1m_v2", and it always targets strategy_schwab_1m_v2_account_name. Requiring
-        # both guarantees we never mirror a non-v2 strategy nor re-mirror the webull leg itself.
-        if event.payload.strategy_code != "schwab_1m_v2":
-            return
-        if event.payload.broker_account_name != self.settings.strategy_schwab_1m_v2_account_name:
-            return
-
-        webull_account_name = str(self.settings.strategy_schwab_1m_v2_webull_account_name or "").strip()
-        if not webull_account_name or webull_account_name == event.payload.broker_account_name:
+        primary_account = str(getattr(self.settings, "strategy_schwab_1m_v2_account_name", "") or "").strip()
+        if webull_account_name == primary_account:
             self.logger.warning(
-                "[OMS-V2-MIRROR] mirror enabled but webull account name is empty/equal to the "
-                "primary (%r) — skipping mirror for %s",
-                webull_account_name, event.payload.symbol,
+                "[OMS-V2-MIRROR] mirror enabled but webull account name equals the primary (%r) "
+                "— skipping mirror for %s",
+                webull_account_name, symbol,
             )
             return
 
-        symbol = event.payload.symbol
         try:
+            # Exit anchor: the live ask at submit (a MARKET master fills at/near the ask), else
+            # the Schwab fill price. Only a FRESH ask is trusted — a stale/absent quote falls
+            # back rather than anchoring exits to a gap.
+            anchor = float(schwab_fill_price)
+            anchor_source = "schwab_fill"
+            quote = self._latest_quotes_by_symbol.get(symbol)
+            if quote:
+                received_at = quote.get("received_at")
+                fresh = isinstance(received_at, datetime)
+                if fresh:
+                    age_ms = (utcnow() - received_at).total_seconds() * 1000.0
+                    if age_ms > float(getattr(self.settings, "oms_v2_exit_quote_max_age_ms", 5000)):
+                        fresh = False
+                ask = quote.get("ask")
+                if fresh and ask:
+                    try:
+                        ask_f = float(ask)
+                    except (TypeError, ValueError):
+                        ask_f = 0.0
+                    if ask_f > 0:
+                        anchor = ask_f
+                        anchor_source = "live_ask"
+            self.logger.info(
+                "[OMS-V2-MIRROR] %s anchor=%.4f source=%s (schwab_fill=%.4f)",
+                symbol, anchor, anchor_source, float(schwab_fill_price),
+            )
+
+            target = anchor * (1.0 + self._cw_target_pct / 100.0)
+            protect = anchor * (1.0 - self._cw_stop_pct / 100.0)
+            # Webull native-OCO combo request: MARKET master (no limit_price — bracket_entry_type
+            # MARKET) + take-profit LIMIT + stop-loss STOP. Drop the resting stop_price entirely
+            # (the cross already happened). The adapter reads bracket / bracket_entry_type /
+            # bracket_target_price / bracket_stop_price from metadata.
+            combo_metadata: dict[str, str] = {
+                "order_type": "market",
+                "time_in_force": "day",
+                "bracket": "true",
+                "native_oco_bracket": "true",
+                "bracket_entry_type": "MARKET",
+                "bracket_target_price": f"{target:.4f}",
+                "bracket_stop_price": f"{protect:.4f}",
+                "path": source_metadata.get("path", ""),
+            }
+
             # Distinct event → distinct event_id (uuid4) → distinct client_order_id, so the
             # mirror leg can never collide with the primary's order/intent rows.
             mirror_event = TradeIntentEvent(
-                source_service=event.source_service,
-                correlation_id=event.event_id,
-                payload=event.payload.model_copy(update={"broker_account_name": webull_account_name}),
+                source_service=SERVICE_NAME,
+                payload=TradeIntentPayload(
+                    strategy_code="schwab_1m_v2",
+                    broker_account_name=webull_account_name,
+                    symbol=symbol,
+                    side="buy",
+                    quantity=quantity,
+                    intent_type="open",
+                    reason="oms_v2_webull_mirror_on_fill",
+                    metadata=combo_metadata,
+                ),
             )
             published_events: list[OrderEventEvent] = []
             with self.session_factory() as session:
-                registration = self.strategy_registrations.get(mirror_event.payload.strategy_code)
+                registration = self.strategy_registrations.get("schwab_1m_v2")
                 strategy = self.store.ensure_strategy(
                     session,
-                    mirror_event.payload.strategy_code,
+                    "schwab_1m_v2",
                     name=(
                         registration.display_name
                         if registration
-                        else mirror_event.payload.strategy_code.replace("_", " ").upper()
+                        else "SCHWAB 1M V2"
                     ),
                     execution_mode=registration.execution_mode if registration else "paper",
                     metadata_json=(
@@ -1078,9 +1129,6 @@ class OmsRiskService:
                     broker_account=broker_account,
                     event=mirror_event,
                 )
-                # Faithful copy of the primary OPEN request (same qty/order_type/TIF/metadata/
-                # reason) — only the account and client_order_id differ. No re-run of risk: the
-                # primary already passed; this is a deliberate parallel execution.
                 request = OrderRequest(
                     client_order_id=self._build_client_order_id(mirror_event),
                     broker_account_name=webull_account_name,
@@ -1090,9 +1138,9 @@ class OmsRiskService:
                     intent_type=mirror_event.payload.intent_type,
                     quantity=mirror_event.payload.quantity,
                     reason=mirror_event.payload.reason,
-                    metadata=dict(mirror_event.payload.metadata),
-                    order_type=str(mirror_event.payload.metadata.get("order_type", "market")),
-                    time_in_force=str(mirror_event.payload.metadata.get("time_in_force", "day")),
+                    metadata=dict(combo_metadata),
+                    order_type="market",
+                    time_in_force="day",
                 )
                 reports = await self.broker_adapter.submit_order(request)
                 published_events.extend(
@@ -1116,11 +1164,12 @@ class OmsRiskService:
 
             statuses = ",".join(item.payload.status for item in published_events) or "none"
             self.logger.info(
-                "[OMS-V2-MIRROR] webull mirror submitted sym=%s acct=%s qty=%s status=%s",
-                symbol, webull_account_name, mirror_event.payload.quantity, statuses,
+                "[OMS-V2-MIRROR] webull mirror-on-fill submitted sym=%s acct=%s qty=%s "
+                "target=%.4f protect=%.4f status=%s",
+                symbol, webull_account_name, quantity, target, protect, statuses,
             )
         except Exception as exc:  # noqa: BLE001 — a webull failure must NEVER affect the primary leg
-            self.logger.warning("[OMS-V2-MIRROR] webull mirror failed for %s: %s", symbol, exc)
+            self.logger.warning("[OMS-V2-MIRROR] webull mirror-on-fill failed for %s: %s", symbol, exc)
 
     async def _process_cancel_intent(
         self,
@@ -2649,6 +2698,11 @@ class OmsRiskService:
         }
 
     async def sync_broker_orders(self, *, account_names: list[str] | None = None) -> dict[str, int]:
+        # Webull mirror-on-fill (see docs/webull-mirror-on-fill-design.md): collect confirmed
+        # v2-primary buy-open FILLS observed this sync, then fire the async Webull mirror AFTER
+        # the session closes (submit_order is async and must not run inside the DB session).
+        # `record_fill_if_needed` is idempotent, so each real fill lands here exactly once.
+        mirror_fill_candidates: list = []
         with self.session_factory() as session:
             if account_names is None:
                 broker_accounts = self.store.list_active_broker_accounts(session)
@@ -2777,6 +2831,25 @@ class OmsRiskService:
                             price=fill.price,
                             metadata={str(k): str(v) for k, v in (order.payload or {}).items()},
                         )
+                        # Webull mirror-on-fill: queue this fill iff it's a v2-primary buy-open
+                        # (flag on + strategy schwab_1m_v2 + primary account + buy + open). Fired
+                        # after the session closes; `record_fill_if_needed` idempotency guarantees
+                        # exactly one queue per real fill (no double-place across re-syncs).
+                        if (
+                            bool(getattr(self.settings, "strategy_schwab_1m_v2_webull_mirror_enabled", False))
+                            and (strategy.code if strategy is not None else "") == "schwab_1m_v2"
+                            and account.name == self.settings.strategy_schwab_1m_v2_account_name
+                            and str(order.side).lower() == "buy"
+                            and str(intent.intent_type).lower() == "open"
+                        ):
+                            mirror_fill_candidates.append(
+                                (
+                                    order.symbol,
+                                    fill.quantity,
+                                    float(fill.price),
+                                    {str(k): str(v) for k, v in (order.payload or {}).items()},
+                                )
+                            )
 
                     intent_status = report.event_type
                     if report.event_type == "accepted":
@@ -2916,6 +2989,15 @@ class OmsRiskService:
         # F2: mirror armed-stop changes made during the per-order sync (arm/decrement/
         # clear/rearm) to the durable table, off-loop after the session closed.
         await self._flush_dirty_armed_stops()
+
+        # Webull mirror-on-fill: fire each queued v2-primary buy-open fill to the Webull
+        # account as an INDEPENDENT post-step (own session, all-swallowing) — a Webull failure
+        # can NEVER unwind the already-committed Schwab fill. Dormant when the flag is off (no
+        # candidate is ever queued).
+        for sym, qty, px, md in mirror_fill_candidates:
+            await self._mirror_v2_fill_to_webull(
+                symbol=sym, quantity=qty, schwab_fill_price=px, source_metadata=md
+            )
         return {
             "orders": synced_orders,
             "terminal_orders": terminal_orders,

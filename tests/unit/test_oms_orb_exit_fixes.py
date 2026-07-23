@@ -451,11 +451,11 @@ def test_mirror_refuses_to_fan_out_without_an_explicit_account():
         strategy_schwab_1m_v2_webull_mirror_enabled=True,
         strategy_schwab_1m_v2_webull_account_name="",      # never provisioned
     )
-    event = SimpleNamespace(payload=SimpleNamespace(
-        intent_type="open", side="buy", strategy_code="schwab_1m_v2",
-        broker_account_name="live:schwab_1m_v2", symbol="KUST",
-    ))
-    assert _a.run(svc._maybe_mirror_v2_open(event)) is None   # no-op, no crash, no fan-out
+    from decimal import Decimal as _Dec
+    # Mirror-on-fill: same fail-safe, new entry point + signature.
+    assert _a.run(svc._mirror_v2_fill_to_webull(
+        symbol="KUST", quantity=_Dec("2"), schwab_fill_price=5.0, source_metadata={},
+    )) is None   # no-op, no crash, no fan-out
 
 
 def test_mirror_default_is_no_longer_orbs_account():
