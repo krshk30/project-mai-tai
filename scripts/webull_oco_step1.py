@@ -68,6 +68,14 @@ def _ref_price(symbol: str, api_key: str) -> float:
     return last
 
 
+def _make_coid() -> str:
+    """A unique client_order_id per run: date + time + a random suffix. Webull rejects a reused
+    client_order_id with TRADE_PLACE_ORDER_REPEAT (417) -- the old `ocostep1-HHMMSS` uniquified on
+    time-of-day ONLY, so it collided across days (same HH:MM:SS) and on same-second retries. Must
+    stay <= 40 chars incl. the `-combo` combo-id and the `M` master-coid suffixes."""
+    return f"ocostep1-{time.strftime('%y%m%d-%H%M%S', time.gmtime())}-{os.urandom(4).hex()}"
+
+
 def _bracket_req(coid: str, symbol: str, entry: float, target: float, protect: float,
                  entry_type: str):
     from project_mai_tai.broker_adapters.protocols import OrderRequest
@@ -212,7 +220,7 @@ async def run(stage: str, symbol: str, confirm: bool, ref_price: float | None,
     target = round(entry * 1.02, 2)          # STOP_PROFIT +2%
     protect = round(entry * 0.95, 2)         # STOP_LOSS  -5%
 
-    coid = f"ocostep1-{time.strftime('%H%M%S', time.gmtime())}"
+    coid = _make_coid()
     combo_id = f"{coid}-combo"[:40]
     log.info("[PLAN/%s] BUY %s %s LIMIT@%.2f -> OCO[ SELL LIMIT %.2f | SELL STOP %.2f ] coid=%s",
              stage.upper(), QTY, symbol, entry, target, protect, coid)
