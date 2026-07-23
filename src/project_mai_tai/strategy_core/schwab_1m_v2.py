@@ -484,6 +484,10 @@ class SchwabV2Strategy:
         self._resting_flip_grace_ms = int(float(
             getattr(self.settings, "strategy_schwab_1m_v2_cw_v2_resting_entry_flip_grace_secs", 30.0) or 30.0
         ) * 1000)
+        # LIVE-BAR gate: only place off a bar within this age of wall-clock (never warmup-replayed).
+        self._resting_max_bar_age_ms = int(float(
+            getattr(self.settings, "strategy_schwab_1m_v2_cw_v2_resting_entry_max_bar_age_secs", 180.0) or 180.0
+        ) * 1000)
         self._pending_intents: list[TradeIntentDraft] = []
         # P1.3 + P1.4 armed-segment safety — ONE flag gates BOTH the boot-mark (P1.3) and the
         # boot-hold (they are one change; splitting them creates a cell where the hold reads every
@@ -1482,6 +1486,13 @@ class SchwabV2Strategy:
             trail = float(state.atr_trail or 0.0)
         if st == "short" and trail > 0.0:
             if not state.resting_active:
+                # LIVE-BAR gate: only rest on the CURRENT purple line -- never on a warmup-replayed /
+                # stale bar. On a mid-session CONFIRM the bot replays hours of old bars; without this
+                # we rested off ~3h-old levels the instant SKYQ confirmed (2026-07-23). Require the
+                # driving bar to be within `_resting_max_bar_age_ms` of wall-clock (live).
+                bar_ms = int(state.bars[-1].timestamp_ms) if state.bars else 0
+                if bar_ms and (self._now_ms() - bar_ms) > self._resting_max_bar_age_ms:
+                    return
                 # STOP<=ASK guard: a buy-stop must sit ABOVE the ask. On a fast up-tick the live ask
                 # can already be at/above the trail (the flip is happening) -> placing firm-rejects
                 # "stop price must be above the current ask". Skip; re-arm once the trail is back above
