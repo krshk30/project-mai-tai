@@ -488,6 +488,10 @@ class SchwabV2Strategy:
         self._resting_max_bar_age_ms = int(float(
             getattr(self.settings, "strategy_schwab_1m_v2_cw_v2_resting_entry_max_bar_age_secs", 180.0) or 180.0
         ) * 1000)
+        # ESTABLISHED-SHORT gate: only rest once the ATR has been short for >= this many consecutive bars.
+        self._resting_min_short_bars = max(1, int(
+            getattr(self.settings, "strategy_schwab_1m_v2_cw_v2_resting_entry_min_short_bars", 3) or 3
+        ))
         self._pending_intents: list[TradeIntentDraft] = []
         # P1.3 + P1.4 armed-segment safety — ONE flag gates BOTH the boot-mark (P1.3) and the
         # boot-hold (they are one change; splitting them creates a cell where the hold reads every
@@ -1486,6 +1490,17 @@ class SchwabV2Strategy:
             trail = float(state.atr_trail or 0.0)
         if st == "short" and trail > 0.0:
             if not state.resting_active:
+                # ESTABLISHED-SHORT gate (2026-07-23, the SKYQ lesson): only rest once the purple line
+                # is a REAL, SETTLED downtrend -- the ATR must have been SHORT for >= min_short_bars
+                # consecutive bars. A 1-bar short in a whipsaw (SKYQ ripped +9% then chopped, flipping
+                # repeatedly) is NOT a setup; wait for it to establish before resting.
+                try:
+                    _sa = atr_signal.get("state_age") if atr_signal else None
+                    state_age = int(_sa) if _sa is not None else int(state.atr_state_age or 0)
+                except (TypeError, ValueError):
+                    state_age = int(state.atr_state_age or 0)
+                if state_age < self._resting_min_short_bars:
+                    return
                 # LIVE-BAR gate: only rest on the CURRENT purple line -- never on a warmup-replayed /
                 # stale bar. On a mid-session CONFIRM the bot replays hours of old bars; without this
                 # we rested off ~3h-old levels the instant SKYQ confirmed (2026-07-23). Require the

@@ -28,20 +28,21 @@ def _strat(resting=True, **overrides):
     return SchwabV2Strategy(Settings(**kwargs))
 
 
-def _sig(*, trail=9.5, state="short"):
+def _sig(*, trail=9.5, state="short", state_age=3):
     return {"touch": False, "touch_price": None, "flip": None, "flip_level": None,
-            "trail": trail, "loss": 0.5, "state": state, "state_age": 3}
+            "trail": trail, "loss": 0.5, "state": state, "state_age": state_age}
 
 
-def _tick(strat, state, *, trail, ts=IN_WIN, st="short", in_window=True, now_ms=1_000_000):
+def _tick(strat, state, *, trail, ts=IN_WIN, st="short", in_window=True, now_ms=1_000_000, state_age=3):
     """One bar through the resting manager; returns the drafts it queued this bar. The RTH window is
     injected via `in_window` (wall-clock, not the bar ts). `now_ms` drives the silence-on-fill grace
-    (also wall-clock, injectable). Default now_ms is non-zero so a flip stamp is truthy."""
+    (also wall-clock, injectable). `state_age` = bars the ATR has held its state (established-short gate;
+    default 3 = established, so it does not gate the other tests)."""
     strat._resting_in_window = lambda now=None: in_window
     strat._now_ms = lambda: now_ms
     state.bars.append(OHLCVBar(timestamp_ms=ts, open=trail + 1, high=trail + 1.2,
                                low=trail - 0.2, close=trail + 0.9, volume=10_000))
-    strat._cw_v2_resting_track(state, _sig(trail=trail, state=st))
+    strat._cw_v2_resting_track(state, _sig(trail=trail, state=st, state_age=state_age))
     return strat.drain_pending_intents()
 
 
@@ -143,6 +144,25 @@ def test_does_not_place_on_a_stale_replayed_bar() -> None:
     assert st.resting_active is False
     out = _tick(strat, st, trail=9.50, now_ms=IN_WIN + 1000)         # bar 1s old -> live -> place
     assert len(out) == 1 and out[0].intent_type == "open"
+
+
+def test_does_not_rest_until_short_is_established() -> None:
+    """⭐ ESTABLISHED-SHORT gate (the SKYQ lesson). Don't rest on a fresh 1-bar short in a whipsaw --
+    only once the ATR has been short for >= min_short_bars (3) consecutive bars (a settled downtrend)."""
+    strat = _strat()
+    st = strat.watchlist_state("TEST")
+    assert _tick(strat, st, trail=9.50, state_age=1) == []           # just flipped short -> too fresh
+    assert _tick(strat, st, trail=9.50, state_age=2) == []           # 2 bars -> still not established
+    out = _tick(strat, st, trail=9.50, state_age=3)                  # 3 bars -> established -> place
+    assert len(out) == 1 and out[0].intent_type == "open"
+
+
+def test_min_short_bars_is_tunable() -> None:
+    """Pin the threshold VALUE: at 5, a 3-bar-old short must NOT place yet."""
+    strat = _strat(strategy_schwab_1m_v2_cw_v2_resting_entry_min_short_bars=5)
+    st = strat.watchlist_state("TEST")
+    assert _tick(strat, st, trail=9.50, state_age=3) == []           # 3 < 5 -> not established, HOLD
+    assert _tick(strat, st, trail=9.50, state_age=5)[0].intent_type == "open"
 
 
 # --------------------------------------------------------------- HOLD-THROUGH-FLIP + SILENCE-ON-FILL
