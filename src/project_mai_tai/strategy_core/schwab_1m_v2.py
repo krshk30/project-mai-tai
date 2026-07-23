@@ -216,6 +216,11 @@ class SymbolState:
     #                                            discriminator: arm_ts < boot => RECONSTRUCTED (mark used);
     #                                            arm_ts >= boot => a LIVE post-boot flip (legit). Race-free
     #                                            by construction — no wall-clock, no latch.
+    # CW-v2 RESTING flip-entry (INERT unless strategy_schwab_1m_v2_cw_v2_resting_entry_enabled). A
+    # resting buy-stop-limit tracks the ATR SHORT trail; NO-OVERLAP replace (cancel one bar, place the
+    # next => never two live buy orders). Reset with the other cw_* at the 04:00-ET anchor.
+    resting_active: bool = False               # we believe a resting entry order is live at the broker
+    resting_level: float = 0.0                 # the stop price (the ATR line) the resting order sits at
 
 
 @dataclass
@@ -456,6 +461,20 @@ class SchwabV2Strategy:
             getattr(self.settings, "strategy_schwab_1m_v2_cw_v2_reclaim_enabled", False)
         )
         self._cw_v2_max_entries_per_flip = 2 if self._cw_v2_reclaim_enabled else 1
+        # CW-v2 ENTRY MODE (two independent flags; docs/v2-resting-flip-entry-design.md). Reactive =
+        # the current wait-3 MARKET break (default ON = byte-identical). Resting = a buy-stop-limit at
+        # the ATR trail line (+band) that fills AT the cross -> OTOCO (default OFF = inert). The
+        # resting manager appends place/cancel drafts to `_pending_intents`, drained by the bot loop.
+        self._reactive_entry_enabled = bool(
+            getattr(self.settings, "strategy_schwab_1m_v2_cw_v2_reactive_entry_enabled", True)
+        )
+        self._resting_entry_enabled = bool(
+            getattr(self.settings, "strategy_schwab_1m_v2_cw_v2_resting_entry_enabled", False)
+        )
+        self._resting_entry_band_pct = float(
+            getattr(self.settings, "strategy_schwab_1m_v2_cw_v2_resting_entry_band_pct", 0.5) or 0.5
+        )
+        self._pending_intents: list[TradeIntentDraft] = []
         # P1.3 + P1.4 armed-segment safety — ONE flag gates BOTH the boot-mark (P1.3) and the
         # boot-hold (they are one change; splitting them creates a cell where the hold reads every
         # reconstructed segment as dangerous and holds forever). OFF => byte-identical.
@@ -826,6 +845,10 @@ class SchwabV2Strategy:
             state.cw_segment_high = 0.0
             state.cw_v2_emit_claimed = False
             state.cw_v2_emit_ms = 0
+            # Resting flip-entry: a live resting order is already cancelled at 16:00 (out-of-window),
+            # so at the 04:00 anchor this only zeroes the strategy's view for the new session.
+            state.resting_active = False
+            state.resting_level = 0.0
 
         # --- modified true range (needs prior SESSION bar + SMA(high-low, period)) ---
         hl_cur = cur.high - cur.low
@@ -1253,6 +1276,12 @@ class SchwabV2Strategy:
         cooldown). No-op unless the sub-flag is on. Returns a market-buy open draft or None."""
         if not self._cw_v2_enabled:
             return None
+        if not self._reactive_entry_enabled or state.resting_active:
+            # Reactive entry off, OR a resting buy-stop-limit is already live for this symbol.
+            # The latter makes "both flags on" resting-primary + reactive-fallback (no double-fill:
+            # the reactive MARKET stands down while the resting order works). Byte-identical when
+            # reactive is on and no resting order exists (the default).
+            return None
         if self._entries_held:
             # Boot-hold (P1.3+P1.4): suppress ALL entries until the bot's one-time verify confirms
             # zero reconstructed-uncapped segments and releases. Never releases here; the bot owns
@@ -1338,6 +1367,98 @@ class SchwabV2Strategy:
             },
         )
 
+    # ------------------------------------------------------- CW-v2 RESTING flip-entry
+    _RESTING_RATCHET_FRAC = 0.002   # replace only when the ATR trail moves >= 0.2% (limit churn)
+
+    def _resting_in_window(self, ts_ms: int) -> bool:
+        """RTH-first for the resting entry: 10:00-16:00 ET (regular session minus the 09:30-10:00 ORB
+        window the reactive entry also skips). A resting OTOCO uses session=NORMAL, so pre/post-market
+        it would queue to the open -- mirror the OMS RTH emit gate and keep it regular-session."""
+        et = datetime.fromtimestamp(ts_ms / 1000.0, UTC).astimezone(EASTERN_TZ)
+        minutes = et.hour * 60 + et.minute
+        return 10 * 60 <= minutes < 16 * 60
+
+    def _queue_resting_place(self, state: SymbolState, line: float) -> None:
+        limit = line * (1.0 + self._resting_entry_band_pct / 100.0)
+        state.resting_active = True
+        state.resting_level = line
+        logger.info(
+            "[V2-RESTING-PLACE] %s stop=%.4f limit=%.4f (band %.2f%%)",
+            state.symbol, line, limit, self._resting_entry_band_pct,
+        )
+        self._pending_intents.append(TradeIntentDraft(
+            symbol=state.symbol, side="buy", intent_type="open",
+            quantity=Decimal(str(self._atr_qty)),
+            reason="schwab_1m_v2 ATR Flip CW-v2-resting",   # keeps the ATR-only belt (has 'ATR Flip')
+            metadata={
+                "path": "ATR Flip", "atr_variant": "CW-v2-resting",
+                "order_type": "STOP_LIMIT",
+                "reference_price": f"{line:.4f}", "entry_price": f"{line:.4f}",
+                "stop_price": f"{line:.4f}", "limit_price": f"{limit:.4f}",
+                "cw_flip_level": f"{line:.4f}", "resting_entry": "true",
+                "source": "schwab_1m_v2", "strategy_version": STRATEGY_VERSION,
+            },
+        ))
+
+    def _queue_resting_cancel(self, state: SymbolState, *, reason: str) -> None:
+        logger.info("[V2-RESTING-CANCEL] %s reason=%s level=%.4f",
+                    state.symbol, reason, state.resting_level)
+        state.resting_active = False
+        state.resting_level = 0.0
+        self._pending_intents.append(TradeIntentDraft(
+            symbol=state.symbol, side="buy", intent_type="cancel",
+            quantity=Decimal(str(self._atr_qty)),
+            reason="schwab_1m_v2 resting-entry cancel",
+            metadata={"resting_entry_cancel": "true", "reason": reason,
+                      "source": "schwab_1m_v2", "strategy_version": STRATEGY_VERSION},
+        ))
+
+    def _cw_v2_resting_track(self, state: SymbolState, atr_signal: dict | None) -> None:
+        """Maintain a resting buy-stop-limit at the ATR SHORT trail (place / no-overlap replace /
+        cancel). No-op unless the resting flag is on. Appends AT MOST ONE draft per bar to
+        `_pending_intents` (never a cancel AND a place together) => never two live buy orders =>
+        no double-fill/oversell. Replaces fire on the DOWN-bars that ratchet the short trail; the
+        fill lands on the UP-cross when the order is resting. Cancel resolves at the OMS by the
+        symbol-fallback (a flat symbol has exactly one open order = this one)."""
+        if not (self._resting_entry_enabled and self._cw_v2_enabled):
+            return
+        if self._entries_held:   # boot-hold suppresses all entries
+            return
+        if state.position_qty != 0:
+            # A fill (or any held position) closed the loop -> the OTOCO exit owns it; drop the flag.
+            if state.resting_active:
+                state.resting_active = False
+                state.resting_level = 0.0
+            return
+        st = str(atr_signal.get("state")) if atr_signal else str(state.atr_state or "")
+        try:
+            raw = atr_signal.get("trail") if atr_signal else None
+            trail = float(raw) if raw else float(state.atr_trail or 0.0)
+        except (TypeError, ValueError):
+            trail = float(state.atr_trail or 0.0)
+        in_window = bool(state.bars) and self._resting_in_window(int(state.bars[-1].timestamp_ms))
+        setup_ok = st == "short" and trail > 0.0 and in_window
+        if not setup_ok:
+            # Not short / out of window (incl. the flip bar, state->long): retire any resting order.
+            # If it already filled, the cancel harmlessly rejects and position_qty carries the trade.
+            if state.resting_active:
+                self._queue_resting_cancel(state, reason="setup_gone")
+            return
+        if not state.resting_active:
+            self._queue_resting_place(state, trail)
+            return
+        if (state.resting_level > 0.0
+                and abs(trail - state.resting_level) / state.resting_level >= self._RESTING_RATCHET_FRAC):
+            # Ratchet: cancel this bar; next bar (resting_active False) re-places at the new level.
+            self._queue_resting_cancel(state, reason="ratchet")
+
+    def drain_pending_intents(self) -> list[TradeIntentDraft]:
+        """Return + clear the resting-entry place/cancel drafts queued this bar. The bot loop emits
+        them after on_bar (a cancel-safe direct emit). Empty unless the resting entry is on."""
+        out = self._pending_intents
+        self._pending_intents = []
+        return out
+
     def cw_armed_segments(self) -> list[dict]:
         """Read-only snapshot of every currently-armed CW-v2 segment (P1.3/P1.4 observability).
 
@@ -1391,6 +1512,11 @@ class SchwabV2Strategy:
         # forming-bar-low reset) on every new bar, independent of flat/cooldown/warmup. No-op
         # unless the sub-flag is on. The entry itself fires intrabar in on_quote.
         self._cw_v2_track(state, atr_signal)
+
+        # CW-v2 RESTING flip-entry: manage the resting buy-stop-limit that tracks the ATR short
+        # trail (place / no-overlap replace / cancel). No-op unless the resting flag is on; appends
+        # place/cancel drafts to _pending_intents, which the bot loop drains after on_bar.
+        self._cw_v2_resting_track(state, atr_signal)
 
         # Confirmed-window (variant CW) bar-close flip EXIT signal: when CW is on and we
         # HOLD a position, a bar that closes below the ATR trail (flip == "SELL") is the

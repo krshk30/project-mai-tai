@@ -1339,6 +1339,19 @@ class SchwabV2BotService:
             logger.exception("schwab_1m_v2 on_bar failed for %s", symbol)
             return
         await self._maybe_emit(draft)
+        # Drain the RESTING flip-entry place/cancel drafts the strategy queued this bar. Emit them
+        # DIRECTLY (bypassing _maybe_emit's reactive-only EH/entry-window gates): the resting manager
+        # already gates a place to RTH + short + in-window, and a cancel must NEVER be gated. No-op
+        # unless the resting entry flag is on (drain() returns []).
+        drain = getattr(self.strategy, "drain_pending_intents", None)
+        if callable(drain) and self.intent_emitter is not None:
+            for d in drain():
+                try:
+                    await self.intent_emitter.emit(d)
+                except Exception:
+                    logger.exception(
+                        "schwab_1m_v2 resting-entry emit failed for %s", getattr(d, "symbol", "?")
+                    )
 
     async def _handle_quote(self, symbol: str, quote: Quote) -> None:
         now = datetime.now(UTC)

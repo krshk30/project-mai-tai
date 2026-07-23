@@ -863,6 +863,28 @@ class OmsRiskService:
                 await self._publish_order_event(orb_abandon_event)
                 return [*pre_submit_events, orb_abandon_event]
 
+            # RESTING-ENTRY dedup (restart safety): a v2 resting buy-stop-limit place is SKIPPED if an
+            # open resting entry already exists for this symbol -- e.g. one survived a restart while
+            # the strategy lost its in-memory resting flag and re-placed. Never two live resting orders
+            # => never a double-fill/oversell. The strategy re-emits every bar; the existing order is
+            # managed via the ratchet/cancel path. Non-resting intents are unaffected (byte-identical).
+            if str(event.payload.metadata.get("resting_entry", "")).lower() == "true" and \
+                    self._resting_entry_already_open(
+                        session, event.payload.broker_account_name, event.payload.symbol):
+                self.store.mark_intent_status(intent, "rejected")
+                order_event = self._build_rejected_event(
+                    event, intent.id, reason="resting entry already open (restart dedup)"
+                )
+                session.commit()
+                for prior_event in pre_submit_events:
+                    await self._publish_order_event(prior_event)
+                await self._publish_order_event(order_event)
+                self.logger.info(
+                    "[V2-RESTING-DEDUP] %s %s -- open resting entry exists; skipped the duplicate place",
+                    event.payload.broker_account_name, event.payload.symbol,
+                )
+                return [*pre_submit_events, order_event]
+
             # Piece: attach native-OCO bracket metadata to the v2 entry (flag-gated; no-op /
             # byte-identical when off or non-v2-entry). Mutates event.payload.metadata in place
             # so the same dict copy below carries the bracket fields to the adapter.
@@ -3993,6 +4015,19 @@ class OmsRiskService:
             reason_detail,
         )
         return self._build_rejected_event(event, intent.id, reason=reason_code)
+
+    def _resting_entry_already_open(self, session, account_name: str, symbol: str) -> bool:
+        """True if an OPEN order tagged `resting_entry` already exists for (account, symbol) -- the
+        restart-dedup guard so the v2 resting flip-entry can never place a second live buy order."""
+        account = session.scalar(select(BrokerAccount).where(BrokerAccount.name == account_name))
+        if account is None:
+            return False
+        want = str(symbol).upper()
+        for order in self.store.list_open_orders(session, broker_account_ids=[account.id]):
+            if (str(order.symbol).upper() == want
+                    and str((order.payload or {}).get("resting_entry", "")).lower() == "true"):
+                return True
+        return False
 
     def _apply_v2_oco_bracket_entry(self, *, event: TradeIntentEvent) -> None:
         """Attach native-OCO bracket metadata to a v2 buy-open so the Schwab adapter places a
