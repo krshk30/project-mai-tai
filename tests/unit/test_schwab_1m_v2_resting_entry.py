@@ -132,6 +132,19 @@ def test_stop_leq_ask_guard_fails_open_without_a_quote() -> None:
     assert _tick(strat, st, trail=9.50)[0].intent_type == "open"
 
 
+def test_does_not_place_on_a_stale_replayed_bar() -> None:
+    """⭐ LIVE-BAR gate (the SKYQ lesson). Never rest on a warmup-replayed / stale bar -- only on the
+    CURRENT live purple line. On a mid-session CONFIRM the bot replays hours of old bars; without this
+    we rested off ~3h-old levels the instant SKYQ confirmed."""
+    strat = _strat()
+    st = strat.watchlist_state("TEST")
+    stale_now = IN_WIN + 10 * 60 * 1000                              # wall-clock 10 min after the bar ts
+    assert _tick(strat, st, trail=9.50, now_ms=stale_now) == []      # bar is stale -> NO place
+    assert st.resting_active is False
+    out = _tick(strat, st, trail=9.50, now_ms=IN_WIN + 1000)         # bar 1s old -> live -> place
+    assert len(out) == 1 and out[0].intent_type == "open"
+
+
 # --------------------------------------------------------------- HOLD-THROUGH-FLIP + SILENCE-ON-FILL
 def test_holds_the_order_through_the_up_flip() -> None:
     """⭐ HOLD-THROUGH-FLIP. The up-flip IS the fill, so state->long must NOT cancel the resting order

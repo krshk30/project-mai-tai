@@ -469,6 +469,12 @@ class Settings(BaseSettings):
     # position-sync lag that spammed ~30 rejected brackets after the NVVE fill. If still flat after the
     # grace, the flip did not fill us -> retire and re-arm on the next short segment.
     strategy_schwab_1m_v2_cw_v2_resting_entry_flip_grace_secs: float = 30.0
+    # LIVE-BAR gate (2026-07-23, the SKYQ lesson): only rest on the CURRENT purple line -- never on a
+    # warmup-replayed / stale bar. When a symbol confirms mid-session the bot replays hours of old bars;
+    # placing off those rested SKYQ at ~3h-old levels the instant it confirmed. Skip the place unless the
+    # bar driving it is within this many seconds of wall-clock (live). Quiet-but-current names still
+    # qualify; warmup-replayed (hours-old) bars do not.
+    strategy_schwab_1m_v2_cw_v2_resting_entry_max_bar_age_secs: float = 180.0
     strategy_macd_30s_reclaim_excluded_symbols: str = "JEM,CYCN,BFRG,UCAR,BBGI"
     # Maximum age (seconds) for the `scanner_confirmed_last_nonempty` snapshot
     # to be eligible for startup restore. Older snapshots are skipped, so
