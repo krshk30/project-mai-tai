@@ -13,8 +13,9 @@ from project_mai_tai.settings import Settings
 from project_mai_tai.strategy_core.schwab_1m_v2 import OHLCVBar, SchwabV2Strategy
 
 _ET = ZoneInfo("America/New_York")
-IN_WIN = int(datetime(2026, 7, 10, 11, 0, tzinfo=_ET).timestamp() * 1000)     # 11:00 ET (RTH, post-ORB)
-PRE_WIN = int(datetime(2026, 7, 10, 9, 45, tzinfo=_ET).timestamp() * 1000)    # 09:45 ET (ORB window)
+IN_WIN = int(datetime(2026, 7, 10, 11, 0, tzinfo=_ET).timestamp() * 1000)     # 11:00 ET (RTH)
+OPEN_WIN = int(datetime(2026, 7, 10, 9, 45, tzinfo=_ET).timestamp() * 1000)   # 09:45 ET (in the 09:30-10:00 open)
+PRE_WIN = int(datetime(2026, 7, 10, 8, 0, tzinfo=_ET).timestamp() * 1000)     # 08:00 ET (pre-market, OUT of window)
 
 
 def _strat(resting=True, **overrides):
@@ -121,7 +122,16 @@ def test_cancels_when_out_of_window() -> None:
 def test_does_not_place_out_of_window() -> None:
     strat = _strat()
     st = strat.watchlist_state("TEST")
-    assert _tick(strat, st, trail=9.50, ts=PRE_WIN) == []            # never rest pre-10:00 / post-16:00
+    assert _tick(strat, st, trail=9.50, ts=PRE_WIN) == []            # never rest pre-market / post-16:00
+
+
+def test_places_in_the_open_window() -> None:
+    """The resting entry RUNS from 09:30 (unlike the reactive entry, which skips 09:30-10:00) --
+    faithful to the 9-day study + the band-limit handles the volatile open. Pins the window change."""
+    strat = _strat()
+    st = strat.watchlist_state("TEST")
+    out = _tick(strat, st, trail=9.50, ts=OPEN_WIN)                  # 09:45 is now IN window
+    assert len(out) == 1 and out[0].intent_type == "open"
 
 
 # --------------------------------------------------------------------------- fill closes the loop
