@@ -475,6 +475,10 @@ class Settings(BaseSettings):
     # bar driving it is within this many seconds of wall-clock (live). Quiet-but-current names still
     # qualify; warmup-replayed (hours-old) bars do not.
     strategy_schwab_1m_v2_cw_v2_resting_entry_max_bar_age_secs: float = 180.0
+    # ESTABLISHED-SHORT gate (2026-07-23, SKYQ): only rest once the ATR has been SHORT for >= this many
+    # consecutive bars -- a REAL settled downtrend, not a 1-bar short in a whipsaw. Selectivity: skip
+    # violent two-sided names (SKYQ ripped +9% then chopped) that flip repeatedly. Tunable without code.
+    strategy_schwab_1m_v2_cw_v2_resting_entry_min_short_bars: int = 3
     strategy_macd_30s_reclaim_excluded_symbols: str = "JEM,CYCN,BFRG,UCAR,BBGI"
     # Maximum age (seconds) for the `scanner_confirmed_last_nonempty` snapshot
     # to be eligible for startup restore. Older snapshots are skipped, so
