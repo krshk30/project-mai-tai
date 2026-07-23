@@ -258,7 +258,7 @@ class Settings(BaseSettings):
     # MUST be explicit. Was "live:orb" -- ORB's OWN live account -- which contradicts the
     # 07-10 decision to use a dedicated live:v2_webull (ORB and v2 trade the same watchlist
     # through different exit logic; one account cannot hold two open managed rows for the
-    # same symbol). Unset -> _maybe_mirror_v2_open no-ops with a warning.
+    # same symbol). Unset -> _mirror_v2_fill_to_webull no-ops with a warning.
     strategy_schwab_1m_v2_webull_account_name: str = ""
     # Cold-start warmup lookback (calendar days). The first poll per symbol
     # (since=0) requests this many days back so the indicator-seed batch
