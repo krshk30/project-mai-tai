@@ -17,6 +17,59 @@
 
 ---
 
+## ✅ 2026-07-22 (PM/EVE) — OCO LIVE + fixes · Webull STEP-1 (Ph 0–2) · exit R&D SETTLED · RESTING flip-entry DEPLOYED
+
+Long session. The morning's "code-complete, inert" OCO went **fully LIVE and validated on Schwab v2**, a
+big entry/exit R&D arc landed, and a **new resting flip-entry strategy was built and deployed live** for
+tomorrow. All flag-gated; kill-switches noted.
+
+**🏦 OCO — now LIVE on Schwab v2 (item-4 proven on real managed positions: KSCP win, LABT, SMCX):**
+- **#510 decimal fix** — ADVB firm-rejected (`>$1 max 2dp`); `_schwab_round` (2dp>$1/4dp≤$1) in emit+adapter.
+- **#512 RTH gate DEPLOYED** — no OCO emit pre/post-market (session:NORMAL is 09:30–16:00; v2 enters 07:00–16:30).
+- **⚠→✅ resolve-grace was a FALSE GREEN** — the 90s grace ≪ Schwab's ~6min OCO→positions propagation, so
+  EVERY fill-resolution fired **3 rejected closes** (harmless self-heal, but noise + latent oversell). The
+  positions-endpoint fix (#513) was NOT fail-open (traded away the reject-probe). **#514 (fill-status)
+  DEPLOYED LIVE + flag ON** — closes the phantom row off the broker's OWN filled-leg execution record
+  (`fetch_oco_resolved_by_fill_symbols`, recency-gated) → 0 rejects, 0 ERNA; expiry/cancel-held skipped.
+- Live flags ON: `SCHWAB_NATIVE_BRACKET_ENABLED`, `OMS_NATIVE_OCO_STAND_DOWN_ENABLED`,
+  `OMS_V2_EMIT_NATIVE_OCO_BRACKET_ENABLED`, `OMS_NATIVE_OCO_RESOLVE_FLAT_RECONCILE_ENABLED`.
+
+**🟣 Webull STEP-1 — Phases 0–2 built (consumer = the v2-Webull MIRROR, same OCO+software methodology):**
+- **#515 adapter combo write-side** (MASTER+STOP_PROFIT+STOP_LOSS, shape from Webull's OFFICIAL SDK sample —
+  the lost 07-20 artifact), **#516 preview probe**, **#517 STEP-1 harness + runbook** — all flag-off inert.
+- **Preview PASSED off-hours** (LIMIT + MARKET master accepted; buy-STOP master 417s = Fork A confirmed). The
+  v2-Webull MIRROR is already code-complete (flag-off, never deployed). **Phase 3 (attended qty-1 live gate on
+  live:orb) is the remaining Webull work.** [[project_mai_tai_oco_bracket_build]]
+
+**🔬 EXIT/ENTRY R&D (all real Schwab bars + Polygon quotes, honest fills) — the exit is SETTLED:**
+- **The live +2% OCO target / −5% stop is the BEST exit tested** (07-21 & 07-22): it beats trailing (any bank
+  split) AND −3%/−4% stops on median, mean, win% both days. Trailing gives back the pop on fades; a −3% stop
+  whipsaws OUT of winners (these names dip ±3–4% then recover). The wide stop is needed b/c the ENTRY buys into
+  noise. [[project_mai_tai_flip_entry_stoplimit]]
+- **⭐ FLIP-ENTRY = the first v2 entry that isn't clearly dead:** buy AT the ATR cross via a resting
+  buy-stop-LIMIT (0.5% band) → OTOCO. 9-day real-data: in-window +0.27%; 0.5% band → 92% fill, 73% win,
+  **+0.33%**. Slippage is the crux (market-stop spikes >5% go neg; the stop-limit fills the pullback clean).
+  Operator: validate LIVE qty-2, not a backtest engine (live surfaces the real fill mechanics).
+
+**🏗️ RESTING FLIP-ENTRY — BUILT + DEPLOYED LIVE tonight (#518/#519/#520/#521), a NEW additive entry MODE:**
+- Two independent flags: `..._cw_v2_reactive_entry_enabled` (default ON = today), `..._cw_v2_resting_entry_enabled`
+  (default OFF), `..._cw_v2_resting_entry_band_pct` (0.5). Strategy manages a resting buy-stop-limit tracking the
+  ATR short trail (place / **no-overlap replace** on ratchet / cancel), routed through the STOP_LIMIT-master
+  OTOCO. Reactive stands down while a resting order is live (both-on = resting-primary + reactive-fallback).
+  Restart-dedup guards duplicates; OTOCO = never naked. 12 tests + 2 safety mutations.
+- **Schwab STOP_LIMIT-master preview PASSED** (HTTP 200/0 rejects). **DEPLOYED ~22:42 ET, BOTH flags ON**, window
+  **09:30–16:00** (operator-corrected from 10:00 — faithful to the study, band handles the open). VPS 694c5e6;
+  OMS + v2-bot restarted flat; both active/0-errors; resting=True reactive=True band=0.5. **KILL = drop
+  `..._RESTING_ENTRY_ENABLED=true` + restart.** Tomorrow: reactive pre-market, resting primary 09:30–16:00 qty-2.
+  WATCH: `[V2-RESTING-PLACE]`/`[V2-RESTING-CANCEL]` (schwab-1m-v2.log), `[V2-OCO-EMIT] ... type=STOP_LIMIT`
+  (oms.log), the OTOCO fills, and the REAL slippage vs the modeled +0.16%. Design: `docs/v2-resting-flip-entry-design.md`.
+
+**📓 Also:** `DAILY-STRATEGY-LOG.md` (local) now has the 07-22 live day in the A/B format + a TOS-executed flag
+(INLF/ZCMD = Schwab-restricted → Webull-only; INLF would've been +4.85%). TZ gotcha saved: bash `TZ=… date`
+returns UTC on the box — use PowerShell/commit-stamps for ET. [[project_mai_tai_flip_entry_stoplimit]]
+
+---
+
 ## ✅ 2026-07-22 — OCO BUILD CODE-COMPLETE (all flag-gated OFF) · morning open-items CLEARED
 
 **All PRs merged; ZERO open PRs at session end.** The OCO bracket workstream is now code-complete
