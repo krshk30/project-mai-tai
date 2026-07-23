@@ -17,6 +17,60 @@
 
 ---
 
+## ⭐ 2026-07-23 (EVENING/EOD) — Webull mirror-on-fill DEPLOYED; BOTH entry modes ON for 07-24; backtest fidelity issue named
+
+**This supersedes the "resting-only / reactive-OFF" state in the block below.** Live state NOW: **v2 ACTIVE,
+SHA `f07159f`, account FLAT, ORB bot OFF** (operator: keep live:orb clean for the mirror test).
+
+**🅰 BOTH entry modes ON for 07-24** (operator-requested): `REACTIVE_ENTRY_ENABLED=true` +
+`RESTING_ENTRY_ENABLED=true`. Safe by design (`schwab_1m_v2.py:1297` `if not reactive or state.resting_active:
+return`) = **resting-primary + reactive-fallback**, no double-fill; OMS one-position-per-symbol backstop.
+Verified via live Settings load (confirmed_window/reactive/resting all True, band 0.5, min_short_bars 3).
+
+**🅱 Webull mirror-on-fill DEPLOYED (PR #531, merged+live).** Root-caused the mirror's every-fill reject:
+(1) it copied the Schwab entry VERBATIM incl `bracket_entry_type=STOP_LIMIT` → Webull Fork-A reject; (2) it
+fired at PLACEMENT not FILL (a resting order rests until the cross, so a submit-time market mirror front-runs).
+**FIX = mirror on the FILL** (`sync_broker_orders`, once per fill) as **MARKET master + native-OCO combo**
+(collapse STOP_LIMIT→MARKET, drop resting stop, keep +2%/−5% exits) — the TurboTrader shape Webull actually
+supports. Decisions LOCKED: **master=MARKET** (changeable), **exits anchored to the WEBULL fill via live-ask**.
+Old verbatim `_maybe_mirror_v2_open` deleted; 10 tests + 524 green; I reviewed the diff. **Mirror ARMED on
+`live:orb`** (shared, collision-guarded) — **tomorrow's first v2 RTH fill auto-places a LIVE MARKET+OCO = the
+attended test.** Design: `docs/webull-mirror-on-fill-design.md`. [[project_mai_tai_resting_entry_out_of_window_bug]]
+
+**🅲 CI ruff-0.16.0 repo-wide break** — the floating `ruff>=0.6,<1.0` pin grabbed the day-of 0.16.0 release
+(changed I001, failed ~140 untouched files). Pinned `<0.16` in #531. Full 0.16 import-sort migration deferred.
+[[project_mai_tai_ruff_016_ci_break]]
+
+**Real 07-23 trades (2, both RESTING):** **NVVE 8.40→8.56 = +1.90%/+$0.32, +2% OCO TARGET, VERIFIED.** **SKYQ
+5.73→≈5.64 ≈ −1.57%, INFERRED** — ⛔ NOT a clean OCO-target cycle (I over-called that): tape never touched
+target 5.85 or stop 5.44, went flat at the 16:00 RTH close; **the broker OCO exit fill is NOT persisted in our
+DB** → real exit price unrecoverable. Two follow-ups: **persist the OCO resolution price**; **what closed SKYQ
+at 16:00** if neither leg hit.
+
+**🔧 BACKTEST FIDELITY — the chronic problem, now named + a plan.** A "run today's trades" ask surfaced THREE
+backtest-vs-live drifts in one sitting (operator lost trust): **3% ORB band vs live 0.5%** (chased JEM to 5.27
+vs 5.16), **trailing exit vs live OCO**, **post-market entries vs 16:00 window**. Root cause: the backtest
+**re-implements** the strategy so its params drift. **FIX (LATER, operator-approved, design-first): make the
+backtest ENGINE replay the LIVE code + config** (`_cw_v2_resting_track` + OMS OCO) so it can't diverge.
+[[project_mai_tai_backtest_fidelity_replay]]
+
+**📊 Corrected 07-23 backtest (0.5% band + OCO + all sessions, Schwab feed, vol-floor gated):** 3 live-qualifying
+fills — **LGCL#1 +2.00% (pre-mkt), WBUY −5.00% (pre-mkt), SKYQ#1 −1.74% (RTH, close-at-bell)** → 33% win,
+**median −1.74%**. Misses (band declined the chase, by design): JEM (+1.7% gap), LGCL#2, SKYQ#2. Key facts:
+**most of 07-23's ATR signal was PRE-MARKET** (only SKYQ was RTH — reopens the "start at 07:00?" window
+question); backtest SKYQ −1.74% ≈ real −1.57% (model reconciles when set up right); **NVVE undetectable in the
+sim** (32-bar sparse Schwab feed = the real winner invisible). ⚠ `DAILY-STRATEGY-LOG.md` 07-23 block was
+written from the BUGGY pass — needs correcting/replacing (operator undecided; hold until the replay harness).
+
+**⛔ OPEN / PENDING (07-24):** (1) **attended Webull mirror test** — watch the first RTH fill mirror to live:orb;
+merge-nothing-else. (2) **replace-throttle → per-1min** (deferred behind Webull). (3) **rename reason label**
+"ATR Flip"→resting/reactive-specific. (4) **replay-harness backtest** (design-first, LATER). (5) **persist OCO
+resolution price** + **SKYQ 16:00-close mechanism**. (6) **pre-market window decision** (07:00 start?). (7) fix
+the DAILY-STRATEGY-LOG 07-23 block. (8) alpaca-cred warnings (benign default-adapter path, deferred). To KILL
+the mirror: `WEBULL_MIRROR_ENABLED=false` + restart. To trade tomorrow: nothing — already ARMED.
+
+---
+
 ## ✅ 2026-07-23 — RESTING FLIP-ENTRY's FIRST LIVE DAY: fully reworked across 6 PRs; first fill NVVE +$0.32 (protected)
 
 The resting flip-entry ran **live resting-only** (reactive OFF) for the first time. The live run surfaced a
