@@ -115,6 +115,22 @@ def test_flag_on_without_bracket_metadata_stays_single_leg() -> None:
     assert adapter._is_bracket_request(plain) is False
 
 
+def test_single_leg_stop_limit_carries_both_stop_and_limit() -> None:
+    """⭐ REGRESSION (07-23): the single-leg builder set `price` only for LIMIT and `stopPrice` only
+    for STOP, so a plain STOP_LIMIT (the resting flip-entry's out-of-window fallback) fell through
+    BOTH and went to Schwab price-less -> "Limit price cannot be zero for limit orders." Both the
+    trigger and the fill cap must be serialized."""
+    adapter = _adapter(bracket_enabled=True)
+    req = _bracket_request(metadata={"order_type": "STOP_LIMIT",
+                                     "stop_price": "0.7330", "limit_price": "0.7366"})
+    payload = adapter._build_order_payload(req)
+    assert payload["orderStrategyType"] == "SINGLE"      # single-leg fallback, not a bracket
+    assert payload["orderType"] == "STOP_LIMIT"
+    assert payload["stopPrice"] == 0.7330                # the trigger
+    assert payload["price"] == 0.7366                    # the fill cap — NOT zero (the bug)
+    assert "childOrderStrategies" not in payload
+
+
 @pytest.mark.parametrize(
     "missing_key",
     ["stop_price", "bracket_target_price", "bracket_stop_price"],

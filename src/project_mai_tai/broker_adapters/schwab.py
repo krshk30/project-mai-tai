@@ -886,6 +886,14 @@ class SchwabBrokerAdapter:
             payload["price"] = float(Decimal(str(limit_price)))
         if order_type == "STOP" and stop_price:
             payload["stopPrice"] = float(Decimal(str(stop_price)))
+        if order_type == "STOP_LIMIT" and stop_price and limit_price:
+            # A single-leg STOP_LIMIT needs BOTH the trigger (stopPrice) and the fill cap (price).
+            # Missing before this branch: STOP_LIMIT fell through LIMIT and STOP, so the order went to
+            # Schwab price-less => "Limit price cannot be zero for limit orders" (the resting flip-entry
+            # out-of-window rejects, 07-23). The bracket path (_build_bracket_payload) already set both;
+            # this closes the single-leg fallback path so a plain STOP_LIMIT can never go malformed.
+            payload["stopPrice"] = float(Decimal(str(stop_price)))
+            payload["price"] = float(Decimal(str(limit_price)))
         return payload
 
     def _is_bracket_request(self, request: OrderRequest) -> bool:
