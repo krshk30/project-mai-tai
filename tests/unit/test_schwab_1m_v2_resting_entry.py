@@ -33,8 +33,11 @@ def _sig(*, trail=9.5, state="short"):
             "trail": trail, "loss": 0.5, "state": state, "state_age": 3}
 
 
-def _tick(strat, state, *, trail, ts=IN_WIN, st="short"):
-    """One bar through the resting manager; returns the drafts it queued this bar."""
+def _tick(strat, state, *, trail, ts=IN_WIN, st="short", in_window=True):
+    """One bar through the resting manager; returns the drafts it queued this bar. The RTH gate is
+    now WALL-CLOCK (not the bar ts), so the window is injected explicitly via `in_window` -- the bar
+    `ts` no longer controls it (that was the bug: a stale/replayed in-window bar fired pre-market)."""
+    strat._resting_in_window = lambda now=None: in_window
     state.bars.append(OHLCVBar(timestamp_ms=ts, open=trail + 1, high=trail + 1.2,
                                low=trail - 0.2, close=trail + 0.9, volume=10_000))
     strat._cw_v2_resting_track(state, _sig(trail=trail, state=st))
@@ -115,23 +118,36 @@ def test_cancels_when_out_of_window() -> None:
     strat = _strat()
     st = strat.watchlist_state("TEST")
     _tick(strat, st, trail=9.50)                                      # place (in window)
-    out = _tick(strat, st, trail=9.50, ts=PRE_WIN)                   # 09:45 ORB window -> cancel
+    out = _tick(strat, st, trail=9.50, in_window=False)              # wall-clock now out of window -> cancel
     assert len(out) == 1 and out[0].intent_type == "cancel"
 
 
 def test_does_not_place_out_of_window() -> None:
     strat = _strat()
     st = strat.watchlist_state("TEST")
-    assert _tick(strat, st, trail=9.50, ts=PRE_WIN) == []            # never rest pre-market / post-16:00
+    assert _tick(strat, st, trail=9.50, in_window=False) == []       # never rest pre-market / post-16:00
 
 
-def test_places_in_the_open_window() -> None:
-    """The resting entry RUNS from 09:30 (unlike the reactive entry, which skips 09:30-10:00) --
-    faithful to the 9-day study + the band-limit handles the volatile open. Pins the window change."""
+def test_window_is_wall_clock_not_bar_ts() -> None:
+    """⭐ THE FIX. The gate keyed off the last BAR's timestamp, so a stale/replayed in-window bar
+    (a quiet symbol's prior-session 15:59 close, or a warmup replay of an old session) fired the
+    resting entry pre-market -- the 04:00/07:00 ET STOP_LIMIT rejects on 07-23. It now reads the
+    WALL CLOCK, so an IN-WINDOW bar at an OUT-OF-WINDOW clock does NOT place."""
     strat = _strat()
     st = strat.watchlist_state("TEST")
-    out = _tick(strat, st, trail=9.50, ts=OPEN_WIN)                  # 09:45 is now IN window
-    assert len(out) == 1 and out[0].intent_type == "open"
+    # real gate: True across the RTH session, False outside -- incl. 04:00, the actual bug time
+    f = strat._resting_in_window
+    assert f(datetime(2026, 7, 23, 4, 0, tzinfo=_ET)) is False       # the 04:00 ET bug moment
+    assert f(datetime(2026, 7, 23, 9, 29, tzinfo=_ET)) is False      # before the open
+    assert f(datetime(2026, 7, 23, 9, 30, tzinfo=_ET)) is True       # runs from 09:30 (unlike reactive)
+    assert f(datetime(2026, 7, 23, 9, 45, tzinfo=_ET)) is True       # 09:45 open window -> in
+    assert f(datetime(2026, 7, 23, 15, 59, tzinfo=_ET)) is True      # last minute
+    assert f(datetime(2026, 7, 23, 16, 0, tzinfo=_ET)) is False      # 16:00 exclusive
+    # and the track obeys the clock, not the (in-window) bar ts
+    st.bars.append(OHLCVBar(timestamp_ms=IN_WIN, open=10, high=10.2, low=9.8, close=10.1, volume=10_000))
+    strat._resting_in_window = lambda now=None: False                # simulate an out-of-window wall clock
+    strat._cw_v2_resting_track(st, _sig(trail=9.5))
+    assert strat.drain_pending_intents() == []                       # in-window bar, out-of-window clock -> no place
 
 
 # --------------------------------------------------------------------------- fill closes the loop
