@@ -2860,6 +2860,7 @@ class OmsRiskService:
                     elif (
                         str(intent.intent_type).lower() == "open"
                         and not self._is_stop_guard_order(order)
+                        and not self._is_resting_trigger_order(order)
                     ):
                         if self._intent_too_old(intent):
                             abandon_code = "INTENT_MAX_AGE"
@@ -4827,6 +4828,19 @@ class OmsRiskService:
     def _is_stop_guard_order(order: BrokerOrder) -> bool:
         payload = order.payload or {}
         return str(payload.get("stop_guard", "")).strip().lower() == "true"
+
+    @staticmethod
+    def _is_resting_trigger_order(order: BrokerOrder) -> bool:
+        """A buy STOP / STOP_LIMIT entry is a TRIGGER order -- DESIGNED to rest until price crosses its
+        trigger. Exempt it from the INTENT_MAX_AGE / SETUP_INVALID abandons, which exist to kill stuck
+        MARKETABLE (LIMIT / MARKET) chases (PR #178) -- a trigger order that simply hasn't triggered is
+        NOT stuck. Without this, the resting flip-entry is abandoned at 30s and can never stably sit at
+        the ATR line (2026-07-23 live finding: the OMS re-cancelled the resting order every ~30-58s on
+        quiet names, re-introducing the missed cross the stable-rest rework had just fixed). Segregation
+        is by order TYPE, so it never exempts a marketable chase."""
+        payload = order.payload or {}
+        otype = str(payload.get("order_type", getattr(order, "order_type", "") or "")).upper()
+        return otype in {"STOP", "STOP_LIMIT"}
 
     @staticmethod
     def _stop_guard_refresh_stage(metadata: dict[str, object]) -> int:
