@@ -29,7 +29,10 @@ dev = [
   "pre-commit>=3.8,<5.0",
   "pytest>=8.3,<9.0",
   "pytest-asyncio>=0.24,<1.0",
-  "ruff>=0.6,<1.0",
+  # Pinned <0.16: ruff 0.16.0 (2026-07-23) changed I001 import-sort rules and fails the whole
+  # repo. Migrating every module to 0.16's ordering is a separate deliberate sweep; until then
+  # this keeps CI on the last-known-good line. Do NOT widen without running `ruff check src tests`.
+  "ruff>=0.6,<0.16",
 ]
 
 [tool.pytest.ini_options]
