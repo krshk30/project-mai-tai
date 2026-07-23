@@ -109,6 +109,29 @@ def test_small_trail_move_does_not_replace() -> None:
     assert _tick(strat, st, trail=9.495) == []                       # 0.05% move -> leave it, no intent
 
 
+def test_stop_leq_ask_guard_skips_the_place() -> None:
+    """⭐ STOP<=ASK guard. A buy-stop must sit ABOVE the ask; on a fast up-tick the ask can already be
+    at/above the trail (the flip is happening) -> Schwab firm-rejects "stop must be above the current
+    ask". Skip the place; re-arm once the trail is back above the market."""
+    from project_mai_tai.market_data.schwab_v2_rest_client import Quote
+    strat = _strat()
+    st = strat.watchlist_state("TEST")
+    st.last_quote = Quote("TEST", 9.55, 9.60, 9.58, IN_WIN, 0)       # ask 9.60 >= trail 9.50 -> SKIP
+    assert _tick(strat, st, trail=9.50) == []
+    assert st.resting_active is False
+    st.last_quote = Quote("TEST", 9.05, 9.10, 9.08, IN_WIN, 0)       # ask 9.10 < trail 9.50 -> place
+    out = _tick(strat, st, trail=9.50)
+    assert len(out) == 1 and out[0].intent_type == "open"
+
+
+def test_stop_leq_ask_guard_fails_open_without_a_quote() -> None:
+    """No fresh quote -> the guard fails open (the broker stays the backstop); nothing regresses."""
+    strat = _strat()
+    st = strat.watchlist_state("TEST")
+    st.last_quote = None
+    assert _tick(strat, st, trail=9.50)[0].intent_type == "open"
+
+
 # --------------------------------------------------------------- HOLD-THROUGH-FLIP + SILENCE-ON-FILL
 def test_holds_the_order_through_the_up_flip() -> None:
     """⭐ HOLD-THROUGH-FLIP. The up-flip IS the fill, so state->long must NOT cancel the resting order

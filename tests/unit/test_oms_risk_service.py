@@ -3673,3 +3673,30 @@ async def test_oms_refreshes_close_intent_when_market_fillable() -> None:
         intent = session.scalar(select(TradeIntent).where(TradeIntent.symbol == "SOBR"))
         assert intent is not None
         assert intent.status == "submitted"  # still working, not abandoned
+
+
+def _resting_order(order_type: str) -> BrokerOrder:
+    return BrokerOrder(
+        strategy_id=None,  # type: ignore[arg-type]
+        broker_account_id=None,  # type: ignore[arg-type]
+        client_order_id="schwab_1m_v2-NVVE-open-x",
+        broker_order_id="o1",
+        symbol="NVVE",
+        side="buy",
+        order_type=order_type.lower(),
+        time_in_force="day",
+        quantity=Decimal("2"),
+        status="working",
+        payload={"order_type": order_type},
+    )
+
+
+def test_resting_trigger_order_is_exempt_from_intent_max_age() -> None:
+    """A buy STOP / STOP_LIMIT (the resting flip-entry) is a TRIGGER order -- DESIGNED to rest until
+    price crosses it, so it must be exempt from the 30s INTENT_MAX_AGE abandon. A marketable LIMIT /
+    MARKET chase is NOT exempt (that is exactly what the abandon exists to kill). Segregation is by
+    order TYPE (2026-07-23 live finding: the OMS was re-cancelling the resting order every ~30-58s)."""
+    assert OmsRiskService._is_resting_trigger_order(_resting_order("STOP_LIMIT")) is True
+    assert OmsRiskService._is_resting_trigger_order(_resting_order("STOP")) is True
+    assert OmsRiskService._is_resting_trigger_order(_resting_order("LIMIT")) is False
+    assert OmsRiskService._is_resting_trigger_order(_resting_order("MARKET")) is False

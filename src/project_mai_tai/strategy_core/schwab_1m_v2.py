@@ -1482,6 +1482,13 @@ class SchwabV2Strategy:
             trail = float(state.atr_trail or 0.0)
         if st == "short" and trail > 0.0:
             if not state.resting_active:
+                # STOP<=ASK guard: a buy-stop must sit ABOVE the ask. On a fast up-tick the live ask
+                # can already be at/above the trail (the flip is happening) -> placing firm-rejects
+                # "stop price must be above the current ask". Skip; re-arm once the trail is back above
+                # the market. Fail-open when no fresh quote (let the broker be the backstop).
+                ask = float(getattr(state.last_quote, "ask_price", 0.0) or 0.0) if state.last_quote else 0.0
+                if ask > 0.0 and trail <= ask:
+                    return
                 self._queue_resting_place(state, trail)
                 return
             # STABLE-REST: re-place only on a meaningful trail move; else leave it out there.
