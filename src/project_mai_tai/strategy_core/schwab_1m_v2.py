@@ -1371,12 +1371,16 @@ class SchwabV2Strategy:
     _RESTING_RATCHET_FRAC = 0.002   # replace only when the ATR trail moves >= 0.2% (limit churn)
 
     def _resting_in_window(self, ts_ms: int) -> bool:
-        """RTH-first for the resting entry: 10:00-16:00 ET (regular session minus the 09:30-10:00 ORB
-        window the reactive entry also skips). A resting OTOCO uses session=NORMAL, so pre/post-market
-        it would queue to the open -- mirror the OMS RTH emit gate and keep it regular-session."""
+        """RTH for the resting entry: 09:30-16:00 ET = the full regular session (matches the OMS OTOCO
+        emit gate `_is_regular_market_session`). UNLIKE the reactive entry it does NOT skip 09:30-10:00:
+        (1) the 9-day study that gave +0.33% gated on the scanner CONFIRM window, not the ORB window --
+        09:30 is the faithful start; (2) the band-limited stop-limit does not chase the volatile open
+        the way the reactive MARKET entry does (the reason for that skip); (3) ORB is a different
+        account (Webull), so no collision. A session=NORMAL OTOCO would queue pre/post-market, so keep
+        it regular-session."""
         et = datetime.fromtimestamp(ts_ms / 1000.0, UTC).astimezone(EASTERN_TZ)
         minutes = et.hour * 60 + et.minute
-        return 10 * 60 <= minutes < 16 * 60
+        return 9 * 60 + 30 <= minutes < 16 * 60
 
     def _queue_resting_place(self, state: SymbolState, line: float) -> None:
         limit = line * (1.0 + self._resting_entry_band_pct / 100.0)
