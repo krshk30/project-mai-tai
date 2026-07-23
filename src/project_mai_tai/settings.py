@@ -459,6 +459,16 @@ class Settings(BaseSettings):
     # The slippage-cap band for the resting buy-stop-limit: limit = line * (1 + band%). 9-day study:
     # 0.5% = best mean / 92% fill (fills the pullback, not the spike). Tunable without code.
     strategy_schwab_1m_v2_cw_v2_resting_entry_band_pct: float = 0.5
+    # STABLE-REST cadence (2026-07-23, the NVVE live lesson): re-place the resting order ONLY when the
+    # ATR trail moves >= this %, never every 0.2% wiggle. The 0.2% flicker cancelled/re-placed ~every
+    # 12s so no order was ever stably "out there", and we missed the cross by ~2% (filled 8.40 vs the
+    # 8.22 line). 1.0% keeps one order resting to actually catch the up-cross. Tunable without code.
+    strategy_schwab_1m_v2_cw_v2_resting_entry_reprice_pct: float = 1.0
+    # SILENCE-ON-FILL grace (secs): once the up-flip fires while a resting order is live, a fill may be
+    # settling. Hold this long for `position_qty` to confirm before touching anything -- bridges the
+    # position-sync lag that spammed ~30 rejected brackets after the NVVE fill. If still flat after the
+    # grace, the flip did not fill us -> retire and re-arm on the next short segment.
+    strategy_schwab_1m_v2_cw_v2_resting_entry_flip_grace_secs: float = 30.0
     strategy_macd_30s_reclaim_excluded_symbols: str = "JEM,CYCN,BFRG,UCAR,BBGI"
     # Maximum age (seconds) for the `scanner_confirmed_last_nonempty` snapshot
     # to be eligible for startup restore. Older snapshots are skipped, so
