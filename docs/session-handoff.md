@@ -17,6 +17,36 @@
 
 ---
 
+## ⭐ 2026-07-24 (AM) — EH-trading BUILT (3 PRs merged DORMANT): 07:30–16:00 window + EH-fillable entries + EOD OCO cleanup
+
+**Designed + built during pre-market, per operator ("design+build today, deploy AFTER-HOURS, not during market
+hours"). All flag-gated OFF → merged to main but INERT until enabled attended, post-close.** Design:
+`docs/premarket-eod-exit-design.md`. Common to both entry modes + both brokers ([[feedback-assess-both-brokers]],
+[[project-mai-tai-premarket-trading-design]]).
+
+| Piece | PR | What | Flag (default OFF) |
+|---|---|---|---|
+| Phase A | #532 | **16:00 EOD OCO→EH-ladder transition** (decision A=KEEP MANAGING: cancel dead OCO, keep +2%/−5% as EH-limits post-close, 19:55 flatten backstop) | `oms_v2_eod_oco_transition_enabled` |
+| Phase A | #532 | entry cap 16:30→**16:00** (no entries after 4 PM) | ⚠ settings DEFAULT — applies ON DEPLOY (safe restriction) |
+| P-B1 | #533 | reactive EH safety: **live-bar guard** (#528 gap, real) + max-cross cap + abandon-on-bad-ask | `oms_v2_eh_entry_enabled` |
+| P-B2 | #534 | **resting EH entry** (software-emulated cross → marketable EH-LIMIT min(ask, level×1.005), abandon gap-through) + window→07:30 | `strategy_schwab_1m_v2_cw_v2_eh_resting_entry_enabled` |
+
+**Key facts learned:** the **reactive EH entry ALREADY fills** (bot's `_apply_extended_hours_routing`, dc11d5a
+June — "has the other bot solved this?"); P-B1 is a SAFETY layer, not a from-scratch fix. The **resting** entry
+genuinely had NO EH path (drained past `_maybe_emit`, RTH-gated) → P-B2 is net-new emulation. **In EH only a
+LIMIT fills on EITHER broker** (MARKET/STOP/OCO all RTH-only — symmetric). EH limits priced off OUR feed
+(`_latest_quotes_by_symbol` ask; Webull has no market-data entitlement). I REVIEWED all 3 diffs (double-emit
+coexistence, re-emit-once grace, band/no-chase, RTH byte-identical all verified); 1420 unit tests green.
+
+**⛔ AFTER-HOURS ATTENDED ENABLEMENT (the remaining step):** deploy (VPS pull+restart → applies the 16:00 cap,
+rest dormant), then enable the flags **ONE AT A TIME, attended, post-close**, validating each. **Unproven
+live:** EH FILL QUALITY on thin pre-market (Schwab session=AM, Webull off Polygon NBBO) — all agents flagged it;
+the OMS band-cap off our feed is the bad-fill guard. **SKYQ 07-23 validates decision A**: its DAY OCO expired
+16:00 unfilled (RTH high 5.77 < 5.85 target) → −1.57% close; with Phase A live the +2% EH-limit would've caught
+the 16:03 post-close spike to 5.88 = a WIN. (⛔ corrected a subagent that mis-called SKYQ a fill — tape-verified.)
+
+---
+
 ## ⭐ 2026-07-23 (EVENING/EOD) — Webull mirror-on-fill DEPLOYED; BOTH entry modes ON for 07-24; backtest fidelity issue named
 
 **This supersedes the "resting-only / reactive-OFF" state in the block below.** Live state NOW: **v2 ACTIVE,
@@ -73,11 +103,10 @@ written from the BUGGY pass — needs correcting/replacing (operator undecided; 
    a pre-market reactive fill (07:00-09:30) would trigger a mirror attempt that Webull *rejects* (OCO RTH-only),
    muddying the clean test; the clean attended test is the first RTH fill.
 
-*🌅 Pre-market trading (NEW 07-24 — design, decide later; [[project-mai-tai-premarket-trading-design]]):*
-2. **Reactive "missing hour"** — reactive covers 07:00-16:30; pre-market starts ~04:00 → 04:00-07:00 uncovered.
-3. **Resting pre-market = non-OCO exit path** — OCO broker-rejected pre-market; needs software-ladder + EH-limit
-   exits (the #390 pattern). 4. **Pre-market DATA constraint** (blocks both) — Schwab REST serves no pre-market
-   bars; CHART_EQUITY streamer + stale warmup-replay (#528 trap) → verify reactive has a live-bar guard.
+*🌅 EH trading — ✅ BUILT 07-24 (dormant), awaiting AFTER-HOURS ATTENDED ENABLEMENT:*
+2. **Enable the 3 flags one-at-a-time post-close + validate** (Phase A EOD-transition, P-B1 reactive-EH, P-B2
+   resting-EH) — see the 07-24 block above for flags/PRs. Prove EH fill quality on thin pre-market (the only
+   unproven live piece). 3. Then decide the 04:00-07:00 gap (window currently opens 07:30) if wanted.
 
 *🔧 Backtest / data integrity:*
 5. **Replay-harness backtest** — engine replays live code+config (the durable fidelity fix). Design-first, LATER.
