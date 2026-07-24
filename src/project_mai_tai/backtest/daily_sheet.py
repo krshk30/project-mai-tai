@@ -9,7 +9,6 @@ from zoneinfo import ZoneInfo
 
 from project_mai_tai.backtest.data import build_bars
 from project_mai_tai.backtest.orb_sim import simulate_bar_close, simulate_intrabar
-from project_mai_tai.backtest.v2_sim import simulate_v2
 
 _ET = ZoneInfo("America/New_York")
 
@@ -32,31 +31,43 @@ def classify_v2_feed(n_bars: int, n_ticks: int, *, min_bars: int = 10, sparse_ba
     return f"full ({n_bars} bars, {n_ticks} ticks)", True
 
 
-def render_v2_sheet(src, y: int, m: int, d: int) -> str:
+def render_v2_sheet(src, y: int, m: int, d: int, *, eh_enabled: bool = False) -> str:
+    """The v2 daily sheet, now driven by the REPLAY engine (backtest/replay.py) — the REAL live
+    strategy entry + the shared cw_exit_decision / static-OCO exit — instead of the retired
+    re-implementing `simulate_v2` (docs/backtest-replay-engine-design.md P4: one replay, one truth).
+
+    Coverage-honesty is preserved: every qualified name (tracked ∪ traded) appears with a REASON —
+    a feed SKIP (`classify_v2_feed` / the replay's sparse-feed skip), a MISS (resting never filled /
+    EH abandon), a no-signal note, or the replayed trade. Never a silent absence (the CLRO omission)."""
+    from project_mai_tai.backtest.replay import build_replay_settings, replay_symbol_day
+    from project_mai_tai.settings import get_settings
+
     obs = datetime(y, m, d, 8, 0, tzinfo=timezone.utc)          # 04:00 ET
     end = datetime(y, m, d + 1, 0, 0, tzinfo=timezone.utc)      # 20:00 ET
     syms = src.v2_qualified_symbols(obs, end)
-    out = [f"ATR/v2 sheet {y}-{m:02d}-{d:02d} — {len(syms)} qualified (tracked ∪ traded); "
-           f"qty10, Schwab ~0s. Every name shown with a reason (no silent absence)."]
+    settings = build_replay_settings(base=get_settings(), eh_enabled=eh_enabled)
+    day = f"{y}-{m:02d}-{d:02d}"
+    out = [f"ATR/v2 sheet {day} — {len(syms)} qualified (tracked ∪ traded); REPLAY engine (real "
+           f"strategy entry+exit){'; EH entry ON' if eh_enabled else ''}. Every name shown with a "
+           f"reason (no silent absence)."]
     for sym in syms:
-        sb = src.schwab_bars(sym, obs, end)
-        sq = src.schwab_quotes(sym, obs, end)
-        mq = src.quotes(sym, obs, end)
-        status, ok = classify_v2_feed(len(sb), len(sq))
+        res = replay_symbol_day(src, sym, day, settings)
+        status, ok = classify_v2_feed(res.n_bars, res.n_quotes)
         out.append(f"\n== {sym} [FEED: {status}] ==")
-        if not ok:
+        for sk in res.skips:
+            out.append(f"  SKIP {sk.reason}: {sk.detail}")
+        if not ok and not res.skips:
             out.append("   -> not backtestable (coverage gap)")
-            continue
-        for mode in ("bar_close", "intrabar"):
-            tr = simulate_v2(sb, sq, mq, qty=10, mode=mode)
-            if not tr:
-                out.append(f"  {mode.upper()}: 0t — no ATR entry (no confirmed touch / vol-floor / no fill)")
-                continue
-            out.append(f"  {mode.upper()} ({len(tr)}t net ${sum(t.pnl for t in tr):+.2f}):")
-            for i, t in enumerate(tr, 1):
-                out.append(f"     #{i} {_et(t.entry_ts)} touch {t.touch_price:.4f} @{t.entry_price:.4f} "
-                           f"-> {_et(t.exit_ts)} @{(t.exit_price or 0):.4f} [{t.exit_reason}] "
-                           f"legs={t.n_legs} ${t.pnl:+.3f}")
+        for mi in res.misses:
+            out.append(f"  MISS {mi.reason}: {mi.detail}")
+        if ok and not res.entries and not res.misses:
+            out.append("  0t — no ATR entry (no confirmed signal / vol-floor / no fill)")
+        for e in res.entries:
+            out.append(f"  ENTRY {e.mode}/{e.order_type} {_et(e.fill_ts)} @{e.fill_price:.4f} "
+                       f"(ref {e.entry_ref:.4f})")
+        for t in res.trades:
+            out.append(f"     [{t.geometry}] -> {_et(t.exit_ts)} @{t.exit_px:.4f} "
+                       f"[{t.exit_reason}] ret {t.ret_pct:+.2f}%")
     return "\n".join(out)
 
 
