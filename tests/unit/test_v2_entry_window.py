@@ -53,26 +53,29 @@ class _RecordingEmitter:
 # --- _within_entry_window boundaries (default 7:00–16:00 ET) ---
 
 
-def test_default_entry_window_is_seven_to_sixteen_hundred() -> None:
+def test_default_entry_window_is_seven_thirty_to_sixteen_hundred() -> None:
     """Pin the operator rule in the DEFAULTS, so the live gate does not depend on env.
-    2026-07-24 Phase A: the end is 16:00 (was 16:30) — no new entries after the RTH close.
-    This is the threshold-pinning test: mutate the end-minute default and it turns red."""
+    2026-07-24 Phase A: the end is 16:00 (was 16:30). Phase B: the start is 07:30 (was 07:00) —
+    pre-market entries begin at 07:30 once EH liquidity is meaningful. This is the threshold-pinning
+    test: mutate the start-minute (30->0) or end-minute default and it turns red."""
     s = Settings()
     assert s.strategy_schwab_1m_v2_entry_window_start_hour_et == 7
-    assert s.strategy_schwab_1m_v2_entry_window_start_minute_et == 0
+    assert s.strategy_schwab_1m_v2_entry_window_start_minute_et == 30
     assert s.strategy_schwab_1m_v2_entry_window_end_hour_et == 16
     assert s.strategy_schwab_1m_v2_entry_window_end_minute_et == 0
 
 
 def test_within_entry_window_inside() -> None:
     svc = _svc()
-    assert svc._within_entry_window(datetime(2026, 7, 14, 7, 0, tzinfo=EASTERN)) is True   # 7 AM sharp
+    assert svc._within_entry_window(datetime(2026, 7, 14, 7, 30, tzinfo=EASTERN)) is True   # 7:30 AM sharp (Phase B start)
     assert svc._within_entry_window(datetime(2026, 7, 14, 12, 0, tzinfo=EASTERN)) is True
     assert svc._within_entry_window(datetime(2026, 7, 14, 15, 59, tzinfo=EASTERN)) is True  # 3:59 PM
 
 
 def test_within_entry_window_outside() -> None:
     svc = _svc()
+    assert svc._within_entry_window(datetime(2026, 7, 14, 7, 0, tzinfo=EASTERN)) is False    # 7:00 AM — before the 07:30 start
+    assert svc._within_entry_window(datetime(2026, 7, 14, 7, 29, tzinfo=EASTERN)) is False   # 7:29 — one minute before start
     assert svc._within_entry_window(datetime(2026, 7, 14, 6, 59, tzinfo=EASTERN)) is False   # pre-7 AM
     assert svc._within_entry_window(datetime(2026, 7, 14, 16, 0, tzinfo=EASTERN)) is False   # 4:00 PM sharp (RTH close)
     assert svc._within_entry_window(datetime(2026, 7, 13, 19, 51, tzinfo=EASTERN)) is False  # the incident time

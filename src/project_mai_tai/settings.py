@@ -375,7 +375,10 @@ class Settings(BaseSettings):
     # EH-limit ladder rather than a fresh 16:00–16:30 entry that fills thin and has to survive AH.
     # Applies to BOTH entry modes (resting + reactive). Rollback = env overrides back to 16/30 or 18/0.
     strategy_schwab_1m_v2_entry_window_start_hour_et: int = 7
-    strategy_schwab_1m_v2_entry_window_start_minute_et: int = 0
+    # 2026-07-24 Phase B (EH-trading design R1): start bumped 07:00 -> 07:30 (operator's chosen value)
+    # so pre-market entries begin at 07:30 ET, once EH liquidity is meaningful. Both modes. The reactive
+    # EH entry is fillable (session=AM limit, restored dc11d5a); this just narrows when it may open.
+    strategy_schwab_1m_v2_entry_window_start_minute_et: int = 30
     strategy_schwab_1m_v2_entry_window_end_hour_et: int = 16
     strategy_schwab_1m_v2_entry_window_end_minute_et: int = 0
     # GO-LIVE opt-in: when False (default), the configured_schwab_accounts guard
@@ -492,6 +495,14 @@ class Settings(BaseSettings):
     # consecutive bars -- a REAL settled downtrend, not a 1-bar short in a whipsaw. Selectivity: skip
     # violent two-sided names (SKYQ ripped +9% then chopped) that flip repeatedly. Tunable without code.
     strategy_schwab_1m_v2_cw_v2_resting_entry_min_short_bars: int = 3
+    # LIVE-BAR gate for the REACTIVE entry, EXTENDED HOURS only (2026-07-24 Phase B, #528 mirror). The
+    # reactive break fires on a live QUOTE, but the ARM (cw_trigger/segment_high) is built from bar highs
+    # in _cw_v2_track, which runs on EVERY bar incl. warmup replays. Pre-market, a warmup-replayed prior-
+    # session BUY flip can arm the setup, and the first live quote above that STALE trigger would fire an
+    # entry on an hours-old level. In EH, require the driving bar within this many seconds of wall-clock
+    # before firing (never a warmup replay). RTH is byte-identical (the guard is skipped in regular hours,
+    # where warmup completes by 09:30 and the 09:30-10:00 ORB skip already covers the open). Tunable.
+    strategy_schwab_1m_v2_cw_v2_reactive_entry_max_bar_age_secs: float = 180.0
     strategy_macd_30s_reclaim_excluded_symbols: str = "JEM,CYCN,BFRG,UCAR,BBGI"
     # Maximum age (seconds) for the `scanner_confirmed_last_nonempty` snapshot
     # to be eligible for startup restore. Older snapshots are skipped, so
@@ -823,6 +834,26 @@ class Settings(BaseSettings):
     # partials price at the bid (zero buffer) — patient profit-taking, harmless
     # if it doesn't fill this quote. See docs/v2-eh-exit-routing-fix-design.md.
     oms_v2_exit_eh_protective_limit_buffer_pct: float = 0.5
+    # Extended-hours REACTIVE entry — marketable-limit ENHANCEMENT (2026-07-24 Phase B / P-B1). The bot
+    # already routes a v2 EH open to a session=AM/PM LIMIT at the live ask (dc11d5a, restored 2026-06-23),
+    # so the reactive entry is fillable pre-market TODAY. This flag layers the design's thin-EH slippage
+    # protection (docs/premarket-eod-exit-design.md risk #3) ON TOP of that routing: a marketable limit
+    # priced off the OMS's OWN fresh Polygon ask (`_latest_quotes_by_symbol`, NOT the broker's — Webull
+    # has no market-data entitlement), buffered above the ask so it crosses reliably, and BOUNDED by a
+    # max-cross cap vs the strategy's signal price — beyond the cap it prefers NO fill (skip + log) over a
+    # bad thin-pre-market fill. OFF (default) = byte-identical: the bot's plain limit-at-ask stands. ⚠ Not
+    # yet attended-tested live; enable only after an after-hours validation of the Webull/Schwab EH fill.
+    oms_v2_eh_entry_enabled: bool = False
+    # Marketable buffer above the live ask for the EH reactive entry limit (% of ask). Small so it crosses
+    # the spread without overpaying; the max-cross cap below is the real bad-fill guard.
+    oms_v2_eh_entry_limit_buffer_pct: float = 0.3
+    # Max-cross cap for the EH reactive entry: the limit may never exceed the strategy's signal price
+    # (metadata entry_price, the break level) by more than this %. If the live ask is already past the cap
+    # the market has run away from the signal -> ABANDON (skip submit), preferring no fill to a bad one.
+    oms_v2_eh_entry_max_cross_pct: float = 1.0
+    # Max ask staleness (ms) the EH reactive entry will price off. No fresh ask within this window ->
+    # ABANDON (never submit a blind limit). Mirrors the ORB quote-priced entry's 2000ms default.
+    oms_v2_eh_entry_quote_max_age_ms: int = 2000
     # Confirmed-window (variant CW) OMS exit [PR #2/3]. When
     # strategy_schwab_1m_v2_confirmed_window_enabled is on (the SAME single switch the
     # CW entry reads, so entry+exit can never diverge), the v2 managed-exit runs the CW

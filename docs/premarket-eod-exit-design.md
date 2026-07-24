@@ -20,8 +20,17 @@ real action ([[project-mai-tai-resting-entry-out-of-window-bug]], [[project-mai-
 must be a LIMIT. Verified from `broker_adapters/schwab.py` and `webull.py` (webull.py:189-200, 519-526).
 
 ## Current state (code)
-- **Windows:** resting `_resting_in_window` = 09:30–16:00; reactive/general `entry_window_*` = 07:00–16:30.
-- **Entry:** OCO bracket emitted **RTH-only** (`_is_regular_market_session`); **NO EH routing for entries.**
+- **Windows:** resting `_resting_in_window` = 09:30–16:00; reactive/general `entry_window_*` = 07:00–16:00
+  (end tightened to 16:00 by Phase A #532; **start → 07:30 by P-B1**).
+- **Entry:** OCO bracket emitted **RTH-only** (`_is_regular_market_session`). ⭐ **CORRECTION (P-B1, verified
+  from code):** the earlier "NO EH routing for entries" claim was WRONG for the **reactive** entry — the bot
+  ALREADY routes a v2 EH open to a `session=AM/PM` LIMIT at the live ask at the `_maybe_emit` chokepoint
+  (`_apply_extended_hours_routing`, restored **dc11d5a 2026-06-23**, on main). So the reactive pre-market entry
+  is **fillable today**, not an unfillable MARKET. What's genuinely missing (and is P-B1's scope): (a) a
+  marketable buffer + max-cross **cap** so a thin-EH fill can't chase past the signal (flag `oms_v2_eh_entry_enabled`,
+  OFF); (b) a **live-bar guard** on the reactive arm so a warmup-replayed trigger can't fire pre-market (#528
+  mirror). The **resting** EH entry is still un-routed (drained directly, bypassing `_maybe_emit`) — that stays
+  P-B2.
 - **Exit:** EH routing EXISTS for managed-exit SELLs (MARKET→LIMIT + `session=AM/PM` off the live bid, #390,
   service.py:2277). OCO is the RTH exit; the software CW ladder is the fallback.
 - **EOD:** v2 positions ride to **19:55** then `_v2_overnight_flatten` (EH-limit, retry). ⛔ **16:00–19:55 the
