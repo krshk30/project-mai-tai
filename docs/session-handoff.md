@@ -39,7 +39,18 @@ LIMIT fills on EITHER broker** (MARKET/STOP/OCO all RTH-only — symmetric). EH 
 (`_latest_quotes_by_symbol` ask; Webull has no market-data entitlement). I REVIEWED all 3 diffs (double-emit
 coexistence, re-emit-once grace, band/no-chase, RTH byte-identical all verified); 1420 unit tests green.
 
-**⛔ AFTER-HOURS ATTENDED ENABLEMENT (the remaining step) — ORDERED:** (1) deploy (VPS pull+restart → applies
+**✅ DEPLOYED MID-MARKET 2026-07-24 (~10:25 ET, operator-directed "validate now, not post-4PM Friday"): VPS
+`80ea68b` = all 6 EH PRs + the 429 fix #537.** Clean boot, all EH flags DORMANT, 16:00 cap live, 429 throttle
+loaded. **VALIDATED IN-MARKET:** (a) 429 fix — armed mirror → **0 429s in 75s** (vs 534); (b) **RTH Webull
+mirror order — FULLY validated live** via the STEP-1 harness on LVWR (qty1, ~$0.05 cost): placed on live:orb,
+market-filled, OCO armed, and the **stop fired → target auto-cancelled = the E5 one-cancels-other proven LIVE**,
+clean flat, no oversell. [[project_mai_tai_webull_mirror_rth_validated]] **Mirror flag currently ARMED**
+(WEBULL_MIRROR_ENABLED=true) — the OMS mirror-on-fill WIRING (vs the harness) is still unproven; if v2 fills in
+RTH it fires (attended). **REMAINING = the EH paths only** (pre-market entries, EH-limit exits, EH mirror) —
+tested post-4PM in the real extended-hours window, same place→confirm→close flow. Harness level display is
+INFLATED (entry ref×1.02 then ±off that = +4%/−3%); the real mirror is correct (±off the ask, service.py:1095).
+
+**⛔ POST-4PM EH ENABLEMENT (the remaining step) — ORDERED:** (1) *(deploy already done above)* — applies
 the 16:00 cap, rest dormant); (2) **VERIFY the pre-market bar feed is live** (CHART_EQUITY streamer — Schwab
 REST is dry pre-market; if it's not feeding, the live-bar guard blocks EVERY EH entry = whole build is a no-op);
 (3) enable flags ONE AT A TIME, attended, validating each: `oms_v2_eod_oco_transition_enabled` →
