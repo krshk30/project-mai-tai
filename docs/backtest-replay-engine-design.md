@@ -62,8 +62,14 @@ Settings() (same env)        ─┘
 ## Phasing
 - **P1 — Entry replay + parity.** Instantiate the real `SchwabV2Strategy`, extract the emit-gate to a shared fn,
   replay one real day, reconcile entries vs real fills. Prove the entry side is faithful.
-- **P2 — Exit unification.** Route the exit through `cw_exit_decision` (kill `ExitEngine` in the v2 path);
-  add the static-OCO first-touch model; select geometry by RTH/EH open.
+- **P2 — Exit unification. ✅ BUILT** (`backtest/replay.py`: `replay_symbol_day` now continues past the
+  entry fill into the full trade). The v2 replay exit uses ONLY the shared `cw_exit_decision` (EH floor-ride,
+  tick-by-tick over the bids, reading `oms_v2_cw_*` from Settings) + a small static-OCO first-touch model
+  (RTH open); `ExitEngine` is never referenced. Geometry is selected by the RTH/EH open. 07-23 SKYQ mechanic
+  reproduced: neither OCO leg touched (tape 5.58-5.77 vs target 5.84 / stop 5.44) → close-at-bell ≈5.64 ≈−1.57%.
+  One behavior-identical live seam: `_maybe_cw_flip_close`'s staleness clock routes through the existing
+  `_now_ms()` seam (base returns wall-clock, byte-identical) so the replay's injected clock reaches the
+  bar-close flip exit. (The full VPS DB reconciliation is the parity gate — run env-sourced on the box.)
 - **P3 — Both brokers + EH.** EH entry/exit geometries; the mirror leg (optional, for the bake-off).
 - **P4 — Deprecate the old harnesses** (`v2_sim` re-impl, `orb_sim::simulate_resting`) — one replay, one truth.
 - Each phase gated by the parity test on a golden day. CI-enforced.

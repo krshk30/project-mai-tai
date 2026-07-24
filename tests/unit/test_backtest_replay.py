@@ -16,7 +16,12 @@ import pytest
 
 from project_mai_tai.backtest.data import Quote as TapeQuote
 from project_mai_tai.backtest.data import SchwabBar
-from project_mai_tai.backtest.replay import build_replay_settings, replay_symbol_day
+from project_mai_tai.backtest.data import Trade as TapeTrade
+from project_mai_tai.backtest.replay import (
+    _static_oco_first_touch,
+    build_replay_settings,
+    replay_symbol_day,
+)
 
 ET = ZoneInfo("America/New_York")
 SYM = "TEST"
@@ -73,10 +78,11 @@ def _quotes(cross_ask: float) -> list[TapeQuote]:
 
 
 class _MemSource:
-    """Minimal in-memory MarketDataSource with just the two methods the replay uses."""
+    """Minimal in-memory MarketDataSource with just the methods the replay uses (bars + Schwab
+    LEVELONE quotes for entry/EH-bids, and the trade tape for the RTH static-OCO first-touch)."""
 
-    def __init__(self, bars, quotes):
-        self._bars, self._quotes = bars, quotes
+    def __init__(self, bars, quotes, trades=None):
+        self._bars, self._quotes, self._trades = bars, quotes, list(trades or [])
 
     def schwab_bars(self, symbol, start, end):
         lo, hi = int(start.timestamp() * 1000), int(end.timestamp() * 1000)
@@ -84,6 +90,9 @@ class _MemSource:
 
     def schwab_quotes(self, symbol, start, end):
         return [q for q in self._quotes if start <= q.ts < end]
+
+    def trades(self, symbol, start, end):
+        return [t for t in self._trades if start <= t.ts < end]
 
 
 def _run(cross_ask: float, **settings_overrides):
@@ -136,3 +145,196 @@ def test_mutation_wider_band_recovers_the_gap_fill() -> None:
     res = _run(cross_ask=99.00, strategy_schwab_1m_v2_cw_v2_resting_entry_band_pct=1.5)
     assert len(res.entries) == 1, f"widened band should fill; got skips={res.skips} misses={res.misses}"
     assert res.entries[0].fill_price == pytest.approx(99.00, abs=1e-6)
+
+
+# ==================================================================== P2: EXIT side
+# The exit geometry is chosen by the position's OPEN session (docs/schwab-1m-v2-live-spec.md §6):
+#   RTH open -> STATIC native OCO (first-touch on the trade tape, else close-at-bell at 16:00).
+#   EH  open -> software CW floor-RIDE driven by the SHARED `cw_exit_decision` over the bids.
+# These synthetics reuse the SAME real ATR machinery the entry tests do; only the exit horizon
+# differs. The v2 replay exit NEVER touches ExitEngine — it is `cw_exit_decision` / static-OCO only.
+
+def _tp(minute: int, price: float) -> TapeTrade:
+    """A trade print `minute` minutes past BASE (i.e. after the ~10:16 ET resting fill)."""
+    return TapeTrade(ts=BASE + timedelta(minutes=minute), price=price, size=100)
+
+
+def _run_rth(tape, cross_ask: float = RESTING_STOP, **overrides):
+    """RTH resting entry (fills AT the ATR line so fill == OCO reference => a clean +2%/-5% frame),
+    then resolve the static OCO against `tape`."""
+    settings = build_replay_settings(**overrides)
+    source = _MemSource(_bars(), _quotes(cross_ask), trades=tape)
+    return replay_symbol_day(source, SYM, DAY, settings)
+
+
+# ------------------------------------------------------------------ (4a) RTH tape hits +2% -> target
+def test_rth_static_oco_target_first_touch_is_plus2() -> None:
+    # Tape: dip to 99, then a print at 101.0 (>= target 98.2636*1.02 -> 100.23) -> the SELL LIMIT fills.
+    res = _run_rth([_tp(20, 99.0), _tp(25, 101.0), _tp(30, 95.0)])
+    assert len(res.trades) == 1
+    t = res.trades[0]
+    assert t.geometry == "rth_static_oco"
+    assert t.exit_reason == "target"
+    # OCO anchored off the CW reference (== the resting fill here), NOT re-struck off anything else.
+    assert t.entry_ref == pytest.approx(t.entry_px, abs=1e-6)
+    assert t.exit_px == pytest.approx(100.23, abs=1e-2)     # ref*1.02 rounded to the Schwab tick
+    assert t.ret_pct == pytest.approx(2.0, abs=0.05)        # ~+2% off the fill
+
+
+# ------------------------------------------------------------------ (4b) RTH neither leg -> close-at-bell
+def test_rth_static_oco_neither_leg_closes_at_bell() -> None:
+    # Tape ranges 99.0-99.5 the whole session: never reaches target (100.23) nor stop (93.35).
+    # The DAY OCO lapses at 16:00 -> close at the last print (the SKYQ 07-23 shape).
+    res = _run_rth([_tp(20, 99.0), _tp(25, 99.5), _tp(30, 99.2)])
+    assert len(res.trades) == 1
+    t = res.trades[0]
+    assert t.geometry == "rth_static_oco"
+    assert t.exit_reason == "close-at-bell"
+    assert t.exit_px == pytest.approx(99.2, abs=1e-6)       # the last print <= the bell
+    assert t.ret_pct == pytest.approx((99.2 - t.entry_px) / t.entry_px * 100.0, abs=1e-6)
+
+
+def test_rth_static_oco_stop_first_touch() -> None:
+    # A print at 90.0 <= stop (93.35) triggers the SELL STOP first -> -5%.
+    res = _run_rth([_tp(20, 99.0), _tp(25, 90.0)])
+    assert res.trades[0].exit_reason == "stop"
+    assert res.trades[0].ret_pct == pytest.approx(-5.0, abs=0.05)
+
+
+def test_static_oco_first_touch_unit_precedence() -> None:
+    """The first-touch model directly: whichever leg the tape reaches FIRST (in time) wins."""
+    et_ = ZoneInfo("America/New_York")
+    t0 = datetime(2026, 7, 23, 11, 0, tzinfo=et_)
+    close = datetime(2026, 7, 23, 16, 0, tzinfo=et_)
+    tape = [(t0, 100.0), (t0.replace(minute=5), 102.5), (t0.replace(minute=6), 94.0)]
+    # target = 100*1.02 = 102.0; the 102.5 print precedes the 94.0 print -> target.
+    _ts, px, reason = _static_oco_first_touch(100.0, tape, target_pct=2.0, stop_pct=5.0, close_dt=close)
+    assert reason == "target" and px == pytest.approx(102.0, abs=1e-9)
+    # Same levels, but the stop print comes first -> stop.
+    tape2 = [(t0, 100.0), (t0.replace(minute=5), 94.0), (t0.replace(minute=6), 102.5)]
+    _, px2, reason2 = _static_oco_first_touch(100.0, tape2, target_pct=2.0, stop_pct=5.0, close_dt=close)
+    assert reason2 == "stop" and px2 == pytest.approx(95.0, abs=1e-9)
+
+
+# ------------------------------------------------------------------ (4c) EH open -> floor-ride
+# A pre-market (EH) reactive entry: BUY flip arms the CW-v2 setup, two hold-bars build the 3-bar
+# trigger, then a quote breaks it -> a marketable-LIMIT EH entry (fill @ ask). Resting is OFF so the
+# reactive path fires (resting is RTH-only anyway).
+EH_BASE = datetime(2026, 7, 23, 8, 0, tzinfo=ET)  # 08:00 ET = pre-market -> EH open
+_EH_OHLC = (
+    [(100.0, 100.2, 99.8, 100.0)] * 9
+    + [
+        (99.8, 99.9, 97.9, 98.0),   # 9  SELL flip -> short
+        (97.8, 97.9, 97.5, 97.6),
+        (97.4, 97.5, 97.1, 97.2),
+        (97.1, 97.2, 96.8, 96.9),
+        (96.9, 97.0, 96.6, 96.7),
+        (96.8, 96.9, 96.5, 96.6),
+        (96.7, 96.8, 96.4, 96.5),
+        (96.7, 99.5, 96.6, 99.3),   # 16 BUY flip -> arm (trigger seeds at 99.5)
+        (99.2, 99.4, 99.0, 99.2),   # 17 hold above flip level, high < 99.5
+        (99.1, 99.4, 99.0, 99.2),   # 18 (bars_waited >= 2 -> trigger frozen at 99.5)
+    ]
+)
+
+
+def _eh_bars():
+    out = []
+    for i, (o, h, lo, c) in enumerate(_EH_OHLC):
+        ts_ms = int((EH_BASE + timedelta(minutes=i)).timestamp() * 1000)
+        out.append(SchwabBar(ts=ts_ms, open=o, high=h, low=lo, close=c, volume=50_000))
+    return out
+
+
+def _eh_quotes(floor_bids):
+    qs = []
+    for i in range(9, 19):  # pre-cross quotes: last below the trigger (no premature break)
+        c = _EH_OHLC[i][3]
+        qs.append(TapeQuote(ts=EH_BASE + timedelta(minutes=i, seconds=30),
+                            bid=c - 0.15, ask=c + 0.05, last=c))
+    # the crossing quote: last 100.5 > trigger 99.5, whole forming bar above the flip level -> ENTRY.
+    qs.append(TapeQuote(ts=EH_BASE + timedelta(minutes=19, seconds=10),
+                        bid=100.3, ask=100.5, last=100.5))  # EH routing fills @ ask 100.5
+    for mm, bid in floor_bids:  # the post-entry bid tape the floor-ride runs over
+        qs.append(TapeQuote(ts=EH_BASE + timedelta(minutes=mm),
+                            bid=bid, ask=bid + 0.2, last=bid))
+    return qs
+
+
+# entry fill = 100.5 -> +2% level = 102.51. Bids ride to 104 (arm) then fall back to 101.5 (< floor).
+_EH_FLOOR_BIDS = [(20, 101.0), (21, 103.0), (22, 104.0), (23, 101.5)]
+
+
+def _run_eh(*, floor_enabled: bool):
+    settings = build_replay_settings(
+        strategy_schwab_1m_v2_cw_v2_resting_entry_enabled=False,  # let the reactive path fire
+        oms_v2_cw_floor_exit_enabled=floor_enabled,
+    )
+    source = _MemSource(_eh_bars(), _eh_quotes(_EH_FLOOR_BIDS))
+    return replay_symbol_day(source, SYM, DAY, settings)
+
+
+def test_eh_open_floor_ride_arms_then_exits_on_fallback() -> None:
+    res = _run_eh(floor_enabled=True)
+    assert len(res.entries) == 1 and res.entries[0].mode == "reactive"
+    assert len(res.trades) == 1, f"expected one EH trade; skips={res.skips} misses={res.misses}"
+    t = res.trades[0]
+    assert t.geometry == "eh_floor_ride"
+    assert t.entry_px == pytest.approx(100.5, abs=1e-6)     # EH marketable-LIMIT fill @ ask
+    # cw_exit_decision ARMED at +2% (bid 103/104 > 102.51) then closed on the fall-back to the floor.
+    assert t.exit_reason == "floor"
+    assert t.exit_px == pytest.approx(100.5 * 1.02, abs=1e-6)
+    assert t.ret_pct == pytest.approx(2.0, abs=1e-6)
+    # the exit fires on the FALL-BACK bid (minute 23), not the first +2% touch (minute 21).
+    assert t.exit_ts.astimezone(ET).strftime("%H:%M") == "08:23"
+
+
+# ------------------------------------------------------------------ mutation: the floor flag decides
+def test_mutation_floor_flag_flips_eh_exit_shape() -> None:
+    """Flip `cw_floor_exit_enabled` and the EH exit SHAPE changes: ON = floor-RIDE (arm past +2%,
+    exit on fall-back), OFF = HARD target close at the first +2% touch. Same tape, same entry —
+    only the shared `cw_exit_decision` mode differs. Proves the flag is load-bearing (mutation red)."""
+    ride = _run_eh(floor_enabled=True).trades[0]
+    hard = _run_eh(floor_enabled=False).trades[0]
+
+    assert ride.exit_reason == "floor"      # rides past +2%, exits on the fall-back
+    assert hard.exit_reason == "target"     # hard-closes at the first +2% bid
+    assert ride.exit_reason != hard.exit_reason
+    # both land on the +2% level, but the HARD close fires EARLIER (first touch) than the ride.
+    assert ride.exit_px == pytest.approx(hard.exit_px, abs=1e-6)
+    assert hard.exit_ts < ride.exit_ts
+    assert hard.exit_ts.astimezone(ET).strftime("%H:%M") == "08:21"   # first +2% touch (bid 103)
+    assert ride.exit_ts.astimezone(ET).strftime("%H:%M") == "08:23"   # the fall-back
+
+
+# ------------------------------------------------------------------ EH bar-close ATR flip exit
+# Proves the "flip" exit_reason is reachable in the replay: after the EH entry, a bar-close SELL
+# flip while holding makes the REAL strategy emit a cw_flip CLOSE draft (`_maybe_cw_flip_close`) —
+# which is only reachable because its staleness clock now routes through the `_now_ms()` seam the
+# ReplayStrategy overrides (a behavior-identical live refactor). flip_pending -> cw_exit_decision
+# returns "flip" on the next bid.
+_EH_FLIP_TAIL = [
+    (99.0, 99.1, 95.0, 95.2),   # 19  crash below the ATR trail -> SELL flip while holding
+    (95.0, 95.1, 93.0, 93.2),   # 20
+    (93.0, 93.1, 91.0, 91.2),   # 21
+]
+
+
+def test_eh_open_bar_close_atr_flip_exit() -> None:
+    bars = _eh_bars()
+    for i, (o, h, lo, c) in enumerate(_EH_FLIP_TAIL, start=len(_EH_OHLC)):
+        ts_ms = int((EH_BASE + timedelta(minutes=i)).timestamp() * 1000)
+        bars.append(SchwabBar(ts=ts_ms, open=o, high=h, low=lo, close=c, volume=50_000))
+    # post-entry bids stay between -5% stop (95.475) and +2% target (102.51): no arm, no hard stop —
+    # so the ONLY thing that can close the trade is the bar-close flip.
+    quotes = _eh_quotes([(20, 99.5), (21, 99.0), (22, 98.5), (23, 98.0)])
+    settings = build_replay_settings(
+        strategy_schwab_1m_v2_cw_v2_resting_entry_enabled=False,
+        oms_v2_cw_floor_exit_enabled=True,
+    )
+    res = replay_symbol_day(_MemSource(bars, quotes), SYM, DAY, settings)
+    assert len(res.trades) == 1, f"expected one EH trade; skips={res.skips} misses={res.misses}"
+    t = res.trades[0]
+    assert t.geometry == "eh_floor_ride"
+    assert t.exit_reason == "flip"                 # the bar-close ATR SELL flip closed it
+    assert t.exit_px < t.entry_px                  # closed at the (falling) bid, a trend exit
