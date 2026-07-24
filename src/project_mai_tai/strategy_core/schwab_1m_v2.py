@@ -1451,12 +1451,12 @@ class SchwabV2Strategy:
         stale price levels, sending session=NORMAL STOP_LIMITs the broker rejected. Wall-clock is the
         real question ("is it regular-session RIGHT NOW?") and aligns this gate with the OMS one.
         ⭐ P-B2 (2026-07-24): when `strategy_schwab_1m_v2_cw_v2_eh_resting_entry_enabled` is ON the window
-        OPENS to 07:30 ET so the software-emulated EH resting entry can arm/fire pre-market. OFF (default)
-        it stays 09:30 — byte-identical to the RTH-only behavior. The end (16:00, exclusive) is unchanged.
-        `now` is injectable for tests."""
+        OPENS to 07:00 ET (operator 07-24 — "7 AM is the pre-market open") so the software-emulated EH
+        resting entry can arm/fire pre-market. OFF (default) it stays 09:30 — byte-identical to the RTH-only
+        behavior. The end (16:00, exclusive) is unchanged. `now` is injectable for tests."""
         et = (now or datetime.now(UTC)).astimezone(EASTERN_TZ)
         minutes = et.hour * 60 + et.minute
-        start = (7 * 60 + 30) if self._eh_resting_enabled else (9 * 60 + 30)
+        start = (7 * 60) if self._eh_resting_enabled else (9 * 60 + 30)
         return start <= minutes < 16 * 60
 
     def _resting_session_is_eh(self, now: datetime | None = None) -> bool:
