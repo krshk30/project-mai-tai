@@ -271,6 +271,16 @@ class Settings(BaseSettings):
     # through different exit logic; one account cannot hold two open managed rows for the
     # same symbol). Unset -> _mirror_v2_fill_to_webull no-ops with a warning.
     strategy_schwab_1m_v2_webull_account_name: str = ""
+    # Extended-hours Webull mirror (mirror-EH). When ON *and* the mirror flag is ON *and*
+    # the primary Schwab v2 fill lands in EXTENDED HOURS, the mirror emits a marketable
+    # EH-LIMIT single-leg master (NO native-OCO combo — the broker OCO is RTH-only and 417s
+    # in EH) priced off OUR fresh ask, bounded by the P-B1 max-cross cap; the mirrored Webull
+    # position is exit-managed by the account-aware software EH-limit CW ladder (#390). A
+    # SEPARATE flag (not the primary's oms_v2_eh_entry_enabled) so enabling the isolated Schwab
+    # reactive-EH entry does NOT also start writing EH orders to the SHARED live:orb account —
+    # the operator enables primary-EH and mirror-EH independently. OFF (default) => in EH the
+    # mirror is byte-identical to today (MARKET + combo, which the broker 417s; RTH-only mirror).
+    strategy_schwab_1m_v2_webull_mirror_eh_enabled: bool = False
     # Cold-start warmup lookback (calendar days). The first poll per symbol
     # (since=0) requests this many days back so the indicator-seed batch
     # always reaches the last completed trading session even across a

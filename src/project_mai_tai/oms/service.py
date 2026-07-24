@@ -1109,6 +1109,31 @@ class OmsRiskService:
                 "path": source_metadata.get("path", ""),
             }
 
+            # EH mirror (flag-gated OFF; byte-identical when off): a MARKET master + native-OCO
+            # combo are BOTH RTH-only on Webull (417 in EH), so when the primary Schwab fill lands
+            # in extended hours we swap the combo for a single-leg marketable EH-LIMIT master (no
+            # OCO). The mirrored Webull position is then exit-managed by the account-aware software
+            # EH-limit CW ladder (#390) — no naked EH position. RTH, or flag-off, keeps the combo
+            # below byte-identical.
+            order_metadata = combo_metadata
+            order_type_str = "market"
+            if (
+                bool(getattr(self.settings, "strategy_schwab_1m_v2_webull_mirror_eh_enabled", False))
+                and not _is_regular_market_session()
+            ):
+                eh_master = self._build_v2_mirror_eh_master(
+                    symbol=symbol,
+                    schwab_fill_price=float(schwab_fill_price),
+                    source_metadata=source_metadata,
+                )
+                if eh_master is None:
+                    # ABANDON: no fresh ask / ask past the max-cross cap. Nothing was opened on
+                    # Webull, so there is no position to protect — prefer no fill to a bad thin-EH
+                    # fill. No submit, logged inside the builder.
+                    return
+                order_metadata = eh_master
+                order_type_str = "limit"
+
             # Distinct event → distinct event_id (uuid4) → distinct client_order_id, so the
             # mirror leg can never collide with the primary's order/intent rows.
             mirror_event = TradeIntentEvent(
@@ -1121,7 +1146,7 @@ class OmsRiskService:
                     quantity=quantity,
                     intent_type="open",
                     reason="oms_v2_webull_mirror_on_fill",
-                    metadata=combo_metadata,
+                    metadata=order_metadata,
                 ),
             )
             published_events: list[OrderEventEvent] = []
@@ -1184,8 +1209,8 @@ class OmsRiskService:
                     intent_type=mirror_event.payload.intent_type,
                     quantity=mirror_event.payload.quantity,
                     reason=mirror_event.payload.reason,
-                    metadata=dict(combo_metadata),
-                    order_type="market",
+                    metadata=dict(order_metadata),
+                    order_type=order_type_str,
                     time_in_force="day",
                 )
                 reports = await self.broker_adapter.submit_order(request)
@@ -1211,11 +1236,81 @@ class OmsRiskService:
             statuses = ",".join(item.payload.status for item in published_events) or "none"
             self.logger.info(
                 "[OMS-V2-MIRROR] webull mirror-on-fill submitted sym=%s acct=%s qty=%s "
-                "target=%.4f protect=%.4f status=%s",
-                symbol, webull_account_name, quantity, target, protect, statuses,
+                "kind=%s target=%.4f protect=%.4f status=%s",
+                symbol, webull_account_name, quantity,
+                ("EH-LIMIT-single-leg" if order_type_str == "limit" else "MARKET+OCO"),
+                target, protect, statuses,
             )
         except Exception as exc:  # noqa: BLE001 — a webull failure must NEVER affect the primary leg
             self.logger.warning("[OMS-V2-MIRROR] webull mirror-on-fill failed for %s: %s", symbol, exc)
+
+    def _build_v2_mirror_eh_master(
+        self,
+        *,
+        symbol: str,
+        schwab_fill_price: float,
+        source_metadata: dict[str, str],
+    ) -> dict[str, str] | None:
+        """Metadata for the EXTENDED-HOURS Webull mirror master: a marketable EH-LIMIT single-leg
+        (NO native-OCO combo — the broker OCO is RTH-only and 417s in EH; see
+        docs/premarket-eod-exit-design.md). Priced off the OMS's OWN fresh ask
+        (`_latest_quotes_by_symbol` = Polygon NBBO, the ONLY feed the Webull mirror can price from —
+        no Webull market-data entitlement, webull.py:521), buffered just above the ask so it crosses,
+        and BOUNDED by a max-cross cap vs the primary Schwab FILL price so a thin-EH ask cannot chase
+        far past where the primary actually entered. Reuses the P-B1 EH-reactive-entry constants
+        (`oms_v2_eh_entry_*`) so the pricing/cap/quote-age bias is IDENTICAL across the EH entry paths.
+
+        Returns None to ABANDON (no submit — no order is ever placed) when there is no fresh ask or
+        the ask is past the cap: prefer NO fill to a bad thin-pre-market fill (design risk #3). Since
+        the mirror opens nothing on abandon there is no naked EH position.
+
+        Carries NO target/protect: the EH mirror emits no broker bracket. The mirrored Webull
+        position is exit-managed by the account-aware software CW EH-limit ladder — `_emit_v2_exit`
+        routes off `row.broker_account_name` and EH-routes via `_extended_hours_session()` (#390), and
+        `_native_oco_stand_down_active` fails OPEN with no confirmed combo, so the ladder runs and
+        anchors +2%/−5% off the ACTUAL Webull fill (more accurate than an assumed ask)."""
+        max_age_ms = int(getattr(self.settings, "oms_v2_eh_entry_quote_max_age_ms", 2000))
+        ask = self._fresh_ask(symbol, max_age_ms)
+        if ask is None:
+            self.logger.info(
+                "[OMS-V2-MIRROR-EH] ABANDON %s: no fresh ask within %dms — no blind EH mirror",
+                symbol, max_age_ms,
+            )
+            return None
+        max_cross_pct = float(getattr(self.settings, "oms_v2_eh_entry_max_cross_pct", 1.0))
+        cap = float(schwab_fill_price) * (1.0 + max_cross_pct / 100.0)
+        if ask > cap:
+            self.logger.info(
+                "[OMS-V2-MIRROR-EH] ABANDON %s: ask %.4f past max-cross cap %.4f "
+                "(schwab_fill %.4f +%.2f%%) — no chase",
+                symbol, ask, cap, float(schwab_fill_price), max_cross_pct,
+            )
+            return None
+        buffer_pct = float(getattr(self.settings, "oms_v2_eh_entry_limit_buffer_pct", 0.3))
+        tick = Decimal("0.01") if ask >= 1.0 else Decimal("0.0001")
+        buffered = Decimal(str(ask)) * (Decimal("1") + Decimal(str(buffer_pct)) / Decimal("100"))
+        # min(buffered, cap) then ROUND_DOWN so tick-alignment can never push the limit above the cap.
+        limit = min(buffered, Decimal(str(cap)))
+        limit_s = format(limit.quantize(tick, rounding=ROUND_DOWN), "f")
+        session_code = _extended_hours_session() or ""
+        self.logger.info(
+            "[OMS-V2-MIRROR-EH] %s session=%s ask=%.4f schwab_fill=%.4f cap=%.4f limit=%s "
+            "(EH-LIMIT single-leg, no OCO)",
+            symbol, session_code, ask, float(schwab_fill_price), cap, limit_s,
+        )
+        return {
+            "order_type": "limit",
+            "time_in_force": "day",
+            "limit_price": limit_s,
+            "reference_price": limit_s,
+            "session": session_code,
+            "extended_hours": "true",
+            "price_source": "ask",
+            "oms_v2_mirror_eh": "true",
+            "oms_v2_mirror_eh_ask": f"{ask:.4f}",
+            "oms_v2_mirror_eh_cap": f"{cap:.4f}",
+            "path": source_metadata.get("path", ""),
+        }
 
     async def _process_cancel_intent(
         self,
