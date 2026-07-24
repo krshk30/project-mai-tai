@@ -47,8 +47,11 @@ REST is dry pre-market; if it's not feeding, the live-bar guard blocks EVERY EH 
 BASE `..._webull_mirror_enabled` on FIRST so `_v2_accounts()` covers the Webull account for the software ladder,
 THEN `..._webull_mirror_eh_enabled`). **Unproven live:** EH FILL QUALITY on thin pre-market (Schwab session=AM,
 Webull off Polygon NBBO) — all agents flagged it; the OMS band-cap off our feed is the bad-fill guard.
-**Remaining minor gaps (tracked):** persist the OCO resolution price; pre-market-opened position gets no OCO
-even after 09:30 (software-ladder-only); half-day session calendar; the #459 16:00/19:55 double-submit seam. **SKYQ 07-23 validates decision A**: its DAY OCO expired
+**Pre-market position across 09:30 = DEFINED + PINNED (#536, test+doc, merged):** a position opened pre-market
+stays CW-ladder-managed continuously across the open (EH-limit → RTH exits), NO OCO conversion (operator
+option 1; the mirror of the 16:00 EOD transition) — works because the stand-down fails open for a no-OCO
+position. **Remaining minor gaps (tracked):** persist the OCO resolution price; half-day session calendar; the
+#459 16:00/19:55 double-submit seam. **SKYQ 07-23 validates decision A**: its DAY OCO expired
 16:00 unfilled (RTH high 5.77 < 5.85 target) → −1.57% close; with Phase A live the +2% EH-limit would've caught
 the 16:03 post-close spike to 5.88 = a WIN. (⛔ corrected a subagent that mis-called SKYQ a fill — tape-verified.)
 
