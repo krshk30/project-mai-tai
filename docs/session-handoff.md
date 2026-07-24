@@ -130,12 +130,14 @@ written from the BUGGY pass — needs correcting/replacing (operator undecided; 
    unproven live piece). 3. Then decide the 04:00-07:00 gap (window currently opens 07:30) if wanted.
 
 *🔧 Backtest / data integrity:*
-5. **Replay-harness backtest** — engine replays live code+config (the durable fidelity fix). ⭐ **NEXT MAJOR
-   TASK.** Foundation now READY: **`docs/schwab-1m-v2-live-spec.md` (#539, merged)** = the canonical live spec
-   the replay must match; it caught 8 stale-doc discrepancies. **PARKED for the backtest phase: the exit
-   ASYMMETRY** — RTH open = static OCO hard +2%/−5%; EH open = +2% FLOOR-RIDE ladder (`cw_floor_exit_enabled=True`,
-   floor==target==2%); confirm intended when building. [[project-mai-tai-backtest-fidelity-replay]]
-   6. **Persist the broker OCO resolution price** (SKYQ exit unrecoverable). 7. **What closed SKYQ at 16:00**.
+5. ✅ **Replay-harness backtest — BUILT 07-24 (P1-P4, PRs #540-#543 merged).** The v2 backtest now REPLAYS the
+   live code: real `SchwabV2Strategy` (entry) + shared `cw_exit_decision` (exit) on historical Schwab bars,
+   same Settings. `--strategy v2 SYMBOL DATE [--eh]`. SKYQ full-trade parity on real data. The 3 drift-bugs
+   can't recur. Foundation = spec `docs/schwab-1m-v2-live-spec.md` (#539). [[project-mai-tai-backtest-fidelity-replay]]
+   **Follow-ups:** real EH parity (post-flags); mirror leg in replay; **NVVE warmup-persist** (rich-feed names
+   invisible when persisted Schwab bars too sparse); extract OMS EH-pricing to share it. **Exit asymmetry still
+   PARKED** (RTH hard-OCO vs EH floor-ride — replay models both). 6. **Persist the broker OCO resolution price**
+   (SKYQ exit unrecoverable). 7. **What closed SKYQ at 16:00**.
 
 *🎯 Resting-entry tuning — ✅ BOTH DECIDED 07-24 (locked, not tunable):* 8. **Reprice = 0.5%** (operator good).
 9. **Selectivity = N=3, KEEP** (no skip-ripping/whipsawing). 10. **Up-flip fill validation** on clean
