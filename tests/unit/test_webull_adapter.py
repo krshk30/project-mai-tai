@@ -7,6 +7,7 @@ and the defensive parsing for the order shapes still to be confirmed by a funded
 """
 from __future__ import annotations
 
+import asyncio
 import sys
 import types
 from decimal import Decimal
@@ -17,6 +18,7 @@ from project_mai_tai.broker_adapters.protocols import OrderRequest
 from project_mai_tai.broker_adapters.webull import (
     WebullAccountConfig,
     WebullBrokerAdapter,
+    WebullPositionsUnavailable,
 )
 
 
@@ -62,9 +64,11 @@ class _FakeClient:
         self._bodies = bodies
         self.last: dict[str, _Req] = {}
         self.raises: dict[str, Exception] = {}
+        self.calls: dict[str, int] = {}  # per-kind get_response count (throttle/backoff proof)
 
     def get_response(self, req: _Req) -> _Resp:
         self.last[req._kind] = req
+        self.calls[req._kind] = self.calls.get(req._kind, 0) + 1
         if req._kind in self.raises:
             raise self.raises[req._kind]
         return _Resp(self._bodies.get(req._kind))
@@ -123,6 +127,14 @@ def _adapter(client, **overrides) -> WebullBrokerAdapter:
     adapter._client_lock = threading.Lock()
     adapter._instrument_cache = {}
     adapter._instrument_lock = threading.Lock()
+    # Position-sync throttle/backoff state (set by __init__ in production; here for __new__).
+    adapter._positions_throttle_secs = 10.0
+    adapter._positions_backoff_base_secs = 5.0
+    adapter._positions_backoff_max_secs = 60.0
+    adapter._positions_lock = threading.Lock()
+    adapter._positions_cache = {}
+    adapter._positions_backoff_until = {}
+    adapter._positions_backoff_secs = {}
     for k, v in overrides.items():
         setattr(adapter, k, v)
     return adapter
@@ -391,6 +403,87 @@ async def test_list_positions_maps_holdings(fake_sdk) -> None:
     assert snaps[0].quantity == Decimal("5")
     assert snaps[0].average_price == Decimal("2.80")
     assert snaps[0].market_value == Decimal("14.25")
+
+
+def _positions_body(qty: str = "5"):
+    return {
+        "positions": {
+            "has_next": False,
+            "holdings": [{"symbol": "AAPL", "quantity": qty, "cost_price": "2.80"}],
+        }
+    }
+
+
+@pytest.mark.asyncio
+async def test_positions_throttle_coalesces_rapid_calls(fake_sdk) -> None:
+    # N rapid calls within THROTTLE_SECS -> exactly ONE Webull get_response; the rest are cached.
+    client = _FakeClient(_positions_body())
+    adapter = _adapter(client)  # default throttle = 10s
+    for _ in range(6):
+        snaps = await adapter.list_account_positions("live:orb")
+        assert len(snaps) == 1 and snaps[0].symbol == "AAPL"
+    assert client.calls.get("positions") == 1
+
+
+@pytest.mark.asyncio
+async def test_positions_throttle_disabled_hits_webull_each_call(fake_sdk) -> None:
+    # MUTATION: disable the throttle (secs=0) -> every call hits Webull (the rapid-call test
+    # above goes red without the coalescing). Pins that the throttle VALUE is what caps the rate.
+    client = _FakeClient(_positions_body())
+    adapter = _adapter(client, _positions_throttle_secs=0.0)
+    for _ in range(6):
+        await adapter.list_account_positions("live:orb")
+    assert client.calls.get("positions") == 6
+
+
+@pytest.mark.asyncio
+async def test_positions_backoff_on_429_serves_cache_then_resumes(fake_sdk) -> None:
+    # Throttle disabled to isolate the 429 backoff; tiny backoff window for a deterministic resume.
+    client = _FakeClient(_positions_body())
+    adapter = _adapter(
+        client,
+        _positions_throttle_secs=0.0,
+        _positions_backoff_base_secs=0.05,
+        _positions_backoff_max_secs=0.05,
+    )
+    # 1) Prime the cache with a successful (HELD) read.
+    assert len(await adapter.list_account_positions("live:orb")) == 1
+    assert client.calls["positions"] == 1
+    # 2) A 429 -> back off AND serve the last known-good snapshot (HELD, NOT flat).
+    client.raises["positions"] = _ServerException("TOO_MANY_REQUESTS", "rate", 429)
+    snaps = await adapter.list_account_positions("live:orb")
+    assert len(snaps) == 1 and snaps[0].symbol == "AAPL"  # unknown != flat: still HELD
+    assert client.calls["positions"] == 2  # this call hit Webull and got the 429
+    # 3) Subsequent calls WITHIN the backoff window do NOT hit Webull.
+    assert len(await adapter.list_account_positions("live:orb")) == 1
+    assert client.calls["positions"] == 2  # unchanged -> no Webull hit during backoff
+    # 4) After the window expires, one call resumes (and the recovered read refreshes the cache).
+    client.raises.pop("positions", None)
+    await asyncio.sleep(0.12)
+    assert len(await adapter.list_account_positions("live:orb")) == 1
+    assert client.calls["positions"] == 3
+
+
+@pytest.mark.asyncio
+async def test_positions_429_without_cache_raises_never_flat(fake_sdk) -> None:
+    # ⚠ "unknown != flat": a 429 with NO prior snapshot RAISES (callers -> UNKNOWN, keep
+    # protection) instead of returning [] (which classifies as FLAT_INFERRED and could clear a
+    # live stop / drop a collision guard).
+    client = _FakeClient({})
+    client.raises["positions"] = _ServerException("TOO_MANY_REQUESTS", "rate", 429)
+    adapter = _adapter(client, _positions_throttle_secs=0.0)
+    with pytest.raises(WebullPositionsUnavailable):
+        await adapter.list_account_positions("live:orb")
+
+
+@pytest.mark.asyncio
+async def test_positions_non_ratelimit_error_returns_empty(fake_sdk) -> None:
+    # A NON-429 error preserves the prior behaviour (log + empty list) so flat-vs-unknown
+    # semantics for other failures are unchanged by this fix.
+    client = _FakeClient({})
+    client.raises["positions"] = _ServerException("ILLEGAL_PARAMETER", "bad", 417)
+    adapter = _adapter(client, _positions_throttle_secs=0.0)
+    assert await adapter.list_account_positions("live:orb") == []
 
 
 @pytest.mark.asyncio

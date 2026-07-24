@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
@@ -35,6 +36,23 @@ from project_mai_tai.settings import Settings
 
 
 logger = logging.getLogger(__name__)
+
+# Webull position-sync rate-limit guard (per broker account). Safe defaults used when the
+# adapter is constructed without a Settings object (e.g. __new__-built test doubles).
+_DEFAULT_POSITIONS_THROTTLE_SECS = 10.0
+_DEFAULT_POSITIONS_BACKOFF_BASE_SECS = 5.0
+_DEFAULT_POSITIONS_BACKOFF_MAX_SECS = 60.0
+
+
+class WebullPositionsUnavailable(Exception):
+    """A position read is rate-limited (HTTP 429) AND no cached snapshot exists.
+
+    ⚠ SAFETY: this is raised INSTEAD of returning an empty list so a rate-limit can never be
+    read as a flat/empty account. The OMS callers treat a raised positions read as UNKNOWN and
+    KEEP protection (``_broker_symbol_position_state`` -> UNKNOWN; ``sync_broker_positions``
+    aborts before clearing virtuals); an empty list would classify as FLAT_INFERRED and, outside
+    the fresh-fill grace, could clear a live protective stop or drop a collision guard. Never
+    downgrade this to a `[]` return."""
 
 # Webull OrderStatus -> our ExecutionReport.event_type. Values cover both the enum-name
 # form ("PARTIAL_FILLED") and the human form ("PARTIAL FILLED") the SDK exposes.
@@ -102,6 +120,26 @@ class WebullBrokerAdapter:
         self._client_lock = threading.Lock()
         self._instrument_cache: dict[str, str] = {}
         self._instrument_lock = threading.Lock()
+        # Position-sync rate-limit guard (per broker-account-name). ORB and the v2 mirror share
+        # the live:orb Webull rate budget; a caller invoking the sync faster than the sync
+        # interval floods Webull with HTTP 429 (found live 2026-07-24 arming the mirror). The
+        # throttle coalesces reads within THROTTLE_SECS (<= the 15s sync, so no staleness
+        # regression); on a 429 the adapter backs off exponentially and serves the last cached
+        # snapshot (never a synthesized flat). Not flag-gated -- a pure safety guard.
+        self._positions_throttle_secs = float(
+            getattr(settings, "webull_positions_throttle_secs", _DEFAULT_POSITIONS_THROTTLE_SECS)
+        )
+        self._positions_backoff_base_secs = float(
+            getattr(settings, "webull_positions_backoff_base_secs", _DEFAULT_POSITIONS_BACKOFF_BASE_SECS)
+        )
+        self._positions_backoff_max_secs = float(
+            getattr(settings, "webull_positions_backoff_max_secs", _DEFAULT_POSITIONS_BACKOFF_MAX_SECS)
+        )
+        self._positions_lock = threading.Lock()
+        # key = broker_account_name -> (monotonic_ts_of_success, snapshots)
+        self._positions_cache: dict[str, tuple[float, list[BrokerPositionSnapshot]]] = {}
+        self._positions_backoff_until: dict[str, float] = {}  # monotonic deadline
+        self._positions_backoff_secs: dict[str, float] = {}   # current (growing) backoff window
 
     # ------------------------------------------------------------------ public API
     async def submit_order(self, request: OrderRequest) -> list[ExecutionReport]:
@@ -146,14 +184,94 @@ class WebullBrokerAdapter:
             return None
 
     async def list_account_positions(self, broker_account_name: str) -> list[BrokerPositionSnapshot]:
+        """Live positions for one broker account, THROTTLED + 429-BACKED-OFF per account.
+
+        - THROTTLE: a successful read < THROTTLE_SECS ago is served from cache (no Webull hit),
+          so the request rate is capped regardless of how often a caller invokes the sync.
+        - BACKOFF: on an HTTP 429 the account enters an exponential backoff window; while backed
+          off the last cached snapshot is served, or -- if no snapshot exists -- a typed
+          ``WebullPositionsUnavailable`` is RAISED (never `[]`). A rate-limit must never be read
+          as a flat/empty account (that would clear protection); see the exception's docstring.
+        - Non-rate-limit errors preserve the prior behaviour (log + empty list)."""
         account = self.accounts_by_name.get(broker_account_name)
         if account is None:
             return []
+        key = broker_account_name
+        throttle_secs = float(getattr(self, "_positions_throttle_secs", _DEFAULT_POSITIONS_THROTTLE_SECS))
+        now = time.monotonic()
+
+        with self._positions_lock:
+            cached = self._positions_cache.get(key)
+            backoff_until = self._positions_backoff_until.get(key, 0.0)
+
+        # THROTTLE — a recent SUCCESS coalesces this call.
+        if cached is not None and (now - cached[0]) < throttle_secs:
+            return list(cached[1])
+
+        # BACKOFF — inside a 429 window, do NOT hit Webull. Serve last known-good; never flat.
+        if now < backoff_until:
+            if cached is not None:
+                return list(cached[1])
+            raise WebullPositionsUnavailable(
+                f"Webull positions for {key} rate-limited (in backoff) and no cached snapshot "
+                f"-> UNKNOWN (protection kept)"
+            )
+
+        # FETCH.
         try:
-            return await asyncio.to_thread(self._positions_blocking, account, broker_account_name)
-        except Exception:  # noqa: BLE001
+            snapshots = await asyncio.to_thread(self._positions_blocking, account, broker_account_name)
+        except Exception as exc:  # noqa: BLE001
+            if self._is_rate_limited(exc):
+                self._note_positions_backoff(key, time.monotonic())
+                with self._positions_lock:
+                    cached = self._positions_cache.get(key)
+                logger.warning(
+                    "Webull position sync rate-limited (429) for %s -> backing off; %s",
+                    broker_account_name,
+                    "serving last cached snapshot"
+                    if cached is not None
+                    else "no cache -> UNKNOWN (protection kept)",
+                )
+                if cached is not None:
+                    return list(cached[1])
+                raise WebullPositionsUnavailable(
+                    f"Webull positions for {key} rate-limited (429) and no cached snapshot "
+                    f"-> UNKNOWN (protection kept)"
+                ) from exc
+            # Non-rate-limit error: preserve the prior behaviour (log + empty list).
             logger.exception("Webull position sync failed for %s", broker_account_name)
             return []
+
+        # SUCCESS — refresh the cache and clear any backoff for this account.
+        with self._positions_lock:
+            self._positions_cache[key] = (time.monotonic(), list(snapshots))
+            self._positions_backoff_until.pop(key, None)
+            self._positions_backoff_secs.pop(key, None)
+        return snapshots
+
+    @staticmethod
+    def _is_rate_limited(exc: Exception) -> bool:
+        """True when a Webull SDK exception is an HTTP 429 / TOO_MANY_REQUESTS rate-limit.
+
+        The SDK ``ServerException`` carries ``http_status`` / ``error_code`` / ``error_msg``
+        (see ``_exc_reason``). Conservative by design: a false positive merely serves a cached
+        snapshot for a few seconds, a false negative resumes hammering Webull."""
+        if getattr(exc, "http_status", None) == 429:
+            return True
+        code = str(getattr(exc, "error_code", "") or "").upper()
+        msg = str(getattr(exc, "error_msg", "") or "").upper()
+        haystack = f"{code} {msg}"
+        return "TOO_MANY_REQUESTS" in haystack or "RATE_LIMIT" in haystack or "429" in haystack
+
+    def _note_positions_backoff(self, key: str, now: float) -> None:
+        """Set/extend the per-account exponential backoff window after a 429."""
+        base = float(getattr(self, "_positions_backoff_base_secs", _DEFAULT_POSITIONS_BACKOFF_BASE_SECS))
+        cap = float(getattr(self, "_positions_backoff_max_secs", _DEFAULT_POSITIONS_BACKOFF_MAX_SECS))
+        with self._positions_lock:
+            current = self._positions_backoff_secs.get(key, 0.0)
+            nxt = base if current <= 0 else min(cap, current * 2.0)
+            self._positions_backoff_secs[key] = nxt
+            self._positions_backoff_until[key] = now + nxt
 
     # ------------------------------------------------------------------ blocking impls
     def _submit_blocking(
