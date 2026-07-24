@@ -70,7 +70,30 @@ Settings() (same env)        ─┘
   One behavior-identical live seam: `_maybe_cw_flip_close`'s staleness clock routes through the existing
   `_now_ms()` seam (base returns wall-clock, byte-identical) so the replay's injected clock reaches the
   bar-close flip exit. (The full VPS DB reconciliation is the parity gate — run env-sourced on the box.)
-- **P3 — Both brokers + EH.** EH entry/exit geometries; the mirror leg (optional, for the bake-off).
+- **P3 — Extended-hours ENTRY. ✅ BUILT** (`backtest/replay.py`: `replay_symbol_day` now FILLS entries
+  OPENED in extended hours, both modes, through the REAL strategy code). The live EH entry is a marketable
+  EH-LIMIT at the ask: **reactive-EH** = `_cw_v2_quote` (with its EH live-bar guard) + the shared
+  `entry_gate.route_extended_hours` (session=AM/PM limit@ask); **resting-EH** = `_eh_resting_cross_check`
+  (P-B2) emitting the marketable EH-LIMIT on the ATR up-cross. The EH-limit FILL/ABANDON model
+  (`_eh_entry_reprice`) SIMULATES the OMS pre-submit re-price (`oms.service._apply_v2_eh_resting_entry` /
+  `_apply_v2_eh_reactive_entry` are DB/broker-coupled → SIMULATE per this doc + Decision 2, same class as
+  the static-OCO first-touch): resting fills at `min(ask, level×(1+band))` and ABANDONS a gap-through
+  (`ask > cap`); reactive (P-B1 on) caps off the signal `×(1+max_cross%)` and abandons past it; no fresh
+  ask ⇒ ABANDON. The EH-opened position exits via the P2 floor-ride (selected by the RTH/EH open). Flag-
+  awareness: `build_replay_settings(eh_enabled=True)` turns BOTH EH flags on (`..._cw_v2_eh_resting_entry_
+  enabled` + `oms_v2_eh_entry_enabled`); the **LIVE deployed defaults stay OFF**, so the default replay is
+  RTH-only like production. Five synthetic CI tests (`test_backtest_replay.py` P3 block): pre-market
+  resting cross→band-fill→floor-ride, reactive marketable fill, gap-through→ABANDON, the EH live-bar guard
+  blocking a stale bar, and the flag-off mutation (RTH-only). **No live seam was touched** — the strategy
+  EH paths + shared gate already carry the P1/P2 `_now_ms()` clock seam, and the OMS band-cap is simulated
+  (not instantiated).
+  - **⚠ HONEST SCOPE — EH REAL-DATA PARITY IS DEFERRED.** There are NO real EH trades yet (the live EH flags
+    are dormant until enabled post-4PM / Monday), so P3 proves the EH **mechanism** on synthetic fixtures
+    ONLY. This is NOT EH real-data parity — the real-fill parity gate (replay vs a real EH trade) is a
+    follow-up once real EH fills exist, exactly like the P1/P2 golden-day reconciliation.
+  - **Out of scope for P3:** the **Webull mirror leg** (the dual-broker bake-off in the replay) — a later
+    item once the EH parity gate exists.
+- **P3b (later) — Both brokers.** The mirror leg (optional, for the bake-off).
 - **P4 — Deprecate the old harnesses** (`v2_sim` re-impl, `orb_sim::simulate_resting`) — one replay, one truth.
 - Each phase gated by the parity test on a golden day. CI-enforced.
 
