@@ -921,6 +921,21 @@ class OmsRiskService:
                 await self._publish_order_event(eh_abandon_event)
                 return [*pre_submit_events, eh_abandon_event]
 
+            # P-B2: band-cap the v2 EH RESTING entry (the software-emulated marketable EH-LIMIT the strategy
+            # emits on the ATR up-cross, tagged eh_resting=true) off the OMS's own fresh ask -> min(ask,
+            # level*(1+band)); ASK past the band or no fresh ask -> ABANDON. Flag-gated OFF / EH-only /
+            # mutually exclusive with the reactive builder (that excludes resting_entry) and the RTH-only
+            # OCO bracket. No-op / byte-identical when off or not a v2 EH resting open.
+            resting_eh_abandon_event = self._apply_v2_eh_resting_entry(
+                session=session, event=event, intent=intent
+            )
+            if resting_eh_abandon_event is not None:
+                session.commit()
+                for prior_event in pre_submit_events:
+                    await self._publish_order_event(prior_event)
+                await self._publish_order_event(resting_eh_abandon_event)
+                return [*pre_submit_events, resting_eh_abandon_event]
+
             client_order_id = self._build_client_order_id(event)
             request = OrderRequest(
                 client_order_id=client_order_id,
@@ -4494,6 +4509,106 @@ class OmsRiskService:
             event.payload.side, reason_detail,
         )
         return self._build_rejected_event(event, intent.id, reason=reason_code)
+
+    def _v2_eh_resting_entry_applies(self, event: TradeIntentEvent) -> bool:
+        """Gate for the EH RESTING-entry band-cap re-price (P-B2). Only the flag-on v2 EH resting open
+        (metadata eh_resting=true) qualifies. The strategy software-emulates the resting cross in EH and
+        emits a MARKETABLE open tagged eh_resting; this builder re-prices it off the OMS's OWN fresh ask
+        and band-caps it. RTH / flag-off / non-v2 / the reactive entry / the RTH broker STOP_LIMIT are all
+        no-ops -> byte-identical. Shares one env switch with the strategy (like confirmed_window_enabled)."""
+        if not bool(getattr(self.settings, "strategy_schwab_1m_v2_cw_v2_eh_resting_entry_enabled", False)):
+            return False
+        p = event.payload
+        md = p.metadata
+        return (
+            p.strategy_code == "schwab_1m_v2"
+            and p.intent_type == "open"
+            and p.side == "buy"
+            and str(md.get("eh_resting", "")).lower() == "true"
+            and not _is_regular_market_session()
+        )
+
+    def _apply_v2_eh_resting_entry(
+        self,
+        *,
+        session: Session,
+        event: TradeIntentEvent,
+        intent: TradeIntent,
+    ) -> OrderEventEvent | None:
+        """Re-price the v2 EH RESTING entry as a marketable, band-capped EH-LIMIT off the OMS's OWN fresh
+        ask (`_latest_quotes_by_symbol`, the ONLY feed the Webull mirror can price from — no Webull market-
+        data entitlement). limit = min(ask, level*(1+band)); ABANDON if the ask has gapped past the band
+        (no-chase) or there is no fresh ask (no blind order) — the SAME conservative bias as the EH reactive
+        entry and the ORB quote-priced entry. This is the software emulation of the RTH broker buy-stop-limit
+        (which triggers at the level and fills up to level*(1+band), missing a gap-through) for extended
+        hours where a broker stop is dead.
+
+        Returns None to PROCEED (after mutating event.payload.metadata's limit) or a rejected event to
+        ABANDON (short-circuit before any broker submit). No-op (returns None, no mutation) when the flag is
+        off / not a v2 EH resting open -> byte-identical. ``session`` is unused (abandon marks the intent in
+        the caller's open session); kept for symmetry with the other pre-submit helpers."""
+        del session
+        if not self._v2_eh_resting_entry_applies(event):
+            return None
+        md = event.payload.metadata
+        symbol = str(event.payload.symbol).upper()
+        session_code = _extended_hours_session()  # "AM"/"PM" (applies() already confirmed EH)
+        # The resting level = the ATR line the cross fired at = the band anchor. Mandatory (fail-closed):
+        # without it we cannot bound the fill, and the EH resting draft always carries it.
+        try:
+            level = float(md.get("resting_level") or md["entry_price"])
+        except (KeyError, TypeError, ValueError):
+            return self._abandon_v2_eh_entry(
+                event=event, intent=intent, reason_code="MISSING_SIGNAL",
+                reason_detail="resting_level/entry_price absent/invalid; cannot band-cap the EH resting entry",
+            )
+        if level <= 0:
+            return self._abandon_v2_eh_entry(
+                event=event, intent=intent, reason_code="MISSING_SIGNAL",
+                reason_detail=f"resting level non-positive ({level})",
+            )
+        # Band = the strategy's own band (single source, passed in metadata); the setting is the fallback belt.
+        try:
+            band_pct = float(md["resting_band_pct"])
+        except (KeyError, TypeError, ValueError):
+            band_pct = float(getattr(self.settings, "oms_v2_eh_resting_entry_band_pct", 0.5))
+        cap = level * (1.0 + band_pct / 100.0)
+        max_age_ms = int(getattr(self.settings, "oms_v2_eh_resting_entry_quote_max_age_ms", 2000))
+        ask = self._fresh_ask(symbol, max_age_ms)
+        if ask is None:
+            return self._abandon_v2_eh_entry(
+                event=event, intent=intent, reason_code="NO_FRESH_QUOTE",
+                reason_detail=f"no fresh ask within {max_age_ms}ms for {symbol}",
+            )
+        if ask > cap:
+            # The ask has gapped past the band -> the RTH stop-limit would MISS this cross too (no-chase);
+            # prefer NO fill to chasing a thin-pre-market spike (design risk #3).
+            return self._abandon_v2_eh_entry(
+                event=event, intent=intent, reason_code="ASK_PAST_BAND",
+                reason_detail=(
+                    f"ask {ask:.4f} past band cap {cap:.4f} "
+                    f"(level {level:.4f} +{band_pct}%) — gap-through, prefer no fill"
+                ),
+            )
+        # ask <= cap: marketable buy limit at min(ask, cap) = the ask (crosses the offer, fills near the line).
+        tick = Decimal("0.01") if ask >= 1.0 else Decimal("0.0001")
+        limit = min(Decimal(str(ask)), Decimal(str(cap)))
+        # ROUND_DOWN so tick-alignment can never push the limit back above the band cap.
+        limit_s = format(limit.quantize(tick, rounding=ROUND_DOWN), "f")
+        md["order_type"] = "limit"
+        md["limit_price"] = limit_s
+        md["reference_price"] = limit_s
+        md["session"] = session_code
+        md["extended_hours"] = "true"
+        md["price_source"] = "ask"
+        md["oms_v2_eh_resting_entry"] = "true"
+        md["oms_v2_eh_resting_entry_ask"] = f"{ask:.4f}"
+        md["oms_v2_eh_resting_entry_cap"] = f"{cap:.4f}"
+        self.logger.info(
+            "[OMS-V2-EH-RESTING] symbol=%s session=%s ask=%.4f level=%.4f cap=%.4f limit=%s",
+            symbol, session_code, ask, level, cap, limit_s,
+        )
+        return None
 
     def _build_rejected_event(
         self,

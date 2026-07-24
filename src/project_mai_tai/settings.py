@@ -503,6 +503,26 @@ class Settings(BaseSettings):
     # before firing (never a warmup replay). RTH is byte-identical (the guard is skipped in regular hours,
     # where warmup completes by 09:30 and the 09:30-10:00 ORB skip already covers the open). Tunable.
     strategy_schwab_1m_v2_cw_v2_reactive_entry_max_bar_age_secs: float = 180.0
+    # ── CW-v2 EH RESTING entry (2026-07-24 Phase B part 2 / P-B2; docs/premarket-eod-exit-design.md) ──
+    # A broker buy-STOP-LIMIT trigger is dead in extended hours on BOTH brokers (Schwab RTH-only; Webull
+    # stops 417). So when this flag is ON, the RESTING entry is SOFTWARE-EMULATED in EH: the strategy
+    # watches live quotes and, on the ATR up-cross (price crossing the resting level UP), emits a
+    # MARKETABLE EH-LIMIT buy at min(ask, level*(1+band)) — ABANDONING if the ask has gapped past
+    # level*(1+band) (the same no-chase / gap-through-miss semantics the RTH broker stop-limit has). It
+    # ALSO opens the resting window to 07:30 (else 09:30, byte-identical). RTH is UNCHANGED (a broker
+    # buy-stop-limit rests as today). No OCO in EH (RTH-only); the software EH-limit exit ladder manages
+    # the position. Read by BOTH the strategy (window + emulation) and the OMS (the band-cap re-price),
+    # exactly like `confirmed_window_enabled`. OFF (default) => byte-identical: the resting window stays
+    # 09:30 and no EH emulation runs. ⚠ Not yet attended-tested live; enable only after an after-hours
+    # validation of the Webull/Schwab EH fill.
+    strategy_schwab_1m_v2_cw_v2_eh_resting_entry_enabled: bool = False
+    # Fallback slippage-cap band for the EH resting entry, used only when the intent carries no
+    # `resting_band_pct` (the strategy passes its own band in metadata as the single source of truth; this
+    # is the belt so the OMS can never over-pay). % of the resting level.
+    oms_v2_eh_resting_entry_band_pct: float = 0.5
+    # Max ask staleness (ms) the EH resting entry will price off. No fresh ask within this window ->
+    # ABANDON (never submit a blind limit). Mirrors the EH reactive entry's 2000ms default.
+    oms_v2_eh_resting_entry_quote_max_age_ms: int = 2000
     strategy_macd_30s_reclaim_excluded_symbols: str = "JEM,CYCN,BFRG,UCAR,BBGI"
     # Maximum age (seconds) for the `scanner_confirmed_last_nonempty` snapshot
     # to be eligible for startup restore. Older snapshots are skipped, so

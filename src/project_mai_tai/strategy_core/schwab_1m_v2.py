@@ -499,6 +499,14 @@ class SchwabV2Strategy:
         self._resting_min_short_bars = max(1, int(
             getattr(self.settings, "strategy_schwab_1m_v2_cw_v2_resting_entry_min_short_bars", 3) or 3
         ))
+        # EH RESTING entry (P-B2): a broker buy-stop-limit trigger is dead in extended hours (both brokers),
+        # so when this flag is ON the resting entry is SOFTWARE-EMULATED in EH — the strategy watches quotes
+        # and, on the ATR up-cross, emits a marketable EH-LIMIT (the OMS band-caps it). It also opens the
+        # resting window to 07:30. OFF => byte-identical (window stays 09:30, EH cross-check inert, RTH
+        # broker-stop path untouched).
+        self._eh_resting_enabled = bool(
+            getattr(self.settings, "strategy_schwab_1m_v2_cw_v2_eh_resting_entry_enabled", False)
+        )
         self._pending_intents: list[TradeIntentDraft] = []
         # P1.3 + P1.4 armed-segment safety — ONE flag gates BOTH the boot-mark (P1.3) and the
         # boot-hold (they are one change; splitting them creates a cell where the hold reads every
@@ -647,6 +655,13 @@ class SchwabV2Strategy:
         # OWNS the CW entry via this quote path; the bar-close _cw_entry is a no-op. No-op (returns
         # None like the base) when the sub-flag is off.
         if self._cw_v2_enabled:
+            # EH RESTING (P-B2): a broker stop-limit can't trigger in extended hours, so when the EH
+            # resting flag is on we software-emulate the cross here — on the ATR up-cross emit a
+            # marketable EH-LIMIT buy (the OMS band-caps it). No-op (returns None) in RTH / flag-off /
+            # not-software-resting, so the reactive quote path below is byte-identical.
+            eh_draft = self._eh_resting_cross_check(state, quote)
+            if eh_draft is not None:
+                return eh_draft
             return self._cw_v2_quote(state, quote)
         # Confirmed-window (CW) owns the entry via the bar-path wait-3 break. The intrabar
         # hold-confirm TOUCH entry is a separate signal and must NOT also fire under CW, so
@@ -1435,15 +1450,38 @@ class SchwabV2Strategy:
         bars -- so the gate read True out-of-hours and the resting entry fired at 04:00/07:00 ET on
         stale price levels, sending session=NORMAL STOP_LIMITs the broker rejected. Wall-clock is the
         real question ("is it regular-session RIGHT NOW?") and aligns this gate with the OMS one.
+        ⭐ P-B2 (2026-07-24): when `strategy_schwab_1m_v2_cw_v2_eh_resting_entry_enabled` is ON the window
+        OPENS to 07:30 ET so the software-emulated EH resting entry can arm/fire pre-market. OFF (default)
+        it stays 09:30 — byte-identical to the RTH-only behavior. The end (16:00, exclusive) is unchanged.
         `now` is injectable for tests."""
         et = (now or datetime.now(UTC)).astimezone(EASTERN_TZ)
         minutes = et.hour * 60 + et.minute
-        return 9 * 60 + 30 <= minutes < 16 * 60
+        start = (7 * 60 + 30) if self._eh_resting_enabled else (9 * 60 + 30)
+        return start <= minutes < 16 * 60
+
+    def _resting_session_is_eh(self, now: datetime | None = None) -> bool:
+        """True when the WALL CLOCK is in extended hours (before 09:30 or >= 16:00 ET) — the window in
+        which the resting entry is SOFTWARE-emulated (no broker stop trigger). Mirrors the OMS
+        `_extended_hours_session` boundary so the strategy emulation and the OMS band-cap agree on the
+        session split. Injectable for tests."""
+        et = (now or datetime.now(UTC)).astimezone(EASTERN_TZ)
+        minutes = et.hour * 60 + et.minute
+        return not (9 * 60 + 30 <= minutes < 16 * 60)
 
     def _queue_resting_place(self, state: SymbolState, line: float) -> None:
         limit = line * (1.0 + self._resting_entry_band_pct / 100.0)
         state.resting_active = True
         state.resting_level = line
+        if self._eh_resting_enabled and self._resting_session_is_eh():
+            # EH SOFTWARE REST (P-B2): a broker buy-stop-limit can't trigger in extended hours, so we do
+            # NOT place a broker order — we arm the level IN MEMORY and watch quotes (_eh_resting_cross_check
+            # emits the marketable EH-LIMIT on the up-cross). No broker draft is queued; the state machine
+            # (reprice / grace / window) is otherwise byte-identical.
+            logger.info(
+                "[V2-RESTING-EH-ARM] %s soft-rest at level=%.4f (EH; broker stop dead, watching quotes)",
+                state.symbol, line,
+            )
+            return
         logger.info(
             "[V2-RESTING-PLACE] %s stop=%.4f limit=%.4f (band %.2f%%)",
             state.symbol, line, limit, self._resting_entry_band_pct,
@@ -1463,10 +1501,16 @@ class SchwabV2Strategy:
         ))
 
     def _queue_resting_cancel(self, state: SymbolState, *, reason: str) -> None:
-        logger.info("[V2-RESTING-CANCEL] %s reason=%s level=%.4f",
-                    state.symbol, reason, state.resting_level)
+        was_level = state.resting_level
         state.resting_active = False
         state.resting_level = 0.0
+        if self._eh_resting_enabled and self._resting_session_is_eh():
+            # EH SOFTWARE REST: nothing is live at the broker -> just clear the in-memory arm, no cancel
+            # draft (a broker cancel for a non-existent order would be spurious).
+            logger.info("[V2-RESTING-EH-DISARM] %s reason=%s level=%.4f", state.symbol, reason, was_level)
+            return
+        logger.info("[V2-RESTING-CANCEL] %s reason=%s level=%.4f",
+                    state.symbol, reason, was_level)
         self._pending_intents.append(TradeIntentDraft(
             symbol=state.symbol, side="buy", intent_type="cancel",
             quantity=Decimal(str(self._atr_qty)),
@@ -1539,13 +1583,16 @@ class SchwabV2Strategy:
                 bar_ms = int(state.bars[-1].timestamp_ms) if state.bars else 0
                 if bar_ms and (self._now_ms() - bar_ms) > self._resting_max_bar_age_ms:
                     return
-                # STOP<=ASK guard: a buy-stop must sit ABOVE the ask. On a fast up-tick the live ask
-                # can already be at/above the trail (the flip is happening) -> placing firm-rejects
-                # "stop price must be above the current ask". Skip; re-arm once the trail is back above
-                # the market. Fail-open when no fresh quote (let the broker be the backstop).
-                ask = float(getattr(state.last_quote, "ask_price", 0.0) or 0.0) if state.last_quote else 0.0
-                if ask > 0.0 and trail <= ask:
-                    return
+                # STOP<=ASK guard (RTH broker stop only): a buy-stop must sit ABOVE the ask. On a fast
+                # up-tick the live ask can already be at/above the trail (the flip is happening) -> placing
+                # firm-rejects "stop price must be above the current ask". Skip; re-arm once the trail is
+                # back above the market. Fail-open when no fresh quote (let the broker be the backstop).
+                # In EH there is NO broker stop (software rest), so the guard is skipped — the quote
+                # cross-check prices/abandons the marketable EH-LIMIT instead.
+                if not (self._eh_resting_enabled and self._resting_session_is_eh()):
+                    ask = float(getattr(state.last_quote, "ask_price", 0.0) or 0.0) if state.last_quote else 0.0
+                    if ask > 0.0 and trail <= ask:
+                        return
                 self._queue_resting_place(state, trail)
                 return
             # STABLE-REST: re-place only on a meaningful trail move; else leave it out there.
@@ -1560,6 +1607,71 @@ class SchwabV2Strategy:
             return
         # No / unknown signal while flat: HOLD the resting order out there (do nothing).
         return
+
+    def _eh_resting_cross_check(self, state: SymbolState, quote: Quote) -> TradeIntentDraft | None:
+        """EH software-emulated resting TRIGGER (P-B2). A broker buy-stop-limit can't trigger in extended
+        hours (Schwab RTH-only; Webull stops 417), so while software-resting in EH we watch quotes and, on
+        the ATR up-cross (a live print reaching the resting level), emit a MARKETABLE EH-LIMIT buy. The OMS
+        band-caps it to min(ask, level*(1+band)) and ABANDONS a gap-through (ask past the band) — the same
+        no-chase / gap-through-miss semantics the RTH broker stop-limit has. The draft is routed through
+        `_maybe_emit`, which stamps session=AM/PM + the limit at the ask (P-B1's `_apply_extended_hours_
+        routing`), then the OMS applies the authoritative band-cap off its OWN feed.
+
+        Returns the open draft or None. No-op (returns None) unless the EH resting flag is on AND it is
+        extended hours AND a software rest is armed + flat + not already in the settle grace — so RTH /
+        flag-off is byte-identical (the RTH broker stop owns the cross there). The up-cross emits EXACTLY
+        ONCE: it enters the silence-on-fill grace (`resting_flip_ms`) before returning, mirroring the RTH
+        broker fill (once triggered, stop re-arming and wait for the position to confirm)."""
+        if not (self._eh_resting_enabled and self._cw_v2_enabled):
+            return None
+        if self._entries_held:                        # boot-hold suppresses all entries
+            return None
+        if not self._resting_session_is_eh():         # RTH -> the broker stop-limit owns the cross
+            return None
+        if not (state.resting_active and state.resting_level > 0.0):
+            return None
+        if state.position_qty != 0 or state.resting_flip_ms:   # already filling / in the settle grace
+            return None
+        # LIVE-BAR guard (#528 mirror): only emit off a live feed, never a warmup-replayed / stale bar. The
+        # arm-time gate in _cw_v2_resting_track already checks freshness at arm; this re-checks at the cross
+        # so a stall between arm and cross can't fire on an hours-old bar. RTH never reaches here.
+        bar_ms = int(state.bars[-1].timestamp_ms) if state.bars else 0
+        if not bar_ms or (self._now_ms() - bar_ms) > self._resting_max_bar_age_ms:
+            return None
+        # The up-cross = a live print (fallback mid) reaching the resting level = the broker stop trigger.
+        px = float(getattr(quote, "last_price", 0.0) or 0.0)
+        if px <= 0.0:
+            bid = float(getattr(quote, "bid_price", 0.0) or 0.0)
+            ask0 = float(getattr(quote, "ask_price", 0.0) or 0.0)
+            px = (bid + ask0) / 2.0 if (bid > 0.0 and ask0 > 0.0) else 0.0
+        if px <= 0.0 or px < state.resting_level:
+            return None
+        level = state.resting_level
+        cap = level * (1.0 + self._resting_entry_band_pct / 100.0)
+        # Enter the settle grace BEFORE returning so a burst of quotes can't double-emit (emit exactly once
+        # per cross). The bar-track then HOLDs through the grace (silence-on-fill) and either sees the fill
+        # (position_qty != 0 -> clear) or grace-expires and disarms/re-arms (flip_no_fill), all in memory.
+        state.resting_flip_ms = self._now_ms()
+        state.last_entry_price = px
+        logger.info(
+            "[V2-RESTING-EH-CROSS] %s px=%.4f >= level=%.4f -> marketable EH-LIMIT buy (cap=%.4f band=%.2f%%)",
+            state.symbol, px, level, cap, self._resting_entry_band_pct,
+        )
+        return TradeIntentDraft(
+            symbol=state.symbol, side="buy", intent_type="open",
+            quantity=Decimal(str(self._atr_qty)),
+            reason="schwab_1m_v2 ATR Flip CW-v2-resting",   # keeps the ATR-only belt (has 'ATR Flip')
+            metadata={
+                "path": "ATR Flip", "atr_variant": "CW-v2-resting",
+                "order_type": "limit",                       # marketable EH-LIMIT (NOT a broker STOP_LIMIT)
+                "reference_price": f"{level:.4f}", "entry_price": f"{level:.4f}",
+                "resting_level": f"{level:.4f}",
+                "resting_band_pct": f"{self._resting_entry_band_pct}",
+                "cw_flip_level": f"{level:.4f}",
+                "resting_entry": "true", "eh_resting": "true",
+                "source": "schwab_1m_v2", "strategy_version": STRATEGY_VERSION,
+            },
+        )
 
     def drain_pending_intents(self) -> list[TradeIntentDraft]:
         """Return + clear the resting-entry place/cancel drafts queued this bar. The bot loop emits
