@@ -385,10 +385,10 @@ class Settings(BaseSettings):
     # EH-limit ladder rather than a fresh 16:00–16:30 entry that fills thin and has to survive AH.
     # Applies to BOTH entry modes (resting + reactive). Rollback = env overrides back to 16/30 or 18/0.
     strategy_schwab_1m_v2_entry_window_start_hour_et: int = 7
-    # 2026-07-24 Phase B (EH-trading design R1): start bumped 07:00 -> 07:30 (operator's chosen value)
-    # so pre-market entries begin at 07:30 ET, once EH liquidity is meaningful. Both modes. The reactive
-    # EH entry is fillable (session=AM limit, restored dc11d5a); this just narrows when it may open.
-    strategy_schwab_1m_v2_entry_window_start_minute_et: int = 30
+    # 2026-07-24 Phase B (EH-trading design R1): pre-market entries open at 07:00 ET (operator 07-24 —
+    # revised from the interim 07:30; "7 AM is the pre-market open"). Both modes. The reactive EH entry is
+    # fillable (session=AM limit, restored dc11d5a); resting opens 07:00 too once the eh_resting flag is on.
+    strategy_schwab_1m_v2_entry_window_start_minute_et: int = 0
     strategy_schwab_1m_v2_entry_window_end_hour_et: int = 16
     strategy_schwab_1m_v2_entry_window_end_minute_et: int = 0
     # GO-LIVE opt-in: when False (default), the configured_schwab_accounts guard

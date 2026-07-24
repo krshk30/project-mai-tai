@@ -48,12 +48,12 @@ def _arm(strat, state, *, trail, ts=PRE_WIN, now_ms, eh=True):
     return strat.drain_pending_intents()
 
 
-# --------------------------------------------------------------------------- window opens to 07:30
-def test_window_opens_to_0730_when_flag_on() -> None:
+# --------------------------------------------------------------------------- window opens to 07:00
+def test_window_opens_to_0700_when_flag_on() -> None:
     strat = _strat()
     f = strat._resting_in_window
-    assert f(datetime(2026, 7, 10, 7, 29, tzinfo=_ET)) is False    # just before 07:30
-    assert f(datetime(2026, 7, 10, 7, 30, tzinfo=_ET)) is True     # ⭐ opens at 07:30
+    assert f(datetime(2026, 7, 10, 6, 59, tzinfo=_ET)) is False    # just before 07:00
+    assert f(datetime(2026, 7, 10, 7, 0, tzinfo=_ET)) is True      # ⭐ opens at 07:00
     assert f(datetime(2026, 7, 10, 8, 0, tzinfo=_ET)) is True      # pre-market EH
     assert f(datetime(2026, 7, 10, 9, 30, tzinfo=_ET)) is True     # RTH open
     assert f(datetime(2026, 7, 10, 15, 59, tzinfo=_ET)) is True    # last RTH minute
@@ -64,17 +64,17 @@ def test_window_stays_0930_when_flag_off() -> None:
     """Flag OFF -> byte-identical: the window stays 09:30 (07:30 does NOT open)."""
     strat = _strat(eh=False)
     f = strat._resting_in_window
-    assert f(datetime(2026, 7, 10, 7, 30, tzinfo=_ET)) is False    # closed pre-market
+    assert f(datetime(2026, 7, 10, 7, 0, tzinfo=_ET)) is False     # closed pre-market
     assert f(datetime(2026, 7, 10, 8, 0, tzinfo=_ET)) is False
     assert f(datetime(2026, 7, 10, 9, 29, tzinfo=_ET)) is False
     assert f(datetime(2026, 7, 10, 9, 30, tzinfo=_ET)) is True     # unchanged 09:30 start
 
 
-def test_0730_window_threshold_is_pinned() -> None:
-    """Threshold mutation guard: 07:30 must be the exact boundary — 07:29 out, 07:30 in."""
+def test_0700_window_threshold_is_pinned() -> None:
+    """Threshold mutation guard: 07:00 must be the exact boundary — 06:59 out, 07:00 in."""
     strat = _strat()
-    assert strat._resting_in_window(datetime(2026, 7, 10, 7, 29, tzinfo=_ET)) is False
-    assert strat._resting_in_window(datetime(2026, 7, 10, 7, 30, tzinfo=_ET)) is True
+    assert strat._resting_in_window(datetime(2026, 7, 10, 6, 59, tzinfo=_ET)) is False
+    assert strat._resting_in_window(datetime(2026, 7, 10, 7, 0, tzinfo=_ET)) is True
 
 
 # --------------------------------------------------------------------------- EH arms in memory (no broker draft)
