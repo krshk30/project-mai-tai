@@ -17,6 +17,35 @@
 
 ---
 
+## ⭐⭐ 2026-07-24 (PM, ~16:10 ET) — EH-trading GONE LIVE for Monday (validated on real money first)
+
+**Operator: "Enable now for Monday."** After a live post-16:00 validation, the 3 EH flags are now TRUE +
+loaded on the VPS. This closes out the AM build below — the EH stack is no longer dormant.
+
+**The validation (real money, live:orb, in the 16:00+ extended-hours window):**
+- ✅ **Streamer pushes post-16:00 EH bars** (JEM/STAK/WLDS @16:00) — the make-or-break; the live-bar guard
+  won't starve EH entries.
+- ✅ **`session=AM` marketable EH-limit BUY fills in EH** — LVWR filled @1.46, repeated @1.43 (twice).
+- ✅ **Close = a SELL that FLATTENS the filled position (qty 1→0), NOT an order-cancel** (operator explicitly
+  asked to confirm close-vs-cancel). Account left flat; test cost ≈ **$0.04**.
+- Test scripts: `/tmp/eh_test.py` (buy), `/tmp/eh_close.py` (sell), `/tmp/eh_pos.py` (position check),
+  `/tmp/flagcheck.py` (flag resolver) on the VPS. Order shape via `WebullBrokerAdapter.submit_order` with
+  metadata `{order_type:limit, session:am, extended_hours:true}` (single-leg, no OCO — EH is LIMIT-only).
+
+**Flags flipped TRUE (choreographed OMS+v2-bot restart; 0 429s; clean start; flat book):**
+`MAI_TAI_OMS_V2_EH_ENTRY_ENABLED`, `MAI_TAI_STRATEGY_SCHWAB_1M_V2_CW_V2_EH_RESTING_ENTRY_ENABLED`,
+`MAI_TAI_STRATEGY_SCHWAB_1M_V2_WEBULL_MIRROR_EH_ENABLED` (+ `..._EOD_OCO_TRANSITION_ENABLED` set earlier PM).
+Note the resting-EH flag's real name is `...CW_V2_EH_RESTING...` (the non-CW variant is MISSING-ATTR).
+Services consuming them: `oms` (reactive-EH + mirror-EH) + `schwab-1m-v2` (resting-EH). **ORB service is DEAD**
+→ no live:orb contention (removes the original 429-collision source; the #537 throttle is deployed regardless).
+
+**🔴 MONDAY WATCH:** 07:00–09:30 ET both v2 modes (reactive+resting) emit `session=AM` limits on Schwab
+primary, mirrored to Webull. **First live EH fire ≈ 07:00 Mon — attend it.** RTH (09:30–16:00) unchanged (OCO).
+**KILL:** drop the 3 `...EH...=true` lines from `/etc/project-mai-tai/project-mai-tai.env` + restart oms &
+schwab-1m-v2 (RTH untouched). [[project-mai-tai-premarket-trading-design]] updated LIVE.
+
+---
+
 ## ⭐ 2026-07-24 (AM) — EH-trading BUILT (3 PRs merged DORMANT): 07:30–16:00 window + EH-fillable entries + EOD OCO cleanup
 
 **Designed + built during pre-market, per operator ("design+build today, deploy AFTER-HOURS, not during market
