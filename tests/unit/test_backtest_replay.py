@@ -338,3 +338,120 @@ def test_eh_open_bar_close_atr_flip_exit() -> None:
     assert t.geometry == "eh_floor_ride"
     assert t.exit_reason == "flip"                 # the bar-close ATR SELL flip closed it
     assert t.exit_px < t.entry_px                  # closed at the (falling) bid, a trend exit
+
+
+# ==================================================================== P3: EXTENDED-HOURS entry
+# The replay now FILLS entries OPENED in extended hours (pre/post-market), so the replay is faithful
+# for EH opens too (docs/backtest-replay-engine-design.md P3). Both EH modes run the REAL strategy code:
+#   * resting-EH: `_eh_resting_cross_check` (P-B2) software-emulates the dead broker stop — on the ATR
+#     up-cross it emits a marketable EH-LIMIT; the replay band-caps it to min(ask, level*(1+band)) and
+#     ABANDONS a gap-through (mirrors the OMS `_apply_v2_eh_resting_entry`).
+#   * reactive-EH: `_cw_v2_quote` breaks the trigger (with its EH live-bar guard); `route_extended_hours`
+#     routes a session=AM/PM limit@ask; with P-B1 on the replay applies the cross-cap/abandon.
+# EH is OFF in the LIVE deployed regime (LIVE_LOCKED); `build_replay_settings(eh_enabled=True)` turns it
+# on — the ONE switch to replay an "EH-enabled" day. ⚠ EH REAL-DATA parity is DEFERRED (no real EH trades
+# exist yet — the flags are dormant); these synthetics prove the EH MECHANISM only.
+
+# --- resting-EH: reuse the SAME validated ATR sequence as the RTH resting entry, but pre-market (08:00).
+EH_REST_BASE = datetime(2026, 7, 23, 8, 0, tzinfo=ET)  # 08:00 ET = pre-market -> EH open + EH resting window
+
+
+def _eh_rest_bars() -> list[SchwabBar]:
+    out = []
+    for i, (o, h, lo, c) in enumerate(_OHLC):
+        ts_ms = int((EH_REST_BASE + timedelta(minutes=i)).timestamp() * 1000)
+        out.append(SchwabBar(ts=ts_ms, open=o, high=h, low=lo, close=c, volume=50_000))
+    return out
+
+
+def _eh_rest_quotes(cross_ask: float, floor_bids=None) -> list[TapeQuote]:
+    """Bars 9..15 pre-cross quotes (last below the resting level -> no premature EH cross), then the
+    crossing quote at bar 16 (last == cross_ask reaches the resting level -> the EH up-cross), then an
+    optional post-entry bid tape for the floor-ride."""
+    qs = []
+    for i in range(9, 16):
+        c = _OHLC[i][3]
+        ts = EH_REST_BASE + timedelta(minutes=i, seconds=30)
+        qs.append(TapeQuote(ts=ts, bid=c - 0.15, ask=c + 0.05, last=c))
+    cross_ts = EH_REST_BASE + timedelta(minutes=16, seconds=30)
+    qs.append(TapeQuote(ts=cross_ts, bid=cross_ask - 0.1, ask=cross_ask, last=cross_ask))
+    for mm, bid in (floor_bids or []):
+        qs.append(TapeQuote(ts=EH_REST_BASE + timedelta(minutes=mm), bid=bid, ask=bid + 0.2, last=bid))
+    return qs
+
+
+def _run_eh_rest(cross_ask: float, *, floor_bids=None, eh_enabled: bool = True, **overrides):
+    settings = build_replay_settings(eh_enabled=eh_enabled, oms_v2_cw_floor_exit_enabled=True, **overrides)
+    source = _MemSource(_eh_rest_bars(), _eh_rest_quotes(cross_ask, floor_bids))
+    return replay_symbol_day(source, SYM, DAY, settings)
+
+
+# ------------------------------------------------------------------ (a) resting-EH cross -> fill -> floor-ride
+def test_p3_premarket_resting_eh_cross_fills_at_band_and_floor_rides() -> None:
+    # Crossing ask 98.50 lands inside the band [98.264, 98.755] -> marketable EH-LIMIT fill at min(ask,cap)
+    # = the ask; the EH-opened position then floor-rides (arm at +2%, exit on fall-back to the floor).
+    res = _run_eh_rest(98.50, floor_bids=[(20, 101.0), (21, 99.0)])
+    assert len(res.entries) == 1, f"expected one EH resting entry; skips={res.skips} misses={res.misses}"
+    e = res.entries[0]
+    assert e.mode == "resting" and e.order_type == "limit"      # software EH-LIMIT, NOT a broker STOP_LIMIT
+    assert e.fill_price == pytest.approx(98.50, abs=1e-6)        # min(ask, level*(1+band)) = the in-band ask
+    assert RESTING_STOP <= e.fill_price <= RESTING_LIMIT
+    assert res.misses == []
+    assert len(res.trades) == 1
+    t = res.trades[0]
+    assert t.geometry == "eh_floor_ride"                        # EH open -> floor-ride geometry (P2 wiring)
+    assert t.exit_reason == "floor"
+    assert t.exit_px == pytest.approx(98.50 * 1.02, abs=1e-6)   # rode past +2%, exited on the fall-back floor
+
+
+# ------------------------------------------------------------------ (b) reactive-EH marketable fill (P-B1 on)
+def test_p3_premarket_reactive_eh_marketable_fill() -> None:
+    # A pre-market reactive break with the P-B1 cap ON: fills at the marketable ask (100.5), bounded by the
+    # cross cap (signal 100.5 +1% = 101.5 -> ask 100.5 <= cap). Resting off so the reactive path fires.
+    settings = build_replay_settings(
+        eh_enabled=True,
+        strategy_schwab_1m_v2_cw_v2_resting_entry_enabled=False,
+        oms_v2_cw_floor_exit_enabled=True,
+    )
+    res = replay_symbol_day(_MemSource(_eh_bars(), _eh_quotes(_EH_FLOOR_BIDS)), SYM, DAY, settings)
+    assert len(res.entries) == 1, f"expected one reactive EH entry; skips={res.skips} misses={res.misses}"
+    e = res.entries[0]
+    assert e.mode == "reactive" and e.order_type == "limit"
+    assert e.fill_price == pytest.approx(100.5, abs=1e-6)        # marketable at the ask (<= the cross cap)
+    assert res.trades[0].geometry == "eh_floor_ride"
+
+
+# ------------------------------------------------------------------ (c) gap-through EH entry -> ABANDON
+def test_p3_gap_through_resting_eh_entry_abandons() -> None:
+    # Same pre-market day, but the break gaps the whole band: crossing ask 99.00 > band cap ~98.755. The
+    # up-cross fires but the ask is past the band -> ABANDON (no fill), the live no-chase / gap-through-miss.
+    res = _run_eh_rest(99.00)
+    assert res.entries == [] and res.trades == [], f"expected a gap-through ABANDON, got {res.entries}"
+    assert len(res.misses) == 1 and res.misses[0].reason == "eh_entry_abandoned"
+    assert "ASK_PAST_BAND" in res.misses[0].detail
+
+
+# ------------------------------------------------------------------ (d) EH live-bar guard blocks a stale bar
+def test_p3_eh_live_bar_guard_blocks_stale_bar_entry() -> None:
+    """The reactive-EH break's driving bar is ~70s old at the crossing quote. At the default max bar age
+    (180s) the entry fires; drop it to 30s and the EH live-bar guard (#528 mirror) suppresses the entry off
+    the now-stale bar — pinning the guard's threshold value (mutation red)."""
+    def _run(max_bar_age_secs: float):
+        settings = build_replay_settings(
+            eh_enabled=True,
+            strategy_schwab_1m_v2_cw_v2_resting_entry_enabled=False,
+            strategy_schwab_1m_v2_cw_v2_reactive_entry_max_bar_age_secs=max_bar_age_secs,
+        )
+        return replay_symbol_day(_MemSource(_eh_bars(), _eh_quotes(_EH_FLOOR_BIDS)), SYM, DAY, settings)
+
+    assert len(_run(180.0).entries) == 1                        # fresh bar -> the reactive-EH entry fires
+    assert _run(30.0).entries == []                             # stale bar (>30s) -> guard suppresses it
+
+
+# ------------------------------------------------------------------ mutation: the EH flag is load-bearing
+def test_p3_mutation_eh_flag_off_no_premarket_entry() -> None:
+    """The SAME pre-market resting day with the EH flag OFF (LIVE default): the resting window is closed
+    pre-market (09:30 start) and the EH cross-check is inert -> NO entry (RTH-only). Proves the EH flag —
+    not the fixture — is what makes the pre-market entry fire (mutation red vs test (a))."""
+    res = _run_eh_rest(98.50, floor_bids=[(20, 101.0), (21, 99.0)], eh_enabled=False)
+    assert res.entries == [] and res.trades == []

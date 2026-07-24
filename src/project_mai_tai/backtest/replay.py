@@ -1,4 +1,4 @@
-"""Backtest REPLAY engine — Phase 1 (ENTRY side) + Phase 2 (EXIT side).
+"""Backtest REPLAY engine — Phase 1 (ENTRY side) + Phase 2 (EXIT side) + Phase 3 (EXTENDED HOURS).
 
 Replays a historical trading day through the **REAL live entry code**
 (`strategy_core.schwab_1m_v2.SchwabV2Strategy`) rather than a re-implementation, then
@@ -23,6 +23,25 @@ exit code. The geometry is chosen by the position's OPEN session (docs/schwab-1m
     `oms_v2_cw_*` from Settings. On +target% it ARMS a floor and rides; exits on fallback-to-floor /
     −stop% (pre-arm) / bar-close ATR flip. **The v2 replay exit NEVER touches `ExitEngine`** — that
     divergence (the 07-23 `ExitEngine` vs `cw_exit_decision` drift) is killed here by construction.
+
+Scope (P3): EXTENDED-HOURS ENTRY — fill entries OPENED before 09:30 / after 16:00, so the replay is
+faithful for pre/post-market opens too (docs/backtest-replay-engine-design.md P3). The live EH entry is a
+**marketable EH-LIMIT at the ask** in BOTH modes, and both run the REAL strategy code here:
+  * **reactive-EH**: `_cw_v2_quote` breaks the trigger intrabar (with its EH live-bar guard), then the
+    SHARED `entry_gate.route_extended_hours` stamps session=AM/PM + a limit at the ask — the exact bot
+    routing. When `oms_v2_eh_entry_enabled` is ON the replay then applies the P-B1 cross-cap/abandon.
+  * **resting-EH**: `_eh_resting_cross_check` (P-B2) software-emulates the dead broker stop — on the ATR
+    up-cross it emits a marketable EH-LIMIT tagged `eh_resting`; the replay band-caps it to
+    min(ask, level×(1+band)) and ABANDONS a gap-through, mirroring the OMS `_apply_v2_eh_resting_entry`.
+The EH-limit FILL/ABANDON model (`_eh_entry_reprice`) is a SMALL simulation of the DB/broker-coupled OMS
+pre-submit re-price (design doc: the OMS is SIMULATE, not instantiated — same class as the static-OCO
+first-touch), reading the SAME Settings + draft metadata so it can't drift on the values. Enable the EH
+paths in the replay via `build_replay_settings(eh_enabled=True)` (or the two flags directly); the LIVE
+deployed defaults stay OFF, so the default replay is RTH-only exactly like production. An EH-opened
+position exits via the same P2 floor-ride geometry (selected by the RTH/EH open). ⚠ EH real-data parity is
+DEFERRED: there are NO real EH trades yet (the live EH flags are dormant), so P3 proves the EH MECHANISM on
+synthetic fixtures only — the real-fill parity gate is a follow-up once real EH fills exist. The Webull
+mirror leg (dual-broker bake-off) is OUT OF SCOPE for P3.
 
 Data: Schwab 1-min bars (`strategy_bar_history`, the LIVE decision source — NOT Polygon,
 per the bar-source-defect rule) + Schwab LEVELONE quotes (`market_quote_ticks` provider
@@ -159,7 +178,12 @@ LIVE_LOCKED = dict(
     strategy_schwab_1m_v2_cw_v2_resting_entry_min_short_bars=3,
     strategy_schwab_1m_v2_cw_v2_resting_entry_max_bar_age_secs=180.0,
     strategy_schwab_1m_v2_cw_v2_resting_entry_flip_grace_secs=30.0,
-    strategy_schwab_1m_v2_cw_v2_eh_resting_entry_enabled=False,
+    # EH ENTRY flags — the LIVE DEPLOYED DEFAULTS (both OFF; the EH flags are dormant until enabled
+    # post-4PM / Monday). Encoded explicitly so the default replay is RTH-only exactly like production.
+    # `build_replay_settings(eh_enabled=True)` (or a direct override) flips these ON so the real EH entry
+    # paths execute — the ONLY switch the operator flips to replay an "EH-enabled" day.
+    strategy_schwab_1m_v2_cw_v2_eh_resting_entry_enabled=False,  # P-B2 resting-EH (strategy + OMS share this)
+    oms_v2_eh_entry_enabled=False,                               # P-B1 reactive-EH OMS cross-cap/abandon
     # Boot-hold safety is ON live but the bot RELEASES it after its one-time verify; the replay
     # models steady-state (released) via `_entries_held = False` below, so this is left default-off.
     strategy_schwab_1m_v2_cw_armed_segment_safety_enabled=False,
@@ -170,11 +194,31 @@ LIVE_LOCKED = dict(
 )
 
 
-def build_replay_settings(base: Settings | None = None, **overrides) -> Settings:
+# The EH-enabled overlay: turns BOTH extended-hours entry flags ON so the real EH paths execute (the
+# strategy emits `_eh_resting_cross_check` + the OMS re-price simulation applies the P-B1/P-B2 cap). This
+# is the SINGLE, explicit switch a replay flips to study a pre/post-market "EH-enabled" day; the LIVE
+# deployed defaults (LIVE_LOCKED, both OFF) are unchanged.
+EH_ENABLED = dict(
+    strategy_schwab_1m_v2_cw_v2_eh_resting_entry_enabled=True,  # P-B2 resting-EH cross-check + band-cap
+    oms_v2_eh_entry_enabled=True,                               # P-B1 reactive-EH cross-cap/abandon
+)
+
+
+def build_replay_settings(
+    base: Settings | None = None, *, eh_enabled: bool = False, **overrides
+) -> Settings:
     """Faithful live-regime Settings for the replay. Starts from `base` (or the env-merged
-    `Settings()` on the VPS), overlays the live-LOCKED spec §8 values, then any test overrides."""
+    `Settings()` on the VPS), overlays the live-LOCKED spec §8 values, optionally the EH-enabled
+    overlay, then any test overrides (which always win).
+
+    `eh_enabled=True` turns ON both extended-hours entry flags (`..._cw_v2_eh_resting_entry_enabled`
+    + `oms_v2_eh_entry_enabled`) so the replay runs the real EH entry paths — the explicit way to
+    replay a pre/post-market "EH-enabled" day. Default False keeps the LIVE deployed regime (EH OFF,
+    RTH-only), so the default replay matches production."""
     merged = dict(base.model_dump()) if base is not None else {}
     merged.update(LIVE_LOCKED)
+    if eh_enabled:
+        merged.update(EH_ENABLED)
     merged.update(overrides)
     return Settings(**merged)
 
@@ -222,6 +266,67 @@ def _to_stratquote(symbol: str, q: TapeQuote) -> StratQuote:
         last_price=float(q.last) if q.last is not None else 0.0,
         quote_time_ms=int(q.ts.timestamp() * 1000),
     )
+
+
+# ------------------------------------------------------------------- EH entry re-price (P3)
+@dataclass(frozen=True)
+class _EHFill:
+    """Outcome of the EH-limit re-price model. `reason_code` == "" => FILL at `fill_price`; else the
+    entry ABANDONS (no fill) with the OMS abandon code (`ASK_PAST_BAND` / `ASK_PAST_CROSS_CAP` /
+    `NO_FRESH_QUOTE` / `MISSING_SIGNAL`)."""
+    fill_price: float
+    entry_ref: float
+    reason_code: str
+
+
+def _eh_entry_reprice(md: dict, ask: float, settings: Settings, *, is_resting: bool) -> _EHFill:
+    """Simulate the OMS extended-hours pre-submit re-price/band-cap/ABANDON (P3).
+
+    The live EH entry is a marketable EH-LIMIT at the ask; the OMS then re-prices + bounds it just
+    before submit. That OMS code (`oms.service._apply_v2_eh_resting_entry` /
+    `_apply_v2_eh_reactive_entry`) is DB/broker-coupled, so — per the design doc's "OCO emit /
+    stand-down = SIMULATE" and Decision 2 (strategy+exit replay, NOT a full OMS mock) — the replay
+    mirrors ONLY its arithmetic, reading the SAME Settings + draft metadata so it cannot drift on the
+    values (the parity gate pins the residual, exactly like `_static_oco_first_touch`).
+
+      * **resting (P-B2, `eh_resting=true`)**: cap = level×(1+band); FILL at min(ask, cap) if the ask is
+        in the band, else ABANDON `ASK_PAST_BAND` (the RTH broker stop-limit would MISS this gap-through
+        too — no chase). `level` = the strategy's resting_level; `band` = its own `resting_band_pct`
+        (the setting is the fallback belt).
+      * **reactive (P-B1, `oms_v2_eh_entry_enabled` ON)**: cap = signal×(1+max_cross%); FILL at the ask
+        if ask ≤ cap, else ABANDON `ASK_PAST_CROSS_CAP`. `signal` = the break level (`entry_price`).
+      * **reactive, P-B1 OFF**: byte-identical to the pre-P3 reactive-EH path — the bot's plain
+        limit-at-ask stands (fill at the routed `limit_price`, i.e. the ask), no cap/abandon.
+
+    A marketable buy fills at the OFFER, so the modeled fill is the (capped) ask — the same conservative
+    no-blind-order / no-chase bias as live (`min(ask, cap)` == ask whenever the ask is inside the cap)."""
+    if ask <= 0.0:
+        return _EHFill(0.0, 0.0, "NO_FRESH_QUOTE")
+    if is_resting:
+        level = float(md.get("resting_level") or md.get("entry_price") or 0.0)
+        if level <= 0.0:
+            return _EHFill(0.0, 0.0, "MISSING_SIGNAL")
+        try:
+            band_pct = float(md["resting_band_pct"])
+        except (KeyError, TypeError, ValueError):
+            band_pct = float(getattr(settings, "oms_v2_eh_resting_entry_band_pct", 0.5))
+        cap = level * (1.0 + band_pct / 100.0)
+        if ask > cap:
+            return _EHFill(0.0, level, "ASK_PAST_BAND")
+        return _EHFill(min(ask, cap), level, "")
+    # reactive
+    if not bool(getattr(settings, "oms_v2_eh_entry_enabled", False)):
+        # P-B1 OFF: the bot's plain limit-at-ask stands (the pre-P3 behavior). `limit_price` == the ask.
+        limit = float(md.get("limit_price") or ask)
+        return _EHFill(limit, float(md.get("entry_price") or ask), "")
+    signal_px = float(md.get("entry_price") or 0.0)
+    if signal_px <= 0.0:
+        return _EHFill(0.0, 0.0, "MISSING_SIGNAL")
+    max_cross_pct = float(getattr(settings, "oms_v2_eh_entry_max_cross_pct", 1.0))
+    cap = signal_px * (1.0 + max_cross_pct / 100.0)
+    if ask > cap:
+        return _EHFill(0.0, signal_px, "ASK_PAST_CROSS_CAP")
+    return _EHFill(min(ask, cap), signal_px, "")
 
 
 # ------------------------------------------------------------------- exit models
@@ -282,10 +387,15 @@ def replay_symbol_day(
     order (bars at close = ts+60s, quotes at ts; no look-ahead), gates reactive drafts through
     `entry_gate.gate_open_intent`, emits resting place/cancel drafts directly (they bypass the
     chokepoint live too), and applies the honest ENTRY fill model:
-      * resting STOP_LIMIT: fills at the first quote whose ask lands in the band [stop, limit]
+      * resting STOP_LIMIT (RTH): fills at the first quote whose ask lands in the band [stop, limit]
         (limit = stop*(1+band)), price = that ask; a break that gaps the whole band, or that never
         reaches the stop, => MISS.
-      * reactive: marketable => fills at the break price (RTH) / the ask-limit (EH routing).
+      * reactive (RTH): marketable => fills at the break price.
+      * EXTENDED-HOURS open (P3, both modes — the gate stamped session=AM/PM): fills via the EH-limit
+        model (`_eh_entry_reprice`) — the capped marketable ask (resting: min(ask, level*(1+band));
+        reactive: min(ask, signal*(1+max_cross%))), or an honest ABANDON/MISS on gap-through / no fresh
+        ask. The resting-EH cross is the REAL `_eh_resting_cross_check`; the reactive-EH break is the REAL
+        `_cw_v2_quote` (EH live-bar guard included), routed by the SHARED `route_extended_hours`.
     Returns the replayed entries (+ skips/misses with reasons).
     """
     day = datetime.strptime(session_day_et, "%Y-%m-%d").replace(tzinfo=EASTERN)
@@ -371,24 +481,51 @@ def replay_symbol_day(
             geometry = "eh_floor_ride"
 
     def _gate_and_maybe_fill(draft, eff_dt: datetime) -> None:
-        """Run a strategy-returned (reactive) draft through the SHARED emit-gate; on emit, apply the
-        marketable reactive fill and record the entry (which selects/opens the exit geometry)."""
+        """Run a strategy-returned draft (reactive break OR the P-B2 EH resting cross) through the SHARED
+        emit-gate; on emit, apply the fill model and record the entry (which selects/opens the exit
+        geometry). RTH reactive fills at the marketable break price; an EXTENDED-HOURS open (the gate
+        stamped session=AM/PM) fills via the EH-limit model (`_eh_entry_reprice`) — fill at the capped
+        ask, or an honest ABANDON/MISS on gap-through / no fresh ask."""
         decision = entry_gate.gate_open_intent(draft, eff_dt, settings, latest_stratquote.get)
         if not decision.emit:
             return
         md = decision.draft.metadata
-        level = float(md.get("cw_trigger") or md.get("reference_price") or md.get("entry_price") or 0.0)
         order_type = str(md.get("order_type", "market")).lower()
-        # The OCO anchor is the CW break/reference price (metadata entry_price/reference_price) — the
-        # exact field `_apply_v2_oco_bracket_entry` reads; NOT the realized fill.
+        # The strategy tags the resting-EH cross (`_eh_resting_cross_check`) eh_resting/resting_entry;
+        # everything else through here is a reactive break.
+        is_resting = (
+            str(md.get("eh_resting", "")).lower() == "true"
+            or str(md.get("resting_entry", "")).lower() == "true"
+        )
+        mode = "resting" if is_resting else "reactive"
+        # EXTENDED-HOURS entry (P3): the gate stamped session=AM/PM via `route_extended_hours`. Fill via
+        # the EH-limit model against the current ask (the SAME feed the gate routed off), or ABANDON.
+        if str(md.get("session", "")).upper() in ("AM", "PM"):
+            sq = latest_stratquote.get(symbol.upper())
+            ask = float(getattr(sq, "ask_price", 0.0) or 0.0) if sq is not None else 0.0
+            eh = _eh_entry_reprice(md, ask, settings, is_resting=is_resting)
+            if eh.reason_code:
+                result.misses.append(ReplaySkip(
+                    symbol, "eh_entry_abandoned",
+                    f"{mode} EH entry abandoned ({eh.reason_code}) "
+                    f"{eff_dt.astimezone(EASTERN):%H:%M:%S} ET ask={ask:.4f} — mirrors OMS "
+                    f"_apply_v2_eh_{'resting' if is_resting else 'reactive'}_entry (no chase / no blind order)",
+                ))
+                return
+            level = float(md.get("cw_trigger") or md.get("resting_level") or eh.entry_ref or 0.0)
+            _record_fill(ReplayEntry(
+                symbol=symbol, mode=mode, order_type="limit",
+                signal_ts=eff_dt, fill_ts=eff_dt, level=level,
+                fill_price=eh.fill_price, entry_ref=eh.entry_ref,
+            ))
+            return
+        # RTH reactive: marketable at the break price. The OCO anchor is the CW break/reference price
+        # (metadata entry_price/reference_price) — the exact field `_apply_v2_oco_bracket_entry` reads.
+        level = float(md.get("cw_trigger") or md.get("reference_price") or md.get("entry_price") or 0.0)
         entry_ref = float(md.get("entry_price") or md.get("reference_price") or 0.0)
-        # EH routing stamps a limit_price (the ask); otherwise fill at the marketable break price.
-        if order_type == "limit" and md.get("limit_price"):
-            fill_price = float(md["limit_price"])
-        else:
-            fill_price = float(md.get("entry_price") or md.get("reference_price") or 0.0)
+        fill_price = float(md.get("entry_price") or md.get("reference_price") or 0.0)
         _record_fill(ReplayEntry(
-            symbol=symbol, mode="reactive", order_type=order_type,
+            symbol=symbol, mode=mode, order_type=order_type,
             signal_ts=eff_dt, fill_ts=eff_dt, level=level, fill_price=fill_price, entry_ref=entry_ref,
         ))
 
