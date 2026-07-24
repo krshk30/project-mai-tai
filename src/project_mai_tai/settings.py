@@ -749,6 +749,17 @@ class Settings(BaseSettings):
     # enabling switches ORB's RTH stop-exit from the in-memory trail to the broker
     # STOP_LOSS market order. See docs/webull-native-stop-order-type-fix-design.md.
     webull_native_stop_order_type_map_enabled: bool = False
+    # Webull position-sync rate-limit guard (per broker account). ORB and the v2->Webull mirror
+    # share the live:orb Webull rate budget; without this, a caller invoking the position sync
+    # faster than the sync interval floods Webull with HTTP 429 (found live 2026-07-24 arming the
+    # mirror: ~6 req/s from the accelerated sync loop). The adapter coalesces reads within
+    # THROTTLE_SECS (<= the 15s sync so no staleness regression) and, on a 429, backs off
+    # exponentially while serving the last cached snapshot -- a rate-limit is NEVER surfaced as a
+    # flat/empty account. Not flag-gated (a pure safety guard); set throttle to 0 to disable
+    # coalescing.
+    webull_positions_throttle_secs: float = 10.0
+    webull_positions_backoff_base_secs: float = 5.0
+    webull_positions_backoff_max_secs: float = 60.0
     oms_broker_sync_interval_seconds: int = 5
     oms_working_order_refresh_seconds: int = 5
     # Fillable-session window (ET, whole-hour): the OMS places/refreshes exit orders
