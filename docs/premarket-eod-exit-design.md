@@ -67,6 +67,39 @@ At the 16:00 RTH→post transition, for each OMS-managed position still open:
 +2%/−5% exit running as EH-LIMITs through post-market, 19:55 flatten as the backstop. NOT an immediate
 liquidation — "this is the right thing; we don't just wanna cancel it."
 
+## R3b — pre-market-opened position across the 09:30 open (the MIRROR of R3)
+**✅ DECISION LOCKED (operator 2026-07-24): option 1 — KEEP ON THE CW LADDER, do NOT convert to OCO.**
+
+R3 is the 16:00 RTH→post transition (OCO → software ladder). R3b is the *symmetric* pre-market→RTH
+case at 09:30, and the answer is the same shape: **keep managing on the software CW ladder; do NOT
+emit an OCO at the open for an already-held position.**
+
+A v2 position that opens in **extended hours** has **no broker-native OCO** — `_apply_v2_oco_bracket_entry`
+skips when `not _is_regular_market_session()` (service.py; the native OCO is a `session=NORMAL` RTH-only
+construct). It is therefore managed by the software CW +2%/−5% ladder, **continuously across 09:30**:
+
+- **No stand-down.** With no confirmed broker bracket, `_native_oco_stand_down_active` **FAILS OPEN**
+  (returns False — the deliberate asymmetry, service.py: a wrong *True* would leave the position with no
+  exit at all, the ERNA shape). So `_evaluate_v2_managed_exit` runs the ladder; it is never stood down.
+- **Session-aware exit routing (#390).** The same ladder EH-routes the exit **before** 09:30 (LIMIT +
+  `session=AM` off the live bid, via `_emit_v2_managed_sell`/`_extended_hours_session`) and uses the
+  **normal MARKET exit after** 09:30 — one ladder, two routes, no gap.
+- **Continuously monitored.** The fillable gate (`_market_is_fillable`, default 7 AM–8 PM ET) is True on
+  **both** sides of 09:30, so the quote consumer keeps evaluating the position across the open.
+- **No OCO emitted at the open.** The OCO-emit path is **entry-only** (`_apply_v2_oco_bracket_entry` is
+  reached solely from the buy-open intent handler, service.py ~907). A held position generates no
+  buy-open at 09:30, so **no bracket is ever emitted for it** — the open is not an OCO / re-entry event.
+
+**Why keep it (not upgrade to a 09:30 OCO emit):** this is the clean mirror of the Phase A 16:00 EOD
+OCO→ladder transition (R3, decision A) — the exit geometry is identical (+2%/−5% off the actual fill),
+and the fail-open stand-down already makes the ladder own the exit without any new code. Converting to
+an OCO at 09:30 would add a broker round-trip and a re-arm flip-flop risk for zero change in geometry.
+
+**Regression pin:** `tests/unit/test_v2_premarket_position_across_open.py` — stand-down fails open in
+both EH and RTH wall-clocks; the ladder emits the EH-LIMIT exit pre-09:30 and the MARKET exit in RTH;
+no bracket/buy-open intent is produced for the held position at the open; and a guard/mutation test
+pins that a wrongly-*True* stand-down would silence the ladder (naked) while fail-open keeps it alive.
+
 ## Phasing (build today, deploy after-hours) — REVISED for the P1/P3 coupling
 ⚠ **P1-start and P3 are COUPLED:** opening the RESTING window to 07:30 without the EH-entry mechanism sends a
 pre-market STOP_LIMIT the broker rejects (the #523 bug). So split by *safety/independence*, not by requirement:
