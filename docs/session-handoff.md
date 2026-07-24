@@ -17,6 +17,38 @@
 
 ---
 
+## ⭐🏗️ 2026-07-24 (PM) — NEXT BUILD: dual-broker FAN-OUT (design done; build Sat-Sun, go-live Tue)
+
+**Operator flagged the gap + locked the requirement.** The v2 eviction removes a Schwab-rejected name from the
+WHOLE bot; now that we trade both brokers that's wrong. Requirement: **same stock on BOTH brokers, both legs
+fired at the SAME INSTANT in parallel** (NO submit-Schwab-then-wait — "seconds trading, can't afford the secs");
+a reject **blocks only that broker**; **both reject → drop the name**; **NO fallback** (a sequential try-then-wait
+was explicitly rejected).
+
+**This REPLACES the sequential mirror-on-FILL** just deployed (which lags by the Schwab fill AND drops
+Schwab-rejected names). Design = revive the parallel FAN-OUT (`dual-broker-v2-design.md` #424) + add per-broker
+eligibility. **Doc: `docs/per-broker-eligibility-webull-fallback-design.md`.** Research (2 agents) confirmed the
+current model is mirror-on-fill (`oms/service.py:2916/2987/3146`) and the eviction is learn-by-failing upstream
+of routing (`schwab_1m_v2_bot.py:945-947`).
+
+**Design (bot-level fan-out):** at each entry signal the bot emits up to TWO eligibility-gated intents in
+parallel — Schwab leg (native mode) + Webull leg (**always MARKET-at-cross + OCO**, off our own fresh ask +
+default qty). Per-broker gate skips a leg if that broker's `*_ineligible_today` table holds the name; **evict
+only when BOTH do.** ⭐ Unavoidable asymmetry: Webull refuses a buy-STOP (Fork A), so the resting-entry Webull
+leg is a MARKET-at-cross (parallel, but more spike slippage than Schwab's resting fill) — accepted.
+
+**Operator decisions (RESOLVED):** (1) resting Webull slippage ACCEPTED. (2) Webull-ineligible = DEFER ("never
+seen a Webull rejection" — both-reject eviction is mostly theoretical; build the table as a safety net, never
+mark ineligible on 429/transient). (3) 2× capital on eligible names WANTED. (4) **FLAG MANDATORY**
+(`strategy_schwab_1m_v2_dual_broker_fanout_enabled`, default OFF = today's mirror-on-fill = **the rollback — do
+NOT delete it**). **It's WIRING not new machinery** — reuse the mirror's Webull MARKET+OCO / EH-limit builders,
+routing-by-account, per-account exit ladder; the change = move the Webull TRIGGER from "on Schwab fill" to "on
+the cross, parallel". **Plan:** Sat-Sun build (per-broker table + both-reject eviction + fan-out emit + tests:
+flag-off identical + fan-out unit + #404 survival), deploy flag-OFF Sun; Mon sequential runs live + attended
+qty-1 fan-out validation; Tue flip flag ON. [[project-mai-tai-dual-broker-fanout-design]]
+
+---
+
 ## ⭐⭐ 2026-07-24 (PM, ~16:10 ET) — EH-trading GONE LIVE for Monday (validated on real money first)
 
 **Operator: "Enable now for Monday."** After a live post-16:00 validation, the 3 EH flags are now TRUE +
