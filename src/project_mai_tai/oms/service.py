@@ -344,6 +344,11 @@ class OmsRiskService:
         # P0.6 EOD flatten: (session_date_et, account, SYMBOL) already flattened, so the
         # 5s loop submits ONE close per symbol per day rather than one every tick.
         self._window_flattened: set[tuple[str, str, str]] = set()
+        # Phase A EOD OCO transition: (session_date_et, account, SYMBOL) whose native-OCO
+        # stand-down was released at 16:00 so the software EH-limit ladder manages the +2%/−5%
+        # for the rest of the day. Day-scoped key => the latch self-expires next session; empty
+        # while the flag is OFF => `_native_oco_stand_down_active` is byte-identical.
+        self._v2_eod_oco_transitioned: set[tuple[str, str, str]] = set()
 
     async def _run_db(self, fn, *, commit: bool = True):
         """Run a PURE-SYNC unit of DB work on a worker thread, off the event loop.
@@ -488,6 +493,16 @@ class OmsRiskService:
                     raise
                 except Exception:
                     self.logger.exception("[ORB-WINDOW-FLATTEN] sweep failed")
+                # Phase A EOD OCO transition: at 16:00 release the native-OCO stand-down for every
+                # still-open managed v2 position so the software EH-limit ladder resumes (decision A
+                # = keep managing +2%/−5%). Same 5s cadence, idempotent per symbol per day, flag-gated
+                # OFF. Wrapped so a failure never breaks broker-sync; LOUD on error.
+                try:
+                    await self._v2_eod_oco_transition()
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    self.logger.exception("[OMS-V2-EOD-OCO-TRANSITION] sweep failed")
                 # v2 overnight flatten: close managed v2 positions at 19:55 before the 20:00 gate
                 # (v2 has no native stop). Same cadence, LOUD on failure. RETRY-UNTIL-FILLED: there
                 # is deliberately NO per-day claim (#478 removed it — a per-day claim silently gave
@@ -2468,6 +2483,14 @@ class OmsRiskService:
         # AttributeError there would propagate into the exit loop. Missing state resolves
         # to "no confirmation" -> the ladder runs, which is the safe direction.
         key = (broker_account_name, symbol)
+        # Phase A EOD OCO transition: once 16:00 has released this position for the day, the
+        # RTH OCO is dead (session=NORMAL can't fill in EH) — never stand down again today,
+        # so the software EH-limit ladder owns the exit even if a stale broker read still
+        # reports the expiring OCO as armed (defeats the 16:00 re-arm flip-flop). The set is
+        # empty unless the flag fired, so this is byte-identical when the transition is OFF.
+        eod_done = getattr(self, "_v2_eod_oco_transitioned", None)
+        if eod_done and (self._session_day_et(), broker_account_name, symbol) in eod_done:
+            return False
         armed = getattr(self, "_native_oco_armed_confirmed_at", None)
         if armed:
             confirmed_at = armed.get(key)
@@ -3409,6 +3432,77 @@ class OmsRiskService:
                     ",".join(sorted({str(i.payload.reason) for i in order_events})) or "no reason",
                 )
                 self._window_flattened.discard(key)   # allow a retry on the next 5s tick
+
+    def _session_day_et(self, now: datetime | None = None) -> str:
+        """The ET calendar day (YYYY-MM-DD) used to scope per-day idempotency latches. Mirrors the
+        `_window_flatten_armed_stops` key so a day-scoped set self-expires next session with no
+        explicit reset (an old day's keys simply never match today's)."""
+        return (now or datetime.now(UTC)).astimezone(SESSION_TZ).strftime("%Y-%m-%d")
+
+    def _v2_eod_oco_transition_due(self, now: datetime | None = None) -> bool:
+        """True once the ET clock reaches the EOD OCO-transition time (default 16:00) on a weekday.
+
+        HALF-DAY caveat (same as the ORB window-flatten / v2 overnight-flatten): there is no session
+        calendar yet, so on an early-close day 16:00 is already post-close — harmless here (the RTH
+        OCO has already expired and releasing the stand-down only hands the still-held position to the
+        EH-limit ladder, which is exactly right), but keep the flag OFF on half-days until the calendar
+        lands if you want the transition pinned to the real close."""
+        et = (now or datetime.now(UTC)).astimezone(SESSION_TZ)
+        if et.weekday() >= 5:
+            return False
+        hh = int(getattr(self.settings, "oms_v2_eod_oco_transition_hour_et", 16))
+        mm = int(getattr(self.settings, "oms_v2_eod_oco_transition_minute_et", 0))
+        return (et.hour, et.minute) >= (hh, mm)
+
+    async def _v2_eod_oco_transition(self) -> None:
+        """Phase A EOD OCO cleanup (docs/premarket-eod-exit-design.md; decision A = KEEP MANAGING).
+
+        At 16:00 ET the native OCO exit legs expire with the RTH close — they carry session=NORMAL
+        (RTH-only) + duration=DAY (schwab.py `_build_bracket_payload`), so after the close they can no
+        longer fill on EITHER broker. For every OMS-managed v2 position still open, RELEASE the
+        native-OCO stand-down for the rest of the day so `_evaluate_v2_managed_exit` resumes and runs
+        the software +2%/−5% ladder as EH-LIMIT exits (#390 MARKET->LIMIT+session routing; the OMS
+        fillable gate keeps 16:00–20:00 fillable). The 19:55 `_v2_overnight_flatten` stays the backstop.
+
+        WHY A LOCAL RELEASE, NOT A BROKER CANCEL: the OCO child legs are broker-created and never land
+        in `broker_orders` (see `_refresh_native_oco_armed_state`), so there is no OMS order to cancel
+        via the existing cancel path — and none is needed: a session=NORMAL DAY order cannot fill in EH,
+        so nothing is lost by letting it lapse. Absent this method the ladder ALSO resumes on its own
+        once the broker drops the expired legs from `fetch_armed_native_oco_symbols` (the resolve-by-fill
+        docstring documents exactly this "timed out at the close -> software ladder manages" case), but
+        that path waits on the broker sync noticing the expiry PLUS the 90s resolution grace, and can
+        flip-flop if a stale read still reports the expiring OCO as armed. This makes the 16:00 handover
+        IMMEDIATE and deterministic: the day-scoped latch short-circuits `_native_oco_stand_down_active`
+        to False, so a re-arm read cannot re-defer the ladder.
+
+        NOT a liquidation (decision A keeps +2%/−5% running), NOT a broker mutation, and it never touches
+        the 19:55 backstop. Idempotent per (session_day, account, symbol). Flag-gated OFF => the latch set
+        stays empty and every consulting predicate is byte-identical."""
+        if not bool(getattr(self.settings, "oms_v2_eod_oco_transition_enabled", False)):
+            return
+        if not self._v2_eod_oco_transition_due():
+            return
+        session_day = self._session_day_et()
+        armed = getattr(self, "_native_oco_armed_confirmed_at", {})
+        resolving = getattr(self, "_native_oco_resolving", {})
+        for acct, symbol in list(self._managed_v2_symbols):
+            key = (session_day, acct, symbol)
+            if key in self._v2_eod_oco_transitioned:
+                continue
+            self._v2_eod_oco_transitioned.add(key)  # claim first: fire once per position per day
+            # Drop any live broker-armed confirmation / resolution-grace entry so the ladder is not
+            # deferred waiting for either to lapse. The stand-down short-circuit (keyed on this same
+            # latch) is the durable guard; these pops just avoid stale log churn from the sync refresh.
+            armed.pop((acct, symbol), None)
+            resolving.pop((acct, symbol), None)
+            self.logger.info(
+                "[OMS-V2-EOD-OCO-TRANSITION] %s %s -> RTH OCO expired at %02d:%02d ET; released the "
+                "native-OCO stand-down for the day; software +2%%/−5%% EH-limit ladder now owns the exit "
+                "(19:55 overnight-flatten remains the backstop)",
+                acct, symbol,
+                int(getattr(self.settings, "oms_v2_eod_oco_transition_hour_et", 16)),
+                int(getattr(self.settings, "oms_v2_eod_oco_transition_minute_et", 0)),
+            )
 
     def _v2_overnight_flatten_due(self, now: datetime | None = None) -> bool:
         """True once the ET clock passes the v2 overnight-flatten time on a weekday. Same half-day

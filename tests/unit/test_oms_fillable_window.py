@@ -61,17 +61,18 @@ def test_market_is_fillable_respects_settings_override() -> None:
 
 def test_window_settings_defaults() -> None:
     s = Settings()
-    # OMS exit gate stays 7–20: narrowing v2 ENTRIES to 16:30 must NOT narrow exits, or a
-    # position opened at 16:29 could not be exited after 16:30 (stranding it).
+    # OMS exit gate stays 7–20: narrowing v2 ENTRIES to 16:00 (2026-07-24 Phase A) must NOT narrow
+    # exits, or a position opened at 15:59 could not be exited after 16:00 (stranding it) — this is
+    # exactly what lets the EOD OCO transition hand the +2%/−5% to the EH-limit ladder post-close.
     assert s.oms_fillable_session_start_hour_et == 7
     assert s.oms_fillable_session_end_hour_et == 20
     assert s.strategy_schwab_1m_v2_entry_window_start_hour_et == 7
     assert s.strategy_schwab_1m_v2_entry_window_end_hour_et == 16
-    assert s.strategy_schwab_1m_v2_entry_window_end_minute_et == 30
+    assert s.strategy_schwab_1m_v2_entry_window_end_minute_et == 0
 
 
 def test_oms_exit_gate_still_fillable_after_v2_entry_window_closes() -> None:
-    """The load-bearing invariant of the 16:30 entry rule: exits outlive entries."""
+    """The load-bearing invariant of the 16:00 entry rule: exits outlive entries."""
     svc = _svc()
-    assert svc._market_is_fillable(datetime(2026, 7, 14, 16, 30, tzinfo=EASTERN)) is True
+    assert svc._market_is_fillable(datetime(2026, 7, 14, 16, 0, tzinfo=EASTERN)) is True
     assert svc._market_is_fillable(datetime(2026, 7, 14, 19, 59, tzinfo=EASTERN)) is True

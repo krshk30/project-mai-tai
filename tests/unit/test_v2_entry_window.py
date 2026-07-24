@@ -1,10 +1,11 @@
-"""v2 trading-window entry gate — the operator's 7:00 AM–4:30 PM ET rule.
+"""v2 trading-window entry gate — the operator's 7:00 AM–4:00 PM ET rule.
 
 The isolated `schwab_1m_v2` bot had no clock gate on entries — `_market_session`
 treats 4 PM–8 PM ET as tradeable "afterhours", so on 2026-07-13 it opened AGEN and
 SOBR at ~7:51 PM ET; those positions then churned unfillable exits overnight. The
 emit chokepoint (`_maybe_emit`) now drops "open" intents outside [start, end) ET
-(default 7:00–16:30, narrowed from 7:00–18:00 by the 2026-07-15 operator rule).
+(default 7:00–16:00: 7:00–18:00 was narrowed to 16:30 on 2026-07-15, then to 16:00
+on 2026-07-24 — Phase A of the EH-trading design, no new entries after the RTH close).
 Exits (cw_flip + OMS-managed) are unaffected.
 """
 from __future__ import annotations
@@ -49,37 +50,40 @@ class _RecordingEmitter:
         self.cw_flips.append((symbol, bar_time_ms))
 
 
-# --- _within_entry_window boundaries (default 7:00–16:30 ET) ---
+# --- _within_entry_window boundaries (default 7:00–16:00 ET) ---
 
 
-def test_default_entry_window_is_seven_to_sixteen_thirty() -> None:
-    """Pin the operator rule in the DEFAULTS, so the live gate does not depend on env."""
+def test_default_entry_window_is_seven_to_sixteen_hundred() -> None:
+    """Pin the operator rule in the DEFAULTS, so the live gate does not depend on env.
+    2026-07-24 Phase A: the end is 16:00 (was 16:30) — no new entries after the RTH close.
+    This is the threshold-pinning test: mutate the end-minute default and it turns red."""
     s = Settings()
     assert s.strategy_schwab_1m_v2_entry_window_start_hour_et == 7
     assert s.strategy_schwab_1m_v2_entry_window_start_minute_et == 0
     assert s.strategy_schwab_1m_v2_entry_window_end_hour_et == 16
-    assert s.strategy_schwab_1m_v2_entry_window_end_minute_et == 30
+    assert s.strategy_schwab_1m_v2_entry_window_end_minute_et == 0
 
 
 def test_within_entry_window_inside() -> None:
     svc = _svc()
     assert svc._within_entry_window(datetime(2026, 7, 14, 7, 0, tzinfo=EASTERN)) is True   # 7 AM sharp
     assert svc._within_entry_window(datetime(2026, 7, 14, 12, 0, tzinfo=EASTERN)) is True
-    assert svc._within_entry_window(datetime(2026, 7, 14, 16, 29, tzinfo=EASTERN)) is True  # 4:29 PM
+    assert svc._within_entry_window(datetime(2026, 7, 14, 15, 59, tzinfo=EASTERN)) is True  # 3:59 PM
 
 
 def test_within_entry_window_outside() -> None:
     svc = _svc()
     assert svc._within_entry_window(datetime(2026, 7, 14, 6, 59, tzinfo=EASTERN)) is False   # pre-7 AM
-    assert svc._within_entry_window(datetime(2026, 7, 14, 16, 30, tzinfo=EASTERN)) is False  # 4:30 sharp
+    assert svc._within_entry_window(datetime(2026, 7, 14, 16, 0, tzinfo=EASTERN)) is False   # 4:00 PM sharp (RTH close)
     assert svc._within_entry_window(datetime(2026, 7, 13, 19, 51, tzinfo=EASTERN)) is False  # the incident time
     assert svc._within_entry_window(datetime(2026, 7, 11, 10, 0, tzinfo=EASTERN)) is False   # Saturday
 
 
 def test_within_entry_window_blocks_the_old_late_afternoon_tail() -> None:
-    """The 2026-07-15 narrowing: 16:30–18:00 used to be enterable, now it is not."""
+    """The 2026-07-15 narrowing (16:30–18:00) plus the 2026-07-24 Phase A tightening: the whole
+    16:00-onward tail — including the old 16:00–16:30 window — is no longer enterable."""
     svc = _svc()
-    for hh, mm in ((16, 31), (17, 0), (17, 59)):
+    for hh, mm in ((16, 0), (16, 15), (16, 29), (16, 31), (17, 0), (17, 59)):
         assert svc._within_entry_window(datetime(2026, 7, 14, hh, mm, tzinfo=EASTERN)) is False
 
 
