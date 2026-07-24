@@ -158,7 +158,8 @@ _US_MARKET_HOLIDAYS: frozenset[date] = US_MARKET_HOLIDAYS
 V2_ENTRY_WINDOW_START_HOUR_ET = 7
 V2_ENTRY_WINDOW_START_MINUTE_ET = 0
 V2_ENTRY_WINDOW_END_HOUR_ET = 16
-V2_ENTRY_WINDOW_END_MINUTE_ET = 30
+# 2026-07-24 Phase A: 16:00 (was 16:30) — no new entries after the RTH close (both modes).
+V2_ENTRY_WINDOW_END_MINUTE_ET = 0
 
 
 def _format_eastern(dt: datetime) -> str:
@@ -1466,8 +1467,8 @@ class SchwabV2BotService:
 
     def _within_entry_window(self, now: datetime) -> bool:
         """True iff `now` falls in the operator entry window: a weekday, non-holiday ET
-        day, inside [start, end). Minute granularity — the default 7:00–16:30 allows from
-        07:00:00 and blocks at 16:30:00 sharp (4:30 PM)."""
+        day, inside [start, end). Minute granularity — the default 7:00–16:00 allows from
+        07:00:00 and blocks at 16:00:00 sharp (4:00 PM RTH close)."""
         return is_fillable_et_session(
             now,
             self._entry_window_start_hour_et(),

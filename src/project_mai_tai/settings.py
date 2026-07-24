@@ -239,6 +239,17 @@ class Settings(BaseSettings):
     oms_v2_overnight_flatten_enabled: bool = False
     oms_v2_overnight_flatten_hour_et: int = 19
     oms_v2_overnight_flatten_minute_et: int = 55
+    # v2 EOD OCO transition (Phase A, docs/premarket-eod-exit-design.md; decision A = KEEP MANAGING).
+    # At 16:00 ET the native OCO legs (session=NORMAL, duration=DAY) expire with the RTH close and
+    # can no longer fill — so for every OMS-managed v2 position still open, release the native-OCO
+    # stand-down for the rest of the day and let the software +2%/−5% ladder resume with EH-LIMIT
+    # exits (#390 routing; oms_fillable_session_* keeps 16:00–20:00 fillable). The 19:55 overnight
+    # flatten stays the backstop. This does NOT liquidate and does NOT cancel/place any broker order
+    # (the RTH OCO auto-expires; a NORMAL-session order can't fill in EH so nothing is lost). Idempotent
+    # per (session_day, account, symbol). OFF => the transition set stays empty => byte-identical.
+    oms_v2_eod_oco_transition_enabled: bool = False
+    oms_v2_eod_oco_transition_hour_et: int = 16
+    oms_v2_eod_oco_transition_minute_et: int = 0
 
     strategy_schwab_1m_v2_enabled: bool = False
     strategy_schwab_1m_v2_bar_poll_interval_seconds: float = 15.0
@@ -358,13 +369,15 @@ class Settings(BaseSettings):
     # the OMS fillable-session gate (oms_fillable_session_*) and are NOT narrowed by
     # this window — a position opened at 4:29 PM can still be exited after 4:30 PM,
     # so this can never strand a position. end is exclusive.
-    # 2026-07-15 operator rule: entries end at 16:30 (was 18:00) — the last 90 minutes
-    # are after the 4:00 PM RTH close, where CW-v2 entries fill thin and the exit has
-    # to survive into after-hours. Rollback = set the env overrides back to 18/0.
+    # 2026-07-15 operator rule: entries ended at 16:30 (was 18:00). 2026-07-24 (Phase A of the
+    # EH-trading design, docs/premarket-eod-exit-design.md): tightened to 16:00 — NO new entries
+    # after the 4:00 PM RTH close, so every open position transitions to the EOD OCO cleanup /
+    # EH-limit ladder rather than a fresh 16:00–16:30 entry that fills thin and has to survive AH.
+    # Applies to BOTH entry modes (resting + reactive). Rollback = env overrides back to 16/30 or 18/0.
     strategy_schwab_1m_v2_entry_window_start_hour_et: int = 7
     strategy_schwab_1m_v2_entry_window_start_minute_et: int = 0
     strategy_schwab_1m_v2_entry_window_end_hour_et: int = 16
-    strategy_schwab_1m_v2_entry_window_end_minute_et: int = 30
+    strategy_schwab_1m_v2_entry_window_end_minute_et: int = 0
     # GO-LIVE opt-in: when False (default), the configured_schwab_accounts guard
     # REFUSES to bind a real Schwab hash to the v2 account (structural paper-safety,
     # P1 Phase 1). When True, v2's account registers the real hash so orders route
