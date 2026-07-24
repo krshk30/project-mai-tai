@@ -78,6 +78,40 @@ pre-market STOP_LIMIT the broker rejects (the #523 bug). So split by *safety/ind
 Each phase its own PR + tests + safety mutation. Flag-gated → merge to main today, deploy dark, enable
 after-hours (deploy = VPS pull + restart, held for after-hours; merging to main does NOT deploy).
 
+## R2b — Webull MIRROR extended-hours parity (built 2026-07-24, flag-gated OFF)
+The v2→Webull mirror-on-fill (`_mirror_v2_fill_to_webull`, #531) builds a **MARKET master +
+native-OCO combo** — BOTH RTH-only on Webull (417 in EH). So a primary Schwab v2 fill in
+**extended hours** made the mirror reject → EH trading was Schwab-only. This closes that gap so the
+dual-broker goal holds in EH too.
+
+**Branch (at mirror time):** when `not _is_regular_market_session()` **and**
+`strategy_schwab_1m_v2_webull_mirror_eh_enabled` is ON, swap the combo for a **single-leg marketable
+EH-LIMIT master** (`_build_v2_mirror_eh_master`): `order_type=limit` + `extended_hours=true` +
+`session=AM/PM`, priced off OUR fresh ask (`_latest_quotes_by_symbol`), buffered above the ask so it
+crosses, and **bounded by the P-B1 max-cross cap vs the Schwab FILL price** (`oms_v2_eh_entry_*`
+constants, shared with the reactive EH entry). **No fresh ask / ask past the cap → ABANDON** (no
+submit — nothing is opened, so no naked EH position). NO `bracket`/`native_oco_bracket` keys →
+`webull.py::_is_bracket_request` is False → the adapter's single-leg EH path (`_submit_blocking` +
+`set_extended_hours_trading(True)`, granted only for a LIMIT-family type).
+
+**Exit coverage (confirmed from code — no naked EH position):** the mirrored Webull position is
+exit-managed by the **account-aware software CW EH-limit ladder**, automatically:
+- the Webull buy FILL creates a managed row + arms `_managed_v2_symbols` for the **Webull account**
+  (`_on_v2_fill`); `_v2_accounts()` already includes the Webull account when the mirror flag is on;
+- the ladder emits via `_emit_v2_exit`, which routes off `row.broker_account_name` (THE INVARIANT)
+  and **EH-routes** via `_extended_hours_session()` → `session=AM/PM` LIMIT off the live bid (#390);
+- with **no** native-OCO combo emitted in EH, `_native_oco_stand_down_active` **fails open** (no
+  confirmed bracket) → the software ladder runs and anchors +2%/−5% off the ACTUAL Webull fill.
+
+**Flag (separate, not shared):** `strategy_schwab_1m_v2_webull_mirror_eh_enabled` (OFF). NOT reusing
+the primary's `oms_v2_eh_entry_enabled`: the mirror writes to the **shared live:orb account** (ORB
+also trades it — see the collision guard), so a shared flag would make enabling the *isolated* Schwab
+reactive-EH entry also start writing EH orders to that shared real-money account. Separate flags let
+the operator enable primary-EH first (isolated, observe) and mirror-EH later, independently. Mirror-EH
+also requires `strategy_schwab_1m_v2_webull_mirror_enabled` (both ON). **RTH, or either flag OFF →
+byte-identical MARKET + combo** (the current mirror). `docs/webull-mirror-on-fill-design.md` is the
+base mirror spec.
+
 ## ⚠ Risks / open research (settle during build)
 1. **Webull EH pricing** — webull.py:521 says "no Webull market-data entitlement to price EH limits." We must
    price the Webull EH-LIMIT off OUR feed (the shared Polygon/Schwab quotes we already stream), not Webull's.
