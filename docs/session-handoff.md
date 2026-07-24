@@ -30,6 +30,7 @@ hours"). All flag-gated OFF → merged to main but INERT until enabled attended,
 | Phase A | #532 | entry cap 16:30→**16:00** (no entries after 4 PM) | ⚠ settings DEFAULT — applies ON DEPLOY (safe restriction) |
 | P-B1 | #533 | reactive EH safety: **live-bar guard** (#528 gap, real) + max-cross cap + abandon-on-bad-ask | `oms_v2_eh_entry_enabled` |
 | P-B2 | #534 | **resting EH entry** (software-emulated cross → marketable EH-LIMIT min(ask, level×1.005), abandon gap-through) + window→07:30 | `strategy_schwab_1m_v2_cw_v2_eh_resting_entry_enabled` |
+| Mirror-EH | #535 | **Webull mirror EH parity** — EH-LIMIT master (off our ask, capped/abandon) + NO OCO in EH → software EH-ladder manages (exit coverage confirmed: `_v2_accounts()` includes Webull when base-mirror on). Closes the dual-broker EH gap | `strategy_schwab_1m_v2_webull_mirror_eh_enabled` (⚠ needs BASE mirror flag on too) |
 
 **Key facts learned:** the **reactive EH entry ALREADY fills** (bot's `_apply_extended_hours_routing`, dc11d5a
 June — "has the other bot solved this?"); P-B1 is a SAFETY layer, not a from-scratch fix. The **resting** entry
@@ -38,10 +39,16 @@ LIMIT fills on EITHER broker** (MARKET/STOP/OCO all RTH-only — symmetric). EH 
 (`_latest_quotes_by_symbol` ask; Webull has no market-data entitlement). I REVIEWED all 3 diffs (double-emit
 coexistence, re-emit-once grace, band/no-chase, RTH byte-identical all verified); 1420 unit tests green.
 
-**⛔ AFTER-HOURS ATTENDED ENABLEMENT (the remaining step):** deploy (VPS pull+restart → applies the 16:00 cap,
-rest dormant), then enable the flags **ONE AT A TIME, attended, post-close**, validating each. **Unproven
-live:** EH FILL QUALITY on thin pre-market (Schwab session=AM, Webull off Polygon NBBO) — all agents flagged it;
-the OMS band-cap off our feed is the bad-fill guard. **SKYQ 07-23 validates decision A**: its DAY OCO expired
+**⛔ AFTER-HOURS ATTENDED ENABLEMENT (the remaining step) — ORDERED:** (1) deploy (VPS pull+restart → applies
+the 16:00 cap, rest dormant); (2) **VERIFY the pre-market bar feed is live** (CHART_EQUITY streamer — Schwab
+REST is dry pre-market; if it's not feeding, the live-bar guard blocks EVERY EH entry = whole build is a no-op);
+(3) enable flags ONE AT A TIME, attended, validating each: `oms_v2_eod_oco_transition_enabled` →
+`oms_v2_eh_entry_enabled` (reactive) → `..._cw_v2_eh_resting_entry_enabled` → then the **mirror-EH** (needs the
+BASE `..._webull_mirror_enabled` on FIRST so `_v2_accounts()` covers the Webull account for the software ladder,
+THEN `..._webull_mirror_eh_enabled`). **Unproven live:** EH FILL QUALITY on thin pre-market (Schwab session=AM,
+Webull off Polygon NBBO) — all agents flagged it; the OMS band-cap off our feed is the bad-fill guard.
+**Remaining minor gaps (tracked):** persist the OCO resolution price; pre-market-opened position gets no OCO
+even after 09:30 (software-ladder-only); half-day session calendar; the #459 16:00/19:55 double-submit seam. **SKYQ 07-23 validates decision A**: its DAY OCO expired
 16:00 unfilled (RTH high 5.77 < 5.85 target) → −1.57% close; with Phase A live the +2% EH-limit would've caught
 the 16:03 post-close spike to 5.88 = a WIN. (⛔ corrected a subagent that mis-called SKYQ a fill — tape-verified.)
 
