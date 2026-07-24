@@ -8,10 +8,13 @@ phantom re-entries — 93/−$39 shown for a real 23/+$1.91; SDOT never chart-ch
 ## Run it (the only supported entry point)
 ```
 # one symbol:
-python -m project_mai_tai.backtest SYMBOL YYYY-MM-DD [--strategy orb|v2] [--mode bar_close|intrabar] [--capped]
+python -m project_mai_tai.backtest SYMBOL YYYY-MM-DD --strategy orb [--mode bar_close|intrabar|resting] [--capped]
+python -m project_mai_tai.backtest SYMBOL YYYY-MM-DD --strategy v2 [--eh]     # v2 = the REPLAY engine
 # full daily sheet (ALL qualified names, each with a reason — no silent absence):
-python -m project_mai_tai.backtest YYYY-MM-DD --strategy orb|v2 --sheet
+python -m project_mai_tai.backtest YYYY-MM-DD --strategy orb|v2 --sheet [--eh]
 ```
+`--mode` is **ORB-only**; v2 has no mode variants — it replays the ACTUAL live strategy. `--eh` (v2)
+opts the replay into the extended-hours entry paths (LIVE default OFF).
 ORB reports P&L across the **measured per-broker latency band** — never a single point. `--sheet`
 enumerates the qualified universe (v2 = tracked∪traded; ORB = window-captured∪traded) and prints
 every name with trades OR an explicit reason (SKIP-no-feed / 0t-no-signal). Run after close for a
@@ -43,13 +46,15 @@ remains as the DB real-fill reporter that cross-checks modeled vs actual fills).
 ## Scope — two strategies
 - **ORB running-high** (`--strategy orb`): Polygon stream, Webull latency band. bar-close =
   live-faithful; intrabar = re-adjudication mode.
-- **ATR/v2** (`--strategy v2`): THREE feeds — ATR signal + entry fill on **Schwab** LEVELONE
-  (`strategy_bar_history` + `market_quote_ticks`), exit ladder (`ExitEngine`) on the **massive**
-  bid, Schwab ~0s latency. Entry = variant-B ATR touch (vendored `atr_oracle`, pinned to
-  `analysis/atr_flip`) + intrabar hold-confirm. **FEED-LIMITED**: the Schwab LEVELONE capture is
-  sparse (anchor ~1¢ conservative) with coverage gaps (some names have no bars/ticks). Trustworthy
-  for **shape + directional P&L**, not penny-exact — read v2 numbers as directional. See the
-  future market-data-capture investigation in the reports log for widening v2 coverage.
+- **ATR/v2** (`--strategy v2`): the **REPLAY engine** (`backtest/replay.py`, docs/backtest-replay-engine-design.md).
+  Feeds historical **Schwab** 1-min bars + LEVELONE quotes (`strategy_bar_history` + `market_quote_ticks`)
+  through the REAL live `SchwabV2Strategy` (entry) + the SHARED `cw_exit_decision`/static-OCO (exit) reading
+  the live-locked `Settings` — no re-implementation, so it cannot drift from live by construction. The old
+  re-implementing harness (`v2_sim.py`: `ExitEngine`-on-massive-bid + intrabar hold-confirm + `--mode`
+  variants) was DELETED in P4. **FEED-LIMITED**: the Schwab LEVELONE capture is sparse with coverage gaps —
+  every qualified name still shows a reason (traded / SKIP-no-feed / no-signal). Trustworthy for **shape +
+  directional P&L**; the trade-for-trade parity gate runs env-sourced on the VPS (`python -m
+  project_mai_tai.backtest.replay <date>`).
 
 P1/P3/P5 extend from here — each needs its own broker latency band + golden cases before its
 conclusions are trusted.

@@ -94,7 +94,21 @@ Settings() (same env)        ─┘
   - **Out of scope for P3:** the **Webull mirror leg** (the dual-broker bake-off in the replay) — a later
     item once the EH parity gate exists.
 - **P3b (later) — Both brokers.** The mirror leg (optional, for the bake-off).
-- **P4 — Deprecate the old harnesses** (`v2_sim` re-impl, `orb_sim::simulate_resting`) — one replay, one truth.
+- **P4 — Deprecate the old harnesses. ✅ BUILT.** The v2 backtest path (`__main__.py --strategy v2` +
+  the `--sheet` daily sheet + `daily_sheet.render_v2_sheet`) now drives `backtest/replay.py` — the REAL
+  live strategy entry + the shared `cw_exit_decision`/static-OCO exit — instead of a re-implementation.
+  The v2 `--mode {bar_close,intrabar,resting}` variants are GONE (the replay runs the single live behavior;
+  `--mode` is now ORB-only); `--eh` opts the replay into the extended-hours entry paths (LIVE default OFF).
+  The v2-only re-impl `backtest/v2_sim.py` (`simulate_v2` + `_simulate_v2_rearm` + `detect_atr_touches*`)
+  was DELETED with its dead-code tests (`test_v2_atr_rearm.py`; the two `simulate_v2`/touch-parity gates in
+  `test_v2_golden.py`). Coverage-honesty is preserved end-to-end (traded / SKIP-no-feed / no-signal; new
+  `test_daily_sheet.py::test_render_v2_sheet_is_coverage_honest_via_replay`).
+  - **⚠ CORRECTION vs the P4 premise:** `orb_sim::simulate_resting` is **ORB-only in the current code**
+    (consumed by `__main__._run_orb --mode resting` + the ORB `test_golden.py`), NOT reused for v2 — there
+    is no v2 consumer to remove. It is ORB's own resting-stop-buy backtest and is LEFT UNTOUCHED (removing
+    it would break ORB). The shared-oracle pin (`atr_oracle`, still used by the replay + the R&D scripts)
+    stays, retained as `test_v2_golden.py::test_v2_vendored_oracle_pinned` + `test_v2_atr_rearm_golden.py`
+    (the latter tests only the shared oracle vs the TOS chart — no `v2_sim` dependency).
 - Each phase gated by the parity test on a golden day. CI-enforced.
 
 ## ✅ Decisions LOCKED (operator 2026-07-24)
