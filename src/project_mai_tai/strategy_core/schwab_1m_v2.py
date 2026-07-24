@@ -1192,7 +1192,11 @@ class SchwabV2Strategy:
         if atr_signal is None or atr_signal.get("flip") != "SELL":
             return None
         cur = state.bars[-1]
-        now_ms = int(datetime.now(UTC).timestamp() * 1000)
+        # Route the staleness clock through the `_now_ms()` seam (base returns wall-clock ms,
+        # BYTE-IDENTICAL to the prior inline `datetime.now(UTC)`), so the backtest REPLAY — which
+        # overrides `_now_ms()` with the injected historical clock — can reach this bar-close flip
+        # exit instead of it being permanently stale-gated. No live behavior change.
+        now_ms = self._now_ms()
         if (now_ms - cur.timestamp_ms) / 1000.0 > MAX_BAR_AGE_SECONDS_FOR_EMIT:
             return None  # stale/replayed bar — never signal an exit on old history
         trail = atr_signal.get("trail")
