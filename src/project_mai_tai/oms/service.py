@@ -902,8 +902,24 @@ class OmsRiskService:
 
             # Piece: attach native-OCO bracket metadata to the v2 entry (flag-gated; no-op /
             # byte-identical when off or non-v2-entry). Mutates event.payload.metadata in place
-            # so the same dict copy below carries the bracket fields to the adapter.
+            # so the same dict copy below carries the bracket fields to the adapter. RTH-only:
+            # in EH this is a no-op (the native OCO is a regular-session construct).
             self._apply_v2_oco_bracket_entry(event=event)
+
+            # P-B1: re-price the v2 REACTIVE entry as a marketable, max-cross-capped EH-LIMIT off the
+            # OMS's own fresh ask (flag-gated OFF; no-op / byte-identical when off or non-v2-EH-reactive
+            # -> the bot's plain limit-at-ask stands). Mutually exclusive with the bracket above (that is
+            # RTH-only, this is EH-only). Returns a rejected event (abandon) which short-circuits before
+            # any submit — the conservative "no fill beats a bad thin-pre-market fill" bias.
+            eh_abandon_event = self._apply_v2_eh_reactive_entry(
+                session=session, event=event, intent=intent
+            )
+            if eh_abandon_event is not None:
+                session.commit()
+                for prior_event in pre_submit_events:
+                    await self._publish_order_event(prior_event)
+                await self._publish_order_event(eh_abandon_event)
+                return [*pre_submit_events, eh_abandon_event]
 
             client_order_id = self._build_client_order_id(event)
             request = OrderRequest(
@@ -4353,6 +4369,131 @@ class OmsRiskService:
             symbol, ask, break_level, bound, limit_s,
         )
         return None
+
+    def _v2_eh_reactive_entry_applies(self, event: TradeIntentEvent) -> bool:
+        """Gate for the EH reactive-entry marketable-limit enhancement (P-B1). Only the flag-on v2
+        REACTIVE buy-open in extended hours qualifies. The RESTING entry (metadata resting_entry=true)
+        is EXCLUDED — it is P-B2 and is drained on a path that never reaches this builder. Everything
+        else (RTH, non-v2, sells, closes, flag-off) is a no-op -> byte-identical."""
+        if not bool(getattr(self.settings, "oms_v2_eh_entry_enabled", False)):
+            return False
+        p = event.payload
+        md = p.metadata
+        return (
+            p.strategy_code == "schwab_1m_v2"
+            and p.intent_type == "open"
+            and p.side == "buy"
+            and str(md.get("resting_entry", "")).lower() != "true"
+            and not _is_regular_market_session()
+        )
+
+    def _apply_v2_eh_reactive_entry(
+        self,
+        *,
+        session: Session,
+        event: TradeIntentEvent,
+        intent: TradeIntent,
+    ) -> OrderEventEvent | None:
+        """Re-price the v2 REACTIVE entry as a MARKETABLE, capped EH-LIMIT off the OMS's own fresh ask.
+
+        CONTEXT (2026-07-24, P-B1): the bot already routes a v2 EH open to a session=AM/PM LIMIT at the
+        live ask (`_apply_extended_hours_routing`, restored dc11d5a 2026-06-23) — so the reactive entry is
+        fillable pre-market TODAY, NOT the unfillable MARKET the older design assumed. This method (flag-
+        gated OFF) layers the design's thin-EH slippage protection on top: it prices the limit off the
+        OMS Polygon quote book (`_latest_quotes_by_symbol`, the ONLY feed available for the Webull mirror,
+        which has no market-data entitlement), buffers it just above the ask so it crosses, and BOUNDS it
+        by a max-cross cap vs the strategy's signal price (`entry_price`, the break level). Past the cap,
+        or with no fresh ask, it ABANDONS — preferring no fill to a bad thin-pre-market fill.
+
+        Returns None to PROCEED (after mutating event.payload.metadata's limit) or a rejected event to
+        ABANDON (short-circuit before any broker submit). No-op (returns None, no mutation) when the flag
+        is off / not a v2 EH reactive entry -> byte-identical: the bot's plain limit-at-ask stands.
+        ``session`` is unused (abandon marks the intent in the caller's open session); kept for symmetry
+        with the other pre-submit helpers."""
+        del session
+        if not self._v2_eh_reactive_entry_applies(event):
+            return None
+        md = event.payload.metadata
+        symbol = str(event.payload.symbol).upper()
+        session_code = _extended_hours_session()  # "AM"/"PM" (applies() already confirmed EH)
+        # Signal price = the break level the strategy computed (the cap anchor). Mandatory (fail-closed):
+        # without it we cannot bound the chase, and a reactive draft always carries it.
+        try:
+            signal_px = float(md["entry_price"])
+        except (KeyError, TypeError, ValueError):
+            return self._abandon_v2_eh_entry(
+                event=event, intent=intent, reason_code="MISSING_SIGNAL",
+                reason_detail="entry_price absent/invalid; cannot bound the EH reactive entry",
+            )
+        if signal_px <= 0:
+            return self._abandon_v2_eh_entry(
+                event=event, intent=intent, reason_code="MISSING_SIGNAL",
+                reason_detail=f"entry_price non-positive ({signal_px})",
+            )
+        max_age_ms = int(getattr(self.settings, "oms_v2_eh_entry_quote_max_age_ms", 2000))
+        ask = self._fresh_ask(symbol, max_age_ms)
+        if ask is None:
+            return self._abandon_v2_eh_entry(
+                event=event, intent=intent, reason_code="NO_FRESH_QUOTE",
+                reason_detail=f"no fresh ask within {max_age_ms}ms for {symbol}",
+            )
+        max_cross_pct = float(getattr(self.settings, "oms_v2_eh_entry_max_cross_pct", 1.0))
+        cap = signal_px * (1.0 + max_cross_pct / 100.0)
+        if ask > cap:
+            # The live ask has run past the signal by more than the cap -> the market moved away from the
+            # setup; prefer NO fill to chasing a thin-pre-market spike (design risk #3).
+            return self._abandon_v2_eh_entry(
+                event=event, intent=intent, reason_code="ASK_PAST_CROSS_CAP",
+                reason_detail=(
+                    f"ask {ask:.4f} past max-cross cap {cap:.4f} "
+                    f"(signal {signal_px:.4f} +{max_cross_pct}%)"
+                ),
+            )
+        # ask <= cap: marketable buy limit = ask * (1 + buffer%), never exceeding the cap.
+        buffer_pct = float(getattr(self.settings, "oms_v2_eh_entry_limit_buffer_pct", 0.3))
+        tick = Decimal("0.01") if ask >= 1.0 else Decimal("0.0001")
+        buffered = Decimal(str(ask)) * (Decimal("1") + Decimal(str(buffer_pct)) / Decimal("100"))
+        limit = min(buffered, Decimal(str(cap)))
+        # ROUND_DOWN so tick-alignment can never push the limit back above the cap.
+        limit_s = format(limit.quantize(tick, rounding=ROUND_DOWN), "f")
+        md["order_type"] = "limit"
+        md["limit_price"] = limit_s
+        md["reference_price"] = limit_s
+        md["session"] = session_code
+        md["extended_hours"] = "true"
+        md["price_source"] = "ask"
+        md["oms_v2_eh_entry"] = "true"
+        md["oms_v2_eh_entry_ask"] = f"{ask:.4f}"
+        md["oms_v2_eh_entry_cap"] = f"{cap:.4f}"
+        self.logger.info(
+            "[OMS-V2-EH-ENTRY] symbol=%s session=%s ask=%.4f signal=%.4f cap=%.4f limit=%s",
+            symbol, session_code, ask, signal_px, cap, limit_s,
+        )
+        return None
+
+    def _abandon_v2_eh_entry(
+        self,
+        *,
+        event: TradeIntentEvent,
+        intent: TradeIntent,
+        reason_code: str,
+        reason_detail: str,
+    ) -> OrderEventEvent:
+        """Pre-submission abandon for the EH reactive entry (no broker order exists yet). Marks the
+        intent rejected, logs [OMS-ABANDON-INTENT], and returns the rejected event — mirrors the ORB
+        quote-priced abandon so the conservative no-blind-order bias is identical across entry paths."""
+        md = event.payload.metadata
+        md["abandon_intent"] = "true"
+        md["abandon_reason_code"] = reason_code
+        md["abandon_reason_detail"] = reason_detail
+        md["oms_v2_eh_entry"] = "abandoned"
+        self.store.mark_intent_status(intent, "rejected")
+        self.logger.info(
+            "[OMS-ABANDON-INTENT] code=%s symbol=%s strategy=%s side=%s reason=%s",
+            reason_code, event.payload.symbol, event.payload.strategy_code,
+            event.payload.side, reason_detail,
+        )
+        return self._build_rejected_event(event, intent.id, reason=reason_code)
 
     def _build_rejected_event(
         self,

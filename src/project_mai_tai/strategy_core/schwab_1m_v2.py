@@ -470,6 +470,13 @@ class SchwabV2Strategy:
         self._reactive_entry_enabled = bool(
             getattr(self.settings, "strategy_schwab_1m_v2_cw_v2_reactive_entry_enabled", True)
         )
+        # LIVE-BAR gate for the REACTIVE entry in EXTENDED HOURS only (#528 mirror). The break fires on a
+        # live quote, but the ARM is built from bar highs on every bar incl. warmup replays; pre-market a
+        # replayed prior-session flip could arm a stale trigger a live quote then breaks. In EH, require
+        # the driving bar within this age of wall-clock before firing. RTH byte-identical (skipped there).
+        self._reactive_max_bar_age_ms = int(float(
+            getattr(self.settings, "strategy_schwab_1m_v2_cw_v2_reactive_entry_max_bar_age_secs", 180.0) or 180.0
+        ) * 1000)
         self._resting_entry_enabled = bool(
             getattr(self.settings, "strategy_schwab_1m_v2_cw_v2_resting_entry_enabled", False)
         )
@@ -1204,6 +1211,14 @@ class SchwabV2Strategy:
         minutes = et.hour * 60 + et.minute
         return 9 * 60 + 30 <= minutes < 10 * 60
 
+    @staticmethod
+    def _cw_is_extended_hours(ts_ms: int) -> bool:
+        """True if ts_ms is OUTSIDE the 09:30-16:00 ET regular session (pre/post-market) — matches the
+        OMS `_extended_hours_session` boundary so the reactive live-bar guard aligns with the EH routing."""
+        et = datetime.fromtimestamp(ts_ms / 1000.0, UTC).astimezone(EASTERN_TZ)
+        minutes = et.hour * 60 + et.minute
+        return not (9 * 60 + 30 <= minutes < 16 * 60)
+
     def _cw_v2_track(self, state: SymbolState, atr_signal: dict | None) -> None:
         """CW-v2 bar-path state machine (no-op unless the sub-flag is on). Maintains the arm /
         3-bar trigger (flip bar + next 2 bars) / flip-level on EVERY new bar independent of
@@ -1356,6 +1371,22 @@ class SchwabV2Strategy:
             return None  # rule 6: intrabar break of the entry-appropriate trigger
         if fl <= 0.0 or px <= fl or state.cw_bar_low_so_far <= fl:
             return None  # rule 7: whole forming bar above the flip level
+
+        # EH LIVE-BAR guard (#528 mirror): in extended hours only, never fire off a warmup-replayed /
+        # stale ARM. The trigger (cw_trigger/segment_high) is built from bar highs in _cw_v2_track, which
+        # runs on every bar incl. warmup replays; pre-market, a replayed prior-session BUY flip can arm a
+        # stale level a live quote then breaks -> an entry on an hours-old trigger. Require the driving bar
+        # within `_reactive_max_bar_age_ms` of wall-clock. RTH is byte-identical (guard skipped in-session,
+        # where warmup completes by 09:30 and the 09:30-10:00 ORB skip already covers the open).
+        if self._cw_is_extended_hours(now_ms):
+            bar_ms = int(state.bars[-1].timestamp_ms) if state.bars else 0
+            if not bar_ms or (self._now_ms() - bar_ms) > self._reactive_max_bar_age_ms:
+                logger.info(
+                    "[V2-CW-EH-STALE-BAR] %s reactive EH entry suppressed — driving bar %s is not live "
+                    "(age > %dms); never fire off a warmup-replayed trigger",
+                    state.symbol, bar_ms, self._reactive_max_bar_age_ms,
+                )
+                return None
 
         state.cw_v2_emit_claimed = True
         state.cw_v2_emit_ms = now_ms
