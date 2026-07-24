@@ -68,14 +68,12 @@ from project_mai_tai.market_data.schwab_v2_tick_writer import SchwabV2TickWriter
 from project_mai_tai.settings import Settings, get_settings
 from project_mai_tai.strategy_core.time_utils import (
     US_MARKET_HOLIDAYS,
-    is_fillable_et_session,
     session_day_eastern_str,
 )
 from project_mai_tai.strategy_core.order_routing import (
-    _format_limit_price,
     extended_hours_session,
-    order_routing_metadata,
 )
+from project_mai_tai.strategy_core import entry_gate
 from project_mai_tai.strategy_core.schwab_1m_v2 import (
     SERVICE_NAME,
     STRATEGY_CODE,
@@ -149,17 +147,13 @@ WATCHDOG_STARTUP_GRACE_SECS = 150.0
 _US_MARKET_HOLIDAYS: frozenset[date] = US_MARKET_HOLIDAYS
 
 # Operator trading window (ET): v2 only ENTERS within [start, end). Outside it
-# — before 7 AM, at/after 6 PM, weekends, and full-closure holidays —
+# — before 7 AM, at/after 4 PM, weekends, and full-closure holidays —
 # `_maybe_emit` drops "open" intents. Exits (cw_flip + OMS-managed) are governed
-# separately (the OMS fillable-session gate). Default 07:00–18:00 ET per operator
-# directive 2026-07-14, after a 7:51 PM ET after-hours entry (AGEN/SOBR) left the
-# OMS churning unfillable overnight exits. Overridable via settings of the same
-# name for tuning without a code change.
-V2_ENTRY_WINDOW_START_HOUR_ET = 7
-V2_ENTRY_WINDOW_START_MINUTE_ET = 0
-V2_ENTRY_WINDOW_END_HOUR_ET = 16
-# 2026-07-24 Phase A: 16:00 (was 16:30) — no new entries after the RTH close (both modes).
-V2_ENTRY_WINDOW_END_MINUTE_ET = 0
+# separately (the OMS fillable-session gate). The canonical default bounds
+# (07:00–16:00 ET) now live in `strategy_core.entry_gate` (shared with the
+# backtest replay, Decision 1 of the replay-engine design) and are resolved via
+# `entry_gate.resolve_entry_window(settings)`, so the live window can never drift
+# from the replay's. Overridable via settings of the same name.
 
 
 def _format_eastern(dt: datetime) -> str:
@@ -1430,52 +1424,26 @@ class SchwabV2BotService:
             )
 
     def _entry_window_start_hour_et(self) -> int:
-        return int(
-            getattr(
-                self.settings,
-                "strategy_schwab_1m_v2_entry_window_start_hour_et",
-                V2_ENTRY_WINDOW_START_HOUR_ET,
-            )
-        )
+        return entry_gate.resolve_entry_window(self.settings)[0]
 
     def _entry_window_end_hour_et(self) -> int:
-        return int(
-            getattr(
-                self.settings,
-                "strategy_schwab_1m_v2_entry_window_end_hour_et",
-                V2_ENTRY_WINDOW_END_HOUR_ET,
-            )
-        )
+        return entry_gate.resolve_entry_window(self.settings)[2]
 
     def _entry_window_start_minute_et(self) -> int:
-        return int(
-            getattr(
-                self.settings,
-                "strategy_schwab_1m_v2_entry_window_start_minute_et",
-                V2_ENTRY_WINDOW_START_MINUTE_ET,
-            )
-        )
+        return entry_gate.resolve_entry_window(self.settings)[1]
 
     def _entry_window_end_minute_et(self) -> int:
-        return int(
-            getattr(
-                self.settings,
-                "strategy_schwab_1m_v2_entry_window_end_minute_et",
-                V2_ENTRY_WINDOW_END_MINUTE_ET,
-            )
-        )
+        return entry_gate.resolve_entry_window(self.settings)[3]
 
     def _within_entry_window(self, now: datetime) -> bool:
         """True iff `now` falls in the operator entry window: a weekday, non-holiday ET
         day, inside [start, end). Minute granularity — the default 7:00–16:00 allows from
-        07:00:00 and blocks at 16:00:00 sharp (4:00 PM RTH close)."""
-        return is_fillable_et_session(
-            now,
-            self._entry_window_start_hour_et(),
-            self._entry_window_end_hour_et(),
-            start_minute=self._entry_window_start_minute_et(),
-            end_minute=self._entry_window_end_minute_et(),
-        )
+        07:00:00 and blocks at 16:00:00 sharp (4:00 PM RTH close).
+
+        Delegates to the shared `entry_gate.within_entry_window` (Decision 1 of the
+        replay-engine design) so the live window and the backtest replay run one
+        implementation."""
+        return entry_gate.within_entry_window(now, self.settings)
 
     async def _maybe_emit(self, draft) -> None:  # type: ignore[no-untyped-def]
         if draft is None:
@@ -1558,25 +1526,20 @@ class SchwabV2BotService:
         RTH is byte-identical to today: ``order_routing_metadata`` returns ``{}``
         when the session is regular, so the order stays market/NORMAL and this
         method never touches the draft. Returns False only to skip the emit.
+
+        Delegates to the shared, pure ``entry_gate.route_extended_hours`` (Decision 1
+        of the replay-engine design) so the live routing and the backtest replay run
+        one implementation. ``extended_hours_session`` is passed as ``session_fn`` from
+        THIS module's binding (keeping the existing monkeypatch seam), and ``logger``
+        is passed so the skip-warning stays under this module's logger byte-identically.
         """
-        if getattr(draft, "intent_type", "") != "open":
-            return True
-        if extended_hours_session(now) is None:
-            return True  # regular session — unchanged (market/NORMAL)
-        symbol = str(getattr(draft, "symbol", "")).upper()
-        side = str(getattr(draft, "side", "buy"))
-        quote = self._last_quote_by_symbol.get(symbol)
-        quote_field = "ask_price" if side == "buy" else "bid_price"
-        price = _format_limit_price(getattr(quote, quote_field, None)) if quote is not None else None
-        if price is None:
-            logger.warning(
-                "schwab_1m_v2 skipping extended-hours %s entry for %s — no %s quote "
-                "(mirrors legacy _resolve_routed_price block)",
-                side, symbol, quote_field,
-            )
-            return False
-        draft.metadata.update(order_routing_metadata(price=price, side=side, now=now))
-        return True
+        return entry_gate.route_extended_hours(
+            draft,
+            now,
+            self._last_quote_by_symbol.get,
+            session_fn=extended_hours_session,
+            log=logger,
+        )
 
 
 async def main() -> None:
