@@ -64,13 +64,36 @@ question); backtest SKYQ −1.74% ≈ real −1.57% (model reconciles when set u
 sim** (32-bar sparse Schwab feed = the real winner invisible). ⚠ `DAILY-STRATEGY-LOG.md` 07-23 block was
 written from the BUGGY pass — needs correcting/replacing (operator undecided; hold until the replay harness).
 
-**⛔ OPEN / PENDING (07-24):** (1) **attended Webull mirror test** — watch the first RTH fill mirror to live:orb;
-merge-nothing-else. (2) **replace-throttle → per-1min** (deferred behind Webull). (3) **rename reason label**
-"ATR Flip"→resting/reactive-specific. (4) **replay-harness backtest** (design-first, LATER). (5) **persist OCO
-resolution price** + **SKYQ 16:00-close mechanism**. (6) **pre-market window decision** (07:00 start?). (7) fix
-the DAILY-STRATEGY-LOG 07-23 block. (8) alpaca-cred warnings (benign default-adapter path, deferred).
-**Mirror is OFF overnight** (`WEBULL_MIRROR_ENABLED=false`); RE-ARM for the attended test = flag `=true` +
-restart OMS when the operator is watching. v2 (Schwab, both entry modes) trades normally regardless.
+**⛔ OPEN / PENDING (canonical list, 2026-07-24):**
+
+*🔴 Near-term (today):*
+1. **Re-arm + attended Webull mirror test** — flip `WEBULL_MIRROR_ENABLED=true` + restart OMS when watching;
+   confirm the first v2 **RTH** fill mirrors to live:orb (MARKET+OCO, one-cancels-other). **Mirror is OFF
+   overnight** now (`=false`); v2 (Schwab, both modes) trades normally regardless. ⚠ arm CLOSE to the open —
+   a pre-market reactive fill (07:00-09:30) would trigger a mirror attempt that Webull *rejects* (OCO RTH-only),
+   muddying the clean test; the clean attended test is the first RTH fill.
+
+*🌅 Pre-market trading (NEW 07-24 — design, decide later; [[project-mai-tai-premarket-trading-design]]):*
+2. **Reactive "missing hour"** — reactive covers 07:00-16:30; pre-market starts ~04:00 → 04:00-07:00 uncovered.
+3. **Resting pre-market = non-OCO exit path** — OCO broker-rejected pre-market; needs software-ladder + EH-limit
+   exits (the #390 pattern). 4. **Pre-market DATA constraint** (blocks both) — Schwab REST serves no pre-market
+   bars; CHART_EQUITY streamer + stale warmup-replay (#528 trap) → verify reactive has a live-bar guard.
+
+*🔧 Backtest / data integrity:*
+5. **Replay-harness backtest** — engine replays live code+config (the durable fidelity fix). Design-first, LATER.
+   [[project-mai-tai-backtest-fidelity-replay]] 6. **Persist the broker OCO resolution price** (SKYQ exit
+   unrecoverable). 7. **What closed SKYQ at 16:00** (neither OCO leg touched, yet flat at bell — unexplained).
+
+*🎯 Resting-entry tuning:* 8. **Reprice tuning** (0.5% vs 1.0%). 9. **Selectivity beyond N=3** (skip
+already-ripping/whipsawing names?). 10. **Up-flip fill validation** on clean non-restricted names (NVVE/SKYQ
+partial).
+
+*🧹 Hygiene:* 11. **Rename reason label** "ATR Flip"→mode-specific. 12. **Replace-throttle → per-1min**
+(deferred behind Webull). 13. **Alpaca-cred warnings** (benign, deferred). 14. **OMS heartbeat-decouple**
+(deferred).
+
+*✅ DONE (07-23 EOD):* DAILY-STRATEGY-LOG 07-23 block corrected · Webull mirror-on-fill built+deployed (#531) ·
+both entry modes ON · ruff pin · handoff/memory current.
 
 ---
 
