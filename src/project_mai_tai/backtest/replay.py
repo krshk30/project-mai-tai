@@ -21,7 +21,11 @@ exit code. The geometry is chosen by the position's OPEN session (docs/schwab-1m
   * **EH open → software CW floor-RIDE** (§6b): the SHARED `cw_exit_decision` is driven tick-by-tick
     over the Schwab LEVELONE bids (the exact fn the OMS `_evaluate_v2_managed_exit` calls), reading
     `oms_v2_cw_*` from Settings. On +target% it ARMS a floor and rides; exits on fallback-to-floor /
-    −stop% (pre-arm) / bar-close ATR flip. **The v2 replay exit NEVER touches `ExitEngine`** — that
+    −stop% (pre-arm) / bar-close ATR flip. If NONE of those geometry legs fire, the terminal backstop
+    is the **19:55 ET overnight-flatten** (mirrors the live `_v2_overnight_flatten`, reading
+    `oms_v2_overnight_flatten_hour_et` / `_minute_et` from Settings): the first bid at/after the
+    flatten time closes the position (`exit_reason="overnight-flatten"`), so an EH-opened trade that
+    rides the whole session still exits. **The v2 replay exit NEVER touches `ExitEngine`** — that
     divergence (the 07-23 `ExitEngine` vs `cw_exit_decision` drift) is killed here by construction.
 
 Scope (P3): EXTENDED-HOURS ENTRY — fill entries OPENED before 09:30 / after 16:00, so the replay is
@@ -131,7 +135,7 @@ class ReplayTrade:
     exit_ts: datetime
     exit_px: float
     ret_pct: float
-    exit_reason: str        # target | stop | floor | flip | close-at-bell
+    exit_reason: str        # target | stop | floor | flip | close-at-bell | overnight-flatten
 
 
 @dataclass(frozen=True)
@@ -440,6 +444,13 @@ def replay_symbol_day(
     cw_floor_pct = float(getattr(settings, "oms_v2_cw_floor_pct", 2.0))
     cw_floor_enabled = bool(getattr(settings, "oms_v2_cw_floor_exit_enabled", False))
 
+    # Overnight-flatten backstop endpoint (spec § overnight flatten): the live `_v2_overnight_flatten`
+    # closes every still-held managed v2 position at 19:55 ET before the 20:00 fillable gate. Read the
+    # hour/minute from Settings (same keys the OMS reads) so the replay endpoint tracks the live clock.
+    flatten_hh = int(getattr(settings, "oms_v2_overnight_flatten_hour_et", 19))
+    flatten_mm = int(getattr(settings, "oms_v2_overnight_flatten_minute_et", 55))
+    overnight_flatten_dt = day.replace(hour=flatten_hh, minute=flatten_mm, second=0, microsecond=0)
+
     resting: _RestingOrder | None = None
     filled = False           # one entry per symbol
     entry_rec: ReplayEntry | None = None
@@ -611,6 +622,15 @@ def replay_symbol_day(
             if bid <= 0:
                 continue
             eh_last_bid = (eff_dt, bid)
+            # Terminal overnight-flatten backstop (mirrors live `_v2_overnight_flatten`): the FIRST bid
+            # at/after 19:55 ET closes any still-held EH position. Checked BEFORE the geometry so nothing
+            # can exit AFTER the flatten instant (live, the position is already gone by then). The
+            # geometry legs (target/floor/stop/flip) only reach this loop on ticks STRICTLY BEFORE the
+            # flatten time — an earlier exit sets exit_done and breaks — so an earlier leg always wins;
+            # the flatten is the endpoint ONLY when none fired.
+            if eff_dt >= overnight_flatten_dt:
+                _finish_eh_exit(eff_dt, bid, "overnight-flatten")
+                continue
             entry_px = entry_rec.fill_price  # EH ladder anchors off the FILL (managed-row entry_price)
             action, eh_armed = cw_exit_decision(
                 entry_px, bid, eh_armed,
@@ -639,8 +659,10 @@ def replay_symbol_day(
             f"on the tape (never reached the stop, or gapped through the limit)",
         ))
 
-    # An EH-opened position that never hit floor / -stop / flip on the loaded tape: close-at-bell at
-    # the last bid seen (the 19:55 flatten backstop is out of scope; this bounds the trade honestly).
+    # An EH-opened position that never hit floor / -stop / flip AND whose loaded tape ENDS before the
+    # 19:55 overnight-flatten time (no bid at/after it to close on): close-at-bell at the last bid seen.
+    # The in-loop overnight-flatten is the primary EH backstop; this only catches a tape too short to
+    # reach the flatten instant, and bounds the trade honestly rather than letting it ride forever.
     if entry_rec is not None and geometry == "eh_floor_ride" and not exit_done and eh_last_bid is not None:
         ts_, bid_ = eh_last_bid
         _finish_eh_exit(ts_, bid_, "close-at-bell")

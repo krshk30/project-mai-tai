@@ -340,6 +340,68 @@ def test_eh_open_bar_close_atr_flip_exit() -> None:
     assert t.exit_px < t.entry_px                  # closed at the (falling) bid, a trend exit
 
 
+# ------------------------------------------------------------------ EH overnight-flatten backstop
+# The terminal endpoint: an EH-opened position that rides the whole session without hitting
+# floor / -5% / flip must still exit at the 19:55 ET overnight-flatten (mirrors the live
+# `_v2_overnight_flatten` safety close before the 20:00 fillable gate). Reuses the SAME reactive-EH
+# entry (fill @ 100.5; target 102.51, stop 95.475) as the floor-ride tests; only the bid tape differs.
+# 08:00 EH_BASE, so minute 655 = 18:55 ET and minute 715 = 19:55 ET.
+
+
+def _run_eh_flatten(floor_bids, *, floor_enabled: bool = True, **overrides):
+    settings = build_replay_settings(
+        strategy_schwab_1m_v2_cw_v2_resting_entry_enabled=False,  # let the reactive EH path fire
+        oms_v2_cw_floor_exit_enabled=floor_enabled,
+        **overrides,
+    )
+    return replay_symbol_day(_MemSource(_eh_bars(), _eh_quotes(floor_bids)), SYM, DAY, settings)
+
+
+def test_eh_open_overnight_flatten_when_geometry_never_fires() -> None:
+    # Post-entry bids stay in the dead band (99.5..101.0, between stop 95.475 and target 102.51): no
+    # arm, no -5%, no flip. The trade would ride forever without the endpoint -> it must flatten at the
+    # first bid at/after 19:55 ET (minute 715), at that bid price.
+    res = _run_eh_flatten([(20, 100.0), (21, 101.0), (655, 99.5), (715, 100.2)])
+    assert len(res.entries) == 1 and res.entries[0].mode == "reactive"
+    assert len(res.trades) == 1, f"expected one EH trade; skips={res.skips} misses={res.misses}"
+    t = res.trades[0]
+    assert t.geometry == "eh_floor_ride"
+    assert t.exit_reason == "overnight-flatten"          # the terminal 19:55 backstop, no geometry hit
+    assert t.exit_px == pytest.approx(100.2, abs=1e-6)   # closed at the 19:55 bid
+    assert t.exit_ts.astimezone(ET).strftime("%H:%M") == "19:55"
+
+
+def test_eh_geometry_exit_before_1955_still_wins() -> None:
+    """Precedence: a floor exit that fires BEFORE 19:55 wins — the overnight-flatten does NOT override
+    an earlier geometry leg. Same arm-then-fallback tape as the floor-ride test, with a trailing 19:55
+    bid appended: the floor closes at 08:23 and the loop is already done before the flatten instant."""
+    res = _run_eh_flatten(_EH_FLOOR_BIDS + [(715, 100.2)])
+    assert len(res.trades) == 1
+    t = res.trades[0]
+    assert t.exit_reason == "floor"                      # the EARLIER floor exit wins, not the flatten
+    assert t.exit_reason != "overnight-flatten"
+    assert t.exit_ts.astimezone(ET).strftime("%H:%M") == "08:23"
+
+
+def test_mutation_overnight_flatten_time_shifts_with_setting() -> None:
+    """Pin the 19:55 threshold: move the flatten time to 18:55 ET via Settings and the SAME dead-band
+    tape flattens at 18:55 (minute 655) instead of 19:55 (minute 715) — proving the endpoint reads
+    `oms_v2_overnight_flatten_hour_et` / `_minute_et` and is not a hard-coded 19:55 (mutation red)."""
+    tape = [(20, 100.0), (21, 101.0), (655, 99.5), (715, 100.2)]
+    default = _run_eh_flatten(tape).trades[0]
+    mutated = _run_eh_flatten(
+        tape,
+        oms_v2_overnight_flatten_hour_et=18,
+        oms_v2_overnight_flatten_minute_et=55,
+    ).trades[0]
+
+    assert default.exit_reason == mutated.exit_reason == "overnight-flatten"
+    assert default.exit_ts.astimezone(ET).strftime("%H:%M") == "19:55"   # reads the default 19/55
+    assert mutated.exit_ts.astimezone(ET).strftime("%H:%M") == "18:55"   # shifts to the mutated 18/55
+    assert mutated.exit_px == pytest.approx(99.5, abs=1e-6)              # the 18:55 bid, an earlier close
+    assert mutated.exit_ts < default.exit_ts
+
+
 # ==================================================================== P3: EXTENDED-HOURS entry
 # The replay now FILLS entries OPENED in extended hours (pre/post-market), so the replay is faithful
 # for EH opens too (docs/backtest-replay-engine-design.md P3). Both EH modes run the REAL strategy code:
