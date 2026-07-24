@@ -106,12 +106,12 @@ written from the BUGGY pass — needs correcting/replacing (operator undecided; 
 
 **⛔ OPEN / PENDING (canonical list, 2026-07-24):**
 
-*🔴 Near-term (today):*
-1. **Re-arm + attended Webull mirror test** — flip `WEBULL_MIRROR_ENABLED=true` + restart OMS when watching;
-   confirm the first v2 **RTH** fill mirrors to live:orb (MARKET+OCO, one-cancels-other). **Mirror is OFF
-   overnight** now (`=false`); v2 (Schwab, both modes) trades normally regardless. ⚠ arm CLOSE to the open —
-   a pre-market reactive fill (07:00-09:30) would trigger a mirror attempt that Webull *rejects* (OCO RTH-only),
-   muddying the clean test; the clean attended test is the first RTH fill.
+*🔴 Near-term:*
+1. **⛔ Webull mirror BLOCKED by a 429 flood (found live 07-24 attended)** — arming it hammers the Webull
+   position-sync ~6/sec → HTTP 429 flood (0→534 in 90s→0 on disarm; `webull.py:366`, retry loop no backoff).
+   Mirror + mirror-EH #535 are unusable until fixed. **PREREQUISITE FIX (off-market): Webull position-sync
+   backoff/throttle** → [[project-mai-tai-webull-mirror-429-flood]]. Mirror left OFF; Schwab v2 unaffected. The
+   attended mirror test waits on this fix.
 
 *🌅 EH trading — ✅ BUILT 07-24 (dormant), awaiting AFTER-HOURS ATTENDED ENABLEMENT:*
 2. **Enable the 3 flags one-at-a-time post-close + validate** (Phase A EOD-transition, P-B1 reactive-EH, P-B2
