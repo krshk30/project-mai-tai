@@ -3204,6 +3204,15 @@ class OmsRiskService:
                         )
                         synced_orders += 1
                         terminal_orders += 1
+                    elif self._resting_trigger_refresh_exempt(order):
+                        # FULL-EXEMPT (default): a resting buy STOP/STOP_LIMIT is designed to sit at
+                        # the ATR line until price crosses — never cancel/replace it on the refresh
+                        # cadence (that tears it down 12x a min = the "no order resting when price
+                        # crosses" miss the STABLE-REST rework fixed, 2026-07-23 NVVE). The strategy's
+                        # STABLE-REST re-prices it on a >=1% trail move; MARKET_CLOSED above still
+                        # abandons it out-of-session (the backstop is preserved). Leave it resting.
+                        # Set oms_refresh_resting_trigger_orders=true to restore the old refresh.
+                        pass
                     else:
                         refresh_result = await self._refresh_working_order(
                             session=session,
@@ -5470,6 +5479,18 @@ class OmsRiskService:
     def _is_stop_guard_order(order: BrokerOrder) -> bool:
         payload = order.payload or {}
         return str(payload.get("stop_guard", "")).strip().lower() == "true"
+
+    def _resting_trigger_refresh_exempt(self, order: BrokerOrder) -> bool:
+        """True when the working-order refresh must LEAVE a resting buy STOP/STOP_LIMIT ENTRY trigger
+        in place instead of cancel/replacing it. Default (oms_refresh_resting_trigger_orders=False) =
+        exempt, so the resting entry actually sits at the ATR line (the strategy's STABLE-REST owns
+        re-pricing; MARKET_CLOSED still parks it out-of-session). Excludes protective stop-guards —
+        those are also STOP-typed but MUST keep their staged re-arm cadence — and marketable chases."""
+        return (
+            self._is_resting_trigger_order(order)
+            and not self._is_stop_guard_order(order)
+            and not bool(getattr(self.settings, "oms_refresh_resting_trigger_orders", False))
+        )
 
     @staticmethod
     def _is_resting_trigger_order(order: BrokerOrder) -> bool:
