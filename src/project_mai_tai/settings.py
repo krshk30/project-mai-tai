@@ -281,6 +281,20 @@ class Settings(BaseSettings):
     # the operator enables primary-EH and mirror-EH independently. OFF (default) => in EH the
     # mirror is byte-identical to today (MARKET + combo, which the broker 417s; RTH-only mirror).
     strategy_schwab_1m_v2_webull_mirror_eh_enabled: bool = False
+    # Dual-broker FAN-OUT (parallel both-broker entry). When ON, the v2 bot emits a
+    # SECOND (Webull) buy-open leg IN PARALLEL at the up-cross — instead of the sequential
+    # mirror-on-fill — so the Webull leg never lags the Schwab fill and a Schwab-rejected
+    # name still trades on Webull. Mutually exclusive with the mirror-on-fill trigger at
+    # runtime (fanout ON suppresses the on-fill mirror). OFF (default) => today's
+    # mirror-on-fill, byte-identical (the rollback path — keep the mirror code). Needs
+    # strategy_schwab_1m_v2_webull_account_name set (the Webull leg's account). See
+    # docs/per-broker-eligibility-webull-fallback-design.md.
+    strategy_schwab_1m_v2_dual_broker_fanout_enabled: bool = False
+    # Per-order quantity for the FAN-OUT Webull leg. 0 (default) => use the same qty as the
+    # Schwab leg (strategy_schwab_1m_v2_default_quantity). Set explicitly to size the Webull
+    # leg independently (operator wanted 2x capital on eligible names — per-order default qty
+    # on each broker, no netting).
+    strategy_schwab_1m_v2_webull_fanout_quantity: int = 0
     # Cold-start warmup lookback (calendar days). The first poll per symbol
     # (since=0) requests this many days back so the indicator-seed batch
     # always reaches the last completed trading session even across a

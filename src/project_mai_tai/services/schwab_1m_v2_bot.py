@@ -189,6 +189,9 @@ class SchwabV2BotService:
         self.rest_client: SchwabV2RestClient | None = None
         self.streamer: SchwabV2Streamer | None = None
         self.intent_emitter: SchwabV2IntentEmitter | None = None
+        # Dual-broker FAN-OUT: second emitter bound to the Webull account (built in run() only when
+        # the fan-out flag is on AND the Webull account is set). None => no fan-out (byte-identical).
+        self.webull_intent_emitter: SchwabV2IntentEmitter | None = None
         self.session_factory: sessionmaker[Session] | None = session_factory
         self._stop_event = asyncio.Event()
         self._strategy_state_stream = stream_name(
@@ -204,6 +207,11 @@ class SchwabV2BotService:
         # emitting intents for names the broker already bounced.
         self._schwab_ineligible_cache: set[str] = set()
         self._schwab_ineligible_loaded_monotonic: float | None = None
+        # Dual-broker FAN-OUT: symbols Webull refused to OPEN today (cached <=60s; see
+        # `_webull_ineligible_symbols`). Used to skip the Webull leg + (with schwab) to evict a name
+        # only when BOTH brokers reject it. Empty unless fan-out is on.
+        self._webull_ineligible_cache: set[str] = set()
+        self._webull_ineligible_loaded_monotonic: float | None = None
         # Track-2 Phase-2 Slice-2: last symbol list published to the gateway as a
         # subscription consumer (debounce). None = nothing published yet.
         self._last_gateway_symbols: list[str] | None = None
@@ -325,6 +333,28 @@ class SchwabV2BotService:
             self.redis,
             broker_account_name=self.settings.strategy_schwab_1m_v2_account_name,
         )
+        # Dual-broker FAN-OUT: build the SECOND emitter bound to the Webull account only when the
+        # flag is on AND the account is set. Unset => warn + stay single-leg (never point at nothing).
+        if bool(getattr(self.settings, "strategy_schwab_1m_v2_dual_broker_fanout_enabled", False)):
+            webull_account = str(
+                getattr(self.settings, "strategy_schwab_1m_v2_webull_account_name", "") or ""
+            ).strip()
+            if webull_account and webull_account != self.settings.strategy_schwab_1m_v2_account_name:
+                self.webull_intent_emitter = SchwabV2IntentEmitter(
+                    self.settings,
+                    self.redis,
+                    broker_account_name=webull_account,
+                )
+                logger.info(
+                    "[V2-FANOUT] dual-broker fan-out ENABLED — Webull leg -> account %s",
+                    webull_account,
+                )
+            else:
+                logger.warning(
+                    "[V2-FANOUT] fan-out flag ON but strategy_schwab_1m_v2_webull_account_name is "
+                    "unset/equal-to-primary (%r) — staying single-leg, no Webull leg emitted",
+                    webull_account,
+                )
         self.rest_client = SchwabV2RestClient(
             self.settings,
             on_chart_bar=self._handle_bar_from_rest,
@@ -936,7 +966,12 @@ class SchwabV2BotService:
         # otherwise re-fire an intent on every flip; evicting from the watchlist
         # halts it at the source. Mirrors the main engine's
         # `_load_schwab_ineligible_symbols_by_strategy` eviction.
+        # Dual-broker fan-out changes the eviction rule: a name keeps trading as long as >=1 broker
+        # accepts it, so evict ONLY names BOTH brokers rejected (schwab ∩ webull). Flag-OFF keeps the
+        # schwab-only eviction (byte-identical — `_webull_ineligible_symbols` returns empty when off).
         ineligible_exclude = self._schwab_ineligible_symbols()
+        if bool(getattr(self.settings, "strategy_schwab_1m_v2_dual_broker_fanout_enabled", False)):
+            ineligible_exclude = ineligible_exclude & self._webull_ineligible_symbols()
         if ineligible_exclude:
             selected -= ineligible_exclude
         if selected == self._watchlist:
@@ -1026,6 +1061,47 @@ class SchwabV2BotService:
             return self._schwab_ineligible_cache
         self._schwab_ineligible_cache = blocked
         self._schwab_ineligible_loaded_monotonic = now_m
+        return blocked
+
+    def _webull_ineligible_symbols(self) -> set[str]:
+        """Dual-broker fan-out: symbols Webull refused to OPEN today (symmetric to
+        `_schwab_ineligible_symbols`, scoped to the Webull account). Used to skip the Webull leg and
+        — intersected with the Schwab set — to evict a name only when BOTH brokers reject it. Cached
+        <=60s. Empty when fan-out is off / the Webull account is unset / paper mode; auto-clears daily
+        via the `session_date`-keyed `webull_ineligible_today` table."""
+        if self.session_factory is None:
+            return set()
+        if not bool(getattr(self.settings, "strategy_schwab_1m_v2_dual_broker_fanout_enabled", False)):
+            return set()
+        account_name = str(
+            getattr(self.settings, "strategy_schwab_1m_v2_webull_account_name", "") or ""
+        ).strip()
+        if not account_name:
+            return set()
+        now_m = time.monotonic()
+        if (
+            self._webull_ineligible_loaded_monotonic is not None
+            and now_m - self._webull_ineligible_loaded_monotonic < 60.0
+        ):
+            return self._webull_ineligible_cache
+        blocked: set[str] = set()
+        try:
+            with self.session_factory() as session:
+                account_id = session.scalar(
+                    select(BrokerAccount.id).where(BrokerAccount.name == account_name)
+                )
+                if account_id is not None:
+                    by_account = OmsStore().list_webull_ineligible_symbols_by_account(
+                        session,
+                        broker_account_ids=[account_id],
+                        session_date=session_day_eastern_str(datetime.now(UTC)),
+                    )
+                    blocked = by_account.get(account_id, set())
+        except Exception:  # noqa: BLE001
+            logger.exception("schwab_1m_v2 failed loading Webull ineligible symbols")
+            return self._webull_ineligible_cache
+        self._webull_ineligible_cache = blocked
+        self._webull_ineligible_loaded_monotonic = now_m
         return blocked
 
     @staticmethod
@@ -1347,6 +1423,8 @@ class SchwabV2BotService:
                     logger.exception(
                         "schwab_1m_v2 resting-entry emit failed for %s", getattr(d, "symbol", "?")
                     )
+        # Dual-broker fan-out: emit any Webull legs the strategy queued this bar (no-op if off).
+        await self._emit_webull_fanout_legs()
 
     async def _handle_quote(self, symbol: str, quote: Quote) -> None:
         now = datetime.now(UTC)
@@ -1362,6 +1440,8 @@ class SchwabV2BotService:
             logger.exception("schwab_1m_v2 on_quote failed for %s", symbol)
             return
         await self._maybe_emit(draft)
+        # Dual-broker fan-out: emit any Webull legs the strategy queued this quote (no-op if off).
+        await self._emit_webull_fanout_legs()
 
     def _persist_bar(self, symbol: str, bar: ChartBar) -> None:
         """Atomic upsert into strategy_bar_history on
@@ -1445,9 +1525,13 @@ class SchwabV2BotService:
         implementation."""
         return entry_gate.within_entry_window(now, self.settings)
 
-    async def _maybe_emit(self, draft) -> None:  # type: ignore[no-untyped-def]
+    async def _maybe_emit(self, draft, emitter=None) -> None:  # type: ignore[no-untyped-def]
+        """Emit a draft through the entry-window gate + ATR-only belt + EH-routing chokepoint.
+        `emitter` defaults to the primary (Schwab) emitter; the dual-broker fan-out passes the
+        Webull emitter so its parallel leg runs the SAME gates/routing, just to the other account."""
         if draft is None:
             return
+        target_emitter = emitter if emitter is not None else self.intent_emitter
         # Confirmed-window (variant CW) bar-close flip: the strategy expresses the trend
         # exit as a CLOSE draft tagged cw_flip. Publish it as a lightweight `v2_cw_flip`
         # signal (the OMS closes the managed row) rather than a normal intent — skip the
@@ -1504,15 +1588,37 @@ class SchwabV2BotService:
                     reason,
                 )
                 return
-        if self.intent_emitter is None:
+        if target_emitter is None:
             logger.warning("schwab_1m_v2 intent dropped — emitter not initialized")
             return
         if not self._apply_extended_hours_routing(draft, datetime.now(UTC)):
             return
         try:
-            await self.intent_emitter.emit(draft)
+            await target_emitter.emit(draft)
         except Exception:
             logger.exception("schwab_1m_v2 emit failed")
+
+    async def _emit_webull_fanout_legs(self) -> None:
+        """Dual-broker fan-out: drain the strategy's queued Webull leg drafts and emit each through
+        the SECOND (Webull) emitter — same entry-window gate + EH-routing as the primary — skipping
+        Webull-ineligible names. Always drains (to clear the queue) even when the emitter is unset.
+        No-op unless fan-out is on (nothing is queued)."""
+        drain = getattr(self.strategy, "drain_webull_fanout_intents", None)
+        if not callable(drain):
+            return
+        legs = drain()
+        if not legs or self.webull_intent_emitter is None:
+            return
+        webull_ineligible = self._webull_ineligible_symbols()
+        for d in legs:
+            sym = str(getattr(d, "symbol", "")).upper()
+            if sym in webull_ineligible:
+                logger.info("[V2-FANOUT] skip Webull leg %s — webull-ineligible today", sym)
+                continue
+            try:
+                await self._maybe_emit(d, emitter=self.webull_intent_emitter)
+            except Exception:
+                logger.exception("schwab_1m_v2 webull fan-out emit failed for %s", sym)
 
     def _apply_extended_hours_routing(self, draft, now: datetime) -> bool:  # type: ignore[no-untyped-def]
         """Restore the legacy entry handoff: in extended hours, merge
