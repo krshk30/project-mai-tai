@@ -776,6 +776,15 @@ class Settings(BaseSettings):
     webull_positions_backoff_max_secs: float = 60.0
     oms_broker_sync_interval_seconds: int = 5
     oms_working_order_refresh_seconds: int = 5
+    # RESTING TRIGGER refresh policy. A resting buy STOP/STOP_LIMIT entry (the CW-v2 resting
+    # flip-entry and the fan-out Schwab leg) is DESIGNED to sit at the ATR line until price crosses
+    # it. Default FALSE = FULL-EXEMPT: never cancel/replace it on the working-order refresh cadence
+    # (the 5s churn tore it down 12x a min and re-opened the "no order resting when price crosses"
+    # miss the STABLE-REST rework fixed — 2026-07-23 NVVE). The strategy's STABLE-REST still re-prices
+    # it when the ATR trail moves >=1%, and the MARKET_CLOSED abandon still parks it out-of-session.
+    # Set TRUE to restore the old behavior (refresh at oms_working_order_refresh_seconds). Marketable
+    # LIMIT/MARKET chases and protective stop-guards are unaffected either way.
+    oms_refresh_resting_trigger_orders: bool = False
     # Fillable-session window (ET, whole-hour): the OMS places/refreshes exit orders
     # only while an order can actually fill (default 7 AM–8 PM ET = Schwab pre-market
     # fills open ~7 AM, after-hours end ~8 PM). Outside it a working order (open or
