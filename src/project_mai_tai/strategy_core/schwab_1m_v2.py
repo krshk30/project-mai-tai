@@ -223,6 +223,10 @@ class SymbolState:
     resting_level: float = 0.0                 # the stop price (the ATR line) the resting order sits at
     resting_flip_ms: int = 0                    # ms-wall-clock the up-flip fired while resting (fill may be
     #                                             settling); 0 = not pending. Silences re-emits through the lag.
+    # Dual-broker FAN-OUT once-per-flip latch for the RTH-resting Webull leg (software-detected at
+    # resting_level). Set when the Webull MARKET leg fires; reset with the other per-flip claims at the
+    # new BUY flip / position close, so a reclaim can fire a fresh Webull leg. INERT unless fan-out is on.
+    fanout_webull_claimed: bool = False
 
 
 @dataclass
@@ -508,6 +512,20 @@ class SchwabV2Strategy:
             getattr(self.settings, "strategy_schwab_1m_v2_cw_v2_eh_resting_entry_enabled", False)
         )
         self._pending_intents: list[TradeIntentDraft] = []
+        # Dual-broker FAN-OUT (docs/per-broker-eligibility-webull-fallback-design.md). When ON, every
+        # up-cross also produces a SECOND Webull MARKET-at-cross buy-open leg (reactive + EH-resting
+        # piggyback on the existing cross; RTH-resting adds a software detector at resting_level).
+        # The Webull-leg drafts accumulate here and are drained + emitted by the bot through a second
+        # emitter bound to the Webull account. OFF (default) => no second leg, byte-identical (the OMS
+        # mirror-on-fill owns the Webull side).
+        self._dual_broker_fanout_enabled = bool(
+            getattr(self.settings, "strategy_schwab_1m_v2_dual_broker_fanout_enabled", False)
+        )
+        # Webull-leg per-order qty: 0 => match the Schwab leg (_atr_qty).
+        self._webull_fanout_qty = int(
+            getattr(self.settings, "strategy_schwab_1m_v2_webull_fanout_quantity", 0) or 0
+        ) or int(self._atr_qty)
+        self._pending_webull_fanout_intents: list[TradeIntentDraft] = []
         # P1.3 + P1.4 armed-segment safety — ONE flag gates BOTH the boot-mark (P1.3) and the
         # boot-hold (they are one change; splitting them creates a cell where the hold reads every
         # reconstructed segment as dangerous and holds forever). OFF => byte-identical.
@@ -565,6 +583,7 @@ class SchwabV2Strategy:
             if self._cw_v2_enabled:
                 state.cw_v2_emit_claimed = False
                 state.cw_v2_bars_since_exit = 0  # reclaim gap: start counting new bars from the exit
+                state.fanout_webull_claimed = False  # fan-out: allow a fresh Webull leg on the reclaim
         if self._atr_rearm_enabled:
             self._poll_atr_guard(state, prev)
 
@@ -655,6 +674,11 @@ class SchwabV2Strategy:
         # OWNS the CW entry via this quote path; the bar-close _cw_entry is a no-op. No-op (returns
         # None like the base) when the sub-flag is off.
         if self._cw_v2_enabled:
+            # Dual-broker fan-out: in RTH resting mode the broker owns the Schwab cross, so software-
+            # detect it here and queue the parallel Webull MARKET leg (once per flip). Side-effect only
+            # (appends to _pending_webull_fanout_intents); no-op unless fan-out is on and RTH-resting is
+            # the active mode. Reactive/EH crosses queue their Webull leg inside their own builders.
+            self._fanout_rth_resting_cross(state, quote)
             # EH RESTING (P-B2): a broker stop-limit can't trigger in extended hours, so when the EH
             # resting flag is on we software-emulate the cross here — on the ATR up-cross emit a
             # marketable EH-LIMIT buy (the OMS band-caps it). No-op (returns None) in RTH / flag-off /
@@ -885,6 +909,7 @@ class SchwabV2Strategy:
             state.cw_segment_high = 0.0
             state.cw_v2_emit_claimed = False
             state.cw_v2_emit_ms = 0
+            state.fanout_webull_claimed = False  # fan-out RTH-resting once-per-flip latch
             # Resting flip-entry: a live resting order is already cancelled at 16:00 (out-of-window),
             # so at the 04:00 anchor this only zeroes the strategy's view for the new session.
             state.resting_active = False
@@ -1271,6 +1296,7 @@ class SchwabV2Strategy:
             fl = atr_signal.get("flip_level")
             state.cw_flip_level = float(fl) if fl is not None else 0.0
             state.cw_entries_this_flip = 0
+            state.fanout_webull_claimed = False  # fresh flip -> re-allow the fan-out Webull leg
             if self._cw_armed_segment_safety_enabled:
                 # Stamp the arm with the FLIP BAR's ts (not wall-clock): a reconstructed arm carries
                 # a persisted historical ts (< boot); a live flip carries the current bar ts (>= boot).
@@ -1415,6 +1441,17 @@ class SchwabV2Strategy:
             "[V2-CW] %s v2 INTRABAR ENTER px=%.4f trig=%.4f flip_level=%.4f low_sf=%.4f n=%d",
             state.symbol, px, trig, fl, state.cw_bar_low_so_far, state.cw_entries_this_flip,
         )
+        # Dual-broker fan-out: co-queue the parallel Webull MARKET leg at the same reactive cross
+        # (once, on the same claim that produced this primary). No-op unless fan-out is on.
+        if self._dual_broker_fanout_enabled:
+            self._pending_webull_fanout_intents.append(
+                self._build_webull_fanout_draft(
+                    state,
+                    entry_px=px,
+                    session_is_eh=self._cw_is_extended_hours(now_ms),
+                    source="reactive",
+                )
+            )
         return TradeIntentDraft(
             symbol=state.symbol,
             side="buy",
@@ -1661,6 +1698,14 @@ class SchwabV2Strategy:
             "[V2-RESTING-EH-CROSS] %s px=%.4f >= level=%.4f -> marketable EH-LIMIT buy (cap=%.4f band=%.2f%%)",
             state.symbol, px, level, cap, self._resting_entry_band_pct,
         )
+        # Dual-broker fan-out: co-queue the parallel Webull EH-LIMIT leg at the same EH cross (once,
+        # guarded by resting_flip_ms set above). No-op unless fan-out is on.
+        if self._dual_broker_fanout_enabled:
+            self._pending_webull_fanout_intents.append(
+                self._build_webull_fanout_draft(
+                    state, entry_px=level, session_is_eh=True, source="eh_resting"
+                )
+            )
         return TradeIntentDraft(
             symbol=state.symbol, side="buy", intent_type="open",
             quantity=Decimal(str(self._atr_qty)),
@@ -1682,6 +1727,86 @@ class SchwabV2Strategy:
         them after on_bar (a cancel-safe direct emit). Empty unless the resting entry is on."""
         out = self._pending_intents
         self._pending_intents = []
+        return out
+
+    # ---------------------------------------------------- Dual-broker FAN-OUT (Webull leg)
+    def _build_webull_fanout_draft(
+        self, state: SymbolState, *, entry_px: float, session_is_eh: bool, source: str
+    ) -> TradeIntentDraft:
+        """Build the parallel Webull FAN-OUT leg draft (account-agnostic; the bot routes it to the
+        Webull emitter). ALWAYS a MARKET-at-cross in RTH (the OMS `_apply_v2_oco_bracket_entry`
+        anchors the native OCO off `entry_price` exactly like the Schwab primary); in EXTENDED HOURS
+        a plain LIMIT that the bot's EH-routing + the OMS reactive-EH builder re-price to a marketable,
+        band-capped EH-LIMIT off the OMS's own fresh ask (a MARKET/OCO 417s in EH on Webull)."""
+        md = {
+            "path": "ATR Flip",
+            "atr_variant": "CW-v2-fanout",
+            "entry_price": f"{entry_px:.4f}",
+            "reference_price": f"{entry_px:.4f}",
+            "cw_flip_level": (
+                f"{state.cw_flip_level:.4f}" if state.cw_flip_level > 0.0 else f"{entry_px:.4f}"
+            ),
+            "fanout_leg": "webull",
+            "fanout_source": source,
+            "order_type": "limit" if session_is_eh else "market",
+            "source": "schwab_1m_v2",
+            "strategy_version": STRATEGY_VERSION,
+        }
+        return TradeIntentDraft(
+            symbol=state.symbol,
+            side="buy",
+            intent_type="open",
+            quantity=Decimal(str(self._webull_fanout_qty)),
+            reason=f"schwab_1m_v2 ATR Flip fan-out webull ({source})",
+            metadata=md,
+        )
+
+    def _fanout_rth_resting_cross(self, state: SymbolState, quote: Quote) -> None:
+        """RTH-RESTING Webull leg (operator decision 2026-07-25, Option 1). In RTH resting mode the
+        Schwab side is a broker stop-limit the broker fills at the cross — the bot does NO
+        cross-detection there. This software-detects a live print reaching `resting_level` (the same
+        level the Schwab stop sits at) and queues the Webull MARKET leg IN PARALLEL, once per flip.
+        Templated on `_eh_resting_cross_check` but RTH-only. No-op unless fan-out is ON AND a Schwab
+        RTH resting order is live AND flat AND not already claimed this flip."""
+        if not self._dual_broker_fanout_enabled:
+            return
+        if not (self._resting_entry_enabled and self._cw_v2_enabled):
+            return
+        if self._entries_held:                              # boot-hold suppresses all entries
+            return
+        if self._resting_session_is_eh():                   # EH -> the EH cross-check queues it instead
+            return
+        if not (state.resting_active and state.resting_level > 0.0):
+            return
+        if state.position_qty != 0 or state.fanout_webull_claimed:
+            return
+        # LIVE-BAR guard (#528 mirror): only fire off a live feed, never a warmup-replayed / stale bar.
+        bar_ms = int(state.bars[-1].timestamp_ms) if state.bars else 0
+        if not bar_ms or (self._now_ms() - bar_ms) > self._resting_max_bar_age_ms:
+            return
+        px = float(getattr(quote, "last_price", 0.0) or 0.0)
+        if px <= 0.0:
+            bid = float(getattr(quote, "bid_price", 0.0) or 0.0)
+            ask0 = float(getattr(quote, "ask_price", 0.0) or 0.0)
+            px = (bid + ask0) / 2.0 if (bid > 0.0 and ask0 > 0.0) else 0.0
+        if px <= 0.0 or px < state.resting_level:
+            return
+        state.fanout_webull_claimed = True
+        logger.info(
+            "[V2-FANOUT-RTH-RESTING] %s px=%.4f >= resting_level=%.4f -> parallel Webull MARKET leg",
+            state.symbol, px, state.resting_level,
+        )
+        self._pending_webull_fanout_intents.append(
+            self._build_webull_fanout_draft(
+                state, entry_px=px, session_is_eh=False, source="rth_resting"
+            )
+        )
+
+    def drain_webull_fanout_intents(self) -> list[TradeIntentDraft]:
+        """Return + clear the Webull FAN-OUT leg drafts queued this quote/bar. The bot emits them
+        through its SECOND (Webull) emitter, gated on Webull-eligibility. Empty unless fan-out is on."""
+        out = self._pending_webull_fanout_intents
+        self._pending_webull_fanout_intents = []
         return out
 
     def cw_armed_segments(self) -> list[dict]:

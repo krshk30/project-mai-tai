@@ -21,6 +21,7 @@ from project_mai_tai.db.models import (
     Strategy,
     TradeIntent,
     VirtualPosition,
+    WebullIneligibleToday,
 )
 from project_mai_tai.events import TradeIntentEvent
 
@@ -496,6 +497,87 @@ class OmsStore:
             select(SchwabIneligibleToday).where(
                 SchwabIneligibleToday.broker_account_id.in_(broker_account_ids),
                 SchwabIneligibleToday.session_date == session_date,
+            )
+        ).all()
+        blocked: dict[UUID, set[str]] = {}
+        for row in rows:
+            blocked.setdefault(row.broker_account_id, set()).add(str(row.symbol).upper())
+        return blocked
+
+    # ---------------------------------------------------------------- Webull ineligible (fan-out)
+    # Symmetric to the Schwab ineligible cache above; used by the dual-broker fan-out per-broker
+    # eligibility gate. A name is only recorded here on a CLEAR not-tradable Webull reject (never on
+    # 429 / rate-limit / transient — the classifier in the service excludes those).
+
+    def get_webull_ineligible_entry(
+        self,
+        session: Session,
+        *,
+        broker_account_id: UUID,
+        symbol: str,
+        session_date: str,
+    ) -> WebullIneligibleToday | None:
+        return session.scalar(
+            select(WebullIneligibleToday).where(
+                WebullIneligibleToday.broker_account_id == broker_account_id,
+                WebullIneligibleToday.symbol == symbol.upper(),
+                WebullIneligibleToday.session_date == session_date,
+            )
+        )
+
+    def record_webull_ineligible_entry(
+        self,
+        session: Session,
+        *,
+        broker_account_id: UUID,
+        symbol: str,
+        session_date: str,
+        reason_text: str,
+        first_seen_at: datetime,
+    ) -> WebullIneligibleToday:
+        entry = self.get_webull_ineligible_entry(
+            session,
+            broker_account_id=broker_account_id,
+            symbol=symbol,
+            session_date=session_date,
+        )
+        normalized_symbol = symbol.upper()
+        normalized_reason = str(reason_text or "").strip()
+        if entry is None:
+            entry = WebullIneligibleToday(
+                broker_account_id=broker_account_id,
+                symbol=normalized_symbol,
+                session_date=session_date,
+                first_seen_at=first_seen_at,
+                reason_text=normalized_reason,
+                hit_count=1,
+            )
+            session.add(entry)
+            session.flush()
+            return entry
+
+        entry.hit_count += 1
+        if normalized_reason:
+            entry.reason_text = normalized_reason
+        if first_seen_at < entry.first_seen_at:
+            entry.first_seen_at = first_seen_at
+        session.flush()
+        return entry
+
+    def list_webull_ineligible_symbols_by_account(
+        self,
+        session: Session,
+        *,
+        broker_account_ids: list[UUID],
+        session_date: str,
+    ) -> dict[UUID, set[str]]:
+        if not broker_account_ids:
+            return {}
+
+        rows = session.scalars(
+            select(WebullIneligibleToday).where(
+                WebullIneligibleToday.broker_account_id.in_(broker_account_ids),
+                WebullIneligibleToday.session_date == session_date,
             )
         ).all()
         blocked: dict[UUID, set[str]] = {}

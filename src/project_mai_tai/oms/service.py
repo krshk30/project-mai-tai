@@ -55,6 +55,33 @@ logger = logging.getLogger(__name__)
 SERVICE_NAME = "oms-risk"
 SESSION_TZ = ZoneInfo("America/New_York")
 SCHWAB_INELIGIBLE_REASON_SUBSTRINGS = ("must be placed with a broker",)
+# Webull "not tradable today" markers for the dual-broker fan-out per-broker eligibility.
+# DELIBERATELY CONSERVATIVE (operator 2026-07-24: "never seen a Webull rejection — find out
+# later or never"): only a CLEAR symbol-not-tradable reject marks a name ineligible for the day.
+# Rate-limit / transient / config rejects must NEVER match — see the EXCLUDE set below (the 429
+# flood already burned us: project_mai_tai_webull_mirror_429_flood).
+# Matched against the reason lower-cased AND with "_" normalized to " ", so Webull's SCREAMING_SNAKE
+# codes (NO_SUCH_TICKER, INVALID_SYMBOL) and free-text both hit.
+WEBULL_INELIGIBLE_REASON_SUBSTRINGS = (
+    "no such ticker",
+    "not tradable",
+    "symbol not found",
+    "instrument not found",
+    "invalid symbol",
+    "invalid ticker",
+)
+# Transient / rate-limit / config markers that MUST NOT mark a name ineligible even if a broader
+# not-tradable substring also appears in the free-text reason. Checked FIRST (veto wins).
+WEBULL_INELIGIBLE_EXCLUDE_SUBSTRINGS = (
+    "429",
+    "too many requests",
+    "rate limit",
+    "timeout",
+    "timed out",
+    "temporarily",
+    "missing webull app key",
+    "no webull account id",
+)
 
 # Exit fillable-session window (ET). Orders can only fill while the market is in a
 # tradeable session; outside it (8 PM–7 AM, weekends, holidays) placing/refreshing
@@ -728,6 +755,62 @@ class OmsRiskService:
                 session.commit()
                 await self._publish_order_event(order_event)
                 return [order_event]
+
+            # Dual-broker fan-out: symmetric Webull ineligible-today short-circuit. A Webull open
+            # for a name Webull already rejected as not-tradable today is dropped without a broker
+            # round-trip. Gated on the fan-out flag so it is INERT (byte-identical, ORB untouched)
+            # when fan-out is off — the table is only ever written under fan-out anyway.
+            if (
+                broker_account.provider == "webull"
+                and bool(getattr(self.settings, "strategy_schwab_1m_v2_dual_broker_fanout_enabled", False))
+                and event.payload.intent_type == "open"
+                and self._has_cached_webull_ineligible_symbol(
+                    session=session,
+                    broker_account_id=broker_account.id,
+                    symbol=event.payload.symbol,
+                )
+            ):
+                self.store.mark_intent_status(intent, "rejected")
+                order_event = self._build_rejected_event(
+                    event,
+                    intent.id,
+                    reason="webull_ineligible_cached",
+                )
+                session.commit()
+                await self._publish_order_event(order_event)
+                return [order_event]
+
+            # Dual-broker fan-out: collision guard on the SHARED Webull account. The v2 Webull leg
+            # must never fight ORB (or a prior un-flat fan-out leg) for the same name on the same
+            # account — skip if that account already has the symbol armed / managed / held. Scoped
+            # to the v2 Webull fan-out open only; ORB's own opens on the account are untouched
+            # (byte-identical when fan-out is off).
+            fanout_webull_account = str(
+                getattr(self.settings, "strategy_schwab_1m_v2_webull_account_name", "") or ""
+            ).strip()
+            if (
+                bool(getattr(self.settings, "strategy_schwab_1m_v2_dual_broker_fanout_enabled", False))
+                and event.payload.strategy_code == "schwab_1m_v2"
+                and event.payload.intent_type == "open"
+                and str(event.payload.side).lower() == "buy"
+                and fanout_webull_account
+                and broker_account.name == fanout_webull_account
+            ):
+                collision = self._fanout_webull_collision_reason(
+                    session=session,
+                    broker_account_name=broker_account.name,
+                    symbol=event.payload.symbol,
+                )
+                if collision:
+                    self.store.mark_intent_status(intent, "rejected")
+                    order_event = self._build_rejected_event(event, intent.id, reason=collision)
+                    session.commit()
+                    self.logger.info(
+                        "[V2-FANOUT] skip webull leg %s on %s: %s",
+                        event.payload.symbol, broker_account.name, collision,
+                    )
+                    await self._publish_order_event(order_event)
+                    return [order_event]
 
             blocked_reason = await self._get_session_symbol_block_reason(
                 account_name=event.payload.broker_account_name,
@@ -1839,9 +1922,15 @@ class OmsRiskService:
 
     def _v2_accounts(self) -> list[str]:
         """v2 broker accounts the CW exit ladder manages. Single (primary Schwab) unless the
-        Webull-mirror flag is on -> then also the Webull account. One account == today (byte-identical)."""
+        Webull leg is active on the SECOND account — either the mirror-on-fill flag OR the
+        dual-broker FAN-OUT flag adds the Webull account so its per-account exit ladder runs.
+        One account == today (byte-identical when both flags off)."""
         accounts = [self.settings.strategy_schwab_1m_v2_account_name]
-        if bool(getattr(self.settings, "strategy_schwab_1m_v2_webull_mirror_enabled", False)):
+        if bool(
+            getattr(self.settings, "strategy_schwab_1m_v2_webull_mirror_enabled", False)
+        ) or bool(
+            getattr(self.settings, "strategy_schwab_1m_v2_dual_broker_fanout_enabled", False)
+        ):
             web = self.settings.strategy_schwab_1m_v2_webull_account_name
             if web and web not in accounts:
                 accounts.append(web)
@@ -2984,8 +3073,12 @@ class OmsRiskService:
                         # (flag on + strategy schwab_1m_v2 + primary account + buy + open). Fired
                         # after the session closes; `record_fill_if_needed` idempotency guarantees
                         # exactly one queue per real fill (no double-place across re-syncs).
+                        # ⭐ Suppressed when the dual-broker FAN-OUT flag is on — fan-out and
+                        # mirror-on-fill are mutually exclusive: the bot already emitted the Webull
+                        # leg in parallel at the cross, so mirroring the Schwab fill would double it.
                         if (
                             bool(getattr(self.settings, "strategy_schwab_1m_v2_webull_mirror_enabled", False))
+                            and not bool(getattr(self.settings, "strategy_schwab_1m_v2_dual_broker_fanout_enabled", False))
                             and (strategy.code if strategy is not None else "") == "schwab_1m_v2"
                             and account.name == self.settings.strategy_schwab_1m_v2_account_name
                             and str(order.side).lower() == "buy"
@@ -4917,6 +5010,28 @@ class OmsRiskService:
                     reason_text=report.reason or "",
                     first_seen_at=report.reported_at,
                 )
+            # Dual-broker fan-out: symmetric Webull ineligible-today cache. Only a CLEAR
+            # not-tradable Webull reject (never 429/transient — the classifier vetoes those) on a
+            # Webull-provider account marks the name ineligible for the day. Discovery is still
+            # learn-by-failing; under fan-out the Schwab leg fired in parallel so the discovery
+            # trade is not lost. Byte-identical when nothing routes to a Webull account.
+            if (
+                report.event_type == "rejected"
+                and bool(getattr(self.settings, "strategy_schwab_1m_v2_dual_broker_fanout_enabled", False))
+                and self._is_webull_ineligible_reason(report.reason)
+                and self.settings.provider_for_account(
+                    intent_event.payload.broker_account_name
+                )
+                == "webull"
+            ):
+                self.store.record_webull_ineligible_entry(
+                    session,
+                    broker_account_id=broker_account_id,
+                    symbol=request.symbol,
+                    session_date=self._current_session_day(report.reported_at),
+                    reason_text=report.reason or "",
+                    first_seen_at=report.reported_at,
+                )
             if report.event_type == "rejected" and self._is_not_tradable_reason(report.reason):
                 await self._set_session_symbol_block(
                     account_name=intent_event.payload.broker_account_name,
@@ -5683,6 +5798,71 @@ class OmsRiskService:
     def _is_schwab_ineligible_reason(reason: str | None) -> bool:
         normalized = str(reason or "").strip().lower()
         return any(fragment in normalized for fragment in SCHWAB_INELIGIBLE_REASON_SUBSTRINGS)
+
+    def _has_cached_webull_ineligible_symbol(
+        self,
+        *,
+        session: Session,
+        broker_account_id: UUID,
+        symbol: str,
+    ) -> bool:
+        return (
+            self.store.get_webull_ineligible_entry(
+                session,
+                broker_account_id=broker_account_id,
+                symbol=symbol,
+                session_date=self._current_session_day(),
+            )
+            is not None
+        )
+
+    @staticmethod
+    def _is_webull_ineligible_reason(reason: str | None) -> bool:
+        """Dual-broker fan-out: True only for a CLEAR not-tradable Webull reject. The transient /
+        rate-limit / config veto set is checked FIRST so a 429 (or "missing key") can NEVER mark a
+        name ineligible even if a broader substring also appears."""
+        normalized = str(reason or "").strip().lower()
+        if not normalized:
+            return False
+        # Match SCREAMING_SNAKE codes AND free-text by also testing an underscore->space variant.
+        despaced = normalized.replace("_", " ")
+
+        def _hit(fragments: tuple[str, ...]) -> bool:
+            return any(f in normalized or f in despaced for f in fragments)
+
+        if _hit(WEBULL_INELIGIBLE_EXCLUDE_SUBSTRINGS):
+            return False
+        return _hit(WEBULL_INELIGIBLE_REASON_SUBSTRINGS)
+
+    def _fanout_webull_collision_reason(
+        self,
+        *,
+        session: Session,
+        broker_account_name: str,
+        symbol: str,
+    ) -> str | None:
+        """Dual-broker fan-out collision guard (mirrors the mirror-on-fill guard). Returns a reason
+        string if the shared Webull account already holds this symbol armed / managed / at the
+        broker (never fight ORB or a prior un-flat leg), else None to proceed."""
+        armed_here = any(
+            st.broker_account_name == broker_account_name and st.symbol == symbol
+            for st in self._armed_hard_stops.values()
+        )
+        if armed_here:
+            return "fanout_webull_collision_armed"
+        if (
+            self.store.get_open_managed_position(
+                session, broker_account_name=broker_account_name, symbol=symbol
+            )
+            is not None
+        ):
+            return "fanout_webull_collision_managed"
+        held_qty = self.store.get_account_position_qty_by_name(
+            session, broker_account_name=broker_account_name, symbol=symbol
+        )
+        if held_qty != 0:
+            return "fanout_webull_collision_held"
+        return None
 
     async def _process_stop_reject_market_fallback(
         self,
