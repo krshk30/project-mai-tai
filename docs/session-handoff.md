@@ -42,13 +42,22 @@ OCO off the cross px (same as the Schwab primary), EH builders re-price a market
 BOTH brokers reject; all webull-ineligible read/write flag-gated (ORB untouched off). **27 new tests + full unit
 suite 1484 pass** (1 pre-existing flake in an untouched file); ruff clean. [[project-mai-tai-dual-broker-fanout-build]]
 
-**🔴 REMAINING (all attended):** Mon = mirror-on-fill still live (flag OFF) + attended qty-1 flag-on validation;
-**Tue = flip flag ON** = add `MAI_TAI_STRATEGY_SCHWAB_1M_V2_DUAL_BROKER_FANOUT_ENABLED=true` to
-`/etc/project-mai-tai/project-mai-tai.env` + confirm the Webull account `strategy_schwab_1m_v2_webull_account_name`
-(mirror currently points at live:orb; ORB dead) + optional `..._webull_fanout_quantity` + restart oms &
-schwab-1m-v2 after a fleet-flat pre-flight. **KILL = drop the env line + restart = back to mirror-on-fill.**
-Migration already applied → Tuesday is just the flag flip + restart. *(Also cleaned 3 untracked ad-hoc scripts off
-the VPS — the deploy refuses a dirty tree — parked in `~/vps-untracked-backup-2026-07-25/`.)*
+**➕ ALSO SHIPPED 07-25 (#547, DEPLOYED, oms restarted, verified): resting-trigger FULL-EXEMPT from the OMS
+working-order refresh.** The resting buy STOP/STOP_LIMIT was exempt from the abandon guards (07-23) but NOT the
+refresh, so it was cancel/replaced every 5s (~12x/min) = the NVVE "no order resting when price crosses" miss — on
+the CURRENT live resting leg AND the fan-out Schwab leg. Fix = the refresh LEAVES a resting trigger in place
+(`_resting_trigger_refresh_exempt`; default `oms_refresh_resting_trigger_orders=false`=exempt). Preserved:
+MARKET_CLOSED out-of-session abandon (still fires) + protective sell stop-guards' staged re-arm (excluded).
+STABLE-REST still re-prices on ≥1% trail move.
+
+**🔴 REMAINING (all attended): Mon = REAL-MONEY validation — see the runbook
+[`monday-fanout-validation-checklist.md`](monday-fanout-validation-checklist.md)** (operator plan: manual test at
+**pre-market ~07:00** + **RTH 09:30**, both TOS/Schwab and Webull, qty 1). Flip
+`MAI_TAI_STRATEGY_SCHWAB_1M_V2_DUAL_BROKER_FANOUT_ENABLED=true` + confirm `..._webull_account_name` (live:orb; ORB
+dead) + `..._webull_fanout_quantity=1` + choreographed restart after a fleet-flat pre-flight. **KILL = drop the env
+line + restart = back to mirror-on-fill.** Migration already applied; deploy already flag-OFF on the box → Monday is
+just the flag flip + restart + the checklist. *(Also cleaned 3 untracked ad-hoc scripts off the VPS — the deploy
+refuses a dirty tree — parked in `~/vps-untracked-backup-2026-07-25/`.)*
 
 ---
 
