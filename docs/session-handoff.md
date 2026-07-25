@@ -17,6 +17,237 @@
 
 ---
 
+## ⭐✅ 2026-07-25 (Sat) — dual-broker FAN-OUT: BUILT + MERGED (#545) + DEPLOYED flag-OFF (live-inert)
+
+**The 07-24 build below is DONE and on the box, dormant.** Built the whole fan-out in one Saturday pass, merged
+`#545`, and deployed flag-OFF while the market was closed and the **fleet was verified FLAT** (safest window).
+VPS = origin/main `eff00c0`; all 5 services active NRestarts=0, no tracebacks, oms-risk heartbeat healthy;
+migration `20260725_0013` applied (`webull_ineligible_today` table exists). **Flag `strategy_schwab_1m_v2_dual_
+broker_fanout_enabled` = no env line = OFF/dormant → live behavior byte-identical to the mirror-on-fill era.**
+
+**⭐ OPERATOR DECISION (07-25): the RTH-resting Webull trigger = OPTION 1 — software-detect at `resting_level`.**
+In RTH resting mode the broker owns the Schwab cross (the bot does no detection there), so a new bot-side
+detector (`_fanout_rth_resting_cross`, templated on the EH cross-check) fires the parallel Webull MARKET leg the
+instant a print reaches `resting_level`. Reactive + EH-resting co-queue their Webull leg inline in the existing
+builders. Rejected: Option 2 (reactive detector — wrong level/time) and Option 3 (fire on the Schwab fill = the
+lag we're removing).
+
+**As-built (refines the design's "wiring not machinery"):** the Webull leg is a NORMAL v2 buy-open intent to the
+Webull account via a SECOND bot emitter → the OMS's account-agnostic `_apply_v2_oco_bracket_entry` builds the RTH
+OCO off the cross px (same as the Schwab primary), EH builders re-price a marketable EH-LIMIT off the OMS ask →
+**no OMS combo builder called from the intent path** (the mirror stays for the flag-OFF on-fill rollback).
+`_v2_accounts()` covers the Webull exit ladder under fan-out; the on-fill mirror is suppressed under fan-out
+(mutually exclusive); a collision guard never fights ORB on the shared account. Per-broker eligibility:
+`webull_ineligible_today` table + classifier that **vetoes 429/transient** (the flood lesson), eviction only when
+BOTH brokers reject; all webull-ineligible read/write flag-gated (ORB untouched off). **27 new tests + full unit
+suite 1484 pass** (1 pre-existing flake in an untouched file); ruff clean. [[project-mai-tai-dual-broker-fanout-build]]
+
+**🔴 REMAINING (all attended):** Mon = mirror-on-fill still live (flag OFF) + attended qty-1 flag-on validation;
+**Tue = flip flag ON** = add `MAI_TAI_STRATEGY_SCHWAB_1M_V2_DUAL_BROKER_FANOUT_ENABLED=true` to
+`/etc/project-mai-tai/project-mai-tai.env` + confirm the Webull account `strategy_schwab_1m_v2_webull_account_name`
+(mirror currently points at live:orb; ORB dead) + optional `..._webull_fanout_quantity` + restart oms &
+schwab-1m-v2 after a fleet-flat pre-flight. **KILL = drop the env line + restart = back to mirror-on-fill.**
+Migration already applied → Tuesday is just the flag flip + restart. *(Also cleaned 3 untracked ad-hoc scripts off
+the VPS — the deploy refuses a dirty tree — parked in `~/vps-untracked-backup-2026-07-25/`.)*
+
+---
+
+## ⭐🏗️ 2026-07-24 (PM) — NEXT BUILD: dual-broker FAN-OUT (design done; build Sat-Sun, go-live Tue)
+
+**Operator flagged the gap + locked the requirement.** The v2 eviction removes a Schwab-rejected name from the
+WHOLE bot; now that we trade both brokers that's wrong. Requirement: **same stock on BOTH brokers, both legs
+fired at the SAME INSTANT in parallel** (NO submit-Schwab-then-wait — "seconds trading, can't afford the secs");
+a reject **blocks only that broker**; **both reject → drop the name**; **NO fallback** (a sequential try-then-wait
+was explicitly rejected).
+
+**This REPLACES the sequential mirror-on-FILL** just deployed (which lags by the Schwab fill AND drops
+Schwab-rejected names). Design = revive the parallel FAN-OUT (`dual-broker-v2-design.md` #424) + add per-broker
+eligibility. **Doc: `docs/per-broker-eligibility-webull-fallback-design.md`.** Research (2 agents) confirmed the
+current model is mirror-on-fill (`oms/service.py:2916/2987/3146`) and the eviction is learn-by-failing upstream
+of routing (`schwab_1m_v2_bot.py:945-947`).
+
+**Design (bot-level fan-out):** at each entry signal the bot emits up to TWO eligibility-gated intents in
+parallel — Schwab leg (native mode) + Webull leg (**always MARKET-at-cross + OCO**, off our own fresh ask +
+default qty). Per-broker gate skips a leg if that broker's `*_ineligible_today` table holds the name; **evict
+only when BOTH do.** ⭐ Unavoidable asymmetry: Webull refuses a buy-STOP (Fork A), so the resting-entry Webull
+leg is a MARKET-at-cross (parallel, but more spike slippage than Schwab's resting fill) — accepted.
+
+**Operator decisions (RESOLVED):** (1) resting Webull slippage ACCEPTED. (2) Webull-ineligible = DEFER ("never
+seen a Webull rejection" — both-reject eviction is mostly theoretical; build the table as a safety net, never
+mark ineligible on 429/transient). (3) 2× capital on eligible names WANTED. (4) **FLAG MANDATORY**
+(`strategy_schwab_1m_v2_dual_broker_fanout_enabled`, default OFF = today's mirror-on-fill = **the rollback — do
+NOT delete it**). **It's WIRING not new machinery** — reuse the mirror's Webull MARKET+OCO / EH-limit builders,
+routing-by-account, per-account exit ladder; the change = move the Webull TRIGGER from "on Schwab fill" to "on
+the cross, parallel". **Plan:** Sat-Sun build (per-broker table + both-reject eviction + fan-out emit + tests:
+flag-off identical + fan-out unit + #404 survival), deploy flag-OFF Sun; Mon sequential runs live + attended
+qty-1 fan-out validation; Tue flip flag ON. [[project-mai-tai-dual-broker-fanout-design]]
+
+---
+
+## ⭐⭐ 2026-07-24 (PM, ~16:10 ET) — EH-trading GONE LIVE for Monday (validated on real money first)
+
+**Operator: "Enable now for Monday."** After a live post-16:00 validation, the 3 EH flags are now TRUE +
+loaded on the VPS. This closes out the AM build below — the EH stack is no longer dormant.
+
+**The validation (real money, live:orb, in the 16:00+ extended-hours window):**
+- ✅ **Streamer pushes post-16:00 EH bars** (JEM/STAK/WLDS @16:00) — the make-or-break; the live-bar guard
+  won't starve EH entries.
+- ✅ **`session=AM` marketable EH-limit BUY fills in EH** — LVWR filled @1.46, repeated @1.43 (twice).
+- ✅ **Close = a SELL that FLATTENS the filled position (qty 1→0), NOT an order-cancel** (operator explicitly
+  asked to confirm close-vs-cancel). Account left flat; test cost ≈ **$0.04**.
+- Test scripts: `/tmp/eh_test.py` (buy), `/tmp/eh_close.py` (sell), `/tmp/eh_pos.py` (position check),
+  `/tmp/flagcheck.py` (flag resolver) on the VPS. Order shape via `WebullBrokerAdapter.submit_order` with
+  metadata `{order_type:limit, session:am, extended_hours:true}` (single-leg, no OCO — EH is LIMIT-only).
+
+**Flags flipped TRUE (choreographed OMS+v2-bot restart; 0 429s; clean start; flat book):**
+`MAI_TAI_OMS_V2_EH_ENTRY_ENABLED`, `MAI_TAI_STRATEGY_SCHWAB_1M_V2_CW_V2_EH_RESTING_ENTRY_ENABLED`,
+`MAI_TAI_STRATEGY_SCHWAB_1M_V2_WEBULL_MIRROR_EH_ENABLED` (+ `..._EOD_OCO_TRANSITION_ENABLED` set earlier PM).
+Note the resting-EH flag's real name is `...CW_V2_EH_RESTING...` (the non-CW variant is MISSING-ATTR).
+Services consuming them: `oms` (reactive-EH + mirror-EH) + `schwab-1m-v2` (resting-EH). **ORB service is DEAD**
+→ no live:orb contention (removes the original 429-collision source; the #537 throttle is deployed regardless).
+
+**🔴 MONDAY WATCH:** 07:00–09:30 ET both v2 modes (reactive+resting) emit `session=AM` limits on Schwab
+primary, mirrored to Webull. **First live EH fire ≈ 07:00 Mon — attend it.** RTH (09:30–16:00) unchanged (OCO).
+**KILL:** drop the 3 `...EH...=true` lines from `/etc/project-mai-tai/project-mai-tai.env` + restart oms &
+schwab-1m-v2 (RTH untouched). [[project-mai-tai-premarket-trading-design]] updated LIVE.
+
+---
+
+## ⭐ 2026-07-24 (AM) — EH-trading BUILT (3 PRs merged DORMANT): 07:30–16:00 window + EH-fillable entries + EOD OCO cleanup
+
+**Designed + built during pre-market, per operator ("design+build today, deploy AFTER-HOURS, not during market
+hours"). All flag-gated OFF → merged to main but INERT until enabled attended, post-close.** Design:
+`docs/premarket-eod-exit-design.md`. Common to both entry modes + both brokers ([[feedback-assess-both-brokers]],
+[[project-mai-tai-premarket-trading-design]]).
+
+| Piece | PR | What | Flag (default OFF) |
+|---|---|---|---|
+| Phase A | #532 | **16:00 EOD OCO→EH-ladder transition** (decision A=KEEP MANAGING: cancel dead OCO, keep +2%/−5% as EH-limits post-close, 19:55 flatten backstop) | `oms_v2_eod_oco_transition_enabled` |
+| Phase A | #532 | entry cap 16:30→**16:00** (no entries after 4 PM) | ⚠ settings DEFAULT — applies ON DEPLOY (safe restriction) |
+| P-B1 | #533 | reactive EH safety: **live-bar guard** (#528 gap, real) + max-cross cap + abandon-on-bad-ask | `oms_v2_eh_entry_enabled` |
+| P-B2 | #534 | **resting EH entry** (software-emulated cross → marketable EH-LIMIT min(ask, level×1.005), abandon gap-through) + window→07:30 | `strategy_schwab_1m_v2_cw_v2_eh_resting_entry_enabled` |
+| Mirror-EH | #535 | **Webull mirror EH parity** — EH-LIMIT master (off our ask, capped/abandon) + NO OCO in EH → software EH-ladder manages (exit coverage confirmed: `_v2_accounts()` includes Webull when base-mirror on). Closes the dual-broker EH gap | `strategy_schwab_1m_v2_webull_mirror_eh_enabled` (⚠ needs BASE mirror flag on too) |
+
+**Key facts learned:** the **reactive EH entry ALREADY fills** (bot's `_apply_extended_hours_routing`, dc11d5a
+June — "has the other bot solved this?"); P-B1 is a SAFETY layer, not a from-scratch fix. The **resting** entry
+genuinely had NO EH path (drained past `_maybe_emit`, RTH-gated) → P-B2 is net-new emulation. **In EH only a
+LIMIT fills on EITHER broker** (MARKET/STOP/OCO all RTH-only — symmetric). EH limits priced off OUR feed
+(`_latest_quotes_by_symbol` ask; Webull has no market-data entitlement). I REVIEWED all 3 diffs (double-emit
+coexistence, re-emit-once grace, band/no-chase, RTH byte-identical all verified); 1420 unit tests green.
+
+**✅ DEPLOYED MID-MARKET 2026-07-24 (~10:25 ET, operator-directed "validate now, not post-4PM Friday"): VPS
+`80ea68b` = all 6 EH PRs + the 429 fix #537.** Clean boot, all EH flags DORMANT, 16:00 cap live, 429 throttle
+loaded. **VALIDATED IN-MARKET:** (a) 429 fix — armed mirror → **0 429s in 75s** (vs 534); (b) **RTH Webull
+mirror order — FULLY validated live** via the STEP-1 harness on LVWR (qty1, ~$0.05 cost): placed on live:orb,
+market-filled, OCO armed, and the **stop fired → target auto-cancelled = the E5 one-cancels-other proven LIVE**,
+clean flat, no oversell. [[project_mai_tai_webull_mirror_rth_validated]] **Mirror flag currently ARMED**
+(WEBULL_MIRROR_ENABLED=true) — the OMS mirror-on-fill WIRING (vs the harness) is still unproven; if v2 fills in
+RTH it fires (attended). **REMAINING = the EH paths only** (pre-market entries, EH-limit exits, EH mirror) —
+tested post-4PM in the real extended-hours window, same place→confirm→close flow. Harness level display is
+INFLATED (entry ref×1.02 then ±off that = +4%/−3%); the real mirror is correct (±off the ask, service.py:1095).
+
+**⛔ POST-4PM EH ENABLEMENT (the remaining step) — ORDERED:** (1) *(deploy already done above)* — applies
+the 16:00 cap, rest dormant); (2) **VERIFY the pre-market bar feed is live** (CHART_EQUITY streamer — Schwab
+REST is dry pre-market; if it's not feeding, the live-bar guard blocks EVERY EH entry = whole build is a no-op);
+(3) enable flags ONE AT A TIME, attended, validating each: `oms_v2_eod_oco_transition_enabled` →
+`oms_v2_eh_entry_enabled` (reactive) → `..._cw_v2_eh_resting_entry_enabled` → then the **mirror-EH** (needs the
+BASE `..._webull_mirror_enabled` on FIRST so `_v2_accounts()` covers the Webull account for the software ladder,
+THEN `..._webull_mirror_eh_enabled`). **Unproven live:** EH FILL QUALITY on thin pre-market (Schwab session=AM,
+Webull off Polygon NBBO) — all agents flagged it; the OMS band-cap off our feed is the bad-fill guard.
+**Pre-market position across 09:30 = DEFINED + PINNED (#536, test+doc, merged):** a position opened pre-market
+stays CW-ladder-managed continuously across the open (EH-limit → RTH exits), NO OCO conversion (operator
+option 1; the mirror of the 16:00 EOD transition) — works because the stand-down fails open for a no-OCO
+position. **Remaining minor gaps (tracked):** persist the OCO resolution price; half-day session calendar; the
+#459 16:00/19:55 double-submit seam. **SKYQ 07-23 validates decision A**: its DAY OCO expired
+16:00 unfilled (RTH high 5.77 < 5.85 target) → −1.57% close; with Phase A live the +2% EH-limit would've caught
+the 16:03 post-close spike to 5.88 = a WIN. (⛔ corrected a subagent that mis-called SKYQ a fill — tape-verified.)
+
+---
+
+## ⭐ 2026-07-23 (EVENING/EOD) — Webull mirror-on-fill DEPLOYED; BOTH entry modes ON for 07-24; backtest fidelity issue named
+
+**This supersedes the "resting-only / reactive-OFF" state in the block below.** Live state NOW: **v2 ACTIVE,
+SHA `f07159f`, account FLAT, ORB bot OFF** (operator: keep live:orb clean for the mirror test).
+
+**🅰 BOTH entry modes ON for 07-24** (operator-requested): `REACTIVE_ENTRY_ENABLED=true` +
+`RESTING_ENTRY_ENABLED=true`. Safe by design (`schwab_1m_v2.py:1297` `if not reactive or state.resting_active:
+return`) = **resting-primary + reactive-fallback**, no double-fill; OMS one-position-per-symbol backstop.
+Verified via live Settings load (confirmed_window/reactive/resting all True, band 0.5, min_short_bars 3).
+
+**🅱 Webull mirror-on-fill DEPLOYED (PR #531, merged+live).** Root-caused the mirror's every-fill reject:
+(1) it copied the Schwab entry VERBATIM incl `bracket_entry_type=STOP_LIMIT` → Webull Fork-A reject; (2) it
+fired at PLACEMENT not FILL (a resting order rests until the cross, so a submit-time market mirror front-runs).
+**FIX = mirror on the FILL** (`sync_broker_orders`, once per fill) as **MARKET master + native-OCO combo**
+(collapse STOP_LIMIT→MARKET, drop resting stop, keep +2%/−5% exits) — the TurboTrader shape Webull actually
+supports. Decisions LOCKED: **master=MARKET** (changeable), **exits anchored to the WEBULL fill via live-ask**.
+Old verbatim `_maybe_mirror_v2_open` deleted; 10 tests + 524 green; I reviewed the diff. **Mirror flag turned
+OFF overnight (operator, EOD) — `WEBULL_MIRROR_ENABLED=false`, account `live:orb` preserved.** To re-arm for the
+attended test: set the flag `=true` + restart OMS when the operator is watching; the first v2 RTH fill then
+auto-places a LIVE MARKET+OCO on live:orb. Design: `docs/webull-mirror-on-fill-design.md`.
+[[project_mai_tai_resting_entry_out_of_window_bug]]
+
+**🅲 CI ruff-0.16.0 repo-wide break** — the floating `ruff>=0.6,<1.0` pin grabbed the day-of 0.16.0 release
+(changed I001, failed ~140 untouched files). Pinned `<0.16` in #531. Full 0.16 import-sort migration deferred.
+[[project_mai_tai_ruff_016_ci_break]]
+
+**Real 07-23 trades (2, both RESTING):** **NVVE 8.40→8.56 = +1.90%/+$0.32, +2% OCO TARGET, VERIFIED.** **SKYQ
+5.73→≈5.64 ≈ −1.57%, INFERRED** — ⛔ NOT a clean OCO-target cycle (I over-called that): tape never touched
+target 5.85 or stop 5.44, went flat at the 16:00 RTH close; **the broker OCO exit fill is NOT persisted in our
+DB** → real exit price unrecoverable. Two follow-ups: **persist the OCO resolution price**; **what closed SKYQ
+at 16:00** if neither leg hit.
+
+**🔧 BACKTEST FIDELITY — the chronic problem, now named + a plan.** A "run today's trades" ask surfaced THREE
+backtest-vs-live drifts in one sitting (operator lost trust): **3% ORB band vs live 0.5%** (chased JEM to 5.27
+vs 5.16), **trailing exit vs live OCO**, **post-market entries vs 16:00 window**. Root cause: the backtest
+**re-implements** the strategy so its params drift. **FIX (LATER, operator-approved, design-first): make the
+backtest ENGINE replay the LIVE code + config** (`_cw_v2_resting_track` + OMS OCO) so it can't diverge.
+[[project_mai_tai_backtest_fidelity_replay]]
+
+**📊 Corrected 07-23 backtest (0.5% band + OCO + all sessions, Schwab feed, vol-floor gated):** 3 live-qualifying
+fills — **LGCL#1 +2.00% (pre-mkt), WBUY −5.00% (pre-mkt), SKYQ#1 −1.74% (RTH, close-at-bell)** → 33% win,
+**median −1.74%**. Misses (band declined the chase, by design): JEM (+1.7% gap), LGCL#2, SKYQ#2. Key facts:
+**most of 07-23's ATR signal was PRE-MARKET** (only SKYQ was RTH — reopens the "start at 07:00?" window
+question); backtest SKYQ −1.74% ≈ real −1.57% (model reconciles when set up right); **NVVE undetectable in the
+sim** (32-bar sparse Schwab feed = the real winner invisible). ⚠ `DAILY-STRATEGY-LOG.md` 07-23 block was
+written from the BUGGY pass — needs correcting/replacing (operator undecided; hold until the replay harness).
+
+**⛔ OPEN / PENDING (canonical list, 2026-07-24):**
+
+*🔴 Near-term:*
+1. **⛔ Webull mirror BLOCKED by a 429 flood (found live 07-24 attended)** — arming it hammers the Webull
+   position-sync ~6/sec → HTTP 429 flood (0→534 in 90s→0 on disarm; `webull.py:366`, retry loop no backoff).
+   Mirror + mirror-EH #535 are unusable until fixed. **PREREQUISITE FIX (off-market): Webull position-sync
+   backoff/throttle** → [[project-mai-tai-webull-mirror-429-flood]]. Mirror left OFF; Schwab v2 unaffected. The
+   attended mirror test waits on this fix.
+
+*🌅 EH trading — ✅ BUILT 07-24 (dormant), awaiting AFTER-HOURS ATTENDED ENABLEMENT:*
+2. **Enable the 3 flags one-at-a-time post-close + validate** (Phase A EOD-transition, P-B1 reactive-EH, P-B2
+   resting-EH) — see the 07-24 block above for flags/PRs. Prove EH fill quality on thin pre-market (the only
+   unproven live piece). 3. Then decide the 04:00-07:00 gap (window currently opens 07:30) if wanted.
+
+*🔧 Backtest / data integrity:*
+5. ✅ **Replay-harness backtest — BUILT 07-24 (P1-P4, PRs #540-#543 merged).** The v2 backtest now REPLAYS the
+   live code: real `SchwabV2Strategy` (entry) + shared `cw_exit_decision` (exit) on historical Schwab bars,
+   same Settings. `--strategy v2 SYMBOL DATE [--eh]`. SKYQ full-trade parity on real data. The 3 drift-bugs
+   can't recur. Foundation = spec `docs/schwab-1m-v2-live-spec.md` (#539). [[project-mai-tai-backtest-fidelity-replay]]
+   **Follow-ups:** real EH parity (post-flags); mirror leg in replay; **NVVE warmup-persist** (rich-feed names
+   invisible when persisted Schwab bars too sparse); extract OMS EH-pricing to share it. **Exit asymmetry still
+   PARKED** (RTH hard-OCO vs EH floor-ride — replay models both). 6. **Persist the broker OCO resolution price**
+   (SKYQ exit unrecoverable). 7. **What closed SKYQ at 16:00**.
+
+*🎯 Resting-entry tuning — ✅ BOTH DECIDED 07-24 (locked, not tunable):* 8. **Reprice = 0.5%** (operator good).
+9. **Selectivity = N=3, KEEP** (no skip-ripping/whipsawing). 10. **Up-flip fill validation** on clean
+non-restricted names (NVVE/SKYQ partial) — still open.
+
+*🧹 Hygiene:* 11. **Rename reason label** "ATR Flip"→mode-specific. 12. **Replace-throttle → per-1min**
+(deferred behind Webull). 13. **Alpaca-cred warnings** (benign, deferred). 14. **OMS heartbeat-decouple**
+(deferred).
+
+*✅ DONE (07-23 EOD):* DAILY-STRATEGY-LOG 07-23 block corrected · Webull mirror-on-fill built+deployed (#531) ·
+both entry modes ON · ruff pin · handoff/memory current.
+
+---
+
 ## ✅ 2026-07-23 — RESTING FLIP-ENTRY's FIRST LIVE DAY: fully reworked across 6 PRs; first fill NVVE +$0.32 (protected)
 
 The resting flip-entry ran **live resting-only** (reactive OFF) for the first time. The live run surfaced a
