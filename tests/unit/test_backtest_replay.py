@@ -216,6 +216,52 @@ def test_static_oco_first_touch_unit_precedence() -> None:
     assert reason2 == "stop" and px2 == pytest.approx(95.0, abs=1e-9)
 
 
+def test_static_oco_races_the_live_bar_close_flip() -> None:
+    """REGRESSION (2026-07-26): the RTH exit must race the live software cw_flip close.
+
+    `schwab_1m_v2._maybe_cw_flip_close` fires whenever CW is on, we hold, and a bar CLOSES below the
+    ATR trail — and it has NO RTH gate, so it races the broker OCO in regular hours too. The replay
+    modelled only target/stop/bell, so SMCX 2026-07-22 (never reached +2%, never reached -5%) drifted
+    to the bell at -2.81% when live would have flip-closed at 14:33. Operator caught it off a chart.
+
+    Without the `flip_dt` leg every assertion below returns "close-at-bell" instead.
+    """
+    et_ = ZoneInfo("America/New_York")
+    t0 = datetime(2026, 7, 22, 14, 26, tzinfo=et_)
+    close = datetime(2026, 7, 22, 16, 0, tzinfo=et_)
+    # A tape that touches NEITHER leg (target 102.0, stop 95.0) — the SMCX shape.
+    tape = [(t0, 100.0), (t0.replace(minute=30), 100.4),
+            (t0.replace(minute=40), 98.6), (t0.replace(minute=50), 98.0)]
+
+    # no flip -> the DAY OCO lapses at the bell (unchanged behaviour)
+    _ts, px, reason = _static_oco_first_touch(
+        100.0, tape, target_pct=2.0, stop_pct=5.0, close_dt=close)
+    assert reason == "close-at-bell" and px == pytest.approx(98.0, abs=1e-9)
+
+    # a bar-close flip at 14:35 -> exit on the FIRST PRINT at/after it (the bot->OMS handoff)
+    ts_f, px_f, reason_f = _static_oco_first_touch(
+        100.0, tape, target_pct=2.0, stop_pct=5.0, close_dt=close,
+        flip_dt=t0.replace(minute=35))
+    assert reason_f == "flip"
+    assert px_f == pytest.approx(98.6, abs=1e-9)
+    assert ts_f == t0.replace(minute=40)
+
+    # PRECEDENCE: the broker legs rest AT the exchange, so a target the tape reaches first still wins
+    # over a later flip.
+    tape_t = [(t0, 100.0), (t0.replace(minute=30), 102.5), (t0.replace(minute=40), 98.6)]
+    _, px_t, reason_t = _static_oco_first_touch(
+        100.0, tape_t, target_pct=2.0, stop_pct=5.0, close_dt=close,
+        flip_dt=t0.replace(minute=35))
+    assert reason_t == "target" and px_t == pytest.approx(102.0, abs=1e-9)
+
+    # ...and a stop reached before the flip still wins too.
+    tape_s = [(t0, 100.0), (t0.replace(minute=30), 94.0), (t0.replace(minute=40), 98.6)]
+    _, px_s, reason_s = _static_oco_first_touch(
+        100.0, tape_s, target_pct=2.0, stop_pct=5.0, close_dt=close,
+        flip_dt=t0.replace(minute=35))
+    assert reason_s == "stop" and px_s == pytest.approx(95.0, abs=1e-9)
+
+
 # ------------------------------------------------------------------ (4c) EH open -> floor-ride
 # A pre-market (EH) reactive entry: BUY flip arms the CW-v2 setup, two hold-bars build the 3-bar
 # trigger, then a quote breaks it -> a marketable-LIMIT EH entry (fill @ ask). Resting is OFF so the
