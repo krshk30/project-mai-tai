@@ -17,6 +17,63 @@
 
 ---
 
+## 🔬⭐ 2026-07-26 (Sun) — R&D DAY: v2 RESTING exit research (NO live change) + replay flip-leg bug FIXED (#549)
+
+**Market closed; nothing deployed; live is UNCHANGED and stays on the baseline** (+2% target / −5%
+stop / flip). This was a full research day on the **RESTING entry only**, 10 days (07-13..07-24,
+27 trades — 07-10 excluded, its trade tape is already pruned). All tooling in the session scratchpad,
+run on the VPS. Memory: [[project-mai-tai-v2-three-exit-rules]], [[project-mai-tai-v2-exit-upside-research]].
+
+**⛔ THE BUG THE OPERATOR CAUGHT (fixed, PR #549).** `backtest/replay.py::_open_static_oco` modelled
+only target/stop/close-at-bell and set `exit_done=True` immediately, so it **omitted the live
+bar-close flip exit** — `schwab_1m_v2._maybe_cw_flip_close` fires whenever CW is on + holding + a bar
+CLOSES below the ATR trail, and it has **NO RTH gate**. Spotted off a TOS chart: **SMCX 07-22** held
+to the bell at −2.81% when live would have flip-closed **14:33**. Fix mirrors the existing EH branch
+(real strategy emits the draft; fill = first print at/after the bar close). Impact: 2 of 27 trades
+change (SMCX −2.81%→−1.40%, KUST −5.48%→−4.78%); baseline robust mean −0.83%→−0.75%. Test pins 4
+cases and **was verified to FAIL without the fix**. Golden gate 16 green, 1534 unit pass, ruff clean.
+⭐ It also corrected my own inference — *"the flip never fires because the target pre-empts it"* was
+wrong; there was no flip leg to fire.
+
+**⭐ THE FINDING THAT STARTED IT — the +2% target really does cap winners.** MFE on the 17 resting
+winners (entry→16:00, off the raw tape): **median +14.5%** (+9.85% on the conservative max-1-min-close
+measure) against ~+1.75% booked; **14 of 17 left ≥5pp on the table**. Peaks verified as real prints
+(ZYBT +173% had 448 prints within 0.5% of the peak). ⭐ This **corrects the 07-15 floor-ratchet study**
+("winners peak +2.01..+2.43%") — that was measured on live positions **already closed at +2%**, so it
+structurally could not see higher. The ceiling was the instrument.
+
+**⛔ WHAT WAS TESTED AND FAILED** (all vs the corrected baseline, robust mean −0.75%): 14 exit signals
++ 5 combos (MACD cross, histogram-shrink N=1-4, StochK <80 / falling, volume-fade, ATR flip) — **every
+one lost**, best `stoch_fall3` −0.80%. ⭐ **Mechanism: no signal BRACKETS the peak** — median lag vs the
+price peak runs −21 bars (stoch_dn80) to +16 bars (atr_flip); all booked ~5% of the available move.
+Also closed: a FIXED floor **is** the target (arithmetic — it fires 0.0–0.3s after arming because the
+resting fill sits ~1 TICK above it), and all 9 dynamic ladders collapsed to identical numbers for the
+same reason. ⛔ >100 configurations were tested on 27 trades — **stop-optimizing marker**.
+
+**✅ THE THREE RULES THAT SURVIVED (resting only, NOT deployed):**
+| rule | robust mean | note |
+|---|---|---|
+| R1 trail the movers (**judge breach at the BAR CLOSE, never intrabar**) | −0.24% | keeps win 63% + worst −5.53% |
+| R2 **breakeven-cut** when the entry bar's HIGH < +2% | +0.04% | the robust core; worst −5.53%→**−2.94%** |
+| R3 **first-bar high ≥+2% = the runner filter** | (a gate) | STRONG peak median +17.8% vs +7.8%; holds 3 of 4 monsters |
+| **R2+R3 COMBINED** (disjoint subsets → additive) | **+0.75%** | **+1.50pp/trade**; trail 3% optimal in ALL 6 sweeps; both legs pay evenly w/o ZYBT |
+
+⚠️ Combined costs win rate **63%→26%** and median +1.61%→−0.23% (many ~0% scratches, few big wins) —
+better RISK, very different feel. ⚠️ The operator's **re-entry safety net does NOT hold**: 8 of 19 cut
+trades had a later reactive entry, 5 won / 3 lost, **net −1.7pp, and none caught a tail** (reactive is
+capped at +2% too).
+
+**🔜 NEXT SESSION — REACTIVE.** It is still plain +2%/−5% — i.e. exactly where RESTING started today,
+with a −5% loser against a +2%-capped winner. Operator: *"change that reactive a little bit like that,
+but not right now… run it next week and see."* Apply R1–R3 there. **Until validated, LIVE STAYS ON THE
+BASELINE.** Operator wants to validate every live trade by hand next week; Thu/Fri produced ~zero
+trades, which is exactly why the **dual-broker fan-out** matters for getting live samples.
+⚠️ Everything above is n=27 backtest — the data is pruned at 07-13, so more evidence must come from
+**FORWARD-testing, not more backtesting.** Nearly-free item found on the way: **anchor the OCO legs to
+the FILL, not `entry_ref`** (a "+2%" target is really +1.78%, a "−5%" stop really −5.12%; ~+0.17pp/trade).
+
+---
+
 ## ⭐✅ 2026-07-25 (Sat) — dual-broker FAN-OUT: BUILT + MERGED (#545) + DEPLOYED flag-OFF (live-inert)
 
 **The 07-24 build below is DONE and on the box, dormant.** Built the whole fan-out in one Saturday pass, merged
