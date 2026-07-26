@@ -349,6 +349,7 @@ def _static_oco_first_touch(
     target_pct: float,
     stop_pct: float,
     close_dt: datetime,
+    flip_dt: datetime | None = None,
 ) -> tuple[datetime, float, str]:
     """RTH-open geometry: the broker-native OCO is STATIC (spec §6a). Struck off the CW break/
     reference price (NOT the fill), the child OCO is `SELL LIMIT @ target` + `SELL STOP @ protect`,
@@ -359,7 +360,17 @@ def _static_oco_first_touch(
     that reaches the protect (<= stop). Whichever the tape reaches first is the exit (a print is a
     single price, so target/stop are mutually exclusive per print — no same-print ambiguity). If
     NEITHER leg is touched by the 16:00 bell, the DAY OCO expires → **close at the 16:00 price** (the
-    last print <= the close). Returns (exit_ts, exit_px, reason)."""
+    last print <= the close).
+
+    ⭐ THIRD LEG — `flip_dt` (the live bar-close ATR SELL-flip). The broker OCO is NOT the only exit
+    live: `schwab_1m_v2._maybe_cw_flip_close` fires whenever CW is on, we hold, and a bar CLOSES below
+    the ATR trail — and it has **no RTH gate**, so it races the OCO in regular hours too. Omitting it
+    made SMCX 2026-07-22 drift to the bell at −2.81% when live would have flip-closed at 14:33
+    (operator caught it off a TOS chart). `flip_dt` is the bar-close instant the REAL strategy emitted
+    the cw_flip draft; the modeled fill is the FIRST PRINT at/after it, mirroring the live bot→OMS
+    handoff (the OMS closes the managed row on the next quote). Target/stop are checked first on a
+    given print because those legs rest AT the exchange, while the flip is a software close that has
+    to go out on the next tick. Returns (exit_ts, exit_px, reason)."""
     target = _schwab_round_price(entry_ref * (1.0 + target_pct / 100.0))
     stop = _schwab_round_price(entry_ref * (1.0 - stop_pct / 100.0))
     last_ts: datetime | None = None
@@ -369,6 +380,8 @@ def _static_oco_first_touch(
             return ts, target, "target"     # SELL LIMIT fills at the target
         if px <= stop:
             return ts, stop, "stop"         # SELL STOP triggers, modeled fill at the stop level
+        if flip_dt is not None and ts >= flip_dt:
+            return ts, px, "flip"           # software cw_flip close -> first print after the bar close
         last_ts, last_px = ts, px
     # Neither leg by the close: the DAY OCO lapses; close at the 16:00 price (last print seen).
     if last_px is None:
@@ -461,12 +474,15 @@ def replay_symbol_day(
     eh_last_bid: tuple[datetime, float] | None = None
     latest_stratquote: dict[str, StratQuote] = {}
 
-    def _open_static_oco(e: ReplayEntry) -> None:
-        """RTH open -> the broker owns a STATIC OCO; resolve it by first-touch on the trade tape."""
+    def _open_static_oco(e: ReplayEntry, flip_dt: datetime | None = None) -> None:
+        """RTH open -> the broker owns a STATIC OCO, RACED against the live software cw_flip close.
+        Resolve by first-touch on the trade tape (`flip_dt` = the bar-close instant the REAL strategy
+        emitted the flip draft, or None if it never did)."""
         nonlocal exit_done
         tape = [(t.ts, float(t.price)) for t in trades if e.fill_ts <= t.ts < rth_close_dt]
         exit_ts, exit_px, reason = _static_oco_first_touch(
-            e.entry_ref, tape, target_pct=cw_target_pct, stop_pct=cw_stop_pct, close_dt=rth_close_dt,
+            e.entry_ref, tape, target_pct=cw_target_pct, stop_pct=cw_stop_pct,
+            close_dt=rth_close_dt, flip_dt=flip_dt,
         )
         ret = (exit_px - e.fill_price) / e.fill_price * 100.0 if e.fill_price else 0.0
         result.trades.append(ReplayTrade(
@@ -486,8 +502,10 @@ def replay_symbol_day(
         filled = True
         entry_rec = e
         if _is_rth(e.fill_ts):
+            # DO NOT resolve here. The live bar-close cw_flip races the broker OCO in RTH too, so the
+            # loop must keep running to hear it from the REAL strategy; resolution happens on the flip
+            # bar, or at the end of the loop if no flip ever fires.
             geometry = "rth_static_oco"
-            _open_static_oco(e)
         else:
             geometry = "eh_floor_ride"
 
@@ -592,6 +610,16 @@ def replay_symbol_day(
                 if (draft is not None and getattr(draft, "intent_type", "") == "close"
                         and str(getattr(draft, "metadata", {}).get("cw_flip", "")).lower() == "true"):
                     eh_flip_pending = True
+            elif geometry == "rth_static_oco":
+                # RTH: the broker OCO is resting, but the live software cw_flip close races it
+                # (`_maybe_cw_flip_close` has NO RTH gate). Same bot->OMS handoff as the EH branch:
+                # the REAL strategy emits the flip draft at the bar close; resolve the OCO with that
+                # instant as a third leg (target/stop still win if the tape reached them first).
+                strat.drain_pending_intents()
+                if (draft is not None and getattr(draft, "intent_type", "") == "close"
+                        and str(getattr(draft, "metadata", {}).get("cw_flip", "")).lower() == "true"
+                        and entry_rec is not None):
+                    _open_static_oco(entry_rec, flip_dt=eff_dt)
             continue
 
         # quote
@@ -666,6 +694,11 @@ def replay_symbol_day(
     if entry_rec is not None and geometry == "eh_floor_ride" and not exit_done and eh_last_bid is not None:
         ts_, bid_ = eh_last_bid
         _finish_eh_exit(ts_, bid_, "close-at-bell")
+
+    # RTH open whose cw_flip never fired: resolve the static OCO on target/stop/bell alone. (When the
+    # flip DID fire the trade is already resolved in-loop with flip_dt set.)
+    if entry_rec is not None and geometry == "rth_static_oco" and not exit_done:
+        _open_static_oco(entry_rec)
 
     return result
 
