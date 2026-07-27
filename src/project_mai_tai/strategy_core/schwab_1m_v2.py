@@ -571,11 +571,16 @@ class SchwabV2Strategy:
         state.position_qty = max(0, int(qty))
         if prev > 0 and state.position_qty == 0:
             state.cooldown_bars_remaining = self.cfg.cooldown_bars
+            # Say only what was OBSERVED. This poll sees a qty transition, not a cause: the
+            # position may have been closed by the OMS, by a broker-side OCO leg filling, by the
+            # operator by hand, or by a phantom row reconciling away. Claiming "OMS closed the
+            # position" sent a live 2026-07-27 diagnosis down the wrong path.
             logger.info(
-                "schwab_1m_v2 cooldown armed for %s (bars=%d) "
-                "after OMS closed the position",
+                "schwab_1m_v2 cooldown armed for %s (bars=%d) — position qty %d -> 0 "
+                "(cause unknown here: OMS exit, broker OCO leg, operator close, or reconcile)",
                 symbol,
                 self.cfg.cooldown_bars,
+                prev,
             )
             # CW-v2 reclaim: our position just closed -> release the intrabar emit claim so a
             # SECOND entry can fire in the SAME long segment (reclaim has no cooldown; the
