@@ -714,6 +714,10 @@ class Settings(BaseSettings):
     # False the adapter's single-leg v1 path is byte-identical to pre-bracket main. Webull's MASTER
     # must be LIMIT/MARKET (a buy-STOP master rejects) -- the builder enforces it.
     webull_native_bracket_enabled: bool = False
+    # Re-price a combo bracket's OCO legs off the ACTUAL master fill instead of the pre-trade
+    # reference. OFF by default: it issues a broker write (replace_order) on a fill, so it wants an
+    # attended live check before it is trusted, exactly like the native bracket itself.
+    webull_bracket_realign_on_fill_enabled: bool = False
     schwab_access_token: str | None = None
     schwab_access_token_expires_at: str | None = None
     schwab_refresh_token: str | None = None

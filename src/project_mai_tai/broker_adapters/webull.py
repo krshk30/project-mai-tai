@@ -140,6 +140,9 @@ class WebullBrokerAdapter:
         self._positions_cache: dict[str, tuple[float, list[BrokerPositionSnapshot]]] = {}
         self._positions_backoff_until: dict[str, float] = {}  # monotonic deadline
         self._positions_backoff_secs: dict[str, float] = {}   # current (growing) backoff window
+        # Combo brackets already re-priced off their master fill (base coids). In-memory only: a
+        # repeat after a restart re-sends identical prices, which is a harmless no-op replace.
+        self._bracket_realigned: set[str] = set()
 
     # ------------------------------------------------------------------ public API
     async def submit_order(self, request: OrderRequest) -> list[ExecutionReport]:
@@ -469,6 +472,22 @@ class WebullBrokerAdapter:
                 "falls back to receive-time; treat THIS fill's latency as an UPPER BOUND",
                 request.symbol, broker_order_id,
             )
+        # Fill-anchored bracket: the combo's exit legs were priced off the pre-trade reference
+        # before this fill existed. Now that the real fill price is known (only readable at all
+        # since the MASTER-coid poll fix), correct them. Flag-gated and fully contained -- it can
+        # never stop this status read from returning.
+        if (
+            event_type == "filled"
+            and fill_price
+            and fill_price > 0
+            and self._is_bracket_request(request)
+            and bool(getattr(self.settings, "webull_bracket_realign_on_fill_enabled", False))
+        ):
+            try:
+                self._realign_bracket_to_fill(account, request, fill_price)
+            except Exception:  # noqa: BLE001 - reporting the fill matters more than re-pricing
+                logger.exception("Webull bracket realign raised for %s", request.symbol)
+
         metadata = dict(request.metadata)
         if item.get("last_filled_time"):
             metadata["webull_broker_filled_time"] = str(item.get("last_filled_time"))
@@ -729,6 +748,97 @@ class WebullBrokerAdapter:
         suffix="" yields the (<=40) group client_combo_order_id."""
         room = max(0, 40 - len(suffix))
         return f"{str(base or '')[:room]}{suffix}"
+
+    # Below this the drift is inside tick-rounding noise and not worth a broker write.
+    _REALIGN_MIN_DRIFT_PCT = Decimal("0.10")
+
+    def _realign_bracket_to_fill(
+        self, account: WebullAccountConfig, request: OrderRequest, fill_price: Decimal
+    ) -> None:
+        """Re-price the OCO legs off the ACTUAL master fill.
+
+        WHY: the combo is placed as one atomic order, so both exit legs are priced from the
+        pre-trade REFERENCE before the master has filled. The Webull leg enters at MARKET on the
+        ATR cross -- precisely where slippage lives -- so the realised bracket drifts off spec.
+        Measured live 2026-07-27 across 8 fan-out trades: the "-5%" stop actually ranged
+        -3.85%..-5.83% and the "+2%" target +1.67%..+3.18%. BIYA 12:51 filled 0.37% worse than
+        reference, which put the stop at -5.34% of the fill; it then slipped to -5.83% realised --
+        a loss beyond the design limit, caused purely by anchoring.
+
+        The RATIOS are derived from the request's own metadata (target/reference, stop/reference),
+        never re-derived from config, so whatever the OMS intended is preserved exactly.
+
+        Deliberately NOT place-then-bracket: that would leave the position naked between the entry
+        fill and the exits landing, which is the shape the whole combo exists to eliminate. The
+        bracket goes on atomically, then gets corrected within one poll.
+
+        Never raises -- a failed realign leaves the ORIGINAL bracket in place, so the position stays
+        protected at the old (merely imperfect) prices. Protection is never traded for precision.
+
+        ⚠ CONFIRM-AT-TEST: whether v3 replace_order accepts a partial combo (the two exit legs only,
+        master omitted because it is already filled) is validated by an attended live check; the
+        flag is OFF until then.
+        """
+        base = str(request.client_order_id or "")
+        if base in self._bracket_realigned:
+            return
+        reference = self._meta_price(request, "reference_price", "entry_price")
+        target = self._meta_price(request, "bracket_target_price")
+        protect = self._meta_price(request, "bracket_stop_price")
+        if not reference or reference <= 0 or target is None or protect is None or fill_price <= 0:
+            return
+
+        drift_pct = abs(fill_price - reference) / reference * Decimal("100")
+        if drift_pct < self._REALIGN_MIN_DRIFT_PCT:
+            self._bracket_realigned.add(base)      # aligned already; don't re-check every poll
+            return
+
+        new_target = self._round_to_tick(fill_price * (target / reference))
+        new_protect = self._round_to_tick(fill_price * (protect / reference))
+        qty = (
+            str(int(request.quantity))
+            if request.quantity == request.quantity.to_integral_value()
+            else str(request.quantity)
+        )
+        modify_orders = [
+            {
+                "client_order_id": self._combo_leg_coid(base, "T"),
+                "combo_type": "STOP_PROFIT",
+                "order_type": "LIMIT",
+                "quantity": qty,
+                "limit_price": str(new_target),
+            },
+            {
+                "client_order_id": self._combo_leg_coid(base, "S"),
+                "combo_type": "STOP_LOSS",
+                "order_type": "STOP_LOSS",
+                "quantity": qty,
+                "stop_price": str(new_protect),
+            },
+        ]
+        # Mark BEFORE the call: a broker write that errors must not be retried every poll.
+        self._bracket_realigned.add(base)
+        try:
+            from webull.trade.trade.v3.order_opration_v3 import OrderOperationV3
+
+            op = OrderOperationV3(self._get_client())
+            op.replace_order(
+                account.account_id,
+                modify_orders,
+                client_combo_order_id=self._combo_leg_coid(base, ""),
+            )
+            logger.info(
+                "Webull bracket realigned to fill for %s: fill=%s vs ref=%s (drift %.2f%%) -> "
+                "target %s->%s stop %s->%s",
+                request.symbol, fill_price, reference, drift_pct,
+                target, new_target, protect, new_protect,
+            )
+        except Exception as exc:  # noqa: BLE001 - the ORIGINAL bracket still protects the position
+            logger.warning(
+                "Webull bracket realign failed for %s (%s); ORIGINAL bracket left in place at "
+                "target=%s stop=%s — position remains protected, prices merely un-corrected",
+                request.symbol, self._exc_reason(exc), target, protect,
+            )
 
     def _build_combo_payload(self, request: OrderRequest) -> list[dict[str, object]]:
         """Webull v3 combo bracket = MASTER(entry BUY) + STOP_PROFIT(SELL LIMIT target) +
