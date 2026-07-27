@@ -238,6 +238,97 @@ class SchwabBrokerAdapter:
             _walk(order)
         return resolved
 
+    async def fetch_oco_exit_fill(
+        self,
+        broker_account_name: str,
+        symbol: str,
+        base_client_order_id: str = "",
+        *,
+        resolved_within_seconds: float = 3600.0,
+    ) -> dict[str, object] | None:
+        """The EXIT EXECUTION of a natively-bracketed trade: qty, price, time, broker order id.
+
+        ⭐ WHY: `fetch_oco_resolved_by_fill_symbols` already finds the FILLED child SELL leg, but
+        returns only the SYMBOL and throws the execution away. Because the OMS never placed that
+        sell, nothing on the order path books a fill for it -- so since the native OCO went live
+        (2026-07-22) NO exit fill has been recorded and the operator's completed-trades table and
+        P&L have been blank. This returns what the caller needs to record the exit.
+
+        ⛔ THE TRAP: a CANCELED sibling leg ALSO carries an executionLegs entry, priced 0.0
+        (observed live: `qty=2.0@0.0` on the cancelled half of every resolved bracket). Booking
+        that would write a $0 exit and report a -100% trade. Hence status must be FILLED **and**
+        the price strictly > 0.
+
+        `base_client_order_id` is unused here (Schwab resolves by symbol through the order tree);
+        it exists so Webull -- which must address its combo legs by suffixed coid -- can implement
+        the same signature.
+
+        Returns None when no qualifying exit exists (bracket still working, or it resolved by
+        expiry/cancel with no fill -- in which case the position is still HELD and the software
+        ladder must keep managing it). Raises on broker/HTTP error so the caller can fail open.
+        """
+        account = self.accounts_by_name.get(broker_account_name)
+        if account is None:
+            return None
+        wanted = str(symbol).upper()
+        now = datetime.now(UTC)
+        frm = (now - timedelta(hours=12)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        to = (now + timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        status_code, _headers, body = await self._authorized_request_json(
+            "GET",
+            f"/trader/v1/accounts/{quote(account.account_hash, safe='')}/orders"
+            f"?fromEnteredTime={frm}&toEnteredTime={to}&maxResults=500",
+        )
+        if status_code >= 400 or not isinstance(body, list):
+            raise RuntimeError(f"Schwab orders fetch failed HTTP {status_code}")
+
+        best: dict[str, object] | None = None
+
+        def _walk(order: dict) -> None:
+            nonlocal best
+            legs = order.get("orderLegCollection") or []
+            leg = legs[0] if legs else {}
+            sym = str((leg.get("instrument") or {}).get("symbol") or "").upper()
+            if (
+                sym == wanted
+                and str(leg.get("instruction") or "").upper() == "SELL"
+                and str(order.get("status") or "").upper() == "FILLED"
+            ):
+                closed_at = self._parse_datetime(order.get("closeTime"))
+                if closed_at is not None:
+                    if closed_at.tzinfo is None:
+                        closed_at = closed_at.replace(tzinfo=UTC)
+                    age = (now - closed_at).total_seconds()
+                    if 0 <= age <= resolved_within_seconds:
+                        qty = Decimal("0")
+                        notional = Decimal("0")
+                        for activity in order.get("orderActivityCollection") or []:
+                            for ex in activity.get("executionLegs") or []:
+                                px = self._decimal_or_none(ex.get("price"))
+                                q = self._decimal_or_none(ex.get("quantity"))
+                                # the $0 CANCELED-sibling artefact, and any zero-qty noise
+                                if px is None or q is None or px <= 0 or q <= 0:
+                                    continue
+                                qty += q
+                                notional += px * q
+                        if qty > 0:
+                            candidate = {
+                                "symbol": wanted,
+                                "quantity": qty,
+                                "price": notional / qty,      # size-weighted across partials
+                                "filled_at": closed_at,
+                                "broker_order_id": str(order.get("orderId") or ""),
+                            }
+                            # most recent qualifying exit wins
+                            if best is None or candidate["filled_at"] > best["filled_at"]:
+                                best = candidate
+            for child in order.get("childOrderStrategies") or []:
+                _walk(child)
+
+        for order in body:
+            _walk(order)
+        return best
+
     async def submit_order(self, request: OrderRequest) -> list[ExecutionReport]:
         account = self.accounts_by_name.get(request.broker_account_name)
         if account is None:

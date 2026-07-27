@@ -758,3 +758,117 @@ async def test_non_bracket_orders_are_untouched(fake_sdk, monkeypatch) -> None:
     _patch_replace(monkeypatch, client)
     await _realign_adapter(client).fetch_order_update(_order())   # no bracket metadata
     assert client.replaced == []
+
+
+# ------------------------------------------- OCO exit-fill capture (2026-07-27)
+# The exit executes on a combo child leg the OMS never placed, so nothing books a fill for it.
+# Since the native bracket went live, NO exit fill has been recorded and the operator's
+# completed-trades table and P&L have been blank.
+
+_BASE = "schwab_1m_v2-BIYA-open-d364cebd2145"
+
+
+class _LegClient(_FakeClient):
+    """Answers order-detail per SUFFIXED coid; records the exact call order."""
+
+    def __init__(self, by_coid: dict):
+        super().__init__({})
+        self.by_coid = by_coid
+        self.seen: list[str] = []
+
+    def get_response(self, req):
+        if req._kind == "detail":
+            coid = req.values.get("client_order_id")
+            self.seen.append(coid)
+            self.last["detail"] = req
+            if coid not in self.by_coid:
+                raise _ServerException("ORDER_NOT_FOUND", "ORDER_NOT_FOUND", 417)
+            return _Resp(self.by_coid[coid])
+        return super().get_response(req)
+
+
+def _leg(status, price, qty="1", when="2026-07-27 15:36:30.000+0000", oid="WB-X"):
+    return {"order_id": oid, "items": [{
+        "order_status": status, "filled_qty": qty, "filled_price": price,
+        "last_filled_time": when,
+    }]}
+
+
+@pytest.mark.asyncio
+async def test_exit_fill_reads_the_take_profit_leg(fake_sdk) -> None:
+    """THE FIX: the real BIYA exit — STOP_PROFIT filled @3.9300."""
+    client = _LegClient({_BASE + "T": _leg("FILLED", "3.9300", oid="WB-T1")})
+    got = await _adapter(client).fetch_oco_exit_fill("live:orb", "BIYA", _BASE)
+    assert got is not None
+    assert got["price"] == Decimal("3.9300")
+    assert got["quantity"] == Decimal("1")
+    assert got["broker_order_id"] == "WB-T1"
+
+
+@pytest.mark.asyncio
+async def test_only_one_detail_call_when_the_target_filled(fake_sdk) -> None:
+    """⛔ RATE LIMIT. In an OCO exactly one leg can fill, so the second lookup is waste. Probing
+    4 symbols x 2 legs back-to-back live returned 1 result then three 417/TOO_MANY_REQUESTS."""
+    client = _LegClient({_BASE + "T": _leg("FILLED", "3.9300")})
+    await _adapter(client).fetch_oco_exit_fill("live:orb", "BIYA", _BASE)
+    assert client.seen == [_BASE + "T"]          # S is never queried
+
+
+@pytest.mark.asyncio
+async def test_falls_back_to_the_stop_leg(fake_sdk) -> None:
+    """The real LGHL exit — target cancelled, STOP_LOSS filled @1.360."""
+    client = _LegClient({
+        _BASE + "T": _leg("CANCELLED", None, qty="0"),
+        _BASE + "S": _leg("FILLED", "1.3600", oid="WB-S1"),
+    })
+    got = await _adapter(client).fetch_oco_exit_fill("live:orb", "LGHL", _BASE)
+    assert got["price"] == Decimal("1.3600")
+    assert got["broker_order_id"] == "WB-S1"
+    assert client.seen == [_BASE + "T", _BASE + "S"]
+
+
+@pytest.mark.asyncio
+async def test_both_legs_cancelled_yields_nothing(fake_sdk) -> None:
+    """The real QBTX case: hand-closed, so both legs cancelled. Returning an exit here would
+    invent a fill that never happened."""
+    client = _LegClient({
+        _BASE + "T": _leg("CANCELLED", None, qty="0"),
+        _BASE + "S": _leg("CANCELLED", None, qty="0"),
+    })
+    assert await _adapter(client).fetch_oco_exit_fill("live:orb", "QBTX", _BASE) is None
+
+
+@pytest.mark.asyncio
+async def test_a_filled_leg_priced_zero_is_never_booked(fake_sdk) -> None:
+    """Same trap as Schwab: a $0 exit would report the trade as -100%."""
+    client = _LegClient({_BASE + "T": _leg("FILLED", "0")})
+    assert await _adapter(client).fetch_oco_exit_fill("live:orb", "BIYA", _BASE) is None
+
+
+@pytest.mark.asyncio
+async def test_missing_base_coid_makes_no_broker_call(fake_sdk) -> None:
+    """Without the entry's coid there is nothing to address; must not fire a blind request."""
+    client = _LegClient({})
+    assert await _adapter(client).fetch_oco_exit_fill("live:orb", "BIYA", "") is None
+    assert client.seen == []
+
+
+@pytest.mark.asyncio
+async def test_order_not_found_on_a_leg_is_skipped_not_raised(fake_sdk) -> None:
+    """A single-leg (non-combo) order has no T/S legs at all — that is absence, not failure."""
+    client = _LegClient({_BASE + "S": _leg("FILLED", "2.5000")})   # T raises ORDER_NOT_FOUND
+    got = await _adapter(client).fetch_oco_exit_fill("live:orb", "BIYA", _BASE)
+    assert got is not None and got["price"] == Decimal("2.5000")
+
+
+@pytest.mark.asyncio
+async def test_status_filter_alone_rejects_a_cancelled_leg_carrying_a_real_price(fake_sdk) -> None:
+    """ISOLATES the status filter. A leg that PARTIALLY filled and was then cancelled reports
+    CANCELLED with a real qty and price. Status must exclude it on its own -- treating a partial
+    as the exit would book the wrong size and close a position that is still partly HELD.
+    (Without this the price/qty filter masks the status filter and a regression goes unseen.)"""
+    client = _LegClient({
+        _BASE + "T": _leg("CANCELLED", "3.9300", qty="1"),   # real price, real qty, NOT filled
+        _BASE + "S": _leg("CANCELLED", None, qty="0"),
+    })
+    assert await _adapter(client).fetch_oco_exit_fill("live:orb", "BIYA", _BASE) is None

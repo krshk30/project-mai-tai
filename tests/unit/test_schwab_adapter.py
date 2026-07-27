@@ -322,3 +322,163 @@ async def test_schwab_adapter_refreshes_and_persists_token_store(
     assert persisted["access_token"] == "access-new"
     assert persisted["refresh_token"] == "refresh-new"
     assert persisted["token_type"] == "Bearer"
+
+
+# ------------------------------------------- OCO exit-fill capture (2026-07-27)
+# Since the native OCO went live (2026-07-22) NO exit fill has been recorded: the exit executes on
+# a broker-created child SELL leg the OMS never placed, so nothing books a fill for it. The
+# operator's completed-trades table and P&L have been blank for five days
+# (07-20: 3 sell fills · 07-21: 5 · 07-22: 1 · 07-23: 0 · 07-27: 0).
+
+def _oco_adapter():
+    return SchwabBrokerAdapter(
+        Settings(oms_adapter="schwab", schwab_access_token="t", schwab_account_hash="hash-123")
+    )
+
+
+def _bracket_order(*, exit_status="FILLED", exit_price="5.92", close_time="2026-07-27T17:00:27+0000",
+                   cancelled_sibling=True):
+    """The live shape: TRIGGER(entry) -> OCO -> two SELL SINGLE children."""
+    sibling = {
+        "orderId": 9002, "status": "CANCELED",
+        "closeTime": close_time,
+        "orderLegCollection": [{"instruction": "SELL",
+                                "instrument": {"symbol": "FIEE"}}],
+        # ⛔ THE TRAP: a CANCELED leg still carries an execution, priced 0.0
+        "orderActivityCollection": [{"executionLegs": [{"quantity": 2.0, "price": 0.0}]}],
+    }
+    winner = {
+        "orderId": 9001, "status": exit_status,
+        "closeTime": close_time,
+        "orderLegCollection": [{"instruction": "SELL", "instrument": {"symbol": "FIEE"}}],
+        "orderActivityCollection": [
+            {"executionLegs": [{"quantity": 2.0, "price": float(exit_price)}]}
+        ],
+    }
+    children = [winner] + ([sibling] if cancelled_sibling else [])
+    return {
+        "orderId": 9000, "status": "FILLED",
+        "closeTime": "2026-07-27T17:00:19+0000",
+        "orderLegCollection": [{"instruction": "BUY", "instrument": {"symbol": "FIEE"}}],
+        "orderActivityCollection": [{"executionLegs": [{"quantity": 2.0, "price": 5.84}]}],
+        "childOrderStrategies": [
+            {"orderId": 8999, "status": "FILLED", "orderStrategyType": "OCO",
+             "orderLegCollection": [], "childOrderStrategies": children}
+        ],
+    }
+
+
+def _patch_orders(monkeypatch, adapter, orders):
+    async def fake(method, path, *, body=None):
+        del body, method, path
+        return (200, {}, orders)
+    monkeypatch.setattr(adapter, "_authorized_request_json", fake)
+
+
+@pytest.mark.asyncio
+async def test_oco_exit_fill_reads_the_filled_child_leg(monkeypatch) -> None:
+    """THE FIX: the exit price the completed-trades table needs, off the broker's own record."""
+    adapter = _oco_adapter()
+    _patch_orders(monkeypatch, adapter, [_bracket_order()])
+    got = await adapter.fetch_oco_exit_fill(
+        "paper:macd_30s", "FIEE", resolved_within_seconds=10**9
+    )
+    assert got is not None
+    assert got["quantity"] == Decimal("2.0")
+    assert got["price"] == Decimal("5.92")          # NOT the 0.0 cancelled sibling
+    assert got["broker_order_id"] == "9001"
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_sibling_priced_zero_is_never_booked(monkeypatch) -> None:
+    """⛔ THE DANGEROUS CASE. Every resolved bracket has a CANCELED sibling carrying
+    `qty=2.0@0.0`. Booking it would write a $0 exit and report a -100% trade."""
+    adapter = _oco_adapter()
+    # only the cancelled, zero-priced leg exists -> there is NO real exit
+    order = _bracket_order(exit_status="CANCELED", exit_price="0.0", cancelled_sibling=False)
+    _patch_orders(monkeypatch, adapter, [order])
+    assert await adapter.fetch_oco_exit_fill(
+        "paper:macd_30s", "FIEE", resolved_within_seconds=10**9
+    ) is None
+
+
+@pytest.mark.asyncio
+async def test_partial_executions_are_size_weighted(monkeypatch) -> None:
+    """A market exit fills in slices (live FIEE: 15 slices). The exit price must be the
+    size-weighted average, not the last slice."""
+    adapter = _oco_adapter()
+    order = _bracket_order()
+    order["childOrderStrategies"][0]["childOrderStrategies"][0]["orderActivityCollection"] = [
+        {"executionLegs": [{"quantity": 1.0, "price": 6.00}, {"quantity": 3.0, "price": 5.00}]}
+    ]
+    _patch_orders(monkeypatch, adapter, [order])
+    got = await adapter.fetch_oco_exit_fill(
+        "paper:macd_30s", "FIEE", resolved_within_seconds=10**9
+    )
+    assert got["quantity"] == Decimal("4.0")
+    assert got["price"] == Decimal("5.25")          # (6*1 + 5*3)/4, not 5.00
+
+
+@pytest.mark.asyncio
+async def test_a_bracket_that_expired_without_filling_yields_nothing(monkeypatch) -> None:
+    """No filled SELL = the position is STILL HELD; returning an exit would close a live row."""
+    adapter = _oco_adapter()
+    order = _bracket_order(exit_status="CANCELED", exit_price="0.0")
+    _patch_orders(monkeypatch, adapter, [order])
+    assert await adapter.fetch_oco_exit_fill(
+        "paper:macd_30s", "FIEE", resolved_within_seconds=10**9
+    ) is None
+
+
+@pytest.mark.asyncio
+async def test_an_unknown_account_returns_none_not_a_false_negative(monkeypatch) -> None:
+    """Guard on the tests themselves: an unconfigured account short-circuits to None BEFORE the
+    order tree is read. Three of these tests originally 'passed' for exactly that reason."""
+    adapter = _oco_adapter()
+    _patch_orders(monkeypatch, adapter, [_bracket_order()])
+    assert await adapter.fetch_oco_exit_fill(
+        "live:does-not-exist", "FIEE", resolved_within_seconds=10**9
+    ) is None
+    # ...while the SAME payload on a known account DOES yield the exit
+    assert await adapter.fetch_oco_exit_fill(
+        "paper:macd_30s", "FIEE", resolved_within_seconds=10**9
+    ) is not None
+
+
+@pytest.mark.asyncio
+async def test_a_stale_exit_outside_the_recency_window_is_ignored(monkeypatch) -> None:
+    """Guards against pairing today's entry with an EARLIER bracket's exit on the same symbol."""
+    adapter = _oco_adapter()
+    _patch_orders(monkeypatch, adapter, [_bracket_order(close_time="2020-01-01T00:00:00+0000")])
+    assert await adapter.fetch_oco_exit_fill(
+        "paper:macd_30s", "FIEE", resolved_within_seconds=60
+    ) is None
+
+
+# The two filters below are DEFENCE IN DEPTH and mask each other: a cancelled sibling is excluded
+# by BOTH status and price, so a test using the realistic payload cannot tell which one is doing
+# the work. These two isolate each filter so neither can silently rot.
+
+@pytest.mark.asyncio
+async def test_status_filter_alone_rejects_a_cancelled_leg_with_a_REAL_price(monkeypatch) -> None:
+    """Only a CANCELED SELL exists, and it carries a plausible non-zero price. Status must
+    exclude it on its own -- otherwise a cancelled bracket books a fake exit and closes a
+    position that is still HELD."""
+    adapter = _oco_adapter()
+    order = _bracket_order(exit_status="CANCELED", exit_price="5.00", cancelled_sibling=False)
+    _patch_orders(monkeypatch, adapter, [order])
+    assert await adapter.fetch_oco_exit_fill(
+        "paper:macd_30s", "FIEE", resolved_within_seconds=10**9
+    ) is None
+
+
+@pytest.mark.asyncio
+async def test_price_filter_alone_rejects_a_FILLED_leg_priced_zero(monkeypatch) -> None:
+    """A FILLED SELL whose only execution is priced 0.0. Price must exclude it on its own --
+    booking it would write a $0 exit and report the trade as -100%."""
+    adapter = _oco_adapter()
+    order = _bracket_order(exit_status="FILLED", exit_price="0.0", cancelled_sibling=False)
+    _patch_orders(monkeypatch, adapter, [order])
+    assert await adapter.fetch_oco_exit_fill(
+        "paper:macd_30s", "FIEE", resolved_within_seconds=10**9
+    ) is None

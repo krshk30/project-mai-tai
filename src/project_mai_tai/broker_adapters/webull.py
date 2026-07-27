@@ -186,6 +186,84 @@ class WebullBrokerAdapter:
             logger.exception("Webull order-status fetch failed for %s", request.client_order_id)
             return None
 
+    async def fetch_oco_exit_fill(
+        self,
+        broker_account_name: str,
+        symbol: str,
+        base_client_order_id: str = "",
+        *,
+        resolved_within_seconds: float = 3600.0,
+    ) -> dict[str, object] | None:
+        """The EXIT EXECUTION of a combo bracket: qty, price, time, broker order id.
+
+        Same contract as the Schwab method of this name so the OMS can call either without
+        knowing the broker. Webull differs in HOW the exit is addressed: the combo's legs live
+        under SUFFIXED coids (`<base>T` = STOP_PROFIT, `<base>S` = STOP_LOSS), so this needs the
+        entry's base coid -- there is no symbol-keyed order tree to walk.
+
+        ⭐ WHY: the OMS never placed these sells, so nothing books a fill for them. Since the
+        native bracket went live NO exit fill has been recorded, leaving the operator's
+        completed-trades table and P&L blank.
+
+        ⛔ Exactly one leg fills and the broker cancels the sibling, so a CANCELLED leg is normal
+        and must be skipped -- as must any leg with a non-positive price.
+
+        Returns None when neither leg has filled (bracket still working, or cancelled without a
+        fill -> the position is still HELD). Raises on transport error so the caller fails open.
+        """
+        account = self.accounts_by_name.get(broker_account_name)
+        base = str(base_client_order_id or "")
+        if account is None or not base:
+            return None
+        return await asyncio.to_thread(self._exit_fill_blocking, account, symbol, base)
+
+    def _exit_fill_blocking(
+        self, account: WebullAccountConfig, symbol: str, base: str
+    ) -> dict[str, object] | None:
+        client = self._get_client()
+        try:
+            from webull.trade.request.get_order_detail_request import OrderDetailRequest
+        except ImportError:  # pragma: no cover - SDK layout fallback
+            from webull.trade.request.v2.get_order_detail_request import OrderDetailRequest
+
+        # ⛔ RATE LIMIT: this account 429s readily (see the 2026-07-24 mirror flood). In an OCO
+        # exactly ONE leg can fill, so RETURN ON THE FIRST HIT rather than always querying both --
+        # that halves the calls on the common path. Found by live-probing 4 symbols back-to-back:
+        # the 1st returned correctly and the next 3 came back 417/TOO_MANY_REQUESTS.
+        for suffix in ("T", "S"):                       # STOP_PROFIT first (the common winner)
+            od = OrderDetailRequest()
+            od.set_account_id(account.account_id)
+            od.set_client_order_id(self._combo_leg_coid(base, suffix))
+            try:
+                body = self._body(client.get_response(od))
+            except Exception as exc:  # noqa: BLE001
+                if self._is_order_not_found(exc):
+                    continue                            # leg never existed -> not an error
+                raise
+            if not isinstance(body, dict):
+                continue
+            item = (body.get("items") or [{}])[0] if isinstance(body.get("items"), list) else {}
+            if str(item.get("order_status") or "").upper() != "FILLED":
+                continue                                # the cancelled sibling: expected, skip
+            qty = self._decimal_or_none(item, "filled_qty", "filledQty")
+            price = self._decimal_or_none(
+                item, "filled_price", "filledPrice", "avg_fill_price", "avgFillPrice"
+            )
+            if qty is None or price is None or qty <= 0 or price <= 0:
+                continue
+            filled_at = self._parse_broker_time(
+                item.get("last_filled_time") or item.get("lastFilledTime")
+            )
+            return {
+                "symbol": str(symbol).upper(),
+                "quantity": qty,
+                "price": price,
+                "filled_at": filled_at or datetime.now(UTC),
+                "broker_order_id": self._first_str(body, "order_id", "orderId")
+                or self._combo_leg_coid(base, suffix),
+            }
+        return None
+
     async def list_account_positions(self, broker_account_name: str) -> list[BrokerPositionSnapshot]:
         """Live positions for one broker account, THROTTLED + 429-BACKED-OFF per account.
 
