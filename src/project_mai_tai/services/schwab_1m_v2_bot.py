@@ -1185,6 +1185,10 @@ class SchwabV2BotService:
                 len(self._rest_warmup_done),
                 len(self._watchlist),
             )
+            # The warmup replay can RE-ARM after the db-seed cap already ran (see
+            # `_cap_reconstructed_segment`) — cap again here, or the segment stays "dangerous"
+            # and the boot-hold freezes CW-v2 entries BOT-WIDE.
+            self._cap_reconstructed_segment(symbol, stage="rest-warmup")
 
         if self._should_skip_rest_strategy_feed(symbol, bar):
             self._rest_bars_gated += 1
@@ -1268,6 +1272,41 @@ class SchwabV2BotService:
                 symbol,
             )
 
+    def _cap_reconstructed_segment(self, symbol: str, *, stage: str) -> None:
+        """P1.3: mark a RECONSTRUCTED armed segment (arm_bar_ts < boot) as USED, so v2 can only
+        enter on flips AFTER boot — a restart can never re-issue the per-segment cap (the CPHI
+        class). Fail-closed: costs one legit first-entry on a pre-restart segment.
+
+        MUST run after EVERY replay that can arm a segment. It originally ran only at the end of the
+        DB seed, but the REST warmup replays again a fraction of a second LATER and RE-ARMS — and
+        those arms were never capped:
+
+            10:33:07,137  [V2-CW-ARM] GMEX bar_ts=1780439040000   <- db-seed replay
+            10:33:07,187  db-seed: GMEX hydrated 250 bars         <- cap ran HERE
+            10:33:07,510  warmup feed for GMEX: 716 bars          <- REST warmup
+            10:33:07,531  [V2-CW-ARM] GMEX bar_ts=1784555700000   <- re-armed, NEVER capped
+
+        Those uncapped pre-boot segments read as "dangerous" to `cw_armed_segments()`, so the P1.3
+        boot-hold suppressed CW-v2 entries **BOT-WIDE** for 54 minutes on 2026-07-27 (06:33->07:26)
+        until a human restarted. One stale symbol froze every symbol.
+        """
+        strat = self.strategy
+        if not getattr(strat, "_cw_armed_segment_safety_enabled", False):
+            return
+        st = strat.watchlist_state(symbol)
+        max_e = strat._cw_v2_max_entries_per_flip
+        if (
+            st.cw_armed
+            and 0 < st.cw_arm_bar_ts < strat._boot_ms
+            and st.cw_entries_this_flip < max_e
+        ):
+            st.cw_entries_this_flip = max_e
+            logger.info(
+                "[V2-CW-SEED-CAP] %s reconstructed armed segment capped "
+                "(entries->%d, arm_bar_ts=%d, stage=%s)",
+                symbol, max_e, st.cw_arm_bar_ts, stage,
+            )
+
     def _seed_strategy_bars_from_db(self, symbol: str) -> None:
         """Fix (b): hydrate `state.bars` from `strategy_bar_history` on cold-start.
 
@@ -1341,19 +1380,7 @@ class SchwabV2BotService:
         # per-segment cap (the CPHI class). Flag-gated; costs one legit first-entry on a pre-restart
         # segment (fail-closed). The boot-hold self-verify catches this failing (segment stays
         # dangerous => held + paged).
-        if getattr(self.strategy, "_cw_armed_segment_safety_enabled", False):
-            max_e = self.strategy._cw_v2_max_entries_per_flip
-            if (
-                st.cw_armed
-                and 0 < st.cw_arm_bar_ts < self.strategy._boot_ms
-                and st.cw_entries_this_flip < max_e
-            ):
-                st.cw_entries_this_flip = max_e
-                logger.info(
-                    "[V2-CW-SEED-CAP] %s reconstructed armed segment capped "
-                    "(entries->%d, arm_bar_ts=%d)",
-                    symbol, max_e, st.cw_arm_bar_ts,
-                )
+        self._cap_reconstructed_segment(symbol, stage="db-seed")
         logger.info(
             "schwab_1m_v2 db-seed: %s hydrated %d bars (state.bars=%d)",
             symbol,

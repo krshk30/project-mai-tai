@@ -148,3 +148,82 @@ def test_db_seed_no_rows_is_safe() -> None:
     bot = _bot(_factory_with_bars([]))
     bot._seed_strategy_bars_from_db("NOPE")
     assert len(bot.strategy.watchlist_state("NOPE").bars) == 0
+
+
+# --------------------------------------------------------------------------- (4)
+# SEED-CAP AFTER WARMUP — the GMEX bot-wide freeze, 2026-07-27.
+#
+# The P1.3 cap marks a RECONSTRUCTED armed segment (arm_bar_ts < boot) as USED so a restart cannot
+# re-issue the per-segment entry allowance. It ran ONLY at the end of the DB seed — but the REST
+# warmup replays a fraction of a second later and RE-ARMS, and those arms were never capped:
+#
+#     10:33:07,137  [V2-CW-ARM] GMEX bar_ts=1780439040000   <- db-seed replay
+#     10:33:07,187  db-seed: GMEX hydrated 250 bars         <- cap ran HERE
+#     10:33:07,510  warmup feed for GMEX: 716 bars          <- REST warmup
+#     10:33:07,531  [V2-CW-ARM] GMEX bar_ts=1784555700000   <- re-armed, NEVER capped
+#
+# An uncapped pre-boot segment reads as "dangerous", so the boot-hold suppressed CW-v2 entries
+# BOT-WIDE for 54 minutes until a human restarted. One stale symbol froze every symbol.
+
+
+def _safe_bot(factory) -> SchwabV2BotService:
+    return SchwabV2BotService(
+        settings=Settings(strategy_schwab_1m_v2_cw_armed_segment_safety_enabled=True),
+        session_factory=factory,
+    )
+
+
+def _reconstructed_arm(bot: SchwabV2BotService, symbol: str = "TEST"):
+    """Put the symbol in the exact post-replay state: armed off a PRE-BOOT bar, uncapped."""
+    st = bot.strategy.watchlist_state(symbol)
+    st.cw_armed = True
+    st.cw_arm_bar_ts = bot.strategy._boot_ms - 3_600_000  # 1h before boot
+    st.cw_entries_this_flip = 0
+    return st
+
+
+def test_cap_helper_marks_reconstructed_segment_used() -> None:
+    bot = _safe_bot(_factory_with_bars([]))
+    st = _reconstructed_arm(bot)
+    assert any(x["dangerous"] for x in bot.strategy.cw_armed_segments())
+    bot._cap_reconstructed_segment("TEST", stage="unit")
+    assert st.cw_entries_this_flip == bot.strategy._cw_v2_max_entries_per_flip
+    assert not any(x["dangerous"] for x in bot.strategy.cw_armed_segments())
+
+
+def test_warmup_rearm_after_db_seed_is_capped() -> None:
+    """THE REGRESSION. Seed runs and caps; the warmup then RE-ARMS; the second cap must fire.
+
+    Without the warmup-site cap the segment stays dangerous and the boot-hold freezes the bot.
+    """
+    bot = _safe_bot(_factory_with_bars([]))
+    # 1. db-seed replay armed a reconstructed segment, and the seed cap ran
+    _reconstructed_arm(bot)
+    bot._cap_reconstructed_segment("TEST", stage="db-seed")
+    assert not any(x["dangerous"] for x in bot.strategy.cw_armed_segments())
+    # 2. the REST warmup replays and RE-ARMS off another pre-boot bar (entries reset to 0)
+    _reconstructed_arm(bot)
+    assert any(x["dangerous"] for x in bot.strategy.cw_armed_segments())  # the freeze state
+    # 3. the warmup-site cap must clear it
+    bot._cap_reconstructed_segment("TEST", stage="rest-warmup")
+    assert not any(x["dangerous"] for x in bot.strategy.cw_armed_segments())
+
+
+def test_cap_never_touches_a_live_post_boot_arm() -> None:
+    """A LIVE flip (arm_bar_ts >= boot) must keep its full entry allowance — capping it would
+    silently forfeit real entries, which is the opposite failure."""
+    bot = _safe_bot(_factory_with_bars([]))
+    st = bot.strategy.watchlist_state("TEST")
+    st.cw_armed = True
+    st.cw_arm_bar_ts = bot.strategy._boot_ms + 60_000  # live, post-boot
+    st.cw_entries_this_flip = 0
+    bot._cap_reconstructed_segment("TEST", stage="rest-warmup")
+    assert st.cw_entries_this_flip == 0                       # untouched
+    assert not any(x["dangerous"] for x in bot.strategy.cw_armed_segments())
+
+
+def test_cap_is_inert_when_the_safety_flag_is_off() -> None:
+    bot = SchwabV2BotService(settings=Settings(), session_factory=_factory_with_bars([]))
+    st = _reconstructed_arm(bot)
+    bot._cap_reconstructed_segment("TEST", stage="db-seed")
+    assert st.cw_entries_this_flip == 0  # flag off -> no mutation
