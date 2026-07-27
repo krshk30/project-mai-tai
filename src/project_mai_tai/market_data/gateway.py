@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 import socket
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 
 from redis.asyncio import Redis
 
@@ -73,6 +73,11 @@ class MarketDataGatewayService:
             "static": set(self.settings.market_data_static_symbol_list),
         }
         self._active_symbols: set[str] = set(self.settings.market_data_static_symbol_list)
+        # Observability for the DFNS/LGHL incident: how many symbols in the last snapshot batch had
+        # NO reference entry. five_pillars silently drops those, so a stale cache is otherwise
+        # invisible. Surfaced on the heartbeat so it is monitorable instead of undiagnosable.
+        self._snapshots_without_reference = 0
+        self._last_snapshot_symbol_count = 0
         self._subscription_offsets = {
             stream_name(self.settings.redis_stream_prefix, "market-data-subscriptions"): "$",
         }
@@ -106,6 +111,7 @@ class MarketDataGatewayService:
             asyncio.create_task(self._subscription_loop(stop_event)),
             asyncio.create_task(self._stream_publish_loop(stop_event)),
             asyncio.create_task(self._heartbeat_loop(stop_event)),
+            asyncio.create_task(self._reference_refresh_loop(stop_event)),
         ]
         if self._active_symbols and self.settings.market_data_warmup_enabled:
             tasks.append(
@@ -131,6 +137,17 @@ class MarketDataGatewayService:
     async def publish_snapshot_batch_once(self, snapshots: Iterable[SnapshotRecord]) -> int:
         snapshot_list = list(snapshots)
         reference_payloads = self.reference_cache.as_payloads(snapshot.symbol for snapshot in snapshot_list)
+        # Count symbols the scanner will silently drop for want of a reference entry (see __init__).
+        # `as_payloads` yields ReferenceDataPayload objects in production; accept plain mappings too
+        # so a swapped-in cache (tests, fixtures) can't turn an observability counter into a crash.
+        known = {
+            payload["symbol"] if isinstance(payload, Mapping) else payload.symbol
+            for payload in reference_payloads
+        }
+        self._last_snapshot_symbol_count = len(snapshot_list)
+        self._snapshots_without_reference = sum(
+            1 for snapshot in snapshot_list if snapshot.symbol not in known
+        )
         await self.publisher.publish_snapshot_batch(snapshot_list, reference_payloads)
         return len(snapshot_list)
 
@@ -174,6 +191,39 @@ class MarketDataGatewayService:
         if loaded:
             return
         await asyncio.to_thread(self.reference_cache.build)
+
+    async def _reference_refresh_loop(self, stop_event: asyncio.Event) -> None:
+        """Periodically re-check the reference cache (the DFNS/LGHL incident, 2026-07-27).
+
+        `_ensure_reference_data()` was only called once at startup, so a gateway with long uptime
+        served an ever-staler cache forever — ours reached 19 days. `load_from_cache()` already
+        honours the max-age and returns False when stale, so simply re-invoking it on a timer is the
+        whole fix: a FRESH cache costs one file read, a STALE one triggers `build()` (which already
+        runs off-loop via `asyncio.to_thread`, so the snapshot loop keeps publishing throughout).
+        Interval <= 0 disables the loop (restores the previous boot-only behaviour)."""
+        interval = int(self.settings.market_data_reference_refresh_interval_seconds)
+        if interval <= 0:
+            self.logger.info("reference-data periodic refresh DISABLED (interval <= 0)")
+            return
+        while not stop_event.is_set():
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=interval)
+                return  # stop requested
+            except TimeoutError:
+                pass
+            try:
+                before = self.reference_cache.ticker_count()
+                await self._ensure_reference_data()
+                after = self.reference_cache.ticker_count()
+                if after != before:
+                    self.logger.info(
+                        "reference data refreshed: %s -> %s tickers", before, after
+                    )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # Never let a refresh failure kill the gateway — the old cache keeps serving.
+                self.logger.exception("reference data refresh failed; keeping the existing cache")
 
     async def _snapshot_loop(self, stop_event: asyncio.Event) -> None:
         interval = max(1, self.settings.market_data_snapshot_interval_seconds)
@@ -310,6 +360,11 @@ class MarketDataGatewayService:
                     details={
                         "reference_tickers": str(self.reference_cache.ticker_count()),
                         "active_symbols": str(len(self._active_symbols)),
+                        # DFNS/LGHL incident: a climbing value here means the scanner is blind to
+                        # that many symbols. Non-zero is NORMAL (the cache is price-filtered to
+                        # $1-10); a sudden RISE is the stale-cache signature worth alerting on.
+                        "snapshots_without_reference": str(self._snapshots_without_reference),
+                        "last_snapshot_symbols": str(self._last_snapshot_symbol_count),
                     },
                 )
 

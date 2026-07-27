@@ -85,6 +85,16 @@ class Settings(BaseSettings):
     massive_api_key: str | None = None
     market_data_snapshot_interval_seconds: int = 5
     market_data_reference_cache_path: str = "data/cache/reference_data.json"
+    # PERIODIC REFERENCE REFRESH (2026-07-27, the DFNS/LGHL incident). `_ensure_reference_data()` was
+    # only ever called ONCE, in `run()`. `load_from_cache()` honours `reference_cache_max_age_hours`
+    # correctly — but nothing re-invoked it, so a long-running gateway never re-checked. Ours had 19
+    # days of uptime and served a 19-day-old cache; every ticker that listed or moved into the
+    # $1-10 band since the build was INVISIBLE to the scanner, because five_pillars drops any symbol
+    # with no reference entry (`if ref is None: continue`) — silently, with no log. DFNS (+64%) and
+    # LGHL (+120%) were both missed on 2026-07-27 for exactly this reason; a manual rebuild had LGHL
+    # confirmed within 90 seconds. This interval is how often the gateway RE-CHECKS; the cache's own
+    # max-age still decides whether a rebuild actually happens, so a fresh cache costs one file read.
+    market_data_reference_refresh_interval_seconds: int = 3600
     market_data_reference_cache_max_age_hours: int = 24
     market_data_reference_lookback_days: int = 20
     market_data_scan_min_price: float = 1.0
