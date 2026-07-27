@@ -675,3 +675,111 @@ async def test_restore_subscription_state_rehydrates_latest_replace_event() -> N
 
     assert service.active_symbols() == {"SPY", "SAGT", "XTLB"}
     assert service._desired_symbols_by_consumer["strategy-engine"] == {"SAGT", "XTLB"}
+
+
+# ------------------------------------------------- periodic reference refresh (DFNS/LGHL incident)
+# 2026-07-27: `_ensure_reference_data()` was called ONCE in run(), so a gateway with long uptime
+# served an ever-staler cache. Ours reached 19 DAYS. five_pillars drops any symbol with no reference
+# entry (`if ref is None: continue`) — silently — so DFNS (+64%) and LGHL (+120%) were invisible to
+# the scanner all session. A manual rebuild had LGHL confirmed within 90s.
+
+
+class CountingReferenceCache(FakeReferenceCache):
+    """Tracks ensure/build calls and can report itself stale, like the real cache does past max-age."""
+
+    def __init__(self, stale: bool = False) -> None:
+        self.load_calls = 0
+        self.build_calls = 0
+        self._stale = stale
+
+    def load_from_cache(self) -> bool:
+        self.load_calls += 1
+        return not self._stale
+
+    def build(self) -> None:
+        self.build_calls += 1
+        self._stale = False
+
+
+def _svc(cache, **settings_kwargs):
+    return MarketDataGatewayService(
+        settings=Settings(redis_stream_prefix="test", **settings_kwargs),
+        redis_client=FakeRedis(),
+        snapshot_provider=FakeSnapshotProvider(),
+        trade_stream=FakeTradeStream(),
+        reference_cache=cache,
+    )
+
+
+@pytest.mark.asyncio
+async def test_reference_refresh_rebuilds_a_stale_cache() -> None:
+    """The fix: a STALE cache is rebuilt by the periodic loop, not left to rot until a restart."""
+    cache = CountingReferenceCache(stale=True)
+    service = _svc(cache, market_data_reference_refresh_interval_seconds=1)
+    stop = asyncio.Event()
+    task = asyncio.create_task(service._reference_refresh_loop(stop))
+    await asyncio.sleep(1.4)
+    stop.set()
+    await asyncio.gather(task, return_exceptions=True)
+    assert cache.load_calls >= 1
+    assert cache.build_calls >= 1  # WITHOUT the fix this loop does not exist -> 0
+
+
+@pytest.mark.asyncio
+async def test_reference_refresh_leaves_a_fresh_cache_alone() -> None:
+    """A fresh cache costs one file read per tick and is never rebuilt."""
+    cache = CountingReferenceCache(stale=False)
+    service = _svc(cache, market_data_reference_refresh_interval_seconds=1)
+    stop = asyncio.Event()
+    task = asyncio.create_task(service._reference_refresh_loop(stop))
+    await asyncio.sleep(1.4)
+    stop.set()
+    await asyncio.gather(task, return_exceptions=True)
+    assert cache.load_calls >= 1
+    assert cache.build_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_reference_refresh_disabled_by_zero_interval() -> None:
+    """interval <= 0 restores the previous boot-only behaviour exactly (the rollback lever)."""
+    cache = CountingReferenceCache(stale=True)
+    service = _svc(cache, market_data_reference_refresh_interval_seconds=0)
+    stop = asyncio.Event()
+    await asyncio.wait_for(service._reference_refresh_loop(stop), timeout=2)
+    assert cache.load_calls == 0 and cache.build_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_refresh_failure_keeps_serving_the_old_cache() -> None:
+    """A refresh blowing up must never kill the gateway — the stale cache keeps serving."""
+    class Exploding(CountingReferenceCache):
+        def load_from_cache(self) -> bool:
+            self.load_calls += 1
+            raise RuntimeError("provider down")
+
+    cache = Exploding(stale=True)
+    service = _svc(cache, market_data_reference_refresh_interval_seconds=1)
+    stop = asyncio.Event()
+    task = asyncio.create_task(service._reference_refresh_loop(stop))
+    await asyncio.sleep(1.4)
+    stop.set()
+    await asyncio.gather(task, return_exceptions=True)
+    assert cache.load_calls >= 1
+    assert not task.cancelled()  # loop survived the exception
+
+
+@pytest.mark.asyncio
+async def test_counts_snapshots_with_no_reference_entry() -> None:
+    """The observability half: the silent drop is now countable. UGRO has a reference entry, DFNS
+    does not — exactly the shape that hid this incident for 19 days."""
+    service = _svc(FakeReferenceCache())
+    await service.publish_snapshot_batch_once(
+        [
+            SnapshotRecord(symbol="UGRO", previous_close=2.10, day_close=2.35,
+                           day_volume=900_000, last_trade_price=2.36),
+            SnapshotRecord(symbol="DFNS", previous_close=4.35, day_close=0.0,
+                           day_volume=0, last_trade_price=7.13),
+        ]
+    )
+    assert service._last_snapshot_symbol_count == 2
+    assert service._snapshots_without_reference == 1  # DFNS — the scanner would silently drop it
