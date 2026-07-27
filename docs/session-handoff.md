@@ -17,6 +17,49 @@
 
 ---
 
+## ⭐ 2026-07-27 (pt 2) — **R2 REPLACED**: 3-MIN TIME STOP + FLOORED TRAIL 3% (robust +0.62%) · NO live change
+
+**Operator's call: R2 is no longer the breakeven cut.** *"The breakeven never worked anyway — the
+3-min stop plus floor trail 3% is our R2."* Full detail: [[project-mai-tai-v2-three-exit-rules]].
+
+    not +2% by minute 3  -> EXIT AT MARKET (~-0.8% median, range -2.61%..+0.68%)
+    +2% by minute 3      -> PROVEN: floor = max(+2% level, peak x (1-3%)), ratcheting,
+                            breach judged at the BAR CLOSE.   (-5% stop + flip stay as backstops)
+
+**robust +0.62%** vs baseline -0.75% · median **+0.05%** · mean +1.94% · **win 51.9%** · worst -5.19%.
+12 of 27 prove within 3 min.
+
+**⭐ WHY A CLOCK, NOT A PRICE — the insight that unlocked it.** A breakeven at the FILL fires in ~0.5s
+on **27 of 27**: we buy at the ASK and the next print is at the BID, so the **spread itself** trips it
+before the stock does anything. A clock cannot be tripped that way. Same root cause as the +2%-floor
+failure — we kept placing exits closer to price than the market's own noise.
+
+**⭐ WHY 3 MINUTES — validated twice, independently.** Winners reach +2% in a median **1.6 min**;
+losers that ever get there take **75.7 min** (47x). Losers reach -3% in **1.4 min** vs winners' 8.4m.
+And the time-stop sweep peaks at 3 min on BOTH curves (target 1m -0.25 / 2m -0.09 / **3m -0.04** /
+4m -0.35 / 7m -0.56; trail 1m +0.12 / 2m +0.35 / **3m +0.40** / 4m -0.17 / 7m -0.56).
+
+**⭐ WHY THE FLOOR (operator's addition).** Without it the trail books UNDER +2% on trades that had
+already earned it — CPHI 07-21 **-5.35%**, ADVB **-5.32%**, CPHI 07-15 -3.24%, LGPS -2.92%, CJMB -2.41%
+— all become +1.60/+1.68/+1.85/+1.67/+1.61% with it, while the real runners still run (ZYBT +36.44%,
+ZCMD +5.92%, UBXG +5.51%, ERNA +4.44%). ⭐ Take the floor even though plain-trail-5% scores marginally
+higher (+0.80%): the floor gradient has a proper **interior peak** (0.5%=+0.37 1%=+0.37 2%=+0.36
+**3%=+0.62** 5%=+0.43) while plain-trail is **still climbing at the tested edge** — the pattern that
+produced two false winners this weekend. Floor also gives 52% wins vs 33%.
+
+**⚠️ COST (operator accepts):** it caps slow-starting monsters — AGEN **+27.58% -> +1.75%** (dipped
+under +2% right after proving, then ran +51.8%), NXTC +8.53->+1.86, VMAR +6.81->+2.09; ATPC (peak
++37.9%) and VEEE (+2% at 4.8m, peak +56.1%) time out. Operator hopes reactive catches them —
+⚠️ but reactive is capped at +2% today too, so it catches the trade, not the move.
+**⚠️ Honest label:** with the floor on, trail width barely matters below 3% — the floor does the work.
+This is really *"take +2% on the first weak BAR CLOSE unless it is still running hard."*
+
+**SHORTLIST (all vs baseline robust -0.75%, win 63.0%):** ⭐ **R2-v2 +0.62% / win 52%** ·
+old-R2+R3 +0.75% / win 26% / worst -2.94% · 3-min+plain-trail-5% +0.80% (⛔ untrusted gradient) ·
+3-min+target -0.04% / win 52% (safest step up) · R1 speed-gate+trail-2% -0.24% / win 63%.
+
+---
+
 ## ⛔ 2026-07-27 — R2 "breakeven race" variant TESTED AND REJECTED (don't re-litigate) · NO live change
 
 **Operator's objection to R2 was good and is CONFIRMED:** judging "weak" on the ENTRY BAR alone is
