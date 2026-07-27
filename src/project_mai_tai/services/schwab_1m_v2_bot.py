@@ -36,6 +36,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from project_mai_tai.db.models import (
     BrokerAccount,
+    OmsManagedPosition,
     Strategy,
     StrategyBarHistory,
     TradeIntent,
@@ -724,6 +725,7 @@ class SchwabV2BotService:
         if self.redis is None:
             return
         self._cw_boot_hold_check()
+        reportable = await asyncio.to_thread(self._fetch_reportable_state)
         payload = StrategyBotStatePayload(
             strategy_code=STRATEGY_CODE,
             account_name=self.settings.strategy_schwab_1m_v2_account_name,
@@ -731,9 +733,9 @@ class SchwabV2BotService:
             prewarm_symbols=[],
             data_health=dict(self._data_health),
             retention_states=[],
-            positions=[],
-            pending_open_symbols=[],
-            pending_close_symbols=[],
+            positions=reportable["positions"],
+            pending_open_symbols=reportable["pending_open"],
+            pending_close_symbols=reportable["pending_close"],
             pending_scale_levels=[],
             daily_pnl=0.0,
             closed_today=[],
@@ -782,6 +784,73 @@ class SchwabV2BotService:
         for symbol in tracked:
             qty = positions.get(symbol, 0)
             self.strategy.update_position(symbol, qty)
+
+    def _fetch_reportable_state(self) -> dict[str, list]:
+        """REPORTING ONLY -- what the operator sees. Deliberately SEPARATE from
+        `_fetch_open_positions`, which drives cooldown/re-entry: widening that one to a second
+        broker account would make v2 believe it is "in position" on Schwab when only the Webull
+        fan-out leg is open, silently changing ENTRY behaviour. This read changes no decision.
+
+        Source is `oms_managed_positions` -- the OMS is its sole writer and it is the same table
+        the exit ladder runs off, so the snapshot agrees with the thing that actually manages the
+        trade. It spans BOTH broker accounts, so a dual-broker fan-out shows as the two legs it
+        really is; before this the field was a hardcoded `[]` and every v2 position -- Schwab and
+        Webull alike -- was invisible to the operator (live 2026-07-27: four filled Webull legs
+        while the snapshot said positions=[] and daily_pnl=0.0).
+
+        Never raises: the snapshot MUST still publish on a DB blip, because data_health and
+        cw_armed_segments in the same payload are what the health crons page on.
+        """
+        empty: dict[str, list] = {"positions": [], "pending_open": [], "pending_close": []}
+        if self.session_factory is None:
+            return empty
+        primary = self.settings.strategy_schwab_1m_v2_account_name
+        out: dict[str, list] = {"positions": [], "pending_open": [], "pending_close": []}
+        try:
+            with self.session_factory() as session:
+                for mp in session.scalars(
+                    select(OmsManagedPosition).where(
+                        OmsManagedPosition.strategy_code == STRATEGY_CODE,
+                        OmsManagedPosition.current_quantity != 0,
+                    )
+                ).all():
+                    account = str(mp.broker_account_name or "")
+                    out["positions"].append({
+                        "symbol": str(mp.symbol or "").upper(),
+                        "quantity": int(mp.current_quantity or 0),
+                        "broker_account_name": account,
+                        # the operator-facing bit: which side of a fan-out this leg is
+                        "leg": "primary" if account == primary else "fanout",
+                        "entry_price": float(mp.entry_price or 0),
+                        "entry_path": str(mp.entry_path or ""),
+                        "current_profit_pct": float(mp.current_profit_pct or 0),
+                        "peak_profit_pct": float(mp.peak_profit_pct or 0),
+                    })
+                out["positions"].sort(key=lambda p: (p["symbol"], p["broker_account_name"]))
+
+                strategy = session.scalar(
+                    select(Strategy).where(Strategy.code == STRATEGY_CODE)
+                )
+                if strategy is not None:
+                    for ti in session.scalars(
+                        select(TradeIntent).where(
+                            TradeIntent.strategy_id == strategy.id,
+                            TradeIntent.intent_type.in_(("open", "close")),
+                            TradeIntent.status.notin_(INFLIGHT_INTENT_STATUSES_TERMINAL),
+                        )
+                    ).all():
+                        symbol = str(ti.symbol or "").upper()
+                        if not symbol:
+                            continue
+                        key = "pending_open" if ti.intent_type == "open" else "pending_close"
+                        if symbol not in out[key]:
+                            out[key].append(symbol)
+                    out["pending_open"].sort()
+                    out["pending_close"].sort()
+        except Exception:
+            logger.exception("schwab_1m_v2 _fetch_reportable_state failed")
+            return empty
+        return out
 
     def _fetch_open_positions(self) -> dict[str, int]:
         """SQL: virtual_positions(qty>0) ∪ in-flight trade_intents(open)
