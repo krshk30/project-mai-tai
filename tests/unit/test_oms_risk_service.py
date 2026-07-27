@@ -3700,3 +3700,108 @@ def test_resting_trigger_order_is_exempt_from_intent_max_age() -> None:
     assert OmsRiskService._is_resting_trigger_order(_resting_order("STOP")) is True
     assert OmsRiskService._is_resting_trigger_order(_resting_order("LIMIT")) is False
     assert OmsRiskService._is_resting_trigger_order(_resting_order("MARKET")) is False
+
+
+# ---------------------------------------------------------- operator manual stop (2026-07-27)
+# The operator cancelled a v2 resting order on DFNS twice and the bot RE-PLACED it within ~2 minutes
+# each time. `_cw_v2_resting_track` places whenever `state.resting_active` is False, and a
+# broker-side cancel clears exactly that flag — so the bot cannot tell "my order expired" from
+# "a human killed this". Manual-stop was wired to the scanner and the in-process bots ONLY, never to
+# the OMS or v2, so vetoing one symbol needed a blacklist AND an env edit AND a service restart.
+#
+# These drive `_evaluate_risk` directly — it is the chokepoint every intent passes and the unit under
+# test; the full process_trade_intent happy path needs seeded strategy/account rows that the existing
+# rejection-only tests in this file do not provide.
+
+
+def _manual_stop_row(session_factory, symbols):
+    from project_mai_tai.db.models import DashboardSnapshot
+    with session_factory() as session:
+        session.add(DashboardSnapshot(
+            snapshot_type="global_manual_stop_symbols",
+            payload={"symbols": list(symbols)},
+        ))
+        session.commit()
+
+
+def _mstop_service(session_factory):
+    return OmsRiskService(
+        settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
+        redis_client=FakeRedis(),
+        session_factory=session_factory,
+    )
+
+
+def _risk(service, symbol, intent_type="open", side="buy", quantity=Decimal("2")):
+    service._load_global_manual_stop_symbols()   # process_trade_intent does this before the txn
+    return service._evaluate_risk(TradeIntentEvent(
+        source_service="strategy-engine",
+        payload=TradeIntentPayload(
+            strategy_code="macd_30s", broker_account_name="paper:macd_30s",
+            symbol=symbol, side=side, quantity=quantity,
+            intent_type=intent_type, reason="ENTRY_P1_MACD_CROSS", metadata={},
+        ),
+    ))
+
+
+def test_manual_stop_blocks_every_intent_type() -> None:
+    """THE REGRESSION: a manually stopped symbol is blocked for EVERY intent type, no restart —
+    the lever that was missing when the bot re-placed DFNS twice."""
+    sf = build_test_session_factory()
+    _manual_stop_row(sf, ["DFNS"])
+    svc = _mstop_service(sf)
+    for it, side, qty in (("open", "buy", Decimal("2")), ("close", "sell", Decimal("2")),
+                          ("scale", "buy", Decimal("1")), ("cancel", "sell", Decimal("0"))):
+        ok, reason = _risk(svc, "dfns", it, side, qty)
+        assert ok is False, it
+        assert reason == "manual_stop:DFNS", (it, reason)
+
+
+def test_manual_stop_is_case_insensitive_and_per_symbol() -> None:
+    """Lowercase input still blocks; a DIFFERENT symbol is untouched (a veto, not a kill switch)."""
+    sf = build_test_session_factory()
+    _manual_stop_row(sf, ["dfns"])
+    svc = _mstop_service(sf)
+    assert _risk(svc, "DFNS")[0] is False
+    assert _risk(svc, "LGHL") == (True, "ok")
+
+
+def test_no_manual_stop_row_blocks_nothing() -> None:
+    """No snapshot row -> byte-identical to before this change."""
+    svc = _mstop_service(build_test_session_factory())
+    assert _risk(svc, "DFNS") == (True, "ok")
+
+
+def test_manual_stop_load_failure_keeps_the_last_good_set() -> None:
+    """FAIL-CLOSED: a DB blip must NEVER silently un-stop a symbol the operator halted."""
+    sf = build_test_session_factory()
+    _manual_stop_row(sf, ["DFNS"])
+    svc = _mstop_service(sf)
+    assert svc._load_global_manual_stop_symbols() == {"DFNS"}
+
+    def boom():
+        raise RuntimeError("db down")
+
+    svc.session_factory = boom
+    svc._manual_stop_loaded_at = -1e9              # force a refresh attempt
+    assert svc._load_global_manual_stop_symbols() == {"DFNS"}   # last good set retained
+    assert _risk(svc, "DFNS")[0] is False                        # and still blocked
+
+
+def test_manual_stop_is_cached_not_queried_per_intent() -> None:
+    """One query per cache window, not one per intent."""
+    sf = build_test_session_factory()
+    _manual_stop_row(sf, ["DFNS"])
+    svc = _mstop_service(sf)
+    calls = {"n": 0}
+    real = svc.session_factory
+
+    def counting():
+        calls["n"] += 1
+        return real()
+
+    svc.session_factory = counting
+    svc._manual_stop_loaded_at = -1e9
+    for _ in range(5):
+        _risk(svc, "DFNS")
+    assert calls["n"] == 1, calls

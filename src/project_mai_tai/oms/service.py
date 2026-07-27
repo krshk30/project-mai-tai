@@ -5,6 +5,7 @@ import json
 import logging
 import re
 import socket
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import ROUND_DOWN, Decimal
@@ -13,7 +14,7 @@ from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
 from redis.asyncio import Redis
-from sqlalchemy import select
+from sqlalchemy import desc, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from project_mai_tai.broker_adapters.alpaca import AlpacaPaperBrokerAdapter
@@ -23,7 +24,14 @@ from project_mai_tai.broker_adapters.schwab import SchwabBrokerAdapter
 from project_mai_tai.broker_adapters.simulated import SimulatedBrokerAdapter
 from project_mai_tai.broker_adapters.webull import WebullBrokerAdapter
 from project_mai_tai.db.session import build_oms_session_factory
-from project_mai_tai.db.models import BrokerAccount, BrokerOrder, Strategy, StrategyBarHistory, TradeIntent
+from project_mai_tai.db.models import (
+    BrokerAccount,
+    BrokerOrder,
+    DashboardSnapshot,
+    Strategy,
+    StrategyBarHistory,
+    TradeIntent,
+)
 from project_mai_tai.exit_logic.config import TradingConfig
 from project_mai_tai.exit_logic.cw_exit import cw_exit_decision
 from project_mai_tai.exit_logic.engine import ExitEngine
@@ -251,6 +259,10 @@ class _DriftCancelCandidate:
 
 
 class OmsRiskService:
+    # Operator manual-stop cache window. Short enough that a stop takes effect on the next intent
+    # cycle (no restart, which was the whole point), long enough that it is not a per-intent query.
+    _MANUAL_STOP_CACHE_SECS = 10.0
+
     NO_POSITION_REASONS = ("cannot be sold short", "insufficient qty", "no broker position available to sell")
     # F2 default so instances created without __init__ (test helpers) safely skip the
     # armed-stop persistence hot-path logic; __init__ overrides from settings in production.
@@ -357,6 +369,9 @@ class OmsRiskService:
         # `v2_cw_flip` signal event; consumed (full close) by the CW exit on the next
         # quote. In-memory so the hot quote path never does a per-tick Redis read.
         self._cw_flip_pending: set[tuple[str, str]] = set()
+        # Operator manual-stop cache (see `_load_global_manual_stop_symbols`).
+        self._manual_stop_symbols: set[str] = set()
+        self._manual_stop_loaded_at: float = -1e9
         # Bug A follow-up: native stop-guard (re)arms that reverse-rejected because the
         # just-cancelled prior guard / entry fill had not settled at the broker. Keyed by
         # hard-stop key -> (strategy_id, broker_account_id) so the periodic sync can re-arm
@@ -679,6 +694,10 @@ class OmsRiskService:
             return
 
     async def process_trade_intent(self, event: TradeIntentEvent) -> list[OrderEventEvent]:
+        # Refresh the operator manual-stop cache BEFORE opening the intent transaction, never inside
+        # it: a nested session shares the connection and fights the outer transaction. `_evaluate_risk`
+        # then reads a plain in-memory set, so the risk path itself does no DB I/O.
+        self._load_global_manual_stop_symbols()
         with self.session_factory() as session:
             registration = self.strategy_registrations.get(event.payload.strategy_code)
             strategy = self.store.ensure_strategy(
@@ -4307,10 +4326,55 @@ class OmsRiskService:
             "broker_accounts": summary.broker_accounts,
         }
 
+    def _load_global_manual_stop_symbols(self) -> set[str]:
+        """Operator manual-stop list, read from the SAME `dashboard_snapshots` row the control
+        plane writes (`global_manual_stop_symbols`, payload {"symbols": [...]}).
+
+        Cached for `_MANUAL_STOP_CACHE_SECS` so this costs one query per window, not one per intent.
+        Any failure returns the LAST GOOD set (never an empty one) — a DB blip must not silently
+        un-stop a symbol the operator deliberately halted.
+        """
+        now = time.monotonic()
+        if now - self._manual_stop_loaded_at < self._MANUAL_STOP_CACHE_SECS:
+            return self._manual_stop_symbols
+        if self.session_factory is None:
+            return self._manual_stop_symbols
+        try:
+            with self.session_factory() as session:
+                snapshot = session.scalar(
+                    select(DashboardSnapshot)
+                    .where(DashboardSnapshot.snapshot_type == "global_manual_stop_symbols")
+                    .order_by(desc(DashboardSnapshot.created_at))
+                )
+            payload = getattr(snapshot, "payload", None)
+            syms = payload.get("symbols", []) if isinstance(payload, dict) else []
+            self._manual_stop_symbols = {
+                str(x).strip().upper() for x in syms if str(x).strip()
+            } if isinstance(syms, list) else set()
+            self._manual_stop_loaded_at = now
+        except Exception:  # noqa: BLE001 - keep the last good set; never fail OPEN
+            # Stamp the clock on failure too, so a DB outage retries once per window instead of
+            # logging a traceback on every single intent.
+            self._manual_stop_loaded_at = now
+            self.logger.exception(
+                "manual-stop load failed; keeping the previous set %s", sorted(self._manual_stop_symbols)
+            )
+        return self._manual_stop_symbols
+
     def _evaluate_risk(self, event: TradeIntentEvent) -> tuple[bool, str]:
         symbol = str(event.payload.symbol).strip().upper()
         if symbol and symbol in self.settings.protected_symbol_set:
             return False, f"protected_symbol:{symbol}"
+        # OPERATOR MANUAL STOP (2026-07-27). The operator cancelled a v2 resting order on DFNS twice
+        # and the bot RE-PLACED it within ~2 minutes each time: `_cw_v2_resting_track` places whenever
+        # `state.resting_active` is False, and a broker-side cancel clears exactly that flag — so the
+        # bot cannot tell "my order expired" from "a human killed this". There was no live, no-restart
+        # way to veto a symbol: manual-stop was wired to the scanner and the in-process bots ONLY
+        # (`grep manual_stop` hit strategy_engine_app.py but NOT oms/service.py or the v2 bot), so
+        # stopping one symbol needed a blacklist AND an env edit AND a service restart.
+        # Enforcing here covers EVERY strategy through the one chokepoint every intent passes.
+        if symbol and symbol in self._manual_stop_symbols:
+            return False, f"manual_stop:{symbol}"
         if event.payload.intent_type == "cancel":
             if event.payload.quantity < 0:
                 return False, "cancel quantity cannot be negative"
