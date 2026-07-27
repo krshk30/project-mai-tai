@@ -523,3 +523,94 @@ def configured_empty(settings):
     from project_mai_tai.broker_adapters.webull import configured_webull_accounts
 
     return configured_webull_accounts(settings)
+
+
+# ------------------------------------------------- combo-bracket status polling (2026-07-27)
+# LIVE DEFECT: `_place_combo_bracket` places each leg under a SUFFIXED coid
+# (`_combo_leg_coid(base, "M"/"T"/"S")`), but the status poll asked for the BARE base. Webull
+# answered 417 ORDER_NOT_FOUND on every poll (236 times on LGHL alone), so the order never left
+# `accepted`: no fill recorded, no managed position, and four REAL filled Webull positions
+# (LGHL/QBTX/BIYA/ENTX) were invisible to v2, which reported positions=[] and daily_pnl=0.0.
+
+def _bracket_adapter(client):
+    import types as _types
+    adapter = _adapter(client)
+    adapter.settings = _types.SimpleNamespace(webull_native_bracket_enabled=True)
+    return adapter
+
+
+_MASTER_FILL = {"order_id": "WB-COMBO-1", "combo_type": "MASTER", "items": [
+    {"order_status": "FILLED", "filled_qty": "1", "filled_price": "8.94"}]}
+
+
+@pytest.mark.asyncio
+async def test_combo_bracket_status_is_polled_under_the_master_coid(fake_sdk) -> None:
+    """THE REGRESSION: a bracket order must be looked up as `<base>M`, not `<base>`."""
+    client = _FakeClient({"detail": _MASTER_FILL})
+    rep = await _bracket_adapter(client).fetch_order_update(
+        _order(client_order_id="schwab_1m_v2-QBTX-open-d730d4d11afd",
+               metadata={"order_type": "market", "bracket": "true"})
+    )
+    assert client.last["detail"].values["client_order_id"] == "schwab_1m_v2-QBTX-open-d730d4d11afdM"
+    assert client.calls["detail"] == 1          # no wasted probe on the happy path
+    assert rep is not None and rep.event_type == "filled"
+    assert rep.fill_price == Decimal("8.94")    # the fill the OMS needs to arm/close
+    # the report must carry the BARE id -- that is the row the OMS reconciles against
+    assert rep.client_order_id == "schwab_1m_v2-QBTX-open-d730d4d11afd"
+
+
+@pytest.mark.asyncio
+async def test_single_leg_status_still_polls_the_bare_coid(fake_sdk) -> None:
+    """No-regression: with the bracket flag off the lookup is byte-identical to before."""
+    client = _FakeClient({"detail": _MASTER_FILL})
+    rep = await _adapter(client).fetch_order_update(_order())     # settings=None -> flag off
+    assert client.last["detail"].values["client_order_id"] == "orb-AAPL-open-1"
+    assert client.calls["detail"] == 1
+    assert rep is not None and rep.event_type == "filled"
+
+
+class _FlakyDetailClient(_FakeClient):
+    """ORDER_NOT_FOUND on the first coid, real payload on the second."""
+
+    def __init__(self, body, fail_first_n: int = 1, exc: Exception | None = None) -> None:
+        super().__init__({"detail": body})
+        self._left = fail_first_n
+        self._exc = exc or _ServerException("ORDER_NOT_FOUND", "ORDER_NOT_FOUND", 417)
+        self.seen: list[str] = []
+
+    def get_response(self, req):
+        if req._kind == "detail":
+            self.seen.append(req.values.get("client_order_id"))
+            self.calls["detail"] = self.calls.get("detail", 0) + 1
+            self.last["detail"] = req
+            if self._left > 0:
+                self._left -= 1
+                raise self._exc
+            return _Resp(self._bodies.get("detail"))
+        return super().get_response(req)
+
+
+@pytest.mark.asyncio
+async def test_order_placed_before_the_flag_flipped_still_resolves(fake_sdk) -> None:
+    """A combo placed while the flag was ON, polled after it was turned OFF: the bare lookup
+    404s and the MASTER fallback finds it. Without this the order goes dark forever."""
+    client = _FlakyDetailClient(_MASTER_FILL)
+    rep = await _adapter(client).fetch_order_update(          # flag OFF -> bare first
+        _order(client_order_id="schwab_1m_v2-QBTX-open-d730d4d11afd")
+    )
+    assert client.seen == ["schwab_1m_v2-QBTX-open-d730d4d11afd",
+                           "schwab_1m_v2-QBTX-open-d730d4d11afdM"]
+    assert rep is not None and rep.event_type == "filled"
+
+
+@pytest.mark.asyncio
+async def test_a_non_not_found_error_is_never_retried(fake_sdk) -> None:
+    """An auth/transport failure must propagate on the FIRST coid -- retrying it under the other
+    shape would double every failing call and mask the real error."""
+    client = _FlakyDetailClient(_MASTER_FILL, fail_first_n=99,
+                                exc=_ServerException("INVALID_TOKEN", "permission denied", 401))
+    rep = await _bracket_adapter(client).fetch_order_update(
+        _order(metadata={"order_type": "market", "bracket": "true"})
+    )
+    assert rep is None                 # fetch_order_update logs + returns None
+    assert client.calls["detail"] == 1  # exactly one attempt, no fallback probe

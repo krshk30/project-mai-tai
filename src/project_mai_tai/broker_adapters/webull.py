@@ -409,10 +409,34 @@ class WebullBrokerAdapter:
         except ImportError:  # pragma: no cover - SDK layout fallback
             from webull.trade.request.v2.get_order_detail_request import OrderDetailRequest
 
-        od = OrderDetailRequest()
-        od.set_account_id(account.account_id)
-        od.set_client_order_id(request.client_order_id)
-        body = self._body(client.get_response(od))
+        # A combo bracket's legs are placed under SUFFIXED client order ids -- `_place_combo_bracket`
+        # sends `_combo_leg_coid(base, "M"/"T"/"S")`, NOT the bare base. Polling the bare id returns
+        # 417 ORDER_NOT_FOUND forever, so the order never leaves `accepted`: no fill is recorded, no
+        # managed position is opened, and a REAL broker position stays invisible to the OMS (live
+        # 2026-07-27 -- LGHL/QBTX/BIYA/ENTX all filled at Webull while v2 reported positions=[] and
+        # daily_pnl=0.0). The MASTER leg carries the entry fill, so poll that.
+        #
+        # Try the shape this request was PLACED as first, then fall back to the other, so an order
+        # placed before the bracket flag was flipped (either direction) still resolves instead of
+        # silently going dark. The fallback costs an extra call only on a lookup that would
+        # otherwise have failed outright.
+        master_coid = self._combo_leg_coid(request.client_order_id, "M")
+        lookups = (
+            [master_coid, request.client_order_id]
+            if self._is_bracket_request(request)
+            else [request.client_order_id, master_coid]
+        )
+        body = None
+        for index, coid in enumerate(lookups):
+            od = OrderDetailRequest()
+            od.set_account_id(account.account_id)
+            od.set_client_order_id(coid)
+            try:
+                body = self._body(client.get_response(od))
+                break
+            except Exception as exc:  # noqa: BLE001 - only ORDER_NOT_FOUND is retryable here
+                if index == len(lookups) - 1 or not self._is_order_not_found(exc):
+                    raise
         if not isinstance(body, dict):
             logger.warning("Webull order-detail: unexpected body=%r", body)
             return None
@@ -686,6 +710,16 @@ class WebullBrokerAdapter:
         if not bool(getattr(self.settings, "webull_native_bracket_enabled", False)):
             return False
         return str(request.metadata.get("bracket", "")).lower() in {"1", "true", "yes"}
+
+    @staticmethod
+    def _is_order_not_found(exc: BaseException) -> bool:
+        """Webull answers a coid it does not know with 417 / ORDER_NOT_FOUND. Used to decide
+        whether a detail lookup is worth retrying under the other (combo vs single-leg) coid
+        shape -- any OTHER error must propagate untouched."""
+        code = getattr(exc, "code", None) or getattr(exc, "error_code", None)
+        if str(code).upper() == "ORDER_NOT_FOUND":
+            return True
+        return "ORDER_NOT_FOUND" in str(exc).upper()
 
     @staticmethod
     def _combo_leg_coid(base: str, suffix: str) -> str:
