@@ -2417,6 +2417,120 @@ class OmsRiskService:
             session, row, position, write_quantity=write_quantity
         )
 
+    # ------------------------------------------------ native-OCO exit fill capture (2026-07-27)
+    # Since the native OCO went live (2026-07-22) NO exit fill has been recorded: the exit executes
+    # on a broker-created child leg the OMS never placed, so nothing on the order path books it.
+    # `collect_completed_trade_cycles` then has entries with no exits to pair, and the operator's
+    # completed-trades table and P&L render BLANK. Measured: Schwab sell fills 07-21: 5 -> 07-23: 0.
+
+    def _find_oco_entry_order(self, session: Session, acct: str, symbol: str):
+        """The bracket ENTRY order — its client_order_id is the base the exit legs hang off, and it
+        carries the strategy/account ids the synthetic exit row needs. SYNC; caller's session.
+
+        Tolerates a missing session: some callers of the close path drive it without one, and the
+        exit capture is BOOKKEEPING — it must degrade to "no fill recorded", never raise into a
+        path whose job is to clear a phantom row.
+        """
+        if session is None:
+            return None
+        return session.scalar(
+            select(BrokerOrder)
+            .join(BrokerAccount, BrokerAccount.id == BrokerOrder.broker_account_id)
+            .where(
+                BrokerAccount.name == acct,
+                BrokerOrder.symbol == symbol.upper(),
+                BrokerOrder.side == "buy",
+            )
+            .order_by(desc(BrokerOrder.updated_at))
+        )
+
+    async def _fetch_oco_exit_detail(self, acct: str, symbol: str, base_coid: str):
+        """Broker read ONLY — never touches the DB, so it is safe to await on the loop and MUST
+        stay outside any `_run_db` unit (see that docstring). Never raises: a missing exit must
+        degrade to 'no fill recorded', never break the close path that protects the account."""
+        # `self.settings` / `self.broker_adapter` are absent on instances built via __new__ by test
+        # helpers (the class already carries class-level defaults for this reason), so resolve both
+        # defensively — bookkeeping must never raise into the close path.
+        settings = getattr(self, "settings", None)
+        if not bool(getattr(settings, "oms_record_native_oco_exit_fills_enabled", False)):
+            return None
+        fn = getattr(getattr(self, "broker_adapter", None), "fetch_oco_exit_fill", None)
+        if fn is None or not base_coid:
+            return None
+        try:
+            return await fn(acct, symbol, base_coid)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001
+            self.logger.warning(
+                "[OMS-OCO-EXIT-FILL] %s %s exit-fill fetch failed; closing without a recorded "
+                "exit (P&L for this trade stays unpaired)", acct, symbol,
+            )
+            return None
+
+    def _persist_oco_exit_fill(self, session: Session, acct: str, symbol: str, entry_order, detail) -> bool:
+        """Book the broker's exit as a real order + fill. SYNC, on the CALLER'S session — never
+        opens its own (a nested session shares the connection and fights the outer transaction).
+
+        The child leg IS a genuine broker order, so it is recorded as one rather than faked onto
+        the entry row. Idempotent twice over: `get_or_create_order` keys on a deterministic
+        client_order_id, and `record_fill_if_needed` refuses a duplicate `broker_fill_id`.
+        """
+        if session is None or entry_order is None or not detail:
+            return False
+        qty = detail.get("quantity")
+        price = detail.get("price")
+        if not qty or not price or Decimal(str(qty)) <= 0 or Decimal(str(price)) <= 0:
+            return False   # the $0 cancelled-sibling artefact must never become a -100% trade
+        child_id = str(detail.get("broker_order_id") or "")
+        intent = session.get(TradeIntent, entry_order.intent_id) if entry_order.intent_id else None
+        if intent is None:
+            return False
+        exit_order = self.store.get_or_create_order(
+            session,
+            intent=intent,
+            strategy_id=entry_order.strategy_id,
+            broker_account_id=entry_order.broker_account_id,
+            client_order_id=f"{entry_order.client_order_id}-ocoexit",
+            symbol=symbol.upper(),
+            side="sell",
+            quantity=Decimal(str(qty)),
+            metadata={"source": "native_oco_child_leg", "broker_order_id": child_id},
+            broker_order_id=child_id or None,
+            status="filled",
+            order_type="oco_exit",
+        )
+        report = ExecutionReport(
+            event_type="filled",
+            client_order_id=exit_order.client_order_id,
+            broker_order_id=child_id,
+            broker_fill_id=f"{child_id}:{qty}" if child_id else None,
+            symbol=symbol.upper(),
+            side="sell",
+            intent_type="close",
+            quantity=Decimal(str(qty)),
+            filled_quantity=Decimal(str(qty)),
+            fill_price=Decimal(str(price)),
+            reason="native_oco_exit",
+            metadata={"source": "native_oco_child_leg"},
+            reported_at=detail.get("filled_at"),
+        )
+        fill = self.store.record_fill_if_needed(
+            session,
+            order=exit_order,
+            strategy_id=entry_order.strategy_id,
+            broker_account_id=entry_order.broker_account_id,
+            report=report,
+            payload={"source": "native_oco_child_leg", "broker_order_id": child_id},
+        )
+        if fill is None:
+            return False
+        self.logger.info(
+            "[OMS-OCO-EXIT-FILL] %s %s recorded broker exit qty=%s @%s (child order %s) -> "
+            "completed trade can now pair", acct, symbol, qty, price, child_id or "?",
+        )
+        return True
+
     async def _v2_close_reconcile_flat(self, session, acct: str, symbol: str, row) -> bool:
         """Phantom guard for the v2 CW full-close: count consecutive REJECTED closes; at the
         threshold, confirm against the broker. If FLAT (position closed out-of-band), close the
@@ -2429,6 +2543,14 @@ class OmsRiskService:
         # Fresh-fill grace anchor for v2 = the managed row's entry_time (when we filled in).
         entry_at = _as_utc(getattr(row, "entry_time", None))
         if await self._broker_symbol_is_flat(acct, symbol, established_at=entry_at):
+            # Capture the broker's own exit BEFORE closing the row, so the completed trade can
+            # pair. This path is broker-agnostic (it fires for Schwab and Webull alike), which is
+            # why it is the primary hook: Webull has no armed-OCO tracking to drive the fast path.
+            entry_order = self._find_oco_entry_order(session, acct, symbol)
+            base_coid = str(getattr(entry_order, "client_order_id", "") or "")
+            detail = await self._fetch_oco_exit_detail(acct, symbol, base_coid)
+            if detail:
+                self._persist_oco_exit_fill(session, acct, symbol, entry_order, detail)
             self.store.close_managed_position(session, row)
             self._managed_v2_symbols.discard(key)
             self._cw_flip_pending.discard(key)
@@ -2457,7 +2579,24 @@ class OmsRiskService:
         a positions-endpoint read. That is authoritative ("the target/stop sold; you are flat") and
         so carries none of the FLAT_INFERRED ambiguity that made the 07-15 ERNA possible: a bracket
         that resolved by expiry/cancel (still held) has no filled leg and is never passed here."""
+        # The broker await must stay OUTSIDE `_run_db` (see its docstring), so this is read ->
+        # fetch -> write rather than one unit. Worst case the fetch fails and we close exactly as
+        # before, just without a recorded exit.
+        def _read_base(session: Session) -> str:
+            order = self._find_oco_entry_order(session, acct, symbol)
+            return str(getattr(order, "client_order_id", "") or "")
+
+        base_coid = ""
+        try:
+            base_coid = await self._run_db(_read_base, commit=False)
+        except Exception:  # noqa: BLE001 - bookkeeping only; never block the phantom-row close
+            self.logger.warning("[OMS-OCO-EXIT-FILL] %s %s entry-order lookup failed", acct, symbol)
+        detail = await self._fetch_oco_exit_detail(acct, symbol, base_coid)
+
         def _close(session: Session) -> None:
+            if detail:
+                entry_order = self._find_oco_entry_order(session, acct, symbol)
+                self._persist_oco_exit_fill(session, acct, symbol, entry_order, detail)
             row = self.store.get_open_managed_position(
                 session, broker_account_name=acct, symbol=symbol
             )
