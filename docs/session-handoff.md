@@ -17,7 +17,7 @@
 
 ---
 
-## ⭐⭐ 2026-07-27 (pt 3) — **LIVE OPS DAY**: 5 deploys · Webull fan-out made VISIBLE · BIYA mystery SOLVED
+## ⭐⭐ 2026-07-27 (pt 3, FINAL) — **LIVE OPS DAY**: 7 PRs · Webull fan-out made VISIBLE · BIYA SOLVED · bracket-anchoring defect found
 
 Market-hours session, all deployed and verified live. Fan-out stayed **ON** (operator's call after
 being shown the risk).
@@ -30,6 +30,9 @@ being shown the risk).
 | #558 `8d0be03` | manual stop is **exposure-directional** — blocks entries, NEVER blocks exits | 13:06 ET |
 | #559 `031e6a3` | v2 snapshot reports **real positions across BOTH brokers**, labelled `primary`/`fanout` | 13:07 ET |
 | #553 `3b99482` | gateway reference-cache periodic refresh (merged earlier, deployed today) | 13:36 ET |
+| #561 `b159cd1` | the cooldown log no longer claims a cause it cannot observe | 16:48 ET |
+| #562 `53689a9` | **fill-anchored OCO bracket** — flag `..._REALIGN_ON_FILL_ENABLED` **staged=false, inert** | 16:48 ET |
+| #563 `b16d09e` | attended-check runbook for #562 | docs |
 
 Also: `DFNS` removed from `MAI_TAI_PROTECTED_SYMBOLS` (now `CYN,CELZ`) and moved onto the
 manual-stop lever — verified `DFNS open -> BLOCKED (manual_stop)`, `DFNS close -> allowed`.
@@ -61,18 +64,57 @@ Exit data IS retrievable — probed live: BIYA `STOP_PROFIT status=FILLED filled
 #557's proven suffix mechanism and would additionally fix phantom rows (positions would close on the
 real exit instead of after 3 rejected closes).
 
+### ⭐ BRACKET-ANCHORING DEFECT — found by auditing every Webull trade against the broker tape
+The combo is placed as ONE atomic order, so BOTH exit legs are priced off the pre-trade REFERENCE
+**before the master has filled**. The Webull leg is MARKET-at-the-ATR-cross = exactly where slippage
+lives, so the realised bracket drifts off spec. Every `[V2-OCO-EMIT]` is arithmetically perfect
+(+2%/−5% of its reference) — the bug is purely *what it anchors to*.
+
+**12 fan-out combos today: ALIGNED 8 / DRIFTED 4** (aligned = +2.00%/−5.00% **of the fill**, ±0.30%):
+
+    LGHL 12:32  fill 1.200  target +1.67%  stop -5.83%   <- worst
+    BIYA 14:00  fill 3.936  target +1.63%  stop -5.49%
+    BIYA 12:51  fill 4.120  target +1.70%  stop -5.34%   -> realised -5.83%, BEYOND the design limit
+    FIEE 13:00  fill 5.980  target +3.18%  stop -3.85%   <- drifted the OTHER way: stop too TIGHT
+
+So the "−5% stop" actually ran **−3.85%..−5.83%** and the "+2% target" **+1.63%..+3.18%**.
+BIYA 12:51's overshoot was ~2/3 anchoring + ~1/3 stop-market slippage — **#562 removes the former
+only**; don't read a residual overshoot as the fix failing.
+⛔ Only the Webull leg is exposed: the Schwab leg is a resting buy-stop-LIMIT, so its fill lands at
+the trigger and the bracket stays aligned.
+
 ### Fan-out results today (per-trade %, median-first)
-4 completed: LGHL **−4.90%** · QBTX **−3.80%** (operator hand-close) · BIYA **+1.84%** · ENTX **+1.90%**
-→ **median −0.98%**, mean −1.24%. Tiny qty-1 sample, not a verdict.
+Bot-only, the 5 that ran to their OWN exit: **+1.84% · +1.90% · +3.18% · −4.90% · −5.83%**
+→ **median +1.84%**. Three more were closed by hand by the operator (QBTX −3.80%, LGHL −2.50%,
+QBTX −0.45%) and are NOT strategy outcomes. n=12 at qty 1 — **not a verdict**.
+⚠️ A **FIEE 313-share** round trip (6.06 → 5.43, −10.40% in 33s) was **NOT placed by mai-tai** —
+qty 313 vs our qty 1, bare Webull uuid coid, no bracket, extended-hours session. Largest dollar
+event of the day and not attributable to the strategy.
 
-### Live ops state at 13:40 ET
-All 6 services active, `NRestarts=0`, heartbeats fresh. `PROTECTED_SYMBOLS=CYN,CELZ`.
-manual-stop row = `["DFNS"]`. Fan-out **ON** (Schwab qty2 + Webull qty1 → `live:orb`).
-`virtual_positions` empty = flat at both brokers. Env backups:
-`.bak.pre-fanout.20260727T135456Z`, `.bak.pre-protect-dfns.20260727T144811Z`,
-`.bak.pre-unprotect-dfns.20260727T173448Z`.
+### ⭐ First HONEST missed-flip base rate (off-hours sweep)
+`scratchpad/missed_flips.py` rewritten to scope each symbol to its real CONFIRM→DROP windows (v1
+judged every flip since 04:00, including ones before the symbol was watched):
 
-### ⛔ Process notes (three self-inflicted)
+    17 WATCHED BUY flips · 6 NOT ARMED = 35% miss rate
+    77 excluded as out-of-window   <-- v1 would have called these misses
+     0 excluded as fossil
+
+Of the 6: BIYA 08:19 + LGHL 08:50 sit inside the 07:56–09:04 window when the bad #552 guard was live
+(**self-inflicted**), and DFNS 15:21 is expected (blacklisted/manual-stopped from ~10:42).
+⇒ **~3 genuinely unexplained**: BIYA 09:34, ENTX 09:43, DFNS 10:30. ONE DAY, n=17 — a direction,
+**not a verdict**. Re-run across ~2 weeks before concluding anything.
+
+### Live ops state at END OF DAY (17:00 ET)
+All 6 services active, `NRestarts=0`, heartbeats fresh, **0 errors since the 16:48 restart**.
+`PROTECTED_SYMBOLS=CYN,CELZ` · manual-stop row `["DFNS"]` · fan-out **ON** (Schwab qty2 + Webull
+qty1 → `live:orb`) · realign flag **staged false** (verified to parse as `False`) ·
+`virtual_positions` empty = **flat at both brokers**. The junk dirs whose names were literal
+Windows paths under `/home/trader/` are **removed** (9 empty dirs, via `rmdir`, zero files
+inside). Env backups:
+`.bak.pre-fanout.20260727T135456Z` · `.bak.pre-protect-dfns.20260727T144811Z` ·
+`.bak.pre-unprotect-dfns.20260727T173448Z` · `.bak.pre-realign-stage.20260727T205312Z`.
+
+### ⛔ Process notes (five — all self-inflicted, all worth not repeating)
 1. **#552** shipped a fossil-arm guard with no base-rate check → zero arms possible 07:56–09:04 ET.
    Rolled back + reverted (#554). 23 failing tests were the signal; I explained them away.
 2. **Twice** I raised false alarms from my own `awk`/regex filters: `awk '$0 >= "<date>"'` compares
@@ -80,14 +122,25 @@ manual-stop row = `["DFNS"]`. Fan-out **ON** (Schwab qty2 + Webull qty1 → `liv
    in history. Reported "1630 errors" and "414 errors"; anchored counts were **0** and **6**.
    ⭐ **Always anchor log filters with `^2026-...`.**
 3. **#556 → #558 same day**: blocking every intent type would have stranded an open position.
+4. Twice I asserted a conclusion the broker tape then disproved — "the fan-out legs are naked"
+   (the native OCO had worked on every one) and "my new tests contaminate the suite" (the identical
+   command passed on re-run). ⭐ **Check the broker / re-run before calling something broken.**
+5. `test_scanner_cycle_history_retention_and_dedup` is **FLAKY** — failed once, passed on re-run of
+   the same command and in two full suites. Unrelated to today's changes; worth its own look.
 
-### Open items
-- **Poll OCO `T`/`S` legs for exit fills** ← unblocks `daily_pnl`, fixes phantom rows. Highest value.
-- Fossil-warmup guard on newest-bar age (**design doc first** — bar-build).
-- `missed_flips.py` needs a watchlist-membership filter, then a ~2-week base rate (**off-hours**).
-- Misleading log: "after OMS closed the position" when no position existed.
-- Cooldown-strands-a-live-order (EDBL 2.77% drift) — needs a base rate.
-- Junk dirs on the VPS whose names are literal Windows paths under `/home/trader/` (backslash-escaped, empty, 4K total) — leaked from a mangled remote command; safe to delete.
+### Open items (end of day)
+1. **⏭️ ENABLE the realign flag under an ATTENDED check** (operator's call, next session). Runbook:
+   `docs/webull-bracket-realign-attended-check.md`; verifier `/home/trader/verify_realign.py` reads
+   the answer off the BROKER. The ONLY unproven part is whether v3 `replace_order` accepts a PARTIAL
+   combo (2 exit legs, master omitted because filled). A failed realign is **not** an emergency —
+   the original bracket stays and the position stays protected.
+2. **Poll OCO `T`/`S` legs for exit fills** — unblocks `daily_pnl`/`closed_today` (today's `fills`
+   were **7 buys, 0 sells**) and fixes phantom rows. Highest value after #562.
+3. Fossil-warmup guard on **newest-bar age** (⛔ design doc first — bar-build).
+4. Missed-flip sweep across **~2 weeks** (off-hours) now that the tracker is honest.
+5. Cooldown-strands-a-live-order (EDBL 2.77% drift) — needs a base rate first.
+6. `docs/session-handoff.md` is **~1700 lines** against its own "keep under ~400" rule — roll
+   entries older than ~2 weeks into `handoff-archive/`.
 
 ---
 
