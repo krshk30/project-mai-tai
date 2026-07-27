@@ -4373,8 +4373,22 @@ class OmsRiskService:
         # (`grep manual_stop` hit strategy_engine_app.py but NOT oms/service.py or the v2 bot), so
         # stopping one symbol needed a blacklist AND an env edit AND a service restart.
         # Enforcing here covers EVERY strategy through the one chokepoint every intent passes.
+        #
+        # EXPOSURE-DIRECTIONAL (corrected same day): a manual stop halts anything that OPENS or
+        # INCREASES exposure and NEVER blocks getting out. The first cut blocked every intent type,
+        # which would have STRANDED an open position -- the OMS could not have closed it and the
+        # operator would have had to sell by hand, the exact thing the operator does not want. A
+        # stop means "stop buying this", not "abandon what I already hold".
+        #   blocked : open (any side -- a short entry is still new exposure), scale-IN (buy)
+        #   allowed : close, cancel (both REDUCE risk), scale-OUT (sell -- the +2/4% profit ladder)
         if symbol and symbol in self._manual_stop_symbols:
-            return False, f"manual_stop:{symbol}"
+            intent_type = str(event.payload.intent_type or "").strip().lower()
+            side = str(event.payload.side or "").strip().lower()
+            reduces_or_cancels = intent_type in {"close", "cancel"} or (
+                intent_type == "scale" and side == "sell"
+            )
+            if not reduces_or_cancels:
+                return False, f"manual_stop:{symbol}"
         if event.payload.intent_type == "cancel":
             if event.payload.quantity < 0:
                 return False, "cancel quantity cannot be negative"
