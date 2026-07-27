@@ -3744,17 +3744,32 @@ def _risk(service, symbol, intent_type="open", side="buy", quantity=Decimal("2")
     ))
 
 
-def test_manual_stop_blocks_every_intent_type() -> None:
-    """THE REGRESSION: a manually stopped symbol is blocked for EVERY intent type, no restart —
-    the lever that was missing when the bot re-placed DFNS twice."""
+def test_manual_stop_blocks_entries_but_never_blocks_getting_out() -> None:
+    """THE REGRESSION (and its same-day correction).
+
+    Blocking entries is the point: the bot re-placed a hand-cancelled DFNS order twice.
+    But blocking `close` would STRAND an open position -- the OMS could not exit it and the
+    operator would have to sell by hand. A stop means "stop buying this", not "abandon what
+    I hold". So the guard is EXPOSURE-DIRECTIONAL.
+    """
     sf = build_test_session_factory()
     _manual_stop_row(sf, ["DFNS"])
     svc = _mstop_service(sf)
-    for it, side, qty in (("open", "buy", Decimal("2")), ("close", "sell", Decimal("2")),
-                          ("scale", "buy", Decimal("1")), ("cancel", "sell", Decimal("0"))):
+
+    # BLOCKED -- opens or increases exposure
+    for it, side, qty in (("open", "buy", Decimal("2")),
+                          ("open", "sell", Decimal("2")),      # a short entry is still new exposure
+                          ("scale", "buy", Decimal("1"))):     # scale-IN
         ok, reason = _risk(svc, "dfns", it, side, qty)
-        assert ok is False, it
-        assert reason == "manual_stop:DFNS", (it, reason)
+        assert ok is False, (it, side)
+        assert reason == "manual_stop:DFNS", (it, side, reason)
+
+    # ALLOWED -- reduces exposure or cancels. Blocking ANY of these strands the operator.
+    for it, side, qty in (("close", "sell", Decimal("2")),
+                          ("cancel", "sell", Decimal("0")),
+                          ("scale", "sell", Decimal("1"))):    # scale-OUT = the +2/4% ladder
+        ok, reason = _risk(svc, "dfns", it, side, qty)
+        assert ok is True, (it, side, reason)
 
 
 def test_manual_stop_is_case_insensitive_and_per_symbol() -> None:
