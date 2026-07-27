@@ -614,3 +614,147 @@ async def test_a_non_not_found_error_is_never_retried(fake_sdk) -> None:
     )
     assert rep is None                 # fetch_order_update logs + returns None
     assert client.calls["detail"] == 1  # exactly one attempt, no fallback probe
+
+
+# --------------------------------------------- fill-anchored bracket realign (2026-07-27)
+# The combo is placed atomically, so BOTH exit legs are priced off the pre-trade REFERENCE before
+# the master has filled. The Webull leg enters at MARKET on the ATR cross -- exactly where slippage
+# lives -- so the realised bracket drifts off spec. Measured live across 8 fan-out trades: the "-5%"
+# stop actually ranged -3.85%..-5.83%, the "+2%" target +1.67%..+3.18%. BIYA 12:51 filled 0.37%
+# worse than reference, putting the stop at -5.34% of the fill; it slipped to -5.83% realised.
+
+def _realign_adapter(client, *, enabled=True):
+    import types as _types
+    adapter = _adapter(client)
+    adapter.settings = _types.SimpleNamespace(
+        webull_native_bracket_enabled=True,
+        webull_bracket_realign_on_fill_enabled=enabled,
+    )
+    adapter._bracket_realigned = set()
+    return adapter
+
+
+def _biya_order(**kw):
+    """The real BIYA 12:51 trade: ref 4.1050, +2%/-5% -> 4.1871/3.8998, master filled 4.120."""
+    md = {
+        "order_type": "market", "bracket": "true", "bracket_entry_type": "MARKET",
+        "reference_price": "4.1050", "bracket_target_price": "4.1871",
+        "bracket_stop_price": "3.8998",
+    }
+    md.update(kw.pop("metadata", {}))
+    return _order(client_order_id="schwab_1m_v2-BIYA-open-aaaa", symbol="BIYA",
+                  quantity=Decimal("1"), metadata=md, **kw)
+
+
+class _ReplaceCapturingClient(_FakeClient):
+    """Records replace_order calls made through OrderOperationV3."""
+
+    def __init__(self, detail_body):
+        super().__init__({"detail": detail_body})
+        self.replaced = []
+
+
+def _reg_op(monkeypatch, op_cls):
+    """Register the v3 order-operation module the adapter lazily imports (the fake_sdk fixture
+    stubs webull.trade.* but not this one)."""
+    for pkg in ("webull.trade.trade", "webull.trade.trade.v3"):
+        monkeypatch.setitem(sys.modules, pkg, types.ModuleType(pkg))
+    mod = types.ModuleType("webull.trade.trade.v3.order_opration_v3")
+    mod.OrderOperationV3 = op_cls
+    monkeypatch.setitem(sys.modules, "webull.trade.trade.v3.order_opration_v3", mod)
+
+
+def _patch_replace(monkeypatch, client):
+    class _Op:
+        def __init__(self, _c):
+            pass
+
+        def replace_order(self, account_id, modify_orders, client_combo_order_id=None):
+            client.replaced.append((account_id, modify_orders, client_combo_order_id))
+            return _Resp({})
+
+    _reg_op(monkeypatch, _Op)
+
+
+_FILL_412 = {"order_id": "WB-B1", "combo_type": "MASTER", "items": [
+    {"order_status": "FILLED", "filled_qty": "1", "filled_price": "4.120"}]}
+
+
+@pytest.mark.asyncio
+async def test_bracket_is_repriced_off_the_actual_fill(fake_sdk, monkeypatch) -> None:
+    """THE FIX: ratios are preserved against the FILL, not the reference."""
+    client = _ReplaceCapturingClient(_FILL_412)
+    _patch_replace(monkeypatch, client)
+    rep = await _realign_adapter(client).fetch_order_update(_biya_order())
+
+    assert rep is not None and rep.event_type == "filled"   # the status read still works
+    assert len(client.replaced) == 1
+    _acct, legs, combo_id = client.replaced[0]
+    by_type = {leg["combo_type"]: leg for leg in legs}
+    # 4.120 * (4.1871/4.1050) = 4.2024 -> tick 4.20 ; 4.120 * (3.8998/4.1050) = 3.9140 -> 3.91
+    assert by_type["STOP_PROFIT"]["limit_price"] == "4.20"   # was 4.19 = only +1.70% of the fill
+    assert by_type["STOP_LOSS"]["stop_price"] == "3.91"      # was 3.90 = -5.34% of the fill
+    assert combo_id == "schwab_1m_v2-BIYA-open-aaaa"
+    # and the corrected legs really are +2% / -5% OF THE FILL
+    assert float(by_type["STOP_PROFIT"]["limit_price"]) / 4.120 == pytest.approx(1.02, abs=0.002)
+    assert float(by_type["STOP_LOSS"]["stop_price"]) / 4.120 == pytest.approx(0.95, abs=0.002)
+
+
+@pytest.mark.asyncio
+async def test_no_realign_when_the_fill_matches_the_reference(fake_sdk, monkeypatch) -> None:
+    """LGHL 10:23 filled exactly at reference — spending a broker write there is pure noise."""
+    client = _ReplaceCapturingClient({"order_id": "WB-L", "items": [
+        {"order_status": "FILLED", "filled_qty": "1", "filled_price": "4.1050"}]})
+    _patch_replace(monkeypatch, client)
+    await _realign_adapter(client).fetch_order_update(_biya_order())
+    assert client.replaced == []
+
+
+@pytest.mark.asyncio
+async def test_realign_is_idempotent_across_polls(fake_sdk, monkeypatch) -> None:
+    """The OMS re-polls a filled order; the bracket must be re-priced ONCE."""
+    client = _ReplaceCapturingClient(_FILL_412)
+    _patch_replace(monkeypatch, client)
+    adapter = _realign_adapter(client)
+    for _ in range(4):
+        await adapter.fetch_order_update(_biya_order())
+    assert len(client.replaced) == 1
+
+
+@pytest.mark.asyncio
+async def test_flag_off_is_byte_identical(fake_sdk, monkeypatch) -> None:
+    """Deploys inert: no broker write until the attended check enables it."""
+    client = _ReplaceCapturingClient(_FILL_412)
+    _patch_replace(monkeypatch, client)
+    rep = await _realign_adapter(client, enabled=False).fetch_order_update(_biya_order())
+    assert rep is not None and rep.event_type == "filled"
+    assert client.replaced == []
+
+
+@pytest.mark.asyncio
+async def test_a_failed_realign_never_breaks_the_fill_report(fake_sdk, monkeypatch) -> None:
+    """PROTECTION > PRECISION. If replace_order fails the ORIGINAL bracket still guards the
+    position, and the fill must still reach the OMS — losing the fill report would be far worse
+    than an imperfectly-priced stop."""
+    client = _ReplaceCapturingClient(_FILL_412)
+
+    class _BoomOp:
+        def __init__(self, _c):
+            pass
+
+        def replace_order(self, *a, **k):
+            raise _ServerException("ORDER_NOT_FOUND", "already filled", 417)
+
+    _reg_op(monkeypatch, _BoomOp)
+    rep = await _realign_adapter(client).fetch_order_update(_biya_order())
+    assert rep is not None
+    assert rep.event_type == "filled"
+    assert rep.fill_price == Decimal("4.120")
+
+
+@pytest.mark.asyncio
+async def test_non_bracket_orders_are_untouched(fake_sdk, monkeypatch) -> None:
+    client = _ReplaceCapturingClient(_FILL_412)
+    _patch_replace(monkeypatch, client)
+    await _realign_adapter(client).fetch_order_update(_order())   # no bracket metadata
+    assert client.replaced == []
