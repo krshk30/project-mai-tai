@@ -17,6 +17,36 @@
 
 ---
 
+## ⛔ 2026-07-27 — R2 "breakeven race" variant TESTED AND REJECTED (don't re-litigate) · NO live change
+
+**Operator's objection to R2 was good and is CONFIRMED:** judging "weak" on the ENTRY BAR alone is
+hasty — of the 20 trades R2 marks weak, **15 DID reach +2% later** (AGEN peak +51.8%, VEEE +56.1%,
+EHGO +24.6%, …); only 5 never did (INM, LABT, SMCX, KUST, SKYQ).
+
+**⛔ But the proposed fix — keep a breakeven armed and let the trade RACE to +2% — is WORSE.** 18
+variants (arm at fill / entry-bar close / 2 bars × buffer 0/0.25/0.5% × proven-gets target/trail3):
+best **robust +0.11%** vs the existing **R2-v1+R3 = +0.75%**. ⭐ **Armed at the FILL it cuts 27 of 27
+— a 0.0% win rate: NOT ONE trade reached +2% before dipping back to the buy price.** Same tick-grid
+cause as the +2% floor — the resting order fills on a **WICK** at the top of a spike, so price sags
+back through the fill within seconds. Arm at the entry-bar close → 21/27 cut; arm 2 bars in → 16/27.
+
+**⭐ And the objection is ALREADY ANSWERED by the combined rule.** A weak trade is not condemned: its
+exit is whichever comes FIRST among {breakeven, +2% target, −5%, flip}, so a weak trade reaching +2%
+before returning to the fill **takes the +2%** (`CPHI 07-15, 1st bar +1.85%, [weak] → +1.85%
+[target]`). ⇒ **Correct framing of R3: the first-bar high is NOT a verdict on the trade — it only
+decides WHO GETS THE TRAIL INSTEAD OF THE +2% TARGET**, and that is earned (STRONG peak median
++17.8% vs +7.8%). Only open sub-question: should a weak-but-PROVEN trade get the trail rather than
+the target? (+0.11% vs +0.75% here — no on this sample; revisit with more data.)
+
+**📋 THE 27-TRADE REFERENCE SET printed** (corrected baseline = today's live behaviour): 17W/10L,
+win 63.0%, median +1.61%, mean −0.56%, **sum −15.13pp**. ⭐ **Median hold ≈ 4 MINUTES, 8 trades done
+in under 60 seconds** — the structural reason bar-based signals cannot time these exits. Worst
+give-backs: **ZYBT 07-20 in 12:27:09 out 12:27:11 (2 SECONDS) +1.78% while the stock went +173%**;
+**CPHI 07-21 (7s) +1.60% while it went +105%.** Reproduce: scratchpad `print27.py`.
+[[project-mai-tai-v2-three-exit-rules]]
+
+---
+
 ## 🔬⭐ 2026-07-26 (Sun) — R&D DAY: v2 RESTING exit research (NO live change) + replay flip-leg bug FIXED (#549)
 
 **Market closed; nothing deployed; live is UNCHANGED and stays on the baseline** (+2% target / −5%
