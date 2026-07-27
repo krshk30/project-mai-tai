@@ -718,6 +718,10 @@ class Settings(BaseSettings):
     # reference. OFF by default: it issues a broker write (replace_order) on a fill, so it wants an
     # attended live check before it is trusted, exactly like the native bracket itself.
     webull_bracket_realign_on_fill_enabled: bool = False
+    # Record the broker-side OCO exit as a FILL so completed trades + P&L reconstruct. OFF by
+    # default: it WRITES rows (a synthetic exit order + its fill), so it wants one attended
+    # session before it is trusted.
+    oms_record_native_oco_exit_fills_enabled: bool = False
     schwab_access_token: str | None = None
     schwab_access_token_expires_at: str | None = None
     schwab_refresh_token: str | None = None

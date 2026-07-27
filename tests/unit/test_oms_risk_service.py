@@ -3820,3 +3820,137 @@ def test_manual_stop_is_cached_not_queried_per_intent() -> None:
     for _ in range(5):
         _risk(svc, "DFNS")
     assert calls["n"] == 1, calls
+
+
+# ------------------------------------- native-OCO exit fill capture (2026-07-27)
+# Since the native OCO went live (2026-07-22) NO exit fill has been recorded: the exit executes on
+# a broker-created child leg the OMS never placed. `collect_completed_trade_cycles` then has
+# entries with no exits to pair, so the operator's completed-trades table and P&L render BLANK.
+# Measured: Schwab sell fills 07-20: 3 · 07-21: 5 · 07-22: 1 (OCO goes live) · 07-23: 0 · 07-27: 0.
+
+def _oco_service(session_factory, *, enabled=True):
+    import types as _t
+    svc = OmsRiskService(
+        settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
+        redis_client=FakeRedis(),
+        session_factory=session_factory,
+    )
+    object.__setattr__(svc.settings, "oms_record_native_oco_exit_fills_enabled", enabled) \
+        if not isinstance(svc.settings, _t.SimpleNamespace) else None
+    return svc
+
+
+def _seed_entry(session):
+    """A filled bracket ENTRY: strategy + account + intent + buy order."""
+    from project_mai_tai.db.models import BrokerAccount, BrokerOrder, Strategy, TradeIntent
+    strategy = Strategy(code="schwab_1m_v2", name="V2", execution_mode="live")
+    account = BrokerAccount(name="live:orb", provider="webull", environment="live")
+    session.add_all([strategy, account])
+    session.flush()
+    intent = TradeIntent(
+        strategy_id=strategy.id, broker_account_id=account.id, symbol="BIYA",
+        side="buy", intent_type="open", quantity=Decimal("1"), reason="ATR Flip",
+        status="filled", payload={},
+    )
+    session.add(intent)
+    session.flush()
+    order = BrokerOrder(
+        intent_id=intent.id, strategy_id=strategy.id, broker_account_id=account.id,
+        client_order_id="schwab_1m_v2-BIYA-open-abc", symbol="BIYA", side="buy",
+        order_type="market", time_in_force="day", quantity=Decimal("1"),
+        status="filled", payload={"bracket": "true"},
+    )
+    session.add(order)
+    session.commit()
+    return order
+
+
+_EXIT = {"symbol": "BIYA", "quantity": Decimal("1"), "price": Decimal("3.93"),
+         "filled_at": datetime(2026, 7, 27, 15, 36, 30, tzinfo=UTC),
+         "broker_order_id": "WB-EXIT-1"}
+
+
+def test_the_broker_exit_is_recorded_as_a_real_fill() -> None:
+    """THE FIX: without this the entry has no exit to pair with and the trade never completes."""
+    from project_mai_tai.db.models import Fill
+    sf = build_test_session_factory()
+    with sf() as session:
+        entry = _seed_entry(session)
+        svc = _oco_service(sf)
+        ok = svc._persist_oco_exit_fill(session, "live:orb", "BIYA", entry, _EXIT)
+        session.commit()
+        assert ok is True
+        fills = session.scalars(select(Fill)).all()
+        assert len(fills) == 1
+        assert fills[0].side == "sell"
+        assert fills[0].price == Decimal("3.93")
+        assert fills[0].quantity == Decimal("1")
+
+
+def test_recording_the_same_exit_twice_books_one_fill() -> None:
+    """Both close paths can fire for the same symbol; double-booking would double the P&L."""
+    from project_mai_tai.db.models import Fill
+    sf = build_test_session_factory()
+    with sf() as session:
+        entry = _seed_entry(session)
+        svc = _oco_service(sf)
+        svc._persist_oco_exit_fill(session, "live:orb", "BIYA", entry, _EXIT)
+        session.commit()
+        svc._persist_oco_exit_fill(session, "live:orb", "BIYA", entry, _EXIT)
+        session.commit()
+        assert len(session.scalars(select(Fill)).all()) == 1
+
+
+def test_a_zero_priced_exit_is_never_booked() -> None:
+    """⛔ THE TRAP: a CANCELED sibling leg carries an execution priced 0.0. Booking it would
+    write a $0 exit and report the trade as -100%."""
+    from project_mai_tai.db.models import Fill
+    sf = build_test_session_factory()
+    with sf() as session:
+        entry = _seed_entry(session)
+        svc = _oco_service(sf)
+        bad = dict(_EXIT, price=Decimal("0"))
+        assert svc._persist_oco_exit_fill(session, "live:orb", "BIYA", entry, bad) is False
+        session.commit()
+        assert session.scalars(select(Fill)).all() == []
+
+
+@pytest.mark.asyncio
+async def test_flag_off_makes_no_broker_call() -> None:
+    """Deploys inert."""
+    sf = build_test_session_factory()
+    svc = _oco_service(sf, enabled=False)
+    called = []
+
+    class _A:
+        async def fetch_oco_exit_fill(self, *a, **k):
+            called.append(a)
+            return _EXIT
+
+    svc.broker_adapter = _A()
+    assert await svc._fetch_oco_exit_detail("live:orb", "BIYA", "base") is None
+    assert called == []
+
+
+@pytest.mark.asyncio
+async def test_a_broker_failure_never_breaks_the_close_path() -> None:
+    """PROTECTION > BOOKKEEPING. If the exit read fails the row must still close; losing the
+    phantom-row cleanup would restart the rejected-close storm this whole path exists to end."""
+    sf = build_test_session_factory()
+    svc = _oco_service(sf)
+
+    class _Boom:
+        async def fetch_oco_exit_fill(self, *a, **k):
+            raise RuntimeError("broker down")
+
+    svc.broker_adapter = _Boom()
+    assert await svc._fetch_oco_exit_detail("live:orb", "BIYA", "base") is None
+
+
+@pytest.mark.asyncio
+async def test_an_adapter_without_the_method_is_skipped() -> None:
+    """Alpaca/simulated have no OCO children; absence is not an error."""
+    sf = build_test_session_factory()
+    svc = _oco_service(sf)
+    svc.broker_adapter = object()
+    assert await svc._fetch_oco_exit_detail("live:orb", "BIYA", "base") is None
