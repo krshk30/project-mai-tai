@@ -515,6 +515,24 @@ class Settings(BaseSettings):
     # bar driving it is within this many seconds of wall-clock (live). Quiet-but-current names still
     # qualify; warmup-replayed (hours-old) bars do not.
     strategy_schwab_1m_v2_cw_v2_resting_entry_max_bar_age_secs: float = 180.0
+    # FOSSIL-ARM guard (2026-07-27, the GMEX incident). A CW-v2 BUY flip detected on a bar older than
+    # this is NOT a setup -- it is a fossil out of the warmup history, and arming off it poisons the
+    # bot. GMEX confirmed 06:33 ET with only multi-week-old bars available; the warmup replay found a
+    # BUY flip on a bar **54 DAYS** old (`age_s=4661047`) and armed a segment stamped with that ts.
+    # `cw_armed_segments()` then read it as reconstructed (arm_bar_ts < boot) AND uncapped, i.e.
+    # "dangerous", so the P1.3 boot-hold suppressed CW-v2 entries **BOT-WIDE** -- one stale symbol
+    # took every symbol down, and it persisted 53 min (06:33->07:26) until a manual restart.
+    # Generous by design (24h): a same-session warmup replay must still arm normally (a bot booting
+    # at 19:00 legitimately replays back to 04:00), so this only ever rejects PRIOR-DAY fossils.
+    # ⚠️ DEFAULT 0 = OFF (byte-identical to pre-fix), matching how every other risky v2 change ships
+    # (fan-out, EH entries, the Webull mirror). Enable attended with ONE env line:
+    #     MAI_TAI_STRATEGY_SCHWAB_1M_V2_CW_V2_ARM_MAX_BAR_AGE_SECS=86400
+    # 86400 (24h) is the recommended value: generous enough that a same-session warmup replay still
+    # arms normally, strict enough to reject the multi-day fossils that caused the incident.
+    # NOTE the guard is deliberately NOT on by default because ~23 unit tests build bars at epoch 1
+    # as a synthetic "before boot" stand-in; turning it on globally would change their behaviour, and
+    # a silent 23-test behaviour change is not something to ship blind. Rollback = drop the env line.
+    strategy_schwab_1m_v2_cw_v2_arm_max_bar_age_secs: float = 0.0
     # ESTABLISHED-SHORT gate (2026-07-23, SKYQ): only rest once the ATR has been SHORT for >= this many
     # consecutive bars -- a REAL settled downtrend, not a 1-bar short in a whipsaw. Selectivity: skip
     # violent two-sided names (SKYQ ripped +9% then chopped) that flip repeatedly. Tunable without code.

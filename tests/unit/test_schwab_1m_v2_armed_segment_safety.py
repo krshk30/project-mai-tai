@@ -119,3 +119,76 @@ def test_disarm_clears_arm_bar_ts() -> None:
     s._cw_v2_track(st, _sig(flip="SELL"))  # SELL flip disarms
     assert st.cw_armed is False and st.cw_arm_bar_ts == 0
     assert s.cw_armed_segments() == []  # no armed segments after disarm
+
+
+# --------------------------------------------------------------- fossil-arm guard (the GMEX incident)
+# 2026-07-27: GMEX confirmed 06:33 ET with only multi-week-old bars; the warmup replay found a BUY
+# flip on a bar 54 DAYS old and armed off it. That arm read as reconstructed+uncapped => "dangerous",
+# so the P1.3 boot-hold suppressed CW-v2 entries BOT-WIDE for 53 min until a manual restart. One
+# stale symbol took every symbol down. The guard refuses to arm off a fossil bar in the first place.
+
+_DAY_MS = 86_400_000
+
+
+def _fossil_guarded(**overrides) -> SchwabV2Strategy:
+    """Safety flag ON *and* the fossil-arm guard enabled at the recommended 24h. The guard ships
+    DEFAULT-OFF (0) so it is byte-identical until the operator sets the env var, so these tests turn
+    it on explicitly rather than relying on a default."""
+    return _safe(strategy_schwab_1m_v2_cw_v2_arm_max_bar_age_secs=86400.0, **overrides)
+
+
+def _try_arm(strat: SchwabV2Strategy, state, *, base_ts: int) -> None:
+    """Same drive sequence as `_arm` but WITHOUT the did-it-arm assertion — used by the fossil tests,
+    where refusing to arm is the expected outcome."""
+    steps = [(12.0, _sig(flip="BUY", flip_level=9.5)), (10.0, _sig()), (11.0, _sig())]
+    for i, (high, sig) in enumerate(steps):
+        state.bars.append(_bar(high, ts=base_ts + i))
+        strat._cw_v2_track(state, sig)
+    strat._cw_v2_track(state, _sig())
+
+
+def test_fossil_bar_does_not_arm() -> None:
+    """A BUY flip on a bar older than the max age must NOT arm — the GMEX reproduction."""
+    s = _fossil_guarded()
+    st = s.watchlist_state("TEST")
+    _try_arm(s, st, base_ts=s._boot_ms - 54 * _DAY_MS)  # 54 days old, exactly the GMEX case
+    assert st.cw_armed is False          # never armed
+    assert st.cw_arm_bar_ts == 0         # nothing stamped
+    assert s.cw_armed_segments() == []   # => no "dangerous" segment to poison the boot-hold
+
+
+def test_fossil_arm_does_not_poison_the_boot_hold() -> None:
+    """The consequence that actually hurt: with no fossil segment, nothing can hold entries."""
+    s = _fossil_guarded()
+    st = s.watchlist_state("TEST")
+    _try_arm(s, st, base_ts=s._boot_ms - 54 * _DAY_MS)
+    assert not any(x["dangerous"] for x in s.cw_armed_segments())  # release CAN fire
+
+
+def test_same_session_warmup_still_arms() -> None:
+    """The guard must be generous: a legitimate same-session warmup replay (hours old, still < boot)
+    arms normally and is still correctly flagged reconstructed."""
+    s = _fossil_guarded()
+    st = s.watchlist_state("TEST")
+    _arm(s, st, base_ts=s._boot_ms - 15 * 3_600_000)  # 15h — a 19:00 boot replaying back to 04:00
+    assert st.cw_armed is True
+    seg = s.cw_armed_segments()
+    assert len(seg) == 1 and seg[0]["reconstructed"] is True and seg[0]["dangerous"] is True
+
+
+def test_live_flip_always_arms() -> None:
+    """A live post-boot flip is never a fossil."""
+    s = _fossil_guarded()
+    st = s.watchlist_state("TEST")
+    _arm(s, st, base_ts=s._boot_ms + 10_000)
+    assert st.cw_armed is True
+    assert s.cw_armed_segments()[0]["reconstructed"] is False
+
+
+def test_guard_disabled_restores_pre_fix_behaviour() -> None:
+    """Setting the max age to 0 disables the guard exactly (the rollback lever)."""
+    s = _safe(strategy_schwab_1m_v2_cw_v2_arm_max_bar_age_secs=0)  # explicit OFF == the default
+    st = s.watchlist_state("TEST")
+    _try_arm(s, st, base_ts=s._boot_ms - 54 * _DAY_MS)
+    assert st.cw_armed is True                       # arms again, as before the fix
+    assert s.cw_armed_segments()[0]["dangerous"] is True  # and poisons the boot-hold, as before

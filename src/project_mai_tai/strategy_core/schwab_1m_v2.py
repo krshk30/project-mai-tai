@@ -503,6 +503,12 @@ class SchwabV2Strategy:
         self._resting_min_short_bars = max(1, int(
             getattr(self.settings, "strategy_schwab_1m_v2_cw_v2_resting_entry_min_short_bars", 3) or 3
         ))
+        # FOSSIL-ARM guard (the GMEX incident): never arm a CW-v2 segment off a bar older than this.
+        # DEFAULT 0 = OFF/byte-identical; set the env var to 86400 to enable. See settings for the
+        # full incident note and the rationale for shipping it inert.
+        self._cw_arm_max_bar_age_ms = int(max(0.0, float(
+            getattr(self.settings, "strategy_schwab_1m_v2_cw_v2_arm_max_bar_age_secs", 0.0) or 0.0
+        )) * 1000)
         # EH RESTING entry (P-B2): a broker buy-stop-limit trigger is dead in extended hours (both brokers),
         # so when this flag is ON the resting entry is SOFTWARE-EMULATED in EH — the strategy watches quotes
         # and, on the ATR up-cross, emits a marketable EH-LIMIT (the OMS band-caps it). It also opens the
@@ -1263,6 +1269,33 @@ class SchwabV2Strategy:
         minutes = et.hour * 60 + et.minute
         return not (9 * 60 + 30 <= minutes < 16 * 60)
 
+    def _cw_fossil_flip_bar(self, state: SymbolState) -> bool:
+        """True when the bar driving a BUY flip is a FOSSIL — older than
+        `strategy_schwab_1m_v2_cw_v2_arm_max_bar_age_secs` (default 24h; 0 disables).
+
+        The GMEX incident (2026-07-27): GMEX confirmed at 06:33 ET with only multi-week-old bars in
+        its warmup, the replay found a BUY flip on a bar **54 days** old, and the resulting armed
+        segment read as reconstructed+uncapped — so the P1.3 boot-hold suppressed CW-v2 entries
+        BOT-WIDE for 53 minutes until a manual restart. One stale symbol took every symbol down.
+
+        Deliberately generous so a legitimate SAME-SESSION warmup replay still arms normally (a bot
+        booting at 19:00 replays back to 04:00 — ~15h — and must keep working). This only rejects
+        prior-day fossils. Uses the `_now_ms()` seam so the backtest replay's injected historical
+        clock is respected (a replay must not have every arm rejected as stale)."""
+        if self._cw_arm_max_bar_age_ms <= 0 or not state.bars:
+            return False
+        bar_ts = int(state.bars[-1].timestamp_ms)
+        age_ms = self._now_ms() - bar_ts
+        if age_ms <= self._cw_arm_max_bar_age_ms:
+            return False
+        logger.warning(
+            "[V2-CW-ARM-SKIP] %s BUY flip on a FOSSIL bar — bar_ts=%d age=%.1fh > max %.1fh; "
+            "not arming (would poison the P1.3 boot-hold bot-wide)",
+            state.symbol, bar_ts, age_ms / 3_600_000.0,
+            self._cw_arm_max_bar_age_ms / 3_600_000.0,
+        )
+        return True
+
     def _cw_v2_track(self, state: SymbolState, atr_signal: dict | None) -> None:
         """CW-v2 bar-path state machine (no-op unless the sub-flag is on). Maintains the arm /
         3-bar trigger (flip bar + next 2 bars) / flip-level on EVERY new bar independent of
@@ -1287,6 +1320,14 @@ class SchwabV2Strategy:
         if atr_signal is None:
             return
         flip = atr_signal.get("flip")
+        if flip == "BUY" and self._cw_fossil_flip_bar(state):
+            # FOSSIL-ARM guard (the GMEX incident, 2026-07-27): the flip bar is older than the
+            # configured max age, so this is warmup wreckage, not a setup. Do NOT arm — arming here
+            # stamps cw_arm_bar_ts with the fossil ts, which `cw_armed_segments()` then reads as
+            # reconstructed+uncapped ("dangerous") and the P1.3 boot-hold suppresses CW-v2 entries
+            # BOT-WIDE until a human restarts. Falling through to the SELL branch is wrong too (the
+            # signal is meaningless), so return outright and leave the prior state untouched.
+            return
         if flip == "BUY":
             state.cw_armed = True
             state.cw_bars_waited = 0
