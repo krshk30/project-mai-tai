@@ -17,6 +17,80 @@
 
 ---
 
+## ⭐⭐ 2026-07-27 (pt 3) — **LIVE OPS DAY**: 5 deploys · Webull fan-out made VISIBLE · BIYA mystery SOLVED
+
+Market-hours session, all deployed and verified live. Fan-out stayed **ON** (operator's call after
+being shown the risk).
+
+### Shipped + deployed
+| PR | what | deployed |
+|---|---|---|
+| #556 `bb6ac10` | OMS honours `global_manual_stop_symbols` at `_evaluate_risk` — live per-symbol veto, no restart, fail-closed | 11:17 ET |
+| #557 `1d8eca0` | **Webull combo status poll uses the MASTER coid** (`...M`) — the day's key fix | 12:33 ET |
+| #558 `8d0be03` | manual stop is **exposure-directional** — blocks entries, NEVER blocks exits | 13:06 ET |
+| #559 `031e6a3` | v2 snapshot reports **real positions across BOTH brokers**, labelled `primary`/`fanout` | 13:07 ET |
+| #553 `3b99482` | gateway reference-cache periodic refresh (merged earlier, deployed today) | 13:36 ET |
+
+Also: `DFNS` removed from `MAI_TAI_PROTECTED_SYMBOLS` (now `CYN,CELZ`) and moved onto the
+manual-stop lever — verified `DFNS open -> BLOCKED (manual_stop)`, `DFNS close -> allowed`.
+
+### ⭐ #557 — the one that mattered
+`_place_combo_bracket` places legs under SUFFIXED coids (`_combo_leg_coid(base,"M"/"T"/"S")`); the
+status poll asked for the BARE base → `417 ORDER_NOT_FOUND` **forever** (542 fetch failures/hour).
+Four Webull fan-out legs filled AND closed at the broker while v2 reported `positions: []` /
+`daily_pnl 0.0`. **542/hr → 0**, and orders now carry REAL Webull order ids.
+⛔ **invisible ≠ unmanaged** — the native OCO worked on every trade; I claimed they were naked and
+the broker tape disproved it. [[project-mai-tai-webull-combo-status-poll]]
+
+### ⭐⭐ BIYA "08:19 flip never armed" — SOLVED
+Schwab REST warmed newly-confirmed symbols with a series whose **newest bar was weeks old**
+(LGHL ~60d, BIYA ~46d, ENTX ~35d — 3 of 3, at their exact CONFIRM timestamps). Indicators were built
+on June prices. Schwab later served BIYA fine (398 fresh bars incl. the real `08:19 BUY 2.8300`).
+⛔ **`[V2-CW-ARM]` also fires during WARMUP REPLAY** — one log instant emits dozens of arms with bars
+spanning weeks. That is why #552's `arm_bar_ts>24h` guard blocked *every* arm, AND why my "81% of
+arms are stale, so it's normal" base rate was measuring the wrong quantity.
+**Guard the NEWEST bar's age, never `arm_bar_ts`.** Fix NOT built — bar-build is design-first.
+[[project-mai-tai-v2-fossil-warmup-series]]
+
+### ⛔ BLOCKER found — no realized P&L exists for natively-bracketed trades
+Today's `fills`: **7 buys, 0 sells.** Exits execute on the broker-side OCO child legs (`...T`/`...S`)
+which the OMS never polls, so no exit fill is ever recorded. `daily_pnl`/`closed_today` therefore
+**cannot** be computed and were deliberately left hardcoded rather than fabricated.
+Exit data IS retrievable — probed live: BIYA `STOP_PROFIT status=FILLED filled_price=3.9300`
+(entry 3.859 = **+1.84%**). **Next fix: poll the `T`/`S` legs to capture the exit fill.** It reuses
+#557's proven suffix mechanism and would additionally fix phantom rows (positions would close on the
+real exit instead of after 3 rejected closes).
+
+### Fan-out results today (per-trade %, median-first)
+4 completed: LGHL **−4.90%** · QBTX **−3.80%** (operator hand-close) · BIYA **+1.84%** · ENTX **+1.90%**
+→ **median −0.98%**, mean −1.24%. Tiny qty-1 sample, not a verdict.
+
+### Live ops state at 13:40 ET
+All 6 services active, `NRestarts=0`, heartbeats fresh. `PROTECTED_SYMBOLS=CYN,CELZ`.
+manual-stop row = `["DFNS"]`. Fan-out **ON** (Schwab qty2 + Webull qty1 → `live:orb`).
+`virtual_positions` empty = flat at both brokers. Env backups:
+`.bak.pre-fanout.20260727T135456Z`, `.bak.pre-protect-dfns.20260727T144811Z`,
+`.bak.pre-unprotect-dfns.20260727T173448Z`.
+
+### ⛔ Process notes (three self-inflicted)
+1. **#552** shipped a fossil-arm guard with no base-rate check → zero arms possible 07:56–09:04 ET.
+   Rolled back + reverted (#554). 23 failing tests were the signal; I explained them away.
+2. **Twice** I raised false alarms from my own `awk`/regex filters: `awk '$0 >= "<date>"'` compares
+   **lexically**, so untimestamped traceback/JSON lines (starting `}`) pass ANY date filter and drag
+   in history. Reported "1630 errors" and "414 errors"; anchored counts were **0** and **6**.
+   ⭐ **Always anchor log filters with `^2026-...`.**
+3. **#556 → #558 same day**: blocking every intent type would have stranded an open position.
+
+### Open items
+- **Poll OCO `T`/`S` legs for exit fills** ← unblocks `daily_pnl`, fixes phantom rows. Highest value.
+- Fossil-warmup guard on newest-bar age (**design doc first** — bar-build).
+- `missed_flips.py` needs a watchlist-membership filter, then a ~2-week base rate (**off-hours**).
+- Misleading log: "after OMS closed the position" when no position existed.
+- Cooldown-strands-a-live-order (EDBL 2.77% drift) — needs a base rate.
+- Junk dirs on the VPS whose names are literal Windows paths under `/home/trader/` (backslash-escaped, empty, 4K total) — leaked from a mangled remote command; safe to delete.
+
+---
+
 ## ⭐ 2026-07-27 (pt 2) — **R2 REPLACED**: 3-MIN TIME STOP + FLOORED TRAIL 3% (robust +0.62%) · NO live change
 
 **Operator's call: R2 is no longer the breakeven cut.** *"The breakeven never worked anyway — the
