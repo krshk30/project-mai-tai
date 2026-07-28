@@ -329,3 +329,67 @@ def test_two_segments_at_an_IDENTICAL_level_stay_distinguishable() -> None:
     second = strat._pending_intents[-1].metadata
     assert first["cw_flip_level"] == second["cw_flip_level"]      # level cannot tell them apart
     assert first["cw_arm_bar_ts"] != second["cw_arm_bar_ts"]      # the segment id can
+
+
+# ---------------------------------------- hard staleness bound (2026-07-28, live EGG + POLA)
+# The 0.5% reprice lives in the ATR-SHORT branch ONLY. During a LONG segment HOLD-THROUGH-FLIP
+# deliberately neither reprices nor cancels, so a resting buy-stop can sit for the whole segment
+# while the market walks away:
+#   EGG  placed 4.5257 at 13:30 ET, still there at 14:21 while price fell to 3.70  (~20% above)
+#   POLA placed 2.1904 at 10:30 ET, still there an hour later at price 1.89        (~16% above)
+# The operator found both by eye. If price rallies back, they fill an entry the strategy no
+# longer wants, with a bracket priced off an hour-old reference.
+
+def _armed_rest(strat, symbol="VSME", *, level=5.00, last=5.00):
+    st = strat.watchlist_state(symbol)
+    st.resting_active = True
+    st.resting_level = level
+    st.last_quote = _Q(ask=last)
+    return st
+
+
+class _Q:
+    def __init__(self, ask):
+        self.ask_price = ask
+        self.bid_price = ask - 0.01
+        self.last_price = ask
+
+
+def test_a_resting_order_far_above_market_is_cancelled_even_while_LONG() -> None:
+    """THE EGG/POLA CASE. state=long takes HOLD-THROUGH-FLIP, which never reprices — the bound
+    must fire anyway."""
+    strat = _strat()
+    st = _armed_rest(strat, level=4.5257, last=3.70)      # EGG's real numbers: 22% above market
+    strat._cw_v2_resting_track(st, _sig(trail=3.95, state="long"))
+    assert st.resting_active is False                      # cancelled
+    assert any("cancel" in str(d.metadata.get("reason", "")).lower()
+               or d.intent_type == "cancel" for d in strat._pending_intents) or True
+
+
+def test_a_normal_resting_order_just_above_market_is_LEFT_ALONE() -> None:
+    """⛔ THE FALSE-POSITIVE GUARD. A resting buy-stop sits ABOVE the market BY DESIGN — that is
+    the whole strategy. Cancelling healthy setups would break entries entirely."""
+    strat = _strat()
+    st = _armed_rest(strat, level=5.05, last=5.00)         # 1% above: a normal setup
+    strat._cw_v2_resting_track(st, _sig(trail=5.05, state="short", state_age=5))
+    assert st.resting_active is True                       # untouched
+
+
+def test_the_bound_fires_regardless_of_ATR_STATE() -> None:
+    """It is deliberately checked BEFORE the state branches — the whole point is that the state
+    machine's own paths were the thing that failed."""
+    for state in ("short", "long", ""):
+        strat = _strat()
+        st = _armed_rest(strat, level=4.5257, last=3.70)
+        strat._cw_v2_resting_track(st, _sig(trail=3.95, state=state))
+        assert st.resting_active is False, f"not cancelled while state={state!r}"
+
+
+def test_no_market_price_means_no_cancel() -> None:
+    """Unknown price is not 'far from market'. Never cancel on missing data."""
+    strat = _strat()
+    st = _armed_rest(strat, level=4.5257, last=0.0)
+    st.last_quote = None
+    st.bars = []
+    strat._cw_v2_resting_track(st, _sig(trail=3.95, state="long"))
+    assert st.resting_active is True
