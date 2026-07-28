@@ -286,3 +286,46 @@ def test_reactive_flag_off_silences_reactive_entry() -> None:
     st.cw_trigger = 5.0
     st.cw_flip_level = 4.0
     assert strat._cw_v2_quote(st, Quote("TEST", 5.99, 6.01, 6.00, IN_WIN, 0)) is None
+
+
+# ------------------------------------------ segment identity on entry payloads (2026-07-27)
+# Reclaim was turned back ON, and judging it needs first-entry vs reclaim split from LIVE fills
+# (that is how the July verdict was reached: n=17 firsts win 58% vs n=13 reclaims win 38%).
+# `cw_flip_level` is NOT a flip id -- it repeats across segments whenever the ATR trail has not
+# moved (live 07-27: FIEE booked two separate round trips 2 min apart at an identical level), so
+# grouping on it silently merges distinct flips. `cw_arm_bar_ts` is per-segment.
+
+def test_resting_entry_payload_carries_segment_identity() -> None:
+    strat = _strat()
+    st = strat.watchlist_state("VSME")
+    st.cw_arm_bar_ts = 1785000000000
+    st.cw_entries_this_flip = 0
+    strat._queue_resting_place(st, 5.00)
+    meta = strat._pending_intents[-1].metadata
+    assert meta["cw_entry_n"] == "1"                      # this order would be the FIRST entry
+    assert meta["cw_arm_bar_ts"] == "1785000000000"
+
+
+def test_the_reclaim_order_is_tagged_as_entry_two() -> None:
+    """THE POINT: without this the reclaim is indistinguishable from a first entry in the fills,
+    and the whole reason reclaim was re-enabled is to measure it on live money."""
+    strat = _strat()
+    st = strat.watchlist_state("VSME")
+    st.cw_arm_bar_ts = 1785000000000
+    st.cw_entries_this_flip = 1                            # one entry already taken this segment
+    strat._queue_resting_place(st, 5.00)
+    assert strat._pending_intents[-1].metadata["cw_entry_n"] == "2"
+
+
+def test_two_segments_at_an_IDENTICAL_level_stay_distinguishable() -> None:
+    """The exact live shape that made cw_flip_level useless: same level, different segments."""
+    strat = _strat()
+    st = strat.watchlist_state("VSME")
+    st.cw_arm_bar_ts = 1785000000000
+    strat._queue_resting_place(st, 5.00)
+    first = strat._pending_intents[-1].metadata
+    st.cw_arm_bar_ts = 1785000600000                       # a NEW segment, same trail level
+    strat._queue_resting_place(st, 5.00)
+    second = strat._pending_intents[-1].metadata
+    assert first["cw_flip_level"] == second["cw_flip_level"]      # level cannot tell them apart
+    assert first["cw_arm_bar_ts"] != second["cw_arm_bar_ts"]      # the segment id can

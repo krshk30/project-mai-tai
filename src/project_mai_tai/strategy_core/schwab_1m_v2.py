@@ -1471,6 +1471,7 @@ class SchwabV2Strategy:
                 "cw_trigger": f"{trig:.4f}",
                 "cw_flip_level": f"{fl:.4f}",
                 "cw_entry_n": str(state.cw_entries_this_flip),
+                "cw_arm_bar_ts": str(int(state.cw_arm_bar_ts or 0)),
                 "bar_low_so_far": f"{state.cw_bar_low_so_far:.4f}",
                 "source": "schwab_1m_v2",
                 "strategy_version": STRATEGY_VERSION,
@@ -1542,6 +1543,13 @@ class SchwabV2Strategy:
                 "reference_price": f"{line:.4f}", "entry_price": f"{line:.4f}",
                 "stop_price": f"{line:.4f}", "limit_price": f"{limit:.4f}",
                 "cw_flip_level": f"{line:.4f}", "resting_entry": "true",
+                # SEGMENT IDENTITY (2026-07-27). Reclaim was turned back ON, and judging it needs
+                # first-entry vs reclaim split from LIVE fills. `cw_flip_level` is NOT a flip id --
+                # it repeats across segments whenever the ATR trail has not moved (FIEE booked two
+                # separate round trips 2 min apart at an identical level), so grouping on it silently
+                # merges distinct flips. `cw_arm_bar_ts` IS per-segment; pair it with cw_entry_n.
+                "cw_entry_n": str(state.cw_entries_this_flip + 1),
+                "cw_arm_bar_ts": str(int(state.cw_arm_bar_ts or 0)),
                 "source": "schwab_1m_v2", "strategy_version": STRATEGY_VERSION,
             },
         ))
@@ -1753,6 +1761,9 @@ class SchwabV2Strategy:
             ),
             "fanout_leg": "webull",
             "fanout_source": source,
+            # segment identity, same reasoning as the resting path above
+            "cw_entry_n": str(state.cw_entries_this_flip + 1),
+            "cw_arm_bar_ts": str(int(state.cw_arm_bar_ts or 0)),
             "order_type": "limit" if session_is_eh else "market",
             "source": "schwab_1m_v2",
             "strategy_version": STRATEGY_VERSION,
