@@ -3954,3 +3954,125 @@ async def test_an_adapter_without_the_method_is_skipped() -> None:
     svc = _oco_service(sf)
     svc.broker_adapter = object()
     assert await svc._fetch_oco_exit_detail("live:orb", "BIYA", "base") is None
+
+
+# ------------------------------------ event-driven OCO exit poll (2026-07-28)
+# The close path needs 3 REJECTED CLOSES + the 120s grace: measured lag exit 09:36:40 ->
+# recorded 09:53:33 = ~17 MINUTES. That stale managed row also BLOCKS re-entry, because the
+# fan-out guard `fanout_webull_collision_managed` refuses a leg while a managed row is open.
+# Live 07-28 INLF: signal 5.4850 skipped (prior row still open, its exit filled 5s later),
+# next signal filled 5.6200 = +2.46% worse against a +2% target. 7 of 9 lost signals that day.
+
+def _poll_service(sf, *, enabled=True, min_secs=0.0):
+    svc = OmsRiskService(
+        settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
+        redis_client=FakeRedis(),
+        session_factory=sf,
+    )
+    object.__setattr__(svc.settings, "oms_native_oco_exit_poll_enabled", enabled)
+    object.__setattr__(svc.settings, "oms_native_oco_exit_poll_min_secs", min_secs)
+    object.__setattr__(svc.settings, "oms_record_native_oco_exit_fills_enabled", True)
+    assert svc.settings.oms_native_oco_exit_poll_enabled is enabled
+    return svc
+
+
+class _ExitAdapter:
+    def __init__(self, detail=None):
+        self.detail = detail
+        self.calls = 0
+
+    async def fetch_oco_exit_fill(self, acct, symbol, base="", *, resolved_within_seconds=3600.0):
+        self.calls += 1
+        return self.detail
+
+
+_POLL_EXIT = {"symbol": "BIYA", "quantity": Decimal("1"), "price": Decimal("3.93"),
+              "filled_at": datetime(2026, 7, 28, 15, 36, 30, tzinfo=UTC),
+              "broker_order_id": "WB-POLL-1"}
+
+
+@pytest.mark.asyncio
+async def test_the_poll_records_the_exit_and_clears_the_row_without_waiting() -> None:
+    """THE FIX: no rejected closes, no 120s grace — the row clears on the periodic sync."""
+    from project_mai_tai.db.models import Fill
+    sf = build_test_session_factory()
+    with sf() as session:
+        _seed_entry(session)
+    svc = _poll_service(sf)
+    svc.broker_adapter = _ExitAdapter(_POLL_EXIT)
+    svc._managed_v2_symbols.add(("live:orb", "BIYA"))
+
+    await svc._poll_native_oco_exits()
+
+    with sf() as session:
+        fills = session.scalars(select(Fill)).all()
+    assert len(fills) == 1 and fills[0].side == "sell"
+    assert fills[0].price == Decimal("3.93")
+
+
+@pytest.mark.asyncio
+async def test_no_exit_at_the_broker_leaves_the_position_alone() -> None:
+    """⛔ THE DANGEROUS DIRECTION. A still-open position must NOT be closed just because the poll
+    ran — that would abandon a live position's ladder."""
+    from project_mai_tai.db.models import Fill
+    sf = build_test_session_factory()
+    with sf() as session:
+        _seed_entry(session)
+    svc = _poll_service(sf)
+    svc.broker_adapter = _ExitAdapter(None)          # bracket still working
+    svc._managed_v2_symbols.add(("live:orb", "BIYA"))
+
+    await svc._poll_native_oco_exits()
+
+    with sf() as session:
+        assert session.scalars(select(Fill)).all() == []
+    assert ("live:orb", "BIYA") in svc._managed_v2_symbols
+
+
+@pytest.mark.asyncio
+async def test_the_per_symbol_throttle_limits_broker_calls() -> None:
+    """⛔ RATE LIMIT. Webull 429s readily (the exit-fill probe and the 07-24 mirror flood). Polling
+    every managed symbol on every ~15s sync must not become a call storm."""
+    sf = build_test_session_factory()
+    with sf() as session:
+        _seed_entry(session)
+    svc = _poll_service(sf, min_secs=999.0)
+    svc.broker_adapter = _ExitAdapter(None)
+    svc._managed_v2_symbols.add(("live:orb", "BIYA"))
+
+    for _ in range(5):
+        await svc._poll_native_oco_exits()
+    assert svc.broker_adapter.calls == 1              # throttled to one inside the window
+
+
+@pytest.mark.asyncio
+async def test_exit_poll_flag_off_makes_no_broker_call() -> None:
+    sf = build_test_session_factory()
+    svc = _poll_service(sf, enabled=False)
+    svc.broker_adapter = _ExitAdapter(_POLL_EXIT)
+    svc._managed_v2_symbols.add(("live:orb", "BIYA"))
+    await svc._poll_native_oco_exits()
+    assert svc.broker_adapter.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_a_broker_failure_does_not_spin_the_poll() -> None:
+    """The clock is stamped BEFORE the call, so a persistently failing symbol is retried once per
+    window rather than on every sync."""
+    sf = build_test_session_factory()
+    with sf() as session:
+        _seed_entry(session)
+
+    class _Boom:
+        calls = 0
+
+        async def fetch_oco_exit_fill(self, *a, **k):
+            _Boom.calls += 1
+            raise RuntimeError("broker down")
+
+    svc = _poll_service(sf, min_secs=999.0)
+    svc.broker_adapter = _Boom()
+    svc._managed_v2_symbols.add(("live:orb", "BIYA"))
+    for _ in range(4):
+        await svc._poll_native_oco_exits()            # must not raise
+    assert _Boom.calls == 1

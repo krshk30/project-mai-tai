@@ -722,6 +722,10 @@ class Settings(BaseSettings):
     # default: it WRITES rows (a synthetic exit order + its fill), so it wants one attended
     # session before it is trusted.
     oms_record_native_oco_exit_fills_enabled: bool = False
+    # POLL the OCO child legs on the periodic sync instead of waiting for the close path. Separate
+    # flag from the capture itself so the (proven) reactive path can stay on if the poll misbehaves.
+    oms_native_oco_exit_poll_enabled: bool = False
+    oms_native_oco_exit_poll_min_secs: float = 30.0
     schwab_access_token: str | None = None
     schwab_access_token_expires_at: str | None = None
     schwab_refresh_token: str | None = None
