@@ -31,7 +31,7 @@ def _safe(**overrides) -> SchwabV2Strategy:
     return _strat(strategy_schwab_1m_v2_cw_armed_segment_safety_enabled=True, **overrides)
 
 
-def _bar(high: float, *, ts: int, vol: int = 10_000, low: float | None = None) -> OHLCVBar:
+def _bar(high: float, *, ts: int, vol: int = 25_000, low: float | None = None) -> OHLCVBar:
     return OHLCVBar(timestamp_ms=ts, open=high - 0.1, high=high,
                     low=high - 0.2 if low is None else low, close=high - 0.05, volume=vol)
 

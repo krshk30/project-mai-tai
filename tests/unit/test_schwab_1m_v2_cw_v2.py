@@ -36,7 +36,7 @@ def _strat_reclaim(**overrides):
     return _strat(**kwargs)
 
 
-def _bar(high: float, *, vol: int = 10_000, low: float | None = None, ts: int = 0) -> OHLCVBar:
+def _bar(high: float, *, vol: int = 25_000, low: float | None = None, ts: int = 0) -> OHLCVBar:
     return OHLCVBar(timestamp_ms=ts, open=high - 0.1, high=high,
                     low=high - 0.2 if low is None else low, close=high - 0.05, volume=vol)
 

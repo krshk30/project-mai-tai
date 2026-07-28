@@ -31,7 +31,7 @@ _ET = ZoneInfo("America/New_York")
 IN_WIN = int(datetime(2026, 7, 10, 11, 0, tzinfo=_ET).timestamp() * 1000)
 
 CNET_THIN = 4011      # the real driving-bar volume when CNET was armed
-FLOOR = 5000          # strategy_schwab_1m_v2_atr_flip_vol_floor default
+FLOOR = 10000         # strategy_schwab_1m_v2_atr_flip_vol_floor -- matches PRODUCTION
 
 
 def _strat(**over):
@@ -68,8 +68,9 @@ def _rest_tick(strat, state, *, trail, volume):
 
 
 # ------------------------------------------------------------------ the floor default
-def test_the_floor_value_is_pinned_at_5000() -> None:
-    """PINS THE VALUE. Operator kept 5000 after reviewing CNET; a silent drift changes what trades."""
+def test_the_floor_value_is_pinned_at_10000() -> None:
+    """PINS THE VALUE, and pins it to what PRODUCTION actually runs. The default said 5000 while the
+    box ran 10000 via env override, so settings.py lied to every reader. Operator confirmed 10000."""
     assert Settings().strategy_schwab_1m_v2_atr_flip_vol_floor == FLOOR
 
 
@@ -162,7 +163,7 @@ def _orb_bar(volume: float) -> OrbBar:
 def test_orb_absolute_floor_blocks_a_relative_spike_on_a_thin_tape() -> None:
     """THE GAP. avg_volume=100 -> the 1.5x relative gate is satisfied by 150 shares."""
     thin = OpeningRange(high=2.00, low=1.90, avg_volume=100.0)
-    assert bar_confirms_breakout(thin, _orb_bar(4_000), OrbConfig()) is False
+    assert bar_confirms_breakout(thin, _orb_bar(9_000), OrbConfig()) is False
 
 
 def test_orb_still_takes_a_genuinely_liquid_breakout() -> None:

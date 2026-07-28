@@ -36,7 +36,7 @@ class OrbConfig:
     # ⭐ ABSOLUTE liquidity floor, shares on the breakout bar (2026-07-28, operator).
     # `vol_mult` alone is RELATIVE: 1.5x a tiny opening-range average is still tiny, so a thin name
     # clears it trivially. v2 has carried an absolute floor for this reason; ORB had none.
-    vol_floor: int = 5000
+    vol_floor: int = 10000
     width_max_pct: float = 12.0
     width_min_pct: float = 2.0
     cutoff_minutes: int = 60          # last entry = session_open + 60m = 10:30 ET

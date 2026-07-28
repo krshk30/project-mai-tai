@@ -49,7 +49,7 @@ def _strat(*, fanout=True, **overrides) -> SchwabV2Strategy:
 
 def _bar(high: float, *, ts: int = 0) -> OHLCVBar:
     return OHLCVBar(timestamp_ms=ts, open=high - 0.1, high=high, low=high - 0.2,
-                    close=high - 0.05, volume=10_000)
+                    close=high - 0.05, volume=25_000)
 
 
 def _sig(flip=None, *, flip_level=None, trail=9.5, state="long", age=1) -> dict:

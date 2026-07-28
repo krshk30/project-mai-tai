@@ -29,7 +29,7 @@ def _strat(**overrides):
     return SchwabV2Strategy(Settings(**kwargs))
 
 
-def _bar(high: float, *, vol: int = 10_000, ts: int = 0) -> OHLCVBar:
+def _bar(high: float, *, vol: int = 25_000, ts: int = 0) -> OHLCVBar:
     return OHLCVBar(
         timestamp_ms=ts,
         open=high - 0.1,
@@ -83,7 +83,7 @@ def test_cw_break_emits_at_three_bar_high():
     assert strat._cw_entry(state, _bar(10.8, ts=5), _sig()) is None
     assert state.cw_armed is True
     # First bar breaking the 3-bar high (11.0) with volume enters at the trigger.
-    draft = strat._cw_entry(state, _bar(11.5, ts=6, vol=10_000), _sig(trail=9.7))
+    draft = strat._cw_entry(state, _bar(11.5, ts=6, vol=25_000), _sig(trail=9.7))
     assert draft is not None
     assert draft.side == "buy" and draft.intent_type == "open"
     assert draft.quantity == Decimal("10")
@@ -105,7 +105,7 @@ def test_cw_sell_flip_cancels_setup():
     assert strat._cw_entry(state, _bar(10.9, ts=5), _sig(flip="SELL", state="short")) is None
     assert state.cw_armed is False
     # A subsequent break must NOT enter (nothing armed).
-    assert strat._cw_entry(state, _bar(12.0, ts=6, vol=10_000), _sig()) is None
+    assert strat._cw_entry(state, _bar(12.0, ts=6, vol=25_000), _sig()) is None
 
 
 def test_cw_thin_break_bar_skipped_then_liquid_break_enters():
@@ -116,7 +116,7 @@ def test_cw_thin_break_bar_skipped_then_liquid_break_enters():
     assert strat._cw_entry(state, _bar(11.6, ts=5, vol=100), _sig()) is None
     assert state.cw_armed is True
     # Next liquid break enters at the trigger.
-    draft = strat._cw_entry(state, _bar(11.7, ts=6, vol=10_000), _sig())
+    draft = strat._cw_entry(state, _bar(11.7, ts=6, vol=25_000), _sig())
     assert draft is not None
     assert draft.metadata["reference_price"] == "11.0000"
 
@@ -126,7 +126,7 @@ def test_cw_no_break_never_emits():
     state = strat.watchlist_state("TEST")
     _run_to_watch(strat, state)
     for i, h in enumerate((10.8, 10.9, 10.5, 10.99), start=5):
-        assert strat._cw_entry(state, _bar(h, ts=i, vol=10_000), _sig()) is None
+        assert strat._cw_entry(state, _bar(h, ts=i, vol=25_000), _sig()) is None
     assert state.cw_armed is True
 
 

@@ -158,7 +158,7 @@ def _gen_session_bars(n: int, base_ms: int) -> list[tuple]:
         low = min(open_, close) - 0.10
         ts = base_ms + i * 60_000
         bars.append((ts, round(open_, 4), round(high, 4), round(low, 4),
-                     round(close, 4), 10_000))
+                     round(close, 4), 25_000))
     return bars
 
 
@@ -222,7 +222,7 @@ def _build_short_then_fresh_touch(strat: SchwabV2Strategy, *, final_vol: int):
         high = close + 0.04                        # below trail → no warmup touch
         low = close - 0.06
         ts = now_ms - (n_warm - i) * 60_000
-        warm.append((ts, open_, high, low, close, 10_000))
+        warm.append((ts, open_, high, low, close, 25_000))
 
     # Replay warmup through the REAL indicator to read the resting trail T.
     probe = SymbolState(symbol="WARM")
@@ -349,15 +349,19 @@ def test_atr_only_mode_hard_disables_paths_1_2() -> None:
 # --------------------------------------------------------------------------- (5)
 
 def test_atr_liquidity_floor_is_the_only_filter() -> None:
-    """vol <= floor → no emit; vol > floor → emit. (Floor default 5000.)"""
+    """vol <= floor → no emit; vol > floor → emit.
+
+    Reads the floor from Settings rather than hard-coding it: the default moved 5000 -> 10000 on
+    2026-07-28 to match what production had been running via env override all along."""
+    floor = Settings().strategy_schwab_1m_v2_atr_flip_vol_floor
     strat_lo = SchwabV2Strategy(Settings())
     strat_lo._atr_enabled = True
-    chart_lo, _ = _build_short_then_fresh_touch(strat_lo, final_vol=5000)   # == floor
+    chart_lo, _ = _build_short_then_fresh_touch(strat_lo, final_vol=floor)      # == floor
     assert [strat_lo.on_bar("TEST", cb) for cb in chart_lo][-1] is None
 
     strat_hi = SchwabV2Strategy(Settings())
     strat_hi._atr_enabled = True
-    chart_hi, _ = _build_short_then_fresh_touch(strat_hi, final_vol=5001)   # > floor
+    chart_hi, _ = _build_short_then_fresh_touch(strat_hi, final_vol=floor + 1)  # > floor
     assert [strat_hi.on_bar("TEST", cb) for cb in chart_hi][-1] is not None
 
 
@@ -385,7 +389,7 @@ def _build_short_then_fresh_touch_n(
         high = close + 0.04                        # below trail → no warmup touch
         low = close - 0.06
         ts = now_ms - (n_warm - i) * 60_000
-        warm.append((ts, open_, high, low, close, 10_000))
+        warm.append((ts, open_, high, low, close, 25_000))
 
     probe = SymbolState(symbol="WARM")
     for (ts, o, h, low, c, v) in warm:
@@ -570,7 +574,7 @@ def _warm_to_short(strat: SchwabV2Strategy, symbol: str = "TEST"):
         close = 12.0 - 0.02 * i
         strat._update_atr_state(
             state, OHLCVBar(now_ms - (200 - i) * 60_000, close + 0.05, close + 0.04,
-                            close - 0.06, close, 10_000))
+                            close - 0.06, close, 25_000))
     assert state.atr_state == "short", "warmup must end short"
     return state, now_ms
 

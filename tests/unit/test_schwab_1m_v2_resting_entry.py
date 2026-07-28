@@ -41,7 +41,7 @@ def _tick(strat, state, *, trail, ts=IN_WIN, st="short", in_window=True, now_ms=
     strat._resting_in_window = lambda now=None: in_window
     strat._now_ms = lambda: now_ms
     state.bars.append(OHLCVBar(timestamp_ms=ts, open=trail + 1, high=trail + 1.2,
-                               low=trail - 0.2, close=trail + 0.9, volume=10_000))
+                               low=trail - 0.2, close=trail + 0.9, volume=25_000))
     strat._cw_v2_resting_track(state, _sig(trail=trail, state=st, state_age=state_age))
     return strat.drain_pending_intents()
 
@@ -250,7 +250,7 @@ def test_window_is_wall_clock_not_bar_ts() -> None:
     assert f(datetime(2026, 7, 23, 15, 59, tzinfo=_ET)) is True      # last minute
     assert f(datetime(2026, 7, 23, 16, 0, tzinfo=_ET)) is False      # 16:00 exclusive
     # and the track obeys the clock, not the (in-window) bar ts
-    st.bars.append(OHLCVBar(timestamp_ms=IN_WIN, open=10, high=10.2, low=9.8, close=10.1, volume=10_000))
+    st.bars.append(OHLCVBar(timestamp_ms=IN_WIN, open=10, high=10.2, low=9.8, close=10.1, volume=25_000))
     strat._resting_in_window = lambda now=None: False                # simulate an out-of-window wall clock
     strat._cw_v2_resting_track(st, _sig(trail=9.5))
     assert strat.drain_pending_intents() == []                       # in-window bar, out-of-window clock -> no place
