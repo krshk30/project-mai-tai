@@ -61,6 +61,20 @@ into one row and `record_fill_if_needed` rejects the rest at `incremental_quanti
 **This affects the LIVE capture too**, whenever a symbol is entered twice in a segment (reclaim).
 Fix shape: put the CHILD id into the exit `client_order_id`.
 
+### Follow-ups CLOSED the same evening (#585) — operator-decided
+| decision | outcome |
+|---|---|
+| Webull 429 loses a trade's P&L | **RETRY, bounded.** `_fetch_oco_exit_detail` now returns `_EXIT_FETCH_FAILED` (distinct from "no exit") and the managed row is held up to `_MAX_EXIT_FETCH_DEFERRALS=3` (~45s). ⛔ Bounded because an open row blocks fan-out re-entry — protection still outranks bookkeeping. |
+| Only ONE exit per entry order | **FIXED.** The child id joins the exit key. BIYA had 4 real exits on 07-27 and 1 was recordable; this bit RECLAIM hardest, i.e. the population being judged right now. Fills still dedupe on `broker_fill_id`, so no double-count. |
+| Spurious 5-bar cooldown | **MEASURE FIRST.** Log now labels `real-position-closed` vs `SPURIOUS-no-shares-ever-held`. Behaviour UNCHANGED and pinned by a test — loosening a cooldown means more live entries. Count for a week, then decide. |
+| Hand-cancel doesn't stop the fan-out leg | **NO CODE — operating procedure.** Hand-cancel **and** set `global_manual_stop_symbols` (#556, built for exactly this). ⛔ And it is NOT "cancel asymmetry": a direct broker DELETE bypasses the bot's cancel path, and the Webull leg fires from a *software* price-cross detector, not from the Schwab order. |
+
+⭐ **An existing invariant was amended explicitly**, not silently:
+`test_a_broker_failure_never_breaks_the_close_path` pinned "the row must still close" via the helper
+returning `None`. That contract changed, so the test now asserts the sentinel **and** drives the
+retry loop to prove it terminates — "the row always closes in the end" is still pinned, just bounded
+instead of immediate. Mutation-checked in four directions; suite green at 1622.
+
 ### Corrections to the batch's own premises
 - Scanner timestamps: **1** corrupt row, not "~3". And **"no fractional seconds" is NOT a
   corruption tell** — 78 CONFIRM rows in 3 days have none, because every correctly-parsed time-only
