@@ -195,3 +195,86 @@ async def test_manual_holding_untouched_scoping_invariant():
     # NO _arm => SYM is not in _managed_v2_symbols (a manual holding is invisible here)
     await svc._v2_overnight_flatten()
     assert _sell_intents(sf) == []
+
+
+# --------------------------------------------- no-bid: NAKED vs PHANTOM (2026-07-27)
+# "No bid" wore one face for two opposite situations and the old code treated both as naked:
+#   (a) we genuinely hold it and the AH book is empty          -> NAKED. stay loud, retry.
+#   (b) the broker holds NOTHING and the row is a PHANTOM      -> nothing to flatten, ever.
+# Live 07-27: two phantom QBTX rows produced 58 ERROR lines in four minutes, every 15s, and
+# cleared nothing — a human had to delete the rows. The flatten cannot price a close for stock
+# that does not exist, so it can never make progress; it just pages forever.
+#
+# NOTE the pre-existing test_no_bid_loud_no_emit asserts only "no sell intent", which is true on
+# BOTH branches — it cannot tell them apart. These assert on the ROW.
+
+def _flat_says(svc, verdict):
+    """Pin `_broker_symbol_is_flat` — the positive-confirmation helper the branch turns on."""
+    async def _fake(acct, symbol, *, established_at=None):
+        if isinstance(verdict, Exception):
+            raise verdict
+        return verdict
+    svc._broker_symbol_is_flat = _fake
+
+
+@pytest.mark.asyncio
+async def test_no_bid_but_broker_flat_reconciles_the_phantom_row() -> None:
+    """THE FIX: a row the broker does not back is cleared instead of paging forever."""
+    sf = _make_sf()
+    svc = _svc(sf)
+    _arm(svc, sf)
+    _force_due(svc)
+    _flat_says(svc, True)                       # broker positively confirms flat
+    await svc._v2_overnight_flatten()
+    row = _row(sf)
+    assert row.current_quantity == 0            # reconciled away
+    assert row.status == "closed"
+    assert _sell_intents(sf) == []              # and NOT by selling anything
+    assert (ACCT, SYM) not in svc._managed_v2_symbols
+
+
+@pytest.mark.asyncio
+async def test_no_bid_while_genuinely_HELD_stays_loud_and_keeps_the_row() -> None:
+    """⛔ THE CASE THAT MUST NOT REGRESS. A real position in an empty AH book is NAKED — the
+    whole reason this sweep exists. It must keep the row and keep retrying, never 'reconcile'
+    away protection because the book happens to be thin."""
+    sf = _make_sf()
+    svc = _svc(sf)
+    _arm(svc, sf)
+    _force_due(svc)
+    _flat_says(svc, False)                      # broker says we HOLD it
+    await svc._v2_overnight_flatten()
+    row = _row(sf)
+    assert row.current_quantity == 100          # untouched
+    assert row.status != "closed"
+    assert (ACCT, SYM) in svc._managed_v2_symbols
+    assert _sell_intents(sf) == []              # still cannot price a close
+
+
+@pytest.mark.asyncio
+async def test_an_unreadable_broker_is_not_a_flat_broker() -> None:
+    """A raised/rate-limited position read must NOT clear protection. This is the 07-15 ERNA
+    shape and the Webull 429 shape: 'I could not tell' is not 'you own nothing'."""
+    sf = _make_sf()
+    svc = _svc(sf)
+    _arm(svc, sf)
+    _force_due(svc)
+    _flat_says(svc, RuntimeError("positions endpoint down"))
+    await svc._v2_overnight_flatten()
+    row = _row(sf)
+    assert row.current_quantity == 100          # kept
+    assert row.status != "closed"
+
+
+@pytest.mark.asyncio
+async def test_a_real_bid_still_closes_normally() -> None:
+    """No-regression: with a bid the sweep emits a close exactly as before and never consults
+    the flat check at all."""
+    sf = _make_sf()
+    svc = _svc(sf)
+    _arm(svc, sf)
+    _force_due(svc)
+    _flat_says(svc, True)                       # would reconcile — must NOT be reached
+    _quote(svc, 9.80)
+    await svc._v2_overnight_flatten()
+    assert len(_sell_intents(sf)) == 1          # closed by SELLING, not by reconciling
