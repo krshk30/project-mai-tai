@@ -31,6 +31,18 @@ logger = logging.getLogger(__name__)
 
 EASTERN = ZoneInfo("America/New_York")
 
+# ⭐ A scanner `confirmed_at` is TIME-ONLY ("09:46:52 AM ET"), so it has to be re-dated onto the
+# trade date. When the scanner carries a stale confirm across sessions, yesterday's time gets
+# stamped onto TODAY and can land in the FUTURE (live 2026-07-28: BIYA/ENTX rows). A confirm cannot
+# legitimately be later than the moment we observed it, so a future stamp is PROOF the value is
+# stale — we fall back to the observation time rather than writing a fictional one into the durable
+# backtest feed (#415), which reads these rows as ground truth.
+#
+# The tolerance covers clock skew between the scanner and this process ONLY. It is deliberately
+# small: a real confirm is always in the past, so anything beyond a skew-sized window is staleness,
+# not a timing artefact.
+FUTURE_CONFIRM_TOLERANCE_SECS = 60.0
+
 _INSERT_SQL = text(
     """
     INSERT INTO scanner_confirmed_events (
@@ -95,7 +107,7 @@ def _parse_confirmed_at(raw: object, trade_date: date, fallback: datetime) -> da
             parsed = datetime.strptime(cleaned, fmt)
         except ValueError:
             continue
-        return datetime(
+        candidate = datetime(
             trade_date.year,
             trade_date.month,
             trade_date.day,
@@ -104,6 +116,17 @@ def _parse_confirmed_at(raw: object, trade_date: date, fallback: datetime) -> da
             parsed.second,
             tzinfo=EASTERN,
         )
+        if (candidate - fallback).total_seconds() > FUTURE_CONFIRM_TOLERANCE_SECS:
+            # Stale carry-over re-dated onto today. Say so loudly and use the observation time --
+            # a future-dated CONFIRM silently poisons every window the backtest feed derives.
+            logger.warning(
+                "[SCANNER-CAPTURE-STALE] confirmed_at=%r re-dates to %s which is AFTER the "
+                "observation time %s — treating as a stale carry-over and using the observation "
+                "time instead",
+                text_value, candidate.isoformat(), fallback.isoformat(),
+            )
+            return fallback
+        return candidate
     return fallback
 
 
