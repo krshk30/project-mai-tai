@@ -1466,6 +1466,8 @@ class SchwabV2Strategy:
                     entry_px=px,
                     session_is_eh=self._cw_is_extended_hours(now_ms),
                     source="reactive",
+                    # ALREADY incremented just above -- the counter reflects THIS entry.
+                    entry_n=state.cw_entries_this_flip,
                 )
             )
         return TradeIntentDraft(
@@ -1745,7 +1747,9 @@ class SchwabV2Strategy:
         if self._dual_broker_fanout_enabled:
             self._pending_webull_fanout_intents.append(
                 self._build_webull_fanout_draft(
-                    state, entry_px=level, session_is_eh=True, source="eh_resting"
+                    state, entry_px=level, session_is_eh=True, source="eh_resting",
+                    # NOT yet incremented on this path -- this leg is the NEXT entry.
+                    entry_n=state.cw_entries_this_flip + 1,
                 )
             )
         return TradeIntentDraft(
@@ -1773,7 +1777,8 @@ class SchwabV2Strategy:
 
     # ---------------------------------------------------- Dual-broker FAN-OUT (Webull leg)
     def _build_webull_fanout_draft(
-        self, state: SymbolState, *, entry_px: float, session_is_eh: bool, source: str
+        self, state: SymbolState, *, entry_px: float, session_is_eh: bool, source: str,
+        entry_n: int,
     ) -> TradeIntentDraft:
         """Build the parallel Webull FAN-OUT leg draft (account-agnostic; the bot routes it to the
         Webull emitter). ALWAYS a MARKET-at-cross in RTH (the OMS `_apply_v2_oco_bracket_entry`
@@ -1790,8 +1795,13 @@ class SchwabV2Strategy:
             ),
             "fanout_leg": "webull",
             "fanout_source": source,
-            # segment identity, same reasoning as the resting path above
-            "cw_entry_n": str(state.cw_entries_this_flip + 1),
+            # Segment identity, same reasoning as the resting path above. ⛔ `entry_n` is supplied by
+            # the CALLER and never derived here: the three fan-out sites sit on opposite sides of the
+            # `cw_entries_this_flip += 1` that the reactive path performs. Computing `+1` inside this
+            # helper tagged every reactive fan-out leg one HIGHER than its own Schwab primary
+            # (shipped in #570), which silently mislabels first-entry as reclaim on exactly the path
+            # reclaims use -- so any first-vs-reclaim split built on it was wrong.
+            "cw_entry_n": str(entry_n),
             "cw_arm_bar_ts": str(int(state.cw_arm_bar_ts or 0)),
             "order_type": "limit" if session_is_eh else "market",
             "source": "schwab_1m_v2",
@@ -1843,7 +1853,9 @@ class SchwabV2Strategy:
         )
         self._pending_webull_fanout_intents.append(
             self._build_webull_fanout_draft(
-                state, entry_px=px, session_is_eh=False, source="rth_resting"
+                state, entry_px=px, session_is_eh=False, source="rth_resting",
+                # NOT yet incremented on this path -- this leg is the NEXT entry.
+                entry_n=state.cw_entries_this_flip + 1,
             )
         )
 
