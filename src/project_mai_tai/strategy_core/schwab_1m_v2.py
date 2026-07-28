@@ -139,6 +139,12 @@ class SymbolState:
     bars: Deque[OHLCVBar] = field(default_factory=lambda: deque(maxlen=300))
     last_quote: Quote | None = None
     position_qty: int = 0
+    # Shares held per ACTUAL FILLS (virtual_positions) only -- NOT the "do we own this" union in
+    # `position_qty`, which also counts our own in-flight open intents. A resting buy-stop's intent
+    # stays `submitted` for its whole life, so the union reports "in position" for an order that has
+    # not filled. Only the resting-order OWNERSHIP gate reads this; every other gate keeps the
+    # conservative union deliberately. See `_cw_v2_resting_track`.
+    position_qty_held: int = 0
     last_entry_price: float | None = None
     # Indicator memo for cross detection (v1.32 needs prev_* to fire only
     # on transitions, not while a condition continues to hold true).
@@ -561,14 +567,19 @@ class SchwabV2Strategy:
     def drop_symbol(self, symbol: str) -> None:
         self._symbol_states.pop(symbol, None)
 
-    def update_position(self, symbol: str, qty: int) -> None:
+    def update_position(self, symbol: str, qty: int, *, held_qty: int | None = None) -> None:
         """Called by the engine each position-poll cycle. On a True→False
         transition (OMS just closed our position), arm the cooldown so we
         don't re-enter immediately on the same bar.
+
+        `qty` is the conservative UNION (fills ∪ in-flight open intents) and keeps driving every
+        existing gate unchanged. `held_qty` is fills-only; it defaults to `qty` so a caller that
+        does not supply it -- and every existing test -- behaves exactly as before.
         """
         state = self.watchlist_state(symbol)
         prev = state.position_qty
         state.position_qty = max(0, int(qty))
+        state.position_qty_held = max(0, int(qty if held_qty is None else held_qty))
         if prev > 0 and state.position_qty == 0:
             state.cooldown_bars_remaining = self.cfg.cooldown_bars
             # Say only what was OBSERVED. This poll sees a qty transition, not a cause: the
@@ -1590,8 +1601,26 @@ class SchwabV2Strategy:
             return
         if self._entries_held:   # boot-hold suppresses all entries
             return
-        if state.position_qty != 0:
+        if state.position_qty_held != 0:
             # In a position -> the OTOCO exit owns it. Drop the flag + any pending-fill grace.
+            #
+            # ⭐ HELD, not the union (2026-07-28, the live EGG/POLA orphan). `position_qty` counts
+            # in-flight open intents too, and a resting buy-stop's intent stays `submitted` for its
+            # ENTIRE life -- it only resolves when price triggers it. So the union reported qty=2 for
+            # an order that had not filled, this gate cleared `resting_active` WITHOUT cancelling the
+            # broker order, and from that instant neither the 0.5% STABLE-REST reprice nor the
+            # flip-no-fill cancel could fire again. The order was orphaned: live at the broker,
+            # invisible to the strategy that placed it.
+            #
+            # It is a LATCH RACE, which is why it looked intermittent. INLF's trail moved >=0.5%
+            # every 2-3 min so it repriced before the position poll saw its own intent (24 places,
+            # pos_qty=0 throughout). EGG's trail sat still, the poll latched qty=2, and the gate then
+            # blocked every FUTURE reprice too -- the operator had to cancel by hand twice while the
+            # order sat at 3.93 and price fell to 3.55.
+            #
+            # Only THIS gate moves to held. Re-entry/reactive/fan-out gates keep the conservative
+            # union on purpose: dropping resting intents there would let a market buy fire while a
+            # stop-limit rests, i.e. a double position.
             if state.resting_active or state.resting_flip_ms:
                 state.resting_active = False
                 state.resting_level = 0.0

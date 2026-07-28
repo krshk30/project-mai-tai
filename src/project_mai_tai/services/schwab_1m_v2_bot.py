@@ -778,13 +778,14 @@ class SchwabV2BotService:
         )
 
     async def _position_poll_pass(self) -> None:
-        positions = await asyncio.to_thread(self._fetch_open_positions)
-        if positions is None:
+        maps = await asyncio.to_thread(self._fetch_position_maps)
+        if maps is None:
             return
+        positions, held = maps
         tracked = set(self._watchlist) | set(self.strategy._symbol_states.keys())
         for symbol in tracked:
             qty = positions.get(symbol, 0)
-            self.strategy.update_position(symbol, qty)
+            self.strategy.update_position(symbol, qty, held_qty=held.get(symbol, 0))
 
     def _fetch_reportable_state(self) -> dict[str, list]:
         """REPORTING ONLY -- what the operator sees. Deliberately SEPARATE from
@@ -947,17 +948,31 @@ class SchwabV2BotService:
         for the v2 broker account, keyed by symbol. Quantity is the max
         across sources (a conservative "do we own this" signal).
         """
+        return self._fetch_position_maps()[0]
+
+    def _fetch_position_maps(self) -> tuple[dict[str, int], dict[str, int]]:
+        """Returns (union, held).
+
+        `union` is the historical conservative signal -- virtual_positions ∪ in-flight open intents
+        -- and is what `_fetch_open_positions` still returns, so every existing caller is unchanged.
+
+        `held` counts virtual_positions ONLY, i.e. shares we actually own per filled orders. The two
+        differ for exactly one reason: a resting buy-stop's open intent stays `submitted` for its
+        whole life, so the union calls it a position before it has filled. The resting-order
+        ownership gate needs `held`; nothing else does. See the comment in `_cw_v2_resting_track`.
+        """
         if self.session_factory is None:
-            return {}
+            return {}, {}
         account_name = self.settings.strategy_schwab_1m_v2_account_name
         positions: dict[str, int] = {}
+        held: dict[str, int] = {}
         try:
             with self.session_factory() as session:
                 broker = session.scalar(
                     select(BrokerAccount).where(BrokerAccount.name == account_name)
                 )
                 if broker is None:
-                    return positions
+                    return positions, held
                 # Virtual positions = mai-tai's authoritative view of what
                 # we own (synchronized by OMS on fills).
                 for vp in session.scalars(
@@ -971,6 +986,7 @@ class SchwabV2BotService:
                         positions[symbol] = max(
                             positions.get(symbol, 0), int(vp.quantity)
                         )
+                        held[symbol] = max(held.get(symbol, 0), int(vp.quantity))
                 # In-flight open intents — block re-entry until OMS resolves
                 # the prior intent (filled / rejected / cancelled).
                 strategy = session.scalar(
@@ -992,7 +1008,7 @@ class SchwabV2BotService:
                             positions[symbol] = max(positions.get(symbol, 0), qty)
         except Exception:
             logger.exception("schwab_1m_v2 _fetch_open_positions failed")
-        return positions
+        return positions, held
 
     async def _scanner_consumer_loop(self) -> None:
         """Seed from the latest existing strategy-state snapshot, then tail
