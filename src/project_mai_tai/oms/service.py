@@ -370,6 +370,9 @@ class OmsRiskService:
         # quote. In-memory so the hot quote path never does a per-tick Redis read.
         self._cw_flip_pending: set[tuple[str, str]] = set()
         # Operator manual-stop cache (see `_load_global_manual_stop_symbols`).
+        # Per-symbol clock for the OCO exit poll, so a managed position is not re-queried on
+        # every sync (Webull 429s readily — see the exit-fill probe and the mirror flood).
+        self._oco_exit_poll_at: dict[tuple[str, str], float] = {}
         self._manual_stop_symbols: set[str] = set()
         self._manual_stop_loaded_at: float = -1e9
         # Bug A follow-up: native stop-guard (re)arms that reverse-rejected because the
@@ -2565,7 +2568,58 @@ class OmsRiskService:
         self._v2_exit_close_failures[key] = 0  # genuinely still held -> keep managing, re-count later
         return False
 
-    async def _close_resolved_oco_managed_row(self, acct: str, symbol: str) -> None:
+    async def _poll_native_oco_exits(self) -> None:
+        """Ask the broker, on the PERIODIC SYNC, whether each open managed position's OCO exit has
+        already filled — instead of waiting for the close path to notice.
+
+        ⭐ WHY (measured live 2026-07-28): the close path needs 3 REJECTED CLOSES plus the 120s
+        fresh-fill grace, so an exit at 09:36:40 was not recorded until 09:53:33 — **~17 minutes**.
+        That lag is not only a reporting problem. The fan-out guard
+        `fanout_webull_collision_managed` refuses a new leg while an open managed row exists, so the
+        stale row BLOCKS RE-ENTRY: INLF signalled 5.4850, was skipped because the prior row was
+        still open (its exit filled 5 SECONDS later), and the next signal a minute on filled at
+        5.6200 — **+2.46% worse entry against a +2% target**. 7 of 9 lost signals that day were
+        this guard.
+
+        Safe to act on without a flat-read grace: unlike `_broker_symbol_is_flat`, this returns the
+        broker's POSITIVE execution record (a FILLED child leg with a price and an order id), which
+        is the same authority `_close_resolved_oco_managed_row` already documents.
+
+        Never raises — bookkeeping must not break the sync that protects the account.
+        """
+        settings = getattr(self, "settings", None)
+        if not bool(getattr(settings, "oms_native_oco_exit_poll_enabled", False)):
+            return
+        min_secs = float(getattr(settings, "oms_native_oco_exit_poll_min_secs", 30.0) or 0)
+        now = time.monotonic()
+        for key in list(getattr(self, "_managed_v2_symbols", set())):
+            acct, symbol = key
+            if now - self._oco_exit_poll_at.get(key, -1e9) < min_secs:
+                continue
+            self._oco_exit_poll_at[key] = now      # stamp BEFORE the call: a failure must not spin
+            try:
+                base_coid = await self._run_db(
+                    lambda session: str(
+                        getattr(self._find_oco_entry_order(session, acct, symbol),
+                                "client_order_id", "") or ""
+                    ),
+                    commit=False,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001
+                continue
+            detail = await self._fetch_oco_exit_detail(acct, symbol, base_coid)
+            if not detail:
+                continue
+            self.logger.info(
+                "[OMS-OCO-EXIT-POLL] %s %s broker shows the OCO exit filled qty=%s @%s — "
+                "recording now instead of waiting for the close path",
+                acct, symbol, detail.get("quantity"), detail.get("price"),
+            )
+            await self._close_resolved_oco_managed_row(acct, symbol, detail=detail)
+
+    async def _close_resolved_oco_managed_row(self, acct: str, symbol: str, *, detail=None) -> None:
         """Close the phantom v2 managed row for a symbol whose native OCO resolved BY A FILL.
 
         ⭐ WHY THIS EXISTS (2026-07-22): the broker-created OCO fill closes the position but never
@@ -2588,10 +2642,13 @@ class OmsRiskService:
 
         base_coid = ""
         try:
-            base_coid = await self._run_db(_read_base, commit=False)
+            if detail is None:
+                base_coid = await self._run_db(_read_base, commit=False)
         except Exception:  # noqa: BLE001 - bookkeeping only; never block the phantom-row close
             self.logger.warning("[OMS-OCO-EXIT-FILL] %s %s entry-order lookup failed", acct, symbol)
-        detail = await self._fetch_oco_exit_detail(acct, symbol, base_coid)
+        if detail is None:
+            # the poll already fetched it; do not spend a second broker round trip (Webull 429s)
+            detail = await self._fetch_oco_exit_detail(acct, symbol, base_coid)
 
         def _close(session: Session) -> None:
             if detail:
@@ -3029,6 +3086,14 @@ class OmsRiskService:
         # is the source of truth, never in-memory arm state. Safe on the boot path too: a
         # restart starts with an empty set and only stands down once the broker confirms.
         await self._refresh_native_oco_armed_state(account_names)
+        # Catch a resolved OCO exit HERE (~15s) rather than letting the close path discover it
+        # ~17min later — the stale managed row blocks fan-out re-entry. See _poll_native_oco_exits.
+        try:
+            await self._poll_native_oco_exits()
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - bookkeeping must never break the protective sync
+            self.logger.exception("[OMS-OCO-EXIT-POLL] pass failed")
         position_summary = await self.sync_broker_positions(account_names=account_names)
         return {
             "accounts": position_summary["accounts"],
