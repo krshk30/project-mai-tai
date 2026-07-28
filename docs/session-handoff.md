@@ -17,6 +17,78 @@
 
 ---
 
+## ⭐⭐⭐ 2026-07-27 (pt 4, EVENING) — P&L blackout ROOT-CAUSED + FIXED · 3 flags ON · reclaim back ON
+
+Post-close session. **13 PRs merged today.** Everything below is deployed and verified.
+
+### The headline: the bot page's P&L was not "never wired" — it BROKE on 07-22
+Operator: *"PNL from bot's page is blank... used to work till Friday."* They were right and I was
+wrong to say the field was never populated. The page's P&L comes from
+`collect_completed_trade_cycles` over DB **`fills`**, NOT the snapshot's hardcoded `daily_pnl`.
+
+    Schwab sell FILLS   07-20: 3 · 07-21: 5 · 07-22: 1 · 07-23: 0 · 07-27: 0
+    Schwab sell ORDERS  07-23: 11 REJECTED · 07-27: 6 REJECTED
+
+Exit fills stopped **the day the native OCO went live**. The exit executes on a broker-created
+child leg the OMS never placed, so nothing books a fill; the OMS then fires its own close, which
+the broker rejects (already flat). **Not a Webull problem** — the fan-out only made it total.
+
+**FIXED in two steps, both deployed:** #565 `fetch_oco_exit_fill` on BOTH adapters (Schwab walks
+`childOrderStrategies`; Webull uses the `T`/`S` suffixed coids), #566 wires both close paths to
+record the exit as a real order + fill. ⛔ Two traps, both found live: a **CANCELED sibling carries
+an execution priced 0.0** (booking it = a −100% trade), and **Webull 429s** if you query both legs
+(only one can fill → return on the first hit).
+
+### Also fixed tonight
+| PR | what |
+|---|---|
+| #562 | **fill-anchored OCO bracket** — legs were priced off the pre-trade REFERENCE, so the "−5%" stop actually ran **−3.85%..−5.83%** (12 combos: ALIGNED 8 / DRIFTED 4) |
+| #563 | attended-check runbook for #562 |
+| #567/#568 | **the OCO watch pager** (`*/15 14-21 UTC`, ET guard 10:00–16:30) |
+| #569 | the overnight flatten **paged 58× in 4 min over a phantom row** and cleared nothing — no-bid ≠ naked, so it now ASKS THE BROKER |
+| #570 | **entry segment identity** (`cw_entry_n` + `cw_arm_bar_ts`) so reclaim can be judged on live fills |
+
+### ⚠️ FOUR flags switched ON tonight — all were OFF by default
+    webull_bracket_realign_on_fill_enabled      = True   (#562)
+    oms_record_native_oco_exit_fills_enabled    = True   (#565/#566)
+    strategy_schwab_1m_v2_cw_v2_reclaim_enabled = True   (reversal of #456)
+    (oms_native_oco_resolve_flat_reconcile_enabled was already True)
+
+**Reclaim is the one to watch.** It reverses a decision made on LIVE money (firsts n=17 win 58%
+median +1.93% · **reclaims n=13 win 38% median −4.98%**). Operator's call, and the reasoning is
+sound: *"testing is not going to give us the real actual issues — only the live."* Two things
+differ from July: the **1-bar reclaim gap is now ON** (targets the ~8s re-entry that caused it) and
+exits are native OCO. ⭐ It moves the **REACTIVE** path (7d: 19 orders / 12 filled); the **resting
+path is NOT capped** by `max_entries_per_flip` and never was.
+
+### ⛔ Judging reclaim: do NOT group by `cw_flip_level`
+It repeats across segments when the ATR trail has not moved — FIEE booked two SEPARATE round trips
+2 min apart at an identical level, and BIYA/ENTX looked like 2-per-flip on a day reclaim was OFF.
+Use `cw_arm_bar_ts` (segment) + `cw_entry_n` (1=first, 2=reclaim), shipped in #570.
+[[project-mai-tai-v2-entry-segment-identity]]
+
+### Which strategy trades where (asked and answered)
+Only **schwab_1m_v2** touches Webull, via the fan-out. `polygon_30s` is **paper only**; ORB is
+inactive. Fill asymmetry is by design: Schwab rests a stop-limit (~13% trigger), Webull buys MARKET
+at the cross (~100%).
+
+### ⛔ Process notes (the two that cost the most)
+- **`awk '$0 >= "<date>"'` compares LEXICALLY** — untimestamped traceback/JSON lines pass ANY date
+  filter. Produced FOUR false alarms today (1630, 414, plus two smaller). **Anchor with `^2026-`.**
+- **A cron script committed from Windows lands 100644** and silently never runs. #568.
+- Mutation testing caught **6 tests passing for the wrong reason** across the day — an unconfigured
+  account short-circuiting to None, and filters masking each other. Isolate each guard.
+
+### Open
+1. **Watch the 4 flags tomorrow** — the pager covers two of them; reclaim needs the `cw_entry_n` split.
+2. Fossil-warmup guard on newest-bar age (⛔ design doc first — bar-build).
+3. `test_scanner_cycle_history_retention_and_dedup` is **FLAKY** (leaks a pending
+   `hydrate-generic-ELAB` task): failed 2×, passed 4× incl. alone on a clean tree.
+4. Missed-flip sweep across ~2 weeks (off-hours), tracker now honest.
+5. `docs/session-handoff.md` is ~1800 lines vs its own ~400 rule — roll into `handoff-archive/`.
+
+---
+
 ## ⭐⭐ 2026-07-27 (pt 3, FINAL) — **LIVE OPS DAY**: 7 PRs · Webull fan-out made VISIBLE · BIYA SOLVED · bracket-anchoring defect found
 
 Market-hours session, all deployed and verified live. Fan-out stayed **ON** (operator's call after
