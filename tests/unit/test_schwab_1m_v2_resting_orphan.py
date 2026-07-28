@@ -149,40 +149,80 @@ def test_gate_reads_held_not_the_union() -> None:
     assert _tick(strat, st, trail=3.5500), "read the union here and the order is silently disowned"
 
 
-# ------------------------------------------------- spurious-cooldown instrumentation (measure only)
-# ⭐ The SAME union that caused the orphan also arms a 5-bar cooldown whenever one of our own
-# resting intents merely goes terminal (repriced/cancelled) -- a cooldown for a trade that never
-# existed, silently blocking re-entries. ~11 arms/day, an unknown fraction spurious.
-# Behaviour is deliberately UNCHANGED here: loosening a cooldown means MORE live entries, and that
-# is not a change to make on an unmeasured hunch. This only makes the two cases distinguishable in
-# the log so the real rate can be counted first.
+# ------------------------------------------------------------ NO COOLDOWN (removed 2026-07-28)
+# ⭐ WHY IT WENT. The 5-bar cooldown was invented when reclaim was UNCAPPED and could chase the same
+# trade repeatedly. The per-segment cap (`_cw_v2_max_entries_per_flip` = 2: one resting + one
+# reclaim) replaced the need for it.
+#
+# It was also ALREADY INERT: every gate that read the counter sat on a path `_cw_v2_enabled`
+# short-circuits (`on_quote` returns into `_cw_v2_quote`; `_cw_entry` returns None on its first
+# line), and none of the three LIVE paths -- reactive, resting, fan-out -- ever consulted it.
+#
+# ⛔ And it CONTRADICTED the design: the reclaim gap is 1 bar, the cooldown was 5. Wiring the counter
+# back up would block the exact second entry a segment is meant to allow (resting fills bar 1, spike
+# on bar 4 -> reclaim). Removed rather than left dormant -- a switched-off safety gate invites a
+# future "fix" that would silently break reclaim.
 
-def test_cooldown_from_a_real_exit_is_labelled_real(caplog) -> None:
+def test_the_cooldown_counter_is_gone_entirely() -> None:
+    """PINS THE REMOVAL. A dormant counter is what invites someone to wire it back up."""
     strat = _strat()
-    strat.update_position("EGG", 2, held_qty=2)          # genuinely holding
+    st = strat.watchlist_state("EGG")
+    assert not hasattr(st, "cooldown_bars_remaining")
+    assert not hasattr(strat.cfg, "cooldown_bars")
+
+
+def test_a_close_still_releases_the_reclaim_claim() -> None:
+    """⛔ THE LOAD-BEARING PART. These two lines lived in the same block as the cooldown; removing
+    'the cooldown' without keeping them would silently stop every SECOND entry in a segment."""
+    strat = _strat()
+    st = strat.watchlist_state("EGG")
+    st.cw_v2_emit_claimed = True
+    st.cw_v2_bars_since_exit = 99
+
+    strat.update_position("EGG", 2, held_qty=2)
+    strat.update_position("EGG", 0, held_qty=0)
+
+    assert st.cw_v2_emit_claimed is False, "reclaim can never fire again"
+    assert st.cw_v2_bars_since_exit == 0, "the 1-bar reclaim gap never starts counting"
+
+
+def test_the_close_is_logged_without_claiming_a_cooldown(caplog) -> None:
+    strat = _strat()
+    strat.update_position("EGG", 2, held_qty=2)
     with caplog.at_level("INFO"):
-        strat.update_position("EGG", 0, held_qty=0)      # a real exit
-    assert "cooldown armed" in caplog.text
+        strat.update_position("EGG", 0, held_qty=0)
+    assert "position closed" in caplog.text
+    assert "reclaim claim released" in caplog.text
+    assert "cooldown armed" not in caplog.text
     assert "real-position-closed" in caplog.text
 
 
-def test_cooldown_from_our_own_resting_intent_is_labelled_spurious(caplog) -> None:
-    """THE MEASUREMENT. Union 2 -> 0 with held 0 on BOTH sides means nothing was ever owned:
-    the resting intent was simply repriced or cancelled."""
+def test_a_spurious_close_is_still_labelled(caplog) -> None:
+    """The union fires this transition when one of our OWN resting intents goes terminal. It no
+    longer arms anything, but it DOES still release the reclaim claim, so it stays distinguishable."""
     strat = _strat()
-    strat.update_position("EGG", 2, held_qty=0)          # in-flight resting intent only
+    strat.update_position("EGG", 2, held_qty=0)      # in-flight resting intent only
     with caplog.at_level("INFO"):
-        strat.update_position("EGG", 0, held_qty=0)      # the intent went terminal
-    assert "cooldown armed" in caplog.text
+        strat.update_position("EGG", 0, held_qty=0)
     assert "SPURIOUS-no-shares-ever-held" in caplog.text
 
 
-def test_the_cooldown_still_arms_in_both_cases_behaviour_unchanged() -> None:
-    """PINS 'MEASURE ONLY'. If this ever fails, someone changed entry behaviour while thinking
-    they were adding a log line."""
-    for held in (2, 0):
-        strat = _strat()
-        st = strat.watchlist_state("EGG")
-        strat.update_position("EGG", 2, held_qty=held)
-        strat.update_position("EGG", 0, held_qty=0)
-        assert st.cooldown_bars_remaining == strat.cfg.cooldown_bars, held
+def test_the_per_segment_cap_is_what_bounds_re_entry_now() -> None:
+    """The cap is the replacement for the cooldown; pin BOTH values so the bound cannot vanish.
+
+    The cap is reclaim-driven: 1 with reclaim off, 2 with it on. PRODUCTION runs reclaim ON
+    (re-enabled 2026-07-27), so the live bound is 2 = one resting + one reclaim per ATR segment --
+    exactly the shape the cooldown was removed in favour of.
+    """
+    assert _strat()._cw_v2_max_entries_per_flip == 1                      # reclaim off
+
+    live = _strat(strategy_schwab_1m_v2_cw_v2_reclaim_enabled=True)       # production
+    assert live._cw_v2_max_entries_per_flip == 2
+
+    # ⛔ The gap is ENV-SET in production (`..._CW_V2_RECLAIM_GAP_BARS=1`); the code default is 0.
+    # Pinning the default here documents the divergence instead of hiding it -- reading 0 from this
+    # file and calling it the live value is the same trap the vol floor sprang (5000 vs a live
+    # 10000). Whatever it is, it is FAR below the 5-bar cooldown that used to contradict it.
+    assert _strat()._cw_v2_reclaim_gap_bars == 0, "code default"
+    gapped = _strat(strategy_schwab_1m_v2_cw_v2_reclaim_gap_bars=1)       # what the box runs
+    assert gapped._cw_v2_reclaim_gap_bars == 1

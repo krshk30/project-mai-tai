@@ -424,10 +424,13 @@ async def test_atr_fires_under_warmed_below_min_bars() -> None:
     assert Decimal(draft.metadata["reference_price"]) == Decimal(f"{T:.4f}")
 
 
-def test_atr_under_warmed_respects_flat_and_cooldown() -> None:
-    """The under-warmed branch honors the SAME entry gates as the warm path:
-    an open position OR an active cooldown suppresses the emit."""
-    # Flat gate: position open → no emit.
+def test_atr_under_warmed_respects_the_flat_gate() -> None:
+    """The under-warmed branch honors the SAME entry gate as the warm path: an open position
+    suppresses the emit.
+
+    ⛔ The cooldown half of this test was REMOVED 2026-07-28 with the cooldown itself. Re-entry is
+    bounded by the per-segment entry cap (one resting + one reclaim), not by a bar counter.
+    """
     strat = SchwabV2Strategy(Settings())
     strat._atr_enabled = True
     chart, _ = _build_short_then_fresh_touch_n(strat, n_warm=40, final_vol=100_000)
@@ -435,15 +438,6 @@ def test_atr_under_warmed_respects_flat_and_cooldown() -> None:
         strat.on_bar("TEST", cb)
     strat.watchlist_state("TEST").position_qty = 10        # not flat
     assert strat.on_bar("TEST", chart[-1]) is None
-
-    # Cooldown gate: cooldown active → no emit.
-    strat2 = SchwabV2Strategy(Settings())
-    strat2._atr_enabled = True
-    chart2, _ = _build_short_then_fresh_touch_n(strat2, n_warm=40, final_vol=100_000)
-    for cb in chart2[:-1]:
-        strat2.on_bar("TEST", cb)
-    strat2.watchlist_state("TEST").cooldown_bars_remaining = 3
-    assert strat2.on_bar("TEST", chart2[-1]) is None
 
 
 def test_atr_under_warmed_no_emit_on_stale_bar() -> None:

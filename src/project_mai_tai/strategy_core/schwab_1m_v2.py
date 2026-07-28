@@ -16,7 +16,7 @@ elsewhere — every fix to this strategy must touch ONLY this file):
 - Two entry paths: "MACD Cross" (path 1) and "VWAP Breakout" (path 2)
 - Both require macd_line > signal_line AND macd_line > prev macd_line
 - Seven base filter gates; each "off" toggle = pass-through
-- Per-symbol cooldown after OMS closes the position
+- Per-segment entry cap (one resting + one reclaim); NO cooldown (removed 2026-07-28)
 - Bar-close evaluation only (intrabar quotes update freshness, not signals)
 
 NO imports from: `schwab_native_30s.py`, `bar_builder.py`, `indicators.py`,
@@ -83,8 +83,6 @@ class SchwabV2Config:
     # VWAP (Section 3.2)
     require_vwap_filter: bool = True
     allow_vwap_cross_entry: bool = True
-    # Cooldown (Section 3.2)
-    cooldown_bars: int = 5
     # Trend EMA (Section 3.3)
     require_uptrend: bool = True
     ema_trend_length: int = 9
@@ -153,7 +151,6 @@ class SymbolState:
     prev_close: float | None = None
     prev_vwap: float | None = None
     # State machine (entry side — exits are OMS).
-    cooldown_bars_remaining: int = 0
     # Session-VWAP accumulators (reset at each 04:00 ET anchor).
     vwap_session_anchor_ms: int = 0
     vwap_sum_pv: float = 0.0
@@ -172,7 +169,7 @@ class SymbolState:
     # WRITE-DISJOINT from every field above — the ATR path never reads or
     # mutates prev_macd/prev_signal/prev_close/prev_vwap, the VWAP
     # accumulators, or the pending-cross fields; it only shares the read-only
-    # `bars` deque and the `position_qty`/`cooldown_bars_remaining` gates. See
+    # `bars` deque and the `position_qty` gate. See
     # docs/schwab-1m-v2-atr-flip-entry-design.md §3.
     atr_session_anchor_ms: int = 0
     atr_hl: Deque[float] = field(default_factory=lambda: deque(maxlen=5))
@@ -370,7 +367,7 @@ class SchwabV2Strategy:
     scaled / hard-stop) — we never emit close/scale/cancel intents.
 
     The engine calls update_position(symbol, qty) on a 5s poll so we can
-    track True→False transitions and arm the cooldown.
+    track True→False transitions and release the reclaim claim.
     """
 
     def __init__(
@@ -569,8 +566,9 @@ class SchwabV2Strategy:
 
     def update_position(self, symbol: str, qty: int, *, held_qty: int | None = None) -> None:
         """Called by the engine each position-poll cycle. On a True→False
-        transition (OMS just closed our position), arm the cooldown so we
-        don't re-enter immediately on the same bar.
+        transition (OMS just closed our position), release the CW-v2 reclaim claim so the
+        segment's second entry can fire. There is no cooldown: the per-segment entry cap bounds
+        re-entry instead (see the block below).
 
         `qty` is the conservative UNION (fills ∪ in-flight open intents) and keeps driving every
         existing gate unchanged. `held_qty` is fills-only; it defaults to `qty` so a caller that
@@ -582,34 +580,45 @@ class SchwabV2Strategy:
         state.position_qty = max(0, int(qty))
         state.position_qty_held = max(0, int(qty if held_qty is None else held_qty))
         if prev > 0 and state.position_qty == 0:
-            state.cooldown_bars_remaining = self.cfg.cooldown_bars
+            # ⛔ NO COOLDOWN (removed 2026-07-28, operator decision). A 5-bar cooldown used to be
+            # armed here. It was invented when reclaim was UNCAPPED and could chase the same trade
+            # repeatedly; the `cw_entries_this_flip < _cw_v2_max_entries_per_flip` cap (2 = one
+            # resting + one reclaim per ATR segment) replaced the need for it.
+            #
+            # It was also already inert: every gate that read the counter lives on a path that
+            # `_cw_v2_enabled` short-circuits (`on_quote` returns into `_cw_v2_quote`; `_cw_entry`
+            # returns None on its first line), and none of the three LIVE paths -- reactive,
+            # resting, fan-out -- ever consulted it.
+            #
+            # ⭐ And it CONTRADICTED the design. The reclaim gap is 1 bar; the cooldown was 5. Wiring
+            # the counter back up would block the exact second entry the segment is meant to allow
+            # (resting fills bar 1, spike on bar 4 -> reclaim). Removed rather than left dormant,
+            # because a safety gate that is switched off is an invitation to "fix" it.
+            #
             # Say only what was OBSERVED. This poll sees a qty transition, not a cause: the
             # position may have been closed by the OMS, by a broker-side OCO leg filling, by the
             # operator by hand, or by a phantom row reconciling away. Claiming "OMS closed the
             # position" sent a live 2026-07-27 diagnosis down the wrong path.
-            # ⭐ MEASUREMENT ONLY (2026-07-28) -- behaviour is unchanged. `position_qty` is the
-            # UNION (fills ∪ in-flight open intents), so this transition fires both when a REAL
-            # position closed and when one of our own resting intents merely went terminal
-            # (repriced/cancelled). The second case arms a 5-bar cooldown for a trade that never
-            # existed, silently blocking re-entries. `position_qty_held` is fills-only, so
-            # held==0 on BOTH sides of the transition means nothing was ever owned.
-            # Counting these before changing the gate: loosening a cooldown means MORE live
-            # entries, and that is not a change to make on an unmeasured hunch.
+            # `position_qty` is the UNION (fills ∪ in-flight open intents), so this fires both on a
+            # REAL close and when one of our own resting intents merely went terminal. That still
+            # matters below -- it releases the reclaim claim -- so the two are logged distinctly.
             spurious = prev_held == 0 and state.position_qty_held == 0
             logger.info(
-                "schwab_1m_v2 cooldown armed for %s (bars=%d) — position qty %d -> 0 "
-                "[held %d -> %d, %s] (cause: OMS exit, broker OCO leg, operator close, reconcile, "
-                "or our own resting intent going terminal)",
+                "schwab_1m_v2 position closed for %s — qty %d -> 0 [held %d -> %d, %s]; reclaim "
+                "claim released (no cooldown) (cause: OMS exit, broker OCO leg, operator close, "
+                "reconcile, or our own resting intent going terminal)",
                 symbol,
-                self.cfg.cooldown_bars,
                 prev,
                 prev_held,
                 state.position_qty_held,
                 "SPURIOUS-no-shares-ever-held" if spurious else "real-position-closed",
             )
+            # ⛔ LOAD-BEARING -- these two lines are what actually enables reclaim, and they were
+            # historically written in the same block as the cooldown. Removing "the cooldown"
+            # without keeping them would silently stop every second entry.
             # CW-v2 reclaim: our position just closed -> release the intrabar emit claim so a
-            # SECOND entry can fire in the SAME long segment (reclaim has no cooldown; the
-            # cw_entries_this_flip<2 cap + arm-on-flip bound it). No-op when the sub-flag is off.
+            # SECOND entry can fire in the SAME long segment (the cw_entries_this_flip<2 cap +
+            # arm-on-flip + the 1-bar gap bound it). No-op when the sub-flag is off.
             if self._cw_v2_enabled:
                 state.cw_v2_emit_claimed = False
                 state.cw_v2_bars_since_exit = 0  # reclaim gap: start counting new bars from the exit
@@ -752,7 +761,7 @@ class SchwabV2Strategy:
 
         # 2) Detect a fresh INTRABAR touch of the resting (last-closed-bar) trail
         #    while the prior bar was short, once per short segment, only when flat
-        #    + no cooldown (the shared entry gates).
+        #    (the shared entry gates).
         # Segment free? Flag-ON: the guard is UNCLAIMED (the arm does NOT claim — claiming
         # happens on emit; a skip therefore re-arms). Flag-OFF: the legacy bool.
         seg_free = (
@@ -764,7 +773,6 @@ class SchwabV2Strategy:
             and state.atr_prev_trail is not None
             and seg_free
             and state.position_qty == 0
-            and state.cooldown_bars_remaining == 0
             and px >= state.atr_prev_trail
         ):
             if not self._atr_rearm_enabled:
@@ -790,7 +798,7 @@ class SchwabV2Strategy:
             (ph.last_px - ph.touch_price) / ph.touch_price * 1e4 if ph.touch_price else 0.0
         )
         # Re-check the shared entry gates at resolution (state may have moved).
-        if state.position_qty > 0 or state.cooldown_bars_remaining > 0:
+        if state.position_qty > 0:
             self._log_hold(state, ph, "skip_gated", net_bps)
             return None
         if ph.n_ticks < self._hold_confirm_min_ticks:
@@ -1068,7 +1076,7 @@ class SchwabV2Strategy:
     ) -> TradeIntentDraft | None:
         """Emit an "ATR Flip" open intent if the flag is on and this bar produced
         an entry signal for the configured variant. Reached only when flat + no
-        cooldown + Paths 1/2 didn't fire (shared gates). The liquidity floor is
+        Paths 1/2 didn't fire (shared gates). The liquidity floor is
         the ONLY filter (operator's "just the script"). OFF flag = dormant: the
         indicator state above is still computed every bar, but nothing emits."""
         if not self._atr_enabled or atr_signal is None:
@@ -1155,7 +1163,7 @@ class SchwabV2Strategy:
         self, state: SymbolState, cur: OHLCVBar, atr_signal: dict
     ) -> TradeIntentDraft | None:
         """Confirmed-window entry (variant "CW"). Reached only when the flag is on,
-        from _maybe_atr_emit (so: flat + no cooldown + fresh bar + Paths 1/2 off).
+        from _maybe_atr_emit (so: flat + fresh bar + Paths 1/2 off).
 
         On a BUY flip we arm and reset the wait; over the next 3 bars we track the
         highest high; from the 4th bar on we enter the first bar whose HIGH breaks that
@@ -1359,7 +1367,7 @@ class SchwabV2Strategy:
         WHY (2026-07-22): the CW backtest reproduced the bot's 5 real 07-21 trades 5/5, but a
         1 phantom remained (CPHI 10:55) -- the bot did NOT arm/enter there while the backtest
         did, and the blocking gate was NOT visible in any log (arms/disarms are logged, but the
-        per-bar armed / entries-this-flip / emit-claimed / cooldown / boot-hold state is not).
+        per-bar armed / entries-this-flip / emit-claimed / boot-hold state is not).
         This exposes exactly the fields that decide whether a quote-path entry can fire, so the
         next backtest-vs-live diff on such a case is mechanical, not inferential. See
         docs/atr-30s-and-cw-parity-2026-07-21.md."""
@@ -1368,12 +1376,12 @@ class SchwabV2Strategy:
         logger.info(
             "[V2-CW-STATE-PROBE] sym=%s armed=%s bars_waited=%d trig=%.4f seg_high=%.4f "
             "flip_level=%.4f entries_this_flip=%d max_per_flip=%d emit_claimed=%s "
-            "bars_since_exit=%d reclaim_gap=%d cooldown=%d entries_held=%s pos_qty=%s",
+            "bars_since_exit=%d reclaim_gap=%d entries_held=%s pos_qty=%s",
             state.symbol, state.cw_armed, state.cw_bars_waited, state.cw_trigger,
             state.cw_segment_high, state.cw_flip_level, state.cw_entries_this_flip,
             self._cw_v2_max_entries_per_flip, state.cw_v2_emit_claimed,
             state.cw_v2_bars_since_exit, self._cw_v2_reclaim_gap_bars,
-            state.cooldown_bars_remaining, self._entries_held, state.position_qty,
+            self._entries_held, state.position_qty,
         )
 
     def _liquidity_floor_ok(self, state: SymbolState) -> bool:
@@ -2002,11 +2010,8 @@ class SchwabV2Strategy:
             # MACD/stoch/VWAP/EMA reads — so it can fire now instead of waiting
             # ~135 bars (the bug that blinded fresh-scanned/post-restart symbols
             # like QTEX; see docs/v2-atr-early-warmup-fix-design.md). Honor the
-            # SAME entry gates as the warm path (flat + no cooldown) and tick the
-            # cooldown so an ATR entry's cooldown elapses on schedule.
-            if state.cooldown_bars_remaining > 0:
-                state.cooldown_bars_remaining -= 1
-            if state.position_qty > 0 or state.cooldown_bars_remaining > 0:
+            # SAME entry gate as the warm path (flat).
+            if state.position_qty > 0:
                 return None
             if atr_signal is None:
                 return None  # ATR trail not defined yet
@@ -2016,11 +2021,6 @@ class SchwabV2Strategy:
                 (now_ms - cur_uw.timestamp_ms) / 1000.0
             ) <= MAX_BAR_AGE_SECONDS_FOR_EMIT
             return self._maybe_atr_emit(state, cur_uw, atr_signal, fresh_uw)
-
-        # Decrement cooldown on every new bar (independent of whether we
-        # would have signaled). v1.32 spec: cooldown ticks down each bar.
-        if state.cooldown_bars_remaining > 0:
-            state.cooldown_bars_remaining -= 1
 
         closes = [b.close for b in state.bars]
         highs = [b.high for b in state.bars]
@@ -2132,7 +2132,7 @@ class SchwabV2Strategy:
                 "vol=%d avg_vol_%d=%.4f rel_vol_x=%.4f "
                 "cross_macd_above=%s cross_vwap_above=%s "
                 "macd_above_sig=%s macd_inc=%s green=%s "
-                "n_bars=%d age_s=%.2f pos_qty=%d cooldown=%d",
+                "n_bars=%d age_s=%.2f pos_qty=%d",
                 state.symbol,
                 cur.timestamp_ms,
                 cur.close,
@@ -2161,7 +2161,6 @@ class SchwabV2Strategy:
                 len(state.bars),
                 bar_age_secs,
                 state.position_qty,
-                state.cooldown_bars_remaining,
             )
 
         # C2: if a NATIVE cross is detected on this bar AND the bar is
@@ -2272,10 +2271,8 @@ class SchwabV2Strategy:
             state.pending_path_vwap = False
             state.pending_cross_bar_ts_ms = 0
 
-        # State-machine gate (entry side): flat + no cooldown + raw entry.
+        # State-machine gate (entry side): flat + raw entry.
         if state.position_qty > 0:
-            return None
-        if state.cooldown_bars_remaining > 0:
             return None
         if self._atr_only_mode:
             # ATR-ONLY chokepoint: hard-disable Paths 1/2 regardless of native OR
