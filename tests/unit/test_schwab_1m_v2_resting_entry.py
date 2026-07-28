@@ -185,7 +185,11 @@ def test_silence_on_fill_position_appears_stops_everything() -> None:
     st = strat.watchlist_state("TEST")
     _tick(strat, st, trail=9.50, now_ms=1000)                        # place
     _tick(strat, st, trail=9.50, st="long", now_ms=2000)            # flip -> grace
-    st.position_qty = 2                                              # the resting order FILLED
+    # The resting order FILLED. A real fill lands in virtual_positions, so BOTH the union and the
+    # held count move; the ownership gate reads held (see test_schwab_1m_v2_resting_orphan.py --
+    # the union alone is also what a merely SUBMITTED resting intent looks like).
+    st.position_qty = 2
+    st.position_qty_held = 2
     out = _tick(strat, st, trail=9.50, st="long", now_ms=3000)
     assert out == []                                                 # no cancel, no place
     assert st.resting_active is False and st.resting_flip_ms == 0
@@ -258,6 +262,7 @@ def test_clears_on_fill_without_cancelling() -> None:
     st = strat.watchlist_state("TEST")
     _tick(strat, st, trail=9.50)                                      # place
     st.position_qty = 2                                               # the resting order FILLED
+    st.position_qty_held = 2                                          # a real fill => shares held
     out = _tick(strat, st, trail=9.50)
     assert out == []                                                  # no cancel (the OTOCO exit owns it)
     assert st.resting_active is False
