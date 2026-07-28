@@ -32,7 +32,7 @@ from project_mai_tai.events import (
     TradeTickEvent,
     TradeTickPayload,
 )
-from project_mai_tai.oms.service import OmsRiskService
+from project_mai_tai.oms.service import _EXIT_FETCH_FAILED, OmsRiskService
 from project_mai_tai.oms.store import OmsStore
 from project_mai_tai.runtime_registry import configured_broker_account_registrations, strategy_registration_map
 from project_mai_tai.settings import Settings
@@ -3935,7 +3935,18 @@ async def test_flag_off_makes_no_broker_call() -> None:
 @pytest.mark.asyncio
 async def test_a_broker_failure_never_breaks_the_close_path() -> None:
     """PROTECTION > BOOKKEEPING. If the exit read fails the row must still close; losing the
-    phantom-row cleanup would restart the rejected-close storm this whole path exists to end."""
+    phantom-row cleanup would restart the rejected-close storm this whole path exists to end.
+
+    ⭐ AMENDED 2026-07-28, deliberately. The failure is now RETRIED a bounded number of times before
+    the row closes, because collapsing "the broker says no exit" into "we could not ask" lost a
+    trade's P&L permanently on a transient Webull 429 (live: CNET 16:11 ET) -- the exact blackout
+    this capture exists to close. So the helper now returns `_EXIT_FETCH_FAILED`, not `None`.
+
+    ⛔ The invariant itself is UNCHANGED and still pinned below: the row always closes in the end.
+    It is bounded by `_MAX_EXIT_FETCH_DEFERRALS` (~45s at the 15s sync), never open-ended, because
+    an open managed row blocks fan-out re-entry. Protection still outranks bookkeeping -- it just
+    gives bookkeeping a few seconds to succeed first.
+    """
     sf = build_test_session_factory()
     svc = _oco_service(sf)
 
@@ -3944,7 +3955,16 @@ async def test_a_broker_failure_never_breaks_the_close_path() -> None:
             raise RuntimeError("broker down")
 
     svc.broker_adapter = _Boom()
-    assert await svc._fetch_oco_exit_detail("live:orb", "BIYA", "base") is None
+    got = await svc._fetch_oco_exit_detail("live:orb", "BIYA", "base")
+    assert got is _EXIT_FETCH_FAILED, "a transient failure must stay distinguishable from 'no exit'"
+
+    # THE INVARIANT: retries are bounded, so the row is guaranteed to close.
+    svc._oco_exit_fetch_deferrals = {}
+    deferrals = 0
+    while svc._defer_for_exit_fetch("live:orb", "BIYA"):
+        deferrals += 1
+        assert deferrals <= 10, "unbounded retry — the managed row would never close"
+    assert deferrals == svc._MAX_EXIT_FETCH_DEFERRALS
 
 
 @pytest.mark.asyncio
