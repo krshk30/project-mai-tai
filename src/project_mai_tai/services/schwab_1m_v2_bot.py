@@ -36,6 +36,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from project_mai_tai.db.models import (
     BrokerAccount,
+    Fill,
     OmsManagedPosition,
     Strategy,
     StrategyBarHistory,
@@ -737,8 +738,8 @@ class SchwabV2BotService:
             pending_open_symbols=reportable["pending_open"],
             pending_close_symbols=reportable["pending_close"],
             pending_scale_levels=[],
-            daily_pnl=0.0,
-            closed_today=[],
+            daily_pnl=reportable["daily_pnl"],
+            closed_today=reportable["closed_today"],
             recent_decisions=[],
             indicator_snapshots=[],
             bar_counts=dict(self._bar_counts),
@@ -801,11 +802,17 @@ class SchwabV2BotService:
         Never raises: the snapshot MUST still publish on a DB blip, because data_health and
         cw_armed_segments in the same payload are what the health crons page on.
         """
-        empty: dict[str, list] = {"positions": [], "pending_open": [], "pending_close": []}
+        empty: dict[str, object] = {
+            "positions": [], "pending_open": [], "pending_close": [],
+            "closed_today": [], "daily_pnl": 0.0,
+        }
         if self.session_factory is None:
             return empty
         primary = self.settings.strategy_schwab_1m_v2_account_name
-        out: dict[str, list] = {"positions": [], "pending_open": [], "pending_close": []}
+        out: dict[str, object] = {
+            "positions": [], "pending_open": [], "pending_close": [],
+            "closed_today": [], "daily_pnl": 0.0,
+        }
         try:
             with self.session_factory() as session:
                 for mp in session.scalars(
@@ -847,10 +854,93 @@ class SchwabV2BotService:
                             out[key].append(symbol)
                     out["pending_open"].sort()
                     out["pending_close"].sort()
+
+                closed, realized = self._closed_round_trips_today(session)
+                out["closed_today"] = closed
+                out["daily_pnl"] = realized
         except Exception:
             logger.exception("schwab_1m_v2 _fetch_reportable_state failed")
             return empty
         return out
+
+    def _closed_round_trips_today(self, session) -> tuple[list[dict], float]:
+        """Today's COMPLETED trades, paired FIFO from `fills`, with per-trade PERCENT.
+
+        ⭐ PERCENT IS THE PRIMARY FIGURE, per the standing output rule: one $25 name outweighs
+        sixteen $1-7 names and flips conclusions. `daily_pnl` is a float dollar field on the wire
+        so it is filled in for the card, but `closed_today` carries `profit_pct` per trade and
+        that is what any judgement should be made on.
+
+        ⛔ DEPENDS ON EXIT FILLS EXISTING. Native-OCO exits execute on a broker child leg the OMS
+        never placed, so until the exit-fill capture is confirmed working this returns ([], 0.0) --
+        which is the TRUTH ("no completed round trips recorded"), not the hardcoded 0.0 it replaces.
+        See project_mai_tai_oco_exit_fill_blackout.
+
+        FIFO because a symbol can be entered twice in one segment (reclaim) and the exits must pair
+        with the entries in order, not be averaged.
+        """
+        # ORM, not raw SQL: the raw form needed Postgres `AT TIME ZONE`, which SQLite cannot run,
+        # so every unit test would have fallen into the except and returned empty -- the pairing
+        # logic would have been untestable while LOOKING covered.
+        et_now = datetime.now(EASTERN_TZ)
+        day_start = et_now.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(UTC)
+        day_end = day_start + timedelta(days=1)
+        rows = session.execute(
+            select(BrokerAccount.name, Fill.symbol, Fill.side, Fill.quantity, Fill.price,
+                   Fill.filled_at)
+            .join(Strategy, Strategy.id == Fill.strategy_id)
+            .join(BrokerAccount, BrokerAccount.id == Fill.broker_account_id)
+            .where(
+                Strategy.code == STRATEGY_CODE,
+                Fill.filled_at >= day_start,
+                Fill.filled_at < day_end,
+            )
+            .order_by(Fill.filled_at)
+        ).all()
+
+        open_lots: dict[tuple[str, str], list[list]] = {}
+        closed: list[dict] = []
+        realized = 0.0
+        primary = self.settings.strategy_schwab_1m_v2_account_name
+        for acct, symbol, side, qty, price, filled_at in rows:
+            key = (str(acct), str(symbol).upper())
+            q, px = float(qty or 0), float(price or 0)
+            if q <= 0 or px <= 0:
+                continue                      # the $0 cancelled-leg artefact must never price a trade
+            if str(side).lower() == "buy":
+                open_lots.setdefault(key, []).append([q, px, filled_at])
+                continue
+            remaining = q
+            while remaining > 0 and open_lots.get(key):
+                lot = open_lots[key][0]
+                take = min(remaining, lot[0])
+                if take <= 0:
+                    # Defensive: a zero-qty lot would leave `remaining` unchanged and spin this
+                    # loop forever. It should be impossible (a lot is popped the moment it hits 0),
+                    # but this runs every 5s inside a live service and an unbounded while-loop is
+                    # the shape behind the old OMS blocking-loop SPOF. A mutation test that stopped
+                    # popping the lot hung the suite outright, which is how this got noticed.
+                    open_lots[key].pop(0)
+                    continue
+                pct = (px / lot[1] - 1.0) * 100.0 if lot[1] else 0.0
+                closed.append({
+                    "symbol": key[1],
+                    "broker_account_name": key[0],
+                    "leg": "primary" if key[0] == primary else "fanout",
+                    "quantity": take,
+                    "entry_price": round(lot[1], 6),
+                    "exit_price": round(px, 6),
+                    "profit_pct": round(pct, 4),          # ⭐ the figure to judge on
+                    "entry_time": lot[2].isoformat() if lot[2] else "",
+                    "exit_time": filled_at.isoformat() if filled_at else "",
+                })
+                realized += (px - lot[1]) * take
+                lot[0] -= take
+                remaining -= take
+                if lot[0] <= 0:
+                    open_lots[key].pop(0)
+        closed.sort(key=lambda c: c["exit_time"])
+        return closed, round(realized, 4)
 
     def _fetch_open_positions(self) -> dict[str, int]:
         """SQL: virtual_positions(qty>0) ∪ in-flight trade_intents(open)

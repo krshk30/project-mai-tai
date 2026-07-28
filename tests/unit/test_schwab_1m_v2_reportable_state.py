@@ -15,7 +15,7 @@ from __future__ import annotations
 from decimal import Decimal
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -97,7 +97,8 @@ def test_closed_positions_are_not_reported() -> None:
 
 def test_no_positions_reports_empty_not_error() -> None:
     assert _bot(_session_factory())._fetch_reportable_state() == {
-        "positions": [], "pending_open": [], "pending_close": []
+        "positions": [], "pending_open": [], "pending_close": [],
+        "closed_today": [], "daily_pnl": 0.0,
     }
 
 
@@ -109,7 +110,8 @@ def test_a_db_failure_still_lets_the_snapshot_publish() -> None:
 
     bot = _bot(boom)
     assert bot._fetch_reportable_state() == {
-        "positions": [], "pending_open": [], "pending_close": []
+        "positions": [], "pending_open": [], "pending_close": [],
+        "closed_today": [], "daily_pnl": 0.0,
     }
 
 
@@ -140,3 +142,99 @@ def test_trading_logic_read_is_untouched_by_the_reporting_read() -> None:
         _managed(session, "QBTX", FANOUT, 1, "8.80")
         session.commit()
     assert [p["leg"] for p in bot._fetch_reportable_state()["positions"]] == ["fanout"]
+
+
+# ------------------------------------------- closed round trips + daily_pnl (2026-07-28)
+# `daily_pnl` and `closed_today` were the last two hardcoded literals in the snapshot. They are
+# now paired FIFO from `fills`. ⭐ PERCENT is the primary figure per the standing output rule --
+# one $25 name outweighs sixteen $1-7 names and flips conclusions.
+
+def _fill(session, *, acct, symbol, side, qty, price, minute):
+    from datetime import UTC, datetime, timedelta
+    from project_mai_tai.db.models import BrokerOrder, Fill, TradeIntent
+    strategy = session.scalar(select(Strategy).where(Strategy.code == "schwab_1m_v2"))
+    account = session.scalar(select(BrokerAccount).where(BrokerAccount.name == acct))
+    intent = TradeIntent(strategy_id=strategy.id, broker_account_id=account.id, symbol=symbol,
+                         side=side, intent_type="open", quantity=Decimal(str(qty)),
+                         reason="t", status="filled", payload={})
+    session.add(intent)
+    session.flush()
+    order = BrokerOrder(intent_id=intent.id, strategy_id=strategy.id,
+                        broker_account_id=account.id,
+                        client_order_id=f"{symbol}-{side}-{minute}-{acct}", symbol=symbol,
+                        side=side, order_type="market", time_in_force="day",
+                        quantity=Decimal(str(qty)), status="filled", payload={})
+    session.add(order)
+    session.flush()
+    session.add(Fill(order_id=order.id, strategy_id=strategy.id,
+                     broker_account_id=account.id, broker_fill_id=f"{symbol}{side}{minute}{acct}",
+                     symbol=symbol, side=side, quantity=Decimal(str(qty)),
+                     price=Decimal(str(price)),
+                     filled_at=datetime.now(UTC) + timedelta(minutes=minute)))
+
+
+def _seed_accounts(session):
+    session.add_all([
+        Strategy(code="schwab_1m_v2", name="V2", execution_mode="live"),
+        BrokerAccount(name=PRIMARY, provider="schwab", environment="live"),
+        BrokerAccount(name=FANOUT, provider="webull", environment="live"),
+    ])
+    session.commit()
+
+
+def test_a_completed_round_trip_reports_percent_and_pnl() -> None:
+    sf = _session_factory()
+    with sf() as session:
+        _seed_accounts(session)
+        _fill(session, acct=FANOUT, symbol="BIYA", side="buy", qty=1, price="3.859", minute=-30)
+        _fill(session, acct=FANOUT, symbol="BIYA", side="sell", qty=1, price="3.930", minute=-27)
+        session.commit()
+    state = _bot(sf)._fetch_reportable_state()
+    assert len(state["closed_today"]) == 1
+    t = state["closed_today"][0]
+    assert t["profit_pct"] == pytest.approx(1.8399, abs=0.001)   # the real BIYA fan-out trade
+    assert t["leg"] == "fanout"
+    assert state["daily_pnl"] == pytest.approx(0.071, abs=0.0005)
+
+
+def test_an_open_position_is_not_counted_as_closed() -> None:
+    """An entry with no exit is still HELD -- counting it would invent a realised loss."""
+    sf = _session_factory()
+    with sf() as session:
+        _seed_accounts(session)
+        _fill(session, acct=FANOUT, symbol="BIYA", side="buy", qty=1, price="3.859", minute=-5)
+        session.commit()
+    state = _bot(sf)._fetch_reportable_state()
+    assert state["closed_today"] == []
+    assert state["daily_pnl"] == 0.0
+
+
+def test_two_entries_one_segment_pair_FIFO_not_averaged() -> None:
+    """THE RECLAIM SHAPE, live from 07-27 onward: a symbol entered twice must pair its exits with
+    its entries IN ORDER. Averaging would report one blended trade and hide that the reclaim was
+    the loser -- which is the entire question reclaim was re-enabled to answer."""
+    sf = _session_factory()
+    with sf() as session:
+        _seed_accounts(session)
+        _fill(session, acct=PRIMARY, symbol="FIEE", side="buy", qty=2, price="5.00", minute=-40)
+        _fill(session, acct=PRIMARY, symbol="FIEE", side="buy", qty=2, price="6.00", minute=-30)
+        _fill(session, acct=PRIMARY, symbol="FIEE", side="sell", qty=2, price="5.10", minute=-20)
+        _fill(session, acct=PRIMARY, symbol="FIEE", side="sell", qty=2, price="5.40", minute=-10)
+        session.commit()
+    trades = _bot(sf)._fetch_reportable_state()["closed_today"]
+    assert len(trades) == 2
+    assert trades[0]["entry_price"] == 5.00 and trades[0]["profit_pct"] == pytest.approx(2.0)
+    assert trades[1]["entry_price"] == 6.00 and trades[1]["profit_pct"] == pytest.approx(-10.0)
+
+
+def test_a_zero_priced_fill_never_prices_a_trade() -> None:
+    """⛔ the $0 cancelled-OCO-leg artefact: booking it would report -100%."""
+    sf = _session_factory()
+    with sf() as session:
+        _seed_accounts(session)
+        _fill(session, acct=FANOUT, symbol="BIYA", side="buy", qty=1, price="3.859", minute=-30)
+        _fill(session, acct=FANOUT, symbol="BIYA", side="sell", qty=1, price="0", minute=-27)
+        session.commit()
+    state = _bot(sf)._fetch_reportable_state()
+    assert state["closed_today"] == []
+    assert state["daily_pnl"] == 0.0
