@@ -488,9 +488,6 @@ class SchwabV2Strategy:
             getattr(self.settings, "strategy_schwab_1m_v2_cw_v2_resting_entry_band_pct", 0.5) or 0.5
         )
         # STABLE-REST: re-place only on a >= reprice_frac trail move (not every 0.2% wiggle).
-        self._resting_max_drift_frac = float(
-            getattr(settings, "strategy_schwab_1m_v2_cw_v2_resting_entry_max_drift_pct", 4.0) or 4.0
-        ) / 100.0
         self._resting_reprice_frac = float(
             getattr(self.settings, "strategy_schwab_1m_v2_cw_v2_resting_entry_reprice_pct", 1.0) or 1.0
         ) / 100.0
@@ -1620,32 +1617,6 @@ class SchwabV2Strategy:
             trail = float(raw) if raw else float(state.atr_trail or 0.0)
         except (TypeError, ValueError):
             trail = float(state.atr_trail or 0.0)
-        # ⭐ HARD STALENESS BOUND (2026-07-28) — runs BEFORE any state branch, on purpose.
-        # The 0.5% reprice below lives in the SHORT branch only. During a LONG segment
-        # HOLD-THROUGH-FLIP deliberately neither reprices nor cancels, so a resting buy-stop can
-        # sit for the ENTIRE segment while the market walks away: live EGG sat at 4.5257 from
-        # 13:30 to 14:21 ET (~50 min) while price fell to 3.70 — 20%+ above market, and POLA did
-        # the same at 16% for an hour. Whatever the state machine believes, an order that far from
-        # the market is not the setup we placed, and if price rallies back it fills an entry the
-        # strategy no longer wants.
-        #
-        # Measured against the MARKET, not the trail: after a flip to long the trail moves BELOW
-        # price, so a trail-based comparison would fire on every flip and defeat HOLD-THROUGH-FLIP.
-        if state.resting_active and state.resting_level > 0.0:
-            px_now = float(getattr(state.last_quote, "ask_price", 0.0) or 0.0) if state.last_quote else 0.0
-            if px_now <= 0.0:
-                px_now = float(state.bars[-1].close) if state.bars else 0.0
-            if px_now > 0.0 and (state.resting_level / px_now - 1.0) >= self._resting_max_drift_frac:
-                logger.info(
-                    "[V2-RESTING-STALE] %s level=%.4f is %.1f%% above market %.4f (>%.1f%%) -> "
-                    "cancelling; the setup that justified it is gone",
-                    state.symbol, state.resting_level,
-                    (state.resting_level / px_now - 1.0) * 100.0, px_now,
-                    self._resting_max_drift_frac * 100.0,
-                )
-                self._queue_resting_cancel(state, reason="stale_far_from_market")
-                return
-
         if st == "short" and trail > 0.0:
             if not state.resting_active:
                 # ESTABLISHED-SHORT gate (2026-07-23, the SKYQ lesson): only rest once the purple line
