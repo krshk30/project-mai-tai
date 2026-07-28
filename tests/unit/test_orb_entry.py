@@ -17,7 +17,8 @@ def _svc(universe, mode="bar_close"):
     svc._states = {}
     svc._universe = {s.upper() for s in universe}
     svc._pending_intents = []
-    svc._cfg = OrbConfig()
+    # toy volumes; the absolute liquidity floor is covered in its own test file (2026-07-28)
+    svc._cfg = OrbConfig(vol_floor=0)
     svc._mode = ExecutionMode(mode)
     return svc
 
