@@ -250,3 +250,51 @@ def test_insert_sql_has_no_reused_param_subquery():
     sql = str(_INSERT_SQL).lower()
     assert "select count" not in sql
     assert ":reconfirm_seq" in sql
+
+
+# --------------------------------------------------------------------- stale carry-over confirms
+# ⭐ LIVE 2026-07-28: the scanner's `confirmed_at` is TIME-ONLY, so it is re-dated onto the trade
+# date. When a confirm is carried over from a previous session, yesterday's time lands on TODAY —
+# and if that time is later than now, the row is stamped in the FUTURE. BIYA/ENTX both did this.
+# These rows are ground truth for the durable backtest feed (#415), so a fictional timestamp
+# silently poisons every window derived from it. Tell: the bad rows carry no fractional seconds.
+from datetime import date as _date  # noqa: E402
+
+from project_mai_tai.services.scanner_confirmed_capture import (  # noqa: E402
+    FUTURE_CONFIRM_TOLERANCE_SECS,
+    _parse_confirmed_at,
+)
+
+_TRADE_DAY = _date(2026, 7, 28)
+_NOW = datetime(2026, 7, 28, 9, 5, 0, tzinfo=EASTERN)      # observed at 09:05 ET
+
+
+def test_a_normal_past_confirm_is_kept_verbatim() -> None:
+    got = _parse_confirmed_at("08:46:52 AM ET", _TRADE_DAY, _NOW)
+    assert got == datetime(2026, 7, 28, 8, 46, 52, tzinfo=EASTERN)
+
+
+def test_a_future_dated_confirm_falls_back_to_the_observation_time() -> None:
+    """THE REGRESSION. 15:31 ET cannot have been observed at 09:05 ET — it is yesterday's confirm
+    re-dated onto today, and must not be written as a real time."""
+    got = _parse_confirmed_at("03:31:00 PM ET", _TRADE_DAY, _NOW)
+    assert got == _NOW, "a future-dated confirm was written into the durable feed as if real"
+
+
+def test_tolerance_value_is_pinned_and_skew_sized() -> None:
+    """PINS THE THRESHOLD's VALUE, not just the behaviour."""
+    assert FUTURE_CONFIRM_TOLERANCE_SECS == 60.0
+
+    # Just inside the skew window -> kept (a scanner clock a few seconds fast is not staleness).
+    inside = _parse_confirmed_at("09:05:30 AM ET", _TRADE_DAY, _NOW)
+    assert inside == datetime(2026, 7, 28, 9, 5, 30, tzinfo=EASTERN)
+
+    # Just outside -> rejected as stale.
+    outside = _parse_confirmed_at("09:06:30 AM ET", _TRADE_DAY, _NOW)
+    assert outside == _NOW
+
+
+def test_unparseable_and_missing_still_fall_back() -> None:
+    assert _parse_confirmed_at("", _TRADE_DAY, _NOW) == _NOW
+    assert _parse_confirmed_at(None, _TRADE_DAY, _NOW) == _NOW
+    assert _parse_confirmed_at("not a time", _TRADE_DAY, _NOW) == _NOW
