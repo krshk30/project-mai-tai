@@ -17,6 +17,57 @@
 
 ---
 
+## ⛔⭐ 2026-07-28 (LATE) — the liquidity floor guarded ONLY DEAD CODE (#587, #588) — FIXED LIVE
+
+Operator: *"we are buying at ATR flip without checking volume"*. Correct, and the cause was worse
+than a missing check.
+
+### The gate existed, was configured, and protected nothing
+`strategy_schwab_1m_v2_atr_flip_vol_floor` is described in settings as **"the ONLY filter"**. It was
+applied in exactly two functions — `_maybe_atr_emit` and `_cw_entry` — the A/B and break paths that
+the resting flip-entry **replaced**. Every path that actually trades had no check at all:
+
+| path | floor | status |
+|---|---|---|
+| `_maybe_atr_emit` (legacy) | ✅ | dead |
+| `_cw_entry` (break) | ✅ | dead |
+| `_cw_v2_quote` (reactive) | ❌ | **LIVE** |
+| `_cw_v2_resting_track` (resting) | ❌ | **LIVE** |
+| `_fanout_rth_resting_cross` (fan-out) | ❌ | **LIVE** |
+
+> ⭐⭐ **configured ≠ enforced.** Sibling of "written ≠ used" (fossil DB columns) and "empty ≠ true"
+> (the hardcoded snapshot). When a filter is *described* as protecting you, **grep every CALLER**
+> before believing it.
+
+### The live case the operator cited
+```
+CNET 2026-07-28
+19:52:02  [V2-RESTING-PLACE] stop=1.4034   <- driving bar volume 4011
+19:57:06  [V2-FANOUT-RTH-RESTING] px=1.4300 -> parallel Webull leg
+          bought 1.43, stopped out 1.36 = -4.9%
+```
+
+### Design points that must not be undone
+- ⛔ **ARM-ONLY on the resting path** — gates the initial arm, never a reprice or cancel. An order
+  already working must keep being managed even if the tape thins, or we recreate the #580 orphan.
+- ⛔ **The fan-out leg is gated separately** — it fires from its OWN software price-cross detector,
+  so gating the Schwab primary does not cover it.
+- ⛔ **ORB needed an ABSOLUTE floor.** It had only `vol_mult * avg_volume`; 1.5x a tiny opening-range
+  average is still tiny. Added ON TOP of the relative gate, not replacing it.
+- Judged on the **last COMPLETED bar** — the forming bar's volume grows through the minute.
+
+### ⛔ settings.py had been lying about the value
+The default said **5000** while the box ran `..._ATR_FLIP_VOL_FLOOR=10000` **all along**. I nearly
+reported 5000 as the live value, and the operator revised a threshold decision believing it was 5000
+("keep 5K, my mistake about 10K" — when production was already 10K). Aligned to 10000 in #588;
+**live behaviour never changed**. ⭐ **Check the ENV before quoting a default as the live value.**
+
+Raising the default turned **43 tests red** — all a *fixture collision*: they used volume exactly
+`10_000` and the gate is strictly `>`. Bumped to 25_000. ⛔ Only volume literals; `± 10_000` in the
+same files are millisecond timestamps.
+
+Memory: `project_mai_tai_liquidity_floor_guarded_dead_code`.
+
 ## ⭐⭐ 2026-07-28 (EVENING) — after-close batch RUN: 3 PRs merged, 2 flags flipped, 2 studies closed
 
 Ran the whole 07-28 after-close batch. **Three of my own prior assumptions were wrong and are
