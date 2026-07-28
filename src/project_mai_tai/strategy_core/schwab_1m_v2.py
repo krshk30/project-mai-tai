@@ -1376,6 +1376,23 @@ class SchwabV2Strategy:
             state.cooldown_bars_remaining, self._entries_held, state.position_qty,
         )
 
+    def _liquidity_floor_ok(self, state: SymbolState) -> bool:
+        """Last COMPLETED bar's volume must clear `_atr_vol_floor`. True when unknown (no bars).
+
+        ⭐ WHY THIS EXISTS AS A SHARED HELPER (2026-07-28). The floor is described in settings as
+        "the ONLY filter", but it was applied in `_maybe_atr_emit` and `_cw_entry` only -- the two
+        paths that are now DEAD. All three LIVE entry paths (reactive, resting, fan-out) bought with
+        no liquidity check at all. Live CNET: the resting order was placed off a bar with vol=4011,
+        below the floor that was supposed to be guarding us, and the trade lost -4.9%.
+
+        Judged on the last COMPLETED bar for the same reason the exit research judges at the bar
+        close: the forming bar's volume is a partial count that grows through the minute, so gating
+        on it would reject early in every bar and accept late in the same bar.
+        """
+        if not state.bars:
+            return True
+        return float(state.bars[-1].volume) > float(self._atr_vol_floor)
+
     def _cw_v2_quote(self, state: SymbolState, quote: Quote) -> TradeIntentDraft | None:
         """CW-v2 intrabar entry: enter the instant a quote price breaks the frozen trigger, gated
         by rule 7 (whole forming bar above the flip level), the 09:30-10:00 ORB skip, the flat gate,
@@ -1394,6 +1411,10 @@ class SchwabV2Strategy:
             # Boot-hold (P1.3+P1.4): suppress ALL entries until the bot's one-time verify confirms
             # zero reconstructed-uncapped segments and releases. Never releases here; the bot owns
             # release + the timeout page. Detection of a P1.3 miss is the bot's verify, not per-quote.
+            return None
+        if not self._liquidity_floor_ok(state):
+            # LIQUIDITY FLOOR (2026-07-28). Was applied only on the dead A/B + break paths; the
+            # reactive path bought regardless of how thin the tape was.
             return None
         px = float(getattr(quote, "last_price", 0.0) or 0.0)
         if px <= 0.0:
@@ -1664,6 +1685,12 @@ class SchwabV2Strategy:
             trail = float(state.atr_trail or 0.0)
         if st == "short" and trail > 0.0:
             if not state.resting_active:
+                # LIQUIDITY FLOOR (2026-07-28). ⛔ Gates the initial ARM only, never a reprice or a
+                # cancel: an order already working must keep being managed even if the tape thins,
+                # or we recreate the #580 orphan (a live buy-stop nobody reprices). Live CNET was
+                # armed off a bar with vol=4011 against a 5000 floor and lost -4.9%.
+                if not self._liquidity_floor_ok(state):
+                    return
                 # ESTABLISHED-SHORT gate (2026-07-23, the SKYQ lesson): only rest once the purple line
                 # is a REAL, SETTLED downtrend -- the ATR must have been SHORT for >= min_short_bars
                 # consecutive bars. A 1-bar short in a whipsaw (SKYQ ripped +9% then chopped, flipping
@@ -1859,6 +1886,11 @@ class SchwabV2Strategy:
             ask0 = float(getattr(quote, "ask_price", 0.0) or 0.0)
             px = (bid + ask0) / 2.0 if (bid > 0.0 and ask0 > 0.0) else 0.0
         if px <= 0.0 or px < state.resting_level:
+            return
+        if not self._liquidity_floor_ok(state):
+            # LIQUIDITY FLOOR (2026-07-28). This leg fires from a SOFTWARE price-cross detector, so
+            # it is a real independent buy decision and needs its own floor -- it is not covered by
+            # gating the Schwab primary. Live CNET fired here at px=1.4300 on a thin tape.
             return
         state.fanout_webull_claimed = True
         logger.info(

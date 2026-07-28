@@ -13,7 +13,10 @@ from project_mai_tai.strategy_core.orb_intrabar import (
     in_pre_open_universe,
 )
 
-CFG = OrbConfig()
+# These cases use TOY volumes (100-300 shares) to exercise the relative vol_mult gate and
+# the trail/vwap/ema arithmetic. `vol_floor=0` keeps them testing exactly that; the absolute
+# liquidity floor added 2026-07-28 is covered in test_schwab_1m_v2_liquidity_floor_coverage.py.
+CFG = OrbConfig(vol_floor=0)
 OPEN = datetime(2026, 6, 18, 13, 30, tzinfo=timezone.utc)  # 09:30 ET
 
 

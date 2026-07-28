@@ -33,6 +33,10 @@ class ExecutionMode(str, Enum):
 class OrbConfig:
     or_minutes: int = 5
     vol_mult: float = 1.5
+    # ⭐ ABSOLUTE liquidity floor, shares on the breakout bar (2026-07-28, operator).
+    # `vol_mult` alone is RELATIVE: 1.5x a tiny opening-range average is still tiny, so a thin name
+    # clears it trivially. v2 has carried an absolute floor for this reason; ORB had none.
+    vol_floor: int = 5000
     width_max_pct: float = 12.0
     width_min_pct: float = 2.0
     cutoff_minutes: int = 60          # last entry = session_open + 60m = 10:30 ET
@@ -108,6 +112,8 @@ def bar_confirms_breakout(opening_range: OpeningRange, bar: OrbBar, config: OrbC
         return False
     if not bar.volume >= config.vol_mult * opening_range.avg_volume:
         return False
+    if bar.volume < config.vol_floor:
+        return False    # absolute floor: a relative spike on a thin tape is still a thin tape
     if config.require_vwap and not (bar.vwap is not None and bar.close > bar.vwap):
         return False
     if config.require_ema9 and not (bar.ema9 is not None and bar.close > bar.ema9):
