@@ -164,3 +164,43 @@ async def test_v2_scale_exit_also_routes_simulated_never_schwab() -> None:
 def _make_row_status(sf) -> str:
     with sf() as s:
         return s.scalar(select(OmsManagedPosition).where(OmsManagedPosition.symbol == SYM)).status
+
+
+# ------------------------------------------- OCO exit-fill routing (2026-07-27)
+# ⛔ WITHOUT THE ROUTER FORWARDER THE WHOLE EXIT-FILL FEATURE IS A SILENT NO-OP. The OMS holds the
+# ROUTER, not a leaf adapter, and its call site is `getattr(adapter, "fetch_oco_exit_fill", None)`
+# -- a missing forwarder resolves to None, so the capture never runs while the flag is ON and the
+# code is deployed. Found by dry-running the backfill against REAL closed trades instead of waiting
+# for the next session: every row returned
+#   AttributeError: 'RoutingBrokerAdapter' object has no attribute 'fetch_oco_exit_fill'
+
+@pytest.mark.asyncio
+async def test_oco_exit_fill_is_routed_to_the_accounts_adapter() -> None:
+    seen: dict = {}
+
+    class _Leaf:
+        async def fetch_oco_exit_fill(self, acct, symbol, base="", *, resolved_within_seconds=3600.0):
+            seen.update(acct=acct, symbol=symbol, base=base, window=resolved_within_seconds)
+            return {"symbol": symbol, "price": Decimal("3.93"), "quantity": Decimal("1")}
+
+    router = RoutingBrokerAdapter(
+        default_provider="simulated",
+        provider_by_account={"live:orb": "webull"},
+        factories_by_provider={"webull": _Leaf, "simulated": SimulatedBrokerAdapter},
+    )
+    got = await router.fetch_oco_exit_fill("live:orb", "BIYA", "base-coid",
+                                           resolved_within_seconds=99.0)
+    assert got is not None and got["price"] == Decimal("3.93")
+    assert seen == {"acct": "live:orb", "symbol": "BIYA", "base": "base-coid", "window": 99.0}
+
+
+@pytest.mark.asyncio
+async def test_an_adapter_without_oco_children_returns_none_not_attribute_error() -> None:
+    """Alpaca / simulated have no OCO child legs. Absence must degrade to None, never raise into
+    the position-close path."""
+    router = RoutingBrokerAdapter(
+        default_provider="simulated",
+        provider_by_account={"paper:x": "simulated"},
+        factories_by_provider={"simulated": SimulatedBrokerAdapter},
+    )
+    assert await router.fetch_oco_exit_fill("paper:x", "BIYA", "coid") is None
