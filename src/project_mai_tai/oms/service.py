@@ -3955,7 +3955,37 @@ class OmsRiskService:
             quote = self._latest_quotes_by_symbol.get(symbol) or {}
             bid = float(quote.get("bid") or 0.0)
             if bid <= 0.0:
-                # Thin AH / no bid: cannot price the EH limit. LOUD + retry next loop (never give up).
+                # No bid. Two VERY different situations wear the same face here, and the old code
+                # treated both as the naked one:
+                #   (a) we genuinely hold it and the AH book is empty  -> NAKED. Stay loud, retry.
+                #   (b) the broker holds NOTHING and the row is a PHANTOM -> nothing to flatten.
+                # Live 2026-07-27: two phantom QBTX rows (hand-closed earlier) produced 58 ERROR
+                # lines in four minutes, every 15s, and cleared nothing — a human had to delete the
+                # rows. The flatten cannot price a close for stock that does not exist, so it can
+                # never make progress; it just pages forever and drowns the real signal.
+                #
+                # Distinguishing them needs no quote: ASK THE BROKER. `_broker_symbol_is_flat` is
+                # the same positive-confirmation helper the reject-driven reconcile already uses to
+                # delete protection — UNKNOWN and HELD both return False, and a flat read inside the
+                # fresh-fill grace is refused (the 07-15 ERNA shape). So (a) is unchanged in every
+                # respect, including a failed or rate-limited read.
+                entry_at = _as_utc(getattr(snapshot, "entry_time", None))
+                phantom = False
+                try:
+                    phantom = await self._broker_symbol_is_flat(acct, symbol, established_at=entry_at)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:  # noqa: BLE001 - an unreadable broker is NOT a flat broker
+                    phantom = False
+                if phantom:
+                    await self._close_resolved_oco_managed_row(acct, symbol)
+                    self.logger.info(
+                        "[OMS-V2-OVERNIGHT-FLATTEN] %s %s qty=%s NO BID but the broker confirms "
+                        "FLAT -> phantom row, reconciled away (nothing to flatten)",
+                        acct, symbol, snapshot.current_quantity,
+                    )
+                    continue
+                # Genuinely held with no bid: LOUD + retry next loop (never give up).
                 self.logger.error(
                     "[OMS-V2-OVERNIGHT-FLATTEN] %s %s qty=%s NO BID — cannot place close before the "
                     "20:00 gate; retrying. Operator action may be required.",
