@@ -17,6 +17,70 @@
 
 ---
 
+## ⭐⭐⭐ 2026-07-28 (INTRADAY) — RESTING-ORDER ORPHAN root-caused + FIXED LIVE (#580) · #578 REVERTED
+
+**Operator report:** "Resting order again is way off… we have to adjust every minute." EGG's resting
+buy-stop sat at **3.93 while price fell to 3.55** and the bot never adjusted it. The operator
+hand-cancelled EGG **three times** in one afternoon. Same shape as POLA on 07-27.
+
+### Root cause — pinned, not inferred
+`_fetch_open_positions` returns `virtual_positions ∪ in-flight OPEN intents`. **A resting order's
+intent stays `submitted` for its ENTIRE life** — it only resolves when price triggers it. So the
+union reported `qty=2` for an order that had never filled, tripping the first gate of
+`_cw_v2_resting_track`, which cleared `resting_active` **without cancelling the broker order**.
+From that instant neither the 0.5% STABLE-REST reprice nor the flip-no-fill cancel could fire.
+
+*Broker cross-check:* the order was still `WORKING` (unfilled) at the same moment the bot logged
+`pos_qty=2`. A working buy-stop and a position cannot both be true.
+
+### ⭐⭐ It is a LATCH RACE — and the latch is permanent
+Same day, same code path:
+
+| symbol | trail behaviour | `pos_qty` while resting | outcome |
+|---|---|---|---|
+| INLF | moved ≥0.5% every 2–3 min | `0` throughout | **24 reprices**, healthy |
+| EGG | sat still | latched to `2` | **0 reprices**, orphaned |
+
+INLF repriced *before* the position poll saw its own intent. EGG's trail sat still, the poll won the
+race once — and the gate then blocked every **future** reprice too. **Losing the race a single time
+orphans the symbol for good.** That is why "it adjusts sometimes" and "it never adjusts" were both
+true reports, and why this looked intermittent for two days.
+
+### ⛔ The wrong fix I nearly shipped — #578, reverted by #579
+First attempt was a "cancel a resting order that drifted >4% from the market" bound. **Checking it
+against the LIVE order before deploying killed it:** EGG's *legitimate* order sat at 3.93 — exactly
+ON the ATR trail — and was **5.93% above mid**. The guard would have cancelled a healthy setup.
+⭐ **Distance from MARKET cannot separate stale from valid** (on a volatile name the trail is
+legitimately far above price — that IS the premise of a resting buy-stop). Never pick a threshold
+without testing it against a live *valid* case. #578 was merged but **never deployed**; reverted.
+
+### The fix (#580, `347f146`) — deliberately surgical
+Only the resting-order **ownership** gate reads a fills-only count `position_qty_held`. New
+`_fetch_position_maps()` returns `(union, held)`; `_fetch_open_positions()` keeps its exact
+signature/return; `update_position(..., held_qty=None)` defaults to `qty` so every existing caller is
+byte-identical. ⛔ **Every other gate keeps the conservative union on purpose** — reactive entry,
+cooldown, re-entry, fan-out, protected-symbols. Dropping resting intents there would let a market buy
+fire while a stop-limit rests = **double position**.
+
+5 new tests reproducing EGG (incl. the order actually *following the trail down*).
+**Mutation-checked both ways.** Full unit suite green (1598).
+
+### Deploy — 15:15 ET, attended, fleet FLAT (0 shares in `virtual_positions`)
+Merged → pulled → `schwab-1m-v2` restarted clean. The still-orphaned EGG order (stop=3.81, price
+3.675) was cancelled at the broker first, because the restarted bot has no memory of it and would
+otherwise have placed a **second** live buy order alongside it.
+
+### ⚠️ Follow-up NOT done
+The same union arms a **spurious 5-bar cooldown** whenever a resting intent goes terminal
+(`"cooldown armed for EGG — position qty 2 -> 0"` at 18:21:40 UTC with **no real exit**). Same root,
+but it changes entry *timing*, so it needs its own measurement.
+⛔ **Corollary: a `"position qty N -> 0"` log line is NOT proof of a real exit** — check `fills` /
+`virtual_positions` before reading one as a round trip. I misread two of them as round trips today.
+
+Memory: `project_mai_tai_resting_order_orphan_latch`. P0-b in the 07-28 after-close batch is CLOSED.
+
+---
+
 ## ⭐⭐⭐ 2026-07-27 (pt 4, EVENING) — P&L blackout ROOT-CAUSED + FIXED · 3 flags ON · reclaim back ON
 
 Post-close session. **13 PRs merged today.** Everything below is deployed and verified.
