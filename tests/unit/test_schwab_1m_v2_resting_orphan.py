@@ -59,7 +59,7 @@ def _tick(strat, state, *, trail):
     strat._resting_in_window = lambda now=None: True
     strat._now_ms = lambda: 1_000_000
     state.bars.append(OHLCVBar(timestamp_ms=IN_WIN, open=trail + 1, high=trail + 1.2,
-                               low=trail - 0.2, close=trail + 0.9, volume=10_000))
+                               low=trail - 0.2, close=trail + 0.9, volume=25_000))
     strat._cw_v2_resting_track(state, _sig(trail))
     return strat.drain_pending_intents()
 

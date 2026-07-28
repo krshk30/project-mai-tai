@@ -423,7 +423,11 @@ class Settings(BaseSettings):
     strategy_schwab_1m_v2_go_live_enabled: bool = False
     strategy_schwab_1m_v2_atr_flip_variant: str = "B"          # "A" or "B"
     strategy_schwab_1m_v2_atr_flip_quantity: int = 10          # live-paper size
-    strategy_schwab_1m_v2_atr_flip_vol_floor: int = 5000       # the only filter
+    # ⭐ 10000, matching PRODUCTION (2026-07-28). The default said 5000 while the box had run
+    # `MAI_TAI_STRATEGY_SCHWAB_1M_V2_ATR_FLIP_VOL_FLOOR=10000` all along, so anyone reading this
+    # file saw the wrong number -- I nearly reported it as the live value. Operator confirmed
+    # 10000 is what should run. Aligned so code and box agree.
+    strategy_schwab_1m_v2_atr_flip_vol_floor: int = 10000
     strategy_schwab_1m_v2_atr_flip_period: int = 5             # ATRPeriod (parity)
     strategy_schwab_1m_v2_atr_flip_factor: float = 3.5         # ATRFactor (parity)
     # CSV of symbols (or "*") for which `[V2-ATR-PROBE]` logs each evaluated bar's

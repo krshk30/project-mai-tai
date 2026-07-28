@@ -43,7 +43,7 @@ def _arm(strat, state, *, trail, ts=PRE_WIN, now_ms, eh=True):
     strat._resting_in_window = lambda now=None: True
     strat._now_ms = lambda: now_ms
     state.bars.append(OHLCVBar(timestamp_ms=ts, open=trail + 1, high=trail + 1.2,
-                               low=trail - 0.2, close=trail + 0.9, volume=10_000))
+                               low=trail - 0.2, close=trail + 0.9, volume=25_000))
     strat._cw_v2_resting_track(state, _sig(trail=trail))
     return strat.drain_pending_intents()
 
@@ -166,7 +166,7 @@ def test_no_eh_cross_in_rth() -> None:
     st = strat.watchlist_state("TEST")
     st.resting_active = True
     st.resting_level = 9.5
-    st.bars.append(OHLCVBar(timestamp_ms=RTH_WIN, open=9.4, high=9.6, low=9.3, close=9.55, volume=10_000))
+    st.bars.append(OHLCVBar(timestamp_ms=RTH_WIN, open=9.4, high=9.6, low=9.3, close=9.55, volume=25_000))
     strat._resting_session_is_eh = lambda now=None: False        # RTH
     strat._now_ms = lambda: RTH_WIN + 1000
     assert strat.on_quote("TEST", Quote("TEST", 9.55, 9.57, 9.56, RTH_WIN + 1000, 0)) is None
@@ -180,7 +180,7 @@ def test_flag_off_is_fully_inert() -> None:
     st = strat.watchlist_state("TEST")
     st.resting_active = True
     st.resting_level = 9.5
-    st.bars.append(OHLCVBar(timestamp_ms=PRE_WIN, open=9.4, high=9.6, low=9.3, close=9.55, volume=10_000))
+    st.bars.append(OHLCVBar(timestamp_ms=PRE_WIN, open=9.4, high=9.6, low=9.3, close=9.55, volume=25_000))
     strat._resting_session_is_eh = lambda now=None: True
     strat._now_ms = lambda: PRE_WIN + 1000
     # reactive stands down while resting_active (interlock), so on_quote returns None — the point is the

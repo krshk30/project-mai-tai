@@ -38,7 +38,7 @@ def _warm_to_short(strat: SchwabV2Strategy, *, n_warm: int = 150):
         close = 12.0 - 0.02 * i
         ts = now_ms - (n_warm - i) * 60_000
         # (symbol, open, high, low, close, volume, ts); high stays below the trail.
-        strat.on_bar("TEST", ChartBar("TEST", close + 0.05, close + 0.04, close - 0.06, close, 10_000, ts))
+        strat.on_bar("TEST", ChartBar("TEST", close + 0.05, close + 0.04, close - 0.06, close, 25_000, ts))
     st = strat.watchlist_state("TEST")
     assert st.atr_prev_state == "short", "warmup must end short"
     assert not st.atr_fired_in_short_seg, "no touch should have fired in warmup"
@@ -123,7 +123,7 @@ def test_heartbeat_resolves_pending_on_bar() -> None:
     assert strat.on_quote("TEST", _q(T, now_ms - 60_000)) is None
     assert strat.watchlist_state("TEST").atr_hold_pending is not None
     # a fresh RED bar (no touch, no flip) -> heartbeat resolves the stale hold
-    bar = ChartBar("TEST", T - 0.40, T - 0.40, T - 0.60, T - 0.50, 10_000, now_ms)
+    bar = ChartBar("TEST", T - 0.40, T - 0.40, T - 0.60, T - 0.50, 25_000, now_ms)
     draft = strat.on_bar("TEST", bar)
     assert draft is not None
     assert draft.metadata["hold_mode"] == "fallback_thin"
@@ -140,7 +140,7 @@ def test_pending_hold_dropped_when_segment_flips() -> None:
     assert strat.on_quote("TEST", _q(T, now_ms)) is None
     assert strat.watchlist_state("TEST").atr_hold_pending is not None
     # a GREEN bar closing above the trail flips the segment long
-    flip_bar = ChartBar("TEST", T + 0.10, T + 1.00, T - 0.10, T + 1.00, 10_000, now_ms)
+    flip_bar = ChartBar("TEST", T + 0.10, T + 1.00, T - 0.10, T + 1.00, 25_000, now_ms)
     draft = strat.on_bar("TEST", flip_bar)
     assert draft is None
     assert strat.watchlist_state("TEST").atr_hold_pending is None
