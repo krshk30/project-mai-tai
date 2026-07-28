@@ -17,6 +17,64 @@
 
 ---
 
+## ⭐⭐ 2026-07-28 (EVENING) — after-close batch RUN: 3 PRs merged, 2 flags flipped, 2 studies closed
+
+Ran the whole 07-28 after-close batch. **Three of my own prior assumptions were wrong and are
+corrected below** — that is the main value of this entry.
+
+### Deployed / flipped
+| item | outcome |
+|---|---|
+| **P0-a** event-driven exit capture | **LIVE** — `MAI_TAI_OMS_NATIVE_OCO_EXIT_POLL_ENABLED=true` + OMS restart. Proven within a minute: `[OMS-V2-OCO-RESOLVED-FLAT] INLF ... closing phantom managed row (no ladder rejects)`. **No 429 flood**: 1-2/min after vs 12+/min in the pre-restart EOD burst. |
+| **P0-c** Webull realign | **OFF** (`..._REALIGN_ON_FILL_ENABLED=false`), verified loaded — the attended check had failed with `OAUTH_OPENAPI_ORDER_CANT_NOT_BE_REPLACE`. |
+| **#582** scanner CONFIRM timestamp | merged + deployed (strategy engine restarted) |
+| **#583** `cw_entry_n` off-by-one | merged + deployed (v2 restarted) |
+| **P1-1** #574 | already live from the 15:15 ET restart |
+
+### ⭐⭐ P2-5 NO_FRESH_QUOTE — CLOSED, NO CHANGE NEEDED (the study measured the wrong feed)
+`quote_staleness_at_signal.py` reports **23.5%** of RTH entry signals sitting on a quote >2s old,
+and it is chronic rather than one episode (drop-one moves it only 23.5 -> 20.8%; 16 symbol-days).
+
+**But that is POLYGON `market_capture_quotes`, and the real gate is OMS-side reading the OMS's own
+broker ask.** Actual `NO_FRESH_QUOTE` fires in the entire OMS log: **3** (1 on 07-20, 2 on 07-28 =
+the INLF case that prompted the question).
+
+> ⭐ **Third instance of the bar-source defect**: a study built on Polygon used to judge a
+> broker-fed decision. **Check which feed the DECISION reads before measuring it.**
+> Also `NO_FRESH_QUOTE` lives in `oms/service.py`, not the strategy — grepping the v2 log gives 0.
+
+### ⚠️ P2-7 missed flips — 36% measured, DO NOT act on it yet
+22 watched BUY flips today, **8 never armed** (ENTX 4/4, CNET 2/3, BIYA 1/1, INLF 1/6).
+
+- ⛔ **Not the cooldown.** CNET at its missed flip logged `pos_qty=0 cooldown=0`.
+- ENTX had **no probe lines at all** at those instants -> v2 was not processing the symbol. It was
+  absent from the live watchlist (2-5 symbols at a time; the cap of 25 is **not** binding — the
+  confirmed set itself churns).
+- ⛔ **The windows come from `scanner_confirmed_events`, whose bug #582 fixes FORWARD ONLY.**
+  Today's rows predate the fix and one (POLA) was demonstrably future-dated. **Re-run on a clean
+  day before believing 36%.**
+
+### P1-3 backfill — 4 of 8 exits recovered, and the other 4 never can be
+The exit row id is `f"{entry.client_order_id}-ocoexit"`, so N exits mapping to ONE entry collapse
+into one row and `record_fill_if_needed` rejects the rest at `incremental_quantity <= 0`. BIYA had
+4 real exits on 07-27 but one entry order -> only 1 recoverable.
+**This affects the LIVE capture too**, whenever a symbol is entered twice in a segment (reclaim).
+Fix shape: put the CHILD id into the exit `client_order_id`.
+
+### Corrections to the batch's own premises
+- Scanner timestamps: **1** corrupt row, not "~3". And **"no fractional seconds" is NOT a
+  corruption tell** — 78 CONFIRM rows in 3 days have none, because every correctly-parsed time-only
+  string lacks them. The only sound detector is future-dating.
+- **No historical repair is possible**: a row future-dated yesterday is indistinguishable from a
+  legitimate past time today.
+
+### Open, with evidence attached
+- A Webull **429 permanently loses an exit fill** (`closing without a recorded exit`) — transient
+  error, permanent give-up, the exact blackout the capture exists to close.
+- **Spurious 5-bar cooldown** whenever a resting intent goes terminal (same union as the orphan).
+- **Schwab/Webull cancel asymmetry**: cancelled the Schwab leg 15:18 ET, the Webull leg still
+  filled 15:19 (+2.09%). Worked out, but a one-sided cancel needs understanding.
+
 ## ⭐⭐⭐ 2026-07-28 (INTRADAY) — RESTING-ORDER ORPHAN root-caused + FIXED LIVE (#580) · #578 REVERTED
 
 **Operator report:** "Resting order again is way off… we have to adjust every minute." EGG's resting
