@@ -61,6 +61,43 @@ from project_mai_tai.strategy_core.time_utils import (
 logger = logging.getLogger(__name__)
 
 SERVICE_NAME = "oms-risk"
+
+
+class _ExitFetchFailed:
+    """Sentinel: we could NOT ask the broker about the exit (transient, typically a Webull 429).
+
+    ⛔ Distinct from `None`, which means the broker answered "there is no exit". Collapsing the two
+    booked the trade unpaired on a temporary rate limit — the exact P&L blackout the OCO exit
+    capture exists to close. Truthy, so callers must test identity BEFORE any `if detail:` branch.
+    """
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:  # pragma: no cover - diagnostics only
+        return "<EXIT_FETCH_FAILED>"
+
+
+_EXIT_FETCH_FAILED = _ExitFetchFailed()
+
+
+def oco_exit_client_order_id(entry_client_order_id: str, child_id: str) -> str:
+    """Key for the synthetic order row that carries a native-OCO exit leg.
+
+    ⭐ The CHILD id is part of the key (2026-07-28). It used to be `"<entry>-ocoexit"` -- derived
+    from the ENTRY alone -- so several exit legs under one entry collapsed onto a single row and
+    `record_fill_if_needed` rejected all but the first at `incremental_quantity <= 0`. BIYA had FOUR
+    real exits on 07-27 and only ONE was recordable. That bites hardest on RECLAIM, a symbol entered
+    twice in one segment, i.e. exactly the trades currently being judged.
+
+    Fills still dedupe on `broker_fill_id` ("<child>:<qty>"), so widening the ORDER key cannot
+    double-count; it only stops the second exit being swallowed. Falls back to the historical shape
+    when no child id is known, so old rows keep resolving.
+    """
+    return (
+        f"{entry_client_order_id}-ocoexit-{child_id[-8:]}"
+        if child_id
+        else f"{entry_client_order_id}-ocoexit"
+    )
 SESSION_TZ = ZoneInfo("America/New_York")
 SCHWAB_INELIGIBLE_REASON_SUBSTRINGS = ("must be placed with a broker",)
 # Webull "not tradable today" markers for the dual-broker fan-out per-broker eligibility.
@@ -285,6 +322,13 @@ class OmsRiskService:
     # forever because close_on_fill waits for a fill that never comes (2026-07-13 AGEN).
     _V2_EXIT_RECONCILE_AFTER_FAILURES = 3
 
+    # How many consecutive sync cycles we will hold a managed row open waiting for a transient
+    # exit-fill fetch (Webull 429) to succeed. At the ~15s sync this is ~45s of retries. Bounded
+    # because an open managed row BLOCKS fan-out re-entry: bookkeeping must never outrank entries.
+    _MAX_EXIT_FETCH_DEFERRALS = 3
+    # Class-level default: test helpers build instances via __new__, bypassing __init__.
+    _oco_exit_fetch_deferrals: dict[tuple[str, str], int] = {}
+
     def __init__(
         self,
         settings: Settings | None = None,
@@ -346,6 +390,8 @@ class OmsRiskService:
         # Phantom-reconcile: consecutive REJECTED v2 full-closes per (acct, symbol). After the
         # threshold, a fresh broker read clears the row iff confirmed flat (see _emit_v2_exit_on_loop).
         self._v2_exit_close_failures: dict[tuple[str, str], int] = {}
+        # Consecutive TRANSIENT exit-fill fetch failures per (acct, symbol). See _defer_for_exit_fetch.
+        self._oco_exit_fetch_deferrals: dict[tuple[str, str], int] = {}
         self._v2_exit_config: TradingConfig = TradingConfig().make_v2_variant()
         self._v2_exit_engine: ExitEngine = ExitEngine(self._v2_exit_config)
         # Confirmed-window (variant CW) exit [PR #2/3]. Gated on the SAME switch the
@@ -2450,7 +2496,14 @@ class OmsRiskService:
     async def _fetch_oco_exit_detail(self, acct: str, symbol: str, base_coid: str):
         """Broker read ONLY — never touches the DB, so it is safe to await on the loop and MUST
         stay outside any `_run_db` unit (see that docstring). Never raises: a missing exit must
-        degrade to 'no fill recorded', never break the close path that protects the account."""
+        degrade to 'no fill recorded', never break the close path that protects the account.
+
+        ⭐ Returns THREE outcomes, not two (2026-07-28). `None` means "the broker says there is no
+        exit" — a real answer. `_EXIT_FETCH_FAILED` means "we could not ask" — typically a Webull
+        429, which is TRANSIENT. Collapsing the two lost the trade's P&L permanently on a temporary
+        rate limit, which is the exact blackout this capture exists to close (live: CNET 16:11 ET).
+        ⛔ The sentinel is a truthy object, so every caller MUST test for it explicitly BEFORE any
+        `if detail:` / `if not detail:` branch."""
         # `self.settings` / `self.broker_adapter` are absent on instances built via __new__ by test
         # helpers (the class already carries class-level defaults for this reason), so resolve both
         # defensively — bookkeeping must never raise into the close path.
@@ -2466,10 +2519,35 @@ class OmsRiskService:
             raise
         except Exception:  # noqa: BLE001
             self.logger.warning(
-                "[OMS-OCO-EXIT-FILL] %s %s exit-fill fetch failed; closing without a recorded "
-                "exit (P&L for this trade stays unpaired)", acct, symbol,
+                "[OMS-OCO-EXIT-FILL] %s %s exit-fill fetch FAILED (transient, e.g. 429) — will "
+                "retry on the next sync rather than book the trade unpaired", acct, symbol,
             )
-            return None
+            return _EXIT_FETCH_FAILED
+
+    def _defer_for_exit_fetch(self, acct: str, symbol: str) -> bool:
+        """True = hold the managed row open one more cycle so the next poll can retry the fetch.
+
+        ⛔ BOUNDED on purpose. An open managed row is what blocks fan-out re-entry via
+        `fanout_webull_collision_managed` — the very lag P0-a was enabled to remove — so a symbol
+        whose fetch keeps failing must NOT pin the row open forever. After
+        `_MAX_EXIT_FETCH_DEFERRALS` tries we close it and accept the unpaired trade: protecting
+        entries outranks bookkeeping."""
+        key = (acct, symbol)
+        n = self._oco_exit_fetch_deferrals.get(key, 0) + 1
+        if n > self._MAX_EXIT_FETCH_DEFERRALS:
+            self._oco_exit_fetch_deferrals.pop(key, None)
+            self.logger.warning(
+                "[OMS-OCO-EXIT-FILL] %s %s exit-fill fetch failed %d times — closing the managed "
+                "row anyway so it cannot block re-entry (P&L for this trade stays unpaired)",
+                acct, symbol, self._MAX_EXIT_FETCH_DEFERRALS,
+            )
+            return False
+        self._oco_exit_fetch_deferrals[key] = n
+        self.logger.info(
+            "[OMS-OCO-EXIT-FILL] %s %s holding the managed row open for retry %d/%d",
+            acct, symbol, n, self._MAX_EXIT_FETCH_DEFERRALS,
+        )
+        return True
 
     def _persist_oco_exit_fill(self, session: Session, acct: str, symbol: str, entry_order, detail) -> bool:
         """Book the broker's exit as a real order + fill. SYNC, on the CALLER'S session — never
@@ -2494,7 +2572,7 @@ class OmsRiskService:
             intent=intent,
             strategy_id=entry_order.strategy_id,
             broker_account_id=entry_order.broker_account_id,
-            client_order_id=f"{entry_order.client_order_id}-ocoexit",
+            client_order_id=oco_exit_client_order_id(entry_order.client_order_id, child_id),
             symbol=symbol.upper(),
             side="sell",
             quantity=Decimal(str(qty)),
@@ -2552,6 +2630,13 @@ class OmsRiskService:
             entry_order = self._find_oco_entry_order(session, acct, symbol)
             base_coid = str(getattr(entry_order, "client_order_id", "") or "")
             detail = await self._fetch_oco_exit_detail(acct, symbol, base_coid)
+            if detail is _EXIT_FETCH_FAILED:
+                # Transient — hold the row so the next cycle can retry rather than book unpaired.
+                if self._defer_for_exit_fetch(acct, symbol):
+                    return False
+                detail = None
+            else:
+                self._oco_exit_fetch_deferrals.pop((acct, symbol), None)
             if detail:
                 self._persist_oco_exit_fill(session, acct, symbol, entry_order, detail)
             self.store.close_managed_position(session, row)
@@ -2610,6 +2695,8 @@ class OmsRiskService:
             except Exception:  # noqa: BLE001
                 continue
             detail = await self._fetch_oco_exit_detail(acct, symbol, base_coid)
+            if detail is _EXIT_FETCH_FAILED:
+                continue     # transient: leave the row alone, the next poll retries
             if not detail:
                 continue
             self.logger.info(
@@ -2649,6 +2736,14 @@ class OmsRiskService:
         if detail is None:
             # the poll already fetched it; do not spend a second broker round trip (Webull 429s)
             detail = await self._fetch_oco_exit_detail(acct, symbol, base_coid)
+        if detail is _EXIT_FETCH_FAILED:
+            # Transient — hold the managed row open so the next sync retries the fetch, up to the
+            # bounded cap, rather than closing the trade with no exit recorded.
+            if self._defer_for_exit_fetch(acct, symbol):
+                return
+            detail = None
+        else:
+            self._oco_exit_fetch_deferrals.pop((acct, symbol), None)
 
         def _close(session: Session) -> None:
             if detail:

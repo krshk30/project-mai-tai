@@ -578,6 +578,7 @@ class SchwabV2Strategy:
         """
         state = self.watchlist_state(symbol)
         prev = state.position_qty
+        prev_held = state.position_qty_held
         state.position_qty = max(0, int(qty))
         state.position_qty_held = max(0, int(qty if held_qty is None else held_qty))
         if prev > 0 and state.position_qty == 0:
@@ -586,12 +587,25 @@ class SchwabV2Strategy:
             # position may have been closed by the OMS, by a broker-side OCO leg filling, by the
             # operator by hand, or by a phantom row reconciling away. Claiming "OMS closed the
             # position" sent a live 2026-07-27 diagnosis down the wrong path.
+            # ⭐ MEASUREMENT ONLY (2026-07-28) -- behaviour is unchanged. `position_qty` is the
+            # UNION (fills ∪ in-flight open intents), so this transition fires both when a REAL
+            # position closed and when one of our own resting intents merely went terminal
+            # (repriced/cancelled). The second case arms a 5-bar cooldown for a trade that never
+            # existed, silently blocking re-entries. `position_qty_held` is fills-only, so
+            # held==0 on BOTH sides of the transition means nothing was ever owned.
+            # Counting these before changing the gate: loosening a cooldown means MORE live
+            # entries, and that is not a change to make on an unmeasured hunch.
+            spurious = prev_held == 0 and state.position_qty_held == 0
             logger.info(
                 "schwab_1m_v2 cooldown armed for %s (bars=%d) — position qty %d -> 0 "
-                "(cause unknown here: OMS exit, broker OCO leg, operator close, or reconcile)",
+                "[held %d -> %d, %s] (cause: OMS exit, broker OCO leg, operator close, reconcile, "
+                "or our own resting intent going terminal)",
                 symbol,
                 self.cfg.cooldown_bars,
                 prev,
+                prev_held,
+                state.position_qty_held,
+                "SPURIOUS-no-shares-ever-held" if spurious else "real-position-closed",
             )
             # CW-v2 reclaim: our position just closed -> release the intrabar emit claim so a
             # SECOND entry can fire in the SAME long segment (reclaim has no cooldown; the

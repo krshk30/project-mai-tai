@@ -147,3 +147,42 @@ def test_gate_reads_held_not_the_union() -> None:
     st = _rested(strat)
     strat.update_position("EGG", 99, held_qty=0)
     assert _tick(strat, st, trail=3.5500), "read the union here and the order is silently disowned"
+
+
+# ------------------------------------------------- spurious-cooldown instrumentation (measure only)
+# ⭐ The SAME union that caused the orphan also arms a 5-bar cooldown whenever one of our own
+# resting intents merely goes terminal (repriced/cancelled) -- a cooldown for a trade that never
+# existed, silently blocking re-entries. ~11 arms/day, an unknown fraction spurious.
+# Behaviour is deliberately UNCHANGED here: loosening a cooldown means MORE live entries, and that
+# is not a change to make on an unmeasured hunch. This only makes the two cases distinguishable in
+# the log so the real rate can be counted first.
+
+def test_cooldown_from_a_real_exit_is_labelled_real(caplog) -> None:
+    strat = _strat()
+    strat.update_position("EGG", 2, held_qty=2)          # genuinely holding
+    with caplog.at_level("INFO"):
+        strat.update_position("EGG", 0, held_qty=0)      # a real exit
+    assert "cooldown armed" in caplog.text
+    assert "real-position-closed" in caplog.text
+
+
+def test_cooldown_from_our_own_resting_intent_is_labelled_spurious(caplog) -> None:
+    """THE MEASUREMENT. Union 2 -> 0 with held 0 on BOTH sides means nothing was ever owned:
+    the resting intent was simply repriced or cancelled."""
+    strat = _strat()
+    strat.update_position("EGG", 2, held_qty=0)          # in-flight resting intent only
+    with caplog.at_level("INFO"):
+        strat.update_position("EGG", 0, held_qty=0)      # the intent went terminal
+    assert "cooldown armed" in caplog.text
+    assert "SPURIOUS-no-shares-ever-held" in caplog.text
+
+
+def test_the_cooldown_still_arms_in_both_cases_behaviour_unchanged() -> None:
+    """PINS 'MEASURE ONLY'. If this ever fails, someone changed entry behaviour while thinking
+    they were adding a log line."""
+    for held in (2, 0):
+        strat = _strat()
+        st = strat.watchlist_state("EGG")
+        strat.update_position("EGG", 2, held_qty=held)
+        strat.update_position("EGG", 0, held_qty=0)
+        assert st.cooldown_bars_remaining == strat.cfg.cooldown_bars, held
