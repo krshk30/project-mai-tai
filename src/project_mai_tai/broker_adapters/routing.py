@@ -63,6 +63,36 @@ class RoutingBrokerAdapter:
             return set()
         return await fn(broker_account_name, symbols)
 
+    async def fetch_oco_exit_fill(
+        self,
+        broker_account_name: str,
+        symbol: str,
+        base_client_order_id: str = "",
+        *,
+        resolved_within_seconds: float = 3600.0,
+    ) -> dict[str, object] | None:
+        """Route to the account's adapter. Optional capability -- an adapter without it (Alpaca,
+        simulated) has no OCO child legs to read, so return None (the caller then closes the row
+        without a recorded exit, exactly as before).
+
+        ⛔ WITHOUT THIS FORWARDER THE WHOLE FEATURE IS A SILENT NO-OP. The OMS holds the ROUTER,
+        not a leaf adapter, and its call site is `getattr(adapter, "fetch_oco_exit_fill", None)` --
+        so a missing forwarder resolves to None and the capture never runs, with the flag ON and
+        the code deployed. Found 2026-07-27 by dry-running the backfill against real closed trades
+        instead of waiting for the next session: every row came back
+        `AttributeError: 'RoutingBrokerAdapter' object has no attribute 'fetch_oco_exit_fill'`.
+        """
+        adapter = self._adapter_for_account(broker_account_name)
+        fn = getattr(adapter, "fetch_oco_exit_fill", None)
+        if fn is None:
+            return None
+        return await fn(
+            broker_account_name,
+            symbol,
+            base_client_order_id,
+            resolved_within_seconds=resolved_within_seconds,
+        )
+
     def _adapter_for_account(self, broker_account_name: str) -> BrokerAdapter:
         provider = self.provider_by_account.get(str(broker_account_name), self.default_provider)
         return self._adapter_for_provider(provider)
