@@ -35,7 +35,6 @@ import sys
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
-import requests
 from sqlalchemy import text
 
 from project_mai_tai.db.session import build_session_factory
@@ -73,6 +72,11 @@ def classify_order(*, symbol: str, instruction: str, order_type: str, trigger: f
 
 
 def push(title: str, body: str, priority: str, tags: str) -> None:
+    # `requests` is imported LAZILY: it is a runtime dep on the box but NOT a CI test dep, and a
+    # module-level import made `test_orphan_order_check` fail to collect with ModuleNotFoundError.
+    # The decision logic must be importable without the notification transport.
+    import requests
+
     # HTTP headers are latin-1: a non-ASCII Title raises UnicodeEncodeError and the page is LOST.
     title = title.encode("ascii", "replace").decode("ascii")
     try:
