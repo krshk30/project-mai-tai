@@ -17,6 +17,55 @@
 
 ---
 
+## ⭐ 2026-07-28 (NIGHT) — COOLDOWN REMOVED (#590) · no behaviour change
+
+Operator, on reviewing the cooldown logic: *"per segment we are allowing our strategies to trade
+once... two trades per ATR segment, one from resting, another from reclaim. Do we really need this
+cooldown?"* — correct on every point.
+
+### Why it existed, and why it doesn't need to
+A 5-bar cooldown was armed whenever a position closed. It dates from when reclaim was **uncapped**
+and could chase the same trade repeatedly. The per-segment cap replaced that need:
+`_cw_v2_max_entries_per_flip` = **2** with reclaim on = one resting + one reclaim per ATR segment.
+
+### It was already inert
+Every gate that read the counter sits on a path `_cw_v2_enabled` short-circuits — `on_quote` returns
+into `_cw_v2_quote` before the legacy touch/hold gate, and `_cw_entry` returns `None` on its first
+line. **None of the three live paths (reactive, resting, fan-out) ever consulted it.** Same shape as
+the liquidity floor the same evening: a gate guarding only replaced code.
+
+### ⭐ Why REMOVE rather than leave it dormant
+**It contradicted the design.** Reclaim gap = **1 bar**; cooldown = **5**. Wiring the counter back up
+would block the exact second entry a segment is meant to allow (resting fills bar 1, spike bar 4,
+reclaim). A switched-off safety gate invites a future session to "fix" it and silently break reclaim.
+
+### ⛔ The hazard, now guarded by a test
+The two lines that actually ENABLE reclaim lived in the same block as the cooldown:
+```python
+state.cw_v2_emit_claimed = False     # lets the segment's SECOND entry fire
+state.cw_v2_bars_since_exit = 0      # starts the 1-bar reclaim gap counting
+```
+Removing "the cooldown" without keeping them stops every second entry, silently.
+`test_a_close_still_releases_the_reclaim_claim` fails if either is dropped (mutation-verified).
+
+### ⚠️ A break I introduced and caught
+Removing the log ARGUMENTS left `cooldown=%d` in two format strings (`V2-CW-STATE-PROBE`,
+`V2-MACD-PROBE`). Python's logging swallows a bad format into `--- Logging error ---` rather than
+raising, so **both probe lines would simply have gone missing in production**. Fixed; all 28 logging
+calls in the module are AST-verified for specifier/argument parity, and both lines were then proven
+to RENDER on the deployed box, not just parse.
+
+### ⛔ A correction to what I told the operator earlier that day
+I had listed the spurious cooldown as *"silently blocking re-entries"*. **Wrong** — nothing live read
+the counter, so it blocked nothing. I inferred impact from the arming without checking the readers.
+The `SPURIOUS` label from #585 is now pointless for cooldown purposes, but stays on the close log
+because a spurious transition still **releases the reclaim claim** (a real effect, worth watching).
+
+### ⭐ Third default-vs-production divergence in one evening
+`_cw_v2_reclaim_gap_bars` defaults to **0** in code; the box runs `..._CW_V2_RECLAIM_GAP_BARS=1`.
+Same trap as the vol floor (5000 in code, 10000 live). Now documented in a test rather than hidden.
+**Standing lesson: check the ENV before quoting any default as the live value.**
+
 ## ⛔⭐ 2026-07-28 (LATE) — the liquidity floor guarded ONLY DEAD CODE (#587, #588) — FIXED LIVE
 
 Operator: *"we are buying at ATR flip without checking volume"*. Correct, and the cause was worse
