@@ -104,6 +104,12 @@ exit retries one decision forever because the 3-reject reconcile needs a positiv
 Webull will not give. Needs a TERMINATION bound, ⛔ not a weaker flat test (that is the ERNA naked
 position).
 
+⛔⭐ **TOP PRIORITY tonight — item (e): we booked the OPERATOR'S MANUAL TOS TRADE as one of our
+exits** (AMIX 1000 sh, filled 2 minutes BEFORE our own entry). `fetch_oco_exit_fill` matches on
+SYMBOL ALONE and walks every order in the account — it never checks the order is ours, that the exit
+follows our entry, or that the quantity is one we trade. **This violates the core concept that Mai
+Tai does not claim manual trades.** 1 of 31 recorded exits affected.
+
 ⛔ **KEEP THIS AT ~3.** When something closes, MOVE it to the log. A study nobody will run, a rule
 that is never "done", and a dormant feature's item are NOT open work — that is how this reached 66.
 
