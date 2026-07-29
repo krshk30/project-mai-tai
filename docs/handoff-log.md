@@ -1015,3 +1015,33 @@ a `−99.99%` artifact poisons every mean on the 07-15 detail run.)*
 
 ---
 
+
+
+---
+
+## 📦 OPEN ITEMS closed 2026-07-29 (second pass, with the operator)
+
+> Operator: *"I still wanna make sure to close all the open items... let's bring it to zero."*
+> Closed 16 of 19. Reasons, so none of these silently return:
+> - **5 UNVERIFIED** (INTENT_MAX_AGE · BUG #3 DEFER log · Webull NO_SUCH_TICKER · OMS
+>   record-desync · dead-ladder audit) — operator call: close rather than carry unproven claims.
+> - **env-vs-default sweep** — DONE, tool shipped (`ops/health/env_default_drift.py`, #598).
+>   74 divergences, 14 numeric; the 3 that mislead trading reasoning are recorded in the PR.
+> - **dual-broker fan-out validation** — satisfied by production use: 30 Webull fan-out fills
+>   across 9 symbols since 07-24.
+> - **INTENT_MAX_AGE exemption / ORB resting-bracket design** — DORMANT, ORB resting entry is off.
+> - **floor-ratchet study** — a saved re-runnable resource, not a task.
+> - **429 past the retry bound** — accepted trade-off (protection outranks bookkeeping).
+> - **07-27 exit history short (4 of 8)** — unrecoverable, won't fix.
+> - **entry-quality / gap-through caps / reclaim-trigger studies** — closed. The exit-side
+>   search is already CLOSED ('the ENTRY is the problem'; >100 configs on 27 trades). They
+>   return with evidence if a live loss points at them.
+> - **fossil-warmup guard** — closed. The attempt (#552) blocked every arm for 68 min and was
+>   reverted; its own design says do not build without a base rate we do not have.
+> - **injection-seam / Webull OCO Ph3** — standing RULE and a triggered CHECKLIST, not tasks.
+>   Rules live in memory; a gate fires when the operator decides to run it.
+> - **missed-flip re-run** — folded into the post-close work of item 1.
+
+⭐ The lesson recorded for next time: the list grew because items were only ever ADDED. A study
+nobody runs, a rule that is never 'done', and a dormant feature's item all sat as open work.
+

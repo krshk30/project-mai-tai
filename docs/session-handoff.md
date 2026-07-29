@@ -75,26 +75,20 @@ intents), all services `active`, NRestarts=0, 0 errors.
 
 ---
 
-## 🔴 OPEN THREADS — one line each (full detail: [`handoff-open-items.md`](handoff-open-items.md))
+## 🔴 OPEN THREADS — 3 (detail: [`handoff-open-items.md`](handoff-open-items.md))
 
-✅ **Pruned with the operator 2026-07-29** — 47 resolved/superseded items moved to the log.
-⛔ **Keep it pruned:** when an item closes, MOVE it to `handoff-log.md` — do not leave it marked ✅.
+✅ **Driven from 66 → 3 with the operator on 2026-07-29.** Everything closed moved verbatim to
+[`handoff-log.md`](handoff-log.md) with its reason.
 
-- **429 can still lose an exit fill** past the ~45s retry bound (#585) — deliberate: an open managed
-  row blocks fan-out re-entry, so protection outranks bookkeeping.
-- **07-27 exit history is permanently short** — backfill recovered **4 of 8**; the rest are
-  unrecoverable (one-exit-per-entry, fixed forward in #585).
-- **36% of in-window BUY flips never armed 07-28** (8 of 22). ⛔ NOT the cooldown — watchlist
-  ABSENCE. ⚠️ Number NOT trustworthy yet: its windows come from the table #582 fixes forward-only.
-  **Re-run on a clean day.**
-- **Spurious `position qty N -> 0` transitions** still release the reclaim claim with no real exit;
-  logged as `SPURIOUS-no-shares-ever-held`. Measure before changing.
-- **P2 measurements not run:** entry-quality (re-sourced onto DB reject reasons), gap-through caps.
-  ⛔ **Reclaim-trigger is NOT measurable the obvious way** — `entry_price` and `cw_flip_level` are
-  written from the SAME variable on the resting path, so "premium over flip level" is 0.00% by
-  construction. Use the FILL price vs `cw_segment_high`.
-- **Architectural (07-17):** the injected-settings seam is a convention, not an invariant — any
-  default-flip PR must run the FULL `tests/unit` suite. See the detail file.
+1. **Re-run backtest-vs-live on a STABLE-CODE day.** Config parity FIXED + verified (89/90, #592);
+   the engine reproducing a live day end-to-end is still unproven (only STKH matched).
+2. **polygon / strategy-engine freeze** — 60-80s at open/close, ~72% CPU in the JSON snapshot
+   encode; `#366` throttle deployed and INSUFFICIENT.
+3. **VPS retention prune** — plan approved, specifics pending. ⛔ `strategy_bar_history` must NOT be
+   pruned: it is the backtest bar source. `market_capture_*` already self-prunes correctly (verified).
+
+⛔ **KEEP THIS AT ~3.** When something closes, MOVE it to the log. A study nobody will run, a rule
+that is never "done", and a dormant feature's item are NOT open work — that is how this reached 66.
 
 ---
 
