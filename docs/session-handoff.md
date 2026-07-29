@@ -45,7 +45,15 @@ intents), all services `active`, NRestarts=0, 0 errors.
 | `OMS_NATIVE_OCO_EXIT_POLL_ENABLED` | **true** (enabled 07-28) |
 | `OMS_RECORD_NATIVE_OCO_EXIT_FILLS_ENABLED` | true |
 | `WEBULL_BRACKET_REALIGN_ON_FILL_ENABLED` | **false** (broken at the broker) |
-| `ORB_ENABLED` / `ORB_QUANTITY` | true / 10 |
+| `ORB_ENABLED` / `ORB_QUANTITY` | true / 10 — ⛔ **the BOT is decommissioned; the flag stays true on purpose** (it registers the `live:orb` broker account the v2 fan-out routes through). See below. |
+
+⛔ **ORB THE BOT IS OFF (2026-07-29).** `project-mai-tai-orb.service` is now **disabled**; it had
+not run since 07-23 but was still **enabled at boot**, so a reboot would have silently started a
+real-money bot at qty 10. Real money is now **Schwab v2 only** (+ its Webull fan-out leg).
+⛔ Fills on `live:orb` are **FAN-OUT legs, not ORB trades**.
+⛔ **Do NOT set `MAI_TAI_ORB_ENABLED=false`** — `runtime_registry:119` gates the ORB registration,
+which is what seeds the `live:orb` BROKER ACCOUNT that `webull.py:87` builds its adapter map from.
+Setting it false breaks the live fan-out.
 
 **Entry bound:** one resting + one reclaim per ATR segment (`max_entries_per_flip=2`).
 **There is NO cooldown** — removed 07-28 (#590); the per-segment cap is the bound.
