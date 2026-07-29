@@ -98,7 +98,11 @@ Setting it false breaks the live fan-out.
 **🌙 AFTER CLOSE TODAY (scoped batch — close it tonight):** (a) run the dead-bot bar-history prune
 (1,091,270 rows, dry-run verified) · (b) restart `trade-coach` (**43% CPU**, auxiliary, 21d — it is
 what starved the OMS heartbeat into the 09:00/09:09 alerts) · (c) stop the readiness check RED-ing on
-the now-decommissioned ORB (3 FAIL = all ORB → a false "DO NOT trust the open" every morning).
+the now-decommissioned ORB (3 FAIL = all ORB → a false "DO NOT trust the open" every morning) ·
+(d) **Webull close-retry STORM** — NCRA 145 rejected sells in 55 min (AMIX 25, STFS 7); the floor
+exit retries one decision forever because the 3-reject reconcile needs a positively-confirmed flat
+Webull will not give. Needs a TERMINATION bound, ⛔ not a weaker flat test (that is the ERNA naked
+position).
 
 ⛔ **KEEP THIS AT ~3.** When something closes, MOVE it to the log. A study nobody will run, a rule
 that is never "done", and a dormant feature's item are NOT open work — that is how this reached 66.
