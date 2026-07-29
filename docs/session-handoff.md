@@ -17,6 +17,51 @@
 
 ---
 
+## ⛔⭐ 2026-07-28 (NIGHT) — BACKTEST-vs-LIVE PARITY AUDIT (#592): the replay was studying a config we were not trading
+
+Operator asked to confirm the backtest engine is "on the same level" as live before trusting it.
+**It was not.**
+
+### Finding 1 — the replay OVERRODE live config (FIXED, deployed)
+`build_replay_settings` overlaid `LIVE_LOCKED` **after** the env-merged base, so a hardcoded list
+beat production. Across all 90 live-relevant settings:
+
+| setting | live | replay |
+|---|---|---|
+| `cw_v2_reclaim_enabled` | True | **False** |
+| `cw_v2_eh_resting_entry_enabled` | True | **False** |
+| `oms_v2_eh_entry_enabled` | True | **False** |
+
+Reclaim went ON 07-27, EH flags ON 07-24; the list was never re-synced. **Reclaim off alone drops
+`max_entries_per_flip` from 2 to 1** — the replay could not model a segment's second entry.
+Fixed: LIVE_LOCKED is now a FALLBACK (`base.model_fields_set` ⇒ env wins), so it self-syncs.
+`REPLAY_FORCED` carries the one real modelling choice (boot-hold released).
+✅ Re-verified on the box after deploy: **89/90 identical**, 1 deliberate.
+Re-runnable check: `/home/trader/_parity_diff.py`.
+
+### Finding 2 — the engine itself is faithful
+STKH 07-28: live `3.6899 → 3.7600 = +1.90%`, replay `3.6900 → 3.7600 = +1.90%`. Entry within
+$0.0001, identical exit and reason. A real end-to-end match.
+
+### ⛔ Finding 3 — three structural limits that bound EVERY comparison
+1. **ONE round trip per symbol-day** — `if exit_done: break`. Live took **6** INLF round trips; the
+   replay takes the first and stops. "1 vs 6" is structural, not a fidelity failure — but only the
+   FIRST live trade of a symbol-day is ever comparable.
+2. **Quote density** ~1 per 3.6-4.6s in the replay window vs a continuous live stream. The resting
+   fill model needs "the first quote whose ask lands in [stop, limit]", so a 4s gap can miss a fill
+   live caught, or fill at a different ask.
+3. **Sparse-bar symbols are uncomparable.** CNET: 71 bars, 1 quote per 118s.
+   ⛔ I nearly credited the new vol floor for CNET's "no entry" — **forcing the floor to 0 still
+   produced no entry**, so it was DATA, not the gate. Disprove the flattering explanation.
+
+### ⛔⭐ Finding 4 — do NOT judge parity on a day you deployed into
+07-28 had **6 deploys mid-session** (orphan fix 15:15 ET, vol floor ~18:00, cooldown ~19:00). Live
+ran >=4 code versions; the replay runs the final one. EGG proves it: the replay entered at 4.03 off
+flip_level 4.0271 (the correct current trail) while LIVE was still sitting on the **orphaned** order
+at 4.5257 from 13:30 — the #580 bug. **The replay was more correct than live was.**
+
+**Next: re-run this comparison after a full session on stable code.** That is the clean test.
+
 ## ⭐ 2026-07-28 (NIGHT) — COOLDOWN REMOVED (#590) · no behaviour change
 
 Operator, on reviewing the cooldown logic: *"per segment we are allowing our strategies to trade
