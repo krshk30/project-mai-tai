@@ -77,7 +77,8 @@ intents), all services `active`, NRestarts=0, 0 errors.
 
 ## 🔴 OPEN THREADS — one line each (full detail: [`handoff-open-items.md`](handoff-open-items.md))
 
-⚠️ That file was moved **verbatim**; nothing in it was judged closed. **Prune it with the operator.**
+✅ **Pruned with the operator 2026-07-29** — 47 resolved/superseded items moved to the log.
+⛔ **Keep it pruned:** when an item closes, MOVE it to `handoff-log.md` — do not leave it marked ✅.
 
 - **429 can still lose an exit fill** past the ~45s retry bound (#585) — deliberate: an open managed
   row blocks fan-out re-entry, so protection outranks bookkeeping.
