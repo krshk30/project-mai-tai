@@ -563,3 +563,69 @@ def test_p3_mutation_eh_flag_off_no_premarket_entry() -> None:
     not the fixture — is what makes the pre-market entry fire (mutation red vs test (a))."""
     res = _run_eh_rest(98.50, floor_bids=[(20, 101.0), (21, 99.0)], eh_enabled=False)
     assert res.entries == [] and res.trades == []
+
+
+# ============================ replay-vs-live CONFIG PARITY (2026-07-28) ============================
+# ⭐ WHY. `build_replay_settings` used to overlay LIVE_LOCKED *after* the env-merged base, so a
+# hardcoded list OVERRODE production. It had gone stale: measured on the box 2026-07-28,
+#     cw_v2_reclaim_enabled          live True -> replay False   (reclaim went back ON 07-27)
+#     cw_v2_eh_resting_entry_enabled live True -> replay False   (EH flags ON since 07-24)
+#     oms_v2_eh_entry_enabled        live True -> replay False
+# Reclaim off alone drops `max_entries_per_flip` from 2 to 1, so the replay could not model the
+# second entry in a segment. Every backtest was studying a configuration we were not trading, and
+# nothing announced it. LIVE_LOCKED is now a FALLBACK: it fills in only what the env did not set.
+
+from project_mai_tai.backtest.replay import LIVE_LOCKED, REPLAY_FORCED  # noqa: E402
+from project_mai_tai.settings import Settings as _Settings  # noqa: E402
+
+
+def test_env_set_values_beat_live_locked() -> None:
+    """THE REGRESSION. A field production explicitly sets must survive into the replay."""
+    for key, live_value in (
+        ("strategy_schwab_1m_v2_cw_v2_reclaim_enabled", True),
+        ("strategy_schwab_1m_v2_cw_v2_eh_resting_entry_enabled", True),
+        ("oms_v2_eh_entry_enabled", True),
+    ):
+        assert LIVE_LOCKED.get(key) is False, f"{key} is only a meaningful test while LIVE_LOCKED disagrees"
+        base = _Settings(**{key: live_value})               # as the env would supply it
+        got = getattr(build_replay_settings(base=base), key)
+        assert got == live_value, (
+            f"{key}: replay used {got!r} while live runs {live_value!r} — the backtest is studying "
+            f"a configuration we are not trading"
+        )
+
+
+def test_reclaim_parity_actually_moves_the_entry_cap() -> None:
+    """Not just a flag: prove the drift changed BEHAVIOUR. Reclaim off caps a segment at ONE entry."""
+    from project_mai_tai.strategy_core.schwab_1m_v2 import SchwabV2Strategy
+    base = _Settings(strategy_schwab_1m_v2_cw_v2_reclaim_enabled=True)
+    assert SchwabV2Strategy(build_replay_settings(base=base))._cw_v2_max_entries_per_flip == 2
+    assert SchwabV2Strategy(build_replay_settings())._cw_v2_max_entries_per_flip == 1   # no env
+
+
+def test_live_locked_still_applies_with_no_env() -> None:
+    """Off-VPS / CI has no env, so the fallback must still deliver the live regime in full."""
+    s = build_replay_settings()
+    for key, value in LIVE_LOCKED.items():
+        assert getattr(s, key) == value, key
+
+
+def test_replay_forced_beats_the_env() -> None:
+    """Boot-hold safety is a MODELLING choice, not drift: the replay models the RELEASED steady
+    state, so an env that turns it on must not gate arms the live bot had stopped gating."""
+    base = _Settings(strategy_schwab_1m_v2_cw_armed_segment_safety_enabled=True)
+    s = build_replay_settings(base=base)
+    for key, value in REPLAY_FORCED.items():
+        assert getattr(s, key) == value, key
+
+
+def test_explicit_overrides_still_win_over_everything() -> None:
+    base = _Settings(strategy_schwab_1m_v2_cw_v2_reclaim_enabled=True)
+    s = build_replay_settings(base=base, strategy_schwab_1m_v2_cw_v2_reclaim_enabled=False)
+    assert s.strategy_schwab_1m_v2_cw_v2_reclaim_enabled is False
+
+
+def test_eh_switch_still_forces_eh_on() -> None:
+    s = build_replay_settings(eh_enabled=True)
+    assert s.strategy_schwab_1m_v2_cw_v2_eh_resting_entry_enabled is True
+    assert s.oms_v2_eh_entry_enabled is True

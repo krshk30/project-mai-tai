@@ -160,10 +160,18 @@ class ReplayResult:
 
 
 # ------------------------------------------------------------------- config
-# The live-LOCKED config values (docs/schwab-1m-v2-live-spec.md §8) that DIFFER from the code
-# defaults. Encoded here so an off-VPS / CI replay is faithful without an env file. On the VPS,
-# `get_settings()` (env-merged) is the authority — `build_replay_settings` starts from a base
-# Settings and overlays these so either source yields the live regime.
+# ⭐ FALLBACK ONLY (2026-07-28). These are the live-LOCKED spec values (docs/schwab-1m-v2-live-spec.md
+# §8) encoded so an off-VPS / CI replay is faithful WITHOUT an env file. They fill in a field only
+# when the base Settings did NOT explicitly set it — i.e. on the VPS the ENV WINS.
+#
+# ⛔ THEY USED TO OVERRIDE THE ENV, and had silently gone stale. Measured 2026-07-28, live-vs-replay:
+#     cw_v2_reclaim_enabled          live True  -> replay False   (reclaim went back ON 07-27)
+#     cw_v2_eh_resting_entry_enabled live True  -> replay False   (EH flags ON since 07-24)
+#     oms_v2_eh_entry_enabled        live True  -> replay False
+# Reclaim off alone drops `max_entries_per_flip` from 2 to 1, so the replay could not even model the
+# second entry in a segment. Every backtest was studying a configuration we were not trading, and
+# nothing said so. Fallback-not-override makes this self-syncing: whatever production runs, the
+# replay runs, and this list only matters where there is no env at all.
 LIVE_LOCKED = dict(
     strategy_schwab_1m_v2_enabled=True,
     strategy_schwab_1m_v2_confirmed_window_enabled=True,
@@ -188,9 +196,6 @@ LIVE_LOCKED = dict(
     # paths execute — the ONLY switch the operator flips to replay an "EH-enabled" day.
     strategy_schwab_1m_v2_cw_v2_eh_resting_entry_enabled=False,  # P-B2 resting-EH (strategy + OMS share this)
     oms_v2_eh_entry_enabled=False,                               # P-B1 reactive-EH OMS cross-cap/abandon
-    # Boot-hold safety is ON live but the bot RELEASES it after its one-time verify; the replay
-    # models steady-state (released) via `_entries_held = False` below, so this is left default-off.
-    strategy_schwab_1m_v2_cw_armed_segment_safety_enabled=False,
     strategy_schwab_1m_v2_entry_window_start_hour_et=7,
     strategy_schwab_1m_v2_entry_window_start_minute_et=0,
     strategy_schwab_1m_v2_entry_window_end_hour_et=16,
@@ -208,22 +213,46 @@ EH_ENABLED = dict(
 )
 
 
+# ⛔ FORCED regardless of the env — these are MODELLING choices, not config drift, so they must win
+# over both LIVE_LOCKED and the base. Boot-hold safety is ON live, but the bot RELEASES it after its
+# one-time verify; the replay models the RELEASED steady state (see `_entries_held = False` below).
+# Letting the env turn it on would gate arms the live bot had already stopped gating.
+REPLAY_FORCED = dict(
+    strategy_schwab_1m_v2_cw_armed_segment_safety_enabled=False,
+)
+
+
 def build_replay_settings(
     base: Settings | None = None, *, eh_enabled: bool = False, **overrides
 ) -> Settings:
-    """Faithful live-regime Settings for the replay. Starts from `base` (or the env-merged
-    `Settings()` on the VPS), overlays the live-LOCKED spec §8 values, optionally the EH-enabled
-    overlay, then any test overrides (which always win).
+    """Faithful live-regime Settings for the replay.
 
-    `eh_enabled=True` turns ON both extended-hours entry flags (`..._cw_v2_eh_resting_entry_enabled`
-    + `oms_v2_eh_entry_enabled`) so the replay runs the real EH entry paths — the explicit way to
-    replay a pre/post-market "EH-enabled" day. Default False keeps the LIVE deployed regime (EH OFF,
-    RTH-only), so the default replay matches production."""
+    Precedence, lowest to highest:
+      1. `base` (the env-merged `Settings()` on the VPS = what production actually runs)
+      2. LIVE_LOCKED — **only for fields the base did not explicitly set** (off-VPS / CI fallback)
+      3. EH_ENABLED  — when `eh_enabled=True`
+      4. REPLAY_FORCED — modelling choices (boot-hold released) that must beat the env
+      5. `**overrides` — explicit caller/test values, always win
+
+    ⭐ Step 2 is a FALLBACK, not an override (changed 2026-07-28). It used to clobber the env, and
+    had gone stale: reclaim and both EH flags were ON live but forced OFF in every replay, so the
+    engine was studying a configuration we were not trading. Reclaim off alone drops
+    `max_entries_per_flip` from 2 to 1.
+
+    `eh_enabled=True` forces both extended-hours entry flags ON so the replay runs the real EH entry
+    paths, regardless of what the base says — the explicit way to study a pre/post-market day. It is
+    no longer needed just to MATCH production (the env already carries the live EH state); it is for
+    forcing EH on where there is no env, or overriding an env that has it off."""
     merged = dict(base.model_dump()) if base is not None else {}
-    merged.update(LIVE_LOCKED)
+    # ⭐ FALLBACK, not override. `model_fields_set` is exactly the set the ENV (or an explicit kwarg)
+    # supplied, so a value production actually runs is never clobbered by this stale-able list.
+    # Off-VPS / CI there is no env, the set is empty, and LIVE_LOCKED applies in full as before.
+    env_set = set(base.model_fields_set) if base is not None else set()
+    merged.update({k: v for k, v in LIVE_LOCKED.items() if k not in env_set})
     if eh_enabled:
         merged.update(EH_ENABLED)
-    merged.update(overrides)
+    merged.update(REPLAY_FORCED)   # modelling choices beat both the env and LIVE_LOCKED
+    merged.update(overrides)       # explicit caller overrides still win over everything
     return Settings(**merged)
 
 
