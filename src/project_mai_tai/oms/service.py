@@ -2493,7 +2493,10 @@ class OmsRiskService:
             .order_by(desc(BrokerOrder.updated_at))
         )
 
-    async def _fetch_oco_exit_detail(self, acct: str, symbol: str, base_coid: str):
+    async def _fetch_oco_exit_detail(
+        self, acct: str, symbol: str, base_coid: str, *,
+        entry_broker_order_id: str = "", entry_filled_at=None, entry_quantity=None,
+    ):
         """Broker read ONLY — never touches the DB, so it is safe to await on the loop and MUST
         stay outside any `_run_db` unit (see that docstring). Never raises: a missing exit must
         degrade to 'no fill recorded', never break the close path that protects the account.
@@ -2514,7 +2517,15 @@ class OmsRiskService:
         if fn is None or not base_coid:
             return None
         try:
-            return await fn(acct, symbol, base_coid)
+            # ⛔ Ownership proof, not a hint. Schwab used to match on SYMBOL ALONE and booked the
+            # operator's hand-placed TOS sell as our exit (2026-07-29). It now fails CLOSED without
+            # `entry_broker_order_id`, so these must be threaded through from the ENTRY order.
+            return await fn(
+                acct, symbol, base_coid,
+                entry_broker_order_id=entry_broker_order_id,
+                entry_filled_at=entry_filled_at,
+                entry_quantity=entry_quantity,
+            )
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001
@@ -2629,7 +2640,11 @@ class OmsRiskService:
             # why it is the primary hook: Webull has no armed-OCO tracking to drive the fast path.
             entry_order = self._find_oco_entry_order(session, acct, symbol)
             base_coid = str(getattr(entry_order, "client_order_id", "") or "")
-            detail = await self._fetch_oco_exit_detail(acct, symbol, base_coid)
+            detail = await self._fetch_oco_exit_detail(
+                acct, symbol, base_coid,
+                entry_broker_order_id=str(getattr(entry_order, "broker_order_id", "") or ""),
+                entry_quantity=getattr(entry_order, "quantity", None),
+            )
             if detail is _EXIT_FETCH_FAILED:
                 # Transient — hold the row so the next cycle can retry rather than book unpaired.
                 if self._defer_for_exit_fetch(acct, symbol):
@@ -2682,19 +2697,22 @@ class OmsRiskService:
             if now - self._oco_exit_poll_at.get(key, -1e9) < min_secs:
                 continue
             self._oco_exit_poll_at[key] = now      # stamp BEFORE the call: a failure must not spin
+            def _read_entry(session: Session, _a=acct, _s=symbol) -> tuple:
+                o = self._find_oco_entry_order(session, _a, _s)
+                return (str(getattr(o, "client_order_id", "") or ""),
+                        str(getattr(o, "broker_order_id", "") or ""),
+                        getattr(o, "quantity", None))
+
             try:
-                base_coid = await self._run_db(
-                    lambda session: str(
-                        getattr(self._find_oco_entry_order(session, acct, symbol),
-                                "client_order_id", "") or ""
-                    ),
-                    commit=False,
-                )
+                base_coid, entry_oid, entry_qty = await self._run_db(_read_entry, commit=False)
             except asyncio.CancelledError:
                 raise
             except Exception:  # noqa: BLE001
                 continue
-            detail = await self._fetch_oco_exit_detail(acct, symbol, base_coid)
+            detail = await self._fetch_oco_exit_detail(
+                acct, symbol, base_coid,
+                entry_broker_order_id=entry_oid, entry_quantity=entry_qty,
+            )
             if detail is _EXIT_FETCH_FAILED:
                 continue     # transient: leave the row alone, the next poll retries
             if not detail:
@@ -2723,19 +2741,24 @@ class OmsRiskService:
         # The broker await must stay OUTSIDE `_run_db` (see its docstring), so this is read ->
         # fetch -> write rather than one unit. Worst case the fetch fails and we close exactly as
         # before, just without a recorded exit.
-        def _read_base(session: Session) -> str:
+        def _read_base(session: Session) -> tuple:
             order = self._find_oco_entry_order(session, acct, symbol)
-            return str(getattr(order, "client_order_id", "") or "")
+            return (str(getattr(order, "client_order_id", "") or ""),
+                    str(getattr(order, "broker_order_id", "") or ""),
+                    getattr(order, "quantity", None))
 
-        base_coid = ""
+        base_coid, entry_oid, entry_qty = "", "", None
         try:
             if detail is None:
-                base_coid = await self._run_db(_read_base, commit=False)
+                base_coid, entry_oid, entry_qty = await self._run_db(_read_base, commit=False)
         except Exception:  # noqa: BLE001 - bookkeeping only; never block the phantom-row close
             self.logger.warning("[OMS-OCO-EXIT-FILL] %s %s entry-order lookup failed", acct, symbol)
         if detail is None:
             # the poll already fetched it; do not spend a second broker round trip (Webull 429s)
-            detail = await self._fetch_oco_exit_detail(acct, symbol, base_coid)
+            detail = await self._fetch_oco_exit_detail(
+                acct, symbol, base_coid,
+                entry_broker_order_id=entry_oid, entry_quantity=entry_qty,
+            )
         if detail is _EXIT_FETCH_FAILED:
             # Transient — hold the managed row open so the next sync retries the fetch, up to the
             # bounded cap, rather than closing the trade with no exit recorded.

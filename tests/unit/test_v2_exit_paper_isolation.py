@@ -179,7 +179,8 @@ async def test_oco_exit_fill_is_routed_to_the_accounts_adapter() -> None:
     seen: dict = {}
 
     class _Leaf:
-        async def fetch_oco_exit_fill(self, acct, symbol, base="", *, resolved_within_seconds=3600.0):
+        async def fetch_oco_exit_fill(self, acct, symbol, base="", *, resolved_within_seconds=3600.0,
+                                  entry_broker_order_id="", entry_filled_at=None, entry_quantity=None):
             seen.update(acct=acct, symbol=symbol, base=base, window=resolved_within_seconds)
             return {"symbol": symbol, "price": Decimal("3.93"), "quantity": Decimal("1")}
 

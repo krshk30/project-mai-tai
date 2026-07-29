@@ -70,6 +70,9 @@ class RoutingBrokerAdapter:
         base_client_order_id: str = "",
         *,
         resolved_within_seconds: float = 3600.0,
+        entry_broker_order_id: str = "",
+        entry_filled_at: object | None = None,
+        entry_quantity: object | None = None,
     ) -> dict[str, object] | None:
         """Route to the account's adapter. Optional capability -- an adapter without it (Alpaca,
         simulated) has no OCO child legs to read, so return None (the caller then closes the row
@@ -86,11 +89,18 @@ class RoutingBrokerAdapter:
         fn = getattr(adapter, "fetch_oco_exit_fill", None)
         if fn is None:
             return None
+        # ⛔ The OWNERSHIP kwargs must be forwarded. Dropping them here would silently restore
+        # symbol-only matching on Schwab -- the exact defect that claimed the operator's manual
+        # trade -- while every test on the leaf adapter still passed. A missing forwarder has
+        # already made this whole capability a no-op once (see the note above).
         return await fn(
             broker_account_name,
             symbol,
             base_client_order_id,
             resolved_within_seconds=resolved_within_seconds,
+            entry_broker_order_id=entry_broker_order_id,
+            entry_filled_at=entry_filled_at,
+            entry_quantity=entry_quantity,
         )
 
     def _adapter_for_account(self, broker_account_name: str) -> BrokerAdapter:
