@@ -15,6 +15,41 @@
 
 ---
 
+---
+
+## 🌙 AFTER CLOSE TODAY (2026-07-29) — a scoped batch, not open-ended
+All three are ready to run the moment the fleet is flat after 16:00 ET. **Close them tonight; do not
+let them become standing items.**
+
+### a. Run the dead-bot bar-history prune
+`scripts/prune_strategy_bar_history.py --go`, then `VACUUM (ANALYZE) strategy_bar_history`.
+Dry-run already verified 2026-07-29: **1,091,270 rows** across 6 codes, every one **51+ days silent**
+(newest write 2026-06-09), ~1 GB. Deferred from the morning because a live AMIX position was open and
+the box was saturated. ⛔ `schwab_1m_v2` rows are NOT touched — that is the backtest bar source.
+
+### b. Restart `trade-coach` — it is the biggest CPU consumer on the box
+Measured at the 07-29 open: **43.0% CPU, 21 days uptime**, and it is AUXILIARY (the readiness check
+labels it so). The box is 2 vCPU at load ~2.4:
+
+    trade-coach 43.0%  ·  control 32.8% (1.6 GB RSS, 15d)  ·  strategy 29.1%  ·  market-data 22.0%
+    oms 2.4%   <- STARVED, not stuck
+
+⭐ **This is what caused the 09:00 + 09:09 OMS LIVENESS alerts.** The OMS never restarted
+(`NRestarts=0`) and logged continuous healthy work through both windows with zero errors — its event
+loop simply could not get scheduled, so the 15s heartbeat went >180s stale twice and recovered within
+a minute each time. **Not a zombie; CPU starvation.**
+⇒ New evidence for open item 2 (the polygon/strategy-engine freeze): the load is broader than the
+strategy engine alone. Consider `control` (32.8%, 1.6 GB after 15 days) next.
+
+### c. Stop the readiness check RED-ing on a decommissioned ORB
+`preopen_readiness_check.py` produced **RED — 3 FAIL** on 07-29, and all three were ORB:
+`orb inactive` · `orb (iso-state) NO recent isolated-state` · `ORB no isolated-state`.
+ORB was deliberately disabled 07-29 ([[project_mai_tai_orb_decommissioned_but_flag_stays_true]]).
+⛔ Left as-is this fires a false **"DO NOT trust the open"** every morning — which is exactly how a
+real RED gets ignored. Make the ORB checks conditional on the service being enabled.
+
+---
+
 ## 1. 🔬 Re-run the backtest-vs-live comparison on a STABLE-CODE day
 07-28 cannot judge parity — six deploys landed mid-session, so live ran >=4 code versions while the
 replay runs the final one. **Config parity itself is FIXED and verified** (89/90, #592); what is
