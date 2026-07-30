@@ -100,10 +100,18 @@ INSERT_SQL = """
 INSERT INTO strategy_bar_history
     (id, strategy_code, symbol, interval_secs, bar_time,
      open_price, high_price, low_price, close_price, volume,
-     trade_count, source, position_state, position_quantity, decision_status)
+     trade_count, source, position_state, position_quantity, decision_status,
+     indicators)
 VALUES (gen_random_uuid(), %(code)s, %(sym)s, %(iv)s, %(ts)s,
         %(o)s, %(h)s, %(l)s, %(c)s, %(v)s,
-        0, 'rest', 'flat', 0, 'rest_backfill')
+        0, 'rest', 'flat', 0, 'rest_backfill',
+        -- ⛔ NOT NULL with NO default. A backfilled bar has no indicator snapshot: indicators are
+        -- what the STRATEGY computed as the bar closed live, and we were not running. An empty
+        -- object is the honest value -- inventing indicators for a bar we never evaluated would
+        -- put fabricated decision state into the table the backtest treats as ground truth.
+        -- Found the hard way: the first live repair run aborted on this constraint (which is the
+        -- constraint doing its job -- it rolled back rather than writing partial rows).
+        '{}'::json)
 ON CONFLICT ON CONSTRAINT uq_strategy_bar_history_strategy_symbol_interval_time DO NOTHING
 """
 

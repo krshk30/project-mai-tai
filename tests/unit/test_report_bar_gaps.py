@@ -58,3 +58,23 @@ def test_it_only_touches_the_v2_series() -> None:
 def test_tiny_jitter_is_not_treated_as_a_hole() -> None:
     """A 1-minute 'gap' is just the next bar; REST round trips are not free."""
     assert mod.MIN_GAP_MINUTES >= 2
+
+
+def test_the_insert_supplies_every_NOT_NULL_column() -> None:
+    """⛔ `indicators` is NOT NULL with NO default and was missing from the first version — the
+    live repair aborted on it. Pins the whole set so the next added column fails HERE, not at
+    02:00 in a cron nobody is watching."""
+    required = (
+        "strategy_code", "symbol", "interval_secs", "bar_time",
+        "open_price", "high_price", "low_price", "close_price",
+        "volume", "position_state", "indicators",
+    )
+    cols = mod.INSERT_SQL.split("VALUES")[0]
+    for c in required:
+        assert c in cols, f"NOT NULL column {c!r} missing from the insert"
+
+
+def test_backfilled_indicators_are_EMPTY_not_invented() -> None:
+    """A bar we never evaluated has no indicator snapshot. Fabricating one would put invented
+    decision state into the table the backtest treats as ground truth."""
+    assert "'{}'::json" in mod.INSERT_SQL
