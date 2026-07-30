@@ -99,10 +99,10 @@ Setting it false breaks the live fan-out.
 clean, 0 suspect of 36) · ✅ **(e)** claim-a-manual-trade FIXED+LIVE (#605, ownership now structural,
 fail-closed) · ✅ **(a)** dead-bot prune 1,091,270 rows, 1962→815 MB, backtest re-verified identical ·
 ✅ **(c)** readiness RED→AMBER (#606) · ⚠️ **(b)** trade-coach restarted but **INEFFECTIVE** (43%→47%,
-the CPU is inherent not drift — OMS starvation will recur; folded into open item 2) · ⏳ **(d)** the
-Webull close-retry storm remains.
-
-**(superseded batch note below)** (a) run the dead-bot bar-history prune
+the CPU is inherent not drift — OMS starvation will recur; folded into open item 2) · ✅ **(d)** Webull close-retry storm FIXED+LIVE (#608) — the cause was
+NOT a missing bound but a counter RESET on inconclusive reads; only a positively-HELD read resets now,
+UNKNOWN accumulates to 8 and stands down **without** touching protection.
+**⇒ ALL 5 BATCH ITEMS CLOSED.** Open items back to the standing 3. (a) run the dead-bot bar-history prune
 (1,091,270 rows, dry-run verified) · (b) restart `trade-coach` (**43% CPU**, auxiliary, 21d — it is
 what starved the OMS heartbeat into the 09:00/09:09 alerts) · (c) stop the readiness check RED-ing on
 the now-decommissioned ORB (3 FAIL = all ORB → a false "DO NOT trust the open" every morning) ·
