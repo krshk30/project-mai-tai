@@ -1048,6 +1048,80 @@ nobody runs, a rule that is never 'done', and a dormant feature's item all sat a
 
 ---
 
+## 2026-07-30 — 11 PRs, an entry-path root cause, and the day the alerts got wired
+
+**Median of the day's 3 morning round trips: −4.92% (all stopped out). After the entry fix: +2.09%
+(3 winners, all hitting +2%).** Same bot, same day, opposite sign.
+
+### ⭐⭐ ROOT CAUSE — the 09:30-10:00 ORB window was DEFERRING armed entries to 10:00
+The operator spotted it on a TOS chart within minutes: *"it's not resting, it's not reclaim, it's
+been going long a long time, and it bought it all the way at the top."*
+
+`_cw_in_orb_window` suppressed reactive entries 09:30-10:00 but **PAUSED the setup instead of
+CANCELLING it**. `cw_trigger` freezes at flip+2 and never expires in RTH, so every armed symbol was
+released at ONE clock edge at 10:00:00 and entered on a stale trigger. The log even named the shape:
+
+    09:38:04 [V2-CW-ORB-BLOCK] SNDG break suppressed px=5.6400 trig=5.1100 — setup stays ARMED and
+             will enter on the first quote above trig once the gate lifts (the SOBR chase shape)
+
+APLX bought +23.7% past its flip level, SNDG +18.9%, both at 10:00:0x. **The window was reserving
+the most volatile 30 minutes of the day for `project-mai-tai-orb`, inactive + DISABLED since 07-23.**
+
+⛔ **RULED OUT, do not re-litigate:** bad bars (the stored NUWE 08:59 bar matched the operator's TOS
+chart exactly, volume included), #590/the cooldown (independently verified inert at `ffdf3d6^` —
+every reader was dead code or a log argument), and warmup-as-root-cause (contributory only).
+
+⭐ **But the deeper defect was the operator's, not mine:** *"whenever the momentum scanner confirms a
+NEW stock it needs to wait for a fresh ATR flip; the ones we've had since 07:00 don't have to."*
+The mechanism existed — `_cap_reconstructed_segment` — keyed on **global process boot**, so a symbol
+promoted at 09:38 happily accepted a flip from 09:16. Right idea, wrong clock.
+
+### Shipped
+- **#616** recorder files each trade under its ENTRY's ET day, not the run date
+- **#618** per-symbol watch-start + ORB window REMOVED (both, deliberately together)
+- **#619** cap the reconstructed segment AFTER the warmup feed — `[V2-CW-SEED-CAP]` had **never
+  fired once**; the boot-hold was masking it by freezing entries bot-wide
+- **#620** never compute true range across a bar gap
+- **#621** fleet check #4 — v2 bar continuity
+- **#623** bar-hole watch + **auto-repair** -> ntfy
+- **#624** `strategy_bar_history.source` provenance column + REST repair
+- **#625** re-check liquidity while resting; fail-closed on an unconfirmed cancel
+- **#626** reconciler CRITICAL findings -> ntfy
+- **#627** the backfill insert was missing NOT NULL `indicators`
+- **#628** a cancel intent tracks the REQUEST, not the target order's fate
+
+### ⛔ Three things that were WRONG in this project's own records
+1. **trade-coach burned 45% of the box while DISABLED**, in a 429 retry storm on a dead OpenAI key
+   since 07-25. 07-29's "CPU is inherent, a restart did nothing" measured right and concluded wrong.
+   Stopped; load 2.2 -> 1.37. 887 reviews, 93% "good", **zero** for the live-money bot.
+2. **The trade recorder could never have written a byte** — its cron sat in TRADER's crontab while
+   `trade_records/` is root-owned and the env file root-readable. It had never entered its own ET
+   window, and the two files present were root-owned artifacts of manual runs.
+   ⭐ **A hand-run as the wrong user is not a test of a cron.**
+3. **The reconciler had already caught the IRE drift** — `position_quantity_mismatch` CRITICAL at
+   12:55:22, eight minutes after a phantom fill, repeated 71 times. **Nobody was ever told.** There
+   was no alerting on reconciliation findings at all. Detection was never the missing piece.
+
+### The liquidity floor was ENFORCED — and stale
+Operator asked to validate it. All four below-floor entries were RESTING orders: APLX passed the
+floor on a 12,530-share bar at 13:09 and **filled at 13:19 into a 100-share bar — 125x thinner than
+the gate approved.** Checked at placement, never re-checked before the fill (#625).
+
+### Data + hygiene
+681 bars backfilled (`source='rest'`), 12 stuck cancel intents closed out (backed up first),
+2,430,969 findings + 269,051 runs pruned. **DB 12 -> 10 GB. Logs 1.7 GB -> 426 MB.**
+⭐ `dashboard_snapshots` **1020 MB -> 14 MB with ZERO rows deleted** — pure TOAST bloat, never a
+retention problem. The original "prune it" plan would have destroyed live state and reclaimed nothing.
+⚠️ It regrew to **96 MB in four minutes**. #366 is now evidenced twice.
+
+### Lessons worth carrying
+- **A circular metric proves nothing.** I "validated" the resting path by comparing its order price
+  to the number the bot used to SET that price. It scored 0.00 every day and could never have found
+  anything. The operator rejected the conclusion; the non-circular test inverted it.
+- **Date-filter every log grep.** An unrotated log made "49,270 MACD crosses today" out of weeks of
+  history; the real number was 433. Made the same error twice in one day.
+- **The operator's daily eyeball beat my log analysis three times.** Weight it.
+
 ## 2026-07-29 (Wed) — a restart-free day, three wrong answers, and the fix for both
 
 **Deployed:** #605 ownership-scoped exit capture · #606 readiness ORB-aware · #608 close-retry
