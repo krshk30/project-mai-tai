@@ -21,34 +21,6 @@
 All three are ready to run the moment the fleet is flat after 16:00 ET. **Close them tonight; do not
 let them become standing items.**
 
-### a. Run the dead-bot bar-history prune
-`scripts/prune_strategy_bar_history.py --go`, then `VACUUM (ANALYZE) strategy_bar_history`.
-Dry-run already verified 2026-07-29: **1,091,270 rows** across 6 codes, every one **51+ days silent**
-(newest write 2026-06-09), ~1 GB. Deferred from the morning because a live AMIX position was open and
-the box was saturated. ⛔ `schwab_1m_v2` rows are NOT touched — that is the backtest bar source.
-
-### b. Restart `trade-coach` — it is the biggest CPU consumer on the box
-Measured at the 07-29 open: **43.0% CPU, 21 days uptime**, and it is AUXILIARY (the readiness check
-labels it so). The box is 2 vCPU at load ~2.4:
-
-    trade-coach 43.0%  ·  control 32.8% (1.6 GB RSS, 15d)  ·  strategy 29.1%  ·  market-data 22.0%
-    oms 2.4%   <- STARVED, not stuck
-
-⭐ **This is what caused the 09:00 + 09:09 OMS LIVENESS alerts.** The OMS never restarted
-(`NRestarts=0`) and logged continuous healthy work through both windows with zero errors — its event
-loop simply could not get scheduled, so the 15s heartbeat went >180s stale twice and recovered within
-a minute each time. **Not a zombie; CPU starvation.**
-⇒ New evidence for open item 2 (the polygon/strategy-engine freeze): the load is broader than the
-strategy engine alone. Consider `control` (32.8%, 1.6 GB after 15 days) next.
-
-### c. Stop the readiness check RED-ing on a decommissioned ORB
-`preopen_readiness_check.py` produced **RED — 3 FAIL** on 07-29, and all three were ORB:
-`orb inactive` · `orb (iso-state) NO recent isolated-state` · `ORB no isolated-state`.
-ORB was deliberately disabled 07-29 ([[project_mai_tai_orb_decommissioned_but_flag_stays_true]]).
-⛔ Left as-is this fires a false **"DO NOT trust the open"** every morning — which is exactly how a
-real RED gets ignored. Make the ORB checks conditional on the service being enabled.
-
-
 ### d. ⛔ Webull close-retry STORM — the floor exit retries forever against a flat broker
 Live 2026-07-29, found validating the day's trades. **NCRA: 145 rejected sells in 55 minutes.**
 
@@ -75,39 +47,26 @@ test: cap the retries per exit decision and stand down loudly.
 No money was lost (every position did exit), so this is correctness + hygiene, not a P&L leak.
 
 
-### e. ⛔⭐ TOP PRIORITY — we booked the OPERATOR'S MANUAL TRADE as one of our exits
-**This violates the core concept: Mai Tai must not interfere with manual trades — it listens to what
-is posted, it does not claim it.** Found 2026-07-29 validating the day's fills; operator confirmed
-the trade was theirs, placed by hand in TOS.
+---
 
-    manual TOS sell filled : 07:49:05 ET   <- TWO MINUTES BEFORE our own entry
-    our AMIX v2 entry      : 07:51:26 ET
-    quantity               : 1000  (we trade 2, or 1 on the fan-out leg)
-    booked onto            : schwab_1m_v2-AMIX-open-5da65614d5aa-ocoexit-72643358
-    blast radius           : 1 of 31 native-OCO exits recorded to date
+## ✅ AFTER-CLOSE BATCH 2026-07-29 — RESULTS
 
-**ROOT CAUSE — `broker_adapters/schwab.py::fetch_oco_exit_fill` matches on SYMBOL ALONE.**
-`_walk()` accepts any order where `symbol == wanted` AND `instruction == SELL` AND
-`status == FILLED` AND it closed within `resolved_within_seconds`. It then walks **every order in
-the account**, so a hand-placed sell is a first-class candidate. It never checks:
-  1. that the order is **OURS** — the docstring says it outright: *"`base_client_order_id` is unused
-     here (Schwab resolves by symbol through the order tree)"*
-  2. that the exit happened **AFTER** our entry (here it was 2 minutes BEFORE)
-  3. that the **quantity** relates to ours (1000 vs 2)
-Any one of those three checks would have caught it.
+| item | outcome |
+|---|---|
+| operator's manual fills | ✅ **BOTH removed** (1000 sh @4.68 and 2000 sh @4.5555) + their synthetic `-ocoexit` order rows. Contamination check now **0 suspect of 36**. Full row contents were printed before deleting. |
+| **(e)** claim-a-manual-trade | ✅ **FIXED + LIVE** (#605). Ownership is structural: walk only our entry's `childOrderStrategies`, FAIL CLOSED without `entry_broker_order_id`. Webull was never affected (suffixed coids). Suite 1664 green. |
+| **(a)** dead-bot prune | ✅ **DONE.** 1,091,270 rows across 6 codes. `strategy_bar_history` **1962 MB → 815 MB** (~1.1 GB reclaimed). Only the 2 read codes remain (polygon_30s 817,331 · schwab_1m_v2 202,756). **Backtest re-verified byte-identical afterwards** (STKH 07-28: 379 bars, +1.90%). |
+| **(c)** readiness RED | ✅ **FIXED + LIVE** (#606). Verdict **RED (3 FAIL) → AMBER (0 FAIL)**. Keyed on `systemctl is-enabled`, NOT the env var. |
+| **(b)** restart trade-coach | ⚠️ **DONE BUT INEFFECTIVE — see below.** |
+| **(d)** Webull close-retry storm | ⏳ still open, carried below. |
 
-**FIX SHAPE (design first — this is the exit-capture path, and it is live):**
-scope the walk to OUR bracket — find the order whose `orderId` equals our ENTRY's
-`broker_order_id`, then walk only its `childOrderStrategies`. Belt: also require
-`closed_at >= entry_time` and `qty <= entry_qty`. ⛔ Do NOT just add a quantity filter — a manual
-trade of 1 or 2 shares would still slip through; ownership is the real axis.
-
-⛔ **Webull needs the same audit** — it addresses combo legs by suffixed coid so it is probably
-already scoped, but that must be VERIFIED, not assumed.
-
-**DATA:** the bad fill row is still in `fills` (`broker_fill_id=1007372643358:1000.0`) and will pair
-against our AMIX entries, corrupting P&L. Deleting it is an operator decision — it is their trade in
-their account, and this system should not be the one that decides.
+### ⚠️ (b) did NOT work — the CPU is inherent, not drift
+`trade-coach` was **43.0%** before the restart and settled at **47.2%** after, on 21 days vs 1 minute
+of uptime. So this is not a leak that a bounce clears — the service genuinely burns ~45% of a 2-vCPU
+box continuously. Load is still ~2.2 with `strategy` 36.5% and `control` 33.7% alongside it.
+⇒ **The OMS heartbeat starvation WILL recur**, and the 09:00/09:09-style liveness pages with it.
+⇒ Folded into open item 2 (polygon/strategy-engine freeze): the real question is why an AUXILIARY
+service costs half the box, and whether it should run during market hours at all.
 
 ---
 
@@ -132,7 +91,10 @@ Config-drift check now shipped: `ops/health/env_default_drift.py` (#598).
 `#366` (snapshot-persist throttle) was deployed and is **INSUFFICIENT**. Next candidate: offload or
 encode-once. F3 health check #1 detects it. [[project_mai_tai_polygon_freeze]]
 
-## 3. 🧹 VPS retention prune — PLAN APPROVED, awaiting the go-ahead on specifics
+## 3. 🧹 VPS retention — PART DONE 2026-07-29
+✅ **`strategy_bar_history` DONE**: 1,091,270 dead-bot rows removed, 1962 MB → 815 MB. Backtest
+re-verified byte-identical afterwards. `scripts/prune_strategy_bar_history.py`.
+Remaining candidates (disk is only 24% used, so this is hygiene):
 Disk is **not** under pressure (25% used, 88 GB free) — this is hygiene.
 ✅ **Already self-managing, verified 2026-07-29:** `market_capture_trades`/`_quotes` hold exactly
 14 days and `market_trade_ticks` 30 days; both systemd timers ran that morning. **Leave them alone.**
@@ -141,7 +103,7 @@ Disk is **not** under pressure (25% used, 88 GB free) — this is hygiene.
 |---|---|---|
 | `reconciliation_findings` | 1142 MB, 2.5M rows, oldest 2026-03-30, never pruned | **prune > 30 days** — diagnostics only |
 | `dashboard_snapshots` | 1017 MB for **5002 rows of a single day** (~200 KB each) | needs a retention policy; confirm nothing reads history first |
-| `strategy_bar_history` | 1955 MB, oldest 2026-04-02 | ⛔ **DO NOT PRUNE** — `backtest/data.py` reads it; it IS the backtest bar source, and pruning it would destroy the history item 1 depends on |
+| ~~`strategy_bar_history`~~ | ~~1955 MB~~ → **815 MB** | ✅ **DONE** — dead-bot rows only. ⛔ The surviving `schwab_1m_v2` rows are the backtest bar source and must never be pruned. |
 
 [[project_mai_tai_retention_inventory]]
 
