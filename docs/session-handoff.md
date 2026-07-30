@@ -105,6 +105,16 @@ exits dated *before* their own entry. **Attribution must be captured, not inferr
 ⛔ **Read `intrabar_ambiguous` before trusting a what-if.** When a stop and target share one 1-minute
 bar, bars cannot order them. ⛔ And an unpaired entry is **not** a naked position — ask the broker.
 
+⛔⭐ **ONE KNOWN BLIND SPOT (#614).** v2 exits leave by two coids and only one is attributable:
+`<entry>-ocoexit-*` carries the entry's own id, but `<symbol>-close-*` (flip / hard stop / EH ladder /
+EOD transition) gets a fresh suffix **and its own single-order intent — nothing links it to its
+entry.** Over 30 days that is **74 `-close-` vs 36 `-ocoexit-`**, and it is the route that carries the
+**losses**, so an ocoexit-only view reads optimistic. Since native OCO became primary (07-28) the mix
+flipped — **23 of 24** exits on 07-29 were pairable — so recent days are fine and **historical ones
+are not**. Those exits are **labelled, not paired** (`exit_route: "close_unattributed"`, kept out of
+`ret_pct`) because symbol+time attribution is the bug this tool exists to end.
+⇒ Real fix, **not built**: stamp the entry's `broker_order_id` onto the close order at the WRITE site.
+
 ---
 
 ## 👀 WATCH NEXT SESSION
