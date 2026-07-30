@@ -193,6 +193,9 @@ class WebullBrokerAdapter:
         base_client_order_id: str = "",
         *,
         resolved_within_seconds: float = 3600.0,
+        entry_broker_order_id: str = "",
+        entry_filled_at: object | None = None,
+        entry_quantity: object | None = None,
     ) -> dict[str, object] | None:
         """The EXIT EXECUTION of a combo bracket: qty, price, time, broker order id.
 
@@ -200,6 +203,12 @@ class WebullBrokerAdapter:
         knowing the broker. Webull differs in HOW the exit is addressed: the combo's legs live
         under SUFFIXED coids (`<base>T` = STOP_PROFIT, `<base>S` = STOP_LOSS), so this needs the
         entry's base coid -- there is no symbol-keyed order tree to walk.
+
+        ⭐ THEREFORE WEBULL IS ALREADY OWNERSHIP-SCOPED and was NOT affected by the 2026-07-29 defect
+        that let Schwab claim the operator's hand-placed trade: a suffixed coid is derived from OUR
+        OWN entry, so a manual order is unreachable by construction. The `entry_*` kwargs are accepted
+        for signature parity (the OMS calls either broker blind) and are deliberately unused here --
+        adding a redundant filter would imply the coid scoping is insufficient, which it is not.
 
         ⭐ WHY: the OMS never placed these sells, so nothing books a fill for them. Since the
         native bracket went live NO exit fill has been recorded, leaving the operator's

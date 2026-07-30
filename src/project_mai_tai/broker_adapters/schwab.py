@@ -245,6 +245,9 @@ class SchwabBrokerAdapter:
         base_client_order_id: str = "",
         *,
         resolved_within_seconds: float = 3600.0,
+        entry_broker_order_id: str = "",
+        entry_filled_at: datetime | None = None,
+        entry_quantity: Decimal | None = None,
     ) -> dict[str, object] | None:
         """The EXIT EXECUTION of a natively-bracketed trade: qty, price, time, broker order id.
 
@@ -259,9 +262,23 @@ class SchwabBrokerAdapter:
         that would write a $0 exit and report a -100% trade. Hence status must be FILLED **and**
         the price strictly > 0.
 
-        `base_client_order_id` is unused here (Schwab resolves by symbol through the order tree);
-        it exists so Webull -- which must address its combo legs by suffixed coid -- can implement
-        the same signature.
+        ⛔⭐ SCOPED TO OUR OWN BRACKET (2026-07-29). This used to match on SYMBOL ALONE and walk
+        EVERY order in the account, so it booked the OPERATOR'S HAND-PLACED TOS SELL as our exit --
+        1000 shares, filled TWO MINUTES BEFORE our own entry, against a system that trades 2. That
+        breaks the core rule that Mai Tai does not claim manual trades: the scoping invariant was
+        enforced on the ACTING path and never on the RECORDING path.
+
+        Ownership is now proved structurally: we locate OUR entry order by `entry_broker_order_id`
+        and walk ONLY its `childOrderStrategies`. ⛔ FAIL CLOSED -- without that id we return None
+        and book nothing, because bookkeeping is never worth claiming someone else's trade. (Safe:
+        every FILLED entry carries a broker_order_id -- measured 14/14 Schwab, 41/41 Webull.)
+
+        `entry_filled_at` / `entry_quantity` are belts, not the mechanism: an exit cannot precede its
+        own entry, and cannot be larger than the position it closes.
+
+        `base_client_order_id` remains unused here (Schwab has no coid echo in the order tree); it
+        exists so Webull -- which addresses its combo legs by suffixed coid, and is therefore already
+        ownership-scoped -- implements the same signature.
 
         Returns None when no qualifying exit exists (bracket still working, or it resolved by
         expiry/cancel with no fill -- in which case the position is still HELD and the software
@@ -269,6 +286,11 @@ class SchwabBrokerAdapter:
         """
         account = self.accounts_by_name.get(broker_account_name)
         if account is None:
+            return None
+        entry_oid = str(entry_broker_order_id or "").strip()
+        if not entry_oid:
+            # ⛔ NO OWNERSHIP PROOF -> BOOK NOTHING. Matching by symbol is how the operator's manual
+            # trade got claimed; an unrecorded exit is a reporting gap, claiming their trade is not.
             return None
         wanted = str(symbol).upper()
         now = datetime.now(UTC)
@@ -299,7 +321,10 @@ class SchwabBrokerAdapter:
                     if closed_at.tzinfo is None:
                         closed_at = closed_at.replace(tzinfo=UTC)
                     age = (now - closed_at).total_seconds()
-                    if 0 <= age <= resolved_within_seconds:
+                    # BELT 1: an exit cannot have happened BEFORE the entry it closes. The
+                    # claimed manual trade filled 2 minutes before ours -- this alone catches it.
+                    too_early = entry_filled_at is not None and closed_at < entry_filled_at
+                    if 0 <= age <= resolved_within_seconds and not too_early:
                         qty = Decimal("0")
                         notional = Decimal("0")
                         for activity in order.get("orderActivityCollection") or []:
@@ -311,6 +336,10 @@ class SchwabBrokerAdapter:
                                     continue
                                 qty += q
                                 notional += px * q
+                        # BELT 2: an exit cannot be LARGER than the position it closes (the manual
+                        # trade was 1000 against our 2).
+                        if entry_quantity is not None and qty > Decimal(str(entry_quantity)):
+                            qty = Decimal("0")
                         if qty > 0:
                             candidate = {
                                 "symbol": wanted,
@@ -325,8 +354,23 @@ class SchwabBrokerAdapter:
             for child in order.get("childOrderStrategies") or []:
                 _walk(child)
 
-        for order in body:
-            _walk(order)
+        def _find_our_entry(orders: list) -> dict | None:
+            """Locate OUR entry order anywhere in the tree by its broker order id."""
+            for o in orders:
+                if str(o.get("orderId") or "") == entry_oid:
+                    return o
+                found = _find_our_entry(o.get("childOrderStrategies") or [])
+                if found is not None:
+                    return found
+            return None
+
+        root = _find_our_entry(body)
+        if root is None:
+            # Our entry is not in the window -> we cannot prove any sell belongs to us.
+            return None
+        # ⭐ ONLY our own bracket's legs are candidates. Never the whole account.
+        for child in root.get("childOrderStrategies") or []:
+            _walk(child)
         return best
 
     async def submit_order(self, request: OrderRequest) -> list[ExecutionReport]:

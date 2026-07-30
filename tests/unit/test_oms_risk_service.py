@@ -4001,7 +4001,8 @@ class _ExitAdapter:
         self.detail = detail
         self.calls = 0
 
-    async def fetch_oco_exit_fill(self, acct, symbol, base="", *, resolved_within_seconds=3600.0):
+    async def fetch_oco_exit_fill(self, acct, symbol, base="", *, resolved_within_seconds=3600.0,
+                                  entry_broker_order_id="", entry_filled_at=None, entry_quantity=None):
         self.calls += 1
         return self.detail
 

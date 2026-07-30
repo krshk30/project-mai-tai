@@ -338,7 +338,12 @@ def _oco_adapter():
 
 def _bracket_order(*, exit_status="FILLED", exit_price="5.92", close_time="2026-07-27T17:00:27+0000",
                    cancelled_sibling=True):
-    """The live shape: TRIGGER(entry) -> OCO -> two SELL SINGLE children."""
+    """The live shape: TRIGGER(entry) -> OCO -> two SELL SINGLE children.
+
+    ⛔ Callers must pass `entry_broker_order_id="9000"` (this order's id). Since 2026-07-29 the
+    matcher walks ONLY our own entry's subtree and FAILS CLOSED without that proof — symbol-only
+    matching is what let it book the operator's hand-placed trade.
+    """
     sibling = {
         "orderId": 9002, "status": "CANCELED",
         "closeTime": close_time,
@@ -381,7 +386,8 @@ async def test_oco_exit_fill_reads_the_filled_child_leg(monkeypatch) -> None:
     adapter = _oco_adapter()
     _patch_orders(monkeypatch, adapter, [_bracket_order()])
     got = await adapter.fetch_oco_exit_fill(
-        "paper:macd_30s", "FIEE", resolved_within_seconds=10**9
+        "paper:macd_30s", "FIEE", resolved_within_seconds=10**9,
+        entry_broker_order_id="9000"
     )
     assert got is not None
     assert got["quantity"] == Decimal("2.0")
@@ -398,7 +404,8 @@ async def test_a_cancelled_sibling_priced_zero_is_never_booked(monkeypatch) -> N
     order = _bracket_order(exit_status="CANCELED", exit_price="0.0", cancelled_sibling=False)
     _patch_orders(monkeypatch, adapter, [order])
     assert await adapter.fetch_oco_exit_fill(
-        "paper:macd_30s", "FIEE", resolved_within_seconds=10**9
+        "paper:macd_30s", "FIEE", resolved_within_seconds=10**9,
+        entry_broker_order_id="9000"
     ) is None
 
 
@@ -413,7 +420,8 @@ async def test_partial_executions_are_size_weighted(monkeypatch) -> None:
     ]
     _patch_orders(monkeypatch, adapter, [order])
     got = await adapter.fetch_oco_exit_fill(
-        "paper:macd_30s", "FIEE", resolved_within_seconds=10**9
+        "paper:macd_30s", "FIEE", resolved_within_seconds=10**9,
+        entry_broker_order_id="9000"
     )
     assert got["quantity"] == Decimal("4.0")
     assert got["price"] == Decimal("5.25")          # (6*1 + 5*3)/4, not 5.00
@@ -426,7 +434,8 @@ async def test_a_bracket_that_expired_without_filling_yields_nothing(monkeypatch
     order = _bracket_order(exit_status="CANCELED", exit_price="0.0")
     _patch_orders(monkeypatch, adapter, [order])
     assert await adapter.fetch_oco_exit_fill(
-        "paper:macd_30s", "FIEE", resolved_within_seconds=10**9
+        "paper:macd_30s", "FIEE", resolved_within_seconds=10**9,
+        entry_broker_order_id="9000"
     ) is None
 
 
@@ -441,7 +450,8 @@ async def test_an_unknown_account_returns_none_not_a_false_negative(monkeypatch)
     ) is None
     # ...while the SAME payload on a known account DOES yield the exit
     assert await adapter.fetch_oco_exit_fill(
-        "paper:macd_30s", "FIEE", resolved_within_seconds=10**9
+        "paper:macd_30s", "FIEE", resolved_within_seconds=10**9,
+        entry_broker_order_id="9000"
     ) is not None
 
 
@@ -468,7 +478,8 @@ async def test_status_filter_alone_rejects_a_cancelled_leg_with_a_REAL_price(mon
     order = _bracket_order(exit_status="CANCELED", exit_price="5.00", cancelled_sibling=False)
     _patch_orders(monkeypatch, adapter, [order])
     assert await adapter.fetch_oco_exit_fill(
-        "paper:macd_30s", "FIEE", resolved_within_seconds=10**9
+        "paper:macd_30s", "FIEE", resolved_within_seconds=10**9,
+        entry_broker_order_id="9000"
     ) is None
 
 
@@ -480,5 +491,6 @@ async def test_price_filter_alone_rejects_a_FILLED_leg_priced_zero(monkeypatch) 
     order = _bracket_order(exit_status="FILLED", exit_price="0.0", cancelled_sibling=False)
     _patch_orders(monkeypatch, adapter, [order])
     assert await adapter.fetch_oco_exit_fill(
-        "paper:macd_30s", "FIEE", resolved_within_seconds=10**9
+        "paper:macd_30s", "FIEE", resolved_within_seconds=10**9,
+        entry_broker_order_id="9000"
     ) is None
