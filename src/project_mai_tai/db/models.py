@@ -452,6 +452,13 @@ class StrategyBarHistory(Base):
     close_price: Mapped[Decimal] = mapped_column(Numeric(18, 8))
     volume: Mapped[int] = mapped_column(Integer)
     trade_count: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
+    # ⛔ PROVENANCE. 'live' = built by the strategy from the live feed (what the bot ACTUALLY
+    # SAW); 'rest' = fetched from Schwab REST to repair a hole. A backfilled bar is NOT
+    # byte-identical to a live-built one (Polygon vs Schwab agreed on only 54.2% of ATR flips),
+    # so any study that must not mix provenances filters on this.
+    source: Mapped[str] = mapped_column(
+        String(16), default="live", server_default=text("'live'")
+    )
     position_state: Mapped[str] = mapped_column(String(32), default="flat")
     position_quantity: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
     decision_status: Mapped[str] = mapped_column(String(32), default="", server_default=text("''"), index=True)
