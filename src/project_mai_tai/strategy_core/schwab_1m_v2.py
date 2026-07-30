@@ -207,7 +207,6 @@ class SymbolState:
     cw_flip_level: float = 0.0                  # the short trail crossed at the BUY flip (rule-7 line)
     cw_entries_this_flip: int = 0               # reclaim counter (cap 2 per BUY-flip segment)
     cw_bar_low_so_far: float = 0.0             # min quote px of the current forming bar (rule 7)
-    cw_orb_block_logged: bool = False          # one [V2-CW-ORB-BLOCK] per flip (this runs per-quote)
     cw_segment_high: float = 0.0               # running max HIGH of ALL bars since the BUY flip (advances
     #                                            every bar, like the backtest RunningHighTracker); the
     #                                            RECLAIM (2nd entry) must break THIS new segment high,
@@ -1287,12 +1286,6 @@ class SchwabV2Strategy:
             },
         )
 
-    def _cw_in_orb_window(self, ts_ms: int) -> bool:
-        """True if ts_ms is in 09:30-10:00 ET (the ORB bot owns this volatile window)."""
-        et = datetime.fromtimestamp(ts_ms / 1000.0, UTC).astimezone(EASTERN_TZ)
-        minutes = et.hour * 60 + et.minute
-        return 9 * 60 + 30 <= minutes < 10 * 60
-
     @staticmethod
     def _cw_is_extended_hours(ts_ms: int) -> bool:
         """True if ts_ms is OUTSIDE the 09:30-16:00 ET regular session (pre/post-market) — matches the
@@ -1330,7 +1323,6 @@ class SchwabV2Strategy:
             state.cw_bars_waited = 0
             state.cw_trigger = float(state.bars[-1].high)   # flip bar starts the 3-bar trigger
             state.cw_segment_high = float(state.bars[-1].high)  # reclaim lookback starts at the flip bar
-            state.cw_orb_block_logged = False   # fresh flip -> re-arm the one-shot ORB-block log
             fl = atr_signal.get("flip_level")
             state.cw_flip_level = float(fl) if fl is not None else 0.0
             state.cw_entries_this_flip = 0
@@ -1445,21 +1437,27 @@ class SchwabV2Strategy:
         now_ms = int(getattr(quote, "quote_time_ms", 0) or 0)
         if now_ms <= 0:
             now_ms = int(datetime.now(UTC).timestamp() * 1000)
-        if self._cw_in_orb_window(now_ms):
-            # OBSERVABILITY ONLY (kept from #467; the trigger change was reverted 2026-07-15).
-            # This block was SILENT, so the SOBR chase was invisible until the operator found it
-            # on a chart. One-shot per flip (this runs on EVERY quote; unthrottled it would
-            # flood). Fires in NORMAL operation, so unlike the fault-only markers its silence is
-            # real information: it measures how often 09:30-10:00 suppresses a real break.
-            if not state.cw_orb_block_logged:
-                state.cw_orb_block_logged = True
-                logger.info(
-                    "[V2-CW-ORB-BLOCK] %s break suppressed 09:30-10:00 (ORB owns the window) "
-                    "px=%.4f trig=%.4f seg_high=%.4f — setup stays ARMED and will enter on the "
-                    "first quote above trig once the gate lifts (the SOBR chase shape)",
-                    state.symbol, px, state.cw_trigger, state.cw_segment_high,
-                )
-            return None
+        # ⛔ THE 09:30-10:00 ORB SUPPRESSION IS REMOVED (operator decision 2026-07-30).
+        #
+        # It reserved the window for `project-mai-tai-orb`, which has been inactive + DISABLED since
+        # 2026-07-23. It was suppressing real breaks to protect a bot that no longer trades.
+        #
+        # ⭐ WHY IT WAS ACTIVELY HARMFUL, not merely useless. It PAUSED the setup instead of
+        # CANCELLING it: `cw_trigger` freezes at flip+2 and never expires in RTH, so every armed
+        # symbol was released at ONE clock edge at 10:00:00 and entered on the first quote above a
+        # now-stale trigger. On 2026-07-30 it suppressed APLX (px 9.6553 vs trig 8.3500) and SNDG
+        # (px 5.6400 vs trig 5.1100) at ~09:40, then both bought at market at 10:00 — +23.7% and
+        # +18.9% past their flip levels. Both stopped out. The old log line called this "the SOBR
+        # chase shape" and left the behaviour in place.
+        #
+        # ⛔ Removing this ALONE would not have prevented those trades — it only changes 10:00 back
+        # to ~09:42. The stale ARM is the actual defect and is fixed by the per-symbol watch-start
+        # in `schwab_1m_v2_bot._cap_reconstructed_segment`. The two changes ship together.
+        # See docs/v2-fresh-flip-since-confirmation-design.md.
+        #
+        # ⚠️ This is a RISK INCREASE: v2 now trades the 09:30-10:00 open for the first time. On the
+        # incident day the window suppressed 3 breaks, so expect ~3 more entries/day at open
+        # volatility. Revert = restore the `if self._cw_in_orb_window(now_ms): return None` gate.
         # Reclaim gap: the 2nd (reclaim) entry must wait `reclaim_gap_bars` NEW bars after the prior
         # exit — no same-bar reclaim (backtest 07-09..07-14: same-bar reclaim re-enters the just-
         # exited micro-spike and bleeds). n=0 (first entry) unaffected. 0 = off (byte-identical).
