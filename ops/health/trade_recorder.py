@@ -104,6 +104,28 @@ WHERE st.code = 'schwab_1m_v2'
 ORDER BY ef.filled_at
 """
 
+# ⛔⭐ THE SECOND EXIT ROUTE, AND WHY IT IS NOT PAIRED HERE.
+# v2 exits leave by two coids: `<entry>-ocoexit-*` (native OCO, shares the entry's id) and
+# `<symbol>-close-*` (OMS-managed: flip, hard stop, EH ladder, EOD transition). The `-close-` coid
+# carries a FRESH random suffix and its own single-order intent, so **nothing in the DB links it back
+# to its entry.** Over 30 days: 74 `-close-` vs 36 `-ocoexit-` fills -- historically the majority.
+# ⛔ Attributing them by symbol+time is exactly the heuristic that manufactured a -8.40% trade and
+# booked the operator's manual 1000-share sell as ours. So this does NOT pair them. It reports a
+# same-symbol close fill as an unproven CANDIDATE, and says so in the record.
+# ⇒ The real fix is at the WRITE site: stamp the entry's broker_order_id onto the close order when the
+#   OMS submits it. Design-first, not built. Until then this route is visible but unattributed.
+CLOSE_CANDIDATE_SQL = """
+SELECT f.price AS px, f.filled_at AS at, f.quantity AS qty, o.client_order_id AS coid
+FROM fills f
+JOIN broker_orders o ON o.id = f.order_id
+JOIN broker_accounts ba ON ba.id = o.broker_account_id
+WHERE o.symbol = :sym AND ba.name = :broker AND f.side = 'sell'
+  AND o.client_order_id LIKE '%-close-%'
+  AND f.filled_at >= :after
+ORDER BY f.filled_at
+LIMIT 1
+"""
+
 BARS_SQL = """
 SELECT bar_time, high_price, low_price
 FROM strategy_bar_history
@@ -260,6 +282,20 @@ def main() -> int:
         meta = ((p.ipayload or {}).get("metadata") or {}) if isinstance(p.ipayload, dict) else {}
         want = _f(meta.get("stop_price") or meta.get("entry_price"), 0.0)
         ep = _f(p.entry_px)
+        with sf() as s:
+            cand = s.execute(text(CLOSE_CANDIDATE_SQL), {
+                "sym": p.symbol, "broker": p.broker, "after": p.entry_at
+            }).first()
+        # ⛔ CANDIDATE, NOT A PAIRING. Reported so the route is never invisible; deliberately NOT
+        # folded into ret_pct, because symbol+time attribution is the bug this tool exists to end.
+        cand_block = {
+            "exit_route": "close_unattributed" if cand else None,
+            "close_candidate_px": _f(cand.px) if cand else None,
+            "close_candidate_at_et": (
+                cand.at.astimezone(ET).isoformat(timespec="seconds") if cand else None),
+            "close_candidate_ret_pct": (
+                round((_f(cand.px) / ep - 1.0) * 100.0, 3) if cand and ep else None),
+        }
         orphan_recs.append({
             "day": day,
             "status": "ENTRY_WITH_NO_EXIT_FILL",
@@ -278,6 +314,7 @@ def main() -> int:
             # Ask the broker (list_account_positions) before ever calling one of these open.
             "verify": "ask the broker; an unrecorded exit is not an open position",
             "recorded_at": datetime.now(UTC).isoformat(timespec="seconds"),
+            **cand_block,
         })
     if a.stdout:
         for r in orphan_recs:
@@ -288,8 +325,12 @@ def main() -> int:
 
     print("[trade-recorder] %s: %d paired round trips seen, %d newly recorded -> %s"
           % (day, len(pairs), written, path))
+    n_cand = sum(1 for r in orphan_recs if r.get("exit_route") == "close_unattributed")
     print("[trade-recorder] %s: %d entries with NO exit fill (state, overwritten) -> %s"
           % (day, n_unpaired, unpaired_path))
+    if n_cand:
+        print("[trade-recorder] %s: of those, %d have an UNATTRIBUTED -close- exit candidate "
+              "(route visible, pairing unprovable -- see CLOSE_CANDIDATE_SQL)" % (day, n_cand))
     return 0
 
 
