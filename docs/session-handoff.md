@@ -22,100 +22,122 @@
 
 ---
 
+## ⛔⭐ FIRST THING AT THE OPEN — one decision, 30 seconds
+
+**The live volume floor is `10000`. The operator's last word on it was "keep 5K, my mistake about
+10K".** These disagree and the live value is the more restrictive one, so the bot is currently taking
+**fewer** entries than intended.
+
+I did **not** change it unattended: lowering a live gate makes the bot trade *more*, which is a risk
+increase, and nobody was in the loop. `#588` aligned the CODE DEFAULT *up* to production's 10000 —
+which was accurate about production but moved away from the instruction.
+
+**If 5K is still what you want:** set `MAI_TAI_STRATEGY_SCHWAB_1M_V2_ATR_FLIP_VOL_FLOOR=5000` in
+`/etc/project-mai-tai/project-mai-tai.env`, `systemctl restart project-mai-tai-schwab-1m-v2`, and the
+code default needs a one-line PR to match. **If 10K is fine, say so and this line gets deleted.**
+
+---
+
 ## 🟢 FLEET — what is live right now
 
-**As of 2026-07-28 EOD.** HEAD `b9fd715`. Fleet **FLAT** (0 shares held, 0 non-terminal open
-intents), all services `active`, NRestarts=0, 0 errors.
+**As of 2026-07-29 EOD.** HEAD `b951b4e`. All services `active`, **NRestarts=0** (a deliberately
+restart-free session, so the day's numbers are usable). **Both brokers FLAT of anything ours.**
 
-| service | PID |
-|---|---|
-| `project-mai-tai-oms` | 1725295 |
-| `project-mai-tai-schwab-1m-v2` | 1736517 |
-| `project-mai-tai-strategy` | 1733721 |
+| service | PID | note |
+|---|---|---|
+| `project-mai-tai-oms` | 1890366 | restarted for #608 mid-session |
+| `project-mai-tai-schwab-1m-v2` | 1736517 | |
+| `project-mai-tai-strategy` | 1733721 | |
+| `project-mai-tai-orb` | — | **inactive + disabled** (see below) |
+
+⛔ **Schwab holds CYN 5000 sh @ $2.5057 (~$5,350) overnight — that is the OPERATOR'S MANUAL TRADE,
+not ours.** Verified: we have **zero** CYN orders, fills, intents, or bars. Leave it alone. It is
+listed here so nobody "reconciles" it. Only Mai Tai's *own* positions are ours to manage.
 
 **Live flags (v2 + OMS):**
 
 | flag | value |
 |---|---|
-| `..._ATR_FLIP_VOL_FLOOR` | **10000** |
+| `..._ATR_FLIP_VOL_FLOOR` | **10000** — ⛔ see the decision at the top of this file |
 | `..._CW_V2_RESTING_ENTRY_ENABLED` | true |
 | `..._CW_V2_EH_RESTING_ENTRY_ENABLED` / `OMS_V2_EH_ENTRY_ENABLED` | true / true |
 | `..._CW_V2_RECLAIM_ENABLED` / `..._CW_V2_RECLAIM_GAP_BARS` | true / 1 |
 | `..._DUAL_BROKER_FANOUT_ENABLED` / `..._WEBULL_FANOUT_QUANTITY` | true / 1 |
-| `OMS_NATIVE_OCO_EXIT_POLL_ENABLED` | **true** (enabled 07-28) |
-| `OMS_RECORD_NATIVE_OCO_EXIT_FILLS_ENABLED` | true |
-| `WEBULL_BRACKET_REALIGN_ON_FILL_ENABLED` | **false** (broken at the broker) |
-| `ORB_ENABLED` / `ORB_QUANTITY` | true / 10 — ⛔ **the BOT is decommissioned; the flag stays true on purpose** (it registers the `live:orb` broker account the v2 fan-out routes through). See below. |
+| `OMS_NATIVE_OCO_EXIT_POLL_ENABLED` / `OMS_RECORD_NATIVE_OCO_EXIT_FILLS_ENABLED` | true / true |
+| `WEBULL_BRACKET_REALIGN_ON_FILL_ENABLED` | false (broken at the broker) |
+| `ORB_ENABLED` / `ORB_QUANTITY` | true / 10 — ⛔ **the BOT is decommissioned; the flag stays true on purpose** |
 
-⛔ **ORB THE BOT IS OFF (2026-07-29).** `project-mai-tai-orb.service` is now **disabled**; it had
-not run since 07-23 but was still **enabled at boot**, so a reboot would have silently started a
-real-money bot at qty 10. Real money is now **Schwab v2 only** (+ its Webull fan-out leg).
-⛔ Fills on `live:orb` are **FAN-OUT legs, not ORB trades**.
-⛔ **Do NOT set `MAI_TAI_ORB_ENABLED=false`** — `runtime_registry:119` gates the ORB registration,
-which is what seeds the `live:orb` BROKER ACCOUNT that `webull.py:87` builds its adapter map from.
-Setting it false breaks the live fan-out.
+⛔ **ORB THE BOT IS OFF.** Real money is now **Schwab v2 only** (+ its Webull fan-out leg). Fills on
+`live:orb` are **FAN-OUT legs, not ORB trades**. ⛔ **Do NOT set `MAI_TAI_ORB_ENABLED=false`** —
+`runtime_registry:119` gates the ORB registration, which seeds the `live:orb` BROKER ACCOUNT that
+`webull.py:87` builds its adapter map from. Setting it false breaks the live fan-out.
+[[project_mai_tai_orb_decommissioned_but_flag_stays_true]]
 
 **Entry bound:** one resting + one reclaim per ATR segment (`max_entries_per_flip=2`).
 **There is NO cooldown** — removed 07-28 (#590); the per-segment cap is the bound.
-⛔ **Do not re-add it**: it would contradict the 1-bar reclaim gap.
+⛔ Do not re-add it: it would contradict the 1-bar reclaim gap.
 
-⛔ **Three settings whose CODE DEFAULT disagrees with PRODUCTION** — vol floor (was 5000 vs live
-10000, now aligned), reclaim gap (0 vs live 1), entry cap (flag-derived).
-**Check the ENV before quoting any default as the live value.**
+⛔ **Check the ENV before quoting any code default as the live value.** Reclaim gap is 0 in code vs 1
+live; the vol floor disagreement above is the same class of drift. Tool: `ops/health/env_default_drift.py`.
+
+---
+
+## 🔬 THE ALL-DAY TRADE RECORDER — running from tomorrow's open
+
+**Live now.** Cron `*/5 * * * *`, guards its own 07:00–20:30 ET weekday window (⛔ `CRON_TZ` is
+ignored on this box, and a UTC crontab range *cannot* express an ET window — it silently loses
+20:00–20:30 and all of Friday's post-19:00 tail).
+
+| path | verb | holds |
+|---|---|---|
+| `/home/trader/trade_records/<day>.jsonl` | **append-only** | one closed round trip per line |
+| `/home/trader/trade_records/<day>.unpaired.jsonl` | **overwritten** | entries with no exit fill *yet* |
+| `/home/trader/trade_records/cron.log` | rotating | proof of life |
+
+Per trade it records both brokers' order ids, intended vs actual fill + `slippage_pct`, path /
+`cw_entry_n`, `held_secs`, `mfe_pct`/`mae_pct`, and the what-ifs: **floor+2% with 2/3/5% trails**, the
+**tiered stop (<$3:−5 / ≥$3:−3)**, and whether a **3-min time stop** would fire.
+
+⭐ **Why it exists:** reconstructing 07-29 from the DB after the fact gave **three answers, two
+wrong** — FIFO pairing invented a −8.40% AMIX trade that never existed, and coid pairing exposed 5
+exits dated *before* their own entry. **Attribution must be captured, not inferred.**
+
+⛔ **Read `intrabar_ambiguous` before trusting a what-if.** When a stop and target share one 1-minute
+bar, bars cannot order them. ⛔ And an unpaired entry is **not** a naked position — ask the broker.
 
 ---
 
 ## 👀 WATCH NEXT SESSION
 
-1. **Fewer entries are expected.** The liquidity floor now gates all three live entry paths
-   (reactive / resting / fan-out) — before 07-28 it guarded only replaced code. Intended, but it is
-   a real behaviour change at the open.
-2. **First job: re-run the backtest-vs-live comparison on a STABLE-CODE day.** 07-28 had six
-   deploys mid-session, so it cannot judge parity. Config parity itself is FIXED and verified
-   (89/90, #592); what is unproven is whether the engine reproduces a live day end-to-end — only
-   STKH matched so far (+1.90% both). Scripts on the box: `_parity_diff.py`, `_live_today.py`,
-   `_cnet_probe.py`, `_density.py`.
-3. ⛔ **When comparing, respect three structural limits** — the replay takes **ONE round trip per
-   symbol-day** (so "1 replay vs 6 live" is expected; compare only the FIRST live trade) · quote
-   density ~1/4s vs a continuous live feed · sparse-bar symbols are uncomparable (CNET: 71 bars).
+1. **Let the recorder run a full clean day first.** 07-29's what-ifs are directional only:
+   **7 of 23 round trips closed inside one minute**, so no completed bar exists and the bar path
+   cannot speak for 30% of the day. Decide the exit rule on **3–5 clean days**, not on one.
+2. **Fewer entries are expected** — the liquidity floor now gates all three live entry paths
+   (reactive / resting / fan-out); before 07-28 it guarded only replaced code.
+3. **`trade-coach` CPU is inherent, not drift.** The restart moved it 43%→47%. OMS heartbeat
+   starvation (the 09:00/09:09 pages) **will recur**. Folded into open item 2.
 4. **A hand-cancel is only half a stop.** Cancelling at the broker does NOT stop the Webull fan-out
-   leg (software price-cross detector). Hand-cancel **AND** set `global_manual_stop_symbols`.
+   leg (a software price-cross detector). Hand-cancel **AND** set `global_manual_stop_symbols`.
+5. **`cw_arm_bar_ts` is `0` on 6 of 23 records** — the `rth_resting` path does not stamp it, so
+   segment identity is unavailable for those. Cosmetic today; it breaks first-vs-reclaim splits.
 
 ---
 
 ## 🔴 OPEN THREADS — 3 (detail: [`handoff-open-items.md`](handoff-open-items.md))
 
-✅ **Driven from 66 → 3 with the operator on 2026-07-29.** Everything closed moved verbatim to
-[`handoff-log.md`](handoff-log.md) with its reason.
+✅ Driven from **66 → 3** with the operator on 2026-07-29; everything closed moved verbatim to
+[`handoff-log.md`](handoff-log.md) with its reason. The 07-29 after-close batch closed **all 5**.
 
 1. **Re-run backtest-vs-live on a STABLE-CODE day.** Config parity FIXED + verified (89/90, #592);
-   the engine reproducing a live day end-to-end is still unproven (only STKH matched).
-2. **polygon / strategy-engine freeze** — 60-80s at open/close, ~72% CPU in the JSON snapshot
-   encode; `#366` throttle deployed and INSUFFICIENT.
-3. **VPS retention prune** — plan approved, specifics pending. ⛔ `strategy_bar_history` must NOT be
-   pruned: it is the backtest bar source. `market_capture_*` already self-prunes correctly (verified).
-
-**🌙 AFTER-CLOSE BATCH 07-29 — 4 of 5 CLOSED:** ✅ both operator manual-trade rows removed (books
-clean, 0 suspect of 36) · ✅ **(e)** claim-a-manual-trade FIXED+LIVE (#605, ownership now structural,
-fail-closed) · ✅ **(a)** dead-bot prune 1,091,270 rows, 1962→815 MB, backtest re-verified identical ·
-✅ **(c)** readiness RED→AMBER (#606) · ⚠️ **(b)** trade-coach restarted but **INEFFECTIVE** (43%→47%,
-the CPU is inherent not drift — OMS starvation will recur; folded into open item 2) · ✅ **(d)** Webull close-retry storm FIXED+LIVE (#608) — the cause was
-NOT a missing bound but a counter RESET on inconclusive reads; only a positively-HELD read resets now,
-UNKNOWN accumulates to 8 and stands down **without** touching protection.
-**⇒ ALL 5 BATCH ITEMS CLOSED.** Open items back to the standing 3. (a) run the dead-bot bar-history prune
-(1,091,270 rows, dry-run verified) · (b) restart `trade-coach` (**43% CPU**, auxiliary, 21d — it is
-what starved the OMS heartbeat into the 09:00/09:09 alerts) · (c) stop the readiness check RED-ing on
-the now-decommissioned ORB (3 FAIL = all ORB → a false "DO NOT trust the open" every morning) ·
-(d) **Webull close-retry STORM** — NCRA 145 rejected sells in 55 min (AMIX 25, STFS 7); the floor
-exit retries one decision forever because the 3-reject reconcile needs a positively-confirmed flat
-Webull will not give. Needs a TERMINATION bound, ⛔ not a weaker flat test (that is the ERNA naked
-position).
-
-⛔⭐ **TOP PRIORITY tonight — item (e): we booked the OPERATOR'S MANUAL TOS TRADE as one of our
-exits** (AMIX 1000 sh, filled 2 minutes BEFORE our own entry). `fetch_oco_exit_fill` matches on
-SYMBOL ALONE and walks every order in the account — it never checks the order is ours, that the exit
-follows our entry, or that the quantity is one we trade. **This violates the core concept that Mai
-Tai does not claim manual trades.** 1 of 31 recorded exits affected.
+   the engine reproducing a live day end-to-end is still unproven (only STKH matched, +1.90% both).
+   07-28 had six mid-session deploys and cannot judge parity. ⭐ **The recorder now gives the
+   clean live side of this comparison for free.**
+2. **polygon / strategy-engine freeze** — 60-80s at open/close, ~72% CPU in the JSON snapshot encode;
+   `#366` throttle deployed and INSUFFICIENT. Now also: `trade-coach` 47%, `control` 33.7%/1.6 GB.
+3. **VPS retention prune** — remaining: `reconciliation_findings` 1142 MB, `dashboard_snapshots`
+   1017 MB. ⛔ **NEVER prune the `schwab_1m_v2` rows of `strategy_bar_history`** — that is the
+   backtest bar source *and* the recorder's bar path. (Dead strategy_codes already pruned:
+   1,091,270 rows, 1962→815 MB, backtest re-verified byte-identical.)
 
 ⛔ **KEEP THIS AT ~3.** When something closes, MOVE it to the log. A study nobody will run, a rule
 that is never "done", and a dormant feature's item are NOT open work — that is how this reached 66.
@@ -125,20 +147,14 @@ that is never "done", and a dormant feature's item are NOT open work — that is
 ## 📜 HISTORY
 
 - **What happened, day by day:** [`handoff-log.md`](handoff-log.md) (append-only)
-- **Deep history:** the archive index below
 
-## 📚 ARCHIVE INDEX (deep history — open only to dig)
-
-| file | covers |
+| archive | covers |
 |---|---|
-| [`handoff-archive/2026-07.md`](handoff-archive/2026-07.md) | **07-16..07-25** — OCO build + STEP-1 live, the wrong-bars root cause, resting flip-entry, Webull mirror, EH trading, dual-broker fan-out build |
+| [`handoff-archive/2026-07.md`](handoff-archive/2026-07.md) | **07-16..07-25** — OCO build + STEP-1 live, the wrong-bars root cause, resting flip-entry, Webull mirror, EH trading, dual-broker fan-out |
 | [`handoff-archive/2026-06.md`](handoff-archive/2026-06.md) | go-live + morning verdict + #326 + restart recovery, OMS exits, ATR qualifier, age-gate, 04:00 race, tick-capture |
-| [`handoff-archive/2026-05.md`](handoff-archive/2026-05.md) | v2 build-out — bar-build, ATR-flip design, exit-engine groundwork, regression battles (56 entries) |
-| [`handoff-archive/2026-04.md`](handoff-archive/2026-04.md) | earliest — token-SPOF saga, early v2 scaffolding, streamer fixes (3 entries) |
+| [`handoff-archive/2026-05.md`](handoff-archive/2026-05.md) | v2 build-out — bar-build, ATR-flip design, exit-engine groundwork, regressions |
+| [`handoff-archive/2026-04.md`](handoff-archive/2026-04.md) | earliest — token-SPOF saga, early v2 scaffolding, streamer fixes |
 | [`handoff-archive/schwab-1m-v2.md`](handoff-archive/schwab-1m-v2.md) | the v2-isolated bot's own deep design/status history |
-| `session-handoff-global.md` | frozen pre-split monolith (backup; to be retired) |
-
----
 
 ## 🔗 KEY REFERENCE DOCS (design-first / canonical)
 
@@ -157,8 +173,7 @@ that is never "done", and a dormant feature's item are NOT open work — that is
 
 ## 🧠 MEMORY POINTERS (auto-load each session; listed for cross-reference)
 
-[[project-mai-tai-context]] · [[project-mai-tai-0400-watchlist-staleness-race]] ·
-[[project-mai-tai-v2-real-account-routing-risk]] · [[project-mai-tai-v2-entry-warmup-gate]] ·
-[[project-mai-tai-v2-no-exits]] · [[project-mai-tai-v2-entry-criteria]] ·
+[[project-mai-tai-context]] · [[project-mai-tai-fleet-roster]] · [[project-mai-tai-architecture]] ·
+[[project-mai-tai-v2-real-account-routing-risk]] · [[project-mai-tai-v2-entry-criteria]] ·
+[[project-mai-tai-oms-scoping-invariant]] · [[project-mai-tai-oco-exit-fill-blackout]] ·
 [[project-mai-tai-schwab-bar-build-core]] · [[feedback-session-doc-and-memory-discipline]]
-

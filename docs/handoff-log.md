@@ -1045,3 +1045,105 @@ a `−99.99%` artifact poisons every mean on the 07-15 detail run.)*
 ⭐ The lesson recorded for next time: the list grew because items were only ever ADDED. A study
 nobody runs, a rule that is never 'done', and a dormant feature's item all sat as open work.
 
+
+---
+
+## 2026-07-29 (Wed) — a restart-free day, three wrong answers, and the fix for both
+
+**Deployed:** #605 ownership-scoped exit capture · #606 readiness ORB-aware · #608 close-retry
+termination bound · #610 all-day trade recorder · #611 recorder captures unpaired entries.
+**HEAD `b951b4e`.** No v2/strategy restarts all session — deliberate, so the day's numbers are usable.
+
+### The day's real numbers (ownership-scoped, repaired)
+
+**23 clean round trips · median +1.38% · 14/23 wins.** Per broker (standing rule):
+Schwab n=6 median **+1.83%** · Webull fan-out n=17 median **+1.11%**.
+Entry slippage vs intended: median **+0.199%**, worst **+1.194%** (NCRA 12:30, reactive).
+
+⭐ Schwab blocked STFS / GMM / NCRA, so **the fan-out is what rescued most of the day** — 17 of 23
+round trips only existed because the Webull leg fired. That is the fan-out earning its keep.
+
+### ⛔⭐ We booked the operator's manual TOS trade as one of our exits
+
+An AMIX **1000-share** manual TOS sell — filled **2 minutes BEFORE our own entry** — was recorded as
+one of our exits. `fetch_oco_exit_fill` matched on **symbol alone** and walked every order in the
+account: it never checked the order was ours, that the exit followed our entry, or that the quantity
+was one we trade.
+
+> *"our Mai tai is not supposed to interfer manual trades.. it listens what posted.. this is a core
+> concept"*
+
+**Fixed live in #605:** the fetch now requires `entry_broker_order_id` and **fails closed without
+it**, `_find_our_entry()` locates our own entry, and it walks **only** that entry's
+`childOrderStrategies`. Ownership is now structural, not a heuristic. Both operator manual-fill rows
+were deleted from the books (0 suspect of 36 remain).
+
+⭐ **Verified live tonight against a real manual position:** Schwab is holding **CYN 5000 sh
+(~$5,350)** overnight and we have **zero** CYN orders, fills, intents, or bars. Untouched.
+⚠️ Honest limit: CYN is *not* a test of #605 — the old bug only fired on symbols we also traded. It
+confirms the scoping invariant, nothing stronger.
+
+### ⛔⭐ THREE WRONG P&L ANSWERS IN ONE EVENING — and why the recorder exists
+
+1. **FIFO pairing** reached across one missing exit and **manufactured a −8.40% AMIX trade that never
+   existed.** The real trade was **+1.78%**.
+2. **Coid pairing** then exposed **5 exits dated BEFORE their own entry** — rows written by the
+   symbol-only matcher above.
+3. The **tiered-stop test inherited the corruption**, so its first two numbers were retracted.
+
+All three retracted; the day re-derived ownership-scoped (23 exits repaired, **0 impossible pairs**).
+
+⭐⭐ **The lesson is not "pair more carefully" — it is that ATTRIBUTION MUST BE CAPTURED, NOT
+INFERRED.** Hence #610: an append-only recorder that writes each round trip **with both brokers'
+order ids at the moment it closes**, so nothing downstream ever guesses which sell belongs to which
+buy. Runs `*/5` all day from tomorrow's open.
+
+### Exit-rule findings on the repaired data (directional only — n=23, one day)
+
+| rule | median | vs actual | wins |
+|---|---|---|---|
+| actual (live) | **+1.38%** | — | 14/23 |
+| tiered stop <$3:−5 / ≥$3:−3 | −3.00% | **−4.38pp WORSE** | 10/23 |
+| floor +2% then trail 2 / 3 / 5% | +1.76% | **+0.39pp better** | 15/23 |
+
+⛔ **Do not act on either yet.** The tiered result is stable under drop-one, so the tighter stop
+really does intercept trades that later won. But the floor's +0.39pp is **driven by one trade** and
+the trail is **inert** — max MFE all day was +4.57%, so a 2% trail never has room to beat a flat +2%.
+⛔ And **7 of 23 round trips closed inside one minute**: no completed bar exists, so the bar path
+cannot speak for 30% of the day. Needs **3–5 clean days**.
+
+### Other fixes
+
+- **#608 Webull close-retry STORM** — NCRA **145 rejected sells in 55 min** (AMIX 25, STFS 7). ⭐ The
+  cause was **NOT a missing bound** but a counter **RESET on inconclusive reads**: a sawtooth that
+  could never reach any limit. Only a positively-**HELD** read resets now; `UNKNOWN` accumulates to 8
+  and stands down **without** touching protection (⛔ standing down must never close the row — that is
+  the ERNA naked position). Mutation 3 hung the suite at bound=99999, so `_MAX_SIM_REJECTS=64` now
+  bounds the *test* too.
+- **#606** readiness stopped RED-ing on the decommissioned ORB (3 FAIL = all ORB ⇒ a false "DO NOT
+  trust the open" every morning).
+- **Dead-bot prune** — 1,091,270 rows, **1962 → 815 MB**, backtest re-verified **byte-identical**.
+- ⚠️ **`trade-coach` restart was INEFFECTIVE** (43% → 47%). The CPU is **inherent, not drift**; OMS
+  heartbeat starvation will recur. Folded into open item 2.
+- **ORB decommissioned** — the service was `inactive` since 07-23 but still **enabled at boot**, so a
+  reboot would have silently started a real-money bot at qty 10. ⭐ I first recommended
+  `ORB_ENABLED=false` and **that would have broken the live fan-out** — the flag seeds the `live:orb`
+  broker account. Caught by tracing the reader chain before executing.
+
+### The 15:59 entries — resolved, nothing naked
+
+Two 15:59 entries (Schwab q=2, Webull q=1) had no exit fill. `OMS-V2-EOD-OCO-TRANSITION` **did** fire
+at 20:00:01 UTC and handed the exit to the EH limit ladder. ⭐ Both brokers confirm **AMIX not held** —
+so the missing rows are the **native-OCO exit-capture gap, not a naked position.** ⛔ This distinction
+is the whole point: "no fill row" ≠ "still held". Ask the broker.
+
+That gap is also what #611 fixes in the recorder — 26 entries produced 23 pairs, and the 3 unpaired
+were invisible. They now land in `<day>.unpaired.jsonl`, **overwritten as state** (appending would
+turn one open trade into a pile of stale duplicates reading as dozens of naked positions).
+
+### Self-caught before it shipped
+
+The recorder's first crontab was `*/5 11-23 * * 1-5`, which *looks* like "07:00–19:59 ET weekdays"
+and is not: those are **UTC** hours, so it lost ET 20:00–20:30 year-round **and** all of Friday's
+post-19:00 tail (UTC Saturday, dow 6) — precisely where the EH exit ladder runs. Both guards moved
+into the script in ET; proven with a stubbed `date` at every boundary.
