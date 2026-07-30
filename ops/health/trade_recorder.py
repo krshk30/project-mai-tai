@@ -75,6 +75,35 @@ WHERE st.code = 'schwab_1m_v2'
 ORDER BY ef.filled_at
 """
 
+# ⭐ THE PAIRED FILE IS NOT THE WHOLE DAY. An entry that fills and never gets an exit fill recorded is
+# a real transaction, and PAIRS_SQL cannot see it -- on 2026-07-29, 26 entries produced 23 pairs and
+# the 3 unpaired ones were silently absent. Silently omitting a trade is the exact failure this whole
+# tool exists to end, so they get captured too. ⛔ They are NOT necessarily open positions: all three
+# on 07-29 were flat at BOTH brokers, i.e. the native-OCO exit-capture gap, not a naked position.
+# Only the broker can tell those apart -- see [[project_mai_tai_oco_exit_fill_blackout]].
+UNPAIRED_SQL = """
+SELECT e.symbol,
+       ba.name           AS broker,
+       e.client_order_id AS entry_coid,
+       e.broker_order_id AS entry_boid,
+       ef.price          AS entry_px,
+       ef.filled_at      AS entry_at,
+       ef.quantity       AS qty,
+       i.payload         AS ipayload
+FROM broker_orders e
+JOIN fills ef             ON ef.order_id = e.id AND ef.side = 'buy'
+JOIN broker_accounts ba   ON ba.id = e.broker_account_id
+JOIN strategies st        ON st.id = e.strategy_id
+LEFT JOIN trade_intents i ON i.id = e.intent_id
+WHERE st.code = 'schwab_1m_v2'
+  AND ef.filled_at >= now() - make_interval(mins => :mins)
+  AND ef.quantity <= 5
+  AND NOT EXISTS (
+        SELECT 1 FROM broker_orders x JOIN fills xf ON xf.order_id = x.id
+        WHERE x.client_order_id LIKE e.client_order_id || '-ocoexit%')
+ORDER BY ef.filled_at
+"""
+
 BARS_SQL = """
 SELECT bar_time, high_price, low_price
 FROM strategy_bar_history
@@ -135,6 +164,22 @@ def analyse(entry_px: float, bars: list, actual_ret: float) -> dict:
     return out
 
 
+def write_unpaired(path: str, recs: list[dict]) -> int:
+    """⛔ OVERWRITE, never append -- and atomically.
+
+    This file answers "which entries have no exit RIGHT NOW", which is a *state*, not a history: an
+    entry unpaired at 10:05 is normally paired by 10:06. Appending would turn one open trade into a
+    growing pile of stale duplicates and read as dozens of naked positions. Same two-verb split as
+    the handoff docs: the paired JSONL is the append-only log, this is the overwritten state.
+    """
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        for r in recs:
+            fh.write(json.dumps(r, separators=(",", ":"), default=str) + "\n")
+    os.replace(tmp, path)          # atomic: a reader never sees a half-written file
+    return len(recs)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--since-mins", type=int, default=1440)
@@ -145,10 +190,12 @@ def main() -> int:
     sf = build_session_factory(get_settings())
     with sf() as s:
         pairs = list(s.execute(text(PAIRS_SQL), {"mins": a.since_mins}).all())
+        orphans = list(s.execute(text(UNPAIRED_SQL), {"mins": a.since_mins}).all())
 
     os.makedirs(a.out, exist_ok=True)
     day = datetime.now(ET).strftime("%Y-%m-%d")
     path = os.path.join(a.out, day + ".jsonl")
+    unpaired_path = os.path.join(a.out, day + ".unpaired.jsonl")
 
     # idempotent: never rewrite a round trip already captured
     seen = set()
@@ -208,8 +255,41 @@ def main() -> int:
         seen.add(exit_boid)
         written += 1
 
+    orphan_recs = []
+    for p in orphans:
+        meta = ((p.ipayload or {}).get("metadata") or {}) if isinstance(p.ipayload, dict) else {}
+        want = _f(meta.get("stop_price") or meta.get("entry_price"), 0.0)
+        ep = _f(p.entry_px)
+        orphan_recs.append({
+            "day": day,
+            "status": "ENTRY_WITH_NO_EXIT_FILL",
+            "symbol": p.symbol,
+            "broker": p.broker,
+            "qty": int(_f(p.qty)),
+            "entry_coid": p.entry_coid,
+            "entry_boid": str(p.entry_boid or ""),
+            "entry_at_et": p.entry_at.astimezone(ET).isoformat(timespec="seconds"),
+            "entry_px": ep,
+            "intended_px": want or None,
+            "slippage_pct": round((ep / want - 1.0) * 100.0, 3) if want else None,
+            "path": meta.get("fanout_source") or meta.get("atr_variant"),
+            "cw_entry_n": meta.get("cw_entry_n"),
+            # ⛔ Do NOT read this as a naked position. It means only that no exit FILL is recorded.
+            # Ask the broker (list_account_positions) before ever calling one of these open.
+            "verify": "ask the broker; an unrecorded exit is not an open position",
+            "recorded_at": datetime.now(UTC).isoformat(timespec="seconds"),
+        })
+    if a.stdout:
+        for r in orphan_recs:
+            print(json.dumps(r, separators=(",", ":"), default=str))
+        n_unpaired = len(orphan_recs)
+    else:
+        n_unpaired = write_unpaired(unpaired_path, orphan_recs)
+
     print("[trade-recorder] %s: %d paired round trips seen, %d newly recorded -> %s"
           % (day, len(pairs), written, path))
+    print("[trade-recorder] %s: %d entries with NO exit fill (state, overwritten) -> %s"
+          % (day, n_unpaired, unpaired_path))
     return 0
 
 
