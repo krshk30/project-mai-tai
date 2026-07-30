@@ -202,6 +202,38 @@ def write_unpaired(path: str, recs: list[dict]) -> int:
     return len(recs)
 
 
+def trade_day(entry_at) -> str:
+    """⛔⭐ A trade belongs to the ET day its ENTRY FILLED on -- never to the day the recorder
+    happened to run.
+
+    This used to be `datetime.now(ET)`, applied to the filename AND stamped into every record's
+    `day` field. Because the cron passes `--since-mins 1440`, the first run of each day reaches back
+    24h and swept the PREVIOUS day's tail into today's file under today's date. Proven 2026-07-30:
+    a run at 06:42 ET wrote a `2026-07-30.jsonl` containing 23 round trips whose `entry_at_et` were
+    every one of them `2026-07-29`.
+
+    That is the same class of error the whole tool exists to end -- a plausible-looking answer that
+    silently misattributes real trades. The 1440-minute lookback is deliberate (a missed run must
+    self-heal, and a late EH exit must still be caught), so the window stays wide and the DAY is
+    derived from the data instead.
+    """
+    return entry_at.astimezone(ET).strftime("%Y-%m-%d")
+
+
+def load_seen(path: str) -> set[str]:
+    """Exit broker-order-ids already captured in a day-file, so re-runs never duplicate a trade."""
+    seen: set[str] = set()
+    if not os.path.exists(path):
+        return seen
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            try:
+                seen.add(json.loads(line)["exit_boid"])
+            except Exception:  # noqa: BLE001 - a torn last line must not block today's writes
+                continue
+    return seen
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--since-mins", type=int, default=1440)
@@ -215,24 +247,20 @@ def main() -> int:
         orphans = list(s.execute(text(UNPAIRED_SQL), {"mins": a.since_mins}).all())
 
     os.makedirs(a.out, exist_ok=True)
-    day = datetime.now(ET).strftime("%Y-%m-%d")
-    path = os.path.join(a.out, day + ".jsonl")
-    unpaired_path = os.path.join(a.out, day + ".unpaired.jsonl")
+    run_day = datetime.now(ET).strftime("%Y-%m-%d")
 
-    # idempotent: never rewrite a round trip already captured
-    seen = set()
-    if os.path.exists(path):
-        with open(path, encoding="utf-8") as fh:
-            for line in fh:
-                try:
-                    seen.add(json.loads(line)["exit_boid"])
-                except Exception:  # noqa: BLE001 - a torn last line must not block today's writes
-                    continue
+    # one seen-set and one counter per TRADE day the window happens to span
+    seen_by_day: dict[str, set[str]] = {}
+    written_by_day: dict[str, int] = {}
 
-    written = 0
     for p in pairs:
         exit_boid = str(p.exit_boid or "")
-        if not exit_boid or exit_boid in seen:
+        if not exit_boid:
+            continue
+        day = trade_day(p.entry_at)
+        path = os.path.join(a.out, day + ".jsonl")
+        seen = seen_by_day.setdefault(day, load_seen(path))
+        if exit_boid in seen:
             continue
         with sf() as s:
             bars = list(s.execute(
@@ -275,9 +303,9 @@ def main() -> int:
             with open(path, "a", encoding="utf-8") as fh:
                 fh.write(line + "\n")
         seen.add(exit_boid)
-        written += 1
+        written_by_day[day] = written_by_day.get(day, 0) + 1
 
-    orphan_recs = []
+    orphan_recs: list[dict] = []
     for p in orphans:
         meta = ((p.ipayload or {}).get("metadata") or {}) if isinstance(p.ipayload, dict) else {}
         want = _f(meta.get("stop_price") or meta.get("entry_price"), 0.0)
@@ -297,7 +325,7 @@ def main() -> int:
                 round((_f(cand.px) / ep - 1.0) * 100.0, 3) if cand and ep else None),
         }
         orphan_recs.append({
-            "day": day,
+            "day": trade_day(p.entry_at),
             "status": "ENTRY_WITH_NO_EXIT_FILL",
             "symbol": p.symbol,
             "broker": p.broker,
@@ -316,21 +344,39 @@ def main() -> int:
             "recorded_at": datetime.now(UTC).isoformat(timespec="seconds"),
             **cand_block,
         })
+    unpaired_path = os.path.join(a.out, run_day + ".unpaired.jsonl")
+    # ⛔ The unpaired file is OVERWRITTEN (it is state, not history), so only the RUN day's file may
+    # be rewritten. An earlier day's unpaired state was already finalised by that day's own runs;
+    # rewriting it from a window that only partially covers that day would DELETE real entries and
+    # read as "those trades never happened". Earlier-day orphans are reported, never written.
+    run_day_orphans = [r for r in orphan_recs if r["day"] == run_day]
+    older_orphans = [r for r in orphan_recs if r["day"] != run_day]
+
     if a.stdout:
         for r in orphan_recs:
             print(json.dumps(r, separators=(",", ":"), default=str))
         n_unpaired = len(orphan_recs)
     else:
-        n_unpaired = write_unpaired(unpaired_path, orphan_recs)
+        n_unpaired = write_unpaired(unpaired_path, run_day_orphans)
 
-    print("[trade-recorder] %s: %d paired round trips seen, %d newly recorded -> %s"
-          % (day, len(pairs), written, path))
-    n_cand = sum(1 for r in orphan_recs if r.get("exit_route") == "close_unattributed")
+    for day in sorted(set(written_by_day) | {run_day}):
+        path = os.path.join(a.out, day + ".jsonl")
+        n_pairs = sum(1 for p in pairs if trade_day(p.entry_at) == day)
+        print("[trade-recorder] %s: %d paired round trips seen, %d newly recorded -> %s"
+              % (day, n_pairs, written_by_day.get(day, 0), path))
+    n_cand = sum(1 for r in run_day_orphans if r.get("exit_route") == "close_unattributed")
     print("[trade-recorder] %s: %d entries with NO exit fill (state, overwritten) -> %s"
-          % (day, n_unpaired, unpaired_path))
+          % (run_day, n_unpaired, unpaired_path))
     if n_cand:
         print("[trade-recorder] %s: of those, %d have an UNATTRIBUTED -close- exit candidate "
-              "(route visible, pairing unprovable -- see CLOSE_CANDIDATE_SQL)" % (day, n_cand))
+              "(route visible, pairing unprovable -- see CLOSE_CANDIDATE_SQL)" % (run_day, n_cand))
+    if older_orphans:
+        by_day: dict[str, int] = {}
+        for r in older_orphans:
+            by_day[r["day"]] = by_day.get(r["day"], 0) + 1
+        print("[trade-recorder] %d unpaired entries from EARLIER days seen but not rewritten "
+              "(%s) -- their day's own state file is authoritative"
+              % (len(older_orphans), ", ".join("%s:%d" % kv for kv in sorted(by_day.items()))))
     return 0
 
 
