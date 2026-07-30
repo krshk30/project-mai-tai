@@ -2,8 +2,11 @@
 # BAR-GAP WATCH — push an alert the moment the v2 bar series develops a hole.
 #
 #   Operator ask (2026-07-30): "if any DB holes or something, you have to get the notification.
-#   You have to automatically start looking into it... run a background job every day, morning
-#   seven to four PM."
+#   You have to automatically start looking into it... you can start fixing it and let me know."
+#   Window 07:00-16:00 ET, operator-stated.
+#
+# ⭐ IT REPAIRS, NOT JUST ALERTS. A cloud agent cannot do this job — it runs in Anthropic's cloud
+# with no route to this box — so the repair belongs here, where the credentials already are.
 #
 # ⭐ WHY. A hole in `strategy_bar_history` makes true range span the gap — `href`/`lref` reference
 # `prev.close`, so ONE bar carries the whole outage into a 5-period Wilder. On 2026-07-30 NUWE's
@@ -80,12 +83,29 @@ send_ntfy() {  # $1=title $2=priority $3=tags $4=body
 echo "$STAMP  $VERDICT" >> "$LOG"
 
 if [ "$LEVEL" = "RED" ] || [ "$LEVEL" = "AMBER" ] || [ "$SELFTEST" -eq 1 ]; then
+  # ---- AUTO-REPAIR -------------------------------------------------------------------------
+  # ⛔ Safe to run unattended for three structural reasons, not because it "seems fine":
+  #   1. INSERT-ONLY — ON CONFLICT DO NOTHING on the unique key, so a bar recorded LIVE can never
+  #      be overwritten by a REST snapshot, even if the gap arithmetic were wrong.
+  #   2. PROVENANCE-STAMPED — every filled row is source='rest'; studies filter WHERE source='live'.
+  #   3. CLEAN UNDO — DELETE FROM strategy_bar_history WHERE source='rest'.
+  # ⛔ It repairs the DATABASE only. Live trading is fixed by a RESTART (the in-memory series), and
+  # a restart is attended — this must never bounce a trading service on its own.
+  REPAIR="(repair skipped)"
+  if [ "$SELFTEST" -eq 0 ]; then
+    REPAIR=$(nice -n 19 "$REPO"/.venv/bin/python "$REPO"/scripts/report_bar_gaps.py                --day "$TODAY" --go 2>&1 | tail -3)
+    echo "$STAMP  REPAIR: $REPAIR" >> "$LOG"
+  fi
   if [ "$PREV_STATUS" = "OK" ] || [ $(( NOW - LAST_ALERT )) -ge "$COOLDOWN_SECS" ] || [ "$SELFTEST" -eq 1 ]; then
     BODY="$VERDICT
-Bars are missing, so ATR spans the hole and resting orders on those names sit too high.
-Locate: ssh mai-tai-vps 'cd $REPO && .venv/bin/python scripts/report_bar_gaps.py --day $TODAY'
-Fix: restart schwab-1m-v2 so the REST warmup refetches a contiguous series (in-memory only;
-the DB hole stays and must be excluded from any backtest or parity study)."
+
+AUTO-REPAIR (database only):
+$REPAIR
+
+Bars were missing, so ATR spanned the hole and resting orders on those names sat too high.
+The DB is repaired; LIVE TRADING still needs an attended restart of schwab-1m-v2 so the REST
+warmup rebuilds a contiguous in-memory series.
+Undo the fill: DELETE FROM strategy_bar_history WHERE source='rest';"
     [ "$SELFTEST" -eq 1 ] && BODY="[SELFTEST] $BODY"
     if [ "$LEVEL" = "RED" ]; then
       send_ntfy "RED v2 BAR HOLE" "urgent" "rotating_light" "$BODY"
