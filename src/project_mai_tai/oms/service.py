@@ -322,6 +322,22 @@ class OmsRiskService:
     # forever because close_on_fill waits for a fill that never comes (2026-07-13 AGEN).
     _V2_EXIT_RECONCILE_AFTER_FAILURES = 3
 
+    # ⛔ TERMINATION BOUND for the v2 close-retry loop. Live 2026-07-29: NCRA took 145 REJECTED
+    # SELLS IN 55 MINUTES (AMIX 25, STFS 7) -- one exit decision, `ref=3.0587`, retried forever
+    # against a broker answering NEW_NO_POSITION_MARGIN_ACCOUNT_CAN_NOT_SELL_SHORT.
+    # The cause was NOT a missing bound: `_v2_close_reconcile_flat` RESET the counter to 0 on any
+    # not-flat read, so it sawtoothed 1,2,3 -> check -> 0 -> 1,2,3 and never accumulated. And
+    # `_broker_symbol_is_flat` collapses HELD and UNKNOWN into one `False`, so an INCONCLUSIVE read
+    # reset the counter as if we had confirmed we hold the position.
+    # Now only a POSITIVELY-HELD read resets it; an inconclusive read accumulates to this bound and
+    # then STANDS DOWN. ⛔ Standing down does NOT close the row or delete protection -- that is the
+    # ERNA naked-position mistake. It stops the hammering and pages; the read-only exit POLL keeps
+    # running and closes the row when the broker shows the OCO resolved (which is what recovered
+    # AMIX on 07-29).
+    _V2_EXIT_ABANDON_AFTER_FAILURES = 8
+    # Class-level default: test helpers build instances via __new__, bypassing __init__.
+    _v2_exit_stood_down: set[tuple[str, str]] = set()
+
     # How many consecutive sync cycles we will hold a managed row open waiting for a transient
     # exit-fill fetch (Webull 429) to succeed. At the ~15s sync this is ~45s of retries. Bounded
     # because an open managed row BLOCKS fan-out re-entry: bookkeeping must never outrank entries.
@@ -390,6 +406,9 @@ class OmsRiskService:
         # Phantom-reconcile: consecutive REJECTED v2 full-closes per (acct, symbol). After the
         # threshold, a fresh broker read clears the row iff confirmed flat (see _emit_v2_exit_on_loop).
         self._v2_exit_close_failures: dict[tuple[str, str], int] = {}
+        # (acct, symbol) whose close-retry loop has been STOOD DOWN — see
+        # `_V2_EXIT_ABANDON_AFTER_FAILURES`. Protection is untouched; only the retry stops.
+        self._v2_exit_stood_down: set[tuple[str, str]] = set()
         # Consecutive TRANSIENT exit-fill fetch failures per (acct, symbol). See _defer_for_exit_fetch.
         self._oco_exit_fetch_deferrals: dict[tuple[str, str], int] = {}
         self._v2_exit_config: TradingConfig = TradingConfig().make_v2_variant()
@@ -2634,7 +2653,9 @@ class OmsRiskService:
             return False
         # Fresh-fill grace anchor for v2 = the managed row's entry_time (when we filled in).
         entry_at = _as_utc(getattr(row, "entry_time", None))
-        if await self._broker_symbol_is_flat(acct, symbol, established_at=entry_at):
+        # ONE broker read, reused for both the flat decision and the HELD-vs-UNKNOWN distinction.
+        state = await self._broker_symbol_position_state(acct, symbol)
+        if await self._broker_symbol_is_flat(acct, symbol, established_at=entry_at, state=state):
             # Capture the broker's own exit BEFORE closing the row, so the completed trade can
             # pair. This path is broker-agnostic (it fires for Schwab and Webull alike), which is
             # why it is the primary hook: Webull has no armed-OCO tracking to drive the fast path.
@@ -2659,13 +2680,33 @@ class OmsRiskService:
             self._cw_flip_pending.discard(key)
             self._cw_floor_armed.discard(key)
             self._v2_exit_close_failures.pop(key, None)
+            self._v2_exit_stood_down.discard(key)
             self.logger.info(
                 "[OMS-V2-RECONCILE-FLAT] sym=%s acct=%s broker flat after %d rejected closes -> "
                 "clearing phantom managed row",
                 symbol, acct, self._V2_EXIT_RECONCILE_AFTER_FAILURES,
             )
             return True
-        self._v2_exit_close_failures[key] = 0  # genuinely still held -> keep managing, re-count later
+        # ⛔ ONLY a POSITIVELY-HELD read may reset the accumulator. `_broker_symbol_is_flat`
+        # returns False for HELD *and* UNKNOWN; resetting on both is what let NCRA retry 145 times.
+        if state is _PositionRead.HELD:
+            self._v2_exit_close_failures[key] = 0  # we DO hold it -> keep managing, re-count later
+            # A positive HELD read is new information: the loop may resume.
+            self._v2_exit_stood_down.discard(key)
+            return False
+
+        # Inconclusive (UNKNOWN, or a FLAT_INFERRED refused by the fresh-fill grace). We can neither
+        # confirm we hold it nor safely clear it, so accumulate -- and stop hammering at the bound.
+        if self._v2_exit_close_failures[key] >= self._V2_EXIT_ABANDON_AFTER_FAILURES:
+            if key not in self._v2_exit_stood_down:
+                self._v2_exit_stood_down.add(key)
+                self.logger.error(
+                    "[OMS-V2-EXIT-STAND-DOWN] sym=%s acct=%s %d rejected closes with an "
+                    "INCONCLUSIVE broker read (state=%s) -> STOPPING the retry loop. The managed "
+                    "row and any protection are LEFT IN PLACE; the exit poll will close it when the "
+                    "broker shows the OCO resolved. OPERATOR: check the position by hand.",
+                    symbol, acct, self._v2_exit_close_failures[key], getattr(state, "value", state),
+                )
         return False
 
     async def _poll_native_oco_exits(self) -> None:
@@ -2784,6 +2825,9 @@ class OmsRiskService:
         self._cw_flip_pending.discard(key)
         self._cw_floor_armed.discard(key)
         self._v2_exit_close_failures.pop(key, None)
+        # ⛔ MUST clear: this is the RECOVERY path a stand-down relies on. Leaving it set would
+        # silently suppress exits for the NEXT position on this symbol.
+        self._v2_exit_stood_down.discard(key)
         self.logger.info(
             "[OMS-V2-OCO-RESOLVED-FLAT] sym=%s acct=%s OCO resolved by FILL (broker execution "
             "record) -> closing phantom managed row (no ladder rejects)",
@@ -2823,6 +2867,7 @@ class OmsRiskService:
                 )
                 if row is None:
                     self._managed_v2_symbols.discard((acct, symbol))
+                    self._v2_exit_stood_down.discard((acct, symbol))
                     return
                 if kind == "SCALE":
                     events = await self._emit_v2_managed_sell(
@@ -2836,6 +2881,15 @@ class OmsRiskService:
                     self.store.update_managed_position_from_position(
                         session, row, position, write_quantity=not close_on_fill
                     )
+                elif (acct, symbol) in self._v2_exit_stood_down:
+                    # ⛔ Retry loop stood down (see _V2_EXIT_ABANDON_AFTER_FAILURES). Emitting again
+                    # would just re-reject: 145 times on NCRA 2026-07-29. The row and any protection
+                    # stay in place and the read-only exit poll still resolves it.
+                    self.logger.warning(
+                        "[OMS-V2-EXIT-STAND-DOWN] sym=%s acct=%s suppressing a %s close — the retry "
+                        "loop is stood down pending an operator check", symbol, acct, kind,
+                    )
+                    return
                 else:  # HARD / FLOOR — full close
                     events = await self._emit_v2_managed_sell(
                         session, row, intent_type="close", quantity=int(position.quantity),
@@ -2862,6 +2916,7 @@ class OmsRiskService:
                         else:
                             self.store.close_managed_position(session, row)
                             self._managed_v2_symbols.discard(key)
+                            self._v2_exit_stood_down.discard(key)
                 session.commit()
         except Exception as exc:  # noqa: BLE001 — the quote path must never die
             self.logger.warning("v2 managed-exit emit failed for %s: %s", symbol, exc)
@@ -4387,6 +4442,7 @@ class OmsRiskService:
         symbol: str,
         *,
         established_at: datetime | None = None,
+        state: "_PositionRead | None" = None,
     ) -> bool:
         """True ONLY on a positively-confirmed flat. Shared by the ORB hard-stop reconcile
         (#436) and the v2 CW managed-exit reconcile — both DELETE protection on True, so the
@@ -4399,7 +4455,11 @@ class OmsRiskService:
 
         Rollback: `oms_reconcile_require_positive_flat=false` restores the pre-fix semantics
         (empty/absent read == flat)."""
-        state = await self._broker_symbol_position_state(broker_account_name, symbol)
+        # `state` lets a caller that already read the broker reuse it. `_broker_symbol_position_state`
+        # does a FRESH read every time, and Webull 429s under load, so the reconcile path must not
+        # pay for two reads to answer one question.
+        if state is None:
+            state = await self._broker_symbol_position_state(broker_account_name, symbol)
         settings = getattr(self, "settings", None)
         if not bool(getattr(settings, "oms_reconcile_require_positive_flat", True)):
             # Pre-fix semantics, exactly: empty/absent/qty-0 => flat; held => not flat; a
