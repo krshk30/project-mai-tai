@@ -245,10 +245,78 @@ def check_strategy_bar_freshness() -> tuple[str, str, str]:
     return (level, "strategy-bar-freshness", detail)
 
 
+
+def classify_bar_continuity(
+    worst_gap_min: int | None,
+    gap_symbols: int | None,
+    bars_seen: int | None,
+    *,
+    amber_gap_min: int = 2,
+    red_gap_min: int = 10,
+) -> tuple[str, str]:
+    """schwab_1m_v2 bar-continuity verdict — the SILENT ATR-corruption detector.
+
+    ⭐ WHY IT EXISTS (2026-07-30, live money). A hole in `strategy_bar_history` makes true range
+    span the gap: `href`/`lref` reference `prev.close`, so ONE bar carries the whole outage. v2 was
+    stopped 10:12-11:33 ET and NUWE's ATR read 0.149 against a true 1-minute ATR of ~0.06 —
+    `loss = 3.5 * ATR` put the resting buy-stop at 4.74 while the operator's chart showed ~4.40.
+    Every resting order on a gap-spanning symbol sits too high until the bad TR ages out.
+
+    ⛔ Gaps are NOT restart-only. Same day, no outage: CRWU 25 min, AXTU 2-13 min, SNDG 3 min.
+    Nobody was checking, so nobody knew. That is the whole reason this check exists.
+
+    ⛔ NO-FALSE-ALARM GUARD: no bars at all means off-hours or an empty watchlist, NOT a fault —
+    GREEN. This check must never red a quiet market (same rule as the freshness check)."""
+    if not bars_seen:
+        return ("GREEN", "no schwab_1m_v2 bars in the window (off-hours or empty watchlist)")
+    if worst_gap_min is None or worst_gap_min <= 1:
+        return ("GREEN", f"schwab_1m_v2 bars contiguous ({bars_seen} bars, no gaps)")
+    if worst_gap_min < amber_gap_min:
+        return ("GREEN", f"schwab_1m_v2 bars contiguous within tolerance (worst {worst_gap_min}min)")
+    if worst_gap_min < red_gap_min:
+        return (
+            "AMBER",
+            f"schwab_1m_v2 BAR GAP {worst_gap_min}min on {gap_symbols} symbol(s) — "
+            f"ATR inflated for those names; resting orders will sit too high",
+        )
+    return (
+        "RED",
+        f"schwab_1m_v2 BAR HOLE {worst_gap_min}min on {gap_symbols} symbol(s) — "
+        f"true range spans the hole, ATR materially wrong, resting orders mispriced. "
+        f"Restart v2 so the REST warmup refetches a contiguous series.",
+    )
+
+
+def check_bar_continuity() -> tuple[str, str, str]:
+    """Check #4: the v2 bar series has no holes — a hole silently corrupts ATR and
+    misprices every resting order on that symbol."""
+    window = (
+        "FROM strategy_bar_history WHERE strategy_code='schwab_1m_v2' AND interval_secs=60 "
+        "AND bar_time >= now() - interval '30 minutes'"
+    )
+    bars_seen = _scalar_int(f"SELECT count(*) {window}")
+    worst = _scalar_int(
+        "WITH g AS (SELECT symbol, bar_time, lead(bar_time) OVER "
+        "(PARTITION BY symbol ORDER BY bar_time) nxt "
+        f"{window}) "
+        "SELECT coalesce(max(extract(epoch FROM (nxt-bar_time))/60),0)::int FROM g "
+        "WHERE nxt - bar_time > interval '1 minute'"
+    )
+    syms = _scalar_int(
+        "WITH g AS (SELECT symbol, bar_time, lead(bar_time) OVER "
+        "(PARTITION BY symbol ORDER BY bar_time) nxt "
+        f"{window}) "
+        "SELECT count(DISTINCT symbol) FROM g WHERE nxt - bar_time > interval '1 minute'"
+    )
+    level, detail = classify_bar_continuity(worst, syms, bars_seen)
+    return (level, "v2-bar-continuity", detail)
+
+
 CHECKS = [
     check_strategy_bar_freshness,   # #1 frozen-loop detector
     check_oms_order_lifecycle,      # #2 alive-but-not-executing detector
     check_stops_armed,              # #3 every OMS-owned open position has an armed stop
+    check_bar_continuity,           # #4 v2 bar holes -> ATR spans them -> orders mispriced
 ]
 
 _RANK = {"GREEN": 0, "AMBER": 1, "RED": 2}
