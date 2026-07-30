@@ -9,7 +9,9 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from ops.health.trade_recorder import TARGET_PCT, TIER_PRICE, analyse
+import json
+
+from ops.health.trade_recorder import TARGET_PCT, TIER_PRICE, analyse, write_unpaired
 
 T0 = datetime(2026, 7, 29, 14, 0, tzinfo=UTC)
 
@@ -88,3 +90,30 @@ def test_no_bars_is_survivable() -> None:
     out = analyse(5.00, [], actual_ret=1.5)
     assert out["n_bars"] == 0 and out["touched_target"] is False
     assert out["whatif_floor2_trail3_pct"] == 1.5
+
+
+# --- the unpaired-entry file: STATE, so overwritten -- never appended -------------------------
+
+def test_unpaired_file_is_overwritten_not_appended(tmp_path) -> None:
+    """⛔ THE WHOLE POINT. An entry unpaired at 10:05 is normally paired by 10:06. If a 5-minute cron
+    APPENDED, one open trade would become a growing pile of stale duplicates that reads as dozens of
+    naked positions — the exact false alarm that paged 58 times over a phantom row."""
+    p = str(tmp_path / "d.unpaired.jsonl")
+
+    write_unpaired(p, [{"symbol": "AMIX", "entry_boid": "A"}, {"symbol": "STFS", "entry_boid": "B"}])
+    assert len(open(p).read().strip().splitlines()) == 2
+
+    write_unpaired(p, [{"symbol": "STFS", "entry_boid": "B"}])      # AMIX paired since
+    rows = [json.loads(x) for x in open(p).read().strip().splitlines()]
+    assert len(rows) == 1 and rows[0]["symbol"] == "STFS"
+
+    assert write_unpaired(p, []) == 0                                # everything paired
+    assert open(p).read() == ""
+
+
+def test_unpaired_write_is_atomic(tmp_path) -> None:
+    """A reader must never catch a half-written file, and no .tmp may be left behind."""
+    p = str(tmp_path / "d.unpaired.jsonl")
+    write_unpaired(p, [{"symbol": "NCRA", "entry_boid": "C"}])
+    assert not (tmp_path / "d.unpaired.jsonl.tmp").exists()
+    assert json.loads(open(p).read().strip())["symbol"] == "NCRA"
