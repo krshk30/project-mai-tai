@@ -766,16 +766,44 @@ class SchwabBrokerAdapter:
 
         final_order = await self._fetch_order(account, broker_order_id)
         if final_order is None:
+            # ⛔⭐ A FAILED CONFIRMATION IS NOT A CANCELLATION. This branch used to report
+            # "cancelled" whenever the confirming fetch came back empty — claiming the single most
+            # consequential terminal state on no evidence at all.
+            #
+            # Live 2026-07-30, IRE: a resting buy-stop was placed 12:45, FILLED at the broker as
+            # price rose through 9.03, and the reprice cancel landed at 12:47. The DELETE did not
+            # 400, this fetch returned None, and we booked "cancelled". The broker held 2 shares
+            # with a live OTOCO bracket (target 9.2069) that our OMS did not know existed and
+            # therefore never managed — no flip exit, no stop management, invisible in
+            # `virtual_positions` while `account_positions` showed 4 shares against our 2.
+            # There were 139 failed order fetches and 130 rate-limit errors that day, so this is
+            # not a rare race.
+            #
+            # ⭐ The rule already exists elsewhere and was never applied here: the Webull mirror
+            # was hardened in #537 to raise on a 429 rather than read an empty response as flat.
+            # Same defect, different adapter.
+            #
+            # Report the order's PRIOR open state instead. "accepted" is in
+            # `OmsStore.OPEN_ORDER_STATUSES`, so the order stays open and the periodic sync
+            # re-polls it and resolves it to filled/cancelled from real broker data.
+            # Fail-closed: worst case we believe an order is live that is not, and the next poll
+            # corrects us — versus owning a position we do not know about.
+            logger.warning(
+                "[SCHWAB-CANCEL-UNCONFIRMED] %s coid=%s boid=%s — DELETE returned %s but the "
+                "confirming fetch failed; NOT claiming cancelled. Order left open for the "
+                "reconcile poll (it may in fact have FILLED).",
+                request.symbol, request.client_order_id, broker_order_id, status_code,
+            )
             return [
                 ExecutionReport(
-                    event_type="cancelled",
+                    event_type="accepted",
                     client_order_id=request.client_order_id,
                     broker_order_id=broker_order_id,
                     symbol=request.symbol,
                     side=request.side,
                     intent_type="cancel",
                     quantity=request.quantity,
-                    reason=request.reason,
+                    reason="cancel unconfirmed: order fetch failed; state unknown",
                     metadata=dict(request.metadata),
                 )
             ]

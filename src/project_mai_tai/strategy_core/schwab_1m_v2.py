@@ -1767,6 +1767,24 @@ class SchwabV2Strategy:
                         return
                 self._queue_resting_place(state, trail)
                 return
+            # ⛔⭐ LIQUIDITY RE-CHECK WHILE RESTING (2026-07-30). The arm-time floor above is a STALE
+            # check: it judges the last completed bar at PLACEMENT, and a resting buy-stop can then
+            # sit for MINUTES while the tape dries up — and still fill.
+            #
+            # Measured live, all four below-floor entries that day were resting orders:
+            #   APLX  placed 13:09, floor saw bar 13:08 = 12,530 (PASS) -> filled 13:19 into a
+            #         100-share bar. 125x thinner than the gate approved.
+            #   AXTX  placed 12:49 off 49,897 -> filled 12:50 into 1,660
+            #   SNDG  placed 12:44 -> filled 12:52 (8 minutes later)
+            #   IREG  placed 13:16 -> filled 13:19
+            # The reactive path is unaffected — it is a market order checked at emit, which IS fill.
+            #
+            # ⛔ CANCEL, never `return`. Silently skipping would leave a live buy-stop at the broker
+            # that nothing reprices — exactly the #580 orphan the arm-only comment above warns
+            # about. Cancelling keeps the order MANAGED, which is the whole point of that warning.
+            if not self._liquidity_floor_ok(state):
+                self._queue_resting_cancel(state, reason="liquidity_floor")
+                return
             # STABLE-REST: re-place only on a meaningful trail move; else leave it out there.
             if (state.resting_level > 0.0
                     and abs(trail - state.resting_level) / state.resting_level >= self._resting_reprice_frac):

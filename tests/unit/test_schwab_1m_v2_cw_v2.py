@@ -389,3 +389,39 @@ def test_stale_trigger_behaviour_is_restored():
     # px 12.9 is above the STALE trigger but far below the real high -> pre-#467 this ENTERS
     draft = strat._cw_v2_quote(st, _quote(12.9))
     assert draft is not None                        # the chase is back (known, accepted for now)
+
+
+# --------------------------------------------------- resting liquidity RE-check (2026-07-30)
+# The arm-time floor is a STALE check. Live that day, ALL FOUR below-floor entries were resting
+# orders that passed the floor at placement and filled minutes later into a dried-up tape:
+#   APLX placed 13:09 off a 12,530-share bar -> filled 13:19 into a 100-share bar (125x thinner).
+# The reactive path is unaffected (market order, checked at emit = fill).
+
+def test_a_resting_order_is_CANCELLED_when_liquidity_dries_up():
+    """THE REGRESSION: while resting, a below-floor bar must cancel the order."""
+    strat = _strat(strategy_schwab_1m_v2_atr_flip_vol_floor=10_000,
+                   strategy_schwab_1m_v2_cw_v2_resting_entry_enabled=True)
+    st = strat.watchlist_state("APLX")
+    st.resting_active = True
+    st.resting_level = 9.03
+    st.bars.append(_bar(9.05, vol=100, ts=99))          # 100 shares — far below the 10k floor
+    strat._pending_intents.clear()
+    strat._cw_v2_resting_track(st, _sig(state="short", trail=9.03))
+    assert st.resting_active is False, "a thin tape must not leave the order working"
+    assert any(
+        d.intent_type == "cancel" for d in strat._pending_intents
+    ), "it must CANCEL, never silently skip — a skip is the #580 orphan"
+
+
+def test_a_resting_order_SURVIVES_while_liquidity_holds():
+    """⛔ The guard must not churn a healthy order — that would re-create the reprice storm."""
+    strat = _strat(strategy_schwab_1m_v2_atr_flip_vol_floor=10_000,
+                   strategy_schwab_1m_v2_cw_v2_resting_entry_enabled=True)
+    st = strat.watchlist_state("APLX")
+    st.resting_active = True
+    st.resting_level = 9.03
+    st.bars.append(_bar(9.05, vol=50_000, ts=99))
+    strat._pending_intents.clear()
+    strat._cw_v2_resting_track(st, _sig(state="short", trail=9.03))
+    assert st.resting_active is True
+    assert not any(d.intent_type == "cancel" for d in strat._pending_intents)
