@@ -1375,11 +1375,6 @@ class SchwabV2BotService:
                 len(self._rest_warmup_done),
                 len(self._watchlist),
             )
-            # The warmup replay can RE-ARM after the db-seed cap already ran (see
-            # `_cap_reconstructed_segment`) — cap again here, or the segment stays "dangerous"
-            # and the boot-hold freezes CW-v2 entries BOT-WIDE.
-            self._cap_reconstructed_segment(symbol, stage="rest-warmup")
-
         if self._should_skip_rest_strategy_feed(symbol, bar):
             self._rest_bars_gated += 1
         else:
@@ -1395,6 +1390,25 @@ class SchwabV2BotService:
         # any newer streamer bars are appended on top.
         if just_warmed:
             await self._drain_streamer_pending(symbol)
+            # ⛔⭐ CAP LAST — after the bar feed AND the streamer drain, never inside the
+            # `just_warmed` block above.
+            #
+            # It used to run the moment `[V2-REST-WARMED]` was logged, which is BEFORE the final
+            # warmup bar reaches `_handle_bar` and before the drain. So the cap inspected a segment
+            # that was not armed yet, found nothing, and the arm landed uncapped microseconds later.
+            # Observed live on the 2026-07-30 11:22 ET restart:
+            #
+            #   15:22:23,607  [V2-REST-WARMED] CRWU            <- cap ran here, saw nothing
+            #   15:22:23,624  [V2-CW-ARM]      CRWU armed      <- armed AFTER the cap
+            #   15:22:27,962  [V2-BOOT-HOLD]   HELD — CRWU(n=0/2)   <- entries frozen BOT-WIDE
+            #
+            # `[V2-CW-SEED-CAP]` had never fired once. The boot-hold is fail-safe (it suppresses
+            # entries rather than trading a stale segment) but it froze the whole bot — the same
+            # 54-minute freeze seen on 2026-07-27, whose fix moved this call but not far enough.
+            #
+            # ⛔ The invariant is in the method's own docstring: "MUST run after EVERY replay that
+            # can arm a segment." Both the final bar feed and the drain are such replays.
+            self._cap_reconstructed_segment(symbol, stage="rest-warmup")
 
     async def _handle_bar_from_streamer(self, symbol: str, bar: ChartBar) -> None:
         """Streamer callback.
