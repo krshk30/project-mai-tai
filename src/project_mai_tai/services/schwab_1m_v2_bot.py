@@ -204,6 +204,10 @@ class SchwabV2BotService:
         )
         self._strategy_state_last_id = "$"
         self._watchlist: set[str] = set()
+        # symbol -> epoch ms at which it JOINED the watchlist. Absent => present since boot, which
+        # falls back to `_boot_ms` (see `_watch_start_for`), preserving pre-2026-07-30 behaviour for
+        # every symbol that was already being watched.
+        self._watch_start_ms: dict[str, int] = {}
         # Symbols Schwab refused to OPEN today (cached <=60s; see
         # `_schwab_ineligible_symbols`). Evicted from the watchlist so v2 stops
         # emitting intents for names the broker already bounced.
@@ -1152,6 +1156,17 @@ class SchwabV2BotService:
         if selected == self._watchlist:
             return
         new_symbols = selected - self._watchlist
+        # ⭐ Stamp WHEN we started watching each symbol. This is the reference
+        # `_cap_reconstructed_segment` uses to decide whether an armed segment was observed LIVE or
+        # merely reconstructed from warmup history — see that method for the full rationale.
+        # ⛔ A symbol that LEAVES and re-joins gets a FRESH stamp: we stopped watching, so we may
+        # have missed flips in between, and its warmup will replay them as if they were current.
+        now_ms = int(datetime.now(UTC).timestamp() * 1000)
+        for sym in new_symbols:
+            self._watch_start_ms[sym] = now_ms
+        self._watch_start_ms = {
+            sym: ts for sym, ts in self._watch_start_ms.items() if sym in selected
+        }
         self._watchlist = selected
         # Drop warmup state for symbols that left the watchlist. If they
         # re-join later, REST needs to refetch the batch and the
@@ -1447,10 +1462,45 @@ class SchwabV2BotService:
                 symbol,
             )
 
+    def _watch_start_for(self, symbol: str) -> int:
+        """Epoch ms from which this symbol's flips are OBSERVED-LIVE rather than reconstructed.
+
+        Its watchlist join time, or `_boot_ms` for anything present since process start.
+        """
+        return self._watch_start_ms.get(symbol, self.strategy._boot_ms)
+
     def _cap_reconstructed_segment(self, symbol: str, *, stage: str) -> None:
-        """P1.3: mark a RECONSTRUCTED armed segment (arm_bar_ts < boot) as USED, so v2 can only
-        enter on flips AFTER boot — a restart can never re-issue the per-segment cap (the CPHI
-        class). Fail-closed: costs one legit first-entry on a pre-restart segment.
+        """P1.3: mark a RECONSTRUCTED armed segment as USED, so v2 can only enter on a flip we
+        actually WATCHED HAPPEN. Fail-closed: costs at most one legit first-entry.
+
+        ⛔⭐ THE REFERENCE IS PER-SYMBOL, NOT GLOBAL BOOT (changed 2026-07-30 after a live loss).
+        It used to compare `arm_bar_ts < self.strategy._boot_ms`. That is the right idea against the
+        WRONG clock: it only screens segments older than the PROCESS, and says nothing about a
+        symbol the scanner promoted mid-session. When a new symbol is confirmed, the REST warmup
+        replays its history and re-arms segments from flips that happened before we were watching —
+        and those sailed through, because they are newer than boot.
+
+        Measured on 2026-07-30 (v2 booted 07-28 19:05 ET):
+
+            APLX  flip bar 09:16 ET | joined the watchlist 09:38 ET | bought 10:00 at +23.7%
+            SNDG  flip bar 09:23 ET | joined the watchlist 09:34 ET | bought 10:00 at +18.9%
+
+        Both flips are two days AFTER boot and ~20 minutes BEFORE the symbol was being watched, so
+        the old check passed them. Both trades stopped out.
+
+        ⭐ Operator's rule (2026-07-30): "if the momentum scanner confirms a NEW stock it needs to
+        wait for a fresh flip; the stocks we've had since 07:00 don't have to — they've been in the
+        system, we saw the flips happen." A per-symbol watch-start expresses exactly that, and
+        symbols present at boot keep `_boot_ms`, so their behaviour is unchanged.
+
+        ⛔ The comparison is `<=`, not `<`. A bar timestamp is the bar's OPEN, so a symbol that
+        joined at 09:38:30 was NOT watching when the 09:38 bar opened — that bar's flip is not
+        observable-live. Fail-closed.
+
+        ⛔ Warmup bars are still INGESTED — the ATR needs the history to be correct. Only the ARM
+        they produce is disqualified.
+
+        MUST run after EVERY replay that can arm a segment. It originally ran only at the end of the
 
         MUST run after EVERY replay that can arm a segment. It originally ran only at the end of the
         DB seed, but the REST warmup replays again a fraction of a second LATER and RE-ARMS — and
@@ -1470,16 +1520,17 @@ class SchwabV2BotService:
             return
         st = strat.watchlist_state(symbol)
         max_e = strat._cw_v2_max_entries_per_flip
+        watch_start = self._watch_start_for(symbol)
         if (
             st.cw_armed
-            and 0 < st.cw_arm_bar_ts < strat._boot_ms
+            and 0 < st.cw_arm_bar_ts <= watch_start
             and st.cw_entries_this_flip < max_e
         ):
             st.cw_entries_this_flip = max_e
             logger.info(
-                "[V2-CW-SEED-CAP] %s reconstructed armed segment capped "
-                "(entries->%d, arm_bar_ts=%d, stage=%s)",
-                symbol, max_e, st.cw_arm_bar_ts, stage,
+                "[V2-CW-SEED-CAP] %s reconstructed armed segment capped — the flip predates our "
+                "watch (entries->%d, arm_bar_ts=%d, watch_start=%d, boot=%d, stage=%s)",
+                symbol, max_e, st.cw_arm_bar_ts, watch_start, strat._boot_ms, stage,
             )
 
     def _seed_strategy_bars_from_db(self, symbol: str) -> None:

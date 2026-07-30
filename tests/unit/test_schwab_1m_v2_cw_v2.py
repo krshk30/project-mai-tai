@@ -120,13 +120,14 @@ def test_cw_v2_rule7_blocks_bar_that_dipped_below_flip_level():
     assert state.cw_entries_this_flip == 0
 
 
-def test_cw_v2_orb_window_skips_entry():
+def test_cw_v2_no_longer_skips_the_0930_1000_window():
+    """Inverted 2026-07-30: the ORB window is removed, so 09:45 enters exactly like 11:00 does.
+    The old assertion (in-window => None) is the behaviour that cost APLX/SNDG."""
     strat = _strat()
     state = strat.watchlist_state("TEST")
     _arm_to_watch(strat, state)
-    assert strat._cw_v2_quote(state, _quote(12.5, ts=ORB_MS)) is None   # 09:45 ET
-    assert state.cw_entries_this_flip == 0
-    assert strat._cw_v2_quote(state, _quote(12.5, ts=NON_ORB_MS)) is not None  # 11:00 ET fires
+    assert strat._cw_v2_quote(state, _quote(12.5, ts=ORB_MS)) is not None   # 09:45 ET now fires
+    assert state.cw_entries_this_flip == 1
 
 
 def test_cw_v2_sell_flip_cancels():
@@ -341,21 +342,39 @@ def test_cw_v2_reclaim_off_leaves_gap_setting_inert():
     assert state.cw_entries_this_flip == 1
 
 
-# --------------------------------------------------------------- ORB-block observability
-# Retained from #467 after its trigger change was REVERTED (2026-07-15). The block was silent,
-# which is why the SOBR chase went unseen. This half is read-only and was never in question.
+# --------------------------------------------------------------- 09:30-10:00 window REMOVED
+# The ORB suppression was removed 2026-07-30 (operator decision). It reserved the window for
+# `project-mai-tai-orb`, DISABLED since 2026-07-23, and -- worse -- it PAUSED the setup instead of
+# cancelling it, so every armed symbol was released at one clock edge at 10:00 and bought a stale
+# trigger. On the incident day APLX entered +23.7% and SNDG +18.9% past their flip levels.
 
-def test_orb_window_block_is_not_silent():
+def test_a_break_inside_0930_1000_now_ENTERS_at_its_own_time():
+    """THE REGRESSION: restoring the ORB gate turns this red."""
     strat = _strat()
     st = strat.watchlist_state("SOBR")
     _arm_to_watch(strat, st)
-    assert st.cw_orb_block_logged is False
-    strat._cw_v2_quote(st, _quote(12.5, ts=ORB_MS))
-    assert st.cw_orb_block_logged is True          # logged
-    strat._cw_v2_quote(st, _quote(12.6, ts=ORB_MS))
-    assert st.cw_orb_block_logged is True          # one-shot (runs on EVERY quote)
-    _feed_bar(strat, st, _bar(20.0, ts=9), _sig(flip="BUY", flip_level=18.0))
-    assert st.cw_orb_block_logged is False         # fresh flip re-arms it
+    assert strat._cw_v2_quote(st, _quote(12.5, ts=ORB_MS)) is not None
+
+
+def test_the_window_is_no_longer_a_special_case_at_all():
+    """Pins the PROPERTY, not one timestamp: an in-window break and an out-of-window break are
+    treated identically. A partial revert that re-gated only one path would go red here."""
+    in_window = _strat()
+    out_window = _strat()
+    a = in_window.watchlist_state("SOBR")
+    b = out_window.watchlist_state("SOBR")
+    _arm_to_watch(in_window, a)
+    _arm_to_watch(out_window, b)
+    got_in = in_window._cw_v2_quote(a, _quote(12.5, ts=ORB_MS))
+    got_out = out_window._cw_v2_quote(b, _quote(12.5, ts=NON_ORB_MS))
+    assert (got_in is None) == (got_out is None)
+    assert got_in is not None
+
+
+def test_the_orb_window_predicate_is_gone_not_merely_unused():
+    """A dormant predicate is an invitation for a future session to re-wire it. Three guards in
+    this file have already been found living in replaced code -- do not leave a fourth."""
+    assert not hasattr(SchwabV2Strategy, "_cw_in_orb_window")
 
 
 def test_stale_trigger_behaviour_is_restored():
