@@ -2,78 +2,78 @@
 
 > Threads that are genuinely **open**. One line each in [`session-handoff.md`](session-handoff.md).
 >
-> **Driven to 3 with the operator 2026-07-29** (from 66 → 19 → 3). Everything closed moved verbatim
-> to the bottom of [`handoff-log.md`](handoff-log.md); nothing was deleted.
->
 > ⛔ **KEEP IT SHORT. The rule that let this rot: items were only ever ADDED.**
 > - When something closes, **MOVE it to the log** — do not leave it here marked ✅.
-> - A *study you are not going to run* is not an open item. Close it; it comes back with evidence
->   attached if a live loss points at it.
-> - A *standing rule* (e.g. "default flips need the full suite") belongs in **memory**, not here —
->   it will never be "done", so it can only distort the list.
+> - A *study you are not going to run* is not an open item.
+> - A *standing rule* belongs in **memory**, not here — it will never be "done".
 > - A *dormant* item (its feature is switched off) is closed, not carried.
 
 ---
 
----
-
-## ✅ AFTER-CLOSE BATCH 2026-07-29 — ALL 5 CLOSED
-
-| item | outcome |
-|---|---|
-| operator's manual fills | ✅ **BOTH removed** (1000 sh @4.68 and 2000 sh @4.5555) + their synthetic `-ocoexit` order rows. Contamination check now **0 suspect of 36**. Full row contents were printed before deleting. |
-| **(e)** claim-a-manual-trade | ✅ **FIXED + LIVE** (#605). Ownership is structural: walk only our entry's `childOrderStrategies`, FAIL CLOSED without `entry_broker_order_id`. Webull was never affected (suffixed coids). Suite 1664 green. |
-| **(a)** dead-bot prune | ✅ **DONE.** 1,091,270 rows across 6 codes. `strategy_bar_history` **1962 MB → 815 MB** (~1.1 GB reclaimed). Only the 2 read codes remain (polygon_30s 817,331 · schwab_1m_v2 202,756). **Backtest re-verified byte-identical afterwards** (STKH 07-28: 379 bars, +1.90%). |
-| **(c)** readiness RED | ✅ **FIXED + LIVE** (#606). Verdict **RED (3 FAIL) → AMBER (0 FAIL)**. Keyed on `systemctl is-enabled`, NOT the env var. |
-| **(b)** restart trade-coach | ⚠️ **DONE BUT INEFFECTIVE — see below.** |
-| **(d)** Webull close-retry storm | ✅ **FIXED + LIVE** (#608). ⛔ The cause was NOT a missing bound — `_v2_close_reconcile_flat` RESET the counter on any not-flat read (sawtooth 1,2,3→check→0), and `_broker_symbol_is_flat` collapses HELD and UNKNOWN into one `False`, so an INCONCLUSIVE read reset it as if we'd confirmed we hold the position. Now only a positively-HELD read resets; UNKNOWN accumulates to a bound of 8 and STANDS DOWN. ⛔ Standing down does NOT close the row or touch protection (that is the ERNA mistake) — the read-only exit poll still resolves it. |
-
-### ⚠️ (b) did NOT work — the CPU is inherent, not drift
-`trade-coach` was **43.0%** before the restart and settled at **47.2%** after, on 21 days vs 1 minute
-of uptime. So this is not a leak that a bounce clears — the service genuinely burns ~45% of a 2-vCPU
-box continuously. Load is still ~2.2 with `strategy` 36.5% and `control` 33.7% alongside it.
-⇒ **The OMS heartbeat starvation WILL recur**, and the 09:00/09:09-style liveness pages with it.
-⇒ Folded into open item 2 (polygon/strategy-engine freeze): the real question is why an AUXILIARY
-service costs half the box, and whether it should run during market hours at all.
-
----
-
 ## 1. 🔬 Re-run the backtest-vs-live comparison on a STABLE-CODE day
-07-28 cannot judge parity — six deploys landed mid-session, so live ran >=4 code versions while the
-replay runs the final one. **Config parity itself is FIXED and verified** (89/90, #592); what is
-unproven is whether the engine reproduces a live day end-to-end. Only STKH has matched so far
-(+1.90% live vs +1.90% replay).
+Config parity is FIXED and verified (89/90, #592); what is unproven is whether the engine reproduces
+a live day end-to-end. Only STKH has ever matched (+1.90% both).
 
-⛔ **Respect three structural limits when comparing:**
-- the replay takes **ONE round trip per symbol-day** (`if exit_done: break`) — so "1 replay vs 6
-  live" is expected; compare only the **FIRST** live trade of each symbol-day
-- quote density ~1 per 4s vs a continuous live feed
-- sparse-bar symbols are uncomparable (CNET: 71 bars, 1 quote/118s)
-
-Scripts on the box: `_parity_diff.py`, `_live_today.py`, `_cnet_probe.py`, `_density.py`.
-Config-drift check now shipped: `ops/health/env_default_drift.py` (#598).
+⛔ **2026-07-30 is UNUSABLE** — 11 PRs deployed mid-session, plus bar holes from deliberate stops.
+⛔ Respect the three structural limits: ONE round trip per symbol-day (`if exit_done: break`), quote
+density ~1/4s, sparse-bar symbols uncomparable.
+⛔ **NEW:** filter `WHERE source='live'` — backfilled bars now exist (#624) and must not be mixed in.
 [[project_mai_tai_backtest_live_parity_audit]]
 
-## 2. 🐌 polygon / strategy-engine freeze
-60-80s loop freezes at the open and close; py-spy showed ~72% CPU in the JSON snapshot encode.
-`#366` (snapshot-persist throttle) was deployed and is **INSUFFICIENT**. Next candidate: offload or
-encode-once. F3 health check #1 detects it. [[project_mai_tai_polygon_freeze]]
+## 2. 🐌 polygon / strategy-engine freeze — **HALF CLOSED**
+✅ The trade-coach half is resolved: it was burning 45% of the box while DISABLED, in a 429 retry
+storm on a dead API key. Stopped 07-30; load 2.2 -> 1.37.
+🔴 The freeze itself remains: 60-80s loop stalls at open/close, ~72% CPU in the JSON snapshot encode.
+`#366` (snapshot-persist throttle) is **BUILT AND NEVER DEPLOYED**.
 
-## 3. 🧹 VPS retention — PART DONE 2026-07-29
-✅ **`strategy_bar_history` DONE**: 1,091,270 dead-bot rows removed, 1962 MB → 815 MB. Backtest
-re-verified byte-identical afterwards. `scripts/prune_strategy_bar_history.py`.
-Remaining candidates (disk is only 24% used, so this is hygiene):
-Disk is **not** under pressure (25% used, 88 GB free) — this is hygiene.
-✅ **Already self-managing, verified 2026-07-29:** `market_capture_trades`/`_quotes` hold exactly
-14 days and `market_trade_ticks` 30 days; both systemd timers ran that morning. **Leave them alone.**
+⭐ **New evidence 07-30:** `dashboard_snapshots` regrew **14 MB -> 96 MB in four minutes** after a
+VACUUM FULL. That is `_replace_dashboard_snapshot` on the hot path — the same write that is 72% of
+the CPU. **#366 is now the root of two open items and is the cheapest available win.**
+[[project_mai_tai_polygon_freeze]]
 
-| table | size | proposal |
-|---|---|---|
-| `reconciliation_findings` | 1142 MB, 2.5M rows, oldest 2026-03-30, never pruned | **prune > 30 days** — diagnostics only |
-| `dashboard_snapshots` | 1017 MB for **5002 rows of a single day** (~200 KB each) | needs a retention policy; confirm nothing reads history first |
-| ~~`strategy_bar_history`~~ | ~~1955 MB~~ → **815 MB** | ✅ **DONE** — dead-bot rows only. ⛔ The surviving `schwab_1m_v2` rows are the backtest bar source and must never be pruned. |
+## 3. ⛔ Schwab API-open rejects ~3/day and NOTHING evicts
+`"Opening transactions for this security must be placed with a broker. Contact us"` — a DIFFERENT
+symbol every day, so it is not one bad ticker: 07-30 ×1, 07-29 ×3, 07-28 ×3, 07-27 ×3, 07-23 ×7.
+**~20 lost entries in a week.** No `scanner_blacklist_entries` row is created; `#326`'s eviction does
+not fire on this reject reason, and the symbol stays `armed=True` as a live candidate.
+⭐ Reframes "fewer entries are expected (volume floor)" — part of the shortfall is THIS.
 
-[[project_mai_tai_retention_inventory]]
+## 4. ⛔⭐ An UNNAMED suppression stops the retry on a broker-refused symbol
+STKH 07-30: 09:53 open intent -> 1 broker order -> REJECTED. 09:55 open intent -> **no order row at
+all**. All three `risk_checks` read `outcome=pass, reason=ok`, and `oms.log` has **zero** STKH lines
+in that window. An intent that passes risk, creates no order, and is marked `rejected` — silently.
+
+⭐⭐ **Currently PROTECTIVE** (it stops us hammering Schwab with an order it structurally refuses)
+**but nobody can name the mechanism.** Both of this month's worst defects were this exact shape:
+#580 was a latch that silently stopped repricing once lost; #608 hid behind an overlapping guard
+("overlapping guards hide a dead one"). A suppression nobody can name can stop working unnoticed —
+and the failure mode here is a reject storm against a live broker.
+⇒ Find the path that marks a risk-passed open intent `rejected` without emitting an order. If it is
+the INTENDED guard, it deserves a log line and a test; if not, the real guard is missing.
+
+## 5. ⛔ A Schwab rejection vetoes the WEBULL leg too
+The fan-out itself works — proved on APLX/SNDG 07-30, both legs firing 5s apart. But when the Schwab
+leg is REJECTED, Webull is never attempted, so a name Schwab refuses via API is traded on **NEITHER**
+broker. [[feedback_assess_both_brokers]] — settle whether this is "Schwab can't trade this name" or
+"we can't trade this name".
+
+## 6. 📊 Order churn: 284 broker orders -> 23 round trips (12:1)
+Resting-entry reprice churn. Invisible to the recorder (closed round trips only), fully visible on
+the live tape. ⛔ Understand this before the trade-coach redesign — it is a large part of what the
+bot actually *does* all day.
+
+## 7. ⛔ IRE: a Schwab REPLACE spawned an order we never recorded
+Our books said 2 shares, the broker said 4. Schwab's own order list:
+
+    1007401978921  REPLACED  qty 2  filled 0   BUY  16:47:29  tag=TA_krshk30gmail...   <- ours
+    1007401979166  FILLED    qty 2  filled 2   BUY  16:47:29  tag=API_TOS:TraderAPI    <- the phantom
+
+**We never issue a replace** — the adapter is DELETE-only, no PUT anywhere. The successor filled at
+the same second with a different tag. ⛔ `CANCELLED_STATUSES` includes `"REPLACED"`, so we map it to
+`cancelled` and stop looking — **a replaced order has a successor and we never go find it.**
+
+**Parked by operator decision 07-30: catch it live next time.** #626 now surfaces the resulting
+position drift within ~8 minutes instead of hours.
 
 ---
 
