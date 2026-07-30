@@ -397,10 +397,19 @@ def test_stale_trigger_behaviour_is_restored():
 #   APLX placed 13:09 off a 12,530-share bar -> filled 13:19 into a 100-share bar (125x thinner).
 # The reactive path is unaffected (market order, checked at emit = fill).
 
+def _in_window(strat):
+    """⛔ FREEZE THE RESTING WINDOW. `_resting_in_window()` reads the WALL CLOCK (09:30-16:00 ET),
+    so a test that leaves it live passes every afternoon and fails every evening. That is exactly
+    what happened: this pair went green locally and in CI at ~15:00 ET, then failed the 19:44 ET
+    run with `reason=window_closed` — a red main branch for everyone, caused by the clock."""
+    strat._resting_in_window = lambda *a, **k: True
+    return strat
+
+
 def test_a_resting_order_is_CANCELLED_when_liquidity_dries_up():
     """THE REGRESSION: while resting, a below-floor bar must cancel the order."""
-    strat = _strat(strategy_schwab_1m_v2_atr_flip_vol_floor=10_000,
-                   strategy_schwab_1m_v2_cw_v2_resting_entry_enabled=True)
+    strat = _in_window(_strat(strategy_schwab_1m_v2_atr_flip_vol_floor=10_000,
+                   strategy_schwab_1m_v2_cw_v2_resting_entry_enabled=True))
     st = strat.watchlist_state("APLX")
     st.resting_active = True
     st.resting_level = 9.03
@@ -415,8 +424,8 @@ def test_a_resting_order_is_CANCELLED_when_liquidity_dries_up():
 
 def test_a_resting_order_SURVIVES_while_liquidity_holds():
     """⛔ The guard must not churn a healthy order — that would re-create the reprice storm."""
-    strat = _strat(strategy_schwab_1m_v2_atr_flip_vol_floor=10_000,
-                   strategy_schwab_1m_v2_cw_v2_resting_entry_enabled=True)
+    strat = _in_window(_strat(strategy_schwab_1m_v2_atr_flip_vol_floor=10_000,
+                   strategy_schwab_1m_v2_cw_v2_resting_entry_enabled=True))
     st = strat.watchlist_state("APLX")
     st.resting_active = True
     st.resting_level = 9.03
