@@ -123,7 +123,18 @@ else:
 
 # ============================================================ (2) SERVICES
 print("\n(2) SERVICES  — systemd active state")
-core = ["strategy", "oms", "market-data", "control", "reconciler", "schwab-1m-v2", "orb"]
+# ⛔⭐ ORB was DECOMMISSIONED 2026-07-29 (service disabled; it had not run since 07-23). Its three
+# checks were still hard FAILs, so the whole verdict went RED — "DO NOT trust the open" — every
+# morning with nothing actually wrong. A pager that cries wolf daily is how a REAL red gets ignored,
+# so the ORB checks are now conditional on the service still being ENABLED.
+# ⛔ Keyed on `is-enabled`, NOT on `MAI_TAI_ORB_ENABLED`: that env var stays TRUE on purpose because
+# it registers the `live:orb` broker account the v2 Webull fan-out routes through. See
+# project_mai_tai_orb_decommissioned_but_flag_stays_true.
+ORB_DECOMMISSIONED = sh("systemctl is-enabled project-mai-tai-orb.service").strip() != "enabled"
+
+core = ["strategy", "oms", "market-data", "control", "reconciler", "schwab-1m-v2"]
+if not ORB_DECOMMISSIONED:
+    core.append("orb")
 aux = ["market-capture", "trade-coach"]
 for svc in core:
     st = sh(f"systemctl is-active project-mai-tai-{svc}.service").strip()
@@ -162,6 +173,8 @@ if orb:
     age = iso_age(orb["produced_at"])
     disp = "just now" if age < 5 else f"{age:.0f}s ago"
     (ok if age < 90 else warn if age < 240 else bad)(f"{'orb (iso-state)':22} {disp}")
+elif ORB_DECOMMISSIONED:
+    info(f"{'orb (iso-state)':22} n/a — ORB is decommissioned (service disabled)")
 else:
     bad(f"{'orb (iso-state)':22} NO recent isolated-state")
 v2 = orb_states.get("schwab_1m_v2")
@@ -222,6 +235,8 @@ if orb:
             ok(f"ORB post-anchor last_tick_at present: {lta}")
         else:
             warn("ORB post-09:25 but no last_tick_at yet — watch bar-build now")
+elif ORB_DECOMMISSIONED:
+    info("ORB bar-flow n/a — decommissioned (service disabled)")
 else:
     bad("ORB no isolated-state")
 
