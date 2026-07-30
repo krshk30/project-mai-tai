@@ -147,3 +147,36 @@ def test_the_cap_consults_the_per_symbol_watch_start_not_boot() -> None:
     assert "< strat._boot_ms" not in src, (
         "reverting the comparison to global boot reintroduces the 2026-07-30 defect"
     )
+
+
+# ------------------------------------------------------------------ CAP ORDERING
+# ⛔⭐ Live 2026-07-30 11:22 ET restart: the cap ran on `[V2-REST-WARMED]`, which is BEFORE the final
+# warmup bar reaches the strategy. It saw an unarmed segment, found nothing, and the arm landed
+# microseconds later UNCAPPED -- freezing CW-v2 entries bot-wide via the boot-hold. `V2-CW-SEED-CAP`
+# had never fired once. The method's own docstring states the invariant: it MUST run after EVERY
+# replay that can arm.
+
+def test_the_cap_runs_AFTER_the_bar_feed_and_the_streamer_drain() -> None:
+    """Pins the ORDER, which no behavioural assertion on the cap itself can catch: a cap that runs
+    too early is correct code at the wrong moment."""
+    import inspect
+
+    src = inspect.getsource(botmod.SchwabV2BotService._handle_bar_from_rest)
+    cap = src.index('_cap_reconstructed_segment(symbol, stage="rest-warmup")')
+    feed = src.index("await self._handle_bar(symbol, bar)")
+    drain = src.index("await self._drain_streamer_pending(symbol)")
+    assert cap > feed, "the cap must run after the final warmup bar is fed"
+    assert cap > drain, "the cap must run after the streamer drain, which can also arm"
+
+
+def test_the_cap_is_not_called_from_inside_the_just_warmed_log_block() -> None:
+    """The exact regression: re-adding the call next to the [V2-REST-WARMED] log restores the bug."""
+    import inspect
+
+    src = inspect.getsource(botmod.SchwabV2BotService._handle_bar_from_rest)
+    warmed_log = src.index("[V2-REST-WARMED]")
+    feed = src.index("await self._handle_bar(symbol, bar)")
+    between = src[warmed_log:feed]
+    assert "_cap_reconstructed_segment" not in between, (
+        "the cap must not run between the warmup-complete log and the bar feed"
+    )
