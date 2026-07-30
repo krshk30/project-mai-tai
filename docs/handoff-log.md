@@ -1147,3 +1147,17 @@ The recorder's first crontab was `*/5 11-23 * * 1-5`, which *looks* like "07:00�
 and is not: those are **UTC** hours, so it lost ET 20:00–20:30 year-round **and** all of Friday's
 post-19:00 tail (UTC Saturday, dow 6) — precisely where the EH exit ladder runs. Both guards moved
 into the script in ET; proven with a stubbed `date` at every boundary.
+
+**Late addition (#614).** The recorder's own output caught a second gap: it reported FOUR unpaired
+entries where I expected three, because one had exited via `-close-` rather than `-ocoexit-`. v2 exits
+leave by two coids and **only one is attributable** — `<symbol>-close-*` gets a fresh suffix and its
+own single-order intent, so nothing links it to its entry. Over 30 days that is **74 `-close-` vs 36
+`-ocoexit-`**, and it is the route carrying flip / hard-stop / EH / EOD exits, i.e. the **losses** ⇒
+an ocoexit-only view reads optimistic. Now **labelled, not paired** (`exit_route:
+"close_unattributed"`, deliberately excluded from `ret_pct`). Real fix, not built: stamp the entry's
+`broker_order_id` onto the close order at the WRITE site.
+
+⚠️ Process notes on tonight's shipping: I merged #610 while my check-wait loop had matched a *stale*
+passing run, so its fixup's own Validate finished only after the merge (it passed on main). And CI
+never created a run for two branches — #612 was reopened, force-pushed and still got nothing, so it
+was closed and re-raised as #614 on a fresh branch, which validated normally.
