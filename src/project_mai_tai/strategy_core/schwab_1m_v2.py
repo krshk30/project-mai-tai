@@ -121,6 +121,12 @@ class SchwabV2Config:
     pending_cross_max_gap_secs: int = 180
 
 
+# ⛔ A bar more than this far from its predecessor is a GAP, not the next bar. v2 runs 60s bars;
+# 90s tolerates ordinary jitter/late arrival while catching every real hole (the smallest observed
+# on 2026-07-30 was 2 minutes). True range is never computed across such a gap — see
+# `_update_atr_state` and [[project_mai_tai_restart_bar_gap_checklist]].
+_ATR_MAX_BAR_GAP_MS = 90_000
+
 @dataclass
 class OHLCVBar:
     timestamp_ms: int
@@ -409,6 +415,7 @@ class SchwabV2Strategy:
         self._atr_vol_floor = int(
             getattr(self.settings, "strategy_schwab_1m_v2_atr_flip_vol_floor", 5000)
         )
+        self._atr_gap_logged: set[str] = set()   # one [V2-ATR-BAR-GAP] per symbol
         self._atr_period = max(
             1, int(getattr(self.settings, "strategy_schwab_1m_v2_atr_flip_period", 5))
         )
@@ -960,17 +967,50 @@ class SchwabV2Strategy:
         if len(state.atr_hl) == period and prev is not None:
             s = sum(state.atr_hl) / period
             hilo = min(hl_cur, 1.5 * s)
-            href = (
-                (cur.high - prev.close)
-                if cur.low <= prev.high
-                else (cur.high - prev.close) - 0.5 * (cur.low - prev.high)
-            )
-            lref = (
-                (prev.close - cur.low)
-                if cur.high >= prev.low
-                else (prev.close - cur.low) - 0.5 * (prev.low - cur.high)
-            )
-            tr = max(hilo, href, lref)
+            # ⛔⭐ NEVER COMPUTE TRUE RANGE ACROSS A BAR GAP.
+            #
+            # `href`/`lref` reference `prev.close`. When the previous bar we SAW is not the
+            # adjacent minute -- a restart, a feed stall, a mid-session promotion -- `prev.close`
+            # can be over an hour old, and ONE bar then carries an hour of price movement into a
+            # 5-period Wilder that holds it for several bars.
+            #
+            # Measured live 2026-07-30: v2 was stopped 10:12-11:33 ET, leaving a single 85-minute
+            # hole on every watchlist symbol. NUWE's ATR read 0.149 against a true 1-minute ATR of
+            # ~0.06, so `loss = 3.5 * ATR` put the resting buy-stop at 4.74 while the operator's
+            # TOS chart (identical params: 5 / 3.5 / WILDERS / modified) showed the trail at ~4.40.
+            # Every resting order on a gap-spanning symbol sits too high until the bad TR ages out.
+            #
+            # `hilo` is safe by construction -- it is this bar's own range, already capped at
+            # 1.5x the SMA -- so a gap bar contributes its real range and nothing more. That is
+            # strictly better than skipping the bar (which would stall the average) or resetting
+            # the ATR (which would discard good history).
+            #
+            # ⚠️ Gaps are NOT restart-only. Same day, no outage: CRWU 25 min, AXTU 2-13 min,
+            # SNDG 3 min. This guard covers all of them.
+            gap_ms = int(cur.timestamp_ms) - int(prev.timestamp_ms)
+            if gap_ms > _ATR_MAX_BAR_GAP_MS:
+                tr = hilo
+                if state.symbol not in self._atr_gap_logged:
+                    self._atr_gap_logged.add(state.symbol)
+                    logger.warning(
+                        "[V2-ATR-BAR-GAP] %s true range NOT spanned across a %.1f-min bar gap "
+                        "(prev_bar_ts=%d cur_bar_ts=%d) — using this bar's own range %.4f. "
+                        "Spanning it would inflate ATR and push every resting order too high.",
+                        state.symbol, gap_ms / 60000.0,
+                        int(prev.timestamp_ms), int(cur.timestamp_ms), hilo,
+                    )
+            else:
+                href = (
+                    (cur.high - prev.close)
+                    if cur.low <= prev.high
+                    else (cur.high - prev.close) - 0.5 * (cur.low - prev.high)
+                )
+                lref = (
+                    (prev.close - cur.low)
+                    if cur.high >= prev.low
+                    else (prev.close - cur.low) - 0.5 * (prev.low - cur.high)
+                )
+                tr = max(hilo, href, lref)
 
         # --- Wilders(tr, period) seeded with the SMA of the first `period` valid TRs ---
         if tr is not None:
