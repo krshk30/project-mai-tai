@@ -295,6 +295,27 @@ class _DriftCancelCandidate:
     drift: float
 
 
+# A trade intent is DONE at these statuses; anything else keeps it in the reconciler's
+# stuck-intent sweep. Mirrors `INFLIGHT_INTENT_STATUSES_TERMINAL` in schwab_1m_v2_bot.
+_TERMINAL_INTENT_STATUSES = ("filled", "rejected", "cancelled")
+
+
+def resolve_cancel_intent_status(intent_type: str, report_event_type: str) -> str:
+    """The status to record on the INTENT, given the broker report about the TARGET ORDER.
+
+    ⛔⭐ A cancel intent tracks the REQUEST; the order tracks the OUTCOME. Copying the report
+    straight across conflates them: Schwab answers a just-issued DELETE with `PENDING_CANCEL`,
+    which maps into ACCEPTED_STATUSES, so the intent was left `accepted` — non-terminal, and
+    nothing ever polls a cancel intent again.
+
+    A terminal report still wins, including "filled": if the order filled instead of cancelling,
+    the intent must say so rather than tidying it away as cancelled.
+    """
+    if intent_type == "cancel" and report_event_type not in _TERMINAL_INTENT_STATUSES:
+        return "cancelled"
+    return report_event_type
+
+
 class OmsRiskService:
     # Operator manual-stop cache window. Short enough that a stop takes effect on the next intent
     # cycle (no restart, which was the whole point), long enough that it is not a per-intent query.
@@ -1544,7 +1565,29 @@ class OmsRiskService:
                 "reason": report.reason,
             }
             self.store.append_order_event(session, order=order, report=report, payload=payload)
-            self.store.mark_intent_status(intent, report.event_type)
+            # ⛔⭐ A CANCEL INTENT TRACKS THE REQUEST; THE ORDER TRACKS THE OUTCOME.
+            #
+            # This used to copy `report.event_type` straight onto the intent. For a cancel the
+            # report describes the TARGET ORDER's current state — and Schwab answers a just-issued
+            # DELETE with `PENDING_CANCEL`, which `_map_order_status` maps into ACCEPTED_STATUSES.
+            # So the intent was marked "accepted": non-terminal, and nothing ever polls a cancel
+            # intent again. It sat there forever.
+            #
+            # Measured 2026-07-30: 11 stuck cancel intents by mid-session, oldest 209 minutes, all
+            # `accepted` with zero broker orders of their own — and every one of their TARGET
+            # ORDERS had already reached `cancelled`/`filled`. The cancels all SUCCEEDED; only the
+            # bookkeeping was abandoned. Each one then produced a `stuck_intent` reconciler finding
+            # every 30s: 3,954 warnings in a day, burying everything else in that table.
+            #
+            # The request is complete once the broker has ACKNOWLEDGED it, and PENDING_CANCEL is an
+            # acknowledgement. Whether the order then cancels or races to a fill is the ORDER's
+            # story, tracked on the order row, which stays open for the reconcile sweep.
+            # A terminal report still wins — including "filled", which honestly records that the
+            # cancel lost the race.
+            self.store.mark_intent_status(
+                intent,
+                resolve_cancel_intent_status(event.payload.intent_type, report.event_type),
+            )
             published_events.append(
                 self._build_order_event(
                     intent_event=event,
