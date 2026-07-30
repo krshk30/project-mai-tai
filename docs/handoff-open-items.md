@@ -17,39 +17,7 @@
 
 ---
 
-## 🌙 AFTER CLOSE TODAY (2026-07-29) — a scoped batch, not open-ended
-All three are ready to run the moment the fleet is flat after 16:00 ET. **Close them tonight; do not
-let them become standing items.**
-
-### d. ⛔ Webull close-retry STORM — the floor exit retries forever against a flat broker
-Live 2026-07-29, found validating the day's trades. **NCRA: 145 rejected sells in 55 minutes.**
-
-    145 x [OMS-V2-MANAGED-EXIT] oms_v2_managed_exit:CW_FLOOR sym=NCRA acct=live:orb ref=3.0587
-          ^ the SAME ref every time -- one exit decision, retried ~145 times (10:28-11:23 ET)
-      8 x [OMS-V2-CW-FLOOR-ARMED]        (the floor keeps re-arming)
-      3 x [OMS-V2-OCO-RESOLVED-FLAT]     (row closed 14:26, 14:28, 15:23 UTC)
-    broker reject: `NEW_NO_POSITION_MARGIN_ACCOUNT_CAN_NOT_SELL_SHORT`
-
-Same shape on **AMIX x25** (11:31-11:32) and **STFS x7**. Also **AMIX x3**
-`ORDER_NOT_SUPPORT_REVERSE_OPTION` at 10:00 — the known Webull fill-settlement-lag family.
-
-**Mechanism (inferred, needs pinning):** the OMS believes it holds the position, Webull answers "no
-position", the sell is rejected, and the retry never terminates. `_v2_close_reconcile_flat` is meant
-to clear a phantom row after `_V2_EXIT_RECONCILE_AFTER_FAILURES = 3` rejects — but it only clears on
-a **positively-confirmed flat**, and for Webull `_broker_symbol_is_flat` may be returning UNKNOWN
-rather than FLAT_CONFIRMED, so the counter never satisfies the guard.
-⛔ That guard is deliberate and must NOT simply be loosened — `[]` from Webull is genuinely ambiguous,
-and treating UNKNOWN as flat is how the ERNA naked position happened
-([[project_mai_tai_false_flat_naked_position]]). The fix is a TERMINATION bound, not a weaker flat
-test: cap the retries per exit decision and stand down loudly.
-
-**Cost:** ~180 rejected orders in one session — API budget, log noise, and it masks real rejects.
-No money was lost (every position did exit), so this is correctness + hygiene, not a P&L leak.
-
-
----
-
-## ✅ AFTER-CLOSE BATCH 2026-07-29 — RESULTS
+## ✅ AFTER-CLOSE BATCH 2026-07-29 — ALL 5 CLOSED
 
 | item | outcome |
 |---|---|
@@ -58,7 +26,7 @@ No money was lost (every position did exit), so this is correctness + hygiene, n
 | **(a)** dead-bot prune | ✅ **DONE.** 1,091,270 rows across 6 codes. `strategy_bar_history` **1962 MB → 815 MB** (~1.1 GB reclaimed). Only the 2 read codes remain (polygon_30s 817,331 · schwab_1m_v2 202,756). **Backtest re-verified byte-identical afterwards** (STKH 07-28: 379 bars, +1.90%). |
 | **(c)** readiness RED | ✅ **FIXED + LIVE** (#606). Verdict **RED (3 FAIL) → AMBER (0 FAIL)**. Keyed on `systemctl is-enabled`, NOT the env var. |
 | **(b)** restart trade-coach | ⚠️ **DONE BUT INEFFECTIVE — see below.** |
-| **(d)** Webull close-retry storm | ⏳ still open, carried below. |
+| **(d)** Webull close-retry storm | ✅ **FIXED + LIVE** (#608). ⛔ The cause was NOT a missing bound — `_v2_close_reconcile_flat` RESET the counter on any not-flat read (sawtooth 1,2,3→check→0), and `_broker_symbol_is_flat` collapses HELD and UNKNOWN into one `False`, so an INCONCLUSIVE read reset it as if we'd confirmed we hold the position. Now only a positively-HELD read resets; UNKNOWN accumulates to a bound of 8 and STANDS DOWN. ⛔ Standing down does NOT close the row or touch protection (that is the ERNA mistake) — the read-only exit poll still resolves it. |
 
 ### ⚠️ (b) did NOT work — the CPU is inherent, not drift
 `trade-coach` was **43.0%** before the restart and settled at **47.2%** after, on 21 days vs 1 minute
