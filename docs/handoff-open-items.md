@@ -110,6 +110,56 @@ trading path.
 
 ---
 
+## 9. ⛔⭐ Redis evicts the HEARTBEAT stream -> a false "oms-risk fleet down" RED page
+*(found 2026-07-31 from a live page; operator: "add it to the list")*
+
+The page said `NO heartbeat in mai_tai:heartbeats (zombie signature / fleet down)`. **The OMS was
+completely healthy** — `active (running)`, 12h uptime, **NRestarts=0**, heartbeat 0s old, and
+**zero gaps >60s in `oms.log`**. Re-running the watchdog by hand returned `VERDICT: OK`.
+
+**Root cause: Redis eviction, not the OMS.**
+
+    maxmemory        512 MB
+    maxmemory_policy allkeys-lru      <- evicts ANY key
+    evicted_keys     185
+
+`mai_tai:heartbeats` is **47 KB** — a trivial LRU victim. When Redis hits the ceiling it drops the
+whole key; the watchdog then finds no `oms-risk` entry and emits the scariest verdict it owns.
+Caught mid-recovery: `XLEN` climbed **30 -> 52 -> 59** over three samples a minute apart — the stream
+repopulating after eviction, not a service coming back.
+
+**What fills Redis:**
+
+| stream | entries | memory |
+|---|---|---|
+| **`mai_tai:snapshot-batches`** | **26** | **180 MB** |
+| `mai_tai:market-data` | 41,069 | 15 MB |
+| `mai_tai:strategy-state` | 57 | 3.8 MB |
+| `mai_tai:heartbeats` | 59 | 0.05 MB |
+
+~7 MB per snapshot batch (~13k symbols + reference data) — the SAME oversized payload behind the
+polygon freeze and #366. `redis_snapshot_batch_stream_maxlen=180` therefore authorises **~1.26 GB
+against a 512 MB budget**.
+
+### ⛔⭐ DO NOT "fix" THIS BY CUTTING THE MAXLEN — it is load-bearing
+`publisher.py` defaults this to **4**, which makes 180 look like drift. It is not.
+`_prefill_alert_history_from_snapshot_batches` requests `count = squeeze_10min_needs`
+= `_snaps_per_10min` = **120 batches** at the 5s snapshot interval. 180 = 120 required + headroom.
+
+Cutting to 4 leaves the momentum scanner with no squeeze history after ANY strategy-engine restart:
+~5 min blind on the 5-min squeeze, **~10 min blind on the 10-min squeeze**. Squeeze -> CONFIRM ->
+watchlist -> v2 entries, so it costs REAL ENTRIES on every restart (there were 11 restarts on 07-30).
+⭐ Researched before landing on the list precisely because the obvious fix was the wrong one.
+
+**Viable directions instead:**
+1. **Shrink the payload** — same root as #366; reference data re-sent in full every 5s cycle is the bulk.
+2. **Raise `maxmemory`** (512 MB on a 4 GB box) — buys headroom, does not stop growth.
+3. **Reconsider `allkeys-lru`** — live operational state should not be silently evictable. ⛔ This is
+   the bigger hazard: today it took the heartbeat stream and produced a false page; it could equally
+   take something load-bearing and produce silent misbehaviour.
+
+---
+
 ## ⚠️ Watch items live in [`session-handoff.md`](session-handoff.md), not here
 Verification is a *state* ("is this behaving?"), not a *task* ("do this"). Keeping them here is what
 made an open-items file that could never reach zero.

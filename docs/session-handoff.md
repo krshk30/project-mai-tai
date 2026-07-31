@@ -89,7 +89,12 @@ entries/day at open volatility).
    *definition* of "not ours", and it forces `critical`; a real drift on a position we own is only a
    *warning*. The payload already computes `strategy_codes: []` and discards it. ⛔ PROTECTED_SYMBOLS
    gates the OMS, a *different* list gates the reconciler. ✅ OMS never touched AZIO.
-8. **IRE: a Schwab REPLACE spawned an order we never recorded** — our books said 2, broker said 4.
+8. **Redis evicts the HEARTBEAT stream ⇒ false "oms-risk fleet down" RED page.** `maxmemory 512 MB`
+   + **`allkeys-lru`** + `snapshot-batches` at **180 MB in 26 entries** ⇒ the 47 KB heartbeat key gets
+   dropped and the watchdog reports a zombie. OMS was healthy throughout (0 log gaps >60s).
+   ⛔ **Do NOT fix by cutting `snapshot_batch_stream_maxlen`** — 180 is load-bearing (the scanner
+   warmup prefill needs **120** batches); cutting it blinds squeeze detection ~10 min per restart.
+9. **IRE: a Schwab REPLACE spawned an order we never recorded** — our books said 2, broker said 4.
    We never issue a replace. Parked by operator decision: catch it live next time (#626 now
    surfaces the drift in ~8 min instead of hours).
 
