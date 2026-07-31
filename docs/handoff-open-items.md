@@ -75,6 +75,138 @@ the same second with a different tag. ⛔ `CANCELLED_STATUSES` includes `"REPLAC
 **Parked by operator decision 07-30: catch it live next time.** #626 now surfaces the resulting
 position drift within ~8 minutes instead of hours.
 
+## 8. ⛔⭐ Reconciler severity is INVERTED — an UNOWNED position pages CRITICAL
+*(found 2026-07-31 from a live AZIO page; operator: "add it to the list, we can work on it later")*
+
+The operator hand-bought **972 AZIO** on `live:orb` and got a RED page for their own trade. Ours?
+**0 orders / 0 intents / 0 fills / 0 bars**, and the finding's own payload said `strategy_codes: []`.
+
+`reconciliation/service.py`:
+
+| line | what it does |
+|---|---|
+| **203** | `keys = set(aggregates) \| set(account_positions)` — the **UNION**, so every hand-placed broker position becomes something to check |
+| **216** | `severity = "critical" if account_quantity == 0 or virtual_quantity == 0 else "warning"` |
+| **229** | computes `strategy_codes` — and throws the answer away |
+
+⭐ A position we never traded has `virtual_quantity == 0` **by definition**, so L216 makes it
+**guaranteed CRITICAL**. **The less we know about a position, the louder it screams** — while a real
+drift on a position we DO own (both quantities non-zero, disagreeing) is only a *warning*. Backwards.
+
+⛔ **TWO SEPARATE IGNORE LISTS.** `MAI_TAI_PROTECTED_SYMBOLS` gates the **OMS**;
+`reconciliation_ignored_position_mismatch_pairs` gates the **reconciler**. The alert cron separately
+filters PROTECTED_SYMBOLS via `EXCLUDE_SQL` — which is why CYN wrote **923 findings on 07-31 and
+pushed ZERO**, while AZIO (unprotected) paged. ⛔ **DB row count ≠ page count; read `EXCLUDE_SQL`
+before calling the channel noisy.**
+
+**Fix:** make severity **attribution-aware** — the data is already in the payload. No `strategy_codes`
+AND no orders/fills/intents for that (account, symbol) ⇒ not ours ⇒ info, never pages.
+Owned-and-disagreeing stays CRITICAL. This removes the need to pre-register anything, which is the
+point: the operator hand-trades all day and cannot maintain a list of every symbol touched.
+
+✅ **The OMS side is CLEAN.** `oms.log` and the v2 log had **zero** mentions of AZIO — the acting
+invariant held and the manual position was never at risk. Reconciler-only change; nothing on the
+trading path.
+
+---
+
+## 9. ⛔⭐ Redis evicts the HEARTBEAT stream -> a false "oms-risk fleet down" RED page
+*(found 2026-07-31 from a live page; operator: "add it to the list")*
+
+The page said `NO heartbeat in mai_tai:heartbeats (zombie signature / fleet down)`. **The OMS was
+completely healthy** — `active (running)`, 12h uptime, **NRestarts=0**, heartbeat 0s old, and
+**zero gaps >60s in `oms.log`**. Re-running the watchdog by hand returned `VERDICT: OK`.
+
+**Root cause: Redis eviction, not the OMS.**
+
+    maxmemory        512 MB
+    maxmemory_policy allkeys-lru      <- evicts ANY key
+    evicted_keys     185
+
+`mai_tai:heartbeats` is **47 KB** — a trivial LRU victim. When Redis hits the ceiling it drops the
+whole key; the watchdog then finds no `oms-risk` entry and emits the scariest verdict it owns.
+Caught mid-recovery: `XLEN` climbed **30 -> 52 -> 59** over three samples a minute apart — the stream
+repopulating after eviction, not a service coming back.
+
+**What fills Redis:**
+
+| stream | entries | memory |
+|---|---|---|
+| **`mai_tai:snapshot-batches`** | **26** | **180 MB** |
+| `mai_tai:market-data` | 41,069 | 15 MB |
+| `mai_tai:strategy-state` | 57 | 3.8 MB |
+| `mai_tai:heartbeats` | 59 | 0.05 MB |
+
+~7 MB per snapshot batch (~13k symbols + reference data) — the SAME oversized payload behind the
+polygon freeze and #366. `redis_snapshot_batch_stream_maxlen=180` therefore authorises **~1.26 GB
+against a 512 MB budget**.
+
+### ⛔⭐ DO NOT "fix" THIS BY CUTTING THE MAXLEN — it is load-bearing
+`publisher.py` defaults this to **4**, which makes 180 look like drift. It is not.
+`_prefill_alert_history_from_snapshot_batches` requests `count = squeeze_10min_needs`
+= `_snaps_per_10min` = **120 batches** at the 5s snapshot interval. 180 = 120 required + headroom.
+
+Cutting to 4 leaves the momentum scanner with no squeeze history after ANY strategy-engine restart:
+~5 min blind on the 5-min squeeze, **~10 min blind on the 10-min squeeze**. Squeeze -> CONFIRM ->
+watchlist -> v2 entries, so it costs REAL ENTRIES on every restart (there were 11 restarts on 07-30).
+⭐ Researched before landing on the list precisely because the obvious fix was the wrong one.
+
+**Viable directions instead:**
+1. **Shrink the payload** — same root as #366; reference data re-sent in full every 5s cycle is the bulk.
+2. **Raise `maxmemory`** (512 MB on a 4 GB box) — buys headroom, does not stop growth.
+3. **Reconsider `allkeys-lru`** — live operational state should not be silently evictable. ⛔ This is
+   the bigger hazard: today it took the heartbeat stream and produced a false page; it could equally
+   take something load-bearing and produce silent misbehaviour.
+
+---
+
+## 10. ⛔⭐⭐ SELECTION: we buy stocks whose move is already SPENT — scanner AND bot
+*(operator, 2026-07-31, from the AXTU chart: "we may have to drop the whole stock... this is some of
+the stock we don't wanna play there. That's something we need to do from the scanner, from our bot,
+everywhere. Make a note. We will discuss.")*
+
+⭐ **This is the SELECTION lever, and it is the one we have never pulled.**
+[[project_mai_tai_30s_exploration]] closed 279 trades net-negative under EVERY exit and concluded
+"SELECTION is the only lever left"; [[project_mai_tai_v2_stop_slippage_rootcause]] proved four ways
+that the ENTRY, not the exit geometry, is the problem. The operator has now arrived at the same place
+from the chart. Do not re-open exit tuning to solve this.
+
+### The worked example — AXTU, 2026-07-31 (+54.5% on the day BEFORE we touched it)
+
+| hour ET | range | median bar volume |
+|---|---|---|
+| 10:00 | 8.4% | 4,388 |
+| 11:00 | 7.6% | 1,300 |
+| 12:00 | **5.1%** | **1,200** |
+
+Range compressing, volume dying, the 50% move already made. **We bought it THREE times during that
+decay** (11:15 @3.80 -> stopped ~3.61 ≈ −5%; 12:03 @3.745; 12:18 @3.86) plus a Webull fan-out leg.
+
+⭐ **Operator's criterion, in their words:** what we want is a stock that "goes down, then comes up
+20%, then goes down" — one that still OSCILLATES. A name that has made its move and gone quiet has no
+swing left to capture, and its volume is too thin to trade even if it did. We are systematically
+buying exhaustion.
+
+### Why the vol floor cannot fix this on its own
+The floor is judged on **ONE completed bar**. AXTU 11:15 armed off the 11:14 bar (**10,467**, clearing
+the 10,000 floor by 4.7%) and filled 32s later into a bar that closed at **2,999**. AXTU's median
+minute today was **2,217**, and only **21 of 125 bars (17%)** cleared 10,000 — the gate only has to
+sample one spike. ⛔ #625's re-check could not fire: the fill beat the next bar close by 25s.
+⇒ A rolling-window liquidity test (median of last N bars) is the minimum fix, but it is a PATCH.
+The real question is whether the name should have been a candidate at all.
+
+### Scope when we build it — the operator was explicit: **everywhere**
+1. **Scanner** — stop CONFIRMING names whose move is spent (a confirm today fires on a squeeze that
+   has already happened).
+2. **Bot** — a per-symbol tradeability gate at arm time (oscillation + live liquidity), not one bar.
+3. **Backtest** — whatever rule lands must be replayable, or we cannot measure it.
+
+⛔ **DISCUSS BEFORE BUILDING** (operator: "We will discuss"). Open design questions: what measures
+"still oscillating" (Kaufman ER is already computed in
+[[project_mai_tai_backtest_engine]]'s param sweep and classified CLRO correctly); how much of the
+day's move is "spent"; and the sample-size trap — this must not become another >100-configs-on-27-
+trades overfit.
+
 ---
 
 ## ⚠️ Watch items live in [`session-handoff.md`](session-handoff.md), not here

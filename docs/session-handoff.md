@@ -84,7 +84,23 @@ entries/day at open volatility).
    APLX/SNDG); but a name Schwab refuses via API is traded on NEITHER broker.
 6. **Order churn 284 orders -> 23 round trips (12:1)** — resting-entry reprice churn. Invisible to
    the recorder, fully visible on the live tape. Understand before the coach redesign.
-7. **IRE: a Schwab REPLACE spawned an order we never recorded** — our books said 2, broker said 4.
+7. **Reconciler severity is INVERTED — an UNOWNED position pages CRITICAL.** A hand-bought AZIO
+   (972 sh, `live:orb`, zero orders/fills/bars of ours) paged RED. `virtual_quantity == 0` is the
+   *definition* of "not ours", and it forces `critical`; a real drift on a position we own is only a
+   *warning*. The payload already computes `strategy_codes: []` and discards it. ⛔ PROTECTED_SYMBOLS
+   gates the OMS, a *different* list gates the reconciler. ✅ OMS never touched AZIO.
+8. **Redis evicts the HEARTBEAT stream ⇒ false "oms-risk fleet down" RED page.** `maxmemory 512 MB`
+   + **`allkeys-lru`** + `snapshot-batches` at **180 MB in 26 entries** ⇒ the 47 KB heartbeat key gets
+   dropped and the watchdog reports a zombie. OMS was healthy throughout (0 log gaps >60s).
+   ⛔ **Do NOT fix by cutting `snapshot_batch_stream_maxlen`** — 180 is load-bearing (the scanner
+   warmup prefill needs **120** batches); cutting it blinds squeeze detection ~10 min per restart.
+9. **⭐⭐ SELECTION — we buy stocks whose move is already SPENT (scanner AND bot).** AXTU 07-31 was
+   **+54.5%** before we touched it; range then compressed 8.4%→5.1% while median bar volume fell
+   4,388→1,200, and we bought it **three times** during that decay. Operator wants names that still
+   OSCILLATE ("down, up 20%, down"), not exhausted ones. ⛔ The vol floor can't fix it: it samples
+   **one** bar (AXTU armed off a 10,467 bar, filled into 2,999; median 2,217, only 17% of bars clear
+   10,000). ⛔ **DISCUSS BEFORE BUILDING.**
+10. **IRE: a Schwab REPLACE spawned an order we never recorded** — our books said 2, broker said 4.
    We never issue a replace. Parked by operator decision: catch it live next time (#626 now
    surfaces the drift in ~8 min instead of hours).
 
