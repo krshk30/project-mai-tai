@@ -811,6 +811,19 @@ class Settings(BaseSettings):
     # Set TRUE to restore the old behavior (refresh at oms_working_order_refresh_seconds). Marketable
     # LIMIT/MARKET chases and protective stop-guards are unaffected either way.
     oms_refresh_resting_trigger_orders: bool = False
+    # ⭐⭐ MANAGED-EXIT HOLD (P0, 2026-07-31 — the KUST incident). The SAME reasoning as the resting
+    # ENTRY exemption directly above, applied to the EXIT side, where it had never been applied.
+    # A working v2 managed exit whose limit is still marketable (limit <= current bid) is left ALONE
+    # by the working-order refresh instead of being cancel/replaced on the cadence.
+    # Live KUST 2026-07-31: a sell LIMIT 1.74 was cancel/replaced NINE times over six minutes while
+    # the real bid sat at 1.74–1.78 the entire window — the order was fillable at every instant and
+    # we took it off the book every ~30s. The position rode to the −5% stop; the Webull leg, given
+    # the identical bid-sourced 1.74 as ONE order nobody cancelled, filled in 34ms. Same signal:
+    # Webull +1.76%, Schwab −5.17%.
+    # ⛔ NOT "never reprice": once the bid falls BELOW the resting limit the order can no longer fill
+    # where it sits and the refresh resumes, so a genuinely stale exit is still corrected.
+    # Set FALSE to restore the old cancel-on-cadence behaviour (kill switch).
+    oms_hold_marketable_managed_exit: bool = True
     # Fillable-session window (ET, whole-hour): the OMS places/refreshes exit orders
     # only while an order can actually fill (default 7 AM–8 PM ET = Schwab pre-market
     # fills open ~7 AM, after-hours end ~8 PM). Outside it a working order (open or

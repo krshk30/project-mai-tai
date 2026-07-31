@@ -3019,6 +3019,17 @@ class OmsRiskService:
                 )
                 routed = _panic_limit_price(bid, buffer_pct)
             if routed is not None:
+                # P0b GUARD (2026-07-31): a sell exit must never rest ABOVE the bid we priced it
+                # from — such an order cannot fill at placement. Belt-and-braces over
+                # `_panic_limit_price`, which should already buffer below the bid.
+                # ⛔ This does NOT close P0b. Live KUST placed a 1.77 exit at 13:28:20 while the
+                # SCHWAB bid was 1.75, and the caller applies a 5s freshness check — so the bid it
+                # priced from was fresh but probably NOT Schwab's (`_latest_quotes_by_symbol` is
+                # documented as Polygon NBBO at the mirror site). Pricing one venue's exit off
+                # another venue's book is the open question; this guard only bounds the symptom.
+                routed = _format_limit_price(
+                    self._cap_exit_limit_to_bid(float(routed), bid=bid)
+                ) or routed
                 order_type = "limit"
                 metadata.update(
                     {
@@ -3651,6 +3662,16 @@ class OmsRiskService:
                         # STABLE-REST re-prices it on a >=1% trail move; MARKET_CLOSED above still
                         # abandons it out-of-session (the backstop is preserved). Leave it resting.
                         # Set oms_refresh_resting_trigger_orders=true to restore the old refresh.
+                        pass
+                    elif self._managed_exit_refresh_exempt(
+                        order, bid=(self._latest_quotes_by_symbol.get(order.symbol) or {}).get("bid")
+                    ):
+                        # MANAGED-EXIT HOLD (P0, 2026-07-31 KUST). The exit is still marketable at
+                        # its resting limit, so leave it on the book and let it fill. Cancel/replacing
+                        # it here is what turned a +1.76% Webull fill into a -5.17% Schwab stop-out:
+                        # nine cancels in six minutes against a bid that never once dropped below the
+                        # limit. Once the bid falls below the limit this branch stops matching and the
+                        # normal refresh below re-prices it.
                         pass
                     else:
                         refresh_result = await self._refresh_working_order(
@@ -6024,6 +6045,73 @@ class OmsRiskService:
             and not self._is_stop_guard_order(order)
             and not bool(getattr(self.settings, "oms_refresh_resting_trigger_orders", False))
         )
+
+    def _managed_exit_refresh_exempt(self, order: BrokerOrder, *, bid: float | None) -> bool:
+        """True when the working-order refresh must LEAVE a v2 managed EXIT in place (P0, 2026-07-31).
+
+        ⭐⭐ THE KUST INCIDENT. This is the exit-side twin of `_resting_trigger_refresh_exempt` above,
+        and the reasoning in that docstring -- "no order resting when price crosses" -- applies to an
+        exit verbatim. It had simply never been applied there: a managed exit is a LIMIT, so it fell
+        through to `_refresh_working_order` and was cancel/replaced on the cadence.
+
+        Live, real money, 2026-07-31: a sell LIMIT 1.74 placed 13:26:20 was cancelled and re-placed
+        NINE times over six minutes. The captured Schwab bid tape for that exact window:
+
+            13:26:13 1.76 | 13:26:54 1.75 | 13:27:34 1.74 | 13:28:02 1.78
+            13:26:14 1.77 | 13:27:13 1.76 | 13:27:38 1.75 | 13:28:04 1.78
+
+        The bid was >= the limit at EVERY tick. The order was fillable the entire time and we kept
+        taking it off the book. It ended at the -5% hard stop (-5.17%), while the Webull leg -- same
+        bid-sourced 1.74, placed once, never cancelled -- filled in 34 milliseconds at 1.7501 (+1.76%).
+
+        ⛔ This is NOT "never reprice". Exemption holds only while the limit is still MARKETABLE
+        (limit <= bid). Once the bid falls below it the order cannot fill where it sits, so the
+        refresh resumes and re-prices it -- otherwise we would trade the KUST failure for a stale
+        exit that never adjusts, which is the same bug facing the other way.
+
+        ⛔ Fail-OPEN on a missing/zero bid: with no usable quote we cannot prove the order is
+        marketable, so we do NOT claim the exemption and the old behaviour stands. An exit is
+        protection; when in doubt keep the existing machinery, never invent a hold.
+        """
+        if not bool(getattr(self.settings, "oms_hold_marketable_managed_exit", True)):
+            return False
+        payload = order.payload or {}
+        if str(payload.get("oms_v2_managed_exit", "")).strip().lower() != "true":
+            return False
+        if str(payload.get("order_type", "")).strip().upper() != "LIMIT":
+            return False   # a MARKET exit has no resting price to protect
+        try:
+            limit_price = float(payload.get("limit_price"))
+        except (TypeError, ValueError):
+            return False
+        if limit_price <= 0.0:
+            return False
+        try:
+            bid_f = float(bid) if bid is not None else 0.0
+        except (TypeError, ValueError):
+            return False
+        if bid_f <= 0.0:
+            return False
+        return limit_price <= bid_f
+
+    @staticmethod
+    def _cap_exit_limit_to_bid(price: float, *, bid: float | None) -> float:
+        """Never place a sell exit ABOVE the current bid (P0b, 2026-07-31).
+
+        The KUST ladder placed one exit at 1.77 while the bid was 1.76 and below -- an order that
+        could not fill at placement, because the limit came off a stale reference price rather than
+        a fresh quote. Capping at the bid makes every repriced exit marketable by construction.
+
+        ⛔ Inert without a usable bid: return the caller's price untouched rather than capping to
+        zero. A 0.0 limit would be far worse than a stale one.
+        """
+        try:
+            bid_f = float(bid) if bid is not None else 0.0
+        except (TypeError, ValueError):
+            return price
+        if bid_f <= 0.0:
+            return price
+        return min(float(price), bid_f)
 
     @staticmethod
     def _is_resting_trigger_order(order: BrokerOrder) -> bool:
