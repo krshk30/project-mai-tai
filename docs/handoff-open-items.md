@@ -209,6 +209,35 @@ trades overfit.
 
 ---
 
+## 11. ⛔⭐⭐ PRE-MARKET OCO HOLE — the structural fix for the KUST class (PROMOTED, top item)
+*(operator 2026-07-31: promote it — "every entry under a native OCO means the broker owns the exit,
+so there's no software-ladder churn path to ride to the stop")*
+
+A pre-market / EH entry gets **no native OCO** (`[V2-OCO-EMIT] SKIPPED (outside regular hours)`), so
+the **software ladder** owns its exit — and the ladder is what cancel/replaced KUST's fillable sell
+NINE times while the bid sat at or above the limit, riding a right signal to −5.17%.
+
+**The fix:** get every position under a broker OCO — either emit one the instant RTH opens for any
+position still held from pre-market, or harden the EH software exit specifically.
+
+⛔⭐ **"OCO ⇒ churn-immune" is NOT unconditional — design for this or the fix is partial.**
+Cancelled/rejected sells within 60 min of an **OCO-bracketed** entry: NVVE 07-23 **11**, KUST 07-22
+6, FIEE 07-27 6, several at 3. The mechanism is visible in the OMS log:
+
+    [OMS-OCO-STAND-DOWN-CLEARED] live:schwab_1m_v2 KUST — OCO gone; ladder deferred ...
+
+When the stand-down CLEARS, the software ladder resumes and can churn **even on a bracketed entry**.
+So emitting a bracket is necessary but not sufficient; the stand-down-clear path needs its own
+answer. *(Caveat: that count is symbol-level in a time window — some sells may belong to another
+position the same day.)*
+
+⭐ **Why this is now the highest-leverage execution item:** it eliminates the failure mode rather
+than detecting it, and it makes the operator's 1–2 week v2 live-validation a clean STRATEGY
+measurement instead of a strategy+execution mixture. The backward execution-% study is a dead end
+(see the log, 07-31), so the live run IS the measurement — it has to be clean.
+
+---
+
 ## ⚠️ Watch items live in [`session-handoff.md`](session-handoff.md), not here
 Verification is a *state* ("is this behaving?"), not a *task* ("do this"). Keeping them here is what
 made an open-items file that could never reach zero.

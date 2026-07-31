@@ -24,8 +24,20 @@
 
 ## 🟢 FLEET — what is live right now
 
-**As of 2026-07-30 EOD.** HEAD `4879360`. **11 PRs shipped today, all deployed and verified.**
-Both brokers flat of anything ours.
+**As of 2026-07-31 EOD.** HEAD `24f2046`. **5 PRs shipped today (#631–#635), 3 deployed.**
+Flat of everything ours; only the operator's manual CYN 5000 remains.
+
+⭐ **Today was an EXECUTION day, not a strategy day.** A live KUST loss (−5.17% on a signal that was
+right) root-caused to our own exit loop, and the chain that fell out of it. See
+[`handoff-log.md`](handoff-log.md) 07-31.
+
+🔴 **P0a is DEPLOYED but NOT VALIDATED.** Kill switch one command away:
+`MAI_TAI_OMS_HOLD_MARKETABLE_MANAGED_EXIT=false` + `stop strategy → restart oms → start strategy`.
+It needs a **pre-market / no-OCO software-ladder exit** to validate — FCUV cannot (native OCO exits
+through the broker bracket, not the software refresh path). **Tomorrow's pre-market is the test.**
+
+🛑 **KUST is on `global_manual_stop_symbols`** — clear with `/scanner/symbol/resume?symbol=KUST`
+once you are happy the exit path is fixed.
 
 | service | state | note |
 |---|---|---|
@@ -47,7 +59,8 @@ Not ours. Verified zero orders/fills/intents/bars for both. **Both are now in
 | `..._CW_V2_RESTING_ENTRY_ENABLED` / EH variants | true |
 | `..._CW_V2_RECLAIM_ENABLED` / `_GAP_BARS` | true / 1 |
 | `..._DUAL_BROKER_FANOUT_ENABLED` | true |
-| `OMS_NATIVE_OCO_EXIT_POLL_ENABLED` / `..._RECORD_..._FILLS` | true / true |
+| `OMS_NATIVE_OCO_EXIT_POLL_ENABLED` / `..._RECORD_..._FILLS` | true / true — ⛔ the poll DOES fire (proved on FCUV); it silently missed AXTU/AXTX for 26–90 min and the cause is still unproven |
+| `OMS_HOLD_MARKETABLE_MANAGED_EXIT` | **true (NEW 07-31, P0a)** — a working managed exit is HELD while its limit is still marketable instead of cancel/replaced on the refresh cadence. **KILL SWITCH.** |
 | `..._ATR_FLIP_USE_MAX_STATE_AGE` | false — ⛔ and its gate sits in DEAD CODE; enabling it would gate nothing |
 | `ORB_ENABLED` | true — ⛔ the BOT is dead; the flag seeds the `live:orb` broker account the fan-out needs |
 
