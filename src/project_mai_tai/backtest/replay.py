@@ -72,6 +72,7 @@ from project_mai_tai.market_data.schwab_v2_rest_client import ChartBar
 from project_mai_tai.market_data.schwab_v2_rest_client import Quote as StratQuote
 from project_mai_tai.settings import Settings
 from project_mai_tai.strategy_core import entry_gate
+from project_mai_tai.backtest.watch_start import WatchWindow, watch_start_for
 from project_mai_tai.strategy_core.schwab_1m_v2 import SchwabV2Strategy
 
 EASTERN = ZoneInfo("America/New_York")
@@ -280,7 +281,13 @@ class ReplayStrategy(SchwabV2Strategy):
     all entry logic (ATR flip, wait-3 reactive break, resting place/reprice/cancel, gates) runs
     unchanged in the base class."""
 
-    def __init__(self, settings: Settings, *, watch_start_ms: int | None = None) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        *,
+        watch_start_ms: int | None = None,
+        watch_windows: list[WatchWindow] | None = None,
+    ) -> None:
         super().__init__(settings)
         self._replay_now_ms = 0
         # Steady-state: the live bot releases boot-hold after its verify; the replay starts released.
@@ -291,6 +298,12 @@ class ReplayStrategy(SchwabV2Strategy):
         # Epoch ms from which this symbol's flips count as OBSERVED-LIVE (its watchlist join).
         # None => fall back to `_boot_ms`, i.e. pre-2026-07-30 behaviour.
         self._replay_watch_start_ms = watch_start_ms
+        # Preferred over the scalar: the symbol's full membership windows for the day. Resolving
+        # PER-ARM is strictly more faithful than one scalar, because the scanner feed flickers --
+        # a symbol can confirm/fade/re-confirm several times in a minute and the bot re-stamps its
+        # watch-start on every re-join, so which join an arm is measured against depends on WHEN
+        # it armed. `None` = not loaded (fall back); `[]` = loaded, never confirmed (fall back).
+        self._replay_watch_windows = watch_windows
 
     def cap_reconstructed_segment(self, symbol: str) -> bool:
         """Replay mirror of `services/schwab_1m_v2_bot.py::_cap_reconstructed_segment` (#618/#619).
@@ -310,11 +323,18 @@ class ReplayStrategy(SchwabV2Strategy):
         """
         if not getattr(self, "_cw_armed_segment_safety_enabled", False):
             return False
-        watch_start = self._replay_watch_start_ms
-        if watch_start is None:
-            watch_start = self._boot_ms
         st = self.watchlist_state(symbol)
         max_e = self._cw_v2_max_entries_per_flip
+        if self._replay_watch_windows:
+            # Measure THIS arm against the membership window it fell in.
+            resolved = watch_start_for(self._replay_watch_windows, st.cw_arm_bar_ts)
+            # None => the arm predates every CONFIRM of the day: we demonstrably were NOT watching
+            # when it flipped, so cap. Fail-closed, matching live.
+            watch_start = resolved if resolved is not None else st.cw_arm_bar_ts
+        else:
+            watch_start = self._replay_watch_start_ms
+            if watch_start is None:
+                watch_start = self._boot_ms
         if st.cw_armed and 0 < st.cw_arm_bar_ts <= watch_start and st.cw_entries_this_flip < max_e:
             st.cw_entries_this_flip = max_e
             return True
@@ -513,7 +533,19 @@ def replay_symbol_day(
         ))
         return result
 
-    strat = ReplayStrategy(settings, watch_start_ms=watch_start_ms)
+    # #618/#619: resolve the symbol's watchlist-membership windows from the durable scanner feed
+    # unless the caller supplied an explicit scalar. Without this the cap falls back to the window
+    # start and is INERT in every real report -- a gate that exists and guards nothing, which is the
+    # exact failure this whole change is fixing. A source with no such feed (fixtures) returns None
+    # and the fallback applies, keeping the golden gate hermetic.
+    day_windows: list[WatchWindow] | None = None
+    if watch_start_ms is None and hasattr(source, "watch_windows"):
+        try:
+            day_windows = source.watch_windows(symbol, day.date())
+        except Exception:  # noqa: BLE001 - a research feed must never break the replay
+            day_windows = None
+
+    strat = ReplayStrategy(settings, watch_start_ms=watch_start_ms, watch_windows=day_windows)
     # ⛔⭐ `_boot_ms` is WALL-CLOCK-NOW in the live strategy (schwab_1m_v2.py: `datetime.now(UTC)`),
     # because live "boot" genuinely is when we started watching. In a replay of a PAST day that
     # reference is after the entire session, so the watch-start cap's `arm_bar_ts <= watch_start`
