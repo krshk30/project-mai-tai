@@ -220,16 +220,31 @@ NINE times while the bid sat at or above the limit, riding a right signal to −
 **The fix:** get every position under a broker OCO — either emit one the instant RTH opens for any
 position still held from pre-market, or harden the EH software exit specifically.
 
-⛔⭐ **"OCO ⇒ churn-immune" is NOT unconditional — design for this or the fix is partial.**
-Cancelled/rejected sells within 60 min of an **OCO-bracketed** entry: NVVE 07-23 **11**, KUST 07-22
-6, FIEE 07-27 6, several at 3. The mechanism is visible in the OMS log:
+### ⛔⭐⭐ DESIGN CONSTRAINT (not a caveat) — the exit must NEVER silently fall back to the ladder
+
+**A bracket only protects while it is live.** The OMS log shows the failure mode directly:
 
     [OMS-OCO-STAND-DOWN-CLEARED] live:schwab_1m_v2 KUST — OCO gone; ladder deferred ...
 
-When the stand-down CLEARS, the software ladder resumes and can churn **even on a bracketed entry**.
-So emitting a bracket is necessary but not sufficient; the stand-down-clear path needs its own
-answer. *(Caveat: that count is symbol-level in a time window — some sells may belong to another
-position the same day.)*
+When the stand-down CLEARS, the timer-driven software ladder **resumes and owns the exit again** —
+so a bracketed entry can churn exactly like KUST did. "OCO everything" was promoted to ELIMINATE the
+churn path; if the exit silently reverts to the ladder the moment the bracket resolves or stands
+down, the hole is only closed for as long as the bracket happens to be alive. **That is KUST again,
+on a bracketed entry.**
+
+⇒ **The pre-market fix is not done until the fallback is handled.** On bracket resolve/stand-down,
+either:
+  1. **re-arm a bracket**, or
+  2. **apply the P0a marketable-hold discipline to that path too**
+     (`_managed_exit_refresh_exempt` — hold a still-marketable exit instead of cancel/replacing it
+     on the refresh cadence).
+Never: hand the exit back to the bare timer.
+
+Evidence that bracketed churn is real: cancelled/rejected sells within 60 min of an **OCO-bracketed**
+entry — NVVE 07-23 **11**, KUST 07-22 6, FIEE 07-27 6, several at 3.
+⛔ **Treat that as a FLAG, not a count.** The attribution is symbol-in-window, so some of those sells
+may belong to a different position the same day. It establishes that bracketed churn EXISTS; it does
+not measure how much.
 
 ⭐ **Why this is now the highest-leverage execution item:** it eliminates the failure mode rather
 than detecting it, and it makes the operator's 1–2 week v2 live-validation a clean STRATEGY
