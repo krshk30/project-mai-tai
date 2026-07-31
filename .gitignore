@@ -21,3 +21,7 @@ build/
 *.sqlite3
 ops/local/
 .claude/settings.local.json
+
+# Generated per-day trade CSVs written by the test/analysis paths. Swept into two commits
+# on 2026-07-31 before being caught by hand; "caught it this time" is not a control.
+data/history/*.csv
