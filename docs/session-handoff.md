@@ -31,6 +31,8 @@ Flat of everything ours; only the operator's manual CYN 5000 remains.
 right) root-caused to our own exit loop, and the chain that fell out of it. See
 [`handoff-log.md`](handoff-log.md) 07-31.
 
+⏸ **No trading Sat/Sun — the live watches below resume MONDAY, not tomorrow.**
+
 🔴 **P0a is DEPLOYED but NOT VALIDATED.** Kill switch one command away:
 `MAI_TAI_OMS_HOLD_MARKETABLE_MANAGED_EXIT=false` + `stop strategy → restart oms → start strategy`.
 It needs a **pre-market / no-OCO software-ladder exit** to validate — FCUV cannot (native OCO exits
@@ -68,6 +70,44 @@ Not ours. Verified zero orders/fills/intents/bars for both. **Both are now in
 it joined the watchlist (per-symbol watch-start, #618). Symbols held since the open are exempt.
 **The 09:30-10:00 ORB window is REMOVED** — v2 now trades the open for the first time (~3 extra
 entries/day at open volatility).
+
+---
+
+## 🗓 WEEKEND 2026-08-01/02 — TRADE-COACH REDESIGN (no trading; operator-scheduled 07-31)
+
+**Markets closed both days, so this is build time, not live-ops time.**
+
+⛔⭐⭐ **THE HARD CONSTRAINT — do not design around historical exit attribution.** It is structurally
+unavailable and 07-31 proved it (see [`handoff-log.md`](handoff-log.md) 07-31):
+- **77 of 111 filled July exits take the `close` route, which has NO link to its entry** — a
+  data-model gap Schwab history cannot repair, because the linkage never existed
+- only **17 of 135 entries (13%)** pair unambiguously without the FIFO inference that once invented
+  a −8.40% trade
+- the 56 recoverable entries are ALL native-OCO / 07-22+, a population **biased away** from the
+  execution failures a coach would most want to learn from
+
+⇒ **Any coach built on "grade our historical trades" inherits a loss-censored, biased sample.**
+Build on data attributable BY CONSTRUCTION (native-OCO round trips, `-ocoexit-` coids,
+`/home/trader/trade_records/<day>.jsonl`) or on FORWARD data from the clean live run.
+
+**Settled about the OLD design — do not rebuild these:**
+
+| | |
+|---|---|
+| Scope | `macd_30s` + `polygon_30s` — **it NEVER reviewed `schwab_1m_v2`**, the real-money bot |
+| Verdict enums | no way to express *"the rule itself is wrong"* — every verdict grades RULEBOOK COMPLIANCE, not profitability. Structurally why 93% came back "good" (887 reviews) |
+| Output | `verdict` + prose. **Nothing a bot can consume, no path back into any rule** |
+| Why it burned 45% CPU | `lookback_days=0` ⇒ `review_start = year 2000` ⇒ it re-loaded ALL orders+fills for 2 strategies and re-paired them in Python **every 60s**, then threw it away. It would burn CPU with a WORKING key |
+| Why `ENABLED=false` didn't stop it | the check is **STARTUP-ONLY** — a running process never re-reads the flag. Not a failed flag; a check in the wrong place |
+
+**Phase 1 (cheap, worth doing regardless of the redesign):** move the enabled-check inside the loop ·
+make `lookback_days=0` mean "current session" · bound the `AiTradeReview` load by date · filter by
+review-state in SQL instead of loading-then-filtering.
+
+⛔ Direction already agreed (operator 07-30): **replace, don't redesign** — a deterministic exit-rule
+matrix (one column per rule, per-trade %) + stock-character features computed PRE-ENTRY, resolved by
+a **lookup, not an LLM**; the LLM only narrates a table it did not compute.
+⛔ Sample-size trap: rules × character buckets on ~30 trades is a guaranteed overfit.
 
 ---
 
