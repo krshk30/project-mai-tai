@@ -2792,14 +2792,32 @@ class OmsRiskService:
             except asyncio.CancelledError:
                 raise
             except Exception:  # noqa: BLE001
+                # MISS-1. Was silent. An entry-order lookup that raises means this symbol can never
+                # resolve its exit, and nothing said so.
+                await self._log_oco_exit_miss(acct, symbol, base_coid="", reason="entry_lookup_raised")
                 continue
             detail = await self._fetch_oco_exit_detail(
                 acct, symbol, base_coid,
                 entry_broker_order_id=entry_oid, entry_quantity=entry_qty,
             )
             if detail is _EXIT_FETCH_FAILED:
-                continue     # transient: leave the row alone, the next poll retries
+                continue     # transient: already logged by _fetch_oco_exit_detail
             if not detail:
+                # ⭐⭐ MISS-3 — THE BLIND SPOT (instrumented 2026-07-31).
+                # We polled, the broker answered, and it reported no filled exit leg. This path was
+                # SILENT, so from outside the process "polled and found nothing" was indistinguishable
+                # from "never polled at all" — which is exactly why the 07-31 AXTU/AXTX misses could
+                # not be root-caused. Live that day: both symbols' OCO exits sat unrecorded for 26-90
+                # minutes while FCUV's recorded fine every time; the managed rows stayed open, blocked
+                # fan-out re-entry, and were only cleared by an OMS restart. Two of three AXTU round
+                # trips have no exit record at all.
+                # Log WHICH entry order we resolved and HOW LONG the row has been open: a miss on a
+                # row open for an hour is the defect; a miss seconds after entry is normal (the OCO
+                # simply has not fired yet).
+                await self._log_oco_exit_miss(
+                    acct, symbol, base_coid=base_coid, reason="broker_reported_no_filled_exit_leg",
+                    entry_oid=entry_oid, entry_qty=entry_qty,
+                )
                 continue
             self.logger.info(
                 "[OMS-OCO-EXIT-POLL] %s %s broker shows the OCO exit filled qty=%s @%s — "
@@ -2807,6 +2825,66 @@ class OmsRiskService:
                 acct, symbol, detail.get("quantity"), detail.get("price"),
             )
             await self._close_resolved_oco_managed_row(acct, symbol, detail=detail)
+
+    # Anti-spam state for the OCO-exit miss log: (acct, symbol) -> (base_coid, last_log_monotonic).
+    _OCO_EXIT_MISS_REPEAT_SECS = 300.0
+
+    async def _log_oco_exit_miss(
+        self, acct: str, symbol: str, *, base_coid: str, reason: str,
+        entry_oid: str = "", entry_qty=None,
+    ) -> None:
+        """Make the OCO-exit-poll MISS path visible (log-only, 2026-07-31).
+
+        ⛔ The poll logs on success and on fetch-FAILURE, but said nothing when it polled and the
+        broker reported no filled exit leg. That silence is why the 07-31 AXTU/AXTX misses could not
+        be diagnosed: we could not tell "polled, found nothing" from "never polled".
+
+        ⛔ RATE-LIMITED ON PURPOSE. The poll runs per managed symbol every ~30s, so logging every
+        miss would add thousands of lines a session to a box that already had a 559 MB log problem.
+        Logs on the FIRST miss for a given entry order (the state that matters), then at most once
+        per `_OCO_EXIT_MISS_REPEAT_SECS` while the same miss persists.
+
+        ⭐ `row_age` is the discriminator: a miss seconds after entry is NORMAL (the OCO simply has
+        not fired). A miss on a row open for tens of minutes is the defect.
+
+        Never raises — this is diagnostics on a path whose job is protecting the account.
+        """
+        try:
+            key = (acct, symbol)
+            now = time.monotonic()
+            state = getattr(self, "_oco_exit_miss_log_at", None)
+            if state is None:
+                state = self._oco_exit_miss_log_at = {}
+            prev_coid, prev_at = state.get(key, (None, -1e9))
+            if prev_coid == base_coid and (now - prev_at) < self._OCO_EXIT_MISS_REPEAT_SECS:
+                return
+            state[key] = (base_coid, now)
+
+            row_age = "?"
+            try:
+                def _age(session: Session) -> str:
+                    row = self.store.get_open_managed_position(
+                        session, broker_account_name=acct, symbol=symbol
+                    )
+                    if row is None or getattr(row, "entry_time", None) is None:
+                        return "no-open-row"
+                    return f"{(utcnow() - row.entry_time).total_seconds():.0f}s"
+                row_age = await self._run_db(_age, commit=False)
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001
+                pass
+
+            self.logger.info(
+                "[OMS-OCO-EXIT-MISS] %s %s reason=%s entry_coid=%s entry_order_id=%s entry_qty=%s "
+                "managed_row_age=%s — polled, no filled exit leg returned; managed row stays OPEN "
+                "(blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect.",
+                acct, symbol, reason, base_coid or "-", entry_oid or "-", entry_qty, row_age,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - diagnostics must never break the protective sync
+            return
 
     async def _close_resolved_oco_managed_row(self, acct: str, symbol: str, *, detail=None) -> None:
         """Close the phantom v2 managed row for a symbol whose native OCO resolved BY A FILL.
