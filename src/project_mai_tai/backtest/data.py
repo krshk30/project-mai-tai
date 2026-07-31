@@ -100,6 +100,17 @@ class DbMarketDataSource:
     def __init__(self, session_factory: sessionmaker[Session]) -> None:
         self._sf = session_factory
 
+    def watch_windows(self, symbol: str, trade_date):
+        """Per-symbol scanner watchlist-membership windows for the #618/#619 watch-start cap.
+
+        Reads the durable `scanner_confirmed_events` feed (live since 2026-07-10). Days before that
+        return [] and the replay falls back to the window start, which is honest: we cannot
+        reconstruct a watch-start we never captured.
+        """
+        from project_mai_tai.backtest.watch_start import load_watch_windows
+
+        return load_watch_windows(self._sf, trade_date, symbol)
+
     def trades(self, symbol: str, start: datetime, end: datetime) -> list[Trade]:
         with self._sf() as s:
             rows = s.execute(

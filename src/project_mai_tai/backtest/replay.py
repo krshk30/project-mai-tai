@@ -72,6 +72,7 @@ from project_mai_tai.market_data.schwab_v2_rest_client import ChartBar
 from project_mai_tai.market_data.schwab_v2_rest_client import Quote as StratQuote
 from project_mai_tai.settings import Settings
 from project_mai_tai.strategy_core import entry_gate
+from project_mai_tai.backtest.watch_start import WatchWindow, watch_start_for
 from project_mai_tai.strategy_core.schwab_1m_v2 import SchwabV2Strategy
 
 EASTERN = ZoneInfo("America/New_York")
@@ -157,6 +158,10 @@ class ReplayResult:
     misses: list[ReplaySkip] = field(default_factory=list)
     # Full entry->exit trades (P2). One per filled entry once the exit resolves.
     trades: list[ReplayTrade] = field(default_factory=list)
+    # How many armed segments the #618/#619 watch-start cap disqualified. Reported rather than left
+    # implicit: a capped segment is an entry the replay did NOT take, and "no entry" must never be
+    # indistinguishable from "no signal" (the CLRO silent-absence lesson).
+    n_watch_start_capped: int = 0
 
 
 # ------------------------------------------------------------------- config
@@ -200,6 +205,11 @@ LIVE_LOCKED = dict(
     strategy_schwab_1m_v2_entry_window_start_minute_et=0,
     strategy_schwab_1m_v2_entry_window_end_hour_et=16,
     strategy_schwab_1m_v2_entry_window_end_minute_et=0,
+    # ⭐ PER-SYMBOL WATCH-START CAP (#618/#619, 2026-07-30). Live env carries this TRUE. It gates
+    # `_cap_reconstructed_segment`, which disqualifies an armed segment whose flip bar predates the
+    # symbol's watchlist join. It fired 76 times in the live v2 log on 2026-07-30 alone, so a replay
+    # that runs without it studies a strictly MORE PERMISSIVE bot than the one we trade.
+    strategy_schwab_1m_v2_cw_armed_segment_safety_enabled=True,
 )
 
 
@@ -213,13 +223,21 @@ EH_ENABLED = dict(
 )
 
 
-# ⛔ FORCED regardless of the env — these are MODELLING choices, not config drift, so they must win
-# over both LIVE_LOCKED and the base. Boot-hold safety is ON live, but the bot RELEASES it after its
-# one-time verify; the replay models the RELEASED steady state (see `_entries_held = False` below).
-# Letting the env turn it on would gate arms the live bot had already stopped gating.
-REPLAY_FORCED = dict(
-    strategy_schwab_1m_v2_cw_armed_segment_safety_enabled=False,
-)
+# ⛔ FORCED regardless of the env — MODELLING choices, not config drift, so they must win over both
+# LIVE_LOCKED and the base.
+#
+# ⛔⭐ EMPTIED 2026-07-31. It used to force `cw_armed_segment_safety_enabled=False`, reasoning that
+# the flag was only the BOOT-HOLD, which the live bot releases after its one-time verify. That was
+# true when written. **#618/#619 (2026-07-30) changed what the flag means**: it now ALSO gates
+# `_cap_reconstructed_segment`, a per-symbol watch-start test that runs ALL SESSION and suppresses
+# entries whose flip predates the symbol's watchlist join. That is steady state, not a startup
+# transient — so forcing the flag off silently deleted a live entry gate from every backtest (it
+# fired 76 times live on 07-30). Exactly the #592 staleness defect, one dict over.
+#
+# The genuine modelling choice — released boot-hold — is expressed directly and narrowly as
+# `_entries_held = False` in `ReplayStrategy.__init__`, so it no longer rides on a settings flag
+# whose meaning can drift underneath it.
+REPLAY_FORCED: dict[str, object] = {}
 
 
 def build_replay_settings(
@@ -263,11 +281,64 @@ class ReplayStrategy(SchwabV2Strategy):
     all entry logic (ATR flip, wait-3 reactive break, resting place/reprice/cancel, gates) runs
     unchanged in the base class."""
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        *,
+        watch_start_ms: int | None = None,
+        watch_windows: list[WatchWindow] | None = None,
+    ) -> None:
         super().__init__(settings)
         self._replay_now_ms = 0
         # Steady-state: the live bot releases boot-hold after its verify; the replay starts released.
+        # ⛔ This is the ONE genuine modelling choice, and it is deliberately expressed HERE rather
+        # than by forcing a settings flag — the flag that used to carry it grew a second meaning
+        # (the #618 watch-start cap) and took this override's blast radius with it.
         self._entries_held = False
+        # Epoch ms from which this symbol's flips count as OBSERVED-LIVE (its watchlist join).
+        # None => fall back to `_boot_ms`, i.e. pre-2026-07-30 behaviour.
+        self._replay_watch_start_ms = watch_start_ms
+        # Preferred over the scalar: the symbol's full membership windows for the day. Resolving
+        # PER-ARM is strictly more faithful than one scalar, because the scanner feed flickers --
+        # a symbol can confirm/fade/re-confirm several times in a minute and the bot re-stamps its
+        # watch-start on every re-join, so which join an arm is measured against depends on WHEN
+        # it armed. `None` = not loaded (fall back); `[]` = loaded, never confirmed (fall back).
+        self._replay_watch_windows = watch_windows
+
+    def cap_reconstructed_segment(self, symbol: str) -> bool:
+        """Replay mirror of `services/schwab_1m_v2_bot.py::_cap_reconstructed_segment` (#618/#619).
+
+        Disqualify an armed segment whose flip bar predates the point we began WATCHING this symbol,
+        so the replay can only enter on a flip it actually saw happen — the same rule the live bot
+        applies. Live measured 2026-07-30: APLX flipped 09:16 ET but joined the watchlist 09:38 ET,
+        SNDG flipped 09:23 / joined 09:34; both were bought at 10:00 (+23.7% / +18.9% past the
+        signal) and both stopped out. Without this, the replay reproduces those entries as if they
+        were legitimate and every study built on it reads optimistic.
+
+        ⛔ `<=`, not `<`: a bar timestamp is the bar's OPEN, so a symbol that joined at 09:38:30 was
+        not watching when the 09:38 bar opened. Fail-closed, exactly like live.
+
+        ⛔ Bars are still INGESTED — the ATR needs the history. Only the ARM they produce is
+        disqualified. Returns True when a segment was capped (for test assertions / reporting).
+        """
+        if not getattr(self, "_cw_armed_segment_safety_enabled", False):
+            return False
+        st = self.watchlist_state(symbol)
+        max_e = self._cw_v2_max_entries_per_flip
+        if self._replay_watch_windows:
+            # Measure THIS arm against the membership window it fell in.
+            resolved = watch_start_for(self._replay_watch_windows, st.cw_arm_bar_ts)
+            # None => the arm predates every CONFIRM of the day: we demonstrably were NOT watching
+            # when it flipped, so cap. Fail-closed, matching live.
+            watch_start = resolved if resolved is not None else st.cw_arm_bar_ts
+        else:
+            watch_start = self._replay_watch_start_ms
+            if watch_start is None:
+                watch_start = self._boot_ms
+        if st.cw_armed and 0 < st.cw_arm_bar_ts <= watch_start and st.cw_entries_this_flip < max_e:
+            st.cw_entries_this_flip = max_e
+            return True
+        return False
 
     def set_clock_ms(self, now_ms: int) -> None:
         self._replay_now_ms = int(now_ms)
@@ -426,6 +497,7 @@ def replay_symbol_day(
     *,
     window_start_hour_et: int = 4,
     window_end_hour_et: int = 20,
+    watch_start_ms: int | None = None,
 ) -> ReplayResult:
     """Replay one symbol for one ET session day through the real entry code + shared emit-gate.
 
@@ -461,8 +533,29 @@ def replay_symbol_day(
         ))
         return result
 
-    strat = ReplayStrategy(settings)
+    # #618/#619: resolve the symbol's watchlist-membership windows from the durable scanner feed
+    # unless the caller supplied an explicit scalar. Without this the cap falls back to the window
+    # start and is INERT in every real report -- a gate that exists and guards nothing, which is the
+    # exact failure this whole change is fixing. A source with no such feed (fixtures) returns None
+    # and the fallback applies, keeping the golden gate hermetic.
+    day_windows: list[WatchWindow] | None = None
+    if watch_start_ms is None and hasattr(source, "watch_windows"):
+        try:
+            day_windows = source.watch_windows(symbol, day.date())
+        except Exception:  # noqa: BLE001 - a research feed must never break the replay
+            day_windows = None
+
+    strat = ReplayStrategy(settings, watch_start_ms=watch_start_ms, watch_windows=day_windows)
+    # ⛔⭐ `_boot_ms` is WALL-CLOCK-NOW in the live strategy (schwab_1m_v2.py: `datetime.now(UTC)`),
+    # because live "boot" genuinely is when we started watching. In a replay of a PAST day that
+    # reference is after the entire session, so the watch-start cap's `arm_bar_ts <= watch_start`
+    # would be true for EVERY segment and silently cap the whole day to zero entries. Re-point it at
+    # the instant this replay started watching, which is the faithful analogue: an arm whose bar
+    # predates the loaded window came from seeded/warmup history we did not observe live, and live
+    # caps exactly those.
+    strat._boot_ms = int(start.timestamp() * 1000)
     qty = strat._atr_qty
+    n_capped = 0
 
     # Merge into a single time-ordered event stream. eff_ts is the instant the event reaches the
     # strategy: bars at close (ts+60s), quotes at their own ts. On a tie, the bar (minute boundary)
@@ -608,6 +701,12 @@ def replay_symbol_day(
         if kind == 0:  # bar (delivered at close)
             bar = _to_chartbar(symbol, payload)  # type: ignore[arg-type]
             draft = strat.on_bar(symbol, bar)
+            # #618/#619 watch-start cap. Live runs this after every replay that can ARM a segment;
+            # here every bar is such a replay, and the test is purely `arm_bar_ts <= watch_start`,
+            # so running it each bar is equivalent and cannot miss a re-arm (the live 07-27 bug was
+            # exactly a re-arm that ran after the one place the cap was called).
+            if strat.cap_reconstructed_segment(symbol):
+                n_capped += 1
             if not filled:
                 # Drain the resting place/cancel drafts the manager queued this bar (bypass the
                 # gate, exactly like the bot's direct emit).
@@ -706,6 +805,19 @@ def replay_symbol_day(
                 _finish_eh_exit(eff_dt, entry_px * (1.0 - cw_stop_pct / 100.0), "stop")
             else:  # flip -> close at the current bid
                 _finish_eh_exit(eff_dt, bid, "flip")
+
+    result.n_watch_start_capped = n_capped
+    if n_capped and not result.entries:
+        ws_txt = (
+            datetime.fromtimestamp(watch_start_ms / 1000.0, UTC).astimezone(EASTERN).strftime("%H:%M:%S")
+            if watch_start_ms else "process boot"
+        )
+        result.skips.append(ReplaySkip(
+            symbol, "watch_start_capped",
+            f"{n_capped} armed segment(s) disqualified: the ATR flip predates our watch-start "
+            f"({ws_txt} ET). Live #618/#619 suppresses these — the flip happened before the scanner "
+            f"put this symbol in front of us, so we never saw it happen.",
+        ))
 
     # Any resting order still working at EOD that never crossed = honest MISS.
     if resting is not None and not filled:
