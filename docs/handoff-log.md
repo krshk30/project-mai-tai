@@ -1048,6 +1048,83 @@ nobody runs, a rule that is never 'done', and a dormant feature's item all sat a
 
 ---
 
+## 2026-07-31 — the KUST execution day, and a backward study that turned out to be a dead end
+
+**One live loss opened a chain.** KUST entered pre-market 09:11 ET and lost **-5.17%** on a signal
+that was RIGHT (price ran to 1.79). The Webull fan-out leg, given the identical instruction, made
+**+1.76%**. ~6.9 percentage points of pure execution loss on the same signal.
+
+### Root cause, proven on the captured tape
+The pre-market entry got **no native OCO** (`[V2-OCO-EMIT] SKIPPED (outside RTH)`), so the software
+ladder owned the exit. It placed a sell LIMIT 1.74 and the working-order refresh **cancel/replaced it
+NINE times in six minutes**. The real Schwab bid across that window:
+
+    13:26:13 1.76 | 13:26:54 1.75 | 13:27:34 1.74 | 13:28:02 1.78
+    13:26:14 1.77 | 13:27:13 1.76 | 13:27:38 1.75 | 13:28:04 1.78
+
+**The bid was >= the limit at EVERY tick.** The order was fillable the whole time and we kept taking
+it off the book. Webull's identical 1.74, placed once and never cancelled, filled in **34 ms**.
+Then the hard-stop market sells collided with each other -- **125 rejects** -- each submission racing
+the previous one still in flight ("oversold"). Slowing the cadence WAS the fix: after a 30.9s gap the
+next attempt filled immediately.
+
+### Shipped
+| PR | What | State |
+|---|---|---|
+| #631 | backtest models the 07-30 per-symbol watch-start cap (#618/#619) | merged |
+| #632 | open items 8/9/10 (reconciler severity, Redis eviction, SELECTION) | merged |
+| #633 | **P0a** -- HOLD a marketable managed exit instead of cancelling on a timer | merged + **deployed** |
+| #634 | OCO-exit-poll MISS path made visible (log-only) | merged + **deployed** |
+| #635 | OCO entry lookup must resolve to a FILLED / partially-filled entry | merged + **deployed** |
+
+**AXTU's 2 unrecorded exits backfilled** from Schwab history via the canonical
+`_persist_oco_exit_fill`, provenance-stamped. AXTU now pairs 3/3: **-5.26%, +2.27%, -0.77%**.
+
+### Four false alerts before 10:30 -- none was a fault
+| Alert | Reality |
+|---|---|
+| readiness AMBER | trade-coach deliberately stopped |
+| reconciler CRITICAL (AZIO) | the operator's manual trade; **the OMS never touched it** |
+| OMS "fleet down" RED | Redis evicted the 47 KB heartbeat key |
+| fleet-health RED | three symbols had just been promoted |
+
+Common root: monitoring cannot distinguish *intended state* / *normal transient* from *breakage*.
+
+### Theories tested and KILLED (do not re-run)
+- "the OCO exit poll never fires" -- **disproved**, it recorded FCUV 4x including in-process
+- "a cancelled buy shadows the entry lookup" -- dismissed on a bad FCUV comparison, then re-opened
+  and shipped as #635 on its own merits; still NOT proven to be the miss cause
+- throttle starvation -- ruled out (30s/symbol on a 15s sync)
+- propagation lag as a *window* problem -- ruled out (the poll uses the 3600s default)
+
+### THE BACKWARD EXECUTION-% STUDY IS A DEAD END -- do not attempt it
+Scoping it killed it. July v2 real money = 135 filled entries, and:
+- only **17 (13%)** pair unambiguously without the FIFO inference that once invented a -8.40% trade
+- **77 filled exits take the `close` route, which has NO link to its entry** -- a data-model gap
+  Schwab history cannot repair, because the linkage never existed
+- the **56 recoverable** entries are ALL native-OCO and **07-22 or later** (native OCO went live 07-22)
+
+**The disqualifier is BIAS, not sample size.** On the native-OCO path the BROKER owns the exit, so
+churn-to-stop structurally cannot happen -- while the failure lives on the software-ladder path,
+which is exactly the unrecoverable population. **KUST's own 07-31 entry carries no
+`native_oco_bracket`** and is excluded from the 56 by construction. Any execution-% from that frame
+would understate and falsely reassure.
+=> Accept the pre-OCO era (79 entries, incl. the 07-13/14/15 churn days) as permanently
+unrecoverable. The forward path -- **OCO everything, then let the live run be the clean test** -- is
+the measurement.
+
+### But "OCO => churn-immune" is NOT unconditional
+Cancelled/rejected sells within 60 min of an **OCO-bracketed** entry: NVVE 07-23 **11**, KUST 07-22
+6, FIEE 07-27 6, several at 3. The mechanism is in the log:
+`[OMS-OCO-STAND-DOWN-CLEARED] ... OCO gone; ladder deferred` -- when the stand-down clears, the
+software ladder resumes and can churn **even on a bracketed entry**. The pre-market-OCO fix must
+design for the stand-down-clear path, not merely emit a bracket.
+*(Caveat: symbol-level count in a time window; some sells may belong to another position that day.)*
+
+### Cleared
+The 2 `sells > buys` symbol-days (CWD 07-02, CLRO 07-07) are **not** the #605 claimed-a-manual-trade
+shape -- share quantities balance exactly (40=40, 20=20). Partial-fill splitting on the sell side.
+
 ## 2026-07-30 — 11 PRs, an entry-path root cause, and the day the alerts got wired
 
 **Median of the day's 3 morning round trips: −4.92% (all stopped out). After the entry fix: +2.09%
