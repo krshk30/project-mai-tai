@@ -160,6 +160,55 @@ watchlist -> v2 entries, so it costs REAL ENTRIES on every restart (there were 1
 
 ---
 
+## 10. ⛔⭐⭐ SELECTION: we buy stocks whose move is already SPENT — scanner AND bot
+*(operator, 2026-07-31, from the AXTU chart: "we may have to drop the whole stock... this is some of
+the stock we don't wanna play there. That's something we need to do from the scanner, from our bot,
+everywhere. Make a note. We will discuss.")*
+
+⭐ **This is the SELECTION lever, and it is the one we have never pulled.**
+[[project_mai_tai_30s_exploration]] closed 279 trades net-negative under EVERY exit and concluded
+"SELECTION is the only lever left"; [[project_mai_tai_v2_stop_slippage_rootcause]] proved four ways
+that the ENTRY, not the exit geometry, is the problem. The operator has now arrived at the same place
+from the chart. Do not re-open exit tuning to solve this.
+
+### The worked example — AXTU, 2026-07-31 (+54.5% on the day BEFORE we touched it)
+
+| hour ET | range | median bar volume |
+|---|---|---|
+| 10:00 | 8.4% | 4,388 |
+| 11:00 | 7.6% | 1,300 |
+| 12:00 | **5.1%** | **1,200** |
+
+Range compressing, volume dying, the 50% move already made. **We bought it THREE times during that
+decay** (11:15 @3.80 -> stopped ~3.61 ≈ −5%; 12:03 @3.745; 12:18 @3.86) plus a Webull fan-out leg.
+
+⭐ **Operator's criterion, in their words:** what we want is a stock that "goes down, then comes up
+20%, then goes down" — one that still OSCILLATES. A name that has made its move and gone quiet has no
+swing left to capture, and its volume is too thin to trade even if it did. We are systematically
+buying exhaustion.
+
+### Why the vol floor cannot fix this on its own
+The floor is judged on **ONE completed bar**. AXTU 11:15 armed off the 11:14 bar (**10,467**, clearing
+the 10,000 floor by 4.7%) and filled 32s later into a bar that closed at **2,999**. AXTU's median
+minute today was **2,217**, and only **21 of 125 bars (17%)** cleared 10,000 — the gate only has to
+sample one spike. ⛔ #625's re-check could not fire: the fill beat the next bar close by 25s.
+⇒ A rolling-window liquidity test (median of last N bars) is the minimum fix, but it is a PATCH.
+The real question is whether the name should have been a candidate at all.
+
+### Scope when we build it — the operator was explicit: **everywhere**
+1. **Scanner** — stop CONFIRMING names whose move is spent (a confirm today fires on a squeeze that
+   has already happened).
+2. **Bot** — a per-symbol tradeability gate at arm time (oscillation + live liquidity), not one bar.
+3. **Backtest** — whatever rule lands must be replayable, or we cannot measure it.
+
+⛔ **DISCUSS BEFORE BUILDING** (operator: "We will discuss"). Open design questions: what measures
+"still oscillating" (Kaufman ER is already computed in
+[[project_mai_tai_backtest_engine]]'s param sweep and classified CLRO correctly); how much of the
+day's move is "spent"; and the sample-size trap — this must not become another >100-configs-on-27-
+trades overfit.
+
+---
+
 ## ⚠️ Watch items live in [`session-handoff.md`](session-handoff.md), not here
 Verification is a *state* ("is this behaving?"), not a *task* ("do this"). Keeping them here is what
 made an open-items file that could never reach zero.

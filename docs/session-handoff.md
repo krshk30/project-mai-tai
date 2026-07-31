@@ -94,7 +94,13 @@ entries/day at open volatility).
    dropped and the watchdog reports a zombie. OMS was healthy throughout (0 log gaps >60s).
    ⛔ **Do NOT fix by cutting `snapshot_batch_stream_maxlen`** — 180 is load-bearing (the scanner
    warmup prefill needs **120** batches); cutting it blinds squeeze detection ~10 min per restart.
-9. **IRE: a Schwab REPLACE spawned an order we never recorded** — our books said 2, broker said 4.
+9. **⭐⭐ SELECTION — we buy stocks whose move is already SPENT (scanner AND bot).** AXTU 07-31 was
+   **+54.5%** before we touched it; range then compressed 8.4%→5.1% while median bar volume fell
+   4,388→1,200, and we bought it **three times** during that decay. Operator wants names that still
+   OSCILLATE ("down, up 20%, down"), not exhausted ones. ⛔ The vol floor can't fix it: it samples
+   **one** bar (AXTU armed off a 10,467 bar, filled into 2,999; median 2,217, only 17% of bars clear
+   10,000). ⛔ **DISCUSS BEFORE BUILDING.**
+10. **IRE: a Schwab REPLACE spawned an order we never recorded** — our books said 2, broker said 4.
    We never issue a replace. Parked by operator decision: catch it live next time (#626 now
    surfaces the drift in ~8 min instead of hours).
 
