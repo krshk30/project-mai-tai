@@ -2551,6 +2551,24 @@ class OmsRiskService:
                 BrokerAccount.name == acct,
                 BrokerOrder.symbol == symbol.upper(),
                 BrokerOrder.side == "buy",
+                # ⛔⭐ FILLED ONLY (2026-07-31). Without this the lookup ordered by `updated_at`
+                # alone, so the newest *cancelled* buy could win -- and a cancelled entry never
+                # held a position, so it has NO OCO children and never will. The poll then asks
+                # the broker about a bracket that cannot exist, gets nothing, and the managed row
+                # stays open forever (blocking fan-out re-entry).
+                #
+                # Live AXTU 2026-07-31 on live:schwab_1m_v2:
+                #     15:15:47  entry-1 FILLED     -> its OCO exit filled 15:26:52 @3.60
+                #     15:31:16  a buy CANCELLED    <- newest by updated_at from here on
+                #     16:03:05  entry-2 FILLED     -> its OCO exit filled 16:17:07 @3.83
+                # Both exits went unrecorded and had to be recovered from Schwab history hours
+                # later. Schwab's fill -> order-history propagation lags minutes, so the window in
+                # which the correct filled entry was still the newest row was small.
+                #
+                # ⛔ Returning None when nothing is filled is CORRECT, not a regression: no filled
+                # entry means no position, so there is no exit to find. `_fetch_oco_exit_detail`
+                # already degrades to "no fill recorded" on an empty base coid.
+                BrokerOrder.status == "filled",
             )
             .order_by(desc(BrokerOrder.updated_at))
         )
