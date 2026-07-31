@@ -2568,7 +2568,15 @@ class OmsRiskService:
                 # ⛔ Returning None when nothing is filled is CORRECT, not a regression: no filled
                 # entry means no position, so there is no exit to find. `_fetch_oco_exit_detail`
                 # already degrades to "no fill recorded" on an empty base coid.
-                BrokerOrder.status == "filled",
+                #
+                # ⛔⭐ MUST INCLUDE `partially_filled`, not just "filled". A partially-filled entry
+                # HOLDS SHARES, so it has a real position and a real bracket -- excluding it would
+                # trade this bug for a NEW miss source, which is the exact failure being closed.
+                # Not hypothetical: the adapter emits `partially_filled` both from the broker's own
+                # status and computed (`0 < filledQuantity < quantity`, schwab.py), and orders here
+                # really do split -- 2124 orders have 2 fills, 406 have 3, 11 have 4. A qty-2 v2
+                # entry filling 1+1 passes through exactly this state.
+                BrokerOrder.status.in_(("filled", "partially_filled")),
             )
             .order_by(desc(BrokerOrder.updated_at))
         )

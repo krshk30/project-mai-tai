@@ -125,3 +125,25 @@ def test_scoped_to_symbol_and_account(session) -> None:
 def test_missing_session_still_returns_none(session) -> None:
     """Documented tolerance: some callers drive the close path without a session."""
     assert _svc()._find_oco_entry_order(None, ACCT, SYMBOL) is None
+
+
+def test_a_PARTIALLY_FILLED_entry_still_wins(session) -> None:
+    """⛔⭐ THE REGRESSION RISK IN THE FIX ITSELF. A partially-filled entry HOLDS SHARES, so it has a
+    real position and a real bracket. Excluding it would trade the cancelled-entry bug for a NEW
+    miss source -- the exact failure this change exists to close.
+
+    Not hypothetical: the adapter emits `partially_filled` both from the broker's status and
+    computed (`0 < filledQuantity < quantity`), and orders here really do split -- 2124 orders have
+    2 fills, 406 have 3, 11 have 4. A qty-2 v2 entry filling 1+1 passes through this state."""
+    _buy(session, coid="partial-entry", status="partially_filled", minutes=15)
+    _buy(session, coid="cancelled-newer", status="cancelled", minutes=31)
+    got = _svc()._find_oco_entry_order(session, ACCT, SYMBOL)
+    assert got is not None, "a partially-filled entry holds shares — it must be resolvable"
+    assert got.client_order_id == "partial-entry"
+
+
+def test_newest_position_holding_entry_wins_across_both_states(session) -> None:
+    """filled and partially_filled are peers: the most recent position-holding entry wins."""
+    _buy(session, coid="filled-older", status="filled", minutes=10)
+    _buy(session, coid="partial-newer", status="partially_filled", minutes=45)
+    assert _svc()._find_oco_entry_order(session, ACCT, SYMBOL).client_order_id == "partial-newer"
