@@ -75,6 +75,39 @@ the same second with a different tag. ⛔ `CANCELLED_STATUSES` includes `"REPLAC
 **Parked by operator decision 07-30: catch it live next time.** #626 now surfaces the resulting
 position drift within ~8 minutes instead of hours.
 
+## 8. ⛔⭐ Reconciler severity is INVERTED — an UNOWNED position pages CRITICAL
+*(found 2026-07-31 from a live AZIO page; operator: "add it to the list, we can work on it later")*
+
+The operator hand-bought **972 AZIO** on `live:orb` and got a RED page for their own trade. Ours?
+**0 orders / 0 intents / 0 fills / 0 bars**, and the finding's own payload said `strategy_codes: []`.
+
+`reconciliation/service.py`:
+
+| line | what it does |
+|---|---|
+| **203** | `keys = set(aggregates) \| set(account_positions)` — the **UNION**, so every hand-placed broker position becomes something to check |
+| **216** | `severity = "critical" if account_quantity == 0 or virtual_quantity == 0 else "warning"` |
+| **229** | computes `strategy_codes` — and throws the answer away |
+
+⭐ A position we never traded has `virtual_quantity == 0` **by definition**, so L216 makes it
+**guaranteed CRITICAL**. **The less we know about a position, the louder it screams** — while a real
+drift on a position we DO own (both quantities non-zero, disagreeing) is only a *warning*. Backwards.
+
+⛔ **TWO SEPARATE IGNORE LISTS.** `MAI_TAI_PROTECTED_SYMBOLS` gates the **OMS**;
+`reconciliation_ignored_position_mismatch_pairs` gates the **reconciler**. The alert cron separately
+filters PROTECTED_SYMBOLS via `EXCLUDE_SQL` — which is why CYN wrote **923 findings on 07-31 and
+pushed ZERO**, while AZIO (unprotected) paged. ⛔ **DB row count ≠ page count; read `EXCLUDE_SQL`
+before calling the channel noisy.**
+
+**Fix:** make severity **attribution-aware** — the data is already in the payload. No `strategy_codes`
+AND no orders/fills/intents for that (account, symbol) ⇒ not ours ⇒ info, never pages.
+Owned-and-disagreeing stays CRITICAL. This removes the need to pre-register anything, which is the
+point: the operator hand-trades all day and cannot maintain a list of every symbol touched.
+
+✅ **The OMS side is CLEAN.** `oms.log` and the v2 log had **zero** mentions of AZIO — the acting
+invariant held and the manual position was never at risk. Reconciler-only change; nothing on the
+trading path.
+
 ---
 
 ## ⚠️ Watch items live in [`session-handoff.md`](session-handoff.md), not here

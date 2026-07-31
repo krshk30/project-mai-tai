@@ -84,7 +84,12 @@ entries/day at open volatility).
    APLX/SNDG); but a name Schwab refuses via API is traded on NEITHER broker.
 6. **Order churn 284 orders -> 23 round trips (12:1)** — resting-entry reprice churn. Invisible to
    the recorder, fully visible on the live tape. Understand before the coach redesign.
-7. **IRE: a Schwab REPLACE spawned an order we never recorded** — our books said 2, broker said 4.
+7. **Reconciler severity is INVERTED — an UNOWNED position pages CRITICAL.** A hand-bought AZIO
+   (972 sh, `live:orb`, zero orders/fills/bars of ours) paged RED. `virtual_quantity == 0` is the
+   *definition* of "not ours", and it forces `critical`; a real drift on a position we own is only a
+   *warning*. The payload already computes `strategy_codes: []` and discards it. ⛔ PROTECTED_SYMBOLS
+   gates the OMS, a *different* list gates the reconciler. ✅ OMS never touched AZIO.
+8. **IRE: a Schwab REPLACE spawned an order we never recorded** — our books said 2, broker said 4.
    We never issue a replace. Parked by operator decision: catch it live next time (#626 now
    surfaces the drift in ~8 min instead of hours).
 
