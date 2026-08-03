@@ -156,8 +156,38 @@ a **lookup, not an LLM**; the LLM only narrates a table it did not compute.
 10. **IRE: a Schwab REPLACE spawned an order we never recorded** — our books said 2, broker said 4.
    We never issue a replace. Parked by operator decision: catch it live next time (#626 now
    surfaces the drift in ~8 min instead of hours).
+11. **⭐🔴 PRE-MARKET OCO HOLE — no native bracket outside RTH, so the software ladder owns the
+   exit.** `[V2-OCO-EMIT] SKIPPED (outside RTH)` is exactly how KUST 07-31 lost **−5.17%** on a
+   signal that was right while the Webull leg made **+1.76%**. **DEFERRED BEHIND P0a VALIDATION,
+   NOT DROPPED** — validate the hold on the software-ladder path *before* changing that path,
+   otherwise the fix and its own regression land together and neither is measurable. Sequencing:
+   P0a validated → (#366 if the quiet window is only deploy-sized) → **this is the next build.**
+   ⛔ Its design constraint is not optional — see *THE STAND-DOWN-CLEAR CONSTRAINT* below.
 
 ✅ **CLOSED today: VPS retention** (DB 12->10 GB, logs 1.7 GB->426 MB, logrotate installed).
+
+---
+
+## ⛔⭐ THE STAND-DOWN-CLEAR CONSTRAINT (binds open thread 11)
+
+**Emitting a bracket is NOT sufficient. "OCO ⇒ churn-immune" is false.**
+
+A native OCO bracket makes the BROKER own the exit, so timer-driven cancel/replace structurally
+cannot happen — *while the bracket is live*. But when it resolves or stands down,
+`[OMS-OCO-STAND-DOWN-CLEARED] ... OCO gone; ladder deferred` hands the exit **back to the bare
+timer ladder** — which is KUST, now on a bracketed entry.
+
+**The evidence it is real, not theoretical.** Cancelled/rejected sells within 60 min of an
+**OCO-bracketed** entry: **NVVE 07-23 = 11**, KUST 07-22 = 6, FIEE 07-27 = 6, several at 3.
+*(Caveat: symbol-level count in a time window; some sells may belong to another position that day.)*
+
+⇒ **The requirement.** On stand-down-clear the exit must either **re-arm a bracket** or **inherit
+the P0a marketable-hold** (`_managed_exit_refresh_exempt`, `oms/service.py:3770`). It must **never**
+fall back to the bare refresh cadence. Any pre-market-OCO design that does not state which of those
+two it does on stand-down-clear is incomplete.
+
+⚠️ P0a alone does not close this: the hold engages only while `limit <= bid`. A bracket that stands
+down while the exit is **not** marketable still lands on the plain ladder.
 
 ---
 
