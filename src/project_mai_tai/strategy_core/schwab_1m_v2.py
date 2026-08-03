@@ -211,7 +211,13 @@ class SymbolState:
     # strategy_schwab_1m_v2_cw_v2_enabled is on. Reset with the other cw_* at the 04:00-ET anchor.
     cw_trigger: float = 0.0                     # v2 trigger = max HIGH of flip bar + next 2 bars
     cw_flip_level: float = 0.0                  # the short trail crossed at the BUY flip (rule-7 line)
-    cw_entries_this_flip: int = 0               # reclaim counter (cap 2 per BUY-flip segment)
+    cw_entries_this_flip: int = 0               # kept for labelling/back-compat; NOT the cap
+    # ⭐⭐ THE CAP IS COMPOSITION, NOT A COUNT (operator 2026-08-03). Exactly one RESTING and one
+    # RECLAIM per cross; `reclaim+reclaim` is "very bad" and `resting+resting` is forbidden. A
+    # scalar cap-at-2 permits both of those, so the slots are tracked PER TYPE.
+    # ⛔ A slot stays consumed after its position EXITS — an exit does not refill it.
+    cw_resting_taken: bool = False              # the resting slot for THIS cross is used
+    cw_reclaim_taken: bool = False              # the reclaim slot for THIS cross is used
     cw_bar_low_so_far: float = 0.0             # min quote px of the current forming bar (rule 7)
     cw_segment_high: float = 0.0               # running max HIGH of ALL bars since the BUY flip (advances
     #                                            every bar, like the backtest RunningHighTracker); the
@@ -1365,7 +1371,13 @@ class SchwabV2Strategy:
             state.cw_segment_high = float(state.bars[-1].high)  # reclaim lookback starts at the flip bar
             fl = atr_signal.get("flip_level")
             state.cw_flip_level = float(fl) if fl is not None else 0.0
-            state.cw_entries_this_flip = 0
+            # ⛔⭐ DO NOT RESET THE SLOTS HERE. The resting buy sits AT the ATR line and fills
+            # INTRABAR; this arm confirms the same cross at the BAR CLOSE, seconds to minutes later.
+            # Resetting here wiped the entry that CAUSED the cross, so counting restarted at zero and
+            # two MORE were allowed — three per cross, four times live on 2026-08-03 (HYFM x3,
+            # FUSE x1; gaps of 21s, 41s, 169s and 706s between fill and arm).
+            # The slots are reset at DISARM instead, so whatever arrives here already carries the
+            # entries attributable to the cross being confirmed.
             state.fanout_webull_claimed = False  # fresh flip -> re-allow the fan-out Webull leg
             if self._cw_armed_segment_safety_enabled:
                 # Stamp the arm with the FLIP BAR's ts (not wall-clock): a reconstructed arm carries
@@ -1381,6 +1393,12 @@ class SchwabV2Strategy:
                 logger.info("[V2-CW-DISARM] %s reason=flip", state.symbol)
             state.cw_armed = False   # segment over (also the flip-close EXIT path)
             state.cw_arm_bar_ts = 0
+            # A cross ENDS here, so this is where its slots are released. Moved from the arm block
+            # (2026-08-03): entries belong to the cross that was live when they filled, or to the
+            # cross that confirms while the position is still held.
+            state.cw_entries_this_flip = 0
+            state.cw_resting_taken = False
+            state.cw_reclaim_taken = False
             return
         if not state.cw_armed:
             return
