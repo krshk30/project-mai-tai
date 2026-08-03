@@ -60,6 +60,35 @@ def test_tiny_jitter_is_not_treated_as_a_hole() -> None:
     assert mod.MIN_GAP_MINUTES >= 2
 
 
+def test_a_single_missing_bar_IS_repairable() -> None:
+    """⛔⭐ THE DEAD BAND (2026-08-03). The comparison must be INCLUSIVE.
+
+    The detector that pages on this same series alerts on `nxt - bar_time > 1 minute`, i.e. one
+    missing bar. This repairer used to fill on `> MIN_GAP_MINUTES`, i.e. two. A gap of EXACTLY
+    2 minutes therefore alerted every 15 minutes and could never be repaired — live that morning
+    EDBL paged AMBER while the repair printed "series is contiguous" in the same log line, and the
+    alert told the operator to restart a healthy real-money service.
+
+    A watch that cannot fix what it reports trains the operator to ignore the channel.
+    """
+    assert ">= make_interval" in mod.GAPS_SQL, (
+        "GAPS_SQL must select gaps INCLUSIVE of MIN_GAP_MINUTES; `>` re-opens the dead band "
+        "against the detector's >1-minute alert threshold"
+    )
+
+
+def test_the_repairer_covers_everything_the_detector_alerts_on() -> None:
+    """The two thresholds must stay reconcilable, so state the relationship as an assertion.
+
+    detector alerts when  gap >  1 min   (>= 1 missing bar)
+    repairer fills when   gap >= MIN_GAP_MINUTES
+
+    Any repairer floor above 2 leaves gaps that alert forever and never repair.
+    """
+    detector_alerts_at_minutes = 2  # first gap size satisfying the detector's `> 1 minute`
+    assert mod.MIN_GAP_MINUTES <= detector_alerts_at_minutes
+
+
 def test_the_insert_supplies_every_NOT_NULL_column() -> None:
     """⛔ `indicators` is NOT NULL with NO default and was missing from the first version — the
     live repair aborted on it. Pins the whole set so the next added column fails HERE, not at

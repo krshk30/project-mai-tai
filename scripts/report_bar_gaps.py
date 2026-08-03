@@ -46,7 +46,17 @@ ET = ZoneInfo("America/New_York")
 STRATEGY_CODE = "schwab_1m_v2"
 INTERVAL_SECS = 60
 
-# A hole this small is ordinary bar jitter, not a data loss worth a REST round trip.
+# Gaps STRICTLY SMALLER than this are ordinary bar jitter (a 1-minute delta is just the next
+# bar — nothing is missing) and are not worth a REST round trip.
+#
+# ⛔⭐ THE COMPARISON IS INCLUSIVE (`>=`), and that is load-bearing — see GAPS_SQL. It used to be
+# `>`, which opened a DEAD BAND against the detector that pages on this same series:
+#   detector (ops/health/fleet_health_check.py) alerts on   nxt - bar_time >  1 minute  (>=1 missing bar)
+#   repairer (here) used to fill on                         nxt - bar_time >  2 minutes (>=2 missing bars)
+# A gap of EXACTLY 2 minutes — one missing bar — therefore alerted forever and could never be
+# repaired. Live on 2026-08-03: EDBL 08:21->08:23 paged AMBER every 15 min while the repair
+# printed "series is contiguous" on the same line of the same log, and the operator was told to
+# restart a healthy trading service. Keep these two thresholds reconcilable.
 MIN_GAP_MINUTES = 2
 
 
@@ -68,7 +78,7 @@ WITH g AS (
 SELECT symbol, bar_time, nxt,
        (EXTRACT(EPOCH FROM (nxt - bar_time)) / 60)::int AS gap_min
 FROM g
-WHERE nxt - bar_time > make_interval(mins => %(min_gap)s)
+WHERE nxt - bar_time >= make_interval(mins => %(min_gap)s)
 ORDER BY symbol, bar_time
 """
 

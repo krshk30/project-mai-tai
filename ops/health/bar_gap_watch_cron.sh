@@ -102,9 +102,12 @@ if [ "$LEVEL" = "RED" ] || [ "$LEVEL" = "AMBER" ] || [ "$SELFTEST" -eq 1 ]; then
 AUTO-REPAIR (database only):
 $REPAIR
 
-Bars were missing, so ATR spanned the hole and resting orders on those names sat too high.
-The DB is repaired; LIVE TRADING still needs an attended restart of schwab-1m-v2 so the REST
-warmup rebuilds a contiguous in-memory series.
+Bars are missing from the DB series (backtest/parity/recorder read it), so the fill above matters.
+LIVE ATR is already protected: #620 refuses to compute true range across a gap and logs
+[V2-ATR-BAR-GAP] per symbol — grep the v2 log to confirm it fired for these names.
+DO NOT restart schwab-1m-v2 on account of this alert: a restart punches a fresh hole of its own,
+which is the very condition this watch exists to catch. Restart only if [V2-ATR-BAR-GAP] is ABSENT
+for a gapped symbol that v2 is actually holding or resting an order on.
 Undo the fill: DELETE FROM strategy_bar_history WHERE source='rest';"
     [ "$SELFTEST" -eq 1 ] && BODY="[SELFTEST] $BODY"
     if [ "$LEVEL" = "RED" ]; then
