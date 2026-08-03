@@ -34,7 +34,13 @@ def test_the_restart_hole_is_RED() -> None:
     """THE REGRESSION: the 85-minute hole that mispriced every resting order."""
     level, detail = c(85, 6, 200)
     assert level == "RED"
-    assert "85min" in detail and "Restart v2" in detail
+    assert "85min" in detail
+    # RETARGETED 2026-08-03: this used to pin `"Restart v2" in detail`. That advice was WRONG —
+    # #620 guards live ATR, and a restart punches a fresh hole, which is the condition this very
+    # check detects. A characterization test that pins a since-killed behaviour is a landmine:
+    # anyone "fixing" the code to satisfy it would restore the harmful advice.
+    assert "Restart v2" not in detail
+    assert "Do NOT restart on this alert alone" in detail
 
 
 def test_the_thresholds_are_pinned() -> None:
@@ -47,5 +53,9 @@ def test_the_thresholds_are_pinned() -> None:
 
 def test_the_detail_names_the_consequence_not_just_the_number() -> None:
     """An operator reading this at 09:31 must know WHY it matters without opening the code."""
-    assert "resting orders" in c(85, 6, 200)[1]
+    # The consequence is now stated honestly: the DB series is holed (the backtest/parity/recorder
+    # read it), while LIVE ATR is guarded by #620. The old text claimed live ATR was "materially
+    # wrong", which was false once #620 shipped.
+    assert "backtest" in c(85, 6, 200)[1]
+    assert "#620" in c(85, 6, 200)[1]
     assert "ATR" in c(3, 1, 200)[1]
