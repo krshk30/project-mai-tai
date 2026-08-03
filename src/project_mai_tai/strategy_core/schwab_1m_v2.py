@@ -211,7 +211,13 @@ class SymbolState:
     # strategy_schwab_1m_v2_cw_v2_enabled is on. Reset with the other cw_* at the 04:00-ET anchor.
     cw_trigger: float = 0.0                     # v2 trigger = max HIGH of flip bar + next 2 bars
     cw_flip_level: float = 0.0                  # the short trail crossed at the BUY flip (rule-7 line)
-    cw_entries_this_flip: int = 0               # reclaim counter (cap 2 per BUY-flip segment)
+    cw_entries_this_flip: int = 0               # kept for labelling/back-compat; NOT the cap
+    # ⭐⭐ THE CAP IS COMPOSITION, NOT A COUNT (operator 2026-08-03). Exactly one RESTING and one
+    # RECLAIM per cross; `reclaim+reclaim` is "very bad" and `resting+resting` is forbidden. A
+    # scalar cap-at-2 permits both of those, so the slots are tracked PER TYPE.
+    # ⛔ A slot stays consumed after its position EXITS — an exit does not refill it.
+    cw_resting_taken: bool = False              # the resting slot for THIS cross is used
+    cw_reclaim_taken: bool = False              # the reclaim slot for THIS cross is used
     cw_bar_low_so_far: float = 0.0             # min quote px of the current forming bar (rule 7)
     cw_segment_high: float = 0.0               # running max HIGH of ALL bars since the BUY flip (advances
     #                                            every bar, like the backtest RunningHighTracker); the
@@ -585,6 +591,24 @@ class SchwabV2Strategy:
         prev_held = state.position_qty_held
         state.position_qty = max(0, int(qty))
         state.position_qty_held = max(0, int(qty if held_qty is None else held_qty))
+        # ⭐⭐ A FILL CONSUMES THE RESTING SLOT (2026-08-03). `position_qty_held` is FILLS-ONLY, so a
+        # 0 -> >0 transition here is a real execution, not an in-flight intent.
+        #
+        # ⛔ This is defect 2 of the composition bug: the ONLY `cw_entries_this_flip += 1` lives on
+        # the REACTIVE path, so a RESTING entry -- the live default since 07-22 -- consumed no slot
+        # at all. That is precisely what let the reclaim path see two free slots and fire TWO
+        # reclaims, the composition the operator calls "very bad".
+        #
+        # The reactive path claims `cw_reclaim_taken` at EMIT, before its fill arrives, so a fill
+        # with the reclaim slot still free must be the resting one. That test is robust to the
+        # order in which `resting_active` is cleared.
+        #
+        # ⭐ BOTH LEGS, for free: `SymbolState` is per SYMBOL, not per account, so the Webull
+        # fan-out leg's fill lands here too. A fan-out-only cross -- Schwab rejected by the
+        # API-open block, as UPC hit on 2026-08-03 -- therefore still consumes its slot and stays
+        # bounded under the per-type cap.
+        if prev_held == 0 and state.position_qty_held > 0 and not state.cw_reclaim_taken:
+            state.cw_resting_taken = True
         if prev > 0 and state.position_qty == 0:
             # ⛔ NO COOLDOWN (removed 2026-07-28, operator decision). A 5-bar cooldown used to be
             # armed here. It was invented when reclaim was UNCAPPED and could chase the same trade
@@ -1365,7 +1389,13 @@ class SchwabV2Strategy:
             state.cw_segment_high = float(state.bars[-1].high)  # reclaim lookback starts at the flip bar
             fl = atr_signal.get("flip_level")
             state.cw_flip_level = float(fl) if fl is not None else 0.0
-            state.cw_entries_this_flip = 0
+            # ⛔⭐ DO NOT RESET THE SLOTS HERE. The resting buy sits AT the ATR line and fills
+            # INTRABAR; this arm confirms the same cross at the BAR CLOSE, seconds to minutes later.
+            # Resetting here wiped the entry that CAUSED the cross, so counting restarted at zero and
+            # two MORE were allowed — three per cross, four times live on 2026-08-03 (HYFM x3,
+            # FUSE x1; gaps of 21s, 41s, 169s and 706s between fill and arm).
+            # The slots are reset at DISARM instead, so whatever arrives here already carries the
+            # entries attributable to the cross being confirmed.
             state.fanout_webull_claimed = False  # fresh flip -> re-allow the fan-out Webull leg
             if self._cw_armed_segment_safety_enabled:
                 # Stamp the arm with the FLIP BAR's ts (not wall-clock): a reconstructed arm carries
@@ -1381,6 +1411,12 @@ class SchwabV2Strategy:
                 logger.info("[V2-CW-DISARM] %s reason=flip", state.symbol)
             state.cw_armed = False   # segment over (also the flip-close EXIT path)
             state.cw_arm_bar_ts = 0
+            # A cross ENDS here, so this is where its slots are released. Moved from the arm block
+            # (2026-08-03): entries belong to the cross that was live when they filled, or to the
+            # cross that confirms while the position is still held.
+            state.cw_entries_this_flip = 0
+            state.cw_resting_taken = False
+            state.cw_reclaim_taken = False
             return
         if not state.cw_armed:
             return
@@ -1468,9 +1504,16 @@ class SchwabV2Strategy:
 
         if not (state.cw_armed and state.cw_bars_waited >= 2):
             return None
+        # ⭐⭐ REACTIVE IS THE RECLAIM SLOT, AND ONLY THAT (operator 2026-08-03).
+        # The cap is COMPOSITION -- exactly one resting and one reclaim per cross -- so a scalar
+        # `entries >= 2` is the wrong gate: it happily permits reclaim+reclaim.
+        # ⛔ DEGENERATE CASE, operator-confirmed: if the RESTING never filled (API-open reject, or
+        # repriced away before price crossed) its slot is FORFEIT. Reactive may NOT substitute into
+        # it -- the cross gets at most the one reclaim. Rationale on record: never trade a type the
+        # operator did not ask for.
         if (
             state.position_qty != 0
-            or state.cw_entries_this_flip >= self._cw_v2_max_entries_per_flip
+            or state.cw_reclaim_taken
             or state.cw_v2_emit_claimed
         ):
             return None
@@ -1501,13 +1544,23 @@ class SchwabV2Strategy:
         # Reclaim gap: the 2nd (reclaim) entry must wait `reclaim_gap_bars` NEW bars after the prior
         # exit — no same-bar reclaim (backtest 07-09..07-14: same-bar reclaim re-enters the just-
         # exited micro-spike and bleeds). n=0 (first entry) unaffected. 0 = off (byte-identical).
-        if (state.cw_entries_this_flip >= 1 and self._cw_v2_reclaim_gap_bars > 0
+        # ⛔ Gated on the RESTING slot being taken, not on a counter: with no prior entry there is
+        # no exit to wait after, and requiring the gap anyway would block the degenerate cross for
+        # ever.
+        if (state.cw_resting_taken and self._cw_v2_reclaim_gap_bars > 0
                 and state.cw_v2_bars_since_exit < self._cw_v2_reclaim_gap_bars):
             return None
 
         # 1st entry (n=0) breaks the flip+2 3-bar trigger; a RECLAIM (n>=1) must break a genuine NEW
         # segment high (max high of ALL bars since the flip) — NOT re-cross the same 3-bar level.
-        trig = state.cw_trigger if state.cw_entries_this_flip == 0 else state.cw_segment_high
+        # Reactive is the reclaim, so it must break a genuine NEW segment high -- never the easier
+        # flip+2 3-bar trigger, which belongs to the resting (first) slot.
+        # ⛔ ALWAYS the segment high. Reactive is the RECLAIM slot, so it must break a genuine NEW
+        # high of the segment -- never the easier flip+2 3-bar `cw_trigger`, which belongs to the
+        # RESTING (first) slot. This is what "reactive may not substitute into the forfeit resting
+        # slot" means mechanically: on a cross whose resting never filled, reactive can still fire
+        # once, but only over the harder reclaim bar -- it can never stand in as the first entry.
+        trig = state.cw_segment_high
         fl = state.cw_flip_level
         if trig <= 0.0 or px <= trig:
             return None  # rule 6: intrabar break of the entry-appropriate trigger
@@ -1532,7 +1585,8 @@ class SchwabV2Strategy:
 
         state.cw_v2_emit_claimed = True
         state.cw_v2_emit_ms = now_ms
-        state.cw_entries_this_flip += 1
+        state.cw_entries_this_flip += 1     # retained for labelling (cw_entry_n); NOT the cap
+        state.cw_reclaim_taken = True       # the reactive path owns the reclaim slot for this cross
         state.last_entry_price = px
         logger.info(
             "[V2-CW] %s v2 INTRABAR ENTER px=%.4f trig=%.4f flip_level=%.4f low_sf=%.4f n=%d",

@@ -56,6 +56,15 @@ def _feed_bar(strat, state, bar, sig):
     strat._cw_v2_track(state, sig)
 
 
+def _resting_fill(strat, state, qty: int = 10) -> None:
+    """Simulate the RESTING entry filling, which is what consumes the resting slot.
+
+    ⭐ 2026-08-03: `position_qty_held` is FILLS-ONLY, so a 0 -> >0 transition there is a real
+    execution. This is the slot the old code never consumed -- the defect that let the reclaim path
+    see two free slots and fire two reclaims."""
+    strat.update_position(state.symbol, qty, held_qty=qty)
+
+
 def _arm_to_watch(strat, state):
     """BUY flip (flip bar high 12.0, flip_level 9.5) + 2 bars (highs 10.0, 11.0) ->
     trigger = max(12.0, 10.0, 11.0) = 12.0, INCLUDING the flip/spike bar."""
@@ -142,37 +151,29 @@ def test_cw_v2_sell_flip_cancels():
 # --------------------------------------------------------------- reclaim (max 2)
 
 def test_cw_v2_reclaim_two_then_capped():
+    """RETARGETED 2026-08-03 — the cap is COMPOSITION, not a count.
+
+    Was: two reactive entries then capped at 2. That pinned the SCALAR cap, which permits
+    reclaim+reclaim — the composition the operator calls "very bad". The reactive path now owns the
+    RECLAIM slot and may fire at most once per cross."""
     strat = _strat_reclaim()
     state = strat.watchlist_state("TEST")
     _arm_to_watch(strat, state)
 
-    # entry #1
     assert strat._cw_v2_quote(state, _quote(12.5)) is not None
-    assert state.cw_entries_this_flip == 1
+    assert state.cw_reclaim_taken is True
     # claimed -> a 2nd break before the fill is blocked
     assert strat._cw_v2_quote(state, _quote(12.6)) is None
 
-    # fill then exit -> update_position True->False releases the claim (no cooldown for reclaim)
     state.position_qty = 10
-    assert strat._cw_v2_quote(state, _quote(12.7)) is None   # in position -> flat gate
     strat.update_position("TEST", 0)
     assert state.cw_v2_emit_claimed is False
 
-    strat._cw_v2_track(state, _sig())    # next bar: reset forming-bar low
-    # entry #2 (reclaim)
-    assert strat._cw_v2_quote(state, _quote(12.5)) is not None
-    assert state.cw_entries_this_flip == 2
-
-    # cap: after a 2nd exit, a further break is blocked (2 per flip)
-    state.position_qty = 10
-    strat.update_position("TEST", 0)
     strat._cw_v2_track(state, _sig())
-    assert strat._cw_v2_quote(state, _quote(12.5)) is None
-    assert state.cw_entries_this_flip == 2
-
-    # a fresh BUY flip re-arms the counter
-    _feed_bar(strat, state, _bar(20.0, ts=99), _sig(flip="BUY", flip_level=15.0))
-    assert state.cw_entries_this_flip == 0 and state.cw_trigger == 20.0
+    _feed_bar(strat, state, _bar(15.0, ts=4), _sig())
+    # ⛔ NO SECOND RECLAIM, however high the break. This is the rule the scalar cap could not express.
+    assert strat._cw_v2_quote(state, _quote(15.5)) is None
+    assert state.cw_reclaim_taken is True
 
 
 # --------------------------------------------------------------- reclaim = new segment high (2026-07-13 fix)
@@ -184,40 +185,44 @@ def _release(state):
 
 
 def test_cw_v2_reclaim_requires_new_segment_high():
-    """The reclaim (2nd entry) must break a genuine NEW high across ALL bars since the flip —
-    NOT re-cross the flip+2 3-bar trigger. This is the 2026-07-13 SOBR over-trading fix."""
+    """The reclaim must break a genuine NEW high across ALL bars since the flip — never re-cross
+    the flip+2 3-bar trigger. The 2026-07-13 SOBR over-trading fix, still guarded."""
     strat = _strat_reclaim()
     state = strat.watchlist_state("TEST")
     _arm_to_watch(strat, state)                       # 3-bar trigger 12.0, segment_high 12.0
-    assert strat._cw_v2_quote(state, _quote(12.5)) is not None      # 1st entry breaks 12.0
-    assert state.cw_entries_this_flip == 1
-    _release(state)
-    # the name runs on -> the segment high advances to 15.0 over the next bars
+    _resting_fill(strat, state)
+    strat.update_position("TEST", 0)
     _feed_bar(strat, state, _bar(15.0, ts=4), _sig())
     assert state.cw_segment_high == 15.0
-    # a quote that re-crosses the OLD 3-bar trigger (13.0 > 12.0) but is BELOW the new segment high
-    # must NOT reclaim (the bug: it used to enter here on a mere bounce).
+    # re-crossing the OLD 3-bar trigger (13.0 > 12.0) but below the new segment high must NOT enter
     assert strat._cw_v2_quote(state, _quote(13.0)) is None
-    assert state.cw_entries_this_flip == 1
-    # only a break of the NEW segment high (>15.0) reclaims.
+    assert state.cw_reclaim_taken is False
+    # only a break of the NEW segment high reclaims
     assert strat._cw_v2_quote(state, _quote(15.5)) is not None
-    assert state.cw_entries_this_flip == 2
+    assert state.cw_reclaim_taken is True
 
 
 def test_cw_v2_cap_two_per_flip_segment():
-    """Hard cap: no 3rd entry in the same BUY-flip segment, even on a further new high."""
+    """RETARGETED — the legal composition is resting + reclaim, and nothing else.
+
+    A resting FILL consumes the resting slot; the reactive path may then take the reclaim once. A
+    further break is refused."""
     strat = _strat_reclaim()
     state = strat.watchlist_state("TEST")
     _arm_to_watch(strat, state)
-    strat._cw_v2_quote(state, _quote(12.5))           # n=1
-    _release(state)
+
+    _resting_fill(strat, state)                       # resting slot consumed by a real fill
+    assert state.cw_resting_taken is True
+    strat.update_position("TEST", 0)                  # it exits; the slot STAYS consumed
+    assert state.cw_resting_taken is True
+
     _feed_bar(strat, state, _bar(15.0, ts=4), _sig())
-    strat._cw_v2_quote(state, _quote(15.5))           # n=2 (reclaim)
-    assert state.cw_entries_this_flip == 2
+    assert strat._cw_v2_quote(state, _quote(15.5)) is not None    # the reclaim
+    assert state.cw_reclaim_taken is True
+
     _release(state)
-    _feed_bar(strat, state, _bar(18.0, ts=5), _sig())  # segment high advances again
-    assert strat._cw_v2_quote(state, _quote(18.5)) is None   # capped at 2 -> no 3rd
-    assert state.cw_entries_this_flip == 2
+    _feed_bar(strat, state, _bar(18.0, ts=5), _sig())
+    assert strat._cw_v2_quote(state, _quote(18.5)) is None        # no third entry
 
 
 def test_cw_v2_segment_high_advances_every_bar_incl_no_signal():
@@ -249,35 +254,31 @@ def test_cw_v2_new_buy_flip_reseeds_segment_high_and_cap():
 
 
 def test_cw_v2_reclaim_gap1_blocks_same_bar_then_allows_next_bar():
+    """The 1-bar reclaim gap still holds — measured from the RESTING fill's exit."""
     strat = _strat_reclaim(strategy_schwab_1m_v2_cw_v2_reclaim_gap_bars=1)
     state = strat.watchlist_state("TEST")
     _arm_to_watch(strat, state)
-    assert strat._cw_v2_quote(state, _quote(12.5)) is not None      # entry #1
-    assert state.cw_entries_this_flip == 1
-    state.position_qty = 10
-    strat.update_position("TEST", 0)                                # exit -> release + reset counter
+    _resting_fill(strat, state)
+    strat.update_position("TEST", 0)                  # exit -> release + start the gap clock
     assert state.cw_v2_emit_claimed is False
     assert state.cw_v2_bars_since_exit == 0
-    # SAME bar: reclaim blocked by the 1-bar gap
-    assert strat._cw_v2_quote(state, _quote(12.6)) is None
-    assert state.cw_entries_this_flip == 1
-    # a NEW bar arrives -> bars_since_exit=1 -> reclaim now allowed
-    strat._cw_v2_track(state, _sig())
+    assert strat._cw_v2_quote(state, _quote(12.6)) is None        # same bar: blocked by the gap
+    assert state.cw_reclaim_taken is False
+    strat._cw_v2_track(state, _sig())                 # a NEW bar
     assert state.cw_v2_bars_since_exit == 1
     assert strat._cw_v2_quote(state, _quote(12.5)) is not None
-    assert state.cw_entries_this_flip == 2
+    assert state.cw_reclaim_taken is True
 
 
 def test_cw_v2_reclaim_gap0_allows_same_bar_byte_identical():
+    """gap=0 -> a same-bar reclaim is allowed, unchanged."""
     strat = _strat_reclaim()  # gap defaults to 0
     state = strat.watchlist_state("TEST")
     _arm_to_watch(strat, state)
-    assert strat._cw_v2_quote(state, _quote(12.5)) is not None
-    state.position_qty = 10
+    _resting_fill(strat, state)
     strat.update_position("TEST", 0)
-    # same-bar reclaim allowed (no gap) — unchanged from before
     assert strat._cw_v2_quote(state, _quote(12.6)) is not None
-    assert state.cw_entries_this_flip == 2
+    assert state.cw_reclaim_taken is True
 
 
 # --- reclaim master switch (2026-07-15 operator rule: reclaim OFF, code retained) ---
@@ -378,17 +379,23 @@ def test_the_orb_window_predicate_is_gone_not_merely_unused():
 
 
 def test_stale_trigger_behaviour_is_restored():
-    """#467 reverted: the 1st entry is back on the FROZEN flip+2 trigger. This documents the
-    KNOWN bug (SOBR 07-15) that is live again, deliberately, pending a narrower fix."""
+    """RETARGETED 2026-08-03 — the SOBR chase is now CLOSED, as a side effect of the cap fix.
+
+    This test used to DOCUMENT a known live bug: the first entry rode the FROZEN flip+2 trigger, so
+    a quote at 12.9 entered while the real segment high was 15.8 (SOBR 07-15). It was left live
+    "pending a narrower fix".
+
+    Making the reactive path the RECLAIM slot is that fix: reactive now breaks the SEGMENT HIGH, so
+    a stale-trigger chase can no longer enter. Kept and inverted rather than deleted — a deleted
+    test invites someone to restore the chase to make a scalar cap pass again."""
     strat = _strat()
     st = strat.watchlist_state("SOBR")
-    _arm_to_watch(strat, st)                       # trigger 12.0
+    _arm_to_watch(strat, st)                       # frozen trigger 12.0
     _feed_bar(strat, st, _bar(15.8, low=12.4, ts=4), _sig())
     strat._cw_v2_track(st, _sig())
     assert st.cw_segment_high == 15.8
-    # px 12.9 is above the STALE trigger but far below the real high -> pre-#467 this ENTERS
-    draft = strat._cw_v2_quote(st, _quote(12.9))
-    assert draft is not None                        # the chase is back (known, accepted for now)
+    assert strat._cw_v2_quote(st, _quote(12.9)) is None     # the chase no longer enters
+    assert strat._cw_v2_quote(st, _quote(15.9)) is not None  # a genuine new high still does
 
 
 # --------------------------------------------------- resting liquidity RE-check (2026-07-30)
@@ -434,3 +441,79 @@ def test_a_resting_order_SURVIVES_while_liquidity_holds():
     strat._cw_v2_resting_track(st, _sig(state="short", trail=9.03))
     assert st.resting_active is True
     assert not any(d.intent_type == "cancel" for d in strat._pending_intents)
+
+
+# =============================================================================================
+# ACCEPTANCE CRITERIA — the composition cap (operator-confirmed 2026-08-03)
+# Exactly one RESTING and one RECLAIM per cross. Never two reclaims ("very bad"), never two
+# restings. Four live breaches that day: HYFM x3, FUSE x1.
+# =============================================================================================
+
+
+def test_LIVE_BREACH_the_arm_must_not_wipe_the_fill_that_caused_it():
+    """⭐⭐ THE BUG, pinned. The resting buy sits AT the ATR line and fills INTRABAR; the arm
+    confirms the SAME cross at the BAR CLOSE, 21s-706s later, and used to run
+    `cw_entries_this_flip = 0` — wiping the entry that caused the cross. Counting restarted at zero
+    and two MORE were allowed: three entries on one cross, four times live on 2026-08-03."""
+    strat = _strat_reclaim()
+    state = strat.watchlist_state("HYFM")
+
+    _resting_fill(strat, state)                 # 12:09:41 — fills BEFORE the arm
+    assert state.cw_resting_taken is True
+    _arm_to_watch(strat, state)                 # 12:10:02 — the arm confirms the SAME cross
+    assert state.cw_resting_taken is True, "the arm wiped the fill that caused it (the live bug)"
+
+    strat.update_position("HYFM", 0)
+    _feed_bar(strat, state, _bar(15.0, ts=4), _sig())
+    assert strat._cw_v2_quote(state, _quote(15.5)) is not None     # the one legal reclaim
+    _release(state)
+    _feed_bar(strat, state, _bar(18.0, ts=5), _sig())
+    assert strat._cw_v2_quote(state, _quote(18.5)) is None         # THE THIRD ENTRY IS REFUSED
+
+
+def test_BOUNDARY_a_genuine_second_cross_starts_clean():
+    """⛔ The fix must not over-correct into blocking legitimate re-arms. A cross ENDS at the
+    DISARM, and the next one gets its own full resting+reclaim."""
+    strat = _strat_reclaim()
+    state = strat.watchlist_state("TEST")
+    _arm_to_watch(strat, state)
+    _resting_fill(strat, state)
+    strat.update_position("TEST", 0)
+    _feed_bar(strat, state, _bar(15.0, ts=4), _sig())
+    assert strat._cw_v2_quote(state, _quote(15.5)) is not None
+    assert state.cw_resting_taken and state.cw_reclaim_taken       # this cross is used up
+    _release(state)
+
+    _feed_bar(strat, state, _bar(9.0, ts=5), _sig(flip="SELL"))    # the cross ENDS
+    assert state.cw_resting_taken is False and state.cw_reclaim_taken is False
+
+    _arm_to_watch(strat, state)                                    # a genuine NEW cross
+    assert strat._cw_v2_quote(state, _quote(12.5)) is not None     # gets its own entry
+
+
+def test_BOTH_LEGS_a_fanout_only_cross_still_consumes_its_slot():
+    """⛔ The Webull fan-out leg must consume the slot too, or a fan-out-only cross is unbounded.
+    Real shape: UPC 2026-08-03 — Schwab rejected the entry via the API-open block, so ONLY the
+    qty-1 Webull leg filled. `SymbolState` is per SYMBOL, so that fill lands here as well."""
+    strat = _strat_reclaim()
+    state = strat.watchlist_state("UPC")
+    _arm_to_watch(strat, state)
+    _resting_fill(strat, state, qty=1)          # the fan-out leg alone (qty 1, not the qty-2 primary)
+    assert state.cw_resting_taken is True
+    strat.update_position("UPC", 0)
+    _feed_bar(strat, state, _bar(15.0, ts=4), _sig())
+    assert strat._cw_v2_quote(state, _quote(15.5)) is not None     # its one reclaim
+    _release(state)
+    _feed_bar(strat, state, _bar(18.0, ts=5), _sig())
+    assert strat._cw_v2_quote(state, _quote(18.5)) is None         # still bounded
+
+
+def test_AN_EXITED_ENTRY_STILL_CONSUMES_ITS_SLOT():
+    """Operator-confirmed: an exit does NOT refill the slot. FUSE 17:03 exited its first entry on
+    its own bracket before entries 2 and 3 fired — that is still a breach."""
+    strat = _strat_reclaim()
+    state = strat.watchlist_state("FUSE")
+    _arm_to_watch(strat, state)
+    _resting_fill(strat, state)
+    strat.update_position("FUSE", 0)            # it exits cleanly
+    assert state.cw_resting_taken is True, "an exit must not refill the resting slot"

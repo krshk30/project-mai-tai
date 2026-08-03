@@ -3840,6 +3840,24 @@ def _oco_service(session_factory, *, enabled=True):
     return svc
 
 
+def _seed_managed_row(session, acct="live:orb", symbol="BIYA"):
+    """An OPEN oms_managed_positions row — the poll's ground truth since 2026-08-03.
+
+    The poll used to iterate the in-memory guard, so these tests only had to add a key. It now
+    iterates the OPEN ROWS, which is the whole point: a row the set has forgotten must still be
+    polled and closed."""
+    from project_mai_tai.db.models import OmsManagedPosition
+    row = OmsManagedPosition(
+        strategy_code="schwab_1m_v2", broker_account_name=acct, symbol=symbol,
+        entry_price=Decimal("3.90"), original_quantity=1, current_quantity=1,
+        entry_path="ATR Flip", entry_time=datetime(2026, 7, 28, 15, 30, tzinfo=UTC),
+        status="open", config_name="make_v2_variant",
+    )
+    session.add(row)
+    session.commit()
+    return row
+
+
 def _seed_entry(session):
     """A filled bracket ENTRY: strategy + account + intent + buy order."""
     from project_mai_tai.db.models import BrokerAccount, BrokerOrder, Strategy, TradeIntent
@@ -3992,6 +4010,7 @@ def _poll_service(sf, *, enabled=True, min_secs=0.0):
     object.__setattr__(svc.settings, "oms_native_oco_exit_poll_enabled", enabled)
     object.__setattr__(svc.settings, "oms_native_oco_exit_poll_min_secs", min_secs)
     object.__setattr__(svc.settings, "oms_record_native_oco_exit_fills_enabled", True)
+    object.__setattr__(svc.settings, "strategy_schwab_1m_v2_account_name", "live:orb")
     assert svc.settings.oms_native_oco_exit_poll_enabled is enabled
     return svc
 
@@ -4019,6 +4038,7 @@ async def test_the_poll_records_the_exit_and_clears_the_row_without_waiting() ->
     sf = build_test_session_factory()
     with sf() as session:
         _seed_entry(session)
+        _seed_managed_row(session)
     svc = _poll_service(sf)
     svc.broker_adapter = _ExitAdapter(_POLL_EXIT)
     svc._managed_v2_symbols.add(("live:orb", "BIYA"))
@@ -4039,6 +4059,7 @@ async def test_no_exit_at_the_broker_leaves_the_position_alone() -> None:
     sf = build_test_session_factory()
     with sf() as session:
         _seed_entry(session)
+        _seed_managed_row(session)
     svc = _poll_service(sf)
     svc.broker_adapter = _ExitAdapter(None)          # bracket still working
     svc._managed_v2_symbols.add(("live:orb", "BIYA"))
@@ -4057,6 +4078,7 @@ async def test_the_per_symbol_throttle_limits_broker_calls() -> None:
     sf = build_test_session_factory()
     with sf() as session:
         _seed_entry(session)
+        _seed_managed_row(session)
     svc = _poll_service(sf, min_secs=999.0)
     svc.broker_adapter = _ExitAdapter(None)
     svc._managed_v2_symbols.add(("live:orb", "BIYA"))
@@ -4083,6 +4105,7 @@ async def test_a_broker_failure_does_not_spin_the_poll() -> None:
     sf = build_test_session_factory()
     with sf() as session:
         _seed_entry(session)
+        _seed_managed_row(session)          # the poll's work-list is the OPEN ROWS
 
     class _Boom:
         calls = 0
@@ -4097,3 +4120,51 @@ async def test_a_broker_failure_does_not_spin_the_poll() -> None:
     for _ in range(4):
         await svc._poll_native_oco_exits()            # must not raise
     assert _Boom.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_EVICT_A_KEY_the_poll_still_finds_polls_closes_and_REENROLLS_it() -> None:
+    """⛔⭐ THE ACCEPTANCE CRITERION for the phantom-row class (2026-08-03).
+
+    A fix that only works when the in-memory guard is already correct assumes the failure mode away.
+    So: leave an OPEN managed row, evict its key from `_managed_v2_symbols` entirely, and prove the
+    poll still reaches it — records the exit, closes the row, and REPAIRS the guard.
+
+    This is the shape of all three live phantoms that day (live:orb FUSE 2h17m, live:orb HYFM
+    1h41m, live:schwab_1m_v2 HYFM): a filled entry, an OCO bracket emitted, the broker flat, the row
+    open, and ZERO miss lines — because the loop body never ran for them at all."""
+    from project_mai_tai.db.models import Fill, OmsManagedPosition
+    sf = build_test_session_factory()
+    with sf() as session:
+        _seed_entry(session)
+        _seed_managed_row(session)
+    svc = _poll_service(sf)
+    svc.broker_adapter = _ExitAdapter(_POLL_EXIT)
+
+    # THE PHANTOM: the row is open, but the guard has forgotten it.
+    svc._managed_v2_symbols.clear()
+    assert ("live:orb", "BIYA") not in svc._managed_v2_symbols
+
+    await svc._poll_native_oco_exits()
+
+    with sf() as session:
+        fills = session.scalars(select(Fill)).all()
+        rows = session.scalars(select(OmsManagedPosition)).all()
+    assert len(fills) == 1 and fills[0].side == "sell", "the evicted row was never polled"
+    assert all(r.status != "open" for r in rows), "the phantom row was left open"
+
+
+@pytest.mark.asyncio
+async def test_the_poll_work_list_is_the_open_rows_not_the_in_memory_guard() -> None:
+    """The guard is the QUOTE hot path and may legitimately hold stale keys; it must not be able to
+    manufacture work. A key with no open row must NOT be polled."""
+    sf = build_test_session_factory()
+    with sf() as session:
+        _seed_entry(session)          # entry order only - NO open managed row
+    svc = _poll_service(sf)
+    svc.broker_adapter = _ExitAdapter(_POLL_EXIT)
+    svc._managed_v2_symbols.add(("live:orb", "BIYA"))   # a stale key
+
+    await svc._poll_native_oco_exits()
+
+    assert svc.broker_adapter.calls == 0, "a key with no open row must not reach the broker"
