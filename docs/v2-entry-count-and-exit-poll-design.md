@@ -50,10 +50,43 @@ allows two MORE — three total on one cross.
 Confirmed ONE `[V2-CW-ARM]` and ONE `[V2-CW-DISARM]` across each run — the operator's chart showed a
 single unbroken trail and was right.
 
+## ⭐ THE CAP'S INTENT — operator-confirmed 2026-08-03
+
+**"Two entries per CROSS SIGNAL. An exit does NOT refill the slot."**
+
+FUSE forced the question: its first entry had already exited on its own bracket before entries 2 and
+3 fired. Two readings behave differently on exactly that shape, so the intent is now on record rather
+than assumed:
+
+| | rule | FUSE 17:03 |
+|---|---|---|
+| **CHOSEN** | ≤2 entries per cross; an already-exited entry still consumes its slot | **BREACH** (3 taken) |
+| rejected | ≤2 positions held simultaneously; a re-entry after a clean exit is legitimate | mostly fine |
+
+⇒ The fix counts entries **taken**, not entries **currently open**.
+
+## ⛔ THERE ARE TWO DEFECTS HERE, NOT ONE
+
+Found while scoping the fix — either alone still lets a third entry through:
+
+1. **The arm resets the counter** (`cw_entries_this_flip = 0` in the BUY-flip arm block).
+2. **The resting fill never increments it at all.** The only `+= 1` is on the REACTIVE path
+   (`schwab_1m_v2.py:1535`). A resting entry — the live default since 07-22 — consumes **no slot**,
+   so even without the reset it would not be counted.
+
+This also explains why every resting entry records `cw_entry_n=1`: it is never counted, so the field
+is not merely mis-stamped, it is never advanced.
+
 ## The fix
 
-**On arming, do not reset to zero — start the count at the number of entries already taken on this
-cross.** If the resting fill already happened, the count starts at 1 and only the reclaim remains.
+**Two changes, both required:**
+
+1. **Move the reset from ARM to DISARM.** A cross's entries begin when the previous segment ended, so
+   zeroing at the disarm means the counter arriving at the arm already holds exactly the entries
+   attributable to the cross being confirmed — including a resting fill that preceded it by minutes.
+   This is the same attribution rule the detector needs; compute it once, use it in both.
+2. **Make a resting fill consume a slot** — increment on fill, not on placement (placement can be
+   repriced away without ever trading).
 
 ⛔ The boundary is the whole design: a genuinely NEW later cross has taken zero entries, so it still
 starts fresh at 0 and gets its full two. The fix must not over-correct into blocking legitimate
