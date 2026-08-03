@@ -55,8 +55,11 @@ and from `/proc/<oms-pid>/environ`**, so the kill switch is an **APPEND**, not a
 | **#639** | bar-gap DEAD BAND (`>` → `>=`) | CI green — **operator merging himself** |
 | **#641** | pager scoping + halt downgrade (stacked on #639) | CI green — **operator merging himself** |
 | **#642** | design note: entry-count + exit-poll, one workstream | open |
-| **35b46e1** | **FIX 1 BUILT** — entry composition cap | branch `claude/v2-entry-composition-and-poll-fix`, 209 v2 tests green, **NOT deployed** |
-| — | **FIX 2 NOT BUILT** — exit-poll driven from open rows | next task |
+| **#644** | **BOTH FIXES BUILT** — entry composition cap (`35b46e1`) + exit poll from open rows (`5a44f97`) | **full suite 1778 green**, evict-a-key gate mutation-proven, **NOT deployed** |
+
+⛔ **Deploy order: FIX 1 FIRST** (it reduces position count), then FIX 2 (it records what remains).
+**Gates, both must pass live:** entry-counter → a live cross reads a legal composition, never 3 ·
+exit-poll → evict an open row's key and prove the poll re-enrols and closes it.
 
 ---
 
@@ -105,7 +108,7 @@ history, then clear the three rows.
 
 ## 👀 WATCH NEXT SESSION
 
-1. **DEPLOY FIX 1 + FIX 2 ATTENDED.** Fix 1 is built (`35b46e1`); Fix 2 is not. Gates:
+1. **DEPLOY FIX 1 + FIX 2 ATTENDED — both are BUILT (#644).** Gates:
    entry-counter → a live cross reads a legal composition, never 3 · exit-poll → **evict an open
    row's key from the set and prove the poll re-enrolls and closes it.** ⛔ Do not ship a fix that
    only works when the set is already correct.
