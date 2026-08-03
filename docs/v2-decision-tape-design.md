@@ -61,6 +61,26 @@ Note also `_persist_bar` writes `position_state="flat"` as a **hardcoded literal
 [[project_mai_tai_v2_snapshot_hardcoded_empty_fields]]. `position_state` is therefore wrong
 whenever v2 is holding. Fixing it belongs to this workstream but is a **separate commit**.
 
+### ✅ SEVERITY SETTLED — `position_state` is a PAPERCUT, not a phantom-position bug
+
+Triaged 2026-08-03 by tracing the READ path before scoping a fix
+([[feedback_fossil_db_columns_trace_read_path]] — a populated, model-consistent column can be
+NEVER READ). `strategy_bar_history.position_state` has **exactly one reader in the codebase**:
+
+| site | what it does |
+|---|---|
+| `ai_trade_coach/repository.py:539` | copies it into `models.py:34` — **nothing acts on it** |
+| `services/control_plane.py` | **zero references** — the dashboard does not even render it |
+| `services/strategy_engine_app.py` (2957-3203) | all **writers**; the `== "open"` at 2958 reads its own freshly-computed local, not the column |
+| `oms/service.py::_broker_symbol_position_state` | **different thing** — reads the BROKER, not this column |
+
+No reconciler, exit-logic or scoping check reads it. ⇒ **No live path can act on the wrong value**,
+so this is NOT in the phantom/naked-position family. Do not promote it.
+
+⚠️ **The one forward risk:** its only reader is the trade coach, which is stopped/disabled since
+07-30 and slated for replacement. **Fix the literal BEFORE the coach returns**, or the redesigned
+coach silently inherits "every v2 bar was flat" as fact.
+
 ## Design — a follow-up stamp, not a reorder
 
 Rejected: **reordering** persist after evaluate. It changes the sequencing of the live real-money
@@ -114,12 +134,18 @@ queryable record of what the bot decided per bar — the same record every exit 
 
 1. merge behind the flag (OFF) — zero live change
 2. enable attended, after close, watch one symbol for a full bar cycle
-3. confirm the bot page leaves STALE **and** that the badge can still go STALE for the right
-   reason: stop feeding bars and verify it reports stale rather than staying green
+3. ⛔⭐ **ACCEPTANCE CRITERION (not a nice-to-have) — PROVE THE BADGE STILL GOES STALE.**
+   Leaving STALE is only half the result and is *not* sufficient to accept this change. Simulate a
+   genuine staleness (stop feeding bars for that symbol / withhold the stamp) and **observe the
+   badge turn STALE**. If it cannot be made to go red on demand, the change is REJECTED and
+   reverted, however green it looks.
 4. only then treat the badge as a health signal during the P0a window
 
-⚠️ Step 3 is the one that is easy to skip and the one that matters — a badge that has gone from
-always-red to always-green is not fixed, it is inverted.
+⚠️ **Why this is the acceptance gate.** Always-green is a strictly worse blind spot than
+always-red: always-red is merely ignored, always-green **reads as health** and will be believed
+during the exact window v2 is being validated. Turning a false alarm into a false all-clear would
+make this change net-negative. That is the failure mode being fixed, so it is the thing that must
+be demonstrated — see [[feedback_a_watch_that_fails_to_a_false_clean]].
 
 ## Related
 
