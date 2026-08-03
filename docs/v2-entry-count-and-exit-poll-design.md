@@ -50,9 +50,42 @@ allows two MORE — three total on one cross.
 Confirmed ONE `[V2-CW-ARM]` and ONE `[V2-CW-DISARM]` across each run — the operator's chart showed a
 single unbroken trail and was right.
 
-## ⭐ THE CAP'S INTENT — operator-confirmed 2026-08-03
+## ⭐⭐ THE CAP IS COMPOSITION, NOT A COUNT — operator-revised 2026-08-03
 
-**"Two entries per CROSS SIGNAL. An exit does NOT refill the slot."**
+**Exactly one RESTING and one RECLAIM per cross. Never two reclaims ("very bad"). Never two
+restings.** A scalar "cap at 2" is the wrong shape: it permits `resting+resting` and
+`reclaim+reclaim`, both of which are forbidden. Gate **per type**: `≤1 resting AND ≤1 reclaim`.
+
+⇒ **This is what makes defect 2 the mechanism, not a footnote.** Because the resting fill never
+increments the counter, the reclaim path sees TWO free slots and can fire TWO reclaims — the exact
+composition the operator calls very bad. Counting the resting fill (defect 2) plus the per-type gate
+is the pair that prevents it; either alone does not.
+
+### The degenerate case — operator-confirmed
+
+A cross where the RESTING never fills (Schwab rejects it via the API-open block, or it is repriced
+away before price crosses): **RECLAIM ONLY. The resting slot is FORFEIT. A reactive entry may NOT
+substitute into it.**
+
+| | |
+|---|---|
+| chosen | resting rejected ⇒ at most ONE entry (the reclaim) on that cross; reactive BLOCKED |
+| rejected | reactive-first fills the empty resting slot, then reclaim ⇒ still two |
+
+Rationale on record: never trade a type the operator did not ask for. UPC today went fan-out-only
+after an API-open reject — under this rule that cross gets one entry, not two.
+
+⚠️ **Blast radius — state it before shipping.** This makes the REACTIVE path a reclaim-only path; it
+can no longer serve as a first entry. Today's Schwab leg filled **11 resting and 10 reactive**
+entries, so a material share of the reactive ones would not have fired. The exact count needs the
+shared attribution logic and is part of the build, not a guess.
+
+### Superseded: the earlier scalar reading
+
+The first confirmation (kept for the record) was *"two entries per cross signal; an exit does not
+refill the slot"* — that remains true about EXITS (an already-exited entry still consumes its slot,
+so FUSE 17:03 is a true breach) but it is **not sufficient**, because it says nothing about
+composition.
 
 FUSE forced the question: its first entry had already exited on its own bracket before entries 2 and
 3 fired. Two readings behave differently on exactly that shape, so the intent is now on record rather
@@ -120,9 +153,13 @@ re-arms.
 
 ## Acceptance criteria
 
-1. Each of the three live cases above yields **2** entries, not 3.
-2. **BOUNDARY:** a real second cross after a completed first still gets a clean fresh two.
-3. A cross with NO pre-arm resting fill is unchanged (byte-identical).
+1. Each of the four live breaches yields a legal composition, never 3 entries.
+2. **COMPOSITION:** `resting+reclaim` allowed · `reclaim+reclaim` BLOCKED · `resting+resting` BLOCKED.
+3. **BOUNDARY:** a real second cross after a completed first starts clean and gets its own
+   resting+reclaim — the fix must not over-correct into blocking legitimate re-arms.
+4. **DEGENERATE:** resting never filled ⇒ reclaim allowed, reactive BLOCKED, one entry max.
+5. An exited entry still consumes its slot (no refill).
+6. The increment lands on BOTH legs, so a fan-out-only cross is still bounded.
 
 ---
 
