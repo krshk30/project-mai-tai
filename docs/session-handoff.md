@@ -24,104 +24,105 @@
 
 ## 🟢 FLEET — what is live right now
 
-**As of 2026-07-31 EOD.** HEAD `24f2046`. **5 PRs shipped today (#631–#635), 3 deployed.**
-Flat of everything ours; only the operator's manual CYN 5000 remains.
+**As of 2026-08-03 EOD.** v2 flat; only the operator's manual CYN 5000 remains.
+⛔ **NOTHING WAS DEPLOYED TODAY.** Everything below is code-complete-but-unshipped.
 
-⭐ **Today was an EXECUTION day, not a strategy day.** A live KUST loss (−5.17% on a signal that was
-right) root-caused to our own exit loop, and the chain that fell out of it. See
-[`handoff-log.md`](handoff-log.md) 07-31.
+⭐ **Today was an ENTRY-PATH day.** Four live breaches of the entry cap on real money, three
+phantom managed rows, and a P0a test that never became possible. Detail: [`handoff-log.md`](handoff-log.md) 08-03.
 
-⏸ **No trading Sat/Sun — the live watches below resume MONDAY, not tomorrow.**
-
-🔴 **P0a is DEPLOYED but NOT VALIDATED.** Kill switch one command away:
-`MAI_TAI_OMS_HOLD_MARKETABLE_MANAGED_EXIT=false` + `stop strategy → restart oms → start strategy`.
-It needs a **pre-market / no-OCO software-ladder exit** to validate — FCUV cannot (native OCO exits
-through the broker bracket, not the software refresh path). **Tomorrow's pre-market is the test.**
-
-🛑 **KUST is on `global_manual_stop_symbols`** — clear with `/scanner/symbol/resume?symbol=KUST`
-once you are happy the exit path is fixed.
-
-| service | state | note |
-|---|---|---|
-| `project-mai-tai-schwab-1m-v2` | active | real money (+ Webull fan-out leg) |
-| `project-mai-tai-oms` / `strategy` / `control` | active | |
-| `project-mai-tai-trade-coach` | **inactive + disabled** | ⛔ do NOT restart — see below |
-| `project-mai-tai-orb` | inactive + disabled | last ran 07-23 |
-
-⛔ **Schwab holds the OPERATOR'S MANUAL positions: CYN 5000 sh @ $2.5057 and TE −3000 sh @ $3.9976.**
-Not ours. Verified zero orders/fills/intents/bars for both. **Both are now in
-`MAI_TAI_PROTECTED_SYMBOLS=CYN,CELZ,TE`** (TE added 07-30, ground-truthed from `/proc/<oms-pid>/environ`).
-
-**Live flags (v2 + OMS):**
-
-| flag | value |
+| service | state |
 |---|---|
-| `..._ATR_FLIP_VOL_FLOOR` | **10000 — SETTLED 07-30.** Production always ran 10000; the "keep 5K" instruction was given believing production was 5000. #588 aligned the code default. Do not re-litigate. |
-| `..._ATR_FLIP_QUANTITY` / `..._WEBULL_FANOUT_QUANTITY` | 2 / 1 — ⛔ `..._DEFAULT_QUANTITY=10` is a DECOY, not the live path |
-| `..._CW_V2_RESTING_ENTRY_ENABLED` / EH variants | true |
-| `..._CW_V2_RECLAIM_ENABLED` / `_GAP_BARS` | true / 1 |
-| `..._DUAL_BROKER_FANOUT_ENABLED` | true |
-| `OMS_NATIVE_OCO_EXIT_POLL_ENABLED` / `..._RECORD_..._FILLS` | true / true — ⛔ the poll DOES fire (proved on FCUV); it silently missed AXTU/AXTX for 26–90 min and the cause is still unproven |
-| `OMS_HOLD_MARKETABLE_MANAGED_EXIT` | **true (NEW 07-31, P0a)** — a working managed exit is HELD while its limit is still marketable instead of cancel/replaced on the refresh cadence. **KILL SWITCH.** |
-| `..._ATR_FLIP_USE_MAX_STATE_AGE` | false — ⛔ and its gate sits in DEAD CODE; enabling it would gate nothing |
-| `ORB_ENABLED` | true — ⛔ the BOT is dead; the flag seeds the `live:orb` broker account the fan-out needs |
+| `project-mai-tai-schwab-1m-v2` | active — real money (+ Webull fan-out leg) |
+| `project-mai-tai-oms` / `strategy` / `control` | active (OMS up since 07-31, NRestarts=0) |
+| `project-mai-tai-trade-coach` / `-orb` | inactive + disabled |
 
-**Entry rules now:** a symbol newly confirmed by the scanner must wait for a flip that occurs AFTER
-it joined the watchlist (per-symbol watch-start, #618). Symbols held since the open are exempt.
-**The 09:30-10:00 ORB window is REMOVED** — v2 now trades the open for the first time (~3 extra
-entries/day at open volatility).
+**Live flags unchanged from 07-31.** P0a (`OMS_HOLD_MARKETABLE_MANAGED_EXIT`) is still
+**deployed-not-validated** and runs on the CODE DEFAULT `True` — it is **absent from the env file
+and from `/proc/<oms-pid>/environ`**, so the kill switch is an **APPEND**, not a flip:
+`MAI_TAI_OMS_HOLD_MARKETABLE_MANAGED_EXIT=false` + `stop strategy → restart oms → start strategy`.
+
+**Schwab token:** re-authed 08-03 06:40 ET after a weekend death. Next expiry **Mon 2026-08-10
+06:40 ET — 19 min before the EH window opens.** A Wednesday-evening re-auth reminder is now live
+(`/home/trader/schwab_reauth_wednesday_cron.sh`, trader crontab `2 22,23 * * *`, guarded to Wed
+18:00 ET) — re-authing midweek parks every future expiry off the market open.
 
 ---
 
-## 🗓 WEEKEND 2026-08-01/02 — TRADE-COACH REDESIGN (no trading; operator-scheduled 07-31)
+## 🔴 ATTENDED DEPLOY QUEUE — nothing ships without the operator present
 
-**Markets closed both days, so this is build time, not live-ops time.**
+| # | what | state |
+|---|---|---|
+| **#639** | bar-gap DEAD BAND (`>` → `>=`) | CI green — **operator merging himself** |
+| **#641** | pager scoping + halt downgrade (stacked on #639) | CI green — **operator merging himself** |
+| **#642** | design note: entry-count + exit-poll, one workstream | open |
+| **35b46e1** | **FIX 1 BUILT** — entry composition cap | branch `claude/v2-entry-composition-and-poll-fix`, 209 v2 tests green, **NOT deployed** |
+| — | **FIX 2 NOT BUILT** — exit-poll driven from open rows | next task |
 
-⛔⭐⭐ **THE HARD CONSTRAINT — do not design around historical exit attribution.** It is structurally
-unavailable and 07-31 proved it (see [`handoff-log.md`](handoff-log.md) 07-31):
-- **77 of 111 filled July exits take the `close` route, which has NO link to its entry** — a
-  data-model gap Schwab history cannot repair, because the linkage never existed
-- only **17 of 135 entries (13%)** pair unambiguously without the FIFO inference that once invented
-  a −8.40% trade
-- the 56 recoverable entries are ALL native-OCO / 07-22+, a population **biased away** from the
-  execution failures a coach would most want to learn from
+---
 
-⇒ **Any coach built on "grade our historical trades" inherits a loss-censored, biased sample.**
-Build on data attributable BY CONSTRUCTION (native-OCO round trips, `-ocoexit-` coids,
-`/home/trader/trade_records/<day>.jsonl`) or on FORWARD data from the clean live run.
+## ⭐⭐ THE ENTRY BUG — FIXED IN CODE, NOT YET LIVE (35b46e1)
 
-**Settled about the OLD design — do not rebuild these:**
+**Three entries on one ATR cross, four times on 2026-08-03** (HYFM ×3, FUSE ×1), all real money.
+The operator spotted it on a chart showing one unbroken ATR trail; the bot's own log confirmed
+exactly ONE arm and ONE disarm per run.
 
-| | |
-|---|---|
-| Scope | `macd_30s` + `polygon_30s` — **it NEVER reviewed `schwab_1m_v2`**, the real-money bot |
-| Verdict enums | no way to express *"the rule itself is wrong"* — every verdict grades RULEBOOK COMPLIANCE, not profitability. Structurally why 93% came back "good" (887 reviews) |
-| Output | `verdict` + prose. **Nothing a bot can consume, no path back into any rule** |
-| Why it burned 45% CPU | `lookback_days=0` ⇒ `review_start = year 2000` ⇒ it re-loaded ALL orders+fills for 2 strategies and re-paired them in Python **every 60s**, then threw it away. It would burn CPU with a WORKING key |
-| Why `ENABLED=false` didn't stop it | the check is **STARTUP-ONLY** — a running process never re-reads the flag. Not a failed flag; a check in the wrong place |
+**Two defects, both required:**
+1. the ARM ran `cw_entries_this_flip = 0`, **wiping the entry that caused the cross** — the resting
+   buy fills INTRABAR, the arm confirms at the BAR CLOSE 21s–706s later
+2. the resting FILL **never consumed a slot at all** — the only increment was on the reactive path
 
-**Phase 1 (cheap, worth doing regardless of the redesign):** move the enabled-check inside the loop ·
-make `lookback_days=0` mean "current session" · bound the `AiTradeReview` load by date · filter by
-review-state in SQL instead of loading-then-filtering.
+⭐ **The cap is COMPOSITION, not a count** (operator 2026-08-03): **≤1 resting AND ≤1 reclaim**.
+A scalar cap-at-2 permits `resting+resting` and `reclaim+reclaim`, and two reclaims is "very bad".
+⛔ **Degenerate case:** if the resting never fills its slot is **FORFEIT** — reactive may not
+substitute into it. ⛔ An exit does **not** refill a slot.
 
-⛔ Direction already agreed (operator 07-30): **replace, don't redesign** — a deterministic exit-rule
-matrix (one column per rule, per-trade %) + stock-character features computed PRE-ENTRY, resolved by
-a **lookup, not an LLM**; the LLM only narrates a table it did not compute.
-⛔ Sample-size trap: rules × character buckets on ~30 trades is a guaranteed overfit.
+⚠️ **BLAST RADIUS — judge this after it ships.** Reactive can no longer be a first entry. On 08-03
+the Schwab leg filled **11 resting and 10 reactive** entries, so a material share of the reactive
+ones would not have fired.
+⭐ **Side effect:** this closes the SOBR stale-trigger chase (`test_stale_trigger_behaviour_is_restored`
+existed to document it as live-and-accepted; it is now inverted, not deleted).
+
+---
+
+## 🔴 THREE PHANTOM MANAGED ROWS — UNTOUCHED, awaiting the operator's go
+
+`live:orb` FUSE · `live:orb` HYFM · `live:schwab_1m_v2` HYFM. Broker-flat confirmed, **no money at
+risk**, but they block fan-out re-entry (`fanout_webull_collision_managed` fired 3× on 08-03).
+
+**All three produced ZERO miss lines** — that is the confirmation they are the **never-enrolled**
+shape, not the cancelled-buy shape. The exit poll iterates an **in-memory set**
+(`_managed_v2_symbols`), not the table it services, so an open row whose key is missing is never
+polled, never logged, never closed.
+
+⛔ **Ruled out with evidence:** collision-skip · all five discard sites · rehydrate · `_v2_accounts()`
+· the store lookup · a loop-abort. **How the keys left the set is still unpinned — and that is
+deliberately not a blocker.** Driving the poll from the open rows closes the class regardless.
+
+**After-close plan (operator's go required):** backfill the unrecorded round trips from Schwab
+history, then clear the three rows.
 
 ---
 
 ## 👀 WATCH NEXT SESSION
 
-1. **#628 is DEPLOYED BUT NOT VALIDATED LIVE.** No cancel intent occurred after the 15:39 deploy.
-   Check at the open: **no cancel intent should linger at `accepted`.**
-2. **v2 trading the 09:30-10:00 open is NEW.** Watch the first hour deliberately.
-3. **`dashboard_snapshots` regrew 14 MB -> 96 MB in FOUR MINUTES** after VACUUM FULL. That is
-   `_replace_dashboard_snapshot` on the hot path — the same write that is 72% of the polygon freeze.
-   ⭐ **#366 is built, never deployed, and is now the root of two open items.** Cheapest win available.
-4. **07-30 data is NOT usable for exit study or parity** — 11 deploys + bar holes from deliberate stops.
-
----
+1. **DEPLOY FIX 1 + FIX 2 ATTENDED.** Fix 1 is built (`35b46e1`); Fix 2 is not. Gates:
+   entry-counter → a live cross reads a legal composition, never 3 · exit-poll → **evict an open
+   row's key from the set and prove the poll re-enrolls and closes it.** ⛔ Do not ship a fix that
+   only works when the set is already correct.
+2. **RE-ARM THE WATCH.** `/home/trader/p0a_watch.sh` exits at 16:05 by design. Relaunch:
+   `setsid /home/trader/p0a_watch.sh </dev/null >>/home/trader/p0a_watch.nohup 2>&1 &`
+   ⛔ Two corrections it still needs: bound windows by **DISARM** as well as ARM (it swept in a
+   post-disarm entry), and attribute by **FILL time** not `submitted_at` (a resting order is placed
+   minutes before it fills). Retire/rename `oco_old_miss_lines` — it still counts raw AGE, which is
+   exactly the discriminator we proved wrong.
+3. **P0a IS STILL UNVALIDATED.** It needs a MARKETABLE software-ladder exit that rests through a
+   refresh tick and fills. 08-03 produced one EH exit that filled in **41ms** — correctly scored
+   `fastfill_inconclusive`, neither pass nor fail. Closure comes via **item 11's stand-down path**
+   (they converge); a deliberate attended pre-market qty-1 test is the fallback.
+4. **The 2 Webull position-sync failures** want a "can a failed sync leave stale holdings state?"
+   check. They do NOT explain the phantoms (timing does not line up) but are a plausible other
+   divergence source. The other 38 of 42 OMS errors are chronic Webull API flakiness — in view,
+   not chased.
 
 ## 🔴 OPEN THREADS (detail: [`handoff-open-items.md`](handoff-open-items.md))
 

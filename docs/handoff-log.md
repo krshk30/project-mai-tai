@@ -1048,6 +1048,54 @@ nobody runs, a rule that is never 'done', and a dormant feature's item all sat a
 
 ---
 
+## 2026-08-03 — the entry cap breached four times, and three phantom rows
+
+**Nothing deployed.** Everything below is built-or-designed and waiting on an attended session.
+
+### The operator found the entry bug on a chart
+He saw three trades inside one unbroken ATR trail and said so. He was right: exactly ONE
+`[V2-CW-ARM]` and ONE `[V2-CW-DISARM]` per run. **Four breaches, real money** — HYFM 12:09/17:31/18:11
+and FUSE 17:03 — three entries each against a cap of two.
+
+Root cause is two defects that compound. The resting buy fills **intrabar**; the arm confirms the
+**same cross** at the bar close 21s–706s later and ran `cw_entries_this_flip = 0`, wiping the entry
+that caused it. And the resting fill **never consumed a slot at all** — the only increment lives on
+the reactive path, so the live default entry type since 07-22 counted for nothing. That second one
+is what let the reclaim path see two free slots and fire two reclaims.
+
+⭐ Operator revised the spec mid-build: **the cap is COMPOSITION, not a count** — ≤1 resting and
+≤1 reclaim; two reclaims is "very bad". Degenerate case confirmed: if the resting never fills its
+slot is **forfeit**, and reactive may not substitute into it. Built as `35b46e1`, 209 v2 tests green.
+Six characterization tests **retargeted, not deleted** — including one that existed to document the
+SOBR stale-trigger chase as live-and-accepted, which this fix closes.
+
+### Three phantom managed rows
+`live:orb` FUSE/HYFM and `live:schwab_1m_v2` HYFM. Broker-flat, no exposure, but they block fan-out
+re-entry. **All three produced zero miss lines**, which is the confirmation they are the
+never-enrolled shape: the exit poll iterates an **in-memory set**, not the table it services.
+Collision-skip, all five discard sites, rehydrate, `_v2_accounts()`, the store lookup and a
+loop-abort are each ruled out with evidence; how the keys left the set is **still unpinned**, and
+the fix is deliberately cause-agnostic.
+
+### P&L, per-trade %, median first
+Real money: **+1.10 (EH), +2.04, −4.43, −6.00** on UPC, then HYFM **+2.28, −4.46, +2.06**. Median
+across the day is thin and the shape is the known one: **7 wins clustered at +2%, 5 losses clustered
+at −5%**, so a 58% win rate still nets negative. Drop-one by name: **EZRA alone (−5.04, −5.10)
+carries almost the entire loss** — remove it and the day is ≈ −0.8 instead of −10.9.
+⭐ UPC ran 7.38 → 5.70 → 6.66 — a genuinely **oscillating** name, the profile the operator wants.
+The losses on it were execution and timing, not selection.
+
+### Fixed / shipped-to-PR today
+`#639` bar-gap dead band (a 1-missing-bar hole alerted forever and could never be repaired; 8,496
+such holes in the v2 series) · `#641` pager scoping — **paper `polygon_30s` could RED-page the
+naked-position alarm** — plus a halt-downgrade gated on `REST_FAILED == 0` (Schwab REST 401'd for
+2h41m that morning; only the window guard kept the two from overlapping) · `#642` the design note.
+
+### Ops
+Schwab refresh_token died Sunday ~15:02 ET; the warning chain fired correctly (AMBER 45h → RED 7h →
+RED expired) and the operator re-authed Monday 06:40. **Next expiry lands Mon 08-10 06:40 ET, 19 min
+before the EH window** — a Wednesday re-auth reminder is now live to park it midweek.
+
 ## 2026-07-31 — the KUST execution day, and a backward study that turned out to be a dead end
 
 **One live loss opened a chain.** KUST entered pre-market 09:11 ET and lost **-5.17%** on a signal
