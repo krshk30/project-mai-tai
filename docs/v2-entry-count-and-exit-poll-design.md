@@ -74,8 +74,34 @@ Found while scoping the fix — either alone still lets a third entry through:
    (`schwab_1m_v2.py:1535`). A resting entry — the live default since 07-22 — consumes **no slot**,
    so even without the reset it would not be counted.
 
-This also explains why every resting entry records `cw_entry_n=1`: it is never counted, so the field
-is not merely mis-stamped, it is never advanced.
+### ⚠️ What defect 2 does to HISTORICAL entry-count data — stated precisely, not over-claimed
+
+The resting path READS the counter and stamps `cw_entries_this_flip + 1` (`:1645`); it just never
+advances it. So:
+
+- a resting entry's OWN label is correct for its position in the segment
+- but any entry that FOLLOWS it on the same leg in the same segment is **under-numbered by one**,
+  because the counter never moved
+
+⛔ **Do not claim "cw_entry_n is pinned at 1 since 07-22" — that is false.** Checked: resting
+(`STOP_LIMIT`) entries since 07-22 carry n=1 (19), n=2 (4) and n=3 (9), because prior REACTIVE
+entries in the same segment did advance the counter.
+
+⛔ **And do not read duplicate labels as proof of corruption.** Segments with two entries sharing a
+label (AMIX, AXTU, APLX, AXTL) turned out to be **fan-out twins** — Schwab qty 2 plus its Webull
+qty 1 two seconds later, identically stamped BY DESIGN (#570). That is correct behaviour, not a bug.
+
+⇒ Honest position: the under-count is real **in mechanism**, but its historical scale is
+**unquantified** — resting entries carry `cw_arm_bar_ts=0`, so they do not group with their own
+segment and the corruption cannot be counted from the recorded data. Treat resting-path entry counts
+as unreliable in a KNOWN DIRECTION (too low); do not build a study on them and do not put a number
+on it.
+
+### ⛔ The increment must land on BOTH legs
+
+The fan-out is where today's phantoms also live, so increment-on-fill has to cover the Webull leg as
+well as the Schwab one. If only the primary counts, a fan-out-only cross (Schwab rejected — which
+happened to UPC today via the API-open block) would still never consume a slot.
 
 ## The fix
 
