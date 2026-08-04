@@ -3,6 +3,12 @@
 **Status: DESIGN ONLY. Nothing is built. No live change until the operator approves this note.**
 Author: agent session 2026-08-04. Closes open thread 11. Doubles as the **P0a validation vehicle**.
 
+> ✅ **Probe P ran 2026-08-04 and SETTLED the gating question — preview-only, nothing placed, zero
+> money at risk.** Schwab rejects a STOP leg in the extended-hours session with
+> *"This order type is not available for this session."* — single leg, entry bracket, and
+> exit-only OCO pair alike, with `session=NORMAL` controls accepting. **The two-part shape below is
+> confirmed.** Full matrix in §0.
+
 > **Scope discipline.** This note covers the **pre-market/EH exit protection path only**.
 > Fix 1 (entry composition cap / SOBR) and Fix 2 (exit poll from open rows) are **out of scope**
 > and are not touched by anything proposed here.
@@ -52,28 +58,55 @@ immediately, it does not wait for adverse movement. So if the STOP leg is refuse
 **native pre-market downside protection is structurally impossible at Schwab**, and the software
 ladder must own the pre-market exit. That is the case the two-part fix below assumes.
 
-### ⇒ PRE-REQUISITE: settle it by measurement, not inference (Probe P)
+### ✅ PROBE P — SETTLED BY MEASUREMENT, 2026-08-04 07:19–07:21 ET
 
-**Nothing gets built until Probe P returns.** Attended, qty 1, one symbol we already hold or a
-cheap liquid name, pre-market, kill-switch trivial (do not repeat, cancel immediately):
+**Run against the live account via `POST /previewOrder` — PREVIEW ONLY, nothing was placed.**
+No live qty-1 order was needed: `preview_bracket_order` already existed
+(`broker_adapters/schwab.py:1183`, the endpoint that broker-validated the OTOCO shape on
+2026-07-21), so the question was answerable at **zero money at risk**. Harness:
+`scripts/schwab_eh_session_probe.py` — the only endpoints it references are `/previewOrder` and
+`/accountNumbers`; there is no POST to `/orders` in the file by construction.
 
-| step | what | settles |
-|---|---|---|
-| P1 | Place a **single-leg SELL STOP**, `session=AM`, far below market, qty 1 | Is a STOP leg accepted in EH *at all*? This is the whole question in one order. |
-| P2 | Only if P1 is accepted: place the **full OCO** (LIMIT target + STOP protective), `session=AM`, qty 1 | Is the OCO *wrapper* accepted in EH? |
-| P3 | Cancel both, confirm flat, capture the raw Schwab response bodies verbatim into the note | — |
+**Every EH case is paired with the identical shape in `session=NORMAL` as a control**, because a
+bare reject is not an answer — it could equally mean "not shortable", "bad tick", or "harness
+broken".
 
-**Branch on the result — the design shape is not a judgement call, P1 decides it:**
+| # | shape | session | result |
+|---|---|---|---|
+| C1 | single BUY STOP | NORMAL | ✅ **ACCEPTED** |
+| **P1** | single BUY STOP | **AM** | 🔴 **REJECT — "This order type is not available for this session."** |
+| C2 | single SELL LIMIT | AM | reject on *position only* (we hold no AAPL) — **no session message** |
+| P2 | single SELL STOP | AM | position reject **+ "not available for this session"** |
+| C3 | TRIGGER→OCO bracket | NORMAL | ✅ **ACCEPTED** |
+| **P3** | TRIGGER→OCO bracket | **AM** | 🔴 **REJECT — "This order type is not available for this session."** |
+| C4b | exit-only OCO pair | NORMAL | reject on *position only* — **no session message** |
+| **P4b** | exit-only OCO pair | **AM** | position reject **+ "not available for this session"** |
 
-- **P1 REJECTS (expected):** native pre-market protection is impossible → **build the two-part fix
-  below unchanged.**
-- **P1 accepts, P2 rejects:** stops work in EH but not inside an OCO → a *narrower* fix exists
-  (native EH protective stop alone, no target leg). **Re-scope this note before building.**
-- **P1 and P2 both accept:** the skip was simply over-cautious → **the fix collapses to emitting
-  the bracket pre-market with a session-aware payload**, and Part 1 below becomes unnecessary.
-  Part 2 and the stand-down-clear requirement still stand.
+**Verdict — the broker's own words, `originalSeverity: REJECT`:**
 
-⛔ Do not let P1's expected answer become an assumption. It costs one qty-1 order to know.
+> **"This order type is not available for this session."**
+
+1. **A STOP order type is refused in the AM session, in every shape** — single leg (P1, a BUY, so
+   no position/shortability confound at all), entry bracket (P3), and exit-only OCO pair (P4b).
+   *[pinned — measured]*
+2. **LIMIT is accepted in AM.** C2 and C4b reject *only* on the oversold/position check with **no
+   session message**; their AM twins add it. The sole difference between C4b and P4b is the
+   session field. That is a clean differential. *[pinned — measured]*
+3. Both NORMAL controls that could be clean were **ACCEPTED**, so the harness is sound and the
+   rejects above are real answers, not artefacts.
+
+⇒ **The `_is_regular_market_session()` skip was self-imposed and never verified — but it is
+CORRECT.** Schwab independently refuses the construct. Two separate facts, both now established:
+we were guessing, and the guess happened to be right.
+
+⇒ **Native pre-market downside protection is structurally impossible at Schwab.** A limit cannot
+express a protective stop (a sell LIMIT below market executes immediately rather than waiting for
+adverse movement), and STOP is refused. **The software ladder MUST own the pre-market exit.**
+
+⇒ **The two-part shape below is CONFIRMED, and Part 1's trigger is confirmed too:** an exit-only
+OCO is refused in AM (P4b), so the bracket genuinely cannot be armed before the RTH edge. The
+design's "emit at the instant RTH opens" is not a convenience — it is the earliest moment the
+broker will accept it.
 
 ---
 
@@ -251,8 +284,8 @@ standing rule: a green suite is not evidence until a deliberate break turns it r
 
 ## 7. OPEN QUESTIONS FOR THE OPERATOR
 
-1. **Probe P first?** It is one qty-1 attended order and it decides whether Part 1 is even the
-   right shape. Recommend yes, next pre-market session.
+1. ~~Probe P first?~~ ✅ **DONE 2026-08-04** — preview-only, no order placed, answer in §0.
+   The two-part shape is confirmed; no re-scope needed.
 2. **A3 needs a bracket stand-down forced on a marketable exit.** Cleanest trigger is a qty-1
    attended position where the bracket is cancelled by hand while the exit is marketable.
    ⛔ Reminder: a hand-cancel at the broker does **not** stop the Webull fan-out leg — it needs
@@ -260,9 +293,11 @@ standing rule: a green suite is not evidence until a deliberate break turns it r
 3. **Sequencing vs #366.** Handoff has this as *P0a validated → (#366 if the quiet window is only
    deploy-sized) → this build*. This note lets P0a validation ride along with Part 3 rather than
    blocking on it — confirm that is the intended order.
-4. **EH target leg.** If Probe P allows a limit-only OCO, do we want a native EH *target* even
-   without a native stop? It adds an upside exit but leaves the downside on software — arguably
-   worse than uniform software ownership, because it splits the exit across two owners.
+4. **EH target leg — now a live question, because LIMIT *is* accepted in AM (C2/C4b).** A native
+   EH *target* is placeable; a native EH *stop* is not. Do we want one? It would put the upside at
+   the broker while the downside stays on software — **splitting the exit across two owners**,
+   which is arguably worse than uniform software ownership and adds a second stand-down surface.
+   **Recommendation: no.** Keep the pre-market exit wholly on the P0a-held ladder until 09:30.
 
 ---
 
