@@ -56,10 +56,16 @@ and from `/proc/<oms-pid>/environ`**, so the kill switch is an **APPEND**, not a
 | **#639** | bar-gap DEAD BAND (`>` → `>=`) | ✅ **MERGED** `b96a0eb` |
 | **#645** | pager scoping + halt downgrade | open — replaces **#641**, which GitHub auto-closed when `--delete-branch` on the #639 merge removed the base it was stacked on. Same commit cherry-picked onto main. ⛔ **lesson: never `--delete-branch` a PR that has a stacked child** |
 
-⚠️ **THE VPS IS BEHIND ON OPS SCRIPTS.** The box synced to `b117d89` BEFORE either ops PR merged, so
-`ops/health/bar_gap_watch_cron.sh` and `fleet_health_check.py` are still the OLD versions there. A
-`git pull` on the VPS is required for the dead-band fix, the paper-scoping and the halt-downgrade to
-take effect — cron only, **no service restart needed**.
+✅ **VPS SYNCED to `71c6c2c`** — all ops fixes live on the box, modes 755, `bash -n` clean, and
+`fleet_health_check.py` run live returns **GREEN on all 4 checks**.
+
+⛔⭐ **A REPO-SIDE BUG SURFACED DOING IT.** The pull ABORTED because two cron wrappers had local
+modifications on the box — and the diff was **mode-only, `100644 → 100755`**. They are committed
+**non-executable in git**, so someone had `chmod +x`'d them on the box to make cron actually run
+them. That is the Windows-commit trap in its permanent form: **any fresh checkout or new box gets
+crons that silently never run.** Resolved for now by resetting the mode, pulling, then `chmod 755`
+back — but the REPO still has them 644. **Fix with `git update-index --chmod=+x` (what #568 did for
+the OCO wrapper) and audit every `ops/health/*.sh` for the same.**
 | **#642** | design note: entry-count + exit-poll, one workstream | open |
 | **#644** | ✅ **DEPLOYED** — entry composition cap + exit poll from open rows | live at `b117d89` |
 
