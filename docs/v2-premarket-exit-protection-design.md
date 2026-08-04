@@ -224,12 +224,41 @@ does on stand-down-clear is incomplete and must be rejected at review.**
 stands down while the exit is **not** marketable still lands on the plain ladder. So the rule needs
 an explicit decision at `[OMS-OCO-STAND-DOWN-CLEARED]` (`oms/service.py:3400`):
 
-| condition at stand-down-clear | required behaviour |
-|---|---|
-| position still held, RTH, no live OCO | **re-arm a bracket** (Part 1's exit-only path) |
-| position still held, EH (no bracket possible) | **P0a-held software exit**, explicitly |
-| exit marketable | P0a hold — already covered |
-| exit NOT marketable | **must still not churn** — this is the uncovered case and needs a stated rule |
+| condition at stand-down-clear | required behaviour | status |
+|---|---|---|
+| position still held, RTH, no live OCO | **re-arm a bracket** (Part 1's exit-only path) | ✅ built, flag-gated off |
+| position still held, EH (no bracket possible) | **P0a-held software exit**, explicitly | ✅ inherited (P0a has no session gate) |
+| exit marketable | P0a hold — already covered | ✅ + now observable |
+| exit NOT marketable | **must still not churn** | 🔴 **STILL OPEN — operator decision** |
+
+### ⛔⭐ A HAZARD THE RE-ARM DESIGN ORIGINALLY MISSED (found in build, 2026-08-04)
+
+**A naive "re-arm on stand-down-clear" can OVERSELL.** The *common* reason a bracket clears is
+that **a leg FILLED and the position is closing** — and OMS position state lags that fill by tens
+of seconds (Schwab's fill → positions propagation runs to ~6 min). Re-arming inside that window
+places a fresh pair of sells against a position about to be flat: the exact E5 shape the bracket
+exists to eliminate.
+
+**The gate is the existing 90s resolution grace, and it is load-bearing.**
+`_native_oco_resolving` already records when the bracket went away, and the grace is precisely
+"long enough for a resolving fill to reconcile". So the re-arm condition is:
+
+> bracket cleared **AND** grace elapsed **AND** the symbol is *still* in `_managed_v2_symbols`
+> ⇒ it did **not** resolve by a fill; it stood down on a position we are still carrying.
+
+That is NVVE, and it is the only case that re-arms. Pinned by
+`test_a_bracket_that_JUST_cleared_is_NOT_re_armed`, which goes red if the grace check is removed.
+
+⭐ The re-arm deliberately **does** cover RTH-entered positions, unlike Part 1's sweep. NVVE was an
+RTH entry that *was* properly bracketed and then stood down — excluding RTH entries would miss the
+very case the constraint exists for.
+
+### 🔴 THE ONE DECISION STILL OWED
+
+For **"exit not marketable at stand-down"**, satisfying "never the bare timer" requires a one-shot
+**reprice-to-bid** so P0a's hold can engage (P0b already caps at the bid). That changes exit
+*pricing* behaviour, so it is **deliberately not built** — inventing a pricing rule silently is
+how band-aids get shipped. Operator's call.
 
 ---
 
