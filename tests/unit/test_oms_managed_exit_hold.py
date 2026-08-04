@@ -159,3 +159,95 @@ def test_capping_is_inert_without_a_usable_bid() -> None:
     svc = _svc()
     assert svc._cap_exit_limit_to_bid(1.74, bid=0.0) == 1.74
     assert svc._cap_exit_limit_to_bid(1.74, bid=None) == 1.74
+
+
+# ------------------------------------------------- P0a OBSERVABILITY (2026-08-04)
+# ⭐ WHY THIS EXISTS. For its first four days the hold branch was a bare `pass`, so engaging it
+# left NO trace at all. P0a sat "deployed-not-validated" partly because there was nothing to look
+# for: a watch could only infer the hold from the ABSENCE of cancel/replace lines, and inferring
+# health from an absence is exactly how a broken watch reports a false clean.
+# [[feedback_a_watch_that_fails_to_a_false_clean]]
+
+class _CapturingLogger:
+    def __init__(self) -> None:
+        self.lines: list[str] = []
+
+    def info(self, msg, *args) -> None:
+        self.lines.append(msg % args if args else msg)
+
+    warning = exception = debug = info
+
+
+def _svc_with_logger(**over):
+    svc = _svc(**over)
+    svc.logger = _CapturingLogger()
+    return svc
+
+
+def _held_order(order_id: str = "o1", limit_price: float = KUST_EXIT_LIMIT, session: str = "AM"):
+    o = _exit_order(age_secs=30, limit_price=limit_price)
+    o.id = order_id
+    o.symbol = "KUST"
+    o.payload["session"] = session
+    return o
+
+
+def test_hold_logs_once_per_order_not_once_per_refresh_tick() -> None:
+    """⛔ EDGE-triggered, not level-triggered. The refresh re-evaluates every working order every
+    ~5s; a per-tick line would be ~12/min/order and drown its own signal (the REVISE-STORM shape).
+    Three evaluations of the same still-held order must produce exactly ONE line."""
+    svc = _svc_with_logger()
+    order = _held_order()
+    for _ in range(3):
+        svc._log_p0a_hold_edge(order, bid=1.76)
+    engaged = [ln for ln in svc.logger.lines if "[OMS-P0A-HOLD]" in ln]
+    assert len(engaged) == 1, f"expected exactly one engage line, got {len(engaged)}"
+    assert "ENGAGED" in engaged[0] and "KUST" in engaged[0]
+
+
+def test_release_reports_how_long_the_hold_actually_held() -> None:
+    """The DURATION is the evidence. 'Rested through a refresh then filled' is the P0a pass
+    condition, and it cannot be scored without knowing how long the order sat."""
+    svc = _svc_with_logger()
+    order = _held_order()
+    svc._log_p0a_hold_edge(order, bid=1.76)
+    svc._log_p0a_hold_release(order, bid=1.70)
+    released = [ln for ln in svc.logger.lines if "[OMS-P0A-HOLD-RELEASED]" in ln]
+    assert len(released) == 1
+    assert "held" in released[0] and "s then released" in released[0]
+
+
+def test_release_without_a_prior_engage_is_silent() -> None:
+    """An order that was never held must not manufacture a release line — a spurious RELEASED
+    would read as 'the hold engaged and gave up', inventing an incident that never happened."""
+    svc = _svc_with_logger()
+    svc._log_p0a_hold_release(_held_order("never-held"), bid=1.70)
+    assert not any("P0A-HOLD-RELEASED" in ln for ln in svc.logger.lines)
+
+
+def test_re_engage_after_a_release_logs_again() -> None:
+    """A genuinely NEW hold on the same order (bid recovered above the limit) is a new event and
+    must be visible. Otherwise a single flapping order would report only its first hold."""
+    svc = _svc_with_logger()
+    order = _held_order()
+    svc._log_p0a_hold_edge(order, bid=1.76)
+    svc._log_p0a_hold_release(order, bid=1.70)
+    svc._log_p0a_hold_edge(order, bid=1.76)
+    assert len([ln for ln in svc.logger.lines if "[OMS-P0A-HOLD]" in ln]) == 2
+
+
+def test_logging_survives_a_service_without_the_tracking_dict() -> None:
+    """__new__-constructed instances lack _p0a_held_orders. A LOG-ONLY attribute must never raise
+    on the working-order path — the refresh loop touches real money."""
+    svc = _svc_with_logger()
+    assert "_p0a_held_orders" not in svc.__dict__
+    svc._log_p0a_hold_edge(_held_order(), bid=1.76)   # must not raise
+    assert any("[OMS-P0A-HOLD]" in ln for ln in svc.logger.lines)
+
+
+def test_the_eh_session_is_the_case_that_matters() -> None:
+    """KUST was session=AM. The hold predicate has no session gating, so the EH exit qualifies on
+    exactly the same terms as an RTH one — this pins that it is not accidentally RTH-only."""
+    svc = _svc()
+    assert svc._managed_exit_refresh_exempt(_held_order(session="AM"), bid=1.76) is True
+    assert svc._managed_exit_refresh_exempt(_held_order(session="NORMAL"), bid=1.76) is True

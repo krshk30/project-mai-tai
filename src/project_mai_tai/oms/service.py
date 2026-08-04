@@ -411,6 +411,10 @@ class OmsRiskService:
         # Read per quote tick (must stay in-memory: a DB round-trip on that path is the
         # #391-family freeze driver), written only by the periodic broker sync.
         self._native_oco_armed_confirmed_at: dict[tuple[str, str], datetime] = {}
+        # order_id -> (when the P0a marketable-hold first engaged, symbol). Purely for the
+        # edge-triggered hold logging; never consulted by a decision path, so a lost entry costs
+        # a log line and nothing else.
+        self._p0a_held_orders: dict[UUID, tuple[datetime, str]] = {}
         # (broker_account_name, symbol) -> when the OCO cleared (armed -> not armed). Keeps the
         # software ladder deferred through the RESOLUTION window: an OCO leg filled and closed the
         # position, but the OMS position state lags the broker fill by ~tens of seconds, so a
@@ -480,6 +484,13 @@ class OmsRiskService:
         # for the rest of the day. Day-scoped key => the latch self-expires next session; empty
         # while the flag is OFF => `_native_oco_stand_down_active` is byte-identical.
         self._v2_eod_oco_transitioned: set[tuple[str, str, str]] = set()
+        # (session_day, account, symbol) -> attempts so far at arming the RTH-edge bracket. NOT a
+        # claim-once latch like the EOD one: this sweep PLACES an order, and a transient broker
+        # error must not permanently skip a position that is currently unprotected. Retries are
+        # rate-limited and capped, then latched LOUD.
+        self._v2_rth_edge_bracket_attempts: dict[tuple[str, str, str], int] = {}
+        self._v2_rth_edge_bracket_done: set[tuple[str, str, str]] = set()
+        self._v2_rth_edge_bracket_last_try: dict[tuple[str, str, str], datetime] = {}
 
     async def _run_db(self, fn, *, commit: bool = True):
         """Run a PURE-SYNC unit of DB work on a worker thread, off the event loop.
@@ -634,6 +645,17 @@ class OmsRiskService:
                     raise
                 except Exception:
                     self.logger.exception("[OMS-V2-EOD-OCO-TRANSITION] sweep failed")
+                # #646 Part 1, the EOD transition's mirror image: at 09:30 ARM a bracket for any
+                # position still held from a PRE-MARKET entry, which today never gets one for its
+                # entire life. Same 5s cadence, same day-scoped idempotence, flag-gated OFF.
+                # Wrapped: a failure here must never break broker-sync, and it must never leave the
+                # software exit worse off (it does not touch it).
+                try:
+                    await self._v2_rth_edge_bracket()
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    self.logger.exception("[OMS-V2-RTH-EDGE-BRACKET] sweep failed")
                 # v2 overnight flatten: close managed v2 positions at 19:55 before the 20:00 gate
                 # (v2 has no native stop). Same cadence, LOUD on failure. RETRY-UNTIL-FILLED: there
                 # is deliberately NO per-day claim (#478 removed it — a per-day claim silently gave
@@ -3816,7 +3838,8 @@ class OmsRiskService:
                         # Set oms_refresh_resting_trigger_orders=true to restore the old refresh.
                         pass
                     elif self._managed_exit_refresh_exempt(
-                        order, bid=(self._latest_quotes_by_symbol.get(order.symbol) or {}).get("bid")
+                        order,
+                        bid=(bid_now := (self._latest_quotes_by_symbol.get(order.symbol) or {}).get("bid")),
                     ):
                         # MANAGED-EXIT HOLD (P0, 2026-07-31 KUST). The exit is still marketable at
                         # its resting limit, so leave it on the book and let it fill. Cancel/replacing
@@ -3824,8 +3847,23 @@ class OmsRiskService:
                         # nine cancels in six minutes against a bid that never once dropped below the
                         # limit. Once the bid falls below the limit this branch stops matching and the
                         # normal refresh below re-prices it.
-                        pass
+                        #
+                        # ⭐ OBSERVABILITY (2026-08-04). This branch was a BARE `pass` for its first
+                        # four days, so the hold left no trace whatsoever: P0a sat
+                        # "deployed-not-validated" partly because there was nothing to look FOR. A
+                        # watch could only infer it from the ABSENCE of cancels, and absence-of-a-thing
+                        # is exactly how a broken watch reports health. Log the engage EDGE (not every
+                        # 5s tick, which would flood) so the hold is provable from the tape.
+                        self._log_p0a_hold_edge(order, bid=bid_now)
                     else:
+                        # If this order was being HELD and no longer qualifies, say so before the
+                        # reprice — otherwise the hold's end is invisible and its duration
+                        # unmeasurable, which is what made P0a unprovable in the first place.
+                        if order.id in self._p0a_held_orders:
+                            self._log_p0a_hold_release(
+                                order,
+                                bid=(self._latest_quotes_by_symbol.get(order.symbol) or {}).get("bid"),
+                            )
                         refresh_result = await self._refresh_working_order(
                             session=session,
                             order=order,
@@ -4278,6 +4316,283 @@ class OmsRiskService:
         `_window_flatten_armed_stops` key so a day-scoped set self-expires next session with no
         explicit reset (an old day's keys simply never match today's)."""
         return (now or datetime.now(UTC)).astimezone(SESSION_TZ).strftime("%Y-%m-%d")
+
+    def _v2_rth_edge_bracket_due(self, now: datetime | None = None) -> bool:
+        """True once the ET clock reaches the RTH edge (default 09:30) on a weekday.
+
+        ⛔ This time is the BROKER'S, not ours. Schwab rejects a STOP leg in the AM session
+        outright, so a bracket cannot exist before the open no matter how we schedule it."""
+        et = (now or datetime.now(UTC)).astimezone(SESSION_TZ)
+        if et.weekday() >= 5:
+            return False
+        hh = int(getattr(self.settings, "oms_v2_rth_edge_bracket_hour_et", 9))
+        mm = int(getattr(self.settings, "oms_v2_rth_edge_bracket_minute_et", 30))
+        return (et.hour, et.minute) >= (hh, mm)
+
+    async def _v2_rth_edge_bracket(self) -> None:
+        """#646 Part 1 — bracket a still-held PRE-MARKET entry the instant the broker allows it.
+
+        THE HOLE THIS CLOSES. `_apply_v2_oco_bracket_entry` decorates a BUY-open intent, so a
+        bracket can only ever be attached to an entry we are placing. A position entered at 07:30
+        and still held at 09:30 is therefore never bracketed for its entire life — nothing in the
+        OMS revisits it. It rode the software ladder all day, which is the ladder that produced
+        KUST (−5.17% on a right signal, nine cancels against a bid that never dropped below the
+        limit).
+
+        ⭐ SCOPE IS PRE-MARKET ENTRIES ONLY (`entry_time` before today's edge). An RTH entry gets
+        its bracket from the entry path exactly as it does today; this sweep must not touch it.
+        That is acceptance criterion A5 — a pre-market fix may not perturb the flow that works.
+
+        ⭐ ORDERING IS FREE, AND DELIBERATELY SO. We only PLACE the OCO here; we never stand the
+        software exit down. The stand-down is driven by `_refresh_native_oco_armed_state`, which
+        activates only once the BROKER confirms both legs WORKING. So the software exit keeps
+        protecting the position until the bracket is provably live, and if placement fails the
+        position simply keeps the exit it already had. There is no unprotected gap by
+        construction, and no new ordering logic to get wrong. [[feedback_has_the_other_bot_solved_this]]
+
+        NOT claim-once. The EOD transition claims its key before acting because it only releases a
+        latch; this one places an order against an unprotected position, so a transient broker
+        error must not silently forfeit the whole day. Retries are rate-limited (60s) and capped
+        (`oms_v2_rth_edge_bracket_max_attempts`), then latched with an ERROR — a position we could
+        not bracket is a thing a human needs told about, not a line in a debug log."""
+        if not bool(getattr(self.settings, "oms_v2_rth_edge_bracket_enabled", False)):
+            return
+        if not self._v2_rth_edge_bracket_due():
+            return
+        adapter = getattr(self, "broker_adapter", None)
+        fetch_armed = getattr(adapter, "fetch_armed_native_oco_symbols", None)
+        if fetch_armed is None:
+            # No broker truth available => we cannot tell a bracketed position from an
+            # unbracketed one. Emitting blind could double-bracket a position (two OCO pairs
+            # reserving the same shares = the E5 oversell). Do nothing.
+            return
+
+        now = datetime.now(UTC)
+        session_day = self._session_day_et(now)
+        edge = now.astimezone(SESSION_TZ).replace(
+            hour=int(getattr(self.settings, "oms_v2_rth_edge_bracket_hour_et", 9)),
+            minute=int(getattr(self.settings, "oms_v2_rth_edge_bracket_minute_et", 30)),
+            second=0, microsecond=0,
+        )
+        max_attempts = int(getattr(self.settings, "oms_v2_rth_edge_bracket_max_attempts", 3))
+
+        by_account: dict[str, list[str]] = {}
+        for acct, symbol in list(self._managed_v2_symbols):
+            # ⛔ The day latch must NOT filter out a symbol whose bracket has since stood down:
+            # doing so made the Part 3 re-arm unreachable for any position already handled at the
+            # open (caught by test_a_re_arm_gets_a_FRESH_attempt_budget). A stand-down is a new
+            # event, so it re-opens eligibility.
+            if (session_day, acct, symbol) in self._v2_rth_edge_bracket_done and not (
+                self._v2_stand_down_rearm_due(acct, symbol, now=now)
+            ):
+                continue
+            by_account.setdefault(acct, []).append(symbol)
+        if not by_account:
+            return
+
+        for acct, symbols in by_account.items():
+            try:
+                already_bracketed = set(await fetch_armed(acct, symbols))
+            except Exception:
+                # FAIL CLOSED on the read: an unreadable broker means we cannot prove a position
+                # is unbracketed, and a double bracket is worse than a late one.
+                self.logger.warning(
+                    "[OMS-V2-RTH-EDGE-BRACKET] %s could not read armed OCO state; skipping this "
+                    "pass (will retry on the next sync)", acct,
+                )
+                continue
+            for symbol in symbols:
+                key = (session_day, acct, symbol)
+                # #646 Part 3 -- THE STAND-DOWN-CLEAR CONSTRAINT. A bracket that resolved or stood
+                # down on a STILL-HELD position must not hand the exit back to the bare timer
+                # ladder. NVVE 2026-07-23 proves that path is real, not theoretical: 11 cancelled
+                # sells on a BRACKETED entry.
+                rearm = self._v2_stand_down_rearm_due(acct, symbol, now=now)
+                if rearm and key in self._v2_rth_edge_bracket_done:
+                    # A genuinely NEW event, not a retry of the morning's arm. Give it a fresh
+                    # budget -- otherwise one position that used up its attempts at 09:30 could
+                    # never be re-armed for the rest of the session.
+                    self._v2_rth_edge_bracket_done.discard(key)
+                    self._v2_rth_edge_bracket_attempts.pop(key, None)
+                    self._v2_rth_edge_bracket_last_try.pop(key, None)
+                if symbol in already_bracketed:
+                    # Already protected at the broker -- nothing owed. Latch so we stop asking.
+                    self._v2_rth_edge_bracket_done.add(key)
+                    continue
+                last = self._v2_rth_edge_bracket_last_try.get(key)
+                if last is not None and (now - last).total_seconds() < 60:
+                    continue
+                attempts = self._v2_rth_edge_bracket_attempts.get(key, 0)
+                if attempts >= max_attempts:
+                    if key not in self._v2_rth_edge_bracket_done:
+                        self._v2_rth_edge_bracket_done.add(key)
+                        self.logger.error(
+                            "[OMS-V2-RTH-EDGE-BRACKET] %s %s GAVE UP after %d attempts — the "
+                            "position is still held and is running on the SOFTWARE ladder for the "
+                            "rest of the session. It is not naked (the P0a-held exit still owns "
+                            "it), but it has no broker-side protection.",
+                            acct, symbol, attempts,
+                        )
+                    continue
+                self._v2_rth_edge_bracket_last_try[key] = now
+                self._v2_rth_edge_bracket_attempts[key] = attempts + 1
+                try:
+                    await self._emit_v2_rth_edge_bracket(
+                        acct=acct, symbol=symbol, edge_et=edge, rearm=rearm
+                    )
+                except Exception:
+                    self.logger.exception(
+                        "[OMS-V2-RTH-EDGE-BRACKET] %s %s attempt %d failed; the software exit is "
+                        "untouched and still owns the position",
+                        acct, symbol, attempts + 1,
+                    )
+                else:
+                    self._v2_rth_edge_bracket_done.add(key)
+
+    def _v2_stand_down_rearm_due(self, acct: str, symbol: str, *, now: datetime) -> bool:
+        """True when a bracket CLEARED on a position we still hold — the re-arm case (#646 Part 3).
+
+        ⛔⭐ THE GATE IS THE RESOLUTION GRACE, AND IT IS LOAD-BEARING. The COMMON reason a bracket
+        clears is that a leg FILLED and the position is closing; the OMS position state lags that
+        fill by tens of seconds (Schwab's fill -> positions propagation runs to ~6 min). Re-arming
+        into that window would place a fresh pair of sells against a position about to be flat —
+        an oversell, the exact E5 shape the bracket exists to eliminate.
+
+        `_native_oco_resolving` records when the bracket went away, and the existing 90s grace is
+        precisely "long enough for a resolving fill to reconcile". So: cleared, grace elapsed, AND
+        the symbol is STILL in the managed set => it did NOT resolve by a fill, it stood down on a
+        position we are still carrying. That is NVVE, and that is the only case we re-arm.
+
+        ⚠️ This does NOT cover a stand-down while the exit is NOT marketable. P0a's hold engages
+        only while `limit <= bid`, so that case still reaches the plain refresh. It needs an
+        operator decision (a one-shot reprice-to-bid changes exit PRICING), and is deliberately
+        left unbuilt rather than invented here. See #646 §7."""
+        if not bool(getattr(self.settings, "oms_v2_stand_down_clear_rearm_enabled", False)):
+            return False
+        cleared_at = getattr(self, "_native_oco_resolving", {}).get((acct, symbol))
+        if cleared_at is None:
+            return False
+        grace = float(getattr(self.settings, "oms_native_oco_resolve_grace_seconds", 90))
+        return (now - cleared_at).total_seconds() > grace
+
+    async def _emit_v2_rth_edge_bracket(
+        self, *, acct: str, symbol: str, edge_et: datetime, rearm: bool = False
+    ) -> None:
+        """Place the exit-only OCO for one still-held pre-market position. Raises on failure so the
+        caller can count the attempt and leave the software exit in charge."""
+        events: list = []
+        with self.session_factory() as session:
+            row = self.store.get_open_managed_position(
+                session, broker_account_name=acct, symbol=symbol
+            )
+            if row is None:
+                return
+            entry_time = row.entry_time
+            if entry_time is not None and entry_time.tzinfo is None:
+                entry_time = entry_time.replace(tzinfo=UTC)
+            if not rearm and entry_time is not None and entry_time >= edge_et.astimezone(UTC):
+                # An RTH entry already gets its bracket from the entry path. Touching it here would
+                # perturb the flow that works -- acceptance criterion A5.
+                #
+                # ⭐ A RE-ARM IS THE EXCEPTION, and deliberately so: NVVE was an RTH-entered,
+                # properly-bracketed position whose bracket then stood down. Excluding RTH entries
+                # from the re-arm would leave exactly the case the constraint exists to cover.
+                return
+            quantity = int(row.current_quantity)
+            entry = float(row.entry_price)
+            if quantity <= 0 or entry <= 0:
+                return
+            strategy = session.scalar(select(Strategy).where(Strategy.code == row.strategy_code))
+            broker_account = session.scalar(
+                select(BrokerAccount).where(BrokerAccount.name == row.broker_account_name)
+            )
+            if strategy is None or broker_account is None:
+                return
+            # ⛔ SHARES ALREADY RESERVED => DO NOT PLACE. A working software exit reserves the
+            # position, so adding an OCO pair on top is two sets of sells against one holding --
+            # Schwab answers that with "This order may result in an oversold position" (seen in
+            # Probe P), and it is the E5 oversell shape besides. Defer; the caller retries. This
+            # returns WITHOUT raising so a deferral does not burn one of the capped attempts.
+            if self.store.get_open_exit_reserved_quantity(
+                session,
+                broker_account_id=broker_account.id,
+                symbol=symbol,
+                include_native_stop_guard=False,
+            ) > 0:
+                self.logger.info(
+                    "[OMS-V2-RTH-EDGE-BRACKET] %s %s deferred — a software exit is working and has "
+                    "the shares reserved; will arm once it clears", acct, symbol,
+                )
+                return
+            # Same geometry the software ladder would have used: the bracket RELOCATES the exit to
+            # the broker, it does not change it.
+            target = _schwab_round(entry * (1.0 + self._cw_target_pct / 100.0))
+            protect = _schwab_round(entry * (1.0 - self._cw_stop_pct / 100.0))
+            metadata = {
+                "exit_only_oco": "true",
+                "session": "NORMAL",
+                "bracket_target_price": target,
+                "bracket_stop_price": protect,
+                "oms_v2_rth_edge_bracket": "true",
+                "entry_price": f"{entry:.4f}",
+                "time_in_force": "day",
+            }
+            event = TradeIntentEvent(
+                source_service=SERVICE_NAME,
+                payload=TradeIntentPayload(
+                    strategy_code=row.strategy_code,
+                    broker_account_name=row.broker_account_name,   # <-- THE SCOPING INVARIANT
+                    symbol=row.symbol,
+                    side="sell",
+                    quantity=Decimal(str(quantity)),
+                    intent_type="close",
+                    reason="oms_v2_rth_edge_bracket",
+                    metadata=dict(metadata),
+                ),
+            )
+            intent = self.store.create_trade_intent(
+                session, strategy=strategy, broker_account=broker_account, event=event
+            )
+            self._record_internal_risk_pass(
+                session, intent=intent, strategy=strategy, broker_account=broker_account,
+                metadata=dict(metadata), reason="oms_v2_rth_edge_bracket",
+            )
+            request = OrderRequest(
+                client_order_id=self._build_client_order_id(event),
+                broker_account_name=row.broker_account_name,
+                strategy_code=row.strategy_code,
+                symbol=row.symbol,
+                side="sell",
+                intent_type="close",
+                quantity=Decimal(str(quantity)),
+                reason="oms_v2_rth_edge_bracket",
+                metadata=dict(metadata),
+                order_type="limit",
+                time_in_force="day",
+            )
+            reports = await self.broker_adapter.submit_order(request)
+            events = await self._record_order_reports(
+                session=session, intent=intent, strategy_id=strategy.id,
+                broker_account_id=broker_account.id, intent_event=event,
+                request=request, reports=reports,
+            )
+            if any(str(getattr(ev.payload, "status", "")).lower() == "rejected" for ev in events):
+                session.commit()
+                raise RuntimeError(
+                    f"exit-only OCO rejected for {symbol} — software exit still owns the position"
+                )
+            self.logger.info(
+                "[%s] %s %s ARMED qty=%d entry=%.4f -> OCO[target=%s stop=%s] (%s)",
+                "OMS-V2-STAND-DOWN-REARM" if rearm else "OMS-V2-RTH-EDGE-BRACKET",
+                acct, symbol, quantity, entry, target, protect,
+                "bracket stood down on a still-held position; re-armed instead of falling back to "
+                "the bare timer ladder (NVVE 2026-07-23)" if rearm else
+                "pre-market entry at %s ET finally has broker-side protection" % (
+                    entry_time.astimezone(SESSION_TZ).strftime("%H:%M:%S") if entry_time else "?"),
+            )
+            session.commit()
+        for ev in events:
+            await self._publish_order_event(ev)
 
     def _v2_eod_oco_transition_due(self, now: datetime | None = None) -> bool:
         """True once the ET clock reaches the EOD OCO-transition time (default 16:00) on a weekday.
@@ -6196,6 +6511,45 @@ class OmsRiskService:
             self._is_resting_trigger_order(order)
             and not self._is_stop_guard_order(order)
             and not bool(getattr(self.settings, "oms_refresh_resting_trigger_orders", False))
+        )
+
+    def _log_p0a_hold_edge(self, order: BrokerOrder, *, bid: float | None) -> None:
+        """Log the P0a hold ENGAGING, once per order, never per 5s tick.
+
+        ⛔ Edge-triggered on purpose. The refresh loop re-evaluates every working order every ~5s,
+        so a level-triggered log would emit ~12 lines/min/order and the signal would drown in its
+        own volume — the `[SCHWAB30-REVISE-STORM]` failure mode. One line when the hold takes the
+        order off the refresh path, one when it hands it back (`_log_p0a_hold_release`), and the
+        duration between them is the evidence that the exit rested instead of churning."""
+        # setdefault, not attribute access: __new__-constructed test instances (and any partially
+        # constructed service) lack the dict, and a missing log-only attribute must never raise on
+        # the working-order path. Same getattr-guard convention as _native_oco_armed_confirmed_at.
+        held = self.__dict__.setdefault("_p0a_held_orders", {})
+        if order.id in held:
+            return
+        held[order.id] = (datetime.now(UTC), order.symbol)
+        payload = order.payload or {}
+        self.logger.info(
+            "[OMS-P0A-HOLD] %s ENGAGED limit=%s bid=%s session=%s — exit is marketable, holding it "
+            "on the book instead of cancel/replacing on the refresh cadence (KUST 2026-07-31)",
+            order.symbol, payload.get("limit_price"), bid, payload.get("session") or "NORMAL",
+        )
+
+    def _log_p0a_hold_release(self, order: BrokerOrder, *, bid: float | None) -> None:
+        """Log the hold HANDING BACK to the refresh path, with how long it held.
+
+        A release is NOT a failure — it is the exemption working as specified: once the bid falls
+        below the limit the order cannot fill where it sits, so the refresh must reprice it.
+        Holding forever would trade the KUST churn for a stale exit that never adjusts, which is
+        the same bug facing the other way."""
+        started = self.__dict__.setdefault("_p0a_held_orders", {}).pop(order.id, None)
+        if started is None:
+            return
+        secs = (datetime.now(UTC) - started[0]).total_seconds()
+        self.logger.info(
+            "[OMS-P0A-HOLD-RELEASED] %s held %.1fs then released to the refresh (limit=%s bid=%s) — "
+            "the bid fell through the limit; repricing is correct here, not churn",
+            order.symbol, secs, (order.payload or {}).get("limit_price"), bid,
         )
 
     def _managed_exit_refresh_exempt(self, order: BrokerOrder, *, bid: float | None) -> bool:
