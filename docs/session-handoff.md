@@ -53,8 +53,13 @@ and from `/proc/<oms-pid>/environ`**, so the kill switch is an **APPEND**, not a
 
 | # | what | state |
 |---|---|---|
-| **#639** | bar-gap DEAD BAND (`>` → `>=`) | CI green — **operator merging himself** |
-| **#641** | pager scoping + halt downgrade (stacked on #639) | CI green — **operator merging himself** |
+| **#639** | bar-gap DEAD BAND (`>` → `>=`) | ✅ **MERGED** `b96a0eb` |
+| **#645** | pager scoping + halt downgrade | open — replaces **#641**, which GitHub auto-closed when `--delete-branch` on the #639 merge removed the base it was stacked on. Same commit cherry-picked onto main. ⛔ **lesson: never `--delete-branch` a PR that has a stacked child** |
+
+⚠️ **THE VPS IS BEHIND ON OPS SCRIPTS.** The box synced to `b117d89` BEFORE either ops PR merged, so
+`ops/health/bar_gap_watch_cron.sh` and `fleet_health_check.py` are still the OLD versions there. A
+`git pull` on the VPS is required for the dead-band fix, the paper-scoping and the halt-downgrade to
+take effect — cron only, **no service restart needed**.
 | **#642** | design note: entry-count + exit-poll, one workstream | open |
 | **#644** | ✅ **DEPLOYED** — entry composition cap + exit poll from open rows | live at `b117d89` |
 
