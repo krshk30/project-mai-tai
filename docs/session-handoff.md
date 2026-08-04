@@ -25,7 +25,8 @@
 ## 🟢 FLEET — what is live right now
 
 **As of 2026-08-03 EOD.** v2 flat; only the operator's manual CYN 5000 remains.
-⛔ **NOTHING WAS DEPLOYED TODAY.** Everything below is code-complete-but-unshipped.
+✅ **DEPLOYED 2026-08-03 23:00 UTC — HEAD `b117d89`.** Both v2 fixes are LIVE (attended, post-close).
+All five services active, v2 errors since restart **0**, ledger flat, **0 open managed rows**.
 
 ⭐ **Today was an ENTRY-PATH day.** Four live breaches of the entry cap on real money, three
 phantom managed rows, and a P0a test that never became possible. Detail: [`handoff-log.md`](handoff-log.md) 08-03.
@@ -55,11 +56,27 @@ and from `/proc/<oms-pid>/environ`**, so the kill switch is an **APPEND**, not a
 | **#639** | bar-gap DEAD BAND (`>` → `>=`) | CI green — **operator merging himself** |
 | **#641** | pager scoping + halt downgrade (stacked on #639) | CI green — **operator merging himself** |
 | **#642** | design note: entry-count + exit-poll, one workstream | open |
-| **#644** | **BOTH FIXES BUILT** — entry composition cap (`35b46e1`) + exit poll from open rows (`5a44f97`) | **full suite 1778 green**, evict-a-key gate mutation-proven, **NOT deployed** |
+| **#644** | ✅ **DEPLOYED** — entry composition cap + exit poll from open rows | live at `b117d89` |
 
-⛔ **Deploy order: FIX 1 FIRST** (it reduces position count), then FIX 2 (it records what remains).
-**Gates, both must pass live:** entry-counter → a live cross reads a legal composition, never 3 ·
-exit-poll → evict an open row's key and prove the poll re-enrols and closes it.
+⛔ **NEITHER FIX IS FLAG-GATED.** Rollback = `gh pr revert 644` → VPS `git pull --ff-only` →
+restart v2, then `stop strategy → restart oms → start strategy`. (P0a's own kill switch is separate
+and still an **APPEND** of `MAI_TAI_OMS_HOLD_MARKETABLE_MANAGED_EXIT=false`.)
+
+⚠️⚠️ **TWO THINGS THE DEPLOY DID *NOT* PROVE — do not log these as validated:**
+
+1. **Fix 2's re-enrol path is UNEXERCISED.** The three phantoms cleared via the OMS restart's
+   `[OMS-V2-MANAGED-REHYDRATE]` — the pre-existing "only a restart clears them" behaviour — **not**
+   via the new poll-from-rows-and-re-enrol mechanism. `[OMS-V2-POLL-REENROLL]` has never fired.
+   **⭐ Track presence AND frequency:** one fire proves the mechanism; REPEATED fires mean the
+   underlying leak is live and self-healing is masking it — that is the trigger for a separate
+   root-cause pass. ⛔ "Phantoms cleared on deploy" is NOT "Fix 2 validated".
+2. **The entry cap is unvalidated until a live cross.** First cross next session must read a legal
+   composition — **two entries, not three**.
+
+✅ What the deploy DID prove: two exits backfilled from broker execution records
+(`[OMS-OCO-EXIT-POLL]` → `[OMS-OCO-EXIT-FILL]` → `[OMS-V2-OCO-RESOLVED-FLAT]`), all three rows
+closed, 6 rejects (`oversold` / `NO_POSITION`) confirming flat the hard way with #608's bound
+holding well under 8, and **nothing executed**.
 
 ---
 
@@ -79,9 +96,13 @@ A scalar cap-at-2 permits `resting+resting` and `reclaim+reclaim`, and two recla
 ⛔ **Degenerate case:** if the resting never fills its slot is **FORFEIT** — reactive may not
 substitute into it. ⛔ An exit does **not** refill a slot.
 
-⚠️ **BLAST RADIUS — judge this after it ships.** Reactive can no longer be a first entry. On 08-03
-the Schwab leg filled **11 resting and 10 reactive** entries, so a material share of the reactive
-ones would not have fired.
+⚠️⚠️ **BLAST RADIUS — LIVE NOW, EXPECT A LIGHTER TAPE.** Reactive can no longer be a first entry
+and must break the **segment high**, not the flip+2 trigger. On 08-03 the Schwab leg filled
+**11 resting and 10 reactive**, so a material share of the reactive ones would not have fired.
+⛔ **"Byte-identical on a normal cross" is FALSE and was dropped with the scalar spec** — the
+composition rule makes it impossible. Proof: a quote at 12.9 against a 15.8 segment high used to
+enter and now returns None (that is the SOBR chase closing). Intended under the rule, **not a
+regression** — but judge whether those reactive entries were earning.
 ⭐ **Side effect:** this closes the SOBR stale-trigger chase (`test_stale_trigger_behaviour_is_restored`
 existed to document it as live-and-accepted; it is now inverted, not deleted).
 
