@@ -18,7 +18,7 @@ unprotected gap and no new ordering logic to get wrong.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -78,7 +78,7 @@ def _svc(*, enabled: bool = True, adapter: _Adapter | None = None, **over) -> Om
     svc._v2_rth_edge_bracket_last_try = {}
     svc.emitted: list[tuple[str, str]] = []
 
-    async def _emit(*, acct, symbol, edge_et):
+    async def _emit(*, acct, symbol, edge_et, rearm=False):
         svc.emitted.append((acct, symbol))
 
     svc._emit_v2_rth_edge_bracket = _emit
@@ -172,7 +172,7 @@ async def test_a_failed_emit_RETRIES_rather_than_forfeiting_the_day() -> None:
     svc = _svc()
     attempts = {"n": 0}
 
-    async def _boom(*, acct, symbol, edge_et):
+    async def _boom(*, acct, symbol, edge_et, rearm=False):
         attempts["n"] += 1
         raise RuntimeError("transient broker 500")
 
@@ -190,7 +190,7 @@ async def test_it_gives_up_LOUDLY_after_the_capped_attempts() -> None:
     It is not naked (the P0a-held software exit still owns it) and the message must say so."""
     svc = _svc()
 
-    async def _boom(*, acct, symbol, edge_et):
+    async def _boom(*, acct, symbol, edge_et, rearm=False):
         raise RuntimeError("broker keeps refusing")
 
     svc._emit_v2_rth_edge_bracket = _boom
@@ -207,7 +207,7 @@ async def test_the_rate_limit_stops_a_failing_emit_from_hammering_the_broker() -
     """The sweep runs every ~5s. Without the 60s gate a refusing broker would be retried 12x/min."""
     svc = _svc()
 
-    async def _boom(*, acct, symbol, edge_et):
+    async def _boom(*, acct, symbol, edge_et, rearm=False):
         raise RuntimeError("nope")
 
     svc._emit_v2_rth_edge_bracket = _boom
@@ -216,3 +216,74 @@ async def test_the_rate_limit_stops_a_failing_emit_from_hammering_the_broker() -
     assert svc._v2_rth_edge_bracket_attempts[
         (svc._session_day_et(), "live:schwab_1m_v2", "KUST")
     ] == 1
+
+
+# ------------------------------------------------------------------ #646 Part 3: stand-down-clear
+# ⭐⭐ THE CONSTRAINT. When a bracket resolves or stands down, the exit must re-arm a bracket or
+# inherit the P0a marketable-hold -- it must NEVER fall back to the bare timer ladder. NVVE
+# 2026-07-23 is the evidence the path is real, not theoretical: ELEVEN cancelled sells on a
+# BRACKETED entry, because `[OMS-OCO-STAND-DOWN-CLEARED] ... ladder deferred` handed the exit back
+# to the same refresh cadence that produced KUST.
+
+def _rearm_svc(*, cleared_secs_ago: float | None, enabled: bool = True, **over):
+    svc = _svc(oms_v2_stand_down_clear_rearm_enabled=enabled, **over)
+    svc._native_oco_resolving = {}
+    if cleared_secs_ago is not None:
+        svc._native_oco_resolving[("live:schwab_1m_v2", "KUST")] = datetime.now(UTC) - timedelta(
+            seconds=cleared_secs_ago
+        )
+    return svc
+
+
+def test_a_bracket_that_JUST_cleared_is_NOT_re_armed() -> None:
+    """⛔⭐ THE ONE THAT PREVENTS AN OVERSELL. The COMMON reason a bracket clears is that a leg
+    FILLED and the position is closing; OMS position state lags that fill by tens of seconds
+    (Schwab fill -> positions runs to ~6 min). Re-arming inside that window places a fresh pair of
+    sells against a position about to be flat -- the E5 shape the bracket exists to eliminate."""
+    svc = _rearm_svc(cleared_secs_ago=5)
+    assert svc._v2_stand_down_rearm_due("live:schwab_1m_v2", "KUST", now=datetime.now(UTC)) is False
+
+
+def test_a_bracket_cleared_LONGER_AGO_THAN_THE_GRACE_on_a_still_held_position_re_arms() -> None:
+    """Grace elapsed AND still in the managed set => it did NOT resolve by a fill. That is NVVE."""
+    svc = _rearm_svc(cleared_secs_ago=120)
+    assert svc._v2_stand_down_rearm_due("live:schwab_1m_v2", "KUST", now=datetime.now(UTC)) is True
+
+
+def test_the_grace_boundary_is_the_configured_value_not_a_hardcode() -> None:
+    """⛔ Pin the VALUE. If the resolution grace is retuned, the re-arm gate must move with it."""
+    svc = _rearm_svc(cleared_secs_ago=120, oms_native_oco_resolve_grace_seconds=300)
+    assert svc._v2_stand_down_rearm_due("live:schwab_1m_v2", "KUST", now=datetime.now(UTC)) is False
+
+
+def test_no_stand_down_means_no_re_arm() -> None:
+    svc = _rearm_svc(cleared_secs_ago=None)
+    assert svc._v2_stand_down_rearm_due("live:schwab_1m_v2", "KUST", now=datetime.now(UTC)) is False
+
+
+def test_the_rearm_flag_defaults_OFF_and_gates_the_path() -> None:
+    assert Settings().oms_v2_stand_down_clear_rearm_enabled is False
+    svc = _rearm_svc(cleared_secs_ago=120, enabled=False)
+    assert svc._v2_stand_down_rearm_due("live:schwab_1m_v2", "KUST", now=datetime.now(UTC)) is False
+
+
+@pytest.mark.asyncio
+async def test_a_re_arm_gets_a_FRESH_attempt_budget() -> None:
+    """A position that exhausted its attempts at 09:30 must still be re-armable at 14:00 -- a
+    stand-down is a NEW event, not a retry of the morning's arm. Without this, one bad open would
+    leave the position on the bare ladder for the rest of the session."""
+    svc = _rearm_svc(cleared_secs_ago=120)
+    key = (svc._session_day_et(), "live:schwab_1m_v2", "KUST")
+    svc._v2_rth_edge_bracket_done.add(key)
+    svc._v2_rth_edge_bracket_attempts[key] = 99
+    await svc._v2_rth_edge_bracket()
+    assert svc.emitted == [("live:schwab_1m_v2", "KUST")]
+
+
+@pytest.mark.asyncio
+async def test_a_re_arm_still_respects_broker_truth() -> None:
+    """Re-arming a position the broker says is already bracketed would double-bracket it. The
+    stand-down record is OUR belief; the broker is the truth."""
+    svc = _rearm_svc(cleared_secs_ago=120, adapter=_Adapter(armed={"KUST"}))
+    await svc._v2_rth_edge_bracket()
+    assert svc.emitted == []

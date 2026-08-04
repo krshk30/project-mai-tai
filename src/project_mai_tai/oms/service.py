@@ -4378,7 +4378,13 @@ class OmsRiskService:
 
         by_account: dict[str, list[str]] = {}
         for acct, symbol in list(self._managed_v2_symbols):
-            if (session_day, acct, symbol) in self._v2_rth_edge_bracket_done:
+            # ⛔ The day latch must NOT filter out a symbol whose bracket has since stood down:
+            # doing so made the Part 3 re-arm unreachable for any position already handled at the
+            # open (caught by test_a_re_arm_gets_a_FRESH_attempt_budget). A stand-down is a new
+            # event, so it re-opens eligibility.
+            if (session_day, acct, symbol) in self._v2_rth_edge_bracket_done and not (
+                self._v2_stand_down_rearm_due(acct, symbol, now=now)
+            ):
                 continue
             by_account.setdefault(acct, []).append(symbol)
         if not by_account:
@@ -4397,6 +4403,18 @@ class OmsRiskService:
                 continue
             for symbol in symbols:
                 key = (session_day, acct, symbol)
+                # #646 Part 3 -- THE STAND-DOWN-CLEAR CONSTRAINT. A bracket that resolved or stood
+                # down on a STILL-HELD position must not hand the exit back to the bare timer
+                # ladder. NVVE 2026-07-23 proves that path is real, not theoretical: 11 cancelled
+                # sells on a BRACKETED entry.
+                rearm = self._v2_stand_down_rearm_due(acct, symbol, now=now)
+                if rearm and key in self._v2_rth_edge_bracket_done:
+                    # A genuinely NEW event, not a retry of the morning's arm. Give it a fresh
+                    # budget -- otherwise one position that used up its attempts at 09:30 could
+                    # never be re-armed for the rest of the session.
+                    self._v2_rth_edge_bracket_done.discard(key)
+                    self._v2_rth_edge_bracket_attempts.pop(key, None)
+                    self._v2_rth_edge_bracket_last_try.pop(key, None)
                 if symbol in already_bracketed:
                     # Already protected at the broker -- nothing owed. Latch so we stop asking.
                     self._v2_rth_edge_bracket_done.add(key)
@@ -4419,7 +4437,9 @@ class OmsRiskService:
                 self._v2_rth_edge_bracket_last_try[key] = now
                 self._v2_rth_edge_bracket_attempts[key] = attempts + 1
                 try:
-                    await self._emit_v2_rth_edge_bracket(acct=acct, symbol=symbol, edge_et=edge)
+                    await self._emit_v2_rth_edge_bracket(
+                        acct=acct, symbol=symbol, edge_et=edge, rearm=rearm
+                    )
                 except Exception:
                     self.logger.exception(
                         "[OMS-V2-RTH-EDGE-BRACKET] %s %s attempt %d failed; the software exit is "
@@ -4429,7 +4449,35 @@ class OmsRiskService:
                 else:
                     self._v2_rth_edge_bracket_done.add(key)
 
-    async def _emit_v2_rth_edge_bracket(self, *, acct: str, symbol: str, edge_et: datetime) -> None:
+    def _v2_stand_down_rearm_due(self, acct: str, symbol: str, *, now: datetime) -> bool:
+        """True when a bracket CLEARED on a position we still hold — the re-arm case (#646 Part 3).
+
+        ⛔⭐ THE GATE IS THE RESOLUTION GRACE, AND IT IS LOAD-BEARING. The COMMON reason a bracket
+        clears is that a leg FILLED and the position is closing; the OMS position state lags that
+        fill by tens of seconds (Schwab's fill -> positions propagation runs to ~6 min). Re-arming
+        into that window would place a fresh pair of sells against a position about to be flat —
+        an oversell, the exact E5 shape the bracket exists to eliminate.
+
+        `_native_oco_resolving` records when the bracket went away, and the existing 90s grace is
+        precisely "long enough for a resolving fill to reconcile". So: cleared, grace elapsed, AND
+        the symbol is STILL in the managed set => it did NOT resolve by a fill, it stood down on a
+        position we are still carrying. That is NVVE, and that is the only case we re-arm.
+
+        ⚠️ This does NOT cover a stand-down while the exit is NOT marketable. P0a's hold engages
+        only while `limit <= bid`, so that case still reaches the plain refresh. It needs an
+        operator decision (a one-shot reprice-to-bid changes exit PRICING), and is deliberately
+        left unbuilt rather than invented here. See #646 §7."""
+        if not bool(getattr(self.settings, "oms_v2_stand_down_clear_rearm_enabled", False)):
+            return False
+        cleared_at = getattr(self, "_native_oco_resolving", {}).get((acct, symbol))
+        if cleared_at is None:
+            return False
+        grace = float(getattr(self.settings, "oms_native_oco_resolve_grace_seconds", 90))
+        return (now - cleared_at).total_seconds() > grace
+
+    async def _emit_v2_rth_edge_bracket(
+        self, *, acct: str, symbol: str, edge_et: datetime, rearm: bool = False
+    ) -> None:
         """Place the exit-only OCO for one still-held pre-market position. Raises on failure so the
         caller can count the attempt and leave the software exit in charge."""
         events: list = []
@@ -4442,9 +4490,13 @@ class OmsRiskService:
             entry_time = row.entry_time
             if entry_time is not None and entry_time.tzinfo is None:
                 entry_time = entry_time.replace(tzinfo=UTC)
-            if entry_time is not None and entry_time >= edge_et.astimezone(UTC):
+            if not rearm and entry_time is not None and entry_time >= edge_et.astimezone(UTC):
                 # An RTH entry already gets its bracket from the entry path. Touching it here would
                 # perturb the flow that works -- acceptance criterion A5.
+                #
+                # ⭐ A RE-ARM IS THE EXCEPTION, and deliberately so: NVVE was an RTH-entered,
+                # properly-bracketed position whose bracket then stood down. Excluding RTH entries
+                # from the re-arm would leave exactly the case the constraint exists to cover.
                 return
             quantity = int(row.current_quantity)
             entry = float(row.entry_price)
@@ -4530,10 +4582,13 @@ class OmsRiskService:
                     f"exit-only OCO rejected for {symbol} — software exit still owns the position"
                 )
             self.logger.info(
-                "[OMS-V2-RTH-EDGE-BRACKET] %s %s ARMED qty=%d entry=%.4f -> OCO[target=%s stop=%s] "
-                "(pre-market entry at %s ET finally has broker-side protection)",
+                "[%s] %s %s ARMED qty=%d entry=%.4f -> OCO[target=%s stop=%s] (%s)",
+                "OMS-V2-STAND-DOWN-REARM" if rearm else "OMS-V2-RTH-EDGE-BRACKET",
                 acct, symbol, quantity, entry, target, protect,
-                (entry_time.astimezone(SESSION_TZ).strftime("%H:%M:%S") if entry_time else "?"),
+                "bracket stood down on a still-held position; re-armed instead of falling back to "
+                "the bare timer ladder (NVVE 2026-07-23)" if rearm else
+                "pre-market entry at %s ET finally has broker-side protection" % (
+                    entry_time.astimezone(SESSION_TZ).strftime("%H:%M:%S") if entry_time else "?"),
             )
             session.commit()
         for ev in events:

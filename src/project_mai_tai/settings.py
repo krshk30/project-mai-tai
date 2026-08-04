@@ -265,6 +265,11 @@ class Settings(BaseSettings):
     oms_v2_rth_edge_bracket_hour_et: int = 9
     oms_v2_rth_edge_bracket_minute_et: int = 30
     oms_v2_rth_edge_bracket_max_attempts: int = 3
+    # #646 Part 3 -- THE STAND-DOWN-CLEAR CONSTRAINT. When a bracket resolves or stands down on a
+    # STILL-HELD position, the exit must re-arm a bracket rather than fall back to the bare timer
+    # ladder. NVVE 2026-07-23 is the evidence the path is real: 11 cancelled sells on a BRACKETED
+    # entry. Independent kill switch from the RTH-edge sweep it reuses.
+    oms_v2_stand_down_clear_rearm_enabled: bool = False
     oms_v2_eod_oco_transition_enabled: bool = False
     oms_v2_eod_oco_transition_hour_et: int = 16
     oms_v2_eod_oco_transition_minute_et: int = 0
