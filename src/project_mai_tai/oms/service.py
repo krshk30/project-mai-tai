@@ -411,6 +411,10 @@ class OmsRiskService:
         # Read per quote tick (must stay in-memory: a DB round-trip on that path is the
         # #391-family freeze driver), written only by the periodic broker sync.
         self._native_oco_armed_confirmed_at: dict[tuple[str, str], datetime] = {}
+        # order_id -> (when the P0a marketable-hold first engaged, symbol). Purely for the
+        # edge-triggered hold logging; never consulted by a decision path, so a lost entry costs
+        # a log line and nothing else.
+        self._p0a_held_orders: dict[UUID, tuple[datetime, str]] = {}
         # (broker_account_name, symbol) -> when the OCO cleared (armed -> not armed). Keeps the
         # software ladder deferred through the RESOLUTION window: an OCO leg filled and closed the
         # position, but the OMS position state lags the broker fill by ~tens of seconds, so a
@@ -3816,7 +3820,8 @@ class OmsRiskService:
                         # Set oms_refresh_resting_trigger_orders=true to restore the old refresh.
                         pass
                     elif self._managed_exit_refresh_exempt(
-                        order, bid=(self._latest_quotes_by_symbol.get(order.symbol) or {}).get("bid")
+                        order,
+                        bid=(bid_now := (self._latest_quotes_by_symbol.get(order.symbol) or {}).get("bid")),
                     ):
                         # MANAGED-EXIT HOLD (P0, 2026-07-31 KUST). The exit is still marketable at
                         # its resting limit, so leave it on the book and let it fill. Cancel/replacing
@@ -3824,8 +3829,23 @@ class OmsRiskService:
                         # nine cancels in six minutes against a bid that never once dropped below the
                         # limit. Once the bid falls below the limit this branch stops matching and the
                         # normal refresh below re-prices it.
-                        pass
+                        #
+                        # ⭐ OBSERVABILITY (2026-08-04). This branch was a BARE `pass` for its first
+                        # four days, so the hold left no trace whatsoever: P0a sat
+                        # "deployed-not-validated" partly because there was nothing to look FOR. A
+                        # watch could only infer it from the ABSENCE of cancels, and absence-of-a-thing
+                        # is exactly how a broken watch reports health. Log the engage EDGE (not every
+                        # 5s tick, which would flood) so the hold is provable from the tape.
+                        self._log_p0a_hold_edge(order, bid=bid_now)
                     else:
+                        # If this order was being HELD and no longer qualifies, say so before the
+                        # reprice — otherwise the hold's end is invisible and its duration
+                        # unmeasurable, which is what made P0a unprovable in the first place.
+                        if order.id in self._p0a_held_orders:
+                            self._log_p0a_hold_release(
+                                order,
+                                bid=(self._latest_quotes_by_symbol.get(order.symbol) or {}).get("bid"),
+                            )
                         refresh_result = await self._refresh_working_order(
                             session=session,
                             order=order,
@@ -6196,6 +6216,45 @@ class OmsRiskService:
             self._is_resting_trigger_order(order)
             and not self._is_stop_guard_order(order)
             and not bool(getattr(self.settings, "oms_refresh_resting_trigger_orders", False))
+        )
+
+    def _log_p0a_hold_edge(self, order: BrokerOrder, *, bid: float | None) -> None:
+        """Log the P0a hold ENGAGING, once per order, never per 5s tick.
+
+        ⛔ Edge-triggered on purpose. The refresh loop re-evaluates every working order every ~5s,
+        so a level-triggered log would emit ~12 lines/min/order and the signal would drown in its
+        own volume — the `[SCHWAB30-REVISE-STORM]` failure mode. One line when the hold takes the
+        order off the refresh path, one when it hands it back (`_log_p0a_hold_release`), and the
+        duration between them is the evidence that the exit rested instead of churning."""
+        # setdefault, not attribute access: __new__-constructed test instances (and any partially
+        # constructed service) lack the dict, and a missing log-only attribute must never raise on
+        # the working-order path. Same getattr-guard convention as _native_oco_armed_confirmed_at.
+        held = self.__dict__.setdefault("_p0a_held_orders", {})
+        if order.id in held:
+            return
+        held[order.id] = (datetime.now(UTC), order.symbol)
+        payload = order.payload or {}
+        self.logger.info(
+            "[OMS-P0A-HOLD] %s ENGAGED limit=%s bid=%s session=%s — exit is marketable, holding it "
+            "on the book instead of cancel/replacing on the refresh cadence (KUST 2026-07-31)",
+            order.symbol, payload.get("limit_price"), bid, payload.get("session") or "NORMAL",
+        )
+
+    def _log_p0a_hold_release(self, order: BrokerOrder, *, bid: float | None) -> None:
+        """Log the hold HANDING BACK to the refresh path, with how long it held.
+
+        A release is NOT a failure — it is the exemption working as specified: once the bid falls
+        below the limit the order cannot fill where it sits, so the refresh must reprice it.
+        Holding forever would trade the KUST churn for a stale exit that never adjusts, which is
+        the same bug facing the other way."""
+        started = self.__dict__.setdefault("_p0a_held_orders", {}).pop(order.id, None)
+        if started is None:
+            return
+        secs = (datetime.now(UTC) - started[0]).total_seconds()
+        self.logger.info(
+            "[OMS-P0A-HOLD-RELEASED] %s held %.1fs then released to the refresh (limit=%s bid=%s) — "
+            "the bid fell through the limit; repricing is correct here, not churn",
+            order.symbol, secs, (order.payload or {}).get("limit_price"), bid,
         )
 
     def _managed_exit_refresh_exempt(self, order: BrokerOrder, *, bid: float | None) -> bool:
