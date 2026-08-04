@@ -24,140 +24,171 @@
 
 ## 🟢 FLEET — what is live right now
 
-**As of 2026-08-03 EOD.** v2 flat; only the operator's manual CYN 5000 remains.
-✅ **DEPLOYED 2026-08-03 23:00 UTC — HEAD `b117d89`.** Both v2 fixes are LIVE (attended, post-close).
-All five services active, v2 errors since restart **0**, ledger flat, **0 open managed rows**.
+**As of 2026-08-04 EOD.** Deployed HEAD **`71c6c2c` (#645)** — ⛔ **UNCHANGED all day; nothing was
+deployed 08-04.** `main` moved (#643 handoff, #646 design, #647 build, #649 runbook) but the box did
+not. All five services active.
 
-⭐ **Today was an ENTRY-PATH day.** Four live breaches of the entry cap on real money, three
-phantom managed rows, and a P0a test that never became possible. Detail: [`handoff-log.md`](handoff-log.md) 08-03.
+⭐ **Today was a MEASUREMENT day.** No code reached production. The output is a settled broker fact,
+three merged PRs sitting dark, and **five corrected numbers — three of them corrected by the agent
+that produced them.**
+
+🔴 **TONIGHT — Gate 0.5, attended, after 18:00 ET.** Full runbook:
+[`v2-premarket-exit-protection-rollout.md`](v2-premarket-exit-protection-rollout.md).
+
+⛔⭐ **THE WINDOW IS AFTER 18:00 ET, NOT 16:30.** v2's entry window runs to 18:00, and **Bug 2 is
+still live**: `cw_entries_this_flip` is in-memory and unpersisted, so a **v2** restart re-issues the
+entry cap on every armed segment (the CPHI mechanism). ⛔ **The fleet-flat rule does not cover it** —
+flat checks POSITIONS; the reset fires on ARMED SEGMENTS, which hold nothing. Proven live at 12:23
+ET today: **fleet completely flat, 2 segments armed.**
+✅ **But Gate 0.5 does NOT need a v2 restart** — #647 touches `oms/service.py`,
+`broker_adapters/schwab.py`, `settings.py` only, all oms-risk; v2 is a separate unit. **Do not
+restart v2 tonight.**
+
+**Pre-flight is a runnable check, and it ASSERTS rather than prints** (the 07-15 lesson):
+`sudo /home/trader/ops_preflight/preflight_v2_restart.sh` → exit 0 = GO. Gates: past 18:00 ET ·
+zero armed segments · zero open managed rows · broker flat excluding operator manuals.
 
 | service | state |
 |---|---|
-| `project-mai-tai-schwab-1m-v2` | active — real money (+ Webull fan-out leg) |
-| `project-mai-tai-oms` / `strategy` / `control` | active (OMS up since 07-31, NRestarts=0) |
-| `project-mai-tai-trade-coach` / `-orb` | inactive + disabled |
+| `schwab-1m-v2` · `oms` · `strategy` · `control` · `market-data` | active |
+| `trade-coach` · `orb` | inactive + disabled |
 
-**Live flags unchanged from 07-31.** P0a (`OMS_HOLD_MARKETABLE_MANAGED_EXIT`) is still
-**deployed-not-validated** and runs on the CODE DEFAULT `True` — it is **absent from the env file
-and from `/proc/<oms-pid>/environ`**, so the kill switch is an **APPEND**, not a flip:
-`MAI_TAI_OMS_HOLD_MARKETABLE_MANAGED_EXIT=false` + `stop strategy → restart oms → start strategy`.
-
-**Schwab token:** re-authed 08-03 06:40 ET after a weekend death. Next expiry **Mon 2026-08-10
-06:40 ET — 19 min before the EH window opens.** A Wednesday-evening re-auth reminder is now live
-(`/home/trader/schwab_reauth_wednesday_cron.sh`, trader crontab `2 22,23 * * *`, guarded to Wed
-18:00 ET) — re-authing midweek parks every future expiry off the market open.
+**Flags: unchanged.** #647's two new flags (`..._RTH_EDGE_BRACKET_ENABLED`,
+`..._STAND_DOWN_CLEAR_REARM_ENABLED`) are **absent from the env ⇒ code default OFF**, verified.
 
 ---
 
-## 🔴 ATTENDED DEPLOY QUEUE — nothing ships without the operator present
 
-| # | what | state |
-|---|---|---|
-| **#639** | bar-gap DEAD BAND (`>` → `>=`) | ✅ **MERGED** `b96a0eb` |
-| **#645** | pager scoping + halt downgrade | ✅ **MERGED** `71c6c2c` — replaced **#641**, which GitHub auto-closed when `--delete-branch` on the #639 merge removed the base it was stacked on. Same commit cherry-picked onto main. ⛔ **lesson: never `--delete-branch` a PR that has a stacked child** |
-| **#644** | entry composition cap + exit poll from open rows | ✅ **DEPLOYED** — live at `b117d89` |
-| **#642** | design note: entry-count + exit-poll, one workstream | open |
 
-✅ **VPS SYNCED to `71c6c2c`** — all ops fixes live on the box, modes 755, `bash -n` clean, and
-`fleet_health_check.py` run live returns **GREEN on all 4 checks**.
 
-⛔⭐ **A REPO-SIDE BUG SURFACED DOING IT.** The pull ABORTED because two cron wrappers had local
-modifications on the box — and the diff was **mode-only, `100644 → 100755`**. They are committed
-**non-executable in git**, so someone had `chmod +x`'d them on the box to make cron actually run
-them. That is the Windows-commit trap in its permanent form: **any fresh checkout or new box gets
-crons that silently never run.** Resolved for now by resetting the mode, pulling, then `chmod 755`
-back — but the REPO still has them 644. **Fix with `git update-index --chmod=+x` (what #568 did for
-the OCO wrapper) and audit every `ops/health/*.sh` for the same.**
+## 🗓 TONIGHT — the ordered window
 
-⛔ **NEITHER FIX IS FLAG-GATED.** Rollback = `gh pr revert 644` → VPS `git pull --ff-only` →
-restart v2, then `stop strategy → restart oms → start strategy`. (P0a's own kill switch is separate
-and still an **APPEND** of `MAI_TAI_OMS_HOLD_MARKETABLE_MANAGED_EXIT=false`.)
+### A. PRE-FLIGHT (blocking · assert, don't print)
+`sudo /home/trader/ops_preflight/preflight_v2_restart.sh` — exit 0 = GO, non-zero = WAIT.
+⛔ Only needed **if** something restarts v2. **Gate 0.5 itself does not.**
 
-⚠️⚠️ **TWO THINGS THE DEPLOY DID *NOT* PROVE — do not log these as validated:**
+### B. DEPLOY — attended, in order. ⛔ NOT scheduled; real-money deploys stay attended.
+1. **Gate 0.5 — #647 (`9a193b1`)** per the runbook. Lands CODE, not behaviour: every flag stays
+   **OFF**. Pull → **pre-restart bar-gap checklist** → account-flat → `stop strategy → restart oms
+   → start strategy` → **post-restart bar-gap checklist**. ⛔ **restart `oms` only — not v2.**
+   Write both new flags into the env explicitly (even as `false`) so their kill is a flip, never an
+   append — the P0a lesson.
+2. ⛔ **#366 IS STRUCK FROM TONIGHT — it is already deployed AND enabled, and it is not working.**
+   Ground-truthed 08-04: its merge `3402756` is an ancestor of the deployed HEAD, and
+   `MAI_TAI_SNAPSHOT_PERSIST_THROTTLE_SECS=1.0` is present in `/proc/<pid>/environ` for
+   **strategy, oms AND control — control has carried it since Jul 14**. Yet
+   `dashboard_snapshots` is **103 MB / 5002 rows and still growing**. "Built, never deployed,
+   cheapest win available" was wrong on both counts. **Not a deploy — an investigation.**
+   ⭐ Leading hypothesis *[inferred, not traced]*: a **1.0s** throttle against a **5s** snapshot
+   cadence (`MAI_TAI_MARKET_DATA_SNAPSHOT_INTERVAL_SECONDS=5`) **never binds**. Configured ≠
+   enforced, again.
+3. Expect a **warmup-replay ARM burst** on any restart. Benign; the watch excludes it
+   (`LIVE_ARM_MAX_AGE_SECS=300`) **upstream of every push condition**, so it cannot page.
 
-1. **Fix 2's re-enrol path is UNEXERCISED.** The three phantoms cleared via the OMS restart's
-   `[OMS-V2-MANAGED-REHYDRATE]` — the pre-existing "only a restart clears them" behaviour — **not**
-   via the new poll-from-rows-and-re-enrol mechanism. `[OMS-V2-POLL-REENROLL]` has never fired.
-   **⭐ Track presence AND frequency:** one fire proves the mechanism; REPEATED fires mean the
-   underlying leak is live and self-healing is masking it — that is the trigger for a separate
-   root-cause pass. ⛔ "Phantoms cleared on deploy" is NOT "Fix 2 validated".
-2. **The entry cap is unvalidated until a live cross.** First cross next session must read a legal
-   composition — **two entries, not three**.
+### C. POST-DEPLOY — read-only, ✅ ALREADY SCHEDULED
+`eod_cron.sh` fires **18:05 ET weekdays** (root cron, ET-guarded inside, fire-once per day) →
+`/home/trader/entry_fix_watch/eod_<date>.txt` + an ntfy summary.
+It re-takes **everything currently provisional**, on corrected denominators: live-arm crosses
+(replay excluded), entries **by slot**, **resting fill rate PER LIVE ARM**, no-entry crosses, and
+round trips in **percent, median-first, drop-one**, refusing to FIFO ambiguous pairs.
+⇒ Then **P1** (below), which needs those numbers first.
 
-✅ What the deploy DID prove: two exits backfilled from broker execution records
-(`[OMS-OCO-EXIT-POLL]` → `[OMS-OCO-EXIT-FILL]` → `[OMS-V2-OCO-RESOLVED-FLAT]`), all three rows
-closed, 6 rejects (`oversold` / `NO_POSITION`) confirming flat the hard way with #608's bound
-holding well under 8, and **nothing executed**.
+### D. NOT TONIGHT — design-first, no deploys
+Webull `CW_FLIP` fan-out fix · liquidity-floor hysteresis (⛔ constrained: keep the order MANAGED,
+never "stop cancelling" — that recreates the #580 orphan) · Decision Tape #640 · **any trigger
+change (waits on P1)**.
 
----
-
-## ⭐⭐ THE ENTRY BUG — FIXED IN CODE, NOT YET LIVE (35b46e1)
-
-**Three entries on one ATR cross, four times on 2026-08-03** (HYFM ×3, FUSE ×1), all real money.
-The operator spotted it on a chart showing one unbroken ATR trail; the bot's own log confirmed
-exactly ONE arm and ONE disarm per run.
-
-**Two defects, both required:**
-1. the ARM ran `cw_entries_this_flip = 0`, **wiping the entry that caused the cross** — the resting
-   buy fills INTRABAR, the arm confirms at the BAR CLOSE 21s–706s later
-2. the resting FILL **never consumed a slot at all** — the only increment was on the reactive path
-
-⭐ **The cap is COMPOSITION, not a count** (operator 2026-08-03): **≤1 resting AND ≤1 reclaim**.
-A scalar cap-at-2 permits `resting+resting` and `reclaim+reclaim`, and two reclaims is "very bad".
-⛔ **Degenerate case:** if the resting never fills its slot is **FORFEIT** — reactive may not
-substitute into it. ⛔ An exit does **not** refill a slot.
-
-⚠️⚠️ **BLAST RADIUS — LIVE NOW, EXPECT A LIGHTER TAPE.** Reactive can no longer be a first entry
-and must break the **segment high**, not the flip+2 trigger. On 08-03 the Schwab leg filled
-**11 resting and 10 reactive**, so a material share of the reactive ones would not have fired.
-⛔ **"Byte-identical on a normal cross" is FALSE and was dropped with the scalar spec** — the
-composition rule makes it impossible. Proof: a quote at 12.9 against a 15.8 segment high used to
-enter and now returns None (that is the SOBR chase closing). Intended under the rule, **not a
-regression** — but judge whether those reactive entries were earning.
-⭐ **Side effect:** this closes the SOBR stale-trigger chase (`test_stale_trigger_behaviour_is_restored`
-existed to document it as live-and-accepted; it is now inverted, not deleted).
+### E. OPERATOR
+Review [#646](https://github.com/krshk30/project-mai-tai/pull/646) · #640 at leisure ·
+⏰ **Wednesday 18:00 ET the Schwab re-auth reminder pages — 30 seconds, and it moves the token
+expiry permanently off the Monday open** (next expiry **Mon 08-10 06:40 ET**, 19 min before the EH
+window).
 
 ---
 
-## 🔴 THREE PHANTOM MANAGED ROWS — UNTOUCHED, awaiting the operator's go
+## 🔬 P1 — THE TRIGGER (the day's main open thread)
 
-`live:orb` FUSE · `live:orb` HYFM · `live:schwab_1m_v2` HYFM. Broker-flat confirmed, **no money at
-risk**, but they block fan-out re-entry (`fanout_webull_collision_managed` fired 3× on 08-03).
+**`b117d89` re-shipped the rule of #467**, verbatim and unconditionally: the reactive/reclaim
+trigger is `trig = state.cw_segment_high` — the **running segment high**, not the **frozen 2-bar
+high** (`cw_trigger`). ⛔ Say "frozen 2-bar high", **never "flip+2"** — that shorthand reads as
+flip × 1.02 and misled two readers into benchmarking against 2%.
 
-**All three produced ZERO miss lines** — that is the confirmation they are the **never-enrolled**
-shape, not the cancelled-buy shape. The exit poll iterates an **in-memory set**
-(`_managed_v2_symbols`), not the table it services, so an open row whose key is missing is never
-polled, never logged, never closed.
+⭐ **Structural proof, tape-independent — bucket 2 is EMPTY BY CONSTRUCTION.** Both fields seed to
+`bars[-1].high` at the flip; `cw_segment_high` takes `max()` on **every** armed bar,
+`cw_trigger` only while `cw_bars_waited < 2`, then freezes. `cw_trigger`'s bars are a strict
+**subset** ⇒ **`segment_high ≥ cw_trigger` always**, and reactive cannot fire before
+`bars_waited ≥ 2`. `max(segment_high, cw_trigger)` would be redundant, not protective. So it is
+**#467 scoped to the reclaim slot** — the resting slot still uses the frozen 2-bar high.
 
-⛔ **Ruled out with evidence:** collision-skip · all five discard sites · rehydrate · `_v2_accounts()`
-· the store lookup · a loop-abort. **How the keys left the set is still unpinned — and that is
-deliberately not a blocker.** Driving the poll from the open rows closes the class regardless.
+**Why it matters regardless of today's tape:** `cw_segment_high` was measured **net-negative** in
+the July port, rolled back by **#469 on a void justification** (its byte-identical test fed a break
+*at arming*, where `segment_high == cw_trigger` by construction and could not diverge), and
+**re-shipped 08-03 as a side effect of a different PR, with no backtest.**
 
-**After-close plan (operator's go required):** backfill the unrecorded round trips from Schwab
-history, then clear the three rows.
+⛔⭐ **AND THE CONVERSE — a normal count at the close is NOT evidence the rule is good.** July's
+mechanism was that it *delays entries to a higher price*: that lands in entry **QUALITY**, not
+entry **COUNT**. **Measure fill-vs-flip distance regardless of what the count does**, or we accept
+a live rule on evidence that cannot see the failure it is meant to rule out — #467's mistake in a
+new costume.
+
+**The measurement (after the close, never during RTH — R&D CPU contends with the OMS loop):**
+- denominator = **LIVE arms** · both buckets · the **2×2** (price touched the resting level while
+  the order was off-book **×** price exceeded `cw_segment_high` — both can be true, so a split
+  mis-assigns)
+- ⚠️ **combined-commit caveat**: `b117d89` shipped the composition cap **and** the trigger together,
+  so a raw before/after estimates the whole commit. Separate them or say "combined".
+- ⭐ **natural control**: 07-30→08-03 = flap present, **old** trigger; 08-04+ = flap present, **new**
+  trigger. The flap is held constant across the boundary.
+- **fill-vs-flip distance as a first-class output.**
+
+⛔ **n=1 settles nothing.** Even a final 12 against a median of 17 sits inside ordinary variance.
+The measurement is the **multi-day** before/after.
+
+---
+
+## ⛔⭐⭐ THE BUG CLASS OF THE WEEK — lead any write-up with this
+**A signal authoritative for job A is NOT authoritative for job B.** Five instances in two days:
+
+| signal | legitimate job | illegitimate reuse | cost |
+|---|---|---|---|
+| `_managed_v2_symbols` | quote guard | exit-poll **work-list** | phantom rows, blocked fan-out |
+| **volume floor** | **admission** | **re-check** | flaps the resting order off the book |
+| `[V2-CW-ARM]` lines | event record | **cross census** | denominator inflated **~14×** |
+| `[OMS-V2-MANAGED-EXIT]` lines | event record | **exit census** | 2% should have been ~12% |
+| **placement intents** | order-lifecycle record | **cross denominator** | #625 altered the very denominator it was judged on |
+
+⇒ **the managed-exit log is not an exit census** — Schwab exits mostly resolve broker-side via
+native OCO and never emit a line (`OMS-OCO-EXIT-FILL` = 1174 lines / 6 days). **Any earlier study
+that counted Schwab exits, crosses, or segments from log lines carries the same hole.**
+
+## ⛔ NO INTRADAY COUNT IS A RESULT UNTIL THE SESSION CLOSES
+Burned twice today, both already reported before being caught:
+*"19 resting placements / ZERO fills"* (2 had filled by 10:46) · *"tape collapsed 17 → 2"*
+(**6 by 12:05**). ⇒ **date-and-time-stamp every mid-session figure and mark it PROVISIONAL.**
+
+**Provisional until the 18:05 report lands:** the composition-cap "0 breaches" reading · every
+08-04 no-entry rate · the day's round-trip P&L.
 
 ---
 
 ## 👀 WATCH NEXT SESSION
 
-1. **DEPLOY FIX 1 + FIX 2 ATTENDED — both are BUILT (#644).** Gates:
-   entry-counter → a live cross reads a legal composition, never 3 · exit-poll → **evict an open
-   row's key from the set and prove the poll re-enrolls and closes it.** ⛔ Do not ship a fix that
-   only works when the set is already correct.
-2. **RE-ARM THE WATCH.** `/home/trader/p0a_watch.sh` exits at 16:05 by design. Relaunch:
-   `setsid /home/trader/p0a_watch.sh </dev/null >>/home/trader/p0a_watch.nohup 2>&1 &`
-   ⛔ Two corrections it still needs: bound windows by **DISARM** as well as ARM (it swept in a
-   post-disarm entry), and attribute by **FILL time** not `submitted_at` (a resting order is placed
-   minutes before it fills). Retire/rename `oco_old_miss_lines` — it still counts raw AGE, which is
-   exactly the discriminator we proved wrong.
-3. **P0a IS STILL UNVALIDATED.** It needs a MARKETABLE software-ladder exit that rests through a
-   refresh tick and fills. 08-03 produced one EH exit that filled in **41ms** — correctly scored
-   `fastfill_inconclusive`, neither pass nor fail. Closure comes via **item 11's stand-down path**
-   (they converge); a deliberate attended pre-market qty-1 test is the fallback.
-4. **The 2 Webull position-sync failures** want a "can a failed sync leave stale holdings state?"
-   check. They do NOT explain the phantoms (timing does not line up) but are a plausible other
-   divergence source. The other 38 of 42 OMS errors are chronic Webull API flakiness — in view,
-   not chased.
+1. **The 18:05 EOD report** — it converts today's provisional readings into results. Read it before
+   quoting any 08-04 number.
+2. **`[OMS-V2-POLL-REENROLL]` has still NEVER fired** — on any day. Fix 2's real path remains
+   unexercised. Repeated fires would mean the leak is live and self-healing is masking it.
+3. **P0a is still unvalidated** — two consecutive fastfills (41 ms 08-03, **25 ms** 08-04 AAOG),
+   both correctly INCONCLUSIVE, `churn=0`. EH exits are marketable limits priced off the bid, so
+   they may **never** engage the hold organically ⇒ the **A3 forced stand-down** is the realistic
+   route. ⚠️ A thin tape starves its sample along with everything else.
+4. **Gate 1 is OPPORTUNISTIC and blocks Gates 2/3** — it needs a v2-held **Schwab** long during
+   **RTH** with **unreserved** shares that are **ours** (⛔ not CYN). It cannot be done tonight.
+5. **Webull `CW_FLIP` fan-out gap** — the leg is deaf to the flip exit (**27 arms vs 0**, **7 emits
+   vs 0**). ~**12%** of Schwab exits by distinct symbol-day. ⛔ Keep the three claims separate:
+   **mechanism certain · frequency measured · cost n=2.**
+6. **KUST manual stop** — status not re-verified since 07-31; it is not in the env file (manual
+   stops are DB-held). Confirm before assuming KUST is tradeable.
+
 
 ## 🔴 OPEN THREADS (detail: [`handoff-open-items.md`](handoff-open-items.md))
 
@@ -192,13 +223,14 @@ history, then clear the three rows.
 10. **IRE: a Schwab REPLACE spawned an order we never recorded** — our books said 2, broker said 4.
    We never issue a replace. Parked by operator decision: catch it live next time (#626 now
    surfaces the drift in ~8 min instead of hours).
-11. **⭐🔴 PRE-MARKET OCO HOLE — no native bracket outside RTH, so the software ladder owns the
-   exit.** `[V2-OCO-EMIT] SKIPPED (outside RTH)` is exactly how KUST 07-31 lost **−5.17%** on a
-   signal that was right while the Webull leg made **+1.76%**. **DEFERRED BEHIND P0a VALIDATION,
-   NOT DROPPED** — validate the hold on the software-ladder path *before* changing that path,
-   otherwise the fix and its own regression land together and neither is measurable. Sequencing:
-   P0a validated → (#366 if the quiet window is only deploy-sized) → **this is the next build.**
-   ⛔ Its design constraint is not optional — see *THE STAND-DOWN-CLEAR CONSTRAINT* below.
+11. **⭐✅ PRE-MARKET OCO HOLE — SETTLED, BUILT, MERGED DARK (08-04).** Probe P measured the
+   answer preview-only, zero risk: Schwab rejects a STOP leg in the EH session — *"This order type
+   is not available for this session"* — single leg, entry bracket **and** exit-only OCO, with
+   `session=NORMAL` controls accepting. ⇒ **native pre-market protection is structurally
+   impossible**; 09:30 is the BROKER's earliest arm point. #646 = design, **#647 merged
+   (`9a193b1`)** = build, all flags OFF. ⛔ Still owed: the **STEP-1 shape proof** against a real
+   held position (Probe P's control rejected on position, so the SHAPE is unproven) and the
+   **not-marketable-at-stand-down** pricing rule. See [[project_mai_tai_premarket_exit_protection]].
 
 ✅ **CLOSED today: VPS retention** (DB 12->10 GB, logs 1.7 GB->426 MB, logrotate installed).
 
@@ -227,12 +259,14 @@ down while the exit is **not** marketable still lands on the plain ladder.
 
 ---
 
-## 🔔 ALERTING — what will now reach the phone (all ntfy, all NEW today)
+## 🔔 ALERTING — what reaches the phone
 
 | watch | fires on |
 |---|---|
 | `bar_gap_watch_cron.sh` | a hole in the v2 bar series — **and auto-repairs the DB**, then reports what it filled |
 | `reconcile_alert_cron.sh` | any reconciler **critical** finding, fingerprint-deduped (7/day, not 1149) |
+| `entry_fix_watch/watch_cron.sh` | **NEW 08-04** — 5 sections; pushes on first live cross, composition breach, POLL-REENROLL, P0a validated/churning, or the checker itself failing. ⛔ **silence is NOT green — read `STATUS.txt`** |
+| `entry_fix_watch/eod_cron.sh` | **NEW 08-04** — end-of-session counts at **18:05 ET**, the figures allowed to be called results |
 | existing | OMS liveness, pre-open readiness, token expiry, OCO capture, orphan orders |
 
 ⛔ All are ROOT crontab, guarded in ET **inside the script** (`CRON_TZ` is ignored on this box).
