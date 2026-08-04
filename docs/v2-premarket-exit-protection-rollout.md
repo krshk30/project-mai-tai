@@ -49,6 +49,31 @@ working and has the shares reserved"* — cannot be cross-read against the P0a h
 reservation. You would be inferring health from an absence again, which is the exact false-clean
 failure this build exists to end.
 
+### ⛔⭐⭐ DO **NOT** RESTART `schwab-1m-v2` FOR THIS DEPLOY
+
+**Verified 2026-08-04:** #647 changes only `oms/service.py`, `broker_adapters/schwab.py` and
+`settings.py`. The first two are **oms-risk only**; the settings additions are new flags defaulting
+**off**. `project-mai-tai-schwab-1m-v2.service` is a **separate unit** — the choreography's
+"strategy" is `project-mai-tai-strategy.service` (the in-process bot host), NOT v2. **v2 needs no
+restart and must not get one.**
+
+**Why a "restart everything to be safe" reflex is dangerous here — BUG 2 IS STILL LIVE.**
+`cw_entries_this_flip` is a plain in-memory field on `SymbolState`. #644 moved its reset from ARM to
+DISARM but **did not persist it**, so a v2 restart reconstructs segments from the DB seed with the
+count at **zero** and the one-entry-per-segment cap silently re-issues on every armed segment. That
+is the CPHI mechanism, unchanged.
+
+If a v2 restart is ever required (NOT tonight), these apply:
+- ⛔ **The fleet-flat rule does not cover it.** Flat checks POSITIONS; the reset fires on ARMED
+  SEGMENTS, which exist with no position. Pre-flight needs an **armed-segment check that ASSERTS on
+  its output**, never one that prints it — the 07-15 restart-incident lesson.
+- ⛔ **"After the close" is NOT safe.** v2's entry window runs to **18:00 ET**, so segments can arm
+  well past 16:00. The clean window is **post-18:00**, or a verified zero-armed state.
+- ⚠️ Expect a **warmup-replay ARM burst** on restart. Benign, and the entry-fix watch already
+  excludes it (`LIVE_ARM_MAX_AGE_SECS = 300`) **upstream of every push condition**, so it cannot
+  page. If it ever does page, the filter is working on the checker and not on the pager — one look,
+  not a scramble.
+
 - [ ] VPS `git pull --ff-only` to the merge commit
 - [ ] **PRE-RESTART bar-gap checklist** (mandatory — a restart leaves a bar hole and ATR spans it,
       which put resting orders ~8% off on 07-30)
