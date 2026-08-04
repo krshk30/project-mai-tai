@@ -106,7 +106,38 @@ window).
 
 ---
 
-## 🔬 P1 — THE TRIGGER (the day's main open thread)
+## 🔴🔴 TOP OF QUEUE — THE 16:00 EXIT JAM (operator queue-jumped it ahead of P1, 08-04)
+
+**Design note: [`v2-eod-oco-jam-design.md`](v2-eod-oco-jam-design.md) (#651, merged). Nothing built.**
+
+**2026-08-04 AAOG, real money: 426 rejected sells in 16 minutes** (`live:orb` 313,
+`live:schwab_1m_v2` 113) — worse than the 145-in-55-min incident #608 exists to prevent. **Neither
+the bot NOR the operator could sell**; a hand-placed TOS sell was rejected oversold, which is how it
+surfaced. Intended stop **−5%**, executed **−5.58% Schwab / −6.01% Webull** ⇒ ~0.6–1.0 pt of pure
+slippage per leg. It cleared only when the broker legs **expired** — nothing we did fixed it.
+
+**Two independent defects:**
+- **D1** — `_v2_eod_oco_transition` releases the stand-down on a still-held position while the
+  broker's OCO legs still **RESERVE** the shares. Its docstring reasons a `session=NORMAL` DAY order
+  *"cannot fill in EH, so nothing is lost by letting it lapse."* ⛔ **Cannot FILL ≠ does not
+  RESERVE** — the handoff goes to a ladder structurally unable to sell.
+- **D2** — the retry bound cannot see a structural block. #608 correctly narrowed the reset to
+  **HELD-only**, but HELD *is* this case, so the accumulator resets every pass and the bound of 8 is
+  unreachable. The model knows *flat / held / unknown*; it has no **held-but-BLOCKED**. ⭐ The
+  discriminator exists and is discarded — the broker returns the reason verbatim and the loop keys
+  on position state without ever reading it.
+
+⛔ **NOT NEW, NOT RARE.** The same jam ran **66× on 07-28** unrecognised; the transition flag has
+been live since **07-27**; a position is held through 16:00 on **7 of ~20 sessions (~1 in 3)**.
+08-04 is merely the first time the **Schwab** leg jammed too.
+
+⇒ **Ship D1 first** — D2 only stops the hammering, D1 restores the invariant. ⚠️ D2 edits the exact
+function #608 hardened, so "NCRA's 145-retry case stays bounded" is a real regression risk.
+**P1 (the trigger) is now SECOND in the queue.**
+
+---
+
+## 🔬 P1 — THE TRIGGER (now SECOND — the jam jumped it)
 
 **`b117d89` re-shipped the rule of #467**, verbatim and unconditionally: the reactive/reclaim
 trigger is `trig = state.cw_segment_high` — the **running segment high**, not the **frozen 2-bar
