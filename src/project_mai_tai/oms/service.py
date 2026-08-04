@@ -2802,8 +2802,56 @@ class OmsRiskService:
             return
         min_secs = float(getattr(settings, "oms_native_oco_exit_poll_min_secs", 30.0) or 0)
         now = time.monotonic()
-        for key in list(getattr(self, "_managed_v2_symbols", set())):
+
+        # ⭐⭐ THE WORK-LIST IS THE OPEN ROWS, NOT THE IN-MEMORY SET (2026-08-03).
+        #
+        # This loop used to iterate `_managed_v2_symbols`. That set is the QUOTE hot-path guard —
+        # it exists so a quote does not open a DB session per tick, which is a real justification —
+        # but reusing it as this poll's work-list has none: the poll runs on the periodic sync with
+        # a >=30s per-key throttle, where a query is free.
+        #
+        # ⛔ THE FAILURE IT CAUSED. An open `oms_managed_positions` row whose key was missing from
+        # the set was NEVER polled, NEVER logged and NEVER closed, and it blocks fan-out re-entry
+        # via `fanout_webull_collision_managed` for as long as it lives. Because the loop body never
+        # ran there was not even a miss line, so from outside "never polled" was indistinguishable
+        # from "polled and found nothing". Three such phantoms on 2026-08-03 — live:orb FUSE (2h17m),
+        # live:orb HYFM (1h41m), live:schwab_1m_v2 HYFM — every one with a filled entry, an OCO
+        # bracket emitted, the broker flat, and ZERO miss lines. Meanwhile the SAME account polled
+        # other symbols fine, so the account was never the discriminator.
+        #
+        # ⭐ CAUSE-AGNOSTIC BY DESIGN. Collision-skip, all five discard sites, rehydrate,
+        # `_v2_accounts()`, the store lookup and a loop-abort were each ruled out with evidence and
+        # HOW the keys left the set is still unpinned. Driving the poll from ground truth closes the
+        # class whatever the eviction path turns out to be — the fix must not wait on that answer.
+        #
+        # Re-enrolling below repairs the quote guard as a side effect, so the hot path self-heals
+        # instead of silently under-protecting a position it has stopped watching.
+        try:
+            def _open_keys(session: Session) -> list[tuple[str, str]]:
+                out: list[tuple[str, str]] = []
+                for a in self._v2_accounts():
+                    for sym in self.store.list_open_managed_symbols(session, broker_account_name=a):
+                        out.append((a, sym))
+                return out
+            work = await self._run_db(_open_keys, commit=False)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - bookkeeping must never break the protective sync
+            self.logger.warning("v2 exit-poll work-list read failed: %s", exc)
+            return
+
+        for key in work:
             acct, symbol = key
+            if key not in self._managed_v2_symbols:
+                # The row is open but the hot-path guard had stopped watching it. Repair, and SAY SO
+                # — a silent repair would hide exactly the divergence this fix exists to surface.
+                self._managed_v2_symbols.add(key)
+                self.logger.warning(
+                    "[OMS-V2-POLL-REENROLL] %s %s open managed row was MISSING from the in-memory "
+                    "guard — re-enrolled. It was invisible to the exit poll and was blocking "
+                    "fan-out re-entry; the quote path had stopped evaluating it too.",
+                    acct, symbol,
+                )
             if now - self._oco_exit_poll_at.get(key, -1e9) < min_secs:
                 continue
             self._oco_exit_poll_at[key] = now      # stamp BEFORE the call: a failure must not spin
