@@ -54,7 +54,9 @@ and from `/proc/<oms-pid>/environ`**, so the kill switch is an **APPEND**, not a
 | # | what | state |
 |---|---|---|
 | **#639** | bar-gap DEAD BAND (`>` → `>=`) | ✅ **MERGED** `b96a0eb` |
-| **#645** | pager scoping + halt downgrade | open — replaces **#641**, which GitHub auto-closed when `--delete-branch` on the #639 merge removed the base it was stacked on. Same commit cherry-picked onto main. ⛔ **lesson: never `--delete-branch` a PR that has a stacked child** |
+| **#645** | pager scoping + halt downgrade | ✅ **MERGED** `71c6c2c` — replaced **#641**, which GitHub auto-closed when `--delete-branch` on the #639 merge removed the base it was stacked on. Same commit cherry-picked onto main. ⛔ **lesson: never `--delete-branch` a PR that has a stacked child** |
+| **#644** | entry composition cap + exit poll from open rows | ✅ **DEPLOYED** — live at `b117d89` |
+| **#642** | design note: entry-count + exit-poll, one workstream | open |
 
 ✅ **VPS SYNCED to `71c6c2c`** — all ops fixes live on the box, modes 755, `bash -n` clean, and
 `fleet_health_check.py` run live returns **GREEN on all 4 checks**.
@@ -66,8 +68,6 @@ them. That is the Windows-commit trap in its permanent form: **any fresh checkou
 crons that silently never run.** Resolved for now by resetting the mode, pulling, then `chmod 755`
 back — but the REPO still has them 644. **Fix with `git update-index --chmod=+x` (what #568 did for
 the OCO wrapper) and audit every `ops/health/*.sh` for the same.**
-| **#642** | design note: entry-count + exit-poll, one workstream | open |
-| **#644** | ✅ **DEPLOYED** — entry composition cap + exit poll from open rows | live at `b117d89` |
 
 ⛔ **NEITHER FIX IS FLAG-GATED.** Rollback = `gh pr revert 644` → VPS `git pull --ff-only` →
 restart v2, then `stop strategy → restart oms → start strategy`. (P0a's own kill switch is separate
