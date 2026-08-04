@@ -397,7 +397,9 @@ class SchwabBrokerAdapter:
                 "POST",
                 f"/trader/v1/accounts/{quote(account.account_hash, safe='')}/orders",
                 body=(
-                    self._build_bracket_payload(request)
+                    self._build_exit_only_oco_payload(request)
+                    if self._is_exit_only_oco_request(request)
+                    else self._build_bracket_payload(request)
                     if self._is_bracket_request(request)
                     else self._build_order_payload(request)
                 ),
@@ -1069,12 +1071,86 @@ class SchwabBrokerAdapter:
             return False
         return str(request.metadata.get("bracket", "")).lower() in {"1", "true", "yes"}
 
-    def _bracket_exit_leg(self, request: OrderRequest, *, order_type: str, price: Decimal) -> dict[str, object]:
+    @staticmethod
+    def _is_exit_only_oco_request(request: OrderRequest) -> bool:
+        return str(request.metadata.get("exit_only_oco", "")).lower() in {"1", "true", "yes"}
+
+    def _build_exit_only_oco_payload(self, request: OrderRequest) -> dict[str, object]:
+        """A bare OCO exit pair against an ALREADY-HELD position (#646 Part 1).
+
+        Distinct from `_build_bracket_payload`, which is TRIGGER(entry) -> OCO(exits) and can only
+        be attached to an order we are placing. A position entered pre-market has no such parent:
+        its entry filled hours earlier as a plain single-leg order, and nothing in the OMS ever
+        revisits it, so today it is never bracketed for its entire life. This is the payload that
+        closes that hole at the RTH edge.
+
+        ⛔⭐ SESSION IS NOT A PARAMETER YOU MAY SET FREELY -- MEASURED, 2026-08-04.
+        Schwab rejects a STOP leg in the extended-hours session outright:
+
+            "This order type is not available for this session."   (originalSeverity: REJECT)
+
+        Probe P confirmed it for a single STOP leg, for TRIGGER->OCO, and for THIS exact
+        exit-only shape, each against an accepted session=NORMAL control
+        (scripts/schwab_eh_session_probe.py). A LIMIT is accepted in AM -- but a limit cannot
+        express a protective stop, because a sell limit below market executes immediately instead
+        of waiting for adverse movement. So there is no such thing as a native pre-market
+        protective exit, and this builder REFUSES to construct one rather than emit an order the
+        broker will certainly reject. That refusal is why the caller must fire at the RTH edge:
+        09:30 is not a convenience, it is the earliest instant the broker will accept the legs."""
+        session = str(request.metadata.get("session", "NORMAL")).upper() or "NORMAL"
+        if session != "NORMAL":
+            raise RuntimeError(
+                "exit-only OCO refused: session=%s -- Schwab rejects a STOP leg outside regular "
+                "hours ('This order type is not available for this session', measured 2026-08-04). "
+                "Arm the bracket at the RTH edge; the software P0a-held ladder owns the exit until "
+                "then." % session
+            )
+        target_price = request.metadata.get("bracket_target_price")
+        protect_price = request.metadata.get("bracket_stop_price")
+        missing = [n for n, v in (("bracket_target_price", target_price),
+                                  ("bracket_stop_price", protect_price)) if not v]
+        if missing:
+            # Never emit half an OCO. One leg alone is not a bracket -- it is an unpaired sell
+            # reserving the shares, which is the E5 oversell shape this structure exists to kill.
+            raise RuntimeError(f"exit-only OCO missing required metadata: {', '.join(missing)}")
+        return {
+            "orderStrategyType": "OCO",
+            "childOrderStrategies": [
+                self._bracket_exit_leg(request, order_type="LIMIT",
+                                       price=Decimal(str(target_price)), session=session),
+                self._bracket_exit_leg(request, order_type="STOP",
+                                       price=Decimal(str(protect_price)), session=session),
+            ],
+        }
+
+    async def preview_exit_only_oco(self, request: OrderRequest) -> tuple[int, object]:
+        """Validate an exit-only OCO at the broker WITHOUT placing it.
+
+        ⛔ STEP-1 PROOF STILL OWED. Probe P could not prove this shape is ACCEPTED: with the
+        account flat, its session=NORMAL control rejected on the oversold/position check, which
+        establishes the session is fine but leaves the shape itself unproven. It must be previewed
+        against a REAL held position before it is allowed anywhere near the managed path."""
+        account = self.accounts_by_name.get(request.broker_account_name)
+        if account is None:
+            return 0, {"message": f"missing Schwab account hash for {request.broker_account_name}"}
+        status_code, _headers, response = await self._authorized_request_json(
+            "POST",
+            f"/trader/v1/accounts/{quote(account.account_hash, safe='')}/previewOrder",
+            body=self._build_exit_only_oco_payload(request),
+        )
+        return status_code, response
+
+    def _bracket_exit_leg(self, request: OrderRequest, *, order_type: str, price: Decimal,
+                          session: str = "NORMAL") -> dict[str, object]:
         """One child of the OCO pair. Always SELL — this bracket is long-only by design
         (the -5% protective stop is below market on a long, which is why the exit legs are
         structurally accept-safe; see docs/oco-bracket-design.md)."""
         leg: dict[str, object] = {
-            "session": "NORMAL",
+            # Defaults to NORMAL, and the only caller that passes anything else is the exit-only
+            # builder -- which refuses AM/PM outright. Parameterised rather than hardcoded so the
+            # session is stated at the call site instead of being an invisible assumption: the
+            # hardcode was why nobody noticed we had never once ASKED the broker for an EH bracket.
+            "session": session,
             "duration": self._map_duration(str(request.metadata.get("time_in_force", request.time_in_force))),
             "orderType": order_type,
             "orderStrategyType": "SINGLE",

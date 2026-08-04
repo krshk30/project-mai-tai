@@ -257,6 +257,14 @@ class Settings(BaseSettings):
     # flatten stays the backstop. This does NOT liquidate and does NOT cancel/place any broker order
     # (the RTH OCO auto-expires; a NORMAL-session order can't fill in EH so nothing is lost). Idempotent
     # per (session_day, account, symbol). OFF => the transition set stays empty => byte-identical.
+    # #646 Part 1 -- bracket a PRE-MARKET entry the instant the broker will accept one. Schwab
+    # refuses a STOP leg outside regular hours ("This order type is not available for this
+    # session", measured 2026-08-04), so 09:30 is the earliest arm point, not a chosen cadence.
+    # Default OFF: this places real broker orders against real positions.
+    oms_v2_rth_edge_bracket_enabled: bool = False
+    oms_v2_rth_edge_bracket_hour_et: int = 9
+    oms_v2_rth_edge_bracket_minute_et: int = 30
+    oms_v2_rth_edge_bracket_max_attempts: int = 3
     oms_v2_eod_oco_transition_enabled: bool = False
     oms_v2_eod_oco_transition_hour_et: int = 16
     oms_v2_eod_oco_transition_minute_et: int = 0
