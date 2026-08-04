@@ -92,9 +92,34 @@ if [ "$LEVEL" = "RED" ] || [ "$LEVEL" = "AMBER" ] || [ "$SELFTEST" -eq 1 ]; then
   # ⛔ It repairs the DATABASE only. Live trading is fixed by a RESTART (the in-memory series), and
   # a restart is attended — this must never bounce a trading service on its own.
   REPAIR="(repair skipped)"
+  HALT_DOWNGRADE=0
   if [ "$SELFTEST" -eq 0 ]; then
-    REPAIR=$(nice -n 19 "$REPO"/.venv/bin/python "$REPO"/scripts/report_bar_gaps.py                --day "$TODAY" --go 2>&1 | tail -3)
+    # ⛔ Capture the FULL output. `tail -3` threw away the ONE line that says whether the gap is
+    # our data loss or the market's: report_bar_gaps prints, PER SYMBOL, either
+    #   "<SYM>: REST fetch FAILED (...)"             -> we could not ask; conclude NOTHING
+    #   "<SYM>: filled H/N missing bar(s) from REST" -> REST answered
+    REPAIR_FULL=$(nice -n 19 "$REPO"/.venv/bin/python "$REPO"/scripts/report_bar_gaps.py                     --day "$TODAY" --go 2>&1)
+    REPAIR=$(printf '%s' "$REPAIR_FULL" | tail -4)
     echo "$STAMP  REPAIR: $REPAIR" >> "$LOG"
+
+    # ---- HALT DOWNGRADE --------------------------------------------------------------------
+    # ⛔⭐ "INSERTED 0" ALONE IS NOT A HALT SIGNATURE. It is equally true when the REST call
+    # ERRORED — so a genuine DUAL-SOURCE OUTAGE (streamer dead AND REST erroring) would look
+    # exactly like a quiet market and be silently downgraded. That is the worst outcome for this
+    # pager, and it is not hypothetical: Schwab REST 401'd for 2h41m on 2026-08-03 (08:00-10:40
+    # UTC); only the 07:00 ET window guard kept the two from overlapping.
+    #
+    # Downgrade ONLY on the full signature: at least one symbol was ASKED and ANSWERED, and NO
+    # symbol failed to answer. Any REST failure => stay RED, because we cannot conclude.
+    # A real subscription drop on a non-halted name still pages: REST WOULD have those bars, so
+    # they get filled (hit>0) and this branch does not fire.
+    REST_FAILED=$(printf '%s' "$REPAIR_FULL" | grep -c 'REST fetch FAILED' || true)
+    REST_ANSWERED_EMPTY=$(printf '%s' "$REPAIR_FULL" | grep -cE 'filled 0/[0-9]+ missing bar\(s\) from REST' || true)
+    REST_ANSWERED_ANY=$(printf '%s' "$REPAIR_FULL" | grep -cE 'filled [0-9]+/[0-9]+ missing bar\(s\) from REST' || true)
+    if [ "${REST_FAILED:-0}" -eq 0 ]        && [ "${REST_ANSWERED_ANY:-0}" -gt 0 ]        && [ "${REST_ANSWERED_EMPTY:-0}" -eq "${REST_ANSWERED_ANY:-0}" ]; then
+      HALT_DOWNGRADE=1
+      echo "$STAMP  HALT-DOWNGRADE: REST answered for all $REST_ANSWERED_ANY holed symbol(s) and had NONE of the bars => the market produced no prints (halt), not our data loss" >> "$LOG"
+    fi
   fi
   if [ "$PREV_STATUS" = "OK" ] || [ $(( NOW - LAST_ALERT )) -ge "$COOLDOWN_SECS" ] || [ "$SELFTEST" -eq 1 ]; then
     BODY="$VERDICT
@@ -102,17 +127,31 @@ if [ "$LEVEL" = "RED" ] || [ "$LEVEL" = "AMBER" ] || [ "$SELFTEST" -eq 1 ]; then
 AUTO-REPAIR (database only):
 $REPAIR
 
-Bars were missing, so ATR spanned the hole and resting orders on those names sat too high.
-The DB is repaired; LIVE TRADING still needs an attended restart of schwab-1m-v2 so the REST
-warmup rebuilds a contiguous in-memory series.
+Bars are missing from the DB series (backtest/parity/recorder read it), so the fill above matters.
+LIVE ATR is already protected: #620 refuses to compute true range across a gap and logs
+[V2-ATR-BAR-GAP] per symbol — grep the v2 log to confirm it fired for these names.
+DO NOT restart schwab-1m-v2 on account of this alert: a restart punches a fresh hole of its own,
+which is the very condition this watch exists to catch. Restart only if [V2-ATR-BAR-GAP] is ABSENT
+for a gapped symbol that v2 is actually holding or resting an order on.
 Undo the fill: DELETE FROM strategy_bar_history WHERE source='rest';"
     [ "$SELFTEST" -eq 1 ] && BODY="[SELFTEST] $BODY"
-    if [ "$LEVEL" = "RED" ]; then
+    if [ "${HALT_DOWNGRADE:-0}" -eq 1 ]; then
+      BODY="MARKET QUIET / HALT - not our data loss.
+REST was asked for every holed symbol, ANSWERED, and had none of the bars, so the market produced
+no prints in those minutes. Nothing to repair and nothing to restart.
+(A REST FAILURE does NOT reach this branch - it stays RED, because a dead streamer plus a dead
+REST is indistinguishable from a quiet market and must never be downgraded.)
+
+$BODY"
+      send_ntfy "INFO v2 bar gap - market halt" "low" "information_source" "$BODY"
+      echo "$STAMP  ALERT[INFO-halt-downgrade] sent (was $LEVEL)" >> "$OUT/alert.log"
+    elif [ "$LEVEL" = "RED" ]; then
       send_ntfy "RED v2 BAR HOLE" "urgent" "rotating_light" "$BODY"
+      echo "$STAMP  ALERT[$LEVEL] sent" >> "$OUT/alert.log"
     else
       send_ntfy "AMBER v2 bar gap" "default" "warning" "$BODY"
+      echo "$STAMP  ALERT[$LEVEL] sent" >> "$OUT/alert.log"
     fi
-    echo "$STAMP  ALERT[$LEVEL] sent" >> "$OUT/alert.log"
     LAST_ALERT=$NOW
   fi
   [ "$SELFTEST" -eq 0 ] && echo "$LEVEL $LAST_ALERT" > "$STATE"

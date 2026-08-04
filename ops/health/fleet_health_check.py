@@ -149,6 +149,32 @@ def classify_order_lifecycle(
     )
 
 
+# ⛔⭐ REAL-MONEY SCOPE — the allowlist that keeps a SIM trade out of a real-money pager.
+#
+# 2026-08-03: unscoped checks let `polygon_30s` (PAPER/sim) drive pages. It reached the entries
+# counter, the sawtooth check and #628 before this sweep. A pager that fires on something you will
+# never act on trains you to ignore it — and this pager guards NAKED POSITIONS.
+#
+# ⛔ `name LIKE 'live:%'` is NOT a safe proxy: `live:polygon_30s` and `live:webull_30s` both exist
+# as rows. Verified 2026-08-03 — only three accounts had any order in 30 days: live:schwab_1m_v2
+# (1200), live:orb (584), paper:polygon_30s (3868). The first two are real money (v2 plus its
+# Webull fan-out leg); the other `live:` rows are dormant legacy names.
+REAL_MONEY_ACCOUNTS: tuple[str, ...] = ("live:schwab_1m_v2", "live:orb")
+_REAL_MONEY_SQL_LIST = ", ".join(f"'{a}'" for a in REAL_MONEY_ACCOUNTS)
+
+
+def _with_paper_note(detail: str, paper_count: int | None, noun: str) -> str:
+    """Append a paper/sim count to a verdict WITHOUT letting it change the level.
+
+    Visible so a real sim defect is not hidden (polygon_30s really does reject every STOP sell
+    with `missing reference_price`), but it can never page. Same shape as `sawtooth_paper` in the
+    P0a watch."""
+    if not paper_count:
+        return detail
+    plural = "" if paper_count == 1 else "s"
+    return f"{detail} [paper/sim: {paper_count} {noun}{plural} — not paged]"
+
+
 def check_oms_order_lifecycle() -> tuple[str, str, str]:
     """Check #2: the OMS is actually EXECUTING (intent -> order/terminal), not just beating.
     Ground truth = trade_intents (what the OMS consumed) LEFT JOIN broker_orders (what it
@@ -164,17 +190,21 @@ def check_oms_order_lifecycle() -> tuple[str, str, str]:
         "AND ti.created_at < now() - interval '10 min' "
         "AND ti.created_at > now() - interval '6 hours'"
     )
-    stuck = _scalar_int(
-        "SELECT count(*) FROM trade_intents ti "
-        f"LEFT JOIN broker_orders bo ON bo.intent_id = ti.id WHERE {where}"
+    # REAL MONEY ONLY drives the verdict; paper is counted and shown, never paged.
+    joined = (
+        "FROM trade_intents ti "
+        "LEFT JOIN broker_orders bo ON bo.intent_id = ti.id "
+        "JOIN broker_accounts ba ON ba.id = ti.broker_account_id"
     )
+    real = f"ba.name IN ({_REAL_MONEY_SQL_LIST})"
+    stuck = _scalar_int(f"SELECT count(*) {joined} WHERE {where} AND {real}")
     oldest = _scalar_int(
         "SELECT round(extract(epoch FROM (now()-min(ti.created_at)))/60)::int "
-        "FROM trade_intents ti "
-        f"LEFT JOIN broker_orders bo ON bo.intent_id = ti.id WHERE {where}"
+        f"{joined} WHERE {where} AND {real}"
     )
+    paper_stuck = _scalar_int(f"SELECT count(*) {joined} WHERE {where} AND NOT ({real})")
     level, detail = classify_order_lifecycle(stuck, oldest)
-    return (level, "oms-order-lifecycle", detail)
+    return (level, "oms-order-lifecycle", _with_paper_note(detail, paper_stuck, "stuck paper intent"))
 
 
 def classify_stops_armed(
@@ -221,13 +251,21 @@ def check_stops_armed() -> tuple[str, str, str]:
         "ON m.broker_account_name = ba.name AND m.symbol = vp.symbol AND m.status = 'open' "
         "WHERE vp.quantity <> 0 AND vp.opened_at < now() - interval '2 min'"
     )
-    unprotected = _scalar_int(f"SELECT count(*) {joins} AND a.id IS NULL AND m.id IS NULL")
-    owned_open = _scalar_int(
-        "SELECT count(*) FROM virtual_positions WHERE quantity <> 0 "
-        "AND opened_at < now() - interval '2 min'"
+    # ⛔ REAL MONEY ONLY. `paper:polygon_30s` NEVER gets an `oms_managed_positions` row (verified
+    # 2026-08-03: that table holds live:orb / live:schwab_1m_v2 / paper:schwab_1m_v2 and nothing
+    # else), so ANY polygon_30s position held past the 2-min settle guard counted as "NAKED" and
+    # RED-paged — for a simulated position that cannot lose a cent.
+    real = f"ba.name IN ({_REAL_MONEY_SQL_LIST})"
+    unprotected = _scalar_int(
+        f"SELECT count(*) {joins} AND {real} AND a.id IS NULL AND m.id IS NULL"
+    )
+    owned_open = _scalar_int(f"SELECT count(*) {joins} AND {real}")
+    paper_unprotected = _scalar_int(
+        f"SELECT count(*) {joins} AND NOT ({real}) AND a.id IS NULL AND m.id IS NULL"
     )
     level, detail = classify_stops_armed(unprotected, owned_open)
-    return (level, "stops-armed", detail)
+    return (level, "stops-armed",
+            _with_paper_note(detail, paper_unprotected, "unprotected sim position"))
 
 
 def check_strategy_bar_freshness() -> tuple[str, str, str]:
@@ -277,13 +315,13 @@ def classify_bar_continuity(
         return (
             "AMBER",
             f"schwab_1m_v2 BAR GAP {worst_gap_min}min on {gap_symbols} symbol(s) — "
-            f"ATR inflated for those names; resting orders will sit too high",
+            f"DB series holed (backtest/parity read it); live ATR is guarded by #620",
         )
     return (
         "RED",
         f"schwab_1m_v2 BAR HOLE {worst_gap_min}min on {gap_symbols} symbol(s) — "
-        f"true range spans the hole, ATR materially wrong, resting orders mispriced. "
-        f"Restart v2 so the REST warmup refetches a contiguous series.",
+        f"DB series holed; backtest/parity/recorder read it. Live ATR guarded by #620 — "
+        f"confirm [V2-ATR-BAR-GAP] fired for these names. Do NOT restart on this alert alone.",
     )
 
 
