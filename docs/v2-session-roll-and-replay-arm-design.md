@@ -154,6 +154,20 @@ v2's **watchlist** emptied because the upstream handoff emptied — not because 
 * A symbol **mid-warmup is skipped, not protected** — warmup replays historical bars whose anchors
   are legitimately older and the bar-driven path owns it; rolling underneath would reset the trail
   mid-series. A **warmed, watchlisted, silent** symbol (halted/illiquid) **does** roll.
+* ⛔⭐ **The log carries the count INCLUDING ZERO**, one line per **boundary crossing** (plus a
+  boot-time line, since `_session_roll_last_anchor` starts at 0), plus a line whenever anything is
+  rolled off-boundary. A line emitted only `if rolled` makes *"rolled nothing"* and *"never ran"*
+  identical on the tape — the exact false-clean this change exists to correct, and the third
+  instance of that pattern on 2026-08-05. It cannot spam at 5s: a rolled symbol becomes current and
+  cannot be rolled twice, and a skipped symbol never enters `rolled`.
+
+**Invariant checked, not assumed:** the sweep guard is `0 < atr_session_anchor_ms < anchor`, so a
+symbol armed with `anchor == 0` would be permanently immune. Unreachable: `atr_session_anchor_ms`
+is written in exactly one place (`_apply_session_anchor_reset`), and both `cw_armed = True` sites
+sit downstream of an `atr_signal`, which only exists once `_update_atr_state` has run — and that
+writes the anchor. Pinned by `test_an_armed_symbol_can_never_have_a_ZERO_anchor`, which arms
+through the **real** bar path and asserts it armed before asserting the invariant, so it cannot
+pass vacuously.
 
 **Flag:** `strategy_schwab_1m_v2_session_time_roll_enabled`, default **False** → the sweep returns
 immediately and the bar-driven path is untouched (byte-identical).
@@ -189,15 +203,50 @@ code works**. A clean `cw_armed_segments` after the deploy proves **nothing**. H
 | 6 | Both drivers produce the same reset, field by field | ✅ `test_both_drivers_produce_the_same_reset` |
 | 7 | Bar-driven path unchanged by the extraction | ✅ `test_bar_driven_reset_still_clears_at_the_anchor` |
 
+| 8 | Boundary crossing logs **rolled=0** | ✅ `test_a_boundary_crossing_logs_even_when_it_rolled_NOTHING` |
+| 9 | …and does **not** log every 5s | ✅ `test_the_sweep_does_NOT_log_every_5s` |
+| 10 | An armed symbol can never carry `anchor == 0` | ✅ `test_an_armed_symbol_can_never_have_a_ZERO_anchor` |
+
 **Mutations (green is not evidence until a deliberate break turns it red):**
 
 ```
-MUTATION A  remove the time trigger      -> 3 RED (incl. the stale-symbol test)   reverted
-MUTATION B  remove the protection check  -> 4 RED (position, resting, warmup, operator)  reverted
+MUTATION A  remove the time trigger        -> 3 RED (incl. the stale-symbol test)          reverted
+MUTATION B  remove the protection check    -> 4 RED (position, resting, warmup, operator)  reverted
+MUTATION C  revert the log to `if rolled:` -> 1 RED (the zero-count line)                  reverted
 ```
 
-**Regression:** 255 passed (`-k "schwab_1m_v2 or cw or atr or oracle or exit_logic"`), 30 passed
-(`tests/backtest`, includes the ATR-oracle parity pin), ruff clean.
+**Regression:** **1,869 passed** (`tests/unit` + `tests/backtest`, includes the ATR-oracle parity
+pin), ruff clean.
+
+⚠️ Two log tests initially passed in isolation and failed in the full suite. Not a code defect —
+`caplog.records` spans the **whole test**, not just the `with caplog.at_level(...)` block, and
+another test in the suite installs a root handler that makes the pre-block INFO record visible.
+Fixed with `caplog.clear()` rather than by loosening the assertion; MUTATION C was re-run
+afterwards to confirm the tests are still load-bearing.
+
+## 5b. Deploy sequence
+
+⛔ **Pre-flight runs before BOTH restarts.** The run restarts v2 twice — once for the merge, once
+for the flag — and the first restart's DB-seed replay can **re-arm segments**, so the second
+restart would otherwise hit armed segments and fire Bug 2. Asserting only before the first is not
+enough.
+
+1. `preflight_v2_restart.sh` — must pass on its own assertions (past 18:00 ET, zero armed segments,
+   zero open managed rows, broker flat excluding operator manuals)
+2. bar-gap capture **pre**
+3. merge, then verify the merge commit **on the branch**, not the PR number
+4. pull + restart v2; confirm clean boot and `[V2-BOOT-HOLD] released`
+5. **`preflight_v2_restart.sh` again** ⬅ the added gate
+6. set `MAI_TAI_STRATEGY_SCHWAB_1M_V2_SESSION_TIME_ROLL_ENABLED=true`, restart
+7. confirm the `[V2-SESSION-ROLL] boundary_crossed=True rolled=N` boot line appears — this is the
+   proof-of-life that the sweep is running at all
+8. bar-gap capture **post**; confirm no hole
+
+⛔ **What the post-deploy state does and does not prove.** The restart clears FUSE/HYFM/AXTL
+regardless of whether this code works, so an empty `cw_armed_segments` proves **the restart**, not
+D1a. The proof is **tomorrow's 04:00 ET boundary on a symbol that has gone silent**. If no such
+candidate exists tomorrow, the fix is **unexercised, not validated** — and the report must say
+which of the two it is.
 
 ## 6. Rejected alternatives
 

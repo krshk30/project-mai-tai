@@ -15,6 +15,7 @@ Asserts on STATE, never on log narration.
 """
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -238,6 +239,74 @@ def test_a_warmed_watchlisted_symbol_that_went_silent_DOES_roll() -> None:
     bot._roll_stale_session_state({}, {})
 
     assert st.cw_armed is False
+
+
+def test_a_boundary_crossing_logs_even_when_it_rolled_NOTHING(caplog) -> None:
+    """⛔ A line emitted only `if rolled` makes 'rolled nothing' and 'never ran' identical on the
+    tape. That false-clean is the pattern this whole change exists to correct."""
+    bot = _bot()
+    caplog.clear()
+    with caplog.at_level(logging.INFO):
+        bot._roll_stale_session_state({}, {})  # nothing armed, nothing stale
+
+    lines = [r.getMessage() for r in caplog.records if "[V2-SESSION-ROLL]" in r.getMessage()]
+    assert len(lines) == 1, "the first sweep after boot must announce itself"
+    assert "rolled=0" in lines[0]
+    assert "boundary_crossed=True" in lines[0]
+
+
+def test_the_sweep_does_NOT_log_every_5s(caplog) -> None:
+    """One line per boundary crossing — not one per poll."""
+    bot = _bot()
+    bot._roll_stale_session_state({}, {})  # boot line
+    caplog.clear()  # `caplog.records` spans the WHOLE test, not just the `with` block
+    with caplog.at_level(logging.INFO):
+        for _ in range(5):
+            bot._roll_stale_session_state({}, {})
+
+    assert [r for r in caplog.records if "[V2-SESSION-ROLL]" in r.getMessage()] == []
+
+
+def test_an_off_boundary_roll_still_logs(caplog) -> None:
+    """A symbol can arrive stale mid-session (re-join carrying old state). It must not be silent."""
+    bot = _bot()
+    bot._roll_stale_session_state({}, {})  # consume the boot line
+    _armed_stale(bot.strategy, "LATE")
+    caplog.clear()  # `caplog.records` spans the WHOLE test, not just the `with` block
+    with caplog.at_level(logging.INFO):
+        bot._roll_stale_session_state({}, {})
+
+    lines = [r.getMessage() for r in caplog.records if "[V2-SESSION-ROLL]" in r.getMessage()]
+    assert len(lines) == 1
+    assert "rolled=1" in lines[0] and "LATE" in lines[0]
+    assert "boundary_crossed=False" in lines[0]
+
+
+def test_an_armed_symbol_can_never_have_a_ZERO_anchor() -> None:
+    """⛔ The sweep guard is `0 < atr_session_anchor_ms < anchor`, so a symbol armed with
+    anchor==0 would be permanently immune. Prove that state is unreachable: `cw_armed` is only
+    set downstream of an `atr_signal`, which only exists once `_update_atr_state` has run — and
+    that writes the anchor. Arms via the REAL path rather than asserting the invariant by hand."""
+    strat = _strat()
+    st = strat.watchlist_state("INV")
+    base = int(datetime(2026, 8, 5, 8, 0, tzinfo=_ET).timestamp() * 1000)
+
+    # Feed enough real bars for the trail to define and a flip to occur.
+    px = 10.0
+    for i in range(40):
+        px = px - 0.05 if i < 25 else px + 0.20
+        bar = OHLCVBar(
+            timestamp_ms=base + i * 60_000, open=px, high=px + 0.05,
+            low=px - 0.05, close=px, volume=50_000,
+        )
+        st.bars.append(bar)
+        sig = strat._update_atr_state(st, bar)
+        strat._cw_v2_track(st, sig)
+        if st.cw_armed:
+            break
+
+    assert st.cw_armed is True, "the fixture must actually arm, or it proves nothing"
+    assert st.atr_session_anchor_ms > 0
 
 
 def test_operator_protected_symbols_are_never_touched() -> None:

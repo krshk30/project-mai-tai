@@ -81,6 +81,7 @@ from project_mai_tai.strategy_core.schwab_1m_v2 import (
     STRATEGY_CODE,
     SchwabV2IntentEmitter,
     SchwabV2Strategy,
+    session_start_ts_ms,
 )
 
 logger = logging.getLogger(__name__)
@@ -233,6 +234,9 @@ class SchwabV2BotService:
         # replayed in timestamp order when warmup completes, so the
         # strategy's append-only deque never sees an out-of-order bar.
         self._rest_warmup_done: set[str] = set()
+        # Last 04:00-ET anchor the time-driven session roll reported on. 0 => the first sweep
+        # after boot logs, which is the proof-of-life line: "the sweep is running and found N".
+        self._session_roll_last_anchor: int = 0
         # Per-symbol queue of streamer bars received before this symbol's
         # REST warmup completed. Drained in `_handle_bar_from_rest`
         # when the symbol crosses into `_rest_warmup_done`, replaying
@@ -832,13 +836,25 @@ class SchwabV2BotService:
             return symbol in self._watchlist and symbol not in self._rest_warmup_done
 
         now_ms = int(datetime.now(UTC).timestamp() * 1000)
+        anchor = session_start_ts_ms(now_ms)
+        crossed = anchor != self._session_roll_last_anchor
         rolled = self.strategy.roll_stale_session_state(now_ms, is_protected=_skip)
-        if rolled:
+        # ⛔⭐ LOG ZERO. A line emitted only `if rolled` makes "rolled nothing" and "never ran"
+        # identical on the tape — the exact false-clean this change exists to correct, and the
+        # third instance of that pattern on 2026-08-05. So: one line per BOUNDARY CROSSING
+        # carrying the count INCLUDING ZERO (and a boot-time line, since `_session_roll_last_anchor`
+        # starts at 0), plus a line whenever anything is actually rolled off-boundary. Not every
+        # 5s: a rolled symbol becomes current and cannot be rolled again, and a skipped symbol
+        # never enters `rolled`, so neither branch can spam.
+        if crossed or rolled:
             logger.info(
-                "[V2-SESSION-ROLL] time-driven 04:00-ET roll cleared %d stale symbol(s): %s "
-                "(watchlist=%d, protected/skipped untouched)",
-                len(rolled), ",".join(sorted(rolled)[:20]), len(self._watchlist),
+                "[V2-SESSION-ROLL] boundary_crossed=%s rolled=%d symbols=%s "
+                "(anchor=%d watchlist=%d armed=%d; protected/skipped untouched)",
+                crossed, len(rolled), ",".join(sorted(rolled)[:20]) or "-",
+                anchor, len(self._watchlist), len(self.strategy.cw_armed_segments()),
             )
+        if crossed:
+            self._session_roll_last_anchor = anchor
 
     def _fetch_reportable_state(self) -> dict[str, list]:
         """REPORTING ONLY -- what the operator sees. Deliberately SEPARATE from
