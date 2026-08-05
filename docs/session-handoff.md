@@ -24,8 +24,8 @@
 
 ## 🟢 FLEET — what is live right now
 
-**As of 2026-08-04 EOD.** Deployed HEAD **`71c6c2c` (#645)** — ⛔ **UNCHANGED all day; nothing was
-deployed 08-04.** `main` moved (#643 handoff, #646 design, #647 build, #649 runbook) but the box did
+**As of 2026-08-04 EOD.** Deployed HEAD **`786bbb6`** (was `71c6c2c`) — attended deploy at
+**17:12:35–17:12:41 ET, 6 seconds**, 0 errors, no bar hole, no entry lost, fleet flat throughout. `main` moved (#643 handoff, #646 design, #647 build, #649 runbook) but the box did
 not. All five services active.
 
 ⭐ **Today was a MEASUREMENT day.** No code reached production. The output is a settled broker fact,
@@ -61,52 +61,74 @@ zero armed segments · zero open managed rows · broker flat excluding operator 
 
 
 
-## 🗓 TONIGHT — the ordered window
+## ✅ WHAT SHIPPED 2026-08-04 (attended, after close)
 
-### A. PRE-FLIGHT (blocking · assert, don't print)
-`sudo /home/trader/ops_preflight/preflight_v2_restart.sh` — exit 0 = GO, non-zero = WAIT.
-⛔ Only needed **if** something restarts v2. **Gate 0.5 itself does not.**
+| | |
+|---|---|
+| **Gate 0.5 — #647** | deployed. **All flags OFF** — code only, no behaviour change |
+| **`EOD_OCO_TRANSITION_ENABLED=false`** | ⚠️ **a BEHAVIOUR CHANGE, operator-directed, separate from the #647 rollout** — disarms the 16:00 jam trigger. The jam mechanism is untouched |
+| **Flags written EXPLICITLY** | all four now in the env, so every kill is a flip, never an append (the P0a lesson, applied to P0a) |
+| **#366** | ⛔ **STRUCK** — already deployed AND enabled (control has carried the throttle since Jul 14) and `dashboard_snapshots` is still 103 MB and growing. **An investigation, not a deploy** |
+| **A7 reject alarm** | live, `*/15`, read-only |
+| **EOD counts** | fired 18:05:30; **10 Schwab entries**, not the 2 a mid-session read showed |
+| **Bar backfill** | 276 bars, `source='rest'`. ⭐ AMIX's 54 "missing" were **11 LULD halts**, not data loss |
 
-### B. DEPLOY — attended, in order. ⛔ NOT scheduled; real-money deploys stay attended.
-1. **Gate 0.5 — #647 (`9a193b1`)** per the runbook. Lands CODE, not behaviour: every flag stays
-   **OFF**. Pull → **pre-restart bar-gap checklist** → account-flat → `stop strategy → restart oms
-   → start strategy` → **post-restart bar-gap checklist**. ⛔ **restart `oms` only — not v2.**
-   Write both new flags into the env explicitly (even as `false`) so their kill is a flip, never an
-   append — the P0a lesson.
-2. ⛔ **#366 IS STRUCK FROM TONIGHT — it is already deployed AND enabled, and it is not working.**
-   Ground-truthed 08-04: its merge `3402756` is an ancestor of the deployed HEAD, and
-   `MAI_TAI_SNAPSHOT_PERSIST_THROTTLE_SECS=1.0` is present in `/proc/<pid>/environ` for
-   **strategy, oms AND control — control has carried it since Jul 14**. Yet
-   `dashboard_snapshots` is **103 MB / 5002 rows and still growing**. "Built, never deployed,
-   cheapest win available" was wrong on both counts. **Not a deploy — an investigation.**
-   ⭐ Leading hypothesis *[inferred, not traced]*: a **1.0s** throttle against a **5s** snapshot
-   cadence (`MAI_TAI_MARKET_DATA_SNAPSHOT_INTERVAL_SECONDS=5`) **never binds**. Configured ≠
-   enforced, again.
-3. Expect a **warmup-replay ARM burst** on any restart. Benign; the watch excludes it
-   (`LIVE_ARM_MAX_AGE_SECS=300`) **upstream of every push condition**, so it cannot page.
-
-### C. POST-DEPLOY — read-only, ✅ ALREADY SCHEDULED
-`eod_cron.sh` fires **18:05 ET weekdays** (root cron, ET-guarded inside, fire-once per day) →
-`/home/trader/entry_fix_watch/eod_<date>.txt` + an ntfy summary.
-It re-takes **everything currently provisional**, on corrected denominators: live-arm crosses
-(replay excluded), entries **by slot**, **resting fill rate PER LIVE ARM**, no-entry crosses, and
-round trips in **percent, median-first, drop-one**, refusing to FIFO ambiguous pairs.
-⇒ Then **P1** (below), which needs those numbers first.
-
-### D. NOT TONIGHT — design-first, no deploys
-Webull `CW_FLIP` fan-out fix · liquidity-floor hysteresis (⛔ constrained: keep the order MANAGED,
-never "stop cancelling" — that recreates the #580 orphan) · Decision Tape #640 · **any trigger
-change (waits on P1)**.
-
-### E. OPERATOR
-Review [#646](https://github.com/krshk30/project-mai-tai/pull/646) · #640 at leisure ·
-⏰ **Wednesday 18:00 ET the Schwab re-auth reminder pages — 30 seconds, and it moves the token
-expiry permanently off the Monday open** (next expiry **Mon 08-10 06:40 ET**, 19 min before the EH
-window).
+⛔ **Rollback anchors:** code `71c6c2c` · env `/root/env.bak.2026-08-04-combined`.
+⛔ **v2 was NOT restarted and must not be** — Bug 2 re-issues the entry cap on every armed segment.
+Pre-flight: `sudo /home/trader/ops_preflight/preflight_v2_restart.sh` (asserts; exit 0 = GO).
 
 ---
 
-## 🔴🔴 TOP OF QUEUE — THE 16:00 EXIT JAM (operator queue-jumped it ahead of P1, 08-04)
+
+## 🔴🔴 TOP OF QUEUE — THE REJECT BACKLOG (operator reframe, 08-04)
+
+⛔⭐ **EVERY BROKER REJECTION IS OUR DEFECT.** Tested against the whole population: **zero classes
+are market-caused.** The reject log is a ranked, dated defect backlog that had never been read.
+⛔ The reason lives in **`broker_order_events.payload->>'reason'`**, NOT `broker_orders.payload`.
+
+**Design note: [`v2-a1-oversell-and-exit-abandonment-design.md`](v2-a1-oversell-and-exit-abandonment-design.md). Nothing built.**
+**Alarm LIVE:** `/home/trader/reject_watch/` — `*/15`, ET-guarded 07:00–20:00 (deliberately wider
+than the exit watch: the 16:00 jam ran after it had stopped). Real money pages; paper never does.
+
+### The settled numbers (enumerated — never pattern-matched)
+| exit rule | episodes | rejects | orders/ep |
+|---|---|---|---|
+| `CW_HARD_STOP` | **24** | **985** (87%) | 41.0 |
+| `CW_FLOOR` | 26 | 114 | 4.4 |
+| **`CW_TARGET`** | **0** | **0** | — |
+
+57 episodes total (FLOOR-ONLY 12 · STOP-only 10 · both 14 · neither-CW 21), 28 never closed.
+**Worst state: 4 post-#566 episodes where a stop fired and no sell filled that day.**
+
+### Three mechanisms, all new today
+1. **A storm needs a PERSISTENT RESERVATION.** Rejects/episode is bimodal (1–6 or 62–129) and
+   **stable since 07-13** — the largest predates the fan-out, #625 and #566. ⇒ **#608 caps the noise
+   and cannot be the fix. DEMOTED.**
+2. **E5 has two sources** — A1a unconfirmed-cancel (~126, KUST) / A1b live protective leg (~242,
+   07-13 + 08-04). Double-derived. ⭐ **E5 is DOWNSTREAM of the churn** (KUST: 12 cancelled limits
+   carry ZERO oversell rejects; the 125 market rejects are strictly sequential) ⇒ **C1/P0a is NOT
+   chasing a symptom; its scope stands.**
+3. **MODE 2 — exits are ABANDONED, not just delayed.** FLOOR-ONLY **10 of 12 never closed (83%)**
+   vs stops 11 of 24, on 114 rejects vs 985. Cause is a **precondition asymmetry**: the stop's
+   condition is *absorbing* (only more true as price falls) and retries forever; the floor's is
+   *transient* (armed only while price ≥ target) so it gets ~4 attempts and can never re-arm.
+   ⇒ the floor question is a **RATCHET**, connecting to the floor-ratchet item already REOPENED.
+
+⛔ **`CW_TARGET = 0` is the design.** The target IS the resting order and fills in place; floor and
+stop **emit a second sell alongside a live protective order**. **Emit-a-second-sell collides;
+modify-the-resting-order cannot.**
+⛔ **`_cw_flip_pending` = ONE structure, TWO defects** (disarm-on-emit; armed for one account only ⇒
+Webull deafness, 27 arms vs 0). Disarm-on-fill fixes neither. Keep separate.
+⚠️ **Mode 2's COST is unresolvable for its era** — 14 of 16 floor episodes pre-date #566, where an
+OCO close left no `fills` row. Answer prospectively; do not infer. E0's *"exit is essentially
+optimal"* carries this unmeasured leak — **not settled, not reopened.**
+
+**Tomorrow, one at a time, validated, attended: A3 (position-state) → A2 (check #438's defer queue
+first) → A1(a/b) → A5 → A8.**
+
+---
+
+## 🔴 THE 16:00 EXIT JAM (second)
 
 **Design note: [`v2-eod-oco-jam-design.md`](v2-eod-oco-jam-design.md) (#651, merged). Nothing built.**
 
@@ -137,7 +159,7 @@ function #608 hardened, so "NCRA's 145-retry case stays bounded" is a real regre
 
 ---
 
-## 🔬 P1 — THE TRIGGER (now SECOND — the jam jumped it)
+## 🔬 P1 — THE TRIGGER (third)
 
 **`b117d89` re-shipped the rule of #467**, verbatim and unconditionally: the reactive/reclaim
 trigger is `trig = state.cw_segment_high` — the **running segment high**, not the **frozen 2-bar
@@ -187,6 +209,8 @@ The measurement is the **multi-day** before/after.
 | `[V2-CW-ARM]` lines | event record | **cross census** | denominator inflated **~14×** |
 | `[OMS-V2-MANAGED-EXIT]` lines | event record | **exit census** | 2% should have been ~12% |
 | **placement intents** | order-lifecycle record | **cross denominator** | #625 altered the very denominator it was judged on |
+| a **wildcard match** (`ILIKE '%HARD_STOP%'`) | finding a family | **defining** one | swept a 1-reject/episode refusal into a 41-reject/episode storm class |
+| **in-memory flags** (`cw_entries_this_flip` · `_managed_v2_symbols` · `_cw_floor_armed` · `_cw_flip_pending`) | a within-tick guard | **durable-looking behaviour** | 14 such structures in the OMS; ~9 gate a money decision |
 
 ⇒ **the managed-exit log is not an exit census** — Schwab exits mostly resolve broker-side via
 native OCO and never emit a line (`OMS-OCO-EXIT-FILL` = 1174 lines / 6 days). **Any earlier study
