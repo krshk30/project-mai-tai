@@ -84,6 +84,22 @@ never-closed episodes.
 ⛔ **(c) does not apply here** — there is nothing to suppress against. (c) covers the 08-04 bracket
 class only (~115 on one day), which is a much smaller prize than the ~242 first claimed.
 
+### ⭐ RANKING — the third class OUTRANKS A1b
+**It is the only class in which a position we HOLD cannot be exited.** Same shape as the 47-minute
+median time-to-exit and the four post-#566 episodes where a stop fired and no sell filled that day.
+A3's refusal protects us; this one blocks us.
+
+### ▶ THE TWO QUESTIONS, IN THIS ORDER
+1. **RECENCY FIRST — it decides urgency, not mechanism.** Has the class recurred since 07-13?
+   *Stopped* ⇒ historical, it waits. *Ongoing* ⇒ **top of the board and A1b drops behind it.**
+2. **⛔ `net_held = 2.00` is OUR arithmetic over OUR fills — not broker truth.** Compare against
+   Schwab's **position endpoint**. Either Schwab's view was wrong or our fill record is, and only
+   one side has been checked.
+
+★ **READ THE INSTRUMENT THAT ALREADY EXISTS FIRST.** The **reconciler drift alerts** report exactly
+this — *"our books vs broker positions disagree"* — and fired **nine times on 08-04 alone**, unread.
+⛔ Do not build a comparison before reading them. [[feedback_has_the_other_bot_solved_this]]
+
 - **A1b — a live protective leg still resting (08-04, ~115).** No cancels involved; a working broker order
   holds the lot. 08-04's 115 is the 16:00 jam, independently traced to the EOD transition leaving
   broker OCO legs alive — **the same conclusion from two unrelated derivations.**
