@@ -30,7 +30,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import Deque, Iterable
+from typing import Callable, Deque, Iterable
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -934,6 +934,92 @@ class SchwabV2Strategy:
 
     # ------------------------------------------------------ ATR Flip (Track 1)
 
+    def _apply_session_anchor_reset(self, state: SymbolState, anchor: int) -> None:
+        """The 04:00-ET session reset, extracted VERBATIM from `_update_atr_state`.
+
+        ⛔⭐ WHY THIS IS A METHOD. The reset has two drivers and they MUST stay identical:
+
+          BAR-driven  — `_update_atr_state` when a bar's anchor differs from the stored one.
+                        Correct, and it is what makes a WATCHLISTED symbol self-clear.
+          TIME-driven — `roll_stale_session_state()` for a symbol that has stopped receiving
+                        bars entirely. Its `anchor != stored` test never evaluates, because
+                        nothing ever calls it. See that method.
+
+        Duplicating this block would let the two drift, and a drift here is silent: it would
+        clear some fields on one path and not the other, leaving a half-reset segment that
+        reads armed with no trail. Both callers go through here.
+        """
+        period = self._atr_period
+        state.atr_session_anchor_ms = anchor
+        state.atr_hl = deque(maxlen=period)
+        state.atr_prev_bar = None
+        state.atr_wilders = None
+        state.atr_tr_seed = []
+        state.atr_state = None
+        state.atr_trail = None
+        state.atr_prev_trail = None
+        state.atr_prev_state = None
+        state.atr_state_age = 0
+        state.atr_fired_in_short_seg = False
+        if self._atr_rearm_enabled:
+            self._set_atr_guard(state, "UNCLAIMED")
+            state.atr_hold_pending = None
+        # Confirmed-window setup does not carry across the session anchor.
+        state.cw_armed = False
+        state.cw_bars_waited = 0
+        state.cw_three_bar_high = 0.0
+        state.cw_trigger = 0.0
+        state.cw_flip_level = 0.0
+        state.cw_entries_this_flip = 0
+        state.cw_bar_low_so_far = 0.0
+        state.cw_segment_high = 0.0
+        state.cw_v2_emit_claimed = False
+        state.cw_v2_emit_ms = 0
+        state.fanout_webull_claimed = False  # fan-out RTH-resting once-per-flip latch
+        # Resting flip-entry: a live resting order is already cancelled at 16:00 (out-of-window),
+        # so at the 04:00 anchor this only zeroes the strategy's view for the new session.
+        state.resting_active = False
+        state.resting_level = 0.0
+
+    def roll_stale_session_state(
+        self,
+        now_ms: int,
+        *,
+        is_protected: "Callable[[str, SymbolState], bool]",
+    ) -> list[str]:
+        """TIME-driven half of the 04:00-ET boundary. Returns the symbols rolled.
+
+        ⛔⭐ THE DEFECT THIS CLOSES (measured 2026-08-05). The session reset was BAR-driven only:
+        `if anchor != state.atr_session_anchor_ms` inside `_update_atr_state`, which is reached
+        only when a bar ARRIVES. A symbol that leaves the watchlist stops receiving bars, so its
+        reset NEVER FIRES and it holds `cw_armed=True` indefinitely. On 2026-08-05 FUSE, HYFM and
+        AXTL sat armed ~33 hours — armed since 08-03 — while the watchlist read
+        ["BJDX","GTE","YXT"]. Every WATCHLISTED symbol self-cleared correctly; only the silent
+        ones rotted. That asymmetry is the whole bug.
+
+        ⛔ SCOPED TO SYMBOLS THAT MISSED THE SESSION ENTIRELY. The guard is
+        `0 < atr_session_anchor_ms < anchor`: the symbol's newest bar belongs to an EARLIER
+        session. A symbol being replayed (warmup / DB-seed) walks historical bars whose anchors
+        are legitimately older, and the bar-driven path is mid-flight for it — so the caller
+        additionally excludes anything still warming. Never touches a symbol receiving bars in
+        THIS session, so the RTH path is unchanged.
+
+        ⛔ PROTECTION IS THE CALLER'S, NOT OURS. `is_protected` decides. The reset clears
+        `resting_active`, and clearing that for a symbol whose buy-stop is WORKING AT THE BROKER
+        orphans the order — the #580 latch race, where losing it once means it never reprices
+        again. The strategy cannot see broker state, so it must not guess.
+        """
+        anchor = session_start_ts_ms(now_ms)
+        rolled: list[str] = []
+        for symbol, state in self._symbol_states.items():
+            if not (0 < state.atr_session_anchor_ms < anchor):
+                continue
+            if is_protected(symbol, state):
+                continue
+            self._apply_session_anchor_reset(state, anchor)
+            rolled.append(symbol)
+        return rolled
+
     def _update_atr_state(self, state: SymbolState, cur: OHLCVBar) -> dict | None:
         """Advance the ATR-trailing-stop flip state by one bar; return this
         bar's signal {touch, touch_price, flip, trail, loss, state, state_age}
@@ -952,36 +1038,7 @@ class SchwabV2Strategy:
         # Session reset (mirror VWAP's anchor roll → reproduces fetch_day's slice).
         anchor = session_start_ts_ms(cur.timestamp_ms)
         if anchor != state.atr_session_anchor_ms:
-            state.atr_session_anchor_ms = anchor
-            state.atr_hl = deque(maxlen=period)
-            state.atr_prev_bar = None
-            state.atr_wilders = None
-            state.atr_tr_seed = []
-            state.atr_state = None
-            state.atr_trail = None
-            state.atr_prev_trail = None
-            state.atr_prev_state = None
-            state.atr_state_age = 0
-            state.atr_fired_in_short_seg = False
-            if self._atr_rearm_enabled:
-                self._set_atr_guard(state, "UNCLAIMED")
-                state.atr_hold_pending = None
-            # Confirmed-window setup does not carry across the session anchor.
-            state.cw_armed = False
-            state.cw_bars_waited = 0
-            state.cw_three_bar_high = 0.0
-            state.cw_trigger = 0.0
-            state.cw_flip_level = 0.0
-            state.cw_entries_this_flip = 0
-            state.cw_bar_low_so_far = 0.0
-            state.cw_segment_high = 0.0
-            state.cw_v2_emit_claimed = False
-            state.cw_v2_emit_ms = 0
-            state.fanout_webull_claimed = False  # fan-out RTH-resting once-per-flip latch
-            # Resting flip-entry: a live resting order is already cancelled at 16:00 (out-of-window),
-            # so at the 04:00 anchor this only zeroes the strategy's view for the new session.
-            state.resting_active = False
-            state.resting_level = 0.0
+            self._apply_session_anchor_reset(state, anchor)
 
         # --- modified true range (needs prior SESSION bar + SMA(high-low, period)) ---
         hl_cur = cur.high - cur.low
@@ -2040,6 +2097,8 @@ class SchwabV2Strategy:
         (arm_bar_ts >= boot) is NEVER counted dangerous — the discriminator that makes this
         continuous and race-free."""
         max_e = self._cw_v2_max_entries_per_flip
+        now_ms = int(datetime.now(UTC).timestamp() * 1000)
+        session_anchor = session_start_ts_ms(now_ms)
         out: list[dict] = []
         for sym, st in self._symbol_states.items():
             if not st.cw_armed:
@@ -2049,8 +2108,28 @@ class SchwabV2Strategy:
                 {
                     "symbol": sym,
                     "arm_bar_ts": int(st.cw_arm_bar_ts),
+                    # ⭐ AGE, not just the raw ms. A 33-hour-old arm and a 3-minute-old arm rendered
+                    # as two epoch integers look identical at a glance; FUSE/HYFM/AXTL sat armed
+                    # since 08-03 and nobody could see it. Age is the field that makes it obvious.
+                    "arm_age_secs": (
+                        int((now_ms - st.cw_arm_bar_ts) / 1000) if st.cw_arm_bar_ts > 0 else 0
+                    ),
+                    # ⛔ THE DEFECT MADE VISIBLE. True = this arm belongs to an EARLIER 04:00-ET
+                    # session and should not exist. It is the exact population the time-driven roll
+                    # clears, so it must read 0 once that is on. It is derived from the session
+                    # anchor — NOT from the entry counter — so unlike `capped`/`dangerous` below it
+                    # cannot be inflated by a replay.
+                    "stale_session": 0 < st.cw_arm_bar_ts < session_anchor,
                     "entries_this_flip": int(st.cw_entries_this_flip),
                     "max_entries": int(max_e),
+                    # ⛔⭐ `capped` AND `dangerous` ARE DERIVED FROM A RETIRED COUNTER. Do not read
+                    # either as a safety verdict. `cw_entries_this_flip` is labelling only (see its
+                    # declaration and the increment site) — the #644 cap is COMPOSITION (<=1 resting
+                    # AND <=1 reclaim). FUSE read 3/2 "capped=true dangerous=false" on 2026-08-05
+                    # ONLY because a DB-seed replay incremented the label 3x while emitting no
+                    # order; at 0 or 1 the identical state would have read dangerous=true. The
+                    # boot-hold release depends on this and is therefore UNVALIDATED. Kept as-is
+                    # here deliberately: changing it is a separate, gated change.
                     "capped": st.cw_entries_this_flip >= max_e,
                     "reconstructed": reconstructed,
                     "dangerous": reconstructed and st.cw_entries_this_flip < max_e,

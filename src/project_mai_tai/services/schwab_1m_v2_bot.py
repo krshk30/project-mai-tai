@@ -790,6 +790,55 @@ class SchwabV2BotService:
         for symbol in tracked:
             qty = positions.get(symbol, 0)
             self.strategy.update_position(symbol, qty, held_qty=held.get(symbol, 0))
+        self._roll_stale_session_state(positions, held)
+
+    def _roll_stale_session_state(
+        self, positions: dict[str, int], held: dict[str, int]
+    ) -> None:
+        """TIME-driven 04:00-ET session roll for symbols that stopped receiving bars.
+
+        The strategy's reset is BAR-driven, so a de-watchlisted symbol never rolls and keeps
+        `cw_armed=True` indefinitely (FUSE/HYFM/AXTL: ~33h on 2026-08-05). This applies the SAME
+        reset on a timer. Runs on the existing 5s position poll — no new task, so no new
+        liveness surface.
+
+        ⛔⭐ THE CARVE-OUT IS WIDER THAN `_protected_symbols()`. That helper answers a DIFFERENT
+        question — "which symbols must stay on the WATCHLIST" — and covers positions only. The
+        session reset also clears `resting_active`, and clearing that while a buy-stop is WORKING
+        AT THE BROKER orphans the order: #580's latch race, where losing it once means it never
+        reprices again. So this predicate adds `resting_active` rather than reusing that helper,
+        and `_protected_symbols()` keeps its meaning untouched (RTH path unchanged).
+
+        ⛔ A symbol mid-warmup is SKIPPED, not protected. Warmup/DB-seed replays historical bars
+        whose anchors are legitimately older; the bar-driven path is in flight for it and will
+        roll it correctly. Rolling underneath the replay would reset the trail mid-series.
+        """
+        if not bool(
+            getattr(self.settings, "strategy_schwab_1m_v2_session_time_roll_enabled", False)
+        ):
+            return
+        operator_protected = set(self.settings.protected_symbol_set)
+
+        def _skip(symbol: str, state) -> bool:
+            if symbol in operator_protected:
+                return True
+            if positions.get(symbol, 0) > 0 or held.get(symbol, 0) > 0:
+                return True
+            if state.position_qty > 0 or state.position_qty_held > 0:
+                return True
+            if state.resting_active:  # #580: a working resting order must never be orphaned
+                return True
+            # mid-warmup: the bar-driven path owns this symbol right now
+            return symbol in self._watchlist and symbol not in self._rest_warmup_done
+
+        now_ms = int(datetime.now(UTC).timestamp() * 1000)
+        rolled = self.strategy.roll_stale_session_state(now_ms, is_protected=_skip)
+        if rolled:
+            logger.info(
+                "[V2-SESSION-ROLL] time-driven 04:00-ET roll cleared %d stale symbol(s): %s "
+                "(watchlist=%d, protected/skipped untouched)",
+                len(rolled), ",".join(sorted(rolled)[:20]), len(self._watchlist),
+            )
 
     def _fetch_reportable_state(self) -> dict[str, list]:
         """REPORTING ONLY -- what the operator sees. Deliberately SEPARATE from
