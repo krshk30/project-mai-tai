@@ -103,9 +103,18 @@ fails for the same reason.
 
 ⇒ **The floor is lost because the rejection window outlasts the condition that permits it.** The
 position then runs with **no profit protection and only the −5% stop beneath it**.
-⇒ The design question is whether the floor should be a **RATCHET** — armed once, stays armed —
-rather than re-derived from price each tick. Connects directly to the floor-ratchet item already
-marked REOPENED.
+⇒ A **RATCHET** — armed once, stays armed — would remove the transience. **But it is NOT the
+mode-2 design question, and it must not enter A1 as plumbing:**
+
+1. ⛔ **The ratchet is a STRATEGY change, not an execution fix.** "Armed once, stays armed" fires the
+   floor at a price the current strategy does not permit. That is **P4.1, which the operator parked.**
+   Offer it to him as an option; do not build it inside an execution item.
+2. ⛔ **FIX THE RESERVATION FIRST.** Modes 1 and 2 share one driver — **reservation duration**.
+   A1a/A1b may dissolve mode 2 without touching floor logic at all. Building a ratchet first adds
+   permanent complexity to compensate for a defect we are in the middle of removing.
+
+⇒ **Sequence: land A1a/A1b, then MEASURE whether mode-2 residue remains.** Decide the ratchet on
+that measurement, not on this note.
 
 ⚠️ `disarm-on-emit` **is** real (`oms/service.py:2459` clears `_cw_floor_armed` and
 `_cw_flip_pending` immediately after emit, unconditionally, with `close_on_fill` already threaded
@@ -145,7 +154,7 @@ done by the first.
 | A1 | A1b: zero oversell rejects where a live protective leg exists | replay 07-13 / 08-04; both are known-bad tapes |
 | A2 | A1a: zero oversell rejects following our own cancel | replay 07-31 (KUST) |
 | A3 | The naked window does **not** grow | measure trigger→fill either side; ⛔ a fix that removes rejects by waiting **fails** |
-| A4 | Mode 2: a floor exit rejected while armed still exits | prove the floor survives its rejection window |
+| A4 | **Mode-2 RESIDUE is measured, not assumed** — after A1a/A1b land, re-run FLOOR-ONLY never-closed | ⛔ NOT "a floor exit rejected while armed still exits" — that phrasing presumes a mode-2-specific fix and forces the ratchet by the back door. Measure first, then decide |
 | A5 | No change to the target path | `CW_TARGET` stays at 0 rejects — it is the control |
 | A6 | Webull flip deafness is **still open** after A1 | ⛔ prove the second defect was not marked done by the first |
 
