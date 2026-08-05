@@ -22,6 +22,53 @@
 
 ---
 
+## ⚖️ THE HONEST LEDGER (2026-08-05) — read before quoting any finding from this board
+
+**Demonstrated money cost of everything found on 2026-08-05 is approximately ZERO.** Say that
+plainly and first. The operator's own read — *"on the chart and the page everything I bought closed
+cleanly and nothing is pending"* — was correct on 2026-08-05, and was correct against three separate
+alarms raised during the day.
+
+**EIGHT claims were withdrawn on 2026-08-05.** Each was reasoned from code shape or a pooled query
+rather than read from the authoritative source:
+
+| # | Claim | Killed by |
+|---|---|---|
+| 1 | `min_bars = 135` blocked GTE | an explicit ATR carve-out sits below it; the constant belongs to a strategy v2 does not run |
+| 2 | GTE's ATR trail was under-seeded | same flip on the full 1,212-bar warmup and the 300-bar deque tail |
+| 3 | the volume floor blocked the flip bar | GTE 76,069 / BJDX 214,530, both far above 10,000 |
+| 4 | warmup history was fetched and discarded | warmup bars are deliberately not persisted (`PERSIST_BAR_AGE_LIMIT_SECONDS`) |
+| 5 | deploy cadence was the daily cleanup | the clear-down held through 06-24→06-30 and 07-01→07-07 with no deploys |
+| 6 | FUSE `3/2` is a live cap breach | `cw_entries_this_flip` is a LABEL; the 3 came from replay increments that emitted no order |
+| 7 | **a stale arm swallowed BJDX's 07:30 flip (D2)** | that flip does not exist — an UNSLICED oracle artifact. BJDX armed 08:50:02 on the real 08:49 flip |
+| 8 | **GTE was a double entry / 4 shares held** | broker truth said 2. Summed fills instead of reading `account_positions` |
+
+Two more were caught *before* acting: `%hard_stop%` reporting "385/394 on the guard path" (truth:
+1/394), and the A2/A3 shared-root hypothesis, which the data rejected.
+
+**⇒ THE CASE FOR THIS WORK IS NOT "IT IS BLEEDING MONEY."** It is: **the books and the broker
+disagree, and size cannot be scaled until they don't.** Overstating it once costs more credibility
+than the whole board is worth.
+
+### What survives with evidence
+
+* **24 blocked hard-stop episodes over ~12 days, 4 of which never closed the same day.** Real,
+  measured, and small at qty 2. This is the strongest money-linked finding on the board.
+* **Books-vs-broker divergence, fresh instance dated 2026-08-05.** GTE's 14:54 Schwab lot @ 9.655
+  exited with **no `fills` row and no trade record**, while `account_positions` showed only the
+  later 9.37 lot — the OCO exit-fill blackout class (#565/#566). `[OMS-OCO-EXIT-MISS]
+  reason=broker_reported_no_filled_exit_leg` repeated for ~20 min against it. Cost if it tracked
+  its Webull twin (−4.92%): **≈ $0.95.** The defect is real; the loss is not the point.
+* **Session state never clears** (v2 absent from the 04:00-ET roll) — fixed in #657, deployed dark.
+* **Two Ship 1 pager defects**, both found and fixed 2026-08-05: false urgents on a filled-then-
+  rejected exit, and a dedupe key that collapsed every symbol into one (INLF's page was silently
+  swallowed by JLHL's). Noise and a missed page — no money.
+
+⛔ **Do not let a clean board read as a validated one.** Where a fix is unexercised rather than
+proven, say which. See §8 of `v2-session-roll-and-replay-arm-design.md`.
+
+---
+
 ## 🟢 FLEET — what is live right now
 
 **As of 2026-08-04 EOD.** Deployed HEAD **`786bbb6`** (was `71c6c2c`) — attended deploy at
