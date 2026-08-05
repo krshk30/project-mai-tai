@@ -59,7 +59,7 @@ reading ~41/episode as the problem; the problem is what is holding the shares. *
 
 | day | oversell rejects | cancelled sells that day | source |
 |---|---|---|---|
-| 07-13 | **127** | 0 | **A1b** |
+| 07-13 | **127** | 0 | ⛔ **NOT A1b — a THIRD CLASS** (see below) |
 | 07-31 (KUST) | 126 | 12 | **A1a** |
 | 08-04 | **115** | 0 | **A1b** |
 | others | 41 | ~0 | mixed |
@@ -67,7 +67,24 @@ reading ~41/episode as the problem; the problem is what is holding the shares. *
 - **A1a — unconfirmed cancel (~126).** Our own cancelled-but-unconfirmed limit exits still reserve
   the shares. KUST 07-31: 12 cancelled LIMITs 09:26–09:33, then **125 rejected MARKET sells
   09:33:42–09:39:10, zero overlap, strictly sequential**, closing at 09:39:41.
-- **A1b — a live protective leg still resting (~242).** No cancels involved; a working broker order
+### ⛔⭐ 07-13 IS A THIRD CLASS — OUR BOOKS SAY HELD, THE BROKER SAYS FLAT (found 2026-08-05)
+AGEN, 127 rejects 14:15:26–14:19:33. **We had NO live sell order of any kind** (last AGEN sell filled
+10:03:33) and **zero native brackets were emitted that day** — so nothing of ours was reserving.
+But `net_held = 2.00` selling 2, managed row OPEN: **the position was genuinely held.**
+
+⇒ This is the **MIRROR IMAGE of A3**, and both produce the same reject sentence:
+| | our books | broker | who is protected |
+|---|---|---|---|
+| **A3** (Webull, 260) | open | flat | the broker refuses OUR duplicate sell — protective |
+| **07-13** (Schwab, 127) | **held 2** | thinks flat | **a legitimate exit is BLOCKED** |
+
+⚠️ **07-13 is the more dangerous of the two** — A3 is being stopped from selling what we do not have;
+this is being stopped from selling what we DO. Same family as the 47-min median exit and the 4
+never-closed episodes.
+⛔ **(c) does not apply here** — there is nothing to suppress against. (c) covers the 08-04 bracket
+class only (~115 on one day), which is a much smaller prize than the ~242 first claimed.
+
+- **A1b — a live protective leg still resting (08-04, ~115).** No cancels involved; a working broker order
   holds the lot. 08-04's 115 is the 16:00 jam, independently traced to the EOD transition leaving
   broker OCO legs alive — **the same conclusion from two unrelated derivations.**
 
@@ -165,6 +182,7 @@ a calculation with an unexamined transform inside it.**
 | "42 hard-stop episodes, understated 75%" | `ILIKE '%HARD_STOP%'` swept in a one-shot mechanism |
 | "87% withdrawn" | the withdrawal was unnecessary; it was right |
 | "the flag is cleared on emit and never re-arms" | it re-emits 4.38×/episode |
+| **"the 60/40 A1a/A1b split"** | **inferred a resting protective leg from the ABSENCE of cancelled sells.** 07-13 had zero brackets and zero live sells — a third class entirely. Absence of X is not presence of Y |
 
 ⇒ **Enumerate, never pattern-match. Split by account, never pool. State the window. A bucket named
 `(other)` must be zero or enumerated. Classification must be tested, never read from a comment.**
