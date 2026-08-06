@@ -21,6 +21,19 @@ up front, because the raw reject count sizes it wrong.
 | **concentration** | **113 of the 115 are ONE incident (08-04 AAOG)**; 07-22 contributes the other 2 |
 | names | AAOG, KUST |
 
+### ⛔⭐ AND IT IS ALREADY MITIGATED — size the CURRENCY, not just the volume
+
+**`MAI_TAI_OMS_V2_EOD_OCO_TRANSITION_ENABLED` was flipped to `false` on 08-04 evening as the
+deliberate jam mitigation** (recorded then as a behaviour change separate from the #647 rollout; the
+08-05 21:06 env mtime is re-persistence during that deploy). **It stays off.**
+
+**Both of D1's days — 08-04 (113) and 07-22 (2) — predate the flip. There have been ZERO D1-class
+rejects since.**
+
+⇒ **D1's justification is "it removes the need for the mitigation", NOT "it fixes a live failure."**
+A reader who sees 115 rejects and no mention that the class has been disarmed for two days will
+rank this item wrong in the other direction.
+
 ⛔ **A reader who sees "115 rejects" without the per-day split will size this wrong.** It is not a
 recurring drip. It requires a specific and uncommon conjunction — **a bracket lapsing while a
 position is held through 16:00** — and when that happens it is violent: 113 rejections in eight
@@ -123,10 +136,24 @@ Same principle as #647. Ordered, and each step gated on the previous:
 STOP leg there; measured 08-04). The software ladder becomes the *only* owner, which is already the
 transition's stated intent.
 
-⚠️ **Open question, unchanged and unanswered:** cancel at 16:00, or **never emit a lapsing bracket
-at all** — give RTH brackets a duration that dies cleanly at the close? Cancelling is the smaller
-change; the duration route **removes the class**. Given D1's true size (§0), the duration route may
-be the better value and should be priced before the cancel path is built.
+### ⭐ THE FORK IS DECIDED IN PRINCIPLE — the duration route, not the cancel route
+
+The question was: cancel at 16:00, or **never emit a lapsing bracket at all** (give RTH brackets a
+duration that dies cleanly at the close)?
+
+**§0 decides it.** With the class already disarmed by a flag, this is not a cleanup task — the
+question is **should an RTH bracket ever be able to lapse?** The cancel route is a smaller change
+that leaves the class alive and the mitigation flag load-bearing forever. **The duration route
+removes the class and makes the flag unnecessary.** Rule 12.
+
+⇒ **Price the duration route first; the expectation is that it wins.** Steps 1–4 above become the
+FALLBACK, to be built only if a bracket duration that expires at the close turns out to be
+unavailable at the broker — an open API question, not an assumption.
+
+⛔ Note what this does to §2's residual gap: **the duration route does not need the
+cancel-by-broker-id path at all**, and therefore does not need the Gate-1 broker read to be built
+safely. The Gate-1 read is still owed — for slice C (§5) and to *confirm* the premise — but it stops
+being a blocker on D1 itself.
 
 ---
 
@@ -160,6 +187,33 @@ keyed on `submitted_at <= T <= updated_at`, i.e. orders live *in our books*. **I
 reservation release lags our recorded cancel, the test says "not live" while the broker still
 reserves** — which is exactly candidate (a). The test rules out orders we know were live; it cannot
 rule out lingering broker-side reservations.
+
+### ⭐ P0a (#633) AS A CANDIDATE FIX FOR SLICE C — half established, half not
+
+**#633 merged 07-31 13:05 ET; the OMS restarted 13:06 ET.** Slice C essentially stops after it.
+
+| | |
+|---|---|
+| ✅ **ESTABLISHED** | **07-31's incident PRECEDES the deploy** — KUST's 125 rejects ran **09:33–10:42 ET**, ~2.5 h before 13:06. With 07-13 (127), **89 % of slice C is pre-P0a.** |
+| ✅ **ESTABLISHED** | **"We simply stopped trading" is RULED OUT.** Mid-RTH sell attempts/day: **7.6 pre-P0a** (excluding the two storm days) vs **11.7 post-P0a**. We traded *more*, not less. |
+| ⛔ **NOT ESTABLISHED** | **The post-P0a silence is indistinguishable from chance.** Only **3 trading days / 35 attempts / 2 rejects**. Storms hit **2 of 13** pre-P0a days ⇒ **P(no storm in 3 days, given nothing changed) = 60.6 %**. On the weaker any-reject test, **P(at most 1 of 3 days) = 33.0 %**. Both are commonplace under the null. |
+
+⇒ **Slice C CANNOT be retired yet.** The favourable half is real and worth recording; the conclusion
+is simply not available at n=3.
+
+⛔ **The mechanism test I wanted is not available from this data.** `broker_orders.status =
+'cancelled'` appears on **only one day in the whole window (8, on 07-31)**, so cancel-rate cannot
+serve as the before/after link between the churn and the reservations. Whatever records the exit
+churn, it is not this column. [[feedback_authoritative_for_a_is_not_for_b]]
+
+⚠️ Also: reject-count ÷ sell-attempts exceeds 100 % on 07-22 (13 rejects, 12 attempts). Reject
+**events** and sell **orders** are different populations — one order can emit several events — so
+that ratio is a shape, not a rate. Do not quote it as a probability.
+
+**The cheapest route to settling it is already deployed:** Part 2's `[OMS-P0A-HOLD]` lens shipped
+with #647 and has been on the box since 08-05 21:06 ET — **0 lines emitted so far, UNEXERCISED**.
+Once it emits, holds can be correlated against reject absence directly, which beats waiting for
+enough quiet days to accumulate.
 
 ⇒ **Slice C needs the same broker order-history read that §2's residual gap needs.** One
 Gate-1-window read serves both. **Do not design slice C until it has one.**
