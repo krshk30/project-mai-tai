@@ -620,8 +620,49 @@ tape that is indistinguishable from an order placed and never filled — and the
 cancelled it at 11:37:02 as `flip_no_fill`, a **misleading** reason for an order that was never on
 the book. ⛔ There is **no `ineligible` line anywhere in the v2 log for PAVS.**
 
-**Minimum fix — one INFO line at each short-circuit**, naming symbol · account · reason · intent id.
-That is the whole ask. ⛔ The suppression itself is correct and protective and must NOT change.
+### ⛔⭐⭐ THE SHARP EDGE — THE TAPE DOES NOT OMIT THE EVENT, IT ASSERTS SOMETHING FALSE
+At 11:37:02 the resting path cancelled PAVS with:
+```
+[V2-RESTING-CANCEL] PAVS reason=flip_no_fill level=7.0528
+```
+**`flip_no_fill` describes an order that WAS on the book and did not fill. There was never an
+order.**
+
+> **Silence reads as NO information and invites a look. A plausible false reason reads AS
+> information and STOPS the investigation.**
+
+⇒ **A wrong reason is worse than a missing one** — a *distinct* failure from the silent-zero family
+this note has been cataloguing all week. That one withholds; this one **misdirects**, and it
+consumes the attention that would have found the defect.
+[[feedback_a_wrong_reason_is_worse_than_a_missing_one]]
+
+### ⛔ CHECKABLE CONSEQUENCE — CONTAMINATED DENOMINATORS, MEASURED
+A wrong reason does not stay in the log; it flows into every count keyed on it. **Any measure of
+"how often does the resting order fail to fill" includes orders that were never placed.**
+
+| day | v2 open intents | **never reached the broker** | filled / ALL | **filled / PLACED** |
+|---|---|---|---|---|
+| 08-05 | 200 | **103 (51.5 %)** | 22.5 % | **46.4 %** |
+| **08-06** | 126 | **73 (57.9 %)** | 21.4 % | **50.9 %** |
+| 08-03 | 165 | 61 (37.0 %) | — | — |
+
+⇒ **Conversion roughly DOUBLES on the honest denominator.** Roughly **half of every v2 open intent
+never reaches a broker at all**, and nothing says so.
+
+⚠️ **The EOD's resting conversion — `9 / 32 live in-window arms = 28.1 %` — is a FLOOR, biased
+DOWN.** Its denominator counts arms on names Schwab had already refused, which were structurally
+incapable of converting. ⛔ I am **not** restating it as a corrected number: that needs the
+arm → intent → order chain, which the per-lot gap makes unreliable. What is established is the
+**direction and the magnitude of the bias**, not a replacement figure.
+⛔ Anything derived from 28.1 % inherits the same bias.
+
+### THE FIX — one line, and one new string
+1. **An INFO line at each short-circuit**, naming symbol · account · reason · intent id.
+2. ⭐ **Give the never-placed case its OWN reason string** — do not let the resting path stamp
+   `flip_no_fill` on an order that never existed. Same one-line change, costs nothing extra, and
+   without it the fix leaves the misdirection in place while merely adding a line elsewhere.
+
+⛔ The suppression itself is correct and protective and must NOT change.
 
 ⚠️ **Same family as `[OMS-P0A-HOLD]` at zero** (#660): a correct decision taken silently is
 indistinguishable from the code never running. [[feedback_a_watch_that_fails_to_a_false_clean]]
