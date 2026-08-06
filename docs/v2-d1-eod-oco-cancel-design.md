@@ -230,6 +230,14 @@ accepts before committing to this route.**
 every place that reasons about end-of-day order expiry — the EOD transition is the one we know
 about; **it is unlikely to be the only one.**
 
+⛔⭐ **BUT THE TAIL ITSELF IS UNMEASURED — `n = 1`.** 16:08:04 is a **single observation**, not a
+constant. The KUST/AGEN reads were checked for more expiry timestamps and returned **zero EXPIRED
+orders on either day**, so nothing corroborates it.
+⇒ **Do not let 16:08:04 harden into "the tail is ~8 minutes."** If the tail varies day to day, the
+daily unprotected window varies with it, and any fix timed against a fixed offset is wrong.
+⇒ **The sweep stands regardless** — it only needs "DAY ≠ 16:00", which one observation is enough to
+establish. Sizing the exposure needs many; asserting the assumption is false needs one.
+
 ⛔ Note what this does to §2's residual gap: **the duration route does not need the
 cancel-by-broker-id path at all**, and therefore does not need the Gate-1 broker read to be built
 safely. The Gate-1 read is still owed — for slice C (§5) and to *confirm* the premise — but it stops
@@ -290,9 +298,23 @@ and 07-31 held 454 including 179 children on **other** symbols — so the machin
 when they exist. These zeros are real, not a mis-targeted query.)*
 
 ⇒ **Both storms were pure pre-market entries** — `[V2-OCO-EMIT] SKIPPED (outside regular hours)` —
-so **no bracket was ever emitted and there were no children to reserve.** The paired-child churn I
-saw on AAOG belongs to its **RTH resting-entry brackets**, which is a D1-side observation. It is a
-real phenomenon and worth its own item, but **it is not what reserves during slice C.**
+so **no bracket was ever emitted and there were no children to reserve.**
+
+#### ⛔⭐ WHY IT DIED — generalised from a case that COULD NOT APPLY
+The hypothesis was built on **AAOG**, whose brackets exist *because it was an RTH resting entry*.
+**Slice C's storms are pre-market entries with no bracket BY CONSTRUCTION.** The evidence came from
+a population structurally incapable of exhibiting the thing being explained.
+
+⭐ **That is the symbol-day-vs-lot error one level up:** there the *unit* of the query mismatched the
+unit of the hypothesis; here the *population* did. Same family — check that the evidence population
+can actually contain the mechanism before generalising from it.
+[[feedback_query_unit_must_match_hypothesis_unit]]
+
+⚠️ **The AAOG churn remains a REAL observation still looking for its own item.** Nine `STOP_LIMIT`
+BUY brackets placed and cancelled every ~minute between 09:54 and 10:43, each spawning two child
+SELL legs, all cancelled in 60–90 s — objects our books never record. **Do not let it disappear
+just because it was disproved as slice C's cause.** It belongs with the resting-entry reprice-churn
+work (the 12:1 order-churn item), where it is the first direct broker-side sighting.
 
 ### ⇒ SLICE C'S CAUSE IS NARROWER NOW, AND THE ELIMINATION IS BROKER-CONFIRMED
 | candidate | status |
@@ -309,6 +331,21 @@ That is the signature of an **account-state flag**, not a race or a reservation.
 ⛔ **Still not established** — "surviving candidate" is not "cause". Settling it needs the broker's
 *account/position* view during a pre-market hold (available vs settled vs held quantity), which is a
 **different read** from order history and needs a live pre-market position.
+
+### ⛔⭐⭐ THREE DISTINCT BROKER READS, THREE DISTINCT WINDOWS — one opportunity does NOT cover all
+Listed explicitly because "one instrument, four questions" was **right about the instrument and
+wrong about the window**, and assuming a single Gate-1 opportunity settles everything would stall
+two of these indefinitely.
+
+| # | read | what it settles | window required | status |
+|---|---|---|---|---|
+| **A** | **order history** (GET `/orders`) | D1's premise · AAOG's lot · the churn test | **none — retrospective, any time** | ✅ **DONE 08-06** |
+| **B** | `preview_exit_only_oco` (**Gate 1**) | the exit-only OCO **shape** | v2 holds a **Schwab long during RTH**, shares **unreserved** and **ours** ⛔ not CYN | ⏳ opportunistic |
+| **C** | **account / position detail** | ⭐ slice C's surviving candidate — available vs settled vs held | a **live PRE-MARKET hold** (07:00–09:30), i.e. the hazard condition itself | ⏳ not yet attempted |
+| **D** | `previewOrder` on **durations** | whether a close-expiring bracket duration exists | likely a held position (Probe P's control rejected on the position check when flat) | ⏳ deprioritised — see §4 |
+
+⭐ **A needed nothing and was free** — it should have been run days ago. **C is the one that matters
+now**, and its window is the pre-market hazard condition itself, so it recurs most mornings.
 
 ⛔ **BLIND SPOT IN MY OWN ELIMINATION TEST — do not read 283/284 as stronger than it is.** The test
 keyed on `submitted_at <= T <= updated_at`, i.e. orders live *in our books*. **If Schwab's
