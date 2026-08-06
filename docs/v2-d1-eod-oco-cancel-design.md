@@ -234,19 +234,37 @@ If the setup stopped happening, quiet days say *nothing* — that would be unpow
 
 *(marker confirmed present in deployed source — guarded against a false zero.)*
 
-#### ⭐ DOSE-RESPONSE — sell attempts per no-bracket position
+#### ⛔⭐ RETRACTED — THERE IS NO DOSE-RESPONSE
 
-| | attempts | oversold rejects |
+**An earlier revision of this note claimed a "~15× dose-response collapse" in retry attempts
+(KUST 138 pre-P0a vs ≤9 post). That claim is WITHDRAWN.** It compared **one** pre-P0a position
+against a few post ones. Pulling the **full** distribution — all 11 pre-P0a no-bracket positions,
+not just the worst — dissolves it:
+
+| era | attempts per no-bracket position (sorted) | median |
 |---|---|---|
-| **pre-P0a — KUST 07-31** | **138** | **125** |
-| post-P0a — AMIX 08-04 | 8 | 2 |
-| post-P0a — BJDX 08-05 | 9 | 0 |
-| post-P0a — GTE 08-05 | 5 | 0 |
-| post-P0a — CLRO 08-06 | 1 | 0 |
+| **PRE-P0a** (n=11) | 2, 3, 3, 3, 4, 6, 7, 8, 9, **133**, **138** | **6** |
+| **POST-P0a** (n=4) | 1, 5, 9, **117** | **7** |
 
-⇒ **A ~15× collapse in the exact quantity P0a targets — retry attempts — on the same precondition,
-with rejects tracking.** Dose-response is **the strongest observational evidence available short of
-an experiment**, and a far better argument than "the storms stopped".
+**The medians are indistinguishable — 6 vs 7.** The distribution is **bimodal** (a quiet mode of
+2–9, and storms), and the retracted claim had quoted its **maximum as though it were its level**,
+then excluded the post-period storm on a per-lot argument the data cannot settle.
+
+**Storm rate is no better:** pre **2/11 (18 %)**, post **1/4 (25 %)** counting AAOG, or 0/4 if
+AAOG's storm belongs to its bracketed lot — and *that* is precisely what cannot be determined
+(§ below).
+
+⇒ ⛔ **On the evidence available, P0a is NOT shown to have reduced the churn.** The favourable
+findings that survive are only these two: the precondition **did** keep recurring (so the test is
+not structurally unpowered), and **"we stopped trading" is ruled out**. Neither is evidence of a
+fix.
+
+⭐ Note the shape of this correction: **widening the unit to the whole distribution retracted the
+headline.** [[feedback_query_unit_must_match_hypothesis_unit]]
+
+⚠️ Useful control inside the data: **KUST appears twice** — 07-15 with 2 attempts / 0 rejects and
+07-31 with 138 / 125. Same symbol, same no-bracket precondition, opposite outcome. Whatever
+distinguishes a storm from a quiet exit, **it is not the precondition alone.**
 
 #### Per-opportunity rate, denominator extended backwards
 
@@ -278,19 +296,47 @@ precondition, which is what makes it a real precondition rather than a quirk of 
    **superset**; the hypothesis needs a held position. The per-opportunity table uses the position
    unit deliberately.
 
-⇒ [[feedback_query_unit_must_match_hypothesis_unit]] — state the unit of the hypothesis FIRST, then
-build the query to it. ⚠️ The per-opportunity table is still **symbol-day** grained, and trap 1
-proves a symbol-day can mix a no-bracket lot with a bracketed one. True per-lot attribution needs
-each sell linked to its entry lot, which the current data supports poorly.
+⇒ [[feedback_query_unit_must_match_hypothesis_unit]] — **when two sources disagree, ask which unit
+each measures before asking which is broken.** Five instances this week; not once was a source
+actually broken.
+
+#### ⛔⭐⭐ THE PER-LOT GAP IS THE BLOCKER, AND IT IS THE ATTRIBUTION ITEM
+
+The symbol-day graining is not a caveat to note and move past — **it decides this note's headline.**
+Whether AAOG's 113-reject storm belongs to its **08:14 no-bracket lot** or its **13:28 bracketed
+lot** determines:
+
+- which board item owns the storm — **slice C** or **D1**; and
+- whether the post-P0a period has **0 storms or 1** — i.e. whether P0a looks like a fix at all.
+
+It was settled here only by a lucky cross-check (`[OMS-V2-EOD-OCO-TRANSITION] AAOG` at 16:00:03, a
+line that exists only for a position with a native OCO). **Nothing in the data model answers it.**
+
+⭐ **This is the SAME defect that leaves ~9 trades a day as `close_candidate_*` instead of asserted
+pairs: a sell is not linked to the entry lot it closes.** One fix, two workstreams unblocked.
+⇒ **Re-frame the attribution work as unblocking ANALYSIS, not tidying REPORTING** — it caps the
+resolution of the exit-churn study, the P0a validation and the slice-C decomposition alike.
+⛔ The link must be **captured at emit time**, never inferred — FIFO already invented a −8.40 %
+trade once. [[project_mai_tai_per_lot_attribution_gap]] · [[feedback_capture_attribution_never_infer]]
 
 #### ⛔ STILL NOT A RETIREMENT — but the null's burden has changed
 
-3 days · 7 positions · **AMIX still threw 2 rejects**. The class is **smaller, not extinct**.
-**But the null must now explain nine no-bracket occurrences across three days with zero
-escalations, while the churn it would have to act through fell ~15×.** That is a much harder
-position than it held this morning.
+3 days · 4 no-bracket positions · **AMIX still threw 2 rejects**, and **AAOG threw 117 attempts /
+113 rejects post-P0a** (lot ownership undetermined). The class is **not shown to be smaller at all**.
 
-⇒ **Do not re-rank the queue** until more post-P0a days accumulate or the lens emits.
+⛔ **The null's burden did NOT increase — I claimed it had, on the retracted dose-response.**
+What is actually left:
+
+| claim | status |
+|---|---|
+| the precondition kept recurring | ✅ established (2→9 SKIPPED/day) |
+| "we simply stopped trading" | ✅ ruled out (7.6 → 11.7 attempts/day) |
+| escalation rate fell | ⛔ 3/10 vs 0/4, **p ≈ 0.33** — underpowered |
+| churn magnitude fell | ⛔ **RETRACTED** — medians 6 vs 7 |
+| P0a fixed slice C | ⛔ **NOT SUPPORTED by any surviving evidence** |
+
+⇒ **Do not re-rank the queue** until more post-P0a days accumulate, the lens emits, **or per-lot
+attribution lands** — which would settle AAOG and is now the highest-value of the three.
 
 ---
 
