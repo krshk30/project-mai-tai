@@ -81,16 +81,52 @@ At the instant Schwab refused we **held 2 shares and had zero working orders of 
 reject **preceded our first submission**. The block then cleared at **16:08:05** with no action by
 us.
 
-⇒ Nothing in our records other than the broker-side OCO legs can account for the reservation.
-**The premise holds, and D1 therefore loses no protection — the legs were already dead.** That is
-what keeps D1 clear of the never-lengthen-the-naked-window constraint.
+## 2b. ✅ PREMISE DIRECTLY OBSERVED 2026-08-06 — and it REVERSES a safety claim
 
-⚠️ **RESIDUAL GAP, stated not buried:** the legs were never *directly observed* in a WORKING state.
-OCO children are broker-created and never land in `broker_orders`, so our DB structurally cannot
-hold them. **This is elimination, not observation.** Direct confirmation needs a broker
-order-history read against a held position with a lapsed bracket — **the same opportunity window as
-Gate 1**, and it is owed. ⛔ Do not build the cancel-by-broker-id path without it: it is the one
-step that assumes the legs exist and are addressable.
+The broker order-history read (read-only GET, no live conditions needed) closed the gap above:
+
+```
+1007463113230 FILLED   BUY  2.0/2.0 MARKET      NORMAL DAY  13:28:43 -> 13:28:43  TRIGGER
+  1007463113233 EXPIRED SELL 2.0/0.0 STOP 4.26  NORMAL DAY  13:28:43 -> 16:08:04  <- child leg
+  1007463113232 EXPIRED SELL 2.0/0.0 LIMIT 4.57 NORMAL DAY  13:28:43 -> 16:08:04  <- child leg
+```
+
+| | |
+|---|---|
+| 16:00:03 | transition releases the stand-down — *"RTH OCO expired at 16:00 ET"* |
+| 16:00:04 → **16:08:03** | 113 oversold rejects |
+| **16:08:04** | **both SELL legs EXPIRE** |
+| 16:08:05 | the very next sell **FILLS** |
+
+Each leg reserved 2 shares against a 2-share position. The block ended **one second** after the legs
+died, with no action by us. **This is observation, not elimination.**
+
+### ⛔⭐⭐ MECHANISM CORRECTION — the note and the transition log are BOTH wrong
+*"RTH OCO expired at 16:00 ET"* is **false**. The legs expired at **16:08:04**. The transition handed
+the exit to the software ladder believing the legs were dead **while they had eight minutes to
+live**. The defect is not *"a leg that cannot fill still reserves"* — it is **a leg that was still
+LIVE**. Different sentence, different fix.
+
+### ⛔⭐⭐ SAFETY CLAIM REVERSED — this was mine, and it was wrong
+An earlier revision of this note said:
+> *"D1 therefore loses no protection — the legs were already dead."*
+
+**FALSE. They were live.** Cancelling at 16:00 would remove a **working STOP at 4.26** on a held
+position. ⇒ **The never-lengthen-the-naked-window constraint is BACK IN FORCE for D1**, and any
+route that cancels must be judged against it.
+
+### ▶ BEFORE CHOOSING A ROUTE, SPLIT "LIVE" IN TWO
+| | claim | status |
+|---|---|---|
+| **(a)** | the leg **RESERVES** the shares | ✅ **ESTABLISHED** (above) |
+| **(b)** | the leg **WOULD ACTUALLY EXECUTE** if price hit 4.26 between 16:00 and 16:08 | ⛔ **UNKNOWN** |
+
+⭐ **(b) decides everything.** Schwab **refuses STOP orders in the EH session** (measured 08-04), so
+a `session=NORMAL` `DAY` stop surviving into 16:00–16:08 may **reserve without protecting** — a leg
+that blocks our exit and would not have saved us either. **If (b) is FALSE, cancelling costs nothing
+real and the original conclusion stands.** If (b) is TRUE, cancelling is a genuine protection
+trade-off.
+⛔ **Do not build either route until (b) is established.**
 
 ---
 
@@ -148,7 +184,19 @@ removes the class and makes the flag unnecessary.** Rule 12.
 
 ⇒ **Price the duration route first; the expectation is that it wins.** Steps 1–4 above become the
 FALLBACK, to be built only if a bracket duration that expires at the close turns out to be
-unavailable at the broker — an open API question, not an assumption.
+unavailable at the broker.
+
+### ⛔⭐ THAT API QUESTION IS NOW A CONCRETE BLOCKER, NOT A THEORETICAL ONE
+The observed legs were `session=NORMAL`, **`duration=DAY`** — and **`DAY` did NOT mean 16:00. It
+meant 16:08:04.** So "give RTH brackets a duration that dies cleanly at the close" may be
+**inexpressible**: if Schwab's `DAY` already runs eight minutes past the close, the route needs a
+specific close-time expiry the broker may not offer. **Establish what durations Schwab actually
+accepts before committing to this route.**
+
+### ⛔⭐ SWEEP OWED — "DAY orders are gone at the close" is an assumption we may have made elsewhere
+`DAY` meaning **16:08:04** invalidates any logic that assumes a DAY order is dead at 16:00. Grep for
+every place that reasons about end-of-day order expiry — the EOD transition is the one we know
+about; **it is unlikely to be the only one.**
 
 ⛔ Note what this does to §2's residual gap: **the duration route does not need the
 cancel-by-broker-id path at all**, and therefore does not need the Gate-1 broker read to be built
@@ -177,10 +225,32 @@ route (c).)
 ⇒ **No native OCO bracket ever existed for that position.** So slice C is neither our live orders
 nor a live bracket.
 
-**Leading candidate — a broker-side reservation we cannot see, in two flavours:**
-(a) **lingering reservations from just-cancelled orders** — the churn cancels and re-submits on
-11–44 s gaps; if Schwab's release lags our recorded cancel, the next order oversells. Self-inflicted
-and tied directly to the exit-churn defect. (b) **pre-market shares not yet sellable.**
+### ⭐⭐ LEADING CANDIDATE, NOW WITH A MECHANISM SEEN AT THE BROKER
+The AAOG order history (§2b) surfaced something bigger than the question it was run for. Between
+**09:54 and 10:43** on 08-04 there are **NINE `STOP_LIMIT` BUY brackets placed and cancelled roughly
+every minute** — and **each one spawns TWO child SELL legs**, all cancelled within 60–90 s:
+
+```
+09:54:03  BUY STOP_LIMIT 4.32 TRIGGER   -> SELL LIMIT 4.38 + SELL STOP 4.08   both CANCELED 09:59:15
+10:00:05  BUY STOP_LIMIT 4.31 TRIGGER   -> SELL LIMIT 4.37 + SELL STOP 4.07   both CANCELED 10:03:15
+10:09:02  ... 10:13 ... 10:24 ... 10:26 ... 10:31 ... 10:33 ... 10:43  (nine in total)
+```
+
+⭐ **This is the resting-entry reprice churn, visible at the BROKER — and every cycle creates and
+destroys a PAIR of SELL legs that our books never record**, because OCO children are broker-created
+and never land in `broker_orders`.
+
+⇒ **That is exactly the invisible reservation slice C has been hunting.** It is no longer a guess
+about "lingering cancels": we can see the objects, we can see their cadence, and we can see that our
+own records omit them entirely. It also explains why the elimination test (§ blind spot) could not
+find them — it searched a table they never enter.
+
+⭐⭐ **HIGHEST-VALUE NEXT USE OF THE INSTRUMENT: run the same order-history read against
+KUST 07-31 and AGEN 07-13.** If the same paired-child churn is present through their reject windows,
+slice C has its mechanism. This now ranks **ahead of** the discriminator question the read was
+queued for.
+
+**Second candidate, still open:** pre-market shares not yet sellable.
 
 ⛔ **BLIND SPOT IN MY OWN ELIMINATION TEST — do not read 283/284 as stronger than it is.** The test
 keyed on `submitted_at <= T <= updated_at`, i.e. orders live *in our books*. **If Schwab's
@@ -250,9 +320,29 @@ not just the worst — dissolves it:
 2–9, and storms), and the retracted claim had quoted its **maximum as though it were its level**,
 then excluded the post-period storm on a per-lot argument the data cannot settle.
 
-**Storm rate is no better:** pre **2/11 (18 %)**, post **1/4 (25 %)** counting AAOG, or 0/4 if
-AAOG's storm belongs to its bracketed lot — and *that* is precisely what cannot be determined
-(§ below).
+**Storm rate:** pre **2/11 (18 %)**, post **1/4 (25 %)** as counted above.
+
+### ✅ AAOG RESOLVED BY EVIDENCE 2026-08-06 — the post-period storm comes OUT
+The order-history read (§2b) settles the lot question the distribution could not: AAOG's 113 rejects
+belong to the **13:28 bracketed lot ⇒ D1**. Its **no-bracket** lot was bought **07:53:12** and sold
+**08:14:01**, both `AM` session, both `SINGLE`, **closed eight hours before the storm** — it cannot
+have been involved, and it contributes **~1 sell attempt**, not 117.
+
+Restricting to the discriminator's hazard condition (**AM entry + first sell attempted before
+09:30**):
+
+| | n | storms |
+|---|---|---|
+| **pre-P0a** | 3 | **2** — KUST 07-31, AGEN 07-13 |
+| **post-P0a** | 3 | **0** — BJDX, GTE, CLRO |
+
+**Post-P0a has ZERO storms, not one.** ⚠️ **Fisher p ≈ 0.20 — NOT significant.** Better than the
+0.33 it replaces, and the awkward counter-example was removed **by evidence, not by the per-lot
+argument I could not settle** — but it is still not a result.
+
+⛔ **The other 14 positions remain SYMBOL-DAY grained and could carry the same error AAOG did**
+(AGEN 07-13 alone had 3 entry lots). Only AAOG has been resolved per-lot. Treat every other row as
+provisional at that grain.
 
 ⇒ ⛔ **On the evidence available, P0a is NOT shown to have reduced the churn.** The favourable
 findings that survive are only these two: the precondition **did** keep recurring (so the test is
