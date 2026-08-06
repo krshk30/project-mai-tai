@@ -685,21 +685,30 @@ name, 08-03 → 08-05:
 | 08-05 | 28 | 6 | +1.32 % | −$1.38 | −$4.14 | −$2.76 |
 | **total** | **45** | | **+1.31 %** | **−$1.41** | **−$4.24** | **−$2.82** |
 
-⇒ ⛔ **FULL SIZE WOULD HAVE LOST $2.82 MORE.** Over this window the half-size effect **saved money**.
-**The parked item is supported by the data, not merely by preference.**
+Full size would have lost **$2.82 more**.
 
-⚠️ **Read this correctly, three ways:**
-1. **Median +1.31 % with a negative sum** — the classic shape: many small winners, a few large
-   losers. Per-trade percentages are **identical at any size**; the forgone figure is a **pure size
-   effect** whose sign simply follows the edge. [[feedback_percentages_not_dollars]]
-2. **While the edge is negative, half-size is PROTECTIVE. If selection improves, it becomes a cost.**
-   The item's status should be re-tested when selection changes, not treated as settled forever.
-3. **Notional is tiny** (qty 1–3 at $1–10), so these are dollars, not a portfolio result. It is a
-   **rate** finding that scales with size — which is exactly why it matters before scaling.
+### ⛔⭐⭐ BUT THIS TABLE MEASURES THE **EDGE**, NOT THE **BLOCK** — PARK IT AND STOP PRICING IT
+**The sign of the `forgone` column is determined entirely by the edge.** Size is a multiplier: on a
+negative edge, taking less of it "saves money" **as arithmetic, not as protection.** Nothing in this
+table says anything about whether the block is good or bad.
 
-⛔ **Upper bound, not an entitlement:** the dropped Schwab leg is a **resting stop-limit** and would
-not always have filled (placed-intent conversion ≈ 46–51 %). True forgone size is **smaller** than
-the table shows, which only strengthens the conclusion.
+⇒ **This is a STRATEGY measurement wearing an EXECUTION label**, and strategy is parked.
+⛔ **Do not let a strategy result set an execution item's status — in either direction.** An earlier
+revision of this section said half-size "is supported by the data" and would "become a cost if
+selection improves". **That second clause was the tell**: an answer that flips on a strategy variable
+was never an execution answer. Both claims are **withdrawn**.
+
+⛔ **And the shape is not a new result.** Median **+1.31 %** with a negative sum is the **parked
++2 % / −5 % payoff geometry** — many small winners, a few large losers — reappearing, not a finding.
+Do not re-derive it as though it were.
+[[project_mai_tai_v2_three_exit_rules]] · [[feedback_percentages_not_dollars]]
+
+⇒ **The item is PARKED. It is not to be priced again.** The figures above are retained only so the
+next reader can see that the question was asked and why the answer does not belong here.
+
+⚠️ **The VISIBILITY fix below stands entirely on its own** and is the only actionable part of §7b.
+It does not depend on this sizing, on the edge, or on which names are blocked — **the next blocked
+name might not be one the operator is happy to skip, and nothing would tell him.**
 
 ### THE FIX — one line, and one new string
 1. **An INFO line at each short-circuit**, naming symbol · account · reason · intent id.
