@@ -1,0 +1,198 @@
+# D1 — CANCEL THE LAPSING OCO LEGS AT 16:00 — design note
+
+**Status: DESIGN ONLY. Nothing built. No live change until the operator approves.**
+Re-scoped 2026-08-06 after D1 shrank **three times**. This note states the shrunken scope honestly
+up front, because the raw reject count sizes it wrong.
+
+> ⛔⭐ **ACCOUNT VISIBILITY OF EVERY NUMBER: `live:schwab_1m_v2` ONLY.**
+> `oversold/overbought` is Schwab's string; a query keyed to it is blind to Webull by construction.
+> [[feedback_reject_query_states_account_visibility]]
+
+---
+
+## 0. ⛔ SIZE THIS CORRECTLY OR NOT AT ALL
+
+**D1 is LOW FREQUENCY, HIGH SEVERITY. It is a near-single-incident fix.**
+
+| | |
+|---|---|
+| rejects in scope | **115** |
+| **days it fired** | **2 of 12** |
+| **concentration** | **113 of the 115 are ONE incident (08-04 AAOG)**; 07-22 contributes the other 2 |
+| names | AAOG, KUST |
+
+⛔ **A reader who sees "115 rejects" without the per-day split will size this wrong.** It is not a
+recurring drip. It requires a specific and uncommon conjunction — **a bracket lapsing while a
+position is held through 16:00** — and when that happens it is violent: 113 rejections in eight
+minutes, and ~0.6–1.0 percentage points of slippage per leg.
+
+**Why it is still next in the queue despite being the smallest of the three:**
+**it is the only one of the three whose mechanism is established.** A1a/slice-C's cause is
+contradicted for its largest day (§5); A2's dominant population is an entry-cadence defect. D1's
+premise was established by elimination on 2026-08-06 (§2). Taking a bigger item first would mean
+designing against an unestablished cause — the exact trap avoided this morning.
+
+---
+
+## 1. SCOPE — after three shrinks
+
+The board's `A1a/A1b (~409)` is the Schwab oversold class. It decomposes exactly:
+
+| slice | rejects | days | owner |
+|---|---|---|---|
+| **16:00–16:30 boundary** | **115** | 2 | **D1 — this note** |
+| after 16:30 (EH tail) | 10 | 4 | unassigned |
+| mid-RTH 09:30–16:00 | **284** | 9 | **slice C — cause OPEN, see §5** |
+| | **409** | | |
+
+**Shrink 1:** the jam note's "426" was two defects; 313 were Webull's A2. → 113 Schwab on 08-04.
+**Shrink 2:** mid-RTH rejects are a different mechanism. → boundary only.
+**Shrink 3:** the boundary slice is 2 days, one of them n=2. → a near-single-incident fix.
+
+---
+
+## 2. THE PREMISE — established by elimination, and the residual gap named
+
+D1's entire basis is: **an expired-but-not-cancelled OCO leg still RESERVES the shares.**
+
+**08-04 AAOG, Schwab — every sell order of ours that day:**
+
+```
+08:14:01  filled     10:57:49  filled (oco_exit)     12:01:13  filled (oco_exit)
+16:00:04  <- FIRST oversold reject
+16:00:06  rejected   <- OUR FIRST SELL ATTEMPT, TWO SECONDS LATER
+```
+
+At the instant Schwab refused we **held 2 shares and had zero working orders of our own.**
+⇒ The competing hypothesis — *our own 1–2 s retry storm was reserving the shares* — is dead: the
+reject **preceded our first submission**. The block then cleared at **16:08:05** with no action by
+us.
+
+⇒ Nothing in our records other than the broker-side OCO legs can account for the reservation.
+**The premise holds, and D1 therefore loses no protection — the legs were already dead.** That is
+what keeps D1 clear of the never-lengthen-the-naked-window constraint.
+
+⚠️ **RESIDUAL GAP, stated not buried:** the legs were never *directly observed* in a WORKING state.
+OCO children are broker-created and never land in `broker_orders`, so our DB structurally cannot
+hold them. **This is elimination, not observation.** Direct confirmation needs a broker
+order-history read against a held position with a lapsed bracket — **the same opportunity window as
+Gate 1**, and it is owed. ⛔ Do not build the cancel-by-broker-id path without it: it is the one
+step that assumes the legs exist and are addressable.
+
+---
+
+## 3. THE CHAIN (unchanged from the jam note, restated for the shrunken scope)
+
+1. **16:00:03** — `_v2_eod_oco_transition` releases the native-OCO stand-down on a still-held
+   position and hands the exit to the software EH ladder.
+2. ⛔ **The broker's OCO sell legs still RESERVE.** The transition's docstring reasons *"a
+   session=NORMAL DAY order cannot fill in EH, so nothing is lost by letting it lapse."*
+   **A leg that cannot FILL still RESERVES.** The handoff is to a ladder structurally unable to sell.
+3. Price is at the stop → `CW_HARD_STOP` every 1–2 s → all rejected oversold.
+4. ⛔ #608's bound never engages because the symbol is **genuinely HELD** — the accumulator resets
+   every pass and `_V2_EXIT_ABANDON_AFTER_FAILURES = 8` is unreachable. That is **D2's** problem,
+   on its own timetable.
+
+⚠️ **CURRENT STATE CHANGE — verify before building.** `MAI_TAI_OMS_V2_EOD_OCO_TRANSITION_ENABLED`
+is now **`false`** (env mtime 08-05 21:06 ET); the last transition line ever is 08-04 20:00 UTC.
+**With the flag off, step 1 does not fire** — and the stand-down still releases organically via
+`_refresh_native_oco_armed_state` (30 s confirmation age-out / ~5 s refresh / 90 s resolution grace,
+all bounded, fail-open). Proven live: `08-05 16:09:03 ET [OMS-OCO-STAND-DOWN-CLEARED] GTE` →
+`16:24:03 CW_FLIP filled`. ⇒ **D1 must be designed against the flag-OFF world**, or the flag's
+status must be settled first. Building D1 as a modification to a transition that no longer runs
+would be building against a dead path.
+
+---
+
+## 4. PROPOSAL — invert the ordering: never hand off until the handoff is real
+
+Same principle as #647. Ordered, and each step gated on the previous:
+
+1. **Read the broker for the position's live OCO legs.** The `childOrderStrategies` walk in
+   `fetch_armed_native_oco_symbols` already finds them; it returns *symbols* and this needs a
+   variant returning **order ids** — a new, small adapter surface.
+2. **Cancel them.** `_cancel_order` (`schwab.py:709`) exists but is driven from an OMS order row,
+   and these legs have none ⇒ needs a **cancel-by-broker-id** entry point.
+   *(Proven reachable: an ad-hoc qty-safe script hit the same endpoint successfully on 08-04.)*
+3. **Re-read the broker and confirm zero live sell legs.** Only then release the stand-down.
+4. ⛔ **On failure: do NOT release.** Leave the stand-down in place and log loudly. A position whose
+   legs we could not cancel is better left with the broker owning it than handed to a ladder that
+   cannot sell.
+
+⛔ **No protection is lost by cancelling** — the legs cannot fill in EH anyway (Schwab refuses a
+STOP leg there; measured 08-04). The software ladder becomes the *only* owner, which is already the
+transition's stated intent.
+
+⚠️ **Open question, unchanged and unanswered:** cancel at 16:00, or **never emit a lapsing bracket
+at all** — give RTH brackets a duration that dies cleanly at the close? Cancelling is the smaller
+change; the duration route **removes the class**. Given D1's true size (§0), the duration route may
+be the better value and should be priced before the cancel path is built.
+
+---
+
+## 5. ⛔ SLICE C IS **NOT** A1b — its cause is OPEN
+
+Recorded here so D1 is not mis-sold as covering it, and so the label does not stick by repetition.
+
+**A1b would mean a live resting protective leg reserves the shares. For 283 of slice C's 284
+rejects, no sell of ours was live at the instant of the reject.** (07-13 AGEN — 45 % of the slice —
+was established on 08-05 as having no sell order of any kind live; that finding is what killed
+route (c).)
+
+**And its second-largest day had no bracket either.** 07-31 KUST, 125 rejects:
+```
+09:11:02 ET  buy filled (PRE-MARKET)
+             [V2-OCO-EMIT] KUST SKIPPED (outside regular hours) -- plain entry,
+                           software ladder owns the exit
+09:26-09:31  our sells CANCELLED (the reprice churn), 11-19 s spans
+09:33-10:42  125 oversold rejects
+```
+⇒ **No native OCO bracket ever existed for that position.** So slice C is neither our live orders
+nor a live bracket.
+
+**Leading candidate — a broker-side reservation we cannot see, in two flavours:**
+(a) **lingering reservations from just-cancelled orders** — the churn cancels and re-submits on
+11–44 s gaps; if Schwab's release lags our recorded cancel, the next order oversells. Self-inflicted
+and tied directly to the exit-churn defect. (b) **pre-market shares not yet sellable.**
+
+⛔ **BLIND SPOT IN MY OWN ELIMINATION TEST — do not read 283/284 as stronger than it is.** The test
+keyed on `submitted_at <= T <= updated_at`, i.e. orders live *in our books*. **If Schwab's
+reservation release lags our recorded cancel, the test says "not live" while the broker still
+reserves** — which is exactly candidate (a). The test rules out orders we know were live; it cannot
+rule out lingering broker-side reservations.
+
+⇒ **Slice C needs the same broker order-history read that §2's residual gap needs.** One
+Gate-1-window read serves both. **Do not design slice C until it has one.**
+
+---
+
+## 6. ACCEPTANCE CRITERIA — inverted badge
+
+| # | criterion | evidence required (observed, not inferred) |
+|---|---|---|
+| **A1** | at the transition the broker reports **zero live sell legs** before the stand-down is released | one timeline: cancel → **broker re-read confirms zero** → release |
+| **A2** | a position held through 16:00 **can be sold at 16:00:05** | a successful EH exit, or a deliberate qty-1 manual sell that is accepted |
+| **A3** | **zero** oversold rejects in the 16:00–16:30 window on a day with a held position | 08-04 (113) is the known-bad tape to replay against |
+| **A4** | ⭐ if cancellation FAILS, the stand-down is **NOT** released | prove by **deliberate mutation** — force the cancel to fail, confirm the bracket keeps ownership |
+| **A5** | D1 does not touch the flat / UNKNOWN paths #608 fixed | #608's tests stay green; NCRA's 145-retry case stays bounded |
+| **A6** | Ship 2 stays green throughout | the managed row never lapses while we cancel and re-read |
+| **A7** | ⛔ slice C is **not** claimed as covered | §5 |
+
+⭐ **A4 is the one most likely to be skipped and most likely to bite** — failure paths are boring,
+and a cancel that silently fails while the stand-down releases anyway reproduces the incident with
+extra steps.
+
+---
+
+## 7. ROLLOUT
+Attended · flag-gated, default **off** · deploy **after the close** · PR + Validate · explicit GO
+before merge+restart · OMS-only (`stop strategy → restart oms → start strategy`) with the
+pre/post-restart bar-gap checklist. ⛔ **No v2 restart** (Bug 2: `cw_entries_this_flip` is
+unpersisted and re-issues the entry cap on every armed segment).
+
+## 8. RELATED
+[`v2-eod-oco-jam-design.md`](v2-eod-oco-jam-design.md) *(its 426 → 113; D2 stays there, own timetable)* ·
+[`v2-a2-reverse-reject-design.md`](v2-a2-reverse-reject-design.md) *(the other 313)* ·
+[`v2-premarket-exit-protection-rollout.md`](v2-premarket-exit-protection-rollout.md) *(Gate 1 — the owed broker read)* ·
+[[project_mai_tai_schwab_eh_no_stop_leg]] · [[project_mai_tai_exit_churn_kust]] ·
+[[project_mai_tai_v2_close_retry_sawtooth]]
