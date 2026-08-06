@@ -379,6 +379,29 @@ requirement:
 The document stated the independence; the **board** re-coupled them under the Gate-1 label. Nobody
 was misled by evidence — they were misled by a heading.
 
+#### ⛔⭐⭐ AND THE FAILURE FORMS LIVE — IT IS NOT ONLY IN OLD BUNDLES
+**Recurred within 24 hours of the rule being written.** A3 was made *"conditional on tonight's
+census"*. The census then failed to ship because **GitHub Actions went into a `major_outage`** —
+so A3 inherited a blocker with **no relationship to it whatsoever**.
+
+⇒ The mis-parking failure is **not a legacy artefact to be cleaned up once.** It **forms every time
+a "conditional on" is added without asking whether the dependency is REAL.**
+
+**Test the dependency's direction and strength before writing it down:**
+- the census **could CANCEL** A3 (if `held>0`, A3 may be unnecessary) — one-directional and weak
+- the census **cannot INFORM** A3's design: it is a deliberate forced stand-down whose method and
+  acceptance are already written
+
+⇒ **A dependency that can only cancel is not a blocker. BOOK IT ANYWAY.** Cancelling a booked item
+is cheap; not booking it has already cost a week.
+
+### 📅 A3 — BOOKED, INDEPENDENT OF THE CENSUS
+**Friday 2026-08-07, after the 16:00 close. Attended.** Not conditional on #660, not conditional on
+Actions recovering, not conditional on the census. If the census lands first and shows `held>0`,
+**cancel it** — that is the cheap direction.
+⛔ A3 is a **deliberate act we schedule**, never an opportunity we wait for. Treating it as
+opportunistic is what kept P0a unvalidated from 07-31.
+
 ⇒ **Consequences, both actionable without Gate 1:**
 1. **P0a's real blocker is the lens not emitting**, and the *instrument-the-negative* change (log
    when the hold path is evaluated and **declines**) addresses it directly. That is an OMS change
