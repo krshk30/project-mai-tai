@@ -29,21 +29,32 @@
 **Fleet: 5 services active. Broker FLAT except `CYN 5000` (operator manual, never touched).**
 Deployed HEAD **`786bbb6`**. `main` is ahead by docs + **PR #657** (open, mergeable, **flag OFF**).
 
-**NEXT ACTION — tonight, attended, after 18:05 ET:** deploy #657 (time-driven 04:00-ET session
-roll). Runbook + acceptance: [`v2-session-roll-and-replay-arm-design.md`](v2-session-roll-and-replay-arm-design.md) §5, §5b.
-```
-18:05  let the EOD counts run on the PRE-deploy binary (do not restart across them)
-~18:10 preflight_v2_restart.sh  ->  bar-gap PRE  ->  merge  ->  verify commit ON THE BRANCH
-       ->  restart  ->  preflight AGAIN (the DB-seed replay can re-arm segments = Bug 2)
-       ->  set ..._SESSION_TIME_ROLL_ENABLED=true  ->  restart  ->  bar-gap POST
-```
-⛔ **A clean `cw_armed_segments` after the deploy proves the RESTART, not the fix.** The proof is
-tomorrow's 04:00 ET boundary on a symbol that has gone silent. If no candidate exists, say
+**NEXT ACTION — TOMORROW, in this order. The deploy is BLOCKED and not by a day.**
+
+⛔ **2026-08-05 deploy did NOT happen.** Pre-flight returned **NO-GO** at 18:05 ET — armed segments.
+Nothing merged, nothing restarted. **PR #657 open, flag OFF.** Fleet flat ex-`CYN`.
+
+1. **FIX PRE-FLIGHT FIRST — the gate itself is unreliable.** It pairs ARM→DISARM over *today's log*
+   with **no replay filter**, so it over-reports dangling replay ARMs (CLRO/PAVS/ZCMD on 08-05) and
+   under-reports symbols armed on an earlier day with no ARM line today (FUSE/HYFM/AXTL). It also
+   reads a **single** log file — and the sink rotates at **00:00 UTC = 20:00 ET**, so after 20:00 it
+   loses most of the day. Fix = read the bot's **published state**, **assert freshness and FAIL
+   CLOSED when stale**, and **keep the log-derived set, alerting on divergence** (tonight's
+   divergence WAS the finding).
+2. **Validate against a fresh known divergence** — capture both sources at the SAME instant.
+3. **Re-run.** If it blocks only on the inert trio, that is the **operator's call with the facts
+   stated** — never an automatic override.
+
+⛔ **"Wait for the 04:00 anchor" does NOT unblock this.** The anchor is BAR-DRIVEN. It clears
+symbols still receiving bars; **FUSE/HYFM/AXTL receive none** (last tick 2026-08-04 04:00 ET), so
+they can never self-clear. They will be armed every evening until a restart or D1a lands.
+
+⛔ **A clean `cw_armed_segments` after any deploy proves the RESTART, not the fix.** The proof is a
+04:00-ET boundary clearing a symbol that has gone silent. If no candidate exists, say
 **"unexercised"**, not "validated".
 
 **Pre-flight ASSERTS, never prints:** `sudo /home/trader/ops_preflight/preflight_v2_restart.sh`,
-exit 0 = GO. Gates: past 18:00 ET · zero armed segments · zero open managed rows · broker flat
-ex-manuals. ⛔ Fleet-flat does **not** cover Bug 2 — that fires on ARMED SEGMENTS, which hold nothing.
+exit 0 = GO. ⛔ Fleet-flat does **not** cover Bug 2 — that fires on ARMED SEGMENTS, which hold nothing.
 
 ### The honest ledger — read before quoting any finding here
 **Demonstrated money cost of 2026-08-05's findings is ~ZERO, and EIGHT claims were withdrawn**
