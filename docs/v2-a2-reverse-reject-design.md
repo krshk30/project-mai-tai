@@ -97,14 +97,30 @@ is live, do X" is unimplementable with current visibility.
 
 ## 4. THE NAKED WINDOW — measured trigger→fill, ON THE DANGEROUS POPULATION ONLY
 
-⭐ **The fix is judged on the 9, not the 14.** The harmless half was never naked; including it mixes
-signal with noise.
+### ⛔ POPULATIONS — STATE THEM ONCE, THEN NEVER MIX THEM
+Three numbers circulate in this note and they are **not interchangeable**. An earlier revision
+labelled the median's denominator as "the dangerous 9" while listing the 2 never-filled inside the
+same column — two different sets under one heading.
 
-| statistic | **dangerous 9** | (all 14, superseded) |
+| set | n | what it is |
+|---|---|---|
+| **ALL instances** | **16** | every `live:orb` reverse-reject episode |
+| ├ resolved via the broker's own `oco_exit` (**harmless**) | 5 | never naked — the bracket exited it |
+| └ **DANGEROUS** | **11** | our ladder was the only owner |
+| &nbsp;&nbsp;&nbsp;├ with a measurable trigger→fill | **9** | ⭐ **the MEDIAN denominator** |
+| &nbsp;&nbsp;&nbsp;└ **never filled at all** | **2** | ERNA 07-15, AGEN 07-13 — **no duration exists**, so they cannot enter a median |
+
+⇒ **MEDIAN is on the 9. THE BOUND IS PRICED ON THE 11** (the 2 never-filled always escalate, at any
+bound). ⛔ Neither is "the population"; say which every time.
+
+⭐ **The fix is judged on the dangerous set, not on all 16.** The harmless half was never naked;
+including it mixes signal with noise.
+
+| statistic | **dangerous, n=9 filled** | (all 14 filled, superseded) |
 |---|---|---|
 | **MEDIAN** | **271.0 s (4.5 min)** | 278.5 s |
 | max | **1 831 s (30.5 min)** — CNET 07-28 | 40 253 s |
-| **never filled** | **2 — ERNA, AGEN** | same |
+| **never filled (EXCLUDED from both medians)** | **2 — ERNA, AGEN** | same |
 
 Sorted, seconds: `30, 60, 60, 60, 271, 286, 812, 827, 1831`
 
