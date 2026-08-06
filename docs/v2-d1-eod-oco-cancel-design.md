@@ -347,6 +347,45 @@ two of these indefinitely.
 ⭐ **A needed nothing and was free** — it should have been run days ago. **C is the one that matters
 now**, and its window is the pre-market hazard condition itself, so it recurs most mornings.
 
+### ⛔⭐⭐ THE RULE THIS EXPOSED — AGGREGATION IN THE **PLAN**, NOT IN THE DATA
+Read A sat behind Gate 1's opportunity **for days, for no reason.** Four questions were bundled
+under one label ("the broker read"), and **A inherited the group's worst constraint** — a live RTH
+position it never needed.
+
+⭐ **This is the aggregation bug class relocated from the measurement to the SCHEDULE.** Same shape
+as the five data instances, one difference: **the data versions produce a wrong answer; this one
+produces DELAY.** It is quieter, it never shows up as an error, and nothing forces its discovery.
+
+⇒ **RULE: a bundled work item inherits the WORST constraint of its members. Before parking anything
+behind a gate, check the ITEM's own requirement, never the group's label.**
+[[feedback_aggregation_masked_the_event]] · [[feedback_authoritative_for_a_is_not_for_b]]
+
+#### ▶ THE SAME PASS OVER THE REST OF THE QUEUE — at least two more are mis-parked
+Gate 1 is currently treated as blocking four things. Checked against each item's **actual**
+requirement:
+
+| item | what it ACTUALLY requires | behind Gate 1? |
+|---|---|---|
+| **#647 Gate 2** (`rth_edge_bracket_enabled`) | Gate 1's shape proof — do not place an unproven shape on a live position | ✅ **YES, legitimately** |
+| **#647 Gate 3** (stand-down re-arm) | Gate 2 proven — it reuses Part 1's emit wholesale | ✅ yes, transitively |
+| **P0a VALIDATION** | the `[OMS-P0A-HOLD]` lens to EMIT. **Part 2 is not flag-gated and has been deployed since 08-05 21:06.** | ⛔ **NO — MIS-PARKED** |
+| **A3 forced stand-down** | a deliberate forced stand-down on a marketable exit | ⛔ **NO — MIS-PARKED** |
+
+⛔⭐ **The rollout runbook ALREADY SAYS SO, and was not read that way:**
+> *"Turning #646 on does **not** validate P0a. Item 11 and P0a are **separate questions** … that
+> still points at the **A3 forced stand-down** as the only reliable route, **and it is untouched by
+> this rollout**."*
+
+The document stated the independence; the **board** re-coupled them under the Gate-1 label. Nobody
+was misled by evidence — they were misled by a heading.
+
+⇒ **Consequences, both actionable without Gate 1:**
+1. **P0a's real blocker is the lens not emitting**, and the *instrument-the-negative* change (log
+   when the hold path is evaluated and **declines**) addresses it directly. That is an OMS change
+   needing an **after-close attended deploy — not an RTH opportunity.** Available tonight.
+2. **A3 is not opportunistic at all.** A forced stand-down is a **deliberate act we schedule**, not
+   a condition we wait for. It has been queued as though it were the latter.
+
 ⛔ **BLIND SPOT IN MY OWN ELIMINATION TEST — do not read 283/284 as stronger than it is.** The test
 keyed on `submitted_at <= T <= updated_at`, i.e. orders live *in our books*. **If Schwab's
 reservation release lags our recorded cancel, the test says "not live" while the broker still
