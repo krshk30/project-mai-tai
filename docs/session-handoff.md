@@ -69,6 +69,9 @@ exit 0 = GO. ⛔ Fleet-flat does **not** cover Bug 2 — that fires on ARMED SEG
 alarms raised that day.
 **The case is NOT "it is bleeding money." It is: the books and the broker disagree, and size cannot
 be scaled until they don't.** Overstating it once costs more than the whole board is worth.
+⛔ **Never quote a P&L number from `<day>.jsonl` alone** — it holds only RTH, `-ocoexit-` exits. Union it with `<day>.unpaired.jsonl`, and say which returns are asserted vs candidate.
+⚠️ The "12% attribution / 16 entries -> 2 round trips" figure was an **`eod_counts.py` artifact** (it groups fills per symbol-day and drops any symbol with >1 fill per side). It is not a real coverage number and should not be requoted.
+
 **Survives with evidence:** 24 blocked hard-stop episodes / ~12 days, 4 never closing same day
 (real, small at qty 2) - and a books-vs-broker divergence dated 08-05 (GTE's 14:54 lot exited with
 no `fills` row and no trade record; cost ~$0.95).
@@ -76,6 +79,7 @@ no `fills` row and no trade record; cost ~$0.95).
 ### BOARD -- sized, not run
 | item | note |
 |---|---|
+| **ATTRIBUTION — ✅ ANSWERED 08-05, it was NOT a coverage problem** | Capture is **100%**: `<day>.jsonl` (36, `-ocoexit-`, attribution ASSERTED) + `<day>.unpaired.jsonl` (9, `-close-`, `close_candidate_ret_pct` accurate to **0.0004 pts**). ⛔ **The bias is in the READER** — 3 of 3 consumers read paired-only. ⛔ **Zero native-OCO exits exist in extended hours** (Schwab refuses a STOP leg there), so the paired file contains **no EH exits at all** and degrades as pre-market volume grows (close route: 1,1,0,2,1,**5**,**8**). Remediation = union both files in `open_capture_0731.sh`, `live_trade_tape*`. |
 | **A2 reverse-reject defer** | 393/394 on the managed-exit ladder, no defer handler. 384 are CW_HARD_STOP -- deferring lengthens the naked window; acceptance must measure **trigger->fill**, not reject count |
 | **marginal seed-cap distribution** | the one item whose payoff is **recovered trades**; 08-05 caps spanned 1 -> 648 min |
 | **third-class recency** | "we hold it, the broker says flat" -- fresh instance 08-05 |
