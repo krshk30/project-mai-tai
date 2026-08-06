@@ -593,6 +593,41 @@ before merge+restart · OMS-only (`stop strategy → restart oms → start strat
 pre/post-restart bar-gap checklist. ⛔ **No v2 restart** (Bug 2: `cw_entries_this_flip` is
 unpersisted and re-issues the entry cap on every armed segment).
 
+## 7b. 🔎 BOARD ITEM — SILENT INTENT DROP AT THE INELIGIBLE SHORT-CIRCUIT (**visibility**)
+
+> ⛔⭐ **FILE UNDER VISIBILITY, NOT UNDER SCHWAB REJECTS.** The operator has **parked** the API-open
+> reject class and PAVS — Webull covers those names and the fan-out works as intended. **This is a
+> different defect that merely surfaced there**, and it is broker-agnostic. Filing it beside the
+> parked item would park it too.
+
+**Defect.** An `open` intent for a symbol cached as ineligible is marked rejected and a rejected
+event published — but **no `broker_orders` row is written and NOTHING IS LOGGED.**
+
+| | |
+|---|---|
+| site | `oms/service.py:870-887` (schwab) and **`:893-910` (webull)** — symmetric, **neither logs** |
+| what happens | `mark_intent_status(intent,"rejected")` → `_build_rejected_event(reason="schwab_ineligible_cached" \| "webull_ineligible_cached")` → publish → return |
+| what does NOT happen | no `broker_orders` row · **no log line** |
+| only trace | `trade_intents.status='rejected'` + a published event nobody reads |
+
+**Why it is general, not Schwab's.** The Webull block at `:893` is identical in shape, so the same
+blindness will hide **non-Schwab** cases as soon as the fan-out evicts a name. Whatever is parked
+about *why* a broker refuses, **the disappearance itself must be visible.**
+
+**Live instance (2026-08-06, PAVS).** Schwab refused PAVS at 08:12:27; at 11:34:38 the bot logged
+`[V2-RESTING-PLACE]` and `emitted intent … qty=2`, and **no Schwab order ever existed.** From the
+tape that is indistinguishable from an order placed and never filled — and the resting path then
+cancelled it at 11:37:02 as `flip_no_fill`, a **misleading** reason for an order that was never on
+the book. ⛔ There is **no `ineligible` line anywhere in the v2 log for PAVS.**
+
+**Minimum fix — one INFO line at each short-circuit**, naming symbol · account · reason · intent id.
+That is the whole ask. ⛔ The suppression itself is correct and protective and must NOT change.
+
+⚠️ **Same family as `[OMS-P0A-HOLD]` at zero** (#660): a correct decision taken silently is
+indistinguishable from the code never running. [[feedback_a_watch_that_fails_to_a_false_clean]]
+⚠️ Also locates at least one instance of **open thread #4** — *"an unnamed suppression stops a
+rejected-symbol retry: risk PASSES, no broker order is created, nothing is logged."*
+
 ## 8. RELATED
 [`v2-eod-oco-jam-design.md`](v2-eod-oco-jam-design.md) *(its 426 → 113; D2 stays there, own timetable)* ·
 [`v2-a2-reverse-reject-design.md`](v2-a2-reverse-reject-design.md) *(the other 313)* ·
