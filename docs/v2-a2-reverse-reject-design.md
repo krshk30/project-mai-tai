@@ -195,9 +195,19 @@ never-filled always counted):
 | 600 s | 5 of 11 |
 
 ⭐ **60 / 90 / 180 s are identical** — that is the 60–271 s gap showing through. So the bound belongs
-**in the gap, not at a percentile**. **90 s recommended**: past the entire fast mode, catching every
-real block at the earliest honest moment, and no choice inside the gap trades away anything.
-**Operator's call.**
+**in the gap, not at a percentile**.
+
+### ✅ SETTLED — **90 SECONDS**, operator decision 2026-08-06
+**The bound is 90 s.** It sits inside the bimodal gap where **every choice from ~90 s to ~250 s
+behaves identically** on the measured set, so the number is not bought at the cost of anything else:
+past the entire fast-settlement mode, catching every real block at the earliest honest moment.
+
+⛔ **This is a RISK CALL, not a derived value.** Do not re-derive it, do not "optimise" it against a
+percentile, and do not let a future sample move it without a fresh risk decision — *"how long may we
+be unable to execute a hard stop"* is not answerable from how long the broker happened to take.
+The data's only job was to show that **nothing is traded away anywhere in 90–250 s**, and it did.
+
+⇒ **A2 IS UNBLOCKED AND BUILDABLE AT 90 s.**
 
 At the bound, with the position still held:
 
