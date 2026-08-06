@@ -646,8 +646,25 @@ A wrong reason does not stay in the log; it flows into every count keyed on it. 
 | **08-06** | 126 | **73 (57.9 %)** | 21.4 % | **50.9 %** |
 | 08-03 | 165 | 61 (37.0 %) | — | — |
 
-⇒ **Conversion roughly DOUBLES on the honest denominator.** Roughly **half of every v2 open intent
-never reaches a broker at all**, and nothing says so.
+⇒ **Conversion roughly DOUBLES on the honest denominator.**
+
+#### ⛔⭐ UNIT CORRECTION ON MY OWN HEADLINE — the intent count is CHURN-INFLATED
+An earlier revision said *"roughly half of every v2 open intent never reaches a broker"*. **True and
+misleading.** The intent denominator counts every reprice of the resting ladder, so a handful of
+blocked names inflates into a large-looking share:
+
+| day | dropped intents | **distinct symbols** | intents/symbol | symbols |
+|---|---|---|---|---|
+| 08-03 | 61 | **4** | 15.3 | EZRA, FUSE, HYFM, UPC |
+| 08-04 | 3 | **1** | 3.0 | AMIX |
+| 08-05 | 103 | **6** | 17.2 | BJDX, GTE, INLF, JLHL, YXT, ZYBT |
+| 08-06 | 95 | **7** | 13.6 | AZI, BYAH, CLRO, PAVS, PN, WLDS, WYHG |
+
+⇒ **~15 intents per blocked symbol IS the resting reprice cadence, not 15 missed trades.** The
+honest statement is **"6–7 symbols a day are blocked"**, never *"half your trading"*.
+⛔ Report distinct symbol-days **alongside** any intent count. Same rule that caught the earlier
+symbol-day-vs-lot and population errors, now applied to a headline of mine.
+[[feedback_query_unit_must_match_hypothesis_unit]]
 
 ⚠️ **The EOD's resting conversion — `9 / 32 live in-window arms = 28.1 %` — is a FLOOR, biased
 DOWN.** Its denominator counts arms on names Schwab had already refused, which were structurally
@@ -655,6 +672,34 @@ incapable of converting. ⛔ I am **not** restating it as a corrected number: th
 arm → intent → order chain, which the per-lot gap makes unreliable. What is established is the
 **direction and the magnitude of the bias**, not a replacement figure.
 ⛔ Anything derived from 28.1 % inherits the same bias.
+
+### ⭐⭐ THE REAL COST IS HALF-SIZE — SIZED, FOR THE OPERATOR'S CALL
+On a Schwab-ineligible name the Webull leg fills **qty 1** while the Schwab leg (**qty 2**) is
+dropped, so we take **1 share of an intended 3**. Measured across every `live:orb` fill on a blocked
+name, 08-03 → 08-05:
+
+| day | fills | names | median % | actual | at full size | forgone |
+|---|---|---|---|---|---|---|
+| 08-03 | 11 | 4 | +1.31 % | −$0.36 | −$1.09 | −$0.73 |
+| 08-04 | 6 | 1 | +1.30 % | +$0.33 | +$0.99 | +$0.66 |
+| 08-05 | 28 | 6 | +1.32 % | −$1.38 | −$4.14 | −$2.76 |
+| **total** | **45** | | **+1.31 %** | **−$1.41** | **−$4.24** | **−$2.82** |
+
+⇒ ⛔ **FULL SIZE WOULD HAVE LOST $2.82 MORE.** Over this window the half-size effect **saved money**.
+**The parked item is supported by the data, not merely by preference.**
+
+⚠️ **Read this correctly, three ways:**
+1. **Median +1.31 % with a negative sum** — the classic shape: many small winners, a few large
+   losers. Per-trade percentages are **identical at any size**; the forgone figure is a **pure size
+   effect** whose sign simply follows the edge. [[feedback_percentages_not_dollars]]
+2. **While the edge is negative, half-size is PROTECTIVE. If selection improves, it becomes a cost.**
+   The item's status should be re-tested when selection changes, not treated as settled forever.
+3. **Notional is tiny** (qty 1–3 at $1–10), so these are dollars, not a portfolio result. It is a
+   **rate** finding that scales with size — which is exactly why it matters before scaling.
+
+⛔ **Upper bound, not an entitlement:** the dropped Schwab leg is a **resting stop-limit** and would
+not always have filled (placed-intent conversion ≈ 46–51 %). True forgone size is **smaller** than
+the table shows, which only strengthens the conclusion.
 
 ### THE FIX — one line, and one new string
 1. **An INFO line at each short-circuit**, naming symbol · account · reason · intent id.
