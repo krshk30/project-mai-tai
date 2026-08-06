@@ -395,12 +395,26 @@ a "conditional on" is added without asking whether the dependency is REAL.**
 ⇒ **A dependency that can only cancel is not a blocker. BOOK IT ANYWAY.** Cancelling a booked item
 is cheap; not booking it has already cost a week.
 
-### 📅 A3 — BOOKED, INDEPENDENT OF THE CENSUS
-**Friday 2026-08-07, after the 16:00 close. Attended.** Not conditional on #660, not conditional on
-Actions recovering, not conditional on the census. If the census lands first and shows `held>0`,
-**cancel it** — that is the cheap direction.
-⛔ A3 is a **deliberate act we schedule**, never an opportunity we wait for. Treating it as
-opportunistic is what kept P0a unvalidated from 07-31.
+### ⏸ A3 — **PARKED PENDING THE CENSUS. NOT CANCELLED.** (operator, 2026-08-06)
+Booked for 08-07 earlier the same evening, then **stood down by the operator**. Off the calendar;
+nothing depends on it. Recorded with the reasoning, because the label matters:
+
+| | |
+|---|---|
+| **skipping costs nothing** | P0a only ever **prevents a cancel**. Not validating it leaves the **pre-07-31 behaviour**, not a worse one. There is no exposure created by waiting. |
+| **the census may retire it for free** | if **`held>0`** shows up in ordinary trading, A3 is unnecessary — that was always its cancel condition |
+| ⚠️ **but one census outcome does NOT retire it** | **`evaluated>0, held=0` stays AMBIGUOUS** — *broken* vs *never-triggered* — and **A3 is the only thing that separates them** |
+
+⇒ **PARKED PENDING THE CENSUS, not closed.** One line to re-book if the census comes back
+ambiguous.
+
+⛔⭐ **The label is load-bearing.** *"Cancelled"* invites nobody to revisit it — and **an item nobody
+revisits is exactly how P0a stayed unvalidated for a week.** Same failure the census itself exists
+to fix: an untested state must be named differently from a settled one.
+[[feedback_unexercised_is_not_a_result]]
+
+⛔ When it IS re-booked: A3 is a **deliberate act we schedule**, never an opportunity we wait for.
+Treating it as opportunistic is what kept P0a unvalidated from 07-31.
 
 ⇒ **Consequences, both actionable without Gate 1:**
 1. **P0a's real blocker is the lens not emitting**, and the *instrument-the-negative* change (log
