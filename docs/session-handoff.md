@@ -27,40 +27,34 @@
 ## ⚡ FIRST SCREEN — act on this alone
 
 **Fleet: 5 services active. Broker FLAT except `CYN 5000` (operator manual, never touched).**
-Deployed HEAD **`786bbb6`**. `main` is ahead by docs + **PR #657** (open, mergeable, **flag OFF**).
+Deployed HEAD **`b222b36`** (#657 merged 2026-08-05 21:01 ET, verified on the BRANCH).
+**`SESSION_TIME_ROLL_ENABLED=true`** — the time-driven 04:00-ET roll is LIVE.
 
-**NEXT ACTION — TOMORROW, in this order. The deploy is BLOCKED and not by a day.**
+## ✅ DEPLOYED 2026-08-05 21:01-21:07 ET (attended, operator override)
 
-⛔ **2026-08-05 deploy did NOT happen.** Pre-flight returned **NO-GO** at 18:05 ET — armed segments.
-Nothing merged, nothing restarted. **PR #657 open, flag OFF.** Fleet flat ex-`CYN`.
+Full sequence, 0 errors, no bar hole (none was possible — EH ended 20:00, zero bars due).
+Pre-flight ran **before BOTH restarts** and the second one earned its place: between restarts the
+DB-seed replay **re-armed 4 symbols** (Bug 2, live, in exactly the gap that check exists for).
 
-1. ~~**FIX PRE-FLIGHT**~~ ✅ **DONE 2026-08-05 20:18 ET.** Reads the bot's **published state**
-   (authoritative), **asserts freshness and FAILS CLOSED** (stale / unreadable / missing all BLOCK,
-   rc=1 verified by mutation), and **retains the log-derived set, reporting divergence** scoped to
-   the ET day across the 20:00 rotation. Validated against a same-instant capture: reports **7**,
-   surfaces **log-only PAVS ZCMD** (dangling ARMs) and **state-only AXTL FUSE HYFM** (armed 08-03).
-   ⛔ **Not version-controlled** — lives only at `/home/trader/ops_preflight/`. Board item.
-   ~~The gate was unreliable:~~ It pairs ARM→DISARM over *today's log*
-   with **no replay filter**, so it over-reports dangling replay ARMs (CLRO/PAVS/ZCMD on 08-05) and
-   under-reports symbols armed on an earlier day with no ARM line today (FUSE/HYFM/AXTL). It also
-   reads a **single** log file — and the sink rotates at **00:00 UTC = 20:00 ET**, so after 20:00 it
-   loses most of the day. Fix = read the bot's **published state**, **assert freshness and FAIL
-   CLOSED when stale**, and **keep the log-derived set, alerting on divergence** (tonight's
-   divergence WAS the finding).
-2. **Validate against a fresh known divergence** — capture both sources at the SAME instant.
-3. **Re-run.** If it blocks only on the inert trio, that is the **operator's call with the facts
-   stated** — never an automatic override.
+```
+#1  [OVERRIDE] 7 ARMED accepted by OPERATOR: AXTL CLRO FUSE GTE HYFM INLF ZYBT
+#2  [BLOCK]    4 ARMED: CLRO GTE INLF ZYBT      <- the replay re-armed these
+#2b [OVERRIDE] 4 ARMED accepted by OPERATOR: CLRO GTE INLF ZYBT
+boot line: [V2-SESSION-ROLL] boundary_crossed=True rolled=0 symbols=- (watchlist=6 armed=4)
+```
 
-⛔ **"Wait for the 04:00 anchor" does NOT unblock this.** The anchor is BAR-DRIVEN. It clears
-symbols still receiving bars; **FUSE/HYFM/AXTL receive none** (last tick 2026-08-04 04:00 ET), so
-they can never self-clear. They will be armed every evening until a restart or D1a lands.
+⛔ **THE BOARD IS RESTART-PROVEN, NOT D1a-PROVEN.** FUSE/HYFM/AXTL cleared because of the
+**restart**, which a bare restart would also have done. `rolled=0` is the CORRECT answer — all 4
+armed segments came from today's bars, so nothing was stale — which makes the boot line
+**proof-of-life, not an exercise**. D1a is live and **UNEXERCISED**.
 
-⛔ **A clean `cw_armed_segments` after any deploy proves the RESTART, not the fix.** The proof is a
-04:00-ET boundary clearing a symbol that has gone silent. If no candidate exists, say
-**"unexercised"**, not "validated".
-
-**Pre-flight ASSERTS, never prints:** `sudo /home/trader/ops_preflight/preflight_v2_restart.sh`,
-exit 0 = GO. ⛔ Fleet-flat does **not** cover Bug 2 — that fires on ARMED SEGMENTS, which hold nothing.
+**NEXT ACTION — TOMORROW after 04:00 ET: verify D1a, and say WHICH of two things happened.**
+1. `grep V2-SESSION-ROLL /var/log/project-mai-tai/schwab-1m-v2.log*` — read **rolled=N** for its
+   value, not its existence.
+2. **rolled>0 on a symbol that went silent ⇒ VALIDATED.** That is the only outcome that counts.
+3. **No silent candidate existed ⇒ say UNEXERCISED, not validated.** The flag having been on all
+   day proves only that it broke nothing.
+⛔ A clean `cw_armed_segments` proves the restart. Do not report it as the fix working.
 
 ### The honest ledger — read before quoting any finding here
 **Demonstrated money cost of 2026-08-05's findings is ~ZERO, and EIGHT claims were withdrawn**
