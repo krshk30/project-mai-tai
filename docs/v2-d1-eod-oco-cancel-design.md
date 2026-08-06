@@ -277,12 +277,38 @@ about "lingering cancels": we can see the objects, we can see their cadence, and
 own records omit them entirely. It also explains why the elimination test (§ blind spot) could not
 find them — it searched a table they never enter.
 
-⭐⭐ **HIGHEST-VALUE NEXT USE OF THE INSTRUMENT: run the same order-history read against
-KUST 07-31 and AGEN 07-13.** If the same paired-child churn is present through their reject windows,
-slice C has its mechanism. This now ranks **ahead of** the discriminator question the read was
-queued for.
+#### ⛔⭐⭐ TESTED IMMEDIATELY — AND FALSIFIED. The churn is NOT slice C's mechanism.
+The same read was run against both slice-C storms. **Neither had a single bracket child:**
 
-**Second candidate, still open:** pre-market shares not yet sellable.
+| | orders at the broker | depth-0 | **children** | cancelled BUY brackets |
+|---|---|---|---|---|
+| **KUST 07-31** | 157 | 157 | **0** | **0** |
+| **AGEN 07-13** | 150 | 150 | **0** | **0** |
+
+*(Sanity-checked: the 07-13 response held 190 orders across 8 symbols with AGEN the largest at 150,
+and 07-31 held 454 including 179 children on **other** symbols — so the machinery finds children
+when they exist. These zeros are real, not a mis-targeted query.)*
+
+⇒ **Both storms were pure pre-market entries** — `[V2-OCO-EMIT] SKIPPED (outside regular hours)` —
+so **no bracket was ever emitted and there were no children to reserve.** The paired-child churn I
+saw on AAOG belongs to its **RTH resting-entry brackets**, which is a D1-side observation. It is a
+real phenomenon and worth its own item, but **it is not what reserves during slice C.**
+
+### ⇒ SLICE C'S CAUSE IS NARROWER NOW, AND THE ELIMINATION IS BROKER-CONFIRMED
+| candidate | status |
+|---|---|
+| a live order of ours | ⛔ excluded — 283/284 had none live |
+| a live broker-created bracket child | ⛔ **excluded at the broker — zero children on both storms** |
+| **pre-market shares not yet sellable** | ⭐ **the only surviving candidate** |
+
+⭐ It also fits every other observation: the discriminator's necessary condition is exactly **AM
+entry + sell attempted before 09:30**; the outcome is **binary** (0 or 125+, never a handful); it
+**clears without action**; and price, liquidity, quantity, lot count and cadence are all irrelevant.
+That is the signature of an **account-state flag**, not a race or a reservation.
+
+⛔ **Still not established** — "surviving candidate" is not "cause". Settling it needs the broker's
+*account/position* view during a pre-market hold (available vs settled vs held quantity), which is a
+**different read** from order history and needs a live pre-market position.
 
 ⛔ **BLIND SPOT IN MY OWN ELIMINATION TEST — do not read 283/284 as stronger than it is.** The test
 keyed on `submitted_at <= T <= updated_at`, i.e. orders live *in our books*. **If Schwab's
