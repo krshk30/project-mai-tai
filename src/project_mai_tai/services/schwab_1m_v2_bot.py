@@ -81,6 +81,7 @@ from project_mai_tai.strategy_core.schwab_1m_v2 import (
     STRATEGY_CODE,
     SchwabV2IntentEmitter,
     SchwabV2Strategy,
+    session_start_ts_ms,
 )
 
 logger = logging.getLogger(__name__)
@@ -233,6 +234,9 @@ class SchwabV2BotService:
         # replayed in timestamp order when warmup completes, so the
         # strategy's append-only deque never sees an out-of-order bar.
         self._rest_warmup_done: set[str] = set()
+        # Last 04:00-ET anchor the time-driven session roll reported on. 0 => the first sweep
+        # after boot logs, which is the proof-of-life line: "the sweep is running and found N".
+        self._session_roll_last_anchor: int = 0
         # Per-symbol queue of streamer bars received before this symbol's
         # REST warmup completed. Drained in `_handle_bar_from_rest`
         # when the symbol crosses into `_rest_warmup_done`, replaying
@@ -790,6 +794,67 @@ class SchwabV2BotService:
         for symbol in tracked:
             qty = positions.get(symbol, 0)
             self.strategy.update_position(symbol, qty, held_qty=held.get(symbol, 0))
+        self._roll_stale_session_state(positions, held)
+
+    def _roll_stale_session_state(
+        self, positions: dict[str, int], held: dict[str, int]
+    ) -> None:
+        """TIME-driven 04:00-ET session roll for symbols that stopped receiving bars.
+
+        The strategy's reset is BAR-driven, so a de-watchlisted symbol never rolls and keeps
+        `cw_armed=True` indefinitely (FUSE/HYFM/AXTL: ~33h on 2026-08-05). This applies the SAME
+        reset on a timer. Runs on the existing 5s position poll — no new task, so no new
+        liveness surface.
+
+        ⛔⭐ THE CARVE-OUT IS WIDER THAN `_protected_symbols()`. That helper answers a DIFFERENT
+        question — "which symbols must stay on the WATCHLIST" — and covers positions only. The
+        session reset also clears `resting_active`, and clearing that while a buy-stop is WORKING
+        AT THE BROKER orphans the order: #580's latch race, where losing it once means it never
+        reprices again. So this predicate adds `resting_active` rather than reusing that helper,
+        and `_protected_symbols()` keeps its meaning untouched (RTH path unchanged).
+
+        ⛔ A symbol mid-warmup is SKIPPED, not protected. Warmup/DB-seed replays historical bars
+        whose anchors are legitimately older; the bar-driven path is in flight for it and will
+        roll it correctly. Rolling underneath the replay would reset the trail mid-series.
+        """
+        if not bool(
+            getattr(self.settings, "strategy_schwab_1m_v2_session_time_roll_enabled", False)
+        ):
+            return
+        operator_protected = set(self.settings.protected_symbol_set)
+
+        def _skip(symbol: str, state) -> bool:
+            if symbol in operator_protected:
+                return True
+            if positions.get(symbol, 0) > 0 or held.get(symbol, 0) > 0:
+                return True
+            if state.position_qty > 0 or state.position_qty_held > 0:
+                return True
+            if state.resting_active:  # #580: a working resting order must never be orphaned
+                return True
+            # mid-warmup: the bar-driven path owns this symbol right now
+            return symbol in self._watchlist and symbol not in self._rest_warmup_done
+
+        now_ms = int(datetime.now(UTC).timestamp() * 1000)
+        anchor = session_start_ts_ms(now_ms)
+        crossed = anchor != self._session_roll_last_anchor
+        rolled = self.strategy.roll_stale_session_state(now_ms, is_protected=_skip)
+        # ⛔⭐ LOG ZERO. A line emitted only `if rolled` makes "rolled nothing" and "never ran"
+        # identical on the tape — the exact false-clean this change exists to correct, and the
+        # third instance of that pattern on 2026-08-05. So: one line per BOUNDARY CROSSING
+        # carrying the count INCLUDING ZERO (and a boot-time line, since `_session_roll_last_anchor`
+        # starts at 0), plus a line whenever anything is actually rolled off-boundary. Not every
+        # 5s: a rolled symbol becomes current and cannot be rolled again, and a skipped symbol
+        # never enters `rolled`, so neither branch can spam.
+        if crossed or rolled:
+            logger.info(
+                "[V2-SESSION-ROLL] boundary_crossed=%s rolled=%d symbols=%s "
+                "(anchor=%d watchlist=%d armed=%d; protected/skipped untouched)",
+                crossed, len(rolled), ",".join(sorted(rolled)[:20]) or "-",
+                anchor, len(self._watchlist), len(self.strategy.cw_armed_segments()),
+            )
+        if crossed:
+            self._session_roll_last_anchor = anchor
 
     def _fetch_reportable_state(self) -> dict[str, list]:
         """REPORTING ONLY -- what the operator sees. Deliberately SEPARATE from

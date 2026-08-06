@@ -513,6 +513,14 @@ class Settings(BaseSettings):
     # confirms zero reconstructed-uncapped segments, and the armed segments are published for the
     # armed_segments_check cron. OFF => byte-identical (no marking, no hold, no snapshot field).
     strategy_schwab_1m_v2_cw_armed_segment_safety_enabled: bool = False
+    # ── TIME-DRIVEN 04:00-ET SESSION ROLL (docs/v2-session-roll-and-replay-arm-design.md) ──
+    # The session reset in `_update_atr_state` is BAR-driven: `anchor != atr_session_anchor_ms` is
+    # only evaluated when a bar ARRIVES. A symbol that leaves the watchlist stops receiving bars, so
+    # its reset never fires and it holds `cw_armed=True` forever — FUSE/HYFM/AXTL sat armed ~33h on
+    # 2026-08-05. ON => a 5s sweep applies the SAME reset to symbols whose newest bar predates the
+    # current session, skipping any symbol with a position or a working resting order (#580).
+    # OFF => byte-identical (the sweep returns immediately; the bar-driven path is untouched).
+    strategy_schwab_1m_v2_session_time_roll_enabled: bool = False
     # ── CW-v2 ENTRY MODE (two independent flags; see docs/v2-resting-flip-entry-design.md) ──
     # The current REACTIVE entry: ATR flips -> wait 3 bars -> MARKET-buy the break. Default TRUE =
     # today, byte-identical. Turn OFF to silence the reactive emit (e.g. run resting-only).

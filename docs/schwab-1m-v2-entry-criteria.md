@@ -1,161 +1,149 @@
-# schwab_1m_v2 — Entry Criteria (MACD Momentum v1.32)
+# schwab_1m_v2 — Entry Criteria (LIVE: CW-v2 ATR flip)
 
-**Purpose:** a faithful, validate-against-the-code reference of every entry rule, so the operator
-can confirm / add / remove rules. Source of truth: `src/project_mai_tai/strategy_core/schwab_1m_v2.py`
-(`SchwabV2Config` + `SchwabV2Strategy._evaluate_completed_bar`). **Entry side only** — all exits
-(MACD-cross-down / stochastic / quick-stop / scaled / hard-stop) are owned by OMS and are NOT in
-this module.
+> ## ⛔ THIS DOCUMENT WAS REPLACED ON 2026-08-05
+>
+> Every prior version described **"MACD Momentum v1.32"** — `min_bars = 135`
+> (`macd_slow + macd_signal + settling`), MACD/VWAP cross paths, stochastic, `rel_vol > 1.5×`,
+> `abs-vol > 5000`. **None of it can fire in production.**
+> `MAI_TAI_STRATEGY_SCHWAB_1M_V2_ATR_ONLY_MODE=true` forces `path_macd = path_vwap = False` at
+> `schwab_1m_v2.py:2466`, and the comment there says so outright:
+> *"with this flag on, the MACD/VWAP emit block below is unreachable."*
+>
+> That code still exists and still logs `[V2-MACD-PROBE]` lines — which is precisely why the old doc
+> looked corroborated. **The probe is diagnostic-only and never gates behaviour** (`:1490`).
+>
+> **This cost a full day on 2026-08-05.** The file was memory-flagged canonical, so a live no-trade
+> investigation was reasoned against a strategy we do not run and produced a wrong root cause
+> (`min_bars = 135` "blocking" GTE) that had to be withdrawn. If you are here to answer *"why didn't
+> we trade X"* — the answer is **not** in the MACD gates. Start at §3 and §6.
 
-> How to use this doc: each tunable rule has its **current value**, whether it's **ON/OFF**, what it
-> does, and a **VALIDATE** prompt. Mark keep / change-to-X / remove. A rule's toggle being OFF means
-> the gate passes through (no effect).
+## Provenance
+
+| | |
+|---|---|
+| **Code read against** | `786bbb6805caca6626c39f018cc4b468aac010d2` — deployed HEAD, branch `main` |
+| **Live flags read from** | `/etc/project-mai-tai/project-mai-tai.env` on the VPS, 2026-08-05 |
+| **Verification** | every gate cites `file:line`. Nothing here is inferred from naming. |
+
+⛔ **Re-verify the flags before trusting this doc.** A gate's presence in code says nothing about
+whether it is reachable — that is the exact failure this rewrite corrects.
+
+```
+MAI_TAI_STRATEGY_SCHWAB_1M_V2_ATR_ONLY_MODE=true                 <- makes MACD/VWAP unreachable
+MAI_TAI_STRATEGY_SCHWAB_1M_V2_CONFIRMED_WINDOW_ENABLED=true
+MAI_TAI_STRATEGY_SCHWAB_1M_V2_CW_V2_ENABLED=true
+MAI_TAI_STRATEGY_SCHWAB_1M_V2_CW_V2_REACTIVE_ENTRY_ENABLED=true
+MAI_TAI_STRATEGY_SCHWAB_1M_V2_CW_V2_RESTING_ENTRY_ENABLED=true
+MAI_TAI_STRATEGY_SCHWAB_1M_V2_CW_V2_EH_RESTING_ENTRY_ENABLED=true
+```
 
 ---
 
-## 0. When the strategy evaluates at all
+## 1. The live path, end to end
 
-- **Bar-close only.** Signals are evaluated once per *new* completed 1-minute bar (`on_bar`, only
-  when the bar's timestamp is newer than the last). Quotes update freshness but **never** fire a
-  signal (`on_quote` returns None). Same-minute bar revisions do **not** re-evaluate.
-- **Warmup gate — `min_bars = 135`.** No evaluation (and no indicator-memo update) until the symbol
-  has **135** bars in the deque. Derived: `macd_slow(26) + macd_signal(9) + macd_warmup_settling_bars(100)`.
-  Rationale: the SMA-seeded EMA is biased for the first ~100 bars; 135 walls off that zone.
-  - VALIDATE: keep 135-bar warmup? (Trade-off: needs ~135 min of history before the first possible
-    fire; the REST cold-start batch covers it.)
-- **Deque size:** last **300** bars retained (`maxlen=300`).
-
-## 1. Indicators (exact math)
-
-| Indicator | Definition | Params |
-|---|---|---|
-| **MACD line** | `EMA(close,12) − EMA(close,26)` | fast 12, slow 26 |
-| **Signal line** | `EMA(macd_series, 9)` | signal 9 |
-| **Histogram** | `macd_line − signal_line` | — |
-| **EMA (trend)** | SMA-seeded EMA of close | length **9** |
-| **Stochastic %K** | `(close − low5)/(high5 − low5) × 100`; flat range → 50 | length **5**, FullK (smoothK=1) |
-| **Avg volume** | mean of last **20** bar volumes | length 20 |
-| **Session VWAP** | cumulative `Σ(typical×vol)/Σvol`, `typical=(H+L+C)/3` | anchored **04:00 ET** each day; resets at the anchor |
-
-- **EMA seeding:** first `period` values are simple-averaged, then standard EMA. (This is why the
-  135-bar warmup exists.)
-- **VWAP anchor:** 04:00 ET (matches the scanner-session roll). Only *new* bars update the
-  accumulator (same-minute revisions don't double-count).
-
-## 2. Config (all current values)
-
-| Field | Current | Meaning |
-|---|---|---|
-| `macd_fast / slow / signal` | 12 / 26 / 9 | MACD lengths |
-| `stoch_length` | 5 | stochastic lookback |
-| `ema_trend_length` | 9 | trend EMA |
-| `rel_vol_length` | 20 | avg-volume lookback |
-| `volume_threshold` | **5000** | absolute min bar volume |
-| `rel_vol_multiple` | **1.5×** | bar volume must exceed 1.5× avg |
-| `macd_hist_min_pct` | **0.02%** | min histogram as % of close |
-| `cooldown_bars` | **5** | bars suppressed after a position closes |
-| `stoch_max_at_entry` | 90.0 | overbought ceiling (only if enabled) |
-| `pending_cross_max_gap_secs` | 180 | C2 carryforward window |
-| `macd_warmup_settling_bars` | 100 | → min_bars 135 |
-| `MAX_BAR_AGE_SECONDS_FOR_EMIT` | **180s** | freshness window |
-| `default_quantity` | 100 (env) | shares per entry |
-
-**Toggles (ON/OFF):**
-
-| Toggle | State | Effect when ON |
-|---|---|---|
-| `require_uptrend` | **ON** | close must be > EMA(9) |
-| `require_macd_strength` | **ON** | hist% ≥ 0.02 |
-| `require_green_bar` | **ON** | close > open |
-| `require_rel_volume` | **ON** | vol > 1.5× avg |
-| `require_vwap_filter` | **ON** | Path-1 VWAP gate (below) |
-| `allow_vwap_cross_entry` | **ON** | Path-1 accepts a fresh VWAP cross-up |
-| `block_overbought` | **OFF** | (would cap stoch < 90) — currently NO stoch ceiling |
-| dead-zone (`dead_zone_start/end`) | **OFF** (0/0) | no time-of-day blackout |
-
-## 3. The two entry paths
-
-A signal fires if **EITHER** path's full condition is true on a fresh bar while flat + off-cooldown.
-"Cross" conditions use the **previous bar's** memo, so they fire only on the single *transition* bar.
-
-### Path 1 — "MACD Cross"
 ```
-macd_cross_above        # prev_macd ≤ prev_signal  AND  macd > signal   (the up-cross bar)
-AND macd_increasing     # macd > prev_macd
-AND vwap_filter_path1   # close > vwap  OR  (allow_vwap_cross_entry AND vwap_cross_above)
-AND base_filters        # the 7 gates in §4
+on_bar
+  └─ _evaluate_completed_bar                                       :2142
+       ├─ position_qty > 0 ......................... return None   :2464
+       ├─ ATR_ONLY_MODE -> path_macd = path_vwap = False           :2466
+       └─ _maybe_atr_emit                                          :1190
+            ├─ not _atr_enabled or atr_signal is None ... return    :1202
+            ├─ not bar_is_fresh ........................ return     :1204
+            └─ _cw_enabled -> _cw_entry(...) OWNS the decision      :1211
+                 └─ _cw_v2_enabled -> return None
+                    "arm/trigger state is tracked in _cw_v2_track; entry is INTRABAR"
 ```
 
-### Path 2 — "VWAP Breakout"
-```
-vwap_cross_above        # prev_close ≤ prev_vwap  AND  close > vwap   (the up-cross bar)
-AND macd_above_signal   # macd > signal  (NOT necessarily a fresh cross; can be macd<0)
-AND macd_increasing     # macd > prev_macd
-AND base_filters        # the 7 gates in §4
-```
+⭐ **The bar close does not enter — it ARMS.** `_cw_v2_track` sets the arm on a BUY flip; the entry
+fires **intrabar**, either from `on_quote` (reactive) or from a resting buy-stop-limit filling at
+the broker. This is why a resting fill can precede its own `[V2-CW-ARM]` line by 21s–706s, and why
+entry composition must be read from the **ARM/DISARM log**, never reasoned from bar closes.
 
-- VALIDATE: Path 2 requires only `macd > signal` (momentum confirmation), **not** `macd > 0` — so
-  it can fire with MACD below zero (seen in the replay study, e.g. QH 07:39). Keep, or add a
-  `macd > 0` requirement?
+## 2. The gates that actually decide
 
-## 4. Base filter gates (the 7 — all must pass)
+| # | Gate | Where | Note |
+|---|---|---|---|
+| 1 | flat — `position_qty > 0` returns | `:2464` | conservative UNION (fills ∪ in-flight opens) |
+| 2 | `_atr_enabled` and `atr_signal is not None` | `:1202` | `atr_signal` is None until the trail is defined |
+| 3 | **`bar_is_fresh`** | `:1204` | *"never fire on a replayed historical touch"* — warmup bars can arm but cannot emit |
+| 4 | **ATR flip == `BUY`** | `_cw_v2_track` | **edge-triggered** — an already-armed symbol does not re-arm |
+| 5 | **volume floor** `cur.volume <= _atr_vol_floor` | `:1213`, `:1321`, `_last_bar_volume_ok:1513` | *"the only filter: bar volume > floor."* Settled at **10,000** |
+| 6 | `cw_armed` + `cw_bars_waited` 3-bar wait | `_cw_v2_track` | reactive trigger is `state.cw_segment_high`, unconditional |
+| 7 | entry window 07:00–18:00 ET | `_within_entry_window` (bot) | pre-market EH trading is live |
+| 8 | **composition cap** ≤1 resting AND ≤1 reclaim per cross | #644 | ⛔ **not a count** — see §5 |
+| 9 | watch-start: a flip predating watchlist join is declined | `_cap_reconstructed_segment` (bot) | *"a NEW stock needs to wait for a fresh flip"* |
+| 10 | 04:00-ET session reset of the whole ATR trail | `_update_atr_state`, `_apply_session_anchor_reset` | **see §3 — this is the one that surprises people** |
 
-Each is ANDed into `base_filters`, used by **both** paths.
+## 3. ⭐ The 04:00 ET session slice — read this before reporting a missed setup
 
-| # | Gate | Rule (current) | ON? | Purpose / VALIDATE |
-|---|---|---|---|---|
-| 1 | **Trend** | `close > EMA(9)` | ON | only enter above short trend. Keep? |
-| 2 | **MACD strength** | `histogram/close×100 ≥ 0.02%` | ON | avoid near-flat crosses. 0.02% is *tiny* — validate the threshold. |
-| 3 | **Stoch not-chase** | `stoch%K < 90` | **OFF** | overbought ceiling currently disabled → enters even when stretched. Turn ON? |
-| 4 | **Green bar** | `close > open` | ON | only on an up-bar. Keep? |
-| 5 | **Relative volume** | `vol > 1.5 × avg_vol(20)` | ON | demand a volume surge. Validate 1.5×. |
-| 6 | **Absolute volume** | `vol > 5000` | (always on) | floor out illiquid prints. Validate 5000 for this universe. |
-| 7 | **Time-of-day** | dead-zone 0/0 → always allowed | OFF | no blackout window. Add one (e.g. avoid first/last minutes)? |
+**The ATR trail is rebuilt from scratch at 04:00 ET every day.** `_update_atr_state` resets the
+entire indicator (`atr_hl`, `atr_wilders`, `atr_trail`, `atr_state`) plus the CW setup whenever a
+bar's `session_start_ts_ms()` anchor differs from the stored one — the same anchor VWAP uses,
+*"so the live series matches the validated session-sliced backtest."*
 
-(Plus the **Path-1 VWAP filter**: `close > vwap` OR a fresh VWAP cross-up.)
+⛔ **This is why a charting platform can show a flip the bot never saw.** TOS computes the ATR
+trailing stop **continuously across sessions**; the bot slices at 04:00 ET. Same tape, same
+ATRPeriod=5 / ATRFactor=3.5 / Wilders — **different answer**, because the indicator is
+path-dependent.
 
-## 5. Cross-detection semantics (important)
+Measured 2026-08-05. Same symbols, same bars; only the slice differs:
 
-- Cross flags compare against the **prior bar's** stored `prev_macd / prev_signal / prev_close /
-  prev_vwap` (the memo), so a path fires **once** on the transition, not every bar the condition
-  stays true. The memo updates on every evaluated bar (including warmup).
-- `macd_above_signal` / `macd_increasing` are *level* checks (not transitions).
+| Symbol | unsliced multi-day run | live 04:00-ET slice | bot's actual arm |
+|---|---|---|---|
+| GTE | flip 07:00 ET (+2 more) | **BUY 09:01 ET** | `[V2-CW-ARM]` 09:02:02 ✅ |
+| BJDX | flip 07:30 ET (+3 more) | **BUY 08:49 ET** | `[V2-CW-ARM]` 08:50:02 ✅ |
 
-## 6. Suppression rules (a true signal can still be withheld)
+The bot armed on the sliced flip **both times, within ~90 seconds**. Nothing was missed. **Live and
+the backtest agree; the chart is the outlier.**
 
-| Suppressor | Rule | Notes |
-|---|---|---|
-| **Freshness** | bar age > **180s** → no fire | stale bars (e.g. warmup replay) never emit |
-| **C2 pending carryforward** | a native cross on a *stale* bar is stashed and may be consumed by the **next fresh bar** if within **180s** AND the cross still holds | prevents losing a real cross at the warmup→live seam |
-| **Position** | `position_qty > 0` → no fire | one open position per symbol (entry side) |
-| **Cooldown** | `cooldown_bars > 0` → no fire | **5 bars** armed when OMS closes a position (True→False); ticks down each bar |
+⛔ **Never judge a "missed setup" against an unsliced oracle run.** Two wrong conclusions were drawn
+from exactly that error on 2026-08-05, including an acceptance test for a live entry-path change
+that could never have gone green. This likely explains a whole class of "I saw a setup and we
+didn't take it" reports.
 
-## 7. On fire
+> Whether daily re-seeding is right for **pre-market** — where the first hours have little history
+> to seed from — is a **strategy** question on the parked list. Flagged, not built.
 
-Emits a single `open` / `buy` intent: `quantity = default_quantity` (100), `reason = "schwab_1m_v2
-<path>"`, metadata incl. `entry_price` (= bar close), `reference_price` (= bar close, drives the sim
-fill), and all indicator values. **No scaling, no exits** — OMS owns those.
+## 4. What is NOT a gate
 
----
+`macd_slow` · `macd_signal` · `min_bars = 135` · MACD cross · VWAP cross · stochastic · `ema9` ·
+`rel_vol` / `pretrigger_min_bar_rel_vol` · `avg_vol_20` · `abs-vol > 5000`.
 
-## 8. Rules-to-validate checklist (quick pass)
+These live in `strategy_core/entry.py`, `strategy_core/indicators.py`, `exit_logic/config.py` and
+the `polygon_30s` / `schwab_native_30s` strategies. **All are real, live modules — for other
+strategies.** `_maybe_atr_emit` and `_cw_v2_track` contain **zero** references to any of them.
 
-Tunables, current value → your call (keep / change / remove):
+`min_bars = 135` additionally carries an **explicit ATR carve-out** below it, added after it
+*"blinded fresh-scanned/post-restart symbols like QTEX."*
 
-1. Warmup `min_bars` = **135** → ?
-2. MACD lengths **12/26/9** → ?
-3. MACD strength `hist% ≥ 0.02%` → ? (very low)
-4. Trend `close > EMA(9)` ON → ?
-5. Green-bar ON → ?
-6. Rel-vol `> 1.5×(20)` ON → ?
-7. Abs-vol `> 5000` → ? (universe-specific)
-8. Stoch overbought ceiling **OFF** (`< 90`) → turn ON?
-9. Path-2 allows `macd < 0` (only `macd > signal`) → add `macd > 0`?
-10. VWAP filter (Path 1) ON + allow-cross ON → ?
-11. Cooldown **5 bars** → ?
-12. Freshness **180s** + C2 carryforward → ?
-13. Time-of-day blackout **OFF** → add one?
-14. Default quantity **100** → ?
+## 5. ⛔ `cw_entries_this_flip` is a LABEL, not the cap
 
-> Note (from the Replay Study Phase 1, directional): MACD-Cross outperformed VWAP-Breakout; the
-> median signal had no free edge (tail-driven); nothing survived a 2% slippage haircut. Useful
-> context when deciding which gates to tighten vs. add.
+Declared at `:214`, incremented at `:1588` — both annotated *"kept for labelling/back-compat;
+**NOT the cap**."* The #644 cap is **composition**: ≤1 resting AND ≤1 reclaim per cross.
+
+`cw_armed_segments()` nevertheless derives `capped` and `dangerous` from that retired counter, so
+**neither is a safety verdict**. FUSE read `3/2 capped=true dangerous=false` on 2026-08-05 only
+because a DB-seed replay incremented the label three times **while emitting no order**; at 0 or 1
+the identical state would have read `dangerous=true`. The P1.3 boot-hold release depends on this
+and is therefore **unvalidated**. Tracked separately; not fixed here.
+
+`arm_age_secs` and `stale_session` were added to the same snapshot in the session-roll change —
+both derive from the session anchor, not the counter, so replay cannot inflate them.
+
+## 6. How to check a specific no-trade
+
+1. `grep '\[V2-CW-ARM\] <SYM>' /var/log/project-mai-tai/schwab-1m-v2.log`
+   ⛔ the **log file**, not `journalctl -u schwab-1m-v2` — that unit does not exist, so it returns a
+   header line and reads as a **false zero**. The unit is `project-mai-tai-schwab-1m-v2`. Assert the
+   source is non-empty with a known-present control probe before trusting any zero.
+2. Compute the flip on the **04:00-ET slice** (§3) — never on a multi-day series.
+3. Check the volume floor on the **flip bar**, not the session median.
+4. Replay it: `python -m project_mai_tai.backtest --strategy v2 --eh <SYM> <DATE>`. This runs the
+   live code. It needs the service env sourced or it fails on DB auth.
+
+## 7. What this doc does not cover
+
+Exits (OMS-owned), the OCO bracket, fan-out leg behaviour, and the resting-order reprice/cancel
+ladder. It enumerates the gates verified by direct read on `786bbb6`; it is **not** a complete
+transcription of `_cw_v2_track`. When in doubt read the code and update this file — a stale spec
+here has now cost a day once.

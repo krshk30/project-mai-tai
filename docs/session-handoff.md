@@ -22,180 +22,69 @@
 
 ---
 
-## 🟢 FLEET — what is live right now
+---
 
-**As of 2026-08-04 EOD.** Deployed HEAD **`786bbb6`** (was `71c6c2c`) — attended deploy at
-**17:12:35–17:12:41 ET, 6 seconds**, 0 errors, no bar hole, no entry lost, fleet flat throughout. `main` moved (#643 handoff, #646 design, #647 build, #649 runbook) but the box did
-not. All five services active.
+## ⚡ FIRST SCREEN — act on this alone
 
-⭐ **Today was a MEASUREMENT day.** No code reached production. The output is a settled broker fact,
-three merged PRs sitting dark, and **five corrected numbers — three of them corrected by the agent
-that produced them.**
+**Fleet: 5 services active. Broker FLAT except `CYN 5000` (operator manual, never touched).**
+Deployed HEAD **`786bbb6`**. `main` is ahead by docs + **PR #657** (open, mergeable, **flag OFF**).
 
-🔴 **TONIGHT — Gate 0.5, attended, after 18:00 ET.** Full runbook:
-[`v2-premarket-exit-protection-rollout.md`](v2-premarket-exit-protection-rollout.md).
+**NEXT ACTION — TOMORROW, in this order. The deploy is BLOCKED and not by a day.**
 
-⛔⭐ **THE WINDOW IS AFTER 18:00 ET, NOT 16:30.** v2's entry window runs to 18:00, and **Bug 2 is
-still live**: `cw_entries_this_flip` is in-memory and unpersisted, so a **v2** restart re-issues the
-entry cap on every armed segment (the CPHI mechanism). ⛔ **The fleet-flat rule does not cover it** —
-flat checks POSITIONS; the reset fires on ARMED SEGMENTS, which hold nothing. Proven live at 12:23
-ET today: **fleet completely flat, 2 segments armed.**
-✅ **But Gate 0.5 does NOT need a v2 restart** — #647 touches `oms/service.py`,
-`broker_adapters/schwab.py`, `settings.py` only, all oms-risk; v2 is a separate unit. **Do not
-restart v2 tonight.**
+⛔ **2026-08-05 deploy did NOT happen.** Pre-flight returned **NO-GO** at 18:05 ET — armed segments.
+Nothing merged, nothing restarted. **PR #657 open, flag OFF.** Fleet flat ex-`CYN`.
 
-**Pre-flight is a runnable check, and it ASSERTS rather than prints** (the 07-15 lesson):
-`sudo /home/trader/ops_preflight/preflight_v2_restart.sh` → exit 0 = GO. Gates: past 18:00 ET ·
-zero armed segments · zero open managed rows · broker flat excluding operator manuals.
+1. ~~**FIX PRE-FLIGHT**~~ ✅ **DONE 2026-08-05 20:18 ET.** Reads the bot's **published state**
+   (authoritative), **asserts freshness and FAILS CLOSED** (stale / unreadable / missing all BLOCK,
+   rc=1 verified by mutation), and **retains the log-derived set, reporting divergence** scoped to
+   the ET day across the 20:00 rotation. Validated against a same-instant capture: reports **7**,
+   surfaces **log-only PAVS ZCMD** (dangling ARMs) and **state-only AXTL FUSE HYFM** (armed 08-03).
+   ⛔ **Not version-controlled** — lives only at `/home/trader/ops_preflight/`. Board item.
+   ~~The gate was unreliable:~~ It pairs ARM→DISARM over *today's log*
+   with **no replay filter**, so it over-reports dangling replay ARMs (CLRO/PAVS/ZCMD on 08-05) and
+   under-reports symbols armed on an earlier day with no ARM line today (FUSE/HYFM/AXTL). It also
+   reads a **single** log file — and the sink rotates at **00:00 UTC = 20:00 ET**, so after 20:00 it
+   loses most of the day. Fix = read the bot's **published state**, **assert freshness and FAIL
+   CLOSED when stale**, and **keep the log-derived set, alerting on divergence** (tonight's
+   divergence WAS the finding).
+2. **Validate against a fresh known divergence** — capture both sources at the SAME instant.
+3. **Re-run.** If it blocks only on the inert trio, that is the **operator's call with the facts
+   stated** — never an automatic override.
 
-| service | state |
+⛔ **"Wait for the 04:00 anchor" does NOT unblock this.** The anchor is BAR-DRIVEN. It clears
+symbols still receiving bars; **FUSE/HYFM/AXTL receive none** (last tick 2026-08-04 04:00 ET), so
+they can never self-clear. They will be armed every evening until a restart or D1a lands.
+
+⛔ **A clean `cw_armed_segments` after any deploy proves the RESTART, not the fix.** The proof is a
+04:00-ET boundary clearing a symbol that has gone silent. If no candidate exists, say
+**"unexercised"**, not "validated".
+
+**Pre-flight ASSERTS, never prints:** `sudo /home/trader/ops_preflight/preflight_v2_restart.sh`,
+exit 0 = GO. ⛔ Fleet-flat does **not** cover Bug 2 — that fires on ARMED SEGMENTS, which hold nothing.
+
+### The honest ledger — read before quoting any finding here
+**Demonstrated money cost of 2026-08-05's findings is ~ZERO, and EIGHT claims were withdrawn**
+(full table: [`handoff-detail-2026-08-05.md`](handoff-detail-2026-08-05.md)). The operator's own read
+-- *"everything I bought closed cleanly, nothing pending"* -- was correct, and correct against three
+alarms raised that day.
+**The case is NOT "it is bleeding money." It is: the books and the broker disagree, and size cannot
+be scaled until they don't.** Overstating it once costs more than the whole board is worth.
+⛔ **Never quote a P&L number from `<day>.jsonl` alone** — it holds only RTH, `-ocoexit-` exits. Union it with `<day>.unpaired.jsonl`, and say which returns are asserted vs candidate.
+⚠️ The "12% attribution / 16 entries -> 2 round trips" figure was an **`eod_counts.py` artifact** (it groups fills per symbol-day and drops any symbol with >1 fill per side). It is not a real coverage number and should not be requoted.
+
+**Survives with evidence:** 24 blocked hard-stop episodes / ~12 days, 4 never closing same day
+(real, small at qty 2) - and a books-vs-broker divergence dated 08-05 (GTE's 14:54 lot exited with
+no `fills` row and no trade record; cost ~$0.95).
+
+### BOARD -- sized, not run
+| item | note |
 |---|---|
-| `schwab-1m-v2` · `oms` · `strategy` · `control` · `market-data` | active |
-| `trade-coach` · `orb` | inactive + disabled |
-
-**Flags: unchanged.** #647's two new flags (`..._RTH_EDGE_BRACKET_ENABLED`,
-`..._STAND_DOWN_CLEAR_REARM_ENABLED`) are **absent from the env ⇒ code default OFF**, verified.
-
----
-
-
-
-
-## ✅ WHAT SHIPPED 2026-08-04 (attended, after close)
-
-| | |
-|---|---|
-| **Gate 0.5 — #647** | deployed. **All flags OFF** — code only, no behaviour change |
-| **`EOD_OCO_TRANSITION_ENABLED=false`** | ⚠️ **a BEHAVIOUR CHANGE, operator-directed, separate from the #647 rollout** — disarms the 16:00 jam trigger. The jam mechanism is untouched |
-| **Flags written EXPLICITLY** | all four now in the env, so every kill is a flip, never an append (the P0a lesson, applied to P0a) |
-| **#366** | ⛔ **STRUCK** — already deployed AND enabled (control has carried the throttle since Jul 14) and `dashboard_snapshots` is still 103 MB and growing. **An investigation, not a deploy** |
-| **A7 reject alarm** | live, `*/15`, read-only |
-| **EOD counts** | fired 18:05:30; **10 Schwab entries**, not the 2 a mid-session read showed |
-| **Bar backfill** | 276 bars, `source='rest'`. ⭐ AMIX's 54 "missing" were **11 LULD halts**, not data loss |
-
-⛔ **Rollback anchors:** code `71c6c2c` · env `/root/env.bak.2026-08-04-combined`.
-⛔ **v2 was NOT restarted and must not be** — Bug 2 re-issues the entry cap on every armed segment.
-Pre-flight: `sudo /home/trader/ops_preflight/preflight_v2_restart.sh` (asserts; exit 0 = GO).
-
----
-
-
-## 🔴🔴 TOP OF QUEUE — THE REJECT BACKLOG (operator reframe, 08-04)
-
-⛔⭐ **EVERY BROKER REJECTION IS OUR DEFECT.** Tested against the whole population: **zero classes
-are market-caused.** The reject log is a ranked, dated defect backlog that had never been read.
-⛔ The reason lives in **`broker_order_events.payload->>'reason'`**, NOT `broker_orders.payload`.
-
-**Design note: [`v2-a1-oversell-and-exit-abandonment-design.md`](v2-a1-oversell-and-exit-abandonment-design.md). Nothing built.**
-**Alarm LIVE:** `/home/trader/reject_watch/` — `*/15`, ET-guarded 07:00–20:00 (deliberately wider
-than the exit watch: the 16:00 jam ran after it had stopped). Real money pages; paper never does.
-
-### The settled numbers (enumerated — never pattern-matched)
-| exit rule | episodes | rejects | orders/ep |
-|---|---|---|---|
-| `CW_HARD_STOP` | **24** | **985** (87%) | 41.0 |
-| `CW_FLOOR` | 26 | 114 | 4.4 |
-| **`CW_TARGET`** | **0** | **0** | — |
-
-57 episodes total (FLOOR-ONLY 12 · STOP-only 10 · both 14 · neither-CW 21), 28 never closed.
-**Worst state: 4 post-#566 episodes where a stop fired and no sell filled that day.**
-
-### Three mechanisms, all new today
-1. **A storm needs a PERSISTENT RESERVATION.** Rejects/episode is bimodal (1–6 or 62–129) and
-   **stable since 07-13** — the largest predates the fan-out, #625 and #566. ⇒ **#608 caps the noise
-   and cannot be the fix. DEMOTED.**
-2. **E5 has two sources** — A1a unconfirmed-cancel (~126, KUST) / A1b live protective leg (~242,
-   07-13 + 08-04). Double-derived. ⭐ **E5 is DOWNSTREAM of the churn** (KUST: 12 cancelled limits
-   carry ZERO oversell rejects; the 125 market rejects are strictly sequential) ⇒ **C1/P0a is NOT
-   chasing a symptom; its scope stands.**
-3. **MODE 2 — exits are ABANDONED, not just delayed.** FLOOR-ONLY **10 of 12 never closed (83%)**
-   vs stops 11 of 24, on 114 rejects vs 985. Cause is a **precondition asymmetry**: the stop's
-   condition is *absorbing* (only more true as price falls) and retries forever; the floor's is
-   *transient* (armed only while price ≥ target) so it gets ~4 attempts and can never re-arm.
-   ⇒ the floor question is a **RATCHET**, connecting to the floor-ratchet item already REOPENED.
-
-⛔ **`CW_TARGET = 0` is the design.** The target IS the resting order and fills in place; floor and
-stop **emit a second sell alongside a live protective order**. **Emit-a-second-sell collides;
-modify-the-resting-order cannot.**
-⛔ **`_cw_flip_pending` = ONE structure, TWO defects** (disarm-on-emit; armed for one account only ⇒
-Webull deafness, 27 arms vs 0). Disarm-on-fill fixes neither. Keep separate.
-⚠️ **Mode 2's COST is unresolvable for its era** — 14 of 16 floor episodes pre-date #566, where an
-OCO close left no `fills` row. Answer prospectively; do not infer. E0's *"exit is essentially
-optimal"* carries this unmeasured leak — **not settled, not reopened.**
-
-**Tomorrow, one at a time, validated, attended: A3 (position-state) → A2 (check #438's defer queue
-first) → A1(a/b) → A5 → A8.**
-
----
-
-## 🔴 THE 16:00 EXIT JAM (second)
-
-**Design note: [`v2-eod-oco-jam-design.md`](v2-eod-oco-jam-design.md) (#651, merged). Nothing built.**
-
-**2026-08-04 AAOG, real money: 426 rejected sells in 16 minutes** (`live:orb` 313,
-`live:schwab_1m_v2` 113) — worse than the 145-in-55-min incident #608 exists to prevent. **Neither
-the bot NOR the operator could sell**; a hand-placed TOS sell was rejected oversold, which is how it
-surfaced. Intended stop **−5%**, executed **−5.58% Schwab / −6.01% Webull** ⇒ ~0.6–1.0 pt of pure
-slippage per leg. It cleared only when the broker legs **expired** — nothing we did fixed it.
-
-**Two independent defects:**
-- **D1** — `_v2_eod_oco_transition` releases the stand-down on a still-held position while the
-  broker's OCO legs still **RESERVE** the shares. Its docstring reasons a `session=NORMAL` DAY order
-  *"cannot fill in EH, so nothing is lost by letting it lapse."* ⛔ **Cannot FILL ≠ does not
-  RESERVE** — the handoff goes to a ladder structurally unable to sell.
-- **D2** — the retry bound cannot see a structural block. #608 correctly narrowed the reset to
-  **HELD-only**, but HELD *is* this case, so the accumulator resets every pass and the bound of 8 is
-  unreachable. The model knows *flat / held / unknown*; it has no **held-but-BLOCKED**. ⭐ The
-  discriminator exists and is discarded — the broker returns the reason verbatim and the loop keys
-  on position state without ever reading it.
-
-⛔ **NOT NEW, NOT RARE.** The same jam ran **66× on 07-28** unrecognised; the transition flag has
-been live since **07-27**; a position is held through 16:00 on **7 of ~20 sessions (~1 in 3)**.
-08-04 is merely the first time the **Schwab** leg jammed too.
-
-⇒ **Ship D1 first** — D2 only stops the hammering, D1 restores the invariant. ⚠️ D2 edits the exact
-function #608 hardened, so "NCRA's 145-retry case stays bounded" is a real regression risk.
-**P1 (the trigger) is now SECOND in the queue.**
-
----
-
-## 🔬 P1 — THE TRIGGER (third)
-
-**`b117d89` re-shipped the rule of #467**, verbatim and unconditionally: the reactive/reclaim
-trigger is `trig = state.cw_segment_high` — the **running segment high**, not the **frozen 2-bar
-high** (`cw_trigger`). ⛔ Say "frozen 2-bar high", **never "flip+2"** — that shorthand reads as
-flip × 1.02 and misled two readers into benchmarking against 2%.
-
-⭐ **Structural proof, tape-independent — bucket 2 is EMPTY BY CONSTRUCTION.** Both fields seed to
-`bars[-1].high` at the flip; `cw_segment_high` takes `max()` on **every** armed bar,
-`cw_trigger` only while `cw_bars_waited < 2`, then freezes. `cw_trigger`'s bars are a strict
-**subset** ⇒ **`segment_high ≥ cw_trigger` always**, and reactive cannot fire before
-`bars_waited ≥ 2`. `max(segment_high, cw_trigger)` would be redundant, not protective. So it is
-**#467 scoped to the reclaim slot** — the resting slot still uses the frozen 2-bar high.
-
-**Why it matters regardless of today's tape:** `cw_segment_high` was measured **net-negative** in
-the July port, rolled back by **#469 on a void justification** (its byte-identical test fed a break
-*at arming*, where `segment_high == cw_trigger` by construction and could not diverge), and
-**re-shipped 08-03 as a side effect of a different PR, with no backtest.**
-
-⛔⭐ **AND THE CONVERSE — a normal count at the close is NOT evidence the rule is good.** July's
-mechanism was that it *delays entries to a higher price*: that lands in entry **QUALITY**, not
-entry **COUNT**. **Measure fill-vs-flip distance regardless of what the count does**, or we accept
-a live rule on evidence that cannot see the failure it is meant to rule out — #467's mistake in a
-new costume.
-
-**The measurement (after the close, never during RTH — R&D CPU contends with the OMS loop):**
-- denominator = **LIVE arms** · both buckets · the **2×2** (price touched the resting level while
-  the order was off-book **×** price exceeded `cw_segment_high` — both can be true, so a split
-  mis-assigns)
-- ⚠️ **combined-commit caveat**: `b117d89` shipped the composition cap **and** the trigger together,
-  so a raw before/after estimates the whole commit. Separate them or say "combined".
-- ⭐ **natural control**: 07-30→08-03 = flap present, **old** trigger; 08-04+ = flap present, **new**
-  trigger. The flap is held constant across the boundary.
-- **fill-vs-flip distance as a first-class output.**
-
-⛔ **n=1 settles nothing.** Even a final 12 against a median of 17 sits inside ordinary variance.
-The measurement is the **multi-day** before/after.
+| **ATTRIBUTION — ✅ ANSWERED 08-05, it was NOT a coverage problem** | Capture is **100%**: `<day>.jsonl` (36, `-ocoexit-`, attribution ASSERTED) + `<day>.unpaired.jsonl` (9, `-close-`, `close_candidate_ret_pct` accurate to **0.0004 pts**). ⛔ **The bias is in the READER** — 3 of 3 consumers read paired-only. ⛔ **Zero native-OCO exits exist in extended hours** (Schwab refuses a STOP leg there), so the paired file contains **no EH exits at all** and degrades as pre-market volume grows (close route: 1,1,0,2,1,**5**,**8**). Remediation = union both files in `open_capture_0731.sh`, `live_trade_tape*`. |
+| **A2 reverse-reject defer** | 393/394 on the managed-exit ladder, no defer handler. 384 are CW_HARD_STOP -- deferring lengthens the naked window; acceptance must measure **trigger->fill**, not reject count |
+| **marginal seed-cap distribution** | the one item whose payoff is **recovered trades**; 08-05 caps spanned 1 -> 648 min |
+| **third-class recency** | "we hold it, the broker says flat" -- fresh instance 08-05 |
+| **A1b · GTE bar accounting · `dangerous=false`** | `dangerous` derives from a retired counter => **P1.3 boot-hold release is UNVALIDATED** |
+| **lingering rows** | hop one **NEGATIVE** (entry path unaffected). Real consequence: a stale row keeps `_managed_v2_symbols` armed => the exit ladder works a gone position. Belongs to the A3 / stand-down family |
 
 ---
 
@@ -291,29 +180,6 @@ Burned twice today, both already reported before being caught:
 
 ---
 
-## ⛔⭐ THE STAND-DOWN-CLEAR CONSTRAINT (binds open thread 11)
-
-**Emitting a bracket is NOT sufficient. "OCO ⇒ churn-immune" is false.**
-
-A native OCO bracket makes the BROKER own the exit, so timer-driven cancel/replace structurally
-cannot happen — *while the bracket is live*. But when it resolves or stands down,
-`[OMS-OCO-STAND-DOWN-CLEARED] ... OCO gone; ladder deferred` hands the exit **back to the bare
-timer ladder** — which is KUST, now on a bracketed entry.
-
-**The evidence it is real, not theoretical.** Cancelled/rejected sells within 60 min of an
-**OCO-bracketed** entry: **NVVE 07-23 = 11**, KUST 07-22 = 6, FIEE 07-27 = 6, several at 3.
-*(Caveat: symbol-level count in a time window; some sells may belong to another position that day.)*
-
-⇒ **The requirement.** On stand-down-clear the exit must either **re-arm a bracket** or **inherit
-the P0a marketable-hold** (`_managed_exit_refresh_exempt`, `oms/service.py:3770`). It must **never**
-fall back to the bare refresh cadence. Any pre-market-OCO design that does not state which of those
-two it does on stand-down-clear is incomplete.
-
-⚠️ P0a alone does not close this: the hold engages only while `limit <= bid`. A bracket that stands
-down while the exit is **not** marketable still lands on the plain ladder.
-
----
-
 ## 🔔 ALERTING — what reaches the phone
 
 | watch | fires on |
@@ -329,18 +195,6 @@ down while the exit is **not** marketable still lands on the plain ladder.
 run. Verify `stat -c %a` and `bash -n` **on the box**. Hit both today.
 
 ---
-
-## 📜 HISTORY
-
-- **What happened, day by day:** [`handoff-log.md`](handoff-log.md) (append-only)
-
-| archive | covers |
-|---|---|
-| [`handoff-archive/2026-07.md`](handoff-archive/2026-07.md) | 07-16..07-25 — OCO build, wrong-bars root cause, resting flip-entry, EH trading, fan-out |
-| [`handoff-archive/2026-06.md`](handoff-archive/2026-06.md) | go-live, #326, OMS exits, ATR qualifier, 04:00 race |
-| [`handoff-archive/2026-05.md`](handoff-archive/2026-05.md) | v2 build-out — bar-build, ATR-flip design, exit-engine |
-| [`handoff-archive/2026-04.md`](handoff-archive/2026-04.md) | token-SPOF saga, early v2 scaffolding |
-| [`handoff-archive/schwab-1m-v2.md`](handoff-archive/schwab-1m-v2.md) | the v2 bot's own design/status history |
 
 ## 🔗 KEY REFERENCE DOCS (design-first / canonical)
 
