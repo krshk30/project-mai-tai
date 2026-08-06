@@ -115,18 +115,50 @@ An earlier revision of this note said:
 position. ⇒ **The never-lengthen-the-naked-window constraint is BACK IN FORCE for D1**, and any
 route that cancels must be judged against it.
 
-### ▶ BEFORE CHOOSING A ROUTE, SPLIT "LIVE" IN TWO
+### ▶ "LIVE" SPLITS IN TWO — and both halves are now ESTABLISHED
 | | claim | status |
 |---|---|---|
-| **(a)** | the leg **RESERVES** the shares | ✅ **ESTABLISHED** (above) |
-| **(b)** | the leg **WOULD ACTUALLY EXECUTE** if price hit 4.26 between 16:00 and 16:08 | ⛔ **UNKNOWN** |
+| **(a)** | the leg **RESERVES** the shares | ✅ **ESTABLISHED** |
+| **(b)** | the leg **WOULD ACTUALLY EXECUTE** | ✅ **ESTABLISHED — IT IS FALSE** |
 
-⭐ **(b) decides everything.** Schwab **refuses STOP orders in the EH session** (measured 08-04), so
-a `session=NORMAL` `DAY` stop surviving into 16:00–16:08 may **reserve without protecting** — a leg
-that blocks our exit and would not have saved us either. **If (b) is FALSE, cancelling costs nothing
-real and the original conclusion stands.** If (b) is TRUE, cancelling is a genuine protection
-trade-off.
-⛔ **Do not build either route until (b) is established.**
+#### ✅ (b) ANSWERED FROM OUR OWN BARS — the stop was CROSSED while alive and did NOT fill
+⛔ **`previewOrder` cannot answer this.** Preview validates a **newly submitted** order — it only
+re-establishes what Probe P already showed. Whether an **existing** `session=NORMAL` `DAY` stop,
+placed during RTH, triggers in the 16:00–16:08 tail is an **observational** question, and the data
+was already loaded. AAOG's stop trigger was **4.26**; the leg was alive until **16:08:04**:
+
+| bar (ET) | open | high | **low** | close | vol | |
+|---|---|---|---|---|---|---|
+| 16:00 | 4.3200 | 4.3200 | 4.3100 | 4.3100 | 2 602 | |
+| 16:01 | 4.2800 | 4.2800 | 4.2800 | 4.2800 | 250 | |
+| 16:04 | 4.2900 | 4.2900 | 4.2900 | 4.2900 | 751 | |
+| **16:05** | 4.2486 | 4.3000 | **4.2486** | 4.3000 | **5 588** | ⭐ **BELOW the 4.26 trigger, on real volume** |
+| 16:06 | 4.2625 | 4.2625 | 4.2625 | 4.2625 | 500 | |
+
+**The 16:05 bar traded through the trigger on 5 588 shares while the leg was alive — and the leg
+expired UNFILLED at 16:08:04 with `filledQuantity 0.0`.** It was also the **first** crossing since
+the 13:28:43 entry, so there is no earlier opportunity to explain it away.
+
+⇒ ⭐⭐ **THE LEG RESERVES WITHOUT PROTECTING.** Exactly as the EH-session rule predicts: Schwab will
+not execute a STOP in extended hours, but it still holds the shares against one.
+
+#### ⇒ THE SAFETY REVERSAL DISSOLVES — but the ORIGINAL WORDING STAYS WRONG
+Cancelling those legs at 16:00 **costs nothing real**, and the never-lengthen-the-naked-window
+constraint **does not bind D1**. The conclusion is restored — for a materially different reason, and
+the note must **not** revert to the old sentence:
+
+| | |
+|---|---|
+| ❌ *"the legs were already dead"* | **false** — alive until 16:08:04 |
+| ✅ **"the legs were alive but INERT — they reserve and cannot execute"** | **observed** |
+
+⚠️ **This is a property of the EH SESSION, not of expiry.** Any future change that lets a bracket leg
+live into a session where it *can* execute re-arms the constraint. The finding is **not** "cancelling
+brackets is always free."
+
+⭐ **And it upgrades D1 from a slippage fix to a correctness fix:** for 8 minutes the position had
+**no working protection at all** — the software ladder was blocked and the broker leg was inert.
+That is a Class A *no owner* condition hiding inside what the board files as Class B.
 
 ---
 
