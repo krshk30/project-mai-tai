@@ -845,6 +845,10 @@ class Settings(BaseSettings):
     # where it sits and the refresh resumes, so a genuinely stale exit is still corrected.
     # Set FALSE to restore the old cancel-on-cadence behaviour (kill switch).
     oms_hold_marketable_managed_exit: bool = True
+    # A2 — back off + escalate when the broker refuses an exit on a position we HOLD.
+    # ⛔ DEFAULT OFF. Scoped to live:orb (the only account where the class occurs).
+    # Design + acceptance: docs/v2-a2-reverse-reject-design.md
+    oms_a2_exit_not_sellable_backoff_enabled: bool = False
     # Fillable-session window (ET, whole-hour): the OMS places/refreshes exit orders
     # only while an order can actually fill (default 7 AM–8 PM ET = Schwab pre-market
     # fills open ~7 AM, after-hours end ~8 PM). Outside it a working order (open or

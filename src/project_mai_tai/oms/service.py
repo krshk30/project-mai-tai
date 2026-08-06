@@ -99,6 +99,25 @@ def oco_exit_client_order_id(entry_client_order_id: str, child_id: str) -> str:
         else f"{entry_client_order_id}-ocoexit"
     )
 SESSION_TZ = ZoneInfo("America/New_York")
+# ---------------------------------------------------------------------------------------------
+# A2 — EXIT_REFUSED_POSITION_NOT_SELLABLE (design: docs/v2-a2-reverse-reject-design.md)
+#
+# The broker refuses a sell on a position we HOLD. Two brokers, two strings, ONE condition:
+#   Webull  ORDER_NOT_SUPPORT_REVERSE_OPTION  (http 417)   394 rejects / 14 days
+#   Schwab  "This order may result in an oversold/overbought position"
+# ⛔ The STRING is not the argument for treating them alike -- a reject string is authoritative for
+# what the broker SAID, never for why. They are one class because the CONDITION is one: the broker
+# will not let us out of a position we hold. [[feedback_a_wrong_reason_is_worse_than_a_missing_one]]
+#
+# ⛔⭐ FASTER RETRYING CANNOT HELP. AAOG 2026-08-04: 313 attempts in 816 s -- one every 2.6 s, every
+# one rejected. The blocker is broker-side ACCOUNT STATE, not price and not our limit. Anyone
+# reading the reject count will reach for retry tuning; it is the one lever that provably does
+# nothing here.
+A2_NOT_SELLABLE_REASON_SUBSTRINGS = (
+    "order_not_support_reverse",   # Webull, SCREAMING_SNAKE (matched despaced too)
+    "oversold",                    # Schwab free-text
+    "overbought",                  # Schwab free-text
+)
 SCHWAB_INELIGIBLE_REASON_SUBSTRINGS = ("must be placed with a broker",)
 # Webull "not tradable today" markers for the dual-broker fan-out per-broker eligibility.
 # DELIBERATELY CONSERVATIVE (operator 2026-07-24: "never seen a Webull rejection — find out
@@ -356,6 +375,15 @@ class OmsRiskService:
     # running and closes the row when the broker shows the OCO resolved (which is what recovered
     # AMIX on 07-29).
     _V2_EXIT_ABANDON_AFTER_FAILURES = 8
+    # ---- A2 ----
+    # Slow the ladder from its 1-2s cadence to a probe. NOT suppression: the block can clear at any
+    # second (median 271s, but 30s at the low end), so we must keep testing or we would trade the
+    # burn for a missed exit -- the same bug facing the other way.
+    _A2_BACKOFF_SECONDS = 15.0
+    # ⛔ OPERATOR RISK DECISION, 2026-08-06, NOT a derived value. Sits inside the bimodal gap where
+    # every bound from ~90s to ~250s escalates on the SAME 7 of 11 -- so nothing is traded away
+    # anywhere in that range. Do not "optimise" it against a percentile.
+    _A2_ESCALATE_AFTER_SECONDS = 90.0
     # Class-level default: test helpers build instances via __new__, bypassing __init__.
     _v2_exit_stood_down: set[tuple[str, str]] = set()
 
@@ -431,6 +459,11 @@ class OmsRiskService:
         # Phantom-reconcile: consecutive REJECTED v2 full-closes per (acct, symbol). After the
         # threshold, a fresh broker read clears the row iff confirmed flat (see _emit_v2_exit_on_loop).
         self._v2_exit_close_failures: dict[tuple[str, str], int] = {}
+        # A2: first time this (acct,symbol) was refused as not-sellable, the last probe, and
+        # whether we have already paged. Cleared the moment a close PLACES or the row closes.
+        self._a2_not_sellable_since: dict[tuple[str, str], datetime] = {}
+        self._a2_last_probe: dict[tuple[str, str], datetime] = {}
+        self._a2_escalated: set[tuple[str, str]] = set()
         # (acct, symbol) whose close-retry loop has been STOOD DOWN — see
         # `_V2_EXIT_ABANDON_AFTER_FAILURES`. Protection is untouched; only the retry stops.
         self._v2_exit_stood_down: set[tuple[str, str]] = set()
@@ -2733,6 +2766,114 @@ class OmsRiskService:
         )
         return True
 
+    # ------------------------------------------------------------------ #
+    # A2 — the broker refuses a sell on a position we HOLD
+    # ------------------------------------------------------------------ #
+    @staticmethod
+    def _is_exit_refused_not_sellable(reason: str | None) -> bool:
+        """True for the EXIT_REFUSED_POSITION_NOT_SELLABLE class, either broker.
+
+        ⛔ Normalised, never a literal match on one broker's text: keying Schwab-only queries on
+        "oversold" is exactly how 394 Webull rejects stayed invisible for 14 days.
+        [[feedback_reject_query_states_account_visibility]]"""
+        normalized = str(reason or "").strip().lower()
+        if not normalized:
+            return False
+        despaced = normalized.replace("_", " ")
+        return any(
+            f in normalized or f in despaced.replace(" ", "_") or f.replace("_", " ") in despaced
+            for f in A2_NOT_SELLABLE_REASON_SUBSTRINGS
+        )
+
+    def _a2_enabled_for(self, broker_account_name: str) -> bool:
+        """Flag-gated AND scoped to `live:orb`.
+
+        ⛔ SCOPE IS DELIBERATE. The class was measured on `live:orb` only -- ZERO reverse-option
+        occurrences on Schwab. The CLASSIFIER is broker-agnostic (acceptance A6 requires it to catch
+        both strings), but the BEHAVIOUR change is confined to where the evidence is. Schwab's
+        oversold population belongs to D1 / slice C, which are separately analysed and PARKED;
+        widening this to Schwab would change a live exit path on an unmeasured population."""
+        if not bool(getattr(self.settings, "oms_a2_exit_not_sellable_backoff_enabled", False)):
+            return False
+        return broker_account_name == "live:orb"
+
+    def _a2_note_reject(self, acct: str, symbol: str) -> None:
+        """Record the episode start (first refusal) and this probe. Never raises."""
+        try:
+            key = (acct, symbol)
+            now = utcnow()
+            self.__dict__.setdefault("_a2_not_sellable_since", {}).setdefault(key, now)
+            self.__dict__.setdefault("_a2_last_probe", {})[key] = now
+        except Exception:  # noqa: BLE001 - bookkeeping must never break the exit path
+            pass
+
+    def _a2_should_defer(self, acct: str, symbol: str) -> bool:
+        """True while inside the backoff interval since the last probe.
+
+        ⛔ NOT abandonment. The managed row stays open and stays owned throughout -- Ship 2 must keep
+        seeing it, or the unowned-position watch will correctly page. This only slows the cadence."""
+        if not self._a2_enabled_for(acct):
+            return False
+        last = self.__dict__.get("_a2_last_probe", {}).get((acct, symbol))
+        if last is None:
+            return False
+        return (utcnow() - last).total_seconds() < self._A2_BACKOFF_SECONDS
+
+    def _a2_clear(self, acct: str, symbol: str) -> None:
+        """The block ended (a close PLACED, or the row closed). Forget the episode."""
+        key = (acct, symbol)
+        self.__dict__.setdefault("_a2_not_sellable_since", {}).pop(key, None)
+        self.__dict__.setdefault("_a2_last_probe", {}).pop(key, None)
+        self.__dict__.setdefault("_a2_escalated", set()).discard(key)
+
+    async def _a2_maybe_escalate(self, acct: str, symbol: str) -> None:
+        """At the bound, PAGE if the position is still held.
+
+        ⭐ GATED ON THE OUTCOME, NEVER ON THE CAUSE. What separates a harmless block (a live broker
+        bracket reserving the shares, which will exit the position itself) from a dangerous one (the
+        position is genuinely unsellable) is whether a broker OCO leg is live -- and OCO children are
+        broker-created, never land in `broker_orders`, and CANNOT BE OBSERVED. So we do not try. We
+        ask the only question the system can answer: IS IT STILL HELD? The harmless half self-
+        resolves to flat and is never escalated; the dangerous half stays held and is.
+
+        ⛔ Uses the TRI-STATE and treats UNKNOWN as still-held. Collapsing UNKNOWN into flat is the
+        #608 defect (145 rejected sells).
+        ⚠️ `account_positions` syncs on ~1-minute cadence, so a position that went flat seconds
+        before the bound can still read HELD -- at most one sync interval of over-escalation at a
+        90 s bound. Stated, not discovered."""
+        key = (acct, symbol)
+        if key in self.__dict__.setdefault("_a2_escalated", set()):
+            return
+        since = self.__dict__.get("_a2_not_sellable_since", {}).get(key)
+        if since is None:
+            return
+        held_secs = (utcnow() - since).total_seconds()
+        if held_secs < self._A2_ESCALATE_AFTER_SECONDS:
+            return
+        try:
+            state = await self._broker_symbol_position_state(acct, symbol)
+        except Exception:  # noqa: BLE001
+            state = None
+        # ⛔ ONLY a POSITIVELY-CONFIRMED flat cancels the page. There is no `_PositionRead.FLAT`
+        # -- the tri-state is FLAT_CONFIRMED / FLAT_INFERRED / HELD / UNKNOWN, and FLAT_INFERRED
+        # means "absent from the read", which a genuine close and a silently-failed read produce
+        # IDENTICALLY (the ERNA lesson).
+        # ⭐ For a PAGE the ambiguity resolves the opposite way to protection-deletion: a false page
+        # is noise, a missed page is a position nobody knows is stuck. So everything that is not
+        # FLAT_CONFIRMED -- including UNKNOWN, FLAT_INFERRED and a read that raised -- escalates.
+        if state is _PositionRead.FLAT_CONFIRMED:
+            self._a2_clear(acct, symbol)
+            return
+        self._a2_escalated.add(key)
+        self.logger.error(
+            "[OMS-A2-EXIT-BLOCKED] sym=%s acct=%s the broker has refused our exit for %.0fs "
+            "(bound %.0fs) and the position is still %s. This is STRUCTURAL, not a transient "
+            "reject: retrying faster cannot help. The managed row and any protection are LEFT IN "
+            "PLACE and the probe continues. OPERATOR: a stop we cannot execute is your decision.",
+            symbol, acct, held_secs, self._A2_ESCALATE_AFTER_SECONDS,
+            getattr(state, "value", state),
+        )
+
     async def _v2_close_reconcile_flat(self, session, acct: str, symbol: str, row) -> bool:
         """Phantom guard for the v2 CW full-close: count consecutive REJECTED closes; at the
         threshold, confirm against the broker. If FLAT (position closed out-of-band), close the
@@ -2772,6 +2913,7 @@ class OmsRiskService:
             self._cw_floor_armed.discard(key)
             self._v2_exit_close_failures.pop(key, None)
             self._v2_exit_stood_down.discard(key)
+            self._a2_clear(acct, symbol)
             self.logger.info(
                 "[OMS-V2-RECONCILE-FLAT] sym=%s acct=%s broker flat after %d rejected closes -> "
                 "clearing phantom managed row",
@@ -2784,6 +2926,10 @@ class OmsRiskService:
             self._v2_exit_close_failures[key] = 0  # we DO hold it -> keep managing, re-count later
             # A positive HELD read is new information: the loop may resume.
             self._v2_exit_stood_down.discard(key)
+            # ⛔ A2: do NOT clear `_a2_not_sellable_since` here. A HELD read means the block is
+            # STILL RUNNING -- clearing the episode start would restart the 90s clock on every pass
+            # and the bound would never be reached. That is exactly the defect this fixes: #608's
+            # counter resets on HELD, which is why the existing bound is unreachable during a jam.
             return False
 
         # Inconclusive (UNKNOWN, or a FLAT_INFERRED refused by the fresh-fill grace). We can neither
@@ -3045,6 +3191,7 @@ class OmsRiskService:
         # ⛔ MUST clear: this is the RECOVERY path a stand-down relies on. Leaving it set would
         # silently suppress exits for the NEXT position on this symbol.
         self._v2_exit_stood_down.discard(key)
+        self._a2_clear(acct, symbol)  # same reason: a stale A2 episode would defer the NEXT position
         self.logger.info(
             "[OMS-V2-OCO-RESOLVED-FLAT] sym=%s acct=%s OCO resolved by FILL (broker execution "
             "record) -> closing phantom managed row (no ladder rejects)",
@@ -3098,6 +3245,18 @@ class OmsRiskService:
                     self.store.update_managed_position_from_position(
                         session, row, position, write_quantity=not close_on_fill
                     )
+                elif self._a2_should_defer(acct, symbol):
+                    # A2 backoff. The broker is refusing this exit as not-sellable; the block is
+                    # broker-side ACCOUNT STATE and re-emitting at the 1-2s ladder cadence provably
+                    # achieves nothing (313 attempts / 816s on AAOG, all rejected). We keep probing
+                    # every _A2_BACKOFF_SECONDS so we catch the moment it clears.
+                    # ⛔ The managed row stays OPEN and OWNED -- this is not abandonment.
+                    self.logger.info(
+                        "[OMS-A2-BACKOFF] sym=%s acct=%s deferring a %s close — broker refuses the "
+                        "exit as not-sellable; probing every %.0fs",
+                        symbol, acct, kind, self._A2_BACKOFF_SECONDS,
+                    )
+                    return
                 elif (acct, symbol) in self._v2_exit_stood_down:
                     # ⛔ Retry loop stood down (see _V2_EXIT_ABANDON_AFTER_FAILURES). Emitting again
                     # would just re-reject: 145 times on NCRA 2026-07-29. The row and any protection
@@ -3120,10 +3279,29 @@ class OmsRiskService:
                     # Phantom guard: a rejected full-close may mean the broker is already flat
                     # (position closed out-of-band). Without this, close_on_fill waits for a fill
                     # that never comes and the exit churns rejected sells forever (2026-07-13 AGEN).
+                    # A2: is this the "broker will not let us out of a position we hold" class?
+                    a2_reason = next(
+                        (
+                            str(getattr(ev.payload, "reason", "") or "")
+                            for ev in events
+                            if str(getattr(ev.payload, "status", "")).lower() == "rejected"
+                        ),
+                        "",
+                    )
+                    a2_hit = (
+                        rejected
+                        and self._a2_enabled_for(acct)
+                        and self._is_exit_refused_not_sellable(a2_reason)
+                    )
+                    if a2_hit:
+                        self._a2_note_reject(acct, symbol)
                     reconciled = rejected and await self._v2_close_reconcile_flat(session, acct, symbol, row)
+                    if a2_hit and not reconciled:
+                        await self._a2_maybe_escalate(acct, symbol)
                     if not reconciled:
                         if not rejected:
                             self._v2_exit_close_failures.pop(key, None)  # the close placed -> reset counter
+                            self._a2_clear(acct, symbol)  # A2: the block ended
                         if close_on_fill:
                             # #6: do NOT close on submit — the confirmed fill closes the row.
                             # Persist price-state only; keep the position monitored/protected.
@@ -3134,6 +3312,7 @@ class OmsRiskService:
                             self.store.close_managed_position(session, row)
                             self._managed_v2_symbols.discard(key)
                             self._v2_exit_stood_down.discard(key)
+                            self._a2_clear(acct, symbol)
                 session.commit()
         except Exception as exc:  # noqa: BLE001 — the quote path must never die
             self.logger.warning("v2 managed-exit emit failed for %s: %s", symbol, exc)
