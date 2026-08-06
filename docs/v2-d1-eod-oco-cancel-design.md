@@ -215,6 +215,85 @@ with #647 and has been on the box since 08-05 21:06 ET — **0 lines emitted so 
 Once it emits, holds can be correlated against reject absence directly, which beats waiting for
 enough quiet days to accumulate.
 
+### ⭐⭐ THE PRECONDITION TEST — dose-response, the strongest observational evidence available
+
+⛔ **Better than accumulating quiet days: check whether the PRECONDITION recurred, not the outcome.**
+If the setup stopped happening, quiet days say *nothing* — that would be unpowered for a
+**structural** reason, and no number of further days would fix it.
+
+**It recurred, on every post-P0a day, more often than on the storm day itself.**
+`[V2-OCO-EMIT] SKIPPED (outside regular hours)` — an entry the emit path declined to bracket:
+
+| day | SKIPPED lines | symbols | all `V2-OCO-EMIT` (denominator) |
+|---|---|---|---|
+| 07-31 | 2 | KUST ← *the storm* | 69 |
+| 08-03 | 2 | UPC | 104 |
+| 08-04 | 4 | AAOG, AMIX | 42 |
+| 08-05 | **8** | BJDX, GTE | 99 |
+| 08-06 | **9** | CLRO, PAVS, WYHG | 9 (partial day) |
+
+*(marker confirmed present in deployed source — guarded against a false zero.)*
+
+#### ⭐ DOSE-RESPONSE — sell attempts per no-bracket position
+
+| | attempts | oversold rejects |
+|---|---|---|
+| **pre-P0a — KUST 07-31** | **138** | **125** |
+| post-P0a — AMIX 08-04 | 8 | 2 |
+| post-P0a — BJDX 08-05 | 9 | 0 |
+| post-P0a — GTE 08-05 | 5 | 0 |
+| post-P0a — CLRO 08-06 | 1 | 0 |
+
+⇒ **A ~15× collapse in the exact quantity P0a targets — retry attempts — on the same precondition,
+with rejects tracking.** Dose-response is **the strongest observational evidence available short of
+an experiment**, and a far better argument than "the storms stopped".
+
+#### Per-opportunity rate, denominator extended backwards
+
+Unit = **a position we actually hold with no bracket** (a filled outside-RTH buy on
+`live:schwab_1m_v2`):
+
+| period | no-bracket positions | escalated | storms | worst |
+|---|---|---|---|---|
+| PRE-P0a (…07-30) | 10 | **3 (30 %)** | 1 | 127 |
+| 07-31 (straddles the 13:06 deploy) | 1 | 1 | 1 | 125 |
+| **POST-P0a (08-03…)** | **4** | **0 (0 %)** | 0 | 0 |
+
+⚠️ **3/10 vs 0/4 is p ≈ 0.33 (Fisher).** The *rate* comparison remains underpowered. The
+dose-response, not the rate, is what carries the weight.
+
+⭐ 07-13's AGEN storm sits inside that pre-P0a set — so **both** storms shared the no-bracket
+precondition, which is what makes it a real precondition rather than a quirk of KUST.
+
+#### ⛔ TWO UNIT TRAPS, recorded because each nearly produced a wrong answer
+
+1. **symbol-day vs LOT.** `AAOG 08-04` reads as **117 attempts / 113 rejects on a "no-bracket" day,
+   post-P0a** — which would sink the hypothesis. It is a **different lot**: the SKIPPED lines belong
+   to the **08:14 pre-market** entry; the storm was the **13:28 RTH** lot, which *had* a bracket
+   (proved by `[OMS-V2-EOD-OCO-TRANSITION] AAOG` at 16:00:03 — a line that exists only for a
+   position with a native OCO). **That storm is D1's, not slice C's.**
+   ⛔ **Caught only by a cross-check that happened to exist**, not by design.
+2. **emit-evaluation vs POSITION.** `SKIPPED` fires even when Schwab then **rejects** the entry
+   (UPC 08-03: SKIPPED logged, Schwab `rejected`, only the Webull leg filled). The log is a
+   **superset**; the hypothesis needs a held position. The per-opportunity table uses the position
+   unit deliberately.
+
+⇒ [[feedback_query_unit_must_match_hypothesis_unit]] — state the unit of the hypothesis FIRST, then
+build the query to it. ⚠️ The per-opportunity table is still **symbol-day** grained, and trap 1
+proves a symbol-day can mix a no-bracket lot with a bracketed one. True per-lot attribution needs
+each sell linked to its entry lot, which the current data supports poorly.
+
+#### ⛔ STILL NOT A RETIREMENT — but the null's burden has changed
+
+3 days · 7 positions · **AMIX still threw 2 rejects**. The class is **smaller, not extinct**.
+**But the null must now explain nine no-bracket occurrences across three days with zero
+escalations, while the churn it would have to act through fell ~15×.** That is a much harder
+position than it held this morning.
+
+⇒ **Do not re-rank the queue** until more post-P0a days accumulate or the lens emits.
+
+---
+
 ⇒ **Slice C needs the same broker order-history read that §2's residual gap needs.** One
 Gate-1-window read serves both. **Do not design slice C until it has one.**
 
