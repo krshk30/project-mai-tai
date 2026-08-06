@@ -34,7 +34,13 @@ Deployed HEAD **`786bbb6`**. `main` is ahead by docs + **PR #657** (open, mergea
 ⛔ **2026-08-05 deploy did NOT happen.** Pre-flight returned **NO-GO** at 18:05 ET — armed segments.
 Nothing merged, nothing restarted. **PR #657 open, flag OFF.** Fleet flat ex-`CYN`.
 
-1. **FIX PRE-FLIGHT FIRST — the gate itself is unreliable.** It pairs ARM→DISARM over *today's log*
+1. ~~**FIX PRE-FLIGHT**~~ ✅ **DONE 2026-08-05 20:18 ET.** Reads the bot's **published state**
+   (authoritative), **asserts freshness and FAILS CLOSED** (stale / unreadable / missing all BLOCK,
+   rc=1 verified by mutation), and **retains the log-derived set, reporting divergence** scoped to
+   the ET day across the 20:00 rotation. Validated against a same-instant capture: reports **7**,
+   surfaces **log-only PAVS ZCMD** (dangling ARMs) and **state-only AXTL FUSE HYFM** (armed 08-03).
+   ⛔ **Not version-controlled** — lives only at `/home/trader/ops_preflight/`. Board item.
+   ~~The gate was unreliable:~~ It pairs ARM→DISARM over *today's log*
    with **no replay filter**, so it over-reports dangling replay ARMs (CLRO/PAVS/ZCMD on 08-05) and
    under-reports symbols armed on an earlier day with no ARM line today (FUSE/HYFM/AXTL). It also
    reads a **single** log file — and the sink rotates at **00:00 UTC = 20:00 ET**, so after 20:00 it
