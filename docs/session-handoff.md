@@ -208,6 +208,23 @@ Burned twice today, both already reported before being caught:
 
 ## 👀 WATCH NEXT SESSION
 
+### ⭐⭐ MONDAY 2026-08-10 — the four validations tonight's deploy DEFERRED, by construction
+⛔ **Nothing below can be checked before Monday. A quiet weekend is not evidence.** Do not re-run
+these greps Saturday or Sunday and do not write the silence up as a pass.
+⛔ **Logs rotate 00:00 UTC = 20:00 ET** — a check after 20:00 ET needs the rotated file too.
+
+| # | what | where | pass looks like |
+|---|---|---|---|
+| **#663** | `session_anchor_reset` is the reason that motivated the change; only `reason=flip` has fired | `schwab-1m-v2.log` ⛔ **not** `journalctl` | a `[V2-CW-DISARM] … reason=session_anchor_reset` at the **04:00** roll, and the unpaired-ARM divergence **drops from 9** (0 would be suspicious) |
+| **#664** | CW_FLIP fan-out — ⚠️ **no dedicated marker exists**, evidence is indirect | exits/orders on **both** accounts | a CW_FLIP exit on `live:schwab_1m_v2` **and** `live:orb`. **UNEXERCISED if no flip fires — that is the expected outcome, not a failure** |
+| **#666** | RCEL — the resting order left working past the close | `schwab-1m-v2.log` + a live-order sweep | at **~16:05**: `[V2-RESTING-CANCEL] reason=window_closed` where `[V2-RESTING-EH-DISARM]` used to appear alone, and **0 live orders** |
+| **#668** | `[VIRTUAL-CLEAR]` — deployed but the path is **UNEXERCISED** (zero rows fleet-wide have `quantity > 0`) | `oms.log` | ⛔ **a line here is a FINDING, not a pass** — it names the account+symbol whose ledger row was erased, and settles open item 12's two candidate causes |
+
+⭐ **Also worth one line:** DSY exited **18:27 ET Friday** in extended hours via `CW_FLOOR` at
+`4.7226` — the 15:59:46 entry shape that started the 16:00 workstream, closed unattended by the
+ladder. That is the first clean EH managed exit on that shape.
+
+
 1. **The 18:05 EOD report** — it converts today's provisional readings into results. Read it before
    quoting any 08-04 number.
 2. **`[OMS-V2-POLL-REENROLL]` has still NEVER fired** — on any day. Fix 2's real path remains
