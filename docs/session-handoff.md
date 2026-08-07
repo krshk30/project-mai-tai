@@ -26,9 +26,82 @@
 
 ## ⚡ FIRST SCREEN — act on this alone
 
-**Fleet: 5 services active. Broker FLAT except `CYN 5000` (operator manual, never touched).**
-Deployed HEAD **`b222b36`** (#657 merged 2026-08-05 21:01 ET, verified on the BRANCH).
-**`SESSION_TIME_ROLL_ENABLED=true`** — the time-driven 04:00-ET roll is LIVE.
+**Fleet: 7 services active. Deployed HEAD `234c915`** (verified in the CHECKOUT, not just the PR).
+**Broker holds `CYN 5000` (operator manual, never touched) AND `DSY 1` on `live:orb` — OURS, held
+over the weekend.** DSY's exit is OMS-managed; floor armed `4.7226`. It is the 15:59:46 entry shape
+that started the 16:00 workstream. **`SESSION_TIME_ROLL_ENABLED=true`.**
+
+⛔⭐ **#666 (RCEL) and #663 are LIVE but UNVALIDATED until Monday** — see the split below. A quiet
+weekend is not evidence. ⛔ **`[VIRTUAL-CLEAR]` (#668) is NOT deployed** — it is the agreed first
+step on open item 12 and lands before Monday's open.
+
+## ✅ DEPLOYED 2026-08-07 17:26–17:48 ET (Friday, attended, operator override)
+
+`b222b36 → 234c915`, ff-only. **#666 + #667 merged tonight**; #660/#662/#663/#664/#665 were already
+on main. Plan: [`deploy-2026-08-07-window.md`](deploy-2026-08-07-window.md).
+
+| step | result |
+|---|---|
+| OMS restart | `active`, `NRestarts=0`. DSY re-enrolled: `[OMS-V2-CW-FLOOR-ARMED] sym=DSY acct=live:orb bid=4.8400 floor=4.7226` |
+| **2a #660 census** | ✅ `[OMS-P0A-CENSUS] window=300s evaluated=0 held=0 declined: -` @ 21:28:47 UTC — **2 s after start** |
+| **2b #662 A2** | ✅ **zero** `[OMS-A2-*]`; flag confirmed `False` in code **and** absent from the env |
+| **Redis** | ✅ live **2 GB**, persisted `redis.conf:2279`, backup verified non-empty. `allkeys-lru` unchanged, **maxlen untouched at 180** |
+| v2 restart | 17:45:04 ET, back same second. `active`, `NRestarts=0`, **0 Tracebacks** |
+| boot | ✅ `[V2-BOOT-HOLD] released — 0 reconstructed-uncapped segments; CW-v2 entries open` |
+| warmup | ✅ `watchlist count=6 warmed=6`, newest bar 17:44 ET (fossil guard clean) |
+| **bar continuity** | ✅ **no restart hole** — bars exist at 17:45/46/47/48. Pre-existing per-symbol EH gaps (RCEL 17:00→17:10) are **sparse post-close tape, not the 07-30 mechanism**, which was 85 min across ALL symbols at once |
+| post-deploy | **0 broker orders created**, **0 working**, all 7 services active |
+
+### ⛔⭐⭐ THE GATE SAID **NO-GO** AND WE PROCEEDED — read this before the next one
+
+```
+[OVERRIDE] clock gate (<18:00 ET) overridden by OPERATOR
+[OVERRIDE] 3 ARMED SEGMENT(S) accepted by the OPERATOR: CGTL DSY NAMI
+[BLOCK]    1 open managed row(s) — live:orb DSY qty=1
+[BLOCK]    broker not flat (excluding operator manuals): DSY=1.00000000
+===> NO-GO.   TRUE EXIT CODE = 1
+```
+
+⛔ **Two of the four blocks have NO override token — none exists in the script.** The clock and
+gate-1 overrides are documented and were used; the two flat blocks were accepted on the operator's
+explicit instruction **with no mechanism to record that inside the gate.** The gate's final verdict
+was NO-GO and exit 1. **That is a materially weaker audit trail than an override run** and it must
+not become the habit.
+
+⚠️ **`EXIT=0` appeared on the first run and was FALSE** — an artefact of piping into `tail`. The
+true code was **1**. Never read this gate's exit status through a pipe.
+[[feedback_a_watch_that_fails_to_a_false_clean]]
+
+⭐ **Why waiting would not have helped:** DSY cannot exit while the market is closed, so both flat
+blocks persist all weekend and clear no earlier than **Monday 07:00**. Every override moment carries
+the same blocks; tonight was the only one with **~62 h soak and 3 anchor clears (Sat/Sun/Mon)**.
+
+⭐⛔ **The anti-reuse property EARNED ITS KEEP:** the armed set moved `CGTL RCEL` → `CGTL DSY NAMI`
+between two runs minutes apart. A list copied from the earlier run would have been refused.
+
+### ⚠️ FOLLOW-UPS THIS DEPLOY CREATED
+1. **The flat gate needs an override with the same naming discipline as gate 1** — or it will keep
+   being bypassed with no record. Bypassing with no token is worse than a token.
+2. ⛔ **The pre-flight's own comment proposes replacing its hand-typed manual-symbol tuple with
+   `virtual_quantity == 0 ⇒ NOT OURS`. Open item 12 disproved that predicate TODAY.** Had it been
+   implemented, the gate would have called **DSY not-ours and reported FLAT while we held it.** The
+   crude list is accidentally safer than its own proposed fix. **Do not implement that board item.**
+3. Put the override asymmetry in the gate's own comment (agreed, not yet done).
+
+### ⭐ VALIDATION SPLIT — four of five confirm MONDAY, by construction
+| | status |
+|---|---|
+| #660 census | ✅ **CONFIRMED tonight** |
+| #662 A2 | ✅ **CONFIRMED tonight** (nothing happened, which is the pass) |
+| #663 disarm | ⚠️ **PARTIAL** — the line is LIVE (**19 `[V2-CW-DISARM] reason=flip`** at boot, previously silent), but the `session_anchor_reset` reason is **UNEXERCISED until 04:00** |
+| #664 CW_FLIP | **UNEXERCISED** — no flip fired; no dedicated marker exists, evidence is indirect by construction |
+| #666 RCEL | **UNEXERCISED** — confirms at **Monday's 16:00** close: expect `[V2-RESTING-CANCEL] reason=window_closed`, and 0 live orders after |
+
+⛔ **Do not re-run these greps over the weekend and do not write the silence up as a pass.**
+
+### One line for the report
+**The Redis change buys time; it does not close the loss path.** `evicted_keys` **5,249** and
+climbing, `allkeys-lru` unchanged, still **zero `xreadgroup` in the codebase.**
 
 ## ✅ DEPLOYED 2026-08-05 21:01-21:07 ET (attended, operator override)
 
