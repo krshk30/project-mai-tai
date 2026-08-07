@@ -3764,10 +3764,25 @@ class OmsRiskService:
                     broker_account_id=account_id,
                     snapshots=snapshots,
                 )
-            self.store.clear_virtual_positions_without_account_backing(
+            # ⛔⭐ A ONE-WAY ERASURE OF OUR OWN HOLDINGS LEDGER — never let it be silent.
+            # This ran ~1×/30s and discarded its count, so the DSY 08-07 false zero (open item 12)
+            # could only be diagnosed by elimination. `virtual_positions` feeds v2's duplicate-open
+            # gate and the bot cards; a wrong clear here is invisible everywhere downstream.
+            cleared = self.store.clear_virtual_positions_without_account_backing(
                 session,
                 broker_account_ids=account_ids,
             )
+            if cleared:
+                account_names = {account_id: name for account_id, name in accounts}
+                detail = ", ".join(
+                    f"{account_names.get(account_id, account_id)}:{symbol}={quantity}"
+                    for account_id, symbol, quantity in cleared
+                )
+                self.logger.warning(
+                    "[VIRTUAL-CLEAR] zeroed %d virtual position(s) with no broker backing: %s",
+                    len(cleared),
+                    detail,
+                )
             return synced_positions
 
         synced_positions = await self._run_db(_persist)

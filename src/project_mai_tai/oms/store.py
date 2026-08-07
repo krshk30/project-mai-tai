@@ -756,12 +756,29 @@ class OmsStore:
         session: Session,
         *,
         broker_account_ids: list[UUID] | None = None,
-    ) -> int:
+    ) -> list[tuple[UUID, str, Decimal]]:
+        """Zero every virtual position the broker snapshot does not back.
+
+        Returns `(broker_account_id, symbol, quantity_before)` per row cleared, so the caller can
+        LOG WHAT IT ERASED.
+
+        ⛔⭐ THIS IS A ONE-WAY ERASURE. Nothing re-derives `virtual_positions` from account backing
+        (grep: three `quantity = Decimal("0")` writes in this module, zero repairs), so a row zeroed
+        here stays zeroed even once the broker reports the position again. It is one of exactly two
+        candidate causes of the DSY 2026-08-07 false zero — a position we held, with an open managed
+        row, reading `virtual_quantity = 0` (open item 12).
+
+        ⛔ The other candidate is "the buy fill never reached `apply_fill_to_positions`", and the two
+        are INDISTINGUISHABLE after the fact: the sell branch of `_apply_position_fill` writes the
+        same `0 / 0 / NULL` this does. Diagnosing DSY needed an elimination argument that only
+        worked because the broker still held the shares. Hence the detail: the NEXT occurrence must
+        name itself.
+        """
         query = select(VirtualPosition).where(VirtualPosition.quantity > 0)
         if broker_account_ids:
             query = query.where(VirtualPosition.broker_account_id.in_(broker_account_ids))
 
-        cleared = 0
+        cleared: list[tuple[UUID, str, Decimal]] = []
         for virtual_position in session.scalars(query).all():
             account_position = session.scalar(
                 select(AccountPosition).where(
@@ -773,10 +790,16 @@ class OmsStore:
             if account_quantity > 0:
                 continue
 
+            cleared.append(
+                (
+                    virtual_position.broker_account_id,
+                    str(virtual_position.symbol or ""),
+                    virtual_position.quantity,
+                )
+            )
             virtual_position.quantity = Decimal("0")
             virtual_position.average_price = Decimal("0")
             virtual_position.opened_at = None
-            cleared += 1
 
         session.flush()
         return cleared

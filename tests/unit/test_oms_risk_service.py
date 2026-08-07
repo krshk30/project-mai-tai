@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 import json
+import logging
 from decimal import Decimal
 
 import pytest
@@ -3173,7 +3174,10 @@ def test_store_clears_virtual_positions_without_broker_backing() -> None:
         cleared = store.clear_virtual_positions_without_account_backing(session)
         session.commit()
 
-    assert cleared == 1
+    # Returns WHAT it erased, not just how many: the caller has to be able to log the symbols.
+    assert len(cleared) == 1
+    assert [symbol for _account_id, symbol, _quantity in cleared] == ["UGRO"]
+    assert cleared[0][2] == Decimal("10"), "the quantity BEFORE the clear must survive into the log"
     with session_factory() as session:
         positions = {position.symbol: position for position in session.scalars(select(VirtualPosition)).all()}
         assert positions["UGRO"].quantity == Decimal("0")
@@ -4168,3 +4172,161 @@ async def test_the_poll_work_list_is_the_open_rows_not_the_in_memory_guard() -> 
     await svc._poll_native_oco_exits()
 
     assert svc.broker_adapter.calls == 0, "a key with no open row must not reach the broker"
+
+
+# ---- [VIRTUAL-CLEAR]: a one-way erasure of our own holdings ledger must not be silent ----
+#
+# ⭐⭐ DSY, live:orb, 2026-08-07 (open item 12). A position we HELD read virtual_quantity = 0 while
+# account_positions said 1 and oms_managed_positions had an open row. Two causes were possible:
+# the buy fill never reached apply_fill_to_positions, or this clear erased it. ⛔ They are
+# INDISTINGUISHABLE after the fact — _apply_position_fill's sell branch writes the same 0/0/NULL.
+# The clear ran ~1×/30s and DISCARDED ITS COUNT, so there was no line to read; diagnosis needed an
+# elimination argument that only worked because the broker still held the shares.
+
+
+
+class _RecordingHandler(logging.Handler):
+    """caplog cannot see these lines: `configure_logging` calls `basicConfig(force=True)` when the
+    service is constructed, which removes pytest's root handler. Own the sink instead."""
+
+    def __init__(self) -> None:
+        super().__init__(level=logging.DEBUG)
+        self.messages: list[str] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.messages.append(record.getMessage())
+
+
+def _capture_service_log(service, name: str) -> _RecordingHandler:
+    handler = _RecordingHandler()
+    logger = logging.getLogger(name)
+    logger.handlers = [handler]
+    logger.setLevel(logging.DEBUG)
+    logger.propagate = False
+    service.logger = logger
+    return handler
+
+
+def _seed_virtual(session, *, symbol: str, virtual_qty: str, account_qty: str | None):
+    strategy = Strategy(code="schwab_1m_v2", name="v2", execution_mode="live", metadata_json={})
+    account = BrokerAccount(name="live:orb", provider="schwab", environment="production")
+    session.add_all([strategy, account])
+    session.flush()
+    session.add(
+        VirtualPosition(
+            strategy_id=strategy.id,
+            broker_account_id=account.id,
+            symbol=symbol,
+            quantity=Decimal(virtual_qty),
+            average_price=Decimal("1.00"),
+            realized_pnl=Decimal("0"),
+        )
+    )
+    if account_qty is not None:
+        session.add(
+            AccountPosition(
+                broker_account_id=account.id,
+                symbol=symbol,
+                quantity=Decimal(account_qty),
+                average_price=Decimal("1.00"),
+                market_value=Decimal("1.00"),
+            )
+        )
+    session.flush()
+    return account.id
+
+
+def test_virtual_clear_REPORTS_what_it_erased() -> None:
+    """⛔ The defect was a discarded count. The return has to carry account, symbol, and the
+    quantity BEFORE the write, or the log line cannot name the next occurrence."""
+    session_factory = build_test_session_factory()
+    with session_factory() as session:
+        account_id = _seed_virtual(session, symbol="DSY", virtual_qty="1", account_qty="0")
+        session.commit()
+
+    with session_factory() as session:
+        cleared = OmsStore().clear_virtual_positions_without_account_backing(session)
+        session.commit()
+
+    assert cleared == [(account_id, "DSY", Decimal("1"))]
+
+
+def test_virtual_clear_never_touches_a_BROKER_BACKED_position() -> None:
+    """⭐ THE DSY SHAPE as the broker actually reports it: backed by 1 share. If this ever fails,
+    the clear is erasing positions we genuinely hold and the false zero becomes reproducible."""
+    session_factory = build_test_session_factory()
+    with session_factory() as session:
+        _seed_virtual(session, symbol="DSY", virtual_qty="1", account_qty="1")
+        session.commit()
+
+    with session_factory() as session:
+        cleared = OmsStore().clear_virtual_positions_without_account_backing(session)
+        session.commit()
+    assert cleared == [], "a broker-backed position was erased"
+
+    with session_factory() as session:
+        position = session.scalar(select(VirtualPosition).where(VirtualPosition.symbol == "DSY"))
+        assert position is not None and position.quantity == Decimal("1")
+
+
+@pytest.mark.asyncio
+async def test_sync_broker_state_LOGS_the_symbols_it_zeroed() -> None:
+    """⭐ The production call site, not a re-implementation of its format string.
+
+    A virtual row with no broker backing, driven through the real `sync_broker_state`. The line has
+    to name the ACCOUNT as well as the symbol — `virtual_positions` is keyed per account and DSY sat
+    on the fan-out leg, not on v2."""
+    from types import SimpleNamespace
+
+    session_factory = build_test_session_factory()
+    with session_factory() as session:
+        _seed_virtual(session, symbol="DSY", virtual_qty="1", account_qty="0")
+        session.commit()
+
+    service = OmsRiskService(
+        settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
+        redis_client=FakeRedis(),
+        session_factory=session_factory,
+    )
+
+    async def _no_positions(_name):
+        return []
+
+    service.broker_adapter = SimpleNamespace(list_account_positions=_no_positions)
+    handler = _capture_service_log(service, "test-virtual-clear")
+
+    await service.sync_broker_state()
+
+    lines = [m for m in handler.messages if "[VIRTUAL-CLEAR]" in m]
+    assert lines, "the ledger was erased with no log line — the DSY diagnosis stays impossible"
+    assert "DSY" in lines[0]
+    assert "live:orb" in lines[0], "the account is load-bearing: v2 and the fan-out leg differ"
+    assert "=1" in lines[0], "the quantity erased must be in the line"
+
+
+@pytest.mark.asyncio
+async def test_sync_broker_state_stays_QUIET_when_nothing_was_cleared() -> None:
+    """~2,800 syncs a day erase nothing. If the line fires on those it is noise, and a noisy line is
+    an unread line — the same failure mode as the reconciler's ~3,000 daily criticals."""
+    from types import SimpleNamespace
+
+    session_factory = build_test_session_factory()
+    with session_factory() as session:
+        _seed_virtual(session, symbol="DSY", virtual_qty="0", account_qty="0")
+        session.commit()
+
+    service = OmsRiskService(
+        settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
+        redis_client=FakeRedis(),
+        session_factory=session_factory,
+    )
+
+    async def _no_positions(_name):
+        return []
+
+    service.broker_adapter = SimpleNamespace(list_account_positions=_no_positions)
+    handler = _capture_service_log(service, "test-virtual-clear-quiet")
+
+    await service.sync_broker_state()
+
+    assert not [m for m in handler.messages if "[VIRTUAL-CLEAR]" in m]

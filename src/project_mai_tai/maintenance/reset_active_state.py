@@ -36,9 +36,11 @@ async def _run() -> dict[str, object]:
                 f"refusing active-state reset with {len(broker_positions)} broker-backed positions still open"
             )
 
-        cleared_virtual_positions = store.clear_virtual_positions_without_account_backing(
-            session,
-            broker_account_ids=active_account_ids,
+        cleared_virtual_positions = len(
+            store.clear_virtual_positions_without_account_backing(
+                session,
+                broker_account_ids=active_account_ids,
+            )
         )
         cancelled_stale_intents = 0
         for intent in session.scalars(
