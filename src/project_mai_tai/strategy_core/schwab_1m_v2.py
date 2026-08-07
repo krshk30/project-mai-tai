@@ -965,6 +965,18 @@ class SchwabV2Strategy:
             self._set_atr_guard(state, "UNCLAIMED")
             state.atr_hold_pending = None
         # Confirmed-window setup does not carry across the session anchor.
+        # ⛔⭐ P2.11 — EMIT THE DISARM. This clear had NO log line, so a replay-armed segment left a
+        # DANGLING ARM: an `[V2-CW-ARM]` with no `[V2-CW-DISARM]` ever. Every log-derived segment
+        # count is contaminated by it, the pre-flight gate read it wrong in BOTH directions
+        # (over-reporting PAVS/ZCMD, under-reporting FUSE/HYFM/AXTL), and the divergence grew
+        # 7 -> 8 -> 9 symbols in three days. No trade has ever been lost to it; it is a TRUST
+        # defect, not a trading one -- and it accumulates.
+        #
+        # ⛔ LOG THE TRANSITION, NOT THE ASSIGNMENT. `cw_armed = False` when already False is a
+        # no-op; logging unconditionally would emit a DISARM for every never-armed symbol on every
+        # reset and INVENT events -- the same corruption facing the other way.
+        if state.cw_armed:
+            logger.info("[V2-CW-DISARM] %s reason=session_anchor_reset", state.symbol)
         state.cw_armed = False
         state.cw_bars_waited = 0
         state.cw_three_bar_high = 0.0
@@ -1303,6 +1315,9 @@ class SchwabV2Strategy:
             return None
         if flip == "SELL":
             # Trail flipped short before the break -> setup invalidated.
+            # P2.11: transition-guarded — cw_armed may already be False here.
+            if state.cw_armed:
+                logger.info("[V2-CW-DISARM] %s reason=flip_sell_before_break", state.symbol)
             state.cw_armed = False
             return None
         if not state.cw_armed:
@@ -1322,6 +1337,9 @@ class SchwabV2Strategy:
             return None  # broke on a sub-floor bar; wait for a liquid break
 
         entry = float(state.cw_three_bar_high)  # idealized stop-buy fill at the trigger
+        # P2.11: the ENTER line below marks this, but pairing ARM/DISARM must not depend on a
+        # reader knowing that. Unconditional here: this branch is only reachable while armed.
+        logger.info("[V2-CW-DISARM] %s reason=entered", state.symbol)
         state.cw_armed = False
         state.last_entry_price = entry
         trail = atr_signal.get("trail")
