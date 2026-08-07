@@ -27,9 +27,10 @@
 ## ⚡ FIRST SCREEN — act on this alone
 
 **Fleet: 7 services active. Deployed HEAD `234c915`** (verified in the CHECKOUT, not just the PR).
-**Broker holds `CYN 5000` (operator manual, never touched) AND `DSY 1` on `live:orb` — OURS, held
-over the weekend.** DSY's exit is OMS-managed; floor armed `4.7226`. It is the 15:59:46 entry shape
-that started the 16:00 workstream. **`SESSION_TIME_ROLL_ENABLED=true`.**
+**Broker FLAT except `CYN 5000` (operator manual, never touched).** ✅ **DSY EXITED 18:27 ET** in
+extended hours — `[OMS-V2-MANAGED-EXIT] CW_FLOOR ref=4.7226` → `[OMS-V2-MANAGED-CLOSE] flat`. The
+15:59:46 entry that started the 16:00 workstream **did not go into the weekend**, and the exit ladder
+worked unattended. **`SESSION_TIME_ROLL_ENABLED=true`.**
 
 ⛔⭐ **#666 (RCEL) and #663 are LIVE but UNVALIDATED until Monday** — see the split below. A quiet
 weekend is not evidence. ⛔ **`[VIRTUAL-CLEAR]` (#668) is NOT deployed** — it is the agreed first
@@ -72,9 +73,22 @@ not become the habit.
 true code was **1**. Never read this gate's exit status through a pipe.
 [[feedback_a_watch_that_fails_to_a_false_clean]]
 
-⭐ **Why waiting would not have helped:** DSY cannot exit while the market is closed, so both flat
-blocks persist all weekend and clear no earlier than **Monday 07:00**. Every override moment carries
-the same blocks; tonight was the only one with **~62 h soak and 3 anchor clears (Sat/Sun/Mon)**.
+### ⛔⭐⭐ CORRECTION — "waiting would not have helped" WAS FALSE, and it was my argument
+At the decision I said: *"DSY cannot exit while the market is closed, so both flat blocks persist
+all weekend and clear no earlier than Monday 07:00."*
+
+**DSY exited at 18:27 ET the same evening** — `[OMS-V2-MANAGED-EXIT] CW_FLOOR ref=4.7226` →
+`[OMS-V2-MANAGED-CLOSE] flat`, sell filled, broker 0. **The gate would have gone green on its own
+~40 minutes later.**
+
+⛔ **The error: "the market is closed" was treated as "no trading can happen." EXTENDED HOURS RUN TO
+20:00 ET** — stated in this very document two sections above ("arming is bar-driven and bars flow
+until 20:00") and the premise of the entire EH exit workstream.
+
+⭐ **What still stands:** the override was still the right call on **soak + 3 anchor clears
+(Sat/Sun/Mon)** — Friday evening remained the best window. But a decision resting partly on a false
+premise is a **lucky** decision, not a validated one. ⇒ **Before asserting a blocker cannot clear,
+name the mechanism that would clear it and the hours that mechanism runs.**
 
 ⭐⛔ **The anti-reuse property EARNED ITS KEEP:** the armed set moved `CGTL RCEL` → `CGTL DSY NAMI`
 between two runs minutes apart. A list copied from the earlier run would have been refused.
@@ -98,6 +112,16 @@ between two runs minutes apart. A list copied from the earlier run would have be
 | #666 RCEL | **UNEXERCISED** — confirms at **Monday's 16:00** close: expect `[V2-RESTING-CANCEL] reason=window_closed`, and 0 live orders after |
 
 ⛔ **Do not re-run these greps over the weekend and do not write the silence up as a pass.**
+
+### ✅ SECOND DEPLOY 2026-08-07 18:36 ET — #668 `[VIRTUAL-CLEAR]`
+`234c915 → ca0cf92`, OMS-only (no gate, no override; fleet was FLAT by then).
+`active`, `NRestarts=0`, **0 Tracebacks**. #660 census still emitting and #662 still silent — both
+re-verified as a regression check on the earlier deploy.
+
+⛔ **`[VIRTUAL-CLEAR]` itself is UNEXERCISED, not passed** — zero rows fleet-wide have
+`quantity > 0`, so the clear has nothing to erase and a quiet log is the *expected* output. Verified
+instead by **content**: the marker is in the file the running PID imports (`/proc/<pid>/cwd` →
+`/home/trader/project-mai-tai`), and 4 tests + 5 mutations cover the behaviour.
 
 ### One line for the report
 **The Redis change buys time; it does not close the loss path.** `evicted_keys` **5,249** and
@@ -183,6 +207,23 @@ Burned twice today, both already reported before being caught:
 ---
 
 ## 👀 WATCH NEXT SESSION
+
+### ⭐⭐ MONDAY 2026-08-10 — the four validations tonight's deploy DEFERRED, by construction
+⛔ **Nothing below can be checked before Monday. A quiet weekend is not evidence.** Do not re-run
+these greps Saturday or Sunday and do not write the silence up as a pass.
+⛔ **Logs rotate 00:00 UTC = 20:00 ET** — a check after 20:00 ET needs the rotated file too.
+
+| # | what | where | pass looks like |
+|---|---|---|---|
+| **#663** | `session_anchor_reset` is the reason that motivated the change; only `reason=flip` has fired | `schwab-1m-v2.log` ⛔ **not** `journalctl` | a `[V2-CW-DISARM] … reason=session_anchor_reset` at the **04:00** roll, and the unpaired-ARM divergence **drops from 9** (0 would be suspicious) |
+| **#664** | CW_FLIP fan-out — ⚠️ **no dedicated marker exists**, evidence is indirect | exits/orders on **both** accounts | a CW_FLIP exit on `live:schwab_1m_v2` **and** `live:orb`. **UNEXERCISED if no flip fires — that is the expected outcome, not a failure** |
+| **#666** | RCEL — the resting order left working past the close | `schwab-1m-v2.log` + a live-order sweep | at **~16:05**: `[V2-RESTING-CANCEL] reason=window_closed` where `[V2-RESTING-EH-DISARM]` used to appear alone, and **0 live orders** |
+| **#668** | `[VIRTUAL-CLEAR]` — deployed but the path is **UNEXERCISED** (zero rows fleet-wide have `quantity > 0`) | `oms.log` | ⛔ **a line here is a FINDING, not a pass** — it names the account+symbol whose ledger row was erased, and settles open item 12's two candidate causes |
+
+⭐ **Also worth one line:** DSY exited **18:27 ET Friday** in extended hours via `CW_FLOOR` at
+`4.7226` — the 15:59:46 entry shape that started the 16:00 workstream, closed unattended by the
+ladder. That is the first clean EH managed exit on that shape.
+
 
 1. **The 18:05 EOD report** — it converts today's provisional readings into results. Read it before
    quoting any 08-04 number.
