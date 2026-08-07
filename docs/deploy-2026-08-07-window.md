@@ -1,4 +1,6 @@
-# DEPLOY INSTRUCTION — window of 2026-08-07, after the close
+# DEPLOY INSTRUCTION — window of **Friday 2026-08-07**, after the close
+
+> ⭐⛔ **IT IS FRIDAY. THERE IS NO SESSION TOMORROW.** The next entry window is **Monday 2026-08-10, 07:00**, and the next 16:00 close is **Monday's**. Every "tomorrow" in a verification plan written on a weeknight means **Monday** here — four of the five changes cannot confirm before then, **by construction.** See §2h.
 
 > Written **before** the window, deliberately. Every near-miss today came from reasoning under time
 > pressure inside one. Nothing in this document should need to be decided at the console.
@@ -94,7 +96,7 @@ A restart leaves a bar hole and ATR spans it. **Warmup repairs MEMORY, not the D
   is set and discarded with no line of its own. ⇒ **The evidence is INDIRECT:** a CW_FLIP exit
   appearing on both accounts. It is inference from outcome, not observation of the mechanism.
 - ⛔ **`UNEXERCISED` is the EXPECTED outcome, not a disappointment.** A flip has to fire, on a held
-  position, inside the window. Most nights that does not happen. Writing UNEXERCISED is the correct
+  position, inside the window. **No session exists again until Monday.** Writing UNEXERCISED is the correct
   and complete result — **not a failed verification, and not something to go hunting for.**
   Not "clean", not "0", not "passed". [[feedback_unexercised_is_not_a_result]]
 - ⇒ Confidence in #664 tonight rests on **the tests and the code read**, not on the tape. Say so.
@@ -108,9 +110,9 @@ A restart leaves a bar hole and ATR spans it. **Warmup repairs MEMORY, not the D
   path is only one of the clears. A drop from 9 is the pass; **0 would itself be suspicious.**
 - ⛔ Pair with **no filter**. The previous count came from an unfiltered pairing.
 
-### 2e. #666 RCEL — **tomorrow's check, not tonight's**
+### 2e. #666 RCEL — **MONDAY's check, not tonight's**
 
-- **Tomorrow at ~16:05:** no resting order left working after the entry window closes.
+- **Monday 2026-08-10 at ~16:05:** no resting order left working after the entry window closes.
   Sweep the account for live orders; expect `0 live order(s)` on `live:schwab_1m_v2`.
 - ⛔ Tonight can only show that v2 started. **The bug is only observable at a window close**, so
   claiming it tonight would be claiming a result from an unexercised path.
@@ -143,6 +145,25 @@ Anyone comparing tonight's suite against a remembered number will read a **false
 
 ---
 
+## 2h. ⭐⛔ THE VALIDATION SPLIT — DECLARED IN ADVANCE, or Monday reads as failure
+
+| | confirms |
+|---|---|
+| **#660** census | **TONIGHT** — timer-driven, 5 min. The only hard same-night pass/fail |
+| **#662** A2 | **TONIGHT** — the proof is that **nothing changed** |
+| **#664** flip | **MONDAY at the earliest** — needs a flip, and there is no session |
+| **#663** disarm | **MONDAY** — needs ARM/DISARM traffic |
+| **#666** RCEL | **MONDAY's 16:00** close |
+
+⇒ **Four of five are UNEXERCISED until Monday BY CONSTRUCTION, not by fault.**
+
+⛔ **This is declared BEFORE the window on purpose.** A quiet weekend is **not evidence of anything**
+— not success, not failure, not "clean". Anyone reading Saturday's or Sunday's logs for these five
+is reading a market that is closed. Do not go hunting, do not re-run the greps, and do not let the
+silence be written up as a pass. [[feedback_unexercised_is_not_a_result]]
+
+---
+
 ## 3. THE GATE DECISION — pre-made, so it is not reasoned out at the console
 
 **Expect the armed-segment pre-flight gate to REFUSE the v2 restart.** Arming is bar-driven and runs
@@ -156,6 +177,27 @@ to 20:00, so segments arm after 16:00 routinely.
 > harms, and the gate's cost model was never written against this case. Overriding is therefore a
 > deliberate exception on a known asymmetry, **not** a judgement that the gate is wrong.
 
+### ⭐⭐ THE WEEKEND INVERTS THIS IN THE FAVOURABLE DIRECTION — read before deciding
+
+The urgency argument **just evaporated**: there is no session tomorrow, so #666's next exposure is
+**Monday's 16:00**, not tomorrow's. But the calendar replaces it with a **stronger** argument.
+
+**What the gate actually protects against** is Bug 2 — `cw_entries_this_flip` is unpersisted, so a
+restart can leave armed segments capped and unable to enter. **That cap is cleared by the 04:00 ET
+session anchor.**
+
+| | clears before the next entry window | elapsed |
+|---|---|---|
+| a weeknight restart | **1** (next 04:00) | a few hours |
+| **tonight, Friday** | **3** — Sat 08-08, Sun 08-09, Mon 08-10 | **~62 hours** |
+
+⇒ **The override's residual risk is at its LOWEST of any night this week.** Three independent
+chances for the state to clear, against one. That is a better reason to take it than urgency ever was.
+
+⭐ **And deploy-distance favours tonight over Sunday or Monday:** maximum separation from a live
+session and **two full days of soak** before real money touches this code. Deploying Sunday night or
+Monday pre-open gives neither. **Friday evening is the best window we have had.**
+
 ⛔ **Only the operator can authorise the override.** Use the documented token; record the reasoning
 at the time of use.
 
@@ -163,9 +205,10 @@ at the time of use.
 > **Declining costs less than it sounds.** If the override is declined, the **three OMS changes and
 > Redis proceed anyway** — including **#664, the one that matters**, which needs **no v2 restart**.
 > What is deferred is #663 (log only, no behaviour) and #666 (real, but its next exposure is
-> tomorrow's 16:00 close, so it fits tomorrow's window).
+> **Monday's** 16:00 close). ⚠️ Deferring means redeploying **Sunday night or Monday pre-open with
+> zero soak**, instead of tonight with two days of it.
 
-⇒ The decision is *"do we take #666 tonight or tomorrow"*, **not** *"do we deploy tonight"*. Say that
+⇒ The decision is *"do we take #666 tonight or **Monday pre-open**"*, **not** *"do we deploy tonight"*. Say that
 before he decides — afterwards it reads as consolation.
 
 ⭐ **Afterwards, put the asymmetry in the gate's own comment** — otherwise the next person re-derives
@@ -186,7 +229,7 @@ real, priced defect (the legs exit independently; AAOG cost 2.5 points). Losing 
 window costs the two **log-only/next-day** items, not this one.
 
 Deferred in that case: **#663** (log only — no behaviour) and **#666** (RCEL — real, but its next
-exposure is tomorrow's 16:00 close, so it can go in tomorrow's window).
+exposure is **Monday's** 16:00 close, so it can go in Monday's pre-open window — which is a worse window: no soak).
 
 ---
 
@@ -194,7 +237,7 @@ exposure is tomorrow's 16:00 close, so it can go in tomorrow's window).
 
 | item | why not |
 |---|---|
-| **The ledger fix** (open item 12 / `virtual_positions` false zero) | **Log line first** — `[VIRTUAL-CLEAR]` lands tomorrow, then the next occurrence names itself. ⛔ Do not fix blind between two candidate causes |
+| **The ledger fix** (open item 12 / `virtual_positions` false zero) | **Log line first** — `[VIRTUAL-CLEAR]` lands over the weekend / before Monday's open, then the next occurrence names itself. ⛔ Do not fix blind between two candidate causes |
 | **Ship 2 and read C** predicate switch to `oms_managed_positions` | queues **behind** the ledger fix. Would be a fourth same-day change to a script already broken three times today |
 | **`snapshot_batch_stream_maxlen`** | **STAYS 180.** Not a tuning knob tonight |
 | **Open item 8** (reconciler severity) | ⛔ blocked on item 12 — downgrading that severity would suppress real defects |
