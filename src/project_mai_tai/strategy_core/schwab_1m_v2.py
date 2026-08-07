@@ -233,8 +233,24 @@ class SymbolState:
     # CW-v2 RESTING flip-entry (INERT unless strategy_schwab_1m_v2_cw_v2_resting_entry_enabled). A
     # resting buy-stop-limit tracks the ATR SHORT trail; NO-OVERLAP replace (cancel one bar, place the
     # next => never two live buy orders). Reset with the other cw_* at the 04:00-ET anchor.
-    resting_active: bool = False               # we believe a resting entry order is live at the broker
+    resting_active: bool = False               # a resting entry is armed (broker order OR EH soft-rest)
     resting_level: float = 0.0                 # the stop price (the ATR line) the resting order sits at
+    # ⛔⭐ SET AT PLACEMENT, READ AT CANCEL. `resting_active` is True for BOTH an RTH broker order and
+    # an EH in-memory soft-rest, so it cannot answer "is something live at the BROKER?". Asking the
+    # CURRENT session at cancel time is wrong: an order placed in RTH and disarmed after 16:00 is a
+    # real broker order being judged by the EH rule. RCEL 2026-08-07 was left WORKING through the
+    # close exactly that way. The placing moment is the only moment that knows.
+    #
+    # ⛔⭐⭐ DEFAULTS **TRUE** — DELIBERATELY, AND DO NOT "TIDY" IT TO False.
+    # Any state that did NOT come through `_queue_resting_place` (a v2 RESTART rebuilding
+    # SymbolState from the DB seed; a test constructing state directly) has no idea whether a broker
+    # order is live. Defaulting False would SKIP the cancel and leave a real order working — the
+    # #580 orphan, and exactly the bug this field was added to fix, merely re-triggered by restart
+    # instead of by session.
+    # ⇒ Ambiguity resolves by what the ACTION costs: a spurious cancel for a non-existent order is
+    # harmless and logged; a MISSED cancel leaves live money on the book unattended.
+    # [[feedback_ambiguity_resolves_by_what_the_action_costs]]
+    resting_is_broker_order: bool = True
     resting_flip_ms: int = 0                    # ms-wall-clock the up-flip fired while resting (fill may be
     #                                             settling); 0 = not pending. Silences re-emits through the lag.
     # Dual-broker FAN-OUT once-per-flip latch for the RTH-resting Webull leg (software-detected at
@@ -992,6 +1008,7 @@ class SchwabV2Strategy:
         # so at the 04:00 anchor this only zeroes the strategy's view for the new session.
         state.resting_active = False
         state.resting_level = 0.0
+        state.resting_is_broker_order = False
 
     def roll_stale_session_state(
         self,
@@ -1743,6 +1760,7 @@ class SchwabV2Strategy:
         state.resting_active = True
         state.resting_level = line
         if self._eh_resting_enabled and self._resting_session_is_eh():
+            state.resting_is_broker_order = False      # soft-rest: nothing goes to the broker
             # EH SOFTWARE REST (P-B2): a broker buy-stop-limit can't trigger in extended hours, so we do
             # NOT place a broker order — we arm the level IN MEMORY and watch quotes (_eh_resting_cross_check
             # emits the marketable EH-LIMIT on the up-cross). No broker draft is queued; the state machine
@@ -1752,6 +1770,7 @@ class SchwabV2Strategy:
                 state.symbol, line,
             )
             return
+        state.resting_is_broker_order = True           # a REAL broker order from here on
         logger.info(
             "[V2-RESTING-PLACE] %s stop=%.4f limit=%.4f (band %.2f%%)",
             state.symbol, line, limit, self._resting_entry_band_pct,
@@ -1779,11 +1798,21 @@ class SchwabV2Strategy:
 
     def _queue_resting_cancel(self, state: SymbolState, *, reason: str) -> None:
         was_level = state.resting_level
+        was_broker_order = state.resting_is_broker_order
         state.resting_active = False
         state.resting_level = 0.0
-        if self._eh_resting_enabled and self._resting_session_is_eh():
-            # EH SOFTWARE REST: nothing is live at the broker -> just clear the in-memory arm, no cancel
-            # draft (a broker cancel for a non-existent order would be spurious).
+        state.resting_is_broker_order = False
+        # ⛔⭐ BRANCH ON WHAT WAS PLACED, NOT ON THE CURRENT SESSION.
+        # This used to read `self._resting_session_is_eh()` — the session NOW — on the premise that
+        # "in EH nothing is live at the broker". True of an order PLACED in EH; false of one placed
+        # in RTH and disarmed after 16:00, which is a real WORKING broker order. RCEL 2026-08-07:
+        # placed 15:55:13 as a broker STOP_LIMIT, `[V2-RESTING-EH-DISARM] reason=window_closed` at
+        # 16:00:03, and the order was STILL WORKING at 16:02 with its OCO children attached —
+        # fillable in extended hours, where Schwab refuses the protective STOP leg. The window
+        # closed the ENTRY and left the ORDER.
+        if not was_broker_order:
+            # EH SOFTWARE REST: nothing was ever sent to the broker -> clear the in-memory arm only
+            # (a broker cancel for a non-existent order would be spurious).
             logger.info("[V2-RESTING-EH-DISARM] %s reason=%s level=%.4f", state.symbol, reason, was_level)
             return
         logger.info("[V2-RESTING-CANCEL] %s reason=%s level=%.4f",
