@@ -65,11 +65,15 @@ A restart leaves a bar hole and ATR spans it. **Warmup repairs MEMORY, not the D
 
 - **Expect on the next flip:** a CW_FLIP exit on **both** `live:schwab_1m_v2` **and** `live:orb`
   (previously only the primary). Reason string `CW_FLIP`.
-- ⚠️ **There is no dedicated log marker for the fan-out.** Verify from the exits/orders on both
-  accounts, not from a grep for the word.
-- ⛔ **If no flip fires tonight, the result is `UNEXERCISED` — write that word.** Not "clean", not
-  "0", not "passed". Declaring it now means nobody can quietly read tomorrow's silence as a pass.
-  [[feedback_unexercised_is_not_a_result]]
+- ⚠️⚠️ **THIS IS THE WEAKEST VERIFICATION OF THE NIGHT, and it is weak by construction.**
+  **There is no dedicated log marker for the fan-out** — I went looking for one; `_cw_flip_pending`
+  is set and discarded with no line of its own. ⇒ **The evidence is INDIRECT:** a CW_FLIP exit
+  appearing on both accounts. It is inference from outcome, not observation of the mechanism.
+- ⛔ **`UNEXERCISED` is the EXPECTED outcome, not a disappointment.** A flip has to fire, on a held
+  position, inside the window. Most nights that does not happen. Writing UNEXERCISED is the correct
+  and complete result — **not a failed verification, and not something to go hunting for.**
+  Not "clean", not "0", not "passed". [[feedback_unexercised_is_not_a_result]]
+- ⇒ Confidence in #664 tonight rests on **the tests and the code read**, not on the tape. Say so.
 
 ### 2d. #663 P2.11 disarm line — a count that must MOVE
 
@@ -96,6 +100,22 @@ A restart leaves a bar hole and ATR spans it. **Warmup repairs MEMORY, not the D
 - **Sizing, already worked:** steady state at full maxlen ≈ 1.2–1.3 GB; box has 8 GB, `available`
   3.7 Gi, Redis RSS 286 MB.
 - ⛔ **`snapshot_batch_stream_maxlen` STAYS 180.** Load-bearing — scanner warmup prefill needs 120.
+
+---
+
+## 2g. ⛔ THE TEST-COUNT BASELINE MOVED TODAY — 1847 → 1883
+
+Anyone comparing tonight's suite against a remembered number will read a **false delta**.
+
+| | count |
+|---|---|
+| `main` **this morning**, before today's merges | **1847** |
+| `main` **now** (after #660/#662/#663/#664/#665 and their tests) | **1883** |
+| `claude/virtual-clear-instrumentation` (#668, +4) | **1887** |
+
+⛔ **Quote both numbers, always.** "1854" appears in this session's earlier notes for the RCEL branch
+— that was 1847 + 7, measured **before** the merges landed. It is stale, not wrong-at-the-time.
+#666's own CI is the authority for that branch.
 
 ---
 
