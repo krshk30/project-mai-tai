@@ -251,3 +251,108 @@ def test_the_eh_session_is_the_case_that_matters() -> None:
     svc = _svc()
     assert svc._managed_exit_refresh_exempt(_held_order(session="AM"), bid=1.76) is True
     assert svc._managed_exit_refresh_exempt(_held_order(session="NORMAL"), bid=1.76) is True
+
+
+# ----------------------------------------------------- INSTRUMENT THE NEGATIVE (2026-08-06)
+#
+# ⭐⭐ WHY. `[OMS-P0A-HOLD]` sat at ZERO lines from deploy (08-05 21:06 ET) onward, and zero is
+# ambiguous between "no managed exit ever qualified" and "the branch never runs". Those are
+# completely different worlds and we could not tell them apart, which is a large part of why P0a
+# stayed deployed-not-validated. The census makes the negative legible.
+#
+# ⛔ `_p0a_decline_reason` DUPLICATES the predicate's structure, so the two CAN drift. The pairing
+# test below is what stops that, and it is the reason the duplication is acceptable at all.
+
+
+def test_p0a_decline_reason_matches_predicate() -> None:
+    """⛔⭐ THE PIN. `_p0a_decline_reason(...) is None` must equal `_managed_exit_refresh_exempt(...)`
+    for every input. Two functions answering one question is the bug class we keep hitting
+    (`feedback_authoritative_for_a_is_not_for_b`); this test is what keeps the pair honest.
+
+    Edit either function without the other and this goes red."""
+    svc = _svc()
+    cases = [
+        (_exit_order(), 1.76),                                   # marketable -> exempt
+        (_exit_order(), 1.70),                                   # bid below limit
+        (_exit_order(), None),                                   # no bid
+        (_exit_order(), 0.0),                                    # zero bid
+        (_exit_order(order_type="MARKET"), 1.76),                # not a LIMIT
+        (_exit_order(managed=False), 1.76),                      # not a managed exit
+        (_exit_order(limit_price=None), 1.76),                   # no limit price
+        (_exit_order(limit_price=0.0), 1.76),                    # zero limit price
+        (_exit_order(), KUST_EXIT_LIMIT),                        # limit == bid, still marketable
+    ]
+    for order, bid in cases:
+        exempt = svc._managed_exit_refresh_exempt(order, bid=bid)
+        reason = svc._p0a_decline_reason(order, bid=bid)
+        assert (reason is None) is exempt, (
+            f"drift: exempt={exempt} but reason={reason!r} for bid={bid} payload={order.payload}"
+        )
+
+
+def test_p0a_decline_reason_is_specific_not_generic() -> None:
+    """A census of `declined=N` with no breakdown would be the same silence in a new costume."""
+    svc = _svc()
+    assert svc._p0a_decline_reason(_exit_order(), bid=1.70) == "not_marketable"
+    assert svc._p0a_decline_reason(_exit_order(), bid=None) == "no_bid"
+    assert svc._p0a_decline_reason(_exit_order(order_type="MARKET"), bid=1.76) == "not_limit"
+    assert svc._p0a_decline_reason(_exit_order(managed=False), bid=1.76) == "not_managed_exit"
+    assert svc._p0a_decline_reason(_exit_order(limit_price=None), bid=1.76) == "no_limit_price"
+    assert svc._p0a_decline_reason(_exit_order(), bid=1.76) is None
+
+
+def test_p0a_decline_reason_reports_flag_off_rather_than_a_false_negative() -> None:
+    """⛔ With the flag off the predicate returns False for a reason that has nothing to do with the
+    market. Reading that as 'the exit was not marketable' would be a wrong conclusion drawn from a
+    correct number — the exact failure this census exists to prevent."""
+    svc = _svc(oms_hold_marketable_managed_exit=False)
+    assert svc._managed_exit_refresh_exempt(_exit_order(), bid=1.76) is False
+    assert svc._p0a_decline_reason(_exit_order(), bid=1.76) == "flag_off"
+
+
+def test_p0a_census_emits_even_when_nothing_was_evaluated() -> None:
+    """⭐⭐ THE WHOLE POINT. A census that only speaks when it has something to say rebuilds the
+    silence it exists to cure. `evaluated=0` is a RESULT and must reach the tape."""
+    svc = _svc()
+    lines: list[str] = []
+    svc.logger = SimpleNamespace(info=lambda msg, *a: lines.append(msg % a))
+    svc._p0a_census = {}
+    svc._p0a_census_last_emit = None
+
+    svc._maybe_emit_p0a_census()
+
+    assert len(lines) == 1, "a quiet window must still emit a census line"
+    assert "evaluated=0" in lines[0]
+    assert "held=0" in lines[0]
+
+
+def test_p0a_census_counts_and_breaks_down_by_reason() -> None:
+    svc = _svc()
+    lines: list[str] = []
+    svc.logger = SimpleNamespace(info=lambda msg, *a: lines.append(msg % a))
+    svc._p0a_census = {"held": 2, "not_marketable": 5, "no_bid": 1}
+    svc._p0a_census_last_emit = None
+
+    svc._maybe_emit_p0a_census()
+
+    assert "evaluated=8" in lines[0]
+    assert "held=2" in lines[0]
+    assert "no_bid=1" in lines[0]
+    assert "not_marketable=5" in lines[0]
+    assert svc._p0a_census == {}, "the window must reset after emitting"
+
+
+def test_p0a_census_respects_its_interval() -> None:
+    """It sits on the ~15s order sync; emitting every pass would be the trade-coach retry-storm
+    shape (45% CPU while nominally disabled)."""
+    svc = _svc()
+    lines: list[str] = []
+    svc.logger = SimpleNamespace(info=lambda msg, *a: lines.append(msg % a))
+    svc._p0a_census = {}
+    svc._p0a_census_last_emit = None
+
+    svc._maybe_emit_p0a_census()
+    svc._maybe_emit_p0a_census()
+    svc._maybe_emit_p0a_census()
+
+    assert len(lines) == 1, "only the first call in the interval may emit"
