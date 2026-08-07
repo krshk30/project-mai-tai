@@ -76,6 +76,12 @@ the same second with a different tag. ⛔ `CANCELLED_STATUSES` includes `"REPLAC
 position drift within ~8 minutes instead of hours.
 
 ## 8. ⛔⭐ Reconciler severity is INVERTED — an UNOWNED position pages CRITICAL
+
+> ⛔⭐⭐ **DO NOT WORK THIS BEFORE ITEM 12.** The CRITICAL alarm has TWO populations: the
+> operator's manual holdings (round lots on `live:schwab_1m_v2`) **and our own positions whose
+> `virtual_positions` row falsely reads 0** (qty 1 on `live:orb` — DSY/MB/NAMI/HUIZ, 08-07).
+> Downgrading the severity would **suppress real defects**. The fix here is a **discriminator
+> (ownership via `oms_managed_positions`), not a severity change.**
 *(found 2026-07-31 from a live AZIO page; operator: "add it to the list, we can work on it later")*
 
 The operator hand-bought **972 AZIO** on `live:orb` and got a RED page for their own trade. Ours?
@@ -256,3 +262,80 @@ measurement instead of a strategy+execution mixture. The backward execution-% st
 ## ⚠️ Watch items live in [`session-handoff.md`](session-handoff.md), not here
 Verification is a *state* ("is this behaving?"), not a *task* ("do this"). Keeping them here is what
 made an open-items file that could never reach zero.
+
+## 12. ⛔⭐⭐ `virtual_positions` reads ZERO for a position we HOLD — and five consumers believe it
+
+**Filed as a defect, not a preference.** The predicate `virtual_quantity != 0` was recommended and
+adopted in **Ship 2 (`unowned_position_cron.sh`)** and **read C (`readc_capture.py`)** on 08-07.
+It is wrong in both. ⛔ It is not a naming collision — `virtual_positions` IS the holdings ledger,
+written by the OMS fill path (`apply_fill_to_positions`). It is simply **empty when it should not be**.
+
+### THE INSTANCE — DSY, `live:orb`, still held at 16:25 ET 08-07
+| source | DSY |
+|---|---|
+| `account_positions` (broker snapshot) | **1** |
+| `oms_managed_positions` | **1 open** |
+| **`virtual_positions`** | **0** ⛔ |
+
+Two of three agree it is held and ours. ⭐ **The control group is what makes this conclusive** — DSY
+is the *only* open position on the fleet, so it is the only row where zero can be judged wrong at all.
+
+⛔ **A same-day census of 18 buy fills read as "18/18 confirm the bug" and confirmed NOTHING** — 17 of
+them had already exited, where `quantity = 0` is CORRECT. The population was the artefact.
+[[feedback_aggregation_masked_the_event]]
+
+### ⛔ Proven by elimination, because the fingerprint does NOT discriminate
+`_apply_position_fill`'s sell branch sets `quantity/average_price/opened_at` to `0/0/NULL` when a
+position closes — **byte-identical to what `clear_virtual_positions_without_account_backing` writes.**
+A zeroed row cannot be attributed to a cause by inspection.
+
+⇒ **DSY is decisive anyway:** the broker holds 1, so no sell sequence can have run to completion
+(buy 2 / sell 1 leaves 1, not 0; selling 2 leaves the broker flat). The sell path is *excluded*.
+Exactly two causes remain, **both defects, and the choice between them does not change the fix**:
+1. the buy fill never reached `apply_fill_to_positions`; or
+2. `clear_virtual_positions_without_account_backing` erased it.
+
+**(2) is the leading hypothesis [inferred, NOT pinned]:** DSY's virtual row was last written
+**15:59:47, 1.1 s after the 15:59:46 fill**. The clear runs every `sync_broker_state`, keys off a
+broker position snapshot fetched in an earlier phase, is **one-way** (nothing re-derives virtual from
+account backing — grep: three `quantity = Decimal("0")`, zero repairs), and **its return count is
+discarded, so it has no log line.** A ~1 s broker position-report lag is sufficient. Same family as
+ERNA/#464, where a fill-settlement grace was added to the *flat-detection* path and **never to this one**.
+
+### ⛔⭐ BLAST RADIUS — and ⛔ A BARE `WHERE` CLAUSE LIES: verify each SITE
+**I first read five `WHERE quantity > 0` clauses and called all five blind. THREE WERE WRONG.** The
+surrounding join decides, not the filter. Corrected, each one re-read:
+
+| site | blind? |
+|---|---|
+| `schwab_1m_v2_bot.py:1048` `_held_symbols` | **YES** — `held` counts virtual ONLY; `union` adds only *in-flight* intents, so a filled-and-forgotten position is invisible. Scoped to `live:schwab_1m_v2` |
+| `control_plane.py:9423` bot cards | **YES** — account rows are pre-filtered to symbols already in runtime **or** virtual, so a false zero hides the row entirely |
+| `strategy_engine_app.py:9812` | under-counts open positions |
+| `reconciliation/service.py:183` | **NO** — `keys = sorted(set(aggregates) | set(account_positions))`, a UNION. It fires |
+| `deploy_preflight.py:97` | **NO** — that line is dead, but a separate `open_account_positions` gate still catches a held position |
+
+### ⛔⭐⭐ THE RECONCILER IS NOT SILENT — IT IS DROWNING, AND IT CONFLATES TWO POPULATIONS
+25,871 runs in 9 days (~1 per 30 s); **~2,300–3,300 `position_quantity_mismatch` CRITICAL per day**,
+every one the shape `account > 0, virtual = 0`. ⭐ **Quantity splits them almost perfectly:**
+
+| population | rows today | what it is |
+|---|---|---|
+| **CYN 5000 · DOCS 1000/300/500 · WWR 10000 · CLRO 1000** on `live:schwab_1m_v2` | round lots, the bulk of the volume (CYN alone ×2,488) | **the operator's manual holdings** — open item 8's population |
+| **DSY 1 · MB 1 · NAMI 1 · HUIZ 1** on `live:orb` | qty 1 (DSY ×190) | **the fan-out leg = OURS.** TRUE POSITIVES of this defect |
+
+⇒ ⛔ **Item 8 ("severity is INVERTED — an UNOWNED position pages CRITICAL") is only HALF TRUE.**
+It generalised from the loud population. **Downgrading that severity without a discriminator would
+suppress the real ones.** ⇒ The fix to 8 is a **discriminator (ownership via
+`oms_managed_positions`), NOT a severity change** — and **item 12 settles first.**
+
+⚠️ `FindingSpec` computes a `fingerprint`, but **`reconciliation_findings` has no fingerprint
+column** — the dedup key is discarded at persistence, so every run re-emits the same finding. That
+volume is why a genuine alarm reads as noise. [[project_mai_tai_reconciler_detects_nobody_listens]]
+[[feedback_authoritative_for_a_is_not_for_b]] · [[feedback_aggregation_masked_the_event]]
+
+### NEXT — in order
+1. **Switch Ship 2 + read C to `oms_managed_positions`** (authorised: the "establish first" condition
+   resolved — it is the same concept, broken, so nothing depends on the old meaning).
+2. **Pin cause (1) vs (2)** — the clear discards its count; **log it before anything else**, then a
+   held position across one sync settles it. ⛔ Do not fix blind.
+3. **Then** re-open item 8.

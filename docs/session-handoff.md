@@ -173,6 +173,10 @@ Burned twice today, both already reported before being caught:
 ✅ **CLOSED today: VPS retention** (DB 12->10 GB, logs 1.7 GB->426 MB, logrotate installed).
 
 ---
+12. **⛔⭐⭐ `virtual_positions` reads ZERO for a position we HOLD (DSY 08-07)** — the ledger, not a
+    naming collision. The reconciler's ~3,000/day CRITICAL alarm **conflates the operator's manual
+    holdings with OUR OWN false zeros** ⇒ **do not work thread 7 first** — downgrading that severity
+    would suppress real defects. ⛔ v2's duplicate-open gate and the bot cards ARE blind.
 
 ## 🔔 ALERTING — what reaches the phone
 
