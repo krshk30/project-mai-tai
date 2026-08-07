@@ -208,6 +208,28 @@ class StrategyStateSnapshotPayload(BaseModel):
 
 
 class StrategyStateSnapshotEvent(EventEnvelope):
+    """⛔⭐⭐ THIS PAYLOAD IS A FULL SNAPSHOT AND MUST STAY ONE. DO NOT CONVERT IT TO DELTAS.
+
+    Redis runs `allkeys-lru` with only ~7 keys, so it evicts WHOLE STREAM KEYS, not entries
+    (~700 evictions/day measured 2026-08-07), and EVERY consumer reads with an in-memory cursor —
+    there is not one `xreadgroup` in the codebase. A dropped message is therefore silent: no error,
+    no retry, no log line.
+
+    ⭐ THE ONLY REASON THAT IS SURVIVABLE HERE is that this payload is a SNAPSHOT: each message
+    supersedes the last, so `_apply_strategy_state_event` rebuilds the watchlist from scratch and a
+    lost message self-heals on the next publish. That is why the eviction blast radius does NOT
+    reach the entry path.
+
+    ⛔ CONVERTING THIS TO DELTAS WOULD LOOK LIKE AN OPTIMISATION AND WOULD SILENTLY MOVE IT FROM THE
+    SAFE CATEGORY INTO THE EXPOSED ONE — every dropped delta would corrupt the watchlist
+    permanently, with nothing to catch it. If you need deltas, a DURABLE CONSUMER GROUP
+    (`xreadgroup`) must land first.
+
+    ⇒ The rule is snapshot-vs-event, not importance: importance is a judgement that drifts, the
+    payload's shape can be CHECKED. Event-carrying streams (`strategy-intents` — trade intents and
+    `v2_cw_flip`; `order-events`) are the exposed ones; snapshot streams are safe by construction.
+    """
+
     event_type: Literal["strategy_state_snapshot"] = "strategy_state_snapshot"
     payload: StrategyStateSnapshotPayload
 

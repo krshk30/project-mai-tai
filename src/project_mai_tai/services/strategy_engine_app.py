@@ -6954,6 +6954,11 @@ class StrategyEngineService:
             )
             for bot in summary["bots"].values()
         ]
+        # ⛔⭐ FULL SNAPSHOT BY DESIGN — do not turn this into a delta to save bandwidth.
+        # Redis `allkeys-lru` evicts whole stream keys and every consumer uses an in-memory cursor,
+        # so a dropped message is SILENT. Snapshot semantics are the only thing making that
+        # survivable: the consumer rebuilds from scratch and self-heals on the next publish.
+        # See StrategyStateSnapshotEvent's docstring for the full rule.
         event = StrategyStateSnapshotEvent(
             source_service=SERVICE_NAME,
             payload=StrategyStateSnapshotPayload(
