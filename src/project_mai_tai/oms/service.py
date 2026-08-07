@@ -839,8 +839,36 @@ class OmsRiskService:
                     or self.settings.strategy_schwab_1m_v2_account_name
                 )
                 if sym:
-                    self._cw_flip_pending.add((acct, sym))
-                    self.logger.info("[OMS-V2-CW] flip pending armed acct=%s sym=%s", acct, sym)
+                    # ⭐⭐ CW_FLIP FAN-OUT (2026-08-07). The flip used to arm ONE account -- the one
+                    # the publisher named, which is the bot's own (Schwab). Every OTHER exit reason
+                    # reaches the Webull leg for free because CW_HARD_STOP / CW_FLOOR are
+                    # STATE-driven: they iterate managed ROWS, and live:orb has rows. The flip alone
+                    # is EVENT-driven and per-account, so the fan-out leg was never told to exit.
+                    #
+                    # Measured over the 7-day corpus:  CW_HARD_STOP 400 orb / 241 schwab
+                    #                                  CW_FLOOR      47 orb /   9 schwab
+                    #                                  CW_FLIP        0 orb /   4 schwab
+                    # ⛔ CLASS A (no owner), NOT Class B (refused): there is no reject count because
+                    # nothing was ever emitted. Cost, n=2 of 4 usable: the Webull leg rode the
+                    # reversal for 22m37s (AAOG 08-04, -2.31%) and 14m01s (GTE 08-05, -4.74%) until
+                    # the CW_HARD_STOP fallback caught it. Rare and expensive -- ~1 event per 2 days
+                    # -- NOT a running cost.
+                    #
+                    # ⭐ WHY THIS IS CONSISTENCY, NOT A NEW RULE: `_v2_accounts()` is already the
+                    # flag-gated answer to "which accounts does the CW exit ladder manage", and it
+                    # collapses to Schwab-only when the fan-out flag is off -- so this is
+                    # BYTE-IDENTICAL with the flag off, and needs no flag of its own. The flip was
+                    # simply the one place that never used it.
+                    #
+                    # ⛔ A stale arm is harmless BY EXISTING DESIGN, and that is load-bearing here:
+                    # `_maybe_emit_v2_managed_exit` discards a pending flip when the symbol has no
+                    # open managed row ("no open row -> drop any stale flip"). So arming an account
+                    # whose leg already exited emits NOTHING. That guard is now pinned by a test.
+                    for arm_acct in dict.fromkeys([*self._v2_accounts(), acct]):
+                        self._cw_flip_pending.add((arm_acct, sym))
+                        self.logger.info(
+                            "[OMS-V2-CW] flip pending armed acct=%s sym=%s", arm_acct, sym
+                        )
             return
 
     async def process_trade_intent(self, event: TradeIntentEvent) -> list[OrderEventEvent]:
