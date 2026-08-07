@@ -217,6 +217,52 @@ Preferred rule:
 - broad runtime / dependency / bootstrap change:
   - deploy `main`
 
+## ⛔⭐⭐ Deploy-Window Discipline (earned 2026-08-06 — three rules)
+
+### 1. NO GATE EDITS DURING A DEPLOY WINDOW
+**A safety gate is not edited while you are trying to get through it.** Wanting to pass is precisely
+the state in which the edit looks obviously correct. Twice in one evening on
+`ops_preflight/preflight_v2_restart.sh`, both caught by luck rather than by control:
+
+- Lowering gate 0's clock threshold 18:00 → 16:00 was proposed on the grounds that the entry window
+  ends at 16:00. **Rejected by the operator — and within 20 minutes three segments armed at 16:20,
+  16:29 and 16:34.** Arming is **bar-driven and bars flow to 20:00**; the entry window is a
+  *different gate on a different event*, checked at emit. The edit would have made the gate read
+  green while segments were armed. **18:00 is wrong; 16:00 is wrong in the DANGEROUS direction.**
+- An untested manual-position override branch was then added for a blocking position that **cleared
+  itself before the branch ever ran**. Caught only because the test output came back *empty*.
+  Reverted.
+
+⇒ Gate changes are designed and tested **outside** a window, with a mutation proof.
+
+### 2. WHEN CI FAILS, ASK WHAT COULD *NOT* HAVE CAUSED IT — FIRST
+`validate` failed on a **docs-only branch**. A change that **cannot** cause a failure failing anyway
+is **the cheapest possible infrastructure signal** — and it went unread for ~15 minutes while jobs
+were re-run. GitHub Actions was in a **`major_outage`**.
+
+⇒ **When CI fails, first ask whether anything failing could not possibly be caused by the change.
+If yes, check INFRASTRUCTURE before checking your work.**
+`curl -s https://www.githubstatus.com/api/v2/components.json` is one command. Signature to
+recognise: a run-level `failure` with a job-level `cancelled`, **no steps and no retrievable log**,
+following a clean run history.
+
+### 3. "CI IS DOWN" IS NOT EVIDENCE IT WOULD HAVE PASSED
+An **absent** control is not a **satisfied** one, and the two collapse into each other under time
+pressure. Even with a full local suite green, ruff clean and a mutation proof, **the local run is
+against a copy of the tree, not the merged result.** That gap is *almost always* empty — and
+"almost always empty" is exactly the reasoning that keeps costing us.
+
+⇒ **Weigh the cost of WAITING before reaching for `--admin`.** If no position is at risk and no
+deadline exists, the expected loss from waiting is zero, and **the bar for proceeding without a
+control should be very high.** ⛔ Never admin-merge past an absent check without an explicit
+instruction naming that specific merge.
+
+### ⭐ Corollary — an acceptance test that depends on a market condition is a HOPE
+Prefer an acceptance signal **the deploy itself produces** (e.g. reading the changed variable out of
+`/proc/<pid>/environ` for every restarted service) over one that needs the market to cooperate. When
+a behavioural signal *cannot* fire, record it as **UNEXERCISED, never PENDING**, so its later
+absence is not misread as failure.
+
 ## Live Session Safety Rule
 
 During market hours:

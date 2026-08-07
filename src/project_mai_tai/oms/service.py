@@ -443,6 +443,12 @@ class OmsRiskService:
         # edge-triggered hold logging; never consulted by a decision path, so a lost entry costs
         # a log line and nothing else.
         self._p0a_held_orders: dict[UUID, tuple[datetime, str]] = {}
+        # P0a CENSUS (instrument-the-negative, 2026-08-06). `[OMS-P0A-HOLD]` at zero lines is
+        # ambiguous between "nothing qualified" and "the branch never fires" — and those are
+        # completely different worlds. The census counts EVERY evaluation and its outcome, so the
+        # negative becomes legible. Diagnostic only; never gates anything.
+        self._p0a_census: dict[str, int] = {}
+        self._p0a_census_last_emit: datetime | None = None
         # (broker_account_name, symbol) -> when the OCO cleared (armed -> not armed). Keeps the
         # software ladder deferred through the RESOLUTION window: an OCO leg filled and closed the
         # position, but the OMS position state lags the broker fill by ~tens of seconds, so a
@@ -3662,6 +3668,11 @@ class OmsRiskService:
 
     async def sync_broker_state(self, *, account_names: list[str] | None = None) -> dict[str, int]:
         order_summary = await self.sync_broker_orders(account_names=account_names)
+        # P0a census rollup. ⭐ Deliberately OUTSIDE any "did we evaluate anything" condition and
+        # outside the per-account loop: it must emit `evaluated=0` on a quiet day, because that is
+        # the reading that distinguishes "nothing qualified" from "the branch never runs". Gating
+        # it on having something to report would rebuild the silence it exists to remove.
+        self._maybe_emit_p0a_census()
         # Re-derive the OCO stand-down from the rows this sync just refreshed -- the broker
         # is the source of truth, never in-memory arm state. Safe on the boot path too: a
         # restart starts with an empty set and only stands down once the broker confirms.
@@ -4034,7 +4045,19 @@ class OmsRiskService:
                         # is exactly how a broken watch reports health. Log the engage EDGE (not every
                         # 5s tick, which would flood) so the hold is provable from the tape.
                         self._log_p0a_hold_edge(order, bid=bid_now)
+                        self._p0a_census_note("held")
                     else:
+                        # INSTRUMENT THE NEGATIVE (2026-08-06). Record WHY this evaluation declined.
+                        # Without it a silent `[OMS-P0A-HOLD]` cannot be read: "no managed exit
+                        # existed" and "the hold never engages" look identical from outside, and
+                        # that ambiguity is what kept P0a deployed-not-validated since 07-31.
+                        self._p0a_census_note(
+                            self._p0a_decline_reason(
+                                order,
+                                bid=(self._latest_quotes_by_symbol.get(order.symbol) or {}).get("bid"),
+                            )
+                            or "declined_unclassified"
+                        )
                         # If this order was being HELD and no longer qualifies, say so before the
                         # reprice — otherwise the hold's end is invisible and its duration
                         # unmeasurable, which is what made P0a unprovable in the first place.
@@ -6691,6 +6714,83 @@ class OmsRiskService:
             and not self._is_stop_guard_order(order)
             and not bool(getattr(self.settings, "oms_refresh_resting_trigger_orders", False))
         )
+
+    def _p0a_decline_reason(self, order: BrokerOrder, *, bid: float | None) -> str | None:
+        """WHY `_managed_exit_refresh_exempt` said no. Returns None when it said yes.
+
+        ⛔⭐ DIAGNOSTIC ONLY. This must NEVER gate behaviour — `_managed_exit_refresh_exempt`
+        remains the single authority for the hold decision. This function exists solely to make a
+        FALSE legible, because `[OMS-P0A-HOLD]` sitting at zero lines is ambiguous between at least
+        five different worlds and we spent a week unable to tell them apart.
+
+        ⛔ It duplicates the predicate's structure, so the two CAN drift. That is pinned by
+        `test_p0a_decline_reason_matches_predicate`, which asserts
+        `(_p0a_decline_reason(...) is None) == _managed_exit_refresh_exempt(...)` across a matrix of
+        inputs. If you edit one, that test fails until you edit the other. Do not delete it.
+        [[feedback_authoritative_for_a_is_not_for_b]] — two sources for one question is exactly the
+        bug class; the test is what keeps this pair honest.
+        """
+        if not bool(getattr(self.settings, "oms_hold_marketable_managed_exit", True)):
+            return "flag_off"
+        payload = order.payload or {}
+        if str(payload.get("oms_v2_managed_exit", "")).strip().lower() != "true":
+            return "not_managed_exit"
+        if str(payload.get("order_type", "")).strip().upper() != "LIMIT":
+            return "not_limit"
+        try:
+            limit_price = float(payload.get("limit_price"))
+        except (TypeError, ValueError):
+            return "no_limit_price"
+        if limit_price <= 0.0:
+            return "no_limit_price"
+        try:
+            bid_f = float(bid) if bid is not None else 0.0
+        except (TypeError, ValueError):
+            return "no_bid"
+        if bid_f <= 0.0:
+            return "no_bid"
+        if limit_price > bid_f:
+            return "not_marketable"
+        return None
+
+    def _p0a_census_note(self, key: str) -> None:
+        """Count one P0a evaluation outcome. Diagnostic only; never raises."""
+        try:
+            c = self.__dict__.setdefault("_p0a_census", {})
+            c[key] = c.get(key, 0) + 1
+        except Exception:  # noqa: BLE001 - bookkeeping must never break the protective sync
+            pass
+
+    def _maybe_emit_p0a_census(self, *, interval_seconds: float = 300.0) -> None:
+        """Periodic rollup of P0a evaluations.
+
+        ⭐⭐ THE WHOLE POINT: **this emits even when `evaluated=0`.** A census that only speaks when
+        it has something to say reproduces the exact failure it exists to cure — silence that could
+        mean "nothing qualified" or "the code never ran". `evaluated=0` is a RESULT and must appear
+        on the tape.
+
+        ⭐ Why a rollup and not a line per decline: this sits on the periodic order sync, so a
+        per-evaluation line would emit per working order per tick. That is the trade-coach
+        retry-storm shape (45% CPU while nominally disabled). Edge-triggered HOLD/RELEASED lines
+        stay as they are; the census carries the volume.
+        """
+        try:
+            now = utcnow()
+            last = self.__dict__.get("_p0a_census_last_emit")
+            if last is not None and (now - last).total_seconds() < interval_seconds:
+                return
+            self._p0a_census_last_emit = now
+            c = dict(self.__dict__.setdefault("_p0a_census", {}))
+            self._p0a_census = {}
+            evaluated = sum(c.values())
+            held = c.pop("held", 0)
+            declines = " ".join(f"{k}={v}" for k, v in sorted(c.items())) or "-"
+            self.logger.info(
+                "[OMS-P0A-CENSUS] window=%.0fs evaluated=%d held=%d declined: %s",
+                interval_seconds, evaluated, held, declines,
+            )
+        except Exception:  # noqa: BLE001
+            pass
 
     def _log_p0a_hold_edge(self, order: BrokerOrder, *, bid: float | None) -> None:
         """Log the P0a hold ENGAGING, once per order, never per 5s tick.
