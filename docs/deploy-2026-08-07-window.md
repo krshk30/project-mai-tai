@@ -8,6 +8,30 @@
 
 ---
 
+## ⭐ TIMING — read this first
+
+**Nothing is scheduled. This runs on the operator's go.** The window opens ~16:05.
+
+### ⚠️ Earlier is materially simpler than later
+**Every verification grep in §2 needs BOTH files after 20:00 ET** (00:00 UTC log rotation). That
+trap has already produced a false zero this week — a single-file grep read 7466 lines as 0. It is
+handled throughout this document, but **the earlier run is the cheaper one**: before 20:00 the
+verifications are single-file and the trap cannot fire at all.
+
+### Duration: **roughly 20–30 minutes**
+**Mostly verification, not execution.** The three restarts and the Redis command are a couple of
+minutes; §2's six checks are the rest, and the census alone has a **5-minute** emit interval that
+cannot be hurried.
+
+### ⛔ ATTENDED THROUGHOUT — not just at the start
+The operator needs to be **present for the override decision**, which lands partway in (§3), not
+merely to authorise the beginning. Do not start on a "go" that is only a go for step 1.
+
+### The one open decision
+**The gate override for #666.** Everything else in this document is pre-decided.
+
+---
+
 ## 0. WHAT IS IN SCOPE — and the merge state, verified on the BRANCH
 
 | PR | change | service | on `origin/main`? |
@@ -134,6 +158,15 @@ to 20:00, so segments arm after 16:00 routinely.
 
 ⛔ **Only the operator can authorise the override.** Use the documented token; record the reasoning
 at the time of use.
+
+### ⭐ STATE THIS AT THE MOMENT OF THE DECISION, NOT AFTERWARDS
+> **Declining costs less than it sounds.** If the override is declined, the **three OMS changes and
+> Redis proceed anyway** — including **#664, the one that matters**, which needs **no v2 restart**.
+> What is deferred is #663 (log only, no behaviour) and #666 (real, but its next exposure is
+> tomorrow's 16:00 close, so it fits tomorrow's window).
+
+⇒ The decision is *"do we take #666 tonight or tomorrow"*, **not** *"do we deploy tonight"*. Say that
+before he decides — afterwards it reads as consolation.
 
 ⭐ **Afterwards, put the asymmetry in the gate's own comment** — otherwise the next person re-derives
 it from scratch under the same time pressure.
