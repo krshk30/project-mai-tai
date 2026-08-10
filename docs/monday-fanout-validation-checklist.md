@@ -9,6 +9,32 @@ brokers each: **pre-market (~07:00 ET, EH)** and **RTH open (09:30 ET)**. This i
 - KILL SWITCH (any time): drop `MAI_TAI_STRATEGY_SCHWAB_1M_V2_DUAL_BROKER_FANOUT_ENABLED` from the env +
   restart oms & schwab-1m-v2 → back to mirror-on-fill (byte-identical).
 
+> ### ⛔⭐⭐ READ BEFORE USING THAT KILL SWITCH — IT NO LONGER LANDS WHERE THE LINE ABOVE SAYS
+> *(found 2026-08-10; that line was written when the mirror was expected to get its own account.)*
+>
+> Production now runs **BOTH** flags on:
+> ```
+> MAI_TAI_STRATEGY_SCHWAB_1M_V2_WEBULL_MIRROR_ENABLED=true
+> MAI_TAI_STRATEGY_SCHWAB_1M_V2_DUAL_BROKER_FANOUT_ENABLED=true
+> ```
+> Mirror-on-fill is inert **only because the fan-out flag suppresses it** — the queue predicate is
+> `mirror_enabled AND NOT fanout_enabled` (`oms/service.py`). The two are mutually exclusive by
+> design, and fan-out currently wins. §A.3/B.3 below test that mutual exclusion while fan-out is ON;
+> they say nothing about what happens when it goes OFF.
+>
+> ⛔ **So dropping the fan-out flag does not return to a dormant state — it ACTIVATES mirror-on-fill,
+> pointed at `live:orb`.** That is the one thing the mirror path's own code forbids:
+> *"Provision a dedicated account (e.g. `live:v2_webull`); **do NOT point this at `live:orb`**."*
+> `live:orb` is the fan-out account, and the shared Webull account.
+>
+> ⇒ **A rollback that makes things worse, at the exact moment nobody re-reads the second flag.**
+> **Drop `..._WEBULL_MIRROR_ENABLED` in the SAME edit**, then verify BOTH are absent/false before
+> restarting oms. Otherwise the kill switch trades one live path for an unintended one.
+>
+> ⚠️ Not a live defect today — a **rollback hazard**. Recorded here *and* in
+> [`dual-broker-v2-design.md`](dual-broker-v2-design.md) because the hazard is the INTERACTION, so
+> whichever flag you arrive at, you need to know about the other one.
+
 Shell prelude for the SQL blocks (run once per ssh session):
 ```bash
 URL=$(sudo grep -E '^MAI_TAI_DATABASE_URL=' /etc/project-mai-tai/project-mai-tai.env | head -1 | cut -d= -f2-)
