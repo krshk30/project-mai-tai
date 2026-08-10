@@ -26,15 +26,17 @@
 
 ## ⚡ FIRST SCREEN — act on this alone
 
-**Fleet: 7 services active. Deployed HEAD `234c915`** (verified in the CHECKOUT, not just the PR).
+**Fleet: 7 services active. Deployed HEAD `ca0cf92`** (verified in the CHECKOUT, not just the PR).
 **Broker FLAT except `CYN 5000` (operator manual, never touched).** ✅ **DSY EXITED 18:27 ET** in
 extended hours — `[OMS-V2-MANAGED-EXIT] CW_FLOOR ref=4.7226` → `[OMS-V2-MANAGED-CLOSE] flat`. The
 15:59:46 entry that started the 16:00 workstream **did not go into the weekend**, and the exit ladder
 worked unattended. **`SESSION_TIME_ROLL_ENABLED=true`.**
 
 ⛔⭐ **#666 (RCEL) and #663 are LIVE but UNVALIDATED until Monday** — see the split below. A quiet
-weekend is not evidence. ⛔ **`[VIRTUAL-CLEAR]` (#668) is NOT deployed** — it is the agreed first
-step on open item 12 and lands before Monday's open.
+weekend is not evidence. ✅ **`[VIRTUAL-CLEAR]` (#668) IS deployed** — second deploy 18:36 ET Friday,
+`234c915 → ca0cf92` (see the section below). ⛔ The **path** is UNEXERCISED, which is not a pass:
+zero rows fleet-wide have `quantity > 0`, so a quiet log is the expected output and **a line there is
+a FINDING**.
 
 ## ✅ DEPLOYED 2026-08-07 17:26–17:48 ET (Friday, attended, operator override)
 
