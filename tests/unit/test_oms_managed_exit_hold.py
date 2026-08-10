@@ -356,3 +356,101 @@ def test_p0a_census_respects_its_interval() -> None:
     svc._maybe_emit_p0a_census()
 
     assert len(lines) == 1, "only the first call in the interval may emit"
+
+
+# ── P0a CENSUS DENOMINATOR (2026-08-10) ───────────────────────────────────────────────────────
+# ⛔⭐⭐ THE CENSUS REBUILT ITS OWN AMBIGUITY ONE LEVEL UP. It was built to separate "nothing
+# qualified" from "the branch never runs" — and it does. But it counted OBSERVATIONS (evaluations
+# at a sync tick) and never OPPORTUNITIES (managed exits emitted), so `evaluated=0` still conflated
+# "no exits happened" with "exits happened and every one filled before a tick could see it".
+#
+# Those are not equally interesting worlds. Measured 2026-08-10: managed-exit submit->fill over 14
+# days, n=27, ALL inside one 15s `oms_broker_sync_interval_seconds` tick, ZERO living >=15s
+# => P0a is STRUCTURALLY UNREACHABLE on this population and `evaluated=0` is CORRECT, not a broken
+# caller. Reaching that verdict took a separate ad-hoc SQL query; `submitted` puts it on the tape.
+# [[feedback_an_ambiguity_fix_that_rebuilds_the_ambiguity]]
+
+
+def test_census_reports_the_denominator_not_just_the_numerator() -> None:
+    """submitted>0 with evaluated=0 is the UNREACHABLE reading — the one that took a separate
+    query to establish. It must be legible from the line alone."""
+    svc = _svc()
+    lines: list[str] = []
+    svc.logger = SimpleNamespace(info=lambda msg, *a: lines.append(msg % a))
+    svc._p0a_census = {}
+    svc._p0a_census_last_emit = None
+    svc._p0a_census_submitted = 0
+
+    for _ in range(3):
+        svc._p0a_census_note_submitted()
+    svc._maybe_emit_p0a_census()
+
+    assert "submitted=3" in lines[0]
+    assert "evaluated=0" in lines[0], "three exits emitted, none ever seen working at a tick"
+
+
+def test_census_distinguishes_no_exits_from_exits_too_fast_to_see() -> None:
+    """⭐ THE WHOLE POINT OF THE DENOMINATOR — the two worlds `evaluated=0` used to collapse."""
+    quiet, fast = [], []
+    for sink, submitted in ((quiet, 0), (fast, 4)):
+        svc = _svc()
+        svc.logger = SimpleNamespace(info=lambda msg, *a, _s=sink: _s.append(msg % a))
+        svc._p0a_census = {}
+        svc._p0a_census_last_emit = None
+        svc._p0a_census_submitted = submitted
+        svc._maybe_emit_p0a_census()
+
+    assert "submitted=0 evaluated=0" in quiet[0], "no managed exit occurred — nothing to conclude"
+    assert "submitted=4 evaluated=0" in fast[0], "exits occurred and NONE was seen => unreachable"
+    assert quiet[0] != fast[0], (
+        "MUTATION GUARD: before `submitted`, these two windows produced BYTE-IDENTICAL lines. "
+        "That identity is exactly the defect; if this ever passes again the denominator is gone."
+    )
+
+
+def test_submitted_counter_resets_with_the_window() -> None:
+    """It is a per-window count like every other field on the line. A cumulative counter beside
+    per-window ones would misread as a rate."""
+    svc = _svc()
+    lines: list[str] = []
+    svc.logger = SimpleNamespace(info=lambda msg, *a: lines.append(msg % a))
+    svc._p0a_census = {}
+    svc._p0a_census_last_emit = None
+    svc._p0a_census_submitted = 0
+
+    svc._p0a_census_note_submitted()
+    svc._maybe_emit_p0a_census()
+    assert "submitted=1" in lines[0]
+
+    svc._p0a_census_last_emit = None      # next window
+    svc._maybe_emit_p0a_census()
+    assert "submitted=0" in lines[1], "the count must not carry across windows"
+
+
+def test_submitted_is_not_folded_into_evaluated() -> None:
+    """⛔ `evaluated` is `sum(_p0a_census.values())`. Counting submissions in that dict would
+    inflate the very number the denominator exists to qualify — the same corruption facing the
+    other way."""
+    svc = _svc()
+    lines: list[str] = []
+    svc.logger = SimpleNamespace(info=lambda msg, *a: lines.append(msg % a))
+    svc._p0a_census = {"held": 1, "not_marketable": 2}
+    svc._p0a_census_last_emit = None
+    svc._p0a_census_submitted = 9
+
+    svc._maybe_emit_p0a_census()
+
+    assert "submitted=9" in lines[0]
+    assert "evaluated=3" in lines[0], "evaluated must count ONLY evaluations, never submissions"
+    assert "held=1" in lines[0]
+
+
+def test_census_bookkeeping_never_raises_into_the_exit_path() -> None:
+    """The exit path is protective. A diagnostic counter must never be able to break it."""
+    svc = _svc()
+    svc.__dict__["_p0a_census_submitted"] = "not-an-int"   # corrupt it
+    svc._p0a_census_note_submitted()                        # must swallow
+    lines: list[str] = []
+    svc.logger = SimpleNamespace(info=lambda msg, *a: lines.append(msg % a))
+    svc._p0a_census_last_emit = None
+    svc._maybe_emit_p0a_census()                            # must not raise

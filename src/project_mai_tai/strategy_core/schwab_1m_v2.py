@@ -1813,6 +1813,22 @@ class SchwabV2Strategy:
         if not was_broker_order:
             # EH SOFTWARE REST: nothing was ever sent to the broker -> clear the in-memory arm only
             # (a broker cancel for a non-existent order would be spurious).
+            #
+            # ⛔⭐ DO NOT STAMP A FILL VERDICT ON AN ORDER THAT NEVER REACHED THE BOOK.
+            # `flip_no_fill` asserts "an order was resting and did not fill". On the soft-rest path
+            # NO resting order ever existed at the broker — the arm lived in memory only — so the
+            # unqualified reason is FALSE, and the counts read off this tape inherit the error.
+            # A wrong reason is worse than a missing one: it stops the investigation.
+            # [[feedback_a_wrong_reason_is_worse_than_a_missing_one]]
+            #
+            # ⚠️ WHAT THIS STILL CANNOT SAY. It separates "no broker order existed" from "one did";
+            # it does NOT separate an EH cross whose marketable limit the OMS ABANDONED pre-submit
+            # (`ASK_PAST_BAND` / `NO_FRESH_QUOTE` / `MISSING_SIGNAL`) from one that reached the book
+            # and genuinely went unfilled. The strategy cannot see the OMS abandon — that needs a
+            # signal it does not have today, and inventing one here would be a behaviour change.
+            # Declared rather than left implied. [[feedback_a_watch_that_fails_to_a_false_clean]]
+            if reason == "flip_no_fill":
+                reason = "flip_no_fill_soft_rest"
             logger.info("[V2-RESTING-EH-DISARM] %s reason=%s level=%.4f", state.symbol, reason, was_level)
             return
         logger.info("[V2-RESTING-CANCEL] %s reason=%s level=%.4f",
