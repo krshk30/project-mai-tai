@@ -235,6 +235,16 @@ class SymbolState:
     # CW-v2 RESTING flip-entry (INERT unless strategy_schwab_1m_v2_cw_v2_resting_entry_enabled). A
     # resting buy-stop-limit tracks the ATR SHORT trail; NO-OVERLAP replace (cancel one bar, place the
     # next => never two live buy orders). Reset with the other cw_* at the 04:00-ET anchor.
+    last_resting_placed_slot: str = "first"    # the slot of the most recent PLACEMENT. Survives the
+    #   cancel on purpose: the position poll can observe a fill AFTER `resting_active` is cleared,
+    #   and fill attribution must not depend on that ordering. Reset only at the segment reset.
+    resting_slot: str = "first"                # WHICH entry slot owns the live resting order:
+    #   "first"   -> tracks the ATR SHORT trail (ratchets DOWN toward price) — the original path
+    #   "reclaim" -> tracks `cw_segment_high` (ratchets UP away from price) — the rested reactive entry
+    # ⛔⭐ IT SELECTS A REPRICE LEVEL AND NOTHING ELSE. It must NEVER gate a cancel. If it were
+    # corrupted the worst outcome is repricing to the wrong level; the order stays MANAGED by the one
+    # latch and can never be orphaned. That property is why this change needs no second latch —
+    # see docs/v2-reactive-resting-entry-design.md §4 (#580 / EGG-POLA).
     resting_active: bool = False               # a resting entry is armed (broker order OR EH soft-rest)
     resting_level: float = 0.0                 # the stop price (the ATR line) the resting order sits at
     # ⛔⭐ SET AT PLACEMENT, READ AT CANCEL. `resting_active` is True for BOTH an RTH broker order and
@@ -626,7 +636,19 @@ class SchwabV2Strategy:
         # API-open block, as UPC hit on 2026-08-03 -- therefore still consumes its slot and stays
         # bounded under the per-type cap.
         if prev_held == 0 and state.position_qty_held > 0 and not state.cw_reclaim_taken:
-            state.cw_resting_taken = True
+            # ⛔⭐⭐ CLAIM ON FILL — and the slot decides WHICH claim.
+            # The original inference was "the reactive path claims cw_reclaim_taken at EMIT, so a
+            # fill with the reclaim slot still free must be the resting one." The RESTED reclaim
+            # entry breaks that premise: it places an order and claims nothing until it fills, so a
+            # free reclaim slot no longer implies a first-entry fill. Read the slot that actually
+            # placed the order instead of inferring it.
+            # ⛔ `last_resting_placed_slot`, NOT `resting_slot`: this poll can run after the cancel
+            # has reset the live view, and the original comment's robustness ("robust to the order
+            # in which resting_active is cleared") must be preserved.
+            if state.last_resting_placed_slot == "reclaim":
+                state.cw_reclaim_taken = True
+            else:
+                state.cw_resting_taken = True
         if prev > 0 and state.position_qty == 0:
             # ⛔ NO COOLDOWN (removed 2026-07-28, operator decision). A 5-bar cooldown used to be
             # armed here. It was invented when reclaim was UNCAPPED and could chase the same trade
@@ -1011,6 +1033,8 @@ class SchwabV2Strategy:
         state.resting_active = False
         state.resting_level = 0.0
         state.resting_is_broker_order = False
+        state.resting_slot = "first"
+        state.last_resting_placed_slot = "first"
 
     def roll_stale_session_state(
         self,
@@ -1787,9 +1811,11 @@ class SchwabV2Strategy:
         minutes = et.hour * 60 + et.minute
         return not (9 * 60 + 30 <= minutes < 16 * 60)
 
-    def _queue_resting_place(self, state: SymbolState, line: float) -> None:
+    def _queue_resting_place(self, state: SymbolState, line: float, *, slot: str = "first") -> None:
         limit = line * (1.0 + self._resting_entry_band_pct / 100.0)
         state.resting_active = True
+        state.resting_slot = slot        # ⛔ selects the REPRICE level only; never gates a cancel
+        state.last_resting_placed_slot = slot
         state.resting_level = line
         if self._eh_resting_enabled and self._resting_session_is_eh():
             state.resting_is_broker_order = False      # soft-rest: nothing goes to the broker
@@ -1798,14 +1824,14 @@ class SchwabV2Strategy:
             # emits the marketable EH-LIMIT on the up-cross). No broker draft is queued; the state machine
             # (reprice / grace / window) is otherwise byte-identical.
             logger.info(
-                "[V2-RESTING-EH-ARM] %s soft-rest at level=%.4f (EH; broker stop dead, watching quotes)",
-                state.symbol, line,
+                "[V2-RESTING-EH-ARM] %s slot=%s soft-rest at level=%.4f (EH; broker stop dead, watching quotes)",
+                state.symbol, slot, line,
             )
             return
         state.resting_is_broker_order = True           # a REAL broker order from here on
         logger.info(
-            "[V2-RESTING-PLACE] %s stop=%.4f limit=%.4f (band %.2f%%)",
-            state.symbol, line, limit, self._resting_entry_band_pct,
+            "[V2-RESTING-PLACE] %s slot=%s stop=%.4f limit=%.4f (band %.2f%%)",
+            state.symbol, slot, line, limit, self._resting_entry_band_pct,
         )
         self._pending_intents.append(TradeIntentDraft(
             symbol=state.symbol, side="buy", intent_type="open",
@@ -1831,9 +1857,11 @@ class SchwabV2Strategy:
     def _queue_resting_cancel(self, state: SymbolState, *, reason: str) -> None:
         was_level = state.resting_level
         was_broker_order = state.resting_is_broker_order
+        was_slot = state.resting_slot
         state.resting_active = False
         state.resting_level = 0.0
         state.resting_is_broker_order = False
+        state.resting_slot = "first"
         # ⛔⭐ BRANCH ON WHAT WAS PLACED, NOT ON THE CURRENT SESSION.
         # This used to read `self._resting_session_is_eh()` — the session NOW — on the premise that
         # "in EH nothing is live at the broker". True of an order PLACED in EH; false of one placed
@@ -1861,10 +1889,11 @@ class SchwabV2Strategy:
             # Declared rather than left implied. [[feedback_a_watch_that_fails_to_a_false_clean]]
             if reason == "flip_no_fill":
                 reason = "flip_no_fill_soft_rest"
-            logger.info("[V2-RESTING-EH-DISARM] %s reason=%s level=%.4f", state.symbol, reason, was_level)
+            logger.info("[V2-RESTING-EH-DISARM] %s slot=%s reason=%s level=%.4f",
+                        state.symbol, was_slot, reason, was_level)
             return
-        logger.info("[V2-RESTING-CANCEL] %s reason=%s level=%.4f",
-                    state.symbol, reason, was_level)
+        logger.info("[V2-RESTING-CANCEL] %s slot=%s reason=%s level=%.4f",
+                    state.symbol, was_slot, reason, was_level)
         self._pending_intents.append(TradeIntentDraft(
             symbol=state.symbol, side="buy", intent_type="cancel",
             quantity=Decimal(str(self._atr_qty)),
@@ -1889,6 +1918,16 @@ class SchwabV2Strategy:
         if not (self._resting_entry_enabled and self._cw_v2_enabled):
             return
         if self._entries_held:   # boot-hold suppresses all entries
+            return
+        # ⛔⭐⭐ SLOT SEPARATION — THE #580 / EGG-POLA SURFACE.
+        # This method manages the FIRST-entry order and reprices it against the ATR SHORT trail.
+        # A RECLAIM order rests at `cw_segment_high`, which moves the OTHER WAY (up, away from
+        # price), so letting this branch touch one would reprice it to a level from a different
+        # mechanism — and the STABLE-REST comparison below would fire on essentially every bar.
+        # ⛔ RETURN, never cancel: cancelling here would be a cancel issued by the wrong owner, which
+        # is precisely the cross-slot orphan this design must not reopen. The reclaim manager owns
+        # it and cancels it through the SAME `_queue_resting_cancel`, so it is never unmanaged.
+        if state.resting_active and state.resting_slot != "first":
             return
         if state.position_qty_held != 0:
             # In a position -> the OTOCO exit owns it. Drop the flag + any pending-fill grace.
@@ -2003,6 +2042,86 @@ class SchwabV2Strategy:
             return
         # No / unknown signal while flat: HOLD the resting order out there (do nothing).
         return
+
+    def _cw_v2_reclaim_resting_track(self, state: SymbolState) -> None:
+        """RESTED RECLAIM ENTRY — rest at `cw_segment_high` instead of chasing the break with a MARKET.
+
+        ⭐⭐ WHY (execution only). The reactive path chases a price it already knew: the level is
+        computed at bar close, then the bot waits for a print above it and buys AFTER the print.
+        Measured 21d on live:schwab_1m_v2, same universe and window — reactive MARKET **SD 58.6 bps,
+        worst adverse +351.7**; the price-committed paths **SD ~25-26 bps, worst +60.2**.
+        ⛔ #674's price cap is a STOPGAP on this path — it bounds the damage, it does not stop the
+        chasing. See docs/v2-reactive-resting-entry-design.md.
+
+        ⛔⭐ ONE RESTING ORDER PER SYMBOL, NOT TWO. `_cw_v2_quote` has always stood the reactive path
+        down while `resting_active` (`if not self._reactive_entry_enabled or state.resting_active`),
+        so the two entry types are ALREADY mutually exclusive and never both want an order. This
+        method therefore places into the SAME latch via the SAME helpers — no second slot, no second
+        latch, no second broker order, and `_resting_entry_already_open` is never reached (its
+        protection is retained: both keep the `resting_entry` tag).
+
+        ⛔⭐⭐ ZERO NEW CLEAR-WITHOUT-CANCEL SITES. The three existing writers of
+        `resting_active = False` are `_queue_resting_cancel` (cancels first), the session-anchor
+        reset, and the position-held gate. This method adds none: it only ever clears state THROUGH
+        `_queue_resting_cancel`. That is the acceptance criterion for #580 / EGG-POLA, not a caveat.
+
+        ⛔ THE LEVEL MOVES THE OTHER WAY. `cw_segment_high` is monotonically non-decreasing, so a
+        reprice raises the resting level. That is FAITHFUL, not a defect: today's reactive entry
+        already buys at market when price breaks a rising segment high — this enters on the same
+        trigger, price-committed. Rule 7 is NOT evaluated (a broker stop cannot carry intrabar
+        state); that is the entire fidelity difference, ~1.3% upper bound.
+        """
+        if not (self._reactive_entry_enabled and self._cw_v2_enabled):
+            return
+        if self._entries_held:                       # boot-hold suppresses all entries
+            return
+        if not self._resting_in_window():            # wall-clock; never rest on stale/replayed bars
+            if state.resting_active and state.resting_slot == "reclaim":
+                self._queue_resting_cancel(state, reason="window_closed")
+            return
+        # ⛔⭐ RTH ONLY — and this is a REGRESSION GUARD, not a scope preference.
+        # In extended hours the reactive entry is ALREADY price-committed: it emits a marketable
+        # band-capped EH-LIMIT via `_eh_resting_cross_check` + the OMS EH pricer. Resting here
+        # competed with that deployed path and turned a working EH reactive fill into an
+        # `ASK_PAST_BAND` abandon (caught by test_p3_premarket_reactive_eh_marketable_fill).
+        # There is nothing to win in EH — the slippage this change targets was measured on RTH
+        # MARKET orders — and a broker stop cannot trigger in EH anyway.
+        if self._resting_session_is_eh():
+            if state.resting_active and state.resting_slot == "reclaim":
+                self._queue_resting_cancel(state, reason="session_eh")
+            return
+        if state.position_qty != 0 or state.cw_reclaim_taken:
+            # In a position, or this cross has already used its reclaim. ⛔ Cancel through the one
+            # path rather than clearing state, or the order becomes unmanaged.
+            if state.resting_active and state.resting_slot == "reclaim":
+                self._queue_resting_cancel(state, reason="slot_consumed")
+            return
+        armed = bool(state.cw_armed and state.cw_bars_waited >= 2 and state.cw_segment_high > 0.0)
+        if not armed:
+            # The segment ended (flip-down / disarm) -> a level from a DEAD segment must never keep
+            # resting. This is the live-money version of a dangling ARM.
+            if state.resting_active and state.resting_slot == "reclaim":
+                self._queue_resting_cancel(state, reason="new_segment")
+            return
+        if state.resting_active and state.resting_slot != "reclaim":
+            return          # the FIRST slot owns the live order; stand down (mutual exclusion)
+        level = float(state.cw_segment_high)
+        if not state.resting_active:
+            if not self._liquidity_floor_ok(state):
+                return      # arm-time floor only, exactly as the first-entry path
+            # STOP<=ASK guard (#527), reused verbatim, fail-open unchanged. ⛔ The residual risk is
+            # HIGHER here than where it was measured: `cw_segment_high` sits AT the recent high by
+            # definition, while the first-entry trail sits below the market by construction.
+            if not (self._eh_resting_enabled and self._resting_session_is_eh()):
+                ask = float(getattr(state.last_quote, "ask_price", 0.0) or 0.0) if state.last_quote else 0.0
+                if ask > 0.0 and level <= ask:
+                    return
+            self._queue_resting_place(state, level, slot="reclaim")
+            return
+        # STABLE-REST: re-place only on a meaningful move, else leave it out there (#547/NVVE).
+        if (state.resting_level > 0.0
+                and abs(level - state.resting_level) / state.resting_level >= self._resting_reprice_frac):
+            self._queue_resting_cancel(state, reason="reprice")
 
     def _eh_resting_cross_check(self, state: SymbolState, quote: Quote) -> TradeIntentDraft | None:
         """EH software-emulated resting TRIGGER (P-B2). A broker buy-stop-limit can't trigger in extended
@@ -2262,6 +2381,9 @@ class SchwabV2Strategy:
         # trail (place / no-overlap replace / cancel). No-op unless the resting flag is on; appends
         # place/cancel drafts to _pending_intents, which the bot loop drains after on_bar.
         self._cw_v2_resting_track(state, atr_signal)
+        # RESTED RECLAIM: runs AFTER the first-entry manager, and stands down whenever that slot owns
+        # the live order. One resting order per symbol, always — see the method's docstring.
+        self._cw_v2_reclaim_resting_track(state)
 
         # Confirmed-window (variant CW) bar-close flip EXIT signal: when CW is on and we
         # HOLD a position, a bar that closes below the ATR trail (flip == "SELL") is the
