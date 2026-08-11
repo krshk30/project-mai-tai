@@ -30,13 +30,28 @@ class _FakeRedis:
 class _Harness:
     # `enabled` = the exit flag; `register` = the dedicated coverage flag (decoupled).
     # _sync_gateway_subscription registers when EITHER is on.
-    def __init__(self, *, enabled: bool = False, register: bool = False, watchlist: set[str]) -> None:
+    #
+    # `coverage` = HELD symbols kept subscribed after the scanner drops them, so their exits keep
+    # working (2026-08-11). Defaults to empty, which keeps every assertion below unchanged —
+    # published symbols are then exactly the watchlist, as before.
+    # See tests/unit/test_v2_held_symbol_exit_coverage.py for the held-symbol behaviour itself.
+    _subscription_symbols = SchwabV2BotService._subscription_symbols
+
+    def __init__(
+        self,
+        *,
+        enabled: bool = False,
+        register: bool = False,
+        watchlist: set[str],
+        coverage: set[str] | None = None,
+    ) -> None:
         self.settings = Settings(
             oms_v2_exit_management_enabled=enabled,
             strategy_schwab_1m_v2_gateway_register_enabled=register,
         )
         self.redis = _FakeRedis()
         self._watchlist = set(watchlist)
+        self._exit_coverage = set(coverage or ())
         self._last_gateway_symbols = None
 
 
