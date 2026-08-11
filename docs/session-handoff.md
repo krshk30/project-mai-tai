@@ -14,133 +14,116 @@
 
 ## ⚡ FIRST SCREEN — act on this alone
 
-**Fleet: 7 services active. Deployed HEAD `cb30fcd`** (verified in the CHECKOUT, not just the PR).
-**Broker FLAT except `CYN 5000` (operator manual).** **`SESSION_TIME_ROLL_ENABLED=true`.**
+**As of 2026-08-11 EOD.** Fleet: 6 services active, `NRestarts=0`. **Deployed HEAD `32926b6`**
+(verified in the CHECKOUT and by CONTENT, not just the PR).
 
-⛔⭐⭐ **TWO ENTRY-PATH CHANGES ARE LIVE, ENABLED, AND UNVALIDATED — unattended from 07:00 ET.**
-`#674` (reactive = band-capped LIMIT) and `#676` (reclaim RESTS at the segment high). Both change
-what the bot sends. Nothing could be exercised at deploy time (market closed) — see the validation
-split below. Exposure is bounded: **qty 2**, and both make entries **more** price-controlled.
+⛔⭐⭐ **`FRTT` IS NOW PROTECTED — IT WILL NOT TRADE AT ALL.**
+`MAI_TAI_PROTECTED_SYMBOLS=CYN,TE,FRTT` (was `CYN,TE`). Operator-directed after he manually bought
+5,000 FRTT mid-afternoon while the bot was trading the same name. **He closed that position into the
+bell, so the original reason is gone** — this is a one-line revert + restart when he wants it back.
+Backup: `/etc/project-mai-tai/project-mai-tai.env.bak-20260811-deploy`.
+⚠️ FRTT vanishing from the watchlist is the protection working, **not a defect**.
 
-⛔ **`AUUD MGIH WAFU WYHG` carry a re-issued entry cap** (Bug 2, accepted in the override). The cost
-is a **lost entry, never a duplicate**; the 04:00 roll clears stale arms.
+**Broker FLAT except `CYN 5000` (operator manual).** 0 working orders, 0 open managed rows.
 
-## ✅ DEPLOYED 2026-08-10 20:21 ET — `ca0cf92 → cb30fcd`
-
-Merged in order: **#672** `4692948` → **#674** `6668042` → **#676** `cb30fcd`
-(#675 conflicted after #674 was squash-merged; rebased as #676, full suite re-run on the new main).
+## ✅ DEPLOYED 2026-08-11 16:08 ET — `cb30fcd → 32926b6`
 
 | step | result |
 |---|---|
-| gate | **GO BY OPERATOR OVERRIDE, exit 0** — see below |
-| restart | stop v2 → restart oms → start v2. All 6 services `active`, `NRestarts=0`, **0 tracebacks** |
-| boot | `[V2-BOOT-HOLD] released — 0 reconstructed-uncapped segments; CW-v2 entries open`, watchlist 8 |
-| **bar gap** | newest bar **19:59 ET** — EH closed 20:00, **no bars were due, no hole possible** |
-| post-deploy | **0 orders · 0 intents · 0 working · 0 managed rows**; broker flat except CYN |
-| suite | 1925 (baseline) → **1978 passed**, +53 tests, zero regressions, ruff clean |
+| merged | **#678** `460b1ac` → **#679** `32926b6` |
+| restart | stop v2 → restart oms → start v2. 6 services active, `NRestarts=0`, **0 tracebacks** |
+| boot | `[V2-BOOT-HOLD] released — 0 reconstructed-uncapped segments` 16:08:48 |
+| **bar gap** | **NO HOLE** — every minute 16:00→16:08 present for all 4 watched symbols |
+| suite | **1996 passed / 0 failed** (baseline 1978 + 18 new), ruff clean |
+| ⚠️ window | deployed at **16:08 ET, EH still open**, on the operator's explicit call (armed-but-flat accepted). Not the 20:15 quiet window. It came out clean; **do not treat that as licence** |
 
-### ⭐⭐ THE GATE WORKED AS DESIGNED — first time. Note it as ACHIEVED.
-```
-[ok]       past 18:00 ET
-[OVERRIDE] 4 ARMED SEGMENT(S) accepted by the OPERATOR: AUUD MGIH WAFU WYHG
-           Bug 2 WILL re-issue the entry cap on each. That BLOCKS entries;
-           the cost is a lost entry, never a duplicate.
-[ok]       zero open managed rows
-[ok]       broker flat on both real-money accounts (operator manuals excluded)
-===> GO **BY OPERATOR OVERRIDE**.   TRUE EXIT CODE = 0
-```
-⛔ Friday and today's 16:08 run both had blocks with **NO token**, bypassed with nothing in the
-gate's own record. Tonight: **one block, one documented token, exit 0, complete audit trail.**
-⭐ **The anti-reuse property fired and was RIGHT:** the armed set moved `JWEL SCKT WYHG XHLD`
-(16:08) → `AUUD STKH WYHG` (18:05) → `AUUD MGIH WAFU WYHG` (20:15). A copied list is refused by
-design. **Always re-read the set at the instant of the run.**
-⚠️ Read the exit code **UNPIPED** — a pipe reported a false `EXIT=0` on Friday.
+### #678 — held positions keep their market data
+Subscriptions now publish **watchlist ∪ held**. The OMS exit ladder is NOT watchlist-gated
+(`_watchlist` = 0 refs in `oms/service.py`) but it IS quote-driven, so dropping a held symbol
+silently disarmed CW_TARGET/CW_FLOOR/CW_HARD_STOP/CW_FLIP **together**. Ownership = 3-source
+ADD-only union (virtual ∪ managed ∪ **account_positions**) minus protected. ⛔ **EXIT-ONLY** — see
+`docs/design/held-symbol-exit-coverage.md` §2; do not "complete" it to allow entries.
+⚠️ **`[V2-EXIT-COVERAGE]` has fired 0×. UNEXERCISED — needs a live held position.**
 
-### ⛔ VALIDATION SPLIT — one confirmed, the rest UNEXERCISED **by construction**
-| what | status |
-|---|---|
-| **#672 census denominator** | ✅ **CONFIRMED LIVE.** Before/after across the restart: `window=300s evaluated=0` → `window=300s **submitted=0** evaluated=0` |
-| #672 `[OMS-INTENT-DROPPED]`, `flip_no_fill_soft_rest` | **UNEXERCISED** — needs a dropped intent / a soft-rest flip |
-| #674 `[OMS-V2-RTH-REACTIVE-LIMIT]`, `[V2-CW-RULE7-BLOCK]` | **UNEXERCISED** — needs an RTH reactive cross |
-| #676 `[V2-RESTING-PLACE] slot=reclaim` | **UNEXERCISED** — needs a resting placement |
-
-⛔ **Market was closed at deploy time. Silence is NOT a pass — do not write it up as one.**
+### #679 — the orphan watch asks a stronger question
+`classify_unowned` (*does anything OWN this order?*) + `classify_oversell` (working sells ≤ shares
+held). 6/6 mutations. Live GREEN on cron at 16:09:22 ET.
 
 ---
 
-## 👀 WATCH TOMORROW (2026-08-11) — from 07:00 ET
+## 👀 WATCH TOMORROW (2026-08-12)
 
-1. **⭐ IMMEDIATE — `[V2-RESTING-PLACE] slot=reclaim` on the first reactive cross.** That is #676's
-   acceptance as a **quoted line**, not a statistical inference hours later. `slot=first|reclaim`
-   separates the two paths on the tape.
-2. **Then the price comparison** — reactive fills should show the RESTING path's dispersion
-   (**SD ~25 bps, nothing past ~60**) instead of **SD 57.0 / worst +351.7**. ⛔ **PRICE ONLY. No
-   outcome measures** — strategy is parked.
-3. ⚠️ **Stop-above-ask rejects.** `cw_segment_high` sits AT the recent high by definition, so this
-   path is **more** exposed than the trail-based one. **4 leaks in 11 days on the LESS exposed path
-   is the BASELINE, not the expectation.** A rise is expected in direction, unknown in size.
-4. ⚠️ **A limit that does not fill.** A market order always fills; #674/#676 sometimes will not.
-   Both placement and abandon are logged — read the non-fill rate off the tape.
-5. **`[V2-CW-RULE7-BLOCK]`** — turns the 1.3% upper bound into a measured number within days.
-6. **#668 `[VIRTUAL-CLEAR]`** — still UNEXERCISED. ⛔ **A line there is a FINDING, not a pass.**
-7. **#664 CW_FLIP fan-out** — opportunistic; **UNEXERCISED is the expected outcome, not a failure.**
+1. **⭐ `[V2-EXIT-COVERAGE]` on the first held position** — #678's acceptance, as a quoted line.
+2. **⭐ The orphan watch's NEW lines** — a `classify_unowned` RED is a **FINDING** (a failed cancel
+   happened again); a `classify_oversell` RED means stacked sells. Neither has fired yet.
+3. **Webull reject storm** — ~30 rejected market sells on WXM alone today; every exit preceded by a
+   burst of 3–11. `live:orb` shows **10,980 rejected sells vs 144 filled over 11 days**. #608 did
+   not close this. ⛔ contaminated by the client-abort conflation, so treat the magnitude, not the
+   count, as the signal.
+4. **FRTT** — protected. Decide whether to unprotect.
 
 ### Tomorrow's queue
-1. **Commit the exec bit on `ops/health/bar_gap_watch_cron.sh`** — the box has a hand-`chmod +x`;
-   the **committed mode is still 100644**, so a fresh checkout gets a cron that silently never runs.
-2. **Decide deliberately whether #674's price cap stays** now that #676 rests. It was shipped as a
-   **STOPGAP** on that path. ⛔ Do not leave it by default — decide.
-3. **Two sweeps** (below).
-4. Pre-flight override paths for the flat blocks (still no token; not needed tonight, still owed).
+1. **🔴 CANCEL-RETRY DESIGN** — the day's real root cause. See below.
+2. Commit the exec bit on `ops/health/bar_gap_watch_cron.sh` (still 100644 committed; the box has a
+   hand-`chmod`, preserved across today's pull).
+3. Decide deliberately whether #674's price cap stays now that #676 rests.
+4. Two sweeps (dead guards · latch-timing inferences).
 
 ---
 
 ## 🔴 OPEN THREADS (detail: [`handoff-open-items.md`](handoff-open-items.md))
 
-1. **⛔⭐⭐ `broker_order_events` conflates CLIENT-SIDE aborts with BROKER refusals.** Three "Webull
-   rejected" events were our own adapter's `RuntimeError`, stored in the same shape. **Every reject
-   count on that table is contaminated — A2, A3, the API-open ~3/day included.** Needs a `source`
-   field, **separable retrospectively**. ⭐ **Measured cost: it produced the 07-25 MARKET fan-out
-   decision** — the reasoning was sound, the evidence was misattributed.
-2. **⭐ SWEEP — dead guards dominated by an earlier return.** 3 found by accident in 4h; each reads
-   as protection and provides none. **Only mutation finds them** (delete it, tests stay green).
-3. **⭐ SWEEP — inferences from WHEN a latch is set, not THAT it is.** Found in `update_position`
-   while building #676. No test fails; the test encodes the old timing too. Grep the **comments**.
-4. **⭐⭐ SELECTION — we buy moves already SPENT.** ⛔ DISCUSS BEFORE BUILDING.
-5. **Redis evicts the HEARTBEAT stream ⇒ false "fleet down" RED page.** `allkeys-lru`, still zero
-   `xreadgroup`. ⛔ Do NOT fix by cutting `snapshot_batch_stream_maxlen` (180 is load-bearing).
-6. **Reconciler severity INVERTED** — an UNOWNED position pages CRITICAL. ⛔ Blocked behind item 12.
-7. **Schwab API-open rejects ~3/day, nothing evicts.**
-8. **Order churn / `-close-` route unattributable** · **per-lot attribution gap**.
-9. **⛔ `virtual_positions` reads ZERO for a position we HOLD (DSY 08-07).** Ownership =
-   `oms_managed_positions`. Item 12 from the previous board; unchanged.
-10. **Webull is OFF THE TABLE** until the Schwab reactive→resting work is proven. The re-scoped
-    combo probe (can a combo MASTER be STOP_LIMIT? RTH, preview-only, EH repeat, **session recorded
-    beside each result**) is parked with it. ⭐ **Fallback if refused:** the leg can still REST with
-    protection attached separately — the bracket is a convenience, the resting entry is the fix.
+1. **🔴⭐⭐ A CANCEL IS FIRE-AND-FORGET — NOT FIXED.** FRTT 13:01:02: the cancel was emitted, died on
+   the network (`upstream connect error … connection termination`), and the order stayed **LIVE and
+   unowned for 136 minutes** until the operator killed it by hand. We treat the *attempt* as the
+   *outcome*. #679 now **detects** it in ~2 min; the **cure** (verify the cancel landed, retry on
+   transient failure) is unbuilt and is a real-money ENTRY-path change — design first.
+   ⛔ 11-day census: exactly **2** rejected cancels, so it is rare and unbounded, not frequent.
+2. **⭐⭐ WE DO NOT RECORD OCO CHILDREN AS ORDERS.** Our order table has no row type for them, so a
+   live protective sell at the broker is invisible **by construction** — today the DB showed 0
+   working orders while the ladder showed 2. This is why four sells stacked on two shares unseen.
+3. **⛔⭐⭐ NO REPLACEMENT LINK** in the order chain — reprice / trade-pairing / entry-lot are ONE
+   gap. `watchdog_replaces_client_order_id` exists but is **0/304** on entry orders.
+4. **🔴 P0 — FRESHNESS GATE ON A STALENESS GUARD.** A post-boot promotion whose warmup series is
+   stale keeps `just_warmed=False`, so `_cap_reconstructed_segment` never runs and BOOT-HOLD
+   suppresses entries **FLEET-WIDE**. Cost **2h22m on 08-11**. ⛔ "seed-cap on promotion" already
+   exists — that is a no-op.
+5. **⛔⭐⭐ `broker_order_events` conflates CLIENT aborts with BROKER refusals** — every reject count
+   on that table is contaminated. Needs a `source` field.
+6. **⛔ We never store a BROKER FILL PRICE.** `filled_avg_price` empty on entry *and* exit; the
+   ladder anchors on the *requested* price. Today's chart showed the FRTT exit at **1.535** while
+   our record says `reference_price 1.53`. Every stop/target is wrong by the slippage.
+7. **⭐⭐ SELECTION — we buy moves already SPENT.** ⛔ DISCUSS BEFORE BUILDING.
+8. **Redis evicts the HEARTBEAT stream ⇒ false "fleet down".** `allkeys-lru`, zero `xreadgroup`.
+9. **Reconciler severity INVERTED** · **Schwab API-open rejects ~3/day** · **`-close-` route
+   unattributable** · **per-lot attribution gap**.
+10. **Webull is OFF THE TABLE** until the Schwab reactive→resting work is proven.
 
-✅ **CLOSED today:** #663 (complete, both drivers) · #666 (PASSED) · D1a #657 (validated 08-08) ·
-the vol-floor flap (measured: 279 cancels/7d, only **4** crossed a level the segment still wanted —
-**count says urgent, cost says no**) · `limit_price=0` (**not live** — zero since 07-24, closed by
-#547) · the fan-out sequential-fallback question (**it is B**: both legs queued together,
-unconditional; 87 pairs where Schwab FILLED and Webull fired anyway).
+✅ **CLOSED today:** #678 · #679 · **#676 is EXERCISED** (`21 reclaim placements`, `slot=reclaim`,
+proven on today's tape — the FRTT order that consumed the afternoon *was* a #676 reclaim rest) ·
+the resting-cancel split (5 sessions, n=655: reprice 58.2% · liquidity_floor 35.4% ·
+**flip_no_fill 6.0%** ⇒ the "76% never fill" headline was per-ORDER over an opportunity-level
+question) · the orphan watch proven **end-to-end incl. phone delivery**.
 
 ---
 
 ## 🔔 ALERTING — what reaches the phone
-`bar_gap_watch_cron.sh` (auto-repairs) · `reconcile_alert_cron.sh` · `entry_fix_watch/watch_cron.sh`
-⛔ **silence is NOT green — read `STATUS.txt`** · `entry_fix_watch/eod_cron.sh` (18:05 ET) ·
-OMS liveness · pre-open readiness · token expiry · OCO capture · orphan orders.
-⛔ All ROOT crontab, ET-guarded **inside** the script (`CRON_TZ` is ignored on this box).
-⛔ **A script committed from Windows lands mode 664 AND carries CRLF** — both make it silently never
-run. Verify `stat -c %a` and `bash -n` **on the box**.
+`orphan_order_cron.sh` **(PROVEN 08-11: RED classified, pushed, RECEIVED)** · `bar_gap_watch_cron.sh`
+· `reconcile_alert_cron.sh` · `entry_fix_watch/watch_cron.sh` ⛔ **silence is NOT green — read
+`STATUS.txt`** · `entry_fix_watch/eod_cron.sh` · OMS liveness · pre-open readiness · token expiry ·
+OCO capture.
+🆕 `/home/trader/slot_watch/check.sh` → `STATUS.txt` — the `slot=` watch. ⛔ **not yet in cron.**
+⛔ All ROOT crontab, ET-guarded **inside** the script (`CRON_TZ` ignored on this box).
+⛔ **A script committed from Windows lands mode 664 AND carries CRLF** — verify `stat -c %a` and
+`bash -n` **on the box**.
 
 ---
 
 ## 🧠 MEMORY POINTERS (auto-load each session)
 [[project-mai-tai-context]] · [[project-mai-tai-fleet-roster]] · [[project-mai-tai-architecture]] ·
 [[project-mai-tai-restart-bar-gap-checklist]] **(READ BEFORE ANY RESTART)** ·
-[[project_mai_tai_fanout_order_type_asymmetry]] · [[project_mai_tai_broker_order_events_conflates_client_aborts]] ·
-[[feedback_an_absence_is_evidence_only_against_a_known_denominator]] ·
-[[feedback_an_ambiguity_fix_that_rebuilds_the_ambiguity]] ·
-[[feedback_the_tools_status_is_not_the_things_status]] · [[feedback-be-crisp-no-essays]]
+[[project_mai_tai_cancel_is_fire_and_forget]] ·
+[[project_mai_tai_v2_post_boot_promotion_uncapped_fleet_hold]] ·
+[[project_mai_tai_no_replacement_link_in_order_chain]] ·
+[[feedback_check_which_parts_already_work]] · [[feedback_a_watch_that_fails_to_a_false_clean]] ·
+[[feedback_a_wrong_reason_is_worse_than_a_missing_one]] · [[feedback-be-crisp-no-essays]]
