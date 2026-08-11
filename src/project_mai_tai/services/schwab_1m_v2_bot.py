@@ -209,6 +209,13 @@ class SchwabV2BotService:
         # falls back to `_boot_ms` (see `_watch_start_for`), preserving pre-2026-07-30 behaviour for
         # every symbol that was already being watched.
         self._watch_start_ms: dict[str, int] = {}
+        # ⛔⭐⭐ EXIT COVERAGE — symbols we HOLD, kept subscribed even after the scanner drops them.
+        # EXIT-ONLY: this set feeds market-data subscriptions so the OMS exit ladder keeps receiving
+        # quotes. It must NEVER be unioned into an ENTRY decision — see
+        # docs/design/held-symbol-exit-coverage.md §2. Held-symbol coverage exists to CLOSE
+        # positions, never to OPEN them; entering a name the scanner dropped is a fresh decision
+        # that contradicts the scanner's purpose.
+        self._exit_coverage: set[str] = set()
         # Symbols Schwab refused to OPEN today (cached <=60s; see
         # `_schwab_ineligible_symbols`). Evicted from the watchlist so v2 stops
         # emitting intents for names the broker already bounced.
@@ -795,6 +802,63 @@ class SchwabV2BotService:
             qty = positions.get(symbol, 0)
             self.strategy.update_position(symbol, qty, held_qty=held.get(symbol, 0))
         self._roll_stale_session_state(positions, held)
+        # Refresh EXIT COVERAGE on the same pass (one extra read, already off-loop).
+        managed = await asyncio.to_thread(self._fetch_managed_symbols)
+        coverage = {s for s, q in held.items() if q > 0} | managed
+        if coverage != self._exit_coverage:
+            gained = sorted(coverage - self._exit_coverage)
+            lost = sorted(self._exit_coverage - coverage)
+            self._exit_coverage = coverage
+            logger.info(
+                "[V2-EXIT-COVERAGE] held=%d gained=%s lost=%s "
+                "(subscription-only; NEVER an entry input)",
+                len(coverage), ",".join(gained) or "-", ",".join(lost) or "-",
+            )
+            await self._sync_gateway_subscription()
+            self._push_desired_symbols()
+
+    def _fetch_managed_symbols(self) -> set[str]:
+        """Symbols with an OPEN managed row, BOTH broker accounts.
+
+        ⭐ Unioned with `virtual_positions` (not used alone) because each ownership layer has a
+        recorded, OPPOSITE failure mode: `virtual_positions` has read ZERO for a position we hold
+        (DSY 2026-08-07), and managed rows have carried PHANTOM rows (#644). Using either alone
+        imports that layer's defect into the exit path.
+
+        ⛔ Fail-safe direction is OVER-subscribe: a spurious subscription costs a few quotes/sec; a
+        missing one blinds every exit rule on a live position. When the sources disagree, subscribe.
+
+        Never raises — a DB blip must not shrink coverage, so the caller keeps the previous set.
+        """
+        if self.session_factory is None:
+            return set(self._exit_coverage)
+        try:
+            with self.session_factory() as session:
+                return {
+                    str(mp.symbol or "").upper()
+                    for mp in session.scalars(
+                        select(OmsManagedPosition).where(
+                            OmsManagedPosition.strategy_code == STRATEGY_CODE,
+                            OmsManagedPosition.current_quantity != 0,
+                        )
+                    ).all()
+                    if mp.symbol
+                }
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "[V2-EXIT-COVERAGE] managed-row read failed; KEEPING the previous coverage set "
+                "(shrinking it on a DB blip would unsubscribe a held symbol)",
+                exc_info=True,
+            )
+            return set(self._exit_coverage)
+
+    def _subscription_symbols(self) -> set[str]:
+        """Symbols to SUBSCRIBE: the watchlist plus anything we still hold.
+
+        ⛔⭐⭐ SUBSCRIPTION ONLY. Never use this for an entry, arm, re-entry or fan-out decision —
+        those read `self._watchlist`. See docs/design/held-symbol-exit-coverage.md §2.
+        """
+        return set(self._watchlist) | set(self._exit_coverage)
 
     def _roll_stale_session_state(
         self, positions: dict[str, int], held: dict[str, int]
@@ -1152,7 +1216,14 @@ class SchwabV2BotService:
             return
         if self.redis is None:
             return
-        desired = sorted(self._watchlist)
+        # ⛔⭐⭐ WATCHLIST **PLUS HELD**. `mode="replace"` means a symbol absent here is
+        # UNSUBSCRIBED, and the OMS exit ladder is quote-driven (`_handle_quote_tick_event` is
+        # `_evaluate_v2_managed_exit`'s only caller). So dropping a held symbol from this list does
+        # not merely stop watching it — it silently disarms CW_TARGET, CW_FLOOR, CW_HARD_STOP and
+        # CW_FLIP on a live position at once. The rules are not watchlist-gated; their INPUT is.
+        # ⛔ EXIT-ONLY: this union must never reach an entry decision. See
+        # docs/design/held-symbol-exit-coverage.md §2.
+        desired = sorted(self._subscription_symbols())
         if desired == self._last_gateway_symbols:
             return  # debounce — only publish on change
         self._last_gateway_symbols = desired
@@ -1248,21 +1319,7 @@ class SchwabV2BotService:
                 for sym, bars in self._streamer_pending.items()
                 if sym in selected
             }
-        if self.rest_client is not None:
-            self.rest_client.set_desired_symbols(selected)
-        if self.streamer is not None:
-            # Streamer subscribes to the FULL watchlist immediately. The
-            # subscribe/evaluate decoupling lives in
-            # `_handle_bar_from_streamer` (buffer until REST warmup) +
-            # `_handle_bar_from_rest` (drain buffer on warmup), so
-            # subscription no longer waits on `_rest_warmup_done`.
-            # Rationale: keeping symbols out of the SUBS set until they
-            # warmed caused Schwab to close the empty session within
-            # ~3s of LOGIN-OK on cold start, producing a reconnect
-            # loop that delayed first-SUBS rather than protecting
-            # ordering. See docs/session-handoff-schwab-1m-v2.md
-            # 2026-05-23 entry for the race analysis.
-            self.streamer.set_desired_symbols(selected)
+        self._push_desired_symbols()
         # Fix (b): hydrate the strategy bar buffer for newly-joined symbols from
         # persisted history so MACD/VWAP/ATR clear their warmup at once instead
         # of waiting ~135 live bars. Runs once per symbol; replayed bars carry
@@ -1275,6 +1332,30 @@ class SchwabV2BotService:
             ",".join(sorted(selected)[:5]),
             len(self._rest_warmup_done),
         )
+
+    def _push_desired_symbols(self) -> None:
+        """Push the SUBSCRIPTION set (watchlist ∪ held) to the REST client and streamer.
+
+        Held-but-de-listed symbols stay subscribed so their exits keep working: the bar feed is
+        what arms CW_FLIP, and the quote feed is what drives every other exit rule.
+        ⛔ EXIT-ONLY — see docs/design/held-symbol-exit-coverage.md §2.
+        """
+        desired = self._subscription_symbols()
+        if self.rest_client is not None:
+            self.rest_client.set_desired_symbols(desired)
+        if self.streamer is not None:
+            # Streamer subscribes to the FULL watchlist immediately. The
+            # subscribe/evaluate decoupling lives in
+            # `_handle_bar_from_streamer` (buffer until REST warmup) +
+            # `_handle_bar_from_rest` (drain buffer on warmup), so
+            # subscription no longer waits on `_rest_warmup_done`.
+            # Rationale: keeping symbols out of the SUBS set until they
+            # warmed caused Schwab to close the empty session within
+            # ~3s of LOGIN-OK on cold start, producing a reconnect
+            # loop that delayed first-SUBS rather than protecting
+            # ordering. See docs/session-handoff-schwab-1m-v2.md
+            # 2026-05-23 entry for the race analysis.
+            self.streamer.set_desired_symbols(desired)
 
     def _schwab_ineligible_symbols(self) -> set[str]:
         """Symbols Schwab refused to OPEN today ("must be placed with a broker").
@@ -1882,6 +1963,36 @@ class SchwabV2BotService:
                 )
             except Exception:
                 logger.exception("schwab_1m_v2 cw_flip emit failed for %s", draft.symbol)
+            return
+        # ⛔⭐⭐ EXIT-ONLY CHOKEPOINT (2026-08-11). Held-symbol coverage keeps a de-listed symbol
+        # SUBSCRIBED so its exits keep working — which means bars and quotes now arrive for a name
+        # the scanner has dropped, and the strategy will happily evaluate it for ENTRY. Block that
+        # here: coverage exists to CLOSE positions, never to OPEN them.
+        #
+        # On a held position we are ALREADY exposed and exiting is not a choice. ENTERING a symbol
+        # the scanner dropped is a fresh decision nobody asked for, and the drop IS the signal that
+        # the name no longer qualifies. The asymmetry is the design, not an oversight.
+        #
+        # ⛔ Do NOT "complete" this by allowing held symbols to arm/enter/take a fan-out leg.
+        # See docs/design/held-symbol-exit-coverage.md §2.
+        # ⭐ SCOPED TO THE HAZARD THIS CHANGE INTRODUCES — coverage-only symbols, nothing else.
+        # A broader "not on the watchlist" test would re-police an invariant that already held
+        # (pre-change, subscribed == watchlist, so every emitted symbol was on it by construction)
+        # and would silently change five existing entry paths. With `_exit_coverage` empty — every
+        # pre-change state, and every existing test — this guard is INERT and byte-neutral.
+        _sym = str(getattr(draft, "symbol", "")).upper()
+        if (
+            getattr(draft, "intent_type", "") == "open"
+            and _sym in getattr(self, "_exit_coverage", set())
+            and _sym not in self._watchlist
+        ):
+            logger.info(
+                "[V2-ENTRY-OFF-WATCHLIST-BLOCK] dropped open intent symbol=%s reason=%s — "
+                "symbol is HELD but no longer on the watchlist; coverage keeps it subscribed for "
+                "EXITS ONLY and must never open a position (design §2)",
+                _sym,
+                getattr(draft, "reason", ""),
+            )
             return
         # Trading-window gate: v2 only ENTERS inside the operator's window
         # (default 7:00 AM–4:30 PM ET, weekdays, non-holiday). Outside it, an
