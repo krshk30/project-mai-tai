@@ -15,6 +15,74 @@
 
 ---
 
+## 2026-08-11 — three wrong mechanisms, one real root cause, and a deploy that came out clean
+
+**Shipped:** `cb30fcd → 32926b6`. **#678** held-symbol exit coverage · **#679** orphan-watch
+ownership + oversell · env `MAI_TAI_PROTECTED_SYMBOLS=CYN,TE → CYN,TE,FRTT`. Suite 1996/0, ruff
+clean, 0 tracebacks, no bar hole.
+
+### The day: an operator screenshot, not an alarm, started it
+The operator opened a TOS ladder at ~15:15 ET and saw **four `-2` sell orders against a +2 FRTT
+position**, plus a `+2 STPLMT` buy from 13:00 still working. Our DB showed **one** working order.
+That gap — 5 at the broker, 1 in our records — drove the whole afternoon.
+
+### ⛔ Three mechanisms were proposed and each died on reading the data
+1. *"the bot re-enters while holding"* — FALSE. Last resting placement 14:54, **ten minutes before**
+   the 15:04 fill. The held gate works.
+2. *"the position-held gate clears `resting_active` without cancelling"* — that code does read that
+   way, but the timeline rules it out: we were FLAT at 13:00.
+3. *"the orphan watch is pointed at the paper account and is blind"* — **asserted twice, FALSE both
+   times.** The env sets `live:schwab_1m_v2`; the hand-run failed only because the service env was
+   not loaded. The cron wrapper loads it via `systemd-run -p EnvironmentFile=`.
+
+### 🔴 The actual root cause
+```
+13:00:03  accepted   resting buy-stop placed (slot=reclaim, stop 1.5200)
+13:01:02  rejected   THE CANCEL FAILED — "upstream connect error or disconnect/reset before
+                     headers. reset reason: connection termination"
+15:00:01  RED        the orphan watch's stale-trigger heuristic fires (13% away, 120min)
+15:17:41  cancelled  by the OPERATOR, by hand — 136.6 minutes later
+```
+**A cancel is fire-and-forget.** We emit it, clear our own state as though it worked, and never
+verify. 11-day census: exactly **2** rejected cancels — rare, and unbounded in consequence.
+
+### ⭐ The watch is a PASS — record it as one
+`ORPHAN ORDER RED - 15:00 ET` was classified, pushed **and received on the phone**. First alarm this
+week to catch something real and deliver it end to end. Its only limit is that it is a heuristic on
+PRICE DISTANCE, so it could not fire until price had drifted 13% — 120 min late. #679 adds
+`classify_unowned`, which asks *does anything OWN this order?* — a fact about our records — and on
+the same tape fires at **13:03**.
+
+### What else the day produced
+- **#676 is EXERCISED** — 21 `slot=reclaim` placements. The irony: the FRTT order that consumed the
+  afternoon **was** a #676 reclaim rest. The `slot=` field earned its keep; the bare
+  `[V2-RESTING-PLACE]` marker fired 201× yesterday on the OLD path and would have read as a pass.
+- **The resting-cancel split** (5 sessions, n=655): reprice 58.2% · liquidity_floor 35.4% ·
+  **flip_no_fill 6.0%** · window_closed 0.5%. The earlier "76% never fill" headline was per-ORDER
+  over an opportunity-level question. ⚠️ A DB test using a 30s successor threshold returned zero and
+  briefly read as "no reprices at all" — wrong, because bars are 60s. Threshold shorter than the
+  mechanism's period ⇒ false negative.
+- **A 2h22m FLEET-WIDE entry suppression** (04:38→07:01 ET) from a post-boot promotion whose stale
+  warmup series held `just_warmed=False`, so the seed-cap never ran. Largest measured loss of the
+  day. Two wrong mechanisms were boarded for this one too before the call sites were read.
+- **The operator manually bought 5,000 FRTT** at ~15:40 and closed it into the bell. FRTT was
+  protected at his direction; the reason evaporated before the deploy ran, and the revert is one
+  line.
+
+### Deploy-window note, recorded deliberately
+Deployed at **16:08 ET with EH still open**, on the operator's explicit call, with MSGY armed-but-
+flat accepted. It came out clean — **no bar hole, 0 tracebacks**. That is one clean sample, not
+evidence the 20:15 quiet window is unnecessary.
+
+### Lesson boarded
+**Before scoping a fix as N parts, check which parts already work** — #678 was reported as four
+broken behaviours and turned out to be one broken INPUT (the subscription); the three exit rules
+and the resting-cancel were correct all along. Third instance this week. The check cuts both ways;
+the value is knowing which, not expecting it to shrink.
+
+
+---
+
 
 ## 2026-08-10 (Mon) — three PRs deployed; five claims of mine withdrawn
 
