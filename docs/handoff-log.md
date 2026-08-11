@@ -15,6 +15,42 @@
 
 ---
 
+
+## 2026-08-10 (Mon) — three PRs deployed; five claims of mine withdrawn
+
+**Deployed 20:21 ET `ca0cf92 -> cb30fcd`** (#672 -> #674 -> #676). Gate: **GO BY OPERATOR OVERRIDE,
+exit 0** — one block, one documented token, complete audit trail. First run where the mechanism
+worked as designed; Friday and today's 16:08 run both bypassed tokenless blocks.
+
+**Shipped.** #672 — P0a census `submitted=N` denominator, `[OMS-INTENT-DROPPED]` on both broker
+short-circuits, `flip_no_fill_soft_rest`. #674 — RTH reactive = band-capped marketable LIMIT
+(**a STOPGAP**, superseded by #676; decide deliberately whether the cap stays) + `[V2-CW-RULE7-BLOCK]`.
+#676 — the RECLAIM entry RESTS at `cw_segment_high` instead of chasing the break.
+
+**Validations.** #663 COMPLETE (both drivers). #666 **PASSED** at 16:00 — `[V2-RESTING-CANCEL]
+reason=window_closed` x2, zero old-symptom lines, 0 live orders after. D1a #657 validated **08-08**
+(not 08-10). #668 and #664 remain **UNEXERCISED**, labelled as such.
+
+**Measured.** Broker-vs-broker fills: median signed **0.0 bps**, 18/16/4 — scatter, not bias. The
+real finding is the **order-type asymmetry** (`rth_resting`: Schwab STOP_LIMIT vs Webull MARKET) and
+that market orders own **all 8 entries >=200 bps**. P0a is **structurally unreachable** (27/27 exits
+fill inside one 15s sync tick). Vol-floor flap: 279 cancels/7d but only **4** crossed a level the
+segment still wanted. Fan-out is **not** sequential-fallback — 87 pairs where Schwab FILLED and
+Webull fired anyway.
+
+**⛔ FIVE CLAIMS OF MINE WITHDRAWN TODAY, ALL IN THE SAME DIRECTION.**
+"the roll path disarms silently" (`armed=0` was on the line I quoted) · "repricing halves the fill
+rate" (0 of 17 were churn; 13 never rested at all) · "rule 7 is a capability wall" (binds on <=1.3%) ·
+"`limit_price=0`, 83 rejects" (zero since 07-24, closed by #547) · "a second resting slot is needed"
+(the code has enforced mutual exclusion all along). ⇒ **"There's a defect here" reads as diligence
+and costs a build; "this is fine" costs nothing when it's right.** The felt asymmetry is inverted
+from the real one — that is why it kept happening.
+
+**⭐ Rules earned today.** An absence is evidence only against a known denominator · never size a
+defect without its date range · an instrument that counts observations without counting
+opportunities is unreadable alone · the tool's status is not the thing's status · dead guards
+dominated by an earlier return (3 in 4h, only mutation finds them).
+
 ## ⛔⭐ 2026-07-28 (NIGHT) — BACKTEST-vs-LIVE PARITY AUDIT (#592): the replay was studying a config we were not trading
 
 Operator asked to confirm the backtest engine is "on the same level" as live before trusting it.
