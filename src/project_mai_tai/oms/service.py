@@ -1246,6 +1246,21 @@ class OmsRiskService:
                 await self._publish_order_event(resting_eh_abandon_event)
                 return [*pre_submit_events, resting_eh_abandon_event]
 
+            # RTH REACTIVE band-capped LIMIT (2026-08-10). The reactive path sent a MARKET order with
+            # no ceiling: measured 21d on live:schwab_1m_v2, reactive MARKET SD 58.6 bps / worst
+            # +351.7, against ~25-28 bps / +60.2 on the price-committed paths. The >=200 bps entries
+            # are UNBOUNDED-PRICE events, not late-arrival events — a price cap caps the price.
+            # Runs AFTER the EH builder and is mutually exclusive with it (RTH-only vs EH-only).
+            rth_reactive_abandon_event = self._apply_v2_rth_reactive_limit(
+                event=event, intent=intent
+            )
+            if rth_reactive_abandon_event is not None:
+                session.commit()
+                for prior_event in pre_submit_events:
+                    await self._publish_order_event(prior_event)
+                await self._publish_order_event(rth_reactive_abandon_event)
+                return [*pre_submit_events, rth_reactive_abandon_event]
+
             client_order_id = self._build_client_order_id(event)
             request = OrderRequest(
                 client_order_id=client_order_id,
@@ -6007,6 +6022,125 @@ class OmsRiskService:
         )
         return self._build_rejected_event(event, intent.id, reason=reason_code)
 
+    def _band_capped_marketable_limit(
+        self, *, symbol: str, level: float, band_pct: float, max_age_ms: int
+    ) -> tuple[str, float, float] | tuple[None, str, str]:
+        """ONE implementation of the band-capped marketable buy limit, shared by the EH resting
+        entry (P-B2, deployed 2026-07) and the RTH reactive entry (2026-08-10).
+
+        Returns `(limit_str, ask, cap)` to proceed, or `(None, reason_code, reason_detail)` to
+        abandon. ⛔ Extracted VERBATIM from `_apply_v2_eh_resting_entry` — the EH path's arithmetic,
+        rounding and abandon reasons are unchanged, and its tests still pin them. A second
+        implementation would be free to drift; **any RTH-vs-EH difference must be deliberate and
+        stated at the call site**, not an accident of copy-paste.
+        """
+        cap = level * (1.0 + band_pct / 100.0)
+        ask = self._fresh_ask(symbol, max_age_ms)
+        if ask is None:
+            return (None, "NO_FRESH_QUOTE", f"no fresh ask within {max_age_ms}ms for {symbol}")
+        if ask > cap:
+            # The ask has gapped past the band -> prefer NO fill to chasing (no-chase).
+            return (None, "ASK_PAST_BAND",
+                    f"ask {ask:.4f} past band cap {cap:.4f} (level {level:.4f} +{band_pct}%) "
+                    f"— gap-through, prefer no fill")
+        tick = Decimal("0.01") if ask >= 1.0 else Decimal("0.0001")
+        # ⭐ THE CEILING IS THE ABANDON ABOVE, NOT THIS `min`. Past that guard `ask <= cap` always
+        # holds, so `min(ask, cap) == ask` in every reachable case — the min can never bind. Kept as
+        # written (inherited verbatim from the EH pricer) because it is harmless and defensive, but
+        # do NOT read it as the price cap: a mutation deleting it leaves every test green, while
+        # deleting the ASK_PAST_BAND abandon fails 3 and widening the band fails 6. **Mutate the
+        # abandon, not the min, when checking that the ceiling is still protected.**
+        limit = min(Decimal(str(ask)), Decimal(str(cap)))
+        # ROUND_DOWN so tick-alignment can never push the limit back above the band cap.
+        return (format(limit.quantize(tick, rounding=ROUND_DOWN), "f"), ask, cap)
+
+    def _v2_rth_reactive_limit_applies(self, event: TradeIntentEvent) -> bool:
+        """Gate for the RTH REACTIVE band-capped limit (2026-08-10).
+
+        ⭐⭐ WHY. The reactive path sends a MARKET order after the print. Measured over 21 days on
+        `live:schwab_1m_v2`, same universe and window: reactive MARKET **SD 58.6 bps, worst adverse
+        +351.7**; the price-committed paths **SD ~25-28 bps, worst +60.2**. The ≥200 bps entries are
+        **unbounded-price events, not late-arrival events** — chasing costs the spread and the drift
+        (tens of bps); having NO CEILING is what produces 352. A price cap caps the price.
+
+        ⛔ This does NOT fix the chasing — the trigger and timing are unchanged. That is the separate
+        resting-reactive change (docs/v2-reactive-resting-entry-design.md), which is blocked tonight
+        by `_resting_entry_already_open` (one resting order per symbol; a second slot is the
+        #580/EGG-POLA orphan surface) and is worth doing on its own.
+
+        Matches a v2 RTH reactive open only: EH is the EH pricer's job, `resting_entry`/`eh_resting`
+        are the resting path's, and the fan-out leg is deliberately untouched here."""
+        p = event.payload
+        md = p.metadata
+        return (
+            p.strategy_code == "schwab_1m_v2"
+            and p.intent_type == "open"
+            and p.side == "buy"
+            and str(md.get("atr_variant", "")) == "CW-v2"
+            and str(md.get("resting_entry", "")).lower() != "true"
+            and str(md.get("eh_resting", "")).lower() != "true"
+            and str(md.get("fanout_leg", "")) == ""
+            and _is_regular_market_session()
+        )
+
+    def _apply_v2_rth_reactive_limit(
+        self, *, event: TradeIntentEvent, intent: TradeIntent
+    ) -> OrderEventEvent | None:
+        """Re-price the RTH reactive v2 entry as a band-capped marketable LIMIT instead of a MARKET.
+
+        Anchor is the strategy's own `entry_price` (the quote that broke the trigger) — the same
+        anchor the fan-out leg and the OCO bracket already use, so the entry price the tape records
+        does not move. Returns None to PROCEED, or a rejected event to ABANDON.
+
+        ⚠️ THE NEW FAILURE MODE, NAMED: **a market order always fills; this one will sometimes not.**
+        That is a real behaviour change and the counterpart to the missed-entry question. Both the
+        placement and the abandon are logged so tomorrow's tape answers the frequency directly
+        instead of needing another reconstruction."""
+        if not self._v2_rth_reactive_limit_applies(event):
+            return None
+        md = event.payload.metadata
+        symbol = str(event.payload.symbol).upper()
+        try:
+            level = float(md["entry_price"])
+        except (KeyError, TypeError, ValueError):
+            return None          # no anchor -> leave the order exactly as it is today (MARKET)
+        if level <= 0:
+            return None
+        try:
+            band_pct = float(md["resting_band_pct"])
+        except (KeyError, TypeError, ValueError):
+            band_pct = float(getattr(self.settings, "oms_v2_eh_resting_entry_band_pct", 0.5))
+        max_age_ms = int(getattr(self.settings, "oms_v2_eh_resting_entry_quote_max_age_ms", 2000))
+        limit_s, a, b = self._band_capped_marketable_limit(
+            symbol=symbol, level=level, band_pct=band_pct, max_age_ms=max_age_ms
+        )
+        if limit_s is None:
+            reason_code, reason_detail = a, b
+            self.logger.info(
+                "[OMS-V2-RTH-REACTIVE-LIMIT] symbol=%s ABANDONED reason=%s — %s",
+                symbol, reason_code, reason_detail,
+            )
+            return self._abandon_v2_eh_entry(
+                event=event, intent=intent, reason_code=reason_code, reason_detail=reason_detail,
+            )
+        ask, cap = a, b
+        md["order_type"] = "limit"
+        md["limit_price"] = limit_s
+        md["price_source"] = "ask"
+        md["oms_v2_rth_reactive_limit"] = "true"
+        md["oms_v2_rth_reactive_limit_ask"] = f"{ask:.4f}"
+        md["oms_v2_rth_reactive_limit_cap"] = f"{cap:.4f}"
+        # ⛔ `reference_price` is NOT overwritten. The EH pricer sets it to the limit; here the
+        # strategy's own trigger price must remain the recorded reference, or every slippage study
+        # that measures fill-vs-decision would silently start measuring fill-vs-fill and report ~0.
+        # THIS IS THE ONE DELIBERATE RTH/EH DIVERGENCE.
+        self.logger.info(
+            "[OMS-V2-RTH-REACTIVE-LIMIT] symbol=%s PLACED ask=%.4f level=%.4f cap=%.4f limit=%s "
+            "(was MARKET; price is now capped)",
+            symbol, ask, level, cap, limit_s,
+        )
+        return None
+
     def _v2_eh_resting_entry_applies(self, event: TradeIntentEvent) -> bool:
         """Gate for the EH RESTING-entry band-cap re-price (P-B2). Only the flag-on v2 EH resting open
         (metadata eh_resting=true) qualifies. The strategy software-emulates the resting cross in EH and
@@ -6069,29 +6203,19 @@ class OmsRiskService:
             band_pct = float(md["resting_band_pct"])
         except (KeyError, TypeError, ValueError):
             band_pct = float(getattr(self.settings, "oms_v2_eh_resting_entry_band_pct", 0.5))
-        cap = level * (1.0 + band_pct / 100.0)
         max_age_ms = int(getattr(self.settings, "oms_v2_eh_resting_entry_quote_max_age_ms", 2000))
-        ask = self._fresh_ask(symbol, max_age_ms)
-        if ask is None:
+        # ⛔ Arithmetic EXTRACTED to `_band_capped_marketable_limit` (2026-08-10) so the RTH reactive
+        # limit shares ONE implementation with this one. Behaviour here is unchanged — same cap, same
+        # ask, same ROUND_DOWN tick alignment, same two abandon reasons — and this path's tests still
+        # pin it. Reuse beats a second implementation that is free to drift.
+        limit_s, ask, cap = self._band_capped_marketable_limit(
+            symbol=symbol, level=level, band_pct=band_pct, max_age_ms=max_age_ms
+        )
+        if limit_s is None:
+            reason_code, reason_detail = ask, cap
             return self._abandon_v2_eh_entry(
-                event=event, intent=intent, reason_code="NO_FRESH_QUOTE",
-                reason_detail=f"no fresh ask within {max_age_ms}ms for {symbol}",
+                event=event, intent=intent, reason_code=reason_code, reason_detail=reason_detail,
             )
-        if ask > cap:
-            # The ask has gapped past the band -> the RTH stop-limit would MISS this cross too (no-chase);
-            # prefer NO fill to chasing a thin-pre-market spike (design risk #3).
-            return self._abandon_v2_eh_entry(
-                event=event, intent=intent, reason_code="ASK_PAST_BAND",
-                reason_detail=(
-                    f"ask {ask:.4f} past band cap {cap:.4f} "
-                    f"(level {level:.4f} +{band_pct}%) — gap-through, prefer no fill"
-                ),
-            )
-        # ask <= cap: marketable buy limit at min(ask, cap) = the ask (crosses the offer, fills near the line).
-        tick = Decimal("0.01") if ask >= 1.0 else Decimal("0.0001")
-        limit = min(Decimal(str(ask)), Decimal(str(cap)))
-        # ROUND_DOWN so tick-alignment can never push the limit back above the band cap.
-        limit_s = format(limit.quantize(tick, rounding=ROUND_DOWN), "f")
         md["order_type"] = "limit"
         md["limit_price"] = limit_s
         md["reference_price"] = limit_s

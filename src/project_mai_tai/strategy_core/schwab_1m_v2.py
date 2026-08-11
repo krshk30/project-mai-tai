@@ -219,6 +219,8 @@ class SymbolState:
     cw_resting_taken: bool = False              # the resting slot for THIS cross is used
     cw_reclaim_taken: bool = False              # the reclaim slot for THIS cross is used
     cw_bar_low_so_far: float = 0.0             # min quote px of the current forming bar (rule 7)
+    cw_rule7_logged_bar_ts: int = 0            # dedupe for [V2-CW-RULE7-BLOCK]: one line per forming
+    #                                            bar, never per quote (retry-storm shape otherwise)
     cw_segment_high: float = 0.0               # running max HIGH of ALL bars since the BUY flip (advances
     #                                            every bar, like the backtest RunningHighTracker); the
     #                                            RECLAIM (2nd entry) must break THIS new segment high,
@@ -1657,6 +1659,36 @@ class SchwabV2Strategy:
         if trig <= 0.0 or px <= trig:
             return None  # rule 6: intrabar break of the entry-appropriate trigger
         if fl <= 0.0 or px <= fl or state.cw_bar_low_so_far <= fl:
+            # ⛔⭐⭐ INSTRUMENT THE NEGATIVE (2026-08-10). This was a bare `return None` — the fourth
+            # missing-negative found this week, and the same shape as P0a's bare `pass`: the
+            # condition is unobservable, so "rule 7 never binds" and "rule 7 blocks constantly" look
+            # identical from outside. The rule-7 frequency (65/5,129 rule-6 passes = 1.3%) had to be
+            # RECONSTRUCTED from `[V2-CW-STATE-PROBE]` against the trade tape, and that number is an
+            # UPPER BOUND by construction (the replay walks every print; v2 evaluates on 5s quote
+            # polls, so its running-min dips below anything v2 saw). One line makes it MEASURED.
+            #
+            # ⭐ It decides a live design question: rule 7 is intrabar state a broker stop CANNOT
+            # carry, so it is the entire behavioural difference for the resting reactive entry.
+            # See docs/v2-reactive-resting-entry-design.md §2.
+            #
+            # ⛔ EDGE-TRIGGERED, not per-quote. This runs on every quote of every armed symbol; a
+            # level-triggered line would be the trade-coach retry-storm shape (45% CPU while
+            # nominally disabled). One line per forming bar.
+            #
+            # ⭐ THE POPULATION IS ALREADY CORRECT WITHOUT A GATE HERE. Rule 6 above
+            # (`if trig <= 0.0 or px <= trig: return None`) has already returned for any quote that
+            # did not break the trigger, so reaching this line MEANS the entry was otherwise
+            # qualifying. An explicit `px > trig` here would be dead code — it was written, and a
+            # mutation that deleted it left every test green, which is how it was caught. Deleting
+            # a condition must change a result or it is not a condition.
+            _bar_ts = int(state.bars[-1].timestamp_ms) if state.bars else 0
+            if state.cw_rule7_logged_bar_ts != _bar_ts:
+                state.cw_rule7_logged_bar_ts = _bar_ts
+                logger.info(
+                    "[V2-CW-RULE7-BLOCK] %s px=%.4f > trig=%.4f but low_sf=%.4f <= flip_level=%.4f "
+                    "— forming bar dipped below the flip level; entry declined",
+                    state.symbol, px, trig, state.cw_bar_low_so_far, fl,
+                )
             return None  # rule 7: whole forming bar above the flip level
 
         # EH LIVE-BAR guard (#528 mirror): in extended hours only, never fire off a warmup-replayed /

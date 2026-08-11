@@ -238,8 +238,19 @@ async def test_flag_off_eh_byte_identical(eh):
 
 @pytest.mark.asyncio
 async def test_rth_flag_on_byte_identical(rth):
-    """Flag ON but regular session -> the OMS never routes (byte-identical MARKET/limit path). A RTH v2
-    open is a plain market order (the bot adds no routing in RTH); the OMS leaves it untouched."""
+    """Flag ON but regular session -> the EH reactive builder never routes. THAT is what this test is
+    for, and it is unchanged.
+
+    ⛔⭐ UPDATED 2026-08-10 — the incidental half of this test encoded a contract we deliberately
+    changed. It asserted `order_type == "market"` for an RTH reactive open, written when nothing
+    else touched RTH. The RTH reactive entry is now a band-capped marketable LIMIT
+    (`_apply_v2_rth_reactive_limit`): measured 21d on live:schwab_1m_v2, reactive MARKET ran SD 58.6
+    bps / worst +351.7 against ~25-28 bps / +60.2 on the price-committed paths, and the ≥200 bps
+    entries are unbounded-PRICE events. A price cap caps the price.
+
+    ⛔ The load-bearing assertion — `oms_v2_eh_entry` absent, i.e. the EH builder stayed inert in RTH
+    — is UNCHANGED and still the point of this test. Only the incidental order-type expectation moved,
+    and it now pins the NEW contract rather than being deleted."""
     service = _oms(oms_v2_eh_entry_enabled=True)
     _set_quote(service, "FOO", ask=1.92, bid=1.90)
     events = await service.process_trade_intent(
@@ -249,8 +260,12 @@ async def test_rth_flag_on_byte_identical(rth):
     assert [e.payload.status for e in events] == ["accepted", "filled"]
     order = _stored_order(service)
     assert order is not None
-    assert "oms_v2_eh_entry" not in order.payload
-    assert order.payload.get("order_type", "market") == "market"
+    assert "oms_v2_eh_entry" not in order.payload, "the EH builder must stay inert in RTH"
+    # NEW CONTRACT (2026-08-10): the RTH reactive open is a band-capped marketable limit, not a
+    # MARKET. ask 1.92 <= cap 2.01 (entry 2.00 +0.5%) -> limit at the ask.
+    assert order.payload.get("order_type") == "limit"
+    assert order.payload.get("limit_price") == "1.92"
+    assert order.payload.get("oms_v2_rth_reactive_limit") == "true"
 
 
 @pytest.mark.asyncio
