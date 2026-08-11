@@ -35,6 +35,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session, sessionmaker
 
 from project_mai_tai.db.models import (
+    AccountPosition,
     BrokerAccount,
     Fill,
     OmsManagedPosition,
@@ -818,23 +819,34 @@ class SchwabV2BotService:
             self._push_desired_symbols()
 
     def _fetch_managed_symbols(self) -> set[str]:
-        """Symbols with an OPEN managed row, BOTH broker accounts.
+        """Symbols we own, from EVERY layer that can assert ownership. **ADD-only union.**
 
-        ⭐ Unioned with `virtual_positions` (not used alone) because each ownership layer has a
-        recorded, OPPOSITE failure mode: `virtual_positions` has read ZERO for a position we hold
-        (DSY 2026-08-07), and managed rows have carried PHANTOM rows (#644). Using either alone
-        imports that layer's defect into the exit path.
+        Three sources, because the fix's own premise is *"if we hold it, we watch it"* and NO single
+        layer is the authority on what we hold:
 
-        ⛔ Fail-safe direction is OVER-subscribe: a spurious subscription costs a few quotes/sec; a
-        missing one blinds every exit rule on a live position. When the sources disagree, subscribe.
+        | source | why it alone is not enough |
+        |---|---|
+        | `virtual_positions` (caller) | read **ZERO for a position we genuinely held** (DSY 2026-08-07) |
+        | `oms_managed_positions`      | has carried **PHANTOM rows** (#644) |
+        | `account_positions`          | broker truth, but lags fills and is silent on a leg the broker has not settled |
 
-        Never raises — a DB blip must not shrink coverage, so the caller keeps the previous set.
+        ⛔⭐⭐ **THE THIRD SOURCE MAY ONLY ADD, NEVER GATE.** If the broker says flat and either
+        internal layer says held, we STAY SUBSCRIBED. Over-subscription is free — a few quotes per
+        second. Under-subscription is the defect this whole change exists to fix, and it would
+        degrade in exactly the situation it was built for.
+
+        ⛔ Protected symbols (e.g. the operator's standing CYN) are EXCLUDED: v2 must never watch,
+        subscribe to or act on them, and coverage is not a back door to that.
+
+        Never raises — a DB blip must not SHRINK coverage, so the caller keeps the previous set.
         """
         if self.session_factory is None:
             return set(self._exit_coverage)
+        owned: set[str] = set()
         try:
             with self.session_factory() as session:
-                return {
+                # (a) our own managed rows — spans both fan-out legs
+                owned |= {
                     str(mp.symbol or "").upper()
                     for mp in session.scalars(
                         select(OmsManagedPosition).where(
@@ -844,13 +856,35 @@ class SchwabV2BotService:
                     ).all()
                     if mp.symbol
                 }
+                # (b) BROKER TRUTH — account_positions for v2's accounts (primary + Webull leg)
+                account_names = {
+                    n for n in (
+                        self.settings.strategy_schwab_1m_v2_account_name,
+                        self.settings.strategy_schwab_1m_v2_webull_account_name,
+                    ) if n
+                }
+                if account_names:
+                    owned |= {
+                        str(ap.symbol or "").upper()
+                        for ap in session.scalars(
+                            select(AccountPosition)
+                            .join(BrokerAccount, BrokerAccount.id == AccountPosition.broker_account_id)
+                            .where(
+                                BrokerAccount.name.in_(account_names),
+                                AccountPosition.quantity != 0,
+                            )
+                        ).all()
+                        if ap.symbol
+                    }
         except Exception:  # noqa: BLE001
             logger.warning(
-                "[V2-EXIT-COVERAGE] managed-row read failed; KEEPING the previous coverage set "
+                "[V2-EXIT-COVERAGE] ownership read failed; KEEPING the previous coverage set "
                 "(shrinking it on a DB blip would unsubscribe a held symbol)",
                 exc_info=True,
             )
             return set(self._exit_coverage)
+        protected = set(self.settings.protected_symbol_set)
+        return owned - protected if protected else owned
 
     def _subscription_symbols(self) -> set[str]:
         """Symbols to SUBSCRIBE: the watchlist plus anything we still hold.

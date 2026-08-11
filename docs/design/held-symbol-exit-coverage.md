@@ -58,27 +58,38 @@ by an explicit test that fails if either is removed (§5, test 5).
 
 ---
 
-## 3. Ownership source — union, deliberately
-
-The coverage set is:
+## 3. Ownership source — a THREE-source, ADD-only union
 
 ```
-coverage = {open OmsManagedPosition rows for STRATEGY_CODE, both accounts}
-           ∪ {virtual_positions.quantity > 0}
+coverage = {virtual_positions.quantity > 0}
+         ∪ {open OmsManagedPosition rows for STRATEGY_CODE, both accounts}
+         ∪ {account_positions.quantity != 0 for v2's accounts}      # BROKER TRUTH
+         −  protected_symbol_set
 ```
 
-**Why the union and not one source.** Each layer has a known, recorded failure mode:
+**Why three and not one.** The premise of this change is *"if we hold it, we watch it"* — and **no
+single layer is the authority on what we hold**:
 
-| source | known defect |
+| source | why it alone is not enough |
 |---|---|
-| `virtual_positions` | reads **ZERO for a position we hold** (DSY 2026-08-07) |
-| `oms_managed_positions` | **phantom rows** — poll driven from open rows (#644) |
+| `virtual_positions` | read **ZERO for a position we genuinely held** (DSY 2026-08-07) |
+| `oms_managed_positions` | has carried **PHANTOM rows** (#644) |
+| `account_positions` | broker truth, but **lags fills** and is silent on an unsettled leg |
 
-Using either alone imports that layer's defect into the exit path. The failure directions are
-opposite, so the union is strictly safer than either.
+⛔⭐⭐ **THE THIRD SOURCE MAY ONLY ADD, NEVER GATE.** If the broker reads flat and either internal
+layer says held, we **stay subscribed**. Over-subscription is free — a few quotes per second.
+Under-subscription is the defect this change exists to fix, and gating on the broker would make the
+fix **degrade in exactly the situation it was built for**. Proved by mutation M5 (union → ∩ ⇒ red).
 
-⭐ **Fail-safe direction is OVER-subscribe.** A spurious subscription costs a few quotes per second.
-A missing one blinds every exit rule on a live position. When the two sources disagree, subscribe.
+⭐ **Fail-safe direction is OVER-subscribe.** When the sources disagree, subscribe.
+
+⛔ **Protected symbols are excluded** (`owned - protected`). The operator's standing **CYN 5000**
+sits in `account_positions`; coverage must not become a back door to watching a symbol v2 must never
+touch. Proved by mutation M6.
+
+⚠️ **What this does NOT claim.** Adding broker truth makes coverage resilient to a drift in any ONE
+layer. It does **not** close the reconciliation gap, and this change should not be credited against
+that board item — if all three layers agree wrongly, coverage is still lost.
 
 ---
 
@@ -129,6 +140,10 @@ its own mutation, with the others still passing.
 | M2 `_push_desired_symbols` → watchlist only | RED: `test_bar_feed_survives_delisting_so_the_flip_exit_can_arm` |
 | M3 remove the entry off-watchlist guard | RED: `test_held_delisted_symbol_can_never_enter` |
 | M4 gate the window-closed cancel on a watchlist | RED: `test_resting_cancel_reaches_a_delisted_symbol` |
+| M5 ADD-only union → INTERSECTION (broker GATES) | RED: `test_broker_flat_but_internally_held_stays_covered` |
+| M6 drop the protected-symbol exclusion | RED: `test_protected_symbols_never_enter_coverage` |
+
+Baseline 14 passed; every mutation reds **exactly one** test with the other 13 green.
 
 ⚠️ **Honest limit on "independently".** CW_TARGET, CW_FLOOR and CW_HARD_STOP share **one** input —
 the quote feed — so they share **one** mutation (M1). They are not independently mutable at the

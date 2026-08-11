@@ -190,6 +190,118 @@ def test_resting_cancel_reaches_a_delisted_symbol() -> None:
     )
 
 
+# ------------------------------------------------------- ownership: ADD-only
+
+def test_broker_flat_but_internally_held_stays_covered() -> None:
+    """⛔⭐⭐ THE THIRD SOURCE MAY ONLY ADD, NEVER GATE.
+
+    `account_positions` is broker truth, but it LAGS fills. If the broker says flat while either
+    internal layer still says held, we must STAY SUBSCRIBED — over-subscription is free,
+    under-subscription is the defect this change exists to fix.
+
+    This is the exact DSY 2026-08-07 shape inverted: a layer reading flat on a position that is
+    genuinely held. Coverage must survive it.
+
+    MUTATION: change the union in `_position_poll_pass` to an INTERSECTION, or make
+    `_fetch_managed_symbols` return only the broker rows -> RED.
+    """
+    import asyncio
+
+    class _Strategy:
+        _symbol_states: dict[str, object] = {}
+
+        def update_position(self, *a, **k) -> None:
+            pass
+
+    class _PollHarness:
+        # the real helpers, so the union under test is the shipped one
+        _subscription_symbols = SchwabV2BotService._subscription_symbols
+        _sync_gateway_subscription = SchwabV2BotService._sync_gateway_subscription
+        _push_desired_symbols = SchwabV2BotService._push_desired_symbols
+
+        def __init__(self) -> None:
+            self.settings = Settings(oms_v2_exit_management_enabled=True)
+            self.strategy = _Strategy()
+            self._watchlist: set[str] = set()          # HELD already de-listed
+            self._exit_coverage: set[str] = set()
+            self._last_gateway_symbols = None
+            self.redis = _FakeRedis()
+            self.rest_client = _Sink()
+            self.streamer = _Sink()
+
+        # virtual_positions says we HOLD it ...
+        def _fetch_position_maps(self):
+            return ({HELD: 2}, {HELD: 2})
+
+        # ... while the broker AND the managed row both read flat
+        def _fetch_managed_symbols(self) -> set[str]:
+            return set()
+
+        def _roll_stale_session_state(self, *a, **k) -> None:
+            pass
+
+    h = _PollHarness()
+    asyncio.run(SchwabV2BotService._position_poll_pass(h))
+
+    assert HELD in h._exit_coverage, (
+        "a broker-flat, internally-held symbol lost coverage — the third source GATED instead "
+        "of ADDING, and the fix degrades in exactly the case it exists for"
+    )
+    assert HELD in _subscription(h), "and it must therefore still be subscribed"
+
+
+def test_protected_symbols_never_enter_coverage() -> None:
+    """The operator's standing CYN sits in `account_positions` with 5000 shares. Coverage must
+    not become a back door to watching/subscribing a protected symbol.
+
+    MUTATION: drop the `owned - protected` subtraction in `_fetch_managed_symbols` -> RED.
+    """
+
+    class _Row:
+        def __init__(self, symbol: str) -> None:
+            self.symbol = symbol
+
+    class _Scalars:
+        def __init__(self, rows) -> None:
+            self._rows = rows
+
+        def all(self):
+            return self._rows
+
+    class _Session:
+        """First scalars() call = managed rows, second = account_positions (broker truth)."""
+
+        def __init__(self) -> None:
+            self._n = 0
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def scalars(self, _stmt):
+            self._n += 1
+            return _Scalars([_Row("CYN")] if self._n == 1 else [_Row(HELD), _Row("CYN")])
+
+    class _H:
+        def __init__(self) -> None:
+            # CYN is the operator's standing real-account position v2 must NEVER touch
+            self.settings = Settings(
+                oms_v2_exit_management_enabled=True,
+                protected_symbols="CYN",
+                strategy_schwab_1m_v2_account_name="live:schwab_1m_v2",
+            )
+            self._exit_coverage: set[str] = set()
+            self.session_factory = _Session
+
+    owned = SchwabV2BotService._fetch_managed_symbols(_H())
+    assert owned == {HELD}, (
+        f"protected symbol leaked into exit coverage: {sorted(owned)} — coverage must not be a "
+        "back door to watching CYN"
+    )
+
+
 # --------------------------------------------------------------------------- 5
 
 @pytest.mark.asyncio
