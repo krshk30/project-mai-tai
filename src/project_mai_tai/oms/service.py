@@ -449,6 +449,16 @@ class OmsRiskService:
         # negative becomes legible. Diagnostic only; never gates anything.
         self._p0a_census: dict[str, int] = {}
         self._p0a_census_last_emit: datetime | None = None
+        # ⛔⭐⭐ THE DENOMINATOR (2026-08-10). The census above counts OBSERVATIONS (evaluations at a
+        # sync tick) and, until this counter, never counted OPPORTUNITIES (managed exits actually
+        # emitted). So `evaluated=0` still conflated "no exits happened" with "exits happened and
+        # every one filled before a tick could see it" — which is the SAME ambiguity the census was
+        # built to remove, rebuilt one level up. Measured 2026-08-10: managed-exit submit->fill over
+        # 14 days, n=27, ALL inside one 15s `oms_broker_sync_interval_seconds` tick, ZERO living
+        # >=15s => P0a is structurally unreachable and `evaluated=0` is CORRECT, not a broken
+        # caller. That verdict required a separate ad-hoc SQL query; with `submitted` on the line it
+        # is readable from the tape alone. Diagnostic only; never gates anything.
+        self._p0a_census_submitted: int = 0
         # (broker_account_name, symbol) -> when the OCO cleared (armed -> not armed). Keeps the
         # software ladder deferred through the RESOLUTION window: an OCO leg filled and closed the
         # position, but the OMS position state lags the broker fill by ~tens of seconds, so a
@@ -950,6 +960,17 @@ class OmsRiskService:
                     reason="schwab_ineligible_cached",
                 )
                 session.commit()
+                # ⛔⭐ NAME THE SUPPRESSION. Risk PASSED (we are past the `not passed` return), no
+                # broker order is created, and the intent is marked rejected — so from the log this
+                # was indistinguishable from an intent that simply never arrived. That is open
+                # thread 4's "unnamed suppression": currently PROTECTIVE, but the same shape as
+                # #580 and #608, which both cost money while nobody could see them. One INFO line
+                # per drop, at the drop, so the tape carries WHICH gate ate the intent.
+                self.logger.info(
+                    "[OMS-INTENT-DROPPED] %s %s reason=schwab_ineligible_cached "
+                    "(risk PASSED; no broker order created; cached ineligible-today)",
+                    event.payload.broker_account_name, event.payload.symbol,
+                )
                 await self._publish_order_event(order_event)
                 return [order_event]
 
@@ -974,6 +995,15 @@ class OmsRiskService:
                     reason="webull_ineligible_cached",
                 )
                 session.commit()
+                # Symmetric with the Schwab branch above — and it must STAY symmetric. A reject
+                # query that can see one broker's drops and not the other's reads as a clean on the
+                # blind side BY CONSTRUCTION.
+                # [[feedback_reject_query_states_account_visibility]]
+                self.logger.info(
+                    "[OMS-INTENT-DROPPED] %s %s reason=webull_ineligible_cached "
+                    "(risk PASSED; no broker order created; cached ineligible-today)",
+                    event.payload.broker_account_name, event.payload.symbol,
+                )
                 await self._publish_order_event(order_event)
                 return [order_event]
 
@@ -3475,6 +3505,10 @@ class OmsRiskService:
             reason, row.symbol, row.broker_account_name, quantity, float(reference_price),
             (decided_at or datetime.now(UTC)).isoformat(timespec="milliseconds"),
         )
+        # P0a census DENOMINATOR: one managed exit emitted = one opportunity for the hold to be
+        # evaluated. Counted here, beside the line that already marks the emit, so the two can
+        # never disagree about what happened.
+        self._p0a_census_note_submitted()
         return events
 
     async def _has_active_native_stop_guard_order(
@@ -6804,6 +6838,18 @@ class OmsRiskService:
         except Exception:  # noqa: BLE001 - bookkeeping must never break the protective sync
             pass
 
+    def _p0a_census_note_submitted(self) -> None:
+        """Count one managed exit EMITTED — the census denominator.
+
+        ⛔ Deliberately a SEPARATE counter, not a `_p0a_census` key: `evaluated` is
+        `sum(_p0a_census.values())`, so folding submissions in there would inflate the very number
+        it exists to qualify. Diagnostic only; never raises, never gates.
+        """
+        try:
+            self._p0a_census_submitted = int(self.__dict__.get("_p0a_census_submitted", 0)) + 1
+        except Exception:  # noqa: BLE001 - bookkeeping must never break the exit path
+            pass
+
     def _maybe_emit_p0a_census(self, *, interval_seconds: float = 300.0) -> None:
         """Periodic rollup of P0a evaluations.
 
@@ -6825,12 +6871,19 @@ class OmsRiskService:
             self._p0a_census_last_emit = now
             c = dict(self.__dict__.setdefault("_p0a_census", {}))
             self._p0a_census = {}
+            submitted = int(self.__dict__.get("_p0a_census_submitted", 0))
+            self._p0a_census_submitted = 0
             evaluated = sum(c.values())
             held = c.pop("held", 0)
             declines = " ".join(f"{k}={v}" for k, v in sorted(c.items())) or "-"
+            # ⭐ READ `submitted` FIRST. It is the denominator, and it is what separates the two
+            # worlds `evaluated=0` collapses together:
+            #   submitted=0 evaluated=0  -> no managed exit occurred. Nothing to conclude.
+            #   submitted>0 evaluated=0  -> exits occurred and NONE was ever seen working at a sync
+            #                               tick => P0a is UNREACHABLE on this population, not idle.
             self.logger.info(
-                "[OMS-P0A-CENSUS] window=%.0fs evaluated=%d held=%d declined: %s",
-                interval_seconds, evaluated, held, declines,
+                "[OMS-P0A-CENSUS] window=%.0fs submitted=%d evaluated=%d held=%d declined: %s",
+                interval_seconds, submitted, evaluated, held, declines,
             )
         except Exception:  # noqa: BLE001
             pass
