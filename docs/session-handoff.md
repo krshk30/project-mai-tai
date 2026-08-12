@@ -17,12 +17,11 @@
 **As of 2026-08-11 EOD.** Fleet: 6 services active, `NRestarts=0`. **Deployed HEAD `32926b6`**
 (verified in the CHECKOUT and by CONTENT, not just the PR).
 
-⛔⭐⭐ **`FRTT` IS NOW PROTECTED — IT WILL NOT TRADE AT ALL.**
-`MAI_TAI_PROTECTED_SYMBOLS=CYN,TE,FRTT` (was `CYN,TE`). Operator-directed after he manually bought
-5,000 FRTT mid-afternoon while the bot was trading the same name. **He closed that position into the
-bell, so the original reason is gone** — this is a one-line revert + restart when he wants it back.
-Backup: `/etc/project-mai-tai/project-mai-tai.env.bak-20260811-deploy`.
-⚠️ FRTT vanishing from the watchlist is the protection working, **not a defect**.
+✅ **`FRTT` PROTECTION APPLIED THEN REVERTED, same evening.** Protected 16:08 ET after the operator
+manually bought 5,000 FRTT while the bot traded the same name; he closed that position into the
+bell, so the reason evaporated and it was **unprotected at 20:11 ET** in the proper quiet window
+(EH closed, flat, none armed, no bars due). `MAI_TAI_PROTECTED_SYMBOLS=CYN,TE` — back to baseline.
+Verified from each running process's own `/proc/<pid>/environ`. **FRTT trades normally again.**
 
 **Broker FLAT except `CYN 5000` (operator manual).** 0 working orders, 0 open managed rows.
 
@@ -45,9 +44,29 @@ ADD-only union (virtual ∪ managed ∪ **account_positions**) minus protected. 
 `docs/design/held-symbol-exit-coverage.md` §2; do not "complete" it to allow entries.
 ⚠️ **`[V2-EXIT-COVERAGE]` has fired 0×. UNEXERCISED — needs a live held position.**
 
+### ✅ 20:11 ET — FRTT unprotected (second restart, textbook window)
+stop v2 → stop strategy → restart oms → start strategy → start v2. 6 active, `NRestarts=0`,
+**0 tracebacks**, newest bar still 19:59 — **EH closed at 20:00, no bars were due, no hole possible.**
+
 ### #679 — the orphan watch asks a stronger question
 `classify_unowned` (*does anything OWN this order?*) + `classify_oversell` (working sells ≤ shares
 held). 6/6 mutations. Live GREEN on cron at 16:09:22 ET.
+
+## 🕐 OPEN PRs — built tonight, NOT merged, NOT deployed
+| PR | what | state |
+|---|---|---|
+| **#681** | **Probe W** — can a Webull combo MASTER be a STOP_LIMIT? | preview-first, 3 shapes, session stamped, cancel-and-verify. ⛔ broker calls UNEXERCISED until run |
+| **#682** | **entry-slippage validation** — fill vs decided level, by slot | run once; ⛔ needs **sudo** (v2 logs are root:root 640) |
+
+⭐⭐ **THE FILL PRICE WAS ALWAYS STORED.** `fills.price`, **100% coverage** (schwab 168/168,
+orb 302/302 over 11d), populated by every adapter and persisted at `oms/store.py:629`.
+⛔ My claim that "we never store a broker fill price anywhere" was **WRONG** — it came from checking
+`broker_orders.payload` alone. The operator's chart marker `-2@1.535` matched `fills.price =
+1.53500000` exactly. **No code change was needed; the query was missing, not the data.**
+
+⭐ **#676 HAS ITS FIRST PRICED FILL:** `reclaim n=1 median −35.2bps` (FRTT, filled BETTER than the
+decided level) · `first n=3 median −20.4bps worst +12.6` · `market n=34 median −0.4 worst +116.3
+SD 36.6`. ⚠️ **n=1 on one symbol is not a result** — the method works, the answer does not exist yet.
 
 ---
 
@@ -64,6 +83,9 @@ held). 6/6 mutations. Live GREEN on cron at 16:09:22 ET.
 
 ### Tomorrow's queue
 1. **🔴 CANCEL-RETRY DESIGN** — the day's real root cause. See below.
+2. **Run Probe W after 09:30 ET** so results land in CORE (#681): preview all three shapes, then
+   one attended qty-1 live rest. ⛔ record the SESSION beside every result.
+3. **Run the slippage script** (#682) — `sudo … scripts/resting_entry_slippage.py --days 11`.
 2. Commit the exec bit on `ops/health/bar_gap_watch_cron.sh` (still 100644 committed; the box has a
    hand-`chmod`, preserved across today's pull).
 3. Decide deliberately whether #674's price cap stays now that #676 rests.

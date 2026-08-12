@@ -15,6 +15,76 @@
 
 ---
 
+## 2026-08-11 EVENING — the fill price was there all along
+
+**After the EOD wrap.** FRTT protection reverted, two probes/scripts built, and a claim of mine
+withdrawn.
+
+### FRTT: protected 16:08, unprotected 20:11 — same evening
+Protected at the operator's direction after he manually bought 5,000 FRTT while the bot traded the
+same name. He closed it into the bell, so the reason evaporated. Reverted at 20:11 in the window we
+had originally wanted: EH closed at 20:00, account flat, none armed, newest bar 19:59 — **no bars
+were due, so no hole was possible.** 0 tracebacks. Verified from each process's own
+`/proc/<pid>/environ`, not from the env file.
+
+### ⭐⭐ The correction that matters: `fills.price` exists, 100% coverage
+Earlier today I reported that **"we never store a broker fill price anywhere"**, escalated it to a
+board item, and said it *blocked* #676's acceptance and made *every stop and target wrong by the
+slippage*. That was **wrong**. I had checked `broker_orders.payload`, found no fill-price key, and
+generalised from one table to the database.
+
+`fills.price` is the broker execution price — populated by **every** adapter via
+`ExecutionReport.fill_price`, persisted at `oms/store.py:629`, **schwab 168/168 and orb 302/302 over
+11 days**. The operator's chart marker `-2@1.535` matched `fills.price = 1.53500000` exactly. The
+value was one JOIN away the whole time.
+
+⇒ **No code change was needed. The query was missing, not the data.** When the operator asked
+whether to build storage, the right answer was "it is already stored" — arrived at only by grepping
+the WRITE path (`fill_price=` → who consumes it) rather than trusting the earlier conclusion.
+
+### The validation script, and two defects it caught in itself
+`scripts/resting_entry_slippage.py` (#682). Both defects were found by RUNNING it, not by reading it:
+
+1. **Tick rounding.** The log prints `stop=1.3742`; the order stores `1.37`. Exact matching missed
+   **48 of 48** resting fills — and the script still printed confident, well-formatted numbers with
+   zero attribution.
+2. ⛔ **Silent-empty.** `except (OSError, PermissionError): continue` swallowed the fact that v2 logs
+   are `root:root 640`. Run as `trader`, every log was unreadable, the slot index came back EMPTY,
+   and the output was indistinguishable from "no placements found". This is the exact failure class
+   boarded this morning, committed by me four hours later.
+
+Both are now guarded: a key ladder at raw/2dp/4dp precision, and loud lines for unreadable files
+AND an empty index, stating it is a **tool failure, not a finding about the strategy**.
+
+### ⭐ #676 has its first priced fill — and it corrected me again
+```
+reclaim  n=1   median -35.2bps        <- filled BETTER than the decided level
+first    n=3   median -20.4bps  worst  +12.6
+market   n=34  median  -0.4bps  worst +116.3  SD 36.6
+```
+Earlier I said **no `slot=reclaim` order had ever filled**. That came from arithmetic on cancel
+reasons; the direct join found one. ⚠️ n=1 on one symbol is not a result — the script refuses to
+print a drop-one when only one name is present.
+
+⛔ Also withdrawn: my claim that the 0.50% band caps slippage at +50bps. It caps the fill against the
+**stop trigger**, not `reference_price`, and the same output shows **+58.3**. What the band does
+guarantee is that the unbounded market tail (+351.7) is impossible.
+
+### Probe W (#681)
+Preview-first probe for whether a Webull combo MASTER can be a STOP_LIMIT — the guard at
+`webull.py` refuses it client-side and has **never asked the broker**. The operator's manual bracket
+screenshot (plain LIMIT + SL/TP legs) is *consistent* with the restriction being real; the note now
+reads UNPROVEN-BUT-PLAUSIBLE rather than confirmed, because the UI not offering it is not proof the
+API refuses it. Session stamped beside every result; cancel-and-verify in a `finally:` with a final
+sweep that exits 3 if anything survives.
+
+### Tally for the day
+Five mechanisms proposed and abandoned, plus this fill-price claim withdrawn. Every one died on
+reading the actual tape, call sites, or write path. The ones that survived came from `grep`, not
+from reasoning about how the system ought to behave.
+
+---
+
 ## 2026-08-11 — three wrong mechanisms, one real root cause, and a deploy that came out clean
 
 **Shipped:** `cb30fcd → 32926b6`. **#678** held-symbol exit coverage · **#679** orphan-watch
