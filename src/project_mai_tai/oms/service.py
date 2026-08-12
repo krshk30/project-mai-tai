@@ -1266,6 +1266,16 @@ class OmsRiskService:
             rth_reactive_abandon_event = self._apply_v2_rth_reactive_limit(
                 event=event, intent=intent
             )
+            # RTH FAN-OUT band-capped LIMIT (2026-08-12). #674 above capped only the SCHWAB primary
+            # ("the fan-out leg is deliberately untouched here"), so the Webull leg still went out as
+            # an UNCAPPED MARKET in regular hours — on BOTH fan-out sources. Live 2026-08-12 BAOS:
+            # the primary decided 1.1702 under its cap while this leg paid 1.1800 and lost 5.08%.
+            # Mutually exclusive with the reactive builder above (that one excludes fanout legs, this
+            # one requires them), so exactly one can fire for any single intent.
+            if rth_reactive_abandon_event is None:
+                rth_reactive_abandon_event = self._apply_v2_rth_fanout_limit(
+                    event=event, intent=intent
+                )
             if rth_reactive_abandon_event is not None:
                 session.commit()
                 for prior_event in pre_submit_events:
@@ -6243,6 +6253,96 @@ class OmsRiskService:
             and str(md.get("fanout_leg", "")) == ""
             and _is_regular_market_session()
         )
+
+    def _v2_rth_fanout_limit_applies(self, event: TradeIntentEvent) -> bool:
+        """Gate for the RTH FAN-OUT band-cap re-price (2026-08-12) — the half #674 left out.
+
+        ⛔ #674 capped the SCHWAB primary and said so explicitly: *"the fan-out leg is deliberately
+        untouched here."* The strategy still builds that leg as
+        `order_type: "limit" if session_is_eh else "market"` (`schwab_1m_v2.py:2236`), so in regular
+        hours the Webull leg is an UNCAPPED MARKET order — on BOTH fan-out sources, `reactive` and
+        `rth_resting`. This gate is deliberately keyed on `fanout_leg` + `order_type == market`
+        rather than on the source, so it covers both without naming either.
+
+        ⭐ Matching on `order_type == "market"` also makes it self-limiting: once the leg carries a
+        price it is out of scope, so this can never double-price an order.
+
+        EH is out of scope — the EH fan-out leg is already a limit and is priced by the EH builder.
+        """
+        if not bool(getattr(self.settings, "oms_v2_rth_fanout_limit_enabled", False)):
+            return False
+        p = event.payload
+        md = p.metadata
+        return (
+            p.strategy_code == "schwab_1m_v2"
+            and p.intent_type == "open"
+            and p.side == "buy"
+            and str(md.get("fanout_leg", "")).lower() == "webull"
+            and str(md.get("order_type", "")).lower() == "market"
+            and _is_regular_market_session()
+        )
+
+    def _apply_v2_rth_fanout_limit(
+        self, *, event: TradeIntentEvent, intent: TradeIntent
+    ) -> OrderEventEvent | None:
+        """Re-price the RTH Webull FAN-OUT leg as a band-capped marketable LIMIT instead of a MARKET.
+
+        Same anchor, band and pricer as #674's primary path, so the two legs of one signal are finally
+        priced by the same rule. Returns None to PROCEED, or a rejected event to ABANDON.
+
+        ⭐ WHY A LIMIT AND NOT A STOP-LIMIT. Probe W (2026-08-12, CORE/RTH) proved Webull REFUSES a
+        STOP_LIMIT combo master (417 `invalid order_type`) and ACCEPTS a LIMIT master with
+        STOP_PROFIT + STOP_LOSS attached (HTTP 200, placed live). A capped LIMIT therefore keeps the
+        broker-side bracket that 174 live fan-out entries depend on — there is no price/protection
+        trade-off on this shape, which is exactly why this is the change worth making.
+
+        ⚠️ THE NEW FAILURE MODE, NAMED: a market order always fills; this one will sometimes not.
+        That is a real behaviour change, and it is the operator's stated preference on entries —
+        a no-fill is acceptable, a bad fill is not. Both outcomes are logged so the tape answers the
+        frequency directly instead of needing a reconstruction."""
+        if not self._v2_rth_fanout_limit_applies(event):
+            return None
+        md = event.payload.metadata
+        symbol = str(event.payload.symbol).upper()
+        try:
+            level = float(md["entry_price"])
+        except (KeyError, TypeError, ValueError):
+            return None          # no anchor -> leave the leg exactly as it is today (MARKET)
+        if level <= 0:
+            return None
+        try:
+            band_pct = float(md["resting_band_pct"])
+        except (KeyError, TypeError, ValueError):
+            band_pct = float(getattr(self.settings, "oms_v2_eh_resting_entry_band_pct", 0.5))
+        max_age_ms = int(getattr(self.settings, "oms_v2_eh_resting_entry_quote_max_age_ms", 2000))
+        limit_s, a, b = self._band_capped_marketable_limit(
+            symbol=symbol, level=level, band_pct=band_pct, max_age_ms=max_age_ms
+        )
+        if limit_s is None:
+            reason_code, reason_detail = a, b
+            self.logger.info(
+                "[OMS-V2-RTH-FANOUT-LIMIT] symbol=%s source=%s ABANDONED reason=%s — %s",
+                symbol, md.get("fanout_source", "?"), reason_code, reason_detail,
+            )
+            return self._abandon_v2_eh_entry(
+                event=event, intent=intent, reason_code=reason_code, reason_detail=reason_detail,
+            )
+        ask, cap = a, b
+        md["order_type"] = "limit"
+        md["limit_price"] = limit_s
+        md["price_source"] = "ask"
+        md["oms_v2_rth_fanout_limit"] = "true"
+        md["oms_v2_rth_fanout_limit_ask"] = f"{ask:.4f}"
+        md["oms_v2_rth_fanout_limit_cap"] = f"{cap:.4f}"
+        # ⛔ `reference_price` is NOT overwritten — same reason as the primary path: every slippage
+        # study measures fill-vs-DECISION, and overwriting the reference silently turns that into
+        # fill-vs-fill and reports ~0. The fan-out leg is the one whose slippage we most want to see.
+        self.logger.info(
+            "[OMS-V2-RTH-FANOUT-LIMIT] symbol=%s source=%s PLACED ask=%.4f level=%.4f cap=%.4f "
+            "limit=%s (was MARKET; the fan-out leg now has a ceiling too)",
+            symbol, md.get("fanout_source", "?"), ask, level, cap, limit_s,
+        )
+        return None
 
     def _apply_v2_rth_reactive_limit(
         self, *, event: TradeIntentEvent, intent: TradeIntent

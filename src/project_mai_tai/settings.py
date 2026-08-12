@@ -952,6 +952,27 @@ class Settings(BaseSettings):
     # False the v2 entry is the unchanged single-leg order. Requires schwab_native_bracket_enabled
     # on the adapter AND oms_native_oco_stand_down_enabled (else the software ladder collides).
     oms_v2_emit_native_oco_bracket_enabled: bool = False
+    # ⛔⭐⭐ RTH FAN-OUT PRICE CAP (2026-08-12) — finishes what #674 started.
+    #
+    # #674 made the RTH REACTIVE entry a band-capped marketable LIMIT instead of an uncapped MARKET,
+    # and scoped itself to the SCHWAB PRIMARY on purpose (`_v2_rth_reactive_limit_applies`:
+    # "the fan-out leg is deliberately untouched here"). So the Webull fan-out leg still goes out as
+    # `order_type: "limit" if session_is_eh else "market"` — i.e. UNCAPPED MARKET in regular hours,
+    # on BOTH fan-out sources (`reactive` AND `rth_resting`).
+    #
+    # ⛔ THAT IS THE REMAINING CHASE. Measured: market entries own the +610 bps (WXM 08-11) and
+    # +684 bps (AMIX) outliers, and on 2026-08-12 BAOS the Schwab primary decided 1.1702 under its
+    # #674 cap while the fan-out leg sent MARKET and paid 1.1800 — the leg then lost 5.08%.
+    #
+    # ⭐ AND CAPPING IT IS FREE. Probe W (2026-08-12, CORE/RTH) proved Webull ACCEPTS a LIMIT master
+    # with STOP_PROFIT + STOP_LOSS legs attached (shape A, HTTP 200, placed live) and REFUSES a
+    # STOP_LIMIT master (shape B, 417). So a band-capped LIMIT keeps the broker-side bracket that
+    # 174 live fan-out entries depend on. There is no protection/price trade-off on this shape.
+    #
+    # OFF by default => the fan-out leg stays MARKET and everything is byte-identical.
+    # ⚠️ THE NEW FAILURE MODE, NAMED: a market order always fills; a capped limit sometimes will not.
+    # Both the placement and the abandon are logged so the tape answers the frequency directly.
+    oms_v2_rth_fanout_limit_enabled: bool = False
     # ⛔⭐⭐ CANCEL-VERIFY (2026-08-12). A CANCEL IS FIRE-AND-FORGET TODAY: `_process_cancel_intent`
     # submits, records whatever the broker said about the TARGET ORDER, and never asks again.
     # LIVE COST, FRTT 2026-08-11 13:01:02 — the cancel was emitted, died on the network
