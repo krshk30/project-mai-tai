@@ -939,6 +939,19 @@ class WebullBrokerAdapter:
         "CORE" (RTH -- matches the RTH-first scope). Fork A: a buy-STOP master rejects on Webull,
         so MASTER is LIMIT or MARKET only (enforced here -- never emit a shape the broker refuses).
 
+        ⭐ EVIDENCE STATUS (updated 2026-08-11). The operator's manual Webull bracket screenshot
+        shows the entry as a plain LIMIT with Stop-Loss + Take-Profit legs attached, TIF Day,
+        regular hours -- CONSISTENT with this restriction being real rather than an untested
+        assumption, which is how it had been carried until now.
+        ⛔ BUT THE UI NOT OFFERING IT IS NOT PROOF THE API REFUSES IT. This guard has never once
+        asked Webull; it refuses client-side, so a rejection has never been observed. Until
+        `scripts/webull_combo_master_probe.py` (Probe W) returns a broker verdict, the correct
+        status is UNPROVEN-BUT-PLAUSIBLE, not "confirmed".
+        ⚠️ And any verdict is valid only for the SESSION it was obtained in -- omitting the session
+        is what produced the wrong 2026-07-25 note.
+        ⭐ It matters because the Schwab leg now RESTS (STOP_LIMIT at the ATR line) while this leg
+        still sends MARKET -- the order-type asymmetry that owns every entry >=200bps of slippage.
+
         ⚠ CONFIRM-AT-TEST: the combo ACCEPTANCE and the one-cancels-other behaviour are exactly
         what Webull STEP-1 validates live (preview item 0, then the attended qty-1 gate); this
         builds the request shape from the documented sample, it does not prove the account
