@@ -318,6 +318,18 @@ class _DriftCancelCandidate:
 # stuck-intent sweep. Mirrors `INFLIGHT_INTENT_STATUSES_TERMINAL` in schwab_1m_v2_bot.
 _TERMINAL_INTENT_STATUSES = ("filled", "rejected", "cancelled")
 
+# ⛔⭐ The states in which a cancel TARGET is provably no longer working at the broker.
+#
+# Deliberately NOT the same set as `_TERMINAL_INTENT_STATUSES`. That one answers "is the cancel
+# REQUEST finished"; this one answers "is the ORDER off the book" — the only question a cancel
+# actually cares about. `expired` belongs here and not there: an order that expired is gone, which
+# satisfies a cancel, but it is not an outcome a cancel intent should claim as its own.
+#
+# ⛔ `accepted` / `pending` / `PENDING_CANCEL` are absent ON PURPOSE. Schwab answers a just-issued
+# DELETE with PENDING_CANCEL; treating that as settled is precisely the assumption that let the
+# FRTT order sit working for 136 minutes on 2026-08-11.
+_CANCEL_TARGET_SETTLED_STATUSES = ("cancelled", "filled", "rejected", "expired")
+
 
 def resolve_cancel_intent_status(intent_type: str, report_event_type: str) -> str:
     """The status to record on the INTENT, given the broker report about the TARGET ORDER.
@@ -1254,6 +1266,16 @@ class OmsRiskService:
             rth_reactive_abandon_event = self._apply_v2_rth_reactive_limit(
                 event=event, intent=intent
             )
+            # RTH FAN-OUT band-capped LIMIT (2026-08-12). #674 above capped only the SCHWAB primary
+            # ("the fan-out leg is deliberately untouched here"), so the Webull leg still went out as
+            # an UNCAPPED MARKET in regular hours — on BOTH fan-out sources. Live 2026-08-12 BAOS:
+            # the primary decided 1.1702 under its cap while this leg paid 1.1800 and lost 5.08%.
+            # Mutually exclusive with the reactive builder above (that one excludes fanout legs, this
+            # one requires them), so exactly one can fire for any single intent.
+            if rth_reactive_abandon_event is None:
+                rth_reactive_abandon_event = self._apply_v2_rth_fanout_limit(
+                    event=event, intent=intent
+                )
             if rth_reactive_abandon_event is not None:
                 session.commit()
                 for prior_event in pre_submit_events:
@@ -1681,8 +1703,35 @@ class OmsRiskService:
             order_type=target_order.order_type,
             time_in_force=target_order.time_in_force,
         )
-        reports = await self.broker_adapter.submit_order(request)
+        verify_enabled = bool(getattr(self.settings, "oms_cancel_verify_enabled", False))
+        try:
+            reports = await self.broker_adapter.submit_order(request)
+        except Exception:
+            # ⛔⭐⭐ A RAISED CANCEL IS AN UNKNOWN, NOT A FAILURE.
+            # FRTT 2026-08-11: the cancel call died on the network and the order stayed WORKING for
+            # 136 minutes. The request may or may not have reached the broker — the ONLY way to know
+            # is to read the order back, which is exactly what verification does. So with the flag on
+            # we swallow the raise HERE and let the verifier resolve it; with the flag off the
+            # behaviour is byte-identical (the exception propagates as it always has).
+            if not verify_enabled:
+                raise
+            self.logger.warning(
+                "[OMS-CANCEL-SUBMIT-RAISED] %s %s coid=%s — cancel call raised; the order's state is "
+                "UNKNOWN, not failed. Verifier will read it back.",
+                target_order.symbol, event.payload.broker_account_name, target_order.client_order_id,
+                exc_info=True,
+            )
+            reports = []
         published_events: list[OrderEventEvent] = []
+
+        if verify_enabled:
+            self._spawn_cancel_verification(
+                request=request,
+                symbol=target_order.symbol,
+                account_name=event.payload.broker_account_name,
+                client_order_id=target_order.client_order_id,
+                broker_order_id=target_order.broker_order_id,
+            )
 
         for report in reports:
             order = self.store.update_order_from_report(
@@ -1736,6 +1785,128 @@ class OmsRiskService:
             )
 
         return published_events
+
+    # ------------------------------------------------------------------ cancel-verify (2026-08-12)
+    def _spawn_cancel_verification(
+        self,
+        *,
+        request: OrderRequest,
+        symbol: str,
+        account_name: str,
+        client_order_id: str,
+        broker_order_id: str | None,
+    ) -> "asyncio.Task[str | None]":
+        """Run `_verify_cancel_landed` OFF the intent path.
+
+        ⛔ Deliberately backgrounded. Verification polls with sleeps, and the worst case is several
+        seconds; doing that inline would stall `process_trade_intent` — which also carries EXITS.
+        Delaying an exit to confirm a cancel would trade a rare unowned order for a common late
+        stop, which is the wrong direction. The hole being closed is 136 MINUTES wide, so a few
+        seconds of asynchrony costs nothing.
+
+        The task is retained so it cannot be garbage-collected mid-flight (the asyncio footgun) and
+        so tests can await it deterministically instead of sleeping.
+        """
+        task = asyncio.ensure_future(
+            self._verify_cancel_landed(
+                request=request,
+                symbol=symbol,
+                account_name=account_name,
+                client_order_id=client_order_id,
+                broker_order_id=broker_order_id,
+            )
+        )
+        tasks = getattr(self, "_cancel_verify_tasks", None)
+        if tasks is None:
+            tasks = set()
+            self._cancel_verify_tasks = tasks
+        tasks.add(task)
+        task.add_done_callback(tasks.discard)
+        return task
+
+    async def _verify_cancel_landed(
+        self,
+        *,
+        request: OrderRequest,
+        symbol: str,
+        account_name: str,
+        client_order_id: str,
+        broker_order_id: str | None,
+    ) -> str | None:
+        """Read the cancel TARGET back until it is settled; re-submit the cancel if it is not.
+
+        ⛔⭐⭐ THE DEFECT THIS CLOSES. We treated the ATTEMPT as the OUTCOME. `_process_cancel_intent`
+        submitted a cancel, recorded whatever the broker said about the target order, and never asked
+        again. On 2026-08-11 the FRTT cancel died on the network and the order stayed WORKING and
+        unowned for 136 minutes until the operator killed it by hand.
+
+        ⛔ Neither an exception nor an `accepted`/`PENDING_CANCEL` report tells you what happened.
+        Both are unknowns. This resolves the unknown the only way it can be resolved — by reading the
+        order back from the broker — and re-submits if the read says it is still working.
+
+        ⚠️ NEVER SILENT. Every exit from this function logs: confirmed, or a loud
+        `[OMS-CANCEL-UNCONFIRMED]` carrying the ids an operator needs. An unverifiable cancel is a
+        WARNING, not an absence — a cancel path that can fail quietly is the same class of defect as
+        the one it is fixing.
+
+        Returns the last observed status, or None if the order could never be read.
+        """
+        attempts = max(1, int(getattr(self.settings, "oms_cancel_verify_attempts", 3) or 3))
+        interval = max(0.0, float(getattr(self.settings, "oms_cancel_verify_interval_seconds", 2.0) or 0.0))
+        resubmits = max(0, int(getattr(self.settings, "oms_cancel_verify_resubmits", 1) or 0))
+
+        observed: str | None = None
+        reads_failed = 0
+        for submit_round in range(resubmits + 1):
+            for _ in range(attempts):
+                if interval:
+                    await asyncio.sleep(interval)
+                try:
+                    report = await self.broker_adapter.fetch_order_update(request)
+                except Exception:
+                    # A failed READ is also an unknown — keep trying, never conclude "gone".
+                    reads_failed += 1
+                    self.logger.warning(
+                        "[OMS-CANCEL-VERIFY-READ-FAILED] %s %s coid=%s — could not read the order back",
+                        symbol, account_name, client_order_id, exc_info=True,
+                    )
+                    continue
+                if report is None:
+                    reads_failed += 1
+                    continue
+                observed = str(getattr(report, "event_type", "") or "")
+                if observed in _CANCEL_TARGET_SETTLED_STATUSES:
+                    self.logger.info(
+                        "[OMS-CANCEL-CONFIRMED] %s %s coid=%s broker_id=%s settled=%s "
+                        "(round=%d) — the order is off the book",
+                        symbol, account_name, client_order_id, broker_order_id, observed,
+                        submit_round,
+                    )
+                    return observed
+            if submit_round < resubmits:
+                self.logger.warning(
+                    "[OMS-CANCEL-RESUBMIT] %s %s coid=%s still reads %s after %d reads — re-sending "
+                    "the cancel (round %d of %d)",
+                    symbol, account_name, client_order_id, observed or "UNREADABLE",
+                    attempts, submit_round + 1, resubmits,
+                )
+                try:
+                    await self.broker_adapter.submit_order(request)
+                except Exception:
+                    self.logger.warning(
+                        "[OMS-CANCEL-RESUBMIT-RAISED] %s %s coid=%s — re-sent cancel raised; "
+                        "continuing to verify",
+                        symbol, account_name, client_order_id, exc_info=True,
+                    )
+
+        self.logger.warning(
+            "[OMS-CANCEL-UNCONFIRMED] %s %s coid=%s broker_id=%s last_status=%s reads_failed=%d — "
+            "THE CANCEL WAS NOT CONFIRMED. The order may still be WORKING and unowned at the broker. "
+            "This is the FRTT 2026-08-11 shape (136 min live). Check it by hand.",
+            symbol, account_name, client_order_id, broker_order_id,
+            observed or "UNREADABLE", reads_failed,
+        )
+        return observed
 
     def _record_internal_risk_pass(
         self,
@@ -6082,6 +6253,96 @@ class OmsRiskService:
             and str(md.get("fanout_leg", "")) == ""
             and _is_regular_market_session()
         )
+
+    def _v2_rth_fanout_limit_applies(self, event: TradeIntentEvent) -> bool:
+        """Gate for the RTH FAN-OUT band-cap re-price (2026-08-12) — the half #674 left out.
+
+        ⛔ #674 capped the SCHWAB primary and said so explicitly: *"the fan-out leg is deliberately
+        untouched here."* The strategy still builds that leg as
+        `order_type: "limit" if session_is_eh else "market"` (`schwab_1m_v2.py:2236`), so in regular
+        hours the Webull leg is an UNCAPPED MARKET order — on BOTH fan-out sources, `reactive` and
+        `rth_resting`. This gate is deliberately keyed on `fanout_leg` + `order_type == market`
+        rather than on the source, so it covers both without naming either.
+
+        ⭐ Matching on `order_type == "market"` also makes it self-limiting: once the leg carries a
+        price it is out of scope, so this can never double-price an order.
+
+        EH is out of scope — the EH fan-out leg is already a limit and is priced by the EH builder.
+        """
+        if not bool(getattr(self.settings, "oms_v2_rth_fanout_limit_enabled", False)):
+            return False
+        p = event.payload
+        md = p.metadata
+        return (
+            p.strategy_code == "schwab_1m_v2"
+            and p.intent_type == "open"
+            and p.side == "buy"
+            and str(md.get("fanout_leg", "")).lower() == "webull"
+            and str(md.get("order_type", "")).lower() == "market"
+            and _is_regular_market_session()
+        )
+
+    def _apply_v2_rth_fanout_limit(
+        self, *, event: TradeIntentEvent, intent: TradeIntent
+    ) -> OrderEventEvent | None:
+        """Re-price the RTH Webull FAN-OUT leg as a band-capped marketable LIMIT instead of a MARKET.
+
+        Same anchor, band and pricer as #674's primary path, so the two legs of one signal are finally
+        priced by the same rule. Returns None to PROCEED, or a rejected event to ABANDON.
+
+        ⭐ WHY A LIMIT AND NOT A STOP-LIMIT. Probe W (2026-08-12, CORE/RTH) proved Webull REFUSES a
+        STOP_LIMIT combo master (417 `invalid order_type`) and ACCEPTS a LIMIT master with
+        STOP_PROFIT + STOP_LOSS attached (HTTP 200, placed live). A capped LIMIT therefore keeps the
+        broker-side bracket that 174 live fan-out entries depend on — there is no price/protection
+        trade-off on this shape, which is exactly why this is the change worth making.
+
+        ⚠️ THE NEW FAILURE MODE, NAMED: a market order always fills; this one will sometimes not.
+        That is a real behaviour change, and it is the operator's stated preference on entries —
+        a no-fill is acceptable, a bad fill is not. Both outcomes are logged so the tape answers the
+        frequency directly instead of needing a reconstruction."""
+        if not self._v2_rth_fanout_limit_applies(event):
+            return None
+        md = event.payload.metadata
+        symbol = str(event.payload.symbol).upper()
+        try:
+            level = float(md["entry_price"])
+        except (KeyError, TypeError, ValueError):
+            return None          # no anchor -> leave the leg exactly as it is today (MARKET)
+        if level <= 0:
+            return None
+        try:
+            band_pct = float(md["resting_band_pct"])
+        except (KeyError, TypeError, ValueError):
+            band_pct = float(getattr(self.settings, "oms_v2_eh_resting_entry_band_pct", 0.5))
+        max_age_ms = int(getattr(self.settings, "oms_v2_eh_resting_entry_quote_max_age_ms", 2000))
+        limit_s, a, b = self._band_capped_marketable_limit(
+            symbol=symbol, level=level, band_pct=band_pct, max_age_ms=max_age_ms
+        )
+        if limit_s is None:
+            reason_code, reason_detail = a, b
+            self.logger.info(
+                "[OMS-V2-RTH-FANOUT-LIMIT] symbol=%s source=%s ABANDONED reason=%s — %s",
+                symbol, md.get("fanout_source", "?"), reason_code, reason_detail,
+            )
+            return self._abandon_v2_eh_entry(
+                event=event, intent=intent, reason_code=reason_code, reason_detail=reason_detail,
+            )
+        ask, cap = a, b
+        md["order_type"] = "limit"
+        md["limit_price"] = limit_s
+        md["price_source"] = "ask"
+        md["oms_v2_rth_fanout_limit"] = "true"
+        md["oms_v2_rth_fanout_limit_ask"] = f"{ask:.4f}"
+        md["oms_v2_rth_fanout_limit_cap"] = f"{cap:.4f}"
+        # ⛔ `reference_price` is NOT overwritten — same reason as the primary path: every slippage
+        # study measures fill-vs-DECISION, and overwriting the reference silently turns that into
+        # fill-vs-fill and reports ~0. The fan-out leg is the one whose slippage we most want to see.
+        self.logger.info(
+            "[OMS-V2-RTH-FANOUT-LIMIT] symbol=%s source=%s PLACED ask=%.4f level=%.4f cap=%.4f "
+            "limit=%s (was MARKET; the fan-out leg now has a ceiling too)",
+            symbol, md.get("fanout_source", "?"), ask, level, cap, limit_s,
+        )
+        return None
 
     def _apply_v2_rth_reactive_limit(
         self, *, event: TradeIntentEvent, intent: TradeIntent
