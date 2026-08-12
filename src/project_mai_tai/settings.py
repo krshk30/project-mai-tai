@@ -952,6 +952,29 @@ class Settings(BaseSettings):
     # False the v2 entry is the unchanged single-leg order. Requires schwab_native_bracket_enabled
     # on the adapter AND oms_native_oco_stand_down_enabled (else the software ladder collides).
     oms_v2_emit_native_oco_bracket_enabled: bool = False
+    # ⛔⭐⭐ CANCEL-VERIFY (2026-08-12). A CANCEL IS FIRE-AND-FORGET TODAY: `_process_cancel_intent`
+    # submits, records whatever the broker said about the TARGET ORDER, and never asks again.
+    # LIVE COST, FRTT 2026-08-11 13:01:02 — the cancel was emitted, died on the network
+    # (`upstream connect error ... connection termination`), and the order stayed WORKING and
+    # unowned for 136 MINUTES until the operator killed it by hand. #679 detects that shape in
+    # ~2 min; nothing cures it.
+    #
+    # ⛔ THE POINT: an exception on the cancel call is NOT evidence the cancel failed, and an
+    # `accepted`/`PENDING_CANCEL` report is NOT evidence it succeeded. Both are unknowns, and the
+    # only way to resolve an unknown is to READ THE ORDER BACK. That is what this does.
+    #
+    # OFF by default => `_process_cancel_intent` is byte-identical. Turning it on adds, after the
+    # submit: poll the target order until it reads terminal, re-submit the cancel if it does not,
+    # and if it STILL does not, emit `[OMS-CANCEL-UNCONFIRMED]` — loud, greppable, and carrying the
+    # ids needed to act. It never swallows: an unconfirmed cancel ends as a WARNING, not silence.
+    oms_cancel_verify_enabled: bool = False
+    # How many times to re-read the order before giving up on one submit attempt.
+    oms_cancel_verify_attempts: int = 3
+    # Seconds between re-reads. Deliberately short: the whole window is the exposure.
+    oms_cancel_verify_interval_seconds: float = 2.0
+    # How many times to RE-SUBMIT the cancel when the reads say it is still working. 1 is the
+    # design default — a second submit is cheap, and the FRTT case would have been cured by it.
+    oms_cancel_verify_resubmits: int = 1
     # Extended-hours exit routing (2026-07-05, CLRO/CELZ stuck-exit fix). In
     # regular trading hours v2 exits stay MARKET/NORMAL (byte-identical). In
     # extended hours (AM/PM) they route as a LIMIT with session=AM|PM so they can

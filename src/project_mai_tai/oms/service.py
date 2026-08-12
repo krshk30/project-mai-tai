@@ -318,6 +318,18 @@ class _DriftCancelCandidate:
 # stuck-intent sweep. Mirrors `INFLIGHT_INTENT_STATUSES_TERMINAL` in schwab_1m_v2_bot.
 _TERMINAL_INTENT_STATUSES = ("filled", "rejected", "cancelled")
 
+# ⛔⭐ The states in which a cancel TARGET is provably no longer working at the broker.
+#
+# Deliberately NOT the same set as `_TERMINAL_INTENT_STATUSES`. That one answers "is the cancel
+# REQUEST finished"; this one answers "is the ORDER off the book" — the only question a cancel
+# actually cares about. `expired` belongs here and not there: an order that expired is gone, which
+# satisfies a cancel, but it is not an outcome a cancel intent should claim as its own.
+#
+# ⛔ `accepted` / `pending` / `PENDING_CANCEL` are absent ON PURPOSE. Schwab answers a just-issued
+# DELETE with PENDING_CANCEL; treating that as settled is precisely the assumption that let the
+# FRTT order sit working for 136 minutes on 2026-08-11.
+_CANCEL_TARGET_SETTLED_STATUSES = ("cancelled", "filled", "rejected", "expired")
+
 
 def resolve_cancel_intent_status(intent_type: str, report_event_type: str) -> str:
     """The status to record on the INTENT, given the broker report about the TARGET ORDER.
@@ -1681,8 +1693,35 @@ class OmsRiskService:
             order_type=target_order.order_type,
             time_in_force=target_order.time_in_force,
         )
-        reports = await self.broker_adapter.submit_order(request)
+        verify_enabled = bool(getattr(self.settings, "oms_cancel_verify_enabled", False))
+        try:
+            reports = await self.broker_adapter.submit_order(request)
+        except Exception:
+            # ⛔⭐⭐ A RAISED CANCEL IS AN UNKNOWN, NOT A FAILURE.
+            # FRTT 2026-08-11: the cancel call died on the network and the order stayed WORKING for
+            # 136 minutes. The request may or may not have reached the broker — the ONLY way to know
+            # is to read the order back, which is exactly what verification does. So with the flag on
+            # we swallow the raise HERE and let the verifier resolve it; with the flag off the
+            # behaviour is byte-identical (the exception propagates as it always has).
+            if not verify_enabled:
+                raise
+            self.logger.warning(
+                "[OMS-CANCEL-SUBMIT-RAISED] %s %s coid=%s — cancel call raised; the order's state is "
+                "UNKNOWN, not failed. Verifier will read it back.",
+                target_order.symbol, event.payload.broker_account_name, target_order.client_order_id,
+                exc_info=True,
+            )
+            reports = []
         published_events: list[OrderEventEvent] = []
+
+        if verify_enabled:
+            self._spawn_cancel_verification(
+                request=request,
+                symbol=target_order.symbol,
+                account_name=event.payload.broker_account_name,
+                client_order_id=target_order.client_order_id,
+                broker_order_id=target_order.broker_order_id,
+            )
 
         for report in reports:
             order = self.store.update_order_from_report(
@@ -1736,6 +1775,128 @@ class OmsRiskService:
             )
 
         return published_events
+
+    # ------------------------------------------------------------------ cancel-verify (2026-08-12)
+    def _spawn_cancel_verification(
+        self,
+        *,
+        request: OrderRequest,
+        symbol: str,
+        account_name: str,
+        client_order_id: str,
+        broker_order_id: str | None,
+    ) -> "asyncio.Task[str | None]":
+        """Run `_verify_cancel_landed` OFF the intent path.
+
+        ⛔ Deliberately backgrounded. Verification polls with sleeps, and the worst case is several
+        seconds; doing that inline would stall `process_trade_intent` — which also carries EXITS.
+        Delaying an exit to confirm a cancel would trade a rare unowned order for a common late
+        stop, which is the wrong direction. The hole being closed is 136 MINUTES wide, so a few
+        seconds of asynchrony costs nothing.
+
+        The task is retained so it cannot be garbage-collected mid-flight (the asyncio footgun) and
+        so tests can await it deterministically instead of sleeping.
+        """
+        task = asyncio.ensure_future(
+            self._verify_cancel_landed(
+                request=request,
+                symbol=symbol,
+                account_name=account_name,
+                client_order_id=client_order_id,
+                broker_order_id=broker_order_id,
+            )
+        )
+        tasks = getattr(self, "_cancel_verify_tasks", None)
+        if tasks is None:
+            tasks = set()
+            self._cancel_verify_tasks = tasks
+        tasks.add(task)
+        task.add_done_callback(tasks.discard)
+        return task
+
+    async def _verify_cancel_landed(
+        self,
+        *,
+        request: OrderRequest,
+        symbol: str,
+        account_name: str,
+        client_order_id: str,
+        broker_order_id: str | None,
+    ) -> str | None:
+        """Read the cancel TARGET back until it is settled; re-submit the cancel if it is not.
+
+        ⛔⭐⭐ THE DEFECT THIS CLOSES. We treated the ATTEMPT as the OUTCOME. `_process_cancel_intent`
+        submitted a cancel, recorded whatever the broker said about the target order, and never asked
+        again. On 2026-08-11 the FRTT cancel died on the network and the order stayed WORKING and
+        unowned for 136 minutes until the operator killed it by hand.
+
+        ⛔ Neither an exception nor an `accepted`/`PENDING_CANCEL` report tells you what happened.
+        Both are unknowns. This resolves the unknown the only way it can be resolved — by reading the
+        order back from the broker — and re-submits if the read says it is still working.
+
+        ⚠️ NEVER SILENT. Every exit from this function logs: confirmed, or a loud
+        `[OMS-CANCEL-UNCONFIRMED]` carrying the ids an operator needs. An unverifiable cancel is a
+        WARNING, not an absence — a cancel path that can fail quietly is the same class of defect as
+        the one it is fixing.
+
+        Returns the last observed status, or None if the order could never be read.
+        """
+        attempts = max(1, int(getattr(self.settings, "oms_cancel_verify_attempts", 3) or 3))
+        interval = max(0.0, float(getattr(self.settings, "oms_cancel_verify_interval_seconds", 2.0) or 0.0))
+        resubmits = max(0, int(getattr(self.settings, "oms_cancel_verify_resubmits", 1) or 0))
+
+        observed: str | None = None
+        reads_failed = 0
+        for submit_round in range(resubmits + 1):
+            for _ in range(attempts):
+                if interval:
+                    await asyncio.sleep(interval)
+                try:
+                    report = await self.broker_adapter.fetch_order_update(request)
+                except Exception:
+                    # A failed READ is also an unknown — keep trying, never conclude "gone".
+                    reads_failed += 1
+                    self.logger.warning(
+                        "[OMS-CANCEL-VERIFY-READ-FAILED] %s %s coid=%s — could not read the order back",
+                        symbol, account_name, client_order_id, exc_info=True,
+                    )
+                    continue
+                if report is None:
+                    reads_failed += 1
+                    continue
+                observed = str(getattr(report, "event_type", "") or "")
+                if observed in _CANCEL_TARGET_SETTLED_STATUSES:
+                    self.logger.info(
+                        "[OMS-CANCEL-CONFIRMED] %s %s coid=%s broker_id=%s settled=%s "
+                        "(round=%d) — the order is off the book",
+                        symbol, account_name, client_order_id, broker_order_id, observed,
+                        submit_round,
+                    )
+                    return observed
+            if submit_round < resubmits:
+                self.logger.warning(
+                    "[OMS-CANCEL-RESUBMIT] %s %s coid=%s still reads %s after %d reads — re-sending "
+                    "the cancel (round %d of %d)",
+                    symbol, account_name, client_order_id, observed or "UNREADABLE",
+                    attempts, submit_round + 1, resubmits,
+                )
+                try:
+                    await self.broker_adapter.submit_order(request)
+                except Exception:
+                    self.logger.warning(
+                        "[OMS-CANCEL-RESUBMIT-RAISED] %s %s coid=%s — re-sent cancel raised; "
+                        "continuing to verify",
+                        symbol, account_name, client_order_id, exc_info=True,
+                    )
+
+        self.logger.warning(
+            "[OMS-CANCEL-UNCONFIRMED] %s %s coid=%s broker_id=%s last_status=%s reads_failed=%d — "
+            "THE CANCEL WAS NOT CONFIRMED. The order may still be WORKING and unowned at the broker. "
+            "This is the FRTT 2026-08-11 shape (136 min live). Check it by hand.",
+            symbol, account_name, client_order_id, broker_order_id,
+            observed or "UNREADABLE", reads_failed,
+        )
+        return observed
 
     def _record_internal_risk_pass(
         self,
