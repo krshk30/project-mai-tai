@@ -2067,6 +2067,35 @@ class OmsRiskService:
         )
         return True
 
+    def _reprotect_after_failed_release(self, acct: str, symbol: str, row) -> None:
+        """Put a protective pair back on a position whose exit legs we cancelled for a close that
+        then would not go through. Never raises — this runs inside the protective sync.
+
+        Prices off the managed row's ENTRY, which is the same anchor `_attach_webull_protection`
+        uses, so the restored pair sits exactly where the original one did.
+        """
+        try:
+            entry_price = float(getattr(row, "entry_price", 0) or 0)
+            quantity = int(getattr(row, "current_quantity", 0) or 0)
+            if entry_price <= 0 or quantity <= 0:
+                self.logger.warning(
+                    "[OMS-EXIT-REPROTECT-SKIPPED] %s %s entry=%s qty=%s — cannot price a protective "
+                    "pair from this row. THE POSITION MAY BE UNCOVERED; check it by hand.",
+                    symbol, acct, entry_price, quantity,
+                )
+                return
+            self._spawn_webull_protection(
+                broker_account_name=acct, symbol=symbol, quantity=quantity,
+                entry_price=entry_price,
+                strategy_code=str(getattr(row, "strategy_code", "") or ""),
+            )
+        except Exception:  # noqa: BLE001 - must never break the protective sync
+            self.logger.warning(
+                "[OMS-EXIT-REPROTECT-FAILED] %s %s — could not re-attach protection after a failed "
+                "release. THE POSITION MAY BE UNCOVERED; check it by hand.",
+                symbol, acct, exc_info=True,
+            )
+
     def _clear_exit_reservation_release(self, broker_account_name: str, symbol: str) -> None:
         """Forget the release latch so the NEXT position on this symbol releases its own legs.
 
@@ -3360,6 +3389,29 @@ class OmsRiskService:
         # ⛔ ONLY a POSITIVELY-HELD read may reset the accumulator. `_broker_symbol_is_flat`
         # returns False for HELD *and* UNKNOWN; resetting on both is what let NCRA retry 145 times.
         if state is _PositionRead.HELD:
+            # ⛔⭐⭐ RE-PROTECT WHAT WE UNCOVERED. If we cancelled this position's resting exit legs
+            # to clear the way for a software close, and that close has now been REFUSED
+            # `_V2_EXIT_RECONCILE_AFTER_FAILURES` times while the broker CONFIRMS we still hold it,
+            # then the position is sitting there with nothing at the broker protecting it.
+            #
+            # Before the release existed, a failing close was survivable: the OCO legs stayed put
+            # and took the position out at +2%/-5% on their own. Cancelling them removes that net,
+            # so the release MUST be able to put it back or it is a strictly worse trade than the
+            # reject storm it replaced.
+            #
+            # ⛔ Only on a POSITIVELY-HELD read. Re-attaching on an inconclusive one could place a
+            # protective pair against shares we no longer own -- an unpaired sell, the E5/NXTC
+            # oversell shape. And the latch is cleared so the NEXT exit decision may release again;
+            # leaving it set would mean the re-attached pair could never be cleared out of the way.
+            if key in self._exit_reservation_released:
+                self._exit_reservation_released.discard(key)
+                self.logger.warning(
+                    "[OMS-EXIT-REPROTECT] %s %s — %d refused closes after releasing the resting exit "
+                    "legs, and the broker still shows the position HELD. Re-attaching protection so "
+                    "it is not left uncovered.",
+                    symbol, acct, self._v2_exit_close_failures[key],
+                )
+                self._reprotect_after_failed_release(acct, symbol, row)
             self._v2_exit_close_failures[key] = 0  # we DO hold it -> keep managing, re-count later
             # A positive HELD read is new information: the loop may resume.
             self._v2_exit_stood_down.discard(key)

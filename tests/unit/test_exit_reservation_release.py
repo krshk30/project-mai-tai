@@ -151,6 +151,75 @@ def test_a_RAISING_cancel_never_blocks_the_close() -> None:
     assert ("live:orb", "XHG") not in s._exit_reservation_released
 
 
+# ------------------------------------------------- re-protect what the release uncovered
+def _reprotect_svc(*, released: bool):
+    s = object.__new__(svc.OmsRiskService)
+    s.logger = logging.getLogger("test-reprotect")
+    s.settings = SimpleNamespace()
+    s._exit_reservation_released = {("live:orb", "XHG")} if released else set()
+    s._v2_exit_close_failures = {("live:orb", "XHG"): 3}
+    s._v2_exit_stood_down = set()
+    s.spawned = []
+    s._spawn_webull_protection = lambda **kw: s.spawned.append(kw)
+    return s
+
+
+def _row(entry_price=5.0, qty=1):
+    return SimpleNamespace(entry_price=entry_price, current_quantity=qty,
+                           strategy_code="schwab_1m_v2")
+
+
+def test_a_released_position_that_will_not_CLOSE_gets_its_protection_BACK() -> None:
+    """⛔⭐⭐ THE HAZARD THE RELEASE CREATES. Before it existed, a failing close was survivable —
+    the OCO legs stayed put and took the position out at +2%/-5% on their own. Cancelling them
+    removes that net, so a close that never goes through leaves the position NAKED. That would be
+    strictly worse than the reject storm it replaced."""
+    s = _reprotect_svc(released=True)
+    svc.OmsRiskService._reprotect_after_failed_release(s, "live:orb", "XHG", _row())
+    assert len(s.spawned) == 1
+    assert s.spawned[0]["symbol"] == "XHG"
+    assert s.spawned[0]["entry_price"] == 5.0
+    assert s.spawned[0]["quantity"] == 1
+
+
+def test_it_will_NOT_reprotect_from_an_unusable_row() -> None:
+    """⛔ A pair priced off a zero entry, or for zero shares, is an unpaired sell against shares we
+    may not own — the E5/NXTC oversell shape. Refuse and say so."""
+    for row in (_row(entry_price=0), _row(qty=0)):
+        s = _reprotect_svc(released=True)
+        svc.OmsRiskService._reprotect_after_failed_release(s, "live:orb", "XHG", row)
+        assert s.spawned == []
+
+
+def test_reprotect_says_so_LOUDLY_when_it_cannot(caplog) -> None:
+    s = _reprotect_svc(released=True)
+    with caplog.at_level(logging.WARNING):
+        svc.OmsRiskService._reprotect_after_failed_release(s, "live:orb", "XHG", _row(entry_price=0))
+    assert "UNCOVERED" in caplog.text
+
+
+def test_a_raising_reprotect_never_breaks_the_protective_sync() -> None:
+    s = _reprotect_svc(released=True)
+
+    def _boom(**kw):
+        raise RuntimeError("no adapter")
+    s._spawn_webull_protection = _boom
+    svc.OmsRiskService._reprotect_after_failed_release(s, "live:orb", "XHG", _row())  # must not raise
+
+
+def test_reprotect_fires_ONLY_when_we_actually_released() -> None:
+    """A position whose legs we never cancelled is already protected — a second pair would
+    double-reserve the shares and draw an oversell refusal."""
+    import inspect
+
+    src = inspect.getsource(svc.OmsRiskService._v2_close_reconcile_flat)
+    assert "if key in self._exit_reservation_released:" in src
+    assert "_reprotect_after_failed_release" in src
+    # ...and only on a POSITIVELY-HELD read, never an inconclusive one.
+    held = src.index("if state is _PositionRead.HELD:")
+    assert held < src.index("_reprotect_after_failed_release")
+
+
 def test_the_flag_defaults_OFF() -> None:
     """⛔ It edits the exit path and opens a brief unprotected window. Must be chosen, not
     inherited."""
