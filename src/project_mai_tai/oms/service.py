@@ -398,6 +398,12 @@ class OmsRiskService:
     _A2_ESCALATE_AFTER_SECONDS = 90.0
     # Class-level default: test helpers build instances via __new__, bypassing __init__.
     _v2_exit_stood_down: set[tuple[str, str]] = set()
+    # (acct, SYMBOL) -> base coid of the resting Webull exit pair we attached. The legs themselves
+    # are broker-created and unqueryable, so this is the only handle that can ever release them.
+    _webull_protect_base: dict[tuple[str, str], str] = {}
+    # (acct, SYMBOL) already released this episode. Cancelling once per exit decision instead of
+    # once per quote tick is what keeps the fix from becoming a storm of its own.
+    _exit_reservation_released: set[tuple[str, str]] = set()
 
     # How many consecutive sync cycles we will hold a managed row open waiting for a transient
     # exit-fill fetch (Webull 429) to succeed. At the ~15s sync this is ~45s of retries. Bounded
@@ -495,6 +501,10 @@ class OmsRiskService:
         # (acct, symbol) whose close-retry loop has been STOOD DOWN — see
         # `_V2_EXIT_ABANDON_AFTER_FAILURES`. Protection is untouched; only the retry stops.
         self._v2_exit_stood_down: set[tuple[str, str]] = set()
+        # Base coid of the resting Webull exit pair, and the once-per-episode release latch. See
+        # `_release_exit_reservation_before_close`. Per-instance so tests cannot leak into each other.
+        self._webull_protect_base: dict[tuple[str, str], str] = {}
+        self._exit_reservation_released: set[tuple[str, str]] = set()
         # Consecutive TRANSIENT exit-fill fetch failures per (acct, symbol). See _defer_for_exit_fetch.
         self._oco_exit_fetch_deferrals: dict[tuple[str, str], int] = {}
         self._v2_exit_config: TradingConfig = TradingConfig().make_v2_variant()
@@ -1967,6 +1977,12 @@ class OmsRiskService:
                 )
                 reports = []
             if any(getattr(r, "event_type", "") not in ("rejected",) for r in reports):
+                # ⛔ REMEMBER THE BASE ID. The legs are broker-created and unqueryable, so this coid
+                # is the ONLY handle we will ever have on them — without it the pair can be placed
+                # but never released, and the software ladder can never sell into it. Mirrors
+                # `_bracket_realigned`: in-memory only, so a restart forgets it (the fallback is the
+                # bracket ENTRY coid, which IS persisted).
+                self._webull_protect_base[(broker_account_name, symbol.upper())] = coid
                 self.logger.info(
                     "[WEBULL-PROTECT-ATTACHED] %s %s qty=%d entry=%.4f -> target=%.4f stop=%.4f "
                     "(attempt %d) — a real pair is now resting at the broker",
@@ -1987,6 +2003,79 @@ class OmsRiskService:
             "software ladder is the only cover. Place one by hand.",
             symbol, broker_account_name, quantity, entry_price, target, protect, attempts,
         )
+
+    # ------------------------------------------- release the exit reservation before a software close
+    async def _release_exit_reservation_before_close(
+        self, *, session, broker_account_name: str, symbol: str,
+    ) -> bool:
+        """Cancel the resting exit legs so the ladder's own sell is not read as a naked short.
+
+        ⛔⭐⭐ THE DEFECT. A resting exit leg RESERVES the position at the broker. The v2 software
+        ladder then sends its own market sell for the same shares, Webull sees available-to-sell = 0
+        and 417s it as a short (`NEW_NO_POSITION_MARGIN_ACCOUNT_CAN_NOT_SELL_SHORT_FOR_LT_2K` /
+        `ORDER_NOT_SUPPORT_REVERSE_OPTION`). Live 2026-08-13 `live:orb`: 58 rejects, 56 of them one
+        XHG share, 48 of those inside five minutes. The `-close-` route filled 4 of 62 at Webull
+        against 5 of 6 at Schwab — because Schwab STANDS THE LADDER DOWN while its bracket is armed
+        (`_native_oco_stand_down_active`) and Webull exposes no such capability, so it fails OPEN.
+
+        ⛔⭐ CANCEL ONCE PER EPISODE, NOT PER TICK. The ladder re-evaluates on every quote tick. If
+        this re-cancelled each time it would simply become a new storm in place of the old one. The
+        latch is cleared when the position closes, so the next entry starts fresh.
+
+        ⛔ VERIFICATION IS BACKGROUNDED ON PURPOSE. `_spawn_cancel_verification` documents why:
+        blocking an exit to confirm a cancel "would trade a rare unowned order for a common late
+        stop, which is the wrong direction". So we submit the cancels, let the close proceed on this
+        tick (it may still reject once while the cancel lands — one reject, not forty-eight), and
+        chase confirmation off-path.
+
+        Returns True if cancels were actually submitted.
+        """
+        key = (broker_account_name, symbol.upper())
+        if key in self._exit_reservation_released:
+            return False
+        base = self._webull_protect_base.get(key, "")
+        if not base:
+            # Fall back to the bracket ENTRY coid — the native combo's legs hang off it, and unlike
+            # the attach coid it survives a restart because it is a real `broker_orders` row.
+            try:
+                entry = self._find_oco_entry_order(session, broker_account_name, symbol)
+                base = str(getattr(entry, "client_order_id", "") or "")
+            except Exception:  # noqa: BLE001 - never break an exit for bookkeeping
+                base = ""
+        if not base:
+            return False
+        try:
+            reports = await self.broker_adapter.cancel_exit_pair(
+                broker_account_name=broker_account_name, symbol=symbol,
+                base_client_order_id=base,
+            )
+        except Exception:  # noqa: BLE001 - a failed release must never stop the close attempt
+            self.logger.warning(
+                "[OMS-EXIT-RELEASE-RAISED] %s %s base=%s — could not cancel the resting exit legs; "
+                "closing anyway (the sell may still be refused as a short)",
+                symbol, broker_account_name, base, exc_info=True,
+            )
+            return False
+        if not reports:
+            # No capability (Schwab/simulated) or no addressable legs -> behave exactly as before.
+            return False
+        self._exit_reservation_released.add(key)
+        self.logger.info(
+            "[OMS-EXIT-RELEASE] %s %s base=%s legs=%d — cancelled the resting exit legs so the "
+            "software close is not refused as a naked short",
+            symbol, broker_account_name, base, len(reports),
+        )
+        return True
+
+    def _clear_exit_reservation_release(self, broker_account_name: str, symbol: str) -> None:
+        """Forget the release latch so the NEXT position on this symbol releases its own legs.
+
+        ⛔ Must be called wherever a managed row closes. A latch that outlives its position means
+        the next entry's reservation is never released and the storm comes straight back — silently,
+        because the code would look like it is still handling the case."""
+        key = (broker_account_name, symbol.upper())
+        self._exit_reservation_released.discard(key)
+        self._webull_protect_base.pop(key, None)
 
     def _record_internal_risk_pass(
         self,
@@ -2445,6 +2534,7 @@ class OmsRiskService:
             if row.current_quantity <= 0:
                 self.store.close_managed_position(session, row)
                 self._managed_v2_symbols.discard((broker_account_name, symbol))  # slice-3: disarm eval
+                self._clear_exit_reservation_release(broker_account_name, symbol)
                 logger.info("[OMS-V2-MANAGED-CLOSE] sym=%s acct=%s flat", symbol, broker_account_name)
             else:
                 session.flush()
@@ -3259,6 +3349,7 @@ class OmsRiskService:
             self._cw_floor_armed.discard(key)
             self._v2_exit_close_failures.pop(key, None)
             self._v2_exit_stood_down.discard(key)
+            self._clear_exit_reservation_release(acct, symbol)
             self._a2_clear(acct, symbol)
             self.logger.info(
                 "[OMS-V2-RECONCILE-FLAT] sym=%s acct=%s broker flat after %d rejected closes -> "
@@ -3537,6 +3628,7 @@ class OmsRiskService:
         # ⛔ MUST clear: this is the RECOVERY path a stand-down relies on. Leaving it set would
         # silently suppress exits for the NEXT position on this symbol.
         self._v2_exit_stood_down.discard(key)
+        self._clear_exit_reservation_release(acct, symbol)
         self._a2_clear(acct, symbol)  # same reason: a stale A2 episode would defer the NEXT position
         self.logger.info(
             "[OMS-V2-OCO-RESOLVED-FLAT] sym=%s acct=%s OCO resolved by FILL (broker execution "
@@ -3658,6 +3750,7 @@ class OmsRiskService:
                             self.store.close_managed_position(session, row)
                             self._managed_v2_symbols.discard(key)
                             self._v2_exit_stood_down.discard(key)
+                            self._clear_exit_reservation_release(acct, symbol)
                             self._a2_clear(acct, symbol)
                 session.commit()
         except Exception as exc:  # noqa: BLE001 — the quote path must never die
@@ -3772,6 +3865,16 @@ class OmsRiskService:
             order_type=order_type,
             time_in_force="day",
         )
+        # ⛔⭐ RELEASE THE RESERVATION FIRST. A resting exit leg holds these very shares, so without
+        # this the sell below is refused as a naked short every time (58 rejects on live:orb
+        # 2026-08-13). Flag-gated and capability-gated: with the flag off, or on an adapter with no
+        # addressable legs (Schwab/simulated), this is a no-op and the submit is byte-identical.
+        if bool(getattr(self.settings, "oms_v2_exit_release_reservation_enabled", False)):
+            await self._release_exit_reservation_before_close(
+                session=session,
+                broker_account_name=row.broker_account_name,
+                symbol=row.symbol,
+            )
         reports = await self.broker_adapter.submit_order(request)
         events = await self._record_order_reports(
             session=session, intent=intent, strategy_id=strategy.id,

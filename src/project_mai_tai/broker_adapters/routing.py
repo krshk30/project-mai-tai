@@ -51,6 +51,23 @@ class RoutingBrokerAdapter:
             return set()
         return await fn(broker_account_name, symbols)
 
+    async def cancel_exit_pair(
+        self, *, broker_account_name: str, symbol: str, base_client_order_id: str
+    ) -> list[ExecutionReport]:
+        """Route to the account's adapter. Optional capability -- an adapter without it has no
+        addressable resting exit legs to release, so return empty and the caller closes exactly as
+        it does today (byte-identical). ⛔ Empty here means "nothing was cancelled", NOT "the
+        reservation is clear" — the caller must not treat it as a release."""
+        adapter = self._adapter_for_account(broker_account_name)
+        fn = getattr(adapter, "cancel_exit_pair", None)
+        if fn is None:
+            return []
+        return await fn(
+            broker_account_name=broker_account_name,
+            symbol=symbol,
+            base_client_order_id=base_client_order_id,
+        )
+
     async def fetch_oco_resolved_by_fill_symbols(
         self, broker_account_name: str, symbols: list[str]
     ) -> set[str]:
