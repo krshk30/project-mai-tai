@@ -972,6 +972,20 @@ class Settings(BaseSettings):
     # OFF by default => the fan-out leg stays MARKET and everything is byte-identical.
     # ⚠️ THE NEW FAILURE MODE, NAMED: a market order always fills; a capped limit sometimes will not.
     # Both the placement and the abandon are logged so the tape answers the frequency directly.
+    # ⛔⭐⭐ FAN-OUT CLAIM GRACE (2026-08-13). The Webull fan-out leg takes a once-per-flip claim when
+    # it is QUEUED, not when it FILLS — and the only releases are a position close, a fresh flip, or
+    # the 04:00 roll. So an order that never reaches the broker still burns the whole flip.
+    #
+    # LIVE COST, FGI 2026-08-13: the 10:02 leg was blocked by our OWN band cap, the claim stayed set,
+    # and the next TWO Schwab entries (10:18, 13:44) were never offered to Webull. Zero orders sent
+    # ⇒ zero broker errors — which reads as the broker refusing us when we had stopped asking.
+    # Same day: Schwab got 57 FGI orders and 47 DFSC orders; Webull got none of either.
+    #
+    # This releases a claim that has not become a position within the grace. ⛔ Safe against a double
+    # Webull leg: a leg that DID fill shows as `position_qty != 0`, and `resting_active` clears on the
+    # primary's fill — both return before a second could be queued.
+    # Set to 0 to disable the release entirely (today's behaviour, byte-identical).
+    strategy_schwab_1m_v2_webull_fanout_claim_grace_secs: float = 30.0
     oms_v2_rth_fanout_limit_enabled: bool = False
     # ⛔⭐⭐ CANCEL-VERIFY (2026-08-12). A CANCEL IS FIRE-AND-FORGET TODAY: `_process_cancel_intent`
     # submits, records whatever the broker said about the TARGET ORDER, and never asks again.
