@@ -14,131 +14,142 @@
 
 ## ⚡ FIRST SCREEN — act on this alone
 
-**As of 2026-08-12 EOD.** Fleet: 7 services active, `NRestarts=0`. **Deployed HEAD `867dcd0`**
-(verified in the checkout AND by content — both new markers present in the running tree).
+**As of 2026-08-13 EOD.** Fleet active. **Deployed HEAD `3ac4721`** (verified in the checkout AND by
+content). Account **FLAT** on both live accounts at close; nothing working at either broker.
 
-✅ **DEPLOYED 18:05 ET with BOTH NEW FLAGS ON** (operator's call — deploying flags-off would have
-forced a second restart in tomorrow's pre-market, the worst window to take one):
+✅ **DEPLOYED 17:35 ET, SEVEN PRs, BOTH NEW FLAGS ON** (operator's explicit call, twice):
 ```
-MAI_TAI_OMS_CANCEL_VERIFY_ENABLED=true
-MAI_TAI_OMS_V2_RTH_FANOUT_LIMIT_ENABLED=true
+MAI_TAI_STRATEGY_SCHWAB_1M_V2_WEBULL_RESTING_MIRROR_ENABLED=true
+MAI_TAI_OMS_V2_EXIT_RELEASE_RESERVATION_ENABLED=true
 ```
-Both confirmed loaded from the OMS process's own `/proc/<pid>/environ`. Env backed up as
-`project-mai-tai.env.bak-deploy-20260812-220439` — the kill for either is one line + a restart.
-⛔ **NEITHER HAS FIRED YET. Both are UNEXERCISED against a live broker.**
+Both confirmed from each process's own `/proc/<pid>/environ`, not from the env file.
+⛔ **Neither key existed before tonight** ⇒ rollback = delete the two lines + restart. (An env
+backup was attempted and produced **no file** — do not rely on one existing.)
+⛔ **BOTH ARE UNEXERCISED.** Zero markers fired: the account was flat from the deploy to the close.
 
-⭐ **The restart touched OMS + strategy ONLY. `schwab-1m-v2` was NOT restarted** — it is the bar
-builder, so leaving it up meant **no bar hole**: every symbol advanced 18:03 → 18:04 straight through.
-Reuse that scoping for any OMS-only change.
+⭐ **Restart touched OMS + strategy + schwab-1m-v2. NO BAR HOLE** — zero missing minutes across the
+restart, verified by a per-minute gap query, not by eyeballing the newest bar.
 
-**Positions: `CRWU 2` (schwab) + `CRWU 1` (orb) — operator closing by hand.** ⛔ **CYN is CLEARED —
-the operator sold all 5,000. `MAI_TAI_PROTECTED_SYMBOLS=CYN,TE` is now stale but harmless.**
-FRTT unprotected and tradeable (verified per-process), but the scanner has not re-promoted it.
+## 👀 WATCH TOMORROW (2026-08-14) — these separate the two changes
 
-## 👀 WATCH TOMORROW (2026-08-13)
-
-1. **⭐ `[OMS-CANCEL-CONFIRMED]` / `[OMS-CANCEL-RESUBMIT]` / `[OMS-CANCEL-UNCONFIRMED]`** in `oms.log`.
-   This exercises from 07:00 on any cancel. An UNCONFIRMED is a **finding**, not noise.
-2. **⭐ `[OMS-V2-RTH-FANOUT-LIMIT] PLACED|ABANDONED`.** ⛔ **RTH-ONLY — it cannot fire before 09:30**,
-   so a quiet pre-market is NOT evidence it did nothing. ABANDONED = a fan-out entry we deliberately
-   did not chase; that is the intended new behaviour, count it rather than fear it.
-3. **🔴 CRWU** — see the unexited-position thread below. Confirm the operator's manual close landed.
-4. The Webull reject storm (`live:orb`) is unchanged and still contaminated by the client-abort
-   conflation — treat magnitude, not count.
-
-## 🔴 THE DAY'S SHARPEST FINDING — a held position with nothing trying to sell it
-
-**CRWU, 2026-08-12.** Held 2 (schwab) + 1 (orb), entries 5.8899 / 5.88, bid fell to **5.61**
-(−4.75% / −4.59%, on the day's low) with **no broker-side stop at all** — the `session=NORMAL`+`DAY`
-bracket expired at 16:00 and `MAI_TAI_OMS_V2_EOD_OCO_TRANSITION_ENABLED=false` means nothing replaces
-it. The software ladder tried twice and BOTH brokers refused:
-- Webull 15:30 `ORDER_NOT_SUPPORT_REVERSE_OPTION`
-- Schwab 15:54 `This order may result in an oversold/overbought position`
-
-Then **nothing was attempted for >2h** — the OMS sat polling for an OCO exit fill that can never
-arrive, on managed rows **13,736s / 18,618s** old (`[OMS-OCO-EXIT-MISS] ... A miss on an OLD row is
-the 07-31 AXTU/AXTX defect`). ⇒ This is the unexited-position direction the operator called
-unrecoverable, and it is the live case for **#647 Gate 2** (`oms_v2_rth_edge_bracket_enabled`, still
-OFF). See [[project_mai_tai_premarket_exit_protection]].
-
-## ✅ MERGED + DEPLOYED TODAY — #684 (`867dcd0`)
-
-**1. Cancel-verify** — the cure for the FRTT 136-minute hole. After a cancel: read the order back
-until it settles → **re-submit** if it still reads working → `[OMS-CANCEL-UNCONFIRMED]` with the
-coid + broker id if not. ⛔ `accepted`/`PENDING_CANCEL` is deliberately **not** proof.
-⛔ A *raised* cancel is an UNKNOWN, not a failure — swallowed only when the flag is on, then resolved
-by reading. Backgrounded, because inline would stall `process_trade_intent`, which carries EXITS.
-
-**2. The fan-out leg finally has a price ceiling.** ⛔ **#674 capped only the SCHWAB PRIMARY** — its
-own gate says *"the fan-out leg is deliberately untouched here"*. So the Webull leg still shipped as
-`order_type: "limit" if session_is_eh else "market"` = **UNCAPPED MARKET in RTH, on BOTH sources
-(`reactive` AND `rth_resting`)**. Live proof: 08-12 BAOS, the primary decided **1.1702** under its cap
-while the fan-out leg paid **1.1800** and lost **5.08%**.
-⚠️ NEW FAILURE MODE, NAMED: a market order always fills; a capped limit sometimes will not.
-
-**Validation:** 24 tests · suite **1989 pass / 0 fail** · ruff clean · **9 mutations, each caught by
-the test that should catch it.**
-
-## ⭐⭐ PROBE W — RUN LIVE, SETTLED (CORE/RTH, `live:orb`, FRTT)
-
-| shape | result |
+| marker | means |
 |---|---|
-| **A** LIMIT master + STOP_PROFIT + STOP_LOSS | **200** — accepted, placed live |
-| **B** STOP_LIMIT master + same legs | **417** `invalid order_type, value: STOP_LOSS_LIMIT` |
-| **C** bare STOP_LIMIT, no legs | **200** at preview |
+| `[V2-WEBULL-RESTING-PLACE]` | the mirror put a REAL resting order at Webull |
+| `[WEBULL-PROTECT-ATTACHED]` / `-FAILED` | the stop+target pair went on after a BARE fill |
+| `[OMS-EXIT-RELEASE]` | resting legs cancelled before a software close |
+| `[OMS-EXIT-REPROTECT]` | a close would not go through ⇒ protection restored |
+| `live:orb` reject count | **58 today.** It should collapse. |
 
-⇒ **Webull refuses a stop-limit combo master; Schwab accepts the identical shape** (`previewOrder`
-200 / 0 rejects). The fan-out order-type asymmetry is **the broker's**, unfixable our side.
-⛔ **DO NOT remove `webull.py:949`** — it enforces the shape 174 live Webull brackets depend on.
-⛔ **#681 still has the enum bug** (line 119 sends `STOP_LIMIT`, must be `STOP_LOSS_LIMIT`). Fix
-before merging; the first probe run was invalid because of it, and **the failing control caught it**.
+⛔ A `[WEBULL-PROTECT-FAILED]` means **we are holding with no broker-side stop.** Act, don't log it.
+
+## 🔴 THE DAY'S SHARPEST FINDING — the close was fighting our own exit legs
+
+**A resting exit leg RESERVES the position.** The v2 software ladder then sends its own market sell
+for those same shares, Webull sees available-to-sell = 0, and refuses it as a naked short:
+
+| n | reason (verbatim, `live:orb`, 2026-08-13) |
+|---|---|
+| 39 | `NEW_NO_POSITION_MARGIN_ACCOUNT_CAN_NOT_SELL_SHORT_FOR_LT_2K` |
+| 19 | `ORDER_NOT_SUPPORT_REVERSE_OPTION` |
+
+56 of 58 were **one XHG share**; 48 of those inside five minutes. These are genuine broker HTTP 417
+payloads, **not** the client-abort conflation.
+
+**⭐ THE ASYMMETRY IS A MISSING CAPABILITY, NOT A BUG IN EITHER BROKER.**
+`-close-` filled **4/62 at Webull vs 5/6 at Schwab**. Schwab stands the ladder down while a bracket
+is armed (`_native_oco_stand_down_active`); Webull exposes no `fetch_armed_native_oco_symbols`, and
+`routing.py` **fails OPEN by design** — so the ladder fires straight into its own reservation.
+
+**⛔ NOTHING DETECTED IT.** `_V2_EXIT_ABANDON_AFTER_FAILURES = 8` resets to 0 on any positively-HELD
+read — and we genuinely *do* hold the share, it is merely reserved — so **the bound is unreachable.**
+The A2 backoff matches `ORDER_NOT_SUPPORT_REVERSE_OPTION` but its flag ships OFF and it does not
+match the other string at all. No distinctive marker, no surviving counter, no alert.
+
+**⭐⭐ THIS ALSO EXPLAINS 08-12 CRWU** — the "held position with nothing trying to sell it" had the
+same two reject strings. It was not a mystery; it was this.
+
+**⛔ BUT THE COST DID NOT MATCH THE ALARM.** Bid at the first blocked attempt vs the price actually
+taken, n=5: better in 2, **worse in 3**, median **−0.51 pp**. Every position exited via its OCO leg.
+The count screamed; the money shrugged. Count says urgent, cost says no — same as the vol-floor flap.
+
+## ✅ MERGED + DEPLOYED TODAY (`3ac4721`)
+
+| PR | what |
+|---|---|
+| #687 | release a fan-out claim that never filled — one rejection used to burn the whole flip |
+| #688 | **both legs REST at their own broker**; the Webull watcher was racing the fill and losing |
+| #689 | attach a REAL stop+target at Webull after a bare resting fill |
+| #690 | attach leg ids could exceed Webull's 40-char cap — landed **exactly on 40** |
+| #691 | the close now CANCELS the resting exit legs first |
+| #692 | re-attach protection if that close will not go through |
+| #693 | commit the exec bit on the two crons that run from the repo path |
+
+**Validation:** suite **2062 pass** · ruff clean · **18 mutations, all killed.**
+⛔ Two mutations initially survived and **both were my error, not weak tests** (one removed only a
+sleep, one targeted code the test replaces with a double). A third survived legitimately and exposed
+a real gap — the attach was not recording its base id — which is now pinned.
+
+**⭐ WHY #691 IS EVEN POSSIBLE:** OCO children are broker-created and never land in `broker_orders`,
+so they cannot be looked **up** — but they carry **deterministic** coids
+(`_combo_leg_coid(base,"T"/"S")`), so they can be **addressed by name**.
+
+**⛔ #691's HAZARD, closed by #692:** cancelling the legs removes the net that used to take the
+position out at +2%/−5% when a close kept failing. Without #692 it would be strictly worse than the
+storm it replaces.
 
 ## 🕐 OPEN PRs
-| PR | what | state |
-|---|---|---|
-| **#681** | Probe W | ⛔ needs the line-119 enum fix before merge |
-| **#682** | entry-slippage validation | needs sudo; unrun |
-| #673 · #646 · #642 · #640 | docs/design | awaiting review |
+| PR | what |
+|---|---|
+| #682 | entry-slippage validation — needs sudo; unrun |
+| #673 · #646 · #642 · #640 | docs/design; awaiting review |
 
 ## 🔴 OPEN THREADS (detail: [`handoff-open-items.md`](handoff-open-items.md))
 
-1. **🔴 The 16:00 bracket death** — see CRWU above. #647 Gate 2 is the built, dark answer.
-2. **⛔⭐⭐ PRE-MARKET IS 0% BRACKETED.** Measured, bot-only, 14d: RTH **172/172** orb and **131/132**
-   schwab; PRE (EH) **0/34** and **0/13**. Both brokers are limit-only in EH, so no design can put a
-   stop at the broker before 09:30 — the RTH-edge arm is the only answer.
-3. **⛔⭐ THE ENTRY LEVELS ARE QUANTISED BY ~70 bps.** +2%/−5% is computed off the **decided** price
-   then tick-rounded; at ~$1.40 a cent is 70 bps, so 08-11 actually ran **+2.11…+2.47 / −4.38…−5.11**.
-   The 0.5% entry band collapses to **ZERO** on sub-$2 names. **Fix the unit, not the number.**
-4. **⭐⭐ THE CHURN IS STILL THE BIGGEST NUMBER ON THE BOARD** — median **5 entries per symbol-day**,
-   max 16 (verified 324 fill rows = 324 distinct orders, not partial fills); ~**200% of one
-   position's notional** in crossing over 14 days. ⛔ The entry-ordinal study is still unrun and
-   selection is **DISCUSS BEFORE BUILDING**.
-5. **⛔⭐⭐ `broker_orders` records an OCO child ONLY WHEN IT FILLS** (`oco_child_legs == legs_filled`
-   in all 21 day-rows). It can answer *"did a leg execute"* and **cannot** answer *"is a bracket
-   resting now"* — only the broker can.
-6. **⛔ The orphan watch reads SCHWAB ONLY** (`SchwabBrokerAdapter`,
-   `strategy_schwab_1m_v2_account_name`). It can never clear a Webull question.
-7. **⛔⭐⭐ `broker_order_events` conflates CLIENT aborts with BROKER refusals** — every reject count
-   on that table is contaminated. Needs a `source` field.
-8. **P0 boot-hold freshness gate** · **Redis evicts the heartbeat stream** · **`-close-` route
-   unattributable** · **per-lot attribution gap** — all unchanged.
+1. **⛔⭐⭐ THE RETRY BOUND IS STILL UNREACHABLE.** `_v2_exit_close_failures` resets on every HELD
+   read, so *any* reject on a position we really hold retries forever. #691 removes the **cause** of
+   these rejects, **not** the missing bound underneath. **This is the next fix.**
+2. **🔴 The 16:00 bracket death** — #647 Gate 2 (`oms_v2_rth_edge_bracket_enabled`) built, still dark.
+3. **⛔⭐⭐ PRE-MARKET IS 0% BRACKETED.** 14d: RTH **172/172** orb, **131/132** schwab; PRE **0/34**,
+   **0/13**. Both brokers are limit-only in EH — the RTH-edge arm is the only answer.
+   ⭐ The mirror is **RTH-only** (`_queue_resting_place` returns on the EH branch *before* the mirror
+   block), so #689's attach never runs in EH — which is where its shape was never proven. No gap.
+4. **⛔⭐ ENTRY LEVELS QUANTISED BY ~70 bps** — +2%/−5% tick-rounded off the decided price; the 0.5%
+   band collapses to **ZERO** under ~$2. **Fix the unit, not the number.**
+5. **⭐⭐ CHURN IS STILL THE BIGGEST NUMBER** — median 5 entries/symbol-day, max 16; ~200% of one
+   position's notional in crossing over 14d. Selection is **DISCUSS BEFORE BUILDING**.
+6. **⛔ The orphan watch reads SCHWAB ONLY.** It can never clear a Webull question.
+7. **⛔⭐⭐ `broker_order_events` conflates CLIENT aborts with BROKER refusals** — needs a `source`
+   field. (Today's 58 were verified genuine by reading the verbatim 417 payloads.)
+8. **⚠ A pre-existing flaky test:** `test_scanner_cycle_history_retention_and_dedup` failed once in a
+   full run, passes alone, passes with all 218 in its file, passes on re-run. Cross-file ordering.
+9. **P0 boot-hold freshness gate** · **Redis evicts the heartbeat stream** · **per-lot attribution
+   gap** — unchanged.
 
 ## 🔔 ALERTING
-`orphan_order_cron.sh` (Schwab-only, see thread 6) · `bar_gap_watch_cron.sh` ·
-`reconcile_alert_cron.sh` · `entry_fix_watch/watch_cron.sh` ⛔ **silence is NOT green — read
-`STATUS.txt`** · OMS liveness · pre-open readiness · token expiry · OCO capture.
-⛔ All ROOT crontab, ET-guarded **inside** the script. ⛔ A script committed from Windows lands mode
-664 AND carries CRLF — verify `stat -c %a` and `bash -n` **on the box**.
+`orphan_order_cron.sh` (Schwab-only) · `bar_gap_watch_cron.sh` · `reconcile_alert_cron.sh` ·
+`entry_fix_watch/watch_cron.sh` ⛔ **silence is NOT green — read `STATUS.txt`** · OMS liveness ·
+pre-open readiness · token expiry · OCO capture.
+⛔ All ROOT crontab, ET-guarded **inside** the script.
+✅ **FIXED TODAY (#693):** `bar_gap_watch_cron.sh` + `reconcile_alert_cron.sh` were 100644 in git and
+chmod'd by hand on the box, leaving the VPS tree **permanently dirty** — which **BLOCKS EVERY
+DEPLOY** (`refusing deploy because repo has local changes`). ⛔ Do NOT `git checkout` them to unblock:
+root's crontab invokes both **directly by path**, so reverting to 100644 silently kills the bar-hole
+watch and the drift alarm. The exec bit is now committed.
+⛔ `schwab_token_expiry_cron.sh` is still 100644 but runs from a **separate `/home/trader/` copy** —
+its repo mode is not load-bearing. Do not "fix" it.
 
 ## 🔑 SCHWAB TOKEN
-Re-authed **2026-08-12 05:21 ET** ⇒ next expiry **Wed 2026-08-19 05:21 ET**. Off the Monday slot,
-but ⚠️ 05:21 is **before** the 07:00 EH open — re-auth Tue evening or Wed after the close to park it
-in dead hours. ⛔ Never quote this date from memory; read `refresh_token_expires_at` in the store.
+**Read from the store 2026-08-13 17:40 ET:** `refresh_token_expires_at = 2026-08-19T09:21:35Z`
+⇒ **Wed 2026-08-19 05:21 ET.** Store mtime fresh ⇒ the refresher is alive.
+⚠️ 05:21 is **before** the 07:00 EH open — re-auth Tue evening or Wed after the close.
+⛔ **Never quote this date from memory; read `refresh_token_expires_at`.** A memory file carried a
+wrong date (`Mon 08-17`) into this session — that is exactly why this rule exists.
 
 ## 🧠 MEMORY POINTERS (auto-load each session)
 [[project-mai-tai-context]] · [[project-mai-tai-fleet-roster]] · [[project-mai-tai-architecture]] ·
 [[project_mai_tai_restart_bar_gap_checklist]] **(READ BEFORE ANY RESTART)** ·
+[[project_mai_tai_exit_reservation_conflict]] **(today's finding)** ·
 [[project_mai_tai_cancel_is_fire_and_forget]] · [[project_mai_tai_probe_w_webull_stoplimit_master]] ·
-[[project_mai_tai_resting_does_not_avoid_the_spread]] ·
+[[project_mai_tai_two_exit_routes_close_unattributable]] ·
 [[project_mai_tai_premarket_exit_protection]] · [[feedback_the_brokers_book_is_shared]] ·
-[[feedback_check_which_parts_already_work]] · [[feedback_a_wrong_reason_is_worse_than_a_missing_one]]
+[[feedback_commit_before_you_mutate]] · [[feedback_a_wrong_reason_is_worse_than_a_missing_one]]
