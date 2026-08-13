@@ -985,6 +985,41 @@ class Settings(BaseSettings):
     # Webull leg: a leg that DID fill shows as `position_qty != 0`, and `resting_active` clears on the
     # primary's fill — both return before a second could be queued.
     # Set to 0 to disable the release entirely (today's behaviour, byte-identical).
+    # ⛔⭐⭐ FAN-OUT ON FILL (2026-08-13) — DEFAULT **ON**, because OFF is the defect.
+    #
+    # The Webull leg used to be fired by `_fanout_rth_resting_cross`, which watched quotes for price
+    # to reach `resting_level`. But the Schwab stop-limit sits AT THE BROKER and fills the instant
+    # price touches that level — and the detector's own `position_qty != 0` gate then blocks it,
+    # because by the next quote tick we are already holding. A race against the broker, lost almost
+    # every time.
+    #
+    # MEASURED 2026-08-13 (RTH): DFSC filled 3× on Schwab, all three AT the stop price; the detector
+    # fired 0×; Webull got ZERO orders. INHD 0, OFAL 0. FGI fired once and LATE (8.6461 vs level
+    # 8.3015, ~4% high) only because a close briefly re-opened the gate. XHG — which Schwab never
+    # traded — fired 7 of 7. The leg worked precisely when the primary was NOT involved.
+    #
+    # ON: the Webull leg is queued from the Schwab RESTING FILL, anchored on the level the primary
+    # actually filled at. No detection, no race. Set FALSE to restore the racing detector.
+    # ⛔⭐⭐ WEBULL RESTING MIRROR (2026-08-13) — the operator's ask: "both resting orders behave in
+    # the same manner, sitting at the broker and waiting."
+    #
+    # ON: when the Schwab resting stop-limit is placed, an identical BARE stop-limit is placed at
+    # Webull at the same stop/limit. Both legs then WAIT at their own broker and trigger themselves
+    # on the same price. No software detection, no race, and both fill at the level -- which is what
+    # closes the ~250 bps gap measured 2026-08-13 between the two legs on the resting path.
+    #
+    # ⛔ THE COST, AND WHY THIS DEFAULTS **OFF**: the mirrored rest is BARE. Webull refuses a
+    # stop-limit master carrying a bracket (Probe W shape B, HTTP 417 `invalid order_type`) while
+    # accepting it alone (shape W7, HTTP 200). So the Webull leg has NO broker-side target/stop at
+    # the instant it fills -- the software ladder must attach protection afterwards. Today's
+    # bracketed fan-out leg is protected from the fill; this one is not. That is a real regression
+    # and the operator should choose it deliberately, not inherit it.
+    #
+    # ⛔ Requires the cancel mirror to work: an un-cancelled Webull rest is a live order nobody owns
+    # (the FRTT 2026-08-11 shape, 136 minutes), on the broker whose book we cannot reliably read.
+    # The cancel is routed on the DIRECT queue so `_maybe_emit`'s entry gates can never drop it.
+    strategy_schwab_1m_v2_webull_resting_mirror_enabled: bool = False
+    strategy_schwab_1m_v2_webull_fanout_on_fill_enabled: bool = True
     strategy_schwab_1m_v2_webull_fanout_claim_grace_secs: float = 30.0
     oms_v2_rth_fanout_limit_enabled: bool = False
     # ⛔⭐⭐ CANCEL-VERIFY (2026-08-12). A CANCEL IS FIRE-AND-FORGET TODAY: `_process_cancel_intent`

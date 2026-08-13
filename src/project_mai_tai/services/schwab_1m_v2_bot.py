@@ -1870,6 +1870,27 @@ class SchwabV2BotService:
                     logger.exception(
                         "schwab_1m_v2 resting-entry emit failed for %s", getattr(d, "symbol", "?")
                     )
+        # ⛔⭐⭐ WEBULL CANCEL-SAFE DRAIN — emitted DIRECTLY, bypassing `_maybe_emit`, exactly as the
+        # Schwab resting drain above does and for the same reason: a CANCEL must never be gated.
+        # `_maybe_emit` carries the entry-window gate, the ATR-only belt and the exit-only chokepoint;
+        # any of them silently dropping a cancel leaves a live order at Webull that nothing owns --
+        # the FRTT 2026-08-11 shape. No-op unless the resting mirror is on (drain returns []).
+        wdrain = getattr(self.strategy, "drain_webull_direct_intents", None)
+        if callable(wdrain):
+            for d in wdrain():
+                if self.webull_intent_emitter is None:
+                    logger.warning(
+                        "schwab_1m_v2 webull direct intent DROPPED for %s (%s) — no webull emitter",
+                        getattr(d, "symbol", "?"), getattr(d, "intent_type", "?"),
+                    )
+                    continue
+                try:
+                    await self.webull_intent_emitter.emit(d)
+                except Exception:
+                    logger.exception(
+                        "schwab_1m_v2 webull direct emit failed for %s (%s)",
+                        getattr(d, "symbol", "?"), getattr(d, "intent_type", "?"),
+                    )
         # Dual-broker fan-out: emit any Webull legs the strategy queued this bar (no-op if off).
         await self._emit_webull_fanout_legs()
 
