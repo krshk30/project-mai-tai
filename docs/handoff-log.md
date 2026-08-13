@@ -15,6 +15,96 @@
 
 ---
 
+## 2026-08-13 — the close was fighting our own exit legs
+
+**Seven PRs merged and deployed (`3ac4721`), both new flags ON at the operator's explicit
+direction.** The day started on "make the Webull leg rest at the broker like Schwab's does" and
+ended somewhere more interesting.
+
+### What we set out to do
+
+The operator had been saying the same thing for two days: *a limit order will not fill in a fast
+market; I want a REAL resting order at Webull, sitting there waiting, like Schwab's.* #688 (merged
+earlier today) did that. But a mirrored Webull rest fills **bare** — Webull 417s a stop-limit master
+carrying a bracket — so #689 attaches a target+stop pair seconds after the fill, using the
+no-master `[STOP_PROFIT, STOP_LOSS]` shape Probe W4 proved at HTTP 200.
+
+### Then the operator asked about the 58 rejects
+
+`live:orb` took 58 rejects today against 24 fills. Every one was the same thing, and it was ours:
+
+> **A resting exit leg RESERVES the position.** The software ladder then sells the same shares,
+> Webull sees available-to-sell = 0, and refuses it as a naked short.
+
+56 of the 58 were **one XHG share**. 48 of those inside five minutes — a single share drawing a
+rejected market sell roughly every six seconds while its own OCO leg sat there working.
+
+**The asymmetry is a missing capability, not a broker bug.** `-close-` filled 4/62 at Webull vs 5/6
+at Schwab. Schwab stands the ladder down while a bracket is armed; Webull exposes no
+`fetch_armed_native_oco_symbols`, and `routing.py` *fails open by design*, so the ladder fires into
+its own reservation. Nothing detected it either: the `= 8` abandon bound resets on any
+positively-HELD read, and we genuinely **do** hold the share — it is merely reserved — so the bound
+is unreachable. No marker, no surviving counter, no alert.
+
+**This retro-explains 08-12 CRWU** — yesterday's "held position with nothing trying to sell it" had
+the same two reject strings. It was never a mystery.
+
+### The discipline that mattered most today
+
+**The count screamed and the money shrugged.** Before proposing anything I priced it: bid at the
+first blocked attempt vs the price actually taken, n=5. Better in 2, **worse in 3**, median
+**−0.51 pp**. Every position exited via its OCO leg. Had I skipped that step I would have sold a
+fix for a problem that was costing roughly nothing — the vol-floor-flap lesson, again.
+
+### Wrong turns, recorded
+
+- **I wiped my own implementation with `git checkout` during a mutation run — for the second time.**
+  Same mistake as 08-12. It is now a memory: **commit before you mutate.**
+- **Two mutations "survived" and both were my error, not weak tests.** One removed only a sleep
+  rather than the retry loop; one targeted adapter code the test replaces with a double. A third
+  survived *legitimately* and found a real gap: the attach was minting its base coid with a uuid and
+  **throwing it away**, so the pair it places could never have been cancelled. Now pinned.
+- **I branched three PRs off a pre-squash branch.** Every one came back `DIRTY` with no CI. Rebasing
+  onto `origin/main` fixed it each time, but it cost three round trips.
+- **My first "is it flat?" query printed a clean result while erroring.** stderr buffered after
+  stdout, so `--- (nothing above = flat)` appeared under a query that never ran. A false clean is
+  the exact shape we have a memory about; caught only because the column names looked wrong.
+
+### The deploy fought back twice
+
+`refusing deploy because repo has local changes` — `bar_gap_watch_cron.sh` and
+`reconcile_alert_cron.sh` were 100644 in git and had been chmod'd by hand on the box. The obvious
+unblock (`git checkout` them) was the **wrong** move: root's crontab invokes both directly by path,
+so reverting to 100644 would have silently stopped the v2 bar-hole watch and the reconciler drift
+alarm. Committed the exec bit instead (#693), then verified both files were still executable after
+the pull. `schwab_token_expiry_cron.sh` is also 100644 but runs from a separate `/home/trader/`
+copy — deliberately left alone rather than "fixed".
+
+The guard also runs *before* the pull, so the box could never reach the fix that would clean it;
+the checkout had to be reconciled by hand once.
+
+### #691's own hazard, and why #692 exists
+
+Cancelling the resting legs to clear the way for a close **removes the net**. Before, a close that
+kept failing was survivable — the OCO legs stayed put and took the position out at +2%/−5%. After,
+they are gone, so a persistently failing close leaves the position naked. #692 re-attaches
+protection after 3 refused closes **on a positively-HELD read only** (an inconclusive one could
+place a pair against shares we no longer own — the oversell shape). Without #692, #691 would have
+been strictly worse than the storm it replaced.
+
+### Deployed
+
+`3ac4721`, 17:35 ET, OMS + strategy + schwab-1m-v2. **No bar hole** — verified with a per-minute gap
+query rather than by eyeballing the newest bar. Both flags confirmed from each process's own
+`/proc/<pid>/environ`. A 1209-line error count in `oms.log` looked alarming and was not this deploy:
+the Webull 429/417 storms are stamped 19:45 UTC, hours earlier, and the only ongoing errors are
+Alpaca at a flat 12/min **before and after** the restart.
+
+**Both flags are UNEXERCISED.** The account went flat before the deploy and stayed flat to the
+close. Tomorrow is the first real test.
+
+---
+
 ## 2026-08-11 EVENING — the fill price was there all along
 
 **After the EOD wrap.** FRTT protection reverted, two probes/scripts built, and a claim of mine
