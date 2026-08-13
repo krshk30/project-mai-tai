@@ -2208,7 +2208,7 @@ class SchwabV2Strategy:
     # ---------------------------------------------------- Dual-broker FAN-OUT (Webull leg)
     def _build_webull_fanout_draft(
         self, state: SymbolState, *, entry_px: float, session_is_eh: bool, source: str,
-        entry_n: int,
+        entry_n: int, band_anchor: float | None = None,
     ) -> TradeIntentDraft:
         """Build the parallel Webull FAN-OUT leg draft (account-agnostic; the bot routes it to the
         Webull emitter). ALWAYS a MARKET-at-cross in RTH (the OMS `_apply_v2_oco_bracket_entry`
@@ -2237,6 +2237,14 @@ class SchwabV2Strategy:
             "source": "schwab_1m_v2",
             "strategy_version": STRATEGY_VERSION,
         }
+        # ⛔⭐ The RTH band anchor, when it differs from `entry_price`. Only `rth_resting` supplies it:
+        # its `entry_px` is where SOFTWARE noticed the cross, which on a fast move is far above the
+        # level the Schwab stop was resting at. `reactive`'s entry_px IS its decision price and
+        # `eh_resting` already passes the level itself, so both correctly leave this unset and the
+        # OMS falls back to `entry_price`. ⛔ Deliberately a SEPARATE key: `entry_price` also anchors
+        # the OCO bracket and must keep meaning "where we expect to fill".
+        if band_anchor is not None and band_anchor > 0:
+            md["resting_band_anchor"] = f"{band_anchor:.4f}"
         return TradeIntentDraft(
             symbol=state.symbol,
             side="buy",
@@ -2291,6 +2299,16 @@ class SchwabV2Strategy:
                 state, entry_px=px, session_is_eh=False, source="rth_resting",
                 # NOT yet incremented on this path -- this leg is the NEXT entry.
                 entry_n=state.cw_entries_this_flip + 1,
+                # ⛔⭐ THE BAND MUST MEASURE FROM THE LEVEL WE DECIDED TO BUY AT, NOT FROM WHERE WE
+                # NOTICED (2026-08-13). `entry_px` here is the price at which SOFTWARE detected the
+                # cross, which on a fast move is far above `resting_level` -- live FGI 08-13: level
+                # 8.3015, detected at 8.6461. A band off `entry_px` therefore permits the whole
+                # 4.15% run-up and only caps beyond it. The Schwab primary rests AT the level and
+                # caps at level*(1+band); this makes the fan-out leg measure the same way.
+                # ⛔ Passed SEPARATELY and NOT via `entry_px`, because `entry_px` also anchors the
+                # OCO bracket -- re-anchoring that to the level would have set FGI's target below
+                # its own fill price. See `_apply_v2_rth_fanout_limit`.
+                band_anchor=state.resting_level,
             )
         )
 
