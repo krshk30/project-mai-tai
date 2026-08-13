@@ -39,11 +39,21 @@ def _session_factory() -> sessionmaker[Session]:
 
 
 class _Harness:
-    """Minimal stand-in exposing the two attributes the hook uses."""
+    """Minimal stand-in exposing the attributes the hook uses.
+
+    ⛔ It borrows REAL `OmsRiskService` methods, so anything those methods call must exist here too.
+    Keep it in step with production rather than guarding the production call site — a `getattr`
+    guard added to satisfy a test double would silently swallow the same attribute error in the
+    OMS itself.
+    """
     def __init__(self, *, enabled: bool) -> None:
         self.settings = Settings(oms_v2_exit_management_enabled=enabled)
         self.store = OmsStore()
         self._managed_v2_symbols: set[tuple[str, str]] = set()  # slice-3: the hook maintains this set
+        self._webull_protect_base: dict[tuple[str, str], str] = {}
+        self._exit_reservation_released: set[tuple[str, str]] = set()
+
+    _clear_exit_reservation_release = OmsRiskService._clear_exit_reservation_release
 
 
 def _apply(harness: _Harness, session: Session, **kw):

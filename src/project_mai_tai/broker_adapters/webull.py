@@ -171,6 +171,61 @@ class WebullBrokerAdapter:
         except Exception as exc:  # noqa: BLE001 - any SDK/transport error -> reject, never crash OMS
             return [self._reject(request, self._exc_reason(exc))]
 
+    def exit_pair_leg_client_order_ids(self, base_client_order_id: str) -> list[str]:
+        """The coids of the two resting exit legs hanging off ``base_client_order_id``.
+
+        ⭐⭐ WHY THIS IS POSSIBLE AT ALL. Webull's OCO children are created BY THE BROKER and never
+        land in ``broker_orders`` -- ``oms/store.py`` says so outright, and a DB query for them
+        always returns nothing. So they cannot be looked UP. But they are placed under
+        DETERMINISTIC ids (``_combo_leg_coid(base, "T"/"S")``), which means they can still be
+        ADDRESSED BY NAME. That is the whole basis of cancelling a reservation we cannot see.
+
+        ⛔ Keep this in lockstep with ``_build_exit_only_pair_payload`` and ``_place_combo_bracket``.
+        If those change their suffixes, cancels here silently target ids that do not exist and the
+        reservation is never released -- which reads exactly like the bug this is fixing.
+        """
+        base = str(base_client_order_id or "")
+        if not base:
+            return []
+        return [self._combo_leg_coid(base, "T"), self._combo_leg_coid(base, "S")]
+
+    async def cancel_exit_pair(
+        self, *, broker_account_name: str, symbol: str, base_client_order_id: str
+    ) -> list[ExecutionReport]:
+        """Cancel both resting exit legs so the shares they RESERVE are released.
+
+        ⛔ THE DEFECT THIS SERVES (live 2026-08-13, live:orb): a resting exit leg reserves the
+        position, so the software ladder's own market sell reads to Webull as a naked short and is
+        417-rejected -- ``NEW_NO_POSITION_MARGIN_ACCOUNT_CAN_NOT_SELL_SHORT_FOR_LT_2K``. One XHG
+        share drew 48 rejected sells in five minutes. Schwab avoids this by standing its ladder
+        down while a bracket is armed; Webull exposes no such capability, so the ladder fires into
+        its own reservation.
+
+        Returns a report per leg. A leg that was already gone answers ORDER_NOT_FOUND, which is a
+        SUCCESS for our purposes (nothing is reserving the shares) -- the caller must not read it
+        as a failure.
+        """
+        account = self.accounts_by_name.get(broker_account_name)
+        if account is None:
+            return []
+        reports: list[ExecutionReport] = []
+        for coid in self.exit_pair_leg_client_order_ids(base_client_order_id):
+            request = OrderRequest(
+                client_order_id=coid,
+                broker_account_name=broker_account_name,
+                strategy_code="",
+                symbol=symbol,
+                side="sell",
+                intent_type="cancel",
+                quantity=Decimal("0"),
+                reason="release exit reservation before software close",
+                metadata={"exit_reservation_release": "true"},
+                order_type="market",
+                time_in_force="day",
+            )
+            reports.extend(await self._cancel_order(account, request))
+        return reports
+
     def _submit_exit_pair_blocking(
         self, account: WebullAccountConfig, request: OrderRequest
     ) -> list[ExecutionReport]:

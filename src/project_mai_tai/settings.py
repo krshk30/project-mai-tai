@@ -849,6 +849,15 @@ class Settings(BaseSettings):
     # ⛔ DEFAULT OFF. Scoped to live:orb (the only account where the class occurs).
     # Design + acceptance: docs/v2-a2-reverse-reject-design.md
     oms_a2_exit_not_sellable_backoff_enabled: bool = False
+    # Cancel the resting broker exit legs before the software ladder's own close, so the sell is not
+    # refused as a naked short against shares its own exit pair has RESERVED.
+    # ⛔ DEFAULT OFF. It changes the exit path — the highest-consequence code in the OMS — and it
+    # briefly leaves the position without broker-side protection between the cancel and the fill.
+    # Measured 2026-08-13 live:orb: 58 rejects, 56 of them one XHG share (48 inside five minutes);
+    # `-close-` filled 4/62 at Webull vs 5/6 at Schwab, which stands its ladder down instead.
+    # No-op on adapters with no addressable resting legs (Schwab/simulated) — see
+    # `routing.cancel_exit_pair`.
+    oms_v2_exit_release_reservation_enabled: bool = False
     # Fillable-session window (ET, whole-hour): the OMS places/refreshes exit orders
     # only while an order can actually fill (default 7 AM–8 PM ET = Schwab pre-market
     # fills open ~7 AM, after-hours end ~8 PM). Outside it a working order (open or
