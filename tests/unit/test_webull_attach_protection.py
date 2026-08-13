@@ -137,6 +137,7 @@ def _svc(adapter):
     )
     s.logger = logging.getLogger("test-attach")
     s.broker_adapter = adapter
+    s._webull_protect_base = {}
     return s
 
 
@@ -155,6 +156,29 @@ def test_it_attaches_and_stops(caplog: pytest.LogCaptureFixture) -> None:
     md = a.calls[0].metadata
     assert md["bracket_target_price"] == "5.1000"   # +2%
     assert md["bracket_stop_price"] == "4.7500"     # -5%
+
+
+def test_it_REMEMBERS_the_base_id_so_the_pair_can_later_be_RELEASED() -> None:
+    """⛔ THE LEGS ARE UNQUERYABLE. They are broker-created and never land in `broker_orders`, so
+    this coid is the only handle that will ever exist on them. Forget it and the pair can be placed
+    but never cancelled — which means the software ladder can never sell into it, and we are back to
+    the 58-reject XHG storm with no way to tell from the outside.
+
+    A mutation that dropped this line left every other attach test green.
+    """
+    a = _Adapter(["accepted"])
+    s = _svc(a)
+    _run(s)
+    assert s._webull_protect_base[("live:orb", "TEST")] == a.calls[0].client_order_id
+
+
+def test_a_FAILED_attach_records_NO_base_id() -> None:
+    """Nothing is resting, so there is nothing to release. A recorded id here would send cancels at
+    an order that never existed and then latch the release as done."""
+    a = _Adapter(["rejected", "rejected", "rejected"])
+    s = _svc(a)
+    _run(s)
+    assert ("live:orb", "TEST") not in s._webull_protect_base
 
 
 def test_it_RETRIES_a_refusal() -> None:
