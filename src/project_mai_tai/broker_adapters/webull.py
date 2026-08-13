@@ -151,6 +151,14 @@ class WebullBrokerAdapter:
             return [self._reject(request, self._missing_config_reason(request.broker_account_name))]
         if request.intent_type == "cancel":
             return await self._cancel_order(account, request)
+        if self._is_exit_only_pair(request):
+            # ⭐ Protective PAIR for a position we already hold -- target + stop, NO entry leg.
+            # Same v3 combo endpoint, one leg fewer. Never taken unless the caller explicitly sets
+            # `webull_exit_only_pair`, so every existing path is byte-identical.
+            try:
+                return await asyncio.to_thread(self._submit_exit_pair_blocking, account, request)
+            except Exception as exc:  # noqa: BLE001 - any SDK/transport error -> reject, never crash OMS
+                return [self._reject(request, self._exc_reason(exc))]
         if self._is_bracket_request(request):
             # Native OCO combo: one v3 place_order of MASTER+STOP_PROFIT+STOP_LOSS. Flag-gated;
             # off => this branch is never taken and the single-leg path below is byte-identical.
@@ -162,6 +170,43 @@ class WebullBrokerAdapter:
             return await asyncio.to_thread(self._submit_blocking, account, request)
         except Exception as exc:  # noqa: BLE001 - any SDK/transport error -> reject, never crash OMS
             return [self._reject(request, self._exc_reason(exc))]
+
+    def _submit_exit_pair_blocking(
+        self, account: WebullAccountConfig, request: OrderRequest
+    ) -> list[ExecutionReport]:
+        """Place the target+stop pair for a HELD position through the v3 combo endpoint.
+
+        ⛔ ONE `client_combo_order_id` across both legs -- that linkage is what makes the broker
+        cancel the survivor when one fills. Without it a filled stop leaves the target working
+        against shares we no longer own and the account goes SHORT.
+        """
+        from webull.trade.trade.v3.order_opration_v3 import OrderOperationV3
+
+        legs = self._build_exit_only_pair_payload(request)
+        op = OrderOperationV3(self._get_client())
+        body = self._body(op.place_order(
+            account.account_id, legs, client_combo_order_id=request.client_order_id))
+        logger.info(
+            "[WEBULL-EXIT-PAIR-PLACED] %s target=%s stop=%s coid=%s -> %s",
+            request.symbol, request.metadata.get("bracket_target_price"),
+            request.metadata.get("bracket_stop_price"), request.client_order_id,
+            str(body)[:160],
+        )
+        return [
+            ExecutionReport(
+                client_order_id=request.client_order_id,
+                broker_order_id=str((body or {}).get("combo_order_id") or ""),
+                broker_fill_id=None,
+                symbol=request.symbol,
+                side=request.side,
+                quantity=request.quantity,
+                filled_quantity=Decimal("0"),
+                price=None,
+                event_type="accepted",
+                reason="webull exit-only protective pair",
+                metadata={**dict(request.metadata), "webull_exit_only_pair": "true"},
+            )
+        ]
 
     async def preview_bracket_order(self, request: OrderRequest) -> tuple[int, object]:
         """Validate a combo bracket at the broker WITHOUT placing it (STEP-1 gate item 0).
@@ -808,6 +853,54 @@ class WebullBrokerAdapter:
         return price.quantize(tick, rounding=ROUND_HALF_UP)
 
     # ------------------------------------------------------ native OCO combo bracket (write side)
+    def _is_exit_only_pair(self, request: OrderRequest) -> bool:
+        """A protective PAIR for a position we ALREADY hold: target + stop, no entry leg.
+
+        ⭐ BROKER-PROVEN 2026-08-13, CORE/RTH, `preview_order` on live:orb (Probe W4):
+            [STOP_PROFIT, STOP_LOSS] with NO master  -> HTTP 200   <- this shape
+            [OCO, OCO]                               -> 417 invalid combo_type
+            [STOP_LOSS_PROFIT] (one leg, both prices)-> 417 invalid combo_type
+        So the pair must be tagged STOP_PROFIT / STOP_LOSS exactly as it is inside a full bracket;
+        it simply arrives without the MASTER.
+
+        WHY IT EXISTS: a Webull resting entry cannot carry a bracket -- the broker refuses a
+        stop-limit master with legs (Probe W shape B, 417). So the resting leg fills BARE and this
+        is what puts a real stop and target at the broker immediately afterwards, instead of leaving
+        the position on software-only protection for its whole life.
+        """
+        return str(request.metadata.get("webull_exit_only_pair", "")).lower() in {"1", "true", "yes"}
+
+    def _build_exit_only_pair_payload(self, request: OrderRequest) -> list[dict[str, object]]:
+        """Target + stop for a HELD position. No master leg -- that is the whole point.
+
+        ⛔ Both legs share one `client_combo_order_id`, which is what makes the broker treat them as
+        one-cancels-the-other. Without that linkage a filled stop would leave the target working
+        against shares we no longer own, and the account goes SHORT -- the E5/NXTC shape.
+        """
+        target = self._meta_price(request, "bracket_target_price")
+        protect = self._meta_price(request, "bracket_stop_price")
+        missing = [n for n, v in (("bracket_target_price", target), ("bracket_stop_price", protect))
+                   if not v]
+        if missing:
+            # ⛔ Never emit half a pair. One leg alone is an unpaired sell reserving the shares.
+            raise RuntimeError(f"webull exit-only pair missing metadata: {', '.join(missing)}")
+        coid = request.client_order_id
+        common = {
+            "symbol": request.symbol,
+            "instrument_type": "EQUITY",
+            "market": "US",
+            "quantity": str(int(request.quantity)),
+            "entrust_type": "QTY",
+            "time_in_force": self._tif(request),
+            "support_trading_session": "CORE",
+        }
+        return [
+            {**common, "client_order_id": f"{coid}T", "combo_type": "STOP_PROFIT", "side": "SELL",
+             "order_type": "LIMIT", "limit_price": str(self._round_to_tick(target))},
+            {**common, "client_order_id": f"{coid}S", "combo_type": "STOP_LOSS", "side": "SELL",
+             "order_type": "STOP_LOSS", "stop_price": str(self._round_to_tick(protect))},
+        ]
+
     def _is_bracket_request(self, request: OrderRequest) -> bool:
         """Build a combo bracket ONLY when the flag is on AND the caller asked for one, so the
         single-leg v1 path stays byte-identical with the flag off (mirrors the Schwab adapter's
