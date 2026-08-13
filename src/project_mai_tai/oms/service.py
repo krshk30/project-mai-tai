@@ -1908,6 +1908,86 @@ class OmsRiskService:
         )
         return observed
 
+    # ------------------------------------------------ webull attach-after-fill (2026-08-13)
+    def _spawn_webull_protection(self, **kw) -> "asyncio.Task[None] | None":
+        """Run the attach OFF the fill path -- it retries with sleeps and must never stall a fill."""
+        task = asyncio.ensure_future(self._attach_webull_protection(**kw))
+        tasks = getattr(self, "_webull_protect_tasks", None)
+        if tasks is None:
+            tasks = set()
+            self._webull_protect_tasks = tasks
+        tasks.add(task)
+        task.add_done_callback(tasks.discard)
+        return task
+
+    async def _attach_webull_protection(
+        self, *, broker_account_name: str, symbol: str, quantity: int,
+        entry_price: float, strategy_code: str,
+    ) -> None:
+        """Put a real target+stop pair at Webull for a position that filled BARE.
+
+        ⛔ THE FAILURE THAT MATTERS: if this never lands we are HOLDING with nothing protecting us
+        at the broker. So it retries, and a final failure is a WARNING carrying everything needed to
+        act by hand -- never a silent return. An unprotected position that nobody is told about is
+        strictly worse than one that is.
+        """
+        target_pct = float(getattr(self.settings, "oms_v2_cw_target_pct", 2.0))
+        stop_pct = float(getattr(self.settings, "oms_v2_cw_hard_stop_pct", 5.0))
+        target = entry_price * (1.0 + target_pct / 100.0)
+        protect = entry_price * (1.0 - stop_pct / 100.0)
+        attempts = max(1, int(getattr(self.settings, "oms_webull_protect_attempts", 3)))
+        interval = max(0.0, float(getattr(self.settings, "oms_webull_protect_interval_seconds", 2.0)))
+
+        for attempt in range(1, attempts + 1):
+            coid = f"{strategy_code}-{symbol}-protect-{uuid4().hex[:12]}"
+            request = OrderRequest(
+                client_order_id=coid,
+                broker_account_name=broker_account_name,
+                strategy_code=strategy_code,
+                symbol=symbol,
+                side="sell",
+                intent_type="close",
+                quantity=Decimal(str(quantity)),
+                reason="webull attach protection after bare resting fill",
+                metadata={
+                    "webull_exit_only_pair": "true",
+                    "bracket_target_price": f"{target:.4f}",
+                    "bracket_stop_price": f"{protect:.4f}",
+                    "source": "oms_v2_webull_protect",
+                },
+                order_type="limit",
+                time_in_force="day",
+            )
+            try:
+                reports = await self.broker_adapter.submit_order(request)
+            except Exception:
+                self.logger.warning(
+                    "[WEBULL-PROTECT-RETRY] %s %s attempt %d/%d raised",
+                    symbol, broker_account_name, attempt, attempts, exc_info=True,
+                )
+                reports = []
+            if any(getattr(r, "event_type", "") not in ("rejected",) for r in reports):
+                self.logger.info(
+                    "[WEBULL-PROTECT-ATTACHED] %s %s qty=%d entry=%.4f -> target=%.4f stop=%.4f "
+                    "(attempt %d) — a real pair is now resting at the broker",
+                    symbol, broker_account_name, quantity, entry_price, target, protect, attempt,
+                )
+                return
+            reason = "; ".join(str(getattr(r, "reason", "")) for r in reports) or "no report"
+            self.logger.warning(
+                "[WEBULL-PROTECT-RETRY] %s %s attempt %d/%d refused: %s",
+                symbol, broker_account_name, attempt, attempts, reason[:200],
+            )
+            if attempt < attempts and interval:
+                await asyncio.sleep(interval)
+
+        self.logger.warning(
+            "[WEBULL-PROTECT-FAILED] %s %s qty=%d entry=%.4f — COULD NOT ATTACH target=%.4f "
+            "stop=%.4f after %d attempts. THE POSITION IS HELD WITH NO BROKER-SIDE STOP; the "
+            "software ladder is the only cover. Place one by hand.",
+            symbol, broker_account_name, quantity, entry_price, target, protect, attempts,
+        )
+
     def _record_internal_risk_pass(
         self,
         session: Session,
@@ -2329,6 +2409,22 @@ class OmsRiskService:
                 "[OMS-V2-MANAGED-OPEN] sym=%s acct=%s qty=%s entry=%s path=%s",
                 symbol, broker_account_name, int(quantity), price, entry_path,
             )
+            # ⭐⭐ ATTACH PROTECTION TO A BARE WEBULL FILL (2026-08-13).
+            # A Webull RESTING entry cannot carry a bracket -- the broker refuses a stop-limit
+            # master with legs (Probe W shape B, 417). So it fills BARE, and without this the
+            # position runs on software-only stops for its whole life. Probe W4 proved the cure:
+            # [STOP_PROFIT, STOP_LOSS] with NO master is ACCEPTED (HTTP 200).
+            # ⛔ Only for a leg that arrived WITHOUT a bracket -- a bracketed entry already has its
+            # protection live at the fill, and a second pair would reserve the shares twice.
+            if (
+                str(metadata.get("fanout_leg", "")).lower() == "webull"
+                and str(metadata.get("native_oco_bracket", "")).lower() != "true"
+            ):
+                self._spawn_webull_protection(
+                    broker_account_name=broker_account_name, symbol=symbol,
+                    quantity=int(quantity), entry_price=float(price),
+                    strategy_code=strategy_code,
+                )
         elif s == "sell":
             # #6: when close-on-fill is ON, the managed-exit row is closed HERE, on the
             # CONFIRMED fill (current_quantity decrement + close-at-0) — NOT on submit in
