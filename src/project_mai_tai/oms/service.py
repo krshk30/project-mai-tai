@@ -6310,19 +6310,42 @@ class OmsRiskService:
             return None          # no anchor -> leave the leg exactly as it is today (MARKET)
         if level <= 0:
             return None
+        # ⛔⭐⭐ THE BAND ANCHOR IS NOT ALWAYS `entry_price` (fixed 2026-08-13, day-one validation).
+        # `_fanout_rth_resting_cross` sets `entry_price` to the price at which SOFTWARE DETECTED the
+        # cross, not to the level the Schwab stop-limit was resting at. Live FGI 08-13: resting level
+        # 8.3015, cross detected at 8.6461 — so a band off `entry_price` permitted the entire 4.15%
+        # run-up and then capped half a percent beyond THAT. The cap must measure from the price we
+        # decided to buy at, which is the RESTING LEVEL.
+        #
+        # ⛔ AND IT MUST BE A SEPARATE FIELD, NOT A CHANGE TO `entry_price`. That field also anchors
+        # the OCO bracket (`_apply_v2_oco_bracket_entry`). Re-anchoring it to the resting level would
+        # have put FGI's target at 8.4675 while the leg filled near 8.69 — a target BELOW the fill,
+        # i.e. an instant loss exit. A worse bug than the one being fixed.
+        #
+        # ⭐ The two anchors converge by construction once this is in: we only PLACE when the cross is
+        # within the band of the level, so a placed leg has cross ≈ level and the bracket is sound.
+        # Everything else abandons, and an abandoned leg has no bracket to mis-anchor.
+        anchor = level
+        try:
+            band_anchor = float(md["resting_band_anchor"])
+            if band_anchor > 0:
+                anchor = band_anchor
+        except (KeyError, TypeError, ValueError):
+            pass
         try:
             band_pct = float(md["resting_band_pct"])
         except (KeyError, TypeError, ValueError):
             band_pct = float(getattr(self.settings, "oms_v2_eh_resting_entry_band_pct", 0.5))
         max_age_ms = int(getattr(self.settings, "oms_v2_eh_resting_entry_quote_max_age_ms", 2000))
         limit_s, a, b = self._band_capped_marketable_limit(
-            symbol=symbol, level=level, band_pct=band_pct, max_age_ms=max_age_ms
+            symbol=symbol, level=anchor, band_pct=band_pct, max_age_ms=max_age_ms
         )
         if limit_s is None:
             reason_code, reason_detail = a, b
             self.logger.info(
-                "[OMS-V2-RTH-FANOUT-LIMIT] symbol=%s source=%s ABANDONED reason=%s — %s",
-                symbol, md.get("fanout_source", "?"), reason_code, reason_detail,
+                "[OMS-V2-RTH-FANOUT-LIMIT] symbol=%s source=%s ABANDONED reason=%s — %s "
+                "(anchor=%.4f, entry_price=%.4f)",
+                symbol, md.get("fanout_source", "?"), reason_code, reason_detail, anchor, level,
             )
             return self._abandon_v2_eh_entry(
                 event=event, intent=intent, reason_code=reason_code, reason_detail=reason_detail,
@@ -6330,10 +6353,21 @@ class OmsRiskService:
         ask, cap = a, b
         md["order_type"] = "limit"
         md["limit_price"] = limit_s
+        # ⛔⭐⭐ THE BRACKET PATH READS A DIFFERENT FIELD (fixed 2026-08-13, day-one validation).
+        # `webull.py::_build_combo_payload` types the combo MASTER off `bracket_entry_type`, NOT off
+        # `order_type`. The strategy stamps that `MARKET` when it builds the fan-out draft, so a
+        # BRACKETED fan-out leg went out as a MARKET master and this cap was silently ignored —
+        # decorative on exactly the orders it was written for (181 of 215 RTH fan-out entries over
+        # 14 days carry a bracket).
+        # PROVEN LIVE: XHG 08-13 11:43:29 — we sent `limit_price 3.87` and it FILLED AT 3.8873,
+        # 45 bps ABOVE our own ceiling, with `bracket_entry_type: MARKET` sitting in the same payload.
+        # ⭐ A LIMIT master + attached legs is broker-valid — Probe W shape A, HTTP 200, placed live.
+        md["bracket_entry_type"] = "LIMIT"
         md["price_source"] = "ask"
         md["oms_v2_rth_fanout_limit"] = "true"
         md["oms_v2_rth_fanout_limit_ask"] = f"{ask:.4f}"
         md["oms_v2_rth_fanout_limit_cap"] = f"{cap:.4f}"
+        md["oms_v2_rth_fanout_limit_anchor"] = f"{anchor:.4f}"
         # ⛔ `reference_price` is NOT overwritten — same reason as the primary path: every slippage
         # study measures fill-vs-DECISION, and overwriting the reference silently turns that into
         # fill-vs-fill and reports ~0. The fan-out leg is the one whose slippage we most want to see.
