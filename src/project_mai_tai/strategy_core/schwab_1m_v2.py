@@ -269,6 +269,14 @@ class SymbolState:
     # resting_level). Set when the Webull MARKET leg fires; reset with the other per-flip claims at the
     # new BUY flip / position close, so a reclaim can fire a fresh Webull leg. INERT unless fan-out is on.
     fanout_webull_claimed: bool = False
+    # ⛔⭐⭐ WALL-CLOCK MS THE CLAIM ABOVE WAS TAKEN (2026-08-13). The claim is taken when the leg is
+    # QUEUED, not when it FILLS -- so an order that never reaches the broker still burns it, and the
+    # only releases are a position close / fresh flip / 04:00 roll. LIVE COST, FGI 2026-08-13: the
+    # 10:02 leg was blocked by our own price cap, the claim stayed set, and the next TWO Schwab
+    # entries (10:18 and 13:44) were never offered to Webull at all. Zero orders sent, so zero
+    # broker errors -- the silence looked like the broker refusing us when we had simply stopped
+    # asking. This timestamp lets the claim expire when no fill confirms it.
+    fanout_claim_ms: int = 0
 
 
 @dataclass
@@ -534,6 +542,11 @@ class SchwabV2Strategy:
         self._resting_reprice_frac = float(
             getattr(self.settings, "strategy_schwab_1m_v2_cw_v2_resting_entry_reprice_pct", 1.0) or 1.0
         ) / 100.0
+        # FAN-OUT CLAIM GRACE (2026-08-13): how long a QUEUED Webull leg holds the once-per-flip
+        # claim before it is released when no position appears. 0 disables => byte-identical.
+        self._fanout_claim_grace_ms = int(float(
+            getattr(self.settings, "strategy_schwab_1m_v2_webull_fanout_claim_grace_secs", 30.0) or 0.0
+        ) * 1000)
         # SILENCE-ON-FILL: hold this long after the up-flip for position_qty to confirm the fill.
         self._resting_flip_grace_ms = int(float(
             getattr(self.settings, "strategy_schwab_1m_v2_cw_v2_resting_entry_flip_grace_secs", 30.0) or 30.0
@@ -693,6 +706,7 @@ class SchwabV2Strategy:
                 state.cw_v2_emit_claimed = False
                 state.cw_v2_bars_since_exit = 0  # reclaim gap: start counting new bars from the exit
                 state.fanout_webull_claimed = False  # fan-out: allow a fresh Webull leg on the reclaim
+                state.fanout_claim_ms = 0
         if self._atr_rearm_enabled:
             self._poll_atr_guard(state, prev)
 
@@ -1028,6 +1042,7 @@ class SchwabV2Strategy:
         state.cw_v2_emit_claimed = False
         state.cw_v2_emit_ms = 0
         state.fanout_webull_claimed = False  # fan-out RTH-resting once-per-flip latch
+        state.fanout_claim_ms = 0
         # Resting flip-entry: a live resting order is already cancelled at 16:00 (out-of-window),
         # so at the 04:00 anchor this only zeroes the strategy's view for the new session.
         state.resting_active = False
@@ -1515,6 +1530,7 @@ class SchwabV2Strategy:
             # The slots are reset at DISARM instead, so whatever arrives here already carries the
             # entries attributable to the cross being confirmed.
             state.fanout_webull_claimed = False  # fresh flip -> re-allow the fan-out Webull leg
+            state.fanout_claim_ms = 0
             if self._cw_armed_segment_safety_enabled:
                 # Stamp the arm with the FLIP BAR's ts (not wall-clock): a reconstructed arm carries
                 # a persisted historical ts (< boot); a live flip carries the current bar ts (>= boot).
@@ -2271,6 +2287,29 @@ class SchwabV2Strategy:
             return
         if not (state.resting_active and state.resting_level > 0.0):
             return
+        # ⭐⭐ RELEASE A CLAIM THAT NEVER BECAME A POSITION (2026-08-13).
+        # The claim below is taken at QUEUE time. If the leg is then blocked -- by our own band cap,
+        # a broker refusal, anything -- nothing releases it until the position closes, a fresh flip
+        # arrives, or 04:00. FGI 2026-08-13 lost its next TWO entries that way.
+        # Mirrors `resting_flip_ms` / `_resting_flip_grace_ms`: hold briefly for the fill to confirm,
+        # then let go. Safe against a double Webull leg because a leg that DID fill shows up as
+        # `position_qty != 0` on the line below, and `resting_active` clears on the primary's fill --
+        # both of which return before we could queue a second one.
+        # ⛔ grace <= 0 disables the release entirely => today's behaviour, byte-identical.
+        if (
+            state.fanout_webull_claimed
+            and state.fanout_claim_ms
+            and state.position_qty == 0
+            and self._fanout_claim_grace_ms > 0
+            and (self._now_ms() - state.fanout_claim_ms) > self._fanout_claim_grace_ms
+        ):
+            logger.info(
+                "[V2-FANOUT-CLAIM-EXPIRED] %s claim taken %.1fs ago never became a position "
+                "-> re-allowing the Webull leg for this flip",
+                state.symbol, (self._now_ms() - state.fanout_claim_ms) / 1000.0,
+            )
+            state.fanout_webull_claimed = False
+            state.fanout_claim_ms = 0
         if state.position_qty != 0 or state.fanout_webull_claimed:
             return
         # LIVE-BAR guard (#528 mirror): only fire off a live feed, never a warmup-replayed / stale bar.
@@ -2290,6 +2329,7 @@ class SchwabV2Strategy:
             # gating the Schwab primary. Live CNET fired here at px=1.4300 on a thin tape.
             return
         state.fanout_webull_claimed = True
+        state.fanout_claim_ms = self._now_ms()   # so an unfilled claim can expire (see the guard above)
         logger.info(
             "[V2-FANOUT-RTH-RESTING] %s px=%.4f >= resting_level=%.4f -> parallel Webull MARKET leg",
             state.symbol, px, state.resting_level,
