@@ -14,116 +14,131 @@
 
 ## ⚡ FIRST SCREEN — act on this alone
 
-**As of 2026-08-11 EOD.** Fleet: 6 services active, `NRestarts=0`. **Deployed HEAD `32926b6`**
-(verified in the CHECKOUT and by CONTENT, not just the PR).
+**As of 2026-08-12 EOD.** Fleet: 7 services active, `NRestarts=0`. **Deployed HEAD `867dcd0`**
+(verified in the checkout AND by content — both new markers present in the running tree).
 
-⛔⭐⭐ **`FRTT` IS NOW PROTECTED — IT WILL NOT TRADE AT ALL.**
-`MAI_TAI_PROTECTED_SYMBOLS=CYN,TE,FRTT` (was `CYN,TE`). Operator-directed after he manually bought
-5,000 FRTT mid-afternoon while the bot was trading the same name. **He closed that position into the
-bell, so the original reason is gone** — this is a one-line revert + restart when he wants it back.
-Backup: `/etc/project-mai-tai/project-mai-tai.env.bak-20260811-deploy`.
-⚠️ FRTT vanishing from the watchlist is the protection working, **not a defect**.
+✅ **DEPLOYED 18:05 ET with BOTH NEW FLAGS ON** (operator's call — deploying flags-off would have
+forced a second restart in tomorrow's pre-market, the worst window to take one):
+```
+MAI_TAI_OMS_CANCEL_VERIFY_ENABLED=true
+MAI_TAI_OMS_V2_RTH_FANOUT_LIMIT_ENABLED=true
+```
+Both confirmed loaded from the OMS process's own `/proc/<pid>/environ`. Env backed up as
+`project-mai-tai.env.bak-deploy-20260812-220439` — the kill for either is one line + a restart.
+⛔ **NEITHER HAS FIRED YET. Both are UNEXERCISED against a live broker.**
 
-**Broker FLAT except `CYN 5000` (operator manual).** 0 working orders, 0 open managed rows.
+⭐ **The restart touched OMS + strategy ONLY. `schwab-1m-v2` was NOT restarted** — it is the bar
+builder, so leaving it up meant **no bar hole**: every symbol advanced 18:03 → 18:04 straight through.
+Reuse that scoping for any OMS-only change.
 
-## ✅ DEPLOYED 2026-08-11 16:08 ET — `cb30fcd → 32926b6`
+**Positions: `CRWU 2` (schwab) + `CRWU 1` (orb) — operator closing by hand.** ⛔ **CYN is CLEARED —
+the operator sold all 5,000. `MAI_TAI_PROTECTED_SYMBOLS=CYN,TE` is now stale but harmless.**
+FRTT unprotected and tradeable (verified per-process), but the scanner has not re-promoted it.
 
-| step | result |
+## 👀 WATCH TOMORROW (2026-08-13)
+
+1. **⭐ `[OMS-CANCEL-CONFIRMED]` / `[OMS-CANCEL-RESUBMIT]` / `[OMS-CANCEL-UNCONFIRMED]`** in `oms.log`.
+   This exercises from 07:00 on any cancel. An UNCONFIRMED is a **finding**, not noise.
+2. **⭐ `[OMS-V2-RTH-FANOUT-LIMIT] PLACED|ABANDONED`.** ⛔ **RTH-ONLY — it cannot fire before 09:30**,
+   so a quiet pre-market is NOT evidence it did nothing. ABANDONED = a fan-out entry we deliberately
+   did not chase; that is the intended new behaviour, count it rather than fear it.
+3. **🔴 CRWU** — see the unexited-position thread below. Confirm the operator's manual close landed.
+4. The Webull reject storm (`live:orb`) is unchanged and still contaminated by the client-abort
+   conflation — treat magnitude, not count.
+
+## 🔴 THE DAY'S SHARPEST FINDING — a held position with nothing trying to sell it
+
+**CRWU, 2026-08-12.** Held 2 (schwab) + 1 (orb), entries 5.8899 / 5.88, bid fell to **5.61**
+(−4.75% / −4.59%, on the day's low) with **no broker-side stop at all** — the `session=NORMAL`+`DAY`
+bracket expired at 16:00 and `MAI_TAI_OMS_V2_EOD_OCO_TRANSITION_ENABLED=false` means nothing replaces
+it. The software ladder tried twice and BOTH brokers refused:
+- Webull 15:30 `ORDER_NOT_SUPPORT_REVERSE_OPTION`
+- Schwab 15:54 `This order may result in an oversold/overbought position`
+
+Then **nothing was attempted for >2h** — the OMS sat polling for an OCO exit fill that can never
+arrive, on managed rows **13,736s / 18,618s** old (`[OMS-OCO-EXIT-MISS] ... A miss on an OLD row is
+the 07-31 AXTU/AXTX defect`). ⇒ This is the unexited-position direction the operator called
+unrecoverable, and it is the live case for **#647 Gate 2** (`oms_v2_rth_edge_bracket_enabled`, still
+OFF). See [[project_mai_tai_premarket_exit_protection]].
+
+## ✅ MERGED + DEPLOYED TODAY — #684 (`867dcd0`)
+
+**1. Cancel-verify** — the cure for the FRTT 136-minute hole. After a cancel: read the order back
+until it settles → **re-submit** if it still reads working → `[OMS-CANCEL-UNCONFIRMED]` with the
+coid + broker id if not. ⛔ `accepted`/`PENDING_CANCEL` is deliberately **not** proof.
+⛔ A *raised* cancel is an UNKNOWN, not a failure — swallowed only when the flag is on, then resolved
+by reading. Backgrounded, because inline would stall `process_trade_intent`, which carries EXITS.
+
+**2. The fan-out leg finally has a price ceiling.** ⛔ **#674 capped only the SCHWAB PRIMARY** — its
+own gate says *"the fan-out leg is deliberately untouched here"*. So the Webull leg still shipped as
+`order_type: "limit" if session_is_eh else "market"` = **UNCAPPED MARKET in RTH, on BOTH sources
+(`reactive` AND `rth_resting`)**. Live proof: 08-12 BAOS, the primary decided **1.1702** under its cap
+while the fan-out leg paid **1.1800** and lost **5.08%**.
+⚠️ NEW FAILURE MODE, NAMED: a market order always fills; a capped limit sometimes will not.
+
+**Validation:** 24 tests · suite **1989 pass / 0 fail** · ruff clean · **9 mutations, each caught by
+the test that should catch it.**
+
+## ⭐⭐ PROBE W — RUN LIVE, SETTLED (CORE/RTH, `live:orb`, FRTT)
+
+| shape | result |
 |---|---|
-| merged | **#678** `460b1ac` → **#679** `32926b6` |
-| restart | stop v2 → restart oms → start v2. 6 services active, `NRestarts=0`, **0 tracebacks** |
-| boot | `[V2-BOOT-HOLD] released — 0 reconstructed-uncapped segments` 16:08:48 |
-| **bar gap** | **NO HOLE** — every minute 16:00→16:08 present for all 4 watched symbols |
-| suite | **1996 passed / 0 failed** (baseline 1978 + 18 new), ruff clean |
-| ⚠️ window | deployed at **16:08 ET, EH still open**, on the operator's explicit call (armed-but-flat accepted). Not the 20:15 quiet window. It came out clean; **do not treat that as licence** |
+| **A** LIMIT master + STOP_PROFIT + STOP_LOSS | **200** — accepted, placed live |
+| **B** STOP_LIMIT master + same legs | **417** `invalid order_type, value: STOP_LOSS_LIMIT` |
+| **C** bare STOP_LIMIT, no legs | **200** at preview |
 
-### #678 — held positions keep their market data
-Subscriptions now publish **watchlist ∪ held**. The OMS exit ladder is NOT watchlist-gated
-(`_watchlist` = 0 refs in `oms/service.py`) but it IS quote-driven, so dropping a held symbol
-silently disarmed CW_TARGET/CW_FLOOR/CW_HARD_STOP/CW_FLIP **together**. Ownership = 3-source
-ADD-only union (virtual ∪ managed ∪ **account_positions**) minus protected. ⛔ **EXIT-ONLY** — see
-`docs/design/held-symbol-exit-coverage.md` §2; do not "complete" it to allow entries.
-⚠️ **`[V2-EXIT-COVERAGE]` has fired 0×. UNEXERCISED — needs a live held position.**
+⇒ **Webull refuses a stop-limit combo master; Schwab accepts the identical shape** (`previewOrder`
+200 / 0 rejects). The fan-out order-type asymmetry is **the broker's**, unfixable our side.
+⛔ **DO NOT remove `webull.py:949`** — it enforces the shape 174 live Webull brackets depend on.
+⛔ **#681 still has the enum bug** (line 119 sends `STOP_LIMIT`, must be `STOP_LOSS_LIMIT`). Fix
+before merging; the first probe run was invalid because of it, and **the failing control caught it**.
 
-### #679 — the orphan watch asks a stronger question
-`classify_unowned` (*does anything OWN this order?*) + `classify_oversell` (working sells ≤ shares
-held). 6/6 mutations. Live GREEN on cron at 16:09:22 ET.
-
----
-
-## 👀 WATCH TOMORROW (2026-08-12)
-
-1. **⭐ `[V2-EXIT-COVERAGE]` on the first held position** — #678's acceptance, as a quoted line.
-2. **⭐ The orphan watch's NEW lines** — a `classify_unowned` RED is a **FINDING** (a failed cancel
-   happened again); a `classify_oversell` RED means stacked sells. Neither has fired yet.
-3. **Webull reject storm** — ~30 rejected market sells on WXM alone today; every exit preceded by a
-   burst of 3–11. `live:orb` shows **10,980 rejected sells vs 144 filled over 11 days**. #608 did
-   not close this. ⛔ contaminated by the client-abort conflation, so treat the magnitude, not the
-   count, as the signal.
-4. **FRTT** — protected. Decide whether to unprotect.
-
-### Tomorrow's queue
-1. **🔴 CANCEL-RETRY DESIGN** — the day's real root cause. See below.
-2. Commit the exec bit on `ops/health/bar_gap_watch_cron.sh` (still 100644 committed; the box has a
-   hand-`chmod`, preserved across today's pull).
-3. Decide deliberately whether #674's price cap stays now that #676 rests.
-4. Two sweeps (dead guards · latch-timing inferences).
-
----
+## 🕐 OPEN PRs
+| PR | what | state |
+|---|---|---|
+| **#681** | Probe W | ⛔ needs the line-119 enum fix before merge |
+| **#682** | entry-slippage validation | needs sudo; unrun |
+| #673 · #646 · #642 · #640 | docs/design | awaiting review |
 
 ## 🔴 OPEN THREADS (detail: [`handoff-open-items.md`](handoff-open-items.md))
 
-1. **🔴⭐⭐ A CANCEL IS FIRE-AND-FORGET — NOT FIXED.** FRTT 13:01:02: the cancel was emitted, died on
-   the network (`upstream connect error … connection termination`), and the order stayed **LIVE and
-   unowned for 136 minutes** until the operator killed it by hand. We treat the *attempt* as the
-   *outcome*. #679 now **detects** it in ~2 min; the **cure** (verify the cancel landed, retry on
-   transient failure) is unbuilt and is a real-money ENTRY-path change — design first.
-   ⛔ 11-day census: exactly **2** rejected cancels, so it is rare and unbounded, not frequent.
-2. **⭐⭐ WE DO NOT RECORD OCO CHILDREN AS ORDERS.** Our order table has no row type for them, so a
-   live protective sell at the broker is invisible **by construction** — today the DB showed 0
-   working orders while the ladder showed 2. This is why four sells stacked on two shares unseen.
-3. **⛔⭐⭐ NO REPLACEMENT LINK** in the order chain — reprice / trade-pairing / entry-lot are ONE
-   gap. `watchdog_replaces_client_order_id` exists but is **0/304** on entry orders.
-4. **🔴 P0 — FRESHNESS GATE ON A STALENESS GUARD.** A post-boot promotion whose warmup series is
-   stale keeps `just_warmed=False`, so `_cap_reconstructed_segment` never runs and BOOT-HOLD
-   suppresses entries **FLEET-WIDE**. Cost **2h22m on 08-11**. ⛔ "seed-cap on promotion" already
-   exists — that is a no-op.
-5. **⛔⭐⭐ `broker_order_events` conflates CLIENT aborts with BROKER refusals** — every reject count
+1. **🔴 The 16:00 bracket death** — see CRWU above. #647 Gate 2 is the built, dark answer.
+2. **⛔⭐⭐ PRE-MARKET IS 0% BRACKETED.** Measured, bot-only, 14d: RTH **172/172** orb and **131/132**
+   schwab; PRE (EH) **0/34** and **0/13**. Both brokers are limit-only in EH, so no design can put a
+   stop at the broker before 09:30 — the RTH-edge arm is the only answer.
+3. **⛔⭐ THE ENTRY LEVELS ARE QUANTISED BY ~70 bps.** +2%/−5% is computed off the **decided** price
+   then tick-rounded; at ~$1.40 a cent is 70 bps, so 08-11 actually ran **+2.11…+2.47 / −4.38…−5.11**.
+   The 0.5% entry band collapses to **ZERO** on sub-$2 names. **Fix the unit, not the number.**
+4. **⭐⭐ THE CHURN IS STILL THE BIGGEST NUMBER ON THE BOARD** — median **5 entries per symbol-day**,
+   max 16 (verified 324 fill rows = 324 distinct orders, not partial fills); ~**200% of one
+   position's notional** in crossing over 14 days. ⛔ The entry-ordinal study is still unrun and
+   selection is **DISCUSS BEFORE BUILDING**.
+5. **⛔⭐⭐ `broker_orders` records an OCO child ONLY WHEN IT FILLS** (`oco_child_legs == legs_filled`
+   in all 21 day-rows). It can answer *"did a leg execute"* and **cannot** answer *"is a bracket
+   resting now"* — only the broker can.
+6. **⛔ The orphan watch reads SCHWAB ONLY** (`SchwabBrokerAdapter`,
+   `strategy_schwab_1m_v2_account_name`). It can never clear a Webull question.
+7. **⛔⭐⭐ `broker_order_events` conflates CLIENT aborts with BROKER refusals** — every reject count
    on that table is contaminated. Needs a `source` field.
-6. **⛔ We never store a BROKER FILL PRICE.** `filled_avg_price` empty on entry *and* exit; the
-   ladder anchors on the *requested* price. Today's chart showed the FRTT exit at **1.535** while
-   our record says `reference_price 1.53`. Every stop/target is wrong by the slippage.
-7. **⭐⭐ SELECTION — we buy moves already SPENT.** ⛔ DISCUSS BEFORE BUILDING.
-8. **Redis evicts the HEARTBEAT stream ⇒ false "fleet down".** `allkeys-lru`, zero `xreadgroup`.
-9. **Reconciler severity INVERTED** · **Schwab API-open rejects ~3/day** · **`-close-` route
-   unattributable** · **per-lot attribution gap**.
-10. **Webull is OFF THE TABLE** until the Schwab reactive→resting work is proven.
+8. **P0 boot-hold freshness gate** · **Redis evicts the heartbeat stream** · **`-close-` route
+   unattributable** · **per-lot attribution gap** — all unchanged.
 
-✅ **CLOSED today:** #678 · #679 · **#676 is EXERCISED** (`21 reclaim placements`, `slot=reclaim`,
-proven on today's tape — the FRTT order that consumed the afternoon *was* a #676 reclaim rest) ·
-the resting-cancel split (5 sessions, n=655: reprice 58.2% · liquidity_floor 35.4% ·
-**flip_no_fill 6.0%** ⇒ the "76% never fill" headline was per-ORDER over an opportunity-level
-question) · the orphan watch proven **end-to-end incl. phone delivery**.
+## 🔔 ALERTING
+`orphan_order_cron.sh` (Schwab-only, see thread 6) · `bar_gap_watch_cron.sh` ·
+`reconcile_alert_cron.sh` · `entry_fix_watch/watch_cron.sh` ⛔ **silence is NOT green — read
+`STATUS.txt`** · OMS liveness · pre-open readiness · token expiry · OCO capture.
+⛔ All ROOT crontab, ET-guarded **inside** the script. ⛔ A script committed from Windows lands mode
+664 AND carries CRLF — verify `stat -c %a` and `bash -n` **on the box**.
 
----
-
-## 🔔 ALERTING — what reaches the phone
-`orphan_order_cron.sh` **(PROVEN 08-11: RED classified, pushed, RECEIVED)** · `bar_gap_watch_cron.sh`
-· `reconcile_alert_cron.sh` · `entry_fix_watch/watch_cron.sh` ⛔ **silence is NOT green — read
-`STATUS.txt`** · `entry_fix_watch/eod_cron.sh` · OMS liveness · pre-open readiness · token expiry ·
-OCO capture.
-🆕 `/home/trader/slot_watch/check.sh` → `STATUS.txt` — the `slot=` watch. ⛔ **not yet in cron.**
-⛔ All ROOT crontab, ET-guarded **inside** the script (`CRON_TZ` ignored on this box).
-⛔ **A script committed from Windows lands mode 664 AND carries CRLF** — verify `stat -c %a` and
-`bash -n` **on the box**.
-
----
+## 🔑 SCHWAB TOKEN
+Re-authed **2026-08-12 05:21 ET** ⇒ next expiry **Wed 2026-08-19 05:21 ET**. Off the Monday slot,
+but ⚠️ 05:21 is **before** the 07:00 EH open — re-auth Tue evening or Wed after the close to park it
+in dead hours. ⛔ Never quote this date from memory; read `refresh_token_expires_at` in the store.
 
 ## 🧠 MEMORY POINTERS (auto-load each session)
 [[project-mai-tai-context]] · [[project-mai-tai-fleet-roster]] · [[project-mai-tai-architecture]] ·
-[[project-mai-tai-restart-bar-gap-checklist]] **(READ BEFORE ANY RESTART)** ·
-[[project_mai_tai_cancel_is_fire_and_forget]] ·
-[[project_mai_tai_v2_post_boot_promotion_uncapped_fleet_hold]] ·
-[[project_mai_tai_no_replacement_link_in_order_chain]] ·
-[[feedback_check_which_parts_already_work]] · [[feedback_a_watch_that_fails_to_a_false_clean]] ·
-[[feedback_a_wrong_reason_is_worse_than_a_missing_one]] · [[feedback-be-crisp-no-essays]]
+[[project_mai_tai_restart_bar_gap_checklist]] **(READ BEFORE ANY RESTART)** ·
+[[project_mai_tai_cancel_is_fire_and_forget]] · [[project_mai_tai_probe_w_webull_stoplimit_master]] ·
+[[project_mai_tai_resting_does_not_avoid_the_spread]] ·
+[[project_mai_tai_premarket_exit_protection]] · [[feedback_the_brokers_book_is_shared]] ·
+[[feedback_check_which_parts_already_work]] · [[feedback_a_wrong_reason_is_worse_than_a_missing_one]]

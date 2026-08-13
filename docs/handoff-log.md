@@ -15,6 +15,76 @@
 
 ---
 
+## 2026-08-11 EVENING — the fill price was there all along
+
+**After the EOD wrap.** FRTT protection reverted, two probes/scripts built, and a claim of mine
+withdrawn.
+
+### FRTT: protected 16:08, unprotected 20:11 — same evening
+Protected at the operator's direction after he manually bought 5,000 FRTT while the bot traded the
+same name. He closed it into the bell, so the reason evaporated. Reverted at 20:11 in the window we
+had originally wanted: EH closed at 20:00, account flat, none armed, newest bar 19:59 — **no bars
+were due, so no hole was possible.** 0 tracebacks. Verified from each process's own
+`/proc/<pid>/environ`, not from the env file.
+
+### ⭐⭐ The correction that matters: `fills.price` exists, 100% coverage
+Earlier today I reported that **"we never store a broker fill price anywhere"**, escalated it to a
+board item, and said it *blocked* #676's acceptance and made *every stop and target wrong by the
+slippage*. That was **wrong**. I had checked `broker_orders.payload`, found no fill-price key, and
+generalised from one table to the database.
+
+`fills.price` is the broker execution price — populated by **every** adapter via
+`ExecutionReport.fill_price`, persisted at `oms/store.py:629`, **schwab 168/168 and orb 302/302 over
+11 days**. The operator's chart marker `-2@1.535` matched `fills.price = 1.53500000` exactly. The
+value was one JOIN away the whole time.
+
+⇒ **No code change was needed. The query was missing, not the data.** When the operator asked
+whether to build storage, the right answer was "it is already stored" — arrived at only by grepping
+the WRITE path (`fill_price=` → who consumes it) rather than trusting the earlier conclusion.
+
+### The validation script, and two defects it caught in itself
+`scripts/resting_entry_slippage.py` (#682). Both defects were found by RUNNING it, not by reading it:
+
+1. **Tick rounding.** The log prints `stop=1.3742`; the order stores `1.37`. Exact matching missed
+   **48 of 48** resting fills — and the script still printed confident, well-formatted numbers with
+   zero attribution.
+2. ⛔ **Silent-empty.** `except (OSError, PermissionError): continue` swallowed the fact that v2 logs
+   are `root:root 640`. Run as `trader`, every log was unreadable, the slot index came back EMPTY,
+   and the output was indistinguishable from "no placements found". This is the exact failure class
+   boarded this morning, committed by me four hours later.
+
+Both are now guarded: a key ladder at raw/2dp/4dp precision, and loud lines for unreadable files
+AND an empty index, stating it is a **tool failure, not a finding about the strategy**.
+
+### ⭐ #676 has its first priced fill — and it corrected me again
+```
+reclaim  n=1   median -35.2bps        <- filled BETTER than the decided level
+first    n=3   median -20.4bps  worst  +12.6
+market   n=34  median  -0.4bps  worst +116.3  SD 36.6
+```
+Earlier I said **no `slot=reclaim` order had ever filled**. That came from arithmetic on cancel
+reasons; the direct join found one. ⚠️ n=1 on one symbol is not a result — the script refuses to
+print a drop-one when only one name is present.
+
+⛔ Also withdrawn: my claim that the 0.50% band caps slippage at +50bps. It caps the fill against the
+**stop trigger**, not `reference_price`, and the same output shows **+58.3**. What the band does
+guarantee is that the unbounded market tail (+351.7) is impossible.
+
+### Probe W (#681)
+Preview-first probe for whether a Webull combo MASTER can be a STOP_LIMIT — the guard at
+`webull.py` refuses it client-side and has **never asked the broker**. The operator's manual bracket
+screenshot (plain LIMIT + SL/TP legs) is *consistent* with the restriction being real; the note now
+reads UNPROVEN-BUT-PLAUSIBLE rather than confirmed, because the UI not offering it is not proof the
+API refuses it. Session stamped beside every result; cancel-and-verify in a `finally:` with a final
+sweep that exits 3 if anything survives.
+
+### Tally for the day
+Five mechanisms proposed and abandoned, plus this fill-price claim withdrawn. Every one died on
+reading the actual tape, call sites, or write path. The ones that survived came from `grep`, not
+from reasoning about how the system ought to behave.
+
+---
+
 ## 2026-08-11 — three wrong mechanisms, one real root cause, and a deploy that came out clean
 
 **Shipped:** `cb30fcd → 32926b6`. **#678** held-symbol exit coverage · **#679** orphan-watch
@@ -1464,3 +1534,93 @@ an ocoexit-only view reads optimistic. Now **labelled, not paired** (`exit_route
 passing run, so its fixup's own Validate finished only after the merge (it passed on main). And CI
 never created a run for two branches — #612 was reopened, force-pushed and still got nothing, so it
 was closed and re-raised as #614 on a fresh branch, which validated normally.
+
+---
+
+# 2026-08-12 — four inverted premises, one probe, two ships, one deploy
+
+**Shipped + deployed: #684 (`867dcd0`) — cancel-verify and the fan-out price ceiling. Both flags ON.**
+
+## The day's method story: every premise checked, four inverted
+
+This session began with a question about resting-entry slippage and spent most of its length
+*disproving stated premises before acting on them*. Recording them together because the pattern is
+the finding — each was checkable in minutes and each would have driven real work in the wrong
+direction.
+
+| premise | what the data said |
+|---|---|
+| "Resting entries fill badly — +55 bps vs the ask" (**mine**) | ❌ a **stale-quote artifact**. Against the TRIGGER: median **+0 bps**, and **0 of 66** paid above both the offer and the tape |
+| "Webull accepts a STOP_LIMIT combo master" | ❌ **417**, twice, CORE/RTH |
+| "Schwab's brackets never fill — ladder wins by ~3s, 0-for-94" | ❌ bracket wins **125/141** schwab, **166/174** orb. All 8 ladder wins were **at/after 16:00** |
+| "Brackets stopped 08-07 / lost the stop leg 08-04" | ❌ 08-04 = 31 children / 31 stops / 31 targets; **08-07 the bot placed no Schwab entries at all** |
+
+⛔ **My own two method errors produced the same false conclusion from two directions**, which is what
+made it feel confirmed: (1) counting brackets over Schwab's order history, which is a **SHARED book**
+containing the operator's manual trades — 17 manual buys read as a bot regression; (2) 15-day chunked
+queries that **truncated silently**, hiding 67 entries. Fixed by joining on our own order ids and
+fetching day-by-day. See `feedback_the_brokers_book_is_shared`.
+⭐ The thing that broke it open: a **control with a known answer** (08-04's AAOG, whose legs the
+operator had already read by hand) still showed its stop leg. **Two wrong methods agreeing is not
+corroboration.**
+
+## Probe W — run live, settled
+
+`live:orb`, FRTT, qty 1, CORE/RTH. **A** LIMIT master + legs → **200** (placed live). **B** STOP_LIMIT
+master + legs → **417 `invalid order_type`**. **C** bare STOP_LIMIT → **200** at preview.
+⇒ Webull refuses a stop-limit combo master; **Schwab accepts the identical shape**. The fan-out
+order-type asymmetry is **the broker's**, not ours. ⛔ Do not remove `webull.py:949` — 174 live
+Webull brackets depend on the shape it enforces.
+
+⛔ **The first probe run was INVALID and the control caught it.** Shapes B *and* C both 417'd — but C
+is the known-good control (44 historical accepts). The probe had bypassed `_map_order_type` along
+with the guard under test and put the broker-neutral name `STOP_LIMIT` on the wire; Webull's enum is
+`STOP_LOSS_LIMIT`. **A third refusal category beyond client-side and broker-side: our own malformed
+payload.** #681 still carries that bug at line 119 — fix before merging.
+
+## What shipped
+
+**1. Cancel-verify** (`oms_cancel_verify_enabled`). The cure for FRTT 08-11's 136-minute unowned
+order. Read the target back until settled → re-submit if still working → `[OMS-CANCEL-UNCONFIRMED]`
+otherwise. `accepted`/`PENDING_CANCEL` deliberately excluded from the settled set — believing it is
+what cost the 136 minutes. A *raised* cancel is an UNKNOWN, not a failure. Backgrounded, because
+inline would stall the intent path, which carries exits.
+
+**2. The fan-out leg gets a ceiling** (`oms_v2_rth_fanout_limit_enabled`). #674 capped only the
+Schwab primary — *"the fan-out leg is deliberately untouched here"* — so the Webull leg was an
+**uncapped MARKET in RTH on both sources**. Live proof same day: BAOS, primary decided **1.1702**
+under its cap, fan-out paid **1.1800**, lost **5.08%**. Probe W is what made this free: a capped
+**LIMIT** master keeps the attached bracket, so there is no price-vs-protection trade-off.
+
+24 tests · suite **1989 pass / 0 fail** · ruff clean · **9 mutations, each caught by the right test**.
+⛔ Process note: my first mutation run used `git checkout` to revert *before committing*, which wiped
+the implementation and made two mutations meaningless. Re-applied, committed, re-ran all of them.
+
+## The deploy — 18:05 ET, both flags ON
+
+Operator's call to enable at deploy rather than flags-off: a flags-off deploy would have forced a
+second restart in tomorrow's **pre-market**, the worst window to take one.
+⭐ **OMS-only change ⇒ OMS + strategy restarted, `schwab-1m-v2` left running.** It is the bar builder,
+so this produced **no bar hole** — bars advanced 18:03 → 18:04 through the restart. Reuse this scoping.
+7 services active, `NRestarts=0`, 0 tracebacks, both flags confirmed from `/proc/<pid>/environ`.
+
+## 🔴 Live exposure found during the post-deploy check (predates the deploy)
+
+**CRWU** held 2 (schwab) + 1 (orb), entries 5.8899 / 5.88, bid **5.61** — on the day's low with **no
+broker-side stop**: the RTH bracket expired at 16:00 and `EOD_OCO_TRANSITION_ENABLED=false` means
+nothing replaces it. The ladder tried twice and both brokers refused (Webull
+`ORDER_NOT_SUPPORT_REVERSE_OPTION` 15:30; Schwab `oversold/overbought` 15:54), then **nothing was
+attempted for >2h** while the OMS polled for an OCO fill that can never arrive on managed rows
+13,736s / 18,618s old. Operator is closing by hand. **This is the live case for #647 Gate 2.**
+
+## Other findings worth keeping
+
+- **Pre-market is 0% bracketed** — bot-only, 14d: RTH 172/172 orb, 131/132 schwab; PRE 0/34 and 0/13.
+- **The levels are quantised by ~70 bps.** +2%/−5% computed off the *decided* price then tick-rounded
+  ⇒ 08-11 actually ran **+2.11…+2.47 / −4.38…−5.11**, and the 0.5% entry band collapses to **zero**
+  on sub-$2 names. Fix the unit, not the number.
+- **`virtual_positions` self-healed** a phantom RMCF 2 via `[VIRTUAL-CLEAR] zeroed 1 virtual
+  position(s) with no broker backing` — the mechanism works, on its own cadence.
+- **CYN cleared** by the operator (all 5,000), so `MAI_TAI_PROTECTED_SYMBOLS=CYN,TE` is now stale.
+- **Schwab re-auth 05:21 ET** ⇒ next expiry **Wed 08-19 05:21 ET**, off the Monday slot but before
+  the 07:00 EH open.
