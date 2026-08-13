@@ -894,10 +894,18 @@ class WebullBrokerAdapter:
             "time_in_force": self._tif(request),
             "support_trading_session": "CORE",
         }
+        # ⛔ MUST go through `_combo_leg_coid`, NOT f"{coid}T". Webull 417-rejects a client_order_id
+        # over 40 chars, and the attach's own base id (`<strategy>-<symbol>-protect-<12hex>`) is 39
+        # for a 5-char symbol -- so a bare append lands EXACTLY on the cap and goes over it for
+        # anything longer. That failure is the LGPS shape (service.py `_CLIENT_ORDER_ID_MAX_LEN`):
+        # every attempt rejects, so the pair can never place. This is the only protection a bare
+        # resting fill has; it must not sit one character from the limit.
         return [
-            {**common, "client_order_id": f"{coid}T", "combo_type": "STOP_PROFIT", "side": "SELL",
+            {**common, "client_order_id": self._combo_leg_coid(coid, "T"),
+             "combo_type": "STOP_PROFIT", "side": "SELL",
              "order_type": "LIMIT", "limit_price": str(self._round_to_tick(target))},
-            {**common, "client_order_id": f"{coid}S", "combo_type": "STOP_LOSS", "side": "SELL",
+            {**common, "client_order_id": self._combo_leg_coid(coid, "S"),
+             "combo_type": "STOP_LOSS", "side": "SELL",
              "order_type": "STOP_LOSS", "stop_price": str(self._round_to_tick(protect))},
         ]
 

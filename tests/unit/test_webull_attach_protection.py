@@ -70,6 +70,26 @@ def test_both_legs_are_SELLs_with_the_right_prices() -> None:
     assert by["STOP_LOSS"]["stop_price"] == "4.75"
 
 
+def test_neither_leg_id_can_exceed_the_40_CHAR_BROKER_CAP() -> None:
+    """⛔ Webull 417s a client_order_id over 40 chars, and the attach's own base is
+    `<strategy>-<SYM>-protect-<12hex>` = 39 for a 5-char symbol. A bare f"{coid}T" lands EXACTLY on
+    the cap and goes OVER it for anything longer -- so the pair could never place, on the one path
+    that is a bare position's only protection. Pin the cap, not the arithmetic that happens to fit
+    today.
+    """
+    for base in ("schwab_1m_v2-XHG-protect-0123456789ab",       # 3-char symbol
+                 "schwab_1m_v2-ABCDE-protect-0123456789ab",     # 5-char symbol -> 39
+                 "x" * 40,                                      # already AT the cap
+                 "y" * 80):                                     # absurd, must still be bounded
+        req = _req()
+        req.client_order_id = base
+        legs = WebullBrokerAdapter._build_exit_only_pair_payload(_adapter(), req)
+        ids = [leg["client_order_id"] for leg in legs]
+        for cid in ids:
+            assert len(cid) <= 40, f"{cid!r} is {len(cid)} chars — the broker will 417 it"
+        assert ids[0] != ids[1], "the two legs must never collide on one id"
+
+
 def test_half_a_pair_is_REFUSED_rather_than_sent() -> None:
     """⛔ One leg alone is an unpaired sell reserving the shares — the E5/NXTC oversell shape."""
     for missing in ("bracket_target_price", "bracket_stop_price"):
