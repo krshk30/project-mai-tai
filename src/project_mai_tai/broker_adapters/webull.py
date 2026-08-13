@@ -939,16 +939,21 @@ class WebullBrokerAdapter:
         "CORE" (RTH -- matches the RTH-first scope). Fork A: a buy-STOP master rejects on Webull,
         so MASTER is LIMIT or MARKET only (enforced here -- never emit a shape the broker refuses).
 
-        ⭐ EVIDENCE STATUS (updated 2026-08-11). The operator's manual Webull bracket screenshot
-        shows the entry as a plain LIMIT with Stop-Loss + Take-Profit legs attached, TIF Day,
-        regular hours -- CONSISTENT with this restriction being real rather than an untested
-        assumption, which is how it had been carried until now.
-        ⛔ BUT THE UI NOT OFFERING IT IS NOT PROOF THE API REFUSES IT. This guard has never once
-        asked Webull; it refuses client-side, so a rejection has never been observed. Until
-        `scripts/webull_combo_master_probe.py` (Probe W) returns a broker verdict, the correct
-        status is UNPROVEN-BUT-PLAUSIBLE, not "confirmed".
-        ⚠️ And any verdict is valid only for the SESSION it was obtained in -- omitting the session
-        is what produced the wrong 2026-07-25 note.
+        ✅ EVIDENCE STATUS: **CONFIRMED BY THE BROKER, 2026-08-12, session CORE/RTH** (Probe W,
+        `scripts/webull_combo_master_probe.py`, account `live:orb`, FRTT, qty 1). Asking Webull
+        directly, bypassing this guard:
+            stop-limit MASTER + STOP_PROFIT + STOP_LOSS -> HTTP 417
+                `Parameter error, invalid order_type, value: STOP_LOSS_LIMIT`
+            LIMIT master + the same legs                -> HTTP 200, and placed live
+        ⭐ The SAME enum is accepted STANDALONE and refused in the MASTER position, which is what
+        makes this a genuine broker refusal rather than an unknown-enum error.
+        ⇒ **THIS GUARD IS CORRECT. DO NOT REMOVE IT** -- 174 live fan-out brackets (14d) depend on
+        the LIMIT-master shape it enforces, and removing it would emit a payload Webull rejects.
+        ⛔ SCHWAB ACCEPTS THE IDENTICAL SHAPE (previewOrder 200 / 0 rejects, same session), so the
+        order-type asymmetry is the BROKER'S and cannot be closed on our side. The PRICE half can:
+        a band-capped LIMIT master keeps the attached bracket -- `oms_v2_rth_fanout_limit_enabled`.
+        ⚠️ The verdict is valid for CORE/RTH only -- omitting the session is what produced the wrong
+        2026-07-25 note.
         ⭐ It matters because the Schwab leg now RESTS (STOP_LIMIT at the ATR line) while this leg
         still sends MARKET -- the order-type asymmetry that owns every entry >=200bps of slippage.
 

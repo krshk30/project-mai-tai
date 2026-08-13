@@ -1,6 +1,28 @@
 #!/usr/bin/env python3
 """Probe W — CAN A WEBULL COMBO MASTER BE A STOP_LIMIT? Preview-first, then one attended live rest.
 
+✅ ANSWERED — RUN LIVE 2026-08-12, session CORE/RTH, account `live:orb`, symbol FRTT, qty 1.
+================================================================================================
+  A  LIMIT master + STOP_PROFIT + STOP_LOSS   preview 200  ·  live 200  (combo placed, then cancelled)
+  B  stop-limit master + the same legs        preview 417  ·  ⛔ NOT ATTEMPTED LIVE (preview refused)
+                                              verbatim: `Parameter error, invalid order_type,
+                                              value: STOP_LOSS_LIMIT` (OAUTH_OPENAPI_PARAM_ERR)
+  C  bare stop-limit entry, no legs           preview 200  ·  live 417 `invalid combo_type,
+                                              value: ["MASTER"]` — a SINGLE order does not belong on
+                                              the combo endpoint; that is an endpoint fact, NOT an
+                                              order-type one. The 44 historical accepts went through
+                                              the single-order path.
+
+⇒ **WEBULL REFUSES A STOP-LIMIT COMBO MASTER. The guard below is CORRECT — do not remove it.**
+⇒ The same enum is ACCEPTED standalone (C preview) and REFUSED in the MASTER position (B), which is
+   what makes B a genuine broker refusal rather than an unknown-enum error.
+⇒ **SCHWAB ACCEPTS THE IDENTICAL SHAPE** (`scripts/schwab_stoplimit_preview.py`: previewOrder 200,
+   0 rejects, same session) — so the fan-out order-type asymmetry is the BROKER'S and cannot be
+   closed on our side. What CAN be closed is the PRICE: a band-capped LIMIT master keeps the
+   attached bracket (shape A) — shipped as `oms_v2_rth_fanout_limit_enabled` in #684.
+⚠️ Valid for CORE/RTH only. Re-run per session before generalising.
+================================================================================================
+
 WHY THIS EXISTS
 ---------------
 `webull.py::_build_combo_payload` refuses a non-LIMIT/MARKET master CLIENT-SIDE:
@@ -112,11 +134,24 @@ def build_payload(shape: str, symbol: str, qty: int, ref: float, coid: str) -> l
         entry = ref * LIMIT_AWAY
         master = {**common, "client_order_id": f"{coid}M", "combo_type": "MASTER",
                   "side": "BUY", "order_type": "LIMIT", "limit_price": _tick(entry)}
-    else:  # B and C both use a STOP_LIMIT master
+    else:  # B and C both use a stop-limit master
         trigger = ref * STOP_AWAY
         entry = trigger
+        # ⛔⭐⭐ THE WIRE ENUM IS `STOP_LOSS_LIMIT`, NOT `STOP_LIMIT` (fixed 2026-08-12 after the
+        # first live run). Webull's OpenAPI stop enums are STOP_LOSS / STOP_LOSS_LIMIT; the
+        # broker-neutral name `STOP_LIMIT` is a name we invented and Webull 417s it with
+        # `invalid order_type, value: STOP_LIMIT`. The adapter maps this at its boundary
+        # (`webull.py::_order_type`) — this probe deliberately bypasses `_build_combo_payload`
+        # because that guard is the thing under test, but bypassing `_map_order_type` too was a
+        # BUG, not part of the test.
+        #
+        # ⛔ HOW IT WAS CAUGHT, and the lesson: shape C is the KNOWN-GOOD control (44 historical
+        # single-leg accepts). On the first run **B and C both 417'd** — a failing control means
+        # the INSTRUMENT is wrong, not that the hypothesis is confirmed. Reporting B as "the
+        # restriction is real" off that run would have been a THIRD refusal category — our own
+        # malformed payload — misread as a broker verdict.
         master = {**common, "client_order_id": f"{coid}M", "combo_type": "MASTER",
-                  "side": "BUY", "order_type": "STOP_LIMIT",
+                  "side": "BUY", "order_type": "STOP_LOSS_LIMIT",
                   "stop_price": _tick(trigger),
                   "limit_price": _tick(trigger * 1.005)}   # the 0.50% slippage band
     if shape == "C":
