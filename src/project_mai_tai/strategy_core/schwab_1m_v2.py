@@ -277,6 +277,10 @@ class SymbolState:
     # broker errors -- the silence looked like the broker refusing us when we had simply stopped
     # asking. This timestamp lets the claim expire when no fill confirms it.
     fanout_claim_ms: int = 0
+    # ⛔⭐ TRUE while a MIRRORED Webull resting stop-limit is live at the broker. Tracked so the
+    # cancel can be mirrored too -- an un-cancelled Webull rest is the 136-minute FRTT orphan
+    # shape, on the broker whose order book we cannot even read reliably.
+    webull_resting_active: bool = False
 
 
 @dataclass
@@ -542,6 +546,18 @@ class SchwabV2Strategy:
         self._resting_reprice_frac = float(
             getattr(self.settings, "strategy_schwab_1m_v2_cw_v2_resting_entry_reprice_pct", 1.0) or 1.0
         ) / 100.0
+        # WEBULL RESTING MIRROR (2026-08-13): place a REAL Webull stop-limit that sits at the
+        # broker alongside Schwab's, instead of reacting after the fact. ⛔ DEFAULT OFF -- Webull
+        # refuses a stop-limit master WITH a bracket (Probe W shape B, 417), so the mirrored rest
+        # is BARE: no target/stop attached at the fill. That is a protection regression and is the
+        # reason this is not on by default.
+        self._webull_resting_mirror_enabled = bool(getattr(
+            self.settings, "strategy_schwab_1m_v2_webull_resting_mirror_enabled", False))
+        # FAN-OUT ON FILL (2026-08-13): queue the Webull leg from the Schwab RESTING FILL instead
+        # of re-detecting the cross on a quote. Default ON — OFF restores the racing detector,
+        # which measurably lost the race (DFSC 0 of 3, INHD 0, OFAL 0 on 2026-08-13).
+        self._fanout_on_fill_enabled = bool(getattr(
+            self.settings, "strategy_schwab_1m_v2_webull_fanout_on_fill_enabled", True))
         # FAN-OUT CLAIM GRACE (2026-08-13): how long a QUEUED Webull leg holds the once-per-flip
         # claim before it is released when no position appears. 0 disables => byte-identical.
         self._fanout_claim_grace_ms = int(float(
@@ -582,6 +598,11 @@ class SchwabV2Strategy:
             getattr(self.settings, "strategy_schwab_1m_v2_webull_fanout_quantity", 0) or 0
         ) or int(self._atr_qty)
         self._pending_webull_fanout_intents: list[TradeIntentDraft] = []
+        # ⛔⭐⭐ CANCEL-SAFE Webull queue. The fan-out queue is drained through `_maybe_emit`,
+        # which carries the entry-window gate, the ATR-only belt and the exit-only chokepoint --
+        # correct for an ENTRY, fatal for a CANCEL, which must never be gated. Schwab already has
+        # this split (`_pending_intents` -> emitted directly); this is its Webull mirror.
+        self._pending_webull_direct_intents: list[TradeIntentDraft] = []
         # P1.3 + P1.4 armed-segment safety — ONE flag gates BOTH the boot-mark (P1.3) and the
         # boot-hold (they are one change; splitting them creates a cell where the hold reads every
         # reconstructed segment as dangerous and holds forever). OFF => byte-identical.
@@ -662,6 +683,59 @@ class SchwabV2Strategy:
                 state.cw_reclaim_taken = True
             else:
                 state.cw_resting_taken = True
+        # ⭐⭐ FIRE THE WEBULL LEG *ON THE SCHWAB FILL* — not by re-detecting the cross (2026-08-13).
+        #
+        # ⛔ THE DEFECT THIS REPLACES. `_fanout_rth_resting_cross` watched quotes for price to reach
+        # `resting_level` and fired the Webull leg then. But the Schwab stop-limit sits AT THE BROKER,
+        # so it fills the instant price touches that level — and the detector's own gate
+        # (`position_qty != 0` → return) then blocks it, because by the next quote tick we are
+        # already holding. It was a race against the broker, and the broker won almost every time.
+        #
+        # MEASURED 2026-08-13 (RTH): DFSC filled 3 times on Schwab — all three AT the stop price —
+        # and the detector fired 0 times. Webull received ZERO orders. Same for INHD and OFAL.
+        # FGI fired once and LATE (px 8.6461 vs level 8.3015, ~4% high) only because a position had
+        # just closed and briefly re-opened the gate. XHG, which Schwab never traded at all, fired
+        # 7 of 7 — the leg works precisely when the primary is NOT involved. That is the tell.
+        #
+        # The fill is a fact we are already told. Use it. No detection, no race, and the anchor is
+        # the level the primary actually filled at.
+        #
+        # ⛔ THE LANDMINE, per the comment above: `SymbolState` is per SYMBOL, not per account, so
+        # the Webull leg's OWN fill lands in this same transition. `fanout_webull_claimed` is what
+        # stops that becoming a second order — it is set BEFORE the draft is queued, below.
+        if (
+            prev_held == 0
+            and state.position_qty_held > 0
+            and self._fanout_on_fill_enabled
+            and self._dual_broker_fanout_enabled
+            and self._cw_v2_enabled
+            and not state.fanout_webull_claimed
+            # ⛔ If a MIRRORED Webull rest is live it fills itself at the broker — firing here
+            # too would put TWO Webull orders behind one signal.
+            and not state.webull_resting_active
+            and state.resting_level > 0.0
+            and bool(state.last_resting_placed_slot)   # a RESTING entry placed this order
+            and not self._resting_session_is_eh()      # EH has its own soft-rest cross path
+        ):
+            state.fanout_webull_claimed = True
+            state.fanout_claim_ms = self._now_ms()
+            logger.info(
+                "[V2-FANOUT-ON-FILL] %s schwab resting entry FILLED at level=%.4f -> parallel "
+                "Webull leg queued immediately (no cross re-detection, no race)",
+                symbol, state.resting_level,
+            )
+            self._pending_webull_fanout_intents.append(
+                self._build_webull_fanout_draft(
+                    state,
+                    # Anchor BOTH the price and the band on the level the primary filled at — that
+                    # is the price we decided to buy, and it is what the Schwab leg actually paid.
+                    entry_px=state.resting_level,
+                    session_is_eh=False,
+                    source="rth_resting",
+                    entry_n=state.cw_entries_this_flip + 1,
+                    band_anchor=state.resting_level,
+                )
+            )
         if prev > 0 and state.position_qty == 0:
             # ⛔ NO COOLDOWN (removed 2026-07-28, operator decision). A 5-bar cooldown used to be
             # armed here. It was invented when reclaim was UNCAPPED and could chase the same trade
@@ -1869,10 +1943,51 @@ class SchwabV2Strategy:
                 "source": "schwab_1m_v2", "strategy_version": STRATEGY_VERSION,
             },
         ))
+        # ⭐⭐ MIRROR THE REST TO WEBULL — same level, same instant, sitting at ITS broker too.
+        #
+        # This is the whole point: both legs WAIT at their own broker for the same price, so neither
+        # has to notice anything. It replaces the software cross-detector that raced the Schwab fill
+        # and lost (DFSC 0 of 3, INHD 0, OFAL 0 on 2026-08-13).
+        #
+        # ⛔ THE MIRRORED REST IS **BARE** -- no target/stop attached. Webull refuses a stop-limit
+        # master carrying a bracket (Probe W shape B: 417 `invalid order_type`), while accepting it
+        # ALONE (shape C/W7: 200). So this leg has NO broker-side protection at the moment it fills;
+        # the software ladder must attach it afterwards. That is a real regression against today's
+        # bracketed fan-out leg, and it is why the flag defaults OFF.
+        #
+        # ⛔ Goes on the DIRECT queue, not the fan-out queue: the fan-out queue is drained through
+        # `_maybe_emit`, and the matching CANCEL must never be gated.
+        if self._webull_resting_mirror_enabled and self._dual_broker_fanout_enabled:
+            state.webull_resting_active = True
+            logger.info(
+                "[V2-WEBULL-RESTING-PLACE] %s slot=%s stop=%.4f limit=%.4f — mirrored rest sitting "
+                "at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)",
+                state.symbol, slot, line, limit,
+            )
+            self._pending_webull_direct_intents.append(TradeIntentDraft(
+                symbol=state.symbol, side="buy", intent_type="open",
+                quantity=Decimal(str(self._webull_fanout_qty)),
+                reason="schwab_1m_v2 ATR Flip fan-out webull (rth_resting_mirror)",
+                metadata={
+                    "path": "ATR Flip", "atr_variant": "CW-v2-fanout",
+                    "order_type": "STOP_LIMIT",
+                    "stop_price": f"{line:.4f}", "limit_price": f"{limit:.4f}",
+                    "reference_price": f"{line:.4f}", "entry_price": f"{line:.4f}",
+                    "cw_flip_level": f"{line:.4f}",
+                    "fanout_leg": "webull", "fanout_source": "rth_resting_mirror",
+                    "resting_entry": "true",
+                    "cw_entry_n": str(state.cw_entries_this_flip + 1),
+                    "cw_arm_bar_ts": str(int(state.cw_arm_bar_ts or 0)),
+                    # ⛔ NO bracket_* keys on purpose -- see the note above.
+                    "source": "schwab_1m_v2", "strategy_version": STRATEGY_VERSION,
+                },
+            ))
 
     def _queue_resting_cancel(self, state: SymbolState, *, reason: str) -> None:
         was_level = state.resting_level
         was_broker_order = state.resting_is_broker_order
+        was_webull_resting = state.webull_resting_active
+        state.webull_resting_active = False
         was_slot = state.resting_slot
         state.resting_active = False
         state.resting_level = 0.0
@@ -1917,6 +2032,21 @@ class SchwabV2Strategy:
             metadata={"resting_entry_cancel": "true", "reason": reason,
                       "source": "schwab_1m_v2", "strategy_version": STRATEGY_VERSION},
         ))
+        # ⛔⭐⭐ CANCEL THE WEBULL MIRROR TOO. An un-cancelled mirrored rest is a live order nobody
+        # owns -- the FRTT 2026-08-11 shape (136 minutes working and unowned), on the broker whose
+        # book we cannot reliably read back. The cancel goes on the DIRECT queue so it bypasses
+        # `_maybe_emit`'s entry gates, exactly as the Schwab cancel above does.
+        if was_webull_resting:
+            logger.info("[V2-WEBULL-RESTING-CANCEL] %s reason=%s level=%.4f — cancelling the mirror",
+                        state.symbol, reason, was_level)
+            self._pending_webull_direct_intents.append(TradeIntentDraft(
+                symbol=state.symbol, side="buy", intent_type="cancel",
+                quantity=Decimal(str(self._webull_fanout_qty)),
+                reason="schwab_1m_v2 resting-entry cancel (webull mirror)",
+                metadata={"resting_entry_cancel": "true", "reason": reason,
+                          "fanout_leg": "webull", "fanout_source": "rth_resting_mirror",
+                          "source": "schwab_1m_v2", "strategy_version": STRATEGY_VERSION},
+            ))
 
     def _cw_v2_resting_track(self, state: SymbolState, atr_signal: dict | None) -> None:
         """Maintain a STABLE resting buy-stop-limit at the ATR SHORT trail. Redesigned 2026-07-23 from
@@ -2351,6 +2481,14 @@ class SchwabV2Strategy:
                 band_anchor=state.resting_level,
             )
         )
+
+    def drain_webull_direct_intents(self) -> list[TradeIntentDraft]:
+        """Webull drafts that must bypass `_maybe_emit` -- placements and cancels for the mirrored
+        resting order. ⛔ A CANCEL MUST NEVER BE GATED: routing one through the entry-window gate
+        would drop it silently and leave a live order at a broker we cannot reliably read back."""
+        out = self._pending_webull_direct_intents
+        self._pending_webull_direct_intents = []
+        return out
 
     def drain_webull_fanout_intents(self) -> list[TradeIntentDraft]:
         """Return + clear the Webull FAN-OUT leg drafts queued this quote/bar. The bot emits them
