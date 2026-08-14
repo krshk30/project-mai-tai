@@ -1782,3 +1782,30 @@ deploy after the close** so today's validation stays uncontaminated.
 
 ⛔ **The standing lesson, twice in one day:** search the source that does not rotate, match the string
 the vendor actually emits, and **check the broker's own screen before concluding from our logs.**
+
+### 2026-08-14 EOD — deployed `69d4b5a`, reconciler only, no bar hole
+
+Nine PRs merged and shipped. **Only `reconciliation/service.py` changed under `src/`**, so the
+reconciler restarted alone and strategy/oms/schwab-1m-v2 were never touched — **no bar hole**, which
+matters because the restart-punches-a-hole rule is what makes routine deploys expensive. After:
+heartbeat healthy, cycles ~20s, 0 errors, both cron scripts parse, exec bits intact.
+
+⛔ **The reconciler change is UNEXERCISED.** Flat account from the deploy ⇒ `account_positions
+qty>0 = 0`, open managed rows = 0, findings since restart = 0. Whether the false WETO-class page is
+gone is **unknown until a position is open during a cycle.** Tests pin it; tests are not the live path.
+
+**Final 08-13-deploy read (validator 15:33 ET, on the FIXED validator):** #688 **172/172 mirrors** —
+the day's unambiguous win, from 215/0 yesterday. #687 PASS (35 claim expiries). #691 rejects 58 → 27,
+not cleared. #689/#692 **10 re-protect failures**. Money: `live:orb` 8 trades median **+1.79%**,
+`v2` 2 trades median **+1.63%**.
+
+**Found at pre-flight:** `live:schwab_1m_v2` holds **XPON −1000**, the operator's own short (zero
+orders/fills/intents/managed rows of ours, ever). It exposed a real gap — the reconciler filters
+`quantity > 0`, so **it cannot see a short position at all**, ours or anyone's. New open item 16.
+
+⛔ **Two clock/instrument errors of mine today, both the same shape.** Git Bash `TZ=America/New_York
+date` **ignores the TZ and prints UTC** — I reported 19:32 ET when the box said 15:32, i.e. I called
+the market closed while it had 28 minutes left. That is the same GNU-extension failure I had written
+an abort guard for in the validator that morning. And I ran the "quotable" validator from a branch
+cut **before** the §4/§6 fix merged, so it printed the old wrong verdicts. **Read the clock and the
+code from the box, not from this machine.**
