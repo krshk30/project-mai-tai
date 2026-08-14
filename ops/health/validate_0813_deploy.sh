@@ -9,7 +9,10 @@
 # ⛔⭐⭐ EVERY CHECK REPORTS THREE SEPARATE THINGS, NEVER COLLAPSED INTO ONE:
 #       DEPLOYED   — is the code actually in the running tree?
 #       EXERCISED  — did the path RUN, and out of how many opportunities? (n / N)
-#       VERDICT    — PASS | FAIL | UNEXERCISED
+#       VERDICT    — PASS | FAIL | PARTIAL | UNEXERCISED | VOID
+#   ⛔ UNEXERCISED and VOID are NOT the same claim. UNEXERCISED = "I looked, it did not run."
+#      VOID = "I could not look." A zero read out of a log that does not cover the window is the
+#      second one wearing the first one's clothes, so it is reported as VOID.
 #   "UNEXERCISED" is a RESULT, not a pass. A bare zero with no denominator is not evidence:
 #   an absence only means something against a known population.
 #
@@ -44,6 +47,27 @@ D1="'${DAY_ET} 23:59:59'::timestamp at time zone 'America/New_York'"
 q() { psql "$DSN" -tAF' | ' -v ON_ERROR_STOP=0 -c "$1" 2>&1; }
 q1() { psql "$DSN" -tAc "$1" 2>/dev/null | tr -d ' '; }
 hdr() { echo; echo "═══ $* "; }
+# ⛔⭐⭐ A TRUNCATED LOG WINDOW POISONS A ZERO, NOT A COUNT.
+# When the file does not cover the whole ET day, a log-derived ZERO is indistinguishable from "I
+# could not see" — so ANY verdict resting on one becomes VOID, whichever way it was leaning. A
+# log-derived NON-ZERO survives: it is a lower bound, and a lower bound of 12 still proves 12.
+# ⛔ This is not cosmetic. On any past-day control run the logs have ALWAYS rotated, and §3 answered
+#   "UNEXERCISED — no RTH broker rest happened at all"  for 2026-08-13 — a day we KNOW placed 215.
+# The truncation banner did say so two lines above, but the VERDICT line did not, and the standing
+# instruction on this script is to read the verdict lines only. An unknown had decayed into a result.
+# ⛔ A verdict resting on a DB count is NOT poisoned — the DB does not rotate. Section 5 is entirely
+# DB-driven, and §4's "no Webull buy filled" reads its denominator from `fills`; both deliberately
+# keep the plain `verdict`.
+verdict_zero() {  # verdict_zero <blind> <status> <msg>  — the verdict rests on a log ZERO
+  if [ "${1:-0}" = "1" ]; then
+    verdict "VOID" "cannot say ${2} — the log does not cover this window, so the zero it rests on means 'I could not see', not 'it did not happen'. (would have read: $3)"
+  else verdict "$2" "$3"; fi
+}
+verdict_pos() {   # verdict_pos  <blind> <status> <msg>  — the verdict rests on a log NON-ZERO
+  if [ "${1:-0}" = "1" ]; then
+    verdict "$2" "$3  ⛔ [log window truncated ⇒ a LOWER BOUND: the finding is real, the magnitude is a floor]"
+  else verdict "$2" "$3"; fi
+}
 verdict() { printf '   ➤ VERDICT: %s — %s\n' "$1" "$2"; }
 
 # ⛔⭐⭐ LOG LINES ARE STAMPED IN **UTC**, AND THE FILE ROTATES AT 00:00 UTC (= 20:00 ET).
@@ -92,9 +116,13 @@ unknown() { for v in "$@"; do case "$v" in ''|*[!0-9-]*|-1) return 0;; esac; don
 show() { case "$1" in -1) echo "UNKNOWN(log cannot answer for this window)";; *) echo "$1";; esac; }
 LOG_SILENT_WARN_SECS=${LOG_SILENT_WARN_SECS:-1800}   # 30 min of silence ⇒ suspect a dead writer
 _ts_epoch() { date -d "$1 UTC" +%s 2>/dev/null; }
+# ⛔ Sets LOG_BLIND=1 when this file does NOT cover the requested window, so the verdicts below can
+# refuse to read a zero out of it. "The day has not happened yet" is NOT blindness — a zero then
+# genuinely means it has not happened, which is exactly what UNEXERCISED asserts.
 logcoverage() {
   local f="$1"
-  logreadable "$f" || { echo "   ⛔⛔ CANNOT READ $f — counts from it are UNKNOWN, not zero."; return; }
+  LOG_BLIND=0
+  logreadable "$f" || { LOG_BLIND=1; echo "   ⛔⛔ CANNOT READ $f — counts from it are UNKNOWN, not zero."; return; }
   local first last
   # ⛔ Take the first/last line that actually CARRIES a timestamp. A traceback at the tail has none,
   # and the old `tail -1 | cut -c1-19` handed back junk — which then failed the `[ -n "$last" ]`
@@ -103,10 +131,12 @@ logcoverage() {
   last=$(sudo tail -200 "$f" | grep -oE '^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}' | tail -1)
   echo "   log $(basename "$f") covers ${first:-?} .. ${last:-?} UTC"
   if [ -z "$first" ] || [ -z "$last" ]; then
+    LOG_BLIND=1
     echo "   ⛔⛔ NO TIMESTAMPED LINE in the head/tail of $f — coverage is UNKNOWN, not clean."
     return
   fi
   if [[ "$first" > "$UTC_FROM" ]]; then
+    LOG_BLIND=1
     echo "   ⛔⛔ THE LOG STARTS AFTER THE WINDOW OPENS (${UTC_FROM} UTC). Rotation already ate part"
     echo "        of this day — every log count below is a LOWER BOUND, not a count."
   fi
@@ -120,6 +150,7 @@ logcoverage() {
   local now_utc; now_utc=$(date -u '+%Y-%m-%d %H:%M:%S')
   if [[ "$now_utc" > "$UTC_TO" ]]; then
     if [[ "$last" < "$UTC_TO" ]]; then
+      LOG_BLIND=1
       echo "   ⛔⛔ THE ET DAY IS OVER but the log ends at ${last} UTC, before the window closes"
       echo "        (${UTC_TO} UTC) — the evening (20:00-23:59 ET) is in the NEXT rotated file."
       echo "        Counts are a LOWER BOUND. Fix: also read the rotated file."
@@ -197,7 +228,7 @@ echo "      checks below read the verbatim reason string instead of trusting the
 
 # ── 3. #688 — DO BOTH LEGS ACTUALLY REST AT THEIR OWN BROKER? ────────────────────────────────────
 hdr "3. #688 RESTING MIRROR — the Webull leg should now WAIT at the broker, not watch a price"
-logcoverage "$V2LOG"
+logcoverage "$V2LOG"; V2_BLIND="$LOG_BLIND"
 SCH_REST=$(logcount "$V2LOG" '[V2-RESTING-PLACE]')
 WB_REST=$(logcount "$V2LOG" '[V2-WEBULL-RESTING-PLACE]')
 WB_CANC=$(logcount "$V2LOG" '[V2-WEBULL-RESTING-CANCEL]')
@@ -209,11 +240,11 @@ echo "   Webull mirrors cancelled                : $(show $WB_CANC)"
 if unknown "$SCH_REST" "$WB_REST"; then
   verdict "VOID" "could not read the v2 log — this is an UNKNOWN, not a pass"
 elif [ "$SCH_REST" -eq 0 ]; then
-  verdict "UNEXERCISED" "no RTH broker rest happened at all — the mirror had no opportunity. NOT a pass."
+  verdict_zero "$V2_BLIND" "UNEXERCISED" "no RTH broker rest happened at all — the mirror had no opportunity. NOT a pass."
 elif [ "$WB_REST" -eq 0 ]; then
-  verdict "FAIL" "${SCH_REST} Schwab rests and ZERO Webull mirrors — the flag is on but nothing mirrored"
+  verdict_zero "$V2_BLIND" "FAIL" "${SCH_REST} Schwab rests and ZERO Webull mirrors — the flag is on but nothing mirrored"
 else
-  verdict "PASS" "${WB_REST} mirrors against ${SCH_REST} RTH rests"
+  verdict_pos "$V2_BLIND" "PASS" "${WB_REST} mirrors against ${SCH_REST} RTH rests"
 fi
 echo "   -- ⛔ ORPHAN CHECK: a mirrored rest nobody cancelled is a live order nobody owns (FRTT, 136 min) --"
 q "select 'orb resting entries left non-terminal: '||count(*)
@@ -225,7 +256,7 @@ echo "   ⛔ CANNOT SEE: whether an order is still working AT WEBULL. This is ou
 
 # ── 4. #689 + #690 — DOES A BARE FILL GET REAL PROTECTION? ───────────────────────────────────────
 hdr "4. #689/#690 ATTACH — a BARE Webull fill must get a real stop+target within seconds"
-logcoverage "$OMSLOG"
+logcoverage "$OMSLOG"; OMS_BLIND="$LOG_BLIND"
 ATT=$(logcount "$OMSLOG" '[WEBULL-PROTECT-ATTACHED]')
 AFAIL=$(logcount "$OMSLOG" '[WEBULL-PROTECT-FAILED]')
 ARETRY=$(logcount "$OMSLOG" '[WEBULL-PROTECT-RETRY]')
@@ -238,14 +269,14 @@ echo "   [WEBULL-PROTECT-FAILED]             : $(show $AFAIL)"
 if unknown "$ATT" "$AFAIL"; then
   verdict "VOID" "could not read the OMS log — cannot tell an attach from a silent failure"
 elif [ "$AFAIL" -gt 0 ]; then
-  verdict "FAIL" "🔴 ${AFAIL} position(s) HELD WITH NO BROKER-SIDE STOP — act, do not file"
+  verdict_pos "$OMS_BLIND" "FAIL" "🔴 ${AFAIL} position(s) HELD WITH NO BROKER-SIDE STOP — act, do not file"
   logtail "$OMSLOG" '[WEBULL-PROTECT-FAILED]' 5 | sed 's/^/      /'
 elif [ "${BAREFILL:-0}" -eq 0 ]; then
   verdict "UNEXERCISED" "no Webull buy filled — nothing to attach to"
 elif [ "$ATT" -eq 0 ]; then
-  verdict "FAIL" "${BAREFILL} Webull fills and ZERO attaches"
+  verdict_zero "$OMS_BLIND" "FAIL" "${BAREFILL} Webull fills and ZERO attaches"
 else
-  verdict "PASS" "${ATT} attached, 0 failed"
+  verdict_zero "$OMS_BLIND" "PASS" "${ATT} attached, 0 failed"
 fi
 echo "   -- #690: the 40-char cap. Look for the id-length refusal, which is what it prevents --"
 q "select 'ILLEGAL_PARAMETER/coid-length rejects: '||count(*) from broker_order_events e
@@ -298,12 +329,12 @@ echo "   [OMS-EXIT-REPROTECT-FAILED]  : $(show $RPF)  🔴 re-attach itself fail
 if unknown "$RP" "$RPS" "$RPF" "$REL"; then
   verdict "VOID" "could not read the OMS log — an uncovered position would be INVISIBLE here"
 elif [ "$RPS" -gt 0 ] || [ "$RPF" -gt 0 ]; then
-  verdict "FAIL" "🔴 a released position may be sitting with NO protection — check it by hand NOW"
+  verdict_pos "$OMS_BLIND" "FAIL" "🔴 a released position may be sitting with NO protection — check it by hand NOW"
   { logtail "$OMSLOG" '[OMS-EXIT-REPROTECT-SKIPPED]' 3; logtail "$OMSLOG" '[OMS-EXIT-REPROTECT-FAILED]' 3; } | sed 's/^/      /'
 elif [ "$REL" -eq 0 ]; then
-  verdict "UNEXERCISED" "no release happened, so no re-protect could be needed"
+  verdict_zero "$OMS_BLIND" "UNEXERCISED" "no release happened, so no re-protect could be needed"
 else
-  verdict "PASS" "${REL} releases, ${RP} needed re-protection, none failed"
+  verdict_zero "$OMS_BLIND" "PASS" "${REL} releases, ${RP} needed re-protection, none failed"
 fi
 
 # ── 7. #687 — DOES A REJECTED WEBULL LEG STOP KILLING THE FLIP? ──────────────────────────────────
@@ -317,9 +348,9 @@ echo "   fanout_webull_collision_managed skips : $(show $COLL)"
 if unknown "$EXP"; then
   verdict "VOID" "could not read the v2 log"
 elif [ "$EXP" -gt 0 ]; then
-  verdict "PASS" "the claim expired ${EXP}x instead of latching the flip shut"
+  verdict_pos "$V2_BLIND" "PASS" "the claim expired ${EXP}x instead of latching the flip shut"
 else
-  verdict "UNEXERCISED" "no claim needed expiring — requires a Webull leg that was claimed and never filled. NOT a pass."
+  verdict_zero "$V2_BLIND" "UNEXERCISED" "no claim needed expiring — requires a Webull leg that was claimed and never filled. NOT a pass."
 fi
 
 # ── 8. #693 — ARE THE CRONS STILL ALIVE, AND CAN WE STILL DEPLOY? ────────────────────────────────
@@ -350,5 +381,7 @@ echo "   ⛔ Naive buy→next-sell pairing. It CANNOT attribute per-lot and it c
 echo "      exited. Treat as a magnitude, not as attribution."
 
 hdr "DONE"
+echo "⛔ AFTER 20:00 ET the logs have rotated, so only the DB-backed checks (§0, §5, §9) can still"
+echo "   serve as a control. The log-backed ones will correctly report VOID, not a result."
 echo "Read the VERDICT lines only. UNEXERCISED means the path never ran — that is a RESULT,"
 echo "not a pass, and it means tomorrow has to ask again."
