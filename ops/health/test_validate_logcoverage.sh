@@ -24,7 +24,7 @@ extract_fn() {  # handles both `f() { ...; }` one-liners and multi-line bodies c
 }
 : > "${TMP}/lib.sh"
 echo 'LOG_SILENT_WARN_SECS=${LOG_SILENT_WARN_SECS:-1800}' >> "${TMP}/lib.sh"
-for fn in verdict verdict_zero verdict_pos _ts_epoch logcoverage; do
+for fn in verdict verdict_zero verdict_pos _ts_epoch logfiles _readlog logcat logcount logtail logcoverage; do
   extract_fn "$fn" >> "${TMP}/lib.sh"
   grep -q "^${fn}() {" "${TMP}/lib.sh" || { echo "EXTRACTION FAILED — ${fn}() not found in $SRC"; exit 1; }
 done
@@ -34,7 +34,10 @@ logreadable() { [ -r "$1" ]; }
 . "${TMP}/lib.sh"
 
 PASS=0; FAIL=0
-mklog() { printf '%s\n' "$@" > "${TMP}/t.log"; echo "${TMP}/t.log"; }
+mklog() { rm -f "${TMP}"/t.log*; printf '%s\n' "$@" > "${TMP}/t.log"; echo "${TMP}/t.log"; }
+# write a ROTATED sibling next to the live file, named exactly as logrotate names them
+mkrot()   { local d="$1"; shift; printf '%s\n' "$@" >  "${TMP}/t.log-${d}"; }
+mkrotgz() { local d="$1"; shift; printf '%s\n' "$@" | gzip > "${TMP}/t.log-${d}.gz"; }
 # ⛔ The window is built in PLAIN UTC here, not via the script's `TZ="America/New_York"` prefix
 # form. That extension is a GNU-on-Linux thing: on Git Bash it SILENTLY returns the input unshifted
 # (verified). `logcoverage` only ever compares UTC_FROM/UTC_TO as opaque strings, so a plain UTC
@@ -108,6 +111,39 @@ check "no timestamps at all: UNKNOWN, not clean" "$(logcoverage "$f")" \
   present "$NOTS" absent "$ROT" absent "$PARTIAL"
 
 
+# ── ROTATED SIBLINGS — the whole point of dropping the 20:00 ET deadline ─────────────────────────
+# ⛔⭐⭐ Before this, the script read ONLY the live file and told you the day was gone after 20:00 ET.
+# It was not gone: logrotate keeps it. A retained day being reported as zero is a false clean.
+echo "TESTING rotated-sibling reading"
+win "$YDAY"
+IN="${UTC_FROM}"                       # a timestamp inside the window
+f=$(mklog "$(shift_utc "$UTC_TO" "-1 hours") live-side MARKER")
+mkrot    "20260813" "${IN} rotated-plain MARKER"
+mkrotgz  "20260812" "$(shift_utc "$UTC_FROM" "+1 hours") rotated-gz MARKER"
+n=$(logcount "$f" 'MARKER')
+if [ "$n" = "3" ]; then echo "  ✓ counts across live + plain + .gz siblings (n=3)"; PASS=$((PASS+1))
+else echo "  ✗ rotated siblings not summed — got n=${n}, want 3"; FAIL=$((FAIL+1)); fi
+# a marker OUTSIDE the window must still be excluded even though its file is read
+mkrot "20260811" "2001-01-01 00:00:00 ancient MARKER"
+n=$(logcount "$f" 'MARKER')
+if [ "$n" = "3" ]; then echo "  ✓ out-of-window lines in a sibling are still filtered out"; PASS=$((PASS+1))
+else echo "  ✗ window filter leaked across siblings — got n=${n}, want 3"; FAIL=$((FAIL+1)); fi
+blind_chk() { if [ "${LOG_BLIND:-x}" = "$2" ]; then echo "  ✓ $1 (LOG_BLIND=$2)"; PASS=$((PASS+1));
+              else echo "  ✗ $1 — LOG_BLIND=${LOG_BLIND:-unset}, want $2"; FAIL=$((FAIL+1)); fi; }
+# ⭐ THE WIN: the live file alone starts long after the window opens — which used to force blind=1
+# and VOID every past-day verdict. With the sibling read, the window is covered end to end.
+f=$(mklog "$(shift_utc "$UTC_TO" "-1 hours") live side" "${UTC_TO} through the close")
+mkrot "20260813" "${IN} rotated covers the open"
+logcoverage "$f" >/dev/null
+blind_chk "siblings cover the open ⇒ a past day is readable, not blind" 0
+# ⛔ AND THE CONSERVATIVE SIDE: if the union still ends before the window closes we stay blind. With
+# every sibling already read there is no way to tell "the writer was quiet" from "the day aged out",
+# and this script must fail toward VOID, never toward a zero.
+f=$(mklog "$(shift_utc "$UTC_TO" "-1 hours") live only")
+mkrot "20260813" "${IN} rotated covers the open"
+logcoverage "$f" >/dev/null
+blind_chk "union still ends short ⇒ stays blind (fails toward VOID)" 1
+
 # ── LOG_BLIND — logcoverage must publish the blindness it prints ─────────────────────────────────
 blind_is() { # blind_is <name> <want 0|1>
   if [ "${LOG_BLIND:-unset}" = "$2" ]; then echo "  ✓ $1 (LOG_BLIND=$2)"; PASS=$((PASS+1))
@@ -143,6 +179,15 @@ check "blind + a FAIL resting on a zero -> VOID (it could be blindness, not badn
 check "NOT blind -> verdict_zero passes straight through" \
   "$(verdict_zero 0 "UNEXERCISED" "no RTH broker rest happened at all")" \
   present "VERDICT: UNEXERCISED" absent "VOID"
+# ⛔⭐⭐ A FAILED POPULATION CONTROL MUST VOID EVERY ZERO, even one from a perfectly readable log.
+# The log being intact says nothing about whether the QUERY would have found the thing. This gate
+# is the entire mechanism behind §0b; without a test it survived a mutation that disabled it.
+check "control FAILED -> every zero is VOID even when the log is fine" \
+  "$(CONTROL_VOID=1 verdict_zero 0 "UNEXERCISED" "no RTH broker rest happened at all")" \
+  present "VERDICT: VOID" present "POPULATION CONTROL FAILED" absent "VERDICT: UNEXERCISED"
+check "control PASSED + not blind -> normal verdict" \
+  "$(CONTROL_VOID=0 verdict_zero 0 "PASS" "3 mirrors against 3 rests")" \
+  present "VERDICT: PASS" absent "VOID"
 check "blind + a FAIL resting on a NON-zero -> survives as a LOWER BOUND" \
   "$(verdict_pos 1 "FAIL" "2 positions HELD WITH NO BROKER-SIDE STOP")" \
   present "VERDICT: FAIL" present "LOWER BOUND" absent "VOID"
@@ -155,7 +200,9 @@ check "NOT blind -> verdict_pos passes straight through, unannotated" \
 # real half-applied edit: 11 call sites rewritten while the two definitions never landed, which
 # `bash -n` reports as perfectly valid.
 echo "TESTING wiring"
-BARE=$(grep -nE '^  verdict "(PASS|UNEXERCISED)"' "$SRC" | grep -vE 'known-bad day|no Webull buy filled|never tried to close|ZERO reservation rejects' || true)
+# ⛔ The exclusions are the verdicts that legitimately rest on DB counts (which do not rotate) or on
+# the controls themselves — a control cannot gate on its own outcome without becoming circular.
+BARE=$(grep -nE '^  verdict "(PASS|UNEXERCISED)"' "$SRC" | grep -vE 'known-bad day|no Webull buy filled|never tried to close|ZERO reservation rejects|a rest, a fill and a bracket' || true)
 if [ -z "$BARE" ]; then echo "  ✓ no log-derived verdict left on the bare helper"; PASS=$((PASS+1))
 else echo "  ✗ bare verdict on log-derived data:"; echo "$BARE" | sed 's/^/      /'; FAIL=$((FAIL+1)); fi
 for fn in verdict_zero verdict_pos; do
