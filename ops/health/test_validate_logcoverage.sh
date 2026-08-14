@@ -24,7 +24,7 @@ extract_fn() {  # handles both `f() { ...; }` one-liners and multi-line bodies c
 }
 : > "${TMP}/lib.sh"
 echo 'LOG_SILENT_WARN_SECS=${LOG_SILENT_WARN_SECS:-1800}' >> "${TMP}/lib.sh"
-for fn in verdict verdict_zero verdict_pos _ts_epoch logfiles _readlog logcat logcount logtail logcoverage; do
+for fn in unknown show verdict verdict_zero verdict_pos classify_protection classify_reprotect say_verdict _ts_epoch logfiles _readlog logcat logcount logtail logcoverage; do
   extract_fn "$fn" >> "${TMP}/lib.sh"
   grep -q "^${fn}() {" "${TMP}/lib.sh" || { echo "EXTRACTION FAILED — ${fn}() not found in $SRC"; exit 1; }
 done
@@ -34,6 +34,12 @@ logreadable() { [ -r "$1" ]; }
 . "${TMP}/lib.sh"
 
 PASS=0; FAIL=0
+ok()  { echo "  ✓ $1"; PASS=$((PASS+1)); }
+bad() { echo "  ✗ $1"; FAIL=$((FAIL+1)); }
+# ⛔ command-not-found returns 127 and does NOT trip `set -u`, so a typo'd or unextracted helper
+# used to print an error and leave FAIL at 0 — a false green in the test harness itself (hit
+# 2026-08-14). Fail the run loudly instead.
+command_not_found_handle() { echo "  ✗ HARNESS ERROR: '$1' is not defined (extract it?)"; FAIL=$((FAIL+1)); return 127; }
 mklog() { rm -f "${TMP}"/t.log*; printf '%s\n' "$@" > "${TMP}/t.log"; echo "${TMP}/t.log"; }
 # write a ROTATED sibling next to the live file, named exactly as logrotate names them
 mkrot()   { local d="$1"; shift; printf '%s\n' "$@" >  "${TMP}/t.log-${d}"; }
@@ -210,6 +216,45 @@ for fn in verdict_zero verdict_pos; do
     echo "  ✓ ${fn} is both defined and called"; PASS=$((PASS+1))
   else echo "  ✗ ${fn} defined=$(grep -c "^${fn}() {" "$SRC") called=$(grep -c "  ${fn} \"" "$SRC")"; FAIL=$((FAIL+1)); fi
 done
+
+
+# -- classify_protection / classify_reprotect: the two verdicts that SHIPPED WRONG on 2026-08-14 ---
+# The control case IS the incident: 11 fills, 148 OCO brackets, 0 re-attaches, 9 re-attach failures.
+# Before the fix §4 said "held with no broker-side stop" and §6 said PASS. Both must now be right.
+echo "TESTING classify_protection (the section that called bracketed fills unprotected)"
+st() { echo "${1%%|*}"; }                       # status field
+ms() { local r=${1#*|}; echo "${r#*|}"; }       # message field
+r=$(classify_protection 11 148 0 9)
+[ "$(st "$r")" = "FAIL" ] && ok "08-14 incident -> FAIL" || bad "08-14 incident: got $(st "$r")"
+grep -q "RE-PROTECT failure" <<<"$(ms "$r")"   && ok "  ...and names it a RE-PROTECT failure, not a bare fill"   || bad "  message must say RE-PROTECT, got: $(ms "$r")"
+grep -qv "HELD WITH NO BROKER-SIDE STOP" <<<"$(ms "$r")"   && ok "  ...and does NOT claim the fills were unprotected" || bad "  still claims unprotected"
+# ⭐ THE CONTROL THAT MATTERS: brackets present + no failures must be a clean PASS, not a FAIL.
+r=$(classify_protection 11 148 0 0)
+[ "$(st "$r")" = "PASS" ] && ok "brackets on, nothing failed -> PASS (0 re-attaches is FINE)"                           || bad "expected PASS, got $(st "$r")"
+# genuinely unprotected: fills, and NO bracket from either path
+r=$(classify_protection 11 0 0 0)
+[ "$(st "$r")" = "FAIL" ] && grep -q "EITHER path" <<<"$(ms "$r")"   && ok "fills but zero brackets anywhere -> FAIL" || bad "expected the EITHER-path FAIL"
+r=$(classify_protection 0 0 0 0)
+[ "$(st "$r")" = "UNEXERCISED" ] && ok "no fills -> UNEXERCISED (denominator empty)"                                  || bad "expected UNEXERCISED, got $(st "$r")"
+r=$(classify_protection 11 -1 -1 -1)
+[ "$(st "$r")" = "VOID" ] && ok "unreadable log -> VOID" || bad "expected VOID, got $(st "$r")"
+
+echo "TESTING classify_reprotect (the section that printed PASS over 9 failures)"
+r=$(classify_reprotect 12 4 0 0 9)
+[ "$(st "$r")" = "FAIL" ] && ok "08-14 incident (REPROTECT-FAILED=0, ATTACH-FAILED=9) -> FAIL"                           || bad "THE BUG IS BACK: got $(st "$r") on the incident numbers"
+grep -q "WEBULL-PROTECT-FAILED" <<<"$(ms "$r")" && ok "  ...and names the second marker"                                                 || bad "  must name WEBULL-PROTECT-FAILED"
+r=$(classify_reprotect 12 4 0 2 0)
+[ "$(st "$r")" = "FAIL" ] && ok "the ORIGINAL marker alone still FAILs" || bad "regressed the old path"
+# ⭐ CONTROL: it must still be able to PASS, or the fix is just a permanent alarm.
+r=$(classify_reprotect 12 4 0 0 0)
+[ "$(st "$r")" = "PASS" ] && ok "releases, nothing failed by either marker -> PASS"                           || bad "expected PASS, got $(st "$r")"
+r=$(classify_reprotect 0 0 0 0 0)
+[ "$(st "$r")" = "UNEXERCISED" ] && ok "no releases -> UNEXERCISED" || bad "expected UNEXERCISED"
+
+echo "TESTING say_verdict routing"
+check "zero-kind routes through verdict_zero (blind -> VOID)"   "$(say_verdict 1 "UNEXERCISED|zero|no release happened")" present "VERDICT: VOID"
+check "pos-kind routes through verdict_pos (blind -> annotated, not VOID)"   "$(say_verdict 1 "FAIL|pos|9 re-protect failures")" present "VERDICT: FAIL" present "LOWER BOUND"
+check "db-kind is immune to log blindness"   "$(say_verdict 1 "UNEXERCISED|db|no Webull buy filled")" present "VERDICT: UNEXERCISED" absent "VOID"
 
 echo
 echo "PASS=${PASS} FAIL=${FAIL}"

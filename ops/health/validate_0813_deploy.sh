@@ -48,6 +48,46 @@ D1="'${DAY_ET} 23:59:59'::timestamp at time zone 'America/New_York'"
 q() { psql "$DSN" -tAF' | ' -v ON_ERROR_STOP=0 -c "$1" 2>&1; }
 q1() { psql "$DSN" -tAc "$1" 2>/dev/null | tr -d ' '; }
 hdr() { echo; echo "═══ $* "; }
+# ⛔⭐⭐ THE §4/§6 DECISIONS LIVE HERE, NOT INLINE, SO A TEST CAN PIN THEM.
+# Both shipped a WRONG verdict on 2026-08-14 because the rule sat in an if/elif nothing exercised:
+# §4 called bracketed fills "unprotected" (it counted only the re-protect marker, ignoring the 148
+# `[V2-OCO-EMIT]` brackets that actually protect), and §6 printed PASS over 9 live failures (it
+# counted `[OMS-EXIT-REPROTECT-FAILED]`=0 while the attach it triggers failed under its own marker).
+# The operator's Webull screen falsified §4; nothing in this script could have.
+# Output contract: "<STATUS>|<zero|pos|db>|<message>" — the caller routes to verdict_zero/_pos/plain.
+classify_protection() {   # <barefill> <oco_real> <attached> <attach_failed>
+  local bf="${1:-0}" oco="$2" att="$3" af="$4"
+  if unknown "$att" "$af" "$oco"; then
+    echo "VOID|pos|could not read the OMS log — cannot tell a bracket from a silent failure"; return; fi
+  if [ "$bf" -eq 0 ] 2>/dev/null; then
+    echo "UNEXERCISED|db|no Webull buy filled — nothing to protect"; return; fi
+  if [ "$oco" -eq 0 ] && [ "$att" -eq 0 ]; then
+    echo "FAIL|zero|${bf} Webull fills and ZERO brackets from EITHER path — genuinely unprotected"; return; fi
+  if [ "$af" -gt 0 ]; then
+    echo "FAIL|pos|🔴 ${af} RE-PROTECT failure(s): #691 cancelled a working bracket to close, the close was refused, and #692 could not put it back. THAT is the uncovered window — not a bare fill"; return; fi
+  echo "PASS|pos|${oco} brackets placed against ${bf} fills; re-protect ${att} ok / 0 failed"
+}
+classify_reprotect() {    # <releases> <reprotects> <skipped> <failed> <attach_failed>
+  local rel="$1" rp="$2" rps="$3" rpf="$4" af="$5"
+  if unknown "$rel" "$rp" "$rps" "$rpf" "$af"; then
+    echo "VOID|zero|could not read the OMS log — an uncovered position would be INVISIBLE here"; return; fi
+  # ⛔ EITHER marker means a re-protect failed. This section TRIGGERS the Webull attach, and the
+  # attach reports its own outcome under its OWN marker — counting only the caller's is a false clean.
+  if [ "$rps" -gt 0 ] || [ "$rpf" -gt 0 ] || [ "$af" -gt 0 ]; then
+    echo "FAIL|pos|🔴 a released position may be sitting with NO protection — $(( rps + rpf )) via REPROTECT-SKIPPED/FAILED and ${af} via WEBULL-PROTECT-FAILED. Check by hand NOW"; return; fi
+  if [ "$rel" -eq 0 ]; then
+    echo "UNEXERCISED|zero|no release happened, so no re-protect could be needed"; return; fi
+  echo "PASS|zero|${rel} releases, ${rp} needed re-protection, none failed by EITHER marker"
+}
+say_verdict() {           # <blind> "<STATUS>|<kind>|<msg>"
+  local blind="$1" st kind msg rest
+  st=${2%%|*}; rest=${2#*|}; kind=${rest%%|*}; msg=${rest#*|}
+  case "$kind" in
+    zero) verdict_zero "$blind" "$st" "$msg";;
+    pos)  verdict_pos  "$blind" "$st" "$msg";;
+    *)    verdict "$st" "$msg";;
+  esac
+}
 # ⛔⭐⭐ A TRUNCATED LOG WINDOW POISONS A ZERO, NOT A COUNT.
 # When the file does not cover the whole ET day, a log-derived ZERO is indistinguishable from "I
 # could not see" — so ANY verdict resting on one becomes VOID, whichever way it was leaning. A
@@ -330,30 +370,34 @@ q "select 'orb resting entries left non-terminal: '||count(*)
      and bo.submitted_at >= $D0;"
 echo "   ⛔ CANNOT SEE: whether an order is still working AT WEBULL. This is our DB's view only."
 
-# ── 4. #689 + #690 — DOES A BARE FILL GET REAL PROTECTION? ───────────────────────────────────────
-hdr "4. #689/#690 ATTACH — a BARE Webull fill must get a real stop+target within seconds"
+# ── 4. IS A WEBULL FILL ACTUALLY PROTECTED? (#689/#690 + the OCO path) ───────────────────────────
+# ⛔⭐⭐ CORRECTED 2026-08-14 — THIS SECTION READ ONE MARKER AND CALLED ITS ABSENCE "UNPROTECTED".
+# There are TWO ways a Webull position gets a broker-side bracket and this only counted the second:
+#   (a) `[V2-OCO-EMIT]`            — the NORMAL bracket, placed with the entry. 148 of them on 08-14.
+#   (b) `[WEBULL-PROTECT-ATTACHED]`— the RE-PROTECT, invoked by `[OMS-EXIT-REPROTECT]` AFTER #691 has
+#                                    cancelled (a) to attempt a close. It is NOT a bare-fill rescue.
+# Reading 0 of (b) as "held with no broker-side stop" produced a FAIL on 11 fills that were in fact
+# bracketed — the operator's own Webull screen (WETO Target@8.17/Stop@7.61) matched an (a) line to
+# the cent and falsified it. ⇒ **Count both paths, and name which one failed.**
+hdr "4. PROTECTION — a Webull fill must end up with a broker-side bracket, by EITHER path"
 logcoverage "$OMSLOG"; OMS_BLIND="$LOG_BLIND"
+OCO_ALL=$(logcount "$OMSLOG" '[V2-OCO-EMIT]')
+OCO_SKIP=$(logcount "$OMSLOG" 'SKIPPED (outside regular hours)')
+OCO_REAL=-1
+if ! unknown "$OCO_ALL" "$OCO_SKIP"; then OCO_REAL=$(( OCO_ALL - OCO_SKIP )); fi
 ATT=$(logcount "$OMSLOG" '[WEBULL-PROTECT-ATTACHED]')
 AFAIL=$(logcount "$OMSLOG" '[WEBULL-PROTECT-FAILED]')
 ARETRY=$(logcount "$OMSLOG" '[WEBULL-PROTECT-RETRY]')
 BAREFILL=$(q1 "select count(*) from fills f join broker_accounts ba on ba.id=f.broker_account_id
    where ba.name='live:orb' and lower(f.side)='buy' and f.filled_at >= $D0 and f.filled_at <= $D1;")
-echo "   Webull BUY fills (the opportunity)  : ${BAREFILL:-?}"
-echo "   [WEBULL-PROTECT-ATTACHED]           : $(show $ATT)"
-echo "   [WEBULL-PROTECT-RETRY]              : $(show $ARETRY)   (a retry is fine; a FAILED is not)"
-echo "   [WEBULL-PROTECT-FAILED]             : $(show $AFAIL)"
-if unknown "$ATT" "$AFAIL"; then
-  verdict "VOID" "could not read the OMS log — cannot tell an attach from a silent failure"
-elif [ "$AFAIL" -gt 0 ]; then
-  verdict_pos "$OMS_BLIND" "FAIL" "🔴 ${AFAIL} position(s) HELD WITH NO BROKER-SIDE STOP — act, do not file"
-  logtail "$OMSLOG" '[WEBULL-PROTECT-FAILED]' 5 | sed 's/^/      /'
-elif [ "${BAREFILL:-0}" -eq 0 ]; then
-  verdict "UNEXERCISED" "no Webull buy filled — nothing to attach to"
-elif [ "$ATT" -eq 0 ]; then
-  verdict_zero "$OMS_BLIND" "FAIL" "${BAREFILL} Webull fills and ZERO attaches"
-else
-  verdict_zero "$OMS_BLIND" "PASS" "${ATT} attached, 0 failed"
-fi
+echo "   Webull BUY fills (the opportunity)     : ${BAREFILL:-?}"
+echo "   (a) [V2-OCO-EMIT] brackets placed      : $(show $OCO_REAL)   <- the NORMAL path; this is the one that protects"
+echo "       ...of which SKIPPED (EH, no stop)  : $(show $OCO_SKIP)"
+echo "   (b) [WEBULL-PROTECT-ATTACHED] re-attach: $(show $ATT)   <- only after #691 CANCELLED (a)"
+echo "       [WEBULL-PROTECT-RETRY]             : $(show $ARETRY)   (a retry is fine; a FAILED is not)"
+echo "       [WEBULL-PROTECT-FAILED]            : $(show $AFAIL)   🔴 a cancelled bracket that could NOT be restored"
+say_verdict "$OMS_BLIND" "$(classify_protection "${BAREFILL:-0}" "$OCO_REAL" "$ATT" "$AFAIL")"
+[ "${AFAIL:-0}" -gt 0 ] 2>/dev/null && logtail "$OMSLOG" '[WEBULL-PROTECT-FAILED]' 3 | sed 's/^/      /'
 echo "   -- #690: the 40-char cap. Look for the id-length refusal, which is what it prevents --"
 q "select 'ILLEGAL_PARAMETER/coid-length rejects: '||count(*) from broker_order_events e
    join broker_orders bo on bo.id=e.order_id join broker_accounts ba on ba.id=bo.broker_account_id
@@ -402,15 +446,17 @@ RPF=$(logcount "$OMSLOG" '[OMS-EXIT-REPROTECT-FAILED]')
 echo "   [OMS-EXIT-REPROTECT]         : $(show $RP)   (of $(show $REL) releases — 0 here is GOOD, and is not a bare zero)"
 echo "   [OMS-EXIT-REPROTECT-SKIPPED] : $(show $RPS)  🔴 could not price a pair ⇒ MAY BE UNCOVERED"
 echo "   [OMS-EXIT-REPROTECT-FAILED]  : $(show $RPF)  🔴 re-attach itself failed ⇒ MAY BE UNCOVERED"
-if unknown "$RP" "$RPS" "$RPF" "$REL"; then
-  verdict "VOID" "could not read the OMS log — an uncovered position would be INVISIBLE here"
-elif [ "$RPS" -gt 0 ] || [ "$RPF" -gt 0 ]; then
-  verdict_pos "$OMS_BLIND" "FAIL" "🔴 a released position may be sitting with NO protection — check it by hand NOW"
-  { logtail "$OMSLOG" '[OMS-EXIT-REPROTECT-SKIPPED]' 3; logtail "$OMSLOG" '[OMS-EXIT-REPROTECT-FAILED]' 3; } | sed 's/^/      /'
-elif [ "$REL" -eq 0 ]; then
-  verdict_zero "$OMS_BLIND" "UNEXERCISED" "no release happened, so no re-protect could be needed"
-else
-  verdict_zero "$OMS_BLIND" "PASS" "${REL} releases, ${RP} needed re-protection, none failed"
+# ⛔⭐⭐ CORRECTED 2026-08-14 — THIS PRINTED **PASS** OVER NINE LIVE FAILURES.
+# It read `[OMS-EXIT-REPROTECT-FAILED]` (=0) and declared "none failed", while the re-attach it
+# triggers was failing 9x under `[WEBULL-PROTECT-FAILED]`. The re-protect CALLS the Webull attach,
+# and the attach reports its own outcome under its OWN marker — so counting only the caller's marker
+# is a false clean on the exact condition this section exists to catch.
+# ⇒ **A re-protect has failed if EITHER marker fires.** $AFAIL is carried down from §4.
+echo "   [WEBULL-PROTECT-FAILED]      : $(show $AFAIL)  🔴 the re-attach this section TRIGGERS — counts as a failure here"
+say_verdict "$OMS_BLIND" "$(classify_reprotect "$REL" "$RP" "$RPS" "$RPF" "$AFAIL")"
+if [ "${RPS:-0}" -gt 0 ] || [ "${RPF:-0}" -gt 0 ] || [ "${AFAIL:-0}" -gt 0 ] 2>/dev/null; then
+  { logtail "$OMSLOG" '[OMS-EXIT-REPROTECT-SKIPPED]' 2; logtail "$OMSLOG" '[OMS-EXIT-REPROTECT-FAILED]' 2
+    logtail "$OMSLOG" '[WEBULL-PROTECT-FAILED]' 2; } | sed 's/^/      /'
 fi
 
 # ── 7. #687 — DOES A REJECTED WEBULL LEG STOP KILLING THE FLIP? ──────────────────────────────────
