@@ -445,3 +445,59 @@ Webull cap at 1.0% has changed nothing.
 the number in the log should be the number the strategy chose.** [[feedback_assess_both_brokers]]
 
 ⛔ **This item CORRECTS item 5**, which claims a Schwab rejection vetoes the Webull leg. It does not.
+
+---
+
+## 14. ⛔⭐ THE FLOAT CEILING EXCLUDES EVERY LARGE-FLOAT MOVER — and nothing records the skip
+*(operator 2026-08-14: "why we dont have CAPR stock in our scanner? this stock seems lot of good spikes")*
+
+### The answer is one number
+```
+CAPR  shares_outstanding = 57,911,893      confirmed_max_float = 50,000,000     -> excluded, by ~16%
+```
+**Confirmed 0 times in 10 days. NOT blacklisted.** Its day: **+98.14%**, volume **17,099,239**,
+rvol **4.4**, price $8.34. For contrast **AKAN**, confirmed all session: `shares_outstanding=540,841`
+— ~100× smaller. The scanner is built for low-float squeezes and CAPR is not one.
+
+The **alert** layer sees it perfectly — 69 lines on 08-14: SQUEEZE 5.7 / 5.8 / 7.2 / **10.0** /
+**16.4** / 6.1 / 5.4 %, plus VOLUME_SPIKE **2.5×** and **5.6×**. It also appears in `five_pillars`,
+which is a **display** surface — ⛔ only `confirmed` feeds a bot watchlist.
+
+### ⛔⛔ (1) THE EXTREME-MOVER ESCAPE HATCH IS SUBORDINATE TO THE GATE IT SHOULD BYPASS
+```python
+if self._qualifies_path_c_extreme_mover(day_change_pct):
+    if passed:            # <- _check_common_filters, INCLUDING float <= confirmed_max_float
+        ... confirm ...
+    logger.debug("[CONFIRMED] %s — PATH C rejected: %s", ticker, reason)
+```
+**All three confirm paths — A (news), B (two-squeeze), C (extreme mover) — sit behind the same
+`_check_common_filters`.** Path C exists precisely for exceptional moves and **cannot fire on one**
+when the float is large. A +98% day on 17M shares is still excluded on float alone.
+⇒ Decide whether that is intended. If Path C is meant to be an override, it is currently not one.
+
+### ⛔⛔ (2) THE SKIP IS UNRECORDED — "why isn't X in the scanner" is unanswerable
+`_check_common_filters` returns `(False, reason)`; the caller logs it at **`logger.debug`**, which is
+not enabled in production. **No artefact anywhere records that a symbol was considered and dropped,
+or why.** Answering this question required reading source, not data.
+
+⇒ **CHEAPEST FIRST STEP, independent of any threshold change: log the reject at INFO** — symbol, the
+gate that bit, and the value vs the limit. It turns "why isn't X in the scanner" into a grep, and it
+supplies **the denominator for every future selection study**: today we can see what passed and never
+what was rejected, nor out of how many. Same shape as the 08-14 bar-watch incident.
+[[feedback_an_absence_is_evidence_only_against_a_known_denominator]] ·
+[[project_mai_tai_v2_snapshot_hardcoded_empty_fields]]
+
+### ⚠️ THE THRESHOLD ITSELF IS A SELECTION QUESTION — **DISCUSS BEFORE BUILDING**
+Raising `confirmed_max_float` changes **what the universe is**, and it collides with our own standing
+finding that **we buy moves already SPENT** — +98% intraday is the textbook case.
+⭐ The operator's counter-point is different and worth weighing separately: CAPR spiked **repeatedly**
+through the day (7 squeeze alerts, 2 volume spikes), which is a **re-entry** pattern rather than one
+exhausted move. Settle that before touching the number.
+[[project_mai_tai_selection_spent_move]] · [[project_mai_tai_scanner_confirmed_capture]]
+
+### Gate values, for reference (`strategy_core/config.py`)
+`confirmed_min_volume=500_000` · `confirmed_max_float=50_000_000` · float-turnover tiers
+**7%** (≤10M) / **10%** (≤30M) / **12%** (>30M) · `extreme_mover_min_day_change_pct` — ⚠️ appears as
+both **50.0** and **30.0** in two config classes; confirm which one the live scanner reads.
+CAPR passes volume (17.1M vs 500k) and would pass turnover (~30% vs 12%); **float is the only gate
+that bites.**

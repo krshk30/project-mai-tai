@@ -151,11 +151,16 @@ storm it replaces.
    fills ever**), so the Webull leg is the ONLY leg — that part is correct and not a bug. Measured
    fills sit at median **+0.32%** vs level, so the loose cap rarely binds. **Deferred by operator
    08-14.** Detail: open item 13.
-8. **⛔⭐⭐ `broker_order_events` conflates CLIENT aborts with BROKER refusals** — needs a `source`
+8. **⛔⭐ THE FLOAT CEILING SILENTLY DROPS LARGE-FLOAT MOVERS** — CAPR 08-14: **+98%**, 17.1M vol,
+   rvol 4.4, and **never confirmed** because `shares_outstanding=57.9M` > `confirmed_max_float=50M`.
+   ⛔ Path C "extreme mover" is nested **inside** that same filter, so it can never override it.
+   ⛔ The reject reason is `logger.debug` only ⇒ **no record of what the scanner dropped, or why.**
+   Threshold = selection = DISCUSS FIRST; the INFO-logging half is cheap. Detail: open item 14.
+9. **⛔⭐⭐ `broker_order_events` conflates CLIENT aborts with BROKER refusals** — needs a `source`
    field. (Today's 58 were verified genuine by reading the verbatim 417 payloads.)
-9. **⚠ A pre-existing flaky test:** `test_scanner_cycle_history_retention_and_dedup` failed once in a
+10. **⚠ A pre-existing flaky test:** `test_scanner_cycle_history_retention_and_dedup` failed once in a
    full run, passes alone, passes with all 218 in its file, passes on re-run. Cross-file ordering.
-10. **P0 boot-hold freshness gate** · **Redis evicts the heartbeat stream** · **per-lot attribution
+11. **P0 boot-hold freshness gate** · **Redis evicts the heartbeat stream** · **per-lot attribution
    gap** — unchanged.
 
 ## 🔔 ALERTING
