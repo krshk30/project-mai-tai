@@ -74,7 +74,7 @@ Decoding the bar timestamps in that line:
 asks for is **satisfiable by a firing that has nothing to do with the gap in question.** A
 confirmation step that any historical firing satisfies is not a confirmation.
 
-### ⛔ THE TWO INVARIANTS THIS INCIDENT BUYS
+### ⛔ THE THREE INVARIANTS THIS INCIDENT BUYS
 
 > **I1 — THE DENOMINATOR IS WATCHED MINUTES, NOT WALL-CLOCK MINUTES.**
 > *Of N minutes the symbol was on the watchlist, M bars arrived.* Off-list minutes are excluded from
