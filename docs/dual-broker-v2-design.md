@@ -117,6 +117,24 @@ cancel-of-siblings, EH) is where surprises live. This is what the qty-1 test (§
 
 ## 9. Flag + merge gate
 - `MAI_TAI_..._WEBULL_MIRROR_ENABLED` default **False** → byte-identical off (no fan-out).
+
+> ### ⛔⭐⭐ THIS FLAG IS **ON** IN PRODUCTION AND INERT ONLY BY ACCIDENT OF ANOTHER FLAG
+> *(found 2026-08-10.)* Production runs `WEBULL_MIRROR_ENABLED=true` **and**
+> `DUAL_BROKER_FANOUT_ENABLED=true`. Mirror-on-fill does nothing today **only because** its queue
+> predicate is `mirror_enabled AND NOT fanout_enabled` — the two are mutually exclusive and fan-out
+> wins. ⇒ **Reading this flag alone tells you nothing about whether the mirror runs.** The default
+> above ("False → byte-identical off") describes the code, not the deployed state.
+>
+> ⛔ **The fan-out kill switch is therefore also a mirror ON switch.** Dropping
+> `DUAL_BROKER_FANOUT_ENABLED` — the documented rollback lever in
+> [`monday-fanout-validation-checklist.md`](monday-fanout-validation-checklist.md) — activates
+> mirror-on-fill against `live:orb`, which §5's own mirror path explicitly forbids
+> (*"Provision a dedicated account (e.g. `live:v2_webull`); do NOT point this at `live:orb`"*).
+> §5 later revised the FAN-OUT to `live:orb` deliberately; the MIRROR's prohibition was never
+> revisited, so the two halves of this document now disagree about that account.
+>
+> ⇒ **Drop BOTH flags in the same edit, or provision the dedicated account first.** Recorded in both
+> documents because the hazard is the INTERACTION between the flags, not either one alone.
 - **Merge gate:** byte-identical-off proven (behavioural + value-identical) + the #404 rehydrate test (§6).
 - Genuine-green CI, no admin. Attended flag-off deploy, fleet-flat.
 
