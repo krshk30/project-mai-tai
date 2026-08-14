@@ -75,7 +75,9 @@ position drift within ~8 minutes instead of hours.
 
 ## 8. ⛔⭐ Reconciler severity is INVERTED — an UNOWNED position pages CRITICAL
 
-> ⛔⭐⭐ **DO NOT WORK THIS BEFORE ITEM 12.** The CRITICAL alarm has TWO populations: the
+> ✅ **UNBLOCKED 2026-08-14:** #704 supplies the discriminator this item was waiting for —
+> `oms_managed_positions` distinguishes "ours" from "the operator's" without a maintained list.
+> ⛔⭐⭐ **STILL DO NOT DOWNGRADE SEVERITY BLIND.** The CRITICAL alarm has TWO populations: the
 > operator's manual holdings (round lots on `live:schwab_1m_v2`) **and our own positions whose
 > `virtual_positions` row falsely reads 0** (qty 1 on `live:orb` — DSY/MB/NAMI/HUIZ, 08-07).
 > Downgrading the severity would **suppress real defects**. The fix here is a **discriminator
@@ -262,6 +264,12 @@ Verification is a *state* ("is this behaving?"), not a *task* ("do this"). Keepi
 made an open-items file that could never reach zero.
 
 ## 12. ⛔⭐⭐ `virtual_positions` reads ZERO for a position we HOLD — and five consumers believe it
+> ✅ **THE RECONCILER CONSUMER IS FIXED + DEPLOYED 2026-08-14 (#704, HEAD `69d4b5a`)** — it now reads
+> `max(virtual, oms_managed_positions)`, so a false zero no longer manufactures a CRITICAL page.
+> ⛔ **UNEXERCISED**: the account was flat from the deploy, so no finding has run on the new code.
+> ⛔ **THE ROOT CAUSE IS UNTOUCHED.** `[VIRTUAL-CLEAR]` still zeroes a live row ~0.7s after the fill,
+> inside the broker settle window (`shape=FLAT_INFERRED (n=0)`), and never restores when the broker
+> becomes visible ~15s later. **The other four consumers still believe it.**
 
 **Filed as a defect, not a preference.** The predicate `virtual_quantity != 0` was recommended and
 adopted in **Ship 2 (`unowned_position_cron.sh`)** and **read C (`readc_capture.py`)** on 08-07.
@@ -567,3 +575,27 @@ count per `client_order_id` before calling it noise OR a real second attempt.**
 Re-price the re-attach off a **fresh quote at attach time**; **refuse to attach if we no longer
 hold**; **serialise** the retry loop; and consider not releasing until the close is known placeable.
 ⛔ Control it: **a re-attach that has only ever failed proves nothing until one succeeds.**
+
+---
+
+## 16. ⛔ THE RECONCILER CANNOT SEE A SHORT POSITION AT ALL
+*(found 2026-08-14 during the EOD deploy pre-flight)*
+
+`_build_position_findings` selects `AccountPosition.quantity > 0`. **A negative quantity is excluded
+from the comparison entirely**, so a short position at the broker is invisible to drift detection —
+it can never produce a `position_quantity_mismatch`, in either direction.
+
+**Live instance:** `live:schwab_1m_v2` held **XPON −1000 @ 4.4152 (mkt −$4,730)** across the 08-14
+close. Confirmed **not ours** — zero XPON orders we ever placed on any account at any time, 0 fills,
+0 intents, 0 managed rows, 0 `oms.log` mentions — so the OMS scoping invariant correctly never acted
+on it. But the reconciler would have been equally silent had it been *ours and wrong*.
+
+⇒ **The gap is not "we ignore the operator's shorts", it is "we cannot detect a short drift AT ALL."**
+If v2 ever ends up short by defect — a double-sell, an exit that overshoots, a fan-out leg selling
+stock the other leg no longer holds — **nothing in the reconciler would say so.**
+
+⚠️ Fixing it is `quantity != 0` plus signed comparison, but **do not do it blind**: every downstream
+severity and alert assumes non-negative quantities, and `abs(account_quantity - our_quantity)` on a
+signed pair changes what "delta" means. Scope it with item 8 (severity inversion), which is now
+workable because #704 supplied the ownership discriminator.
+[[project_mai_tai_oms_scoping_invariant]] · [[feedback_the_brokers_book_is_shared]]

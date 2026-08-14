@@ -14,74 +14,54 @@
 
 ## ⚡ FIRST SCREEN — act on this alone
 
-**As of 2026-08-14 midday (session in progress).** Fleet active. Box still on **HEAD `3ac4721`** —
-08-14's merges are on `main` but **NOT deployed**; the operator's call is **deploy after the close**,
-which keeps today's validation uncontaminated.
+**As of 2026-08-14 EOD.** Fleet active. **Deployed HEAD `69d4b5a`** (pulled + verified by content
+16:36 ET). Tree **0 local changes**. Account **FLAT on everything we trade**.
+⚠️ **`live:schwab_1m_v2` holds XPON −1000 @ 4.4152 (mkt −$4,730) — the OPERATOR'S OWN SHORT, not
+ours.** Proven: zero XPON orders we ever placed on any account at any time, 0 fills / 0 intents /
+0 managed rows, 0 `oms.log` mentions. The OMS scoping invariant means we never act on it.
+⛔ It is also **INVISIBLE to the reconciler** — that query filters `quantity > 0`, so **no short
+position is ever compared.** New open item 16.
 
-✅ **BOTH 08-13 FLAGS ARE NOW EXERCISED** (they were UNEXERCISED at yesterday's close):
-```
-MAI_TAI_STRATEGY_SCHWAB_1M_V2_WEBULL_RESTING_MIRROR_ENABLED=true   -> #688 PASS, 83 mirrors / 83 RTH rests
-MAI_TAI_OMS_V2_EXIT_RELEASE_RESERVATION_ENABLED=true               -> #691 rejects 58 -> 24, NOT cleared
-```
-⛔ Rollback = delete those two lines + restart. Neither key existed before 08-13; **no env backup
-exists** — do not assume one does.
+### The 08-13 deploy, final read (validator 15:33 ET, day complete)
+| § | PR | verdict | number |
+|---|---|---|---|
+| 3 | #688 mirror | ✅ **PASS** | **172 mirrors / 172 RTH rests** — yesterday was 215 rests / **0** |
+| 4 | protection | 🔴 FAIL | 18 fills · **259 `[V2-OCO-EMIT]` brackets** · **10 re-protect failures** |
+| 5 | #691 release | 🔴 FAIL | reservation rejects **58 → 27**; `-close-` 5 filled / 27 rejected |
+| 6 | #692 reprotect | 🔴 FAIL | 13 releases, 4 re-protects, **10 failed via `[WEBULL-PROTECT-FAILED]`** |
+| 7 | #687 claim expiry | ✅ PASS | expired **35×** instead of latching the flip shut |
+| 8 | #693 cron bit | ✅ PASS | tree clean |
+| 9 | money | — | `live:orb` 8 trades **median +1.79%** (worst −6.75) · `v2` 2 trades **median +1.63%** |
 
-### 08-14 validator, 12:06 ET (intraday ⇒ partial; re-run after the close for the quotable set)
-| § | PR | verdict |
-|---|---|---|
-| 3 | #688 mirror | ✅ **PASS — 83/83.** The headline win; yesterday it was 215 rests / 0 mirrors |
-| 4 | #689 attach | 🔴 FAIL **— but MIS-ATTRIBUTED, see below** |
-| 5 | #691 release | 🔴 FAIL — 24 reservation rejects (was 58); close route 5 filled / 24 rejected |
-| 6 | #692 reprotect | ⚠️ **PASS is FALSE** — wrong marker, see below |
-| 7 | #687 claim expiry | ✅ PASS — expired 21× instead of latching the flip shut |
-| 8 | #693 cron bit | ✅ PASS |
-| 9 | money | `live:orb` 5 trades, **median +1.49%**, best +3.03%, worst −6.75% |
+⭐ **#688 is the day's win and it is unambiguous: 172/172.**
+⛔ **§4/§6 were BOTH lying this morning and are fixed (#703)** — §4 counted only the re-protect
+marker and called bracketed fills "unprotected"; §6 printed PASS over the same 10 failures. **A
+broker screenshot caught them, not the script.** Today's numbers above are from the fixed version.
 
-### ⛔⛔ TWO VALIDATOR DEFECTS FOUND BY READING A BROKER SCREEN — fix before trusting §4/§6
-**Brackets are FINE: 148 `[V2-OCO-EMIT]` today.** §4 counts only `[WEBULL-PROTECT-ATTACHED]` (=0) and
-concludes "held with no broker-side stop" — **wrong**. §6 counts `[OMS-EXIT-REPROTECT-FAILED]` (=0)
-and prints PASS while the re-attach failed **9×** under `[WEBULL-PROTECT-FAILED]` — **a false clean.**
-⇒ **Both sections must read BOTH markers.** The real defect is Tier A item 1 below.
-⭐ The operator's own Webull screen (WETO `Target@8.17 / Stop@7.61`) is what falsified my report.
-**The broker screen outranks our logs — use it first.**
+## 📦 DEPLOYED TONIGHT (16:36 ET) — `3ac4721` → `69d4b5a`
+**Only ONE file under `src/` changed: `reconciliation/service.py`.** Everything else is docs,
+`ops/health`, standalone scripts, tests. ⇒ **reconciler restarted alone; strategy / oms /
+schwab-1m-v2 were NOT touched, so there is NO BAR HOLE.** Verified after: heartbeat healthy,
+cycles completing ~20s, **0 errors**, both cron scripts parse, exec bits `-rwxrwxr-x`.
 
-### ▶ RUN THE VALIDATOR
-```bash
-ssh mai-tai-vps 'bash -s' < ops/health/validate_0813_deploy.sh        # or  -- YYYY-MM-DD
-```
-Read `➤ VERDICT:` only. `PASS` = exercised AND behaved · `FAIL` = act now · `UNEXERCISED` = the path
-never ran (**a RESULT, not a pass**) · `VOID` = could not see (**never a pass**).
-⛔ An intraday run is **not** a result — the day has not happened yet.
-✅ **There is NO 20:00 ET deadline any more** (#699): rotated log siblings are read, so a post-close
-run sees the whole day. A `VOID` now means the window aged out of retention (~6 days), not that you
-ran late.
-⭐ §0 self-tests against 08-13's 58 known rejects; §0b controls the **population** (rest / fill /
-bracket visible?) against 08-12. Either failing ⇒ the run VOIDs its own zero-based verdicts.
+⛔⛔ **THE RECONCILER CHANGE IS DEPLOYED BUT UNEXERCISED — that is a RESULT, not a pass.**
+The account is flat (`account_positions qty>0` = **0**, open managed rows = **0**), so **no finding
+has been generated on the new code**. Whether the payload carries `managed_quantity`/`our_quantity`
+and whether the WETO-class false page is actually gone is **UNKNOWN until a position is open during
+a reconciler cycle — Monday at the earliest.** Unit tests pin it (8 cases, 4 mutants killed); tests
+are not the live path.
 
-## 📦 WHAT IS DEPLOYED ON THE BOX (`3ac4721`, 08-13 17:35 ET)
-
-#687 fan-out claim release · #688 both legs rest at their own broker · #689 attach a stop+target
-after a bare fill · #690 the 40-char coid cap · #691 the close cancels resting exit legs first ·
-#692 re-attach if that close will not go through · #693 the cron exec bit.
-Validation at merge: 2062 pass · ruff clean · 18 mutations all killed.
-
-⛔ **08-13's "the close was fighting our own exit legs" narrative has moved out of this file** — it
-is history now, not state. It lives in [`handoff-log.md`](handoff-log.md) and in
-[[project_mai_tai_exit_reservation_conflict]]. The part that is still TRUE and still open is Tier A
-items 1 and 2 above.
-
-## 🚚 NOT YET DEPLOYED — merged to `main` on 08-14, goes out after the close
-#697 #698 #699 (validator: rotation warning, blind-zero verdicts, rotated-log reading + population
-controls) · #701 (bar-watch I2/I3) · #700 #702 (design + open items, docs only) · #682 #673 #646
-#642 #640 (scripts/design, previously parked).
-⛔ **#701 changes a live pager path**: after the pull, the bar-gap all-clear HOLDS for 30 min instead
-of firing immediately. That is intended — it will look like a missing green the first time.
-⛔ Pre-flight verified 08-14: VPS tree **0 local changes**, `bar_gap_watch_cron.sh` is **100755** on
-`main`. Follow [[project_mai_tai_restart_bar_gap_checklist]] across the restart.
+**Also live now:** #697/#698/#699 (validator: intraday rotation warning, blind-zero verdicts,
+**rotated logs are read ⇒ there is NO 20:00 ET deadline**, §0b population controls) · #701 bar-watch
+I2/I3 · #703 the §4/§6 fix.
+⛔ **#701 changes a live pager**: after a bar-gap repair the all-clear now HOLDS 30 min instead of
+firing immediately. Intended — it stops the watch verifying its own INSERT — but the first time it
+happens it will look like a missing green. **Not yet exercised: the watch window is 07:00-16:00 ET
+and the deploy landed at 16:36.**
 
 ## 🕐 OPEN PRs
-**#702** — the four 08-14 open-item notes (docs only). Everything else that was open on 08-14 morning
-(#682 #673 #646 #642 #640, plus #697-#701) is **MERGED**; see the deploy queue above.
+**NONE.** Nine merged 08-14: #697 #698 #699 #700 #701 #702 #703 #704 + the five parked
+(#682 #673 #646 #642 #640). All of it is deployed.
 
 ## 🔴 OPEN THREADS — tiered, detail in [`handoff-open-items.md`](handoff-open-items.md)
 
@@ -89,40 +69,48 @@ of firing immediately. That is intended — it will look like a missing green th
 > item numbers; this list is the scannable index. **Tier A is what can lose money today.**
 
 ### 🔴 TIER A — can cost money now
-1. **THE RELEASE → CLOSE → REPROTECT CHAIN LEAVES AN UNCOVERED WINDOW** *(item 15)* — #691 cancels a
-   working bracket to close, the close is refused, #692 cannot put the bracket back (9× on 08-14).
-   ⛔ Brackets themselves are FINE: **148 `[V2-OCO-EMIT]` today**; the failures are re-protect, not
-   bare fills. ⛔ Validator §4/§6 read the wrong marker and print a FALSE CLEAN — fix before trusting.
-2. **THE RETRY BOUND IS STILL UNREACHABLE** *(thread 3 detail)* — `_v2_exit_close_failures` resets on
-   every HELD read, so a reject on a position we truly hold retries forever. **The fix underneath #691.**
+1. **⭐ MONDAY'S FIRST MOVE — THE RELEASE → CLOSE → REPROTECT CHAIN** *(item 15)* — #691 cancels a
+   working bracket to close, the close is refused, #692 cannot put it back. **10× on 08-14.**
+   Direction: re-price the re-attach off a **fresh quote at attach time** (it currently uses the
+   ENTRY price and fires 37s–10min later, so the stop is stale), **refuse to attach if we no longer
+   hold**, and **serialise** the retry loop (two interleaved sequences per fill today).
+   ⛔ Control it: a re-attach that has only ever failed proves nothing until one succeeds.
+   ✅ The measuring instrument is fixed (#703) — Monday's numbers are trustworthy.
+2. **THE RETRY BOUND IS STILL UNREACHABLE** — `_v2_exit_close_failures` resets on every positively-
+   HELD read, so a reject on a position we truly hold retries forever. **The fix underneath #691**,
+   whose rejects went 58 → 27 but did not clear.
 3. **PRE-MARKET IS 0% BRACKETED** *(item 11)* — 14d: RTH 172/172 orb, 131/132 schwab; PRE 0/34, 0/13.
    Both brokers are limit-only in EH; the RTH-edge arm (#647 Gate 2, built, dark) is the only answer.
 4. **`virtual_positions` FALSELY READS ZERO ON A POSITION WE HOLD** *(item 12)* — `[VIRTUAL-CLEAR]`
-   fires inside the settle window (~0.7s after the fill) and never restores when the broker catches
-   up ~15s later. ⛔ **This is what pages "reconcile drift" while you are in the trade** —
-   `oms_managed_positions` is the correct book and reads open/qty=1 throughout. Alarm, not a defect.
+   fires ~0.7s after a fill, inside the ~15s broker settle window, and never restores.
+   ✅ **The reconciler half is FIXED + DEPLOYED (#704)** — it now reads `oms_managed_positions` too.
+   ⛔ **UNEXERCISED** (flat account since the deploy) **and the root cause is untouched**: the clear
+   itself still zeroes a live row, and five consumers still believe it.
 
 ### 🟡 TIER B — wrong numbers / wrong reasons, no immediate loss
-5. **`broker_order_events` CONFLATES OUR ABORTS WITH BROKER REFUSALS** — needs a `source` column.
+5. **⛔ THE RECONCILER CANNOT SEE A SHORT POSITION AT ALL** *(item 16, new 08-14)* — the query
+   filters `quantity > 0`, so a negative quantity never enters the comparison. The gap is not "we
+   ignore the operator's shorts", it is **"a short drift of OURS would be undetectable."**
+6. **`broker_order_events` CONFLATES OUR ABORTS WITH BROKER REFUSALS** — needs a `source` column.
    08-14: the **largest** reject class was **83× our own `RuntimeError('Webull combo MASTER…')`**.
-6. **THE WEBULL LEG BUYS UNDER A LOOSER CAP THAN THE STRATEGY CHOSE** *(item 13)* — fan-out intents
+7. **THE WEBULL LEG BUYS UNDER A LOOSER CAP THAN THE STRATEGY CHOSE** *(item 13)* — fan-out intents
    carry no `eh_resting`/`resting_band_pct` ⇒ 1.0% instead of 0.5%. ⛔ Schwab genuinely refuses most
    of those names (10 of 12 have ZERO Schwab fills ever). Measured fills sit at median **+0.32%**,
    so the loose cap rarely binds. **Deferred 08-14.**
-7. **THE FLOAT CEILING SILENTLY DROPS LARGE-FLOAT MOVERS** *(item 14)* — CAPR 08-14: +98%, 17.1M vol,
+8. **THE FLOAT CEILING SILENTLY DROPS LARGE-FLOAT MOVERS** *(item 14)* — CAPR 08-14: +98%, 17.1M vol,
    never confirmed, `shares_outstanding 57.9M > 50M`. ⛔ Path C "extreme mover" is nested INSIDE that
    filter so it can never override it. ⛔ The reject reason is `logger.debug` only ⇒ no record of what
    the scanner dropped. Threshold = selection = DISCUSS FIRST; the INFO-logging half is cheap.
-8. **ENTRY LEVELS QUANTISED BY ~70 bps** — +2%/−5% tick-rounded off the decided price; the 0.5% band
+9. **ENTRY LEVELS QUANTISED BY ~70 bps** — +2%/−5% tick-rounded off the decided price; the 0.5% band
    collapses to ZERO under ~$2. **Fix the unit, not the number.**
-9. **THE ORPHAN WATCH READS SCHWAB ONLY** — it can never clear a Webull question.
+10. **THE ORPHAN WATCH READS SCHWAB ONLY** — it can never clear a Webull question.
 
 ### 📋 TIER C — known, parked, not decaying
-10. **CHURN IS THE BIGGEST NUMBER** — median 5 entries/symbol-day, max 16; ~200% of one position's
+11. **CHURN IS THE BIGGEST NUMBER** — median 5 entries/symbol-day, max 16; ~200% of one position's
     notional crossed over 14d. Selection is **DISCUSS BEFORE BUILDING**.
-11. **The 16:00 bracket death** *(item 11)* · **P0 boot-hold freshness gate** · **Redis evicts the
+12. **The 16:00 bracket death** *(item 11)* · **P0 boot-hold freshness gate** · **Redis evicts the
     heartbeat stream** *(item 9)* · **per-lot attribution gap** — unchanged.
-12. **⚠ Flaky test** `test_scanner_cycle_history_retention_and_dedup` — passes alone and in-file,
+13. **⚠ Flaky test** `test_scanner_cycle_history_retention_and_dedup` — passes alone and in-file,
     failed once in a full run. Cross-file ordering.
 
 ## 🔔 ALERTING
