@@ -501,3 +501,91 @@ exhausted move. Settle that before touching the number.
 both **50.0** and **30.0** in two config classes; confirm which one the live scanner reads.
 CAPR passes volume (17.1M vs 500k) and would pass turnover (~30% vs 12%); **float is the only gate
 that bites.**
+
+---
+
+## 15. 🔴🔴 HIGH — #689 ATTACH IS 0-FOR-11. NO WEBULL FILL GOT A BROKER-SIDE BRACKET ALL DAY
+*(2026-08-14, first live exercise of #689. Deployed 08-13 17:35.)*
+
+```
+Webull BUY fills (the opportunity) : 11
+[WEBULL-PROTECT-ATTACHED]          : 0        <- never once
+[WEBULL-PROTECT-RETRY]             : 27
+[WEBULL-PROTECT-FAILED]            : 9        <- "HELD WITH NO BROKER-SIDE STOP"
+```
+Symbols: STKH, AKAN, CGTL. **Not an edge case — a 0% success rate on its first full day.**
+
+### ⛔ IT IS NOT A SETTLE RACE — that hypothesis was checked and killed
+| symbol | fill -> VISIBLE at Webull | attach fired |
+|---|---|---|
+| AKAN 14:18:54Z | **15.0s** | 14:20:20Z — **71s AFTER it was visible** |
+| STKH 14:52:43Z | 0.3s | 15:02:33Z — **~10 MINUTES after the fill** |
+| CGTL 15:14:01Z | 0.4s | 15:14:38Z — 37s after |
+
+⇒ **THE LEVELS ARE COMPUTED OFF THE ENTRY PRICE AND APPLIED MINUTES LATER.** `entry=8.1944 ->
+stop=7.7847` (−5%) is correct at the instant of the fill and wrong by the time it is sent, because
+price has already traded through it. Webull then refuses exactly what it says: *the stop is not below
+market.* **The defect is a stale reference price, not a late attach and not a bad payload.**
+
+### The three distinct refusals (they are NOT one bug)
+```
+22x OAUTH_OPENAPI_TRADE_STOP_LOSS_PRICE_LT_MARKETPRICE   stop no longer below market  (price fell through it)
+ 3x OAUTH_OPENAPI_TRADE_STOP_PROFIT_PRICE_GT_OPENPRICE   target no longer above open
+ 2x OAUTH_OPENAPI_SYMBOL_CAN_NOT_SELL_SHORT              Webull no longer sees the position at all
+```
+⛔ The third one means the position was **already gone** — the ladder had exited it — so the attach
+was chasing something that no longer existed.
+
+### ⛔ AND A CONCURRENCY BUG UNDERNEATH — two attach loops on ONE position
+STKH, 15:02:33-41Z, verbatim order: `attempt 1/3` · `attempt 2/3` · **`attempt 1/3`** · `attempt 3/3`
+· `FAILED` · `attempt 2/3` · `attempt 3/3` · `FAILED`. **Two interleaved retry sequences for the same
+fill**, which is why 9 FAILED lines cover only ~5-6 distinct positions. Any "how many were
+unprotected" count taken off the FAILED lines is inflated until this is fixed.
+
+### What held
+✅ The **software ladder closed every one** — account **FLAT** at 12:06 ET, both position tables
+empty, every buy paired. The exposure was real but transient. ⛔ That is cover, not protection: for
+the length of each window the only net was our own process.
+
+### ⇒ Direction (not built)
+Re-price the bracket off a **fresh quote at attach time**, not the entry, and refuse to attach at all
+if the position is no longer held. Then control it: **an attach that has only ever failed proves
+nothing until one succeeds** — require a PASS on a live fill before calling it fixed.
+[[project_mai_tai_probe_w_webull_stoplimit_master]] · [[feedback_unexercised_is_not_a_result]]
+
+---
+
+## 16. 🔴 HIGH — #691 HALVED THE RESERVATION REJECTS BUT DID NOT CLEAR THEM (58 -> 24)
+*(2026-08-14 intraday, 12:06 ET — partial by construction; re-read after the close)*
+
+```
+[OMS-EXIT-RELEASE]        : 12      the release IS firing
+[OMS-EXIT-RELEASE-RAISED] : 0
+reservation rejects today : 24      (was 58 on 08-13)
+-close- sells attempted   : 29      -> filled 5 / rejected 24
+```
+✅ #692 is clean alongside it: 12 releases, 4 needed re-protection, **0 skipped, 0 failed**.
+
+⇒ The cause #691 removes is real (−59%), but **the close route still rejects 24 of 29**. Underneath
+it is **open thread 1: the retry bound resets on any positively-HELD read, so a reject on a position
+we really do hold retries forever.** #691 was never going to fix that, and today shows it.
+
+### ⛔⛔ AND A BIGGER REJECT CLASS IS HIDING BEHIND IT — 83, our own exception
+Verbatim, `live:orb`, today:
+```
+83  Webull order rejected: RuntimeError('Webull combo MASTER must be LIMIT or MARKET (a buy-STOP ma...  (7 symbols)
+23  NEW_NO_POSITION_MARGIN_ACCOUNT_CAN_NOT_SELL_SHORT_FOR_LT_2K                                        (3 symbols)
+ 1  ORDER_NOT_SUPPORT_REVERSE_OPTION
+```
+**The largest reject class today is a PYTHON RuntimeError recorded as "Webull order rejected".** It is
+not a broker refusal at all — it is our own guard raising, stored in the same field with the same
+prefix. ⛔ This is precisely the contamination that needs a `source` column, and it means **every
+reject count on this account is over-stated until the two are separable.**
+[[project_mai_tai_broker_order_events_conflates_client_aborts]]
+
+⭐ The string points at a known, settled fact: **Webull refuses a stop-limit MASTER but accepts a
+no-master exit PAIR.** Something is still minting a buy-STOP as a combo master.
+⚠️ 83 RuntimeErrors against **83 mirrors placed** is a suspicious 1:1 — worth checking whether the
+mirror path raises this every time while still succeeding, i.e. whether it is noise or a real
+second attempt. **Do not assume either; count them per client_order_id.**
+[[project_mai_tai_probe_w_webull_stoplimit_master]]

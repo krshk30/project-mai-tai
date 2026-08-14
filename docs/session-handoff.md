@@ -132,35 +132,43 @@ storm it replaces.
 
 ## 🔴 OPEN THREADS (detail: [`handoff-open-items.md`](handoff-open-items.md))
 
-1. **⛔⭐⭐ THE RETRY BOUND IS STILL UNREACHABLE.** `_v2_exit_close_failures` resets on every HELD
+1. **🔴🔴 #689 ATTACH IS 0-FOR-11 (08-14).** Eleven Webull fills, **zero** brackets attached, 9
+   `[WEBULL-PROTECT-FAILED]`. ⛔ NOT a settle race — attach fires 37s to **10 min** after the fill,
+   so the entry-derived stop is stale by the time it is sent (`stop not below market`, 22x).
+   ⛔ Two interleaved retry loops per fill inflate the FAILED count. Ladder covered every one;
+   flat at 12:06 ET. Detail: open item 15.
+2. **🔴 #691 HALVED THE RESERVATION REJECTS, DID NOT CLEAR (58 -> 24)**, close route 5 filled / 24
+   rejected. ⛔ The **largest** reject class today is **83x our own `RuntimeError('Webull combo
+   MASTER must be LIMIT or MARKET')`** stored as "Webull order rejected". Detail: open item 16.
+3. **⛔⭐⭐ THE RETRY BOUND IS STILL UNREACHABLE.** `_v2_exit_close_failures` resets on every HELD
    read, so *any* reject on a position we really hold retries forever. #691 removes the **cause** of
    these rejects, **not** the missing bound underneath. **This is the next fix.**
-2. **🔴 The 16:00 bracket death** — #647 Gate 2 (`oms_v2_rth_edge_bracket_enabled`) built, still dark.
-3. **⛔⭐⭐ PRE-MARKET IS 0% BRACKETED.** 14d: RTH **172/172** orb, **131/132** schwab; PRE **0/34**,
+4. **🔴 The 16:00 bracket death** — #647 Gate 2 (`oms_v2_rth_edge_bracket_enabled`) built, still dark.
+5. **⛔⭐⭐ PRE-MARKET IS 0% BRACKETED.** 14d: RTH **172/172** orb, **131/132** schwab; PRE **0/34**,
    **0/13**. Both brokers are limit-only in EH — the RTH-edge arm is the only answer.
    ⭐ The mirror is **RTH-only** (`_queue_resting_place` returns on the EH branch *before* the mirror
    block), so #689's attach never runs in EH — which is where its shape was never proven. No gap.
-4. **⛔⭐ ENTRY LEVELS QUANTISED BY ~70 bps** — +2%/−5% tick-rounded off the decided price; the 0.5%
+6. **⛔⭐ ENTRY LEVELS QUANTISED BY ~70 bps** — +2%/−5% tick-rounded off the decided price; the 0.5%
    band collapses to **ZERO** under ~$2. **Fix the unit, not the number.**
-5. **⭐⭐ CHURN IS STILL THE BIGGEST NUMBER** — median 5 entries/symbol-day, max 16; ~200% of one
+7. **⭐⭐ CHURN IS STILL THE BIGGEST NUMBER** — median 5 entries/symbol-day, max 16; ~200% of one
    position's notional in crossing over 14d. Selection is **DISCUSS BEFORE BUILDING**.
-6. **⛔ The orphan watch reads SCHWAB ONLY.** It can never clear a Webull question.
-7. **⛔⭐ THE WEBULL LEG BUYS UNDER A LOOSER CAP THAN THE STRATEGY CHOSE** — fan-out intents carry
+8. **⛔ The orphan watch reads SCHWAB ONLY.** It can never clear a Webull question.
+9. **⛔⭐ THE WEBULL LEG BUYS UNDER A LOOSER CAP THAN THE STRATEGY CHOSE** — fan-out intents carry
    no `eh_resting`/`resting_band_pct`, so they price at the OMS default **1.0%** instead of the
    strategy's **0.5%**. ⛔ Schwab genuinely refuses most of these names (**10 of 12 have ZERO Schwab
    fills ever**), so the Webull leg is the ONLY leg — that part is correct and not a bug. Measured
    fills sit at median **+0.32%** vs level, so the loose cap rarely binds. **Deferred by operator
    08-14.** Detail: open item 13.
-8. **⛔⭐ THE FLOAT CEILING SILENTLY DROPS LARGE-FLOAT MOVERS** — CAPR 08-14: **+98%**, 17.1M vol,
+10. **⛔⭐ THE FLOAT CEILING SILENTLY DROPS LARGE-FLOAT MOVERS** — CAPR 08-14: **+98%**, 17.1M vol,
    rvol 4.4, and **never confirmed** because `shares_outstanding=57.9M` > `confirmed_max_float=50M`.
    ⛔ Path C "extreme mover" is nested **inside** that same filter, so it can never override it.
    ⛔ The reject reason is `logger.debug` only ⇒ **no record of what the scanner dropped, or why.**
    Threshold = selection = DISCUSS FIRST; the INFO-logging half is cheap. Detail: open item 14.
-9. **⛔⭐⭐ `broker_order_events` conflates CLIENT aborts with BROKER refusals** — needs a `source`
+11. **⛔⭐⭐ `broker_order_events` conflates CLIENT aborts with BROKER refusals** — needs a `source`
    field. (Today's 58 were verified genuine by reading the verbatim 417 payloads.)
-10. **⚠ A pre-existing flaky test:** `test_scanner_cycle_history_retention_and_dedup` failed once in a
+12. **⚠ A pre-existing flaky test:** `test_scanner_cycle_history_retention_and_dedup` failed once in a
    full run, passes alone, passes with all 218 in its file, passes on re-run. Cross-file ordering.
-11. **P0 boot-hold freshness gate** · **Redis evicts the heartbeat stream** · **per-lot attribution
+13. **P0 boot-hold freshness gate** · **Redis evicts the heartbeat stream** · **per-lot attribution
    gap** — unchanged.
 
 ## 🔔 ALERTING
