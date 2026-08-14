@@ -22,8 +22,9 @@
 #   2. The WIRE. It cannot see the client_order_id actually sent, only what we logged.
 #   3. Whether a cancel LANDED. `[OMS-EXIT-RELEASE]` means submitted; confirmation is backgrounded.
 #   4. Manual operator activity at either broker (the broker's book is SHARED).
-#   5. Anything before 20:00 ET — logs rotate at 00:00 UTC. Run this BEFORE 20:00 ET or the day
-#      is gone. The script refuses to give a clean verdict past the rotation.
+#   5. Only what logrotate still keeps. The rotated siblings ARE read (verified back to 2026-08-08),
+#      so the 20:00 ET deadline this script used to impose is GONE — but once a day ages out of
+#      retention entirely, it is unrecoverable and the window reports blind.
 # ─────────────────────────────────────────────────────────────────────────────────────────────────
 set -uo pipefail
 
@@ -59,7 +60,9 @@ hdr() { echo; echo "═══ $* "; }
 # DB-driven, and §4's "no Webull buy filled" reads its denominator from `fills`; both deliberately
 # keep the plain `verdict`.
 verdict_zero() {  # verdict_zero <blind> <status> <msg>  — the verdict rests on a log ZERO
-  if [ "${1:-0}" = "1" ]; then
+  if [ "${CONTROL_VOID:-0}" = "1" ]; then
+    verdict "VOID" "a §0 POPULATION CONTROL FAILED — this run cannot prove it would see the thing it is counting, so its zero is meaningless. (would have read: ${2} — $3)"
+  elif [ "${1:-0}" = "1" ]; then
     verdict "VOID" "cannot say ${2} — the log does not cover this window, so the zero it rests on means 'I could not see', not 'it did not happen'. (would have read: $3)"
   else verdict "$2" "$3"; fi
 }
@@ -89,25 +92,45 @@ if [ -z "$UTC_FROM" ] || [ -z "$UTC_TO" ] || [ "$UTC_FROM" = "${DAY_ET} 00:00:00
   exit 2
 fi
 logreadable() { sudo test -r "$1"; }   # ⛔ the logs are ROOT-ONLY; a bare [ -r ] as trader says NO
-logcount() {  # logcount <file> <fixed-string>  -> a count, or -1 meaning UNKNOWN
-  # ⛔⭐⭐ RETURNS -1, NOT 0, WHEN THE FILE CANNOT ANSWER FOR THIS WINDOW. An empty or freshly
-  # rotated logfile otherwise yields 0 and reads as "nothing happened" — the difference between
-  # "it did not fire" and "I could not see" is the whole point of this script.
+# ⛔⭐⭐ THE ROTATED FILES ARE STILL ON THE BOX — THE DAY IS NOT "GONE" AFTER 20:00 ET.
+# This script used to read ONLY the live file and told you to run before 20:00 ET or lose the day.
+# That was wrong: logrotate keeps `<log>-YYYYMMDD[.gz]` siblings (verified back to 2026-08-08), and
+# they hold the markers — `schwab-1m-v2.log-20260814` carries the 215 [V2-RESTING-PLACE] lines for
+# ET 08-13 that the live file no longer has. Reading only the live file turned a retained day into
+# a false zero, which is the exact failure this script exists to prevent.
+# ⛔ NAMING: logrotate stamps the file with the date it was CREATED, so `<log>-20260814` holds the
+# UTC day 2026-08-13. An ET day spans TWO UTC days (04:00 → next 03:59), hence two or more files.
+# We do not try to compute which: we feed every sibling through the same window filter and let the
+# timestamp comparison select. Cheap, and immune to the off-by-one that naming invites.
+logfiles() {  # every file that could hold lines for this window, oldest first, live file last
+  local base="$1"
+  sudo sh -c "ls -1 '${base}'-* 2>/dev/null" | sort
+  echo "$base"
+}
+_readlog() { case "$1" in *.gz) sudo zcat -- "$1" 2>/dev/null;; *) sudo cat -- "$1" 2>/dev/null;; esac; }
+logcat() {  # stream every readable file for this log, in chronological order
+  local f
+  while IFS= read -r f; do [ -n "$f" ] && logreadable "$f" && _readlog "$f"; done < <(logfiles "$1")
+}
+logcount() {  # logcount <log-base> <fixed-string>  -> a count, or -1 meaning UNKNOWN
+  # ⛔⭐⭐ RETURNS -1, NOT 0, WHEN NO FILE CAN ANSWER FOR THIS WINDOW. An empty or freshly rotated
+  # logfile otherwise yields 0 and reads as "nothing happened" — the difference between "it did not
+  # fire" and "I could not see" is the whole point of this script.
   logreadable "$1" || { echo -1; return; }
-  sudo awk -v a="$UTC_FROM" -v b="$UTC_TO" -v pat="$2" '
+  logcat "$1" | awk -v a="$UTC_FROM" -v b="$UTC_TO" -v pat="$2" '
     { ts = substr($0,1,19); gsub(",",".",ts)
-      if (ts ~ /^[0-9]{4}-/) { if (fst=="") fst=ts; lst=ts }
+      if (ts ~ /^[0-9]{4}-/) { if (fst=="") fst=ts; if (ts>lst) lst=ts }
       if (ts >= a && ts <= b && index($0,pat)) n++ }
     END {
-      if (fst == "" || lst < a || fst > b) { print -1 }   # file does not overlap the window at all
+      if (fst == "" || lst < a || fst > b) { print -1 }   # nothing on disk overlaps the window
       else print n+0
-    }' "$1"
+    }'
 }
-logtail() {  # logtail <file> <fixed-string> <n>
+logtail() {  # logtail <log-base> <fixed-string> <n>
   logreadable "$1" || return
-  sudo awk -v a="$UTC_FROM" -v b="$UTC_TO" -v pat="$2" '
+  logcat "$1" | awk -v a="$UTC_FROM" -v b="$UTC_TO" -v pat="$2" '
     { ts = substr($0,1,19); gsub(",",".",ts) }
-    ts >= a && ts <= b && index($0,pat)' "$1" | tail -"$3"
+    ts >= a && ts <= b && index($0,pat)' | tail -"$3"
 }
 # ⛔⭐⭐ AN UNKNOWN MUST NEVER BECOME A PASS. The first version of this script let an unreadable log
 # fall through the numeric comparisons and printed "VERDICT: PASS" on counts it had never read —
@@ -127,9 +150,14 @@ logcoverage() {
   # ⛔ Take the first/last line that actually CARRIES a timestamp. A traceback at the tail has none,
   # and the old `tail -1 | cut -c1-19` handed back junk — which then failed the `[ -n "$last" ]`
   # guard and SKIPPED the coverage check entirely. A skipped check prints exactly like a clean one.
-  first=$(sudo head -200 "$f" | grep -oE '^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}' | head -1)
-  last=$(sudo tail -200 "$f" | grep -oE '^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}' | tail -1)
-  echo "   log $(basename "$f") covers ${first:-?} .. ${last:-?} UTC"
+  # ⛔ Coverage must span the SAME file set the counts do (live + rotated siblings). Measuring
+  # coverage on the live file alone while counting across all of them would declare the window blind
+  # on exactly the past days the rotated files can now answer for — a false UNKNOWN in place of a
+  # real count, which is the same defect as a false zero, just wearing the other mask.
+  local nfiles; nfiles=$(logfiles "$f" | grep -c . )
+  first=$(logcat "$f" | grep -oE '^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}' | head -1)
+  last=$(logcat "$f"  | grep -oE '^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}' | tail -1)
+  echo "   log $(basename "$f") + $((nfiles-1)) rotated sibling(s) cover ${first:-?} .. ${last:-?} UTC"
   if [ -z "$first" ] || [ -z "$last" ]; then
     LOG_BLIND=1
     echo "   ⛔⛔ NO TIMESTAMPED LINE in the head/tail of $f — coverage is UNKNOWN, not clean."
@@ -152,12 +180,13 @@ logcoverage() {
     if [[ "$last" < "$UTC_TO" ]]; then
       LOG_BLIND=1
       echo "   ⛔⛔ THE ET DAY IS OVER but the log ends at ${last} UTC, before the window closes"
-      echo "        (${UTC_TO} UTC) — the evening (20:00-23:59 ET) is in the NEXT rotated file."
-      echo "        Counts are a LOWER BOUND. Fix: also read the rotated file."
+      echo "        (${UTC_TO} UTC). The rotated siblings ARE being read, so this is not the old"
+      echo "        20:00 ET problem — this day has AGED OUT of retention. Counts are a LOWER BOUND."
     fi
   else
     echo "   ℹ the ET day is still running (now ${now_utc} UTC, closes ${UTC_TO} UTC) — counts are"
-    echo "     PARTIAL by construction, not by rotation. Only the last run before 20:00 ET is quotable."
+    echo "     PARTIAL by construction, not by rotation. Re-run after the close for the full day —"
+    echo "     rotation no longer costs you the evening."
     # ⛔ A SILENT log is a different failure from a partial day, and it is the one that fakes a
     # clean: a dead writer yields zeros that read exactly like "the path never fired".
     local le ne age; le=$(_ts_epoch "$last"); ne=$(date +%s)
@@ -192,11 +221,58 @@ else
   verdict "VOID" "SELF-TEST FAILED — the query cannot see a day we KNOW was bad. Every result below is untrustworthy. Fix the query before reading further."
 fi
 
+# ── 0b. THE CONTROL MUST COVER THE THING BEING MEASURED, NOT JUST *A* THING ──────────────────────
+# ⛔⭐⭐ §0 reproduces 58 rejects. That proves the reject query can see `broker_order_events`. It
+# proves NOTHING about whether a RESTING ENTRY or a BRACKET would be visible if one existed —
+# different tables, different joins, different log file. A control on the wrong population is how
+# "it never happened" gets asserted from a source that could not have held it either way.
+# ⛔ CONTROL DAY = 2026-08-12, chosen because it is the most recent day with a strong population in
+# every channel at once. Do NOT move it earlier to "before the change": 2026-08-07 has ZERO Schwab
+# brackets and ZERO filled rests, so it would pass this control vacuously.
+CTRL_DAY=2026-08-12
+CONTROL_VOID=0
+ctrl() {  # ctrl <label> <actual> <min-expected>
+  local lbl="$1" got="${2:-}" min="$3"
+  if [ -n "$got" ] && [ "$got" -ge "$min" ] 2>/dev/null; then
+    printf '   ✓ %-46s %s (>= %s)\n' "$lbl" "$got" "$min"
+  else
+    printf '   ✗ %-46s %s (expected >= %s)\n' "$lbl" "${got:-ERROR}" "$min"; CONTROL_VOID=1
+  fi
+}
+hdr "0b. POPULATION CONTROLS — could this run SEE a rest / a fill / a bracket at all? (${CTRL_DAY})"
+C0="'${CTRL_DAY} 00:00:00'::timestamp at time zone 'America/New_York'"
+C1="'${CTRL_DAY} 23:59:59'::timestamp at time zone 'America/New_York'"
+ctrl "DB  Schwab resting entries (STOP_LIMIT buy)" "$(q1 "select count(*) from broker_orders bo
+  join broker_accounts ba on ba.id=bo.broker_account_id where ba.name='live:schwab_1m_v2'
+  and bo.order_type='STOP_LIMIT' and lower(bo.side)='buy'
+  and bo.submitted_at >= $C0 and bo.submitted_at <= $C1;")" 300
+ctrl "DB  Schwab BRACKET legs (oco_exit)" "$(q1 "select count(*) from broker_orders bo
+  join broker_accounts ba on ba.id=bo.broker_account_id where ba.name='live:schwab_1m_v2'
+  and bo.order_type='oco_exit' and bo.submitted_at >= $C0 and bo.submitted_at <= $C1;")" 25
+ctrl "DB  Webull BRACKET legs (oco_exit)" "$(q1 "select count(*) from broker_orders bo
+  join broker_accounts ba on ba.id=bo.broker_account_id where ba.name='live:orb'
+  and bo.order_type='oco_exit' and bo.submitted_at >= $C0 and bo.submitted_at <= $C1;")" 10
+ctrl "DB  Webull BUY fills (the attach opportunity)" "$(q1 "select count(*) from fills f
+  join broker_accounts ba on ba.id=f.broker_account_id where ba.name='live:orb'
+  and lower(f.side)='buy' and f.filled_at >= $C0 and f.filled_at <= $C1;")" 10
+# ⭐ The LOG control is the one that matters most, because it exercises the whole chain §3 uses:
+# rotated-file reading + the UTC window filter + the exact marker string.
+CTRL_UF=$(date -u -d "TZ=\"America/New_York\" ${CTRL_DAY} 00:00:00" '+%Y-%m-%d %H:%M:%S')
+CTRL_UT=$(date -u -d "TZ=\"America/New_York\" ${CTRL_DAY} 23:59:59" '+%Y-%m-%d %H:%M:%S')
+ctrl "LOG [V2-RESTING-PLACE] in a ROTATED file" "$(UTC_FROM=$CTRL_UF UTC_TO=$CTRL_UT logcount "$V2LOG" '[V2-RESTING-PLACE]')" 300
+if [ "$CONTROL_VOID" = "0" ]; then
+  verdict "PASS" "a rest, a fill and a bracket are all VISIBLE to this run — a zero below is a real zero"
+else
+  verdict "VOID" "A CONTROL FAILED — this run cannot prove it would see what it is counting. Every zero-based verdict below is now VOID. Fix the query before reading anything."
+fi
+echo "   ⛔ NOT CONTROLLABLE: [V2-WEBULL-RESTING-PLACE] and [WEBULL-PROTECT-ATTACHED] are NEW in the"
+echo "      2026-08-13 deploy — no past day could have emitted them, so no historical control exists."
+echo "      Controlled here instead: the populations they act ON, and the log machinery §3 reads with."
+
 if [ "$NOW_H" -ge 20 ] 2>/dev/null && [ "${DAY_ET}" = "$(TZ=America/New_York date +%F)" ]; then
   echo
-  echo "   ⛔⛔ IT IS PAST 20:00 ET. Logs rotate at 00:00 UTC, so today's log lines are GONE."
-  echo "        DB checks below are still valid; every LOG-based count is a FALSE ZERO. Do not"
-  echo "        read a log verdict from this run."
+  echo "   ✅ It is past 20:00 ET. The live log has rotated, but the rotated sibling is read too,"
+  echo "        so the day is INTACT. (This used to declare every log count a false zero.)"
 fi
 
 # ── 1. IS THE DEPLOY EVEN ON THE BOX, AND ARE THE FLAGS LIVE? ────────────────────────────────────
@@ -381,7 +457,7 @@ echo "   ⛔ Naive buy→next-sell pairing. It CANNOT attribute per-lot and it c
 echo "      exited. Treat as a magnitude, not as attribution."
 
 hdr "DONE"
-echo "⛔ AFTER 20:00 ET the logs have rotated, so only the DB-backed checks (§0, §5, §9) can still"
-echo "   serve as a control. The log-backed ones will correctly report VOID, not a result."
+echo "⛔ A VOID means the window aged out of log retention, not that you ran too late — the rotated"
+echo "   siblings are read, so a same-day evening run is fine."
 echo "Read the VERDICT lines only. UNEXERCISED means the path never ran — that is a RESULT,"
 echo "not a pass, and it means tomorrow has to ask again."
