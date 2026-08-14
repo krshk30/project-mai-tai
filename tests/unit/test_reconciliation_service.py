@@ -228,3 +228,100 @@ def test_reconciler_can_ignore_position_mismatch_for_specific_account_symbols() 
             "stuck_intent",
         }
         assert len(incidents) == 2
+
+
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
+# ⛔⭐⭐ THE VIRTUAL-POSITION FALSE ZERO — reconciler must not page for a position the OMS tracks.
+#
+# Live instance 2026-08-14 (WETO, live:orb): the OMS filled 1 @ 8.005; `[VIRTUAL-CLEAR]` zeroed the
+# virtual row 0.7s later, INSIDE the ~15s Webull settle window, and nothing restored it when the
+# broker became visible. `oms_managed_positions` read status=open/current_quantity=1 the whole time.
+# Comparing only against the virtual row produced a CRITICAL page for a correctly-tracked position.
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
+def _reconcile_position_findings(*, virtual_qty, managed_qty, broker_qty):
+    """Seed one symbol on one account with the three quantities, return its position findings."""
+    from project_mai_tai.db.models import OmsManagedPosition
+
+    session_factory = build_test_session_factory()
+    now = datetime.now(UTC)
+    with session_factory() as session:
+        strategy = Strategy(code="schwab_1m_v2", name="v2", execution_mode="live", metadata_json={})
+        account = BrokerAccount(name="live:orb", provider="webull", environment="production")
+        session.add_all([strategy, account])
+        session.flush()
+        if virtual_qty:
+            session.add(VirtualPosition(
+                strategy_id=strategy.id, broker_account_id=account.id, symbol="WETO",
+                quantity=Decimal(str(virtual_qty)), average_price=Decimal("8.005"),
+                realized_pnl=Decimal("0"), opened_at=now,
+            ))
+        if managed_qty:
+            session.add(OmsManagedPosition(
+                strategy_code="schwab_1m_v2", broker_account_name="live:orb", symbol="WETO",
+                entry_price=Decimal("8.005"), original_quantity=managed_qty,
+                current_quantity=managed_qty, entry_time=now,
+                current_profit_pct=Decimal("0"), peak_profit_pct=Decimal("0"), status="open",
+            ))
+        if broker_qty:
+            session.add(AccountPosition(
+                broker_account_id=account.id, symbol="WETO", quantity=Decimal(str(broker_qty)),
+                average_price=Decimal("8.005"), market_value=Decimal("8.005"), source_updated_at=now,
+            ))
+        session.commit()
+
+    service = ReconciliationService(
+        settings=Settings(), redis_client=FakeRedis(), session_factory=session_factory
+    )
+    with session_factory() as session:
+        return [f for f in service._build_position_findings(session)
+                if f.finding_type == "position_quantity_mismatch"]
+
+
+def test_managed_position_covers_a_false_zero_virtual_row() -> None:
+    """THE 08-14 WETO CASE: broker 1, virtual 0, managed 1 -> NOT a drift."""
+    findings = _reconcile_position_findings(virtual_qty=0, managed_qty=1, broker_qty=1)
+    assert findings == [], f"the OMS tracks this position; it must not page. got {findings}"
+
+
+def test_unowned_broker_position_still_pages() -> None:
+    """⭐ THE CONTROL. A position NOTHING of ours knows about must still be reported — otherwise the
+    fix has simply blinded the reconciler, which is worse than the false page it removes."""
+    findings = _reconcile_position_findings(virtual_qty=0, managed_qty=0, broker_qty=1)
+    assert len(findings) == 1
+    assert findings[0].severity == "critical"
+
+
+def test_stale_open_managed_row_against_a_flat_broker_still_pages() -> None:
+    """A managed row left open on a position the broker no longer shows is the PHANTOM-ROW defect;
+    taking the max must not swallow it."""
+    findings = _reconcile_position_findings(virtual_qty=0, managed_qty=1, broker_qty=0)
+    assert len(findings) == 1
+    assert findings[0].severity == "critical"
+
+
+def test_real_quantity_disagreement_still_pages_and_reports_both_books() -> None:
+    findings = _reconcile_position_findings(virtual_qty=1, managed_qty=1, broker_qty=5)
+    assert len(findings) == 1
+    payload = findings[0].payload
+    assert Decimal(payload["virtual_quantity"]) == 1
+    assert Decimal(payload["managed_quantity"]) == 1
+    assert Decimal(payload["our_quantity"]) == 1
+    assert Decimal(payload["account_quantity"]) == 5
+
+
+def test_tracked_position_with_a_real_disagreement_is_WARNING_not_critical() -> None:
+    """⛔⭐ SEVERITY MUST READ *OUR BOOKS*, NOT THE VIRTUAL ROW ALONE.
+
+    broker 5 / virtual 0 / managed 2 is a genuine drift on a position we DO own. `critical` is
+    reserved for "one side is zero" — i.e. nobody owns it, or we think we hold something the broker
+    has never heard of. Judging that off the virtual row alone calls an owned, tracked position
+    `critical` purely because the virtual row false-zeroed, which is the severity inversion that
+    makes the loudest alarms the ones we understand least.
+    """
+    findings = _reconcile_position_findings(virtual_qty=0, managed_qty=2, broker_qty=5)
+    assert len(findings) == 1
+    assert findings[0].severity == "warning", (
+        "an owned position whose quantities merely disagree is a warning; "
+        f"got {findings[0].severity} — severity is reading the virtual row again"
+    )
+    assert Decimal(findings[0].payload["our_quantity"]) == 2
