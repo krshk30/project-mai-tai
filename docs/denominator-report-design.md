@@ -89,7 +89,57 @@ confirmation step that any historical firing satisfies is not a confirmation.
 > verification and provides none. See `project_mai_tai_dead_guards_dominated_by_an_earlier_return`.
 
 I2 generalises past this watch: **any** check that both repairs and verifies needs it, and the
-`ReportFindings`-style pattern of "detect → fix → confirm fixed" is exactly where it hides.
+"detect → fix → confirm fixed" pattern is exactly where it hides.
+
+> **I3 — AN ALERT MUST NOT DELEGATE A CHECK IT CANNOT ITSELF PERFORM.**
+> Either mechanise the check and print the answer, or delete the line. An instruction that cannot be
+> carried out has exactly two outcomes, both bad: the reader burns time discovering it is
+> unanswerable, or the reader learns to skip instructions in that alert — and the *next* instruction
+> in the same body is the do-not-restart rule, which is the one that must never be skipped.
+
+### ⛔ I3 applied — what the RED body should say instead
+
+The current line is unanswerable as written:
+
+```
+Live ATR guarded by #620 — confirm [V2-ATR-BAR-GAP] fired for these names.
+```
+
+Three separate reasons it cannot be confirmed by a human reading the alert:
+
+1. **It is unscoped in time.** Any firing today satisfies it, including one on 29-day-old
+   warmup-replay bars — which is precisely what happened on 08-14.
+2. **ABSENT is the EXPECTED answer for the most common cause.** A DB gap and an in-memory gap are
+   **different universes**: when the symbol is off the watchlist there is a DB hole and *no*
+   in-memory gap, so the guard correctly never fires. The instruction invites reading a correct
+   silence as a failure.
+3. **It asks for the wrong limb first.** The question that decides the action is *"were we exposed?"*
+   — position or working order on the gapped symbol — which is a mechanical DB lookup. On 08-14 that
+   limb answered NO, at which point the guard's state was irrelevant.
+
+**Replacement — the watch computes both limbs and prints the conclusion:**
+
+```
+EXPOSURE:  LBGJ  position=none  working_orders=none   -> NOT EXPOSED
+           (guard state is irrelevant when nothing was held or resting)
+```
+
+and only when exposure exists, a **scoped** guard check — the log line carries `prev_bar_ts` and
+`cur_bar_ts`, so a firing can be bound to the detected gap instead of merely to the day:
+
+```
+EXPOSURE:  ABCD  position=200  working_orders=1       -> EXPOSED
+GUARD:     [V2-ATR-BAR-GAP] ABCD with cur_bar_ts inside 11:16-11:36Z : PRESENT (1)
+           -> live ATR refused to span the gap. No restart.
+GUARD:     ... : ABSENT, and the symbol WAS watched throughout
+           -> unguarded true range on a held position. THIS is the restart case.
+```
+
+⛔ **Note the dependency: the ABSENT branch is only meaningful given I1.** Distinguishing "absent
+because there was no in-memory gap (symbol off-list)" from "absent because the guard failed"
+requires knowing whether the symbol was watched. **I1 is a prerequisite for making this confirmation
+mean anything** — without it, ABSENT stays ambiguous and the line should simply be deleted rather
+than mechanised.
 
 ### ⭐ WHAT IS WORKING, AND MUST NOT BE BROKEN BY THE FIX
 
@@ -290,7 +340,10 @@ repair range, and the report must print both ranges so the reader can see they d
 3. **Manual activity.** The broker's book is shared; manual buys appear in these denominators.
 4. **Intent that never reached an order.** Until check 1 exists, a suppression upstream of order
    creation is invisible — **the 08-11 hole stays open until check 1 is built.**
-5. **Whether a symbol *should* have been on the watchlist.** I1 excludes off-list minutes from N —
+5. **Whether an ABSENT guard means "no gap to span" or "the guard failed."** Distinguishing them
+   needs I1's watched-minutes source. Until that exists the guard-confirmation line is deleted
+   rather than mechanised — an ambiguous check printed as a check is worse than no check.
+6. **Whether a symbol *should* have been on the watchlist.** I1 excludes off-list minutes from N —
    which is correct for feed health, but it means **watchlist churn itself is not measured by check
    0.** If churn is the defect, it needs its own check with its own denominator.
 
@@ -298,7 +351,9 @@ repair range, and the report must print both ranges so the reader can see they d
 
 ## §6. Build order
 
-1. **Check 0 (I1 + I2)** — smallest, highest-value, and it stops a live false-alarm source today.
+1. **Check 0 (I1 + I2 + I3)** — smallest, highest-value, and it stops a live false-alarm source
+   today. I3's alert-body change ships with it: the unanswerable guard line is either mechanised
+   (needs I1) or deleted, and **deleted is the correct interim state** if I1 lands later.
 2. **Check 1's denominator** — scope the arm/flip source. Without it the report cannot catch the
    incident that motivated the original ask.
 3. Checks 2, 3, 4, 7 — pure SQL, baselines above already measured.
