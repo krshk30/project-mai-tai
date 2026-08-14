@@ -42,6 +42,33 @@ restart, verified by a per-minute gap query, not by eyeballing the newest bar.
 
 ⛔ A `[WEBULL-PROTECT-FAILED]` means **we are holding with no broker-side stop.** Act, don't log it.
 
+### ▶ RUN THE VALIDATOR — one command, covers all seven PRs
+```bash
+ssh mai-tai-vps 'bash -s' < ops/health/validate_0813_deploy.sh
+```
+Operator plan: **run it PERIODICALLY through the morning.** Read the `➤ VERDICT:` lines only.
+
+| verdict | what it means |
+|---|---|
+| `PASS` | exercised AND behaved |
+| `FAIL` | act now — §4 and §6 FAILs mean a position may be **UNPROTECTED** |
+| `UNEXERCISED` | the path never ran. **A RESULT, not a pass** — ask again later |
+| `VOID` | the script could not see. **Never read as a pass** |
+
+⛔⛔ **AN INTRADAY RUN IS NOT A RESULT.** Early runs will read `UNEXERCISED` simply because the day
+has not happened yet. Only the **last run before 20:00 ET** is quotable.
+⛔⛔ **RUN THE FINAL ONE BEFORE 20:00 ET.** Logs rotate at 00:00 UTC = 20:00 ET; after that the day's
+log lines are gone and every log-based count is a lower bound (the script says so, but it cannot
+recover them). DB-based checks stay valid.
+⭐ §0 is a **self-test** against 2026-08-13's 58 known rejects — if that control fails to reproduce,
+the whole run declares itself VOID and nothing below it is trustworthy.
+⭐ **Proven on a known-bad tape:** run with `-- 2026-08-13` it correctly goes FAIL on #688 (215
+Schwab rests / 0 mirrors), #689 (12 fills / 0 attaches) and #691 (58 rejects, `-close-` 4/62). A
+validator that has only ever printed PASS proves nothing. [[feedback_a_watch_that_fails_to_a_false_clean]]
+
+⛔ **The single number:** reservation rejects, **58 today**. Expect it to collapse — but a hard ZERO
+alongside zero `[OMS-EXIT-RELEASE]` lines means **never exercised**, not success. Check both.
+
 ## 🔴 THE DAY'S SHARPEST FINDING — the close was fighting our own exit legs
 
 **A resting exit leg RESERVES the position.** The v2 software ladder then sends its own market sell

@@ -92,6 +92,32 @@ protection after 3 refused closes **on a positively-HELD read only** (an inconcl
 place a pair against shares we no longer own — the oversell shape). Without #692, #691 would have
 been strictly worse than the storm it replaced.
 
+### A validator, and what building it taught
+
+Wrote `ops/health/validate_0813_deploy.sh` — one command covering all seven PRs, reporting
+DEPLOYED / EXERCISED / VERDICT separately so an untested path can never read as a working one.
+
+**The step that mattered was refusing to trust it.** Run against today — a day we *know* was bad —
+it must go red, and it did: #688 FAIL (215 Schwab rests, 0 mirrors), #689 FAIL (12 Webull fills,
+0 attaches), #691 FAIL (58 rejects, `-close-` 4 of 62). That dry run found three defects, all mine:
+
+1. log counts **ignored the `--day` argument** and read whatever the current file held;
+2. the logs are **root-only**, so the readability test running as `trader` said UNREADABLE;
+3. worst — that string flowed into the numeric comparisons and printed **`VERDICT: PASS`** on counts
+   it had never read. An unreadable log produced a pass, inside the very script written to stop
+   exactly that.
+
+Fixed by making UNKNOWN out-of-band (`-1`) and checked *first* in every verdict block, and by
+treating an empty or freshly-rotated file as UNKNOWN rather than zero — "it did not fire" and "I
+could not see" must never render the same. Confirmed live: after the 00:00 UTC rotation the v2
+section now reads VOID, not UNEXERCISED.
+
+Also learned the window has two ends: the ET day runs to 03:59 UTC, so 20:00–23:59 ET always lands
+in the next rotated file. A count taken after 20:00 ET is a lower bound wearing a count's clothes.
+
+⚠️ The operator will run it **periodically** tomorrow morning. Every intermediate `UNEXERCISED` just
+means the day is not done — only the last run before 20:00 ET is quotable.
+
 ### Deployed
 
 `3ac4721`, 17:35 ET, OMS + strategy + schwab-1m-v2. **No bar hole** — verified with a per-minute gap
