@@ -53,6 +53,17 @@ verdict() { printf '   ➤ VERDICT: %s — %s\n' "$1" "$2"; }
 # windowed to the UTC range of the requested ET day, and the file's true coverage is printed.
 UTC_FROM=$(date -u -d "TZ=\"America/New_York\" ${DAY_ET} 00:00:00" '+%Y-%m-%d %H:%M:%S' 2>/dev/null)
 UTC_TO=$(date -u -d "TZ=\"America/New_York\" ${DAY_ET} 23:59:59" '+%Y-%m-%d %H:%M:%S' 2>/dev/null)
+# ⛔⭐⭐ WINDOW SANITY — the `TZ="..."` prefix is a GNU-on-Linux extension. Where it is unsupported
+# (Git Bash, busybox) date does NOT error: it returns the string UNSHIFTED, and the window silently
+# becomes a UTC day. Every count below would then be windowed to the wrong 24h and read as a clean
+# result. ET is UTC-4/-5, so a correct conversion can NEVER leave the time at 00:00:00.
+if [ -z "$UTC_FROM" ] || [ -z "$UTC_TO" ] || [ "$UTC_FROM" = "${DAY_ET} 00:00:00" ]; then
+  echo "⛔⛔ ABORT: date(1) here does not support the TZ=\"America/New_York\" prefix, so the ET->UTC"
+  echo "     window was NOT converted (UTC_FROM='${UTC_FROM}'). Every count would be windowed to the"
+  echo "     wrong 24 hours and would read as a clean result. Run this on the VPS via:"
+  echo "     ssh mai-tai-vps 'bash -s' < ops/health/validate_0813_deploy.sh"
+  exit 2
+fi
 logreadable() { sudo test -r "$1"; }   # ⛔ the logs are ROOT-ONLY; a bare [ -r ] as trader says NO
 logcount() {  # logcount <file> <fixed-string>  -> a count, or -1 meaning UNKNOWN
   # ⛔⭐⭐ RETURNS -1, NOT 0, WHEN THE FILE CANNOT ANSWER FOR THIS WINDOW. An empty or freshly
