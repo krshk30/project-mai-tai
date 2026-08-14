@@ -79,25 +79,53 @@ logtail() {  # logtail <file> <fixed-string> <n>
 # the exact false-clean it exists to prevent. Every verdict block now calls this FIRST.
 unknown() { for v in "$@"; do case "$v" in ''|*[!0-9-]*|-1) return 0;; esac; done; return 1; }
 show() { case "$1" in -1) echo "UNKNOWN(log cannot answer for this window)";; *) echo "$1";; esac; }
+LOG_SILENT_WARN_SECS=${LOG_SILENT_WARN_SECS:-1800}   # 30 min of silence ⇒ suspect a dead writer
+_ts_epoch() { date -d "$1 UTC" +%s 2>/dev/null; }
 logcoverage() {
   local f="$1"
   logreadable "$f" || { echo "   ⛔⛔ CANNOT READ $f — counts from it are UNKNOWN, not zero."; return; }
   local first last
-  first=$(sudo head -1 "$f" | cut -c1-19); last=$(sudo tail -1 "$f" | cut -c1-19)
+  # ⛔ Take the first/last line that actually CARRIES a timestamp. A traceback at the tail has none,
+  # and the old `tail -1 | cut -c1-19` handed back junk — which then failed the `[ -n "$last" ]`
+  # guard and SKIPPED the coverage check entirely. A skipped check prints exactly like a clean one.
+  first=$(sudo head -200 "$f" | grep -oE '^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}' | head -1)
+  last=$(sudo tail -200 "$f" | grep -oE '^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}' | tail -1)
   echo "   log $(basename "$f") covers ${first:-?} .. ${last:-?} UTC"
-  if [ -n "$first" ] && [[ "$first" > "$UTC_FROM" ]]; then
+  if [ -z "$first" ] || [ -z "$last" ]; then
+    echo "   ⛔⛔ NO TIMESTAMPED LINE in the head/tail of $f — coverage is UNKNOWN, not clean."
+    return
+  fi
+  if [[ "$first" > "$UTC_FROM" ]]; then
     echo "   ⛔⛔ THE LOG STARTS AFTER THE WINDOW OPENS (${UTC_FROM} UTC). Rotation already ate part"
     echo "        of this day — every log count below is a LOWER BOUND, not a count."
   fi
-  # ⛔ AND THE OTHER END. The ET day runs to 03:59 UTC the NEXT morning, so 20:00-23:59 ET always
-  # lands in the FOLLOWING logfile. A run that ignores this reports a lower bound as if it were a
-  # count — the same false-clean, just at the far edge of the window.
+  # ⛔⭐⭐ THE OTHER END IS **TWO DIFFERENT THINGS**. NEVER GIVE THEM THE SAME BANNER:
+  #   (a) ROTATION LOSS — the ET day is OVER and the file still ends before the window closes. The
+  #       evening (20:00-23:59 ET) is in the NEXT file and these counts are a genuine LOWER BOUND.
+  #   (b) THE DAY HAS NOT HAPPENED YET — counts are partial by construction. Not a defect.
+  # The first version compared `last` against min(now, window_end), so on EVERY intraday run the
+  # few seconds of log latency tripped (a)'s ⛔⛔ banner. A warning that is always on is not a
+  # warning: at 19:30, when rotation loss is real, it would have looked identical to 06:38 noise.
   local now_utc; now_utc=$(date -u '+%Y-%m-%d %H:%M:%S')
-  local want="$UTC_TO"; [[ "$now_utc" < "$UTC_TO" ]] && want="$now_utc"
-  if [ -n "$last" ] && [[ "$last" < "$want" ]]; then
-    echo "   ⛔⛔ THE LOG ENDS AT ${last} UTC but the window runs to ${want} UTC — the evening"
-    echo "        (20:00-23:59 ET) is in the NEXT rotated file. Counts are a LOWER BOUND."
-    echo "        Fix: also read the rotated file, or run again before 20:00 ET."
+  if [[ "$now_utc" > "$UTC_TO" ]]; then
+    if [[ "$last" < "$UTC_TO" ]]; then
+      echo "   ⛔⛔ THE ET DAY IS OVER but the log ends at ${last} UTC, before the window closes"
+      echo "        (${UTC_TO} UTC) — the evening (20:00-23:59 ET) is in the NEXT rotated file."
+      echo "        Counts are a LOWER BOUND. Fix: also read the rotated file."
+    fi
+  else
+    echo "   ℹ the ET day is still running (now ${now_utc} UTC, closes ${UTC_TO} UTC) — counts are"
+    echo "     PARTIAL by construction, not by rotation. Only the last run before 20:00 ET is quotable."
+    # ⛔ A SILENT log is a different failure from a partial day, and it is the one that fakes a
+    # clean: a dead writer yields zeros that read exactly like "the path never fired".
+    local le ne age; le=$(_ts_epoch "$last"); ne=$(date +%s)
+    if [ -n "$le" ]; then
+      age=$(( ne - le ))
+      if [ "$age" -gt "$LOG_SILENT_WARN_SECS" ]; then
+        echo "   ⛔ $(basename "$f") HAS BEEN SILENT FOR $(( age / 60 )) MIN — suspect a dead writer."
+        echo "     Its zeros below are UNKNOWN, not counts. Check the service before reading them."
+      fi
+    fi
   fi
 }
 
