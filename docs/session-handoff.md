@@ -145,11 +145,17 @@ storm it replaces.
 5. **⭐⭐ CHURN IS STILL THE BIGGEST NUMBER** — median 5 entries/symbol-day, max 16; ~200% of one
    position's notional in crossing over 14d. Selection is **DISCUSS BEFORE BUILDING**.
 6. **⛔ The orphan watch reads SCHWAB ONLY.** It can never clear a Webull question.
-7. **⛔⭐⭐ `broker_order_events` conflates CLIENT aborts with BROKER refusals** — needs a `source`
+7. **⛔⭐ THE WEBULL LEG BUYS UNDER A LOOSER CAP THAN THE STRATEGY CHOSE** — fan-out intents carry
+   no `eh_resting`/`resting_band_pct`, so they price at the OMS default **1.0%** instead of the
+   strategy's **0.5%**. ⛔ Schwab genuinely refuses most of these names (**10 of 12 have ZERO Schwab
+   fills ever**), so the Webull leg is the ONLY leg — that part is correct and not a bug. Measured
+   fills sit at median **+0.32%** vs level, so the loose cap rarely binds. **Deferred by operator
+   08-14.** Detail: open item 13.
+8. **⛔⭐⭐ `broker_order_events` conflates CLIENT aborts with BROKER refusals** — needs a `source`
    field. (Today's 58 were verified genuine by reading the verbatim 417 payloads.)
-8. **⚠ A pre-existing flaky test:** `test_scanner_cycle_history_retention_and_dedup` failed once in a
+9. **⚠ A pre-existing flaky test:** `test_scanner_cycle_history_retention_and_dedup` failed once in a
    full run, passes alone, passes with all 218 in its file, passes on re-run. Cross-file ordering.
-9. **P0 boot-hold freshness gate** · **Redis evicts the heartbeat stream** · **per-lot attribution
+10. **P0 boot-hold freshness gate** · **Redis evicts the heartbeat stream** · **per-lot attribution
    gap** — unchanged.
 
 ## 🔔 ALERTING
