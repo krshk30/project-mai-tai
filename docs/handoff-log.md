@@ -1740,3 +1740,45 @@ attempted for >2h** while the OMS polled for an OCO fill that can never arrive o
 - **CYN cleared** by the operator (all 5,000), so `MAI_TAI_PROTECTED_SYMBOLS=CYN,TE` is now stale.
 - **Schwab re-auth 05:21 ET** ⇒ next expiry **Wed 08-19 05:21 ET**, off the Monday slot but before
   the 07:00 EH open.
+
+## 2026-08-14 — first live exercise of the 08-13 deploy; two validator defects found by a broker screen
+
+**#688 is the win: 83 Webull mirrors against 83 RTH Schwab rests, 100%.** Yesterday the same check
+read 215 rests / 0 mirrors. That path went from broken to exact in one deploy, and it is no longer
+UNEXERCISED. #687 also passed live (21 claim expiries instead of latching a flip shut).
+
+**#691 halved the reservation rejects, 58 → 24, and did not clear them** (`-close-` 5 filled / 24
+rejected, 12 releases). The cause it removes is real; the bound underneath — `_v2_exit_close_failures`
+resetting on any positively-HELD read — is untouched and is the next fix.
+
+**⛔ I reported "#689 attach is 0-for-11, no Webull fill got a broker-side bracket all day." That was
+WRONG, and the operator's own Webull screen is what disproved it.** WETO showed `Target@8.17 /
+Stop@7.61`, matching `[V2-OCO-EMIT] WETO entry=8.0100 -> OCO[target=8.1702 stop=7.6095]` to the cent.
+Brackets go on fine — **148 `[V2-OCO-EMIT]` today**. I read the absence of ONE marker as the absence
+of protection without checking the other path that provides it.
+
+⇒ **Two validator defects, both false-clean/false-alarm shaped:**
+- **§4** counts only `[WEBULL-PROTECT-ATTACHED]` and concludes "held with no broker-side stop".
+- **§6** counts `[OMS-EXIT-REPROTECT-FAILED]` (=0) and prints **PASS** while the re-attach failed
+  **9×** under `[WEBULL-PROTECT-FAILED]`.
+Both must read both markers. Recorded as open item 15.
+
+**The real defect is narrower and worse:** `[V2-OCO-EMIT]` puts a bracket on → **#691 cancels it** to
+close → the close is refused 3× → **#692 cannot put it back** (stale entry-derived stop; price has
+already traded through it, `STOP_LOSS_PRICE_LT_MARKETPRICE` 22×). Held, bracket gone, close failing.
+That is the hazard #692 exists to close, and it is not closing it.
+
+**Other findings, all filed as open items:** the fan-out leg prices under a 1.0% cap instead of the
+strategy's 0.5% (item 13 — but Schwab genuinely refuses 10 of 12 of those names, zero Schwab fills
+ever, so the Webull leg is the only leg); the scanner float ceiling drops large-float movers and the
+"extreme mover" path is nested *inside* that filter so it can never override it (item 14, CAPR +98%
+never confirmed); and the largest `live:orb` reject class today was **83× our own Python
+`RuntimeError('Webull combo MASTER…')`** stored as a broker refusal.
+
+**Shipped:** #697/#698/#699 (validator: the rotation warning fired on every intraday run; a blind
+zero must not read as UNEXERCISED; **rotated logs ARE retained — there is no 20:00 ET deadline**, and
+§0b now controls the population being measured) · #701 (bar-watch I2/I3). **Merged, not deployed —
+deploy after the close** so today's validation stays uncontaminated.
+
+⛔ **The standing lesson, twice in one day:** search the source that does not rotate, match the string
+the vendor actually emits, and **check the broker's own screen before concluding from our logs.**
