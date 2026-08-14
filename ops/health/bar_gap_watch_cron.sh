@@ -70,9 +70,51 @@ VERDICT=$(nice -n 19 "$REPO"/.venv/bin/python "$REPO"/ops/health/fleet_health_ch
 LEVEL=$(printf '%s' "$VERDICT" | awk '{print $2}')
 [ -z "$LEVEL" ] && LEVEL="AMBER" && VERDICT="bar-continuity check produced no verdict"
 
-PREV_STATUS="OK"; LAST_ALERT=0
-[ -f "$STATE" ] && read -r PREV_STATUS LAST_ALERT < "$STATE" 2>/dev/null || true
+PREV_STATUS="OK"; LAST_ALERT=0; REPAIR_AT=0
+# ⛔ I2 — the 3rd field is the epoch of the last REPAIR. An older 2-field state file leaves it
+# empty, which defaults to 0 and disables the gate: degrades to the old behaviour, never to a
+# silently wrong one.
+[ -f "$STATE" ] && read -r PREV_STATUS LAST_ALERT REPAIR_AT < "$STATE" 2>/dev/null || true
+case "${REPAIR_AT:-}" in ''|*[!0-9]*) REPAIR_AT=0;; esac
 NOW=$(date +%s)
+WATCH_WINDOW_SECS=1800   # MUST match the 30-min window fleet_health_check.py inspects
+GAPPED=""; GAPPED_SQL=""
+
+# ⛔ I2 predicate, factored out so it can be pinned by a test. TRUE (0) => the check window still
+# overlaps the range we repaired, so a contiguous read proves only that our own INSERT landed.
+green_held() {  # green_held <now_epoch> <repair_epoch> <window_secs>
+  [ "${2:-0}" -gt 0 ] || return 1          # never repaired => nothing to hold for
+  [ $(( $1 - $3 )) -lt "$2" ]
+}
+# ⛔ I3 helper, likewise pinned: pull the holed symbols out of report_bar_gaps.py's output.
+parse_gapped() { grep -oE '\[backfill\] [A-Z]{1,6}:' | sed -E 's/.*\] ([A-Z]+):/\1/' | sort -u | tr '\n' ' '; }
+
+# ⛔⭐⭐ I3 — THE UNANSWERABLE LINE IS DELETED, NOT REPLACED BY A MECHANISED ONE. HERE IS WHY.
+# The old body asked the operator to "confirm [V2-ATR-BAR-GAP] fired for these names". That is
+# unanswerable: it is unscoped in time (ANY firing that day satisfies it — on 2026-08-14 the only
+# firing was on warmup-replay bars 29 DAYS stale), and ABSENT is the EXPECTED state whenever the
+# symbol simply left the watchlist, because then there is a DB hole and NO in-memory gap to span.
+#
+# The obvious fix is to have this script answer the real question — "were we HOLDING or RESTING on
+# the gapped symbol?" — instead of asking it. That was written, and then MEASURED, and it does not
+# work with the current schema:
+#
+#   * `broker_orders.status` has only ever held THREE values across the whole table, every account,
+#     all time: rejected (46819) / cancelled (14270) / filled (14004). A "non-terminal status"
+#     filter is therefore ALWAYS ZERO — a guard that guards nothing.
+#   * `account_positions.quantity <> 0` is empty on EVERY account (133 v2 rows, all zero), and
+#     `virtual_positions` for v2 is 67 rows all zero — consistent with its known false-zero defect.
+#
+# So a naive exposure check would print NOT EXPOSED 100% of the time: a false-clean generator, which
+# is the very failure this whole change is about. Shipping it would have been worse than the line it
+# replaced, because it would have LOOKED like an answer.
+#
+# ⇒ The correct form is an INTERVAL OVERLAP — an order whose [submitted_at, updated_at] span crosses
+#   the gap window, regardless of its final status (v2 orders live ~50s median, 334s p90, so the
+#   overlap is real even though the row only ever records its terminal state), plus fills bracketing
+#   the window for the holding limb. That needs the gap's minute range, which is recoverable from
+#   the rows just stamped source='rest'. It is NOT built here: it needs its own validation that the
+#   EXPOSED branch can actually fire, on a past day where it demonstrably should.
 
 send_ntfy() {  # $1=title $2=priority $3=tags $4=body
   # ⛔ Titles must be ASCII — an em-dash silently LOSES the push (learned on the OCO watch).
@@ -101,6 +143,12 @@ if [ "$LEVEL" = "RED" ] || [ "$LEVEL" = "AMBER" ] || [ "$SELFTEST" -eq 1 ]; then
     REPAIR_FULL=$(nice -n 19 "$REPO"/.venv/bin/python "$REPO"/scripts/report_bar_gaps.py                     --day "$TODAY" --go 2>&1)
     REPAIR=$(printf '%s' "$REPAIR_FULL" | tail -4)
     echo "$STAMP  REPAIR: $REPAIR" >> "$LOG"
+    # ⛔ I2 — stamp WHEN we wrote, so the recovery GREEN can refuse to verify our own INSERT.
+    if printf '%s' "$REPAIR_FULL" | grep -qE 'INSERTED [1-9][0-9]* bar'; then REPAIR_AT=$NOW; fi
+    # I3 — which symbols were holed, for the exposure lookup and for a SCOPED undo hint.
+    GAPPED=$(printf '%s' "$REPAIR_FULL" | parse_gapped)
+    echo "$STAMP  GAPPED: ${GAPPED:-<none parsed>}" >> "$LOG"
+    [ -n "$GAPPED" ] && GAPPED_SQL=$(printf "'%s'," $GAPPED | sed 's/,$//')
 
     # ---- HALT DOWNGRADE --------------------------------------------------------------------
     # ⛔⭐ "INSERTED 0" ALONE IS NOT A HALT SIGNATURE. It is equally true when the REST call
@@ -128,12 +176,24 @@ AUTO-REPAIR (database only):
 $REPAIR
 
 Bars are missing from the DB series (backtest/parity/recorder read it), so the fill above matters.
-LIVE ATR is already protected: #620 refuses to compute true range across a gap and logs
-[V2-ATR-BAR-GAP] per symbol — grep the v2 log to confirm it fired for these names.
+
+A HOLE IS NOT A DEFECT BY ITSELF. A symbol that LEAVES THE WATCHLIST stops receiving bars BY
+DESIGN, and on 2026-08-14 that was the whole of a RED (LBGJ, off-list 07:16-07:38 ET). This alert
+CANNOT yet tell that apart from a real feed loss - it has no watched-minutes denominator.
 DO NOT restart schwab-1m-v2 on account of this alert: a restart punches a fresh hole of its own,
-which is the very condition this watch exists to catch. Restart only if [V2-ATR-BAR-GAP] is ABSENT
-for a gapped symbol that v2 is actually holding or resting an order on.
-Undo the fill: DELETE FROM strategy_bar_history WHERE source='rest';"
+which is the very condition this watch exists to catch.
+RESTART ONLY IF v2 was HOLDING or RESTING on a gapped symbol across the gap. Check it directly -
+the order row only ever records its FINAL status, so ask for an interval overlap, not a live status:
+  select bo.symbol, bo.order_type, bo.status, bo.submitted_at, bo.updated_at
+    from broker_orders bo join broker_accounts b on b.id=bo.broker_account_id
+   where b.name='live:schwab_1m_v2' and bo.symbol in (${GAPPED_SQL:-'<none parsed>'})
+     and bo.submitted_at <= <gap_end> and bo.updated_at >= <gap_start>;
+Live ATR is separately protected by #620, which refuses to span a gap. Its [V2-ATR-BAR-GAP] marker
+is deliberately NOT quoted here as confirmation: it is unscoped in time, and its ABSENCE is the
+correct, expected state when the symbol was merely off the watchlist.
+Undo THIS fill (scoped — never the bare source='rest' delete, which drops every bar ever repaired):
+  DELETE FROM strategy_bar_history WHERE source='rest'
+    AND symbol IN (${GAPPED_SQL:-'<none parsed>'}) AND bar_time >= now() - interval '3 hours';"
     [ "$SELFTEST" -eq 1 ] && BODY="[SELFTEST] $BODY"
     if [ "${HALT_DOWNGRADE:-0}" -eq 1 ]; then
       BODY="MARKET QUIET / HALT - not our data loss.
@@ -156,10 +216,24 @@ $BODY"
   fi
   [ "$SELFTEST" -eq 0 ] && echo "$LEVEL $LAST_ALERT" > "$STATE"
 else
+  # ⛔⭐⭐ I2 — A VERIFICATION MUST NOT BE SATISFIABLE BY OUR OWN ACTION.
+  # The check inspects the last 30 minutes. Immediately after a repair that window IS the range we
+  # just backfilled, so it reads contiguous BECAUSE WE MADE IT CONTIGUOUS — the GREEN would print
+  # whether or not the cause persisted. Observed live 2026-08-14: RED 07:40 → auto-repair → GREEN
+  # 07:45, and the symbol churned off the watchlist again at 07:47. Hold the all-clear until the
+  # window has advanced entirely past the repaired range.
   if [ "$PREV_STATUS" != "OK" ]; then
-    send_ntfy "OK v2 bar series contiguous again" "default" "white_check_mark" "$VERDICT"
+    if green_held "$NOW" "$REPAIR_AT" "$WATCH_WINDOW_SECS"; then
+      echo "$STAMP  GREEN HELD: the ${WATCH_WINDOW_SECS}s window still overlaps the range repaired at ${REPAIR_AT} — verifying our own INSERT proves nothing. $(( REPAIR_AT + WATCH_WINDOW_SECS - NOW ))s to go." >> "$LOG"
+      # stay non-OK so the all-clear can still fire once the window clears
+      echo "$PREV_STATUS $LAST_ALERT $REPAIR_AT" > "$STATE"
+      exit 0
+    fi
+    send_ntfy "OK v2 bar series contiguous again" "default" "white_check_mark" \
+      "$VERDICT
+Verified on a window that does NOT overlap the repaired range (last repair $(( (NOW - REPAIR_AT) / 60 )) min ago; window ${WATCH_WINDOW_SECS}s)."
     echo "$STAMP  ALERT[GREEN] recovery sent" >> "$OUT/alert.log"
   fi
-  echo "OK $LAST_ALERT" > "$STATE"
+  echo "OK $LAST_ALERT $REPAIR_AT" > "$STATE"
 fi
 exit 0
