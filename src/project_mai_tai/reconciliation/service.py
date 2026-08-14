@@ -18,6 +18,7 @@ from project_mai_tai.db.models import (
     AccountPosition,
     BrokerAccount,
     BrokerOrder,
+    OmsManagedPosition,
     ReconciliationFinding,
     ReconciliationRun,
     Strategy,
@@ -199,8 +200,42 @@ class ReconciliationService:
             ).all()
         }
 
+        # ⛔⭐⭐ `virtual_positions` FALSELY READS ZERO ON A POSITION WE REALLY HOLD, and comparing
+        # ONLY against it manufactures a CRITICAL drift for a position that is tracked correctly.
+        # Live instance 2026-08-14 (WETO, live:orb): the OMS filled 1 @ 8.005 at 16:19:14Z, and
+        # `[VIRTUAL-CLEAR]` zeroed the virtual row 0.7s later — inside the ~15s Webull settle window,
+        # while `[SETTLE-PENDING] shape=FLAT_INFERRED` still said "our fill is not visible yet". The
+        # broker became visible at 16:19:30Z and NOTHING restored the row. Meanwhile
+        # `oms_managed_positions` read `status=open, current_quantity=1` throughout, updating every
+        # ~8s. Broker 1 vs virtual 0 ⇒ CRITICAL page, while the OMS's own book was correct all along.
+        #
+        # ⇒ OUR BOOKS = the MAX of the two sources. `oms_managed_positions` is single-writer
+        # (OMS-only) and is the ladder's own state, so it is the authority on "do we think we hold
+        # this". Taking the max can only REMOVE a drift the OMS can account for; it can never hide
+        # one, because a stale-open managed row still disagrees with a flat broker and still fires.
+        # ⛔ It keys on broker_account_NAME (TEXT natural key, no FK), so it needs the name->id map.
+        # ⛔ Inert when `oms_v2_exit_management_enabled` is OFF (no rows) — then this is a no-op and
+        # behaviour is byte-identical to before.
+        account_id_by_name = {account.name: account.id for account in account_lookup.values()}
+        managed_quantities: dict[tuple[Any, str], Decimal] = {}
+        managed_strategies: dict[tuple[Any, str], set[str]] = defaultdict(set)
+        for managed in session.scalars(
+            select(OmsManagedPosition).where(OmsManagedPosition.status == "open")
+        ).all():
+            account_id = account_id_by_name.get(managed.broker_account_name)
+            if account_id is None:
+                continue
+            key = (account_id, managed.symbol)
+            managed_quantities[key] = managed_quantities.get(key, Decimal("0")) + Decimal(
+                str(managed.current_quantity)
+            )
+            managed_strategies[key].add(managed.strategy_code)
+
         findings: list[FindingSpec] = []
-        keys = sorted(set(aggregates) | set(account_positions), key=lambda item: (str(item[0]), item[1]))
+        keys = sorted(
+            set(aggregates) | set(account_positions) | set(managed_quantities),
+            key=lambda item: (str(item[0]), item[1]),
+        )
         for account_id, symbol in keys:
             account = account_lookup.get(account_id)
             account_name = account.name if account is not None else str(account_id)
@@ -210,10 +245,15 @@ class ReconciliationService:
             account_position = account_positions.get((account_id, symbol))
 
             virtual_quantity = aggregate["quantity"] if aggregate else Decimal("0")
+            managed_quantity = managed_quantities.get((account_id, symbol), Decimal("0"))
+            # OUR BOOKS = the OMS ladder's own state OR the virtual row, whichever knows more. See
+            # the WETO note above: the virtual row false-zeroes inside the broker settle window while
+            # oms_managed_positions stays correct, and comparing only the former manufactures a page.
+            our_quantity = max(virtual_quantity, managed_quantity)
             account_quantity = account_position.quantity if account_position is not None else Decimal("0")
-            quantity_delta = abs(account_quantity - virtual_quantity)
+            quantity_delta = abs(account_quantity - our_quantity)
             if quantity_delta > tolerance:
-                severity = "critical" if account_quantity == 0 or virtual_quantity == 0 else "warning"
+                severity = "critical" if account_quantity == 0 or our_quantity == 0 else "warning"
                 findings.append(
                     FindingSpec(
                         finding_type="position_quantity_mismatch",
@@ -224,9 +264,17 @@ class ReconciliationService:
                         payload={
                             "account_name": account_name,
                             "account_quantity": str(account_quantity),
+                            # ⛔ BOTH sources are reported, never collapsed. When these disagree the
+                            # reader must be able to see WHICH book was wrong — on 2026-08-14 the
+                            # virtual row said 0 and the managed row said 1, and only one was right.
                             "virtual_quantity": str(virtual_quantity),
+                            "managed_quantity": str(managed_quantity),
+                            "our_quantity": str(our_quantity),
                             "quantity_delta": str(quantity_delta),
-                            "strategy_codes": sorted(set(aggregate["strategy_codes"])) if aggregate else [],
+                            "strategy_codes": sorted(
+                                set(aggregate["strategy_codes"] if aggregate else [])
+                                | managed_strategies.get((account_id, symbol), set())
+                            ),
                         },
                     )
                 )
