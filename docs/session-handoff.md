@@ -89,18 +89,51 @@ restore were both scoped to `fetched`. `[BROKER-SYNC-UNREADABLE]` fired with the
 trigger. Inject the fault against the real object. Waiting was the worse option here — see below.
 
 ### ⛔⭐ DENOMINATOR CORRECTION — "2/324" IS CONTAMINATED
-Retained-log coverage is **08-10 → 08-17** (6 sessions), **not** 08-11→08-17 as first stated. And:
+Retained-log coverage is **Mon 08-10 → Mon 08-17** (6 sessions), **not** 08-11→08-17 as first stated.
+⛔ **Re-bucketed to ET** — my first pass bucketed by UTC day, and **logs rotate 00:00 UTC = 20:00 ET**,
+so a Saturday-evening burst was filed under Sunday:
 
-| day | failures |  | day | failures |
+| ET day | failures | | ET day | failures |
 |---|---|---|---|---|
-| 08-11 | 2 | | 08-15 | 1 |
-| 08-12 | 1 | | **08-16** | **273** ⛔ *Saturday, market closed* |
-| 08-14 | 1 | | 08-17 | 46 |
+| 08-10 Mon | 0 | | **08-15 Sat** | **274** ⛔ *market closed* |
+| 08-11 Tue | 2 | | 08-16 Sun | 0 |
+| 08-12 Wed | 1 | | 08-17 Mon | 46 |
+| 08-13 Thu | 0 | | 08-14 Fri | 1 |
 
-**273 of 324 (84%) fell on a non-trading day.** Session-day failures are **50**, not 324. The
-**2-of-2 conversion is unchanged** and remains the number to quote. ⭐ The Saturday spike is its own
-finding: **Schwab throws large outage bursts.** One landing on a trading day while we hold is far
-worse than any per-session rate implies — which is precisely why this was forced, not awaited.
+**274 of 324 (85%) fell on a non-trading day.** Session-day failures are **50**, not 324. The
+**2-of-2 conversion is unchanged** and remains the number to quote.
+
+### §53 — THE WEEKEND SPIKE: **NOT** PROMOTED TO A FINDING
+⛔ **Downgraded wording: one weekend showed 274 failures; the cause is NOT established.**
+The "Schwab throws large outage bursts" claim is withdrawn pending evidence. The forced-injection
+decision stands on its own — only that rationale was in question.
+
+**53.1 — prior weekends: UNANSWERABLE, n=1.** The retained window runs Mon→Mon and contains
+**exactly one weekend**. `journalctl -u project-mai-tai-oms` returns **no entries at all** (the service
+logs to a file sink), so there is no deeper history. ⇒ Cannot distinguish scheduled weekend
+maintenance from an outage. **Re-check after the next weekend rotates in.**
+
+**53.2 — cadence, NOT a retry storm** ✅ *(closed, no new item)*. Inter-failure gaps during the burst:
+**254 of 272 were exactly 15s** (whole range 14–16s), and the adapter's positions read has **no retry
+or backoff** (its only retry is a single token-refresh). ⇒ normal 15s poll, **every call failing**.
+Schwab's own words, 278×: `Application encountered unexpected error that prevented fulfilling this
+request` — a server-side 5xx, not our timeout. Other classes: 30 read timeouts, 8 DNS
+`NoResolvedHost`, 3 `Service is currently unavailable`, 3 TLS handshake, 2 upstream reset.
+
+### 🔴 §54 — THE FIX CREATES ITS OWN SILENT WINDOW *(new item, NOT tonight)*
+#714 correctly leaves the ledger **stale-but-intact** while reads fail — but during that window we
+stop learning what changed at the broker, and a native stop could fill unseen.
+`[BROKER-SYNC-UNREADABLE]` **only logs**; nothing pages on *sustained* unreadability. 274 lines nobody
+reads is a component reporting healthy while its function is dead — the shape this board exists for.
+**Sizing is already measured** — the trip threshold has a clean gap to sit in:
+
+| | longest consecutive unreadable run |
+|---|---|
+| Sat 08-15 evening | **273 reads ≈ 68 min** |
+| last trading day (08-17) | **6 reads ≈ 1 min** |
+
+⇒ Trip on *N consecutive failures* **and** *holding something*, well above 6 and well below 273.
+**Natural pair with Ship 1 (the exit-blocked pager): same trip logic, different sensor.**
 
 ## 🕐 OPEN PRs
 **#715** R4 refusal model (backtest module only, no wiring) · **#716** §46.1 raise-propagation tests.
