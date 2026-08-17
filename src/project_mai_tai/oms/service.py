@@ -6357,8 +6357,8 @@ class OmsRiskService:
         # identical reason.
         if not _is_regular_market_session():
             self.logger.info(
-                "[V2-OCO-EMIT] %s SKIPPED (outside regular hours) -- plain entry, software "
-                "ladder owns the exit", payload.symbol,
+                "[V2-OCO-EMIT] %s %s SKIPPED (outside regular hours) -- plain entry, software "
+                "ladder owns the exit", payload.symbol, payload.broker_account_name,
             )
             return
         md = payload.metadata
@@ -6372,8 +6372,9 @@ class OmsRiskService:
             # No usable entry reference -> do NOT emit a half-specified bracket; fall back to
             # the plain single-leg entry (the adapter also refuses an incomplete bracket).
             self.logger.warning(
-                "[V2-OCO-EMIT] %s no usable entry reference (entry_price/reference_price); "
-                "placing the plain single-leg entry instead of a bracket", payload.symbol,
+                "[V2-OCO-EMIT] %s %s no usable entry reference (entry_price/reference_price); "
+                "placing the plain single-leg entry instead of a bracket",
+                payload.symbol, payload.broker_account_name,
             )
             return
         target = entry * (1.0 + self._cw_target_pct / 100.0)
@@ -6398,8 +6399,15 @@ class OmsRiskService:
         md["bracket_target_price"] = _schwab_round(target)
         md["bracket_stop_price"] = _schwab_round(protect)
         self.logger.info(
-            "[V2-OCO-EMIT] %s bracket entry=%.4f -> OCO[target=%.4f stop=%.4f] (type=%s)",
-            payload.symbol, entry, target, protect, md["bracket_entry_type"],
+            # ⛔⭐ THE ACCOUNT IS LOAD-BEARING ON THIS LINE (added 2026-08-17). Without it this
+            # marker is the ONLY unscoped one in the exit-protection picture, and the fan-out puts
+            # BOTH accounts on the same symbol at the same moment — so any per-account attribution
+            # has to guess, and a Schwab bracket can be read as covering a Webull fill. The 08-17
+            # denominator had to carry a `NATIVE_OCO?` question mark for exactly this reason, which
+            # blocked stating "the attach never succeeds" per account at all.
+            "[V2-OCO-EMIT] %s %s bracket entry=%.4f -> OCO[target=%.4f stop=%.4f] (type=%s)",
+            payload.symbol, payload.broker_account_name, entry, target, protect,
+            md["bracket_entry_type"],
         )
 
     def _apply_orb_quote_priced_entry(
