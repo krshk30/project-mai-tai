@@ -675,3 +675,124 @@ severity and alert assumes non-negative quantities, and `abs(account_quantity - 
 signed pair changes what "delta" means. Scope it with item 8 (severity inversion), which is now
 workable because #704 supplied the ownership discriminator.
 [[project_mai_tai_oms_scoping_invariant]] · [[feedback_the_brokers_book_is_shared]]
+
+---
+
+## 17. 🔴🔴 HIGH — ONE FAILED SCHWAB POSITIONS READ ERASES A HELD POSITION'S LEDGER ROW
+*(2026-08-17. Proven harm, not a hypothesis. Root-cause candidate for item 12's false ZERO.)*
+
+### The chain — every link code-confirmed
+1. `broker_adapters/schwab.py::list_account_positions` **returns `[]` on ANY failure** — five
+   `return []` paths including a bare `except RuntimeError`. ⛔ A bare except returning a value that
+   means "nothing here" is the worst shape of this bug.
+2. **Webull HAS a never-synthesize-flat guard** (cached snapshot, typed error on 429, *"never a
+   synthesized flat"*). **Schwab has none.** That asymmetry is the actionable part.
+3. `oms/service.py` does **not** gate the sync on an empty snapshot.
+4. `store.sync_account_positions` zeroes **every symbol absent from the snapshot**.
+5. `store.clear_virtual_positions_without_account_backing` then erases those virtual rows — and its
+   own docstring says: *"Nothing re-derives `virtual_positions` from account backing … a row zeroed
+   here stays zeroed even once the broker reports the position again."*
+
+### ⭐⭐ THE NUMBER TO QUOTE IS THE CONVERSION, NOT THE TRIGGER RATE
+```
+324 Schwab positions-read failures in retained logs (08-11 -> 08-17)
+109 OMS-owned position windows in the same period
+  2 failures landed WHILE we held a position
+  2 of 2  ->  ERASED, to the second
+      08-12 19:34:18 failure -> 19:34:18.484 [VIRTUAL-CLEAR] live:schwab_1m_v2:CRWU=2
+      08-14 19:31:48 failure -> 19:31:49.090 [VIRTUAL-CLEAR] live:schwab_1m_v2:VWAV=2
+```
+⛔ **2/324 invites someone to call this rare. The operative figure is 2 of 2 exposed holds erased,
+and it scales with HOLD TIME, not with failure frequency.** Both were **isolated single failures**
+(one each in a 10-minute window) ⇒ **one failed read is sufficient**; no burst, and no later good
+sync repairs it. Only 2 of 324 coincided with a hold because the failures clustered while we
+happened to be flat — that is luck, not a guard.
+
+### Build THREE layers — they fail differently
+1. **Port Webull's guard to the Schwab adapter** — cached snapshot, typed error, close all five
+   `return []` paths.
+2. **Gate the sync itself** — refuse to zero anything from an empty snapshot, ever. Independent of
+   the adapter so an adapter regression cannot reopen the path.
+3. **⭐ Make the erasure NOT one-way** — re-derive from broker backing once the broker reports the
+   position again. L1+L2 stop new erasures; neither repairs an existing one, and it is the one-way
+   property that turns a transient hiccup into permanent ledger corruption. Degrades gracefully when
+   the first two are bypassed by something nobody thought of.
+
+**Acceptance:** the mutant must prove the guard fires on a failed read, AND a separate test must
+prove a failed read cannot reach `sync_account_positions` at all.
+**Justification needs no further demonstration:** *an empty list from a failed call is not a flat
+account.*
+
+⛔ **ONE ROOT, TWO HARMS.** The same Schwab instability produced 7 entry aborts on 08-17 (timeouts,
+`Unable to resolve host traderapi-accounts.schwab.com`, upstream resets — 5 of 7 today). A fix that
+addresses only the ledger will look like it worked while entries keep dropping.
+[[project_mai_tai_virtual_positions_false_zero]]
+
+---
+
+## 18. 🟡 ~35 OF 76 SCHWAB ENTRY REJECTS ARE OURS — the buy-stop is not above the ask
+*(2026-08-17, from Schwab's OWN book: tag `TA_*`, BUY legs, `status=REJECTED`, 08-10 → 08-17.)*
+
+| n | reason | symbols | whose |
+|---|---|---|---|
+| 29 (+6 in combined) | *"The stop price must be above the current ask for buy stop orders…"* | BOXL CRWU FGI GXAI RMCF SCKT XHLD | **OURS** |
+| 24 | *"Opening transactions for this security must be placed with a broker"* | 21 | Schwab restriction |
+| 16 | *"not eligible for electronic entry… call a representative"* | INHD PLAG | Schwab restriction |
+| 1 | **"You do not have enough available cash/buying power"** | XHLD | account-level, different class |
+
+⭐ **~41 of 76 are Schwab refusing the security outright** — this quantifies the standing "Schwab
+genuinely refuses most of those names" finding. Not ours, not fixable our side.
+
+### ⛔ TEST THE HYPOTHESIS BEFORE BUILDING — three outcomes, three different directions
+v2 entries are buy-stops and Schwab requires the trigger above the ask **at arrival**. For each of
+the ~35: our submitted stop, the quote at submit time, and the tape over the following minute.
+- **price ran through our trigger before arrival** ⇒ latency/staleness in the entry path, and the
+  loss concentrates in exactly the fastest moves we want. Real execution defect.
+- **our trigger was computed below the ask when we computed it** ⇒ pricing-logic defect, and the
+  **same family as the Webull `STOP_LOSS_PRICE_LT_MARKETPRICE` case** — check the shared cause.
+- **neither** ⇒ something about how Schwab evaluates the trigger that we do not model. Say so
+  rather than picking the closest story.
+
+⛔⛔ **Do NOT widen the trigger to make the rejects stop.** That changes what we enter — strategy,
+not execution.
+
+⭐ **The two reject populations are ALREADY separable without item 9's `source` column:** present in
+Schwab's book with `REJECTED` = broker refusal (76); absent with no `broker_order_id` = our own abort
+(7, all transient infrastructure).
+
+---
+
+## 19. 🟡 THE BROKER-TRUTH GATE IS SHARED-BOOK SCOPED — the scoping invariant's one bypass
+*(2026-08-17. LATENT — no v2 emitter reaches it today.)*
+
+`oms/service.py:1145-1171` gates a SELL on `account_positions` — **the shared book** — then does a
+live broker re-read. On any symbol the operator holds manually it **cannot distinguish our shares
+from his**, so it passes on his inventory. It is the one mechanism by which the OMS scoping
+invariant could be bypassed and we could sell into an operator position.
+
+Latent because it is a *permissive* gate: it removes a rejection, it does not create a sell, and the
+only consumer that could manufacture one (`strategy_engine_app`'s rehydrate) is inert for v2 —
+v2 is an isolated service and is not in `state.bots` (`bot_count=1`, polygon_30s).
+
+⛔ The `[VIRTUAL-CLEAR]` sweep has the **same** defect (`store.py`, keyed on account+symbol only), so
+it is **not** the template for fixing this. Fix scoped to the OMS-owned set, same as item 20.
+⭐ **The `tag` field is a second discriminator** in Schwab's book (`TA_krshk30gmailcom…` = ours,
+`API_TOS:*` = the operator's) — but note the limit: **positions carry no tag, only orders.** So
+OMS-owned quantity must be derived from our order history, not read off the position book. That is
+the direction, not a drop-in.
+
+---
+
+## 20. 🟡 THE RESTART PRE-FLIGHT IS MIS-SCOPED, AND ITS SECOND CLAUSE IS THE USABLE ONE
+*(2026-08-17.)*
+
+`docs/live-market-restart-runbook.md` and the memory say **"account-flat"** against the **shared
+book**. On an account where the operator holds anything manually (IVF 5000, XPON −1000) that blocks
+**every deploy, forever**. It must test the **OMS-owned set** — managed rows + our non-terminal
+orders — matching the scoping invariant that already governs what the OMS acts on.
+
+⛔ **"Working orders = 0" is UNSATISFIABLE during RTH.** v2 rests entries near-continuously (336
+orders against 82 arms on 08-12; median time-at-rest 61s), so as one cancels another replaces it.
+Use the runbook's second clause — *"or know exactly which survive"* — which is what made today's
+three deploys possible. **This is "never ask for a confirmation the system cannot produce", found in
+the wild.**

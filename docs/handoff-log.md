@@ -15,6 +15,64 @@
 
 ---
 
+## 2026-08-17 (Mon) EVENING — the root cause was the session tag, and a proven-harm ledger defect
+
+*(Supersedes nothing in the entry below — that covers the morning. This is the afternoon.)*
+
+**Four PRs shipped and deployed: #706 `12756d0`, #707 `634ff21`, #709 `ac14b86`, #710 `a2616f6`.**
+Outages 3s / 10s / 15s / 3s. `schwab-1m-v2` never restarted, 0 bar gaps attributable to any of them.
+
+### The root cause, after three wrong answers
+#707's payload logging deployed at 07:44 ET and captured a refusal at **08:26 ET the same morning** —
+a day earlier than expected. IVF, bought pre-market at 2.5300, stop 2.40, **prior close 0.9716**:
+Webull validates a `CORE`-tagged order against the **CORE reference — the prior close** — not the
+live extended-hours tape. Our stop was below our entry; it was not below 0.9716.
+
+Per-fill cross-tab: **100% of refusals pre-market, every RTH fill bracketed.** The same episode also
+**disproved #707's own motivating hypothesis** — the widened retry ran 5 attempts across 30s with the
+position visible in 0.1s, so the settle window was exonerated exactly as designed.
+
+The fix is one conditional (#710). Webull's documented enum has `ALL` for extended hours, but the
+**v3 COMBO endpoint refuses it and accepts `ALL_DAY`** — `ALL` is valid single-leg only. A first
+six-value probe concluded "CORE is the only value"; the caveat attached to it is what kept that from
+becoming a false certainty.
+
+### The other find: one failed Schwab read erases a held position's ledger row
+Chasing why `[VIRTUAL-CLEAR]` fired on a position we held led to a complete, code-confirmed chain:
+Schwab's `list_account_positions` returns `[]` on any failure, the sync zeroes every absent symbol,
+and the clear is **one-way**. Webull has a never-synthesize-flat guard; Schwab does not.
+**324 failures, 109 hold-windows, 2 landed during a hold, 2 of 2 erased** — to the second, both from
+**isolated single failures**. Quote the 2-of-2 conversion, never the 2/324 trigger rate.
+
+### Three self-corrections worth keeping
+- **A probe whose control failed is VOID, not negative.** My first session-enum probe failed every
+  call on `invalid client_combo_order_id` (coids too short). Read as data it would have "confirmed"
+  that no extended value exists — the opposite of the truth.
+- **"Unqueryable" was wrong.** Webull's OCO children are **not discoverable** but **are readable by
+  deterministic coid** via `OrderDetailRequest.set_client_order_id`. The old wording nearly caused an
+  answerable check to be skipped as impossible.
+- **Task #9 was over-claimed and demoted.** I read an 11:51 snapshot as a permanent condition without
+  pulling `updated_at`. The clear LAGS (4s / 5m26s / 20m03s); it does not persist.
+
+### ⛔ THREE OVER-BROAD DENOMINATORS IN ONE DAY — the pattern is the lesson
+1. 14 **calendar days** quoted as 14 sessions (the window holds 10).
+2. Fills per **placement** (11%) instead of per **arm** (42%) — a 4× distortion, because every
+   reprice mints a new intent and there is no replacement link to collapse.
+3. **All positions** instead of the population the change reaches — this one manufactured a false
+   alarm on a decision already approved, then dissolved when scoped to pre-market `live:orb`
+   (41 positions, 0 past 19:30, latest close-of-day **09:31**, longest hold 47 min).
+⇒ **Ask which population a change reaches BEFORE measuring against it.**
+[[feedback_which_population_does_this_change_reach]]
+
+### Closed
+**Item 1.** Against Schwab's own book: **875/875 entry orders present, zero absent**; median
+time-at-rest **61–62s every day** (a fixed reprice cadence). 08-11 unremarkable on all measures.
+⛔ Nearly poisoned by `maxResults`: it **saturates rather than pages** (50→11, 200→45, 1000→269,
+3000→269) and truncates **silently**. Every future Schwab book pull must saturate and verify two
+values agree.
+
+---
+
 ## 2026-08-17 (Mon) — the reprotect direction was aimed at the wrong mechanism
 
 **Two PRs merged + deployed: #706 (`12756d0`) and #707 (`634ff21`).** Outages 3s and 10s, both far
