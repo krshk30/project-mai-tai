@@ -1920,14 +1920,46 @@ class OmsRiskService:
 
     # ------------------------------------------------ webull attach-after-fill (2026-08-13)
     def _spawn_webull_protection(self, **kw) -> "asyncio.Task[None] | None":
-        """Run the attach OFF the fill path -- it retries with sleeps and must never stall a fill."""
+        """Run the attach OFF the fill path -- it retries with sleeps and must never stall a fill.
+
+        ⛔⭐ ONE ATTACH PER POSITION AT A TIME (2026-08-17). The reprotect trigger can fire again
+        while an earlier attach is still working through its retries, and the two sequences then
+        interleave against the same shares. Live 2026-08-14 STKH, on ONE fill:
+        ``1/3, 2/3, 1/3, 3/3, FAILED, 2/3, 3/3, FAILED`` -- two sequences, two FAILED lines, one
+        position. Two costs, and the second is the one that misleads: the broker sees double the
+        traffic, and **any unprotected count read off the FAILED lines is INFLATED** (~0.6
+        positions per FAILED line, not 1).
+
+        ⛔ COALESCE, do not queue. A second attach for the same symbol wants the SAME pair on the
+        SAME shares, so the in-flight sequence already covers it; running it again afterwards would
+        just re-send a pair that either already rests or was already refused.
+        """
+        key = (str(kw.get("broker_account_name", "")), str(kw.get("symbol", "")).upper())
+        inflight = getattr(self, "_webull_protect_inflight", None)
+        if inflight is None:
+            inflight = {}
+            self._webull_protect_inflight = inflight
+        running = inflight.get(key)
+        if running is not None and not running.done():
+            self.logger.info(
+                "[WEBULL-PROTECT-COALESCED] %s %s — an attach is already in flight for this "
+                "position; not starting a second interleaved sequence",
+                key[1], key[0],
+            )
+            return running
         task = asyncio.ensure_future(self._attach_webull_protection(**kw))
         tasks = getattr(self, "_webull_protect_tasks", None)
         if tasks is None:
             tasks = set()
             self._webull_protect_tasks = tasks
         tasks.add(task)
+        inflight[key] = task
         task.add_done_callback(tasks.discard)
+        # ⛔ Only free the slot if it still holds THIS task, never unconditionally -- otherwise a
+        # finishing task could evict a newer one and let the interleaving straight back in.
+        task.add_done_callback(
+            lambda done, k=key: inflight.pop(k, None) if inflight.get(k) is done else None
+        )
         return task
 
     async def _attach_webull_protection(
@@ -1940,6 +1972,19 @@ class OmsRiskService:
         at the broker. So it retries, and a final failure is a WARNING carrying everything needed to
         act by hand -- never a silent return. An unprotected position that nobody is told about is
         strictly worse than one that is.
+
+        ⛔⛔ THE TWO PRE-FLIGHT GUARDS BELOW ARE **NOISE** FIXES. NEITHER MAKES THE PAIR PLACE.
+        Measured 2026-08-17 over all seven retained `oms.log` files (08-11 -> 08-17): this path has
+        **NEVER ONCE SUCCEEDED** -- zero `[WEBULL-PROTECT-ATTACHED]` and zero
+        `[WEBULL-EXIT-PAIR-PLACED]`, meaning `place_order` has never returned. 08-14 alone was 10
+        episodes, 0 attaches, across BOTH callers (#689 bare-fill fires ~0.2s after the fill,
+        #692 reprotect 37s-10min later) and refused identically whether the position was visible
+        or not. So the payload itself is refused for a reason neither guard addresses.
+
+        ⇒ **A LOWER REFUSAL COUNT AFTER THIS CHANGE IS NOT A FIX AND MUST NOT BE REPORTED AS ONE.**
+        These guards stop us sending orders we can already tell will be refused; they protect
+        nothing that was not protected before. The live PASS to require is a
+        `[WEBULL-PROTECT-ATTACHED]`, which has never yet been observed.
         """
         target_pct = float(getattr(self.settings, "oms_v2_cw_target_pct", 2.0))
         stop_pct = float(getattr(self.settings, "oms_v2_cw_hard_stop_pct", 5.0))
@@ -1949,6 +1994,38 @@ class OmsRiskService:
         interval = max(0.0, float(getattr(self.settings, "oms_webull_protect_interval_seconds", 2.0)))
 
         for attempt in range(1, attempts + 1):
+            # ⛔ Do not chase a position we no longer own. 2 of 27 refusals on 08-14 were
+            # SYMBOL_CAN_NOT_SELL_SHORT: the shares had already gone, so the attach was sending a
+            # protective SELL against nothing -- which at Webull reads as OPENING a short.
+            # ⛔⭐ ONLY a positively-CONFIRMED flat may stop us. FLAT_INFERRED is the ordinary shape
+            # inside the settle window -- live 08-14 CGTL read FLAT_INFERRED (n=0) for 12.7s after
+            # a real fill -- and bailing on it would abandon exactly the bare fills this exists to
+            # cover. Same discipline as `_v2_close_reconcile_flat`: HELD and UNKNOWN both continue.
+            state = await self._broker_symbol_position_state(broker_account_name, symbol)
+            if state is _PositionRead.FLAT_CONFIRMED:
+                self.logger.info(
+                    "[WEBULL-PROTECT-ABANDONED] %s %s — the broker CONFIRMS we no longer hold this "
+                    "position, so there is nothing to protect. Stopping at attempt %d/%d.",
+                    symbol, broker_account_name, attempt, attempts,
+                )
+                return
+            # ⛔ Do not send a pair the broker has already told us it will refuse. Our levels are
+            # anchored to the ENTRY, so once price runs past either one that leg is unplaceable and
+            # the WHOLE combo is 417-rejected -- live 08-14 CGTL 15:14 sent target 5.2173 against
+            # Webull's own "should be higher than 5.23".
+            unplaceable = await self._webull_protect_unplaceable_reason(
+                broker_account_name=broker_account_name, symbol=symbol,
+                target=target, protect=protect,
+            )
+            if unplaceable:
+                self.logger.warning(
+                    "[WEBULL-PROTECT-UNPLACEABLE] %s %s attempt %d/%d — %s. Not sending a pair the "
+                    "broker would refuse; re-checking on the next attempt.",
+                    symbol, broker_account_name, attempt, attempts, unplaceable,
+                )
+                if attempt < attempts and interval:
+                    await asyncio.sleep(interval)
+                continue
             coid = f"{strategy_code}-{symbol}-protect-{uuid4().hex[:12]}"
             request = OrderRequest(
                 client_order_id=coid,
@@ -2003,6 +2080,54 @@ class OmsRiskService:
             "software ladder is the only cover. Place one by hand.",
             symbol, broker_account_name, quantity, entry_price, target, protect, attempts,
         )
+
+    async def _webull_protect_unplaceable_reason(
+        self, *, broker_account_name: str, symbol: str, target: float, protect: float,
+    ) -> str:
+        """Empty string if the protective pair can be sent; otherwise why the broker would refuse.
+
+        Webull validates the pair against the LIVE market -- the stop must sit BELOW it, the target
+        ABOVE it. Its own words, verbatim from the 08-14 rejects:
+            "The stop price of the stop-loss order should be lower than the current market price."
+            "The limit price of the take-profit order should be higher than 5.28"
+
+        ⛔⭐ READ THOSE AS THE REQUIRED CONDITION, NOT THE VIOLATION. The error CODES
+        (`STOP_LOSS_PRICE_LT_MARKETPRICE`, `STOP_PROFIT_PRICE_GT_OPENPRICE`) name the same required
+        relation, so they read as the exact opposite of what went wrong -- which is how they were
+        once glossed backwards, and how "the stop was stale" became the accepted story for refusals
+        that were mostly nothing of the kind.
+
+        ⛔ BIASED TOWARDS SENDING. We skip only when a level is unplaceable against EVERY proxy we
+        have (bid, ask, last), never on a single borderline one. A false skip costs real protection;
+        a false send costs one log line. The asymmetry is deliberate and must stay this way round.
+
+        ⛔⭐ NO QUOTE => NO OPINION. Returns "" when nothing can quote, so the pair is sent exactly
+        as before -- not knowing the price is not evidence the levels are wrong. This also means
+        the guard is INERT wherever no provider can quote, so **its silence is not proof it ran**.
+        """
+        try:
+            quote = await self._fetch_quote_for_order(
+                broker_account_name=broker_account_name, symbol=symbol
+            )
+        except Exception:  # noqa: BLE001 - a quote lookup must never cost us protection
+            return ""
+        proxies = [
+            float(quote[k]) for k in ("bid_price", "ask_price", "last_price")
+            if quote.get(k) is not None and float(quote[k] or 0) > 0
+        ]
+        if not proxies:
+            return ""
+        if protect >= max(proxies):
+            return (
+                f"stop {protect:.4f} is not below the market (bid/ask/last max "
+                f"{max(proxies):.4f}) — the stop leg would be refused"
+            )
+        if target <= min(proxies):
+            return (
+                f"target {target:.4f} is not above the market (bid/ask/last min "
+                f"{min(proxies):.4f}) — the take-profit leg would be refused"
+            )
+        return ""
 
     # ------------------------------------------- release the exit reservation before a software close
     async def _release_exit_reservation_before_close(
