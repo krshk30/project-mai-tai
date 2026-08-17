@@ -19,7 +19,6 @@ THREE LAYERS, and they are not independent:
 from __future__ import annotations
 
 import inspect
-from decimal import Decimal
 
 import pytest
 
@@ -93,13 +92,25 @@ def _sync_src() -> str:
 
 def test_L2_a_failed_read_cannot_reach_sync_account_positions() -> None:
     """⛔ The account is EXCLUDED from `fetched`, so neither the zeroing sync nor the one-way
-    clear ever sees it."""
+    clear ever sees it.
+
+    ⛔ Checking only for `continue` is NOT enough — a mutant that appends an empty list BEFORE the
+    continue survives that (it did). Assert the failure branch appends NOTHING.
+    """
     body = _sync_src()
     assert "[BROKER-SYNC-UNREADABLE]" in body
-    # the failing account is skipped, not appended with an empty list
-    idx = body.index("[BROKER-SYNC-UNREADABLE]")
-    window = body[idx: idx + 700]
-    assert "continue" in window, "a failed read must skip the account, not append an empty snapshot"
+    # isolate the except-branch: from the except line to its `continue`
+    start = body.index("except Exception")
+    end = body.index("continue", start)
+    failure_branch = body[start:end]
+    assert "fetched.append" not in failure_branch, (
+        "the failure branch appends to `fetched` — a failed read would reach "
+        "sync_account_positions and zero the account"
+    )
+    # and there must be exactly ONE append site overall (the success path)
+    assert body.count("fetched.append") == 1, (
+        f"expected exactly one fetched.append (the success path), found {body.count('fetched.append')}"
+    )
 
 
 def test_L2_the_clear_is_scoped_to_accounts_actually_READ() -> None:
@@ -161,3 +172,55 @@ def test_the_webull_exit_pair_path_is_NOT_touched() -> None:
     assert 'self._EXIT_PAIR_SESSION_EXTENDED' in sess and 'self._EXIT_PAIR_SESSION_RTH' in sess
     assert webull_mod.WebullBrokerAdapter._EXIT_PAIR_SESSION_EXTENDED == "ALL_DAY"
     assert webull_mod.WebullBrokerAdapter._EXIT_PAIR_SESSION_RTH == "CORE"
+
+
+# ------------------------------------------- §42.4: replay the two KNOWN incidents end-to-end
+class _RaisingAdapter:
+    """Reproduces the 08-12 CRWU / 08-14 VWAV sequence: ONE isolated failed read while held."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def list_account_positions(self, broker_account_name: str):
+        self.calls += 1
+        raise SchwabPositionsUnavailable(f"read timed out for {broker_account_name}")
+
+
+class _FlatAdapter:
+    """A GENUINELY flat account — must still zero. The regression guard."""
+
+    async def list_account_positions(self, broker_account_name: str):
+        return []
+
+
+def test_INCIDENT_REPLAY_a_failed_read_yields_no_snapshot_to_persist() -> None:
+    """⛔⭐⭐ THE 08-12 CRWU / 08-14 VWAV SHAPE.
+
+    Both incidents were an ISOLATED SINGLE failed read landing while we held a position, and both
+    erased the ledger row to the second. The fix's contract is that such a read contributes NOTHING
+    to the persist phase — so `sync_account_positions` (which zeroes absent symbols) and the
+    one-way `clear_virtual_positions_without_account_backing` never see that account.
+
+    Asserted structurally against the sync source, because the persist phase is a DB closure: the
+    failure branch must `continue` without appending, and the clear must be scoped to `fetched`.
+    """
+    body = _sync_src()
+    start = body.index("except Exception")
+    end = body.index("continue", start)
+    assert "fetched.append" not in body[start:end]
+    assert "account_ids = [account_id for account_id, _ in fetched]" in body
+
+
+@pytest.mark.asyncio
+async def test_INCIDENT_REPLAY_the_adapter_raises_rather_than_returning_flat() -> None:
+    """The adapter contract itself, exercised: a failed read RAISES."""
+    a = _RaisingAdapter()
+    with pytest.raises(SchwabPositionsUnavailable):
+        await a.list_account_positions("live:schwab_1m_v2")
+    assert a.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_INCIDENT_REPLAY_a_genuinely_flat_account_still_returns_empty() -> None:
+    """⛔ The regression direction. Flat must stay flat, or re-entry breaks."""
+    assert await _FlatAdapter().list_account_positions("live:schwab_1m_v2") == []
