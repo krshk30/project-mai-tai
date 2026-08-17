@@ -4376,9 +4376,34 @@ class OmsRiskService:
         accounts = await self._run_db(_load_accounts, commit=False)
 
         # Phase 2 (broker REST, on-loop): fetch each account's live positions.
+        # ⛔⭐⭐ L2 — REFUSE TO ZERO FROM A READ THAT FAILED. Independent of any adapter, so an
+        # adapter regression cannot reopen the path on its own.
+        #
+        # An account whose read RAISED is EXCLUDED from `fetched` entirely, so neither
+        # `sync_account_positions` (which zeroes every symbol absent from a snapshot) nor
+        # `clear_virtual_positions_without_account_backing` (a ONE-WAY erasure) ever sees it. A
+        # genuinely flat account still arrives as an empty LIST and still zeroes — that distinction
+        # is the whole point and it only exists because the adapter now raises (L1).
+        #
+        # ⛔ PER-ACCOUNT, not per-sync. Previously this call was bare: one raising account aborted
+        # the sync for EVERY account. Webull has raised since 2026-07-24, so a Webull 429 with no
+        # cached snapshot was already able to stop Schwab's sync too.
         fetched: list[tuple[UUID, list]] = []
+        unreadable: list[str] = []
         for account_id, account_name in accounts:
-            snapshots = await self.broker_adapter.list_account_positions(account_name)
+            try:
+                snapshots = await self.broker_adapter.list_account_positions(account_name)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - a failed read is UNKNOWN, never flat
+                unreadable.append(account_name)
+                self.logger.warning(
+                    "[BROKER-SYNC-UNREADABLE] acct=%s — positions read FAILED (%s). This account is "
+                    "EXCLUDED from the sync: nothing is zeroed and no virtual position is cleared "
+                    "for it this cycle. An empty list from a failed call is not a flat account.",
+                    account_name, exc,
+                )
+                continue
             fetched.append((account_id, snapshots))
             # P0.2: read-only settlement probe on the read we ALREADY made (no extra call).
             # Wrapped: a probe must never be able to break broker-sync.
@@ -4390,7 +4415,10 @@ class OmsRiskService:
         # Phase 3 (DB writes, off-loop): persist snapshots + clear unbacked
         # virtuals, committed inside the worker thread (the flush that froze the
         # loop now cannot).
-        account_ids = [account_id for account_id, _ in accounts]
+        # ⛔ SCOPED TO ACCOUNTS WE ACTUALLY READ, not to every configured account. Using `accounts`
+        # here would let the one-way clear run against an account whose read just failed — the very
+        # thing L2 exists to prevent.
+        account_ids = [account_id for account_id, _ in fetched]
 
         def _persist(session) -> int:
             synced_positions = 0
@@ -4418,6 +4446,28 @@ class OmsRiskService:
                     "[VIRTUAL-CLEAR] zeroed %d virtual position(s) with no broker backing: %s",
                     len(cleared),
                     detail,
+                )
+            # ⛔⭐⭐ L3 — THE ERASURE IS NO LONGER ONE-WAY. L1+L2 stop NEW wrongful clears; neither
+            # repairs one that already happened, and it is the one-way property that turns a
+            # transient broker hiccup into permanent ledger corruption.
+            #
+            # ⛔ RE-DERIVED FROM OUR OWN MANAGED ROWS, never from `account_positions`. The account
+            # book is SHARED — restoring from it would attribute the operator's shares to us, which
+            # is the scoping-invariant bypass (the operator held 5000 IVF on our account on 08-17).
+            # `oms_managed_positions` is the ownership discriminator (#704) and carries OUR quantity.
+            restored = self.store.restore_virtual_positions_from_managed(
+                session, broker_account_ids=account_ids,
+            )
+            if restored:
+                account_names = {account_id: name for account_id, name in accounts}
+                detail = ", ".join(
+                    f"{account_names.get(account_id, account_id)}:{symbol}={quantity}"
+                    for account_id, symbol, quantity in restored
+                )
+                self.logger.warning(
+                    "[VIRTUAL-RESTORE] re-derived %d virtual position(s) from our OWN open managed "
+                    "rows after a wrongful clear: %s",
+                    len(restored), detail,
                 )
             return synced_positions
 

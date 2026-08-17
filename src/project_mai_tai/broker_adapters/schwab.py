@@ -72,6 +72,28 @@ def configured_schwab_accounts(settings: Settings) -> dict[str, SchwabAccountCon
     return configured
 
 
+class SchwabPositionsUnavailable(Exception):
+    """A Schwab positions read FAILED. Raised INSTEAD of returning an empty list.
+
+    ⛔⭐⭐ SAFETY, and it is not theoretical. An empty list from a failed call is not a flat
+    account. `store.sync_account_positions` zeroes every symbol ABSENT from a snapshot, and
+    `clear_virtual_positions_without_account_backing` then erases the matching `virtual_positions`
+    rows **one-way** — its own docstring: *"Nothing re-derives `virtual_positions` from account
+    backing … a row zeroed here stays zeroed even once the broker reports the position again."*
+
+    Measured 2026-08-17: 2 of 2 failures that landed while we held a position erased the ledger row
+    (CRWU 08-12, VWAV 08-14), each from an ISOLATED SINGLE failure.
+
+    HARM IN BOTH DIRECTIONS once a row is wrongly zeroed:
+      * the sell gate (`oms/service.py`) rejects an exit for a position we really hold — the DSY
+        08-07 shape;
+      * the v2 duplicate-open gate opens, permitting re-entry into a name we already own.
+
+    ⛔ Never downgrade this to a `[]` return. The Webull adapter has carried the equivalent
+    contract (`WebullPositionsUnavailable`) since 2026-07-24; Schwab was the unguarded one.
+    """
+
+
 class SchwabBrokerAdapter:
     FILLED_STATUSES = {"FILLED"}
     PARTIAL_FILL_STATUSES = {"PARTIAL_FILL"}
@@ -477,31 +499,64 @@ class SchwabBrokerAdapter:
         return str(request.metadata.get("stop_guard", "")).strip().lower() == "true"
 
     async def list_account_positions(self, broker_account_name: str) -> list[BrokerPositionSnapshot]:
+        """Live positions for one Schwab account.
+
+        ⛔⭐⭐ A FAILED READ RAISES; IT NEVER RETURNS `[]`. An empty list from a failed call is not
+        a flat account, and treating it as one erases the holdings ledger — PERMANENTLY, because
+        nothing re-derives `virtual_positions` from account backing.
+
+        PROVEN HARM (2026-08-17 forensics, `live:schwab_1m_v2`): 324 read failures in the retained
+        logs, 109 windows in which we held a position, and **2 failures landed during a hold — 2 of
+        2 ERASED, to the second**:
+            08-12 19:34:18 failure -> 19:34:18.484 [VIRTUAL-CLEAR] CRWU=2
+            08-14 19:31:48 failure -> 19:31:49.090 [VIRTUAL-CLEAR] VWAV=2
+        Both were ISOLATED SINGLE failures, so ONE bad read is sufficient. ⛔ Quote the 2-of-2
+        CONVERSION, never the 2/324 trigger rate — it scales with HOLD TIME, not failure frequency.
+
+        ⭐ `return snapshots` below is UNCHANGED and may legitimately be empty: a genuinely flat
+        account MUST still zero. That distinction — empty-because-flat vs empty-because-broken — is
+        the whole point, and it is what makes the sync-side guard implementable at all.
+
+        Mirrors the Webull adapter's long-standing `WebullPositionsUnavailable` contract; Schwab was
+        the unguarded one.
+        """
         account = self.accounts_by_name.get(broker_account_name)
         if account is None:
-            logger.warning("missing Schwab account hash for broker account %s", broker_account_name)
-            return []
+            raise SchwabPositionsUnavailable(
+                f"missing Schwab account hash for broker account {broker_account_name} "
+                f"-> UNKNOWN (never flat)"
+            )
 
         try:
             status_code, _headers, response = await self._authorized_request_json(
                 "GET",
                 f"/trader/v1/accounts/{quote(account.account_hash, safe='')}?fields=positions",
             )
-        except RuntimeError:
-            logger.exception("failed listing Schwab positions for %s", broker_account_name)
-            return []
+        except RuntimeError as exc:
+            # ⛔ Was a bare `except RuntimeError: return []` — a bare except returning a value that
+            # means "nothing here" is the worst shape of this bug. Timeouts, upstream resets and
+            # DNS failures all landed here (45 of them on 2026-08-17 alone).
+            logger.warning("failed listing Schwab positions for %s: %s", broker_account_name, exc)
+            raise SchwabPositionsUnavailable(
+                f"Schwab positions read for {broker_account_name} failed ({exc}) -> UNKNOWN"
+            ) from exc
 
         if status_code >= 400 or not isinstance(response, dict):
+            reason = self._extract_error_reason(response)
             logger.warning(
-                "failed listing Schwab positions for %s: %s",
-                broker_account_name,
-                self._extract_error_reason(response),
+                "failed listing Schwab positions for %s: %s", broker_account_name, reason,
             )
-            return []
+            raise SchwabPositionsUnavailable(
+                f"Schwab positions read for {broker_account_name} returned {status_code}: "
+                f"{reason} -> UNKNOWN"
+            )
 
         account_payload = response.get("securitiesAccount", response)
         if not isinstance(account_payload, dict):
-            return []
+            raise SchwabPositionsUnavailable(
+                f"Schwab positions read for {broker_account_name} returned an unusable payload "
+                f"shape -> UNKNOWN"
+            )
 
         snapshots: list[BrokerPositionSnapshot] = []
         for raw in account_payload.get("positions", []):
