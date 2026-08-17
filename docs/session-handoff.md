@@ -73,10 +73,34 @@ documented enum. **Do NOT "correct" ALL_DAY to ALL.**
 ⛔ **`preview_order` does NOT validate position backing** (it 200s while flat) ⇒ Probe W4 only ever
 proved the shape PARSES, never that it PLACES. Two comments still say "BROKER-PROVEN" (item 8).
 
-| **#714** | **L1+L2+L3 — a failed Schwab positions read never reads as a flat account** | 4.4s | ⛔ **UNEXERCISED** |
+| **#714** | **L1+L2+L3 — a failed Schwab positions read never reads as a flat account** | 4.4s | ✅ **PROVEN BY FORCED INJECTION** |
 
 **Deployed HEAD is now `70ca930`** (#714, 17:50 ET). ⛔ §43 diff assertion held: **`webull.py` is NOT
 in the changed set**, so #710's `ALL_DAY` is untouched and tomorrow's attribution is preserved.
+
+### ✅ §50 — #714 RESOLVED 19:47 ET WITHOUT WAITING (option **a**, forced injection)
+On-box harness: the **real `SchwabBrokerAdapter`** pointed at an unreachable endpoint, driving the
+**real `sync_broker_positions`**, with only the DB store stubbed. Four assertions all passed —
+adapter **raised** the typed exception (not `[]`); the failed account **never reached**
+`sync_account_positions`; the **healthy account still synced**; the one-way clear **and** the L3
+restore were both scoped to `fetched`. `[BROKER-SYNC-UNREADABLE]` fired with the full reason.
+⛔ No live account traded, no DB row written, fleet flat, outside market hours. Harness deleted.
+⭐ **Method note:** "UNEXERCISED is not a result" does **not** oblige you to wait for a rare live
+trigger. Inject the fault against the real object. Waiting was the worse option here — see below.
+
+### ⛔⭐ DENOMINATOR CORRECTION — "2/324" IS CONTAMINATED
+Retained-log coverage is **08-10 → 08-17** (6 sessions), **not** 08-11→08-17 as first stated. And:
+
+| day | failures |  | day | failures |
+|---|---|---|---|---|
+| 08-11 | 2 | | 08-15 | 1 |
+| 08-12 | 1 | | **08-16** | **273** ⛔ *Saturday, market closed* |
+| 08-14 | 1 | | 08-17 | 46 |
+
+**273 of 324 (84%) fell on a non-trading day.** Session-day failures are **50**, not 324. The
+**2-of-2 conversion is unchanged** and remains the number to quote. ⭐ The Saturday spike is its own
+finding: **Schwab throws large outage bursts.** One landing on a trading day while we hold is far
+worse than any per-session rate implies — which is precisely why this was forced, not awaited.
 
 ## 🕐 OPEN PRs
 **#715** R4 refusal model (backtest module only, no wiring) · **#716** §46.1 raise-propagation tests.
