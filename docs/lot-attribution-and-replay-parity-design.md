@@ -63,21 +63,50 @@ fill.**
 | exit intent / order | `payload.closes_lot_id` | set from the managed row being exited |
 | `fills` (exit) | `payload.closes_lot_id` | the assertion the recorder needs |
 
-**Open questions for review:**
-1. **Column or payload?** `payload.lot_id` needs no migration but cannot be indexed cheaply. A real
-   column on `oms_managed_positions` + `fills` is the honest home if we intend to query it per-lot.
-   ⭐ Recommend: **column on `oms_managed_positions`, payload on orders/fills** — the managed row is
-   the natural lot identity and is already the ownership discriminator (#704).
-2. **Partial exits / scales.** A lot can be closed by more than one sell. `closes_lot_id` on each
-   exit fill handles it; the recorder sums per lot. Confirm scales are in scope.
-3. **The Webull fan-out leg** is a *separate* lot on a *separate* account driven by the same signal.
-   Does it get its own `lot_id`, or a `parent_lot_id` pointing at the Schwab lot? ⭐ Recommend
-   **its own `lot_id` plus `parent_lot_id`** — they exit independently and divergence is a known cost.
-4. **Backfill.** Historical rows have no lot_id and cannot get one honestly. Accept: per-lot analysis
-   starts from the deploy date forward. ⛔ Do not backfill by inference.
+### ✅ RESOLVED BY THE OPERATOR 2026-08-17
+1. **REAL COLUMNS**, not payload. `lot_id` on `oms_managed_positions` and on `fills`;
+   `closes_lot_id` on exit orders/fills. Indexable, queryable, migration required.
+2. **Scales in scope, and they behave exactly as the live system does.** A lot may be closed by
+   several sells; each carries `closes_lot_id` and the recorder sums per lot. No special-casing —
+   whatever live does with a scale, the lot record reflects.
+3. **The Webull fan-out leg gets its OWN `lot_id` plus `parent_lot_id`** pointing at the Schwab lot.
+   They exit independently and the divergence is a known, measured cost — one id could not represent
+   two different exits.
+4. **Backfill ACCEPTED for backtesting**, with the boundary below.
 
-**Acceptance:** a mutant that drops `closes_lot_id` from the exit path must turn a test red; and a
-test must prove a sell with no `closes_lot_id` is recorded as *unasserted*, never guessed into a pair.
+### ⛔⭐⭐ THE BACKFILL BOUNDARY — where inference is and is not allowed
+The operator's rationale is sound: a backtest is a model already, and historical analysis needs
+history. But the *use* decides the standard, and tonight proved it:
+
+| use | standard |
+|---|---|
+| **LIVE attribution** (the recorder, P&L, per-lot studies going forward) | **CAPTURED ONLY.** No inference, ever. Unchanged. |
+| **HISTORICAL backfill** (validating the engine, pre-deploy analysis) | reconstructed — but **bounded, labelled, and quality-measured** |
+
+⛔ **Why the boundary is not optional.** The backfill's intended job in Part B is to be the ground
+truth the replay is validated against. If it is itself a guess, the control checks a model against a
+guess — which is exactly how route 1 produced a plausible table with >50pp per-trade errors.
+
+**A bounded reconstruction is far better than what failed tonight.** Route 1 paired each entry to
+"the first sell on that symbol after entry_time" — no upper bound, no quantity check. We already have
+a lot record: **`oms_managed_positions` IS the lot**, with `entry_time`, `original_quantity`,
+`current_quantity` and a close time. Reconstruct within those bounds:
+- candidate sells restricted to `[row.entry_time, row.updated_at]` on the SAME account+symbol,
+- quantity accounted against `original_quantity` (a lot is closed when its quantity is satisfied),
+- ⛔ joined on **our own order ids** first — the broker's book is shared.
+
+**And publish the ambiguity rate.** Every backfilled lot is classified:
+`UNAMBIGUOUS` (exactly one quantity-consistent sell set in the window) · `AMBIGUOUS` (more than one)
+· `UNPAIRED` (none). ⭐ **The rate is the gate, not a footnote**: if ≥95% are UNAMBIGUOUS the
+baseline is usable with the remainder EXCLUDED (never guessed); if a large share are AMBIGUOUS the
+backfill is not a baseline and Part B waits for captured data.
+
+⛔ Backfilled rows must be **marked as reconstructed** (`lot_source='backfill'` vs `'captured'`) so no
+later study silently mixes the two — the same provenance discipline as `source='live'` on bars.
+
+**Acceptance:** a mutant that drops `closes_lot_id` from the exit path must turn a test red; a test
+must prove a sell with no `closes_lot_id` is recorded as *unasserted*, never guessed into a pair; and
+a test must prove a backfilled lot can never be written with `lot_source='captured'`.
 
 ---
 
@@ -117,7 +146,28 @@ consequence.**
    reclaim gap. ⛔ Do not invent a replay-side cap; that is how the two drift apart again.
 4. Audit the remaining engine-vs-live deltas before trusting the output (see B4).
 
-### B4. Known fidelity limits to re-check, not assume
+### B4. ⭐ THE MOMENTUM SCANNER IS PART OF THE MODEL (operator requirement, 2026-08-17)
+A name is only tradeable **while the momentum scanner has it CONFIRMED**. The scanner confirms on a
+squeeze and prunes on the fade rule (change% < 30), re-confirming and pruning repeatedly — CLRO
+flickered 8× in one session. **Do NOT scan the whole session.**
+
+This must be carried through BOTH halves of the work, not just the universe list:
+- **Universe** — `v2_qualified_symbols` already derives from `scanner_confirmed_events`; keep it.
+- **Windows** — entries count only if the break/decision timestamp falls inside a CONFIRMED window
+  (`CONFIRM -> FADE | RETENTION_DROP`). Source: `strategy_core.momentum_confirmed` log events, and
+  the extractor already exists at `backtest/scanner_windows.py`.
+- ⛔ **This bites re-entry specifically.** The old note that the window restriction was a NO-OP was
+  measured for the SLOW wait-3-candle entry, which self-selects into stable windows. It explicitly
+  "WOULD bite an immediate-flip entry" — and once the cap is removed, **reclaims are exactly the
+  short-interval re-entries most likely to land near a prune boundary.** A reclaim fired while the
+  scanner had pruned the name is not a trade we would have taken.
+- **Backfill** — the reconstruction must record which confirmed window each lot opened in, so a
+  later study can tell a genuine reclaim from an out-of-window artefact.
+
+⇒ Removing the one-round-trip cap without the window restriction would manufacture trades the live
+system could not have taken. The two changes are **one piece of work**, not two.
+
+### B5. Known fidelity limits to re-check, not assume
 - **Sparse Schwab feed** — the engine's own note: trustworthy for SHAPE/DIRECTION, not penny-exact.
   4 of 17 names on 08-17 were skipped `sparse_schwab_feed`.
 - **Universe drift** — the replay traded CDTG/MYSZ/WFF on 08-17 which we never took on that account.
