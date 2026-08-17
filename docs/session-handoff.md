@@ -45,9 +45,14 @@ payload + broker response either way. Log all three parts regardless of outcome.
 
 ## ⚡ FIRST SCREEN
 
-**As of 2026-08-17 EOD.** **Deployed HEAD `a2616f6`** — verified BY CONTENT on the box and asserted
-as an ancestor; `src/` diff vs `origin/main` = 0 files. Tree clean. **Account fully FLAT** (0 managed
-rows, 0 working orders, shared book empty — the operator's IVF 5000 closed).
+**As of 2026-08-17 EOD.** Tree clean. **Account fully FLAT** (0 managed rows, 0 working orders, shared
+book empty — the operator's IVF 5000 closed).
+
+**Box files = `d9d84de`; `src/` diff vs `origin/main` = 0 files.** ⛔ But the **running OMS process
+still carries `70ca930`'s code** — it started **17:50 ET** (#714) and has **not restarted since**.
+The only `src/` delta between them is #715's new `backtest/broker_refusal.py`, which the OMS never
+imports ⇒ **functionally identical for the OMS, but do not call the process "d9d84de".**
+Verified BY CONTENT, not by hash: `BROKER-SYNC-UNREADABLE` ×1, `SchwabPositionsUnavailable` ×5.
 
 ### Shipped + deployed today — FIVE PRs, all verified by content
 | PR | what | outage | exercised? |
@@ -73,10 +78,67 @@ documented enum. **Do NOT "correct" ALL_DAY to ALL.**
 ⛔ **`preview_order` does NOT validate position backing** (it 200s while flat) ⇒ Probe W4 only ever
 proved the shape PARSES, never that it PLACES. Two comments still say "BROKER-PROVEN" (item 8).
 
-| **#714** | **L1+L2+L3 — a failed Schwab positions read never reads as a flat account** | 4.4s | ⛔ **UNEXERCISED** |
+| **#714** | **L1+L2+L3 — a failed Schwab positions read never reads as a flat account** | 4.4s | ✅ **PROVEN BY FORCED INJECTION** |
 
 **Deployed HEAD is now `70ca930`** (#714, 17:50 ET). ⛔ §43 diff assertion held: **`webull.py` is NOT
 in the changed set**, so #710's `ALL_DAY` is untouched and tomorrow's attribution is preserved.
+
+### ✅ §50 — #714 RESOLVED 19:47 ET WITHOUT WAITING (option **a**, forced injection)
+On-box harness: the **real `SchwabBrokerAdapter`** pointed at an unreachable endpoint, driving the
+**real `sync_broker_positions`**, with only the DB store stubbed. Four assertions all passed —
+adapter **raised** the typed exception (not `[]`); the failed account **never reached**
+`sync_account_positions`; the **healthy account still synced**; the one-way clear **and** the L3
+restore were both scoped to `fetched`. `[BROKER-SYNC-UNREADABLE]` fired with the full reason.
+⛔ No live account traded, no DB row written, fleet flat, outside market hours. Harness deleted.
+⭐ **Method note:** "UNEXERCISED is not a result" does **not** oblige you to wait for a rare live
+trigger. Inject the fault against the real object. Waiting was the worse option here — see below.
+
+### ⛔⭐ DENOMINATOR CORRECTION — "2/324" IS CONTAMINATED
+Retained-log coverage is **Mon 08-10 → Mon 08-17** (6 sessions), **not** 08-11→08-17 as first stated.
+⛔ **Re-bucketed to ET** — my first pass bucketed by UTC day, and **logs rotate 00:00 UTC = 20:00 ET**,
+so a Saturday-evening burst was filed under Sunday:
+
+| ET day | failures | | ET day | failures |
+|---|---|---|---|---|
+| 08-10 Mon | 0 | | **08-15 Sat** | **274** ⛔ *market closed* |
+| 08-11 Tue | 2 | | 08-16 Sun | 0 |
+| 08-12 Wed | 1 | | 08-17 Mon | 46 |
+| 08-13 Thu | 0 | | 08-14 Fri | 1 |
+
+**274 of 324 (85%) fell on a non-trading day.** Session-day failures are **50**, not 324. The
+**2-of-2 conversion is unchanged** and remains the number to quote.
+
+### §53 — THE WEEKEND SPIKE: **NOT** PROMOTED TO A FINDING
+⛔ **Downgraded wording: one weekend showed 274 failures; the cause is NOT established.**
+The "Schwab throws large outage bursts" claim is withdrawn pending evidence. The forced-injection
+decision stands on its own — only that rationale was in question.
+
+**53.1 — prior weekends: UNANSWERABLE, n=1.** The retained window runs Mon→Mon and contains
+**exactly one weekend**. `journalctl -u project-mai-tai-oms` returns **no entries at all** (the service
+logs to a file sink), so there is no deeper history. ⇒ Cannot distinguish scheduled weekend
+maintenance from an outage. **Re-check after the next weekend rotates in.**
+
+**53.2 — cadence, NOT a retry storm** ✅ *(closed, no new item)*. Inter-failure gaps during the burst:
+**254 of 272 were exactly 15s** (whole range 14–16s), and the adapter's positions read has **no retry
+or backoff** (its only retry is a single token-refresh). ⇒ normal 15s poll, **every call failing**.
+Schwab's own words, 278×: `Application encountered unexpected error that prevented fulfilling this
+request` — a server-side 5xx, not our timeout. Other classes: 30 read timeouts, 8 DNS
+`NoResolvedHost`, 3 `Service is currently unavailable`, 3 TLS handshake, 2 upstream reset.
+
+### 🔴 §54 — THE FIX CREATES ITS OWN SILENT WINDOW *(new item, NOT tonight)*
+#714 correctly leaves the ledger **stale-but-intact** while reads fail — but during that window we
+stop learning what changed at the broker, and a native stop could fill unseen.
+`[BROKER-SYNC-UNREADABLE]` **only logs**; nothing pages on *sustained* unreadability. 274 lines nobody
+reads is a component reporting healthy while its function is dead — the shape this board exists for.
+**Sizing is already measured** — the trip threshold has a clean gap to sit in:
+
+| | longest consecutive unreadable run |
+|---|---|
+| Sat 08-15 evening | **273 reads ≈ 68 min** |
+| last trading day (08-17) | **6 reads ≈ 1 min** |
+
+⇒ Trip on *N consecutive failures* **and** *holding something*, well above 6 and well below 273.
+**Natural pair with Ship 1 (the exit-blocked pager): same trip logic, different sensor.**
 
 ## 🕐 OPEN PRs
 **#715** R4 refusal model (backtest module only, no wiring) · **#716** §46.1 raise-propagation tests.
