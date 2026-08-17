@@ -20,6 +20,7 @@ Design notes / safety:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import threading
 import time
@@ -158,6 +159,7 @@ class WebullBrokerAdapter:
             try:
                 return await asyncio.to_thread(self._submit_exit_pair_blocking, account, request)
             except Exception as exc:  # noqa: BLE001 - any SDK/transport error -> reject, never crash OMS
+                self._log_exit_pair_refusal(request, exc)
                 return [self._reject(request, self._exc_reason(exc))]
         if self._is_bracket_request(request):
             # Native OCO combo: one v3 place_order of MASTER+STOP_PROFIT+STOP_LOSS. Flag-gated;
@@ -963,6 +965,34 @@ class WebullBrokerAdapter:
              "combo_type": "STOP_LOSS", "side": "SELL",
              "order_type": "STOP_LOSS", "stop_price": str(self._round_to_tick(protect))},
         ]
+
+    def _log_exit_pair_refusal(self, request: OrderRequest, exc: BaseException) -> None:
+        """Record EXACTLY what we sent and EXACTLY what came back when a protective pair is refused.
+
+        ⛔⭐⭐ WHY THIS EXISTS. This path has never once succeeded — zero
+        `[WEBULL-EXIT-PAIR-PLACED]` across seven days of logs — and a week was spent inferring the
+        cause from a 200-char-truncated reason string. Three hypotheses were argued and killed
+        (stale pricing, a CORE-session price reference, a malformed payload — the last disproved
+        2026-08-17 when the production builder's own output previewed HTTP 200). None of that
+        needed to be guesswork: the request and the response together settle it in one episode.
+
+        ⛔ `preview_order` CANNOT substitute for this. It returned 200 for this exact payload while
+        the account was FLAT, so it does not validate position backing — which is why Probe W4's
+        200 only ever proved the shape PARSES, never that it PLACES.
+
+        Never raises: diagnostics must not be able to break an order path.
+        """
+        try:
+            legs = self._build_exit_only_pair_payload(request)
+            payload = json.dumps(legs, default=str)
+        except Exception:  # noqa: BLE001 - if we cannot rebuild it, still log the failure itself
+            payload = "<payload could not be rebuilt>"
+        body = getattr(exc, "body", None) or getattr(exc, "response", None) or ""
+        logger.warning(
+            "[WEBULL-EXIT-PAIR-REFUSED] %s %s combo_id=%s\n  SENT: %s\n  ERROR: %s: %s\n  BODY: %s",
+            request.symbol, request.broker_account_name, request.client_order_id,
+            payload, type(exc).__name__, str(exc)[:1000], str(body)[:1000],
+        )
 
     def _is_bracket_request(self, request: OrderRequest) -> bool:
         """Build a combo bracket ONLY when the flag is on AND the caller asked for one, so the
