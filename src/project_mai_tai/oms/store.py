@@ -804,6 +804,81 @@ class OmsStore:
         session.flush()
         return cleared
 
+    def restore_virtual_positions_from_managed(
+        self,
+        session: Session,
+        *,
+        broker_account_ids: list[UUID] | None = None,
+    ) -> list[tuple[UUID, str, Decimal]]:
+        """Re-derive a virtual position that was wrongly zeroed, from OUR OWN open managed rows.
+
+        Returns `(broker_account_id, symbol, restored_quantity)` per row repaired.
+
+        ⛔⭐⭐ WHY THIS EXISTS. `clear_virtual_positions_without_account_backing` is a ONE-WAY
+        erasure — nothing re-derived these rows, so a single failed broker read permanently
+        corrupted the holdings ledger. Measured 2026-08-17: 2 of 2 read failures that landed while
+        we held a position erased the row (CRWU 08-12, VWAV 08-14), each from an isolated single
+        failure. L1 (adapter raises) and L2 (sync refuses to zero) stop NEW erasures; only this
+        repairs an existing one, and it is what bounds the fix's own failure direction.
+
+        ⛔⭐ SOURCE IS `oms_managed_positions`, **NOT** `account_positions`. The account book is
+        SHARED with the operator — on 2026-08-17 he held 5000 IVF on the same account we trade 2 on.
+        Re-deriving from the shared book would attribute HIS shares to us, which is exactly the
+        scoping-invariant bypass. The managed row is the ownership discriminator (#704) and carries
+        OUR quantity.
+
+        ⛔ Broker backing is still REQUIRED, as a floor: we only restore when the broker shows at
+        least the managed quantity. A managed row alone is not proof the shares exist — that would
+        resurrect a genuinely-closed position.
+        """
+        managed_q = select(OmsManagedPosition).where(OmsManagedPosition.status == "open")
+        restored: list[tuple[UUID, str, Decimal]] = []
+        accounts_by_name = {
+            account.name: account
+            for account in session.scalars(select(BrokerAccount)).all()
+        }
+        for managed in session.scalars(managed_q).all():
+            account = accounts_by_name.get(str(managed.broker_account_name or ""))
+            if account is None:
+                continue
+            if broker_account_ids and account.id not in broker_account_ids:
+                continue
+            symbol = str(managed.symbol or "").upper()
+            want = Decimal(str(managed.current_quantity or 0))
+            if not symbol or want <= 0:
+                continue
+
+            virtual = session.scalar(
+                select(VirtualPosition).where(
+                    VirtualPosition.broker_account_id == account.id,
+                    VirtualPosition.symbol == symbol,
+                )
+            )
+            # Only repair an ERASED row. A row already carrying quantity is left alone — this must
+            # never overwrite a live ledger value with a managed-row estimate.
+            if virtual is None or Decimal(str(virtual.quantity or 0)) > 0:
+                continue
+
+            backing = session.scalar(
+                select(AccountPosition).where(
+                    AccountPosition.broker_account_id == account.id,
+                    AccountPosition.symbol == symbol,
+                )
+            )
+            have = Decimal(str(backing.quantity)) if backing is not None else Decimal("0")
+            if have < want:
+                continue
+
+            virtual.quantity = want
+            entry = managed.entry_price
+            if entry is not None and Decimal(str(entry)) > 0:
+                virtual.average_price = Decimal(str(entry))
+            restored.append((account.id, symbol, want))
+
+        if restored:
+            session.flush()
+        return restored
+
     def _apply_position_fill(
         self,
         *,
