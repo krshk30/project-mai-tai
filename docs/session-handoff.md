@@ -49,7 +49,7 @@ payload + broker response either way. Log all three parts regardless of outcome.
 as an ancestor; `src/` diff vs `origin/main` = 0 files. Tree clean. **Account fully FLAT** (0 managed
 rows, 0 working orders, shared book empty — the operator's IVF 5000 closed).
 
-### Shipped + deployed today — four PRs, all verified by content
+### Shipped + deployed today — FIVE PRs, all verified by content
 | PR | what | outage | exercised? |
 |---|---|---|---|
 | #706 | 3 guards on the Webull attach + `RoutingBrokerAdapter.fetch_quotes` | 3s | ⛔ **0/0/0 — none has run** |
@@ -73,7 +73,14 @@ documented enum. **Do NOT "correct" ALL_DAY to ALL.**
 ⛔ **`preview_order` does NOT validate position backing** (it 200s while flat) ⇒ Probe W4 only ever
 proved the shape PARSES, never that it PLACES. Two comments still say "BROKER-PROVEN" (item 8).
 
-## 🕐 OPEN PRs — **NONE.** #706 #707 #709 #710 all merged and deployed.
+| **#714** | **L1+L2+L3 — a failed Schwab positions read never reads as a flat account** | 4.4s | ⛔ **UNEXERCISED** |
+
+**Deployed HEAD is now `70ca930`** (#714, 17:50 ET). ⛔ §43 diff assertion held: **`webull.py` is NOT
+in the changed set**, so #710's `ALL_DAY` is untouched and tomorrow's attribution is preserved.
+
+## 🕐 OPEN PRs
+**#715** R4 refusal model (backtest module only, no wiring) · **#716** §46.1 raise-propagation tests.
+Both docs/test-only — **neither needs a restart**.
 
 ## 🔴 OPEN THREADS — detail in [`handoff-open-items.md`](handoff-open-items.md)
 
@@ -117,10 +124,52 @@ proved the shape PARSES, never that it PLACES. Two comments still say "BROKER-PR
     per-lot attribution · flaky `test_scanner_cycle_history_retention_and_dedup`.
 
 ## ✅ CLOSED TODAY
-**Item 1 (submitted-but-never-rested) — CLOSED.** Against Schwab's OWN book, per-day pulls:
-**875/875 of our entry orders are present — ZERO absent.** Median time-at-rest **61–62s every day**
-(a fixed reprice cadence, not market behaviour). 08-11 is unremarkable on all three measures. The
-E1→E2 drop was an artifact of E2 coming from our own `ExecutionReport` normalisation.
+**Item 1 — CLOSED.** 875/875 entry orders present in Schwab's own book, zero absent; median
+time-at-rest 61–62s. Full detail in [`handoff-log.md`](handoff-log.md).
+
+## §49 — v2 SESSION ROLL: GIVE IT A LINE, THEN VERIFY IT
+**STATUS: UNVERIFIED — not confirmed, and not a pass.** ⛔ Leave this visible until it changes;
+"unverified" is a state that resolves only if someone comes back to it.
+
+During §46.3 strategy-engine's roll was **confirmed firing in-process**:
+```
+2026-08-17 08:00:00 UTC  bot day-roll fired | strategy=polygon_30s  2026-08-16 -> 2026-08-17
+2026-08-17 08:00:02 UTC  scanner session-roll fired | previous_session=2026-08-16T08:00:00+00:00
+```
+There is **no systemd timer and no crontab entry** for it — the roll is driven by the running
+strategy-engine loop, so a restart disarms nothing; it only needs the process alive at 04:00 ET.
+
+⛔ **v2's own roll produced no matching log line.** v2 was not restarted, so nothing changed for it —
+but nothing verified it either. **It cannot be verified because it does not log**, and a roll that
+fires silently is indistinguishable from one that never fired. Same failure this board keeps finding:
+**the code only speaks when it acts.**
+
+**Order of work — the line FIRST, then the verification:**
+1. **Add the line.** Emit on the roll itself, carrying previous/new session boundaries and the
+   account, matching the shape `strategy_engine_app` already uses. ⭐ **Log the DECISION, not just
+   the action** — if the roll evaluates and declines to fire, that gets a line too, or the same blind
+   spot reopens one level down.
+2. **Then verify against the 08-19 04:00 ET boundary — NOT 08-18's**, because the line will not exist
+   for tomorrow's roll. State that explicitly; do not report tomorrow's absence as a pass.
+3. **Deploy timing:** v2 has been untouched since 08-13 and restarting it is not free. This is
+   log-only and **does not justify a restart of its own** — bundle it with the next v2 deploy that
+   has a real reason, or hold it. By-content and files-before-process checks apply as usual.
+
+⛔ Do NOT close this as "verified" because the roll appears to work. Until the line exists and has
+been read after a real 04:00 boundary, the honest status stays **UNVERIFIED**.
+
+## 📌 THREE RULES CARRIED FROM 08-17 NIGHT
+1. **⛔ A TIMING WRAPPER MEASURES THE WRAPPER, NOT THE SERVICE.** I reported a 34s OMS shutdown from
+   wall-clock around `systemctl stop`; systemd's own record showed **4.4s** (`Stopping 21:49:59.362`
+   → `Deactivated 21:50:03.744`, `TimeoutStopUSec=30s` never approached). **Read systemd's record.**
+   Cheap rule; it kept a wrong entry off the board.
+2. **⛔ THE SYNC-ABORT EXPOSURE PRE-DATED #714 BY THREE WEEKS.** The Webull adapter has raised
+   `WebullPositionsUnavailable` since **2026-07-24**, and `sync_broker_positions` called
+   `list_account_positions` **bare** — so a Webull 429 with no cached snapshot could already abort
+   **Schwab's** sync too. #714 made the loop per-account; #716 pins it with a behavioural test. The
+   exposure existed for three weeks and nobody knew — same column as everything else here.
+3. **⛔ A ROLL / GUARD THAT DOES NOT LOG CANNOT BE VERIFIED.** See §49. Give it a line before trying
+   to confirm it, and log the decision as well as the action.
 
 ## 🔑 SCHWAB TOKEN
 `refresh_token_expires_at = 2026-08-19T09:21:35Z` ⇒ **Wed 08-19 05:21 ET**, BEFORE the 07:00 EH open.
