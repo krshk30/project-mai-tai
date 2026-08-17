@@ -96,6 +96,44 @@ def test_the_retry_horizon_outlives_the_measured_settle_window() -> None:
     )
 
 
+def _svc_on_CODE_DEFAULTS(adapter):
+    """A settings object carrying NONE of the protect knobs, so every `getattr` fallback runs.
+
+    ⛔⭐⭐ THIS IS THE CONFIGURATION THAT ACTUALLY RUNS. Verified on the box 2026-08-17:
+    `/etc/project-mai-tai/project-mai-tai.env` sets no `WEBULL_PROTECT_*` override at all, so the
+    CODE DEFAULTS are live. A fixture that passes attempts/interval explicitly is testing a
+    configuration that exists nowhere — and it let a mutant reverting the default to the old
+    3-attempts SURVIVE, because the fixture overrode the very thing under test.
+    """
+    s = object.__new__(svc.OmsRiskService)
+    s.settings = SimpleNamespace(oms_v2_cw_target_pct=2.0, oms_v2_cw_hard_stop_pct=5.0)
+    s.logger = logging.getLogger("test-retry-horizon")
+    s.broker_adapter = adapter
+    s._webull_protect_base = {}
+
+    async def _state(_a, _b):
+        return svc._PositionRead.UNKNOWN
+
+    async def _quote(*, broker_account_name, symbol):  # noqa: ARG001
+        return {}
+
+    s._broker_symbol_position_state = _state
+    s._fetch_quote_for_order = _quote
+    return s
+
+
+def test_THE_SHIPPED_DEFAULTS_outlive_the_settle_window() -> None:
+    """⭐ The one that pins production. No env override exists, so these defaults are what a live
+    Webull fill will actually get."""
+    a = _Adapter()
+    slept = _run_capturing_sleeps(_svc_on_CODE_DEFAULTS(a))
+    assert len(a.calls) >= 5, f"default attempts too few: {len(a.calls)}"
+    assert sum(slept) > 12.7, (
+        f"DEFAULT retry span {sum(slept)}s must outlast the 12.7s settle lag measured live — "
+        "the old 3x2s default spanned only 4.0s"
+    )
+
+
 def test_the_delays_back_off_rather_than_staying_flat() -> None:
     slept = _run_capturing_sleeps(_svc(_Adapter()))
     assert slept == [2.0, 4.0, 8.0, 15.0], slept
