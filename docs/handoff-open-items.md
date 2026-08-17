@@ -544,14 +544,63 @@ It reads `[OMS-EXIT-REPROTECT-FAILED]` (**=0**) and reports *"12 releases, 4 re-
 failed"* — while the re-attach failed **9×** under `[WEBULL-PROTECT-FAILED]`. **Wrong marker ⇒ PASS
 on a live failure.** §4 mis-attributes the same events as bare fills. **Both must read both markers.**
 
-### Why the re-attach fails — stale reference price
-Attach fires **37s to ~10 min** after the entry, but the levels are computed off the **ENTRY** price.
-By then price has traded through the stop, and Webull refuses exactly what it says:
+### ⛔⛔ WHY THE RE-ATTACH FAILS — **REWRITTEN 2026-08-17. The 08-14 answer below was wrong.**
+The 08-14 entry said *"stale reference price"* and that became the accepted story. It is **half
+right at best**, and three hypotheses have now been killed by evidence rather than argument.
+
+**FACT 1 — it is not 10 failures, it is every attempt ever made.**
 ```
-22x STOP_LOSS_PRICE_LT_MARKETPRICE      stop no longer below market
- 3x STOP_PROFIT_PRICE_GT_OPENPRICE      target no longer above open
- 2x SYMBOL_CAN_NOT_SELL_SHORT           the position was ALREADY GONE — chasing nothing
+oms.log + all 6 rotated files (08-11 -> 08-17):
+  [WEBULL-PROTECT-ATTACHED]   0
+  [WEBULL-EXIT-PAIR-PLACED]   0     <- logged right after place_order returns
 ```
+`place_order` has **never once returned successfully**. This is not a regression; the path has
+never worked. ⇒ "#689 attach is 0-for-11" understates it — it is **0-for-ever**.
+
+**FACT 2 — stale pricing is refuted for the bare-fill half.** Splitting the 08-14 refusals by
+caller (they have opposite timing) is what the original entry never did:
+
+| caller | fires | 08-14 | stale price? |
+|---|---|---|---|
+| #689 bare-fill | ~0.2s after the fill | 6 episodes, all refused | **NO — refuted** |
+| #692 reprotect | 37s–10min after | 3 triggers, all refused | plausible, probably right |
+
+CGTL's levels were **244 ms old** and exactly +2%/−5% of the fill when refused. Price cannot go
+stale in 244 ms. ⇒ The stale-price story holds for **#692 only**; my blanket version was too broad.
+
+**FACT 3 — the reject strings were read backwards.** The full text (never seen before, because the
+log truncated at 200 chars — *"...should be lower than the cu"*):
+```
+OAUTH_OPENAPI_TRADE_STOP_LOSS_PRICE_LT_MARKETPRICE
+  "The stop price of the stop-loss order should be lower than the current market price."
+```
+Our stop **was** lower. The error CODE names the **required relation, not the violation**, so it
+reads as its own opposite. Only **1** refusal (CGTL 15:14, target 5.2173 vs *"should be higher than
+5.23"*) was a genuine price violation.
+
+**FACT 4 — the payload is NOT malformed (Probe X, 08-17, `preview_order`, nothing placed).**
+```
+CONTROL   Probe W shape A (LIMIT master + legs)      -> 200   instrument valid
+UNDER TEST production _build_exit_only_pair_payload  -> 200   <-- while the account is FLAT
+```
+⇒ ⛔⭐⭐ **`preview_order` DOES NOT VALIDATE POSITION BACKING.** It passed while we hold nothing.
+So **Probe W4's HTTP 200 only ever proved the shape PARSES, never that it PLACES** — the
+"BROKER-PROVEN" claim in `webull.py::_is_exit_only_pair` and in
+`tests/unit/test_webull_attach_protection.py` overstates what was shown. **Do not treat a preview
+200 as evidence this path works.**
+
+**ALSO KILLED:** the CORE-session / prior-close reference theory (`support_trading_session: "CORE"`
+on pre-market orders). AKAN's stop 7.74 sat **below** its 08-13 close of 9.49 and was still refused.
+
+### What survives — plausible, NOT proven
+**Position backing at place time.** Attempts fired at 0s / 2s / 4s against a settle lag measured at
+**12.7s** (CGTL 08-14: `FAILED` logged **8s BEFORE** `[SETTLE-LAG] VISIBLE after 12.7s`), and one
+episode logged `NEVER VISIBLE after 300s`. A protective SELL for shares the broker cannot see is a
+naked short to it.
+⛔ **The counter-evidence is real:** in **4 of 6** bare-fill episodes attempts 2–3 fired *after*
+`SETTLE-LAG: VISIBLE` and were still refused. `list_account_positions` visibility and order-side
+available-to-sell are **different surfaces** and have not been shown to move together.
+⇒ **If the widened horizon (#707) lands and refusals persist, the settle window is exonerated.**
 ⛔ **Concurrency:** STKH shows **two interleaved retry sequences on one fill**
 (`1/3, 2/3, 1/3, 3/3, FAILED, 2/3, 3/3, FAILED`), so the 9 FAILED lines cover only ~5-6 distinct
 positions. Any unprotected-count read off those lines is inflated.
@@ -571,10 +620,37 @@ A Python exception stored with the same `Webull order rejected` prefix as a genu
 count per `client_order_id` before calling it noise OR a real second attempt.**
 [[project_mai_tai_broker_order_events_conflates_client_aborts]] · [[project_mai_tai_probe_w_webull_stoplimit_master]]
 
-### Direction (not built)
-Re-price the re-attach off a **fresh quote at attach time**; **refuse to attach if we no longer
-hold**; **serialise** the retry loop; and consider not releasing until the close is known placeable.
-⛔ Control it: **a re-attach that has only ever failed proves nothing until one succeeds.**
+### ✅ SHIPPED 2026-08-17 — #706 + #707, both deployed (HEAD `634ff21`)
+**#706** (three noise fixes, deployed 11:00 ET, 3s outage):
+- **still-held guard** — bails ONLY on a positively-CONFIRMED flat; `FLAT_INFERRED`/`UNKNOWN`
+  continue, because FLAT_INFERRED is the ordinary settle-window shape (CGTL read it for 12.7s).
+- **placeability guard** — skips levels the broker would refuse. Biased towards SENDING: skips only
+  when a level fails against EVERY proxy (bid/ask/last). **No quote ⇒ no opinion ⇒ send.**
+- **coalescing** — one attach per position, killing the interleaved sequences.
+- **`RoutingBrokerAdapter.fetch_quotes`** — ⛔ without it the placeability guard is a SILENT NO-OP:
+  the OMS holds the ROUTER, `fetch_quotes` is Schwab-only, so every Webull lookup returned `{}` and
+  the guard would read as present while never running (the `fetch_oco_exit_fill` trap). Quotes are
+  symbol-level; verified 08-17 that Schwab quotes the Webull-only names (XHG 3.53/3.78).
+
+**#707** (deployed 11:44 ET, 10s outage):
+- **`[WEBULL-EXIT-PAIR-REFUSED]`** logs the exact payload sent (from the REAL builder, never a copy)
+  plus the full exception and response body. ⭐ **This is the instrument that ends the guessing** —
+  three hypotheses were argued and killed without it.
+- reason cap **200 → 1000** (the truncation is what hid FACT 3 above).
+- **retry horizon 3×2s (4.0s) → 5 attempts backing off 2/4/8/15 (~29s)**, capped. Attempt 1 stays
+  immediate: settle is usually 0.3–0.7s.
+
+### ⛔⛔ NONE OF THIS HAS PROTECTED ANYTHING — read before reporting on it
+Both PRs are **UNEXERCISED**: the account was flat all session, so no Webull fill has reached the
+attach path since deploy. And they are **noise + diagnosis fixes, not a cure** — the payload is
+refused for a reason none of them addresses.
+⇒ **A LOWER REFUSAL COUNT TOMORROW IS NOT A FIX.** The only real PASS is a
+`[WEBULL-PROTECT-ATTACHED]`, which has **never once been observed.**
+
+### Still not built
+- The retry bound `_v2_exit_close_failures` still resets on every positively-HELD read (item below).
+- Not releasing until the close is known placeable.
+- Correcting the "BROKER-PROVEN" comments that rest on a preview (FACT 4).
 
 ---
 

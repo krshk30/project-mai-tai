@@ -15,6 +15,76 @@
 
 ---
 
+## 2026-08-17 (Mon) — the reprotect direction was aimed at the wrong mechanism
+
+**Two PRs merged + deployed: #706 (`12756d0`) and #707 (`634ff21`).** Outages 3s and 10s, both far
+under the 120s bar-hole threshold; `schwab-1m-v2` deliberately NOT restarted either time, so no v2
+bar hole and 0 gaps on the continuity check. Operator gave an explicit GO for both, and for
+deploying across the 07:00 EH open after I flagged that the timing (not the flat account) was the
+risk.
+
+### What I set out to do, and why it was wrong
+Friday's handoff named Monday's first move: re-price the re-attach off a fresh quote, refuse to
+attach if we no longer hold, serialise the retry loop. I scoped exactly that — then the evidence
+contradicted the premise before I wrote any of it.
+
+**The finding that reframed everything:** `[WEBULL-PROTECT-ATTACHED]` = **0** and
+`[WEBULL-EXIT-PAIR-PLACED]` = **0** across ALL SEVEN retained `oms.log` files (08-11 → 08-17).
+`place_order` has never once returned. It is not "0-for-11 on 08-14", it is **0-for-ever**.
+
+**Stale pricing is refuted for the bare-fill half.** Splitting the refusals by caller — which the
+08-14 entry never did — the two callers have opposite timing and fail identically. CGTL's levels
+were **244 ms old** when refused. The stale-price story survives for #692 reprotect only.
+
+**The reject strings were read backwards.** The full text says *"The stop price of the stop-loss
+order should be lower than the current market price"* — and ours **was** lower. The error CODE names
+the required relation, not the violation. The 200-char log truncation cut the message at
+*"...should be lower than the cu"*, which is precisely why the code got glossed as its own opposite
+and "the stop was stale" stood for a week. [[feedback_a_wrong_reason_is_worse_than_a_missing_one]]
+
+**Probe X killed the malformed-payload theory.** The production builder's OWN output previewed
+**HTTP 200** — while the account was FLAT. ⇒ `preview_order` does not validate position backing, so
+**Probe W4's 200 only proved the shape PARSES, never that it PLACES.** Two "BROKER-PROVEN" comments
+now rest on evidence that cannot support them. [[feedback_authoritative_for_a_is_not_for_b]]
+
+**The CORE-session/prior-close theory died too:** AKAN's stop 7.74 was below its 08-13 close of 9.49
+and still refused.
+
+### What shipped anyway, and honestly labelled
+#706's three guards are defensible on their own terms and #707 widens the retry horizon past the
+measured 12.7s settle lag — but **none of it is a cure**, and all of it is **UNEXERCISED** (flat
+account all session). The warning is written into the commit messages, both PR bodies, the code
+docstrings and the test module headers, because "refusals went down" is exactly the reading that
+would otherwise be made. The only real PASS is a `[WEBULL-PROTECT-ATTACHED]`.
+
+⭐ The one durable win is **#707's `[WEBULL-EXIT-PAIR-REFUSED]`**: full payload + full broker
+response on every refusal. Three hypotheses were argued and killed by inference this session; one
+instrumented episode would have settled it.
+
+### Two process notes worth keeping
+- **A mutant SURVIVED and it was the important one.** Reverting the code default 5→3 attempts
+  changed nothing, because every fixture passed `attempts`/`interval` explicitly and overrode the
+  thing under test. Production sets **no** `WEBULL_PROTECT_*` env override (checked on the box), so
+  the code defaults are the only thing that runs — the untested path was the live one.
+  [[feedback_fixture_must_match_production_config]]
+- **`json` was not imported in `webull.py`.** The new diagnostic would have thrown `NameError` at
+  exactly the moment it was needed. Caught by lint, not by thought.
+- I twice over-estimated elapsed time and had to re-read the box clock (once nearly calling a
+  pre-open v2 zero a fault at 06:53 when the EH open is 07:00). **The clock comes from the box.**
+  [[feedback_report_times_in_et]]
+
+### Also this session
+- **Fleet health, pre-open:** all services up, token `refresh_token_expires_at` read from the store
+  (Wed 08-19 05:21 ET), XPON short **gone** (operator closed it; verified against a live 3s-fresh
+  sync, not a bare zero).
+- **v2's `degraded` at 06:29 was the pre-open baseline, not a fault** — proven with a 5-day control
+  showing every prior day's first bar at exactly 11:00:00 UTC. Confirmed green when 11:00:00 landed.
+- ⚠️ **This file's 08-14 entry was appended at the BOTTOM (line ~1744), not the top**, against the
+  rule at the head of this file. Left in place — it is append-only — but it means the 08-14
+  narrative is where nobody will look.
+
+---
+
 ## 2026-08-13 — the close was fighting our own exit legs
 
 **Seven PRs merged and deployed (`3ac4721`), both new flags ON at the operator's explicit
