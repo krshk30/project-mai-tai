@@ -121,13 +121,31 @@ def test_the_OMS_sends_a_HINT_not_a_webull_enum() -> None:
 
 
 def test_the_session_is_LOGGED_on_every_outcome_line() -> None:
-    """⛔ If tomorrow's pre-market attach fails, the FIRST question is which string went out. That
-    must never have to be inferred."""
+    """⛔ If tomorrow's pre-market attach fails, the FIRST question is which string went out.
+    That must never have to be inferred.
+
+    ⛔ EVERY occurrence, not the first. `[WEBULL-PROTECT-RETRY]` has TWO sites — the `refused`
+    branch and the `raised` branch — and checking only the first let a mutant that stripped the
+    session from the refused line SURVIVE.
+
+    ⛔ Each check is bounded to its OWN `self.logger(...)` call. A fixed-size window bleeds into
+    the NEXT log statement, and since that one also carries `session=%s` the same mutant survived
+    a second time. Split on the call boundary, not on a character count.
+    """
     body = _attach_body()
-    for marker in ("[WEBULL-PROTECT-ATTACHED]", "[WEBULL-PROTECT-RETRY]", "[WEBULL-PROTECT-FAILED]"):
-        idx = body.index(marker)
-        window = body[idx: idx + 500]
-        assert "session=%s" in window, f"{marker} does not log the session actually sent"
+    calls = body.split("self.logger")
+    markers = ("[WEBULL-PROTECT-ATTACHED]", "[WEBULL-PROTECT-RETRY]", "[WEBULL-PROTECT-FAILED]")
+    seen = {m: 0 for m in markers}
+    for call in calls:
+        for m in markers:
+            if m in call:
+                seen[m] += 1
+                assert "session=%s" in call, f"{m} logs without the session actually sent: {call[:120]}"
+    assert seen["[WEBULL-PROTECT-RETRY]"] >= 2, (
+        f"expected BOTH retry sites (refused + raised), found {seen['[WEBULL-PROTECT-RETRY]']}"
+    )
+    for m in markers:
+        assert seen[m] >= 1, f"{m} not found in any logger call"
 
 
 def test_the_RTH_BRACKET_payload_is_untouched() -> None:
