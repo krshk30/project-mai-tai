@@ -45,9 +45,14 @@ payload + broker response either way. Log all three parts regardless of outcome.
 
 ## ⚡ FIRST SCREEN
 
-**As of 2026-08-17 EOD.** **Deployed HEAD `a2616f6`** — verified BY CONTENT on the box and asserted
-as an ancestor; `src/` diff vs `origin/main` = 0 files. Tree clean. **Account fully FLAT** (0 managed
-rows, 0 working orders, shared book empty — the operator's IVF 5000 closed).
+**As of 2026-08-17 EOD.** Tree clean. **Account fully FLAT** (0 managed rows, 0 working orders, shared
+book empty — the operator's IVF 5000 closed).
+
+**Box files = `d9d84de`; `src/` diff vs `origin/main` = 0 files.** ⛔ But the **running OMS process
+still carries `70ca930`'s code** — it started **17:50 ET** (#714) and has **not restarted since**.
+The only `src/` delta between them is #715's new `backtest/broker_refusal.py`, which the OMS never
+imports ⇒ **functionally identical for the OMS, but do not call the process "d9d84de".**
+Verified BY CONTENT, not by hash: `BROKER-SYNC-UNREADABLE` ×1, `SchwabPositionsUnavailable` ×5.
 
 ### Shipped + deployed today — FIVE PRs, all verified by content
 | PR | what | outage | exercised? |
