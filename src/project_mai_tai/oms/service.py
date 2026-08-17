@@ -1990,8 +1990,30 @@ class OmsRiskService:
         stop_pct = float(getattr(self.settings, "oms_v2_cw_hard_stop_pct", 5.0))
         target = entry_price * (1.0 + target_pct / 100.0)
         protect = entry_price * (1.0 - stop_pct / 100.0)
-        attempts = max(1, int(getattr(self.settings, "oms_webull_protect_attempts", 3)))
+        # ⛔⭐⭐ THE RETRY HORIZON MUST OUTLIVE THE SETTLE WINDOW (2026-08-17).
+        # The old schedule was 3 attempts at a FIXED 2s: fired at 0s / 2s / 4s, so the whole
+        # sequence was over 4.3 seconds after the fill. Measured settle lag on the same account
+        # reached 12.7s (live 08-14 CGTL: `[SETTLE-LAG] VISIBLE after 12.7s`, with all three
+        # attempts already spent and FAILED logged 8s BEFORE the position appeared) and once
+        # logged `NEVER VISIBLE after 300s`. A protective SELL for shares the broker cannot yet
+        # see is a naked short to it, so the sequence could not have succeeded at any price.
+        # Backoff 2 -> 4 -> 8 -> 15 spans ~29s, which covers the observed window with margin.
+        # ⛔ Attempt 1 stays IMMEDIATE on purpose: settle is usually 0.3-0.7s, and delaying every
+        # attach to survive the rare slow case would leave the common case unprotected for longer.
+        # ⛔ NOT PROVEN, ONLY PLAUSIBLE: in 4 of 6 bare-fill episodes attempts 2-3 fired AFTER
+        # `SETTLE-LAG: VISIBLE` and were still refused. Position visibility (`list_account_positions`)
+        # and order-side available-to-sell are different surfaces and have NOT been shown to move
+        # together. If this lands and refusals persist, the settle window is exonerated.
+        attempts = max(1, int(getattr(self.settings, "oms_webull_protect_attempts", 5)))
         interval = max(0.0, float(getattr(self.settings, "oms_webull_protect_interval_seconds", 2.0)))
+        backoff = max(1.0, float(getattr(self.settings, "oms_webull_protect_backoff_multiplier", 2.0)))
+        max_interval = max(
+            0.0, float(getattr(self.settings, "oms_webull_protect_max_interval_seconds", 15.0))
+        )
+
+        def _retry_delay(attempt_number: int) -> float:
+            """Seconds to wait AFTER `attempt_number` before the next one."""
+            return min(interval * (backoff ** (attempt_number - 1)), max_interval)
 
         for attempt in range(1, attempts + 1):
             # ⛔ Do not chase a position we no longer own. 2 of 27 refusals on 08-14 were
@@ -2024,7 +2046,7 @@ class OmsRiskService:
                     symbol, broker_account_name, attempt, attempts, unplaceable,
                 )
                 if attempt < attempts and interval:
-                    await asyncio.sleep(interval)
+                    await asyncio.sleep(_retry_delay(attempt))
                 continue
             coid = f"{strategy_code}-{symbol}-protect-{uuid4().hex[:12]}"
             request = OrderRequest(
@@ -2067,12 +2089,17 @@ class OmsRiskService:
                 )
                 return
             reason = "; ".join(str(getattr(r, "reason", "")) for r in reports) or "no report"
+            # ⛔⭐ DO NOT TRUNCATE THE BROKER'S OWN WORDS. At 200 chars the reject read
+            # `...should be lower than the cu` — cut off exactly where it stopped being useful,
+            # which is how the error CODE (`STOP_LOSS_PRICE_LT_MARKETPRICE`, naming the REQUIRED
+            # relation) got glossed as its own opposite and "the stop was stale" became the
+            # accepted story for a week. The message text is the only thing that disambiguates it.
             self.logger.warning(
                 "[WEBULL-PROTECT-RETRY] %s %s attempt %d/%d refused: %s",
-                symbol, broker_account_name, attempt, attempts, reason[:200],
+                symbol, broker_account_name, attempt, attempts, reason[:1000],
             )
             if attempt < attempts and interval:
-                await asyncio.sleep(interval)
+                await asyncio.sleep(_retry_delay(attempt))
 
         self.logger.warning(
             "[WEBULL-PROTECT-FAILED] %s %s qty=%d entry=%.4f — COULD NOT ATTACH target=%.4f "
