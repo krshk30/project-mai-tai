@@ -68,6 +68,37 @@ class RoutingBrokerAdapter:
             base_client_order_id=base_client_order_id,
         )
 
+    async def fetch_quotes(self, symbols: list[str]) -> dict[str, dict[str, float | None]]:
+        """Quotes for ``symbols``, from ANY configured provider that can serve them.
+
+        ⛔⭐ DELIBERATELY **NOT** ROUTED BY ACCOUNT, unlike every other forwarder here. Positions
+        and orders belong to an account, so routing those by account is correct. A QUOTE does not
+        -- it is a property of the SYMBOL. ``fetch_quotes`` is implemented only by the Schwab
+        adapter (Webull, Alpaca and simulated have no such method), so an account-routed version
+        would return ``{}`` for precisely the Webull accounts that need it, and every caller would
+        fail OPEN while the guard still read as present in the code.
+
+        That is the `fetch_oco_exit_fill` trap documented above -- the OMS holds the ROUTER, not a
+        leaf adapter, so a capability the router does not forward is a silent no-op with the flag
+        ON. Verified live 2026-08-17: Schwab quotes the Webull-only names fine (XHG 3.53/3.78,
+        ONFO 2.32/2.37), so borrowing a quote across providers is sound, not a workaround.
+
+        Returns ``{}`` only when NO configured provider can quote -- a genuine "we cannot know",
+        which callers must distinguish from "the price is fine".
+        """
+        for provider in self.factories_by_provider:
+            try:
+                adapter = self._adapter_for_provider(provider)
+            except Exception:  # noqa: BLE001 - a provider that will not build must not break a quote
+                continue
+            fetcher = getattr(adapter, "fetch_quotes", None)
+            if fetcher is None:
+                continue
+            quotes = await fetcher(symbols)
+            if quotes:
+                return dict(quotes)
+        return {}
+
     async def fetch_oco_resolved_by_fill_symbols(
         self, broker_account_name: str, symbols: list[str]
     ) -> set[str]:
