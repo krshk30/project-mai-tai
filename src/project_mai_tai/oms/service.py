@@ -2004,6 +2004,14 @@ class OmsRiskService:
         # `SETTLE-LAG: VISIBLE` and were still refused. Position visibility (`list_account_positions`)
         # and order-side available-to-sell are different surfaces and have NOT been shown to move
         # together. If this lands and refusals persist, the settle window is exonerated.
+        # ⛔⭐⭐ THE SESSION TAG DECIDES WHETHER THIS CAN PLACE AT ALL (root cause, 2026-08-17).
+        # Webull validates a CORE-tagged order against the CORE reference — the PRIOR CLOSE — so
+        # pre-market a stop below our entry still sits far ABOVE that reference and is refused.
+        # Live IVF: bought 2.53 pre-market, stop 2.40, prior close 0.9716 -> 5 refusals.
+        # RTH keeps CORE (proven working); only the non-RTH path widens to ALL_DAY.
+        # ⛔ The OMS says WHICH SESSION WE ARE IN; the adapter owns the broker's enum. No Webull
+        # string appears here, and the adapter never imports upward for the clock.
+        session_hint = "RTH" if _is_regular_market_session() else "EXTENDED"
         attempts = max(1, int(getattr(self.settings, "oms_webull_protect_attempts", 5)))
         interval = max(0.0, float(getattr(self.settings, "oms_webull_protect_interval_seconds", 2.0)))
         backoff = max(1.0, float(getattr(self.settings, "oms_webull_protect_backoff_multiplier", 2.0)))
@@ -2063,6 +2071,7 @@ class OmsRiskService:
                     "bracket_target_price": f"{target:.4f}",
                     "bracket_stop_price": f"{protect:.4f}",
                     "source": "oms_v2_webull_protect",
+                    "market_session": session_hint,
                 },
                 order_type="limit",
                 time_in_force="day",
@@ -2071,8 +2080,8 @@ class OmsRiskService:
                 reports = await self.broker_adapter.submit_order(request)
             except Exception:
                 self.logger.warning(
-                    "[WEBULL-PROTECT-RETRY] %s %s attempt %d/%d raised",
-                    symbol, broker_account_name, attempt, attempts, exc_info=True,
+                    "[WEBULL-PROTECT-RETRY] %s %s session=%s attempt %d/%d raised",
+                    symbol, broker_account_name, session_hint, attempt, attempts, exc_info=True,
                 )
                 reports = []
             if any(getattr(r, "event_type", "") not in ("rejected",) for r in reports):
@@ -2084,8 +2093,9 @@ class OmsRiskService:
                 self._webull_protect_base[(broker_account_name, symbol.upper())] = coid
                 self.logger.info(
                     "[WEBULL-PROTECT-ATTACHED] %s %s qty=%d entry=%.4f -> target=%.4f stop=%.4f "
-                    "(attempt %d) — a real pair is now resting at the broker",
-                    symbol, broker_account_name, quantity, entry_price, target, protect, attempt,
+                    "session=%s (attempt %d) — a real pair is now resting at the broker",
+                    symbol, broker_account_name, quantity, entry_price, target, protect,
+                    session_hint, attempt,
                 )
                 return
             reason = "; ".join(str(getattr(r, "reason", "")) for r in reports) or "no report"
@@ -2094,18 +2104,21 @@ class OmsRiskService:
             # which is how the error CODE (`STOP_LOSS_PRICE_LT_MARKETPRICE`, naming the REQUIRED
             # relation) got glossed as its own opposite and "the stop was stale" became the
             # accepted story for a week. The message text is the only thing that disambiguates it.
+            # ⛔ The session goes on the line. If tomorrow's pre-market attach fails, the FIRST
+            # question is which string we actually sent — that must never have to be inferred.
             self.logger.warning(
-                "[WEBULL-PROTECT-RETRY] %s %s attempt %d/%d refused: %s",
-                symbol, broker_account_name, attempt, attempts, reason[:1000],
+                "[WEBULL-PROTECT-RETRY] %s %s session=%s attempt %d/%d refused: %s",
+                symbol, broker_account_name, session_hint, attempt, attempts, reason[:1000],
             )
             if attempt < attempts and interval:
                 await asyncio.sleep(_retry_delay(attempt))
 
         self.logger.warning(
-            "[WEBULL-PROTECT-FAILED] %s %s qty=%d entry=%.4f — COULD NOT ATTACH target=%.4f "
-            "stop=%.4f after %d attempts. THE POSITION IS HELD WITH NO BROKER-SIDE STOP; the "
-            "software ladder is the only cover. Place one by hand.",
-            symbol, broker_account_name, quantity, entry_price, target, protect, attempts,
+            "[WEBULL-PROTECT-FAILED] %s %s qty=%d entry=%.4f session=%s — COULD NOT ATTACH "
+            "target=%.4f stop=%.4f after %d attempts. THE POSITION IS HELD WITH NO BROKER-SIDE "
+            "STOP; the software ladder is the only cover. Place one by hand.",
+            symbol, broker_account_name, quantity, entry_price, session_hint,
+            target, protect, attempts,
         )
 
     async def _webull_protect_unplaceable_reason(
