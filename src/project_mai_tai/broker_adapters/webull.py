@@ -949,7 +949,15 @@ class WebullBrokerAdapter:
             "quantity": str(int(request.quantity)),
             "entrust_type": "QTY",
             "time_in_force": self._tif(request),
-            "support_trading_session": "CORE",
+            # ⛔⭐⭐ THE SESSION IS WHY EVERY PRE-MARKET ATTACH WAS REFUSED (root-caused 2026-08-17).
+            # A "CORE"-tagged order is validated by Webull against the CORE reference -- the PRIOR
+            # CLOSE -- not the live extended-hours tape. On a gapper that is fatal: live IVF bought
+            # pre-market at 2.53 with a stop at 2.40 against a prior close of 0.9716, so Webull's
+            # "the stop price should be lower than the current market price" was literally true from
+            # its side. 100% of refusals were pre-market; every RTH fill got its bracket.
+            # ⛔ The OMS decides the session (`_is_regular_market_session` lives there and this
+            # adapter must not import upward). Absent metadata => "CORE" => byte-identical.
+            "support_trading_session": self._exit_pair_session(request),
         }
         # ⛔ MUST go through `_combo_leg_coid`, NOT f"{coid}T". Webull 417-rejects a client_order_id
         # over 40 chars, and the attach's own base id (`<strategy>-<symbol>-protect-<12hex>`) is 39
@@ -965,6 +973,33 @@ class WebullBrokerAdapter:
              "combo_type": "STOP_LOSS", "side": "SELL",
              "order_type": "STOP_LOSS", "stop_price": str(self._round_to_tick(protect))},
         ]
+
+    # Webull's documented enum is Y / N / NIGHT / ALL_DAY / ALL / CORE, but the v3 COMBO endpoint
+    # accepts only a subset. Broker-verified 2026-08-17 by preview against this exact endpoint:
+    #     CORE 200 · ALL_DAY 200 · ALL 417 · NIGHT 417 · Y 417
+    # ⛔ `ALL` ("include extended trading hours") is valid for a SINGLE-LEG order and REFUSED on the
+    # combo. That asymmetry is why a first six-value probe read "CORE is the only value". Do not
+    # "correct" ALL_DAY to the more obvious-looking ALL -- it 417s and every attach dies again.
+    _EXIT_PAIR_SESSION_RTH = "CORE"
+    _EXIT_PAIR_SESSION_EXTENDED = "ALL_DAY"
+
+    def _exit_pair_session(self, request: OrderRequest) -> str:
+        """The trading session to tag a protective pair with.
+
+        ⛔ NOT a blanket swap. RTH keeps CORE: it is proven to work (live SLE 2026-08-17 got its
+        bracket 1.8s after the fill) and it carries none of ALL_DAY's overnight breadth. Only the
+        non-RTH path needs the wider window, and only because CORE is validated against the prior
+        close there.
+
+        ⛔ ALL_DAY spans 20:00 ET -> 20:00 ET, which is BROADER than pre-market. Accepted on the
+        evidence that we have never held past 20:00: 341 managed positions over the 10 sessions to
+        2026-08-17, ZERO open past 20:00 ET, latest close 19:00 ET. If that ever stops being true,
+        this decision needs revisiting -- the breadth is theoretical only while that holds.
+        """
+        hint = str(request.metadata.get("market_session", "") or "").strip().upper()
+        if hint == "EXTENDED":
+            return self._EXIT_PAIR_SESSION_EXTENDED
+        return self._EXIT_PAIR_SESSION_RTH
 
     def _log_exit_pair_refusal(self, request: OrderRequest, exc: BaseException) -> None:
         """Record EXACTLY what we sent and EXACTLY what came back when a protective pair is refused.
