@@ -1937,3 +1937,94 @@ the market closed while it had 28 minutes left. That is the same GNU-extension f
 an abort guard for in the validator that morning. And I ran the "quotable" validator from a branch
 cut **before** the §4/§6 fix merged, so it printed the old wrong verdicts. **Read the clock and the
 code from the box, not from this machine.**
+
+## 2026-08-17 (Mon) — a week of wrong answers closed, five deploys, and a defect proven by injection
+
+**Five PRs deployed** (#706 3s, #707 10s, #709 15s, #710 3s, #714 4.4s) plus seven docs/test-only
+merges (#711–#713, #715–#718). Fleet 6/6 at EOD, account fully flat, tree clean.
+
+### The root cause — Webull validates a CORE order against the PRIOR CLOSE
+`support_trading_session=CORE` is checked against the **CORE reference price**, i.e. the prior close,
+not the live extended-hours tape. IVF 08:26 ET: bought 2.5300, stop 2.40, prior close **0.9716** ⇒ 5×
+417 *"stop price should be lower than the current market price"*. Our stop was below our entry; it was
+not below the prior close. Cross-tab over 6 sessions: **100% of refusals pre-market, every RTH fill
+bracketed.** Fix (#710) tags the non-RTH path `ALL_DAY`.
+
+⛔ **Three prior hypotheses died today**: stale ENTRY pricing (held for #692, wrong for #689),
+CORE-session as first framed, and malformed payload. The reason had been sitting in the broker's own
+words all along — a log line truncated it, and **a wrong reason stopped the investigation for a week.**
+⛔ **`preview_order` does not validate position backing** (200s while flat) ⇒ Probe W4's
+"BROKER-PROVEN" only ever proved the shape PARSES.
+
+### #714 — one failed Schwab positions read erased a held position's ledger row
+`list_account_positions` returned `[]` on **four** failure paths (incl. a bare `except`);
+`sync_account_positions` zeroes absent symbols; `[VIRTUAL-CLEAR]` erases one-way. **2 of 2 exposed
+holds erased, to the second** (CRWU 08-12 19:34:18, VWAV 08-14 19:31:49), each from an **isolated
+single failure**. L1 adapter raises · L2 sync excludes the unreadable account · L3 re-derives from
+`oms_managed_positions` (OURS, never the shared book) with broker backing as a floor.
+
+⭐ **Caught in my own diff before merge:** L2 built `account_ids` from every *configured* account,
+which would have defeated L2 from the other end. Fixed to `[account_id for account_id, _ in fetched]`.
+
+**Proven live at 19:47 ET by FORCED INJECTION rather than by waiting** — an on-box harness pointed the
+**real `SchwabBrokerAdapter`** at an unreachable endpoint and drove the **real
+`sync_broker_positions`**, stubbing only the DB store. Adapter raised the typed exception; the failed
+account never reached `sync_account_positions`; the healthy account still synced; the one-way clear
+and the L3 restore were both scoped to `fetched`. No live account, no DB write, fleet flat, harness
+deleted. **Source-shape assertions via `inspect` could not have proven this** — hence the new standing
+rule: *"UNEXERCISED is not a result" does not oblige you to wait for a rare live trigger.*
+
+### The denominator, corrected twice
+First stated as **2/324 over 08-11→08-17**. Retained coverage is actually **Mon 08-10 → Mon 08-17**
+(6 sessions), and the day buckets were **UTC** — logs rotate 00:00 UTC = 20:00 ET, so a
+Saturday-evening burst was filed under Sunday. In ET: 08-11 **2** · 08-12 **1** · 08-14 **1** ·
+**08-15 Sat 274** · 08-17 **46**. **274 of 324 (85%) fell on a non-trading day; session-day failures
+are 50.** The **2-of-2 conversion is unchanged** and is the only number to quote — exposure scales
+with **hold time**, not failure frequency.
+
+⛔ **The "Schwab throws large outage bursts" claim was withdrawn same night.** The retained window holds
+**exactly one weekend** and `journalctl -u project-mai-tai-oms` has **no entries at all** (file sink),
+so scheduled weekend maintenance cannot be distinguished from an outage — **n=1, unanswerable.**
+Wording downgraded to *"one weekend showed 274 failures; cause not established."*
+✅ But the *storm-vs-cadence* half resolved: **254 of 272 inter-failure gaps were exactly 15s** and the
+positions read has **no retry or backoff** ⇒ normal poll, every call failing, 68 minutes. Schwab's own
+text 278×: `Application encountered unexpected error…`. Closed, no new item.
+
+### New item: the fix creates its own silent window (§54)
+While reads fail the ledger is correctly **stale-but-intact**, but we stop learning what changed at
+the broker and a native stop could fill unseen. `[BROKER-SYNC-UNREADABLE]` **only logs**. Sizing came
+free from the gap analysis — longest consecutive unreadable run **273 reads ≈ 68 min** (Sat eve) vs
+**6 reads ≈ 1 min** on the last trading day. Trip on *N consecutive failures* **and** *holding
+something*. Pairs with Ship 1's exit-blocked pager.
+
+### Item 1 closed
+**875/875 entry orders present in Schwab's own book**, zero absent; median time-at-rest 61–62s.
+The resting-entry mechanism is sound; nothing was being dropped at rest.
+
+### Withdrawn — two backtests, for their own reasons
+- **Exit geometry (+1%/−3% vs +2%/−5%)**: the engine caps at **one round trip per symbol-day**, and a
+  capped population **cannot express the turnover effect** that is the entire thesis for a tighter
+  target. Withdrawn before reporting a number.
+- **Route 1**: failed **its own control** — only 48% of days within 0.5pp, worst >50pp. Two causes: no
+  flip-exit modelling, and an **INFERRED** "actual" baseline (first sell after entry) — the FIFO
+  attribution the board explicitly forbids.
+
+### Method errors worth keeping
+- **Four over-broad denominators in one day** — 14 calendar days vs 10 sessions; fills-per-placement
+  (11%) vs fills-per-arm (42%); all-positions vs the reached population (this one **manufactured a
+  false alarm on an already-approved decision**); first-round-trip vs actual re-entry.
+- **A wall-clock wrapper measured itself** — reported a 34s OMS shutdown; systemd's own record said
+  **4.4s**. Concern withdrawn.
+- **Dropped the our-orders join** while reconciling two counts and introduced 8 OVER classifications
+  from shared-book contamination.
+- **`systemctl is-active project-mai-tai-oms-risk` → `inactive`** for a unit that does not exist —
+  a status query against a wrong name returns a **confident wrong answer, not an error**. Enumerate,
+  then filter.
+- **`git checkout -q main 2>/dev/null; git reset --hard origin/main`** — the checkout failed
+  (worktree conflict), `2>/dev/null` hid it, `;` ran the reset anyway and **wiped two commits off the
+  branch I was standing on.** Recovered only because they had been pushed. Never chain a destructive
+  command behind a suppressed-error one.
+- **Three surviving mutants**, each instructive: a fixture that passed settings explicitly hid a
+  default-revert (production has no env override, so the untested default was the only live path); a
+  test that read only the first of two retry sites; and a 500-char window that bled into the next log
+  statement.
