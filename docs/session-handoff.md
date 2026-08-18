@@ -12,7 +12,7 @@
 
 ---
 
-# 🚨 TOMORROW'S FIRST ACTION — 08:11–08:26 ET, DO THIS BEFORE ANYTHING ELSE
+# 🚨 TODAY'S FIRST ACTION — 08:11–08:26 ET, DO THIS BEFORE ANYTHING ELSE
 
 **#710 shipped the CORE→ALL_DAY session fix at 16:06 ET 08-17. It is UNEXERCISED.** The only thing
 that can prove it is a **pre-market Webull fan-out fill**, and the window is ~08:11–08:26 ET
@@ -25,7 +25,7 @@ nothing.
 ```bash
 # 1. did it attach, and with which session string?
 sudo grep -E "WEBULL-PROTECT-(ATTACHED|RETRY|FAILED)|WEBULL-EXIT-PAIR-REFUSED" \
-  /var/log/project-mai-tai/oms.log | cut -c1-260      # every line now carries session=
+  /var/log/project-mai-tai/oms.log | cut -c1-260      # lines carry session= only AFTER #710
 ```
 2. **READ THE SINK.** Take the base coid from `[WEBULL-PROTECT-ATTACHED]`, derive `<base>T` /
    `<base>S` via `_combo_leg_coid`, and fetch each leg with Webull `OrderDetailRequest`
@@ -43,26 +43,40 @@ payload + broker response either way. Log all three parts regardless of outcome.
 ⛔ **n=0 fills is a NON-RESULT, not a pass.** State the fill count with the verdict.
 
 ## 📋 THEN, IN THIS ORDER (operator-set 08-17 night)
-**acceptance read → §49 → R4 wiring → R1 → §31 → §32 → §1 → §2 → §3.**
+**acceptance read → ~~§49~~ ✅ *(killed 08-18, see below)* → R4 wiring → R1 → §31 → §32 → §1 → §2 → §3.**
 
 ---
 
 ## ⚡ FIRST SCREEN
 
-**As of 2026-08-17 EOD (verified on the box 19:47 ET).** Tree clean. **Account fully FLAT** (0 managed
-rows, 0 working orders, shared book empty — the operator's IVF 5000 closed). **6/6 services active.**
+**PRE-OPEN PASS RUN 2026-08-18 06:40 ET — GREEN.** **7/7 services running** (enumerated, not queried
+by name). **Nothing restarted overnight** — OMS still up from 17:50 ET Mon, carrying #714. Account
+**flat**: 0 open managed rows, broker book empty. Market data **flowing** (latest bar 06:40 ET, 240
+rows/30m); `market-data.log` silent since 21:53 ET is a **quiet logger, not a freeze** — confirmed
+against the bar table. v2 watchlist live and rotating (`count=3 sample=PFSA,SGLY,XOS` 06:37 ET).
+Fan-out **armed**: `DUAL_BROKER_FANOUT_ENABLED` · `WEBULL_MIRROR_EH_ENABLED` · `NATIVE_BRACKET_ENABLED`
+all true, fan-out qty **1**. Infra: redis PONG **1.11G/2.00G ⚠️ `allkeys-lru`** · postgres 19 conns ·
+disk 23% · load 1.24.
 
 **Box files = `d9d84de`; `src/` diff vs `origin/main` = 0 files** (main has since advanced on
-docs-only commits). ⛔ But the **running OMS process still carries `70ca930`'s code** — it started
-**17:50 ET** (#714) and has **not restarted since**. The only `src/` delta is #715's new
-`backtest/broker_refusal.py`, which the OMS never imports ⇒ **functionally identical for the OMS,
-but do not call the process "d9d84de".**
-Verified BY CONTENT, not by hash: `BROKER-SYNC-UNREADABLE` ×1, `SchwabPositionsUnavailable` ×5.
+docs-only commits). ⛔ The **running OMS process carries `70ca930`'s code** — started **17:50 ET Mon**,
+**no restart since**. The only `src/` delta is #715's `backtest/broker_refusal.py`, which the OMS
+never imports ⇒ **functionally identical for the OMS, but do not call the process "d9d84de".**
+Verified BY CONTENT, not by hash: `BROKER-SYNC-UNREADABLE` ×1, `SchwabPositionsUnavailable` ×5,
+`_EXIT_PAIR_SESSION_EXTENDED = "ALL_DAY"` ×1, `WEBULL-EXIT-PAIR-REFUSED` ×1.
+
+### 🔬 INSTRUMENT CHECK on today's acceptance read — the watch is NOT blind
+✅ The grep **fires on a known-bad tape**: 40 matches in `oms.log-20260815.gz`, 11 on 08-17 carrying
+the real refusal text. ✅ **Rotation is safe** — today's window (11:00–13:30 UTC) sits entirely in the
+current `oms.log`, opened 00:00 UTC. One file; no `.log*` glob needed.
+⛔ **`session=` is UNEXERCISED, not failing.** Zero lines carry it, but the **denominator is zero**:
+all 11 attach lines are from 08:26 ET Mon, four hours *before* #710 deployed at 16:06 ET, and there
+have been **0 since**. Absence proves nothing here.
 
 ### Shipped + deployed today — FIVE PRs, all verified by content
 | PR | what | outage | exercised? |
 |---|---|---|---|
-| #706 | 3 guards on the Webull attach + `RoutingBrokerAdapter.fetch_quotes` | 3s | ⛔ **0/0/0 — none has run** |
+| #706 | 3 guards on the Webull attach + `RoutingBrokerAdapter.fetch_quotes` | 3s | ⛔ **0/0/0 across the WHOLE retained window** — `ABANDONED`/`COALESCED`/`UNPLACEABLE`, and `ATTACHED` is **0** too |
 | #707 | `[WEBULL-EXIT-PAIR-REFUSED]` payload logging · retry horizon 4.0s→~29s | 10s | ✅ **validated — it delivered the root cause** |
 | #709 | broker account on every `[V2-OCO-EMIT]` line | 15s | pending next bracket |
 | #710 | **pre-market pair tagged `ALL_DAY`, not `CORE`** | 3s | ⛔ **UNEXERCISED — top of this file** |
@@ -145,18 +159,23 @@ project-mai-tai-oms` has **no entries at all** (file sink). Current wording stay
 showed 274 failures; cause not established."** Do **not** restate it as "Schwab throws outage
 bursts" until a second weekend rotates in.
 
-## §49 — v2 SESSION ROLL: **UNVERIFIED** (not a pass, not a fail)
-strategy-engine's roll was confirmed firing in-process at 04:00 ET; there is **no systemd timer and
-no crontab** — the running loop drives it, so a restart disarms nothing.
-⛔ **v2's own roll produced no matching log line.** It cannot be verified because **it does not log**,
-and a silent roll is indistinguishable from one that never fired.
-1. **Add the line first.** Carry previous/new session boundaries + account. ⭐ **Log the DECISION, not
-   just the action** — a roll that evaluates and declines needs a line too, or the blind spot
-   reopens one level down.
-2. **Verify against the 08-19 04:00 ET boundary — NOT 08-18's.** The line will not exist for
-   tomorrow's roll; do not report tomorrow's absence as a pass.
-3. **Log-only ⇒ does NOT justify a v2 restart of its own.** v2 untouched since 08-13. Bundle it with
-   the next v2 deploy that has a real reason, or hold.
+## ✅ §49 — v2 SESSION ROLL: **VERIFIED 08-18. THE PREMISE WAS WRONG — NOTHING TO BUILD.**
+⛔ Monday's conclusion (*"v2's roll produced no matching log line… it cannot be verified because it
+does not log"*) was **FALSE**. I grepped v2's log for the **strategy-engine's** phrasing
+(`session-roll fired`); **v2 emits `[V2-SESSION-ROLL]`.** A whole board section rested on a wrong
+grep pattern.
+
+The line exists and has fired at **04:00 ET on every retained day**:
+`08-13 rolled=18 · 08-14 11 · 08-15 30 · 08-16 30 · 08-17 30 · 08-18 44`
+```
+2026-08-18 08:00:03  [V2-SESSION-ROLL] boundary_crossed=True rolled=44 symbols=AACG,AEHL,AIXI,…
+2026-08-18 08:09:37  [V2-SESSION-ROLL] boundary_crossed=False rolled=1 symbols=WFF (anchor=… watchlist=1 armed=1; protected/skipped untouched)
+```
+⭐ It **already logs the DECISION**, not just the action — the second line is a roll that evaluated and
+declined. That was the whole ask. It also logs on restarts (`08-13 16:44 / 21:36 rolled=0`).
+
+⇒ **No line to write. No 08-19 verification to wait for. No v2 restart to bundle.** v2 stays untouched
+since 08-13, and a deploy comes off the queue.
 
 ## 📌 RULES CARRIED FROM 08-17 NIGHT
 1. **⛔ A TIMING WRAPPER MEASURES THE WRAPPER.** I reported a 34s OMS shutdown from wall-clock around
@@ -169,9 +188,17 @@ and a silent roll is indistinguishable from one that never fired.
 4. **⭐⭐ "UNEXERCISED" DOES NOT MEAN "WAIT".** If the untested path is reachable by **injecting a
    fault into the real object**, inject it — same day. Only market/broker state we cannot create
    justifies waiting. Stub the *persistence*, never the object under test.
-5. **⛔ A STATUS QUERY AGAINST A WRONG NAME RETURNS A CONFIDENT WRONG ANSWER, NOT AN ERROR.**
-   `systemctl is-active project-mai-tai-oms-risk` → `inactive`; no such unit exists. **Enumerate,
-   then filter.** ⛔ And never chain a destructive command behind a suppressed-error one — a
+5. **⛔⭐⭐ A QUERY AGAINST A WRONG NAME RETURNS A CONFIDENT WRONG ANSWER, NOT AN ERROR.**
+   **FOUR instances in 24h**, each of which produced a false conclusion:
+   `systemctl is-active project-mai-tai-oms-risk` → `inactive` (no such unit) ·
+   `journalctl -u project-mai-tai-oms` → *no entries* (file sink) ·
+   grepping v2's log for the **strategy-engine's** roll phrasing → **"it does not log"**, which
+   became §49 · grepping `WEBULL-PROTECT-SKIP/NOHOLD/SERIALIZED` → 0/0/0 for markers that
+   **do not exist** (the real ones are `ABANDONED`/`COALESCED`/`UNPLACEABLE`).
+   ⇒ **ENUMERATE, THEN FILTER.** A name you typed is an **unverified input to the query**. If the
+   tool cannot distinguish *absent* from *dead/empty/zero*, verify the name first — `list-units`,
+   `ls`, or grep the marker **out of the source**.
+   ⛔ And never chain a destructive command behind a suppressed-error one — a
    `checkout … 2>/dev/null; reset --hard` wiped two commits off the branch it was standing on.
 
 ## 🔑 SCHWAB TOKEN
