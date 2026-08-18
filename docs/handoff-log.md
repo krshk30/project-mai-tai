@@ -2028,3 +2028,71 @@ The resting-entry mechanism is sound; nothing was being dropped at rest.
   default-revert (production has no env override, so the untested default was the only live path); a
   test that read only the first of two retry sites; and a 500-char window that bled into the next log
   statement.
+
+## 2026-08-18 (Tue) — a P0 root cause, a dead leg found by a baseline, and two variables killed by a histogram
+
+**Deployed: #721 alone** (v2, 16:31 ET, outage **1 second**). Merged docs-only: #718, #719, #720, #722.
+Fleet 7/7 at EOD, account flat, no open PRs.
+
+### The acceptance read: #710 is correctly implemented and INEFFECTIVE
+First pre-market fan-out fill since the fix — **XOS, `live:orb`, 08:41:59 ET, qty 1 @ 4.6700**. The
+payload carried exactly what #710 was built to send, `"support_trading_session": "ALL_DAY"`, and
+Webull refused it five times, byte-identically. XOS at that moment: **previous_close 2.09**, last
+trade 4.64, our stop 4.44. Refused against the prior close, accepted against the live tape.
+⇒ **The prior-close REFERENCE is confirmed; the session enum is NOT the lever that selects it.** A
+real PLACE with a real position behind it, so unlike Probe W4 there is no preview ambiguity.
+The software ladder exited **both** legs (`-close-`); Schwab's leg logged `SKIPPED (outside regular
+hours)`. Pre-market remains **0% bracketed on both brokers**.
+
+### 🔴 The root cause: the db-seed hydrated 250 bars BY ROW COUNT
+CAST had 38 bars on 08-18, a **61-day hole**, then June — so 212 of its 250 seeded bars came from
+06-18 and v2 **armed at flip_level 7.99 while CAST traded 1.04–1.28**. Five arms marched through five
+June bars in **26 ms**.
+
+⛔ It collapsed five board sections into one. The Schwab "stop price above the ask" rejects were not a
+pricing defect; `cw_arm_bar_ts` was not a fossil surviving the session reset (**the field is honest —
+the input was wrong**, and the one-line clear I nearly shipped would have destroyed the only accurate
+witness); the ATR session-slice never fires because the discontinuity is *inside* the series; and
+#618/#619 closed a **different path** (REST warmup), while for CAST the cap **never ran at all**.
+`min_bars` (~135) explicitly **exempts ATR-Flip**, so no downstream guard could ever have caught it.
+
+⛔⭐⭐ **The rejects were a PROTECTIVE ACCIDENT, not a guard.** 33 of 454 entries carried a
+prior-session arm bar; 32 were refused because the level was absurd, and **one — BQ, 08-12, arm bar
+06-11 — FILLED, for +1.75%**, sitting indistinguishably beside seven clean BQ trades that day. That
+single fact is why the item is P0 on **mechanism**, not damage.
+
+### Two variables killed by measurement, before shipping
+A 4-day threshold was built, tested, mutation-tested — and then **the histogram killed it**: no void
+exists anywhere in the time dimension, and 110 gaps at 2d–4d carry an **18% median discontinuity**. A
+price cut was killed too — it truncates every Monday, because penny-stock weekend gaps genuinely run
+10–18%. Re-cutting by **missed trading sessions** found the void: **0.7% same-session · 10.2% across a
+CLOSURE · 26.2% across ONE missed session**, then flat. Principle: **seed across a closure, refuse to
+seed across an absence.** Calendar derived from the data so holidays cannot drift; a failed calendar
+read returns 0 so a DB blip never silently truncates real history.
+
+### 🔴 And the arms baseline found a dead leg
+Recording arms/session before the change surfaced something unrelated and larger: rejects stepped from
+~4–30/day to **170–215/day on 08-14**, while fills halved. **541 of ~566 were
+`RuntimeError('Webull combo MASTER must be LIMIT or MARKET ...; got STOP_LIMIT')`** — *our own code*,
+stored as *"Webull order rejected"*. The Webull `rth_resting_mirror` leg has been **100% dead since
+08-14: 542 attempts, 1 fill.** It explains both the halved fills and `ATTACHED=0`. The guard is
+correct; the caller was never changed to match it.
+⇒ **§3's abort-vs-refusal column stops being a principle and becomes an instrument** — it now has a
+measured three-session cost, and it moves ahead of the leg fix, because #16's acceptance IS a reject
+count.
+
+### Method errors, all self-caught
+- **A test that reimplemented the logic it tested — twice, an hour apart, on two functions.** One
+  escape (`- 1` dropped from the session count) would have **truncated every weekend**. Only mutants
+  found it.
+- **591 vs 215 bars for CAST**: I summed both strategy codes when the seed reads only its own, and
+  concluded CAST "would seed cleanly this afternoon". It was still exposed four hours later.
+- **A `gh pr edit` that printed success after its Python had died**, pushing a stale file; and `/tmp`
+  resolving differently between Git Bash and Windows Python.
+- **A heavy correlated query taking the box from load 1.24 → 3.69 during market hours** — killed it
+  rather than let it run, and rewrote it single-pass after the close.
+- **My memory of the v2 entry window (7–18 ET) was wrong; the code says 7–16.** Read from the code
+  before restarting, which is what made the 16:31 restart safe.
+- **§49 was killed outright** — v2 *does* log its session roll (`[V2-SESSION-ROLL]`, every retained
+  day, including the decision); Monday's conclusion came from grepping v2's log for the
+  *strategy-engine's* phrasing. A three-part plan and a v2 deploy came off the queue.
