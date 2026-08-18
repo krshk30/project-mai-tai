@@ -30,7 +30,7 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from redis.asyncio import Redis
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -92,6 +92,29 @@ INTERVAL_SECS = 60
 # symbol's cold-start. >= the 135-bar MACD settling with headroom, and bounded so
 # the seed + early live bars sit comfortably under the strategy's deque(maxlen=300).
 DB_SEED_BAR_LIMIT = 250
+# ⛔⭐⭐ THE SEED IS BOUNDED BY COUNT, SO IT MUST ALSO BE BOUNDED BY CONTINUITY (2026-08-18, P0).
+# `DB_SEED_BAR_LIMIT` takes N ROWS. On a thinly-traded name that reaches back as far as the rows do:
+# CAST had 38 bars on 08-18 and a 61-day hole behind them, so 212 of its 250 seeded bars came from
+# 06-18 and the strategy armed at flip_level 7.99 while CAST traded 1.04-1.28 (6.7x off).
+#
+# ⛔⭐⭐ THE VARIABLE IS MISSED TRADING SESSIONS, NOT WALL-CLOCK. Measured over 256k gaps in
+# `strategy_bar_history`, the median price discontinuity across a gap is:
+#     same session (contiguous)      255,243 gaps    0.7%      <- fine
+#     0 sessions missed (a CLOSURE)      345 gaps   10.2%      <- LEGITIMATE, must stay seeded
+#     1 session missed                    75 gaps   26.2%      <- 2.6x jump
+#     2..10 sessions missed              ~190 gaps   16-32%    <- FLAT, no further structure
+# ⛔ Wall-clock is the WRONG variable: a weekend is a legitimate closure (0 sessions missed) and a
+# price cut would truncate every Monday, because penny-stock weekend gaps genuinely run ~10-18%.
+# Duration is equally wrong: beyond one missed session the discontinuity stops growing, so a 2-day
+# absence is as dangerous as a 60-day one. An earlier 4-DAY threshold let 110 gaps through whose
+# median discontinuity was 18%.
+#
+# The governing principle: SEED ACROSS A MARKET CLOSURE, REFUSE TO SEED ACROSS AN ABSENCE.
+# Insufficient history means NO SIGNAL, NOT OLD SIGNAL -- the same shape as "an empty list from a
+# failed call is not a flat account".
+DB_SEED_MAX_MISSED_SESSIONS = 0
+# Gaps below this never need a session lookup (>99.9% of all gaps), so the calendar query is rare.
+_DB_SEED_GAP_PROBE_MIN = timedelta(hours=2)
 STATE_PUBLISH_INTERVAL_SECONDS = 5
 POSITION_POLL_INTERVAL_SECONDS = 5
 # Max bar age (seconds) for DB-persistence. Older bars are warmup feeds
@@ -259,6 +282,10 @@ class SchwabV2BotService:
         # guard). Seeding clears that blackout. Pruned with the watchlist so a
         # re-added symbol re-seeds.
         self._db_seeded: set[str] = set()
+        # ⛔⭐ Counter for [V2-DB-SEED-GAP]. A refusal that only logs per-occurrence cannot be
+        # distinguished from a refusal that stopped happening — see the census discipline on
+        # `evaluated=0`. Reported on the session roll so a ZERO is a MEASUREMENT, not a silence.
+        self._db_seed_gap_truncations: int = 0
         # C3 routing counters — exposed via heartbeat for observability.
         # `rest_bars_gated` increments on REST bars suppressed because
         # streamer is healthy and already has the bucket. `rest_bars_gap_fill`
@@ -952,6 +979,16 @@ class SchwabV2BotService:
                 anchor, len(self._watchlist), len(self.strategy.cw_armed_segments()),
             )
         if crossed:
+            # ⛔⭐ SEED-GAP CENSUS, on the same boundary line the roll already earns. Emitted even
+            # at ZERO, deliberately: a truncation counter that only speaks when it truncates cannot
+            # be told apart from one that has stopped running. Same discipline as `evaluated=0`.
+            logger.info(
+                "[V2-DB-SEED-GAP-CENSUS] truncations=%d of %d symbols seeded since boot "
+                "(threshold: >%d missed trading session) — ZERO here means MEASURED-NONE, not unmeasured. "
+                "⛔ The DENOMINATOR is load-bearing: a bare zero cannot tell a clean day from a "
+                "census that never ran, which is the only reason this line exists.",
+                self._db_seed_gap_truncations, len(self._db_seeded), DB_SEED_MAX_MISSED_SESSIONS,
+            )
             self._session_roll_last_anchor = anchor
 
     def _fetch_reportable_state(self) -> dict[str, list]:
@@ -1727,6 +1764,38 @@ class SchwabV2BotService:
                 symbol, max_e, st.cw_arm_bar_ts, watch_start, strat._boot_ms, stage,
             )
 
+    def _missed_sessions_between(self, session, older, newer) -> int:
+        """How many TRADING SESSIONS fall strictly between two bar timestamps.
+
+        ⛔⭐ The calendar is derived from the DATA (any symbol, this strategy code), so market
+        holidays need no separate table and cannot drift out of date. A weekend contributes ZERO
+        because no session falls inside it — which is the whole point: we seed across a CLOSURE and
+        refuse to seed across an ABSENCE.
+
+        ⛔ On any DB error this returns 0, i.e. "no sessions missed", so the seed behaves exactly as
+        it did before. A failed calendar read must never silently truncate real history — the same
+        direction of bias as "no quote => no opinion".
+        """
+        try:
+            rows = session.execute(
+                text(
+                    "SELECT count(DISTINCT ((bar_time AT TIME ZONE 'America/New_York')::date)) "
+                    "FROM strategy_bar_history "
+                    "WHERE strategy_code = :sc AND interval_secs = :iv "
+                    "AND bar_time > :lo AND bar_time < :hi"
+                ),
+                {"sc": STRATEGY_CODE, "iv": INTERVAL_SECS, "lo": older, "hi": newer},
+            ).scalar()
+            return max(0, int(rows or 0) - 1)   # the two endpoints' own sessions do not count
+        except Exception:  # noqa: BLE001 - a calendar read must never cost us real history
+            logger.warning(
+                "[V2-DB-SEED-GAP] session-calendar lookup failed; treating the gap as CONTIGUOUS "
+                "(seeding unchanged). This biases towards the pre-fix behaviour, never towards "
+                "silently dropping real bars.",
+                exc_info=True,
+            )
+            return 0
+
     def _seed_strategy_bars_from_db(self, symbol: str) -> None:
         """Fix (b): hydrate `state.bars` from `strategy_bar_history` on cold-start.
 
@@ -1774,6 +1843,44 @@ class SchwabV2BotService:
             return
         if not rows:
             return
+        # ⛔⭐⭐ TRUNCATE AT THE FIRST WIDE GAP (P0, 2026-08-18). `rows` is newest-first. Walk back
+        # and keep only the CONTIGUOUS tail; everything beyond a > DB_SEED_MAX_GAP_DAYS jump is a
+        # different market regime for this name and must never reach the strategy.
+        # ⛔ Downstream guards CANNOT cover this and it is not safe to lean on them:
+        #   * `min_bars` (~135) explicitly EXEMPTS ATR-Flip -- which is the path that armed CAST;
+        #   * `[V2-CW-SEED-CAP]` is post-hoc and has failed twice, once by 50ms ordering (#619, the
+        #     REST-warmup path) and once by never running at all (CAST, 08-18);
+        #   * clearing the pending-cross stash below only stops a MACD/VWAP cross, never an ARM.
+        # Remove the bad input; then none of them has to be right.
+        kept: list = []
+        prev_bt = None
+        missed_at_break = 0
+        for row in rows:  # newest -> oldest
+            bt = row.bar_time if row.bar_time.tzinfo else row.bar_time.replace(tzinfo=UTC)
+            if prev_bt is not None and (prev_bt - bt) >= _DB_SEED_GAP_PROBE_MIN:
+                missed = self._missed_sessions_between(session, bt, prev_bt)
+                if missed > DB_SEED_MAX_MISSED_SESSIONS:
+                    missed_at_break = missed
+                    break
+            kept.append(row)
+            prev_bt = bt
+        dropped = len(rows) - len(kept)
+        if dropped:
+            # ⛔⭐ SPEAK WHEN REFUSING. A silent truncation replaces a visible failure with an
+            # invisible one, and we would never learn the fix had stopped working.
+            oldest_kept = kept[-1].bar_time
+            first_dropped = rows[len(kept)].bar_time
+            logger.warning(
+                "[V2-DB-SEED-GAP] %s dropped %d of %d seed bars — the series SKIPS %d trading "
+                "session(s) (%s -> %s, %.1f days). Seeded the contiguous tail only (%d bars). "
+                "A market CLOSURE is seeded across; an ABSENCE is not — median price "
+                "discontinuity is 10.2%% across a closure and 26.2%% across one missed session.",
+                symbol, dropped, len(rows), missed_at_break,
+                first_dropped, oldest_kept,
+                (oldest_kept - first_dropped).total_seconds() / 86400.0, len(kept),
+            )
+            self._db_seed_gap_truncations += 1
+        rows = kept
         for row in reversed(rows):  # ascending (oldest first)
             bt = row.bar_time
             if bt.tzinfo is None:  # defensive: treat a naive timestamp as UTC
@@ -1800,6 +1907,15 @@ class SchwabV2BotService:
         # per-segment cap (the CPHI class). Flag-gated; costs one legit first-entry on a pre-restart
         # segment (fail-closed). The boot-hold self-verify catches this failing (segment stays
         # dangerous => held + paged).
+        # ⛔⭐⭐ NOT LOAD-BEARING — DO NOT TRUST THIS THE WAY THE LAST READER DID (2026-08-18).
+        # It runs HERE, after the replay loop above, so every arm inside `on_bar` has already fired
+        # and stamped. It has failed twice in production:
+        #   * 2026-07-30 REST-warmup path — ran 50ms BEFORE the arm and saw nothing (#619);
+        #   * 2026-08-18 CAST — never ran at all; one [V2-CW-SEED-CAP] all day (WFF), zero
+        #     [V2-BOOT-HOLD], and CAST armed uncapped off a 06-18 bar at flip_level 7.99 vs a
+        #     live price of 1.21.
+        # The gap truncation above is what actually prevents that now, by removing the bad input.
+        # Repair or delete this once the truncation has proven out; until then it is decoration.
         self._cap_reconstructed_segment(symbol, stage="db-seed")
         logger.info(
             "schwab_1m_v2 db-seed: %s hydrated %d bars (state.bars=%d)",
