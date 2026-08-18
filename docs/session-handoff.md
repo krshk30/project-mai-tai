@@ -201,9 +201,20 @@ since 08-13, and a deploy comes off the queue.
    ⛔ And never chain a destructive command behind a suppressed-error one — a
    `checkout … 2>/dev/null; reset --hard` wiped two commits off the branch it was standing on.
 
-## 🔑 SCHWAB TOKEN
-`refresh_token_expires_at = 2026-08-19T09:21:35Z` ⇒ **Wed 08-19 05:21 ET**, BEFORE the 07:00 EH open.
-**Re-auth Tue evening or Wed after the close.** ⛔ Never quote from memory — read the store.
+## 🗓️ DATED ITEMS — AN ITEM WHOSE TRIGGER IS A DATE NOBODY WROTE DOWN NEVER RESOLVES
+| date | item | why it cannot slip |
+|---|---|---|
+| **Mon 2026-08-25, before 16:46 ET** | **SCHWAB RE-AUTH** at `https://project-mai-tai.live/auth/schwab/start` | `refresh_token_expires_at = 2026-08-25T20:46:01Z`, **read from the store 08-18 16:48 ET, VERDICT GREEN ~7.0d**. ⛔ MANUAL ONLY — the refresh path cannot renew it; only an `authorization_code` grant resets the clock. Miss it and **Tue 08-26 pre-market opens with no token**. |
+| **Mon 2026-08-24** | **task #13 — the weekend-outage re-check** | Only answerable once a SECOND weekend rotates into the retained logs. Not before. |
+
+⛔⭐ **THE WEDNESDAY RE-AUTH CRON IS NOW TWO-FOR-TWO OUT OF PHASE — RETIRE IT, DO NOT RESCHEDULE.**
+A fixed weekday against a clock that moves with every re-auth desynchronises permanently. It has
+fired 4 times, **never once near an expiry** (all GREEN, 6.5-6.9d left). This cycle's expiry moved to
+a **Monday**, so the cron now fires 6 days early (08-19) or a day late (08-26). The real safety net
+is `schwab_token_expiry_cron.sh`, which derives from the stored expiry and has produced 77 GREEN /
+12 AMBER / 2 RED. ⛔ Also fix the DUPLICATED crontab lines — every reminder and verdict is emitted twice.
+⛔ `schwab_token_expiry_latest.txt` is a STAMP from the last cron run, not a live read. Run the
+checker directly if you need the current value.
 
 ## ⚠️ SCHWAB API WAS UNSTABLE 08-17
 **46 positions-read failures (ET) + 7 entry aborts** — timeouts, `Unable to resolve host
