@@ -913,12 +913,24 @@ class WebullBrokerAdapter:
     def _is_exit_only_pair(self, request: OrderRequest) -> bool:
         """A protective PAIR for a position we ALREADY hold: target + stop, no entry leg.
 
-        ⭐ BROKER-PROVEN 2026-08-13, CORE/RTH, `preview_order` on live:orb (Probe W4):
-            [STOP_PROFIT, STOP_LOSS] with NO master  -> HTTP 200   <- this shape
+        ⛔⭐⭐ THE SHAPE PARSES. IT IS **NOT** BROKER-PROVEN. (Corrected 2026-08-19, B6.)
+        This comment used to read "BROKER-PROVEN", and that claim rested on `preview_order`:
+
+            [STOP_PROFIT, STOP_LOSS] with NO master  -> HTTP 200 (PREVIEW)   <- this shape
             [OCO, OCO]                               -> 417 invalid combo_type
             [STOP_LOSS_PROFIT] (one leg, both prices)-> 417 invalid combo_type
+
+        ⛔ `preview_order` DOES NOT VALIDATE POSITION BACKING -- it returned 200 for this exact
+        payload **while the account was FLAT**. So Probe W4 proved the shape PARSES, never that it
+        PLACES against a real position. The 417s above ARE informative (a parse-time refusal is
+        still a refusal); the 200 is not.
+
+        ⛔ AND THE LIVE RECORD DISAGREES WITH THE COMMENT: this is the #689 attach path, and it has
+        NEVER ONCE SUCCEEDED -- zero `[WEBULL-PROTECT-ATTACHED]` ever observed. A "proven" label on
+        a path that is 0-for-ever is exactly the wrong reason that stops an investigation.
+
         So the pair must be tagged STOP_PROFIT / STOP_LOSS exactly as it is inside a full bracket;
-        it simply arrives without the MASTER.
+        it simply arrives without the MASTER. Whether that is SUFFICIENT is still open.
 
         WHY IT EXISTS: a Webull resting entry cannot carry a bracket -- the broker refuses a
         stop-limit master with legs (Probe W shape B, 417). So the resting leg fills BARE and this

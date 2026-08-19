@@ -5,10 +5,14 @@
 with it. Without this attach step the position runs on SOFTWARE-ONLY stops for its entire life —
 nothing sitting at the broker at all.
 
-⭐ THE SHAPE IS BROKER-PROVEN (Probe W4, CORE/RTH, live:orb, preview_order):
-    [STOP_PROFIT, STOP_LOSS] with NO master      -> HTTP 200  ✅   <- what we send
+⛔⭐⭐ THE SHAPE PARSES — IT IS **NOT** BROKER-PROVEN (corrected 2026-08-19, B6):
+    [STOP_PROFIT, STOP_LOSS] with NO master      -> HTTP 200 (PREVIEW ONLY)  <- what we send
     [OCO, OCO]                                   -> 417 invalid combo_type
     [STOP_LOSS_PROFIT] (one leg, both prices)    -> 417 invalid combo_type
+⛔ `preview_order` does NOT validate position backing — it returned 200 for this payload while the
+account was FLAT. Probe W4 proved the shape PARSES, never that it PLACES. The 417s remain
+informative; the 200 does not. And the live record disagrees with the old label: this is the #689
+attach path, which has NEVER once succeeded (zero `[WEBULL-PROTECT-ATTACHED]` ever).
 
 ⛔ TWO WAYS THIS LOSES MONEY QUIETLY, both pinned below:
    1. the attach fails and nobody is told  -> holding with no stop
