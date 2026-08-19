@@ -184,3 +184,35 @@ def test_header_is_quiet_when_everything_classified():
     )
     assert "UNCLASSIFIED" not in line
     assert "rows=1" in line
+
+
+# ---------------------------------------------------------------------------
+# P3 — the ABORT/REFUSAL conflation, measured 2026-08-19
+# ---------------------------------------------------------------------------
+
+
+def test_our_own_webull_runtime_error_is_a_client_abort_not_a_broker_refusal():
+    """⛔⭐⭐ 544 rows on live:orb in 30 days — the #16 dead-mirror population.
+
+    Our code aborts the STOP_LIMIT combo master client-side, and the OMS stores the RuntimeError as
+    "Webull order rejected". The abort patterns were all Schwab-shaped network failures, so these
+    classified as the BROKER refusing us. They are us never asking.
+    """
+    reason = (
+        "Webull order rejected: RuntimeError('Webull combo MASTER must be LIMIT or MARKET "
+        "for a STOP_LIMIT child; got STOP_LIMIT')"
+    )
+    assert classify_refusal(reason) is RefusalClass.CLIENT_ABORT
+
+
+def test_a_client_abort_never_marks_the_symbol_untradeable():
+    """⛔ An abort says nothing about the NAME — excluding it would delete real trades."""
+    model = build_refusal_model([("XHG", "RuntimeError('Webull combo MASTER must be LIMIT')")])
+    assert model.refused_symbols == frozenset()
+    assert model.counts[RefusalClass.CLIENT_ABORT] == 1
+
+
+def test_a_genuine_broker_refusal_still_outranks_the_abort_patterns():
+    """Ordering guard: a symbol-level refusal must not be reclassified as an abort."""
+    reason = "Opening transactions for this security must be placed with a broker"
+    assert classify_refusal(reason) is RefusalClass.NOT_ELECTRONICALLY_TRADEABLE
