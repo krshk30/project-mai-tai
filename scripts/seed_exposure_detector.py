@@ -116,22 +116,54 @@ class BotState:
 
 @dataclass(frozen=True)
 class SweepRow:
+    """One symbol, described by THE WINDOW THE SEED WILL ACTUALLY TAKE.
+
+    ⛔⭐⭐ REWRITTEN 2026-08-19 (P10). The first version classified on BAR COUNT, and the criterion
+    was wrong in both directions. It is kept here as a warning, because I shipped it in #724:
+
+        "SHORT history (< 250 bars ever) — short is NOT holed"
+
+    That is FALSE IN GENERAL. AIXC (104 bars) and NTWOW (160) were safe because **nothing sat behind
+    them** — their history started that day — not because they were short. A symbol with 241 bars
+    from a single session 41 days ago is equally "short" and entirely stale. **SHORT IS NOT
+    CONTIGUOUS, and bar count says nothing about either.**
+
+    ⇒ Never infer safety from a count. Describe the window the seed will load and look for a gap in
+      it — of which there are TWO kinds, and the old criterion could see neither reliably:
+
+      INTERNAL  — a gap BETWEEN two adjacent loaded bars. `_seed_strategy_bars_from_db` truncates
+                  at these (#721), so they are the covered case.
+      BOUNDARY  — the gap between the NEWEST loaded bar and now. ⛔ #721 does NOT see this: its loop
+                  only ever compares adjacent loaded bars, so a wholly-stale, internally-contiguous
+                  history seeds IN FULL with no truncation and no log line. Measured 2026-08-19:
+                  **178 symbols** in that state, some 35-62 days stale with 600-780 bars each.
+    """
+
     symbol: str
-    bars_today: int
-    bars_ever: int
-    bar_at_limit: datetime | None  # the SEED_LIMIT-th newest bar, or None if fewer exist
+    window_bars: int  # bars the seed would load = min(SEED_LIMIT, available)
+    bars_ever: int  # informational ONLY — never a safety signal
+    newest_bar: datetime | None
+    max_internal_gap: timedelta | None  # largest gap between adjacent bars INSIDE that window
 
     def classify(self, now: datetime) -> tuple[bool, str]:
-        """(exposed, human-readable reason). Order matters; the first two are NOT exposure."""
-        if self.bars_today >= SEED_LIMIT:
-            return False, f"OK   >= {SEED_LIMIT} bars today; the seed cannot reach past today"
-        if self.bar_at_limit is None:
-            return False, f"OK   SHORT history (< {SEED_LIMIT} bars ever) — short is NOT holed"
-        age_days = (now - self.bar_at_limit).total_seconds() / 86400.0
-        if now - self.bar_at_limit > EXPOSURE_AGE:
-            stamp = self.bar_at_limit.astimezone(ET).strftime("%m-%d %H:%M")
-            return True, f"*** EXPOSED *** {SEED_LIMIT}th-newest bar {stamp} ET ({age_days:.1f}d)"
-        return False, f"OK   {SEED_LIMIT}th-newest bar is recent ({age_days:.1f}d)"
+        """(exposed, human-readable reason). Boundary is checked FIRST — it is the uncovered kind."""
+        if self.newest_bar is None or self.window_bars == 0:
+            return False, "OK   no stored history — nothing to seed"
+
+        boundary = now - self.newest_bar
+        if boundary > EXPOSURE_AGE:
+            stamp = self.newest_bar.astimezone(ET).strftime("%m-%d %H:%M")
+            return True, (
+                f"*** EXPOSED (BOUNDARY) *** newest bar {stamp} ET "
+                f"({boundary.total_seconds() / 86400.0:.1f}d) — the WHOLE {self.window_bars}-bar "
+                f"window is stale. ⛔ #721 does NOT truncate this: no internal gap to find."
+            )
+        if self.max_internal_gap is not None and self.max_internal_gap > EXPOSURE_AGE:
+            return True, (
+                f"*** EXPOSED (INTERNAL) *** {self.max_internal_gap.total_seconds() / 86400.0:.1f}d "
+                f"gap inside the {self.window_bars}-bar window — #721 truncates at this."
+            )
+        return False, f"OK   {self.window_bars}-bar window is contiguous and current"
 
 
 def parse_watchlist_event(raw: str | None, now: datetime, max_age_seconds: int) -> BotState:
@@ -191,70 +223,99 @@ def parse_watchlist_event(raw: str | None, now: datetime, max_age_seconds: int) 
     )
 
 
-SWEEP_SQL = """
-SELECT
-  (SELECT count(*) FROM strategy_bar_history h
-     WHERE h.strategy_code = %(code)s AND h.interval_secs = %(iv)s AND h.symbol = %(sym)s
-       AND h.bar_time >= %(et0)s) AS bars_today,
-  (SELECT count(*) FROM strategy_bar_history h
-     WHERE h.strategy_code = %(code)s AND h.interval_secs = %(iv)s AND h.symbol = %(sym)s)
-     AS bars_ever,
-  (SELECT h.bar_time FROM strategy_bar_history h
-     WHERE h.strategy_code = %(code)s AND h.interval_secs = %(iv)s AND h.symbol = %(sym)s
-     ORDER BY h.bar_time DESC OFFSET %(off)s LIMIT 1) AS bar_at_limit
+# ⛔⭐ THE WINDOW, NOT A COUNT. `LIMIT %(limit)s` mirrors the seed's own `.limit(DB_SEED_BAR_LIMIT)`,
+# so this reads exactly the rows `_seed_strategy_bars_from_db` would load — including the case where
+# fewer than the limit exist, which is `min(limit, available)` on both sides.
+# `lag(...) OVER (ORDER BY bar_time DESC)` gives each bar its NEWER neighbour, so `newer - bar_time`
+# is the gap between adjacent loaded bars. The BOUNDARY gap is computed from `max(bar_time)` against
+# the caller's clock, not here — the DB's `now()` and the detector's `now` must not disagree.
+WINDOW_SQL = """
+WITH win AS (
+  SELECT h.bar_time,
+         lag(h.bar_time) OVER (ORDER BY h.bar_time DESC) AS newer
+  FROM strategy_bar_history h
+  WHERE h.strategy_code = %(code)s AND h.interval_secs = %(iv)s AND h.symbol = %(sym)s
+  ORDER BY h.bar_time DESC
+  LIMIT %(limit)s
+)
+SELECT count(*) AS window_bars,
+       max(bar_time) AS newest_bar,
+       max(newer - bar_time) AS max_internal_gap
+FROM win
 """
 
+BARS_EVER_SQL = """
+SELECT count(*) FROM strategy_bar_history
+WHERE strategy_code = %(code)s AND interval_secs = %(iv)s AND symbol = %(sym)s
+"""
+
+# The on-deck sweep, same window logic applied across the recent universe in one pass.
 ONDECK_SQL = """
 WITH recent AS (
   SELECT DISTINCT symbol FROM strategy_bar_history
-  WHERE strategy_code = %(code)s AND interval_secs = %(iv)s
-    AND bar_time >= %(lookback)s
-), m AS (
-  SELECT r.symbol,
-    (SELECT count(*) FROM strategy_bar_history h
-       WHERE h.strategy_code = %(code)s AND h.interval_secs = %(iv)s AND h.symbol = r.symbol
-         AND h.bar_time >= %(et0)s) AS bars_today,
-    (SELECT h.bar_time FROM strategy_bar_history h
-       WHERE h.strategy_code = %(code)s AND h.interval_secs = %(iv)s AND h.symbol = r.symbol
-       ORDER BY h.bar_time DESC OFFSET %(off)s LIMIT 1) AS bar_at_limit
+  WHERE strategy_code = %(code)s AND interval_secs = %(iv)s AND bar_time >= %(lookback)s
+), w AS (
+  SELECT r.symbol, x.window_bars, x.newest_bar, x.max_internal_gap
   FROM recent r
+  CROSS JOIN LATERAL (
+    SELECT count(*) AS window_bars, max(bar_time) AS newest_bar,
+           max(newer - bar_time) AS max_internal_gap
+    FROM (
+      SELECT h.bar_time, lag(h.bar_time) OVER (ORDER BY h.bar_time DESC) AS newer
+      FROM strategy_bar_history h
+      WHERE h.strategy_code = %(code)s AND h.interval_secs = %(iv)s AND h.symbol = r.symbol
+      ORDER BY h.bar_time DESC LIMIT %(limit)s
+    ) q
+  ) x
 )
-SELECT symbol, bars_today, bar_at_limit FROM m
-WHERE bars_today < %(limit)s AND bar_at_limit IS NOT NULL AND bar_at_limit < %(cutoff)s
-ORDER BY bar_at_limit
+SELECT symbol, window_bars, newest_bar, max_internal_gap FROM w
+WHERE window_bars > 0
+  AND (newest_bar < %(cutoff)s OR max_internal_gap > %(maxgap)s)
+ORDER BY newest_bar
 """
 
 
-def _et_midnight(now: datetime) -> datetime:
-    return now.astimezone(ET).replace(hour=0, minute=0, second=0, microsecond=0)
+@dataclass(frozen=True)
+class OnDeckRow:
+    symbol: str
+    window_bars: int
+    newest_bar: datetime
+    max_internal_gap: timedelta | None
+
+    def kind(self, now: datetime) -> str:
+        """BOUNDARY is named separately because #721 does not cover it."""
+        return "BOUNDARY" if (now - self.newest_bar) > EXPOSURE_AGE else "internal"
 
 
 def sweep(conn, symbols: list[str], now: datetime) -> list[SweepRow]:
-    et0 = _et_midnight(now)
+    """Describe each symbol by the window the seed would load. No bar-count inference."""
     rows: list[SweepRow] = []
     with conn.cursor() as cur:
         for sym in symbols:
-            cur.execute(
-                SWEEP_SQL,
-                {
-                    "code": STRATEGY_CODE,
-                    "iv": INTERVAL_SECS,
-                    "sym": sym,
-                    "et0": et0,
-                    "off": SEED_LIMIT - 1,
-                },
+            params = {"code": STRATEGY_CODE, "iv": INTERVAL_SECS, "sym": sym, "limit": SEED_LIMIT}
+            cur.execute(WINDOW_SQL, params)
+            window_bars, newest_bar, max_internal_gap = cur.fetchone()
+            cur.execute(BARS_EVER_SQL, params)
+            (bars_ever,) = cur.fetchone()
+            rows.append(
+                SweepRow(
+                    symbol=sym,
+                    window_bars=int(window_bars or 0),
+                    bars_ever=int(bars_ever or 0),
+                    newest_bar=newest_bar,
+                    max_internal_gap=max_internal_gap,
+                )
             )
-            bars_today, bars_ever, bar_at_limit = cur.fetchone()
-            rows.append(SweepRow(sym, int(bars_today), int(bars_ever), bar_at_limit))
     return rows
 
 
-def on_deck(conn, now: datetime, exclude: set[str]) -> list[tuple[str, int, datetime]]:
+def on_deck(conn, now: datetime, exclude: set[str]) -> list[OnDeckRow]:
     """§132 — exposed symbols NOT yet on the watchlist. These are PREDICTIONS.
 
-    Each one truncates the moment it joins the watchlist, so a later `[V2-DB-SEED-GAP]` naming it is
-    a CONFIRMED FORECAST — a stronger result than an observed truncation, because the prediction was
-    on the record first.
+    Each one is exposed the moment it joins the watchlist, so a later `[V2-DB-SEED-GAP]` naming it
+    is a CONFIRMED FORECAST. ⛔ A BOUNDARY-exposed name will NOT produce that log line — #721 cannot
+    see it — so for those the forecast can only be confirmed by reading the seeded series, never by
+    waiting for a truncation that will never come.
     """
     with conn.cursor() as cur:
         cur.execute(
@@ -262,14 +323,15 @@ def on_deck(conn, now: datetime, exclude: set[str]) -> list[tuple[str, int, date
             {
                 "code": STRATEGY_CODE,
                 "iv": INTERVAL_SECS,
-                "et0": _et_midnight(now),
-                "off": SEED_LIMIT - 1,
                 "limit": SEED_LIMIT,
                 "lookback": now - timedelta(days=ONDECK_LOOKBACK_DAYS),
                 "cutoff": now - EXPOSURE_AGE,
+                "maxgap": EXPOSURE_AGE,
             },
         )
-        return [(s, int(b), t) for s, b, t in cur.fetchall() if s not in exclude]
+        return [
+            OnDeckRow(s, int(w or 0), n, g) for s, w, n, g in cur.fetchall() if s not in exclude
+        ]
 
 
 DEFAULT_SERVICE_SOURCE = "src/project_mai_tai/services/schwab_1m_v2_bot.py"
@@ -416,39 +478,47 @@ def main() -> int:
         return 0
 
     print(f"  swept {len(rows)} of {len(watchlist)} ✅ coverage proven")
-    exposed = 0
-    for row in rows:
-        is_exposed, reason = row.classify(now)
-        exposed += is_exposed
-        print(
-            f"    {row.symbol:<7} bars_today={row.bars_today:<5} ever={row.bars_ever:<6} {reason}"
-        )
+
+    # ⛔⭐ POPULATION FIRST, INSTANCE SECOND. The count and its denominator lead; symbol names are
+    # the appendix. A report that opens with a ticker invites the reader to treat the finding as
+    # one symbol's problem.
+    classified = [(r, *r.classify(now)) for r in rows]
+    exposed_rows = [(r, why) for r, is_exp, why in classified if is_exp]
+    boundary_n = sum(1 for r, why in exposed_rows if "BOUNDARY" in why)
+    print(
+        f"  VERDICT   : {len(exposed_rows)} EXPOSED of {len(rows)} swept "
+        f"({boundary_n} boundary, {len(exposed_rows) - boundary_n} internal)"
+    )
+    for row, _is_exposed, why in classified:
+        print(f"    {row.symbol:<7} window={row.window_bars:<4} ever={row.bars_ever:<6} {why}")
 
     if ondeck:
-        # ⛔⭐ SPLIT BY WHAT THE BOT IS ACTUALLY HOLDING. A flat list of 122 dormant names is a
-        # forecast nobody can act on. WARM = the bot already has a bar buffer for it this session,
-        # so it is one promotion away from seeding; COLD = in the 30-day universe but untouched
-        # today. The warm list is never truncated — it is the actionable half.
-        warm = [r for r in ondeck if r[0] in state.warm]
-        cold = [r for r in ondeck if r[0] not in state.warm]
+        warm = [r for r in ondeck if r.symbol in state.warm]
+        cold = [r for r in ondeck if r.symbol not in state.warm]
+        b_all = sum(1 for r in ondeck if r.kind(now) == "BOUNDARY")
         print(
-            f"  ON DECK — {len(ondeck)} exposed symbol(s) not on the watchlist (§132 PREDICTIONS)"
+            f"  ON DECK   : {len(ondeck)} exposed and NOT on the watchlist (§132 PREDICTIONS) — "
+            f"{b_all} boundary, {len(ondeck) - b_all} internal"
         )
-        print(f"            {len(warm)} WARM (bot holds a buffer now) · {len(cold)} COLD (dormant)")
+        print(
+            f"              {len(warm)} WARM (bot holds a buffer now) · {len(cold)} COLD (dormant)"
+        )
         shown = warm + cold[: max(0, ONDECK_PRINT_CAP - len(warm))]
-        for sym, bars_today, bar_at_limit in shown:
-            age_days = (now - bar_at_limit).total_seconds() / 86400.0
-            tag = "WARM" if sym in state.warm else "cold"
+        for r in shown:
+            age = (now - r.newest_bar).total_seconds() / 86400.0
+            tag = "WARM" if r.symbol in state.warm else "cold"
             print(
-                f"    {tag} {sym:<7} bars_today={bars_today:<5} {SEED_LIMIT}th-newest {age_days:.1f}d old"
+                f"    {tag} {r.symbol:<7} window={r.window_bars:<4} "
+                f"newest {age:.1f}d old  [{r.kind(now)}]"
             )
         if len(ondeck) > len(shown):
             print(f"    ... showing {len(shown)} of {len(ondeck)} — the COUNT above is complete.")
-        print("    Each truncates the moment it joins the watchlist. A later [V2-DB-SEED-GAP]")
-        print("    naming one of these is a CONFIRMED FORECAST — report it as predicted/fired.")
+        print(
+            "    ⛔ A BOUNDARY name produces NO [V2-DB-SEED-GAP] line when it joins — #721 cannot"
+        )
+        print("       see it. Absence of a truncation is NOT evidence it was safe.")
 
-    print(f"  verdict   : {exposed} EXPOSED of {len(rows)} swept")
-    return 1 if exposed else 0
+    return 1 if exposed_rows else 0
 
 
 if __name__ == "__main__":
