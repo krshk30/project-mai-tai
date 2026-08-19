@@ -1796,6 +1796,48 @@ class SchwabV2BotService:
             )
             return 0
 
+    def _missed_sessions_before_today(self, session, newest_bar) -> int:
+        """Trading sessions strictly BETWEEN the newest stored bar's session and TODAY's.
+
+        ⛔⭐⭐ WHY THIS IS NOT `_missed_sessions_between(session, newest_bar, now)` (P10, 2026-08-19).
+        That function subtracts 1 because BOTH its endpoints are bars whose own sessions appear in
+        the count. Here the newer endpoint is the WALL CLOCK, not a bar, and the calendar counts any
+        symbol's bars — so pre-open, a symbol whose newest bar is YESTERDAY would score 1 and have
+        its entire history wiped. That is the exact inverse of the rule: a weekend or an overnight
+        is a CLOSURE and must be seeded across.
+
+        Comparing ET DATES, exclusive at both ends, removes the ambiguity — no offset to reason
+        about, and "newest bar is yesterday" is 0 by construction.
+
+        ⛔ Same failure mode as its sibling: any DB error returns 0 ("no sessions missed"), so a
+        calendar blip biases towards the pre-fix behaviour and never towards dropping real history.
+        """
+        try:
+            rows = session.execute(
+                text(
+                    "SELECT count(DISTINCT ((bar_time AT TIME ZONE 'America/New_York')::date)) "
+                    "FROM strategy_bar_history "
+                    "WHERE strategy_code = :sc AND interval_secs = :iv "
+                    "AND (bar_time AT TIME ZONE 'America/New_York')::date > :lo "
+                    "AND (bar_time AT TIME ZONE 'America/New_York')::date < :hi"
+                ),
+                {
+                    "sc": STRATEGY_CODE,
+                    "iv": INTERVAL_SECS,
+                    "lo": newest_bar.astimezone(EASTERN_TZ).date(),
+                    "hi": datetime.now(UTC).astimezone(EASTERN_TZ).date(),
+                },
+            ).scalar()
+            return max(0, int(rows or 0))
+        except Exception:  # noqa: BLE001 - a calendar read must never cost us real history
+            logger.warning(
+                "[V2-DB-SEED-GAP] boundary session-calendar lookup failed; treating the series as "
+                "CURRENT (seeding unchanged). Biases towards the pre-fix behaviour, never towards "
+                "silently dropping real bars.",
+                exc_info=True,
+            )
+            return 0
+
     def _seed_strategy_bars_from_db(self, symbol: str) -> None:
         """Fix (b): hydrate `state.bars` from `strategy_bar_history` on cold-start.
 
@@ -1852,6 +1894,35 @@ class SchwabV2BotService:
         #     REST-warmup path) and once by never running at all (CAST, 08-18);
         #   * clearing the pending-cross stash below only stops a MACD/VWAP cross, never an ARM.
         # Remove the bad input; then none of them has to be right.
+        # ⛔⭐⭐ THE BOUNDARY GAP (P10, 2026-08-19). The loop below only ever compares ADJACENT
+        # LOADED BARS, so a history that is wholly stale but internally contiguous has no gap to
+        # find and seeded IN FULL — no truncation, no log line. Measured that day: 178 symbols in
+        # exactly that state, 600-780 bars each, 35-62 days stale at the worst. VRAX would have
+        # seeded 241 bars from 07-09 (traded 5.92-12.85) while it traded 3.22-4.07; it escaped only
+        # because it joined the watchlist AFTER its first bar of the day, which put both islands in
+        # the window and made the gap internal.
+        # ⇒ The gap between the NEWEST loaded bar and TODAY counts as a missed-session gap, on the
+        #   same constant and in the same units as the internal check.
+        boundary_missed = 0
+        if rows:
+            newest_bt = (
+                rows[0].bar_time
+                if rows[0].bar_time.tzinfo
+                else rows[0].bar_time.replace(tzinfo=UTC)
+            )
+            boundary_missed = self._missed_sessions_before_today(session, newest_bt)
+        if boundary_missed > DB_SEED_MAX_MISSED_SESSIONS:
+            # ⛔ SPEAK WHEN REFUSING — same census line, same counter, so the existing watch sees it.
+            logger.warning(
+                "[V2-DB-SEED-GAP] %s dropped ALL %d seed bars — the series ENDS %d trading "
+                "session(s) before today (newest bar %s). The whole window is a different market "
+                "regime for this name; there is no contiguous tail to keep. A market CLOSURE is "
+                "seeded across; an ABSENCE is not.",
+                symbol, len(rows), boundary_missed, rows[0].bar_time,
+            )
+            self._db_seed_gap_truncations += 1
+            rows = []
+
         kept: list = []
         prev_bt = None
         missed_at_break = 0
