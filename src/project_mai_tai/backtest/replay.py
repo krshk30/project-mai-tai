@@ -195,19 +195,26 @@ LIVE_LOCKED = dict(
     strategy_schwab_1m_v2_atr_flip_period=5,
     strategy_schwab_1m_v2_atr_flip_factor=3.5,
     strategy_schwab_1m_v2_cw_v2_reactive_entry_enabled=True,
-    strategy_schwab_1m_v2_cw_v2_reclaim_enabled=False,
+    # ⛔⭐⭐ CORRECTED 2026-08-19 (P8). Was False, which is what production ran until 07-27.
+    # Reclaim off drops `max_entries_per_flip` from 2 to 1, so an off-VPS replay could not even model
+    # the second entry in a segment — and reclaim is a materially WORSE population live (38% win /
+    # −4.98% vs firsts 58% / +1.93%), so omitting it did not merely differ, it FLATTERED.
+    strategy_schwab_1m_v2_cw_v2_reclaim_enabled=True,
     strategy_schwab_1m_v2_cw_v2_resting_entry_enabled=True,
     strategy_schwab_1m_v2_cw_v2_resting_entry_band_pct=0.5,
     strategy_schwab_1m_v2_cw_v2_resting_entry_reprice_pct=0.5,
     strategy_schwab_1m_v2_cw_v2_resting_entry_min_short_bars=3,
     strategy_schwab_1m_v2_cw_v2_resting_entry_max_bar_age_secs=180.0,
     strategy_schwab_1m_v2_cw_v2_resting_entry_flip_grace_secs=30.0,
-    # EH ENTRY flags — the LIVE DEPLOYED DEFAULTS (both OFF; the EH flags are dormant until enabled
-    # post-4PM / Monday). Encoded explicitly so the default replay is RTH-only exactly like production.
-    # `build_replay_settings(eh_enabled=True)` (or a direct override) flips these ON so the real EH entry
-    # paths execute — the ONLY switch the operator flips to replay an "EH-enabled" day.
-    strategy_schwab_1m_v2_cw_v2_eh_resting_entry_enabled=False,  # P-B2 resting-EH (strategy + OMS share this)
-    oms_v2_eh_entry_enabled=False,  # P-B1 reactive-EH OMS cross-cap/abandon
+    # EH ENTRY flags — ⛔ CORRECTED 2026-08-19 (P8). This block used to read "the LIVE DEPLOYED
+    # DEFAULTS (both OFF; the EH flags are dormant until enabled post-4PM / Monday)" and encoded both
+    # as False. That premise expired 2026-07-24: production has run BOTH ON ever since, verified
+    # against the box's env. Off-VPS / CI replays were therefore RTH-only while production traded
+    # extended hours, and the comment asserted the opposite of the truth.
+    # ⭐ `build_replay_settings(eh_enabled=True)` remains the explicit switch for FORCING EH on where
+    # there is no env, or over an env that has it off; it is no longer needed to MATCH production.
+    strategy_schwab_1m_v2_cw_v2_eh_resting_entry_enabled=True,  # P-B2 resting-EH (strategy + OMS share this)
+    oms_v2_eh_entry_enabled=True,  # P-B1 reactive-EH OMS cross-cap/abandon
     strategy_schwab_1m_v2_entry_window_start_hour_et=7,
     strategy_schwab_1m_v2_entry_window_start_minute_et=0,
     strategy_schwab_1m_v2_entry_window_end_hour_et=16,

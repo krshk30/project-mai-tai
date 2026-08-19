@@ -7,6 +7,7 @@ gap the crossing ask above the band) flips fill<->miss — pinning that the fill
 is governed by the band exactly as the honest fill model claims. A full-day 07-23 fixture is
 too heavy for CI; that lives in the Deliverable-3 VPS reconciliation.
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timedelta
@@ -41,14 +42,14 @@ _OHLC = [
     (100.0, 100.2, 99.8, 100.0),  # 6
     (100.0, 100.2, 99.8, 100.0),  # 7
     (100.0, 100.2, 99.8, 100.0),  # 8  -> state defined: long, trail 98.6
-    (99.8, 99.9, 97.9, 98.0),     # 9  -> SELL flip to short
-    (97.8, 97.9, 97.5, 97.6),     # 10 short age 1
-    (97.4, 97.5, 97.1, 97.2),     # 11 short age 2
-    (97.1, 97.2, 96.8, 96.9),     # 12 short age 3 -> RESTING PLACE (stop 99.01/limit 99.505)
-    (96.9, 97.0, 96.6, 96.7),     # 13 short age 4
-    (96.8, 96.9, 96.5, 96.6),     # 14 reprice (trail moved >0.5%) -> cancel
-    (96.7, 96.8, 96.4, 96.5),     # 15 re-place (stop 98.2636/limit 98.7549)
-    (96.7, 99.5, 96.6, 99.3),     # 16 BUY flip (the fill happens on the crossing quote below)
+    (99.8, 99.9, 97.9, 98.0),  # 9  -> SELL flip to short
+    (97.8, 97.9, 97.5, 97.6),  # 10 short age 1
+    (97.4, 97.5, 97.1, 97.2),  # 11 short age 2
+    (97.1, 97.2, 96.8, 96.9),  # 12 short age 3 -> RESTING PLACE (stop 99.01/limit 99.505)
+    (96.9, 97.0, 96.6, 96.7),  # 13 short age 4
+    (96.8, 96.9, 96.5, 96.6),  # 14 reprice (trail moved >0.5%) -> cancel
+    (96.7, 96.8, 96.4, 96.5),  # 15 re-place (stop 98.2636/limit 98.7549)
+    (96.7, 99.5, 96.6, 99.3),  # 16 BUY flip (the fill happens on the crossing quote below)
 ]
 # The resting stop/limit working into the flip (bar 15 placement), from the validated run.
 RESTING_STOP = 98.2636
@@ -109,8 +110,8 @@ def test_replay_produces_expected_resting_entry() -> None:
     assert len(res.entries) == 1, f"expected exactly one entry, got {res.entries} skips={res.skips}"
     e = res.entries[0]
     assert e.mode == "resting" and e.order_type == "STOP_LIMIT"
-    assert e.fill_price == pytest.approx(98.50, abs=1e-6)      # fills at the in-band ask
-    assert e.level == pytest.approx(RESTING_STOP, abs=1e-3)    # keyed off the ATR line
+    assert e.fill_price == pytest.approx(98.50, abs=1e-6)  # fills at the in-band ask
+    assert e.level == pytest.approx(RESTING_STOP, abs=1e-3)  # keyed off the ATR line
     assert res.misses == []
     # The fill is priced inside the resting band, above the stop.
     assert RESTING_STOP <= e.fill_price <= RESTING_LIMIT
@@ -143,7 +144,9 @@ def test_mutation_wider_band_recovers_the_gap_fill() -> None:
     (limit ≈ stop*1.015 ≈ 99.74 > 99.00) — proving the band is the fill/miss threshold, and the
     replay reads the live `resting_entry_band_pct` setting (no re-implemented constant)."""
     res = _run(cross_ask=99.00, strategy_schwab_1m_v2_cw_v2_resting_entry_band_pct=1.5)
-    assert len(res.entries) == 1, f"widened band should fill; got skips={res.skips} misses={res.misses}"
+    assert len(res.entries) == 1, (
+        f"widened band should fill; got skips={res.skips} misses={res.misses}"
+    )
     assert res.entries[0].fill_price == pytest.approx(99.00, abs=1e-6)
 
 
@@ -153,6 +156,7 @@ def test_mutation_wider_band_recovers_the_gap_fill() -> None:
 #   EH  open -> software CW floor-RIDE driven by the SHARED `cw_exit_decision` over the bids.
 # These synthetics reuse the SAME real ATR machinery the entry tests do; only the exit horizon
 # differs. The v2 replay exit NEVER touches ExitEngine — it is `cw_exit_decision` / static-OCO only.
+
 
 def _tp(minute: int, price: float) -> TapeTrade:
     """A trade print `minute` minutes past BASE (i.e. after the ~10:16 ET resting fill)."""
@@ -177,8 +181,8 @@ def test_rth_static_oco_target_first_touch_is_plus2() -> None:
     assert t.exit_reason == "target"
     # OCO anchored off the CW reference (== the resting fill here), NOT re-struck off anything else.
     assert t.entry_ref == pytest.approx(t.entry_px, abs=1e-6)
-    assert t.exit_px == pytest.approx(100.23, abs=1e-2)     # ref*1.02 rounded to the Schwab tick
-    assert t.ret_pct == pytest.approx(2.0, abs=0.05)        # ~+2% off the fill
+    assert t.exit_px == pytest.approx(100.23, abs=1e-2)  # ref*1.02 rounded to the Schwab tick
+    assert t.ret_pct == pytest.approx(2.0, abs=0.05)  # ~+2% off the fill
 
 
 # ------------------------------------------------------------------ (4b) RTH neither leg -> close-at-bell
@@ -190,7 +194,7 @@ def test_rth_static_oco_neither_leg_closes_at_bell() -> None:
     t = res.trades[0]
     assert t.geometry == "rth_static_oco"
     assert t.exit_reason == "close-at-bell"
-    assert t.exit_px == pytest.approx(99.2, abs=1e-6)       # the last print <= the bell
+    assert t.exit_px == pytest.approx(99.2, abs=1e-6)  # the last print <= the bell
     assert t.ret_pct == pytest.approx((99.2 - t.entry_px) / t.entry_px * 100.0, abs=1e-6)
 
 
@@ -208,11 +212,15 @@ def test_static_oco_first_touch_unit_precedence() -> None:
     close = datetime(2026, 7, 23, 16, 0, tzinfo=et_)
     tape = [(t0, 100.0), (t0.replace(minute=5), 102.5), (t0.replace(minute=6), 94.0)]
     # target = 100*1.02 = 102.0; the 102.5 print precedes the 94.0 print -> target.
-    _ts, px, reason = _static_oco_first_touch(100.0, tape, target_pct=2.0, stop_pct=5.0, close_dt=close)
+    _ts, px, reason = _static_oco_first_touch(
+        100.0, tape, target_pct=2.0, stop_pct=5.0, close_dt=close
+    )
     assert reason == "target" and px == pytest.approx(102.0, abs=1e-9)
     # Same levels, but the stop print comes first -> stop.
     tape2 = [(t0, 100.0), (t0.replace(minute=5), 94.0), (t0.replace(minute=6), 102.5)]
-    _, px2, reason2 = _static_oco_first_touch(100.0, tape2, target_pct=2.0, stop_pct=5.0, close_dt=close)
+    _, px2, reason2 = _static_oco_first_touch(
+        100.0, tape2, target_pct=2.0, stop_pct=5.0, close_dt=close
+    )
     assert reason2 == "stop" and px2 == pytest.approx(95.0, abs=1e-9)
 
 
@@ -230,18 +238,23 @@ def test_static_oco_races_the_live_bar_close_flip() -> None:
     t0 = datetime(2026, 7, 22, 14, 26, tzinfo=et_)
     close = datetime(2026, 7, 22, 16, 0, tzinfo=et_)
     # A tape that touches NEITHER leg (target 102.0, stop 95.0) — the SMCX shape.
-    tape = [(t0, 100.0), (t0.replace(minute=30), 100.4),
-            (t0.replace(minute=40), 98.6), (t0.replace(minute=50), 98.0)]
+    tape = [
+        (t0, 100.0),
+        (t0.replace(minute=30), 100.4),
+        (t0.replace(minute=40), 98.6),
+        (t0.replace(minute=50), 98.0),
+    ]
 
     # no flip -> the DAY OCO lapses at the bell (unchanged behaviour)
     _ts, px, reason = _static_oco_first_touch(
-        100.0, tape, target_pct=2.0, stop_pct=5.0, close_dt=close)
+        100.0, tape, target_pct=2.0, stop_pct=5.0, close_dt=close
+    )
     assert reason == "close-at-bell" and px == pytest.approx(98.0, abs=1e-9)
 
     # a bar-close flip at 14:35 -> exit on the FIRST PRINT at/after it (the bot->OMS handoff)
     ts_f, px_f, reason_f = _static_oco_first_touch(
-        100.0, tape, target_pct=2.0, stop_pct=5.0, close_dt=close,
-        flip_dt=t0.replace(minute=35))
+        100.0, tape, target_pct=2.0, stop_pct=5.0, close_dt=close, flip_dt=t0.replace(minute=35)
+    )
     assert reason_f == "flip"
     assert px_f == pytest.approx(98.6, abs=1e-9)
     assert ts_f == t0.replace(minute=40)
@@ -250,15 +263,15 @@ def test_static_oco_races_the_live_bar_close_flip() -> None:
     # over a later flip.
     tape_t = [(t0, 100.0), (t0.replace(minute=30), 102.5), (t0.replace(minute=40), 98.6)]
     _, px_t, reason_t = _static_oco_first_touch(
-        100.0, tape_t, target_pct=2.0, stop_pct=5.0, close_dt=close,
-        flip_dt=t0.replace(minute=35))
+        100.0, tape_t, target_pct=2.0, stop_pct=5.0, close_dt=close, flip_dt=t0.replace(minute=35)
+    )
     assert reason_t == "target" and px_t == pytest.approx(102.0, abs=1e-9)
 
     # ...and a stop reached before the flip still wins too.
     tape_s = [(t0, 100.0), (t0.replace(minute=30), 94.0), (t0.replace(minute=40), 98.6)]
     _, px_s, reason_s = _static_oco_first_touch(
-        100.0, tape_s, target_pct=2.0, stop_pct=5.0, close_dt=close,
-        flip_dt=t0.replace(minute=35))
+        100.0, tape_s, target_pct=2.0, stop_pct=5.0, close_dt=close, flip_dt=t0.replace(minute=35)
+    )
     assert reason_s == "stop" and px_s == pytest.approx(95.0, abs=1e-9)
 
 
@@ -267,21 +280,18 @@ def test_static_oco_races_the_live_bar_close_flip() -> None:
 # trigger, then a quote breaks it -> a marketable-LIMIT EH entry (fill @ ask). Resting is OFF so the
 # reactive path fires (resting is RTH-only anyway).
 EH_BASE = datetime(2026, 7, 23, 8, 0, tzinfo=ET)  # 08:00 ET = pre-market -> EH open
-_EH_OHLC = (
-    [(100.0, 100.2, 99.8, 100.0)] * 9
-    + [
-        (99.8, 99.9, 97.9, 98.0),   # 9  SELL flip -> short
-        (97.8, 97.9, 97.5, 97.6),
-        (97.4, 97.5, 97.1, 97.2),
-        (97.1, 97.2, 96.8, 96.9),
-        (96.9, 97.0, 96.6, 96.7),
-        (96.8, 96.9, 96.5, 96.6),
-        (96.7, 96.8, 96.4, 96.5),
-        (96.7, 99.5, 96.6, 99.3),   # 16 BUY flip -> arm (trigger seeds at 99.5)
-        (99.2, 99.4, 99.0, 99.2),   # 17 hold above flip level, high < 99.5
-        (99.1, 99.4, 99.0, 99.2),   # 18 (bars_waited >= 2 -> trigger frozen at 99.5)
-    ]
-)
+_EH_OHLC = [(100.0, 100.2, 99.8, 100.0)] * 9 + [
+    (99.8, 99.9, 97.9, 98.0),  # 9  SELL flip -> short
+    (97.8, 97.9, 97.5, 97.6),
+    (97.4, 97.5, 97.1, 97.2),
+    (97.1, 97.2, 96.8, 96.9),
+    (96.9, 97.0, 96.6, 96.7),
+    (96.8, 96.9, 96.5, 96.6),
+    (96.7, 96.8, 96.4, 96.5),
+    (96.7, 99.5, 96.6, 99.3),  # 16 BUY flip -> arm (trigger seeds at 99.5)
+    (99.2, 99.4, 99.0, 99.2),  # 17 hold above flip level, high < 99.5
+    (99.1, 99.4, 99.0, 99.2),  # 18 (bars_waited >= 2 -> trigger frozen at 99.5)
+]
 
 
 def _eh_bars():
@@ -296,14 +306,17 @@ def _eh_quotes(floor_bids):
     qs = []
     for i in range(9, 19):  # pre-cross quotes: last below the trigger (no premature break)
         c = _EH_OHLC[i][3]
-        qs.append(TapeQuote(ts=EH_BASE + timedelta(minutes=i, seconds=30),
-                            bid=c - 0.15, ask=c + 0.05, last=c))
+        qs.append(
+            TapeQuote(
+                ts=EH_BASE + timedelta(minutes=i, seconds=30), bid=c - 0.15, ask=c + 0.05, last=c
+            )
+        )
     # the crossing quote: last 100.5 > trigger 99.5, whole forming bar above the flip level -> ENTRY.
-    qs.append(TapeQuote(ts=EH_BASE + timedelta(minutes=19, seconds=10),
-                        bid=100.3, ask=100.5, last=100.5))  # EH routing fills @ ask 100.5
+    qs.append(
+        TapeQuote(ts=EH_BASE + timedelta(minutes=19, seconds=10), bid=100.3, ask=100.5, last=100.5)
+    )  # EH routing fills @ ask 100.5
     for mm, bid in floor_bids:  # the post-entry bid tape the floor-ride runs over
-        qs.append(TapeQuote(ts=EH_BASE + timedelta(minutes=mm),
-                            bid=bid, ask=bid + 0.2, last=bid))
+        qs.append(TapeQuote(ts=EH_BASE + timedelta(minutes=mm), bid=bid, ask=bid + 0.2, last=bid))
     return qs
 
 
@@ -326,7 +339,7 @@ def test_eh_open_floor_ride_arms_then_exits_on_fallback() -> None:
     assert len(res.trades) == 1, f"expected one EH trade; skips={res.skips} misses={res.misses}"
     t = res.trades[0]
     assert t.geometry == "eh_floor_ride"
-    assert t.entry_px == pytest.approx(100.5, abs=1e-6)     # EH marketable-LIMIT fill @ ask
+    assert t.entry_px == pytest.approx(100.5, abs=1e-6)  # EH marketable-LIMIT fill @ ask
     # cw_exit_decision ARMED at +2% (bid 103/104 > 102.51) then closed on the fall-back to the floor.
     assert t.exit_reason == "floor"
     assert t.exit_px == pytest.approx(100.5 * 1.02, abs=1e-6)
@@ -343,14 +356,14 @@ def test_mutation_floor_flag_flips_eh_exit_shape() -> None:
     ride = _run_eh(floor_enabled=True).trades[0]
     hard = _run_eh(floor_enabled=False).trades[0]
 
-    assert ride.exit_reason == "floor"      # rides past +2%, exits on the fall-back
-    assert hard.exit_reason == "target"     # hard-closes at the first +2% bid
+    assert ride.exit_reason == "floor"  # rides past +2%, exits on the fall-back
+    assert hard.exit_reason == "target"  # hard-closes at the first +2% bid
     assert ride.exit_reason != hard.exit_reason
     # both land on the +2% level, but the HARD close fires EARLIER (first touch) than the ride.
     assert ride.exit_px == pytest.approx(hard.exit_px, abs=1e-6)
     assert hard.exit_ts < ride.exit_ts
-    assert hard.exit_ts.astimezone(ET).strftime("%H:%M") == "08:21"   # first +2% touch (bid 103)
-    assert ride.exit_ts.astimezone(ET).strftime("%H:%M") == "08:23"   # the fall-back
+    assert hard.exit_ts.astimezone(ET).strftime("%H:%M") == "08:21"  # first +2% touch (bid 103)
+    assert ride.exit_ts.astimezone(ET).strftime("%H:%M") == "08:23"  # the fall-back
 
 
 # ------------------------------------------------------------------ EH bar-close ATR flip exit
@@ -360,9 +373,9 @@ def test_mutation_floor_flag_flips_eh_exit_shape() -> None:
 # ReplayStrategy overrides (a behavior-identical live refactor). flip_pending -> cw_exit_decision
 # returns "flip" on the next bid.
 _EH_FLIP_TAIL = [
-    (99.0, 99.1, 95.0, 95.2),   # 19  crash below the ATR trail -> SELL flip while holding
-    (95.0, 95.1, 93.0, 93.2),   # 20
-    (93.0, 93.1, 91.0, 91.2),   # 21
+    (99.0, 99.1, 95.0, 95.2),  # 19  crash below the ATR trail -> SELL flip while holding
+    (95.0, 95.1, 93.0, 93.2),  # 20
+    (93.0, 93.1, 91.0, 91.2),  # 21
 ]
 
 
@@ -382,8 +395,8 @@ def test_eh_open_bar_close_atr_flip_exit() -> None:
     assert len(res.trades) == 1, f"expected one EH trade; skips={res.skips} misses={res.misses}"
     t = res.trades[0]
     assert t.geometry == "eh_floor_ride"
-    assert t.exit_reason == "flip"                 # the bar-close ATR SELL flip closed it
-    assert t.exit_px < t.entry_px                  # closed at the (falling) bid, a trend exit
+    assert t.exit_reason == "flip"  # the bar-close ATR SELL flip closed it
+    assert t.exit_px < t.entry_px  # closed at the (falling) bid, a trend exit
 
 
 # ------------------------------------------------------------------ EH overnight-flatten backstop
@@ -412,8 +425,8 @@ def test_eh_open_overnight_flatten_when_geometry_never_fires() -> None:
     assert len(res.trades) == 1, f"expected one EH trade; skips={res.skips} misses={res.misses}"
     t = res.trades[0]
     assert t.geometry == "eh_floor_ride"
-    assert t.exit_reason == "overnight-flatten"          # the terminal 19:55 backstop, no geometry hit
-    assert t.exit_px == pytest.approx(100.2, abs=1e-6)   # closed at the 19:55 bid
+    assert t.exit_reason == "overnight-flatten"  # the terminal 19:55 backstop, no geometry hit
+    assert t.exit_px == pytest.approx(100.2, abs=1e-6)  # closed at the 19:55 bid
     assert t.exit_ts.astimezone(ET).strftime("%H:%M") == "19:55"
 
 
@@ -424,7 +437,7 @@ def test_eh_geometry_exit_before_1955_still_wins() -> None:
     res = _run_eh_flatten(_EH_FLOOR_BIDS + [(715, 100.2)])
     assert len(res.trades) == 1
     t = res.trades[0]
-    assert t.exit_reason == "floor"                      # the EARLIER floor exit wins, not the flatten
+    assert t.exit_reason == "floor"  # the EARLIER floor exit wins, not the flatten
     assert t.exit_reason != "overnight-flatten"
     assert t.exit_ts.astimezone(ET).strftime("%H:%M") == "08:23"
 
@@ -442,9 +455,11 @@ def test_mutation_overnight_flatten_time_shifts_with_setting() -> None:
     ).trades[0]
 
     assert default.exit_reason == mutated.exit_reason == "overnight-flatten"
-    assert default.exit_ts.astimezone(ET).strftime("%H:%M") == "19:55"   # reads the default 19/55
-    assert mutated.exit_ts.astimezone(ET).strftime("%H:%M") == "18:55"   # shifts to the mutated 18/55
-    assert mutated.exit_px == pytest.approx(99.5, abs=1e-6)              # the 18:55 bid, an earlier close
+    assert default.exit_ts.astimezone(ET).strftime("%H:%M") == "19:55"  # reads the default 19/55
+    assert (
+        mutated.exit_ts.astimezone(ET).strftime("%H:%M") == "18:55"
+    )  # shifts to the mutated 18/55
+    assert mutated.exit_px == pytest.approx(99.5, abs=1e-6)  # the 18:55 bid, an earlier close
     assert mutated.exit_ts < default.exit_ts
 
 
@@ -461,7 +476,9 @@ def test_mutation_overnight_flatten_time_shifts_with_setting() -> None:
 # exist yet — the flags are dormant); these synthetics prove the EH MECHANISM only.
 
 # --- resting-EH: reuse the SAME validated ATR sequence as the RTH resting entry, but pre-market (08:00).
-EH_REST_BASE = datetime(2026, 7, 23, 8, 0, tzinfo=ET)  # 08:00 ET = pre-market -> EH open + EH resting window
+EH_REST_BASE = datetime(
+    2026, 7, 23, 8, 0, tzinfo=ET
+)  # 08:00 ET = pre-market -> EH open + EH resting window
 
 
 def _eh_rest_bars() -> list[SchwabBar]:
@@ -483,13 +500,17 @@ def _eh_rest_quotes(cross_ask: float, floor_bids=None) -> list[TapeQuote]:
         qs.append(TapeQuote(ts=ts, bid=c - 0.15, ask=c + 0.05, last=c))
     cross_ts = EH_REST_BASE + timedelta(minutes=16, seconds=30)
     qs.append(TapeQuote(ts=cross_ts, bid=cross_ask - 0.1, ask=cross_ask, last=cross_ask))
-    for mm, bid in (floor_bids or []):
-        qs.append(TapeQuote(ts=EH_REST_BASE + timedelta(minutes=mm), bid=bid, ask=bid + 0.2, last=bid))
+    for mm, bid in floor_bids or []:
+        qs.append(
+            TapeQuote(ts=EH_REST_BASE + timedelta(minutes=mm), bid=bid, ask=bid + 0.2, last=bid)
+        )
     return qs
 
 
 def _run_eh_rest(cross_ask: float, *, floor_bids=None, eh_enabled: bool = True, **overrides):
-    settings = build_replay_settings(eh_enabled=eh_enabled, oms_v2_cw_floor_exit_enabled=True, **overrides)
+    settings = build_replay_settings(
+        eh_enabled=eh_enabled, oms_v2_cw_floor_exit_enabled=True, **overrides
+    )
     source = _MemSource(_eh_rest_bars(), _eh_rest_quotes(cross_ask, floor_bids))
     return replay_symbol_day(source, SYM, DAY, settings)
 
@@ -499,17 +520,25 @@ def test_p3_premarket_resting_eh_cross_fills_at_band_and_floor_rides() -> None:
     # Crossing ask 98.50 lands inside the band [98.264, 98.755] -> marketable EH-LIMIT fill at min(ask,cap)
     # = the ask; the EH-opened position then floor-rides (arm at +2%, exit on fall-back to the floor).
     res = _run_eh_rest(98.50, floor_bids=[(20, 101.0), (21, 99.0)])
-    assert len(res.entries) == 1, f"expected one EH resting entry; skips={res.skips} misses={res.misses}"
+    assert len(res.entries) == 1, (
+        f"expected one EH resting entry; skips={res.skips} misses={res.misses}"
+    )
     e = res.entries[0]
-    assert e.mode == "resting" and e.order_type == "limit"      # software EH-LIMIT, NOT a broker STOP_LIMIT
-    assert e.fill_price == pytest.approx(98.50, abs=1e-6)        # min(ask, level*(1+band)) = the in-band ask
+    assert (
+        e.mode == "resting" and e.order_type == "limit"
+    )  # software EH-LIMIT, NOT a broker STOP_LIMIT
+    assert e.fill_price == pytest.approx(
+        98.50, abs=1e-6
+    )  # min(ask, level*(1+band)) = the in-band ask
     assert RESTING_STOP <= e.fill_price <= RESTING_LIMIT
     assert res.misses == []
     assert len(res.trades) == 1
     t = res.trades[0]
-    assert t.geometry == "eh_floor_ride"                        # EH open -> floor-ride geometry (P2 wiring)
+    assert t.geometry == "eh_floor_ride"  # EH open -> floor-ride geometry (P2 wiring)
     assert t.exit_reason == "floor"
-    assert t.exit_px == pytest.approx(98.50 * 1.02, abs=1e-6)   # rode past +2%, exited on the fall-back floor
+    assert t.exit_px == pytest.approx(
+        98.50 * 1.02, abs=1e-6
+    )  # rode past +2%, exited on the fall-back floor
 
 
 # ------------------------------------------------------------------ (b) reactive-EH marketable fill (P-B1 on)
@@ -522,10 +551,14 @@ def test_p3_premarket_reactive_eh_marketable_fill() -> None:
         oms_v2_cw_floor_exit_enabled=True,
     )
     res = replay_symbol_day(_MemSource(_eh_bars(), _eh_quotes(_EH_FLOOR_BIDS)), SYM, DAY, settings)
-    assert len(res.entries) == 1, f"expected one reactive EH entry; skips={res.skips} misses={res.misses}"
+    assert len(res.entries) == 1, (
+        f"expected one reactive EH entry; skips={res.skips} misses={res.misses}"
+    )
     e = res.entries[0]
     assert e.mode == "reactive" and e.order_type == "limit"
-    assert e.fill_price == pytest.approx(100.5, abs=1e-6)        # marketable at the ask (<= the cross cap)
+    assert e.fill_price == pytest.approx(
+        100.5, abs=1e-6
+    )  # marketable at the ask (<= the cross cap)
     assert res.trades[0].geometry == "eh_floor_ride"
 
 
@@ -534,7 +567,9 @@ def test_p3_gap_through_resting_eh_entry_abandons() -> None:
     # Same pre-market day, but the break gaps the whole band: crossing ask 99.00 > band cap ~98.755. The
     # up-cross fires but the ask is past the band -> ABANDON (no fill), the live no-chase / gap-through-miss.
     res = _run_eh_rest(99.00)
-    assert res.entries == [] and res.trades == [], f"expected a gap-through ABANDON, got {res.entries}"
+    assert res.entries == [] and res.trades == [], (
+        f"expected a gap-through ABANDON, got {res.entries}"
+    )
     assert len(res.misses) == 1 and res.misses[0].reason == "eh_entry_abandoned"
     assert "ASK_PAST_BAND" in res.misses[0].detail
 
@@ -544,24 +579,39 @@ def test_p3_eh_live_bar_guard_blocks_stale_bar_entry() -> None:
     """The reactive-EH break's driving bar is ~70s old at the crossing quote. At the default max bar age
     (180s) the entry fires; drop it to 30s and the EH live-bar guard (#528 mirror) suppresses the entry off
     the now-stale bar — pinning the guard's threshold value (mutation red)."""
+
     def _run(max_bar_age_secs: float):
         settings = build_replay_settings(
             eh_enabled=True,
             strategy_schwab_1m_v2_cw_v2_resting_entry_enabled=False,
             strategy_schwab_1m_v2_cw_v2_reactive_entry_max_bar_age_secs=max_bar_age_secs,
         )
-        return replay_symbol_day(_MemSource(_eh_bars(), _eh_quotes(_EH_FLOOR_BIDS)), SYM, DAY, settings)
+        return replay_symbol_day(
+            _MemSource(_eh_bars(), _eh_quotes(_EH_FLOOR_BIDS)), SYM, DAY, settings
+        )
 
-    assert len(_run(180.0).entries) == 1                        # fresh bar -> the reactive-EH entry fires
-    assert _run(30.0).entries == []                             # stale bar (>30s) -> guard suppresses it
+    assert len(_run(180.0).entries) == 1  # fresh bar -> the reactive-EH entry fires
+    assert _run(30.0).entries == []  # stale bar (>30s) -> guard suppresses it
 
 
 # ------------------------------------------------------------------ mutation: the EH flag is load-bearing
 def test_p3_mutation_eh_flag_off_no_premarket_entry() -> None:
-    """The SAME pre-market resting day with the EH flag OFF (LIVE default): the resting window is closed
-    pre-market (09:30 start) and the EH cross-check is inert -> NO entry (RTH-only). Proves the EH flag —
-    not the fixture — is what makes the pre-market entry fire (mutation red vs test (a))."""
-    res = _run_eh_rest(98.50, floor_bids=[(20, 101.0), (21, 99.0)], eh_enabled=False)
+    """The SAME pre-market resting day with the EH flags OFF: the resting window is closed pre-market
+    (09:30 start) and the EH cross-check is inert -> NO entry (RTH-only). Proves the EH flag — not
+    the fixture — is what makes the pre-market entry fire (mutation red vs test (a)).
+
+    ⛔ 2026-08-19 (P8): the flags are now OFF only by EXPLICIT OVERRIDE. `eh_enabled=False` is a
+    no-op — the overlay only ADDS flags when True — and LIVE_LOCKED now mirrors production, where
+    both EH flags are ON. Relying on the old default meant this mutation was silently riding on the
+    mirror being wrong.
+    """
+    res = _run_eh_rest(
+        98.50,
+        floor_bids=[(20, 101.0), (21, 99.0)],
+        eh_enabled=False,
+        strategy_schwab_1m_v2_cw_v2_eh_resting_entry_enabled=False,
+        oms_v2_eh_entry_enabled=False,
+    )
     assert res.entries == [] and res.trades == []
 
 
@@ -580,27 +630,62 @@ from project_mai_tai.settings import Settings as _Settings  # noqa: E402
 
 
 def test_env_set_values_beat_live_locked() -> None:
-    """THE REGRESSION. A field production explicitly sets must survive into the replay."""
-    for key, live_value in (
-        ("strategy_schwab_1m_v2_cw_v2_reclaim_enabled", True),
-        ("strategy_schwab_1m_v2_cw_v2_eh_resting_entry_enabled", True),
-        ("oms_v2_eh_entry_enabled", True),
-    ):
-        assert LIVE_LOCKED.get(key) is False, f"{key} is only a meaningful test while LIVE_LOCKED disagrees"
-        base = _Settings(**{key: live_value})               # as the env would supply it
+    """THE REGRESSION. A field production explicitly sets must survive into the replay.
+
+    ⛔⭐⭐ REWRITTEN 2026-08-19 (P8). This used to assert `LIVE_LOCKED.get(key) is False` for
+    reclaim and the two EH flags — "only a meaningful test while LIVE_LOCKED disagrees" — which
+    meant the regression bought its own meaningfulness by requiring the PRODUCTION MIRROR TO STAY
+    WRONG. Production has run all three ON since 07-24/07-27, so every off-VPS / CI replay studied a
+    configuration we were not trading, and the test was the reason it could not be fixed.
+
+    ⛔ You do not keep production config wrong so a test stays meaningful. The disagreement the
+    regression needs is now built HERE, from a dict this test owns, so the mirror is free to track
+    production and the property under test is unchanged.
+    """
+    # The disagreement is constructed, not borrowed: whatever the mirror says, flip it.
+    for key, mirror_value in sorted(LIVE_LOCKED.items()):
+        if not isinstance(mirror_value, bool):
+            continue
+        env_value = not mirror_value  # deliberately unlike the fallback
+        base = _Settings(**{key: env_value})  # as the env would supply it
         got = getattr(build_replay_settings(base=base), key)
-        assert got == live_value, (
-            f"{key}: replay used {got!r} while live runs {live_value!r} — the backtest is studying "
-            f"a configuration we are not trading"
+        assert got == env_value, (
+            f"{key}: replay used {got!r} while the env supplied {env_value!r} — the backtest is "
+            f"studying a configuration we are not trading"
         )
 
 
+def test_live_locked_tracks_production_for_the_three_flags_that_once_drifted() -> None:
+    """⛔ The 07-28 divergence, pinned so it cannot silently return.
+
+    All three were measured ON THE BOX as `true` (2026-08-19, scripts/audit_live_locked_drift.py).
+    The mirror's whole contract is that an off-VPS / CI replay is faithful WITHOUT an env file, and
+    these are the three that made it unfaithful.
+    """
+    for key in (
+        "strategy_schwab_1m_v2_cw_v2_reclaim_enabled",
+        "strategy_schwab_1m_v2_cw_v2_eh_resting_entry_enabled",
+        "oms_v2_eh_entry_enabled",
+    ):
+        assert LIVE_LOCKED[key] is True, f"{key} must mirror production (live: true)"
+
+
 def test_reclaim_parity_actually_moves_the_entry_cap() -> None:
-    """Not just a flag: prove the drift changed BEHAVIOUR. Reclaim off caps a segment at ONE entry."""
+    """Not just a flag: prove the setting changes BEHAVIOUR. Reclaim off caps a segment at ONE entry.
+
+    ⛔ 2026-08-19 (P8): both arms are now stated EXPLICITLY. The `off` arm used to be "no env", which
+    worked only while LIVE_LOCKED wrongly carried reclaim=False; with the mirror corrected, no-env
+    means reclaim ON. The property — off => 1, on => 2 — is unchanged and no longer depends on the
+    mirror disagreeing with production.
+    """
     from project_mai_tai.strategy_core.schwab_1m_v2 import SchwabV2Strategy
-    base = _Settings(strategy_schwab_1m_v2_cw_v2_reclaim_enabled=True)
-    assert SchwabV2Strategy(build_replay_settings(base=base))._cw_v2_max_entries_per_flip == 2
-    assert SchwabV2Strategy(build_replay_settings())._cw_v2_max_entries_per_flip == 1   # no env
+
+    on = _Settings(strategy_schwab_1m_v2_cw_v2_reclaim_enabled=True)
+    off = _Settings(strategy_schwab_1m_v2_cw_v2_reclaim_enabled=False)
+    assert SchwabV2Strategy(build_replay_settings(base=on))._cw_v2_max_entries_per_flip == 2
+    assert SchwabV2Strategy(build_replay_settings(base=off))._cw_v2_max_entries_per_flip == 1
+    # And the DEFAULT (no env, off-VPS / CI) must now follow production, which runs reclaim ON.
+    assert SchwabV2Strategy(build_replay_settings())._cw_v2_max_entries_per_flip == 2
 
 
 def test_live_locked_still_applies_with_no_env() -> None:
