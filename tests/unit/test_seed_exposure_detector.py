@@ -12,12 +12,13 @@ read. A regression here is silent and costs a P0.
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from scripts.seed_exposure_detector import (
     DetectorBlind,
+    OnDeckRow,
     _dsn,
     SweepRow,
     check_constants,
@@ -156,58 +157,92 @@ def test_an_empty_watchlist_is_returned_not_refused():
 
 
 # --------------------------------------------------------------------------------------
-# classify() — pinned branches, real BIVI numbers where they exist
+# classify() — THE WINDOW, NOT A COUNT (P10, 2026-08-19)
 # --------------------------------------------------------------------------------------
 
 
-def test_at_or_over_the_seed_limit_is_not_exposed():
-    row = SweepRow(
-        "CAST", bars_today=250, bars_ever=2525, bar_at_limit=datetime(2026, 6, 2, tzinfo=UTC)
+def _row(symbol, window_bars, newest, gap_days=None, ever=None):
+    return SweepRow(
+        symbol=symbol,
+        window_bars=window_bars,
+        bars_ever=ever if ever is not None else window_bars,
+        newest_bar=newest,
+        max_internal_gap=timedelta(days=gap_days) if gap_days is not None else None,
     )
-    exposed, reason = row.classify(NOW)
-    assert exposed is False
-    assert "cannot reach past today" in reason
 
 
-def test_short_history_is_not_holed():
-    """⛔ AIXC 104 / NTWOW 160 — a history that STARTS today is SHORT, NOT HOLED, and must keep seeding."""
-    row = SweepRow("AIXC", bars_today=0, bars_ever=104, bar_at_limit=None)
-    exposed, reason = row.classify(NOW)
-    assert exposed is False
-    assert "SHORT history" in reason
+def test_vrax_the_case_that_broke_the_old_criterion():
+    """⛔⭐⭐ THE REGRESSION. VRAX at 07:35 on 2026-08-19: 241 bars, ALL from 07-09, none today.
 
-
-def test_bivi_the_live_08_19_case_is_exposed():
-    """The real 07:11 ET reading: 11 bars today, 250th-newest from 08-12 (6.7d)."""
-    row = SweepRow(
-        "BIVI", bars_today=11, bars_ever=523, bar_at_limit=datetime(2026, 8, 12, 18, 30, tzinfo=UTC)
-    )
-    exposed, reason = row.classify(NOW)
-    assert exposed is True
-    assert "EXPOSED" in reason
-    assert "6.7d" in reason
-
-
-def test_a_recent_limit_bar_is_not_exposed():
-    row = SweepRow(
-        "XOS", bars_today=10, bars_ever=976, bar_at_limit=datetime(2026, 8, 18, tzinfo=UTC)
-    )
-    exposed, reason = row.classify(NOW)
-    assert exposed is False
-    assert "is recent" in reason
-
-
-def test_an_ordinary_weekend_does_not_flag():
-    """Fri 08-14 close -> now is ~4.5d... but a Friday-AFTERNOON bar is inside the 4d window.
-
-    Pinned: a bar at 2026-08-15 16:00 UTC read at 2026-08-19 11:30 UTC is 3.81d and must NOT flag.
-    This is the guard against flagging every Monday.
+    The old criterion said `SHORT history (< 250 bars ever) — short is NOT holed` and passed it.
+    The window is internally contiguous, so there is no internal gap to find — and #721 would have
+    seeded all 241 bars from a session where VRAX traded 5.92-12.85, while it traded 3.22-4.07 that
+    day. The BOUNDARY is the only thing that reveals it.
     """
-    row = SweepRow(
-        "SLE", bars_today=5, bars_ever=678, bar_at_limit=datetime(2026, 8, 15, 16, 0, tzinfo=UTC)
-    )
+    row = _row("VRAX", 241, datetime(2026, 7, 9, 15, 47, tzinfo=UTC), gap_days=None)
+    exposed, why = row.classify(NOW)
+    assert exposed is True
+    assert "BOUNDARY" in why
+    assert "#721 does NOT truncate this" in why
+
+
+def test_short_history_is_no_longer_a_free_pass():
+    """⛔ The retracted rule, pinned as a regression: a 3-bar window that is 40 days old is EXPOSED."""
+    row = _row("TINY", 3, datetime(2026, 7, 10, tzinfo=UTC))
+    exposed, _ = row.classify(NOW)
+    assert exposed is True
+
+
+def test_a_history_that_starts_today_is_genuinely_safe():
+    """AIXC / NTWOW — safe because NOTHING SITS BEHIND THEM, not because they are short."""
+    row = _row("AIXC", 104, datetime(2026, 8, 19, 11, 0, tzinfo=UTC))
+    exposed, why = row.classify(NOW)
+    assert exposed is False
+    assert "contiguous and current" in why
+
+
+def test_internal_gap_is_still_detected():
+    """The #721-covered kind: bars today, but an old island inside the same window."""
+    row = _row("BIVI", 250, datetime(2026, 8, 19, 11, 25, tzinfo=UTC), gap_days=5.9)
+    exposed, why = row.classify(NOW)
+    assert exposed is True
+    assert "INTERNAL" in why
+
+
+def test_boundary_is_checked_before_internal():
+    """A wholly-stale window can also contain an internal gap; BOUNDARY is the uncovered kind and
+    must be the one reported, because it is the one nothing else will catch."""
+    row = _row("BOTH", 250, datetime(2026, 7, 1, tzinfo=UTC), gap_days=10)
+    _, why = row.classify(NOW)
+    assert "BOUNDARY" in why and "INTERNAL" not in why
+
+
+def test_a_full_current_window_is_not_exposed():
+    row = _row("TNON", 250, datetime(2026, 8, 19, 11, 29, tzinfo=UTC), gap_days=0.01)
     exposed, _ = row.classify(NOW)
     assert exposed is False
+
+
+def test_no_history_is_reported_as_nothing_to_seed_not_as_safe():
+    row = _row("NEW", 0, None)
+    exposed, why = row.classify(NOW)
+    assert exposed is False
+    assert "nothing to seed" in why
+
+
+def test_bar_count_alone_never_decides():
+    """⛔⭐ Two symbols with the SAME window size, opposite verdicts — the count cannot be the input."""
+    stale = _row("A", 241, datetime(2026, 7, 9, tzinfo=UTC))
+    fresh = _row("B", 241, datetime(2026, 8, 19, 11, 0, tzinfo=UTC))
+    assert stale.classify(NOW)[0] is True
+    assert fresh.classify(NOW)[0] is False
+
+
+def test_ondeck_row_names_the_uncovered_kind():
+    boundary = OnDeckRow("NXTC", 250, datetime(2026, 7, 14, tzinfo=UTC), None)
+    internal = OnDeckRow("KIDZ", 250, datetime(2026, 8, 19, 11, 0, tzinfo=UTC), timedelta(days=28))
+    assert boundary.kind(NOW) == "BOUNDARY"
+    assert internal.kind(NOW) == "internal"
 
 
 # --------------------------------------------------------------------------------------
