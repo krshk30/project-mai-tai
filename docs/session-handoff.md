@@ -12,157 +12,137 @@
 
 ---
 
-# 🚨 TOMORROW STARTS WITH THE DETECTOR, BEFORE 07:00. NOTHING ELSE MOVES UNTIL THE CENSUS WINDOW.
+# 🚨 TOMORROW MORNING: TWO THINGS, BOTH FAIL SILENTLY
 
-**#721 deployed 16:31 ET 08-18 (`1a26f430`). Its census read `truncations=0 of 5` tonight — that is
-MECHANICAL, NOT EVIDENCE.** CAST stopped being exposed because it grew past 250 bars during the
-session, not because of the fix.
+**1. The census WILL jump. That is the fix firing, not a problem.** #734 shipped tonight and adds
+the **BOUNDARY** gap check. **181 of 194 exposed symbols are the class it newly catches.**
 
-```bash
-/tmp/seed_exposure_detector.sh          # on the box; read-only, no restart
-```
-Run it **pre-open AND at every watchlist add** — a symbol joining mid-session has almost no bars at
-that moment, which is the CAST case exactly. Then watch `[V2-DB-SEED-GAP-CENSUS]` through
-**04:00–11:00 ET**.
+**2. ⛔ #734 IS DEPLOYED BUT UNEXERCISED.** Tonight's census read `truncations=0 of 0 symbols
+seeded` — the operator emptied the watchlist at 16:29 before the restart, so **no seed ran**.
+Tomorrow's 04:00 roll is its **first real test**. Deployed ≠ proven.
 
-⛔ **THE PROOF IS `truncations > 0` ON A THIN SYMBOL WITH AN OLD SERIES BEHIND IT.** A second quiet
-morning is a **NON-RESULT** — say so; do not bank it. The criterion is **bar count vs the 250 seed
-limit, not clock time**: a thin name may never reach 250 in a session, and thin names are the whole
-universe. Exposed = *thin today* **AND** *has an old series*. A history that STARTS today (AIXC 74,
-NTWOW 160) is **SHORT, NOT HOLED** — the regression direction, and it must keep seeding.
+⇒ Watch `[V2-DB-SEED-GAP]` through **04:00–11:00 ET**. A boundary refusal reads
+`dropped ALL n seed bars`. The new **04:00–11:00 cron** now runs the detector every 5 min and alerts
+on CHANGE only (`/home/trader/project-mai-tai/ops/health/seed_exposure_cron.sh`).
 
 ---
 
 ## ⚡ FIRST SCREEN
 
-**2026-08-18 EOD.** Fleet **7/7 running**. **Account FLAT** — broker book empty, 0 managed rows,
-0 working orders. Tree clean, **no open PRs, nothing in flight**.
+**2026-08-19 EOD.** Fleet **7/7**. Account FLAT, **0 open managed rows**, nothing working.
+**Box HEAD `f18132e7`** (was `1a26f43` — **19 commits**), `src` diff vs origin/main = **0**.
 
-**Box HEAD `1a26f430`, `src` diff vs `origin/main` = 0.** v2 restarted **16:31:39 ET** (files written
-16:31:26 — process after files); outage **1 second** per systemd's own record ⇒ **no bar hole**.
-OMS still carries `70ca930`, untouched since 08-17 17:50 ET.
-Verified BY CONTENT: `DB_SEED_MAX_MISSED_SESSIONS` ×3 · `_missed_sessions_between` ×2 ·
-`[V2-DB-SEED-GAP-CENSUS]` ×1 · `[V2-BOOT-HOLD] released — 0 reconstructed-uncapped segments`.
+**⛔ v2 IS THE ONLY SERVICE RUNNING THE PULLED CODE.** Files written **20:36:13 UTC**, v2 process
+started **20:36:31 UTC** (after files). Every other service still runs pre-pull code:
+
+| service | process start | running pulled code? |
+|---|---|---|
+| **schwab-1m-v2** | 08-19 20:36:31 UTC | ✅ YES |
+| **oms** | 08-17 21:50:03 UTC | ⛔ **NO — on disk, not running** (#735/#736/#737) |
+| strategy · market-data · control · reconciler · market-capture | 07-08 → 08-17 | ⛔ NO |
+
+> ### ⛔⭐⭐ NEW STANDING RULE — `src diff = 0` IS NO LONGER EVIDENCE
+> From 2026-08-19 the box carries code it is not running. Every deploy report after a partial-restart
+> pull must state, **per service**, the **file-write time and the process-start time side by side**.
+> The table above is the evidence; the diff is not.
 
 ---
 
-# 📋 THE QUEUE — BY EXECUTION, NOT BY TIER (operator-set 08-18)
+# 📋 THE BOARD
+
+The operator maintains the live board (lamps/filters). This file records only what the board cannot:
+**dated triggers, tonight's state, and the flags that make a number readable.**
 
 ## 🗓️ DATED — a trigger nobody wrote down never fires
 | when | what |
 |---|---|
-| **Wed 08-19, 04:00–11:00 ET** | **#721 acceptance.** Detector + census. `truncations>0` on a holed thin symbol is the only proof. |
-| **Mon 08-24** | **#13** — the weekend-outage re-check, answerable only once a SECOND weekend is in the retained logs. |
-| **Mon 08-25, before 16:46 ET** | **SCHWAB RE-AUTH** at `https://project-mai-tai.live/auth/schwab/start`. `refresh_token_expires_at = 2026-08-25T20:46:01Z`, read from the STORE 08-18 16:48 ET (GREEN ~7.0d). ⛔ **MANUAL ONLY.** Miss it and **Tue 08-26 pre-market opens with no token**. |
+| **THU 08-20 eve** | **OMS deploy — #735 + #736 + #737** (one bundle by FILE, separable by signal). ⛔⭐⭐ **SET `MAI_TAI_STRATEGY_SCHWAB_1M_V2_WEBULL_RESTING_MIRROR_ENABLED=true`** — it is **false** now. Miss it and #735 ships and does NOTHING, and the acceptance fails for the wrong reason. **OMS first, then v2 with the flag.** |
+| **FRI 08-21 am** | **#735 acceptance, pre-committed.** orb entry fills/day **6–7 → 12–25** with Schwab's rate side by side · mirror STOP_LIMIT rejects **→ 0** (720 since 08-14) · `[WEBULL-BARE-FILL]` per-session count, **expected ~9/day**. ⛔ **>20 bare fills ⇒ STOP and report before Monday.** ⛔ A quiet Friday is a **non-result**, not a pass. ⛔ #736's signal is the opposite: **expect ZERO `[OCO-TARGET-BELOW-FILL]` lines** — one appearing IS the finding. |
+| **FRI 08-21 eve** | **Q1** — the `source` column (our aborts vs broker rejects). |
+| **MON 08-24** | **#13** weekend-outage re-check — needs a 2nd weekend in the retained logs. |
+| **MON 08-25, before 16:46 ET** | **SCHWAB RE-AUTH**, `https://project-mai-tai.live/auth/schwab/start`. ⛔ **MANUAL ONLY.** Miss it and Tue 08-26 pre-market opens with no token. |
 
-## 🚀 DEPLOYS, IN ORDER
-**§81.4 → §3 → #16 → §81.1+2 → #7 → §54/#12**
-
-1. **§81.4 — THE RESTART FENCE. ✅ CONFIRMED WINDOW-FREE, SHIPS IMMEDIATELY.**
-   `deploy_preflight` is imported by **no service code**, and `/home/trader/ops_preflight/
-   preflight_v2_restart.sh` is standalone blocking tooling ⇒ **no deploy window needed.**
-   ⛔ It is a **SIBLING, not an edit**: the existing script gates **v2** restarts; this fence is for an
-   **OMS** restart while a pre-market position is open, because the software ladder is **in-process in
-   the OMS**. Today that fence was **a human remembering, for 26 minutes**.
-   ⛔ Commit the exec bit; a hand-chmod on the box blocks every deploy.
-2. **§3 — THE `source` COLUMN (abort vs refusal). IT IS THE INSTRUMENT, SO IT GOES FIRST.**
-   #16's acceptance IS a reject count, and the conflation is what makes reject counts unreadable —
-   fixing the leg before the gauge means measuring the fix through the lens that hid it. **Changes
-   zero order flow**, so it is the safest thing in the first window. Measured cost: three sessions.
-3. **#16 — THE DEAD WEBULL MIRROR LEG. THURSDAY, NOT FRIDAY.** It is the only queued change that
-   **adds live orders**, so it must be watched the next morning; a Friday deploy means three days
-   before anyone sees it work. Build with the full mutation round, deploy after the close.
-4. **§81.1+2** — stop the pre-market combo attach · **one COUNTED line per unprotected fill**.
-   ⛔ Trap at the top of that PR: after part 1 the refusals stop **because we stopped asking**.
-   Part 2's count is the only honest signal.
-5. **#7** retry bound `_v2_exit_close_failures` unreachable · 6. **§54/#12** sustained-unreadability
-   pager (trip on N consecutive failures AND holding; 273 reads ≈68 min vs 6 ≈1 min sizes it).
-
-## 🔀 PARALLEL — no deploy, no restart
-**R4 wiring → R1-as-fidelity · §121 · §113 · §124 · §99 · the segment-identity audit**
-⛔ **R1 is the FIRST trade-level parity the engine has ever had** — the 89/90 is *config* parity and
-only STKH has ever matched. The divergence report must classify **(a) engine defect / (b) production
-defect / (c) genuine tolerance from run one**; retrofitting after a run that called everything an
-engine miss is worse than useless. Signature of (b): *an arm whose bar predates the loaded window*.
-Replay loads by TIME WINDOW and already caps such arms, so **it will correctly refuse entries
-production actually took — those are NOT misses.** R1-as-evaluation waits on the seed work.
-Golden set: 08-17, 20 broker-confirmed trades, +$2.26 gross (IPST +2.52, IVF −0.26, WFF +0.10, SLE −0.10).
-
-## ⬇️ BEHIND
-#4 · #11 · **§63 stays LAST — the refusals are still a detector** · group B (BOXL/GXAI/RMCF, 1–2¢) ·
-SCKT (stop above ask on our feed, refused anyway, n=1) · #8 · #9 · #6 · §82 (fan-out once-per-flip
-latch) · retire the Wednesday cron + fix the duplicated crontab lines · Redis MAXLEN **once
-`required_cycles` pins the floor**.
-
-## 🧪 RESIDUALS
-- The **4d–7d REST band #721 cannot see** (73 gaps, 59 symbols) — they arrive via REST, not the DB.
-  ⭐ Design note: **the gap check belongs downstream of BOTH feeds**, not inside the DB seed.
-- `_cap_reconstructed_segment` is **decoration** — marked NOT LOAD-BEARING in code with both
-  failures named (50 ms early on REST-warmup #619; never ran at all for CAST).
-- The **1.80 G Redis peak is still unexplained** against a 1.11 G structurally-constant steady state.
-- `source='live'` is a **PROVENANCE** guarantee, never a **FRESHNESS** one.
-
-## ⛔ FLAGS ON EVERYTHING
-1. **EVERY Schwab-vs-Webull comparison spanning 08-14 → now is VOID.** The Webull leg was absent.
-2. **STKH CANNOT BE R1's REFERENCE** — it sits in the >4d gap population (60.1 d, 2 wide gaps) and it
-   is the only symbol that has ever matched.
+## ⛔ STANDING — from the moment #735 is live
+**`preflight_oms_restart.sh` runs before EVERY OMS restart.** Installed at
+`/home/trader/ops_preflight/`, md5-identical to the repo copy. It is standalone tooling — **it does
+not gate itself, so the discipline is to run it.** Bare Webull fills will exist; a restart without it
+can leave one uncovered.
 
 ---
 
-## ⭐⭐ THE DAY'S ROOT CAUSE — one defect that ate five board sections
-`_seed_strategy_bars_from_db` hydrated **250 bars BY ROW COUNT**, so on a thin name it reached back as
-far as the rows did. CAST 08-18: 38 bars that day, a **61-day hole**, then June ⇒ armed at
-**flip_level 7.99 while CAST traded 1.04–1.28**. Five arms through five June bars in **26 ms**.
+## ⛔ FLAGS ON EVERYTHING — read before quoting a number
 
-**Fixed by the right variable — MISSED TRADING SESSIONS, not wall-clock.** Over 256k gaps:
+1. **Schwab-vs-Webull comparisons are VOID STRUCTURALLY, not since a date.** When the Webull leg is
+   present its order type is refused client-side, re-sent as a different type minutes later at a
+   different price, and exits on its own OCO.
+2. **STKH cannot be R1's reference** — >4d gap population, and the only symbol that ever matched.
+3. **⭐ First-vs-reclaim keys on `cw_entry_n` (97%), NEVER `cw_arm_bar_ts` (53%).** The missing half
+   is **leg-structured** — schwab resting 20%, reactive 100%, eh_resting **0%** — so grouping on the
+   segment id **re-weights** a study toward reactive and excludes EH resting entirely.
+4. **Every reject count is contaminated** until Q1 lands — `broker_order_events` stores our own
+   aborts as broker rejects.
+5. **`trade_reasons.py` is enforced NOWHERE.** It bans substring-matching reason strings and has no
+   consumer. Reading its docstring and assuming the rule is applied is wrong.
 
-| | gaps | median price move |
-|---|---|---|
-| same session | 255,243 | **0.7%** |
-| **0 missed — a CLOSURE** | **345** | **10.2%** ← legitimate, seed across it |
-| **1 missed** | 75 | **26.2%** ← 2.6× jump |
-| 2–10 missed | ~190 | 16–32%, flat |
+---
 
-⛔ Two candidate variables **died to that histogram**: a 4-day threshold let 110 gaps through at 18%
-median, and a PRICE cut truncates every Monday (weekend gaps genuinely run 10–18%). Only *missed
-sessions* separates a **CLOSURE** from an **ABSENCE**. Calendar derived from the data ⇒ holidays
-cannot drift; a failed calendar read returns **0**, so a DB blip never silently truncates history.
+## 🔬 THE DAY'S ROOT CAUSES — two, both ours
 
-⛔⭐⭐ **THE SCHWAB STOP-PRICE REJECTS WERE A PROTECTIVE ACCIDENT, NOT A GUARD.** 33 of 454 entries
-carried a prior-session arm bar; **32 refused because the level was absurd, and one (BQ 08-12, arm bar
-06-11) FILLED for +1.75%** — indistinguishable from seven clean BQ trades the same day. **That is why
-this is P0 on MECHANISM, not damage**, and it answers anyone pointing at a winning trade as evidence
-the data was fine.
-⛔ **CAST is the symptom.** The fingerprint is on **eight** symbols — CRWU, SCKT, INHD, AEHL, STFS, BQ,
-WCT, CAST. Removing one destroys evidence and changes nothing.
+**⛔⭐⭐ THE WEBULL MIRROR WAS BORN BROKEN, AND WE REFUSED IT — NOT WEBULL.**
+`rth_resting_mirror`: **720 orders, 0 fills**, first seen **08-14**. It did not *die*; it never
+worked. The strategy emits that leg **BARE on purpose** (Probe W: Webull ACCEPTS a stop-limit master
+standalone, 200). `_apply_v2_oco_bracket_entry` had **no broker scope**, stamped a Schwab bracket
+onto it, and our own adapter guard aborted it **client-side**.
+⭐ **Control group we did not have to build: the only 2 mirror fills ever are the 2 orders that
+escaped the stamping.** Fixed by #735, scoped narrowly (`webull` + `STOP_LIMIT`) so the **174 live
+bracketed LIMIT fan-outs** keep their protection.
 
-## 🔴 #16 IN ONE PARAGRAPH (the other thing found today)
-The Webull `rth_resting_mirror` leg has been **100% dead since 08-14** — it sends a `STOP_LIMIT`
-master and **our own code aborts it client-side**: `RuntimeError('Webull combo MASTER must be LIMIT or
-MARKET ...; got STOP_LIMIT')`. **542 attempts, 1 fill** (08-14 175/1 · 08-17 202/0 · 08-18 165/0);
-other legs healthy. ⛔ Invisible because a RuntimeError from OUR code is stored as *"Webull order
-rejected"*. It explains **both** fills/day halving (61–68 → 20–28) **and** `ATTACHED=0`. Acceptance
-*with its denominator*: fills/day back toward 61–68, and the RuntimeError count to **zero**.
+**⛔⭐⭐ #721 HAD A SECOND HOLE — THE BOUNDARY GAP.** Its walk compared **adjacent loaded bars only**,
+so a wholly-stale but internally-contiguous history seeded **in full, with no log line**. **178
+symbols** were in that state, 600–780 bars each, **35–62 days stale**. Fixed by #734.
+⛔ The fix is **not** `_missed_sessions_between(newest, now)` — that would wipe every symbol's
+history every pre-open. See the memory.
 
-## 📌 STANDING RULES EARNED 08-17/08-18
-1. **⭐⭐ "UNEXERCISED" DOES NOT MEAN "WAIT."** If the untested path is reachable by injecting a fault
-   into the **real object**, inject it — #714 was proven in minutes. Stub the persistence, never the
-   object under test.
-2. **⛔⭐⭐ COUNT WITH THE PREDICATE THE CONSUMER USES.** Family of four, the last being bar counts
-   summed across strategy codes (591) when the seed reads only its own (215).
-3. **⛔⭐⭐ A QUERY AGAINST A WRONG NAME RETURNS A CONFIDENT WRONG ANSWER, NOT AN ERROR.** Four in 24 h;
-   one became §49, a three-part plan to build a log line that already existed. **Enumerate, then
-   filter. For log markers, grep the marker out of the SOURCE.**
-4. **⛔⭐⭐ READ THE CONTENT, NEVER THE STATUS.** 8+ in 48 h. Every filtered query echoes its predicate
-   **and** the unfiltered count; every write is read back.
-5. **⛔⭐⭐ A TEST MAY NOT REIMPLEMENT WHAT IT TESTS.** Twice in one evening on two functions; one
-   escape would have truncated **every weekend**. Mutants were the only thing that caught it.
-6. **⛔ THE CLOCK AND THE CODE COME FROM THE BOX.** My elapsed-time sense and my memory of the entry
-   window (7–18 ET; the code says **7–16**) were both wrong today.
+---
+
+## 🧠 STANDING RULES EARNED TODAY
+
+1. **⛔⭐⭐ TRUNCATING MY OWN OUTPUT IS A WRONG ANSWER, NOT AN ERROR.** Three confident wrong
+   conclusions in one day: reject reasons cut at 110 chars (85/79/57 → truly **92/73/58**), a
+   crontab under `head -45`, and a fills query under `head -24` that made a real Webull fill look
+   like a **phantom managed row**. ⭐ The tell each time was **a number that did not reconcile**.
+2. **⛔⭐⭐ A BROKER-SHAPED RULE NEEDS A BROKER SCOPE — and the signature is SEMANTIC.** The syntactic
+   grep returns 10 hits; **8 clear**. The test is *does this rule MEAN something different at Schwab
+   than at Webull?* Adding a scope where it does **not** differ is its own defect.
+3. **⛔⭐ ARMED IS NOT A POSITION.** It is bar-driven, bars flow to 20:00, so arming after the 16:00
+   entry-window close is **normal**. ⛔ **Stopping a symbol FREEZES its arm** instead of clearing it —
+   which is how tonight's restart gate went permanently red.
+4. **⛔ A HELPER'S CONTRACT INCLUDES THE TYPE OF ITS ENDPOINTS.** Reusing one with a different
+   endpoint kind is a **new function**, not a call.
+5. **⛔ Piping a test run into `tail` destroys its exit status** — a green-looking tail said nothing,
+   and I pushed a commit with 5 failing tests.
+
+---
+
+## 📌 OPEN, NOT ON THE BOARD
+
+- **The CAST seed-cap miss is UNEXPLAINED again.** My theory died: the guards read the **state**
+  field, which is never 0 (**0 of 1621 arms**), and the cap has fired **36 times** — including for
+  CAST on 08-18. ⛔ **Any "delete the dead seed cap" item rests on a premise the data contradicts.**
+- **§82 has THREE causes, not two.** #739 fixes the reactive latch (14 of 19). Still live: the claim
+  **expiry** re-opening on `position_qty == 0` (a Webull fill does not raise it), and the
+  **phantom-close** path re-arming `fanout_webull_claimed`.
+- **Reboot backlog** — 8 pending kernels + `libc6`, **125 days uptime**; a reboot restarts all 12
+  services at once.
+- **P9 corroboration must come from a READ, not an order.** 58 symbols are excluded from every replay
+  universe on **one broker sentence each**, and retrying is impossible (we cache ineligibility).
+  Whether Schwab's instrument metadata carries a broker-only flag is **unverified**.
+- **Box-vs-repo file copies re-diverge on every deploy.** `preopen_readiness_cron.sh` is a real file,
+  not a symlink; it diverged on tonight's pull exactly as predicted and was synced by hand.
 
 ## 🧠 MEMORY POINTERS
 [[project-mai-tai-context]] · [[project-mai-tai-fleet-roster]] · [[project-mai-tai-architecture]] ·
-[[project_mai_tai_db_seed_by_count_injects_stale_bars]] · [[project_mai_tai_restart_bar_gap_checklist]] ·
-[[project_mai_tai_webull_core_session_root_cause]] · [[project_mai_tai_broker_order_events_conflates_client_aborts]] ·
-[[feedback_a_bare_where_clause_lies]] · [[feedback_the_tools_status_is_not_the_things_status]] ·
-[[feedback_unexercised_is_not_a_result]] · [[feedback_check_which_parts_already_work]]
+[[project_mai_tai_webull_mirror_born_broken]] · [[project_mai_tai_broker_shaped_rule_needs_broker_scope]] ·
+[[project_mai_tai_armed_is_not_a_position]] · [[feedback_truncated_output_is_a_wrong_answer]] ·
+[[project_mai_tai_db_seed_by_count_injects_stale_bars]] · [[project_mai_tai_backtest_live_parity_audit]] ·
+[[project_mai_tai_restart_bar_gap_checklist]]

@@ -2096,3 +2096,77 @@ count.
 - **§49 was killed outright** — v2 *does* log its session roll (`[V2-SESSION-ROLL]`, every retained
   day, including the decision); Monday's conclusion came from grepping v2's log for the
   *strategy-engine's* phrasing. A three-part plan and a v2 deploy came off the queue.
+
+---
+
+# 2026-08-19 (Wed) — 14 PRs merged; two root causes, both ours; a deploy with two overrides
+
+## Deploy (evening) — #734 alone + the mirror flag OFF
+Pre-flight **NO-GO twice**, then **GO by two operator overrides**, quoted here as the script demands:
+
+```
+[OVERRIDE] clock gate (<18:00 ET) overridden by OPERATOR
+           reason: post-close deploy; entry window closed 16:00 ET, watchlist emptied
+                   16:29 ET by operator, YJ inert (no bars => cannot self-clear)
+[OVERRIDE] 1 ARMED SEGMENT(S) accepted by the OPERATOR: YJ
+===> GO **BY OPERATOR OVERRIDE**. NOT zero-armed: 1 segment(s) accepted. overridden: YJ
+```
+
+19 commits pulled, `src` diff = 0, **v2 restarted alone** (files 20:36:13 → process 20:36:31 UTC),
+**no bar hole** (2816 before and after). `MAI_TAI_..._WEBULL_RESTING_MIRROR_ENABLED` set **false**,
+confirmed in the running process via `/proc`. OMS deliberately untouched — **on disk, not running.**
+
+Both divergent-copy items closed inside the deploy: `preopen_readiness_cron.sh` **had diverged** on
+the pull (as predicted) and was synced; the fence md5-matches its repo copy. The **04:00–11:00
+seed-exposure cron** was installed and its ET guard verified (silent at 16:37).
+
+## Root cause 1 — the Webull mirror was born broken, and WE refused it
+`rth_resting_mirror`: **720 orders, 0 fills**, first order **08-14**. Not a regression — it never
+worked. The strategy sends that leg **BARE on purpose** (Probe W: Webull accepts a stop-limit master
+*standalone*, 200; refuses it *with legs*, 417). `_apply_v2_oco_bracket_entry` had **no broker
+predicate**, stamped a Schwab bracket onto it, and our own adapter guard aborted it **client-side** —
+the order never reached Webull. **570 of 572 carried the stamped keys; the only 2 that ever filled
+are the 2 that escaped it.** Fixed #735, scoped `webull` + `STOP_LIMIT` only so the 174 live
+bracketed LIMIT fan-outs keep protection. #167 adds `[WEBULL-BARE-FILL]`, counted at the FILL because
+`[WEBULL-PROTECT-FAILED]` runs ~0.6 positions per line.
+
+⛔ Corrections to the prior story: "dead since 08-14" was wrong (born broken), and "no Webull leg at
+all" is too strong — the cross-path leg kept filling (25/25 since 08-14). What collapsed is the rate:
+**12–25/day → 6–7/day** while the Schwab primary held (08-17 v2=14/orb=6; 08-18 v2=21/orb=7).
+
+## Root cause 2 — #721 had a boundary hole
+Its walk compares **adjacent loaded bars only**, so a wholly-stale but internally-contiguous history
+seeded **in full, no truncation, no log line**. **178 symbols** in that state, 600–780 bars, 35–62
+days stale. Surfaced by VRAX (241 bars from 07-09, traded 5.92–12.85, vs 3.22–4.07 that day), which
+escaped only because it joined the watchlist *after* its first bar of the day. Fixed #734.
+⛔ Not `_missed_sessions_between(newest, now)` — its `-1` assumes both endpoints are bars, so reused
+against the wall clock it would wipe every symbol's history every pre-open.
+
+## P2 — R1 is NOT gradeable as built
+`reconcile_day` replays each symbol-day fresh per real entry, so **one replayed trade is printed
+against every real fill** — IVF showed one replay vs eight real, Δ from −0.40% to **+64.71%**. And
+the golden set is **mixed-broker: 14 Schwab + 6 Webull** (WFF is orb-only; Schwab rejected it twice
+and R4 correctly declined it). **All 3 replayed exits hit `target`** — establish whether the engine
+can model a loss at all before trusting any replayed exit.
+
+## Other work
+§131/B13 detector rebuilt on the uncapped Redis source (#724), later corrected again (#733) because
+my own criterion — *"short is NOT holed"* — was false in general. Q0 OMS restart fence + 12-case tape
+(#725). P1 R4 wiring + the unclassified denominator (#726). P5 no-reimplement lint (#727). P6
+LIVE_LOCKED drift audit (#728) → P8 corrected the mirror and moved the test off it (#730). P3 abort
+taxonomy (#729). §137 inert-module lint (#731) — which found `trade_reasons.py` inert within a day.
+P9 reason-string trust (#732). P12 born-triggered bracket guard (#736). B6 (#737). §177 (#738).
+B (#741). B10: the trader crontab was a strict **subset** of root's — 8 scripts double-executing
+(`oms_liveness` 339+339/day) — emptied, and the Wednesday re-auth cron retired.
+
+## What went wrong in my own work
+- **Truncation produced a wrong conclusion three times** (110-char reject reasons, `head -45` on a
+  crontab, `head -24` on a fills query that made a real Webull fill look like a phantom row).
+- **Pushed a commit with 5 failing tests** because I piped pytest into `tail`, destroying its exit
+  status.
+- **Wrote a §82 fix and discarded it** — a non-releasing counter would have reintroduced the FGI
+  08-13 failure (a band-capped leg burning the whole flip, Webull receiving zero orders).
+- **An ambiguity fix that rebuilt the ambiguity**: a test I wrote in the morning broke in the
+  afternoon because I later added a second copy of the string it anchored on.
+- **Leaked the DB password** into the process list and the transcript via a `sudo VAR=…` prefix.
+  **Rotation recommended** (board: P17).
