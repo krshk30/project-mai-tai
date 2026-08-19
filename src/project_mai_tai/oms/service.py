@@ -1919,6 +1919,54 @@ class OmsRiskService:
         return observed
 
     # ------------------------------------------------ webull attach-after-fill (2026-08-13)
+    def _check_bracket_born_triggered(
+        self, *, symbol: str, broker_account_name: str, metadata: dict, fill_price: float
+    ) -> bool:
+        """A bracket whose TARGET is at or below the FILL is born already triggered. Count it.
+
+        ⛔⭐⭐ WHY IT CAN ONLY BE CAUGHT HERE. The bracket is priced off the entry REFERENCE and
+        emitted WITH the entry, before any fill exists, so at submit there is nothing to compare --
+        the defect is only observable once the fill price is known. This is the one moment it can
+        be seen at all.
+
+        MEASURED, 30 days to 2026-08-19: 7 of 457 bracketed fills (1.5%) had target <= fill. ALL 7
+        were MARKET entries whose slippage (1.78-3.63%) outran the +2% target; zero on STOP_LIMIT
+        (152) or LIMIT (43). SIX of the seven exited within 5-39 SECONDS on the target leg --
+        -0.62, -0.34, 0.00, 0.00, 0.00, -0.42 per cent, median 0.00 -- i.e. the entry was converted
+        into an immediate scratch regardless of what the trade would have done.
+
+        ⭐ THE PATH THAT PRODUCED THEM IS GONE. #674 and its RTH fan-out half band-cap the entry to
+        level*(1+0.5%), and 0.5% < the 2% target, so a capped fill cannot outrun its own target.
+        Market-entry bracketed fills: 262 up to 08-12, then ZERO. This guard exists because that is
+        a PROPERTY OF THE CURRENT CONFIGURATION, not of the code: a new market path, or the band
+        flag off, brings it straight back and nothing would say so.
+
+        ⛔ NO BROKER SCOPE, DELIBERATELY. A target below the fill is an instant-loss exit at either
+        venue -- the rule does not differ by broker, and adding a scope where it does not differ is
+        its own defect (§164). Pinned by a test on the Schwab primary.
+        """
+        if str(metadata.get("native_oco_bracket", "")).lower() != "true":
+            return False
+        try:
+            target = float(metadata.get("bracket_target_price"))
+        except (TypeError, ValueError):
+            return False
+        if target <= 0 or fill_price <= 0 or target > fill_price:
+            return False
+        session_et = utcnow().astimezone(SESSION_TZ).date().isoformat()
+        if getattr(self, "_born_triggered_session", None) != session_et:
+            self._born_triggered_session = session_et
+            self._born_triggered_count = 0
+        self._born_triggered_count = getattr(self, "_born_triggered_count", 0) + 1
+        self.logger.warning(
+            "[OCO-TARGET-BELOW-FILL] %s %s fill=%.4f target=%.4f — the bracket is BORN TRIGGERED: "
+            "the target leg sells at or below the entry the moment it works. n=%d this session "
+            "(%s). Entry slippage outran the target; check the entry price cap.",
+            symbol, broker_account_name, float(fill_price), target,
+            self._born_triggered_count, session_et,
+        )
+        return True
+
     def _count_bare_webull_fill(
         self, *, symbol: str, broker_account_name: str, quantity: int, entry_price: float
     ) -> int:
@@ -2723,6 +2771,10 @@ class OmsRiskService:
             logger.info(
                 "[OMS-V2-MANAGED-OPEN] sym=%s acct=%s qty=%s entry=%s path=%s",
                 symbol, broker_account_name, int(quantity), price, entry_path,
+            )
+            self._check_bracket_born_triggered(
+                symbol=symbol, broker_account_name=broker_account_name,
+                metadata=metadata, fill_price=float(price),
             )
             # ⭐⭐ ATTACH PROTECTION TO A BARE WEBULL FILL (2026-08-13).
             # A Webull RESTING entry cannot carry a bracket -- the broker refuses a stop-limit
