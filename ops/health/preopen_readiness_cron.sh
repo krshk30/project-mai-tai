@@ -43,5 +43,38 @@ case "$CODE" in
   *) LEVEL=ERROR ;;   # readiness script crashed — treat like RED
 esac
 
+# ---- SEED-EXPOSURE DETECTOR (§177). Run BY REPO PATH, never the retired /tmp stub. ----
+# ⛔⭐ A TOOL THAT ARRIVES AND IS NEVER CALLED IS A MODULE WITH NO IMPORTERS. `broker_refusal.py`
+# shipped green and inert for a day; `trade_reasons.py` has never had a consumer. This is the call
+# site that stops the detector joining them.
+#
+# ⛔⭐⭐ AND THIS SLOT IS LATE FOR ITS PURPOSE — SAY SO RATHER THAN LET IT READ AS COVERAGE.
+# The guard above pins this routine to ~09:12 ET, but seed exposure is created from 04:00 ET and at
+# EVERY watchlist add: on 2026-08-19 BIVI was exposed at 06:50 and VRAX truncated at 09:13. A 09:12
+# reading is a DAILY RECORD, not the watch. The real watch wants its own ET-guarded cron across
+# 04:00-11:00 ET; until that exists, do not read a clean line here as a clean session.
+#
+# ⛔ Exit codes: 0 = swept, no exposure | 1 = EXPOSURE found | 2 = CANNOT SEE (refused).
+# 2 is NOT better than 1 — an unknown must never decay into a pass — so it raises the level at
+# least as far as 1 does.
+SEED_OUT="$OUT/seed_exposure_latest.txt"
+REPO=/home/trader/project-mai-tai
+if [ -x "$REPO/.venv/bin/python" ] && [ -f "$REPO/scripts/seed_exposure_detector.py" ]; then
+  ( cd "$REPO" && ./.venv/bin/python scripts/seed_exposure_detector.py --assert-constants )     > "$SEED_OUT" 2>&1
+  SEED_CODE=$?
+else
+  echo "seed-exposure detector NOT FOUND at $REPO/scripts/seed_exposure_detector.py" > "$SEED_OUT"
+  SEED_CODE=2   # ⛔ missing tool = CANNOT SEE, never GREEN
+fi
+SEED_LINE=$(grep -E '^\s+(VERDICT|⛔ CANNOT SEE)' "$SEED_OUT" | head -1)
+echo "$STAMP  seed-exposure exit=$SEED_CODE  $SEED_LINE" >> "$OUT/cron.log"
+
+case "$SEED_CODE" in
+  2) [ "$LEVEL" = "GREEN" ] && LEVEL=RED   ; VERDICT="$VERDICT | SEED-EXPOSURE: CANNOT SEE" ;;
+  1) [ "$LEVEL" = "GREEN" ] && LEVEL=AMBER ; VERDICT="$VERDICT | $SEED_LINE" ;;
+  0) VERDICT="$VERDICT | seed-exposure: none" ;;
+  *) [ "$LEVEL" = "GREEN" ] && LEVEL=RED   ; VERDICT="$VERDICT | SEED-EXPOSURE: crashed" ;;
+esac
+
 /home/trader/preopen_alert.sh "$LEVEL" "$VERDICT" "$OUTFILE"
 exit 0
