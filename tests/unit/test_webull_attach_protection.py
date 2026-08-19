@@ -14,6 +14,7 @@ nothing sitting at the broker at all.
    1. the attach fails and nobody is told  -> holding with no stop
    2. the two legs are not linked          -> stop fills, target survives, account goes SHORT
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -33,8 +34,12 @@ def _req(**md):
     meta = {"bracket_target_price": "5.10", "bracket_stop_price": "4.75"}
     meta.update(md)
     return SimpleNamespace(
-        client_order_id="coid-1", symbol="TEST", side="sell", quantity=Decimal("2"),
-        metadata=meta, time_in_force="day",
+        client_order_id="coid-1",
+        symbol="TEST",
+        side="sell",
+        quantity=Decimal("2"),
+        metadata=meta,
+        time_in_force="day",
     )
 
 
@@ -77,10 +82,12 @@ def test_neither_leg_id_can_exceed_the_40_CHAR_BROKER_CAP() -> None:
     that is a bare position's only protection. Pin the cap, not the arithmetic that happens to fit
     today.
     """
-    for base in ("schwab_1m_v2-XHG-protect-0123456789ab",       # 3-char symbol
-                 "schwab_1m_v2-ABCDE-protect-0123456789ab",     # 5-char symbol -> 39
-                 "x" * 40,                                      # already AT the cap
-                 "y" * 80):                                     # absurd, must still be bounded
+    for base in (
+        "schwab_1m_v2-XHG-protect-0123456789ab",  # 3-char symbol
+        "schwab_1m_v2-ABCDE-protect-0123456789ab",  # 5-char symbol -> 39
+        "x" * 40,  # already AT the cap
+        "y" * 80,
+    ):  # absurd, must still be bounded
         req = _req()
         req.client_order_id = base
         legs = WebullBrokerAdapter._build_exit_only_pair_payload(_adapter(), req)
@@ -132,8 +139,10 @@ class _Adapter:
 def _svc(adapter):
     s = object.__new__(svc.OmsRiskService)
     s.settings = SimpleNamespace(
-        oms_v2_cw_target_pct=2.0, oms_v2_cw_hard_stop_pct=5.0,
-        oms_webull_protect_attempts=3, oms_webull_protect_interval_seconds=0.0,
+        oms_v2_cw_target_pct=2.0,
+        oms_v2_cw_hard_stop_pct=5.0,
+        oms_webull_protect_attempts=3,
+        oms_webull_protect_interval_seconds=0.0,
     )
     s.logger = logging.getLogger("test-attach")
     s.broker_adapter = adapter
@@ -142,9 +151,15 @@ def _svc(adapter):
 
 
 def _run(s):
-    return asyncio.run(s._attach_webull_protection(
-        broker_account_name="live:orb", symbol="TEST", quantity=1,
-        entry_price=5.0, strategy_code="schwab_1m_v2"))
+    return asyncio.run(
+        s._attach_webull_protection(
+            broker_account_name="live:orb",
+            symbol="TEST",
+            quantity=1,
+            entry_price=5.0,
+            strategy_code="schwab_1m_v2",
+        )
+    )
 
 
 def test_it_attaches_and_stops(caplog: pytest.LogCaptureFixture) -> None:
@@ -154,8 +169,8 @@ def test_it_attaches_and_stops(caplog: pytest.LogCaptureFixture) -> None:
     assert len(a.calls) == 1
     assert "[WEBULL-PROTECT-ATTACHED]" in caplog.text
     md = a.calls[0].metadata
-    assert md["bracket_target_price"] == "5.1000"   # +2%
-    assert md["bracket_stop_price"] == "4.7500"     # -5%
+    assert md["bracket_target_price"] == "5.1000"  # +2%
+    assert md["bracket_stop_price"] == "4.7500"  # -5%
 
 
 def test_it_REMEMBERS_the_base_id_so_the_pair_can_later_be_RELEASED() -> None:
@@ -210,11 +225,121 @@ def test_only_a_BARE_fill_triggers_it() -> None:
     shares twice and draw an oversell refusal."""
     whole = inspect.getsource(svc)
     seg = whole.split("[OMS-V2-MANAGED-OPEN]")[1][:1500]
-    assert 'native_oco_bracket' in seg and '!= "true"' in seg
-    assert 'fanout_leg' in seg
+    assert "native_oco_bracket" in seg and '!= "true"' in seg
+    assert "fanout_leg" in seg
 
 
 def test_the_attach_runs_OFF_the_fill_path() -> None:
     """It sleeps between retries; blocking the fill path with it would delay real executions."""
     src = inspect.getsource(svc.OmsRiskService._spawn_webull_protection)
     assert "ensure_future" in src
+
+
+# ==================================================================================================
+# §167 — ONE COUNTED LINE PER BARE WEBULL FILL.
+#
+# ⛔⭐⭐ The exposure must be counted where it is CREATED. #689's attach has never once succeeded, so
+# a bare fill is uncovered from the instant it fills, and the count cannot be read off
+# [WEBULL-PROTECT-FAILED]: two attach sequences can interleave on ONE position (STKH 08-14 —
+# 1/3 2/3 1/3 3/3 FAILED 2/3 3/3 FAILED, one fill, two FAILED lines), so that count runs ~0.6
+# positions per line. One line per FILL is 1:1 by construction.
+# ==================================================================================================
+
+
+def _counter_svc():
+    s = svc.OmsRiskService.__new__(svc.OmsRiskService)
+    s.logger = logging.getLogger("test-bare-fill")
+    return s
+
+
+def test_a_bare_fill_emits_one_counted_line(caplog: pytest.LogCaptureFixture) -> None:
+    s = _counter_svc()
+    with caplog.at_level(logging.WARNING):
+        n = s._count_bare_webull_fill(
+            symbol="XHG", broker_account_name="live:orb", quantity=1, entry_price=2.4487
+        )
+    assert n == 1
+    assert "[WEBULL-BARE-FILL]" in caplog.text
+    assert "XHG" in caplog.text and "live:orb" in caplog.text
+    assert "NO BROKER-SIDE BRACKET" in caplog.text
+    assert "n=1 bare fill(s) this session" in caplog.text
+
+
+def test_the_count_is_one_per_FILL_not_per_attach_attempt() -> None:
+    """⛔ 1:1 by construction — three fills, three counts, regardless of what the attach does."""
+    s = _counter_svc()
+    counts = [
+        s._count_bare_webull_fill(
+            symbol=sym, broker_account_name="live:orb", quantity=1, entry_price=1.0
+        )
+        for sym in ("AAA", "BBB", "CCC")
+    ]
+    assert counts == [1, 2, 3]
+
+
+def test_the_count_RESETS_on_a_new_ET_session(monkeypatch) -> None:
+    """⛔ A since-boot counter reads as a day's exposure to anyone who does not know when the process
+    started — the ambiguity the seed census had to add a denominator to fix."""
+    s = _counter_svc()
+    from datetime import UTC, datetime as _dt
+
+    monkeypatch.setattr(svc, "utcnow", lambda: _dt(2026, 8, 19, 18, 0, tzinfo=UTC))
+    assert (
+        s._count_bare_webull_fill(
+            symbol="AAA", broker_account_name="live:orb", quantity=1, entry_price=1.0
+        )
+        == 1
+    )
+    assert (
+        s._count_bare_webull_fill(
+            symbol="BBB", broker_account_name="live:orb", quantity=1, entry_price=1.0
+        )
+        == 2
+    )
+    monkeypatch.setattr(svc, "utcnow", lambda: _dt(2026, 8, 20, 18, 0, tzinfo=UTC))
+    assert (
+        s._count_bare_webull_fill(
+            symbol="CCC", broker_account_name="live:orb", quantity=1, entry_price=1.0
+        )
+        == 1
+    ), "a new ET session must restart the count"
+
+
+def test_the_session_date_is_ON_the_line(caplog: pytest.LogCaptureFixture, monkeypatch) -> None:
+    """The denominator is only readable if the line says which session it counts."""
+    from datetime import UTC, datetime as _dt
+
+    monkeypatch.setattr(svc, "utcnow", lambda: _dt(2026, 8, 19, 18, 0, tzinfo=UTC))
+    with caplog.at_level(logging.WARNING):
+        _counter_svc()._count_bare_webull_fill(
+            symbol="AAA", broker_account_name="live:orb", quantity=1, entry_price=1.0
+        )
+    assert "2026-08-19" in caplog.text
+
+
+def test_the_line_is_a_WARNING_not_info(caplog: pytest.LogCaptureFixture) -> None:
+    """⛔ It records an UNCOVERED real-money position. INFO is where this would go unread."""
+    with caplog.at_level(logging.WARNING):
+        _counter_svc()._count_bare_webull_fill(
+            symbol="AAA", broker_account_name="live:orb", quantity=1, entry_price=1.0
+        )
+    assert any(
+        r.levelno >= logging.WARNING and "WEBULL-BARE-FILL" in r.getMessage()
+        for r in caplog.records
+    )
+
+
+def test_the_counted_line_sits_on_the_BARE_branch_at_the_fill() -> None:
+    """⛔ It must fire on the same condition the attach does — a bracketed fill is already covered."""
+    # ⛔ Anchored on the BARE-BRANCH CONDITION rather than on a log marker, and the window is sized
+    # to span the comment block between the branch and the two calls. The first version of this test
+    # used a 2000-char window off `[OMS-V2-MANAGED-OPEN]` and failed — NOT because the marker is
+    # ambiguous (it occurs exactly once) but because the window was too short to reach the calls.
+    # Anchoring on the condition ties the assertion to the thing it actually claims to check.
+    whole = inspect.getsource(svc)
+    idx = whole.index('str(metadata.get("native_oco_bracket", "")).lower() != "true"')
+    seg = whole[idx : idx + 3000]
+    assert "_count_bare_webull_fill" in seg, "the count must sit on the bare branch"
+    assert seg.index("_count_bare_webull_fill") < seg.index("_spawn_webull_protection"), (
+        "the exposure must be counted BEFORE the attach is attempted, never conditional on it"
+    )

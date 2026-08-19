@@ -1919,6 +1919,38 @@ class OmsRiskService:
         return observed
 
     # ------------------------------------------------ webull attach-after-fill (2026-08-13)
+    def _count_bare_webull_fill(
+        self, *, symbol: str, broker_account_name: str, quantity: int, entry_price: float
+    ) -> int:
+        """One COUNTED line per bare Webull fill. Returns the running per-session count (§167).
+
+        ⛔⭐⭐ COUNTED AT THE FILL, NOT FROM THE ATTACH OUTCOME. The position is uncovered from this
+        instant until an attach succeeds, and `[WEBULL-PROTECT-ATTACHED]` has NEVER been observed
+        (#689 is 0-for-ever). The exposure must be counted where it is created.
+
+        ⛔ IT CANNOT BE READ OFF `[WEBULL-PROTECT-FAILED]`. That marker's own docstring records why:
+        two attach sequences can interleave on ONE position (STKH 2026-08-14, on a single fill:
+        `1/3 2/3 1/3 3/3 FAILED 2/3 3/3 FAILED` -- one fill, two FAILED lines), so a count taken
+        there runs ~0.6 positions per line. One line per FILL is 1:1 by construction.
+
+        ⛔ PER ET SESSION, AND THE SESSION IS ON THE LINE. A since-boot counter reads as a day's
+        exposure to anyone who does not know when the process started -- the exact ambiguity the
+        seed census had to add a denominator to fix.
+        """
+        session_et = utcnow().astimezone(SESSION_TZ).date().isoformat()
+        if getattr(self, "_bare_webull_fill_session", None) != session_et:
+            self._bare_webull_fill_session = session_et
+            self._bare_webull_fill_count = 0
+        self._bare_webull_fill_count = getattr(self, "_bare_webull_fill_count", 0) + 1
+        self.logger.warning(
+            "[WEBULL-BARE-FILL] %s %s qty=%d entry=%.4f — FILLED WITH NO BROKER-SIDE BRACKET; "
+            "the software ladder is the ONLY cover until an attach succeeds. "
+            "n=%d bare fill(s) this session (%s).",
+            symbol, broker_account_name, int(quantity), float(entry_price),
+            self._bare_webull_fill_count, session_et,
+        )
+        return self._bare_webull_fill_count
+
     def _spawn_webull_protection(self, **kw) -> "asyncio.Task[None] | None":
         """Run the attach OFF the fill path -- it retries with sleeps and must never stall a fill.
 
@@ -2703,6 +2735,24 @@ class OmsRiskService:
                 str(metadata.get("fanout_leg", "")).lower() == "webull"
                 and str(metadata.get("native_oco_bracket", "")).lower() != "true"
             ):
+                # ⛔⭐⭐ COUNT THE BARE FILL AT THE FILL, NOT FROM THE ATTACH OUTCOME (§167).
+                #
+                # This position is uncovered from THIS INSTANT until an attach succeeds, and
+                # `[WEBULL-PROTECT-ATTACHED]` has NEVER been observed (#689 is 0-for-ever). So the
+                # exposure has to be counted where it is created.
+                #
+                # ⛔ IT CANNOT BE READ OFF `[WEBULL-PROTECT-FAILED]`. That marker's own docstring
+                # records why: two attach sequences can interleave on ONE position (STKH 08-14,
+                # `1/3 2/3 1/3 3/3 FAILED 2/3 3/3 FAILED` -- one fill, two FAILED lines), so a count
+                # taken there runs ~0.6 positions per line. One line per FILL is 1:1 by construction.
+                #
+                # ⛔ PER ET SESSION, and the session is ON THE LINE. A since-boot counter reads as a
+                # day's exposure to anyone who does not know when the process started -- the exact
+                # ambiguity the seed census had to add a denominator to fix.
+                self._count_bare_webull_fill(
+                    symbol=symbol, broker_account_name=broker_account_name,
+                    quantity=int(quantity), entry_price=float(price),
+                )
                 self._spawn_webull_protection(
                     broker_account_name=broker_account_name, symbol=symbol,
                     quantity=int(quantity), entry_price=float(price),
@@ -6409,6 +6459,41 @@ class OmsRiskService:
         if payload.strategy_code != "schwab_1m_v2":
             return
         if payload.side != "buy" or payload.intent_type != "open":
+            return
+        # ⛔⭐⭐ BROKER SCOPE (2026-08-19). THIS DECORATOR IS SCHWAB-SHAPED AND HAD NO BROKER GATE.
+        #
+        # It keyed on `strategy_code == "schwab_1m_v2"` alone, so it could not tell the SCHWAB
+        # PRIMARY from the WEBULL FAN-OUT legs of the same signal, and stamped a Schwab-shaped
+        # bracket onto both. On the `rth_resting_mirror` leg that is fatal:
+        #
+        #   * the strategy emits that leg BARE, on purpose -- "⛔ NO bracket_* keys" -- because
+        #     Probe W (2026-08-12, CORE/RTH, live account) proved Webull ACCEPTS a stop-limit master
+        #     STANDALONE (200) and refuses it only with legs attached (417);
+        #   * this function then added `bracket_entry_type=STOP_LIMIT` + `native_oco_bracket` +
+        #     target/stop, converting the shape Webull accepts into the one it refuses;
+        #   * the adapter's combo guard -- CORRECT for combos -- then aborted it CLIENT-SIDE, so the
+        #     order never reached Webull at all.
+        #
+        # MEASURED: 570 of 572 mirror orders carry those keys and were refused; the ONLY 2 that ever
+        # FILLED are the 2 that escaped this stamping. Five sessions, zero mirror fills.
+        #
+        # ⛔ THE SCOPE IS DELIBERATELY NARROW: webull + STOP_LIMIT only. The LIMIT/MARKET fan-out
+        # legs DEPEND on this bracket -- 174 live fan-out brackets in 14 days -- and excluding all
+        # Webull legs would strip protection from every one of them. Only the stop-limit master is
+        # the illegal-as-combo shape.
+        #
+        # ⛔ THIS IS A DEFECT FIX, NOT A FEATURE TOGGLE. Stamping a Schwab-shaped bracket onto a
+        # Webull leg is wrong whether or not the mirror flag is on; do not couple the two.
+        md_scope = payload.metadata
+        if (
+            str(md_scope.get("fanout_leg", "")).lower() == "webull"
+            and str(md_scope.get("order_type", "")).upper() == "STOP_LIMIT"
+        ):
+            self.logger.info(
+                "[V2-OCO-EMIT] %s %s SKIPPED (webull stop-limit master) -- Webull accepts this "
+                "shape only BARE; attaching a bracket makes it a combo master the broker refuses",
+                payload.symbol, payload.broker_account_name,
+            )
             return
         # ⭐ RTH-ONLY (the native OCO is a regular-session construct). v2 enters from 07:00 ET
         # but the bracket uses session=NORMAL: a MARKET+STOP OTOCO placed PRE-market would queue
