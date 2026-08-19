@@ -75,6 +75,16 @@ _PATTERNS: tuple[tuple[RefusalClass, re.Pattern[str]], ...] = (
     (RefusalClass.CLIENT_ABORT, re.compile(r"unable to resolve host", re.I)),
     (RefusalClass.CLIENT_ABORT, re.compile(r"upstream connect error|reset before headers", re.I)),
     (RefusalClass.CLIENT_ABORT, re.compile(r"application encountered unexpected error", re.I)),
+    # ⛔⭐⭐ OUR OWN RuntimeError, STORED AS "Webull order rejected" (P3, measured 2026-08-19).
+    # 544 rows on `live:orb` in 30 days carry `RuntimeError('Webull combo MASTER must be LIMIT or
+    # MARKET ...; got STOP_LIMIT')` — the #16 dead-mirror population (542 attempts over 08-14..18),
+    # aborted CLIENT-SIDE before the order ever reached Webull. The abort patterns above were all
+    # SCHWAB-shaped network failures, so every one of these classified as a BROKER refusal.
+    # ⛔ That is the abort/refusal conflation with a name: 544 of that account's 12,138 rejects are
+    # not the broker refusing us, they are us never asking. Any "Webull reject rate" computed before
+    # this was measuring our own bug.
+    (RefusalClass.CLIENT_ABORT, re.compile(r"combo MASTER must be", re.I)),
+    (RefusalClass.CLIENT_ABORT, re.compile(r"RuntimeError", re.I)),
 )
 
 
