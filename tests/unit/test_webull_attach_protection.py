@@ -336,8 +336,16 @@ def test_the_counted_line_sits_on_the_BARE_branch_at_the_fill() -> None:
     # used a 2000-char window off `[OMS-V2-MANAGED-OPEN]` and failed — NOT because the marker is
     # ambiguous (it occurs exactly once) but because the window was too short to reach the calls.
     # Anchoring on the condition ties the assertion to the thing it actually claims to check.
+    # ⛔⭐ THE ANCHOR MUST BE UNIQUE, AND MINE STOPPED BEING SO. I first anchored on
+    # `[OMS-V2-MANAGED-OPEN]` with too small a window; "fixed" it by anchoring on the
+    # native_oco_bracket predicate; then P12 added a method containing that SAME predicate, so
+    # `.index()` began matching the method instead of the fill branch and the test broke on a
+    # substring-not-found. An ambiguity fix that rebuilds the ambiguity. `[OMS-V2-MANAGED-OPEN]`
+    # occurs exactly once — verified — so it is the unique anchor; the window is simply sized to
+    # reach the calls.
     whole = inspect.getsource(svc)
-    idx = whole.index('str(metadata.get("native_oco_bracket", "")).lower() != "true"')
+    assert whole.count("[OMS-V2-MANAGED-OPEN]") == 1, "the anchor must stay unique"
+    idx = whole.index("[OMS-V2-MANAGED-OPEN]")
     seg = whole[idx : idx + 3000]
     assert "_count_bare_webull_fill" in seg, "the count must sit on the bare branch"
     assert seg.index("_count_bare_webull_fill") < seg.index("_spawn_webull_protection"), (

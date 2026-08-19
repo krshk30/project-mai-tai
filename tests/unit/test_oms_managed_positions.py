@@ -10,7 +10,10 @@ render on SQLite). The load-bearing property proven here is SINGLE-WRITER + DORM
 The service gating is tested by calling `OmsRiskService._apply_managed_position_after_fill`
 against a minimal harness (it uses only `self.settings` + `self.store`).
 """
+
 from __future__ import annotations
+
+import logging
 
 from decimal import Decimal
 
@@ -30,8 +33,10 @@ ACCT = "paper:schwab_1m_v2"
 
 def _session_factory() -> sessionmaker[Session]:
     engine = create_engine(
-        "sqlite+pysqlite:///:memory:", future=True,
-        connect_args={"check_same_thread": False}, poolclass=StaticPool,
+        "sqlite+pysqlite:///:memory:",
+        future=True,
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
     )
     # ONLY our table — avoid the market_trade_ticks JSONB-on-SQLite landmine.
     OmsManagedPosition.__table__.create(engine)
@@ -46,21 +51,34 @@ class _Harness:
     guard added to satisfy a test double would silently swallow the same attribute error in the
     OMS itself.
     """
+
     def __init__(self, *, enabled: bool) -> None:
         self.settings = Settings(oms_v2_exit_management_enabled=enabled)
         self.store = OmsStore()
-        self._managed_v2_symbols: set[tuple[str, str]] = set()  # slice-3: the hook maintains this set
+        self._managed_v2_symbols: set[tuple[str, str]] = (
+            set()
+        )  # slice-3: the hook maintains this set
         self._webull_protect_base: dict[tuple[str, str], str] = {}
         self._exit_reservation_released: set[tuple[str, str]] = set()
+        # P12: the fill path now runs the born-triggered bracket check, which logs.
+        self.logger = logging.getLogger("test-oms-managed-positions")
 
     _clear_exit_reservation_release = OmsRiskService._clear_exit_reservation_release
+    # ⛔ Kept in step with production, per this class's own rule: the real method is borrowed rather
+    # than stubbed, and the production call site is NOT guarded with getattr.
+    _check_bracket_born_triggered = OmsRiskService._check_bracket_born_triggered
 
 
 def _apply(harness: _Harness, session: Session, **kw):
     # default a v2 open BUY fill; callers override
     params = dict(
-        strategy_code="schwab_1m_v2", broker_account_name=ACCT, symbol="VSME",
-        side="buy", intent_type="open", quantity=Decimal("10"), price=Decimal("2.50"),
+        strategy_code="schwab_1m_v2",
+        broker_account_name=ACCT,
+        symbol="VSME",
+        side="buy",
+        intent_type="open",
+        quantity=Decimal("10"),
+        price=Decimal("2.50"),
         metadata={"path": "MACD Cross"},
     )
     params.update(kw)
@@ -72,6 +90,7 @@ def _rows(session: Session) -> list[OmsManagedPosition]:
 
 
 # --------------------------------------------------------------------------- (1)
+
 
 def test_make_v2_variant_reproduces_rescore_ladder() -> None:
     """make_v2_variant = the validated re-score ladder (1.5% stop, base scale/floor,
@@ -96,11 +115,18 @@ def test_make_v2_variant_reproduces_rescore_ladder() -> None:
 
 # --------------------------------------------------------------------------- (2)
 
+
 def test_open_fill_creates_managed_row_when_enabled() -> None:
     h = _Harness(enabled=True)
     with _session_factory()() as s:
-        _apply(h, s, symbol="VSME", quantity=Decimal("10"), price=Decimal("2.5000"),
-               metadata={"path": "ATR Flip"})
+        _apply(
+            h,
+            s,
+            symbol="VSME",
+            quantity=Decimal("10"),
+            price=Decimal("2.5000"),
+            metadata={"path": "ATR Flip"},
+        )
         s.commit()
         rows = _rows(s)
         assert len(rows) == 1
@@ -117,6 +143,7 @@ def test_open_fill_creates_managed_row_when_enabled() -> None:
 
 # --------------------------------------------------------------------------- (3)
 
+
 def test_dormant_when_flag_off() -> None:
     h = _Harness(enabled=False)
     with _session_factory()() as s:
@@ -126,6 +153,7 @@ def test_dormant_when_flag_off() -> None:
 
 
 # --------------------------------------------------------------------------- (4)
+
 
 def test_non_v2_strategy_never_managed() -> None:
     h = _Harness(enabled=True)
@@ -138,6 +166,7 @@ def test_non_v2_strategy_never_managed() -> None:
 
 # --------------------------------------------------------------------------- (5)
 
+
 def test_open_fill_is_idempotent_one_row_per_symbol() -> None:
     h = _Harness(enabled=True)
     with _session_factory()() as s:
@@ -149,6 +178,7 @@ def test_open_fill_is_idempotent_one_row_per_symbol() -> None:
 
 # --------------------------------------------------------------------------- (6)
 
+
 def test_position_state_persists_from_hydrated_position() -> None:
     """update_managed_position_from_position writes ladder state from a real
     exit_logic.Position; the -999 floor sentinel maps to NULL, set floor persists."""
@@ -156,15 +186,25 @@ def test_position_state_persists_from_hydrated_position() -> None:
     cfg = TradingConfig().make_v2_variant()
     with _session_factory()() as s:
         row = store.create_managed_position(
-            s, strategy_code="schwab_1m_v2", broker_account_name=ACCT, symbol="VSME",
-            entry_price=Decimal("10.0"), quantity=10, entry_path="MACD Cross",
+            s,
+            strategy_code="schwab_1m_v2",
+            broker_account_name=ACCT,
+            symbol="VSME",
+            entry_price=Decimal("10.0"),
+            quantity=10,
+            entry_path="MACD Cross",
         )
         # fresh position: no floor yet → NULL
-        p = Position("VSME", 10.0, 10, entry_time="2026-01-01",
-                     floor_lock_at_1pct_peak_pct=cfg.profit_floor_lock_at_1pct_peak_pct,
-                     floor_lock_at_2pct_peak_pct=cfg.profit_floor_lock_at_2pct_peak_pct,
-                     floor_lock_at_3pct_peak_pct=cfg.profit_floor_lock_at_3pct_peak_pct,
-                     floor_trail_buffer_over_4pct_pct=cfg.profit_floor_trail_buffer_over_4pct_pct)
+        p = Position(
+            "VSME",
+            10.0,
+            10,
+            entry_time="2026-01-01",
+            floor_lock_at_1pct_peak_pct=cfg.profit_floor_lock_at_1pct_peak_pct,
+            floor_lock_at_2pct_peak_pct=cfg.profit_floor_lock_at_2pct_peak_pct,
+            floor_lock_at_3pct_peak_pct=cfg.profit_floor_lock_at_3pct_peak_pct,
+            floor_trail_buffer_over_4pct_pct=cfg.profit_floor_trail_buffer_over_4pct_pct,
+        )
         # +2.5% (safely inside the 2% floor band — 10.20 floats to 1.9999% and
         # would miss it): tier 2, floor locks at 0.5% → floor_price 10.05.
         p.update_price(10.25)
@@ -173,18 +213,24 @@ def test_position_state_persists_from_hydrated_position() -> None:
         r = _rows(s)[0]
         assert r.tier == 2
         assert abs(Decimal(str(r.peak_profit_pct)) - Decimal("2.5")) < Decimal("0.001")
-        assert r.floor_pct is not None and abs(Decimal(str(r.floor_pct)) - Decimal("0.5")) < Decimal("0.001")
-        assert r.floor_price is not None and abs(Decimal(str(r.floor_price)) - Decimal("10.05")) < Decimal("0.001")
+        assert r.floor_pct is not None and abs(
+            Decimal(str(r.floor_pct)) - Decimal("0.5")
+        ) < Decimal("0.001")
+        assert r.floor_price is not None and abs(
+            Decimal(str(r.floor_price)) - Decimal("10.05")
+        ) < Decimal("0.001")
 
 
 # --------------------------------------------------------------------------- (7)
+
 
 def test_external_sell_flatten_closes_row() -> None:
     h = _Harness(enabled=True)
     with _session_factory()() as s:
         _apply(h, s, symbol="VSME", quantity=Decimal("10"))  # open
-        _apply(h, s, symbol="VSME", side="sell", intent_type="close",
-               quantity=Decimal("10"))  # full flatten
+        _apply(
+            h, s, symbol="VSME", side="sell", intent_type="close", quantity=Decimal("10")
+        )  # full flatten
         s.commit()
         r = _rows(s)[0]
         assert r.status == "closed" and r.current_quantity == 0
