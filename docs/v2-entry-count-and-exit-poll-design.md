@@ -130,6 +130,14 @@ segment and the corruption cannot be counted from the recorded data. Treat resti
 as unreliable in a KNOWN DIRECTION (too low); do not build a study on them and do not put a number
 on it.
 
+> ⛔⭐ **STILL TRUE (re-checked 2026-08-19, P7). Do not confuse it with what WAS measured.**
+> Segment-id **COVERAGE** is countable and has now been counted — 223 of 421 open fills carry
+> `cw_arm_bar_ts` (53%), and the gap is structured by leg (schwab resting 20%, reactive 100%,
+> eh_resting 0%). See `docs/segment-identity-coverage.md`.
+> The entry **UNDER-COUNT** above remains unquantifiable and unquantified: a missing increment
+> leaves no trace, so there is nothing to count. **Two different quantities — the number below is
+> not a number for the one above.**
+
 ### ⛔ The increment must land on BOTH legs
 
 The fan-out is where today's phantoms also live, so increment-on-fill has to cover the Webull leg as
