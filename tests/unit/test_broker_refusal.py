@@ -8,6 +8,7 @@ orders, 82 of them carrying a reason).
 "not electronically tradeable" removes the trade entirely and is a property of the SYMBOL, while
 "trigger not above ask" is a submit-time reject that depends on where the tape was.
 """
+
 from __future__ import annotations
 
 import inspect
@@ -64,13 +65,15 @@ def test_only_the_symbol_level_class_produces_a_REFUSED_SYMBOL() -> None:
     """⛔⭐ THE ONE THAT CHANGES RESULTS MOST. A name Schwab will not accept must be excluded
     entirely — otherwise the engine books P&L from a trade that could never have happened.
     A trigger reject is NOT a property of the symbol and must not exclude it."""
-    m = build_refusal_model([
-        ("BANL", R_NOT_TRADEABLE),
-        ("INHD", R_NOT_ELIGIBLE),
-        ("CRWU", R_TRIGGER),          # <- tradeable; just rejected at that instant
-        ("XHLD", R_BUYING_POWER),
-        ("IVF", R_TIMEOUT),
-    ])
+    m = build_refusal_model(
+        [
+            ("BANL", R_NOT_TRADEABLE),
+            ("INHD", R_NOT_ELIGIBLE),
+            ("CRWU", R_TRIGGER),  # <- tradeable; just rejected at that instant
+            ("XHLD", R_BUYING_POWER),
+            ("IVF", R_TIMEOUT),
+        ]
+    )
     assert m.refused_symbols == frozenset({"BANL", "INHD"})
     assert m.is_refused("banl") and m.is_refused("INHD")
     assert not m.is_refused("CRWU"), "a trigger reject must not make the symbol untradeable"
@@ -79,12 +82,17 @@ def test_only_the_symbol_level_class_produces_a_REFUSED_SYMBOL() -> None:
 
 def test_the_four_classes_are_counted_SEPARATELY() -> None:
     """⛔ Never one blended refusal rate — they behave differently."""
-    m = build_refusal_model([
-        ("A", R_NOT_TRADEABLE), ("B", R_NOT_ELIGIBLE),
-        ("C", R_TRIGGER), ("D", R_TRIGGER),
-        ("E", R_BUYING_POWER),
-        ("F", R_TIMEOUT), ("G", R_DNS),
-    ])
+    m = build_refusal_model(
+        [
+            ("A", R_NOT_TRADEABLE),
+            ("B", R_NOT_ELIGIBLE),
+            ("C", R_TRIGGER),
+            ("D", R_TRIGGER),
+            ("E", R_BUYING_POWER),
+            ("F", R_TIMEOUT),
+            ("G", R_DNS),
+        ]
+    )
     assert m.counts[RefusalClass.NOT_ELECTRONICALLY_TRADEABLE] == 2
     assert m.counts[RefusalClass.TRIGGER_NOT_ABOVE_ASK] == 2
     assert m.counts[RefusalClass.INSUFFICIENT_BUYING_POWER] == 1
@@ -101,8 +109,9 @@ def test_unclassified_reasons_are_SURFACED_not_swallowed() -> None:
 def test_the_header_states_population_window_and_account_BEFORE_any_number() -> None:
     """R7 + R9 — no count without a denominator, and name the population first."""
     m = build_refusal_model([("A", R_NOT_TRADEABLE), ("C", R_TRIGGER)])
-    h = header(m, account="live:schwab_1m_v2",
-               start=datetime(2026, 8, 10), end=datetime(2026, 8, 18))
+    h = header(
+        m, account="live:schwab_1m_v2", start=datetime(2026, 8, 10), end=datetime(2026, 8, 18)
+    )
     assert "account=live:schwab_1m_v2" in h
     assert "window=2026-08-10..2026-08-18" in h
     assert "refused_symbols=1" in h
@@ -114,7 +123,9 @@ def test_there_is_NO_hand_edit_or_override_hook() -> None:
     that is the signal it has become strategy — so there must be nowhere to put it."""
     src = inspect.getsource(mod)
     for forbidden in ("MANUAL_", "OVERRIDE", "EXTRA_REFUSED", "ALWAYS_REFUSE", "WHITELIST"):
-        assert forbidden not in src, f"an override hook ({forbidden}) would let this become strategy"
+        assert forbidden not in src, (
+            f"an override hook ({forbidden}) would let this become strategy"
+        )
     sig = inspect.signature(build_refusal_model)
     assert list(sig.parameters) == ["rows"], "the model takes derived rows only, nothing curated"
 
@@ -124,3 +135,52 @@ def test_the_model_is_PURE_no_db_no_network() -> None:
     src = inspect.getsource(mod)
     for banned in ("psycopg", "requests", "urllib", "httpx", "session.execute("):
         assert banned not in src, f"{banned} in the model would make a replay non-reproducible"
+
+
+# ---------------------------------------------------------------------------
+# ⛔⭐⭐ THE UNCLASSIFIED DENOMINATOR (2026-08-19)
+# ---------------------------------------------------------------------------
+
+
+def test_unclassified_counts_rows_not_distinct_reasons():
+    """⛔ Measured live: 85 unclassified ROWS carrying 2 distinct reasons.
+
+    The header used to print `UNCLASSIFIED=2` while a THIRD of the population was unrecognised.
+    `unclassified` is deduped FOR READING; `unclassified_rows` is the denominator.
+    """
+    rows = [("AAA", "Limit price cannot be zero for limit orders.")] * 84
+    rows += [("BBB", "Orders above $1 can be entered in no more than two decimals")]
+    model = build_refusal_model(rows)
+    assert model.unclassified_rows == 85
+    assert len(model.unclassified) == 2
+
+
+def test_a_reject_stored_with_no_reason_still_counts_in_the_denominator():
+    """⛔ Dropping reason-less rejects shrinks the denominator silently."""
+    model = build_refusal_model([("AAA", None), ("BBB", "")])
+    assert model.unclassified_rows == 2
+    assert model.unclassified == ()
+
+
+def test_header_states_unclassified_rows_and_share():
+    rows = [("AAA", "Limit price cannot be zero for limit orders.")] * 84
+    rows += [("CRWU", "Opening transactions for this security must be placed with a broker")]
+    model = build_refusal_model(rows)
+    line = header(
+        model, account="live:schwab_1m_v2", start=datetime(2026, 7, 20), end=datetime(2026, 8, 19)
+    )
+    assert "rows=85" in line
+    assert "UNCLASSIFIED=84 rows" in line
+    assert "98.8% of population" in line
+    assert "1 distinct reason(s)" in line
+
+
+def test_header_is_quiet_when_everything_classified():
+    model = build_refusal_model(
+        [("CRWU", "Opening transactions for this security must be placed with a broker")]
+    )
+    line = header(
+        model, account="live:schwab_1m_v2", start=datetime(2026, 7, 20), end=datetime(2026, 8, 19)
+    )
+    assert "UNCLASSIFIED" not in line
+    assert "rows=1" in line
