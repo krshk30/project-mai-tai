@@ -1910,7 +1910,21 @@ class SchwabV2Strategy:
         )
         # Dual-broker fan-out: co-queue the parallel Webull MARKET leg at the same reactive cross
         # (once, on the same claim that produced this primary). No-op unless fan-out is on.
-        if self._dual_broker_fanout_enabled:
+        # ⛔⭐⭐ §82 — THE REACTIVE PATH MUST HONOUR THE SAME LATCH THE RESTING PATHS USE.
+        # It claimed `cw_v2_emit_claimed` (its own dedup) and never read `fanout_webull_claimed`, so
+        # one armed segment could satisfy BOTH gates and emit two Webull legs for a single
+        # `cw_entry_n`. Measured 08-01..08-19 on live:orb over 119 segments carrying a segment id:
+        # 19 emitted more than one leg, and 14 of those were exactly this pair, `reactive` after
+        # `rth_resting` (AZI, CLRO, INLF, JWEL, PLAG, SLE...).
+        #
+        # ⛔ THE COST WAS ONE-DIRECTIONAL: of 22 extra legs, ALL 22 filled WORSE than the first leg
+        # of their own segment — median 4.58% worse, worst 21.14%. Every duplicate chased.
+        #
+        # Claiming here also stamps `fanout_claim_ms`, so this leg is subject to the SAME expiry as
+        # the resting ones rather than being invisible to it.
+        if self._dual_broker_fanout_enabled and not state.fanout_webull_claimed:
+            state.fanout_webull_claimed = True
+            state.fanout_claim_ms = self._now_ms()
             self._pending_webull_fanout_intents.append(
                 self._build_webull_fanout_draft(
                     state,
