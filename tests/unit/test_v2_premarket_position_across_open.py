@@ -165,7 +165,10 @@ async def test_premarket_no_oco_position_eh_ladder_emits_limit_exit(monkeypatch)
     assert m["oms_v2_managed_exit"] == "true"
     assert m["order_type"] == "limit"                 # EH → LIMIT, not an unfillable MARKET
     assert m["session"] == "AM" and m["extended_hours"] == "true"
-    assert m["limit_price"] == _panic_limit_price(9.40, 0.5)   # buffered marketable off the bid
+    # ⛔ The literal is PINNED, not recomputed: 9.40 × (1 − 0.5%) = 9.353 → quantize(0.01) → "9.35".
+    # Asserting only against `_panic_limit_price(...)` would pass for ANY buffer the function
+    # happened to apply, including none. The chain keeps the function exercised AND the value fixed.
+    assert m["limit_price"] == _panic_limit_price(9.40, 0.5) == "9.35"  # buffered off the bid
     assert m["reference_price"] == "9.5000"           # CW −5% leg LEVEL, preserved
     assert sells[0].reason.endswith("CW_HARD_STOP")
 
