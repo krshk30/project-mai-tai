@@ -54,20 +54,27 @@ class RefusalClass(str, Enum):
 # than the violation (`STOP_LOSS_PRICE_LT_MARKETPRICE` reads as its own opposite), which is how a
 # whole week of diagnosis went the wrong way on 2026-08-17.
 _PATTERNS: tuple[tuple[RefusalClass, re.Pattern[str]], ...] = (
-    (RefusalClass.NOT_ELECTRONICALLY_TRADEABLE,
-     re.compile(r"opening transactions for this security must be placed with a broker", re.I)),
-    (RefusalClass.NOT_ELECTRONICALLY_TRADEABLE,
-     re.compile(r"not eligible for electronic entry", re.I)),
-    (RefusalClass.TRIGGER_NOT_ABOVE_ASK,
-     re.compile(r"stop price must be above the current ask", re.I)),
-    (RefusalClass.INSUFFICIENT_BUYING_POWER,
-     re.compile(r"not have enough available cash/buying power", re.I)),
+    (
+        RefusalClass.NOT_ELECTRONICALLY_TRADEABLE,
+        re.compile(r"opening transactions for this security must be placed with a broker", re.I),
+    ),
+    (
+        RefusalClass.NOT_ELECTRONICALLY_TRADEABLE,
+        re.compile(r"not eligible for electronic entry", re.I),
+    ),
+    (
+        RefusalClass.TRIGGER_NOT_ABOVE_ASK,
+        re.compile(r"stop price must be above the current ask", re.I),
+    ),
+    (
+        RefusalClass.INSUFFICIENT_BUYING_POWER,
+        re.compile(r"not have enough available cash/buying power", re.I),
+    ),
     # Ours, not the broker's — these never reached the book.
     (RefusalClass.CLIENT_ABORT, re.compile(r"read operation timed out", re.I)),
     (RefusalClass.CLIENT_ABORT, re.compile(r"unable to resolve host", re.I)),
     (RefusalClass.CLIENT_ABORT, re.compile(r"upstream connect error|reset before headers", re.I)),
-    (RefusalClass.CLIENT_ABORT,
-     re.compile(r"application encountered unexpected error", re.I)),
+    (RefusalClass.CLIENT_ABORT, re.compile(r"application encountered unexpected error", re.I)),
 )
 
 
@@ -105,6 +112,13 @@ class RefusalModel:
     refused_symbols: frozenset[str]
     counts: dict[RefusalClass, int]
     unclassified: tuple[str, ...]
+    # ⛔⭐⭐ THE DENOMINATOR IS LOAD-BEARING, AND `unclassified` IS NOT IT.
+    # `unclassified` is DEDUPED (distinct wordings, for reading), so it answers "how many kinds of
+    # reason did we fail to recognise" — never "how much of the population". Measured 2026-08-19 on
+    # 30 days of live:schwab_1m_v2: 85 unclassified ROWS carrying just 2 distinct reasons, so the
+    # header read `UNCLASSIFIED=2` while a THIRD of the population (85/258, 32.9%) was unclassified.
+    # A taxonomy that has stopped matching the broker would look trivial exactly when it matters.
+    unclassified_rows: int = 0
 
     def is_refused(self, symbol: str) -> bool:
         return str(symbol or "").upper() in self.refused_symbols
@@ -119,9 +133,13 @@ def build_refusal_model(rows: list[tuple[str, str | None]]) -> RefusalModel:
     refused: set[str] = set()
     counts: dict[RefusalClass, int] = {k: 0 for k in RefusalClass}
     unknown: list[str] = []
+    unknown_rows = 0
     for symbol, reason in rows:
         klass = classify_refusal(reason)
         if klass is None:
+            # ⛔ Count the ROW even when the reason is empty. A reject we stored with no reason is
+            # still a reject we could not classify; dropping it shrinks the denominator silently.
+            unknown_rows += 1
             if reason:
                 unknown.append(str(reason)[:120])
             continue
@@ -132,6 +150,7 @@ def build_refusal_model(rows: list[tuple[str, str | None]]) -> RefusalModel:
         refused_symbols=frozenset(refused),
         counts=counts,
         unclassified=tuple(dict.fromkeys(unknown)),
+        unclassified_rows=unknown_rows,
     )
 
 
@@ -151,8 +170,18 @@ REFUSAL_ROWS_SQL = """
 def header(model: RefusalModel, *, account: str, start: datetime, end: datetime) -> str:
     """R7/R9 — the population, window and account, stated BEFORE any number."""
     parts = [f"{k.value}={v}" for k, v in model.counts.items() if v]
-    return (
+    total = sum(model.counts.values()) + model.unclassified_rows
+    line = (
         f"REFUSAL MODEL | account={account} | window={start:%Y-%m-%d}..{end:%Y-%m-%d} | "
-        f"{' '.join(parts) or 'no refusals'} | refused_symbols={len(model.refused_symbols)}"
-        + (f" | UNCLASSIFIED={len(model.unclassified)}" if model.unclassified else "")
+        f"rows={total} | {' '.join(parts) or 'no refusals'} | "
+        f"refused_symbols={len(model.refused_symbols)}"
     )
+    if model.unclassified_rows:
+        # ⛔ ROWS first, then distinct wordings. The row count is the share of the population the
+        # taxonomy did not recognise; the distinct count only says how many kinds there were.
+        pct = 100.0 * model.unclassified_rows / total if total else 0.0
+        line += (
+            f" | ⛔ UNCLASSIFIED={model.unclassified_rows} rows ({pct:.1f}% of population), "
+            f"{len(model.unclassified)} distinct reason(s)"
+        )
+    return line

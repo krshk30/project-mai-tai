@@ -58,15 +58,22 @@ strategy's **wall-clock reads** in the resting-entry path (`_now_ms`, `_resting_
 HISTORICAL clock — no entry logic is re-implemented; only "now" is substituted for the
 replayed instant (the no-look-ahead requirement). Everything else runs in the real class.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from project_mai_tai.backtest.data import Quote as TapeQuote
 from project_mai_tai.backtest.data import SchwabBar
 from project_mai_tai.backtest.data import Trade as TapeTrade
+from project_mai_tai.backtest.broker_refusal import (
+    REFUSAL_ROWS_SQL,
+    RefusalModel,
+    build_refusal_model,
+    header,
+)
 from project_mai_tai.exit_logic.cw_exit import cw_exit_decision
 from project_mai_tai.market_data.schwab_v2_rest_client import ChartBar
 from project_mai_tai.market_data.schwab_v2_rest_client import Quote as StratQuote
@@ -113,11 +120,11 @@ def _schwab_round_price(price: float) -> float:
 @dataclass(frozen=True)
 class ReplayEntry:
     symbol: str
-    mode: str          # "resting" | "reactive"
-    order_type: str    # "STOP_LIMIT" | "market" | "limit"
+    mode: str  # "resting" | "reactive"
+    order_type: str  # "STOP_LIMIT" | "market" | "limit"
     signal_ts: datetime  # when the order was placed (resting) / the break fired (reactive)
-    fill_ts: datetime    # when it filled on the tape
-    level: float         # the ATR line / trigger the entry keyed off
+    fill_ts: datetime  # when it filled on the tape
+    level: float  # the ATR line / trigger the entry keyed off
     fill_price: float
     # The CW break/reference price the OCO anchors off (metadata entry_price/reference_price) — the
     # RTH static-OCO target/stop are struck off THIS, not the realized fill (per spec §6a).
@@ -128,15 +135,15 @@ class ReplayEntry:
 @dataclass(frozen=True)
 class ReplayTrade:
     symbol: str
-    mode: str               # "resting" | "reactive"
-    geometry: str           # "rth_static_oco" | "eh_floor_ride"
+    mode: str  # "resting" | "reactive"
+    geometry: str  # "rth_static_oco" | "eh_floor_ride"
     entry_ts: datetime
-    entry_px: float         # the realized entry FILL (the cost basis for ret_pct)
-    entry_ref: float        # the CW break/reference anchor for the OCO legs
+    entry_px: float  # the realized entry FILL (the cost basis for ret_pct)
+    entry_ref: float  # the CW break/reference anchor for the OCO legs
     exit_ts: datetime
     exit_px: float
     ret_pct: float
-    exit_reason: str        # target | stop | floor | flip | close-at-bell | overnight-flatten
+    exit_reason: str  # target | stop | floor | flip | close-at-bell | overnight-flatten
 
 
 @dataclass(frozen=True)
@@ -200,7 +207,7 @@ LIVE_LOCKED = dict(
     # `build_replay_settings(eh_enabled=True)` (or a direct override) flips these ON so the real EH entry
     # paths execute — the ONLY switch the operator flips to replay an "EH-enabled" day.
     strategy_schwab_1m_v2_cw_v2_eh_resting_entry_enabled=False,  # P-B2 resting-EH (strategy + OMS share this)
-    oms_v2_eh_entry_enabled=False,                               # P-B1 reactive-EH OMS cross-cap/abandon
+    oms_v2_eh_entry_enabled=False,  # P-B1 reactive-EH OMS cross-cap/abandon
     strategy_schwab_1m_v2_entry_window_start_hour_et=7,
     strategy_schwab_1m_v2_entry_window_start_minute_et=0,
     strategy_schwab_1m_v2_entry_window_end_hour_et=16,
@@ -219,7 +226,7 @@ LIVE_LOCKED = dict(
 # deployed defaults (LIVE_LOCKED, both OFF) are unchanged.
 EH_ENABLED = dict(
     strategy_schwab_1m_v2_cw_v2_eh_resting_entry_enabled=True,  # P-B2 resting-EH cross-check + band-cap
-    oms_v2_eh_entry_enabled=True,                               # P-B1 reactive-EH cross-cap/abandon
+    oms_v2_eh_entry_enabled=True,  # P-B1 reactive-EH cross-cap/abandon
 )
 
 
@@ -269,8 +276,8 @@ def build_replay_settings(
     merged.update({k: v for k, v in LIVE_LOCKED.items() if k not in env_set})
     if eh_enabled:
         merged.update(EH_ENABLED)
-    merged.update(REPLAY_FORCED)   # modelling choices beat both the env and LIVE_LOCKED
-    merged.update(overrides)       # explicit caller overrides still win over everything
+    merged.update(REPLAY_FORCED)  # modelling choices beat both the env and LIVE_LOCKED
+    merged.update(overrides)  # explicit caller overrides still win over everything
     return Settings(**merged)
 
 
@@ -358,8 +365,15 @@ class ReplayStrategy(SchwabV2Strategy):
 
 # ------------------------------------------------------------------- adapters
 def _to_chartbar(symbol: str, b: SchwabBar) -> ChartBar:
-    return ChartBar(symbol=symbol, open=b.open, high=b.high, low=b.low,
-                    close=b.close, volume=int(b.volume), timestamp_ms=int(b.ts))
+    return ChartBar(
+        symbol=symbol,
+        open=b.open,
+        high=b.high,
+        low=b.low,
+        close=b.close,
+        volume=int(b.volume),
+        timestamp_ms=int(b.ts),
+    )
 
 
 def _to_stratquote(symbol: str, q: TapeQuote) -> StratQuote:
@@ -378,6 +392,7 @@ class _EHFill:
     """Outcome of the EH-limit re-price model. `reason_code` == "" => FILL at `fill_price`; else the
     entry ABANDONS (no fill) with the OMS abandon code (`ASK_PAST_BAND` / `ASK_PAST_CROSS_CAP` /
     `NO_FRESH_QUOTE` / `MISSING_SIGNAL`)."""
+
     fill_price: float
     entry_ref: float
     reason_code: str
@@ -477,11 +492,11 @@ def _static_oco_first_touch(
     last_px: float | None = None
     for ts, px in tape:
         if px >= target:
-            return ts, target, "target"     # SELL LIMIT fills at the target
+            return ts, target, "target"  # SELL LIMIT fills at the target
         if px <= stop:
-            return ts, stop, "stop"         # SELL STOP triggers, modeled fill at the stop level
+            return ts, stop, "stop"  # SELL STOP triggers, modeled fill at the stop level
         if flip_dt is not None and ts >= flip_dt:
-            return ts, px, "flip"           # software cw_flip close -> first print after the bar close
+            return ts, px, "flip"  # software cw_flip close -> first print after the bar close
         last_ts, last_px = ts, px
     # Neither leg by the close: the DAY OCO lapses; close at the 16:00 price (last print seen).
     if last_px is None:
@@ -498,6 +513,7 @@ def replay_symbol_day(
     window_start_hour_et: int = 4,
     window_end_hour_et: int = 20,
     watch_start_ms: int | None = None,
+    refusal_model: RefusalModel | None = None,
 ) -> ReplayResult:
     """Replay one symbol for one ET session day through the real entry code + shared emit-gate.
 
@@ -520,17 +536,39 @@ def replay_symbol_day(
     start = day.replace(hour=window_start_hour_et, minute=0, second=0, microsecond=0)
     end = day.replace(hour=window_end_hour_et, minute=0, second=0, microsecond=0)
 
+    # R4 — THE BROKER REFUSES. Checked BEFORE any data is loaded, because the modelled fact is that
+    # the ORDER NEVER EXISTS: Schwab will not accept an opening electronic order on this name at
+    # all. Filling it books P&L from a trade that could never have happened, which is the single
+    # largest correction to a replayed result.
+    # ⛔ It is recorded as a SKIP, never dropped silently. "No entry" must never be
+    # indistinguishable from "no signal" — the same rule the watch-start cap counter exists for.
+    if refusal_model is not None and refusal_model.is_refused(symbol):
+        result = ReplayResult(symbol=symbol, session_day_et=session_day_et, n_bars=0, n_quotes=0)
+        result.skips.append(
+            ReplaySkip(
+                symbol,
+                "broker_refused",
+                "R4: Schwab refuses opening electronic orders on this name (observed in its own book) "
+                "— the order never exists, so no entry is replayable. Excluding the NAME, not the fill.",
+            )
+        )
+        return result
+
     bars = source.schwab_bars(symbol, start, end)
     quotes = source.schwab_quotes(symbol, start, end)
-    result = ReplayResult(symbol=symbol, session_day_et=session_day_et,
-                          n_bars=len(bars), n_quotes=len(quotes))
+    result = ReplayResult(
+        symbol=symbol, session_day_et=session_day_et, n_bars=len(bars), n_quotes=len(quotes)
+    )
 
     if len(bars) < MIN_BARS_FOR_REPLAY:
-        result.skips.append(ReplaySkip(
-            symbol, "sparse_schwab_feed",
-            f"only {len(bars)} Schwab 1-min bars in {window_start_hour_et:02d}:00-"
-            f"{window_end_hour_et:02d}:00 ET (< {MIN_BARS_FOR_REPLAY}); too sparse to replay the ATR flip",
-        ))
+        result.skips.append(
+            ReplaySkip(
+                symbol,
+                "sparse_schwab_feed",
+                f"only {len(bars)} Schwab 1-min bars in {window_start_hour_et:02d}:00-"
+                f"{window_end_hour_et:02d}:00 ET (< {MIN_BARS_FOR_REPLAY}); too sparse to replay the ATR flip",
+            )
+        )
         return result
 
     # #618/#619: resolve the symbol's watchlist-membership windows from the durable scanner feed
@@ -570,7 +608,9 @@ def replay_symbol_day(
     # Post-entry trade tape for the RTH static-OCO first-touch — the native OCO fills/triggers
     # against the actual prints (spec §6a). Loaded once; sliced to [entry, 16:00) when a fill lands.
     trades: list[TapeTrade] = source.trades(symbol, start, end) if hasattr(source, "trades") else []
-    rth_close_dt = day.replace(hour=RTH_CLOSE_ET[0], minute=RTH_CLOSE_ET[1], second=0, microsecond=0)
+    rth_close_dt = day.replace(
+        hour=RTH_CLOSE_ET[0], minute=RTH_CLOSE_ET[1], second=0, microsecond=0
+    )
 
     # Live exit params (spec §6) from Settings — the SAME values the OMS passes to cw_exit_decision,
     # so the EH floor-ride is the live decision verbatim and RTH OCO legs are struck at live levels.
@@ -587,11 +627,11 @@ def replay_symbol_day(
     overnight_flatten_dt = day.replace(hour=flatten_hh, minute=flatten_mm, second=0, microsecond=0)
 
     resting: _RestingOrder | None = None
-    filled = False           # one entry per symbol
+    filled = False  # one entry per symbol
     entry_rec: ReplayEntry | None = None
-    geometry = ""            # "rth_static_oco" | "eh_floor_ride"
+    geometry = ""  # "rth_static_oco" | "eh_floor_ride"
     exit_done = False
-    eh_armed = False         # EH floor-ride: cw_exit_decision floor-armed state
+    eh_armed = False  # EH floor-ride: cw_exit_decision floor-armed state
     eh_flip_pending = False  # EH floor-ride: a bar-close ATR SELL-flip fired while holding
     eh_last_bid: tuple[datetime, float] | None = None
     latest_stratquote: dict[str, StratQuote] = {}
@@ -603,15 +643,28 @@ def replay_symbol_day(
         nonlocal exit_done
         tape = [(t.ts, float(t.price)) for t in trades if e.fill_ts <= t.ts < rth_close_dt]
         exit_ts, exit_px, reason = _static_oco_first_touch(
-            e.entry_ref, tape, target_pct=cw_target_pct, stop_pct=cw_stop_pct,
-            close_dt=rth_close_dt, flip_dt=flip_dt,
+            e.entry_ref,
+            tape,
+            target_pct=cw_target_pct,
+            stop_pct=cw_stop_pct,
+            close_dt=rth_close_dt,
+            flip_dt=flip_dt,
         )
         ret = (exit_px - e.fill_price) / e.fill_price * 100.0 if e.fill_price else 0.0
-        result.trades.append(ReplayTrade(
-            symbol=symbol, mode=e.mode, geometry="rth_static_oco",
-            entry_ts=e.fill_ts, entry_px=e.fill_price, entry_ref=e.entry_ref,
-            exit_ts=exit_ts, exit_px=exit_px, ret_pct=ret, exit_reason=reason,
-        ))
+        result.trades.append(
+            ReplayTrade(
+                symbol=symbol,
+                mode=e.mode,
+                geometry="rth_static_oco",
+                entry_ts=e.fill_ts,
+                entry_px=e.fill_price,
+                entry_ref=e.entry_ref,
+                exit_ts=exit_ts,
+                exit_px=exit_px,
+                ret_pct=ret,
+                exit_reason=reason,
+            )
+        )
         exit_done = True
 
     def _record_fill(e: ReplayEntry) -> None:
@@ -656,40 +709,69 @@ def replay_symbol_day(
             ask = float(getattr(sq, "ask_price", 0.0) or 0.0) if sq is not None else 0.0
             eh = _eh_entry_reprice(md, ask, settings, is_resting=is_resting)
             if eh.reason_code:
-                result.misses.append(ReplaySkip(
-                    symbol, "eh_entry_abandoned",
-                    f"{mode} EH entry abandoned ({eh.reason_code}) "
-                    f"{eff_dt.astimezone(EASTERN):%H:%M:%S} ET ask={ask:.4f} — mirrors OMS "
-                    f"_apply_v2_eh_{'resting' if is_resting else 'reactive'}_entry (no chase / no blind order)",
-                ))
+                result.misses.append(
+                    ReplaySkip(
+                        symbol,
+                        "eh_entry_abandoned",
+                        f"{mode} EH entry abandoned ({eh.reason_code}) "
+                        f"{eff_dt.astimezone(EASTERN):%H:%M:%S} ET ask={ask:.4f} — mirrors OMS "
+                        f"_apply_v2_eh_{'resting' if is_resting else 'reactive'}_entry (no chase / no blind order)",
+                    )
+                )
                 return
             level = float(md.get("cw_trigger") or md.get("resting_level") or eh.entry_ref or 0.0)
-            _record_fill(ReplayEntry(
-                symbol=symbol, mode=mode, order_type="limit",
-                signal_ts=eff_dt, fill_ts=eff_dt, level=level,
-                fill_price=eh.fill_price, entry_ref=eh.entry_ref,
-            ))
+            _record_fill(
+                ReplayEntry(
+                    symbol=symbol,
+                    mode=mode,
+                    order_type="limit",
+                    signal_ts=eff_dt,
+                    fill_ts=eff_dt,
+                    level=level,
+                    fill_price=eh.fill_price,
+                    entry_ref=eh.entry_ref,
+                )
+            )
             return
         # RTH reactive: marketable at the break price. The OCO anchor is the CW break/reference price
         # (metadata entry_price/reference_price) — the exact field `_apply_v2_oco_bracket_entry` reads.
-        level = float(md.get("cw_trigger") or md.get("reference_price") or md.get("entry_price") or 0.0)
+        level = float(
+            md.get("cw_trigger") or md.get("reference_price") or md.get("entry_price") or 0.0
+        )
         entry_ref = float(md.get("entry_price") or md.get("reference_price") or 0.0)
         fill_price = float(md.get("entry_price") or md.get("reference_price") or 0.0)
-        _record_fill(ReplayEntry(
-            symbol=symbol, mode=mode, order_type=order_type,
-            signal_ts=eff_dt, fill_ts=eff_dt, level=level, fill_price=fill_price, entry_ref=entry_ref,
-        ))
+        _record_fill(
+            ReplayEntry(
+                symbol=symbol,
+                mode=mode,
+                order_type=order_type,
+                signal_ts=eff_dt,
+                fill_ts=eff_dt,
+                level=level,
+                fill_price=fill_price,
+                entry_ref=entry_ref,
+            )
+        )
 
     def _finish_eh_exit(exit_ts: datetime, exit_px: float, reason: str) -> None:
         nonlocal exit_done
         e = entry_rec
         assert e is not None
         ret = (exit_px - e.fill_price) / e.fill_price * 100.0 if e.fill_price else 0.0
-        result.trades.append(ReplayTrade(
-            symbol=symbol, mode=e.mode, geometry="eh_floor_ride",
-            entry_ts=e.fill_ts, entry_px=e.fill_price, entry_ref=e.entry_ref,
-            exit_ts=exit_ts, exit_px=exit_px, ret_pct=ret, exit_reason=reason,
-        ))
+        result.trades.append(
+            ReplayTrade(
+                symbol=symbol,
+                mode=e.mode,
+                geometry="eh_floor_ride",
+                entry_ts=e.fill_ts,
+                entry_px=e.fill_price,
+                entry_ref=e.entry_ref,
+                exit_ts=exit_ts,
+                exit_px=exit_px,
+                ret_pct=ret,
+                exit_reason=reason,
+            )
+        )
         exit_done = True
 
     for eff_ts, kind, payload in events:
@@ -714,7 +796,10 @@ def replay_symbol_day(
                     it = getattr(d, "intent_type", "")
                     if it == "cancel":
                         resting = None
-                    elif it == "open" and str(d.metadata.get("order_type", "")).upper() == "STOP_LIMIT":
+                    elif (
+                        it == "open"
+                        and str(d.metadata.get("order_type", "")).upper() == "STOP_LIMIT"
+                    ):
                         resting = _RestingOrder(
                             stop=float(d.metadata["stop_price"]),
                             limit=float(d.metadata["limit_price"]),
@@ -735,8 +820,11 @@ def replay_symbol_day(
                 # (precedence target/arm > stop > flip, exactly like the live block). Resting churn
                 # while holding is drained + discarded.
                 strat.drain_pending_intents()
-                if (draft is not None and getattr(draft, "intent_type", "") == "close"
-                        and str(getattr(draft, "metadata", {}).get("cw_flip", "")).lower() == "true"):
+                if (
+                    draft is not None
+                    and getattr(draft, "intent_type", "") == "close"
+                    and str(getattr(draft, "metadata", {}).get("cw_flip", "")).lower() == "true"
+                ):
                     eh_flip_pending = True
             elif geometry == "rth_static_oco":
                 # RTH: the broker OCO is resting, but the live software cw_flip close races it
@@ -744,9 +832,12 @@ def replay_symbol_day(
                 # the REAL strategy emits the flip draft at the bar close; resolve the OCO with that
                 # instant as a third leg (target/stop still win if the tape reached them first).
                 strat.drain_pending_intents()
-                if (draft is not None and getattr(draft, "intent_type", "") == "close"
-                        and str(getattr(draft, "metadata", {}).get("cw_flip", "")).lower() == "true"
-                        and entry_rec is not None):
+                if (
+                    draft is not None
+                    and getattr(draft, "intent_type", "") == "close"
+                    and str(getattr(draft, "metadata", {}).get("cw_flip", "")).lower() == "true"
+                    and entry_rec is not None
+                ):
                     _open_static_oco(entry_rec, flip_dt=eff_dt)
             continue
 
@@ -763,11 +854,18 @@ def replay_symbol_day(
             # at L = S*(1+band); it fills only if the ask lands in the band [S, L]. Fill @ ask ∈ [S,L];
             # a break that GAPS the whole band does NOT fill — the honest resting-entry miss.
             if not filled and resting is not None and resting.stop <= float(q.ask) <= resting.limit:
-                _record_fill(ReplayEntry(
-                    symbol=symbol, mode="resting", order_type="STOP_LIMIT",
-                    signal_ts=resting.place_ts, fill_ts=eff_dt,
-                    level=resting.stop, fill_price=float(q.ask), entry_ref=resting.entry_ref,
-                ))
+                _record_fill(
+                    ReplayEntry(
+                        symbol=symbol,
+                        mode="resting",
+                        order_type="STOP_LIMIT",
+                        signal_ts=resting.place_ts,
+                        fill_ts=eff_dt,
+                        level=resting.stop,
+                        fill_price=float(q.ask),
+                        entry_ref=resting.entry_ref,
+                    )
+                )
                 resting = None
             continue
 
@@ -787,11 +885,17 @@ def replay_symbol_day(
             if eff_dt >= overnight_flatten_dt:
                 _finish_eh_exit(eff_dt, bid, "overnight-flatten")
                 continue
-            entry_px = entry_rec.fill_price  # EH ladder anchors off the FILL (managed-row entry_price)
+            entry_px = (
+                entry_rec.fill_price
+            )  # EH ladder anchors off the FILL (managed-row entry_price)
             action, eh_armed = cw_exit_decision(
-                entry_px, bid, eh_armed,
-                target_pct=cw_target_pct, stop_pct=cw_stop_pct,
-                floor_pct=cw_floor_pct, floor_enabled=cw_floor_enabled,
+                entry_px,
+                bid,
+                eh_armed,
+                target_pct=cw_target_pct,
+                stop_pct=cw_stop_pct,
+                floor_pct=cw_floor_pct,
+                floor_enabled=cw_floor_enabled,
                 flip_pending=eh_flip_pending,
             )
             if action in ("arm", "hold"):
@@ -809,30 +913,44 @@ def replay_symbol_day(
     result.n_watch_start_capped = n_capped
     if n_capped and not result.entries:
         ws_txt = (
-            datetime.fromtimestamp(watch_start_ms / 1000.0, UTC).astimezone(EASTERN).strftime("%H:%M:%S")
-            if watch_start_ms else "process boot"
+            datetime.fromtimestamp(watch_start_ms / 1000.0, UTC)
+            .astimezone(EASTERN)
+            .strftime("%H:%M:%S")
+            if watch_start_ms
+            else "process boot"
         )
-        result.skips.append(ReplaySkip(
-            symbol, "watch_start_capped",
-            f"{n_capped} armed segment(s) disqualified: the ATR flip predates our watch-start "
-            f"({ws_txt} ET). Live #618/#619 suppresses these — the flip happened before the scanner "
-            f"put this symbol in front of us, so we never saw it happen.",
-        ))
+        result.skips.append(
+            ReplaySkip(
+                symbol,
+                "watch_start_capped",
+                f"{n_capped} armed segment(s) disqualified: the ATR flip predates our watch-start "
+                f"({ws_txt} ET). Live #618/#619 suppresses these — the flip happened before the scanner "
+                f"put this symbol in front of us, so we never saw it happen.",
+            )
+        )
 
     # Any resting order still working at EOD that never crossed = honest MISS.
     if resting is not None and not filled:
-        result.misses.append(ReplaySkip(
-            symbol, "resting_never_filled",
-            f"resting buy-stop-limit [{resting.stop:.4f}, {resting.limit:.4f}] placed "
-            f"{resting.place_ts.astimezone(EASTERN):%H:%M:%S} ET never saw an ask in the band "
-            f"on the tape (never reached the stop, or gapped through the limit)",
-        ))
+        result.misses.append(
+            ReplaySkip(
+                symbol,
+                "resting_never_filled",
+                f"resting buy-stop-limit [{resting.stop:.4f}, {resting.limit:.4f}] placed "
+                f"{resting.place_ts.astimezone(EASTERN):%H:%M:%S} ET never saw an ask in the band "
+                f"on the tape (never reached the stop, or gapped through the limit)",
+            )
+        )
 
     # An EH-opened position that never hit floor / -stop / flip AND whose loaded tape ENDS before the
     # 19:55 overnight-flatten time (no bid at/after it to close on): close-at-bell at the last bid seen.
     # The in-loop overnight-flatten is the primary EH backstop; this only catches a tape too short to
     # reach the flatten instant, and bounds the trade honestly rather than letting it ride forever.
-    if entry_rec is not None and geometry == "eh_floor_ride" and not exit_done and eh_last_bid is not None:
+    if (
+        entry_rec is not None
+        and geometry == "eh_floor_ride"
+        and not exit_done
+        and eh_last_bid is not None
+    ):
         ts_, bid_ = eh_last_bid
         _finish_eh_exit(ts_, bid_, "close-at-bell")
 
@@ -904,7 +1022,9 @@ def fetch_real_v2_exit(session_factory, symbol: str, session_day_et: str) -> Rea
     for event_at, payload in rows:
         if not isinstance(payload, dict):
             continue
-        px = next((payload[k] for k in _price_keys if payload.get(k) not in (None, "", 0, "0")), None)
+        px = next(
+            (payload[k] for k in _price_keys if payload.get(k) not in (None, "", 0, "0")), None
+        )
         try:
             px_f = float(px)  # type: ignore[arg-type]
         except (TypeError, ValueError):
@@ -914,20 +1034,79 @@ def fetch_real_v2_exit(session_factory, symbol: str, session_day_et: str) -> Rea
     return last
 
 
+def load_refusal_model(
+    session_factory,
+    *,
+    account: str,
+    session_day_et: str,
+    lookback_days: int = 30,
+    include_same_day_and_later: bool = False,
+) -> tuple[RefusalModel, str]:
+    """Build the R4 refusal model from OUR OWN stored reject reasons. Returns (model, mode label).
+
+    ⛔⭐⭐ THE WINDOW IS A LOOK-AHEAD DECISION, SO IT IS EXPLICIT AND STATED IN THE HEADER.
+    A reject observed on 08-15 telling us a name was untradeable on 08-12 is information the engine
+    did not have on 08-12. The two jobs want opposite answers, and neither is "the" right one:
+
+      * `causal` (DEFAULT) — window ENDS at the replayed day's 00:00 ET. Only refusals we had
+        already observed. This is the honest setting for "what would this strategy have made",
+        because it cannot use knowledge from the future.
+      * `hindsight` — includes the replayed day and later. The honest setting for "is the P&L we
+        BOOKED real", where the question is whether the trade was possible at all, not whether we
+        could have known.
+
+    Choosing silently would make every replayed number quietly one or the other.
+    [[feedback_authoritative_for_a_is_not_for_b]]
+
+    ⛔ Not-electronically-tradeable is a property of the SYMBOL and rarely changes, so the two modes
+    usually agree. `causal` is still the default: a rule that is usually harmless is not a rule.
+    """
+    from sqlalchemy import text
+
+    day = datetime.strptime(session_day_et, "%Y-%m-%d").replace(tzinfo=EASTERN)
+    start = day - timedelta(days=lookback_days)
+    if include_same_day_and_later:
+        end = day + timedelta(days=lookback_days)
+        mode = "hindsight"
+    else:
+        end = day
+        mode = "causal"
+    with session_factory() as s:
+        rows = s.execute(
+            text(REFUSAL_ROWS_SQL), {"account": account, "start": start, "end": end}
+        ).all()
+    return build_refusal_model([(str(sym), reason) for sym, reason in rows]), mode
+
+
 def reconcile_day(
-    source, session_day_et: str, settings: Settings, real: list[RealEntry], *, session_factory=None
+    source,
+    session_day_et: str,
+    settings: Settings,
+    real: list[RealEntry],
+    *,
+    session_factory=None,
+    refusal_model: RefusalModel | None = None,
+    refusal_header: str = "",
 ) -> str:
     """Replay every real-entry symbol for the day and reconcile the replayed **full trade**
     (entry -> exit -> ret/reason) vs the real fills. Returns a human-readable report. Honest about
     feed coverage and about any real-exit the broker tables can't price."""
     lines: list[str] = []
     lines.append(f"=== BACKTEST REPLAY — FULL-TRADE PARITY — {session_day_et} ===")
+    # R7/R9 — the population, window and account are stated BEFORE any number. A refusal model that
+    # is silently absent looks exactly like one that found nothing, so the no-model case says so.
+    lines.append(
+        refusal_header or "REFUSAL MODEL: NONE APPLIED — ⛔ every order is assumed to fill (R4 off)"
+    )
     lines.append(f"real v2 entries: {len(real)}")
     for r in real:
-        res = replay_symbol_day(source, r.symbol, session_day_et, settings)
+        res = replay_symbol_day(
+            source, r.symbol, session_day_et, settings, refusal_model=refusal_model
+        )
         real_exit = (
             fetch_real_v2_exit(session_factory, r.symbol, session_day_et)
-            if session_factory is not None else None
+            if session_factory is not None
+            else None
         )
         lines.append("")
         lines.append(
@@ -974,9 +1153,24 @@ def main() -> None:  # pragma: no cover - CLI wrapper (exercised via the VPS rec
     from project_mai_tai.db.session import build_session_factory
     from project_mai_tai.settings import get_settings
 
-    ap = argparse.ArgumentParser(description="Backtest REPLAY — P2 full-trade parity reconciliation")
+    ap = argparse.ArgumentParser(
+        description="Backtest REPLAY — P2 full-trade parity reconciliation"
+    )
     ap.add_argument("date", help="session day, ET, YYYY-MM-DD")
-    ap.add_argument("symbols", nargs="*", help="optional symbol filter (default: all real v2 entries)")
+    ap.add_argument(
+        "symbols", nargs="*", help="optional symbol filter (default: all real v2 entries)"
+    )
+    ap.add_argument("--refusal-account", default="live:schwab_1m_v2")
+    ap.add_argument("--refusal-lookback-days", type=int, default=30)
+    ap.add_argument(
+        "--refusal-hindsight",
+        action="store_true",
+        help="include refusals observed ON/AFTER the replayed day (look-ahead; use for 'was the "
+        "booked P&L possible', never for 'what would we have made')",
+    )
+    ap.add_argument(
+        "--no-refusal-model", action="store_true", help="R4 off — assume every order fills"
+    )
     args = ap.parse_args()
 
     sf = build_session_factory(get_settings())
@@ -986,7 +1180,39 @@ def main() -> None:  # pragma: no cover - CLI wrapper (exercised via the VPS rec
     if args.symbols:
         keep = {s.upper() for s in args.symbols}
         real = [r for r in real if r.symbol.upper() in keep]
-    print(reconcile_day(source, args.date, settings, real, session_factory=sf))
+    model = None
+    hdr = ""
+    if not args.no_refusal_model:
+        model, mode = load_refusal_model(
+            sf,
+            account=args.refusal_account,
+            session_day_et=args.date,
+            lookback_days=args.refusal_lookback_days,
+            include_same_day_and_later=args.refusal_hindsight,
+        )
+        day = datetime.strptime(args.date, "%Y-%m-%d").replace(tzinfo=EASTERN)
+        hdr = f"[{mode}] " + header(
+            model,
+            account=args.refusal_account,
+            start=day - timedelta(days=args.refusal_lookback_days),
+            end=day
+            + (
+                timedelta(days=args.refusal_lookback_days)
+                if args.refusal_hindsight
+                else timedelta(0)
+            ),
+        )
+    print(
+        reconcile_day(
+            source,
+            args.date,
+            settings,
+            real,
+            session_factory=sf,
+            refusal_model=model,
+            refusal_header=hdr,
+        )
+    )
 
 
 if __name__ == "__main__":  # pragma: no cover
