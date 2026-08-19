@@ -6410,6 +6410,41 @@ class OmsRiskService:
             return
         if payload.side != "buy" or payload.intent_type != "open":
             return
+        # ⛔⭐⭐ BROKER SCOPE (2026-08-19). THIS DECORATOR IS SCHWAB-SHAPED AND HAD NO BROKER GATE.
+        #
+        # It keyed on `strategy_code == "schwab_1m_v2"` alone, so it could not tell the SCHWAB
+        # PRIMARY from the WEBULL FAN-OUT legs of the same signal, and stamped a Schwab-shaped
+        # bracket onto both. On the `rth_resting_mirror` leg that is fatal:
+        #
+        #   * the strategy emits that leg BARE, on purpose -- "⛔ NO bracket_* keys" -- because
+        #     Probe W (2026-08-12, CORE/RTH, live account) proved Webull ACCEPTS a stop-limit master
+        #     STANDALONE (200) and refuses it only with legs attached (417);
+        #   * this function then added `bracket_entry_type=STOP_LIMIT` + `native_oco_bracket` +
+        #     target/stop, converting the shape Webull accepts into the one it refuses;
+        #   * the adapter's combo guard -- CORRECT for combos -- then aborted it CLIENT-SIDE, so the
+        #     order never reached Webull at all.
+        #
+        # MEASURED: 570 of 572 mirror orders carry those keys and were refused; the ONLY 2 that ever
+        # FILLED are the 2 that escaped this stamping. Five sessions, zero mirror fills.
+        #
+        # ⛔ THE SCOPE IS DELIBERATELY NARROW: webull + STOP_LIMIT only. The LIMIT/MARKET fan-out
+        # legs DEPEND on this bracket -- 174 live fan-out brackets in 14 days -- and excluding all
+        # Webull legs would strip protection from every one of them. Only the stop-limit master is
+        # the illegal-as-combo shape.
+        #
+        # ⛔ THIS IS A DEFECT FIX, NOT A FEATURE TOGGLE. Stamping a Schwab-shaped bracket onto a
+        # Webull leg is wrong whether or not the mirror flag is on; do not couple the two.
+        md_scope = payload.metadata
+        if (
+            str(md_scope.get("fanout_leg", "")).lower() == "webull"
+            and str(md_scope.get("order_type", "")).upper() == "STOP_LIMIT"
+        ):
+            self.logger.info(
+                "[V2-OCO-EMIT] %s %s SKIPPED (webull stop-limit master) -- Webull accepts this "
+                "shape only BARE; attaching a bracket makes it a combo master the broker refuses",
+                payload.symbol, payload.broker_account_name,
+            )
+            return
         # ⭐ RTH-ONLY (the native OCO is a regular-session construct). v2 enters from 07:00 ET
         # but the bracket uses session=NORMAL: a MARKET+STOP OTOCO placed PRE-market would queue
         # to 09:30 (missing the pre-market entry) or firm-reject. So OUTSIDE regular hours we do
