@@ -140,7 +140,8 @@ history every pre-open. See the memory.
 - **The CAST seed-cap miss is UNEXPLAINED again.** My theory died: the guards read the **state**
   field, which is never 0 (**0 of 1621 arms**), and the cap has fired **36 times** — including for
   CAST on 08-18. ⛔ **Any "delete the dead seed cap" item rests on a premise the data contradicts.**
-- **§82 has THREE causes, not two.** #739 fixes the reactive latch (14 of 19). Still live: the claim
+- **⛔ §82 has THREE causes, not two. #739 (cause 1) is `OPEN` — NEVER MERGED** (verified on the
+  branch 08-20: `state=OPEN, mergedAt=NEVER`, no commit on `origin/main`). It fixes the reactive latch (14 of 19). Still live: the claim
   **expiry** re-opening on `position_qty == 0` (a Webull fill does not raise it), and the
   **phantom-close** path re-arming `fanout_webull_claimed`.
 - **Reboot backlog** — 8 pending kernels + `libc6`, **125 days uptime**; a reboot restarts all 12
