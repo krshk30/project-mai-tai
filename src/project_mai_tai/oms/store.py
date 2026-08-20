@@ -423,6 +423,10 @@ class OmsStore:
             event_type=report.event_type,
             event_at=report.reported_at,
             payload=payload,
+            # Q1: carried straight through from the report. This function does not INFER an
+            # origin — it has no way to know one, and a guess here would be indistinguishable
+            # from the truth downstream, which is the whole defect.
+            event_source=getattr(report, "origin", "unknown") or "unknown",
         )
         session.add(event)
         session.flush()

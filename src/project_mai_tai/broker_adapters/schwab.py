@@ -401,6 +401,7 @@ class SchwabBrokerAdapter:
             return [
                 ExecutionReport(
                     event_type="rejected",
+                    origin="client",  # Q1: never left the process — no broker saw this
                     client_order_id=request.client_order_id,
                     symbol=request.symbol,
                     side=request.side,
@@ -430,6 +431,7 @@ class SchwabBrokerAdapter:
             return [
                 ExecutionReport(
                     event_type="rejected",
+                    origin="client",  # Q1: never left the process — no broker saw this
                     client_order_id=request.client_order_id,
                     symbol=request.symbol,
                     side=request.side,
@@ -444,6 +446,7 @@ class SchwabBrokerAdapter:
             return [
                 ExecutionReport(
                     event_type="rejected",
+                    origin="broker",  # Q1: the venue answered, and the answer was a refusal (HTTP >= 400)
                     client_order_id=request.client_order_id,
                     symbol=request.symbol,
                     side=request.side,
@@ -773,6 +776,7 @@ class SchwabBrokerAdapter:
             return [
                 ExecutionReport(
                     event_type="rejected",
+                    origin="client",  # Q1: never left the process — no broker saw this
                     client_order_id=request.client_order_id,
                     symbol=request.symbol,
                     side=request.side,
@@ -795,6 +799,7 @@ class SchwabBrokerAdapter:
             return [
                 ExecutionReport(
                     event_type="rejected",
+                    origin="client",  # Q1: never left the process — no broker saw this
                     client_order_id=request.client_order_id,
                     broker_order_id=broker_order_id,
                     symbol=request.symbol,
@@ -810,6 +815,7 @@ class SchwabBrokerAdapter:
             return [
                 ExecutionReport(
                     event_type="rejected",
+                    origin="broker",  # Q1: the venue answered, and the answer was a refusal (HTTP >= 400)
                     client_order_id=request.client_order_id,
                     broker_order_id=broker_order_id,
                     symbol=request.symbol,
