@@ -34,6 +34,65 @@ UNVERIFIED — never infer one from the command that set it.
 
 ---
 
+## ✅ THE WINDOW RAN — 2026-08-20, 16:13→16:19 ET. RESULT.
+
+Executed in the adjusted order. Every gate passed; nothing was skipped.
+
+| step | result |
+|---|---|
+| pre-state | **FLAT**, corroborated by TWO sources (`oms_managed_positions` open=0 against a real denominator of 40 `closed`; `virtual_positions`=0 — which alone proves nothing, it has a known false-zero) · 0 working orders |
+| 1. preflight | **GO** — flat on every real-money account, all sources ≤9s old |
+| 2. OMS deploy (`run_migrations: true`) | success, 20:14:49 UTC |
+| **3. THE GATE** | **`event_source` = 1 row**, alembic **`20260820_0015`**, `ix_broker_order_events_event_source` created ⇒ **PROCEED** |
+| 4. strategy | **restarted at 20:14:49 as predicted** — the OMS deploy is not OMS-only |
+| 5. flag → `true`, v2 deploy | env line 208 flipped (backup `…env.bak-20260820-preflag`, diff = that one line), v2 up 20:16:46 |
+| 6. flag from the SINK | `/proc/845419/environ` → **`…WEBULL_RESTING_MIRROR_ENABLED=true`** |
+| 7. bar gap | **none** — 20:13/20:14/20:15/20:16 all persisted across the restart |
+| fleet | **7/7 active**, 0 failed, 0 tracebacks in either new process |
+
+**Per-service, file-write `2026-08-20 20:14:28 UTC`:** oms 20:14:49 **YES** · strategy 20:14:49
+**YES** · schwab-1m-v2 20:16:46 **YES** · market-data / control / reconciler / market-capture
+**NO — on disk, not running** (as expected).
+
+### ⭐ THE ONE SIGNAL THAT IS ALREADY REAL
+**Signal 6 — seed-gap fail-open: 0 since boot, against 24 in the pre-restart process.** A control
+that good is rare. ⛔ **But it is ~2 minutes of runtime and NO SEEDING HAS RUN post-restart** — the
+fail-opens happened during seeding. Consistent with #743 working; **not yet proof.** The real test is
+tomorrow's 04:00 roll.
+
+**B20 fired and logged zero:** `[V2-ENTRY-WINDOW-ARM-RELEASE] released=0 symbols=-`. The mechanism
+ran at the boundary; zero is the correct answer for a process that just booted with no armed
+segments. **B19: 0** — no watchlist departures yet, so it is **UNEXERCISED**, not passing.
+
+### ⛔ WHAT TONIGHT CANNOT GRADE — the flag went live AFTER the entry window
+Signals 1, 2, 3 and 4 are **not gradeable tonight and must not be read as passes**:
+- **1 (rejects)** — no new rejects on 08-20, but the flag went on at 16:16 ET, so nothing has had the
+  opportunity to reject. Zero here means "no exposure yet".
+- **2 (fills/day)** — orb shows 15 for 08-20, all of it **pre-flag**. Not attributable.
+- **3 (bare fills)** — 0; nothing could have filled yet.
+- **4 (duplicate legs)** — **UNMEASURED**, no pinned query.
+- **#736** — 0 lines, and its watch remains **UNEXERCISED**.
+
+### ⛔⭐⭐ TWO NUMBERS I REPORTED DURING THE RUN WERE MY OWN FILTER ARTIFACTS
+Both looked like live defects. Both were the measuring instrument.
+1. **"230 error-ish lines in the OMS"** — a case-insensitive grep for `error` matched Webull API
+   responses containing `error_code` (110 `ORDER_NOT_FOUND`, 67 `TOO_MANY_REQUESTS`, 23 cancel-417).
+   **Real tracebacks: 0.** Boot-reconcile churn, and the pre-restart control was 32 in a comparable
+   window — the ratio is the boot burst, not a fault.
+2. **"48 tracebacks in v2 since boot"** — `awk '$0 >= "2026-08-20 20:16:46"'` compares STRINGS, and
+   lines beginning `T`/`p`/space sort above or below a digit arbitrarily. Every traceback line in the
+   WHOLE FILE passed the filter. Re-counted by LINE NUMBER: **0 post-restart.** The `QueryCanceled`
+   traces it surfaced were at 19:50 and 19:58 — the OLD process, running pre-#743 code.
+⭐ **A timestamp filter that string-compares against multi-line records is not a time filter.**
+Both times the tell was the same: a number that did not reconcile with the tail I could see.
+
+### ⛔ A COLLECTOR DEFECT FOUND BY USING IT
+`collect_deploy_evidence.sh` counts signals 3, 6 and #736 across ALL rotations, so its POST run
+reported fail-open **30** (cumulative) where the restart-scoped truth is **0**. It needs a `--since`
+before Friday's grading, or it will grade the old process alongside the new one.
+
+---
+
 ## 🗓️ DATED — carried forward + new
 
 | when | what |
