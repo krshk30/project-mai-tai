@@ -714,3 +714,75 @@ def test_eh_switch_still_forces_eh_on() -> None:
     s = build_replay_settings(eh_enabled=True)
     assert s.strategy_schwab_1m_v2_cw_v2_eh_resting_entry_enabled is True
     assert s.oms_v2_eh_entry_enabled is True
+
+
+# =================================================================== P21 — the empty tape
+# ⛔⭐⭐ THE CASE THAT DID NOT EXIST. Every close-at-bell test above passes a NON-EMPTY tape, which
+# is exactly why `if last_px is None: return close_dt, target, "close-at-bell"` survived: it booked
+# the TARGET price — a manufactured MAXIMUM WIN — for the one tape shape carrying no evidence.
+#
+# ⛔ The rule these pin: an untradeable tape SHRINKS THE DENOMINATOR. It is not booked at the
+# target, and it is not booked at 0% either — 0% is a CLAIM that the trade was flat, and the tape
+# supports that no better than it supports +2%. An absence must stay an absence, and be COUNTED.
+def test_empty_tape_resolves_to_NOTHING_not_to_the_target() -> None:
+    """The resolver returns None. It must be impossible to book a price from no prints."""
+    close = datetime(2026, 7, 23, 16, 0, tzinfo=ET)
+    assert (
+        _static_oco_first_touch(
+            100.0, [], target_pct=2.0, stop_pct=5.0, close_dt=close
+        )
+        is None
+    )
+
+
+def test_a_nonempty_tape_still_resolves_normally() -> None:
+    """⛔ THE CONTROL. If this ever returns None too, the fix has eaten real trades."""
+    close = datetime(2026, 7, 23, 16, 0, tzinfo=ET)
+    got = _static_oco_first_touch(
+        100.0, [(BASE, 99.5)], target_pct=2.0, stop_pct=5.0, close_dt=close
+    )
+    assert got is not None and got[2] == "close-at-bell"
+
+
+def test_an_unmodellable_exit_is_DROPPED_and_COUNTED() -> None:
+    """End to end: no trade booked, the entry still recorded, the drop counted and explained."""
+    res = _run_rth([])
+    assert res.trades == [], "a trade with no tape must not be booked at ANY price"
+    assert res.n_exit_unmodellable == 1, "the drop must be counted, or the exclusion is silent"
+    assert res.entries, "the ENTRY happened — only the exit is unmodellable"
+    skips = [s for s in res.skips if s.reason == "exit_unmodellable"]
+    assert len(skips) == 1 and "NO prints" in skips[0].detail
+
+
+def test_the_drop_never_books_a_zero_percent_trade_either() -> None:
+    """⛔ The specific wrong fix: booking 0% keeps the denominator and invents a flat result."""
+    res = _run_rth([])
+    assert not any(t.ret_pct == 0.0 for t in res.trades)
+    assert len(res.trades) == 0
+
+
+def test_a_normal_day_counts_ZERO_drops() -> None:
+    """⛔ The counter must be a MEASUREMENT, not a tripwire — zero on a clean day, every time."""
+    res = _run_rth([_tp(20, 99.0), _tp(25, 101.0)])
+    assert res.n_exit_unmodellable == 0
+    assert len(res.trades) == 1
+
+
+def test_the_RUN_HEADER_states_the_drop_count_even_at_zero() -> None:
+    """⛔⭐ An exclusion reported only when it fires is indistinguishable from one that stopped
+    running. The header line is emitted unconditionally — that is the whole point of counting."""
+    from project_mai_tai.backtest.replay import RealEntry, reconcile_day
+
+    settings = build_replay_settings()
+    source = _MemSource(_bars(), _quotes(RESTING_STOP), trades=[])
+    real = [RealEntry(SYM, 98.26, BASE, "resting")]
+    out = reconcile_day(source, DAY, settings, real)
+
+    assert "trades DROPPED as unmodellable" in out
+    assert "no prints after the fill): 1" in out, out
+
+    # ...and the SAME line, at ZERO, on a day where every exit priced cleanly. This half is the
+    # one that matters: a counter that speaks only when it fires is a tripwire, not a census.
+    src_ok = _MemSource(_bars(), _quotes(RESTING_STOP), trades=[_tp(20, 99.0), _tp(25, 101.0)])
+    out_ok = reconcile_day(src_ok, DAY, settings, real)
+    assert "no prints after the fill): 0" in out_ok, out_ok

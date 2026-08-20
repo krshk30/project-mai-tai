@@ -169,6 +169,10 @@ class ReplayResult:
     # implicit: a capped segment is an entry the replay did NOT take, and "no entry" must never be
     # indistinguishable from "no signal" (the CLRO silent-absence lesson).
     n_watch_start_capped: int = 0
+    # P21: entries whose exit could not be modelled because the tape held NO prints after the fill.
+    # Counted for exactly the reason `n_watch_start_capped` is: an excluded trade that nobody counts
+    # is indistinguishable from a trade that never existed, and the exclusion becomes its own bias.
+    n_exit_unmodellable: int = 0
 
 
 # ------------------------------------------------------------------- config
@@ -472,7 +476,7 @@ def _static_oco_first_touch(
     stop_pct: float,
     close_dt: datetime,
     flip_dt: datetime | None = None,
-) -> tuple[datetime, float, str]:
+) -> tuple[datetime, float, str] | None:
     """RTH-open geometry: the broker-native OCO is STATIC (spec §6a). Struck off the CW break/
     reference price (NOT the fill), the child OCO is `SELL LIMIT @ target` + `SELL STOP @ protect`,
     both rounded to the Schwab tick rule — exactly `_apply_v2_oco_bracket_entry`.
@@ -492,7 +496,9 @@ def _static_oco_first_touch(
     the cw_flip draft; the modeled fill is the FIRST PRINT at/after it, mirroring the live bot→OMS
     handoff (the OMS closes the managed row on the next quote). Target/stop are checked first on a
     given print because those legs rest AT the exchange, while the flip is a software close that has
-    to go out on the next tick. Returns (exit_ts, exit_px, reason)."""
+    to go out on the next tick. Returns (exit_ts, exit_px, reason), or **None** when the tape
+    carries NO prints after the entry — see the P21 note at that branch: such a trade is
+    unmodellable and must be DROPPED and COUNTED, never booked at any price."""
     target = _schwab_round_price(entry_ref * (1.0 + target_pct / 100.0))
     stop = _schwab_round_price(entry_ref * (1.0 - stop_pct / 100.0))
     last_ts: datetime | None = None
@@ -507,7 +513,23 @@ def _static_oco_first_touch(
         last_ts, last_px = ts, px
     # Neither leg by the close: the DAY OCO lapses; close at the 16:00 price (last print seen).
     if last_px is None:
-        return close_dt, target, "close-at-bell"  # no prints post-entry (degenerate) -> ref-level
+        # ⛔⭐⭐ P21 (2026-08-20). NO PRINTS AFTER ENTRY ⇒ THE TRADE IS UNMODELLABLE. Return None.
+        #
+        # This branch used to `return close_dt, target, "close-at-bell"` — it booked the TARGET
+        # price, a manufactured MAXIMUM WIN, for the one tape shape that carries no evidence at all.
+        # It survived because every existing close-at-bell test passes a NON-EMPTY tape.
+        #
+        # ⛔ The fix is not "book 0% instead". 0% is a CLAIM — that the trade was flat — and the
+        # tape does not support it any more than it supports +target. An untradeable tape must
+        # SHRINK THE DENOMINATOR, never add a data point. The caller drops the trade and counts it.
+        #
+        # ⛔ Returning None rather than a sentinel reason is deliberate: a caller that ignores this
+        # gets a TypeError, not a plausible number. The wrong thing is unrepresentable, which is the
+        # only reason the next person cannot re-introduce it by accident.
+        #
+        # ⭐ The count is REPORTED in the run header, at zero as well — an exclusion nobody counts is
+        # just a silent bias wearing a fix's clothes.
+        return None
     return last_ts or close_dt, last_px, "close-at-bell"
 
 
@@ -649,7 +671,7 @@ def replay_symbol_day(
         emitted the flip draft, or None if it never did)."""
         nonlocal exit_done
         tape = [(t.ts, float(t.price)) for t in trades if e.fill_ts <= t.ts < rth_close_dt]
-        exit_ts, exit_px, reason = _static_oco_first_touch(
+        resolved = _static_oco_first_touch(
             e.entry_ref,
             tape,
             target_pct=cw_target_pct,
@@ -657,6 +679,25 @@ def replay_symbol_day(
             close_dt=rth_close_dt,
             flip_dt=flip_dt,
         )
+        if resolved is None:
+            # P21: no prints between the fill and 16:00 — nothing on the tape can price this exit.
+            # DROP the trade (the denominator shrinks) and SAY SO. Booking any price here — the
+            # target as it once did, or 0% as a "neutral" choice — invents a result the tape does
+            # not contain. The entry stays in `result.entries` because the entry DID happen; the
+            # entries-vs-trades gap is exactly what this counter explains.
+            result.n_exit_unmodellable += 1
+            result.skips.append(
+                ReplaySkip(
+                    symbol,
+                    "exit_unmodellable",
+                    f"entry filled {e.fill_ts.astimezone(EASTERN):%H:%M:%S} ET @ {e.fill_price:.4f} "
+                    f"but the trade tape holds NO prints in [fill, 16:00) — the exit cannot be "
+                    f"priced, so the trade is dropped rather than booked at any price.",
+                )
+            )
+            exit_done = True
+            return
+        exit_ts, exit_px, reason = resolved
         ret = (exit_px - e.fill_price) / e.fill_price * 100.0 if e.fill_price else 0.0
         result.trades.append(
             ReplayTrade(
@@ -1106,10 +1147,17 @@ def reconcile_day(
         refusal_header or "REFUSAL MODEL: NONE APPLIED — ⛔ every order is assumed to fill (R4 off)"
     )
     lines.append(f"real v2 entries: {len(real)}")
+    # P21 — the drop count is a HEADER line, filled in after the loop and printed even at ZERO.
+    # An exclusion reported only when it fires cannot be told apart from one that stopped running,
+    # and a reader who never sees the line has no way to know the denominator moved under them.
+    unmodellable_slot = len(lines)
+    lines.append("")
+    n_unmodellable = 0
     for r in real:
         res = replay_symbol_day(
             source, r.symbol, session_day_et, settings, refusal_model=refusal_model
         )
+        n_unmodellable += res.n_exit_unmodellable
         real_exit = (
             fetch_real_v2_exit(session_factory, r.symbol, session_day_et)
             if session_factory is not None
@@ -1150,6 +1198,10 @@ def reconcile_day(
                 f"{t.exit_ts.astimezone(EASTERN):%H:%M:%S} ET reason={t.exit_reason} "
                 f"| replay ret {t.ret_pct:+.2f}%{gap}"
             )
+    lines[unmodellable_slot] = (
+        f"trades DROPPED as unmodellable (no prints after the fill): {n_unmodellable} "
+        "— ⛔ these SHRINK the denominator; they are not booked at any price, not even 0%."
+    )
     return "\n".join(lines)
 
 
