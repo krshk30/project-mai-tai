@@ -177,6 +177,12 @@ class BrokerOrderEvent(Base):
     event_type: Mapped[str] = mapped_column(String(32), index=True)
     event_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
     payload: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
+    # Q1 — "broker" | "client" | "unknown"; see `ExecutionReport.origin` for the full contract.
+    # ⛔ NOT named `source`: `payload["metadata"]["source"]` already exists with an unrelated
+    # meaning (e.g. "native_oco_child_leg"), and reusing the word here would rebuild the exact
+    # ambiguity this column exists to remove.
+    # ⛔ Indexed because every contaminated count this fixes is a GROUP BY on it.
+    event_source: Mapped[str] = mapped_column(String(16), default="unknown", index=True)
 
 
 class SchwabIneligibleToday(Base):

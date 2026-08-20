@@ -40,6 +40,21 @@ class ExecutionReport:
     reason: str = ""
     metadata: dict[str, str] = field(default_factory=dict)
     reported_at: datetime = field(default_factory=utcnow)
+    # ⛔⭐⭐ Q1 — WHO REFUSED. `event_type="rejected"` is written both when the BROKER refused a
+    # request we sent and when WE abandoned one that never left the process. Collapsed into one
+    # word, every reject count is contaminated, and "the broker is rejecting us" and "we are
+    # aborting our own orders" read identically — two findings that point at different code.
+    #
+    #   "broker"  — a response came back from the venue and it was a refusal (HTTP >= 400, or a
+    #               status the broker reported). The order EXISTED at the broker.
+    #   "client"  — we never got that far: a pre-flight guard, a missing account or order id, a
+    #               payload we could not build, a transport error, or an abandon/cancel WE chose.
+    #   "unknown" — not yet classified. ⛔ THE DEFAULT ON PURPOSE.
+    #
+    # ⛔ The default is "unknown", never "broker". A site nobody has labelled must not silently
+    # acquire the label that carries blame — that is how the original contamination happened, one
+    # convenient default at a time. An honest gap is countable; a confident wrong label is not.
+    origin: Literal["broker", "client", "unknown"] = "unknown"
 
 
 @dataclass(frozen=True)

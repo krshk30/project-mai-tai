@@ -149,7 +149,7 @@ class WebullBrokerAdapter:
     async def submit_order(self, request: OrderRequest) -> list[ExecutionReport]:
         account = self.accounts_by_name.get(request.broker_account_name)
         if account is None:
-            return [self._reject(request, self._missing_config_reason(request.broker_account_name))]
+            return [self._reject(request, self._missing_config_reason(request.broker_account_name), origin="client")]
         if request.intent_type == "cancel":
             return await self._cancel_order(account, request)
         if self._is_exit_only_pair(request):
@@ -472,7 +472,7 @@ class WebullBrokerAdapter:
         client = self._get_client()
         instrument_id = self._resolve_instrument_id(client, request.symbol)
         if not instrument_id:
-            return [self._reject(request, f"Webull instrument id not found for {request.symbol}")]
+            return [self._reject(request, f"Webull instrument id not found for {request.symbol}", origin="client")]
 
         from webull.trade.request.place_order_request import PlaceOrderRequest
 
@@ -1333,9 +1333,20 @@ class WebullBrokerAdapter:
             return None
         return f"{broker_order_id}:{filled_quantity}"
 
-    def _reject(self, request: OrderRequest, reason: str) -> ExecutionReport:
+    def _reject(
+        self, request: OrderRequest, reason: str, *, origin: str = "unknown"
+    ) -> ExecutionReport:
+        """⛔⭐ Q1 — `origin` DEFAULTS TO "unknown", and several callers deliberately leave it there.
+
+        The pre-flight guards (no config, no instrument id) are unambiguously CLIENT: nothing was
+        sent. The callers that wrap an exception are NOT classifiable from here — the exception may
+        be a transport failure (client) or may wrap a Webull HTTP refusal (broker), and this helper
+        cannot see which. Labelling them by assumption would put a confident wrong word in the
+        column whose entire purpose is to stop that. They stay "unknown" until someone reads the
+        exception path and can say."""
         return ExecutionReport(
             event_type="rejected",
+            origin=origin,
             client_order_id=request.client_order_id,
             symbol=request.symbol,
             side=request.side,
