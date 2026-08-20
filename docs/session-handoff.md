@@ -58,7 +58,8 @@ The operator maintains the live board (lamps/filters). This file records only wh
 |---|---|
 | **THU 08-20 eve** | **OMS deploy — #735 + #736 + #737** (one bundle by FILE, separable by signal). ⛔⭐⭐ **SET `MAI_TAI_STRATEGY_SCHWAB_1M_V2_WEBULL_RESTING_MIRROR_ENABLED=true`** — it is **false** now. Miss it and #735 ships and does NOTHING, and the acceptance fails for the wrong reason. **OMS first, then v2 with the flag.** |
 | **FRI 08-21 am** | **#735 acceptance, pre-committed.** orb entry fills/day **6–7 → 12–25** with Schwab's rate side by side · mirror STOP_LIMIT rejects **→ 0** (720 since 08-14) · `[WEBULL-BARE-FILL]` per-session count, **expected ~9/day**. ⛔ **>20 bare fills ⇒ STOP and report before Monday.** ⛔ A quiet Friday is a **non-result**, not a pass. ⛔ #736's signal is the opposite: **expect ZERO `[OCO-TARGET-BELOW-FILL]` lines** — one appearing IS the finding. |
-| **FRI 08-21 eve** | **Q1** — the `source` column (our aborts vs broker rejects). |
+| **FRI 08-21 eve** | ~~**Q1** — the `source` column~~ **BUILT + MERGED 08-20 (#746)**, column is `event_source`. Ships in the **THU 08-20** OMS deploy — ⛔ **with `run_migrations: true`**, see below. |
+| **AFTER Q1 IS DEPLOYED *AND PROVEN*** | **§178 — revisit B9 cause 2's release condition.** Ruled STRICT for now (`position_qty == 0 AND fanout_qty == 0`). The broker-state option (read the leg's terminal state from `broker_order_events`) is more truthful and **unusable today**: while that table mixes our aborts with broker rejects, a CLIENT ABORT reads as "leg is done, release" and reproduces the duplicate. ⛔ **PROVEN, not merely merged — and not merely deployed.** A populated column is not a clean split; every row before the migration is `unknown`. |
 | **MON 08-24** | **#13** weekend-outage re-check — needs a 2nd weekend in the retained logs. |
 | **MON 08-25, before 16:46 ET** | **SCHWAB RE-AUTH**, `https://project-mai-tai.live/auth/schwab/start`. ⛔ **MANUAL ONLY.** Miss it and Tue 08-26 pre-market opens with no token. |
 
@@ -125,6 +126,16 @@ history every pre-open. See the memory.
 ---
 
 ## 📌 OPEN, NOT ON THE BOARD
+
+- **⛔⭐⭐ §180 — THE SLOT ACCOUNTING FOR FAN-OUT-ONLY CROSSES IS WRONG (new, 08-20).**
+  `_fetch_position_maps` scopes every read to `strategy_schwab_1m_v2_account_name` (Schwab); the
+  fan-out leg fills on `live:orb` ⇒ **a Webull-only fill moves NEITHER `position_qty` NOR
+  `position_qty_held`.** The `update_position` comment asserts the opposite — *"BOTH LEGS, for free:
+  SymbolState is per SYMBOL, not per account"* — which is true about `SymbolState` and irrelevant:
+  **the QUERY that feeds it is per-account.** The slot accounting for a fan-out-only cross rests on
+  that comment and is therefore also wrong. ⛔ Same shape as the two "BROKER-PROVEN" labels: **a
+  wrong reason left in the code**, which stops the next reader from looking. Its own item — NOT
+  fixed by B9 cause 3.
 
 - **The CAST seed-cap miss is UNEXPLAINED again.** My theory died: the guards read the **state**
   field, which is never 0 (**0 of 1621 arms**), and the cap has fired **36 times** — including for
