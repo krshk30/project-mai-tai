@@ -80,6 +80,9 @@ def _seed(rows: list[_Row], sessions: set | None = None, today: date | None = No
     bot.session_factory = lambda: _Session(rows)
     bot._db_seeded = set()
     bot._db_seed_gap_truncations = 0
+    # ⛔⭐ The census DENOMINATOR, mirrored from `__init__` because `object.__new__` skips it.
+    # Both counters start at 0 here for the same reason production starts them at 0 at boot.
+    bot._db_seed_evaluations = 0
     bot.strategy = _Strategy()
     # ⛔⭐ The cap is stubbed to a RECORDER, not silenced. It runs AFTER the replay loop, so every
     # arm inside `on_bar` has already fired and stamped — the 50ms race of #619, still present on
