@@ -2170,3 +2170,68 @@ B (#741). B10: the trader crontab was a strict **subset** of root's — 8 script
   afternoon because I later added a second copy of the string it anchored on.
 - **Leaked the DB password** into the process list and the transcript via a `sudo VAR=…` prefix.
   **Rotation recommended** (board: P17).
+
+---
+
+# 2026-08-20 (Thu) — six merges, a deploy, and two numbers that were my own instrument
+
+## Shipped
+`#743` seed-calendar timeout+cascade+census · `#744` P21 empty-tape drop · `#745` B9 design (no
+code) · `#746` Q1 `event_source` (+ migration `20260820_0015`) · `#747` B19/B20 arm lifecycle ·
+`#748`/`#749`/`#750`/`#752` ops docs. **`#751` (evidence collector) and `#739` (§82 cause 1) remain
+OPEN.**
+
+## The deploy — 16:13→16:19 ET, adjusted running order, every gate passed
+Pre-state FLAT, corroborated by TWO sources (`oms_managed_positions` open=0 against a real
+denominator of 40 `closed`; `virtual_positions`=0 alone proves nothing — known false-zero) and 0
+working orders. Preflight **GO** → OMS with `run_migrations: true` → **the gate**: `event_source`
+= 1 row, alembic `20260820_0015`, index created → flag flipped (env line 208, backup kept, diff =
+that one line) → v2 deploy → flag read back from `/proc/845419/environ` = **true** → **no bar gap**
+(20:13/14/15/16 all persisted) → fleet **7/7**, **0 tracebacks** in either new process.
+
+⭐ **The strategy service restarted at 20:14:49 alongside the OMS**, exactly as predicted the
+afternoon before. `deploy_service.sh` does stop-strategy → restart-oms → start-strategy. The
+morning's sheet said "strategy: expect NO"; that was wrong and is corrected.
+
+⭐ **The one real signal:** seed-gap fail-open **0 since boot against 24 in the pre-restart
+process.** ⛔ ~2 minutes of runtime with no seeding — consistent with #743 working, **not proof**.
+
+⛔ **Signals 1–4 could not be produced.** The flag went live at 16:16 ET, after the entry window.
+orb's 15 fills on 08-20 are entirely pre-flag and not attributable.
+
+## ⛔⭐⭐ Two numbers I reported mid-run were artifacts of my own filters
+1. **"230 error-ish OMS lines"** — case-insensitive grep for `error` matching Webull API payloads
+   containing `error_code` (110 `ORDER_NOT_FOUND`, 67 `TOO_MANY_REQUESTS`). Real tracebacks: **0**;
+   the pre-restart control was 32 in a comparable window, so the ratio was the boot burst.
+2. **"48 v2 tracebacks since boot"** — `awk '$0 >= "<ts>"'` STRING-compares, so every traceback line
+   in the whole file passed regardless of time. Re-counted by line number: **0 post-restart**. The
+   `QueryCanceled` traces it surfaced were 19:50/19:58 — the **old pre-#743 process**, i.e. the very
+   defect that had just been fixed.
+
+Neither was a live fault. Both tells were identical: **a number that did not reconcile with the tail
+I could see.**
+
+## §183 — asked before the window, and the answer changed the procedure
+Is the `broker_order_events` insert exception caught anywhere? **Yes — everywhere.** All six
+`append_order_event` paths sit under `except Exception:` that logs and continues; none re-raise. So
+a missed `run_migrations` does **not** fail loudly. ⛔ **And it is not observability — it drops
+FILLS**, because `append_order_event` runs BEFORE `record_fill_if_needed` and
+`apply_fill_to_positions`. The first swallowing path is `_mirror_v2_fill_to_webull` — **the
+instrument for that night's own acceptance**. A missed toggle would have taken out the measuring
+device for the thing it shipped beside.
+
+## Corrections taken this day
+- **Cause 3's gate**: I wrote that tonight's run produces the residual it is measured against. It
+  does not — **#739 is `OPEN`, never merged**, so tonight produced no §82 residual at all. Right
+  answer (don't build it), wrong reason.
+- **Signal 1 was a log grep** returning 0 while `broker_orders` held the 720 exactly. When the
+  success criterion **is** zero, a broken watch and a passing deploy are the same number.
+- **`grep` was silently skipping `.gz` rotations**; a third census line only appeared under `zgrep`.
+- **The file-write column was a directory mtime** — identical across all seven services, i.e. the
+  one column the "diff is not evidence" rule depends on was inert.
+
+## Mutation
+Five mutants killed on P21, four on Q1, six on B19/B20 — **two escaped the first pass**, both my
+test's fault: a fixture that already satisfied the fallback it was meant to exercise (Q1 M2), and a
+suite that covered the helper but never the call site (B19 M6, which would have made the whole
+feature a permanent no-op).
