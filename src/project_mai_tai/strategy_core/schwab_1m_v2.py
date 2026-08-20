@@ -635,8 +635,86 @@ class SchwabV2Strategy:
             self._symbol_states[symbol] = state
         return state
 
-    def drop_symbol(self, symbol: str) -> None:
+    def _release_arm(self, state: SymbolState, reason: str) -> bool:
+        """Walk an armed segment OUT of the state machine. Returns True if it WAS armed.
+
+        ⛔⭐⭐ ARMED IS NOT A POSITION, AND CLEARING IT IS A TRANSITION — NOT AN ASSIGNMENT.
+        The body below is deliberately the same set of writes the SELL-flip "segment over" branch
+        makes, because that IS the end-of-segment transition; a second, subtly different way to end
+        a segment is how two paths drift apart. If that branch ever changes, this must change with
+        it.
+
+        ⭐ It LOGS. A segment that ends silently cannot be told apart from one that never existed,
+        and the arm state is what the restart gate reads — a disarm nobody can see is exactly how
+        that gate went permanently red.
+        """
+        if not state.cw_armed:
+            return False
+        logger.info("[V2-CW-DISARM] %s reason=%s", state.symbol, reason)
+        state.cw_armed = False
+        state.cw_arm_bar_ts = 0
+        state.cw_entries_this_flip = 0
+        state.cw_resting_taken = False
+        state.cw_reclaim_taken = False
+        return True
+
+    def release_and_drop_symbol(self, symbol: str, *, reason: str = "watchlist-removed") -> bool:
+        """B19 — leaving the watchlist DISARMS the symbol; it does not freeze it.
+
+        ⛔⭐⭐ THE DEFECT. Removing a symbol used to leave `cw_armed=True` frozen in place: the bot
+        stopped watching, so nothing ever drove the state machine to the SELL flip that would have
+        ended the segment. The arm then outlived the reason it existed, and `cw_armed_segments()` —
+        which the restart gate reads — kept reporting a segment nobody was watching. Stopping a
+        symbol made the gate red FOREVER, and the only way out was a restart.
+
+        ⛔ `drop_symbol` (popping the state) is NOT this fix, which is why it is replaced rather
+        than called: popping makes the arm VANISH with no transition and no log line. Silent
+        deletion and silent freezing are the same defect from opposite ends — in neither case can a
+        reader tell what happened to the segment. Disarm first, THEN drop.
+        """
+        state = self._symbol_states.get(symbol)
+        if state is None:
+            return False
+        released = self._release_arm(state, reason)
         self._symbol_states.pop(symbol, None)
+        return released
+
+    def release_arms_at_entry_window_close(
+        self, *, is_protected=None, reason: str = "entry-window-close"
+    ) -> list[str]:
+        """B20 — at the 16:00 entry-window close, release arms on symbols we do NOT hold.
+
+        Arming is bar-driven and bars flow to 20:00 ET, so a symbol arming after 16:00 is NORMAL —
+        it is simply an arm that can no longer lead anywhere, because the entry window that gives it
+        meaning has shut. Carrying it overnight only misreports.
+
+        ⛔⭐⭐ SAFE ONLY BECAUSE NOTHING AFTER-HOURS READS THIS FLAG. Verified before building, not
+        assumed:
+          * the software exit LADDER arms off `OmsService._cw_floor_armed`, a set keyed by
+            (account, symbol) that the OMS owns — it never reads `state.cw_armed`;
+          * `_maybe_cw_flip_close`, the bar-close ATR exit that has NO RTH gate and so is the one
+            thing genuinely live after 16:00, gates on `_cw_enabled` / `position_qty > 0` /
+            `flip == "SELL"` — `cw_armed` is not in its conditions;
+          * every remaining reader is ENTRY-side (`_cw_v2_quote`, the reclaim gate,
+            `_cap_reconstructed_segment`) and is exactly what should stop after 16:00.
+        ⇒ Releasing the arm cannot disarm an exit. If a future exit path starts reading `cw_armed`,
+        this becomes unsafe and the test below is what should fail first.
+
+        `is_protected` is the SAME predicate the session roll uses, passed in rather than
+        re-derived: a held position, a working resting order, or a mid-warmup symbol keeps its arm.
+        Re-implementing those rules here would be a second copy that drifts.
+        """
+        released: list[str] = []
+        for sym, st in self._symbol_states.items():
+            if not st.cw_armed:
+                continue
+            if max(int(st.position_qty), int(st.position_qty_held)) > 0:
+                continue  # we hold it (union OR fills) — conservative on purpose
+            if is_protected is not None and is_protected(sym, st):
+                continue
+            if self._release_arm(st, reason):
+                released.append(sym)
+        return released
 
     def update_position(self, symbol: str, qty: int, *, held_qty: int | None = None) -> None:
         """Called by the engine each position-poll cycle. On a True→False

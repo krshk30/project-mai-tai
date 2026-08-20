@@ -269,6 +269,8 @@ class SchwabV2BotService:
         # Last 04:00-ET anchor the time-driven session roll reported on. 0 => the first sweep
         # after boot logs, which is the proof-of-life line: "the sweep is running and found N".
         self._session_roll_last_anchor: int = 0
+        # B20: ET date on which the 16:00 entry-window arm release last ran (once per boundary).
+        self._entry_window_arm_release_day: str = ""
         # Per-symbol queue of streamer bars received before this symbol's
         # REST warmup completed. Drained in `_handle_bar_from_rest`
         # when the symbol crosses into `_rest_warmup_done`, replaying
@@ -935,6 +937,38 @@ class SchwabV2BotService:
         """
         return set(self._watchlist) | set(self._exit_coverage)
 
+    def _release_arms_at_entry_window_close(self, is_protected) -> None:
+        """B20 — at 16:00 ET, an arm on a flat symbol can no longer lead anywhere. Release it.
+
+        Fires ONCE per crossing of the 16:00 ET boundary, tracked like the session roll's anchor so
+        the 5s poll cannot re-run it every tick. Arming is bar-driven and bars flow to 20:00, so
+        arms KEEP APPEARING after 16:00 — this is not a one-shot sweep, it is a boundary event, and
+        an arm created at 16:30 is left alone until the next day's boundary. That is correct: it
+        misreports nothing, because by then the entry window has been shut all along.
+
+        ⛔ SAFETY, VERIFIED BEFORE BUILDING: nothing after-hours reads `cw_armed`. The software exit
+        ladder arms off `OmsService._cw_floor_armed`; `_maybe_cw_flip_close` — the bar-close ATR
+        exit with no RTH gate, i.e. the one thing genuinely live past 16:00 — gates on
+        `_cw_enabled`/`position_qty`/`flip == "SELL"` and never on `cw_armed`. Every other reader is
+        entry-side. See the strategy-side docstring for the full list.
+        """
+        et = datetime.now(UTC).astimezone(EASTERN_TZ)
+        past_close = (et.hour * 60 + et.minute) >= 16 * 60
+        day_key = et.strftime("%Y-%m-%d")
+        if not past_close:
+            return
+        if self._entry_window_arm_release_day == day_key:
+            return
+        self._entry_window_arm_release_day = day_key
+        released = self.strategy.release_arms_at_entry_window_close(is_protected=is_protected)
+        # ⭐ LOG ZERO. "released nothing" and "never ran" must not read the same on the tape.
+        logger.info(
+            "[V2-ENTRY-WINDOW-ARM-RELEASE] released=%d symbols=%s (16:00 ET boundary; held, "
+            "resting-active, operator-protected and mid-warmup symbols keep their arm)",
+            len(released),
+            ",".join(released[:20]) or "-",
+        )
+
     def _roll_stale_session_state(
         self, positions: dict[str, int], held: dict[str, int]
     ) -> None:
@@ -973,6 +1007,12 @@ class SchwabV2BotService:
                 return True
             # mid-warmup: the bar-driven path owns this symbol right now
             return symbol in self._watchlist and symbol not in self._rest_warmup_done
+
+        # B20 — release arms at the 16:00 ET entry-window close for symbols we do not hold.
+        # ⭐ Placed HERE, sharing `_skip`, deliberately: the carve-outs an arm release must respect
+        # (operator-protected, held, working resting order, mid-warmup) are exactly the ones this
+        # predicate already encodes and has been corrected twice for. A second copy would drift.
+        self._release_arms_at_entry_window_close(_skip)
 
         now_ms = int(datetime.now(UTC).timestamp() * 1000)
         anchor = session_start_ts_ms(now_ms)
@@ -1381,6 +1421,9 @@ class SchwabV2BotService:
         if selected == self._watchlist:
             return
         new_symbols = selected - self._watchlist
+        # ⛔ Captured HERE, before `self._watchlist` is reassigned below — computing it after the
+        # reassignment yields the empty set and the B19 release silently never runs.
+        departed_symbols = self._watchlist - selected
         # ⭐ Stamp WHEN we started watching each symbol. This is the reference
         # `_cap_reconstructed_segment` uses to decide whether an armed segment was observed LIVE or
         # merely reconstructed from warmup history — see that method for the full rationale.
@@ -1396,6 +1439,16 @@ class SchwabV2BotService:
         # Drop warmup state for symbols that left the watchlist. If they
         # re-join later, REST needs to refetch the batch and the
         # buffer-and-replay path runs again.
+        # B19 — a symbol LEAVING the watchlist is disarmed, not frozen.
+        # ⛔ The bot's reset is bar-driven, so once we stop watching a symbol nothing ever drives
+        # its state machine to the SELL flip that ends the segment. Its `cw_armed` used to sit
+        # True forever, and `cw_armed_segments()` — which the restart gate reads — kept reporting
+        # a segment nobody was watching. That is how stopping a symbol made the gate red until the
+        # next restart.
+        # ⛔ Done BEFORE the sets below are pruned: the release logs a transition, and the log is
+        # the only record that this segment ended rather than simply stopped being observed.
+        for sym in sorted(departed_symbols):
+            self.strategy.release_and_drop_symbol(sym)
         self._rest_warmup_done &= selected
         self._db_seeded &= selected
         # Drop any buffered streamer bars for symbols no longer on the
