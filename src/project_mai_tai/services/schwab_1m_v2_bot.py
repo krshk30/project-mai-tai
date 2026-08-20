@@ -25,6 +25,7 @@ import logging
 import signal
 import time
 from datetime import UTC, date, datetime, timedelta
+from datetime import time as time_cls  # `time` the module is already imported above
 from decimal import Decimal
 from uuid import uuid4
 from zoneinfo import ZoneInfo
@@ -286,6 +287,19 @@ class SchwabV2BotService:
         # distinguished from a refusal that stopped happening — see the census discipline on
         # `evaluated=0`. Reported on the session roll so a ZERO is a MEASUREMENT, not a silence.
         self._db_seed_gap_truncations: int = 0
+        # ⛔⭐⭐ THE CENSUS DENOMINATOR, AND WHY IT IS NOT `len(self._db_seeded)` (P11, 2026-08-20).
+        # `_db_seeded` is a DEDUP set, pruned to the live watchlist on every selection pass
+        # (`self._db_seeded &= selected`). It is not, and never was, a "since boot" population: at
+        # the 04:00 roll the watchlist turns over and the set intersects towards EMPTY while the
+        # truncation counter beside it keeps climbing. That printed `truncations=7 of 0 symbols
+        # seeded since boot` on 08-20 — a numerator with no denominator, on the one line whose
+        # stated purpose is to supply the denominator.
+        # ⇒ Count seed EVALUATIONS: monotonic, never pruned, and in the SAME UNIT as the numerator
+        #   (one per symbol per seed attempt that actually loaded rows, so a symbol that leaves and
+        #   re-joins the watchlist contributes one to each — exactly as it contributes one possible
+        #   truncation to each). Same unit is the point: the ratio is only readable if both halves
+        #   count the same events.
+        self._db_seed_evaluations: int = 0
         # C3 routing counters — exposed via heartbeat for observability.
         # `rest_bars_gated` increments on REST bars suppressed because
         # streamer is healthy and already has the bucket. `rest_bars_gap_fill`
@@ -983,11 +997,15 @@ class SchwabV2BotService:
             # at ZERO, deliberately: a truncation counter that only speaks when it truncates cannot
             # be told apart from one that has stopped running. Same discipline as `evaluated=0`.
             logger.info(
-                "[V2-DB-SEED-GAP-CENSUS] truncations=%d of %d symbols seeded since boot "
+                "[V2-DB-SEED-GAP-CENSUS] truncations=%d of %d seed evaluations since boot "
                 "(threshold: >%d missed trading session) — ZERO here means MEASURED-NONE, not unmeasured. "
                 "⛔ The DENOMINATOR is load-bearing: a bare zero cannot tell a clean day from a "
-                "census that never ran, which is the only reason this line exists.",
-                self._db_seed_gap_truncations, len(self._db_seeded), DB_SEED_MAX_MISSED_SESSIONS,
+                "census that never ran, which is the only reason this line exists. Both halves are "
+                "MONOTONIC since boot and count the same unit (one seed evaluation per symbol per "
+                "attempt), so truncations can never exceed evaluations.",
+                self._db_seed_gap_truncations,
+                self._db_seed_evaluations,
+                DB_SEED_MAX_MISSED_SESSIONS,
             )
             self._session_roll_last_anchor = anchor
 
@@ -1794,7 +1812,27 @@ class SchwabV2BotService:
                 "silently dropping real bars.",
                 exc_info=True,
             )
+            self._rollback_quietly(session)
             return 0
+
+    @staticmethod
+    def _rollback_quietly(session) -> None:
+        """Clear a failed transaction so ONE bad lookup cannot fail every lookup after it.
+
+        ⛔⭐⭐ THE CASCADE THIS EXISTS TO STOP (P11, 2026-08-20). A `statement_timeout` leaves the
+        transaction ABORTED, and Postgres refuses every subsequent statement on it
+        (`InFailedSqlTransaction`). The seed walk calls the calendar again per gap on the SAME
+        session, so the first timeout converted every later lookup in that seed into a "failure"
+        too. That is why the failures arrived in same-millisecond clusters — one boundary line and
+        then three gap lines at 21:57:04.372/.391/.394/.397 — which reads as three independent slow
+        queries and is actually one timeout plus three refusals.
+        ⛔ The two are NOT interchangeable diagnoses: a cluster blamed on "the DB is slow" sends you
+        to the wrong query entirely. Rolling back keeps each lookup's verdict its own.
+        """
+        try:
+            session.rollback()
+        except Exception:  # noqa: BLE001 - best-effort; the caller has already decided to bias safe
+            logger.debug("[V2-DB-SEED-GAP] rollback after a failed calendar lookup failed", exc_info=True)
 
     def _missed_sessions_before_today(self, session, newest_bar) -> int:
         """Trading sessions strictly BETWEEN the newest stored bar's session and TODAY's.
@@ -1811,21 +1849,38 @@ class SchwabV2BotService:
 
         ⛔ Same failure mode as its sibling: any DB error returns 0 ("no sessions missed"), so a
         calendar blip biases towards the pre-fix behaviour and never towards dropping real history.
+
+        ⛔⭐⭐ THE BOUNDS ARE TIMESTAMPS, NOT ET DATES (P11, 2026-08-20). Filtering on
+        ``(bar_time AT TIME ZONE ...)::date`` wraps the indexed column in an expression, so Postgres
+        cannot use it as an index CONDITION — it degrades to a post-index FILTER and walks every row
+        this strategy owns however narrow the window is. Measured on the box: 1603 ms warm,
+        `Rows Removed by Filter: 257621`, `Heap Fetches: 112449` — over the 5 s ``statement_timeout``
+        the "fast" session profile sets, which is exactly how this lookup was failing. Converting the
+        two ET dates to their ET-midnight instants makes them an index cond: **32.7 ms, same answer**
+        (verified equal for gaps of 0, 1, 2, 3 and 35 sessions).
+        ⛔ Build the instants through ``EASTERN_TZ``, never by subtracting a fixed offset — the
+        boundary must stay correct across a DST change.
         """
+        lo_date = newest_bar.astimezone(EASTERN_TZ).date()
+        hi_date = datetime.now(UTC).astimezone(EASTERN_TZ).date()
+        # ET dates strictly between the two ⇒ instants in [lo_date + 1 day, hi_date), ET midnights.
+        lo_ts = datetime.combine(lo_date + timedelta(days=1), time_cls.min, tzinfo=EASTERN_TZ)
+        hi_ts = datetime.combine(hi_date, time_cls.min, tzinfo=EASTERN_TZ)
+        if lo_ts >= hi_ts:
+            return 0  # newest bar is today or later — no session can fall in an empty range
         try:
             rows = session.execute(
                 text(
                     "SELECT count(DISTINCT ((bar_time AT TIME ZONE 'America/New_York')::date)) "
                     "FROM strategy_bar_history "
                     "WHERE strategy_code = :sc AND interval_secs = :iv "
-                    "AND (bar_time AT TIME ZONE 'America/New_York')::date > :lo "
-                    "AND (bar_time AT TIME ZONE 'America/New_York')::date < :hi"
+                    "AND bar_time >= :lo AND bar_time < :hi"
                 ),
                 {
                     "sc": STRATEGY_CODE,
                     "iv": INTERVAL_SECS,
-                    "lo": newest_bar.astimezone(EASTERN_TZ).date(),
-                    "hi": datetime.now(UTC).astimezone(EASTERN_TZ).date(),
+                    "lo": lo_ts,
+                    "hi": hi_ts,
                 },
             ).scalar()
             return max(0, int(rows or 0))
@@ -1836,55 +1891,17 @@ class SchwabV2BotService:
                 "silently dropping real bars.",
                 exc_info=True,
             )
+            self._rollback_quietly(session)
             return 0
 
-    def _seed_strategy_bars_from_db(self, symbol: str) -> None:
-        """Fix (b): hydrate `state.bars` from `strategy_bar_history` on cold-start.
+    def _truncate_seed_rows_at_gap(self, session, symbol: str, rows: list) -> list:
+        """Return the CONTIGUOUS tail of `rows` (newest-first), refusing stale history.
 
-        Replays the last DB_SEED_BAR_LIMIT persisted 60s bars (ascending) through
-        the strategy so MACD/VWAP/stoch clear their warmup immediately — killing
-        the ~135-minute post-restart entry blackout (the line-676 min_bars guard
-        otherwise blinds ALL paths until `state.bars` refills live-only, which the
-        C3 dedup gate forces). Seed bars carry historical timestamps so
-        `bar_is_fresh` is False → no intent fires on the replay. Cross-session is
-        safe: VWAP/ATR self-reset at the 04:00-ET anchor; MACD wants the continuity.
-
-        SAFETY (the load-bearing bit): after the replay, CLEAR the pending-cross
-        stash. A native MACD/VWAP cross on the LAST seed bar would otherwise be
-        consumed by the first live bar (gap <= pending_cross_max_gap_secs) and fire
-        a PHANTOM entry from replayed history — worse than the blackout. The prev_*
-        memos are KEPT (that's the point — live crosses then detect correctly).
-        Runs once per symbol (`_db_seeded`, pruned with the watchlist).
+        Extracted from `_seed_strategy_bars_from_db` (P11, 2026-08-20) so the two calendar
+        lookups run inside the caller's `with self.session_factory()` block instead of against
+        a session it had already closed. Behaviour is otherwise unchanged: same constants,
+        same log lines, same counter.
         """
-        if self.session_factory is None or symbol in self._db_seeded:
-            return
-        self._db_seeded.add(symbol)
-        try:
-            with self.session_factory() as session:
-                rows = (
-                    session.execute(
-                        select(StrategyBarHistory)
-                        .where(
-                            StrategyBarHistory.strategy_code == STRATEGY_CODE,
-                            StrategyBarHistory.symbol == symbol,
-                            StrategyBarHistory.interval_secs == INTERVAL_SECS,
-                        )
-                        .order_by(StrategyBarHistory.bar_time.desc())
-                        .limit(DB_SEED_BAR_LIMIT)
-                    )
-                    .scalars()
-                    .all()
-                )
-        except Exception:  # noqa: BLE001
-            logger.warning(
-                "schwab_1m_v2 db-seed query failed for %s; falling back to "
-                "live-only warmup",
-                symbol,
-                exc_info=True,
-            )
-            return
-        if not rows:
-            return
         # ⛔⭐⭐ TRUNCATE AT THE FIRST WIDE GAP (P0, 2026-08-18). `rows` is newest-first. Walk back
         # and keep only the CONTIGUOUS tail; everything beyond a > DB_SEED_MAX_GAP_DAYS jump is a
         # different market regime for this name and must never reach the strategy.
@@ -1903,6 +1920,7 @@ class SchwabV2BotService:
         # the window and made the gap internal.
         # ⇒ The gap between the NEWEST loaded bar and TODAY counts as a missed-session gap, on the
         #   same constant and in the same units as the internal check.
+        self._db_seed_evaluations += 1
         boundary_missed = 0
         if rows:
             newest_bt = (
@@ -1951,7 +1969,68 @@ class SchwabV2BotService:
                 (oldest_kept - first_dropped).total_seconds() / 86400.0, len(kept),
             )
             self._db_seed_gap_truncations += 1
-        rows = kept
+        return kept
+
+    def _seed_strategy_bars_from_db(self, symbol: str) -> None:
+        """Fix (b): hydrate `state.bars` from `strategy_bar_history` on cold-start.
+
+        Replays the last DB_SEED_BAR_LIMIT persisted 60s bars (ascending) through
+        the strategy so MACD/VWAP/stoch clear their warmup immediately — killing
+        the ~135-minute post-restart entry blackout (the line-676 min_bars guard
+        otherwise blinds ALL paths until `state.bars` refills live-only, which the
+        C3 dedup gate forces). Seed bars carry historical timestamps so
+        `bar_is_fresh` is False → no intent fires on the replay. Cross-session is
+        safe: VWAP/ATR self-reset at the 04:00-ET anchor; MACD wants the continuity.
+
+        SAFETY (the load-bearing bit): after the replay, CLEAR the pending-cross
+        stash. A native MACD/VWAP cross on the LAST seed bar would otherwise be
+        consumed by the first live bar (gap <= pending_cross_max_gap_secs) and fire
+        a PHANTOM entry from replayed history — worse than the blackout. The prev_*
+        memos are KEPT (that's the point — live crosses then detect correctly).
+        Runs once per symbol (`_db_seeded`, pruned with the watchlist).
+        """
+        if self.session_factory is None or symbol in self._db_seeded:
+            return
+        self._db_seeded.add(symbol)
+        try:
+            with self.session_factory() as session:
+                rows = (
+                    session.execute(
+                        select(StrategyBarHistory)
+                        .where(
+                            StrategyBarHistory.strategy_code == STRATEGY_CODE,
+                            StrategyBarHistory.symbol == symbol,
+                            StrategyBarHistory.interval_secs == INTERVAL_SECS,
+                        )
+                        .order_by(StrategyBarHistory.bar_time.desc())
+                        .limit(DB_SEED_BAR_LIMIT)
+                    )
+                    .scalars()
+                    .all()
+                )
+                # ⛔⭐⭐ THE GAP ANALYSIS RUNS INSIDE THIS `with` ON PURPOSE (P11, 2026-08-20).
+                # It used to run BELOW the block, against a session the context manager had already
+                # CLOSED. SQLAlchemy hides that — a closed Session silently re-opens a connection
+                # and begins a NEW transaction on next use — so it "worked", while leaving a
+                # transaction nothing ever commits or closes, once per seeded symbol. Two calendar
+                # lookups that must share the seed's transaction had instead each escaped it.
+                # ⛔ "It works in production" was never evidence here: the defect's whole shape is
+                # that the failure is invisible until the connection pool or the timeout notices.
+                # ⛔ Guarded on `rows` so an empty history stays a NON-EVENT: it must not spend a
+                # calendar lookup and must not count towards the census denominator, exactly as
+                # before, when `if not rows: return` sat above this block.
+                if rows:
+                    rows = self._truncate_seed_rows_at_gap(session, symbol, rows)
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "schwab_1m_v2 db-seed query failed for %s; falling back to "
+                "live-only warmup",
+                symbol,
+                exc_info=True,
+            )
+            return
+        if not rows:
+            return
         for row in reversed(rows):  # ascending (oldest first)
             bt = row.bar_time
             if bt.tzinfo is None:  # defensive: treat a naive timestamp as UTC
