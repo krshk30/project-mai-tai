@@ -477,6 +477,19 @@ class OmsRiskService:
         # caller. That verdict required a separate ad-hoc SQL query; with `submitted` on the line it
         # is readable from the tape alone. Diagnostic only; never gates anything.
         self._p0a_census_submitted: int = 0
+        # ⛔⭐⭐ Q12 — THE AUDIT WRITE USED TO GATE THE LEDGER WRITES (§183, fixed 2026-08-21).
+        # `append_order_event` ran BEFORE `record_fill_if_needed` / `apply_fill_to_positions`, and
+        # every one of the seven paths that reach it swallows `Exception` with a log line. So any
+        # failure of the AUDIT row silently cost the FILL and the POSITION UPDATE — per order,
+        # behind a WARNING. The missed migration was one way to trigger it; it is not the only one
+        # (statement timeout, a deadlock, a serialization failure, a full disk).
+        # ⇒ The audit write is now isolated in a SAVEPOINT and can only lose ITSELF.
+        # These two counters exist because "isolated and silent" would be a worse bug than the one
+        # being fixed: a dropped audit row must be COUNTED, and counted against a DENOMINATOR, or
+        # its zero is unreadable — the same discipline as the seed-gap census.
+        self._order_event_attempts: int = 0
+        self._order_event_failures: int = 0
+        self._order_event_census_last_emit: datetime | None = None
         # (broker_account_name, symbol) -> when the OCO cleared (armed -> not armed). Keeps the
         # software ladder deferred through the RESOLUTION window: an OCO leg filled and closed the
         # position, but the OMS position state lags the broker fill by ~tens of seconds, so a
@@ -1757,7 +1770,7 @@ class OmsRiskService:
                 "metadata": dict(report.metadata),
                 "reason": report.reason,
             }
-            self.store.append_order_event(session, order=order, report=report, payload=payload)
+            self._append_order_event_isolated(session, order=order, report=report, payload=payload)
             # ⛔⭐ A CANCEL INTENT TRACKS THE REQUEST; THE ORDER TRACKS THE OUTCOME.
             #
             # This used to copy `report.event_type` straight onto the intent. For a cancel the
@@ -4439,6 +4452,7 @@ class OmsRiskService:
         # the reading that distinguishes "nothing qualified" from "the branch never runs". Gating
         # it on having something to report would rebuild the silence it exists to remove.
         self._maybe_emit_p0a_census()
+        self._maybe_emit_order_event_census()
         # Re-derive the OCO stand-down from the rows this sync just refreshed -- the broker
         # is the source of truth, never in-memory arm state. Safe on the boot path too: a
         # restart starts with an empty set and only stands down once the broker confirms.
@@ -4668,7 +4682,13 @@ class OmsRiskService:
                         report=report,
                         metadata=dict(report.metadata),
                     )
-                    self.store.append_order_event(session, order=order, report=report, payload=payload)
+                    # ⛔ Q12/§183 — isolated. `record_fill_if_needed` already ran above this
+                    # block, so at THIS site a failing audit row cost the POSITION UPDATE while
+                    # leaving the fill row behind: a fill on the books that never moved a
+                    # position, which is worse than losing both because it reconciles as real.
+                    self._append_order_event_isolated(
+                        session, order=order, report=report, payload=payload
+                    )
                     if fill is not None:
                         self.store.apply_fill_to_positions(
                             session,
@@ -7273,7 +7293,16 @@ class OmsRiskService:
                 "metadata": dict(report.metadata),
                 "reason": report.reason,
             }
-            self.store.append_order_event(session, order=order, report=report, payload=payload)
+            # ⛔⭐⭐ Q12/§183 — THE LEDGER WRITES GO FIRST, AND THE AUDIT WRITE IS ISOLATED.
+            # This ordering used to be the other way round, and because every caller of this path
+            # swallows `Exception`, a failing audit row silently took the FILL and the POSITION
+            # UPDATE with it. Recording WHAT HAPPENED must never be gated on recording THAT it
+            # happened. Two independent protections, deliberately both:
+            #   1. order   — the fill and position writes no longer sit downstream of the audit row;
+            #   2. savepoint — the audit row cannot abort the transaction they share.
+            # Either alone would leave a hole: reordering does not stop a failed flush poisoning
+            # the transaction for everything AFTER it, and the savepoint alone would still leave
+            # the ledger downstream of a call that can fail for reasons we have not thought of.
             fill = self.store.record_fill_if_needed(
                 session,
                 order=order,
@@ -7281,6 +7310,9 @@ class OmsRiskService:
                 broker_account_id=broker_account_id,
                 report=report,
                 payload=payload,
+            )
+            self._append_order_event_isolated(
+                session, order=order, report=report, payload=payload
             )
             if fill is not None:
                 self.store.apply_fill_to_positions(
@@ -7580,7 +7612,7 @@ class OmsRiskService:
                 report=cancelled_report,
                 metadata=cancel_metadata,
             )
-            self.store.append_order_event(
+            self._append_order_event_isolated(
                 session,
                 order=order,
                 report=cancelled_report,
@@ -7772,7 +7804,7 @@ class OmsRiskService:
                 self.store.update_order_from_report(
                     order, report=cancelled_report, metadata=cancel_metadata
                 )
-                self.store.append_order_event(
+                self._append_order_event_isolated(
                     session,
                     order=order,
                     report=cancelled_report,
@@ -7859,6 +7891,87 @@ class OmsRiskService:
         if limit_price > bid_f:
             return "not_marketable"
         return None
+
+    def _append_order_event_isolated(
+        self,
+        session: Session,
+        *,
+        order: BrokerOrder,
+        report: ExecutionReport,
+        payload: dict[str, object],
+    ) -> bool:
+        """Write the audit row WITHOUT letting its failure reach the ledger writes. Q12/§183.
+
+        ⛔⭐⭐ WHY A SAVEPOINT AND NOT A `try/except` (this is the whole fix).
+        A bare try/except does NOT work here and would ship as a fix that isn't one.
+        `append_order_event` ends in `session.flush()`; when that flush fails at the DATABASE
+        level, Postgres marks the whole transaction ABORTED and refuses every subsequent
+        statement on it with `InFailedSqlTransaction`. Catching the exception leaves the session
+        exactly as poisoned as before, so `record_fill_if_needed` and `apply_fill_to_positions`
+        would still fail — silently, one line further down. The identical cascade was diagnosed
+        in the seed-gap work: one timeout turning three later lookups into "failures".
+        ⇒ `begin_nested()` issues a SAVEPOINT. A failure rolls back to it and leaves the outer
+        transaction USABLE, which is the only property that makes the ledger writes survivable.
+
+        ⛔ AND IT MUST NOT BE SILENT. "Swallowing it more politely" leaves the same silence that
+        made §183 invisible for as long as it was. A dropped audit row is COUNTED, and counted
+        against the number of attempts, because a bare `failures=0` cannot be told apart from a
+        counter that never ran.
+
+        Returns True when the audit row was written, False when it was dropped. The caller is
+        expected to CARRY ON either way -- the return value is for tests and for callers that
+        want to note the degradation, never a gate on recording what happened.
+        """
+        self._order_event_attempts += 1
+        try:
+            with session.begin_nested():
+                self.store.append_order_event(session, order=order, report=report, payload=payload)
+            return True
+        except Exception:  # noqa: BLE001 - an audit row must never cost a fill
+            self._order_event_failures += 1
+            self.logger.error(
+                "[OMS-ORDER-EVENT-DROPPED] %s %s coid=%s status=%s — the audit row was NOT "
+                "written; the SAVEPOINT was rolled back and the FILL + POSITION writes continue. "
+                "n=%d dropped of %d attempts since boot. ⛔ This is real data loss in "
+                "`broker_order_events` (reject reasons, event_source): every reject count over a "
+                "window containing this line is UNDER-counted, and the gap is invisible in the "
+                "table itself.",
+                getattr(order, "symbol", "?"),
+                getattr(report, "event_type", "?"),
+                getattr(report, "client_order_id", "?"),
+                getattr(report, "event_type", "?"),
+                self._order_event_failures,
+                self._order_event_attempts,
+                exc_info=True,
+            )
+            return False
+
+    def _maybe_emit_order_event_census(self, *, interval_seconds: float = 300.0) -> None:
+        """Periodic rollup of audit-row writes. Emits at ZERO failures, deliberately.
+
+        ⭐ Same discipline as `[OMS-P0A-CENSUS]` and the seed-gap census: a counter that only
+        speaks when it has something to report cannot be told apart from a counter that stopped
+        running, and `failures=0` is the success criterion here — which is exactly the shape that
+        makes a broken watch and a healthy system print the same number.
+        ⛔ `attempts` is the DENOMINATOR and is read FIRST:
+             attempts=0 failures=0  -> no order event occurred. Nothing to conclude.
+             attempts>0 failures=0  -> every audit row landed. THAT is the pass.
+        """
+        try:
+            now = utcnow()
+            last = self._order_event_census_last_emit
+            if last is not None and (now - last).total_seconds() < interval_seconds:
+                return
+            self._order_event_census_last_emit = now
+            self.logger.info(
+                "[OMS-ORDER-EVENT-CENSUS] audit rows: %d dropped of %d attempted since boot "
+                "(⛔ read attempts FIRST: attempts=0 means UNMEASURED, not clean). A drop costs "
+                "the audit row only — the fill and the position update are no longer gated on it.",
+                self._order_event_failures,
+                self._order_event_attempts,
+            )
+        except Exception:  # noqa: BLE001 - bookkeeping must never break the sync path
+            pass
 
     def _p0a_census_note(self, key: str) -> None:
         """Count one P0a evaluation outcome. Diagnostic only; never raises."""
@@ -8157,7 +8270,7 @@ class OmsRiskService:
             report=cancelled_report,
             metadata=cancel_metadata,
         )
-        self.store.append_order_event(
+        self._append_order_event_isolated(
             session,
             order=order,
             report=cancelled_report,

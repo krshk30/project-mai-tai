@@ -4330,3 +4330,192 @@ async def test_sync_broker_state_stays_QUIET_when_nothing_was_cleared() -> None:
     await service.sync_broker_state()
 
     assert not [m for m in handler.messages if "[VIRTUAL-CLEAR]" in m]
+
+
+# ═══════════════════════════════════════════════════════════════════════════════════════
+# Q12 / §183 — THE AUDIT WRITE MUST NOT GATE THE LEDGER WRITES
+#
+# ★ These tests exist to pin the DIRECTION of a failure. `append_order_event` used to run
+#   BEFORE `record_fill_if_needed` and `apply_fill_to_positions`, and all seven paths that
+#   reach it swallow `Exception` with a log line — so a failure of the AUDIT row silently
+#   cost the FILL and the POSITION UPDATE, per order, behind a WARNING.
+#
+# ⛔⭐⭐ THE FIXTURE MAKES A **FLUSH** FAIL, NOT A PYTHON `raise`, AND THAT IS THE POINT.
+#   A test whose stub does `raise RuntimeError` is passed by a bare `try/except` — which is
+#   NOT a fix, because the real failure aborts the transaction and every later statement on
+#   it fails too (`InFailedSqlTransaction` on Postgres; SQLAlchemy `PendingRollbackError`
+#   on this SQLite harness, which is the same property). Only a SAVEPOINT survives that, so
+#   the stub below provokes a genuine flush error and these tests fail against try/except.
+# ═══════════════════════════════════════════════════════════════════════════════════════
+
+
+def _explode_on_flush(calls: dict[str, int]):
+    """A store.append_order_event that fails the way the real one does: inside `flush()`.
+
+    `order_id` is NOT NULL, so this raises IntegrityError from the flush and leaves the
+    Session needing a rollback — exactly the state that made the ledger writes downstream
+    of it unreachable.
+    """
+    from project_mai_tai.db.models import BrokerOrderEvent
+
+    def _append(session, *, order, report, payload):  # noqa: ANN001, ANN202
+        del order, report, payload
+        calls["n"] = calls.get("n", 0) + 1
+        session.add(BrokerOrderEvent(order_id=None, event_type="boom", payload={}))
+        session.flush()
+
+    return _append
+
+
+def _entry_intent() -> TradeIntentEvent:
+    return TradeIntentEvent(
+        source_service="strategy-engine",
+        payload=TradeIntentPayload(
+            strategy_code="macd_30s",
+            broker_account_name="paper:macd_30s",
+            symbol="UGRO",
+            side="buy",
+            quantity=Decimal("10"),
+            intent_type="open",
+            reason="ENTRY_P1_MACD_CROSS",
+            metadata={"path": "P1_MACD_CROSS", "reference_price": "2.55"},
+        ),
+    )
+
+
+def _q12_service(session_factory):  # noqa: ANN001, ANN202
+    return OmsRiskService(
+        settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
+        redis_client=FakeRedis(),
+        session_factory=session_factory,
+    )
+
+
+@pytest.mark.asyncio
+async def test_fill_and_position_survive_an_audit_write_failure() -> None:
+    """★ THE WHOLE POINT OF Q12. A dropped audit row costs the audit row and nothing else."""
+    session_factory = build_test_session_factory()
+    service = _q12_service(session_factory)
+    calls: dict[str, int] = {}
+    service.store.append_order_event = _explode_on_flush(calls)  # type: ignore[method-assign]
+
+    events = await service.process_trade_intent(_entry_intent())
+
+    # The audit write really did fail — without this the test proves nothing.
+    assert calls.get("n", 0) >= 1
+    assert [event.payload.status for event in events] == ["accepted", "filled"]
+
+    with session_factory() as session:
+        stored_fill = session.scalar(select(Fill))
+        virtual_position = session.scalar(select(VirtualPosition))
+        account_position = session.scalar(select(AccountPosition))
+
+        # ★ THE LEDGER SURVIVED. Before Q12 all three of these were None.
+        assert stored_fill is not None, "the FILL was lost to a failed audit write"
+        assert stored_fill.price == Decimal("2.55")
+        assert virtual_position is not None, "the POSITION UPDATE was lost to a failed audit write"
+        assert virtual_position.quantity == Decimal("10")
+        assert account_position is not None
+        assert account_position.quantity == Decimal("10")
+
+
+@pytest.mark.asyncio
+async def test_a_dropped_audit_row_is_counted_not_swallowed() -> None:
+    """★ Isolating it SILENTLY would be a worse bug than the one being fixed.
+
+    A drop is real data loss in `broker_order_events` and is invisible in that table — the
+    only way anyone learns of it is this counter and its log line.
+    """
+    session_factory = build_test_session_factory()
+    service = _q12_service(session_factory)
+    calls: dict[str, int] = {}
+    service.store.append_order_event = _explode_on_flush(calls)  # type: ignore[method-assign]
+
+    await service.process_trade_intent(_entry_intent())
+
+    assert service._order_event_failures >= 1, "a dropped audit row was not counted"
+    # ⛔ THE DENOMINATOR. `failures=0` is unreadable without it, so it must move too.
+    assert service._order_event_attempts >= service._order_event_failures
+    assert service._order_event_attempts >= 1
+
+
+@pytest.mark.asyncio
+async def test_the_happy_path_still_writes_the_audit_row() -> None:
+    """★ The control. Without it, the tests above also pass on a build that never writes an
+    audit row at all — "the ledger survived" only means something beside "normally both land"."""
+    from project_mai_tai.db.models import BrokerOrderEvent
+
+    session_factory = build_test_session_factory()
+    service = _q12_service(session_factory)
+
+    await service.process_trade_intent(_entry_intent())
+
+    with session_factory() as session:
+        assert session.scalar(select(BrokerOrderEvent)) is not None, "no audit row on the happy path"
+        assert session.scalar(select(Fill)) is not None
+
+    assert service._order_event_attempts >= 1
+    assert service._order_event_failures == 0
+
+
+def test_order_event_census_emits_at_zero_with_its_denominator() -> None:
+    """★ `failures=0` IS the success criterion, which is exactly the shape where a broken
+    counter and a healthy system print the same number. So the census speaks at zero, and
+    carries `attempts` so that zero can be read.
+
+    ⛔ Captured with a handler attached DIRECTLY to the service logger, not via `caplog`:
+    the oms-risk logger does not propagate to the root, so `caplog` sees nothing and the
+    test would fail on a perfectly working census — a false RED that teaches you to weaken
+    the assertion. Capture where the record is actually emitted.
+    """
+    service = _q12_service(build_test_session_factory())
+    records: list[logging.LogRecord] = []
+
+    class _Capture(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            records.append(record)
+
+    handler = _Capture(level=logging.INFO)
+    service.logger.addHandler(handler)
+    previous_level = service.logger.level
+    service.logger.setLevel(logging.INFO)
+    try:
+        service._maybe_emit_order_event_census(interval_seconds=0.0)
+    finally:
+        service.logger.removeHandler(handler)
+        service.logger.setLevel(previous_level)
+
+    line = next(
+        (r.getMessage() for r in records if "OMS-ORDER-EVENT-CENSUS" in r.getMessage()),
+        None,
+    )
+    assert line is not None, "the census stayed silent at zero — the failure it exists to prevent"
+    assert "0 dropped of 0 attempted" in line
+
+
+def test_the_ledger_writes_come_before_the_audit_write_on_the_record_path() -> None:
+    """★ Pins the SECOND protection, which behaviour alone cannot pin.
+
+    Mutation M1 — moving the audit write back above `record_fill_if_needed` — SURVIVED the
+    behavioural tests above, and correctly so: with the savepoint in place the ordering no
+    longer changes the outcome for a failing audit row. That makes the ordering easy to
+    "tidy" away, and it is the layer that still covers a failure the savepoint does not
+    anticipate. So it is pinned here, structurally, and the reason is written down.
+
+    ⛔ This asserts ORDER ONLY. It is not a substitute for the behavioural tests, and it
+    would happily pass on a build where neither write happens at all.
+    """
+    import inspect
+
+    from project_mai_tai.oms.service import OmsRiskService
+
+    source = inspect.getsource(OmsRiskService._record_order_reports)
+    fill_at = source.find("record_fill_if_needed")
+    audit_at = source.find("_append_order_event_isolated")
+
+    assert fill_at != -1, "record_fill_if_needed is not on this path any more"
+    assert audit_at != -1, "the audit write is not isolated on this path"
+    assert fill_at < audit_at, (
+        "the audit write moved back above the ledger write — that is the §183 ordering, "
+        "and the savepoint is then the only thing left between a DB hiccup and a lost fill"
+    )
