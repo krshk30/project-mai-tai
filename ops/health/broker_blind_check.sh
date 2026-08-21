@@ -22,19 +22,23 @@
 # ⛔⭐⭐ WHAT THIS CANNOT SEE -- stated here because a watch that hides its blind spot is the
 # thing it is meant to prevent.
 #
-# THERE IS NO SUCCESS MARKER. `[BROKER-SYNC-UNREADABLE]` is the only BROKER-SYNC line the OMS
-# emits; a successful positions read logs nothing. So "consecutive" cannot be read directly --
-# it is INFERRED from the gap between failures against the known sync cadence. On the 08-20
-# tape two gaps were 30s where the rest were 15s, and at 15s cadence a 30s gap is EITHER one
-# successful read OR one slow/skipped cycle. This script cannot tell which.
+# ON OLD TAPE THERE IS NO SUCCESS MARKER, so "consecutive" cannot be read and is INFERRED from
+# the gap between failures against the known sync cadence. On the 08-20 tape two gaps were 30s
+# where the rest were 15s, and at 15s cadence a 30s gap is EITHER one successful read OR one
+# slow/skipped cycle. This script cannot tell which on that tape.
 #   => It treats a gap of up to 3 intervals as the same run. That is the tolerant reading, and
-#      it is the SAFE direction here: merging is a false POSITIVE risk on a pager that also
-#      requires holding, whereas splitting would hide a real outage behind two short runs.
-#   => If the 30s gaps were successes, the true longest 08-20 run is 14, not 22. Both are far
-#      above the trip, so the verdict does not turn on it -- but the NUMBER does, and anyone
-#      quoting "22 consecutive" should know it has that assumption inside it.
-# ⇒ FOLLOW-UP (OMS change, not this file): emit a periodic `[BROKER-SYNC-OK] acct=…` census so
-#   a run boundary is a fact instead of an inference. Same discipline as the seed-gap census.
+#      the SAFE direction here: merging is a false POSITIVE risk on a pager that also requires
+#      holding, whereas splitting would hide a real outage behind two short runs.
+#   => If the 30s gaps were successes, the true longest 08-20 run is 14, not 22. Both clear the
+#      trip so the verdict does not turn on it -- but the NUMBER does, and anyone quoting
+#      "22 consecutive" should know that assumption is inside it.
+#
+# ✅ FIXED AT THE SOURCE. The OMS now stamps `consecutive=N` on every `[BROKER-SYNC-UNREADABLE]`
+# line and emits `[BROKER-SYNC-OK]` on recovery, so a run boundary is a FACT. This script
+# PREFERS that field wherever it is present and falls back to the gap inference only for tape
+# written before the change -- and it PRINTS which of the two it used, because a run length
+# that was read and one that was inferred are not the same kind of number.
+# ⛔ That deploys with the OMS, not with this file: until then, live tape is still inferred.
 # ══════════════════════════════════════════════════════════════════════════════════════════
 set -u
 
@@ -86,6 +90,18 @@ holding_at() {  # holding_at <account> <iso-instant|now>  -> integer count, or "
 }
 
 # ── the tape: same reading discipline as ops/health/evidence.sh ────────────────────────────
+# ⛔⭐⭐ PREFER THE FACT OVER THE INFERENCE. Once the OMS change lands, every
+# `[BROKER-SYNC-UNREADABLE]` line carries `consecutive=N` and a recovery emits
+# `[BROKER-SYNC-OK]`. Where `consecutive=` is present the run length is READ, not derived from
+# gaps, and the 30s-gap ambiguity below simply does not arise. Old tape has no such field, so
+# the gap inference stays as the fallback — and which one was used is PRINTED, because a run
+# length that was inferred and one that was read are not the same kind of number.
+# ⛔ `consecutive=-1` is the OMS's out-of-band sentinel for "the counter itself failed". It is
+# not a run length and must never be compared against the trip.
+have_consecutive() {  # -> 0 if the tape carries the stamped field
+  printf '%s\n' "$1" | grep -q 'consecutive=[0-9]'
+}
+
 build_tape() {  # -> stdout: "<epoch> <acct> <iso>"
   local src
   if [ -n "${Q5_TAPE:-}" ]; then src="cat ${Q5_TAPE}"; else
@@ -141,7 +157,13 @@ run_check() {
   echo "### Q5 broker-blindness check  (cadence=${iv}s from ${ENVFILE}; run-gap<=${gapmax}s;"
   echo "    trip: >=${minrun} failures AND >=${minspan}s blind AND holding on that account)"
 
-  local tape runs
+  local tape runs raw_lines method
+  # the raw matching lines, so `consecutive=` can be detected before the tape is reduced
+  if [ -n "${Q5_TAPE:-}" ]; then raw_lines=$(grep -F -- "$MARKER" "${Q5_TAPE}" 2>/dev/null)
+  else raw_lines=$(sudo -n zcat -f -- "${LOGDIR}"/oms.log "${LOGDIR}"/oms.log-* 2>/dev/null | grep -F -- "$MARKER"); fi
+  if have_consecutive "$raw_lines"; then method="READ from consecutive= (fact)"; else
+    method="INFERRED from gaps <= ${gapmax}s (no consecutive= on this tape; a 30s gap at ${iv}s cadence is a success OR a slow cycle and cannot be told apart)"; fi
+  echo "    run length: ${method}"
   tape=$(build_tape)
   if [ -z "$tape" ]; then
     # ⛔ Distinguish "no outage" from "could not look". A pager that cannot read its own tape
@@ -248,6 +270,21 @@ selftest() {
   out=$(Q5_STATE="$st" Q5_CURL=/bin/false bash "$0" --dry-run --at 2026-08-20T15:04:17 2>&1)
   echo "$out" | grep -q 'would page' && bad "re-paged an already-seen run" || ok "no repeat page"
   rm -f "$st"
+
+  echo "T8 * the run length says whether it was READ or INFERRED"
+  local ftape out8
+  # old tape: no consecutive= field -> must SAY it inferred, and say why
+  out8=$(bash "$0" --dry-run 2>&1)
+  echo "$out8" | grep -q 'INFERRED from gaps' && ok "old tape reports INFERRED, with the reason"                                               || bad "did not declare the inference: $out8"
+  # new tape: consecutive= present -> must SAY it read the fact
+  ftape=$(mktemp)
+  for i in 0 1 2 3 4 5 6 7; do
+    date -u -d "2026-08-21 12:10:00 UTC + $(( i * iv )) seconds"       "+%Y-%m-%d %H:%M:%S,000 WARNING [oms-risk] ${MARKER} acct=live:orb consecutive=$(( i + 1 )) — positions read FAILED (synthetic)" >> "$ftape"
+  done
+  out8=$(Q5_TAPE="$ftape" Q5_STATE=$(mktemp) Q5_CURL=/bin/false bash "$0" --dry-run --at 2026-08-21T12:12:00 2>&1)
+  echo "$out8" | grep -q 'READ from consecutive' && ok "stamped tape reports READ (fact)"                                                  || bad "did not prefer the fact: $out8"
+  echo "$out8" | grep -q 'would page' && ok "and still trips on the stamped tape" || bad "stamped tape did not trip"
+  rm -f "$ftape"
 
   echo "T7 * every outbound call goes through the CURL seam"
   # ⛔ THE GUARD MUST NOT MATCH ITSELF. This is the FOURTH self-matching guard of the day --
