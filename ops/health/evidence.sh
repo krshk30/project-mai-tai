@@ -151,7 +151,7 @@ select_lines() {  # select_lines <infile> <marker> <pattern> <outfile>
 
 # ══════════════════════════════════════════════════════════════════════════════════════════
 CMD="${1:-}"; shift || true
-SERVICE=""; MARKER=""; PATTERN=""; SINCE="all"; OUT=""; UNCHECKED=0
+SERVICE=""; MARKER=""; PATTERN=""; SINCE="all"; OUT=""; UNCHECKED=0; DENOM=""; MINHITS=1
 while [ $# -gt 0 ]; do
   case "$1" in
     --service) SERVICE="${2:-}"; shift 2 ;;
@@ -159,6 +159,8 @@ while [ $# -gt 0 ]; do
     --pattern) PATTERN="${2:-}"; shift 2 ;;
     --since)   SINCE="${2:-}";   shift 2 ;;
     --out)     OUT="${2:-}";     shift 2 ;;
+    --denominator) DENOM="${2:-}"; shift 2 ;;
+    --min)         MINHITS="${2:-1}"; shift 2 ;;
     --unchecked-marker) UNCHECKED=1; shift ;;
     *) die_void "unknown argument '$1'" ;;
   esac
@@ -167,6 +169,66 @@ done
 mkdir -p "$OUTDIR" 2>/dev/null || true
 
 case "$CMD" in
+  acceptance)
+    # ⛔⭐⭐ B28 — A FEATURE THAT NEVER PRODUCED ITS SUCCESS MARKER DID NOT SHIP.
+    #
+    # Two features were BORN BROKEN on consecutive days and neither was caught for a week:
+    #   #688 (2026-08-14) the Webull resting mirror — 720 orders, 0 fills.
+    #   #689 (2026-08-13) the protective attach   — succeeded at the venue every time and
+    #                     crashed building its own report, so `[WEBULL-PROTECT-ATTACHED]`
+    #                     was structurally unreachable and read 0 for its entire life.
+    #
+    # ⛔ NEITHER DEGRADED. There was no working period to compare against, so every counter
+    # read exactly as it always had. **The absence of a CHANGE is not a signal** — which is
+    # why "tests pass" and "deployed" both said yes while the feature did nothing.
+    #
+    # ⇒ The check is not "did it error" but "did it produce the thing it exists to produce,
+    #   in production, against a real denominator". Both would have failed this on day one.
+    #
+    # Usage:
+    #   evidence.sh acceptance --service <svc> --marker '<success marker>' \
+    #       --denominator '<opportunity marker>' [--min N] [--since boot|all|ISO]
+    #
+    # VERDICTS — three, never two:
+    #   PASS       success marker seen >= --min times.
+    #   FAIL       opportunities occurred and the success marker NEVER appeared. The feature
+    #              did not ship. This is the #688/#689 case.
+    #   UNMEASURED opportunities = 0. Nothing could have succeeded, so nothing is proven.
+    #              ⛔ NOT a pass. A quiet window must never retire an acceptance check.
+    SERVICE=$(resolve_service "$SERVICE") || exit 2
+    [ -n "$DENOM" ] || die_void "acceptance needs --denominator (the opportunity marker)"
+    if [ "$UNCHECKED" -eq 0 ]; then
+      verify_marker "$MARKER" || exit 2
+      verify_marker "$DENOM"  || exit 2
+    fi
+    CUT=$(resolve_since "$SERVICE" "$SINCE") || exit 2
+    S="$OUTDIR/$SERVICE.stream"; build_stream "$SERVICE" "$S"
+    TOTAL=$(assert_readable "$SERVICE" "$S") || exit 2
+    W="$OUTDIR/$SERVICE.window";  apply_since "$S" "$CUT" "$W"
+    select_lines "$W" "$MARKER" "" "$OUTDIR/acc.hit"
+    select_lines "$W" "$DENOM"  "" "$OUTDIR/acc.opp"
+    HITS=$(awk 'END{print NR}' "$OUTDIR/acc.hit" 2>/dev/null)
+    OPPS=$(awk 'END{print NR}' "$OUTDIR/acc.opp" 2>/dev/null)
+    echo "### ACCEPTANCE  marker='$MARKER'  denominator='$DENOM'"
+    echo "    successes=${HITS:-0}  opportunities=${OPPS:-0}  min=${MINHITS}"
+    echo "    window: since='${CUT:-ALL RETAINED}'  (stream ${TOTAL} lines, service ${SERVICE})"
+    if [ "${OPPS:-0}" -eq 0 ] 2>/dev/null; then
+      echo "    => UNMEASURED. No opportunity occurred, so nothing could have succeeded."
+      echo "       ⛔ This is NOT a pass. Re-run over a window that contains the feature's input."
+      exit 3
+    fi
+    if [ "${HITS:-0}" -ge "${MINHITS}" ] 2>/dev/null; then
+      echo "    => PASS. The feature produced its success marker in production."
+      exit 0
+    fi
+    echo "    => ⛔⛔ FAIL. ${OPPS} opportunit(y|ies) occurred and the success marker appeared"
+    echo "       ${HITS} time(s). On this evidence the feature DID NOT SHIP — it is not"
+    echo "       degraded, it has never worked. Check that the marker is REACHABLE before"
+    echo "       concluding the feature is merely idle: #689's line sat after a call that"
+    echo "       raised on the success path, so no amount of traffic could ever reach it."
+    exit 1
+    ;;
+
   verify)
     verify_marker "$MARKER" && echo "OK: '$MARKER' is present in $REPO_DIR/src"
     ;;
@@ -277,6 +339,6 @@ case "$CMD" in
     ;;
 
   *)
-    die_void "unknown command '${CMD:-<none>}' (count|lines|markers|verify|selftest)"
+    die_void "unknown command '${CMD:-<none>}' (count|lines|markers|verify|acceptance|selftest)"
     ;;
 esac
