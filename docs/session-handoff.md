@@ -12,129 +12,139 @@
 
 ---
 
-# 🚨 TOMORROW MORNING: ONE TEST, AND FOUR SIGNALS THAT DO NOT EXIST YET
+# 🚨 MONDAY: THE DEPLOY DID NOT HAPPEN, AND TWO GRADES REVERSED
 
-**1. The 04:00 roll is the FIRST REAL TEST of #743.** Tonight's fail-open count is **0 since boot
-against 24 in the pre-restart process** — a good control, but only ~2 minutes of runtime with **no
-seeding**, and the fail-opens happen *during* seeding. **Consistent with working; not proof.**
-Watch `[V2-DB-SEED-GAP]` and the census through **04:00–11:00 ET**.
+**1. ⛔ NOTHING DEPLOYED FRIDAY.** Two "deploy done" reports, **no workflow run either time**, box
+unchanged across three readings 80 minutes apart. `main` is **8 commits ahead** of the box.
+⇒ **Test the input-rejection hypothesis first:** a `workflow_dispatch` with a missing required
+input is rejected outright and leaves **no run at all** — which matches the evidence exactly.
+⇒ Monday post-close, **with the Actions page open. Confirm the run appears before reporting it.**
 
-**2. ⛔ SIGNALS 1–4 DO NOT EXIST YET AND MUST NOT BE READ AS PASSES.** The mirror flag went live at
-**16:16 ET, after the entry window shut**. Nothing has had the opportunity to reject, fill, or
-duplicate. Friday's session is the first population. **A quiet Friday is a NON-RESULT.**
+**2. ⛔⛔ `Deploy Main` IS A HAZARD — DO NOT USE IT (B30).** Its 5 runs (all June, all `failure`)
+**deployed the code first** — pip installed, alembic ran — then failed a health gate. A failed
+`Deploy Main` is **not a no-op**: it changes the box and reports failure, so a reader retries and
+deploys twice believing they deployed zero times.
+⇒ **The mechanism is `Deploy Service`, once per service.** That is what ran on 08-20 (20:14:16 oms,
+20:16:26 v2). It was never written down, which is how Friday happened.
+
+**3. ⛔ #743 IS NOT PROVEN. Signal 6 FAILED.** See the grade below.
 
 ---
 
 ## ⚡ FIRST SCREEN
 
-**2026-08-20 EOD.** Fleet **7/7 active**, 0 failed. Account **FLAT**, 0 open managed rows.
-**Box HEAD `2a43b29`** (was `f18132e7`). Deploy ran 16:13→16:19 ET; every gate passed.
+**2026-08-21 EOD.** Fleet **7/7 running**, account **FLAT** (0 open of 749 · 0 non-zero of 289
+`account_positions` · 0 working orders). Bar stream continuous, **no gap**.
+**Box HEAD `2a43b29`** — unchanged since 08-20. Entry window closed 16:00 ET.
 
 | service | process start (UTC) | running pulled code? |
 |---|---|---|
-| **oms** | 08-20 20:14:49 | ✅ YES — #735/#736/#737 (from disk) + **Q1 #746** |
-| **strategy** | 08-20 20:14:49 | ✅ YES — restarted BY the OMS deploy (see below) |
-| **schwab-1m-v2** | 08-20 20:16:46 | ✅ YES — #743 + B19/B20 #747 + the flag |
-| market-data · control · reconciler · market-capture | 07-27 / 07-14 / 08-14 / 07-08 | ⛔ **NO — on disk, not running** |
+| oms · strategy | 08-20 20:14:49 | ✅ (08-20's pull) |
+| schwab-1m-v2 | 08-20 20:16:46 | ✅ (08-20's pull) |
+| market-data · control · reconciler · market-capture | 07-27 / 07-14 / 08-14 / 07-08 | ⛔ on disk, not running |
 
-**Files written `2026-08-20 20:14:28 UTC`.** ⛔ **`src diff = 0` IS NOT EVIDENCE** — this table is.
-
-**The two opt-ins, verified FROM THE SINK, not from the commands that set them:**
-- flag @ `/proc/845419/environ` → **`…WEBULL_RESTING_MIRROR_ENABLED=true`**
-- `event_source` in `information_schema` → **1 row**; alembic head **`20260820_0015`**
-
-> ### ⛔⭐⭐ THE OMS DEPLOY IS NOT OMS-ONLY
-> `deploy_service.sh` does **stop strategy → restart oms → start strategy**. The strategy service
-> restarts every time the OMS does, and picks up whatever is on disk. Use `hold_strategy: true` to
-> prevent it. Any per-service expectation table that says "strategy: expect NO" is wrong.
+⛔ **`src diff = 0` IS NOT EVIDENCE — this table is.** Friday's non-deploy would have passed a
+health-only check cleanly: *7/7 running, flat, flag true, `event_source` present, alembic at head —
+**all of that is true of the old code.*** That sentence is the argument for the pre/post table.
 
 ---
 
-# 📋 THE BOARD
+# 📋 THE SIX-SIGNAL GRADE — FINAL, against `2a43b29`
 
-## 🗓️ DATED — a trigger nobody wrote down never fires
+Graded after the **16:00 ET** entry-window close. Today's numbers are the **pre-fix baseline** and
+stay valid whenever the deploy lands.
+
+| # | signal | reading | verdict |
+|---|---|---|---|
+| 1 | mirror legs reaching the venue (§194 replacement) | 152 emitted · **6** became an order · 3 filled · 13 refused | result |
+| 2 | entry fills/day (§186: filled BUYS) | orb 7 · schwab 5 | **thin** |
+| 3 | `[WEBULL-BARE-FILL]` | **8 started bare, 3 STAYED bare**, 5 protected in seconds | pass (<20) |
+| 4 | duplicate legs/segment (§185 pinned) | 0 of **2** segments | ⛔ **NON-RESULT** |
+| 5 | seed-gap census denominator | `truncations=5 of 13` | ✅ PASS |
+| 6 | seed-gap **fail-open** | **2** | ⛔ **FAIL** |
+
+⛔ **Signal 4 stays NON-RESULT.** Control reproduced `119\|19\|22`, so the instrument is sound —
+the denominator is simply 2, and **6 filled fan-out legs carry no segment id at all**. Do not let
+Monday inherit a softened version.
+⛔ **Any `live:orb` P&L for today is incomplete by FIVE exits** (9 buy fills, 4 sell fills).
+
+---
+
+# 🔴 THE THREE FINDINGS THAT MATTER MOST
+
+## 1. ⛔⛔ THE ATTACH HAS BEEN SUCCEEDING ALL ALONG — `0 ATTACHED` IS AN ARTIFACT
+`webull.py:261`, inside `_submit_exit_pair_blocking` (the attach's **success** path), passes
+`price=None`. `ExecutionReport` has **`fill_price`**. The constructor raises *after* a successful
+placement; the caller logs it as `Webull order rejected: TypeError(...)`.
+**Webull returned a `combo_order_id` every time.** Four on 08-21 (SUGP, JUNS, USDE, EXYN).
+⇒ Retries 2–5 then get `ORDER_NOT_SUPPORT_REVERSE_OPTION` — **fighting our own live pair.**
+⇒ `THE POSITION IS HELD WITHOUT PROTECTION` is very likely FALSE.
+⛔ **ONE CHANGE, TWO HALVES:** the kwarg **and** storing `_webull_protect_base[...]` — the success
+branch is `if any(...)` over an **empty** list, so the only handle on a broker-created pair is also
+lost. Fixing the kwarg alone leaves a recorded pair we still cannot cancel.
+⛔ **SEQUENCING: grade #739 on today's numbers BEFORE this lands.** It moves signals 1 and 3 and
+every `[WEBULL-PROTECT-*]` count. Nothing graded across that boundary is comparable.
+
+## 2. ⛔ #743 NOT PROVEN — the fail-open returned the same day
+`0` at 12:58 ET, **`2` by the close**; both `psycopg.errors.QueryCanceled: statement timeout` on
+the **boundary** lookup #743 rewrote. Rate cut 24/day → 2/day; the timeout **survives**.
+⇒ Next: *why* — same plan regression under load, a lock, or a different query on that session?
+⛔ A lower refusal count is not a fix.
+
+## 3. ⛔ THE RECONCILER CANNOT SEE THIS CLASS AT ALL (in `docs/architecture.md` now)
+Every check compares the venue against **our own tables**, so an order we never recorded is
+invisible **by construction**. There is no `cancel_all`, no venue-side `list_open_orders`, no
+adapter enumerating broker orders — which protected us Friday, but that is **luck, not design**.
+⛔ `account_positions` + `virtual_positions` + `oms_managed_positions` are **ONE source**: blind,
+derived-from-it, and our bookkeeping. **`fills` is the only independent ledger; the broker SCREEN
+outranks all of them.**
+
+---
+
+## 🗓️ DATED
 | when | what |
 |---|---|
-| **FRI 08-21 am** | **Grade the six signals against `docs/deploy-2026-08-20-window.md` §3**, not against a clean-looking log. ⛔ Fix the collector's `--since` FIRST (below) or it grades the old process too. ⛔ A quiet Friday is a **NON-RESULT**. |
-| **MON 08-24** | **#13** weekend-outage re-check — needs a 2nd weekend in the retained logs. |
-| **MON 08-25, before 16:46 ET** | **SCHWAB RE-AUTH**, `https://project-mai-tai.live/auth/schwab/start`. ⛔ **MANUAL ONLY.** ⛔ **Read the expiry FROM THE STORE on the day — never from memory or from this line.** |
-| **AFTER Q1 IS DEPLOYED *AND PROVEN*** | **§178** — revisit B9 cause 2's release. Ruled **STRICT** (`position_qty == 0 AND fanout_qty == 0`). ⛔ Q1 is now DEPLOYED; it is **not PROVEN** — every pre-migration row is `unknown`, so a count spanning the boundary is not a clean split. |
-| **AFTER #739 IS MERGED, DEPLOYED *AND MEASURED*** | **B9 cause 3 build.** ⛔ **#739 is still `OPEN`** — not merely un-deployed, **unscheduled**. |
+| **MON 08-24** | **SCHWAB RE-AUTH** — `refresh_token_expires_at = 2026-08-25T20:46:01Z` = **Tue 08-25 16:46 ET**, mid-session. ⛔ MANUAL, cannot ride the deploy. ⛔ **TWO FIELDS**: `expires_at` is the short-lived ACCESS token the refresher rotates itself — a ready-made false alarm. Read the store, never memory. |
+| **MON 08-24 post-close** | Deploy, Actions page open. **Grade #739 FIRST** on today's numbers, then OMS (#758, #760, #755), then v2 (#761). |
+| **MON 08-24** | #13 weekend-outage re-check (needs a 2nd weekend retained). |
 
-## ⛔ STANDING
-- **`preflight_oms_restart.sh` before EVERY OMS restart.** It does not gate itself. Ran clean tonight.
-  ⛔ The repo copy at `ops/health/` is **MISSING** — the box copy is the only one, so the md5 check
-  has nothing to compare against.
-- **Both opt-ins are verified from the SINK.** Setting a switch and confirming a switch are
-  different facts.
+## 📌 OPEN PRs — none deployed
+`#755` Q12 audit-write · `#756` preflight fences (**held — only-change window**) · `#758` origin/reason
+· `#759` Q5 pager · `#760` BROKER-SYNC-OK census · `#761` reclaim live-bar + slot_consumed
+· `#762` §205 audit (**decide: merge as tooling or close — do not leave drifting**) · `#763` B28+B29.
 
----
-
-## ⛔ FLAGS ON EVERYTHING — read before quoting a number
-
-1. **Reject counts remain contaminated for any window spanning tonight.** `event_source` populates
-   from 20:14 UTC forward; everything before is `unknown` **by design**.
-2. **Schwab-vs-Webull comparisons are VOID STRUCTURALLY.** Signal 2 puts the two rates **side by
-   side**; it never differences them.
-3. **⭐ First-vs-reclaim keys on `cw_entry_n` (97%), NEVER `cw_arm_bar_ts` (53%).** The missing half
-   is leg-structured, so grouping on the segment id re-weights toward reactive.
-4. **`trade_reasons.py` is enforced NOWHERE** — it bans substring-matching reason strings and has no
-   consumer. `event_source` is what replaces that habit.
-5. **`virtual_positions` has a known FALSE-ZERO** — never read flat from it alone. Tonight's flat was
-   corroborated by `oms_managed_positions` against a real denominator (40 `closed`).
-
----
-
-## 📌 OPEN, NOT ON THE BOARD
-
-- **⛔ #751 (evidence collector) needs a `--since` BEFORE Friday.** It counts signals 3/6/#736 across
-  **all rotations**, so its POST run reported fail-open **30** where the restart-scoped truth is
-  **0**. Left as-is it grades the old process alongside the new one. PR open, unmerged.
-- **⛔ Signal 2's DEFINITION is unresolved.** The sheet's baseline is 6–7/day; the collector's query
-  reads 8–10 — most likely because it counts any filled `limit`/`market` on `live:orb`, which may
-  include **closes**. Not a reason to move the goalposts; a reason to grade with **one stated
-  definition** and to say which.
-- **⛔ Signal 4 has NO PINNED QUERY** — reports **UNMEASURED**, never 0.
-- **⛔ #736's watch is UNEXERCISED** — `[OCO-TARGET-BELOW-FILL]` has never matched anything. Its zero
-  is *consistent with* success and is not *evidence* of it.
-- **⛔⭐⭐ §180 — THE FAN-OUT SLOT ACCOUNTING IS WRONG.** `_fetch_position_maps` is Schwab-scoped; the
-  fan-out leg fills on `live:orb` ⇒ a Webull-only fill moves **neither** `position_qty` nor
-  `position_qty_held`. The `update_position` comment asserts the opposite — true about
-  `SymbolState`, irrelevant, because **the QUERY that feeds it is per-account**. Own item.
-- **P2 replay rebuild** — needs redoing: **P21 changed what the replay reports** (unmodellable
-  trades are now DROPPED and counted, never booked).
-- **The unified gap check** downstream of both feeds — Q11 came back **6 of 43** ⇒ not urgent.
-- **The CAST seed-cap miss is UNEXPLAINED.** The guards read the **state** field, never 0.
-- **Reboot backlog** — 8 kernels + `libc6`, **~18 weeks uptime**; a reboot restarts all 12 services.
-
----
-
-## 🧠 RULES EARNED 2026-08-20
-
-1. **⛔⭐⭐ §179 MERGING IS SCHEDULING.** Merged ⇒ ships on the next deploy of whatever service it
-   touches. B19/B20 and Q1 moved onto tonight by being merged. **The rule only works with no
-   exceptions** — which is why cause 3 was NOT built-and-held-unmerged.
-2. **⛔⭐⭐ §183 VERIFY A FAILURE MODE AT THE CATCH SITE, NEVER AT THE RAISE.** I proved the missed
-   migration *raises*; every one of the six paths swallows it with `except Exception` + log. And it
-   is **not observability — it drops FILLS**: `append_order_event` runs BEFORE
-   `record_fill_if_needed` and `apply_fill_to_positions`. ⭐ Ask where the failing call sits in the
-   **sequence**, and **would this failure disable its own detector?** (It would: the first
-   swallowing path was the Webull mirror — the instrument for tonight's own signals.)
-3. **⛔⭐⭐ A TIMESTAMP FILTER THAT STRING-COMPARES AGAINST MULTI-LINE RECORDS IS NOT A TIME FILTER.**
-   `awk '$0 >= "<ts>"'` passed every traceback line in the whole file, manufacturing "48 tracebacks
-   since boot" (truth: **0**). A case-insensitive grep for `error` manufactured "230 error-ish OMS
-   lines" out of Webull `error_code` payloads (truth: **0 tracebacks**). ⭐ Both tells were the same:
-   **a number that did not reconcile with the tail I could see.**
-4. **⛔⭐ §181a** — a test covering the HELPER but not the WIRING cannot see a dead call site.
-   **§181b** — a stub that already satisfies a fallback never exercises it. Both mutants escaped.
-5. **⛔ §180** — a wrong COMMENT is a wrong reason, and code rests on it.
-6. **⛔⭐ WHEN THE SUCCESS CRITERION IS ZERO, PROVE THE WATCH AGAINST A KNOWN-POSITIVE FIRST.**
-   Signal 1 was a log grep returning 0 while `broker_orders` held the 720 — a broken watch and a
-   passing deploy are the same number.
+## 🧠 RULES EARNED 2026-08-21
+1. **⛔⭐⭐ A MUST-BE-ZERO SIGNAL CANNOT BE GRADED INTRADAY.** Mid-window is *not yet failed*, never
+   *passed*. Signal 6 read 0 at 12:58 and 2 by the close. B28's UNMEASURED verdict is the same
+   insight one step earlier.
+2. **⛔⭐⭐ WHICH SIDE OF THE WIRE WRITES THIS FIELD?** `webull_broker_place_time` is written by OUR
+   status poll — its absence is our blindness, not the venue's silence. **The name is not the
+   provenance; grep the write site.** Three wrong conclusions off that one field.
+3. **⛔⭐⭐ AN ABSENCE IS ONLY AN ABSENCE WITHIN THE POPULATION YOU QUERIED.** Name the population on
+   the line. Three wrong absences in one day.
+4. **⛔⭐⭐ TWO METRICS THAT SHOULD DIFFER AND NEVER DO ARE THE SAME NUMBER.** A greedy regex matched
+   a sibling field for 4 hours. ⛔ Renaming for clarity? Check the new name is not a **substring**
+   of a sibling.
+5. **⛔⭐ FLAT NOW IS A SNAPSHOT, NOT A STATE.** Generalises to every pre-flight gate — re-confirm,
+   never carry forward. (Proved itself: two working orders appeared 37 min after a clean reading.)
+6. **⛔⭐ A WEEKDAY IS A COMPUTATION, NOT A LABEL.** Derive it. Both parties asserted one wrongly,
+   in opposite directions, in a single exchange.
+7. **⛔ THE ARITHMETIC WAS RIGHT; THE GROUPING HID THE EVENT.** A 26-day total was 96% one 3-hour
+   storm. ⛔ And a hypothesis must be tested in the **unit the mechanism uses** — churn→429 looked
+   refuted per-DAY and holds per-MINUTE.
+8. **⛔ A FIX THAT LIVES IN ONE SCRIPT IS NOT A FIX** (B29). The mutation applied-check existed in
+   one harness; the next one-off did not have it, so the fix had never been made.
+9. **⛔ A GUARD THAT NAMES WHAT IT HUNTS MUST EXCLUDE ITSELF — build it in, don't remember it.**
+   Five self-matches in one session; fixed structurally (scan only above the selftest label).
+10. **⛔ THE EXIT STATUS MUST TRAVEL IN THE OUTPUT.** `$?` after a pipe is the pipe's. Written down
+    twice, broken twice in one day — so it is a tool now, not a rule. It found a real defect
+    (every successful `count` had been exiting 1) on its first run.
 
 ## 🧠 MEMORY POINTERS
 [[project-mai-tai-context]] · [[project-mai-tai-fleet-roster]] · [[project-mai-tai-architecture]] ·
-[[project_mai_tai_db_seed_by_count_injects_stale_bars]] · [[project_mai_tai_armed_is_not_a_position]] ·
-[[project_mai_tai_broker_order_events_conflates_client_aborts]] · [[feedback_verify_before_concluding]] ·
-[[feedback_truncated_output_is_a_wrong_answer]] · [[feedback_mutate_the_code_pin_the_threshold]] ·
-[[project_mai_tai_webull_mirror_born_broken]] · [[project_mai_tai_restart_bar_gap_checklist]]
+[[project_mai_tai_reprotect_chain_uncovered_window]] (⛔ description SUPERSEDED — attach works) ·
+[[project_mai_tai_db_seed_by_count_injects_stale_bars]] (⛔ #743 NOT proven) ·
+[[project_mai_tai_false_flat_naked_position]] (the one-source chain) ·
+[[feedback_authoritative_for_a_is_not_for_b]] (which side of the wire) ·
+[[feedback_verify_before_concluding]] (must-be-zero) ·
+[[feedback_an_absence_is_evidence_only_against_a_known_denominator]] (name the population)

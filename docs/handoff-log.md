@@ -2235,3 +2235,57 @@ Five mutants killed on P21, four on Q1, six on B19/B20 — **two escaped the fir
 test's fault: a fixture that already satisfied the fallback it was meant to exercise (Q1 M2), and a
 suite that covered the helper but never the call site (B19 M6, which would have made the whole
 feature a permanent no-op).
+
+---
+
+# 2026-08-21 (Fri) — two grades reversed, a feature found working, and no deploy
+
+## The day in one line
+Six PRs opened, **nothing deployed** — two "deploy done" reports with no workflow run either time —
+and the two most valuable findings both came from refusing to accept a counter at face value.
+
+## Shipped to main
+`#751` deploy-evidence collector · `#754` §185/§186 signal definitions · `#739` §82 fan-out
+once-per-flip · `#757` §190 `evidence.sh`.
+**Open, none deployed:** #755 #756(held) #758 #759 #760 #761 #762 #763.
+
+## ⛔ THE DEPLOY NEVER RAN
+Box unchanged across three readings 80 min apart; `gh` shows **no deploy run today**. `Deploy Main`
+last ran 06-19 (5 runs, all failure). The real mechanism is **`Deploy Service`, once per service** —
+never written down, which is how this happened. Hypothesis to test Monday: a `workflow_dispatch`
+with a missing required input is rejected outright and leaves no run.
+⛔ **`Deploy Main` deploys the code and THEN fails a health gate** — a failed run is not a no-op.
+
+## ⛔⛔ THE ATTACH HAS BEEN WORKING SINCE #689 SHIPPED
+`price=None` vs `fill_price` in `_submit_exit_pair_blocking` crashes the report **after** Webull
+returns a `combo_order_id`. So success was logged as `Webull order rejected: TypeError(...)`,
+`[WEBULL-PROTECT-ATTACHED]` was structurally unreachable, and "0-for-EVER" was an artifact of the
+crash. Four pairs were created at the venue on 08-21 alone; retries 2–5 then hit
+`ORDER_NOT_SUPPORT_REVERSE_OPTION` **fighting our own live pair**.
+⇒ It also explains signal 3's split exactly: **no attach ⇒ the ladder closed it; attach placed ⇒
+no sell fill of ours** (broker-created OCO children never land in `broker_orders`).
+
+## ⛔ #743 REVERSED: PROVEN → NOT PROVEN, IN ONE AFTERNOON
+Graded PASS at 12:58 on `lookup failed = 0`; **2 by the 16:00 close**, both
+`QueryCanceled: statement timeout` on the boundary lookup #743 rewrote. 24/day → 2/day is a big
+improvement and not a fix.
+
+## Q17 / Q20 — measured, then de-ranked
+893 no-position exit refusals over 26 days, median **58.6s** post-fill, **nothing stranded** across
+three sources ⇒ delay, not can't-exit. The reservation hypothesis (Q20) was **refuted**: 764 of 893
+predate #689, so the attach cannot have reserved anything, and the 08-21 correlation was the
+confounder *"those were the only symbols trading."*
+⛔ And `ORDER_NOT_SUPPORT_REVERSE_OPTION` × 10,748 turned out to be **one 3-hour YJ storm (96%)** —
+a 26-day total that hid a single event.
+
+## What went wrong in my own work
+- **Three instrument defects, all self-inflicted, all found only by an independent source:**
+  `|| echo 0` swallowing *Permission denied*; a guard matching its own line (×5); a greedy regex
+  reading a sibling field for four hours. Every one: *the tool agreed with itself.*
+- **Graded a must-be-zero signal intraday** and called it PASS.
+- **Reported a hypothesis refuted after testing it in the wrong unit** (per-day, not per-minute).
+- **Withdrew a correct weekday flag** in favour of an incorrect one, without computing either.
+- **Called three position sources independent** when they are one source repeated — and used that
+  false independence to downweight `fills`, the only ledger that disagreed.
+- **A mutation run reported a false survivor** because the anchor had been refactored away — the
+  exact defect fixed that morning, in a new script that did not reuse the fix (⇒ B29).
