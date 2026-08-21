@@ -11,3 +11,9 @@
 *.yaml text eol=lf
 *.json text eol=lf
 *.csv text eol=lf
+
+# Force a TEXTUAL diff for markdown even when a stray control byte is present.
+# `text eol=lf` above governs line endings, not binary detection: git still calls a
+# file binary if it contains a NUL, and one literal NUL inside a `tr '\0' '\n'` example
+# was enough to render docs/deploy-2026-08-20-window.md unreviewable in its own PR.
+*.md diff
