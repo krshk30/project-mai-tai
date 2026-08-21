@@ -48,6 +48,40 @@ OUTDIR=${MAI_TAI_EVIDENCE_OUT:-/tmp/evidence}
 
 die_void() { echo "VOID: $*" >&2; echo "VOID"; exit 2; }
 
+# ── ⛔⭐⭐ THE STATUS TRAVELS IN THE OUTPUT, BECAUSE A PIPE EATS THE OTHER KIND ──────────
+# Written down twice, broken twice in one day — the second time while verifying the tool
+# built to stop truncation traps:
+#   `preflight_v2_restart.sh ... | tail -30; echo "EXIT=$?"`  -> printed EXIT=0 on a gate
+#      whose own verdict line read `===> NO-GO`. `$?` was TAIL's status.
+#   `evidence.sh acceptance ... | tail -3; echo "exit=$?"`    -> printed exit=0 on a VOID.
+# ⇒ That is not a habit problem. `$?` after a pipeline is the LAST command's status, and no
+#   amount of remembering fixes a shape that is wrong by default.
+#
+# So the status stops being something a caller has to collect. It is printed as the FINAL
+# stdout line on every exit path — including `die_void` and any unexpected error — which
+# means `| tail -N` still shows it, because tail keeps the END.
+# ⛔ Do not "tidy" this into an echo at the bottom of main(): an EXIT trap is what makes it
+# cover the early-exit paths, and those are exactly the ones that were being misread.
+_emit_status() {
+  local rc=$?
+  if [ "$rc" -eq 0 ]; then printf 'EXIT_STATUS=0\n'
+  else printf 'EXIT_STATUS=%d  <<< NON-ZERO (0=ok 1=FAIL 2=VOID 3=UNMEASURED)\n' "$rc"; fi
+  return "$rc"
+}
+trap _emit_status EXIT
+
+# run_checked — for anything THIS script shells out to. Takes the status FIRST, emits the
+# output second, so the two can never be transposed by a pipe in between.
+# ⛔ Never `run_checked cmd | something` expecting `$?` to be cmd's: use the return value,
+#    or read the EXIT_STATUS line. That is the whole point.
+run_checked() {
+  local out rc
+  out=$("$@" 2>&1); rc=$?
+  printf '%s\n' "$out"
+  return "$rc"
+}
+
+
 # ── 1. NEVER TRUNCATE ─────────────────────────────────────────────────────────────────────
 # There is deliberately no `head`, no `tail` and no `cut` anywhere below. Full output goes to a
 # file and the caller is told the path. A truncated read is a wrong answer wearing a confident
@@ -259,7 +293,12 @@ case "$CMD" in
       echo "count=$N marker='$MARKER' pattern='${PATTERN:-none}' service=$SERVICE"
       echo "  window_lines=$WN of stream_lines=$TOTAL  since='${CUT:-ALL RETAINED}'"
       echo "  matches_file=$M (complete, untruncated)"
-      [ "${N:-0}" -eq 0 ] && echo "  NOTE: 0 matches, and readability IS proven ($TOTAL lines read) => a real zero."
+      # ⛔ `cond && echo` as the LAST statement makes the branch exit 1 whenever cond is
+      # false. Found by the EXIT_STATUS trap on its first run: every successful non-zero
+      # count was exiting 1. Use an explicit if, and end the branch deliberately.
+      if [ "${N:-0}" -eq 0 ]; then
+        echo "  NOTE: 0 matches, and readability IS proven ($TOTAL lines read) => a real zero."
+      fi
     else
       echo "wrote $N complete lines to $M  (window_lines=$WN of stream_lines=$TOTAL, since='${CUT:-ALL RETAINED}')"
     fi
@@ -332,6 +371,27 @@ case "$CMD" in
     f=$(echo "$r" | grep -oE 'matches_file=[^ ]+' | cut -d= -f2)
     fn=$(awk 'END{print NR}' "$f" 2>/dev/null)
     [ "${n:-0}" -eq "${fn:--1}" ] && ok "count=$n equals file lines=$fn" || bad "count=$n but file has $fn"
+
+    echo "T11 * THE PIPE TRAP: a non-zero status must survive being piped"
+    # ⛔ The exact shape that misread a live-money gate twice: `cmd | tail -N; echo $?`
+    # reports TAIL's status, which is always 0. The status is now in the OUTPUT, so a
+    # reader that pipes still sees it — which is the only fix that does not rely on memory.
+    piped=$(bash "$SELF" count --service oms --marker '[NO-SUCH-MARKER-XYZ]' 2>&1 | tail -3)  # TRUNCATION_GUARD
+    rc_of_tail=$?
+    [ "$rc_of_tail" -eq 0 ] && ok "confirms the trap: \$? after the pipe is 0, as always" \
+                            || bad "expected the pipe to mask the status; harness assumption wrong"
+    echo "$piped" | grep -q 'EXIT_STATUS=2' \
+      && ok "but EXIT_STATUS=2 survived the pipe, in the output" \
+      || bad "the status did NOT survive the pipe: $piped"
+    echo "$piped" | grep -q 'NON-ZERO' && ok "and it is labelled NON-ZERO" || bad "not labelled"
+
+    echo "T12 * a SUCCESSFUL run still ends with EXIT_STATUS=0"
+    ok0=$(bash "$SELF" count --service schwab-1m-v2 --marker '[V2-DB-SEED-GAP]' 2>&1 | tail -1)  # TRUNCATION_GUARD
+    [ "$ok0" = "EXIT_STATUS=0" ] && ok "clean run ends EXIT_STATUS=0" || bad "got: $ok0"
+
+    echo "T13 * run_checked returns the command's status, not the printf's"
+    run_checked false > /dev/null 2>&1 && bad "run_checked false returned success" || ok "run_checked false -> non-zero"
+    run_checked true  > /dev/null 2>&1 && ok "run_checked true  -> zero" || bad "run_checked true returned failure"
 
     echo
     echo "PASS=$P FAIL=$F"
