@@ -4330,3 +4330,127 @@ async def test_sync_broker_state_stays_QUIET_when_nothing_was_cleared() -> None:
     await service.sync_broker_state()
 
     assert not [m for m in handler.messages if "[VIRTUAL-CLEAR]" in m]
+
+
+# ═══════════════════════════════════════════════════════════════════════════════════════
+# Q5 — [BROKER-SYNC-OK] / consecutive=: A RUN BOUNDARY MUST BE A FACT, NOT AN INFERENCE
+#
+# ★ A successful positions read used to log NOTHING, so a run of failures had no boundary on
+#   the tape. Any watcher had to infer one from the GAP between failure lines measured against
+#   the sync cadence — and on the 2026-08-20 outage that inference was genuinely ambiguous:
+#   two gaps were 30s where the rest were 15s, and at 15s cadence a 30s gap is EITHER one
+#   successful read OR one slow cycle. That single ambiguity is the whole difference between
+#   calling that outage "22 consecutive" and calling it "14".
+# ═══════════════════════════════════════════════════════════════════════════════════════
+
+
+def _sync_service() -> OmsRiskService:
+    return OmsRiskService(
+        settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
+        redis_client=FakeRedis(),
+        session_factory=build_test_session_factory(),
+    )
+
+
+def _capture(service: OmsRiskService) -> tuple[list[logging.LogRecord], object]:
+    """Attach a handler to the service logger. ⛔ Not caplog — the oms-risk logger does not
+    propagate to the root, so caplog sees nothing and the test would fail on a working build."""
+    records: list[logging.LogRecord] = []
+
+    class _H(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            records.append(record)
+
+    h = _H(level=logging.INFO)
+    service.logger.addHandler(h)
+    service.logger.setLevel(logging.INFO)
+    return records, h
+
+
+def test_the_run_counter_increments_and_a_success_RESETS_it() -> None:
+    """★ The property Q5 needs. Without the reset, `consecutive=` would climb forever and be
+    worse than the gap inference it replaces."""
+    service = _sync_service()
+    acct = "live:schwab_1m_v2"
+
+    # three failures
+    for expected in (1, 2, 3):
+        n = service._broker_read_consecutive_failures.get(acct, 0) + 1
+        service._broker_read_consecutive_failures[acct] = n
+        assert n == expected
+
+    # a success resets it — this is the event that was previously invisible
+    service._broker_read_consecutive_failures[acct] = 0
+    assert service._broker_read_consecutive_failures[acct] == 0
+
+    # and the next failure starts a NEW run at 1, not at 4
+    n = service._broker_read_consecutive_failures.get(acct, 0) + 1
+    service._broker_read_consecutive_failures[acct] = n
+    assert n == 1, "a new run must start at 1; otherwise two outages merge into one"
+
+
+def test_the_run_counter_is_PER_ACCOUNT() -> None:
+    """★ Webull and Schwab fail independently and for different reasons. A shared counter would
+    let one venue's outage inflate the other's run length — and the pager acts per account."""
+    service = _sync_service()
+    service._broker_read_consecutive_failures["live:orb"] = 5
+    service._broker_read_consecutive_failures["live:schwab_1m_v2"] = 0
+    assert service._broker_read_consecutive_failures["live:orb"] == 5
+    assert service._broker_read_consecutive_failures["live:schwab_1m_v2"] == 0
+
+
+def test_broker_read_census_emits_at_zero_failures_with_its_denominator() -> None:
+    """★ `failed=0` is the healthy state, which is exactly the shape where a broken watch and a
+    working system print the same number. So the census speaks at zero and carries `ok`."""
+    service = _sync_service()
+    service._broker_read_ok = {"live:schwab_1m_v2": 40}
+    service._broker_read_failed = {}
+    records, h = _capture(service)
+    try:
+        service._maybe_emit_broker_read_census(interval_seconds=0.0)
+    finally:
+        service.logger.removeHandler(h)
+
+    line = next((r.getMessage() for r in records if "BROKER-SYNC-CENSUS" in r.getMessage()), None)
+    assert line is not None, "the census stayed silent on a clean window"
+    assert "ok=40" in line and "failed=0" in line
+    assert "consecutive_now=0" in line
+
+
+def test_broker_read_census_says_UNMEASURED_when_no_account_was_read() -> None:
+    """★ ok=0 failed=0 is NOT a clean window — it means the sync did not run. The two must
+    never render the same, which is the entire reason this line carries a denominator."""
+    service = _sync_service()
+    service._broker_read_ok = {}
+    service._broker_read_failed = {}
+    records, h = _capture(service)
+    try:
+        service._maybe_emit_broker_read_census(interval_seconds=0.0)
+    finally:
+        service.logger.removeHandler(h)
+
+    line = next((r.getMessage() for r in records if "BROKER-SYNC-CENSUS" in r.getMessage()), None)
+    assert line is not None
+    assert "UNMEASURED" in line
+
+
+def test_the_failure_line_is_WIRED_to_carry_consecutive_and_success_resets() -> None:
+    """★ §181a — a test covering the state but not the WIRING cannot see a dead call site.
+    Both halves live inside `sync_broker_positions`, so both are pinned against the source."""
+    import inspect
+
+    src = inspect.getsource(OmsRiskService.sync_broker_positions)
+    assert "[BROKER-SYNC-UNREADABLE] acct=%s consecutive=%d" in src, (
+        "the failure line no longer stamps the run length"
+    )
+    assert "[BROKER-SYNC-OK]" in src, "the run-boundary line is gone"
+    assert "_runs[account_name] = 0" in src, (
+        "a successful read no longer resets the run"
+    )
+    # ⛔ The run must be keyed on THE ACCOUNT. `test_the_run_counter_is_PER_ACCOUNT` above
+    # exercises the dict, not the code path, so a mutant collapsing every account onto one
+    # shared key SURVIVED it — Webull's outage would then inflate Schwab's run length, and the
+    # pager acts per account. Pinned where the keying actually happens.
+    assert "_runs.get(account_name, 0)) + 1" in src, (
+        "the run counter is no longer keyed per account"
+    )

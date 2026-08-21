@@ -477,6 +477,17 @@ class OmsRiskService:
         # caller. That verdict required a separate ad-hoc SQL query; with `submitted` on the line it
         # is readable from the tape alone. Diagnostic only; never gates anything.
         self._p0a_census_submitted: int = 0
+        # ⛔⭐⭐ BROKER-READ RUN STATE (Q5, 2026-08-21). A successful positions read used to log
+        # nothing at all, so a run of failures had no boundary on the tape and any watcher had
+        # to INFER one from the gap between failure lines. Measured on the 08-20 outage that
+        # inference was genuinely ambiguous — two 30s gaps against a 15s cadence, each either a
+        # success or a slow cycle, which is the whole difference between "22 consecutive" and
+        # "14". These three make it a fact: a run counter stamped on the failure line, and the
+        # ok/failed pair that gives the census its denominator.
+        self._broker_read_consecutive_failures: dict[str, int] = {}
+        self._broker_read_ok: dict[str, int] = {}
+        self._broker_read_failed: dict[str, int] = {}
+        self._broker_read_census_last_emit: datetime | None = None
         # (broker_account_name, symbol) -> when the OCO cleared (armed -> not armed). Keeps the
         # software ladder deferred through the RESOLUTION window: an OCO leg filled and closed the
         # position, but the OMS position state lags the broker fill by ~tens of seconds, so a
@@ -4439,6 +4450,7 @@ class OmsRiskService:
         # the reading that distinguishes "nothing qualified" from "the branch never runs". Gating
         # it on having something to report would rebuild the silence it exists to remove.
         self._maybe_emit_p0a_census()
+        self._maybe_emit_broker_read_census()
         # Re-derive the OCO stand-down from the rows this sync just refreshed -- the broker
         # is the source of truth, never in-memory arm state. Safe on the boot path too: a
         # restart starts with an empty set and only stands down once the broker confirms.
@@ -4499,13 +4511,58 @@ class OmsRiskService:
                 raise
             except Exception as exc:  # noqa: BLE001 - a failed read is UNKNOWN, never flat
                 unreadable.append(account_name)
+                # ⛔⭐⭐ `consecutive=` MAKES A RUN A FACT INSTEAD OF AN INFERENCE.
+                # A successful read logs NOTHING, so before this counter existed the only way
+                # to tell "the next cycle also failed" from "one success then failed again"
+                # was the GAP between failure lines measured against the sync cadence. On the
+                # 2026-08-20 outage two gaps were 30s where the rest were 15s, and at 15s
+                # cadence a 30s gap is either one success or one slow cycle — unresolvable
+                # from the tape. That ambiguity is the difference between calling that run 22
+                # and calling it 14. The OMS knows which it was; now it says so.
+                # ⛔ Stamped on the line that ALREADY exists — no new log volume. A per-read
+                # success line would be ~4/min/account and drown its own signal, which is the
+                # `[SCHWAB30-REVISE-STORM]` shape this codebase has been bitten by before.
+                # ⛔⭐ INSTRUMENTATION IS NEVER LOAD-BEARING ON THIS PATH. This block sits inside
+                # the failure handler of a live-money positions sync; if it raised, a broker
+                # outage would become a broken sync. Guarded the same way `_observe_settlement`
+                # is ten lines below, and reached through `__dict__.setdefault` like
+                # `_p0a_census` — a duck-typed or partially-constructed service (several tests
+                # build one without `__init__`) must not be able to break a real sync. Found by
+                # exactly those tests: the first version raised AttributeError in seven of them.
+                # ⛔ `-1` is an OUT-OF-BAND sentinel, never a run length: if the counter itself
+                # failed, the line must not print a number that reads like a count.
+                try:
+                    _runs = self.__dict__.setdefault("_broker_read_consecutive_failures", {})
+                    n = int(_runs.get(account_name, 0)) + 1
+                    _runs[account_name] = n
+                    _failed = self.__dict__.setdefault("_broker_read_failed", {})
+                    _failed[account_name] = int(_failed.get(account_name, 0)) + 1
+                except Exception:  # noqa: BLE001 - a counter must never cost us the sync
+                    n = -1
                 self.logger.warning(
-                    "[BROKER-SYNC-UNREADABLE] acct=%s — positions read FAILED (%s). This account is "
-                    "EXCLUDED from the sync: nothing is zeroed and no virtual position is cleared "
-                    "for it this cycle. An empty list from a failed call is not a flat account.",
-                    account_name, exc,
+                    "[BROKER-SYNC-UNREADABLE] acct=%s consecutive=%d — positions read FAILED (%s). "
+                    "This account is EXCLUDED from the sync: nothing is zeroed and no virtual "
+                    "position is cleared for it this cycle. An empty list from a failed call is "
+                    "not a flat account.",
+                    account_name, n, exc,
                 )
                 continue
+            # ⭐ The read SUCCEEDED. Reset the run — this is the event that was previously
+            # invisible, and its absence is what forced Q5 to infer run boundaries from gaps.
+            try:
+                _runs = self.__dict__.setdefault("_broker_read_consecutive_failures", {})
+                if _runs.get(account_name):
+                    self.logger.info(
+                        "[BROKER-SYNC-OK] acct=%s — positions read RECOVERED after %d consecutive "
+                        "failure(s). This line is the RUN BOUNDARY; a reader no longer has to "
+                        "infer one from the gap between failures.",
+                        account_name, _runs[account_name],
+                    )
+                _runs[account_name] = 0
+                _ok = self.__dict__.setdefault("_broker_read_ok", {})
+                _ok[account_name] = int(_ok.get(account_name, 0)) + 1
+            except Exception:  # noqa: BLE001 - a counter must never cost us the sync
+                pass
             fetched.append((account_id, snapshots))
             # P0.2: read-only settlement probe on the read we ALREADY made (no extra call).
             # Wrapped: a probe must never be able to break broker-sync.
@@ -7859,6 +7916,54 @@ class OmsRiskService:
         if limit_price > bid_f:
             return "not_marketable"
         return None
+
+    def _maybe_emit_broker_read_census(self, *, interval_seconds: float = 300.0) -> None:
+        """Periodic per-account rollup of broker positions reads. Emits at ZERO failures.
+
+        ⭐ Same discipline as `[OMS-P0A-CENSUS]` and the seed-gap census: a counter that only
+        speaks when it has something to report cannot be told apart from one that stopped
+        running — and here `failed=0` is the healthy state, which is exactly the shape where a
+        broken watch and a working system print the same number.
+
+        ⛔ `ok` IS THE DENOMINATOR AND IS READ FIRST:
+             ok=0 failed=0  -> the sync did not run this window. UNMEASURED, not healthy.
+             ok>0 failed=0  -> reads are landing. THAT is the pass.
+        ⛔ Per ACCOUNT, never summed. Webull and Schwab fail independently and for different
+        reasons; a fleet total would hide one venue being blind behind the other being fine —
+        the same mistake as a Schwab-vs-Webull comparison that differences the two.
+        """
+        try:
+            now = utcnow()
+            last = self._broker_read_census_last_emit
+            if last is not None and (now - last).total_seconds() < interval_seconds:
+                return
+            self._broker_read_census_last_emit = now
+            _ok = self.__dict__.setdefault("_broker_read_ok", {})
+            _failed = self.__dict__.setdefault("_broker_read_failed", {})
+            _runs = self.__dict__.setdefault("_broker_read_consecutive_failures", {})
+            accounts = sorted(set(_ok) | set(_failed))
+            if not accounts:
+                self.logger.info(
+                    "[BROKER-SYNC-CENSUS] no account was read this window — UNMEASURED, not clean."
+                )
+                return
+            parts = []
+            for acct in accounts:
+                parts.append(
+                    f"{acct}: ok={_ok.get(acct, 0)} "
+                    f"failed={_failed.get(acct, 0)} "
+                    f"consecutive_now={_runs.get(acct, 0)}"
+                )
+            self.logger.info(
+                "[BROKER-SYNC-CENSUS] %s (⛔ read `ok` FIRST: ok=0 means the sync did not run, "
+                "not that reads are healthy). `consecutive_now` is the live run length for that "
+                "account — a run boundary is now a FACT on this tape, never inferred from a gap.",
+                " | ".join(parts),
+            )
+            self._broker_read_ok = {}
+            self._broker_read_failed = {}
+        except Exception:  # noqa: BLE001 - bookkeeping must never break the sync path
+            pass
 
     def _p0a_census_note(self, key: str) -> None:
         """Count one P0a evaluation outcome. Diagnostic only; never raises."""
