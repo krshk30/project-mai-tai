@@ -160,18 +160,18 @@ class WebullBrokerAdapter:
                 return await asyncio.to_thread(self._submit_exit_pair_blocking, account, request)
             except Exception as exc:  # noqa: BLE001 - any SDK/transport error -> reject, never crash OMS
                 self._log_exit_pair_refusal(request, exc)
-                return [self._reject(request, self._exc_reason(exc))]
+                return [self._reject(request, self._exc_reason(exc), origin=self._origin_from_exc(exc))]
         if self._is_bracket_request(request):
             # Native OCO combo: one v3 place_order of MASTER+STOP_PROFIT+STOP_LOSS. Flag-gated;
             # off => this branch is never taken and the single-leg path below is byte-identical.
             try:
                 return await asyncio.to_thread(self._submit_bracket_blocking, account, request)
             except Exception as exc:  # noqa: BLE001 - any SDK/transport error -> reject, never crash OMS
-                return [self._reject(request, self._exc_reason(exc))]
+                return [self._reject(request, self._exc_reason(exc), origin=self._origin_from_exc(exc))]
         try:
             return await asyncio.to_thread(self._submit_blocking, account, request)
         except Exception as exc:  # noqa: BLE001 - any SDK/transport error -> reject, never crash OMS
-            return [self._reject(request, self._exc_reason(exc))]
+            return [self._reject(request, self._exc_reason(exc), origin=self._origin_from_exc(exc))]
 
     def exit_pair_leg_client_order_ids(self, base_client_order_id: str) -> list[str]:
         """The coids of the two resting exit legs hanging off ``base_client_order_id``.
@@ -682,8 +682,22 @@ class WebullBrokerAdapter:
             metadata["webull_broker_filled_time"] = str(item.get("last_filled_time"))
         if item.get("place_time"):
             metadata["webull_broker_place_time"] = str(item.get("place_time"))
+        # ⛔⭐⭐ §196 — DO NOT SUBSTITUTE OUR INTENT TEXT FOR A REASON THE BROKER DID NOT GIVE.
+        # This used to end `... or request.reason)`. When Webull's status item carried no
+        # failure_reason, the stored `reject_reason` silently became our own intent string —
+        # live 2026-08-21, SUGP: `schwab_1m_v2 ATR Flip fan-out webull (rth_resting_mirror)`
+        # sitting in the field whose whole job is to say why the venue refused. A field that
+        # LOOKS like a reason while carrying none is the wrong-reason failure, and a plausible
+        # wrong reason stops the investigation where a missing one would not.
+        reason = self._status_reason(item, request, event_type, broker_order_id)
+        # ⛔⭐ Q1/§195 — THIS SITE NEVER PASSED `origin` AT ALL, so every event built from a
+        # status poll defaulted to `unknown`: 154 of 154 in the 17h after Q1 deployed. Per the
+        # contract in protocols.py, "a status the broker reported" IS `broker` — we asked the
+        # venue about its own book and this is its answer. That is derived from where the data
+        # came from, not assumed from what it says.
         return ExecutionReport(
             event_type=event_type,  # type: ignore[arg-type]
+            origin="broker",
             client_order_id=request.client_order_id,
             broker_order_id=broker_order_id,
             broker_fill_id=self._fill_id(broker_order_id, filled_quantity, event_type),
@@ -693,7 +707,7 @@ class WebullBrokerAdapter:
             quantity=request.quantity,
             filled_quantity=filled_quantity,
             fill_price=fill_price,
-            reason=str(item.get("failure_reason") or item.get("failureReason") or request.reason),
+            reason=reason,
             metadata=metadata,
             reported_at=reported_at,
         )
@@ -738,7 +752,7 @@ class WebullBrokerAdapter:
         try:
             return await asyncio.to_thread(self._cancel_blocking, account, request)
         except Exception as exc:  # noqa: BLE001
-            return [self._reject(request, self._exc_reason(exc))]
+            return [self._reject(request, self._exc_reason(exc), origin=self._origin_from_exc(exc))]
 
     def _cancel_blocking(
         self, account: WebullAccountConfig, request: OrderRequest
@@ -1371,4 +1385,68 @@ class WebullBrokerAdapter:
         http = getattr(exc, "http_status", None)
         if code or msg or http:
             return f"Webull order rejected: {code or ''} {msg or ''} (http {http})".strip()
-        return f"Webull order rejected: {exc!r}"
+        # ⛔⭐⭐ §196 — THIS BRANCH PUTS OUR OWN WORDS BEHIND THE BROKER'S NAME.
+        # Measured 2026-08-21: of the ~728 pre-#735 mirror rejects, **723** read
+        #   `Webull order rejected: RuntimeError('Webull combo MASTER must be LIMIT or
+        #    MARKET (a buy-STOP master rejects); got STOP_LIMIT')`
+        # — our own guard raising, wearing the venue's name. Only 5 were genuinely Webull's.
+        # For a week that string was read as "Webull refuses our shape", and the sentence the
+        # broker never said is the one that stopped the investigation.
+        # ⇒ Say plainly whose sentence it is. The prefix now names the SOURCE, not the venue.
+        return f"LOCAL refusal (no broker response): {exc!r}"
+
+    @staticmethod
+    def _status_reason(
+        item: dict, request: OrderRequest, event_type: str, broker_order_id: str | None
+    ) -> str:
+        """§196 — the reason on a status-poll report. NEVER our intent text on a refusal.
+
+        ⛔⭐⭐ WHAT THIS REPLACED, AND WHY IT IS EXTRACTED.
+        The poll used to end `... or request.reason)`. When Webull's status item carried no
+        `failure_reason`, the stored `reject_reason` silently became OUR OWN intent string —
+        live 2026-08-21, SUGP: `schwab_1m_v2 ATR Flip fan-out webull (rth_resting_mirror)`
+        sitting in the field whose only job is to say why the venue refused.
+        A field that LOOKS like a reason while carrying none is the wrong-reason failure, and
+        a plausible wrong reason stops an investigation where a missing one would not.
+
+        ⛔ Pulled out of `_fetch_order_blocking` so it can be TESTED. That function needs a live
+        SDK client, and as a result the entire status-poll path had no test at all — which is
+        exactly where this defect lived. Mutants M2/M3 survived until this extraction existed.
+        """
+        broker_reason = str(item.get("failure_reason") or item.get("failureReason") or "").strip()
+        if broker_reason:
+            return broker_reason
+        if event_type == "rejected":
+            # ⛔ Name the ABSENCE. Never fall back to request.reason on a refusal.
+            return (
+                f"Webull reported REJECTED with no failure_reason "
+                f"(order {broker_order_id or '<none>'}); the venue gave no words"
+            )
+        # Non-refusal states carry our intent text harmlessly — a label, not a verdict.
+        return str(request.reason)
+
+    @staticmethod
+    def _origin_from_exc(exc: Exception) -> str:
+        """Q1 — classify a raised refusal as `broker` or `unknown`, never by assumption.
+
+        ⛔⭐ THE CONTRACT (protocols.py) IS THE AUTHORITY: `broker` means "a response came back
+        from the venue and it was a refusal (HTTP >= 400, or a status the broker reported)".
+        We already have exactly that evidence on this exception — `_exc_reason` reads
+        `http_status` and `error_code` off it — so the classification is DERIVED, not guessed.
+
+        ⛔ NO HTTP STATUS AND NO ERROR CODE ⇒ STAYS `unknown`. That is a transport/SDK failure
+        for all we can tell here, and the default exists precisely so an unlabelled site cannot
+        quietly acquire the word that carries blame. An honest gap is countable; a confident
+        wrong label is not.
+        """
+        http = getattr(exc, "http_status", None)
+        code = getattr(exc, "error_code", None)
+        try:
+            if http is not None and int(http) >= 400:
+                return "broker"
+        except (TypeError, ValueError):
+            pass
+        # An error_code only exists because the venue put one in a response body.
+        if code:
+            return "broker"
+        return "unknown"
