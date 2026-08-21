@@ -144,17 +144,136 @@ def test_the_schwab_split_is_not_all_one_word() -> None:
     assert 'origin="broker"' in src and 'origin="client"' in src
 
 
-def test_webull_exception_paths_stay_UNKNOWN_rather_than_guess() -> None:
-    """⛔⭐ The honest gap, pinned so nobody 'tidies' it into a guess.
+def test_webull_exception_paths_are_DERIVED_never_guessed() -> None:
+    """⛔⭐ The honest gap has been CLOSED BY READING THE PATH — which is what its own pin asked for.
 
-    `_reject` is one helper behind six call sites. The pre-flight guards (no config, no instrument
-    id) are unambiguously client — nothing was sent. The callers that wrap an exception are NOT
-    classifiable from there: the exception may be a transport failure (client) or may wrap a
-    Webull HTTP refusal (broker). They stay "unknown" until someone reads that path and can say.
+    The previous version of this test held the exception sites at "unknown" and said why:
+    *"They stay unknown until someone reads that path and can say."* That happened on
+    2026-08-21. The exception already carries the evidence — `_exc_reason` reads `http_status`
+    and `error_code` off it — so the classification is the SAME mechanical rule this file
+    already documents for Schwab:
+
+        HTTP >= 400 (or a venue error_code)  -> "broker"   the venue answered, and it was no
+        neither                              -> "unknown"  transport/SDK; still not classifiable
+
+    ⛔ The invariant that mattered is preserved and made STRONGER: an exception site must not
+    carry a LITERAL label (that would be the guess the old test was guarding against), it must
+    call the derivation. Pinned syntactically here and behaviourally below.
     """
     src = (_ADAPTERS / "webull.py").read_text(encoding="utf-8")
-    assert 'origin: str = "unknown"' in src, "the helper must default to unknown, not to a guess"
-    assert src.count('origin="client"') == 2, "only the two pre-flight guards are classifiable"
-    assert '_reject(request, self._exc_reason(exc), origin=' not in src, (
-        "an exception-wrapping site was labelled by assumption"
+    assert 'origin: str = "unknown"' in src, "the helper must still default to unknown"
+    assert src.count('origin="client"') == 2, "only the two pre-flight guards are literal-client"
+    assert '_reject(request, self._exc_reason(exc), origin="' not in src, (
+        "an exception-wrapping site was labelled by a LITERAL — that is the guess"
     )
+    assert src.count("origin=self._origin_from_exc(exc)") == 4, (
+        "every exception-wrapping reject site must DERIVE its origin"
+    )
+
+
+def test_origin_from_exc_labels_broker_only_on_venue_evidence() -> None:
+    """★ The behavioural half. A syntactic guard cannot tell a derivation from a constant.
+
+    ⛔ The 'no evidence' case is the one that matters: it must stay UNKNOWN. A classifier that
+    returned "broker" for everything would satisfy the source-grep above and reintroduce exactly
+    the contamination the column exists to remove.
+    """
+    from project_mai_tai.broker_adapters.webull import WebullBrokerAdapter
+
+    f = WebullBrokerAdapter._origin_from_exc
+
+    class _Exc(Exception):
+        def __init__(self, **kw: object) -> None:
+            super().__init__("boom")
+            for k, v in kw.items():
+                setattr(self, k, v)
+
+    # the venue answered — today's live case was http 417
+    assert f(_Exc(http_status=417)) == "broker"
+    assert f(_Exc(http_status=400)) == "broker"
+    assert f(_Exc(error_code="STOP_PRICE_MUST_BE_GREAT_THAN_MARKET_PRICE")) == "broker"
+    # ⛔ no venue evidence -> the honest gap, NOT a guess
+    assert f(_Exc()) == "unknown"
+    assert f(RuntimeError("Webull combo MASTER must be LIMIT or MARKET")) == "unknown"
+    assert f(_Exc(http_status=None)) == "unknown"
+    assert f(_Exc(http_status="not-a-number")) == "unknown"
+    # a 2xx/3xx is not a refusal
+    assert f(_Exc(http_status=200)) == "unknown"
+
+
+def test_a_local_refusal_does_not_wear_the_brokers_name() -> None:
+    """★ §196. For a week, 723 of ~728 mirror rejects read `Webull order rejected:
+    RuntimeError(...)` — our own guard, prefixed with the venue's name. Only 5 were Webull's.
+    A sentence the broker never said is worse than no sentence, because it stops the
+    investigation."""
+    from project_mai_tai.broker_adapters.webull import WebullBrokerAdapter
+
+    r = WebullBrokerAdapter._exc_reason(
+        RuntimeError("Webull combo MASTER must be LIMIT or MARKET (a buy-STOP master rejects)")
+    )
+    assert not r.startswith("Webull order rejected:"), (
+        "a locally-raised refusal is still being presented as the broker's words"
+    )
+    assert "LOCAL refusal" in r
+
+    class _VenueExc(Exception):
+        http_status = 417
+        error_code = "STOP_PRICE_MUST_BE_GREAT_THAN_MARKET_PRICE"
+        error_msg = "STOP_PRICE_MUST_BE_GREAT_THAN_MARKET_PRICE"
+
+    v = WebullBrokerAdapter._exc_reason(_VenueExc())
+    assert v.startswith("Webull order rejected:"), "a real venue refusal must keep the venue's name"
+    assert "417" in v
+
+
+def test_status_poll_never_substitutes_our_intent_text_on_a_refusal() -> None:
+    """★ §196, the live SUGP case. Webull answered REJECTED and gave no failure_reason; the
+    old code put our intent string in `reject_reason`, where it read as the venue's verdict."""
+    from project_mai_tai.broker_adapters.protocols import OrderRequest
+    from project_mai_tai.broker_adapters.webull import WebullBrokerAdapter
+
+    req = OrderRequest(
+        client_order_id="schwab_1m_v2-SUGP-open-a95522e458d7",
+        symbol="SUGP",
+        side="buy",
+        quantity=Decimal("2"),
+        order_type="STOP_LIMIT",
+        broker_account_name="live:orb",
+        strategy_code="schwab_1m_v2",
+        intent_type="open",
+        reason="schwab_1m_v2 ATR Flip fan-out webull (rth_resting_mirror)",
+    )
+    f = WebullBrokerAdapter._status_reason
+
+    # the venue gave no words -> say SO, never echo ours back
+    r = f({}, req, "rejected", "6QHGQMTTQC5G2LGQI8UJ316V0B")
+    assert "ATR Flip fan-out" not in r, "our intent text is being presented as the broker's reason"
+    assert "no failure_reason" in r and "6QHGQMTTQC5G2LGQI8UJ316V0B" in r
+
+    # the venue DID give words -> use them verbatim
+    assert f({"failure_reason": "STOP_PRICE_MUST_BE_GREAT_THAN_MARKET_PRICE"}, req, "rejected", "x") \
+        == "STOP_PRICE_MUST_BE_GREAT_THAN_MARKET_PRICE"
+    assert f({"failureReason": "CAMEL_CASE_TOO"}, req, "rejected", "x") == "CAMEL_CASE_TOO"
+
+    # a NON-refusal keeps our label — it is a description, not a verdict
+    assert f({}, req, "filled", "x") == "schwab_1m_v2 ATR Flip fan-out webull (rth_resting_mirror)"
+
+
+def test_the_status_poll_is_WIRED_to_the_helper_and_states_its_origin() -> None:
+    """★ §181a — a test covering the HELPER but not the WIRING cannot see a dead call site.
+    Both halves of the fix live at the poll's ExecutionReport, so both are pinned here."""
+    src = (_ADAPTERS / "webull.py").read_text(encoding="utf-8")
+    assert "reason = self._status_reason(item, request, event_type, broker_order_id)" in src, (
+        "the status poll is no longer routed through _status_reason"
+    )
+    # ⛔ Strip comments before grepping for CODE. The first version of this assertion matched
+    # my own docstring, which quotes the old expression verbatim — the third self-matching
+    # guard of the day, after the truncation guard matched its own pattern line and then its
+    # own success message. A guard that names what it hunts must exclude itself.
+    code_lines = [ln for ln in src.split(chr(10)) if not ln.lstrip().startswith("#")]
+    code = chr(10).join(code_lines)
+    assert 'item.get("failureReason") or request.reason' not in code, (
+        "the intent-text fallback is back on a status-poll reason"
+    )
+    # Q1/§195: the poll builds the venue's own report of its book -> `broker`, per protocols.py
+    assert 'origin="broker",' in src, "the status-poll report stopped stating its origin"
