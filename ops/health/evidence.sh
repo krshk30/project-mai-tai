@@ -185,7 +185,7 @@ select_lines() {  # select_lines <infile> <marker> <pattern> <outfile>
 
 # ══════════════════════════════════════════════════════════════════════════════════════════
 CMD="${1:-}"; shift || true
-SERVICE=""; MARKER=""; PATTERN=""; SINCE="all"; OUT=""; UNCHECKED=0; DENOM=""; MINHITS=1
+SERVICE=""; MARKER=""; PATTERN=""; SINCE="all"; OUT=""; UNCHECKED=0; DENOM=""; MINHITS=1; MFILE=""; MFIND=""; MREPL=""; MTEST=""; MLABEL=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --service) SERVICE="${2:-}"; shift 2 ;;
@@ -195,6 +195,11 @@ while [ $# -gt 0 ]; do
     --out)     OUT="${2:-}";     shift 2 ;;
     --denominator) DENOM="${2:-}"; shift 2 ;;
     --min)         MINHITS="${2:-1}"; shift 2 ;;
+    --file)    MFILE="${2:-}";  shift 2 ;;
+    --find)    MFIND="${2:-}";  shift 2 ;;
+    --replace) MREPL="${2:-}";  shift 2 ;;
+    --test)    MTEST="${2:-}";  shift 2 ;;
+    --label)   MLABEL="${2:-}"; shift 2 ;;
     --unchecked-marker) UNCHECKED=1; shift ;;
     *) die_void "unknown argument '$1'" ;;
   esac
@@ -203,6 +208,69 @@ done
 mkdir -p "$OUTDIR" 2>/dev/null || true
 
 case "$CMD" in
+  mutate)
+    # ⛔⭐⭐ B29 — A MUTANT THAT DID NOT APPLY IS NOT A SURVIVING MUTANT.
+    #
+    # Twice in one session a mutation run reported SURVIVED because the patch silently failed
+    # to match — once because a refactor had renamed the anchor, once because the `find` string
+    # had never existed. Both times the harness printed a confident "applied" and the result
+    # read as coverage the tests did not have.
+    #
+    # The first time, the fix was a hash check added to that one script. **The second time was
+    # a NEW one-off script that did not have it** — so the fix had not actually been made.
+    # ⇒ A fix that lives in one script is not a fix. It has to live where the next caller will
+    #   reach it. That is why this is a subcommand and not a snippet to copy.
+    #
+    # Usage:
+    #   evidence.sh mutate --file <path> --find '<literal>' --replace '<literal>' \
+    #       --test '<shell command>' [--label M1]
+    #
+    # VERDICTS — four, and the fourth is the reason this exists:
+    #   KILLED       exit 0  the test FAILED under the mutant. The test has real coverage.
+    #   SURVIVED     exit 1  the test PASSED under the mutant. A genuine gap.
+    #   NOT-APPLIED  exit 4  the file did not change. ⛔ NOT survived, NOT killed — the mutant
+    #                        never existed, and any verdict drawn from it is void.
+    #   VOID         exit 2  bad arguments / unreadable file.
+    #
+    # ⛔ The file is ALWAYS restored, including on interrupt — a mutation harness that can
+    #    leave a mutant on disk is worse than no harness.
+    [ -n "$MFILE" ] && [ -n "$MFIND" ] && [ -n "$MTEST" ] || \
+      die_void "mutate needs --file, --find and --test (--replace may be empty to delete)"
+    [ -r "$MFILE" ] || die_void "cannot read $MFILE"
+    _MUT_BACKUP=$(mktemp)
+    cp "$MFILE" "$_MUT_BACKUP"
+    # shellcheck disable=SC2064
+    trap "cp '$_MUT_BACKUP' '$MFILE'; rm -f '$_MUT_BACKUP'; _emit_status" EXIT
+    BEFORE=$(md5sum "$MFILE" | awk '{print $1}')
+    MFILE="$MFILE" MFIND="$MFIND" MREPL="$MREPL" python3 - <<'PYEOF'
+import io, os
+p = os.environ["MFILE"]
+s = io.open(p, encoding="utf-8").read()
+s = s.replace(os.environ["MFIND"], os.environ["MREPL"], 1)
+io.open(p, "w", encoding="utf-8", newline="\n").write(s)
+PYEOF
+    AFTER=$(md5sum "$MFILE" | awk '{print $1}')
+    echo "### MUTATE ${MLABEL:-mutant}  file=$MFILE"
+    if [ "$BEFORE" = "$AFTER" ]; then
+      echo "    md5 $BEFORE unchanged"
+      echo "    => ⛔⛔ NOT-APPLIED. The --find string did not match, so no mutant existed."
+      echo "       This is NOT 'survived'. Any coverage claim from this run is void."
+      echo "       ⛔ Check the anchor against the CURRENT file — a refactor renames anchors"
+      echo "          silently, and the patch then fails quietly while printing success."
+      exit 4
+    fi
+    echo "    md5 $BEFORE -> $AFTER  (mutant applied and verified)"
+    sh -c "$MTEST" > "$OUTDIR/mutate.out" 2>&1
+    TRC=$?
+    if [ "$TRC" -ne 0 ]; then
+      echo "    test exited $TRC  => KILLED. The test caught it."
+      exit 0
+    fi
+    echo "    test exited 0  => ⛔ SURVIVED. The mutant was not caught — this is a real gap."
+    echo "       output: $OUTDIR/mutate.out"
+    exit 1
+    ;;
+
   acceptance)
     # ⛔⭐⭐ B28 — A FEATURE THAT NEVER PRODUCED ITS SUCCESS MARKER DID NOT SHIP.
     #
@@ -353,17 +421,26 @@ case "$CMD" in
       if LC_ALL=C sort -c "$OUTDIR/t8" 2>/dev/null; then ok "output is in timestamp order"; else bad "output is NOT sorted"; fi
     else bad "T8 had no tape to check"; fi
 
-    echo "T9 ★ — the reader contains no truncating verbs"
-    # ⛔ The guard must not match ITSELF. Its own line names every verb it hunts for, so the
-    # first version reported a truncating verb in the reader and the verb was the guard.
-    # Same family as a `ps | grep` filter that hides the process it is looking for. The
-    # sentinel below is excluded from the body, and the pattern is assembled so the literals
-    # never appear together on one line.
+    echo "T9 * the READING PATH contains no truncating verbs"
+    # ⛔⭐⭐ SELF-EXCLUDING BY CONSTRUCTION, NOT BY SENTINEL.
+    # This guard matched ITSELF five separate times in one session: its own pattern line,
+    # its own success message, a wiring assertion quoting the old code, and twice more when
+    # new pipe-trap tests legitimately used `| tail`. Each time the fix was another sentinel
+    # comment — i.e. remembering. Same argument as B28 and the EXIT trap: build the property
+    # in, do not ask the next person to recall it.
+    #
+    # ⇒ The invariant is about the READING PATH, not the harness. A test may legitimately
+    #   truncate to build a fixture or inspect output; the code that answers questions may
+    #   not. So the guard scans only the file ABOVE the selftest case — and since the guard
+    #   lives INSIDE selftest, it can never see itself, no matter what it is rewritten to say.
+    reading_path=$(awk '/^  selftest\)/{exit} {print}' "$SELF" | grep -vE '^\s*#')
     V1='hea''d'; V2='tai''l'; V3='cut -''c'
-    body=$(grep -vE '^\s*#' "$SELF" | grep -v 'TRUNCATION_GUARD' || true)
-    if echo "$body" | grep -qE "\| *($V1|$V2) |$V1 -[0-9]|$V2 -[0-9]|$V3"; then  # TRUNCATION_GUARD
-      bad "a truncating verb is present in the reader"
-    else ok "no truncating verbs in the reading path"; fi
+    if printf '%s
+' "$reading_path" | grep -qE "\| *($V1|$V2) |$V1 -[0-9]|$V2 -[0-9]|$V3"; then
+      bad "a truncating verb is present in the reading path"
+    else
+      ok "no truncating verbs in the reading path"
+    fi
 
     echo "T10 — matches_file is complete: its line count equals the reported count"
     r=$(bash "$SELF" count --service schwab-1m-v2 --marker '[V2-DB-SEED-GAP]' 2>&1)
@@ -393,12 +470,44 @@ case "$CMD" in
     run_checked false > /dev/null 2>&1 && bad "run_checked false returned success" || ok "run_checked false -> non-zero"
     run_checked true  > /dev/null 2>&1 && ok "run_checked true  -> zero" || bad "run_checked true returned failure"
 
+    echo "T14 * mutate: KILLED / SURVIVED / and the verdict that motivated it"
+    subj=$(mktemp)
+    printf 'threshold=10\nif [ "$1" -gt "$threshold" ]; then echo HIGH; else echo LOW; fi\n' > "$subj"
+    orig_md5=$(md5sum "$subj" | awk '{print $1}')
+    tcmd="out=\$(bash $subj 5); [ \"\$out\" = \"LOW\" ]"
+
+    bash "$SELF" mutate --file "$subj" --find 'threshold=10' --replace 'threshold=1' \
+         --test "$tcmd" --label T14a > /dev/null 2>&1
+    [ $? -eq 0 ] && ok "a caught mutant reports KILLED (exit 0)" || bad "KILLED case wrong"
+
+    bash "$SELF" mutate --file "$subj" --find 'echo HIGH' --replace 'echo VERYHIGH' \
+         --test "$tcmd" --label T14b > /dev/null 2>&1
+    [ $? -eq 1 ] && ok "an uncaught mutant reports SURVIVED (exit 1)" || bad "SURVIVED case wrong"
+
+    echo "T15 ** THE POINT: a mutant that never applied is NOT 'survived'"
+    # ⛔ This is the verdict the whole subcommand exists for. Twice in one session a run
+    # reported SURVIVED because the anchor had been renamed by a refactor, and the false
+    # coverage read as real. Exit 4 is deliberately distinct from BOTH 0 and 1.
+    out14=$(bash "$SELF" mutate --file "$subj" --find 'threshold=999' --replace 'x' \
+              --test "$tcmd" --label T15 2>&1)
+    rc14=$?
+    [ "$rc14" -eq 4 ] && ok "NOT-APPLIED is its own verdict (exit 4)" || bad "got exit $rc14, expected 4"
+    echo "$out14" | grep -q 'NOT-APPLIED' && ok "and it says so in words" || bad "no NOT-APPLIED text"
+    # ⛔ Match the VERDICT line, not any occurrence of the word — the message deliberately
+    # contains "This is NOT 'survived'", and a bare grep flagged its own clarification.
+    echo "$out14" | grep -qE '=>.*SURVIVED'       && bad "the VERDICT line says SURVIVED"       || ok "the verdict is never SURVIVED (the word appears only in the disclaimer)"
+
+    echo "T16 * the subject file is RESTORED after every run"
+    [ "$(md5sum "$subj" | awk '{print $1}')" = "$orig_md5" ] \
+      && ok "file byte-identical after 3 mutations" || bad "the harness left a mutant on disk"
+    rm -f "$subj"
+
     echo
     echo "PASS=$P FAIL=$F"
     [ "$F" -eq 0 ] || exit 1
     ;;
 
   *)
-    die_void "unknown command '${CMD:-<none>}' (count|lines|markers|verify|acceptance|selftest)"
+    die_void "unknown command '${CMD:-<none>}' (count|lines|markers|verify|acceptance|mutate|selftest)"
     ;;
 esac
