@@ -31,6 +31,7 @@ import pytest
 from project_mai_tai.settings import Settings
 from project_mai_tai.strategy_core.schwab_1m_v2 import (
     OHLCVBar,
+    Quote,
     SchwabV2Strategy,
     SymbolState,
 )
@@ -178,7 +179,11 @@ def test_every_reclaim_teardown_goes_through_the_cancel_path(monkeypatch, setup)
     elif setup == "slot_taken":
         st.cw_reclaim_taken = True
     elif setup == "in_position":
-        st.position_qty = 2
+        # ⛔ BOTH, deliberately. "in_position" must mean a REAL FILL. Setting only the union
+        # `position_qty` used to be enough because the gate read the union — which is precisely
+        # the ambiguity being removed: our own in-flight resting intent also raises it, and that
+        # is what made this gate cancel its own order 253 times.
+        st.position_qty = st.position_qty_held = 2
     elif setup == "eh":
         monkeypatch.setattr(strat, "_resting_session_is_eh", lambda now=None: True)
 
@@ -371,3 +376,132 @@ def test_all_four_resting_paths_carry_the_live_bar_guard() -> None:
         assert "_resting_max_bar_age_ms" in src, (
             f"{fn.__name__} places or fires a resting order off an ungated bar"
         )
+
+
+# -- slot_consumed: HELD, not the union (the 253-cancel oscillation) -----------------------
+
+def test_our_own_in_flight_resting_intent_must_not_consume_the_slot(monkeypatch) -> None:
+    """★ THE OSCILLATION. `position_qty` is the UNION and counts in-flight open intents; a resting
+    buy-stop's intent stays `submitted` for its entire life because it only resolves when price
+    triggers it. So placing the leg set the gate, the gate cancelled the leg, the intent went
+    away, the gate cleared, and the next bar placed it again — at a CONSTANT price.
+
+    Measured 08-14..08-21: `slot_consumed` is 253 of 773 mirror cancels. IPST 2026-08-17 re-sent
+    31 legs over 3648 seconds inside a 0.6% level range; four other segments did it at 0.0%.
+    """
+    strat = _strat()
+    _rth(strat, monkeypatch)
+    st = _armed(seg_high=10.0)
+    st.resting_active, st.resting_slot, st.resting_level = True, "reclaim", 10.0
+    st.resting_is_broker_order = True
+    st.position_qty = 2          # our OWN resting intent, in flight
+    st.position_qty_held = 0     # ...and nothing actually filled
+
+    strat._cw_v2_reclaim_resting_track(st)
+
+    assert _cancels(strat) == [], (
+        "the reclaim slot cancelled its own order because its own in-flight intent looked "
+        "like a position — that is the 253-cancel oscillation"
+    )
+    assert st.resting_active is True, "the order must stay live and keep being managed"
+
+
+def test_a_REAL_fill_still_consumes_the_slot(monkeypatch) -> None:
+    """★ THE CONTROL, and it is load-bearing. Without it the test above passes just as well on a
+    build where the slot is NEVER consumed — which would leave a resting buy working while we are
+    already in the position, i.e. the opposite defect."""
+    strat = _strat()
+    _rth(strat, monkeypatch)
+    st = _armed(seg_high=10.0)
+    st.resting_active, st.resting_slot, st.resting_level = True, "reclaim", 10.0
+    st.resting_is_broker_order = True
+    st.position_qty = 2
+    st.position_qty_held = 2     # a REAL fill
+
+    strat._cw_v2_reclaim_resting_track(st)
+
+    cancels = _cancels(strat)
+    assert len(cancels) == 1, "a real fill must still consume the slot and cancel the order"
+    assert cancels[0].metadata.get("reason") == "slot_consumed"
+
+
+def test_cw_reclaim_taken_still_consumes_the_slot(monkeypatch) -> None:
+    """★ The other half of the gate is untouched — one reclaim per cross, still enforced."""
+    strat = _strat()
+    _rth(strat, monkeypatch)
+    st = _armed(seg_high=10.0)
+    st.resting_active, st.resting_slot, st.resting_level = True, "reclaim", 10.0
+    st.resting_is_broker_order = True
+    st.position_qty = st.position_qty_held = 0
+    st.cw_reclaim_taken = True
+
+    strat._cw_v2_reclaim_resting_track(st)
+    assert len(_cancels(strat)) == 1
+
+
+# -- THE DOUBLE-POSITION CASE, pinned ------------------------------------------------------
+
+def test_the_reactive_MARKET_stands_down_while_a_reclaim_order_rests(monkeypatch) -> None:
+    """★★ THE RISK THIS CHANGE WAS QUESTIONED ON, pinned directly.
+
+    The concern about moving off the union is that it "would let a market buy fire while a
+    stop-limit rests, i.e. a double position". The guard against that is NOT this gate — it is
+    `resting_active` in `_cw_v2_quote`: *"Reactive entry off, OR a resting buy-stop-limit is
+    already live for this symbol."* This asserts it holds with our own intent in flight, which is
+    exactly the state the change creates.
+    """
+    strat = _strat()
+    _rth(strat, monkeypatch)
+    st = _armed(seg_high=10.0)
+    st.resting_active, st.resting_slot, st.resting_level = True, "reclaim", 10.0
+    st.position_qty = 2          # our own resting intent in flight
+    st.position_qty_held = 0
+
+    quote = Quote(symbol="TEST", bid_price=10.4, ask_price=10.5, last_price=10.45,
+                  quote_time_ms=RTH + 1_000)
+    assert strat._cw_v2_quote(st, quote) is None, (
+        "a reactive MARKET buy was emitted while a resting stop-limit was live — double position"
+    )
+
+
+def test_the_spurious_cancel_was_itself_the_hole_in_that_guard(monkeypatch) -> None:
+    """★★ THE INVERSION, and the reason this change is SAFER rather than riskier.
+
+    Every spurious `slot_consumed` cancel set `resting_active = False`. With that flag down the
+    reactive MARKET path is no longer stood down — so the union was not the conservative choice,
+    it was punching a hole in the real double-position guard 253 times over the window.
+
+    This pins the causal chain: order cancelled -> resting_active False -> reactive path OPEN.
+    """
+    strat = _strat()
+    _rth(strat, monkeypatch)
+    st = _armed(seg_high=10.0)
+    st.resting_active, st.resting_slot, st.resting_level = True, "reclaim", 10.0
+    st.resting_is_broker_order = True
+
+    quote = Quote(symbol="TEST", bid_price=10.4, ask_price=10.5, last_price=10.45,
+                  quote_time_ms=RTH + 1_000)
+    assert strat._cw_v2_quote(st, quote) is None, "precondition: the stand-down is active"
+
+    # now do what the old gate did on every bar: cancel the order for `slot_consumed`
+    strat._queue_resting_cancel(st, reason="slot_consumed")
+    assert st.resting_active is False
+
+    # ...and the reactive stand-down is gone. THIS is the window the oscillation opened.
+    assert strat._cw_v2_quote(st, quote) is not None or not strat._reactive_entry_enabled, (
+        "with resting_active cleared the reactive path must be reachable again — if it is not, "
+        "this test no longer demonstrates the hole and needs rewriting, not deleting"
+    )
+
+
+def test_the_gate_reads_held_not_the_union() -> None:
+    """★ §181a. Behaviour above can be satisfied by several shapes; this pins the one the
+    reasoning rests on, so a future 'tidy' back to the union is loud."""
+    import inspect
+
+    from project_mai_tai.strategy_core import schwab_1m_v2 as mod
+
+    src = inspect.getsource(mod.SchwabV2Strategy._cw_v2_reclaim_resting_track)
+    assert "state.position_qty_held != 0 or state.cw_reclaim_taken" in src, (
+        "the reclaim slot gate is back on the union, which counts our own in-flight intent"
+    )

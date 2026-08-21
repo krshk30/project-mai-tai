@@ -2328,9 +2328,39 @@ class SchwabV2Strategy:
             if state.resting_active and state.resting_slot == "reclaim":
                 self._queue_resting_cancel(state, reason="session_eh")
             return
-        if state.position_qty != 0 or state.cw_reclaim_taken:
-            # In a position, or this cross has already used its reclaim. ⛔ Cancel through the one
-            # path rather than clearing state, or the order becomes unmanaged.
+        # ⛔⭐⭐ HELD, NOT THE UNION — AND THE UNION MADE THIS GATE CANCEL ITS OWN ORDER.
+        # `position_qty` is the UNION: it counts in-flight open intents, and a resting buy-stop's
+        # intent stays `submitted` for its ENTIRE life because it only resolves when price
+        # triggers it. So placing the reclaim leg set the gate true, the gate cancelled the leg,
+        # the intent went away, the gate went false, and the next bar placed it again.
+        # A self-sustaining oscillation ON THE BAR CADENCE, AT A CONSTANT PRICE.
+        #
+        # Measured across the retained window (08-14..08-21): `slot_consumed` is **253 of 773**
+        # mirror cancels, second only to `reprice`. The worst segments re-send an UNCHANGED level
+        # for the better part of an hour --
+        #     IPST 2026-08-17: 31 legs over 3648s, level range 0.6%
+        #     TNON / SLE / IPST x2:  8-17 legs each, level range **0.0%**
+        # and the tape shows the cycle outright:
+        #     16:31:02 PLACE  slot=reclaim stop=8.4400
+        #     16:32:02 CANCEL slot=reclaim reason=slot_consumed level=8.4400
+        #     16:33:00 PLACE  slot=reclaim stop=8.4400      <- identical level, 58s later
+        #
+        # `position_qty_held` is FILLS-ONLY, so it cannot be raised by our own resting intent.
+        # This is the SAME correction `_cw_v2_resting_track` received on 2026-07-28 for the EGG /
+        # POLA orphan; the reclaim path never got it.
+        #
+        # ⛔⭐⭐ AND IT STRENGTHENS THE DOUBLE-POSITION GUARD RATHER THAN WEAKENING IT.
+        # The guard against a market buy landing on top of a resting order is `resting_active` in
+        # `_cw_v2_quote` ("Reactive entry off, OR a resting buy-stop-limit is already live"), NOT
+        # this gate. Every spurious `slot_consumed` cancel set `resting_active = False`, which
+        # RE-OPENED the reactive MARKET path while the segment was still armed. The union was not
+        # the conservative choice here — it was punching a hole in the real guard 253 times.
+        # ⛔ The general warning on `_cw_v2_resting_track` ("re-entry / reactive / fan-out gates
+        # keep the union on purpose") is about gates that admit a NEW order type. This gate admits
+        # nothing: it only decides whether the reclaim slot's OWN order stays alive.
+        if state.position_qty_held != 0 or state.cw_reclaim_taken:
+            # Genuinely holding, or this cross has already used its reclaim. ⛔ Cancel through the
+            # one path rather than clearing state, or the order becomes unmanaged.
             if state.resting_active and state.resting_slot == "reclaim":
                 self._queue_resting_cancel(state, reason="slot_consumed")
             return
