@@ -2347,6 +2347,31 @@ class SchwabV2Strategy:
         if not state.resting_active:
             if not self._liquidity_floor_ok(state):
                 return      # arm-time floor only, exactly as the first-entry path
+            # ⛔⭐⭐ LIVE-BAR GUARD (#528 mirror) — THE ONE RESTING PATH THAT DID NOT HAVE IT.
+            # The other three all gate on bar freshness (`_cw_v2_resting_track` at arm,
+            # `_eh_resting_cross_check` at the cross, `_fanout_rth_resting_cross` at the cross).
+            # This one did not, so a WARMUP / SEED BAR REPLAY drove it: each replayed bar armed a
+            # fresh segment, placed a resting order, and cancelled it on the next replayed bar.
+            #
+            # Measured live 2026-08-21, USDE — ELEVEN place/cancel pairs inside NINETEEN
+            # MILLISECONDS (13:44:54.636 -> .655), off bars stamped 37 and 32 minutes apart:
+            #     [V2-CW-ARM] bar_ts=1787260560000  -> PLACE 4.4600 -> CANCEL new_segment
+            #     [V2-CW-ARM] bar_ts=1787262780000  -> PLACE 4.4400 -> CANCEL reprice
+            #     [V2-CW-ARM] bar_ts=1787264700000  -> PLACE 4.9600 -> CANCEL reprice ...
+            # No tape moves 4.46 -> 5.51 in 19ms. That was history being replayed, and every
+            # cycle sent a REAL order to Schwab and a REAL mirrored leg to Webull.
+            #
+            # Cost measured the same morning: of 43 Webull mirror legs, 34 were cancelled before
+            # the broker ever created an order. The mirror fills fine when a leg survives long
+            # enough to be placed -- 79% of them did not.
+            #
+            # ⛔ ARM-TIME ONLY, exactly like the first-entry path. The reprice branch below can
+            # only run once `resting_active` is True, and a replay can no longer set it, so the
+            # whole chain is cut at its source. Widening this to the reprice would also gate an
+            # order that armed legitimately and must keep being managed -- the #580 orphan.
+            bar_ms = int(state.bars[-1].timestamp_ms) if state.bars else 0
+            if not bar_ms or (self._now_ms() - bar_ms) > self._resting_max_bar_age_ms:
+                return
             # STOP<=ASK guard (#527), reused verbatim, fail-open unchanged. ⛔ The residual risk is
             # HIGHER here than where it was measured: `cw_segment_high` sits AT the recent high by
             # definition, while the first-entry trail sits below the market by construction.

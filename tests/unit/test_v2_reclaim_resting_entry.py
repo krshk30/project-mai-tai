@@ -66,10 +66,18 @@ def _armed(sym="TEST", *, seg_high=10.0, flip=9.0):
     return st
 
 
-def _rth(strat, monkeypatch, in_window=True, eh=False):
+def _rth(strat, monkeypatch, in_window=True, eh=False, bar_age_ms=1_000):
     monkeypatch.setattr(strat, "_resting_in_window", lambda now=None: in_window)
     monkeypatch.setattr(strat, "_resting_session_is_eh", lambda now=None: eh)
     monkeypatch.setattr(strat, "_liquidity_floor_ok", lambda st: True)
+    # ⛔⭐⭐ THE CLOCK MUST SIT NEXT TO THE BAR, OR EVERY TEST HERE IS A STALE-BAR TEST.
+    # `_armed()` stamps its bar at a fixed 2026-08-10 instant while `_now_ms()` returned the
+    # real wall clock, so the fixture's bar was ELEVEN DAYS old. That passed only because this
+    # path had no bar-freshness gate — the fixture was quietly exercising the exact replay
+    # scenario that produced the live USDE churn, and asserting it should ARM.
+    # Freezing the clock a second after the bar makes these tests mean what their names say.
+    # ⇒ `bar_age_ms` is the seam: raise it to test the stale-bar refusal deliberately.
+    monkeypatch.setattr(strat, "_now_ms", lambda: RTH + bar_age_ms)
 
 
 def _places(strat):
@@ -283,3 +291,83 @@ def test_reprice_only_on_a_meaningful_move(monkeypatch) -> None:
     st.cw_segment_high = 12.0
     strat._cw_v2_reclaim_resting_track(st)
     assert len(_cancels(strat)) == 1
+
+
+# -- LIVE-BAR guard (the 2026-08-21 churn) ------------------------------------------------
+
+def test_a_REPLAYED_bar_must_not_arm_a_reclaim_rest(monkeypatch, caplog) -> None:
+    """★ THE CHURN. This path was the only one of four without the #528 LIVE-BAR guard, so a
+    warmup / seed bar replay drove it: each replayed bar armed a fresh segment, placed a
+    resting order, and cancelled it on the next replayed bar.
+
+    Live 2026-08-21, USDE — ELEVEN place/cancel pairs inside NINETEEN MILLISECONDS
+    (13:44:54.636 -> .655) off bars stamped 37 and 32 minutes apart, walking the level
+    4.46 -> 5.51. No tape moves like that in 19ms; that was history being replayed. Every
+    cycle sent a real order to Schwab and a real mirrored leg to Webull.
+    """
+    strat = _strat()
+    # the bar is a full hour older than the clock -> a replayed bar, not a live one
+    _rth(strat, monkeypatch, bar_age_ms=3_600_000)
+    st = _armed(seg_high=10.0)
+    with caplog.at_level(logging.INFO):
+        strat._cw_v2_reclaim_resting_track(st)
+
+    assert st.resting_active is False, "a replayed bar armed a resting order"
+    assert _places(strat) == [], "a replayed bar emitted a real order"
+    assert _cancels(strat) == [], "and then a cancel for it"
+    assert not _lines(caplog, "V2-RESTING-PLACE")
+
+
+def test_a_LIVE_bar_still_arms(monkeypatch) -> None:
+    """★ THE CONTROL, and it is the load-bearing half. Without it the guard above passes just
+    as well on a build where the reclaim entry never arms at all — the fix would have silently
+    deleted the feature and every assertion would still be green."""
+    strat = _strat()
+    _rth(strat, monkeypatch, bar_age_ms=1_000)
+    st = _armed(seg_high=10.0)
+    strat._cw_v2_reclaim_resting_track(st)
+
+    assert st.resting_active is True, "the live-bar path stopped arming — the guard is too tight"
+    assert st.resting_slot == "reclaim"
+    assert len(_places(strat)) == 1
+
+
+def test_the_guard_sits_at_ARM_not_at_reprice(monkeypatch) -> None:
+    """★ Arm-time only, exactly like the first-entry path. An order that armed legitimately must
+    keep being managed even if the feed then stalls — otherwise this reopens the #580 orphan: a
+    live buy order at the broker that nothing reprices and nothing cancels.
+
+    ⛔ A replay cannot reach here, because it can no longer set `resting_active` in the first
+    place; the chain is cut at its source rather than at every link.
+    """
+    strat = _strat()
+    _rth(strat, monkeypatch, bar_age_ms=3_600_000)   # stale feed
+    st = _armed(seg_high=10.0)
+    st.resting_active = True                          # ...but an order is ALREADY working
+    st.resting_slot = "reclaim"
+    st.resting_level = 10.0
+    st.cw_segment_high = 12.0                         # and the level has moved a long way
+
+    strat._cw_v2_reclaim_resting_track(st)
+    assert len(_cancels(strat)) == 1, (
+        "a working order stopped being repriced on a stale feed — that is the #580 orphan"
+    )
+
+
+def test_all_four_resting_paths_carry_the_live_bar_guard() -> None:
+    """★ §181a. The guard was missing from exactly one of four paths for a month, and nothing
+    said so. This asserts the set, so a fifth path cannot be added without one."""
+    import inspect
+
+    from project_mai_tai.strategy_core import schwab_1m_v2 as mod
+
+    for fn in (
+        mod.SchwabV2Strategy._cw_v2_resting_track,
+        mod.SchwabV2Strategy._cw_v2_reclaim_resting_track,
+        mod.SchwabV2Strategy._eh_resting_cross_check,
+        mod.SchwabV2Strategy._fanout_rth_resting_cross,
+    ):
+        src = inspect.getsource(fn)
+        assert "_resting_max_bar_age_ms" in src, (
+            f"{fn.__name__} places or fires a resting order off an ungated bar"
+        )
