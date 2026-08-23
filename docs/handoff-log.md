@@ -2289,3 +2289,144 @@ a 26-day total that hid a single event.
   false independence to downweight `fills`, the only ledger that disagreed.
 - **A mutation run reported a false survivor** because the anchor had been refactored away — the
   exact defect fixed that morning, in a new script that did not reuse the fix (⇒ B29).
+
+---
+
+# 2026-08-23 (Sunday) — the dispatch was the blocker; two deploys landed on a closed market
+
+## §252 — THE NON-DEPLOY WAS INPUT REJECTION, AND THE TRAP IS THE SERVICE NAME
+Two "deploy done" reports on 08-21 left **no run either time**. Tested directly against the real
+workflow, every probe fired from a **non-`main` ref** so nothing could reach the box:
+
+| probe | sent | result | run? |
+|---|---|---|---|
+| A | `service` omitted | 422 `Required input 'service' not provided` | none |
+| B | `service=schwab_1m_v2` (underscores) | 422 `not in the list of allowed values` | none |
+| C | `service=v2` | 422 `not in the list of allowed values` | none |
+| E | filename `deploy_service.yml` | 404 | none |
+| F | `--ref mian` | 422 `No ref found for` | none |
+| **D (control)** | `service=schwab-1m-v2` | **204, empty body** | **run 32641625596** |
+
+`service` is the only `required: true` input with **no default**; the other three default to
+`false`. The control run failed at step 2 `Require main ref` with steps 3-7 **skipped**, which also
+rules a wrong ref OUT as a candidate — that mode *does* create a visible run.
+
+⛔⭐⭐ **THE NAME TRAP.** The dispatch takes **`schwab-1m-v2`** (hyphens — the unit, the log path,
+the workflow choice). The code slug is **`schwab_1m_v2`** (underscores). Typing the slug is
+rejected outright and **leaves no trace anywhere but the caller's own terminal.**
+
+**Copy-paste:**
+
+```
+gh workflow run deploy-service.yml --ref main -f service=schwab-1m-v2 -f run_migrations=false
+```
+
+**A landed submission:** prints `Created workflow_dispatch event ...` and exits 0 (raw API:
+**204, empty body**); then within ~5 s `gh run list --workflow=deploy-service.yml --limit 1` shows
+`branch=main`. If that listing is empty **there is no run** — re-read the error, do not wait.
+
+## §253 / §256 — TWO DEPLOYS, MARKET CLOSED
+Sunday is structurally better than Monday evening: today means Monday's full session runs it,
+graded Monday evening. Box was flat and no session could fire mid-restart.
+
+* **09:15 ET — #739** (reactive fan-out ignored the shared once-per-flip latch). Box `2a43b29` to `9a2cb39`.
+* **09:35 ET — #765 / §256** (below). Box to `253752a`.
+
+Both: `Deploy Service`, v2 only, `run_migrations=false` — verified first that the pending commits
+carry **no alembic revision**. Flat reading re-taken immediately before **each** — snapshot, not
+state. OMS/strategy/control/market-data/reconciler/market-capture correctly still read "on disk,
+not running the pull".
+
+⛔ Three self-corrections, each of which would otherwise have become a false record:
+1. A flat query **labelled `virtual_positions_NONZERO` while selecting `account_positions`** — two
+   metrics that could never differ. Real answer: 842 rows, 0 non-zero.
+2. An error census returned empty because the log is `root:root 640` and `tail` was
+   **permission-denied, not clean**. Re-read under `sudo`.
+3. Handoff said 8 commits behind; the box read **7** — the handoff predated #764's own merge.
+
+## §254 / §256 — THE SEED-GAP GUARD TIMED OUT IN EXACTLY THE CASE IT EXISTS TO CATCH
+Both 08-21 fail-opens are the **same symbol, identical parameters**: LSTA, `lo=2026-05-30`,
+`hi=2026-08-21` — an **83-day window**. #743's index fix is **intact** (the Index Cond still carries
+all four predicates); what survived is the **width**.
+
+Measured on the idle box, that exact window:
+
+| form | rows | time |
+|---|---|---|
+| `count(DISTINCT date)` | 214,470 + external merge sort 4640 kB | **3580 ms** |
+| same shape, 2-day window (control) | 6,861 | 54 ms |
+| **`EXISTS (SELECT 1 ...)`** | **1** | **0.182 ms** |
+| `SELECT DISTINCT ... LIMIT 1` | 214,470 (HashAggregate) | 523 ms |
+
+⛔⭐⭐ **`lo` is the day AFTER the newest stored bar, so the window width IS the staleness being
+measured.** The staler the history, the wider the scan, the likelier the 5 s timeout — and the
+failure is fail-open, which declares the series CURRENT. On 08-21 LSTA's stored history was purely
+**May**; the fail-open seeded 142 May bars on **August 21** and `[V2-CW-ARM]` armed off them. Only
+the post-hoc `[V2-CW-SEED-CAP]` stopped an entry — the guard its own comment says has failed twice.
+
+`DB_SEED_MAX_MISSED_SESSIONS = 0`, so `count(DISTINCT date) > 0` **is** `EXISTS`. 3.6 s bought one
+bit. Fixed in **#765**, with the branch guarded so raising the constant falls back to the exact
+count, and the refusal message now reporting **newest-bar ET vs today ET** — a saturating return
+cannot support a session count.  Mutation **5/5**.
+
+⛔ **Measured before recommending:** `SELECT DISTINCT ... LIMIT 1` does **not** short-circuit —
+HashAggregate cannot emit before consuming its input. Recommending it unmeasured would have shipped
+a non-fix.
+
+**Exposure removed:** 475 of 485 symbols (schwab_1m_v2 / 60s) carry a newest bar older than Friday
+midday. The wide-window case is the **majority state of the table**, not an edge.
+
+⚠ **Stated in advance, not to be discovered in the grade:** more truncations means fewer symbols
+arm, which **shrinks signal 4's denominator** — already only 2. A smaller denominator Monday reads
+as **this fix working**, not as signal 4 degrading.
+
+## §257 — THE ATTACH: FIVE SUCCESSES RECORDED AS FIVE REFUSALS (#766, HELD)
+`_submit_exit_pair_blocking` built its `ExecutionReport` with `price=`; the field is `fill_price`.
+The constructor raised **after** `place_order` returned a `combo_order_id`; `submit_order` caught it
+and returned a **`rejected`** report — ⛔ **not an empty list**, a non-empty list of one reject,
+which is what the OMS `any(... not in ("rejected",))` branch then fails. So
+`_webull_protect_base[...] = coid` never ran and retries 2-5 fought our own live pair.
+
+⛔⛔ **CORRECTION TO THE 08-21 FRAMING.** `[WEBULL-EXIT-PAIR-PLACED]` is logged *before* the
+constructor, so "0-for-EVER" and "succeeding all along" cannot both be true. Censused every
+`oms.log*`:
+
+| population | PAIR-PLACED | ATTACHED | TypeError | REVERSE_OPTION |
+|---|---|---|---|---|
+| 08-16 to 08-20 | **0** | 0 | 0 | 3 (08-18) |
+| **08-21** | **5** | **0** | **10** | **56** |
+| 08-22, 08-23 | 0 | 0 | 0 | 0 |
+
+The attach **began succeeding on 08-21**; "0-for-EVER" was correct for its own window. And it is
+**five, not four** — SUGP 13:50, JUNS 14:01, USDE 16:42, EXYN 17:13, **USDE again 19:40**.
+⛔ *A correction is a claim too, and it needs its own denominator.*
+
+⚠ Five broker-created pairs had their only handle discarded. `broker_orders` never held them by
+construction, so **no query of ours can confirm they are gone — the screen outranks our logs.**
+
+⛔ **This is a SEAM defect.** The adapter's payload builder was tested; the OMS's success branch was
+tested; **each was fed a fixture standing in for the other**, and the joint — what the real adapter
+returns on a real successful placement — was never executed. Mutation **4/4**, and N1 (revert the
+kwarg) proves the new test catches the original production bug.
+
+⛔ Also found by *checking which parts already work*: the handle-storage **line** was already
+correct and already asserted. It was **unreachable, not wrong** — so the second half needed
+coverage, not code.
+
+## HOUSEKEEPING
+* **#762 was already decided** — CLOSED unmerged 08-21 23:01. `cf64e6b5` is **not** an ancestor of
+  `main`; the branch survives. No drift to resolve.
+* **#756 stays held** until it is the only change in a window.
+* New **open item 21** — the v2 streamer reconnect-loops all weekend at `symbols_desired=0`
+  (~1000-1600 lines/idle day vs 6-130/trading day). Not deploy-caused.
+* Memory `project_mai_tai_reprotect_chain_uncovered_window` rewritten: "0-for-EVER" superseded and
+  bounded to its window.
+
+## RULES EARNED
+1. **⛔⭐⭐ A CORRECTION NEEDS ITS OWN DENOMINATOR.** "Succeeding all along" overshot the evidence in
+   the opposite direction from "0-for-EVER". Both were absences read past their population.
+2. **⛔⭐ MEASURE THE ALTERNATIVE BEFORE RECOMMENDING IT.** The obvious `LIMIT 1` rewrite is not a
+   fix; only measuring showed it.
+3. **⛔⭐ A MUTATION HARNESS MUST RESTORE IN A `finally`.** One crashed mid-run and left a mutant in
+   the source. Fixed structurally, and the restore is now re-verified **by content**.
+4. **⛔ TEST THE SEAM, NOT JUST BOTH SIDES.** Two green files, seven days, one broken joint.
