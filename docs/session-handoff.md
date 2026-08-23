@@ -12,139 +12,129 @@
 
 ---
 
-# 🚨 MONDAY: THE DEPLOY DID NOT HAPPEN, AND TWO GRADES REVERSED
+# 🚨 MONDAY: THE CODE IS ON THE BOX. GRADE #739 FIRST, THEN MERGE #766.
 
-**1. ⛔ NOTHING DEPLOYED FRIDAY.** Two "deploy done" reports, **no workflow run either time**, box
-unchanged across three readings 80 minutes apart. `main` is **8 commits ahead** of the box.
-⇒ **Test the input-rejection hypothesis first:** a `workflow_dispatch` with a missing required
-input is rejected outright and leaves **no run at all** — which matches the evidence exactly.
-⇒ Monday post-close, **with the Actions page open. Confirm the run appears before reporting it.**
+**1. ✅ THE DEPLOY BLOCKER IS SOLVED, AND IT WAS THE SERVICE NAME.** `Deploy Service`'s `service`
+input is the only `required: true` with **no default**, and it is a `choice`. A missing *or
+misspelled* value is rejected **422 with no run created** — no trace anywhere but the caller's
+terminal. ⛔⭐⭐ **The dispatch takes `schwab-1m-v2` (HYPHENS). The code slug is `schwab_1m_v2`
+(UNDERSCORES) and is refused outright.** Probed A–F with a passing control; see the day log.
 
-**2. ⛔⛔ `Deploy Main` IS A HAZARD — DO NOT USE IT (B30).** Its 5 runs (all June, all `failure`)
-**deployed the code first** — pip installed, alembic ran — then failed a health gate. A failed
-`Deploy Main` is **not a no-op**: it changes the box and reports failure, so a reader retries and
-deploys twice believing they deployed zero times.
-⇒ **The mechanism is `Deploy Service`, once per service.** That is what ran on 08-20 (20:14:16 oms,
-20:16:26 v2). It was never written down, which is how Friday happened.
+```
+gh workflow run deploy-service.yml --ref main -f service=schwab-1m-v2 -f run_migrations=false
+```
+**Landed** = exit 0 / raw API **204 empty**, then `gh run list --workflow=deploy-service.yml
+--limit 1` shows `branch=main` within ~5 s. Empty listing = **no run**; re-read the error, do not wait.
 
-**3. ⛔ #743 IS NOT PROVEN. Signal 6 FAILED.** See the grade below.
+**2. ⛔ GRADE #739 ON FRIDAY'S NUMBERS BEFORE MERGING #766.** #766 moves signals 1 and 3 and every
+`[WEBULL-PROTECT-*]` count. Nothing graded across that boundary is comparable.
+
+**3. ⚠ SIGNAL 4's DENOMINATOR WILL SHRINK, AND THAT IS #765 WORKING.** More truncations ⇒ fewer
+symbols arm. It was already only 2. Do not read a smaller denominator as signal 4 degrading.
 
 ---
 
 ## ⚡ FIRST SCREEN
 
-**2026-08-21 EOD.** Fleet **7/7 running**, account **FLAT** (0 open of 749 · 0 non-zero of 289
-`account_positions` · 0 working orders). Bar stream continuous, **no gap**.
-**Box HEAD `2a43b29`** — unchanged since 08-20. Entry window closed 16:00 ET.
+**2026-08-23 (Sun) 09:45 ET.** Fleet **7/7 running**, account **FLAT** — 0 non-terminal orders
+across **all** broker accounts (auditable: the entire status vocabulary in 7d is
+`filled`/`rejected`/`cancelled`, all terminal), 0 non-zero of 1033 `account_positions`, 0 non-zero
+of 842 `virtual_positions`, 0 open `oms_managed_positions`. **Box HEAD `253752a` — 0 behind main.**
 
 | service | process start (UTC) | running pulled code? |
 |---|---|---|
-| oms · strategy | 08-20 20:14:49 | ✅ (08-20's pull) |
-| schwab-1m-v2 | 08-20 20:16:46 | ✅ (08-20's pull) |
+| **schwab-1m-v2** | **08-23 13:35:18** | ✅ **has #739 AND #765** |
+| oms · strategy | 08-20 20:14:49 | ⛔ on disk, not running (#758/#760/#755/#766 all unrun) |
 | market-data · control · reconciler · market-capture | 07-27 / 07-14 / 08-14 / 07-08 | ⛔ on disk, not running |
 
-⛔ **`src diff = 0` IS NOT EVIDENCE — this table is.** Friday's non-deploy would have passed a
-health-only check cleanly: *7/7 running, flat, flag true, `event_source` present, alembic at head —
-**all of that is true of the old code.*** That sentence is the argument for the pre/post table.
+⛔ **`src diff = 0` IS NOT EVIDENCE — this table is.**
 
 ---
 
-# 📋 THE SIX-SIGNAL GRADE — FINAL, against `2a43b29`
+# 📋 THE SIX-SIGNAL GRADE — Friday's numbers are the PRE-FIX BASELINE, still valid
 
-Graded after the **16:00 ET** entry-window close. Today's numbers are the **pre-fix baseline** and
-stay valid whenever the deploy lands.
+Graded 08-21 after the 16:00 ET close against `2a43b29`. **v2 now runs newer code; OMS does not.**
 
-| # | signal | reading | verdict |
+| # | signal | 08-21 reading | verdict |
 |---|---|---|---|
-| 1 | mirror legs reaching the venue (§194 replacement) | 152 emitted · **6** became an order · 3 filled · 13 refused | result |
-| 2 | entry fills/day (§186: filled BUYS) | orb 7 · schwab 5 | **thin** |
-| 3 | `[WEBULL-BARE-FILL]` | **8 started bare, 3 STAYED bare**, 5 protected in seconds | pass (<20) |
+| 1 | mirror legs reaching the venue (§194) | 152 emitted · **6** became an order · 3 filled · 13 refused | result |
+| 2 | entry fills/day (§186 filled BUYS) | orb 7 · schwab 5 | **thin** |
+| 3 | `[WEBULL-BARE-FILL]` | 8 started bare, **3 STAYED bare**, 5 protected in seconds | pass (<20) |
 | 4 | duplicate legs/segment (§185 pinned) | 0 of **2** segments | ⛔ **NON-RESULT** |
 | 5 | seed-gap census denominator | `truncations=5 of 13` | ✅ PASS |
-| 6 | seed-gap **fail-open** | **2** | ⛔ **FAIL** |
+| 6 | seed-gap **fail-open** | **2** | ⛔ **FAIL — addressed by #765** |
 
-⛔ **Signal 4 stays NON-RESULT.** Control reproduced `119\|19\|22`, so the instrument is sound —
-the denominator is simply 2, and **6 filled fan-out legs carry no segment id at all**. Do not let
+⛔ Signal 4 stays NON-RESULT: the control reproduced `119|19|22`, so the instrument is sound — the
+denominator is simply 2, and **6 filled fan-out legs carry no segment id at all.** Do not let
 Monday inherit a softened version.
-⛔ **Any `live:orb` P&L for today is incomplete by FIVE exits** (9 buy fills, 4 sell fills).
 
 ---
 
-# 🔴 THE THREE FINDINGS THAT MATTER MOST
+# 🔴 THE THREE THAT MATTER MOST
 
-## 1. ⛔⛔ THE ATTACH HAS BEEN SUCCEEDING ALL ALONG — `0 ATTACHED` IS AN ARTIFACT
-`webull.py:261`, inside `_submit_exit_pair_blocking` (the attach's **success** path), passes
-`price=None`. `ExecutionReport` has **`fill_price`**. The constructor raises *after* a successful
-placement; the caller logs it as `Webull order rejected: TypeError(...)`.
-**Webull returned a `combo_order_id` every time.** Four on 08-21 (SUGP, JUNS, USDE, EXYN).
-⇒ Retries 2–5 then get `ORDER_NOT_SUPPORT_REVERSE_OPTION` — **fighting our own live pair.**
-⇒ `THE POSITION IS HELD WITHOUT PROTECTION` is very likely FALSE.
-⛔ **ONE CHANGE, TWO HALVES:** the kwarg **and** storing `_webull_protect_base[...]` — the success
-branch is `if any(...)` over an **empty** list, so the only handle on a broker-created pair is also
-lost. Fixing the kwarg alone leaves a recorded pair we still cannot cancel.
-⛔ **SEQUENCING: grade #739 on today's numbers BEFORE this lands.** It moves signals 1 and 3 and
-every `[WEBULL-PROTECT-*]` count. Nothing graded across that boundary is comparable.
+## 1. ⛔⛔ THE ATTACH SUCCEEDS AND WE RECORD IT AS A REFUSAL — #766, HELD
+`price=` vs **`fill_price=`**: the `ExecutionReport` constructor raises **after** `place_order`
+returns a `combo_order_id`, so `submit_order` returns a **`rejected`** report (⛔ *not* an empty
+list — a non-empty list of one reject) and the OMS success branch never runs. That branch is what
+stores `_webull_protect_base[…] = coid`, **the only handle on legs the broker creates and never
+lists.** Retries 2–5 then fight our own live pair (`ORDER_NOT_SUPPORT_REVERSE_OPTION` ×56).
 
-## 2. ⛔ #743 NOT PROVEN — the fail-open returned the same day
-`0` at 12:58 ET, **`2` by the close**; both `psycopg.errors.QueryCanceled: statement timeout` on
-the **boundary** lookup #743 rewrote. Rate cut 24/day → 2/day; the timeout **survives**.
-⇒ Next: *why* — same plan regression under load, a lock, or a different query on that session?
-⛔ A lower refusal count is not a fix.
+⛔⛔ **NOT "succeeding all along" — it began on 08-21.** `[WEBULL-EXIT-PAIR-PLACED]` is 0 across
+08-16→08-20 and **5 on 08-21** (SUGP, JUNS, USDE, EXYN, **USDE again**) — ⛔ **five, not four.**
+"0-for-EVER" was true for its own window. *A correction is a claim too, and needs its own denominator.*
 
-## 3. ⛔ THE RECONCILER CANNOT SEE THIS CLASS AT ALL (in `docs/architecture.md` now)
+⚠ **Five broker-created pairs had their handle discarded.** `broker_orders` never held them by
+construction ⇒ **no query of ours can confirm they are gone. The screen outranks our logs.**
+⛔ **§220 dependency:** when #766 lands, re-put the ladder-only decision with the honest number —
+**3 of 8**, extended hours only, stop priced below market.
+
+## 2. ✅ #743's SUCCESSOR SHIPPED — the guard failed in the case it exists to catch
+`lo` is the day after the newest bar, so **the window width IS the staleness**. 83-day window =
+3580 ms (72% of the 5 s timeout, **idle**) → fail-open → LSTA seeded **May** bars on **Aug 21** and
+armed off them. `EXISTS` answers the same question in **0.182 ms**. Live since 09:35 ET.
+⛔ `SELECT DISTINCT … LIMIT 1` was **measured and rejected** — HashAggregate cannot emit early.
+**Monday is the first real exercise: signal 6 must read 0, and it CANNOT be graded intraday.**
+
+## 3. ⛔ THE RECONCILER CANNOT SEE THIS CLASS AT ALL
 Every check compares the venue against **our own tables**, so an order we never recorded is
-invisible **by construction**. There is no `cancel_all`, no venue-side `list_open_orders`, no
-adapter enumerating broker orders — which protected us Friday, but that is **luck, not design**.
+invisible **by construction**. No `cancel_all`, no venue-side `list_open_orders`. That is exactly
+why the five orphaned pairs above are unanswerable from here.
 ⛔ `account_positions` + `virtual_positions` + `oms_managed_positions` are **ONE source**: blind,
-derived-from-it, and our bookkeeping. **`fills` is the only independent ledger; the broker SCREEN
-outranks all of them.**
+derived-from-it, and our bookkeeping. **`fills` is the only independent ledger.**
 
 ---
 
 ## 🗓️ DATED
 | when | what |
 |---|---|
-| **MON 08-24** | **SCHWAB RE-AUTH** — `refresh_token_expires_at = 2026-08-25T20:46:01Z` = **Tue 08-25 16:46 ET**, mid-session. ⛔ MANUAL, cannot ride the deploy. ⛔ **TWO FIELDS**: `expires_at` is the short-lived ACCESS token the refresher rotates itself — a ready-made false alarm. Read the store, never memory. |
-| **MON 08-24 post-close** | Deploy, Actions page open. **Grade #739 FIRST** on today's numbers, then OMS (#758, #760, #755), then v2 (#761). |
+| **MON 08-24** | **SCHWAB RE-AUTH.** Read from the store 08-23: `refresh_token_expires_at = 2026-08-25T20:46:01Z` = **Tue 08-25 16:46 ET**, mid-session. ⛔ MANUAL, cannot ride a deploy. ⛔ **TWO FIELDS** — `expires_at` is the short-lived ACCESS token the refresher rotates itself, a ready-made false alarm. Read the store, never memory. |
+| **MON 08-24 post-close** | **Grade #739 FIRST**, then merge+deploy **#766**, then OMS (#758, #760, #755), then v2 (#761). Actions page open; confirm the run before reporting it. |
 | **MON 08-24** | #13 weekend-outage re-check (needs a 2nd weekend retained). |
 
-## 📌 OPEN PRs — none deployed
-`#755` Q12 audit-write · `#756` preflight fences (**held — only-change window**) · `#758` origin/reason
-· `#759` Q5 pager · `#760` BROKER-SYNC-OK census · `#761` reclaim live-bar + slot_consumed
-· `#762` §205 audit (**decide: merge as tooling or close — do not leave drifting**) · `#763` B28+B29.
+## 📌 OPEN PRs
+`#766` **attach fix — HELD until #739 is graded** (validate green) · `#755` Q12 audit-write ·
+`#756` preflight fences (**held — only-change window**) · `#758` origin/reason · `#759` Q5 pager ·
+`#760` BROKER-SYNC-OK census · `#761` reclaim live-bar + slot_consumed · `#763` B28+B29.
+✅ Merged today: **#765** (§256). ⛔ **#762 is already CLOSED unmerged (08-21)** — `cf64e6b5` is not
+an ancestor of `main`. Not drifting; do not re-triage it.
 
-## 🧠 RULES EARNED 2026-08-21
-1. **⛔⭐⭐ A MUST-BE-ZERO SIGNAL CANNOT BE GRADED INTRADAY.** Mid-window is *not yet failed*, never
-   *passed*. Signal 6 read 0 at 12:58 and 2 by the close. B28's UNMEASURED verdict is the same
-   insight one step earlier.
-2. **⛔⭐⭐ WHICH SIDE OF THE WIRE WRITES THIS FIELD?** `webull_broker_place_time` is written by OUR
-   status poll — its absence is our blindness, not the venue's silence. **The name is not the
-   provenance; grep the write site.** Three wrong conclusions off that one field.
-3. **⛔⭐⭐ AN ABSENCE IS ONLY AN ABSENCE WITHIN THE POPULATION YOU QUERIED.** Name the population on
-   the line. Three wrong absences in one day.
-4. **⛔⭐⭐ TWO METRICS THAT SHOULD DIFFER AND NEVER DO ARE THE SAME NUMBER.** A greedy regex matched
-   a sibling field for 4 hours. ⛔ Renaming for clarity? Check the new name is not a **substring**
-   of a sibling.
-5. **⛔⭐ FLAT NOW IS A SNAPSHOT, NOT A STATE.** Generalises to every pre-flight gate — re-confirm,
-   never carry forward. (Proved itself: two working orders appeared 37 min after a clean reading.)
-6. **⛔⭐ A WEEKDAY IS A COMPUTATION, NOT A LABEL.** Derive it. Both parties asserted one wrongly,
-   in opposite directions, in a single exchange.
-7. **⛔ THE ARITHMETIC WAS RIGHT; THE GROUPING HID THE EVENT.** A 26-day total was 96% one 3-hour
-   storm. ⛔ And a hypothesis must be tested in the **unit the mechanism uses** — churn→429 looked
-   refuted per-DAY and holds per-MINUTE.
-8. **⛔ A FIX THAT LIVES IN ONE SCRIPT IS NOT A FIX** (B29). The mutation applied-check existed in
-   one harness; the next one-off did not have it, so the fix had never been made.
-9. **⛔ A GUARD THAT NAMES WHAT IT HUNTS MUST EXCLUDE ITSELF — build it in, don't remember it.**
-   Five self-matches in one session; fixed structurally (scan only above the selftest label).
-10. **⛔ THE EXIT STATUS MUST TRAVEL IN THE OUTPUT.** `$?` after a pipe is the pipe's. Written down
-    twice, broken twice in one day — so it is a tool now, not a rule. It found a real defect
-    (every successful `count` had been exiting 1) on its first run.
+## 🧠 RULES EARNED 2026-08-23
+1. **⛔⭐⭐ A CORRECTION NEEDS ITS OWN DENOMINATOR.** "Succeeding all along" overshot the evidence in
+   the opposite direction from "0-for-EVER" — both were absences read past their population.
+2. **⛔⭐ MEASURE THE ALTERNATIVE BEFORE RECOMMENDING IT.** The obvious `LIMIT 1` rewrite is not a fix.
+3. **⛔⭐ A MUTATION HARNESS MUST RESTORE IN A `finally`** — one crashed mid-run and left a mutant in
+   the source. Restore is now re-verified **by content**.
+4. **⛔ TEST THE SEAM, NOT JUST BOTH SIDES.** Two green files, seven days, one broken joint — each
+   fed a fixture standing in for the other.
+5. **⛔ A PERMISSION-DENIED READ IS NOT A CLEAN ONE.** `tail` on a `root:root 640` log returned an
+   empty error census. Confirm by CONTENT.
 
 ## 🧠 MEMORY POINTERS
 [[project-mai-tai-context]] · [[project-mai-tai-fleet-roster]] · [[project-mai-tai-architecture]] ·
-[[project_mai_tai_reprotect_chain_uncovered_window]] (⛔ description SUPERSEDED — attach works) ·
-[[project_mai_tai_db_seed_by_count_injects_stale_bars]] (⛔ #743 NOT proven) ·
+[[project_mai_tai_reprotect_chain_uncovered_window]] (⛔ re-censused 08-23 — 5 placed, 0 recorded) ·
+[[project_mai_tai_db_seed_by_count_injects_stale_bars]] (⛔ #765 now live, unproven until Monday) ·
 [[project_mai_tai_false_flat_naked_position]] (the one-source chain) ·
-[[feedback_authoritative_for_a_is_not_for_b]] (which side of the wire) ·
-[[feedback_verify_before_concluding]] (must-be-zero) ·
-[[feedback_an_absence_is_evidence_only_against_a_known_denominator]] (name the population)
+[[feedback_an_absence_is_evidence_only_against_a_known_denominator]] (name the population) ·
+[[feedback_verify_before_concluding]] (must-be-zero cannot be graded intraday) ·
+[[feedback_fixture_must_match_production_config]] (the seam) ·
+[[feedback_mutate_the_code_pin_the_threshold]].
