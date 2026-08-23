@@ -1890,6 +1890,12 @@ class SchwabV2BotService:
     def _missed_sessions_before_today(self, session, newest_bar) -> int:
         """Trading sessions strictly BETWEEN the newest stored bar's session and TODAY's.
 
+        ⛔⭐ THE RETURN SATURATES (§256, 2026-08-23). While `DB_SEED_MAX_MISSED_SESSIONS` is 0 this
+        answers 0 or 1 — "none" or "at least one" — never the true cardinality, because the caller
+        only ever compares it against that constant. **Do not log this number as a session count.**
+        The refusal message reports the two ET dates instead, which is both honest and strictly
+        more informative than "56". See the branch below for why the exact count is unaffordable.
+
         ⛔⭐⭐ WHY THIS IS NOT `_missed_sessions_between(session, newest_bar, now)` (P10, 2026-08-19).
         That function subtracts 1 because BOTH its endpoints are bars whose own sessions appear in
         the count. Here the newer endpoint is the WALL CLOCK, not a bar, and the calendar counts any
@@ -1921,7 +1927,43 @@ class SchwabV2BotService:
         hi_ts = datetime.combine(hi_date, time_cls.min, tzinfo=EASTERN_TZ)
         if lo_ts >= hi_ts:
             return 0  # newest bar is today or later — no session can fall in an empty range
+        params = {"sc": STRATEGY_CODE, "iv": INTERVAL_SECS, "lo": lo_ts, "hi": hi_ts}
         try:
+            if DB_SEED_MAX_MISSED_SESSIONS == 0:
+                # ⛔⭐⭐ THE DECISION IS ONE BIT, SO ASK FOR ONE BIT (§256, 2026-08-23).
+                # The caller's ONLY use of this number is `> DB_SEED_MAX_MISSED_SESSIONS`, and
+                # that constant is 0 — so `count(DISTINCT date) > 0` is EXACTLY `EXISTS`. The
+                # count form made Postgres materialise every matching row and sort it to compute
+                # a cardinality that was then thrown away.
+                #
+                # ⛔⭐⭐ AND THE COST SCALED WITH THE STALENESS IT MEASURES. `lo` is the day AFTER
+                # the newest stored bar, so THE WINDOW WIDTH *IS* THE GAP. The staler the history,
+                # the wider the scan, the likelier the 5 s `statement_timeout` — and the failure
+                # is fail-open, which declares the series CURRENT. **The guard timed out precisely
+                # in the case it exists to catch.** Measured on the box 2026-08-23 against the
+                # exact window of both 08-21 failures (LSTA, 2026-05-30..2026-08-21, 83 days):
+                #     count(DISTINCT ...)  214,470 rows + external merge sort 4640 kB → 3580 ms
+                #     EXISTS (SELECT 1)              1 row, same Index Cond          →    0.182 ms
+                # 3580 ms is 72% of the timeout on an IDLE box; 08-21 ran mid-session. Same
+                # answer both ways on that window: counted=56, exists=true.
+                #
+                # ⛔ MEASURED AND REJECTED: `SELECT DISTINCT ... LIMIT 1` does NOT short-circuit —
+                # HashAggregate cannot emit before it has consumed its input, so it still read all
+                # 214,470 rows (523 ms warm). Only EXISTS stops at the first match.
+                #
+                # ⛔ THE EQUIVALENCE IS CONDITIONAL, SO THE BRANCH IS TOO. Raise the constant above
+                # 0 and "at least one" stops answering the question; this falls back to the exact
+                # count automatically rather than silently returning a wrong verdict.
+                found = session.execute(
+                    text(
+                        "SELECT EXISTS (SELECT 1 "
+                        "FROM strategy_bar_history "
+                        "WHERE strategy_code = :sc AND interval_secs = :iv "
+                        "AND bar_time >= :lo AND bar_time < :hi)"
+                    ),
+                    params,
+                ).scalar()
+                return 1 if found else 0
             rows = session.execute(
                 text(
                     "SELECT count(DISTINCT ((bar_time AT TIME ZONE 'America/New_York')::date)) "
@@ -1929,12 +1971,7 @@ class SchwabV2BotService:
                     "WHERE strategy_code = :sc AND interval_secs = :iv "
                     "AND bar_time >= :lo AND bar_time < :hi"
                 ),
-                {
-                    "sc": STRATEGY_CODE,
-                    "iv": INTERVAL_SECS,
-                    "lo": lo_ts,
-                    "hi": hi_ts,
-                },
+                params,
             ).scalar()
             return max(0, int(rows or 0))
         except Exception:  # noqa: BLE001 - a calendar read must never cost us real history
@@ -1984,12 +2021,16 @@ class SchwabV2BotService:
             boundary_missed = self._missed_sessions_before_today(session, newest_bt)
         if boundary_missed > DB_SEED_MAX_MISSED_SESSIONS:
             # ⛔ SPEAK WHEN REFUSING — same census line, same counter, so the existing watch sees it.
+            newest_et = newest_bt.astimezone(EASTERN_TZ)
+            today_et = datetime.now(UTC).astimezone(EASTERN_TZ)
             logger.warning(
-                "[V2-DB-SEED-GAP] %s dropped ALL %d seed bars — the series ENDS %d trading "
-                "session(s) before today (newest bar %s). The whole window is a different market "
-                "regime for this name; there is no contiguous tail to keep. A market CLOSURE is "
-                "seeded across; an ABSENCE is not.",
-                symbol, len(rows), boundary_missed, rows[0].bar_time,
+                "[V2-DB-SEED-GAP] %s dropped ALL %d seed bars — the newest stored bar is %s ET "
+                "and today is %s ET, with at least one trading session in between (%.1f days). "
+                "The whole window is a different market regime for this name; there is no "
+                "contiguous tail to keep. A market CLOSURE is seeded across; an ABSENCE is not.",
+                symbol, len(rows),
+                newest_et.strftime("%Y-%m-%d %H:%M"), today_et.strftime("%Y-%m-%d"),
+                (today_et - newest_et).total_seconds() / 86400.0,
             )
             self._db_seed_gap_truncations += 1
             rows = []
