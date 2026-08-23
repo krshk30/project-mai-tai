@@ -39,7 +39,7 @@ symbols arm. It was already only 2. Do not read a smaller denominator as signal 
 **2026-08-23 (Sun) 09:45 ET.** Fleet **7/7 running**, account **FLAT** — 0 non-terminal orders
 across **all** broker accounts (auditable: the entire status vocabulary in 7d is
 `filled`/`rejected`/`cancelled`, all terminal), 0 non-zero of 1033 `account_positions`, 0 non-zero
-of 842 `virtual_positions`, 0 open `oms_managed_positions`. **Box HEAD `253752a` — 0 behind main.**
+of 842 `virtual_positions`, 0 open `oms_managed_positions`. **Box HEAD `253752a` — 0 CODE commits behind main** (docs-only commits land on `main` after every handoff merge and never reach the box; count with `git rev-list --count HEAD..origin/main -- src ops`).
 
 | service | process start (UTC) | running pulled code? |
 |---|---|---|
