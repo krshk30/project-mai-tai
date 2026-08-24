@@ -89,6 +89,52 @@ second side and orphans the first side's `try:` / `assert(`. Resolved both direc
 it changes **whether a fill and a position get written**. Protection, not telemetry. Revised drop
 order: **#760 first, then #758; #766 and #755 stay.**
 
+### ⛔⭐⭐ THE META-PATTERN, SECOND INSTANCE — **A RULE THAT LIVES IN ONE PLACE IS NOT A RULE**
+We already had *"a fix that lives in one script is not a fix."* #739 shipped a latch check with
+**no `else`**, so a prevented duplicate was completely silent — **B28's own thesis, violated two
+days after we built the tool for it.** The rule existed, in B28, and did not reach the next PR.
+
+⇒ It generalises: **a rule that lives in one place is not a rule.** A rule is only real where it
+is *applied at the point of authorship* — a checklist item, a test, or a reviewer prompt — not
+where it is *written down*. Both instances are the same failure: the artefact existed and the
+next author did not meet it.
+
+⇒ §266 builds the marker (`[V2-FANOUT-REACTIVE-SUPPRESSED]` + its `[V2-FANOUT-REACTIVE-LATCHED]`
+denominator). But the durable half is the generalised rule, recorded here.
+
+### ⛔⭐ AND §266 ALMOST SHIPPED ITS OWN VERSION OF A 2026-08-21 DEFECT
+The first draft of the LATCHED line ended `DENOMINATOR for [V2-FANOUT-REACTIVE-SUPPRESSED]` — so
+a production `grep -c "[V2-FANOUT-REACTIVE-SUPPRESSED]"` would have matched **every LATCHED line
+too**, returning the suppression count inflated by exactly its own denominator. Two metrics that
+must differ, reading the same number. Same family as the greedy-regex sibling collision of 08-21.
+**The behavioural test caught it on the first run**; a source-inspection test never would have.
+⇒ Refer to a sibling marker in PROSE, never by token. Pinned by
+`test_the_two_MARKERS_ARE_NOT_SUBSTRINGS_OF_EACH_OTHER`.
+
+### ⛔ #739's OWN TESTS WENT RED ON A COMMENT, AND THAT IS A FINDING
+`_reactive_src()` sliced the function by a **magic character count** (`idx : idx + 2200`). §266's
+comment block pushed the fan-out gate past it and **both latch tests failed while the behaviour
+was completely unchanged.** A false red costs the same attention as a real one, and on a day with
+five PRs queued it is the kind that gets waved through. Re-bounded **structurally** (entry log
+line → the closing `TradeIntentDraft`) and re-mutated: the two original mutants (reactive stops
+honouring the latch; the claim is no longer stamped) are still **KILLED**.
+
+### ⛔⭐⭐ A CORRECTION TO MY OWN §264 READ, MADE THE SAME DAY
+I wrote *"we have never called any of them"* from a grep of **`src/`** and stated it at **repo
+scope**. False, twice over — a second agent found both from the other direction:
+* **per-ID detail is ALREADY WIRED** — `webull.py:336/338`, `:600/602` use `OrderDetailRequest`
+  in the status-poll path. The grep missed it because the adapter calls the low-level request
+  class, not the `OrderOperationV3.get_order_detail` wrapper.
+* **enumeration was already DEMONSTRATED** — `scripts/webull_oco_step1.py:114` calls
+  `OrderOperationV3(client).get_order_open(account_id)` raw, as a shape capture.
+
+⇒ *Name the population on the line.* The grep's scope was `src/`; the sentence's scope was "we".
+The corrected finding is **narrower and stronger**: the seam was known, exercised, and left in a
+one-off script. What is missing is **only enumeration**, and the per-ID half a probe needs is
+already in production code. Two caveats now on the design: **listings may LAG, so a missing order
+is not proof of absence** (⇒ enumerate to discover, detail-call to conclude), and the venue allows
+**2 requests / 2 seconds** ⇒ pace the sweep and print the request count beside the page count.
+
 ### ⛔ A false clean, caught by its own emptiness
 `/opt/project-mai-tai` **exists and is not a git repo** (a stub holding only `src/`). A
 `cd /opt/... || cd /home/...` fallback landed there — the `||` never fired because the `cd`

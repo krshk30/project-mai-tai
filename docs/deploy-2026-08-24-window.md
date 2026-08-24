@@ -283,6 +283,24 @@ Do not compress verification to fit five PRs into one evening before a re-auth m
 
 ⛔ **§262/#769 is not droppable** — it is a precondition of #766, not a peer of it.
 
+### ⛔⭐⭐ DO NOT MERGE TONIGHT — the deploy health gate
+
+A second workstream has built a **deploy health gate that alters `ops/systemd/deploy_service.sh`**.
+It takes effect on the **NEXT DISPATCH — including tonight's own** — so merging it before this
+window would change the deploy mechanism *while it is being used*, and any failure would be
+ambiguous between the gate and the five PRs it was gating.
+
+⇒ **It waits for a quiet window, alongside #756** (the preflight fences, already held for the
+same only-change reason). Anyone picking up the PR queue tonight: it is not in the list above,
+and that is deliberate.
+
+### ⛔ §266 rides with #761 — ONE v2 restart, not two
+
+The suppression counter (`[V2-FANOUT-REACTIVE-SUPPRESSED]`) touches the live v2 entry path, the
+same file family as #761. Merge both, then **one** `schwab-1m-v2` dispatch. It cannot help
+tonight's grade either way — it produces its first reading tomorrow — so nothing about it is
+rushed.
+
 ### The dispatch name trap — pinned from `.github/workflows/deploy-service.yml`
 
 `service:` is the only `required: true` with no default, and it is a `choice`. A missing or
@@ -322,13 +340,26 @@ Window is `weekday && 07 <= ET hour < 16`. `oms` and `strategy` are `HIGH_RISK=1
 | **`get_order_history`** | `(account_id, page_size=None, start_date=None, end_date=None, last_client_order_id=None)` |
 | `get_order_detail` | `(account_id, client_order_id)` |
 
-**We have never called any of them.** Every `list_open_orders` in our tree is
+⛔⭐⭐ **CORRECTION TO MY OWN FIRST READ (same day).** I wrote *"we have never called any of
+them"* off a grep of `src/` and stated it at repo scope. **It is false at repo scope, in two
+different ways**, and a second agent found both from the other direction. *Name the population on
+the line — the grep's scope was `src/`, the sentence's scope was "we".*
+
+| capability | actual status |
+|---|---|
+| **per-ID detail** | ✅ **ALREADY WIRED IN THE ADAPTER.** `webull.py:336/338` and `:600/602` import `OrderDetailRequest` and use it in the status-poll path. My grep missed it because the adapter calls the low-level request class, not the `OrderOperationV3.get_order_detail` wrapper. |
+| **enumeration** | ⛔ **never wired into the adapter or any service** — but **demonstrated**: `scripts/webull_oco_step1.py:114` calls `OrderOperationV3(client).get_order_open(account_id)` raw, as a shape-capture step. |
+
+⇒ The corrected finding is **narrower and stronger**: the seam was not merely available, it was
+**known, exercised, and left in a one-off script.** What is missing is *only* enumeration, and the
+per-ID half the design needs is already in production code.
+
+**What was correctly scoped and still stands:** every `list_open_orders` in our tree is
 `self.store.list_open_orders` — `oms/service.py:4671, 5130, 6562`,
 `maintenance/reset_active_state.py:26, 64`, defined at `oms/store.py:36`. **All five read our own
-Postgres table.** Of `OrderOperationV3` we call only `place_order` (×2), `preview_order`,
-`replace_order`.
+Postgres table.** No service path ever asks the venue.
 
-⇒ **The reconciler's blindness is an UNCALLED METHOD, not a missing capability.**
+⇒ **The reconciler's blindness is an UNWIRED METHOD, not a missing capability.**
 
 ### ⛔⭐⭐ CORRECTION TO THE HANDOFF — "no query of ours can confirm they are gone" is FALSE
 
@@ -369,6 +400,14 @@ This is a genuine known-positive, not a self-referential one.
   against `page_size`, and **print the page count beside every total**. Never report a history
   total without the number of pages that produced it.
 - ⛔ it is `account_id`-scoped ⇒ **state the account with every count.**
+- ⛔⭐⭐ **THE LISTINGS MAY LAG ⇒ A MISSING ORDER IS NOT PROOF OF ABSENCE.** This inverts the
+  probe's logic: enumeration can only ever *confirm* presence. For a **known ID**, absence must be
+  settled with the **detail call** — which the adapter already has (`OrderDetailRequest`). ⇒ the
+  probe is `history` **to discover**, `detail` **to conclude**. Never conclude from a listing.
+- ⛔⭐ **RATE LIMIT: 2 requests / 2 seconds**, on a venue that already refuses our status polls in
+  bursts. A cursor walk plus a detail call per ID is a *sequence* of requests, so the sweep must be
+  paced, not looped. ⇒ pace it, and **print the request count beside the page count** — an
+  enumeration that got throttled mid-walk reads exactly like a short final page.
 
 ### 🔴 RETENTION IS A CLOCK — CAPTURE THE IDS TODAY
 
