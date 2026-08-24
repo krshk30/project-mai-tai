@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import deque
+import ast
 import importlib.util
 from pathlib import Path
 import sys
@@ -273,7 +274,100 @@ def test_request_pacer_never_issues_two_calls_as_a_burst():
 
 
 def test_live_code_contains_no_mutating_sdk_calls():
-    source = SCRIPT.read_text(encoding="utf-8")
+    """⛔⭐⭐ AN ALLOWLIST CLAIM NEEDS AN ALLOWLIST CHECK (§273, 2026-08-24).
 
-    for forbidden in (".place_order(", ".replace_order(", ".cancel_order(", ".preview_order("):
-        assert forbidden not in source
+    This test WAS a denylist of four literal substrings — `.place_order(`, `.replace_order(`,
+    `.cancel_order(`, `.preview_order(`. The module docstring makes an ALLOWLIST claim ("can call
+    only two SDK methods"), and a denylist cannot enforce it: it constrains the four names someone
+    thought of, and says nothing about the fifth.
+
+    ⛔ MEASURED, both mutants SURVIVED the old test:
+      * `self.operation.batch_place_order(...)` — a REAL mutating method on the very class this
+        probe instantiates. `.place_order(` does not match `.batch_place_order(`, because the
+        character before `place_order` is `_`, not `.`. The same token-boundary blind spot as B32,
+        in the guard that stands between a diagnostic and a live real-money account.
+      * `self.operation.api_client.post("/openapi/trade/order/place", {})` — a raw HTTP write that
+        bypasses every SDK wrapper, so no method-name denylist could ever see it.
+
+    ⇒ The check is now an AST ALLOWLIST over the calls actually made on the SDK objects, plus a
+    ban on raw HTTP verbs. It is complete by construction rather than by recall: a new mutating
+    method added to the SDK next month is refused without anyone remembering to add its name.
+    """
+    tree = ast.parse(SCRIPT.read_text(encoding="utf-8"))
+
+    ALLOWED = {"get_order_history", "get_order_detail"}
+    SDK_RECEIVERS = {"operation", "client", "api_client", "adapter"}
+    HTTP_VERBS = {"post", "put", "patch", "delete"}
+
+    MUTATING = {
+        "place_order", "replace_order", "cancel_order", "preview_order",
+        "batch_place_order", "place_option", "cancel_option", "replace_option",
+        "preview_option", "submit_order",
+    }
+
+    called_on_sdk: set[str] = set()
+    http_calls: set[str] = set()
+    dynamic: set[str] = set()
+
+    # ⛔⭐⭐ DYNAMIC DISPATCH DEFEATS BOTH OTHER CHECKS, AND IT SURVIVED THE FIRST HARDENING.
+    # `getattr(self.operation, "cancel_order")(...)` is invisible to the AST attribute walk (the
+    # call's func is a Name, not an Attribute) AND to the literal scan (the source contains
+    # `"cancel_order")(`, never `.cancel_order(`). Mutant MX4. A method name that only ever exists
+    # as a STRING is exactly the shape a static guard is blind to, so the string itself is banned.
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            if node.value in MUTATING:
+                dynamic.add(node.value)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "getattr":
+            recv = node.args[0] if node.args else None
+            recv_name = (
+                recv.attr if isinstance(recv, ast.Attribute)
+                else recv.id if isinstance(recv, ast.Name)
+                else None
+            )
+            if recv_name in {"operation", "client", "api_client", "adapter"}:
+                dynamic.add(f"getattr({recv_name}, ...)")
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+            continue
+        attr = node.func.attr
+        recv = node.func.value
+        # `self.operation.X(...)` / `self.client.X(...)` / `adapter.X(...)`
+        recv_name = (
+            recv.attr if isinstance(recv, ast.Attribute)
+            else recv.id if isinstance(recv, ast.Name)
+            else None
+        )
+        if recv_name in SDK_RECEIVERS:
+            called_on_sdk.add(attr)
+        if attr in HTTP_VERBS:
+            http_calls.add(f"{recv_name}.{attr}")
+
+    # ⛔ These are PURE RESPONSE PARSERS on our own adapter, verified by reading them: both are
+    # `@staticmethod`s that only `getattr` off an already-returned object. Neither touches the
+    # network. They are named ONE BY ONE on purpose — a wildcard like "anything starting with _"
+    # would readmit `_submit_blocking`, which is a live write.
+    LOCAL_PARSERS = {"_body", "_response_status", "_get_client"}
+    forbidden = called_on_sdk - ALLOWED - LOCAL_PARSERS
+    assert not forbidden, (
+        f"the probe calls SDK methods outside the two-method contract: {sorted(forbidden)}"
+    )
+    assert not dynamic, (
+        "the probe names a mutating SDK method as a STRING or dispatches onto the SDK dynamically, "
+        f"which no static guard can follow: {sorted(dynamic)}"
+    )
+    assert not http_calls, (
+        f"the probe issues a raw mutating HTTP call, bypassing the SDK contract: {sorted(http_calls)}"
+    )
+
+    # ⛔ Keep the literal denylist too. The AST walk covers calls; this covers a mutating name
+    # appearing anywhere else (a getattr string, a dispatch table, a comment that becomes code).
+    # Belt and braces on the one guard that stands in front of a real-money account.
+    source = SCRIPT.read_text(encoding="utf-8")
+    for forbidden_name in (
+        "place_order", "replace_order", "cancel_order", "preview_order",
+        "batch_place_order", "place_option", "cancel_option", "replace_option",
+        "preview_option", "submit_order",
+    ):
+        assert f".{forbidden_name}(" not in source, f"mutating SDK call present: {forbidden_name}"
