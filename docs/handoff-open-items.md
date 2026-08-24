@@ -912,9 +912,47 @@ blindness itself, not a gap in the query.
 | 2 | guards matching their own log lines | a watch counted itself |
 | 3 | `[V2-FANOUT-REACTIVE-LATCHED]` carrying `[V2-FANOUT-REACTIVE-SUPPRESSED]` in its text (§266) | `grep -c` of the suppression count would have returned it **inflated by exactly its own denominator** |
 
-⇒ **The rule:** no marker may be a substring of another marker, **or of any other marker's
-emitted line.** It is mechanically checkable — collect the `[A-Z0-9-]+` bracket tokens across the
-source and assert pairwise non-containment, same shape as the orphan-import lint.
+### ⛔⭐⭐ MEASURED BEFORE PROPOSING THE LINT — AND THE RULE AS FIRST STATED IS TOO STRONG
+
+Scanned `src/` on 2026-08-24: **155 distinct bracket markers, 29 substring pairs, 14 of them
+"bare-prefix families"** — `[V2-CW]` with `[V2-CW-ARM]`/`[V2-CW-DISARM]`/…, `[V2-FANOUT]` with its
+five members, `[OMS-EXIT-REPROTECT]` with `-FAILED`/`-SKIPPED`, `[SCHWAB-TOKEN-REFRESHER]` with
+three, and so on.
+
+⇒ **A lint that simply bans "marker contains marker" fails 29 times on day one** and demands 29
+renames across live log-consuming watches and cron scripts. The family-prefix convention is
+deliberate and load-bearing; it is not the defect.
+
+**The defect is on the CONSUMER side, and it is what all three instances actually share:**
+
+> **Two markers counted as SEPARATE metrics must not be substrings of one another —
+> equivalently, never count a bare-prefix marker without anchoring the token.**
+
+`[V2-FANOUT]` sitting above `[V2-FANOUT-ON-FILL]` is harmless until somebody counts the bare
+prefix. That is exactly what happened to `[V2-DB-SEED-GAP]` (three populations, opposite zero
+polarity, summed by one `grep -c`) and to §266's LATCHED/SUPPRESSED pair.
+
+**⇒ Lint the counts, not the emitters.** Rule: a count whose marker token is a bare prefix of
+another marker must anchor on `]` (or name the longer sibling). **Current true violations: ONE.**
+
+| file | line | count | why it is ambiguous |
+|---|---|---|---|
+| `ops/health/collect_deploy_evidence.sh` | 126 | `cnt 'OMS-V2-MIRROR.*fail'` | also matches `[OMS-V2-MIRROR-EH]` lines — two populations, one number. Low severity (both are "mirror failures") but it is the exact shape. |
+
+⇒ **The tool is cheap: one fix, then a lint that holds at zero.** That is a far better trade than
+29 renames, and it lands the rule where the harm is.
+
+### ⭐⭐ AND THE DETECTOR REPRODUCED THE BUG IT WAS BUILT TO FIND
+My first version flagged **3** consumers. **All three were false positives** — it matched a bare
+prefix *inside a longer, correctly-specific sibling* (`V2-DB-SEED-GAP-CENSUS` counted as an
+unanchored `V2-DB-SEED-GAP`; `SCHWAB-TOKEN-REFRESHER-DEGRADED-PERSISTENT` likewise), and one
+"hit" was a **comment warning about this very trap**. The substring bug appeared *inside the tool
+written to detect the substring bug*, on the first run.
+
+⇒ Two requirements for whoever builds B32: **the token must be matched to its boundary (the next
+character must not be `-`), and comment lines are not counts.** ⛔ And the lint needs its own
+known-positive, or it will pass by finding nothing — the `OMS-V2-MIRROR` row above is that
+fixture.
 
 ⭐ **NOTE WHAT CAUGHT INSTANCE 3: a BEHAVIOURAL test that read the emitted log.** A
 source-inspection test asserts the marker is *written* and can never see that a sibling's *line*
