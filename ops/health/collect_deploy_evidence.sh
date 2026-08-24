@@ -144,16 +144,30 @@ echo "      baseline: 720 rejected 08-14..08-19  ⇒ expect 0 NEW after the flag
 echo "      ⛔ ZERO MEANS: no mirror leg was REFUSED. It does NOT mean one was placed —"
 echo "         an entry-less day produces the same 0. Read it beside signal 2's fill count."
 echo "   2. entry fills/day — orb WITH schwab beside it (never differenced):"
-sudo -u postgres psql -d project_mai_tai -X -q -c  "SELECT ba.name AS account, bo.submitted_at::date AS d, count(*) AS fills
+# ⛔⭐⭐ §186 — AN ENTRY IS A FILLED **BUY**. NOTHING ELSE (settled 08-21, before reading).
+# The previous query filtered `order_type IN ('limit','market')` and did not filter side, so it
+# was wrong in BOTH directions: it counted 18 exits as entries over 08-14..08-19 AND dropped 49
+# real Schwab entries, because the resting flip-entry is a STOP_LIMIT **buy**. Schwab's rate read
+# 11 when it was 56. Verified total over 08-01..08-19: every buy is an entry (none carries an exit
+# marker), every sell is an exit (oco_exit, or oms_v2_managed_exit=true).
+sudo -u postgres psql -d project_mai_tai -X -q -c  "SELECT ba.name AS account, bo.submitted_at::date AS d, count(*) AS entries
     FROM broker_orders bo JOIN broker_accounts ba ON ba.id=bo.broker_account_id
-   WHERE ba.name IN ('live:orb','live:schwab_1m_v2') AND bo.status='filled'
-     AND bo.order_type IN ('limit','market') AND bo.submitted_at > now() - interval '3 days'
+   WHERE ba.name IN ('live:orb','live:schwab_1m_v2') AND bo.status='filled' AND bo.side='buy'
+     AND bo.submitted_at > now() - interval '3 days'
    GROUP BY 1,2 ORDER BY 2 DESC, 1;" | sed 's/^/      /'
-echo "      baseline: orb 6-7/day  ⇒ expect 12-25"
-echo "      ⛔ DEFINITION UNRESOLVED: this counts any filled limit/market on the account, which"
-echo "         may include CLOSES. State which definition graded the day; do not move the goalposts."
-echo "   4. duplicate legs per segment : ⛔ QUERY NOT PINNED — report as UNMEASURED, never as 0"
-echo "      (baseline 19-of-119 came from the §82 work; needs the segment join before it is a number)"
+echo "      ⛔ The '12-25' band came from the CONTAMINATED count and is NOT a pass/fail until"
+echo "         re-derived. orb's '6-7/day' survives as a MEDIAN only (08-14 was 19, an outlier)."
+echo "      ⛔ Side by side, never differenced — one Schwab entry can fan out to one orb leg."
+echo "   4. duplicate legs per segment — §185, pinned:"
+# ⛔ NOT "$(dirname "$0")" — this script is fed to the box over `ssh 'bash -s'`, so $0 is the
+#    shell, not a path. The collector already cd'd to the repo, so address it from there.
+#    If the file is absent the || branch says UNMEASURED; it must never fall through to 0.
+S4=ops/health/signal4_duplicate_legs.sh
+if [ -r "$S4" ]; then
+  bash "$S4" | sed 's/^/      /'
+else
+  echo "      ⛔ UNMEASURED — $S4 not present on the box (deploy it). NOT zero duplicates."
+fi
 echo "   3. WEBULL-BARE-FILL           : $(cnt 'WEBULL-BARE-FILL' oms)   (⛔ >20/day STOP)"
 # ⛔⭐⭐ SIGNAL 3'S ZERO NEEDED A DENOMINATOR TOO (08-21). `[WEBULL-BARE-FILL]` shipped in
 # #735 (committed 08-19, RUNNING only since the 08-20 20:14:49 deploy) and has never been
