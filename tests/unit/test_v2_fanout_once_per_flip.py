@@ -22,10 +22,27 @@ from project_mai_tai.strategy_core import schwab_1m_v2 as strat
 
 
 def _reactive_src() -> str:
-    """The reactive intrabar-enter path, where the un-latched fan-out lived."""
+    """The reactive intrabar-enter path, where the un-latched fan-out lived.
+
+    ⛔⭐⭐ THIS SLICE WAS A MAGIC CHARACTER COUNT (`idx : idx + 2200`) AND IT BROKE (§266,
+    2026-08-24). Adding the suppression marker's comment block pushed the fan-out gate past 2200
+    characters, and BOTH latch tests below went red **while the behaviour was completely
+    unchanged** — a false alarm that costs exactly as much attention as a real one, and on a day
+    with five PRs queued it is the kind of red that gets waved through.
+
+    ⇒ The window is now bounded STRUCTURALLY, from the entry log line to the `TradeIntentDraft`
+    that ends the function. A comment can no longer move it, and a genuine relocation of the
+    fan-out block out of this function still fails it — which is the thing these tests exist to
+    catch.
+
+    ⛔ These remain SOURCE-INSPECTION tests: they prove the gate is written, never that it is
+    REACHED. `test_v2_fanout_suppression_marker.py` drives `_cw_v2_quote` for real and asserts on
+    the emitted log; that file is the behavioural cover, this one is the shape.
+    """
     whole = inspect.getsource(strat)
     idx = whole.index("[V2-CW] %s v2 INTRABAR ENTER")
-    return whole[idx : idx + 2200]
+    end = whole.index("return TradeIntentDraft(", idx)
+    return whole[idx:end]
 
 
 def test_the_reactive_fanout_honours_the_SHARED_latch() -> None:

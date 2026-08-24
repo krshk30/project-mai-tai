@@ -1922,19 +1922,76 @@ class SchwabV2Strategy:
         #
         # Claiming here also stamps `fanout_claim_ms`, so this leg is subject to the SAME expiry as
         # the resting ones rather than being invisible to it.
-        if self._dual_broker_fanout_enabled and not state.fanout_webull_claimed:
-            state.fanout_webull_claimed = True
-            state.fanout_claim_ms = self._now_ms()
-            self._pending_webull_fanout_intents.append(
-                self._build_webull_fanout_draft(
-                    state,
-                    entry_px=px,
-                    session_is_eh=self._cw_is_extended_hours(now_ms),
-                    source="reactive",
-                    # ALREADY incremented just above -- the counter reflects THIS entry.
-                    entry_n=state.cw_entries_this_flip,
+        # ⛔⭐⭐ §266 — #739 SHIPPED WITH NO `else`, SO A PREVENTED DUPLICATE WAS SILENT.
+        # The latch check above is the whole of #739, and it produced NO evidence of working: a
+        # suppression logged nothing, so "the fix is preventing duplicates" and "the reactive path
+        # never runs" read identically from outside. That is B28's own thesis — a feature that
+        # never produced its success marker did not ship — violated two days after we built the
+        # tool for it. ⭐ A RULE THAT LIVES IN ONE PLACE IS NOT A RULE.
+        #
+        # ⛔ THIS WAS NOT A COSMETIC GAP. Without a marker the only instrument for grading #739 is
+        # signal 4, a RATE over segments carrying `cw_arm_bar_ts` — median 4 segments/day against a
+        # 119-segment baseline, i.e. ~30 sessions to a verdict. The suppression is an EVENT, so it
+        # is readable on the first session the path runs.
+        #
+        # ⛔ THE `else` IS NESTED INSIDE THE FLAG CHECK ON PURPOSE. `fanout_enabled == False` is
+        # NOT a suppression — it is the fan-out being off, an entirely different population. A flat
+        # `else` on the combined condition would count every quote of every symbol on a fan-out-off
+        # deployment as a prevented duplicate: a confident wrong number, which is worse than the
+        # missing one it replaces.
+        if self._dual_broker_fanout_enabled:
+            if not state.fanout_webull_claimed:
+                state.fanout_webull_claimed = True
+                state.fanout_claim_ms = self._now_ms()
+                # ⛔⭐ THE DENOMINATOR, and it must be emitted even though nothing is wrong.
+                # SUPPRESSED=0 is ambiguous alone: either no duplicate was attempted (a clean day)
+                # or this site never executed (UNMEASURED). Only LATCHED separates those two, the
+                # same way the seed-gap census rescues 6a's zero. Never read one without the other.
+                # ⛔⭐⭐ DO NOT NAME THE SIBLING MARKER IN THIS STRING. The first draft ended
+                # "DENOMINATOR for [V2-FANOUT-REACTIVE-SUPPRESSED]" and the behavioural test
+                # caught it immediately: `grep -c "[V2-FANOUT-REACTIVE-SUPPRESSED]"` would then
+                # match EVERY LATCHED line too, and the suppression count would come back inflated
+                # by exactly its own denominator — two metrics that must differ, reading the same
+                # number, for a reason invisible in either line. Same family as the greedy-regex
+                # sibling collision of 2026-08-21. Refer to the sibling in PROSE, never by token.
+                logger.info(
+                    "[V2-FANOUT-REACTIVE-LATCHED] %s reactive claimed the fan-out latch "
+                    "n=%d px=%.4f — this line is the DENOMINATOR for the reactive suppression "
+                    "count (its own marker is deliberately not repeated here)",
+                    state.symbol, state.cw_entries_this_flip, px,
                 )
-            )
+                self._pending_webull_fanout_intents.append(
+                    self._build_webull_fanout_draft(
+                        state,
+                        entry_px=px,
+                        session_is_eh=self._cw_is_extended_hours(now_ms),
+                        source="reactive",
+                        # ALREADY incremented just above -- the counter reflects THIS entry.
+                        entry_n=state.cw_entries_this_flip,
+                    )
+                )
+            else:
+                # ⛔⭐⭐ EVERY LINE HERE IS ONE §82 DUPLICATE THAT DID NOT HAPPEN.
+                # NON-ZERO IS GOOD NEWS — the same polarity as the seed-gap REFUSAL count, and the
+                # opposite of almost every other counter on this tape. Read it that way or the fix
+                # working will be filed as the fix failing.
+                #
+                # `claim_age_ms` is the §82 signature: the measured shape was `reactive` following
+                # `rth_resting` in the SAME segment, 14 of the 19 duplicates, seconds-to-minutes
+                # apart. The age separates that from a same-instant double-evaluation.
+                # ⛔ It is an AGE, not a source. `fanout_webull_claimed` is a bool and no claim site
+                # records WHO set it, so this line cannot say whether the resting or the reactive
+                # path got there first. Naming the claimant needs a `fanout_claim_source` field at
+                # all three claim sites — a separate change, and NOT quietly assumed here.
+                claim_ms = int(getattr(state, "fanout_claim_ms", 0) or 0)
+                age_ms = (self._now_ms() - claim_ms) if claim_ms > 0 else -1
+                logger.info(
+                    "[V2-FANOUT-REACTIVE-SUPPRESSED] %s reactive fan-out leg SUPPRESSED — the "
+                    "latch was already claimed claim_age_ms=%d n=%d px=%.4f "
+                    "(⭐ NON-ZERO IS GOOD NEWS: this is one §82 duplicate prevented, not a fault; "
+                    "age=-1 means the claim carried no timestamp)",
+                    state.symbol, age_ms, state.cw_entries_this_flip, px,
+                )
         return TradeIntentDraft(
             symbol=state.symbol,
             side="buy",
