@@ -15,6 +15,88 @@
 
 ---
 
+## 2026-08-24 (Mon) MORNING — the conflict was in the other pair, and #739 has never traded
+
+**Pre-close prep only. No merges. Two PRs opened: #769 (§262), #770 (this handoff + the sheet).**
+
+### §262 — signal 4 had no side filter, and #766 was about to walk into it
+`measure()` never filtered `bo.side`. §186 had already settled that an entry is a filled BUY, so
+the filter was always the definition — it merely held **by accident**, because the exit-pair
+success path raised `TypeError` on every call and recorded nothing.
+
+#766 revives that path, and its report is built from `{**request.metadata,
+webull_exit_only_pair}` — so a recorded exit leg can inherit `fanout_source` and a non-zero
+`cw_arm_bar_ts` and enter signal 4's population as a SELL.
+
+Landed while it is provably a no-op: population 150 rows, **100% `side='buy'`**, and **zero**
+`live:orb` rows have ever carried `webull_exit_only_pair`. Control after the edit:
+`expected 119|19|22  got 119|19|22`. **Mutation:** one synthetic exit row scores `119|20|23`
+without the filter and `119|19|22` with it. *A filter added while it changes nothing is provable;
+the same filter added afterwards is a number that moved for two reasons at once.*
+
+### ⛔⭐⭐ #739 HAS NEVER TRADED A SESSION — today is its first
+`844be295` was committed to `main` **08-21 08:03 ET**, after the box's last pull before Friday.
+The v2 service ran Friday on `2a43b29`; `merge-base --is-ancestor 844be295 2a43b29` is **false**.
+First box HEAD containing it is `253752a`, deployed **Sun 08-23 09:35 ET**.
+⇒ Friday is #739's **baseline**, not a grade of it. Tonight is **data point 1, not a verdict.**
+
+### §263 — the grouping key CANNOT move to `cw_entry_n`, and the counterfactual says why
+P7 and #570 never disagreed: P7's rule is about a per-fill **LABEL** (first vs reclaim), signal 4
+asks a **GROUPING** question. `cw_entry_n` is the ordinal *inside* a segment, not the boundary
+*of* one. Measured on the §82 control window:
+
+| key | groups | dup | extra legs |
+|---|---|---|---|
+| current `(symbol, cw_arm_bar_ts)` | 119 | 19 | **22** ← ground truth |
+| `(symbol, cw_entry_n)` | **65** | 45 | **158** |
+| `(symbol, ET day, cw_entry_n)` | 69 | 47 | 154 |
+
+**The denominator HALVES, it does not double** — field coverage is not grouping coverage, and an
+ordinal collapses many arms onto `n=1`. **136 manufactured false duplicates.** On the resting
+path — the very leg the rekey was meant to rescue — **148 of 152 fills all claim `cw_entry_n=1`**
+(P7: "stamped but never incremented"). It would replace a *declared blind spot* with a *silent
+wrong answer that looks plausible*: the `cw_flip_level` failure mode, re-derived.
+
+⇒ **The different question:** #739 shipped with **no marker at all** — the new latch check has no
+`else`, so a suppression is completely silent (#763's thesis, and the reason signal 4 is the only
+instrument). Adding `[V2-FANOUT-REACTIVE-SUPPRESSED]` makes every prevented duplicate a **counted
+event** with no 119-segment denominator, readable the first time the path runs instead of in ~30
+sessions. Queue item — it touches the live v2 entry path.
+
+### §264 — the SDK door is open, AND the "lost" handles were never lost
+`OrderOperationV3` — the class `webull.py` **already imports** — exposes `get_order_open`,
+`get_order_history`, `get_order_detail`. We have never called any of them: all five
+`list_open_orders` in our tree are `self.store.list_open_orders`, reading **our own Postgres
+table**. ⇒ the reconciler's blindness is an **uncalled method**, not a missing capability.
+
+⛔ **Correction to the state file:** *"no query of ours can confirm they are gone"* is true of
+`broker_orders` and **false of the log**. The adapter logs the raw response body *before* the
+constructor raises, so **all five `combo_order_id`s were on disk** and are now transcribed into
+`docs/deploy-2026-08-24-window.md`. The 15:40:45 ET USDE pair carries `stop=7.5905` — exactly
+−5.0% of the operator's screen-confirmed 7.99 entry — so symbol, timestamp and stop price agree
+**independently of our order tables**. That is a real known-positive.
+⛔ Retention is a clock: `daily, rotate 7` ⇒ `oms.log-20260822.gz` drops on or about **08-29**.
+
+### The conflict check found the conflict in the OTHER pair
+**#766 ↔ #758 do not conflict** — they auto-merge either way, both fixes verified present by
+content, 98 tests green. **#760 ↔ #755 DO** — 4 hunks, symmetric, all both-added-at-a-shared-
+anchor. ⛔ A naive marker-strip does **not** work: the shared trailing context closes only the
+second side and orphans the first side's `try:` / `assert(`. Resolved both directions to green;
+**full unit suite on all five PRs merged: 2336 passed.**
+
+⛔ **#755 was mis-classified as observability.** It reorders `record_fill_if_needed` +
+`apply_fill_to_positions` **ahead of** the audit write and isolates that write in a SAVEPOINT —
+it changes **whether a fill and a position get written**. Protection, not telemetry. Revised drop
+order: **#760 first, then #758; #766 and #755 stay.**
+
+### ⛔ A false clean, caught by its own emptiness
+`/opt/project-mai-tai` **exists and is not a git repo** (a stub holding only `src/`). A
+`cd /opt/... || cd /home/...` fallback landed there — the `||` never fired because the `cd`
+**succeeded** — and the readiness check printed an **empty** HEAD and an **empty** commits-behind.
+Now recorded in the state file. *An empty `git rev-parse` is VOID, never 0.*
+
+---
+
 ## 2026-08-17 (Mon) EVENING — the root cause was the session tag, and a proven-harm ledger defect
 
 *(Supersedes nothing in the entry below — that covers the morning. This is the afternoon.)*

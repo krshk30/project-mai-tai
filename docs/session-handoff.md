@@ -49,6 +49,14 @@ of 842 `virtual_positions`, 0 open `oms_managed_positions`. **Box HEAD `253752a`
 
 ⛔ **`src diff = 0` IS NOT EVIDENCE — this table is.**
 
+⛔⭐⭐ **THE REPO ON THE BOX IS `/home/trader/project-mai-tai`. `/opt/project-mai-tai` EXISTS AND
+IS NOT A GIT REPO** — a stub holding only `src/`. Hit 2026-08-24: a `cd /opt/... || cd /home/...`
+fallback landed on the stub, `git rev-parse` failed, and the readiness check printed an EMPTY
+HEAD and an EMPTY "commits behind" — a false clean of exactly the family in
+[[feedback_a_watch_that_fails_to_a_false_clean]]. The `||` never fired because the `cd`
+**succeeded**. ⇒ Address the repo by its full path, and treat an empty `git rev-parse` as VOID,
+never as 0.
+
 ---
 
 # 📋 THE SIX-SIGNAL GRADE — Friday's numbers are the PRE-FIX BASELINE, still valid
