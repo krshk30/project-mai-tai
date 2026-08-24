@@ -111,6 +111,36 @@ must differ, reading the same number. Same family as the greedy-regex sibling co
 ⇒ Refer to a sibling marker in PROSE, never by token. Pinned by
 `test_the_two_MARKERS_ARE_NOT_SUBSTRINGS_OF_EACH_OTHER`.
 
+### ⛔⭐⭐ §272 — `eh_resting` IS THE ONLY FAN-OUT EMITTER THAT NEVER TOUCHES THE SHARED LATCH
+Answered from the code that populates `resting_flip_ms`, **not** from the comment citing it — the
+comment ("once, guarded by `resting_flip_ms` set above") is TRUE for its own scope and is being
+read to mean something larger. `resting_flip_ms` is a **per-cross** anti-burst guard, exactly as
+its own docstring says. It is not the per-flip latch and it is not segment-scoped.
+
+Of the four fan-out emit sites, three read AND write `fanout_webull_claimed`; **`eh_resting`
+(`_eh_resting_cross_check`) does neither.** ⇒ **#739 has a boundary nobody wrote down**: it cannot
+suppress reactive-after-`eh_resting`, because `eh_resting` never sets the latch reactive reads.
+
+⛔⭐⭐ And **no instrument we have could show it**: `eh_resting` legs carry `cw_arm_bar_ts=0`
+(30 fills, 0 with a segment id, re-measured today), so signal 4 excludes them entirely — an
+(`eh_resting` + `reactive`) pair in one segment reads as ONE leg, not a duplicate.
+
+Population where it could bite: **22 symbol-days** since 08-01 carrying an `eh_resting` leg
+alongside another source, **2 of them on 08-21**. ⛔ **NOT 22 duplicates** — a symbol-day is not a
+segment (§263 measured how badly that collapses), and the DB **cannot** tighten it, because the
+`eh_resting` leg has no segment id to join on. That is the blindness itself. Board item **22**,
+with observability split from behaviour and observability FIRST — the behaviour change is exactly
+the trade #739's author built and discarded.
+
+### ⛔⭐⭐ B32 — THE SIBLING-TOKEN COLLISION IS NOW THREE. MAKE IT MECHANICAL.
+`order_created`/`refused_no_order_created` · guards matching their own lines · §266's LATCHED line
+carrying the SUPPRESSED token. **Rule: no marker may be a substring of another marker, or of any
+other marker's emitted line.** Mechanically checkable — collect the bracket tokens and assert
+pairwise non-containment, same shape as the orphan-import lint. Third instance is where a habit
+becomes a tool. ⭐ **What caught instance 3 was a BEHAVIOURAL test reading the emitted log**; a
+source-inspection test asserts the marker is *written* and can never see a sibling's *line*
+containing it. Board item **B32**.
+
 ### ⛔ #739's OWN TESTS WENT RED ON A COMMENT, AND THAT IS A FINDING
 `_reactive_src()` sliced the function by a **magic character count** (`idx : idx + 2200`). §266's
 comment block pushed the fan-out gate past it and **both latch tests failed while the behaviour
@@ -118,6 +148,12 @@ was completely unchanged.** A false red costs the same attention as a real one, 
 five PRs queued it is the kind that gets waved through. Re-bounded **structurally** (entry log
 line → the closing `TradeIntentDraft`) and re-mutated: the two original mutants (reactive stops
 honouring the latch; the claim is no longer stamped) are still **KILLED**.
+
+⇒ **THE GENERAL RULE: a test bounded by a CHARACTER COUNT is a test of FORMATTING, not of
+behaviour.** It fails on comments and passes on real relocations that happen to land inside the
+window — wrong in both directions. Any `getsource` slice must be bounded by a structural anchor at
+BOTH ends. The next person to add a comment near a `_reactive_src()`-style helper will hit this,
+so it is written here and not only in the diff.
 
 ### ⛔⭐⭐ A CORRECTION TO MY OWN §264 READ, MADE THE SAME DAY
 I wrote *"we have never called any of them"* from a grep of **`src/`** and stated it at **repo
@@ -134,6 +170,10 @@ one-off script. What is missing is **only enumeration**, and the per-ID half a p
 already in production code. Two caveats now on the design: **listings may LAG, so a missing order
 is not proof of absence** (⇒ enumerate to discover, detail-call to conclude), and the venue allows
 **2 requests / 2 seconds** ⇒ pace the sweep and print the request count beside the page count.
+
+⭐ **THE SAFETY PROPERTY IN ONE LINE, to carry into the probe design verbatim: ENUMERATE TO
+DISCOVER, DETAIL-CALL TO CONCLUDE — NEVER CONCLUDE FROM A LISTING.** It is cheap precisely
+because the detail half already exists in production code.
 
 ### ⛔ A false clean, caught by its own emptiness
 `/opt/project-mai-tai` **exists and is not a git repo** (a stub holding only `src/`). A

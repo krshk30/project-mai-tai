@@ -93,6 +93,12 @@ lists.** Retries 2–5 then fight our own live pair (`ORDER_NOT_SUPPORT_REVERSE_
 
 ⚠ **Five broker-created pairs had their handle discarded.** `broker_orders` never held them by
 construction ⇒ **no query of ours can confirm they are gone. The screen outranks our logs.**
+⛔⭐⭐ **CORRECTED 08-24: "no query of ours can confirm they are gone" is TRUE of `broker_orders`
+and FALSE of the LOG.** The adapter logs the raw body BEFORE the constructor raises, so all five
+`combo_order_id`s were on disk and are now transcribed into `docs/deploy-2026-08-24-window.md`
+(retention `rotate 7` ⇒ the file drops ~08-29). The 15:40:45 ET USDE pair carries `stop=7.5905` =
+exactly −5.0% of the operator's screen-confirmed 7.99 entry ⇒ a real known-positive.
+
 ⛔ **§220 dependency:** when #766 lands, re-put the ladder-only decision with the honest number —
 **3 of 8**, extended hours only, stop priced below market.
 
@@ -102,6 +108,17 @@ construction ⇒ **no query of ours can confirm they are gone. The screen outran
 armed off them. `EXISTS` answers the same question in **0.182 ms**. Live since 09:35 ET.
 ⛔ `SELECT DISTINCT … LIMIT 1` was **measured and rejected** — HashAggregate cannot emit early.
 **Monday is the first real exercise: signal 6 must read 0, and it CANNOT be graded intraday.**
+
+## 3b. 🔴 §272 — `eh_resting` NEVER TOUCHES THE SHARED FAN-OUT LATCH, AND SIGNAL 4 IS BLIND TO IT
+Three of four fan-out emit sites read AND write `fanout_webull_claimed`; `_eh_resting_cross_check`
+does **neither**. ⇒ **#739 cannot suppress reactive-after-`eh_resting`** — a boundary nobody wrote
+down. ⛔ The comment citing `resting_flip_ms` is TRUE for its own scope: it is a **per-cross**
+anti-burst guard, not the per-flip latch.
+⛔⭐⭐ `eh_resting` legs carry `cw_arm_bar_ts=0` (30 fills, **0** with a segment id) ⇒ signal 4
+excludes them, so an (`eh_resting` + `reactive`) pair reads as **ONE leg, not a duplicate**. If it
+is a fourth duplicate path, nothing we have would ever show it. Population: **22 symbol-days**
+since 08-01, 2 on 08-21 — ⛔ **not 22 duplicates**, and the DB cannot tighten it because the leg
+has no segment id to join on. Board item **22**; observability first, behaviour second.
 
 ## 3. ⛔ THE RECONCILER CANNOT SEE THIS CLASS AT ALL
 Every check compares the venue against **our own tables**, so an order we never recorded is

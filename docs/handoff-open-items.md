@@ -831,3 +831,92 @@ different question (Schwab-side DNS/auth), counted separately on purpose.
 
 **Not yet investigated:** whether the reconnect is *supposed* to be suppressed at
 `symbols_desired=0`, or whether the socket should simply be held open. Cheap to answer; nobody has.
+
+---
+
+## 22. 🔴🔴 HIGH — `eh_resting` IS THE ONLY FAN-OUT EMITTER THAT NEVER TOUCHES THE SHARED LATCH (§272)
+
+**Answered from the code that populates `resting_flip_ms`, not from the comment that cites it.**
+The comment at the `eh_resting` fan-out site reads *"once, guarded by `resting_flip_ms` set
+above."* ⛔ **That claim is TRUE FOR ITS OWN SCOPE AND DOES NOT MEAN WHAT IT IS BEING READ TO
+MEAN.** `resting_flip_ms` is set at `_eh_resting_cross_check` immediately before the append and
+checked on entry, so it does exactly what its own docstring says: *"a burst of quotes can't
+double-emit (emit exactly once per cross)."* It is a **per-cross** guard. It is **not** the
+per-flip latch, and it is not scoped to a segment.
+
+### The census that settles it — all four fan-out emit sites
+
+| line | enclosing | `source=` | reads `fanout_webull_claimed` | writes it |
+|---|---|---|---|---|
+| 805 | `update_position` | `rth_resting` | ✅ (L790) | ✅ (L798) |
+| 1963 | `_cw_v2_quote` | `reactive` | ✅ (L1943, #739) | ✅ (L1944) |
+| **2473** | **`_eh_resting_cross_check`** | **`eh_resting`** | ⛔ **NO** | ⛔ **NO** |
+| 2616 | `_fanout_rth_resting_cross` | `rth_resting` | ✅ (L2592) | ✅ (L2610) |
+
+*(line numbers as of the §266 branch)*
+
+### ⇒ TWO CONSEQUENCES, BOTH BY CONSTRUCTION
+
+1. **#739 HAS A HOLE.** Because `eh_resting` never *writes* the latch, a later `reactive` cross in
+   the same flip reads `fanout_webull_claimed == False` and emits. #739 suppresses
+   reactive-after-`rth_resting` and reactive-after-on-fill; it **cannot** suppress
+   reactive-after-`eh_resting`. This is not a regression in #739 — it is the boundary of what #739
+   fixed, and it was not written down.
+2. **`eh_resting` IS NOT BLOCKED BY ANOTHER PATH'S CLAIM** either, since it never reads the latch.
+
+### ⛔⭐⭐ AND NO INSTRUMENT WE HAVE COULD EVER SHOW IT
+
+`eh_resting` legs carry **`cw_arm_bar_ts = 0`** — P7 measured 26 fills at **0%** segment-id
+coverage; re-measured 2026-08-24 on `live:orb`, **30 fills, 0 with a segment id.** Signal 4
+requires a non-zero segment id, so an `eh_resting` leg is **excluded from its population
+entirely**. A genuine (`eh_resting` + `reactive`) pair inside one segment therefore appears in
+signal 4 as **ONE leg — not a duplicate.**
+
+⇒ *If this is a fourth duplicate path, the only instrument for §82 is structurally blind to it.*
+
+### The population is non-empty and current
+
+Symbol-days on `live:orb` (filled buys, `rth_resting_mirror` excluded) carrying an `eh_resting`
+fan-out leg **alongside at least one other source**, 08-01 → 08-24: **22**, including **two on
+08-21** (JUNS, SUGP). Earlier: UPC 08-03 · AMIX 08-04 · BJDX 08-05 · CLRO/PAVS 08-06 · DSY 08-07 ·
+AUUD/HUDI/JWEL 08-10 · WXM 08-11 · BAOS/BOXL/OFAL 08-12 · FGI/GXAI 08-13 · CGTL/STKH/WETO 08-14 ·
+IVF 08-17 · XOS 08-18.
+
+⛔⛔ **THESE 22 ARE NOT 22 DUPLICATES AND MUST NOT BE QUOTED AS ONE.** A symbol-DAY is not a
+segment — §263 measured exactly how badly that grouping collapses distinct arms. This is the size
+of the population **where the defect could bite**, nothing more. **The DB cannot tighten it to
+segments, by construction:** the `eh_resting` leg has no segment id to join on. That is the
+blindness itself, not a gap in the query.
+
+### ⇒ NEXT STEP — SPLIT OBSERVABILITY FROM BEHAVIOUR, AND DO OBSERVABILITY FIRST
+
+1. **Additive, zero behaviour change:** log at the `eh_resting` emit site whether the latch was
+   *already* claimed at that moment — the site keeps emitting either way. That measures the real
+   rate without deciding anything, the same shape as the seed-gap census.
+2. **Behaviour, only after (1) has data:** decide whether `eh_resting` should claim and consult
+   the latch. ⛔ **This is not a safe "just add the check".** It would suppress legs that fire
+   today, and a pre-market entry followed by an RTH re-entry in the same flip may well be
+   legitimate. #739's author hit the same tension with the expiry counter, **built a fix and
+   discarded it** because it traded a duplicate-fill defect for a silent-no-order defect. Do not
+   re-derive that trade — read #739's commit message first.
+
+---
+
+## B32. ⛔⭐⭐ NO LOG MARKER MAY CONTAIN ANOTHER AS A SUBSTRING — make it a lint
+
+**Third instance, which is where a habit becomes a tool.**
+
+| # | collision | cost |
+|---|---|---|
+| 1 | the `order_created` / `refused_no_order_created` regex | a greedy match returned two metrics as one number for 4 h |
+| 2 | guards matching their own log lines | a watch counted itself |
+| 3 | `[V2-FANOUT-REACTIVE-LATCHED]` carrying `[V2-FANOUT-REACTIVE-SUPPRESSED]` in its text (§266) | `grep -c` of the suppression count would have returned it **inflated by exactly its own denominator** |
+
+⇒ **The rule:** no marker may be a substring of another marker, **or of any other marker's
+emitted line.** It is mechanically checkable — collect the `[A-Z0-9-]+` bracket tokens across the
+source and assert pairwise non-containment, same shape as the orphan-import lint.
+
+⭐ **NOTE WHAT CAUGHT INSTANCE 3: a BEHAVIOURAL test that read the emitted log.** A
+source-inspection test asserts the marker is *written* and can never see that a sibling's *line*
+contains it. The lint generalises that catch to every marker, including the ones no test drives.
+
