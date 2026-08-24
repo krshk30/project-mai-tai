@@ -796,3 +796,38 @@ orders against 82 arms on 08-12; median time-at-rest 61s), so as one cancels ano
 Use the runbook's second clause — *"or know exactly which survive"* — which is what made today's
 three deploys possible. **This is "never ask for a confirmation the system cannot produce", found in
 the wild.**
+
+## 21. 🟡 THE v2 STREAMER RECONNECT-LOOPS ALL WEEKEND WITH `symbols_desired=0`
+**Volume that can bury a real signal.** `[V2-WS-DISCONNECT] failure #1: received 1000 (OK); then
+sent 1000 (OK)` → `[V2-WS-LOGIN-OK]` repeats on a ~60 s cycle whenever the watchlist is empty.
+
+⛔ **The split is by IDLE vs TRADING, not by date** — censused across every `schwab-1m-v2.log*`
+(plain + gz) on 2026-08-23:
+
+| ET day | disconnects | |
+|---|---|---|
+| Sat 08-16 | **1578** | idle |
+| Sun 08-17 | **532** | idle |
+| Mon 08-18 | 6 | trading |
+| Tue 08-19 | 30 | trading |
+| Wed 08-20 | 130 | trading |
+| Fri 08-21 | 12 | trading |
+| Sat 08-22 | **1142** | idle |
+| Sun 08-23 (to ~09:45 ET) | **927** | idle |
+
+⇒ **Every** `[V2-WS-LOGIN-OK]` on an idle day carries `symbols_desired=0`. We open a
+subscription-less socket, Schwab closes it cleanly with **1000 (OK)** after ~60 s, we immediately
+reopen it. Nothing is wrong at the venue — close code 1000 is the venue behaving correctly.
+
+**Why it is on the board rather than ignored:** ~1000–1600 lines/idle day is the dominant
+population in the file, and a census that greps this log without naming its population will read
+it as noise or drown a real line in it. It is **not** deploy-caused — it predates both 08-23
+deploys and is present in files going back to 08-16.
+
+⛔ **The same census surfaced real transient failures that are NOT this loop** and must not be
+folded into it: `userPreference HTTP 503 Unable to resolve host traderapi-user-preference.schwab.com`
+×46, `HTTP 503 … host null` ×10, `HTTP 500` ×6, `HTTP 401 Client not authorized` ×1. Those are a
+different question (Schwab-side DNS/auth), counted separately on purpose.
+
+**Not yet investigated:** whether the reconnect is *supposed* to be suppressed at
+`symbols_desired=0`, or whether the socket should simply be held open. Cheap to answer; nobody has.
