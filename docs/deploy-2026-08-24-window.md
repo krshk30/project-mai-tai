@@ -409,6 +409,51 @@ This is a genuine known-positive, not a self-referential one.
   paced, not looped. ⇒ pace it, and **print the request count beside the page count** — an
   enumeration that got throttled mid-walk reads exactly like a short final page.
 
+### ✅ THE PROBE EXISTS — `codex/webull-order-inventory-probe`, hardened by **#772**
+
+Read-only by contract: **only `get_order_history` and `get_order_detail`**, paced at 2.1 s. The
+five combo IDs above are **embedded as controls**, `VHGU4AR1TEVN2QSSSDAEFAQP09` carrying
+`expected_stop=7.5905`.
+
+⛔ **Its read-only guard was a DENYLIST enforcing an ALLOWLIST claim** and two mutants survived it
+— `batch_place_order` (a real mutating method on the class the probe instantiates; `.place_order(`
+does not match `.batch_place_order(`, the **B32 token-boundary blind spot** in the
+highest-consequence guard in the repo) and a raw `api_client.post`. A third, `getattr(op,
+"cancel_order")(...)`, survived my *first* fix. Now an AST allowlist + a dynamic-dispatch ban +
+a string-constant ban: **5/5 killed with an unmutated control still green** (#772).
+
+### ⭐⭐ THE THREE DESIGN IDEAS TO CARRY INTO ANY RECONCILIATION WORK
+
+1. **CONTROLS ARE EMBEDDED AND CANNOT BE RESCUED BY A DETAIL CALL.** A complete sweep that omits
+   or contradicts any of the five is **VOID**. ⇒ the probe *cannot return a comfortable answer on
+   a broken instrument* — the usual failure mode of a validator that has only ever printed PASS.
+
+2. **⛔⭐⭐ ADOPT THE WORDING: INCOMPLETE SWEEP = `COULD_NOT_TELL`, NOT `VOID`.**
+   **VOID** = the control ran and *failed* — the instrument is broken, every number is unreadable.
+   **COULD_NOT_TELL** = the control *never received a valid assay* — transport died, the cursor
+   repeated, a page was unreachable. Nothing was measured, so nothing can be graded either way.
+   ⇒ *We have muddled these repeatedly.* Both are "not a pass", and collapsing them loses whether
+   the tool is broken or was simply never given a chance to speak.
+
+3. **COUNT NESTED CHILD RECORDS, NOT WRAPPER OBJECTS.** Combo children can push a page **past**
+   `page_size`, so the naive short-page terminal test fires early and **reads as a clean, complete
+   sweep**. A truncation trap at the venue boundary that we had not anticipated. ⛔ Generalises:
+   *a pagination terminal condition must count the unit the API paginates, not the unit you
+   happen to be iterating.*
+
+### The trust criteria a reconciliation design must satisfy
+
+**coverage** · **freshness measured against `detail` across state transitions** · **combo children
+with stable IDs** · **partial-fill quantities proven cumulative and monotonic** · **OCO sibling
+resolution under one identity** · **cursor integrity**.
+
+### ⛔⭐⭐ AND THE CEILING — state it beside every clean result
+
+A clean sweep proves **a complete-looking population for one account, one window, one API version
+and one cursor chain.** It **cannot prove present-moment absence during list lag.**
+⇒ this is why the safety property is *enumerate to discover, **detail-call to conclude***, and why
+`get_order_open` returning nothing is never an answer on its own.
+
 ### 🔴 RETENTION IS A CLOCK — CAPTURE THE IDS TODAY
 
 `/etc/logrotate.d/project-mai-tai` is **`daily, rotate 7`** (+ `maxsize 200M`, which can rotate
