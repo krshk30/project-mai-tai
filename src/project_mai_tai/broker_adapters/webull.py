@@ -258,7 +258,17 @@ class WebullBrokerAdapter:
                 side=request.side,
                 quantity=request.quantity,
                 filled_quantity=Decimal("0"),
-                price=None,
+                # ⛔⭐⭐ THE FIELD IS `fill_price` (§257, 2026-08-23). `price=` was an unexpected
+                # kwarg, so this constructor raised TypeError on the SUCCESS path — AFTER
+                # `place_order` had already returned a `combo_order_id`. `submit_order` caught it
+                # and returned `self._reject(..., TypeError(...))`, so the caller saw a REJECT for
+                # a pair that was resting at the broker. That is the whole of "0 ATTACHED":
+                # the attach had been succeeding all along and we recorded every success as a
+                # refusal, then retried into `ORDER_NOT_SUPPORT_REVERSE_OPTION` fighting our own
+                # live pair. ⛔ The OMS success branch keys on `event_type not in ("rejected",)`,
+                # so this one kwarg also cost the ONLY handle we ever get on broker-created legs
+                # (`_webull_protect_base`) — a pair we placed and could never release.
+                fill_price=None,
                 event_type="accepted",
                 reason="webull exit-only protective pair",
                 metadata={**dict(request.metadata), "webull_exit_only_pair": "true"},
