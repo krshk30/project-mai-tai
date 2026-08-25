@@ -135,7 +135,7 @@ echo "   alembic head             : $(sudo -u postgres psql -d project_mai_tai -
 
 echo
 echo "### 4. §183 — was a broker_order_events write swallowed?"
-echo "   [OMS-V2-MIRROR] failures      : $(cnt 'OMS-V2-MIRROR.*fail' oms)"
+echo "   [OMS-V2-MIRROR] failures      : $(cnt 'OMS-V2-MIRROR\].*fail' oms)"
 echo "   failed syncing broker state   : $(cnt 'failed syncing broker state' oms)"
 echo "   managed-exit emit failed      : $(cnt 'managed-exit emit failed' oms)"
 echo "   UndefinedColumn / no column   : $(cnt 'UndefinedColumn\|has no column' oms)"
