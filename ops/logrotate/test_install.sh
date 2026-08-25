@@ -47,6 +47,18 @@ grep -qx 'enable --now logrotate.timer' "$CALLS"
 grep -qx 'is-enabled --quiet logrotate.timer' "$CALLS"
 grep -qx 'is-active --quiet logrotate.timer' "$CALLS"
 
+# A scheduled reconciliation runs daily. An already-current policy must still
+# validate and verify the timer, but it must not replace the target again.
+installed_inode=$(stat -c '%i' "$TMP/logrotate.d/installed")
+: > "$MKTEMP_CALLS"
+MAI_TAI_LOGROTATE_TARGET="$TMP/logrotate.d/installed" \
+MAI_TAI_LOGROTATE_BIN="$TMP/logrotate" \
+MAI_TAI_SYSTEMCTL_BIN="$TMP/systemctl" \
+  bash "$ROOT/ops/logrotate/install.sh" "$ROOT"
+[[ ! -s "$MKTEMP_CALLS" ]]
+[[ "$(stat -c '%i' "$TMP/logrotate.d/installed")" == "$installed_inode" ]]
+cmp "$ROOT/ops/logrotate/project-mai-tai" "$TMP/logrotate.d/installed"
+
 cat > "$TMP/logrotate-fail" <<'EOF'
 #!/usr/bin/env bash
 exit 7

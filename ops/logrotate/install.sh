@@ -31,29 +31,34 @@ if ! grep -Fq 'rotating pattern: /var/log/project-mai-tai/*.log' <<<"$debug_outp
 fi
 
 target_dir=$(dirname "$TARGET")
-# Keep the candidate on the target filesystem for an atomic rename, but outside
-# logrotate.d itself.  logrotate reads dotfiles in that directory, so staging
-# there briefly creates two configs for the same log pattern.
-target_parent=$(dirname "$target_dir")
-tmp=$("${PRIV[@]}" mktemp "$target_parent/.project-mai-tai.logrotate.XXXXXX")
-cleanup() { "${PRIV[@]}" rm -f "$tmp"; }
-trap cleanup EXIT
-
-if [[ -n "${MAI_TAI_LOGROTATE_TARGET:-}" ]]; then
-  # Test/non-production seam: never requires root ownership or sudo.
-  install -m 0644 "$SOURCE" "$tmp"
+if "${PRIV[@]}" test -f "$TARGET" && "${PRIV[@]}" cmp -s "$SOURCE" "$TARGET"; then
+  echo "Logrotate policy already matches the versioned source; no replacement needed."
 else
-  "${PRIV[@]}" install -o root -g root -m 0644 "$SOURCE" "$tmp"
+  # Keep the candidate on the target filesystem for an atomic rename, but outside
+  # logrotate.d itself.  logrotate reads dotfiles in that directory, so staging
+  # there briefly creates two configs for the same log pattern.
+  target_parent=$(dirname "$target_dir")
+  tmp=$("${PRIV[@]}" mktemp "$target_parent/.project-mai-tai.logrotate.XXXXXX")
+  cleanup() { "${PRIV[@]}" rm -f "$tmp"; }
+  trap cleanup EXIT
+
+  if [[ -n "${MAI_TAI_LOGROTATE_TARGET:-}" ]]; then
+    # Test/non-production seam: never requires root ownership or sudo.
+    install -m 0644 "$SOURCE" "$tmp"
+  else
+    "${PRIV[@]}" install -o root -g root -m 0644 "$SOURCE" "$tmp"
+  fi
+  "${PRIV[@]}" cmp -s "$SOURCE" "$tmp"
+  "${PRIV[@]}" mv -f "$tmp" "$TARGET"
+  trap - EXIT
+  echo "Installed updated project-mai-tai logrotate policy."
 fi
-"${PRIV[@]}" cmp -s "$SOURCE" "$tmp"
-"${PRIV[@]}" mv -f "$tmp" "$TARGET"
-trap - EXIT
 
 "${PRIV[@]}" "$SYSTEMCTL_BIN" enable --now logrotate.timer >/dev/null
 "${PRIV[@]}" "$SYSTEMCTL_BIN" is-enabled --quiet logrotate.timer
 "${PRIV[@]}" "$SYSTEMCTL_BIN" is-active --quiet logrotate.timer
 
-if ! cmp -s "$SOURCE" "$TARGET"; then
+if ! "${PRIV[@]}" cmp -s "$SOURCE" "$TARGET"; then
   echo "installed logrotate policy does not match $SOURCE"
   exit 1
 fi

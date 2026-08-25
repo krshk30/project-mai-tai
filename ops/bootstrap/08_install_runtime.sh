@@ -18,10 +18,6 @@ sudo -u trader "$PYTHON_BIN" -m venv "$VENV_DIR"
 sudo -u trader "$VENV_DIR/bin/python" -m pip install --upgrade pip
 sudo -u trader "$VENV_DIR/bin/pip" install -e "$REPO_DIR"
 
-# Keep the evidence window automatic and versioned. This validates the policy,
-# installs it atomically, and proves the host's daily logrotate timer is live.
-bash "$REPO_DIR/ops/logrotate/install.sh" "$REPO_DIR"
-
 if [[ "$RUN_MIGRATIONS" == "1" ]]; then
   set -a
   # shellcheck disable=SC1090

@@ -22,15 +22,30 @@ window remains bounded at 30 rotations.
 
 ## Automatic installation
 
-Every normal runtime install calls `ops/logrotate/install.sh`. The installer:
+The `Reconcile Log Retention` workflow runs every day at `22:30 UTC`, which is
+`17:30 ET` in standard time and `18:30 ET` in daylight time. It also checks the
+live Eastern clock and refuses the weekday `07:00-16:00 ET` market window, so a
+delayed scheduled run cannot silently become a live-session change. A manual
+dispatch remains available after hours.
+
+The workflow checks out the reviewed repository revision on its GitHub runner,
+copies only `install.sh` and the policy into an isolated VPS `/tmp` directory,
+and invokes the installer from there. It does **not** pull the application
+checkout, update its virtual environment, run migrations, or restart any
+application service. Log retention therefore cannot block or partially apply an
+application deployment.
+
+The installer:
 
 1. makes logrotate parse the candidate and proves it saw the application glob;
-2. atomically installs the versioned policy only after that validation;
+2. compares the reviewed policy with the installed bytes and replaces it only
+   when they differ;
 3. enables and starts the host's daily `logrotate.timer`;
 4. verifies the timer is enabled and active and the installed bytes match.
 
-Any failed step stops the deploy before migrations or service restart. No
-trading service is restarted merely to rotate a log.
+Any failed step makes the dedicated workflow red and the next daily run retries.
+It does not prevent an emergency application deployment. No application service
+is restarted merely to rotate a log.
 
 `copytruncate` remains necessary because systemd holds each append target open.
 Its small copy/truncate race can lose lines written during a rotation; this
