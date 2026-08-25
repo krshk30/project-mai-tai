@@ -505,3 +505,89 @@ def test_the_gate_reads_held_not_the_union() -> None:
     assert "state.position_qty_held != 0 or state.cw_reclaim_taken" in src, (
         "the reclaim slot gate is back on the union, which counts our own in-flight intent"
     )
+
+
+# -- #761 live acceptance: opportunity and success are separate ---------------------------
+
+RECLAIM_SLOT_CHECKED = "[V2-RECLAIM-SLOT-CHECKED]"
+UNION_ONLY_PASSED = "[V2-RECLAIM-UNION-ONLY-PASSED]"
+
+
+def test_union_only_reclaim_emits_opportunity_and_success(monkeypatch, caplog) -> None:
+    """The known-positive: the exact #761 state emits one denominator and one success.
+
+    Their placement on opposite sides of the slot-consumption gate is load-bearing.  Restoring
+    the old `position_qty != 0` predicate leaves CHECKED visible but returns before PASSED, so B28
+    reports a failed acceptance rather than an unmeasured feature.
+    """
+    strat = _strat()
+    _rth(strat, monkeypatch)
+    st = _armed(seg_high=10.0)
+    st.resting_active, st.resting_slot, st.resting_level = True, "reclaim", 10.0
+    st.resting_is_broker_order = True
+    st.position_qty = 2
+    st.position_qty_held = 0
+    st.cw_reclaim_taken = False
+
+    with caplog.at_level(logging.INFO):
+        strat._cw_v2_reclaim_resting_track(st)
+
+    assert len(_lines(caplog, RECLAIM_SLOT_CHECKED)) == 1, "the #761 denominator is missing"
+    assert len(_lines(caplog, UNION_ONLY_PASSED)) == 1, "the #761 success marker is missing"
+    assert _cancels(strat) == [], "the union-only state was still treated as a consumed slot"
+    assert st.resting_active is True, "the reclaim order must remain managed"
+
+
+def test_union_only_markers_are_silent_when_feature_is_off(monkeypatch, caplog) -> None:
+    """Flag-off is not an opportunity.  Both observables must stay inside the feature check."""
+    strat = _strat()
+    strat._reactive_entry_enabled = False
+    _rth(strat, monkeypatch)
+    st = _armed(seg_high=10.0)
+    st.resting_active, st.resting_slot, st.resting_level = True, "reclaim", 10.0
+    st.position_qty = 2
+    st.position_qty_held = 0
+    st.cw_reclaim_taken = False
+
+    with caplog.at_level(logging.INFO):
+        strat._cw_v2_reclaim_resting_track(st)
+
+    assert _lines(caplog, RECLAIM_SLOT_CHECKED) == []
+    assert _lines(caplog, UNION_ONLY_PASSED) == []
+
+
+def test_union_only_markers_are_silent_when_site_did_not_run(monkeypatch, caplog) -> None:
+    """Feature-on alone is not a denominator: no active reclaim rest means no #761 opportunity."""
+    strat = _strat()
+    _rth(strat, monkeypatch)
+    st = _armed(seg_high=10.0)
+    st.position_qty = 0
+    st.position_qty_held = 0
+
+    with caplog.at_level(logging.INFO):
+        strat._cw_v2_reclaim_resting_track(st)
+
+    assert _lines(caplog, RECLAIM_SLOT_CHECKED) == []
+    assert _lines(caplog, UNION_ONLY_PASSED) == []
+    assert len(_places(strat)) == 1, "control must reach the tracker and arm a reclaim rest"
+
+
+def test_a_real_fill_is_not_in_the_union_only_denominator(monkeypatch, caplog) -> None:
+    """The denominator is the defect population, not every reclaim-slot evaluation."""
+    strat = _strat()
+    _rth(strat, monkeypatch)
+    st = _armed(seg_high=10.0)
+    st.resting_active, st.resting_slot, st.resting_level = True, "reclaim", 10.0
+    st.resting_is_broker_order = True
+    st.position_qty = 2
+    st.position_qty_held = 2
+
+    with caplog.at_level(logging.INFO):
+        strat._cw_v2_reclaim_resting_track(st)
+
+    assert len(_lines(caplog, RECLAIM_SLOT_CHECKED)) == 1, (
+        "a real fill is still an evaluation of the reclaim-slot gate and must count in its "
+        "denominator"
+    )
+    assert _lines(caplog, UNION_ONLY_PASSED) == []
+    assert len(_cancels(strat)) == 1, "a genuine fill must still consume the reclaim slot"
