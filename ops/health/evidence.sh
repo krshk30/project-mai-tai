@@ -63,7 +63,9 @@ die_void() { echo "VOID: $*" >&2; echo "VOID"; exit 2; }
 # ⛔ Do not "tidy" this into an echo at the bottom of main(): an EXIT trap is what makes it
 # cover the early-exit paths, and those are exactly the ones that were being misread.
 _emit_status() {
-  local rc=$?
+  # ⛔ Takes the status EXPLICITLY. Reading `$?` here is only correct when this is the FIRST
+  # command in the trap; in a compound trap it reports whatever ran just before it.
+  local rc=${1:-$?}
   if [ "$rc" -eq 0 ]; then printf 'EXIT_STATUS=0\n'
   else printf 'EXIT_STATUS=%d  <<< NON-ZERO (0=ok 1=FAIL 2=VOID 3=UNMEASURED)\n' "$rc"; fi
   return "$rc"
@@ -194,7 +196,15 @@ while [ $# -gt 0 ]; do
     --since)   SINCE="${2:-}";   shift 2 ;;
     --out)     OUT="${2:-}";     shift 2 ;;
     --denominator) DENOM="${2:-}"; shift 2 ;;
-    --min)         MINHITS="${2:-1}"; shift 2 ;;
+    --min)         MINHITS="${2:-1}"
+                   # ⛔⭐ AN UNVALIDATED THRESHOLD IS A PASS SWITCH. `--min -1` made
+                   # `HITS >= MINHITS` true at zero successes, so the acceptance check printed
+                   # PASS on 0 of 16 opportunities — the exact reading it exists to prevent.
+                   case "$MINHITS" in
+                     ''|*[!0-9]*) die_void "--min must be a non-negative integer, got '${MINHITS}'" ;;
+                   esac
+                   [ "$MINHITS" -ge 1 ] 2>/dev/null || die_void "--min must be >= 1; a threshold of 0 passes on zero successes and is not an acceptance test"
+                   shift 2 ;;
     --file)    MFILE="${2:-}";  shift 2 ;;
     --find)    MFIND="${2:-}";  shift 2 ;;
     --replace) MREPL="${2:-}";  shift 2 ;;
@@ -240,7 +250,14 @@ case "$CMD" in
     _MUT_BACKUP=$(mktemp)
     cp "$MFILE" "$_MUT_BACKUP"
     # shellcheck disable=SC2064
-    trap "cp '$_MUT_BACKUP' '$MFILE'; rm -f '$_MUT_BACKUP'; _emit_status" EXIT
+    # ⛔⭐⭐ CAPTURE THE VERDICT BEFORE CLEANUP CLOBBERS IT. This trap ran
+    #   cp ...; rm -f ...; _emit_status
+    # and `_emit_status` reads `$?` — which by then is the status of the `rm`, not of the script.
+    # So a SURVIVING MUTANT exited 1 while printing EXIT_STATUS=0. The mutation harness reported
+    # the cleanup's success as the mutation's verdict: a surviving mutant read as a pass, which is
+    # the only failure this harness exists to make impossible.
+    # shellcheck disable=SC2064
+    trap '_MUT_RC=$?; cp "$_MUT_BACKUP" "$MFILE"; rm -f "$_MUT_BACKUP"; _emit_status "$_MUT_RC"' EXIT
     BEFORE=$(md5sum "$MFILE" | awk '{print $1}')
     MFILE="$MFILE" MFIND="$MFIND" MREPL="$MREPL" python3 - <<'PYEOF'
 import io, os

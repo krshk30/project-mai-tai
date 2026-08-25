@@ -151,9 +151,11 @@ never recorded is therefore invisible to it *by construction* — not missed, no
 tightened, but outside the shape of the comparison. "The reconciler detects drift" is a claim
 about drift between two records we hold; it is not a claim about the broker's book.
 
-Concretely (found live 2026-08-21): four Webull protective OCO pairs were created at the venue
+Concretely (found live 2026-08-21): **five** Webull protective OCO pairs were created at the venue
 and returned `combo_order_id`s, while the code that would have recorded them crashed after
-placement. The result is orders that exist at the broker, protect real shares, and appear in no
+placement. ⛔ Four was the first count and it was wrong — USDE appears **twice** on 08-21
+(12:42:47Z and 15:40:45Z) and the second was collapsed into the first. The durable list is in
+`docs/deploy-2026-08-24-window.md`: SUGP, JUNS, USDE, EXYN, USDE. The result is orders that exist at the broker, protect real shares, and appear in no
 table we own. Reconciliation reported nothing — correctly, by its own contract.
 
 ⇒ Two consequences worth stating where safety is reasoned about:
