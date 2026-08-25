@@ -237,10 +237,15 @@ def test_the_internal_gap_lookup_asks_for_ONE_BIT_not_a_cardinality() -> None:
 def test_the_internal_EXISTS_matches_the_old_answer_on_a_known_window() -> None:
     """Known Mon->Wed window: Tuesday is the one intervening session in both formulations.
 
-    This is the control paired with the query-shape assertion above.  The old count's Boolean
-    decision and the new saturated return must agree; the rewrite may remove work, not truth.
+    This control computes the PRIOR query literally: exact timestamp bounds, distinct ET dates,
+    then ``max(0, count - 1)``.  It must not reuse the rewrite's bounds, because then a boundary
+    defect could certify itself.  Monday has a bar after the older endpoint, so the prior query
+    sees Monday + Tuesday and returns one; the rewrite sees Tuesday and also returns one.
     """
+    older = datetime(2026, 8, 17, 19, 59, tzinfo=UTC)  # Mon 15:59 ET
+    newer = datetime(2026, 8, 19, 13, 30, tzinfo=UTC)  # Wed 09:30 ET
     bars = [
+        datetime(2026, 8, 17, 20, 0, tzinfo=UTC),  # older endpoint's date, prior count's offset
         datetime(2026, 8, 18, 13, 30, tzinfo=UTC),
         datetime(2026, 8, 18, 15, 0, tzinfo=UTC),
         datetime(2026, 8, 19, 13, 30, tzinfo=UTC),  # endpoint date: outside the open window
@@ -254,23 +259,29 @@ def test_the_internal_EXISTS_matches_the_old_answer_on_a_known_window() -> None:
             return SimpleNamespace(scalar=lambda: bool(matched))
 
     sess = _KnownWindowSession()
-    new_answer = _bot()._missed_sessions_between(
-        sess,
-        datetime(2026, 8, 17, 19, 59, tzinfo=UTC),
-        datetime(2026, 8, 19, 13, 30, tzinfo=UTC),
-    )
+    new_answer = _bot()._missed_sessions_between(sess, older, newer)
     _, params = sess.calls[-1]
-    old_count_for_window = len(
+    prior_distinct_dates = len(
         {
             bar.astimezone(EASTERN_TZ).date()
             for bar in bars
-            if params["lo"] <= bar < params["hi"]
+            if older < bar < newer
         }
     )
-    assert old_count_for_window == 1, "the control must contain exactly Tuesday's session"
-    assert (old_count_for_window > DB_SEED_MAX_MISSED_SESSIONS) == (
+    prior_answer = max(0, prior_distinct_dates - 1)
+    assert prior_distinct_dates == 2, "the prior query must see Monday and Tuesday"
+    assert prior_answer == 1
+    assert (prior_answer > DB_SEED_MAX_MISSED_SESSIONS) == (
         new_answer > DB_SEED_MAX_MISSED_SESSIONS
     )
+
+    # Mutation control: moving the new lower boundary forward one date excludes Tuesday and
+    # reverses the verdict.  A production mutant from +1 day to +2 days therefore turns the
+    # equivalence assertion above red instead of letting the fixture pass vacuously.
+    mutated_lo = params["lo"] + timedelta(days=1)
+    mutated_found = any(mutated_lo <= bar < params["hi"] for bar in bars)
+    assert mutated_found is False
+    assert (prior_answer > DB_SEED_MAX_MISSED_SESSIONS) != mutated_found
 
 
 def test_internal_EXISTS_is_guarded_by_the_zero_threshold(monkeypatch) -> None:
