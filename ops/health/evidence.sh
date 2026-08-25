@@ -64,7 +64,9 @@ die_void() { echo "VOID: $*" >&2; echo "VOID"; exit 2; }
 # cover the early-exit paths, and those are exactly the ones that were being misread.
 _mut_cleanup() {
   local rc=$?
-  if cp "$_MUT_BACKUP" "$MFILE"; then
+  # ⛔ VERIFY the restore before deleting the only copy — `cp` exiting 0 is not proof the file
+  # came back identical (short write, full disk, truncated target).
+  if cp "$_MUT_BACKUP" "$MFILE" && cmp -s "$_MUT_BACKUP" "$MFILE"; then
     rm -f "$_MUT_BACKUP"
   else
     printf 'MUTATION-RESTORE-FAILED: could not restore %s
@@ -73,9 +75,18 @@ _mut_cleanup() {
 ' "$_MUT_BACKUP" >&2
     printf 'MUTATION-RESTORE-FAILED: restore it by hand before trusting anything in this file.
 ' >&2
-    [ "$rc" -eq 0 ] && rc=2
+    # ⛔ A RESTORE FAILURE IS *ALWAYS* VOID. This read `[ "$rc" -eq 0 ] && rc=2`, so a restore
+    # failure during a SURVIVING MUTANT exited 1 — reported as "the mutant survived" when the
+    # truth is "the run is unusable and the file is still poisoned". The instrument being broken
+    # outranks whatever it was measuring.
+    rc=2
   fi
   _emit_status "$rc"
+  # ⛔⭐⭐ AN EXIT TRAP DOES NOT INHERIT `rc`. Assigning rc=2 changed only the printed line; bash
+  # still exited with the status that TRIGGERED the trap (1 = surviving mutant). So the VOID was
+  # announced in text and contradicted by the exit code — and the exit code is what CI reads.
+  # ⇒ the trap must `exit` explicitly. Found by the fault control, not by review.
+  exit "$rc"
 }
 
 _emit_status() {
@@ -263,8 +274,16 @@ case "$CMD" in
     [ -n "$MFILE" ] && [ -n "$MFIND" ] && [ -n "$MTEST" ] || \
       die_void "mutate needs --file, --find and --test (--replace may be empty to delete)"
     [ -r "$MFILE" ] || die_void "cannot read $MFILE"
-    _MUT_BACKUP=$(mktemp)
-    cp "$MFILE" "$_MUT_BACKUP"
+    _MUT_BACKUP=$(mktemp) || die_void "cannot create a backup temp file"
+    # ⛔⭐⭐ PROVE THE BACKUP BEFORE MUTATING. This `cp` was UNCHECKED. Forced to fail, the backup
+    # stayed EMPTY, the mutation proceeded anyway, and cleanup then copied the empty backup over
+    # the subject — leaving the file at ZERO BYTES. The harness destroyed the thing it was testing
+    # and reported nothing. ⇒ No verified backup ⇒ no mutation. `cmp` because a `cp` that exits 0
+    # having written a short file is still not a backup.
+    if ! cp "$MFILE" "$_MUT_BACKUP" || ! cmp -s "$MFILE" "$_MUT_BACKUP"; then
+      rm -f "$_MUT_BACKUP"
+      die_void "could not take a verified backup of $MFILE — refusing to mutate it"
+    fi
     # shellcheck disable=SC2064
     # ⛔⭐⭐ CAPTURE THE VERDICT BEFORE CLEANUP CLOBBERS IT. This trap ran
     #   cp ...; rm -f ...; _emit_status
@@ -541,6 +560,39 @@ PYEOF
     [ "$(md5sum "$subj" | awk '{print $1}')" = "$orig_md5" ] \
       && ok "file byte-identical after 3 mutations" || bad "the harness left a mutant on disk"
     rm -f "$subj"
+
+    echo "T17 ** FAULT CONTROL: if the INITIAL backup fails, NOTHING may be mutated"
+    # ⛔⭐⭐ THIS IS THE ONE THAT DESTROYED A FILE. The first `cp` was UNCHECKED: forced to fail it
+    # left an EMPTY backup, mutation ran anyway, and cleanup copied that empty file over the
+    # subject — 0 BYTES, silently. A harness that can delete the thing it measures is worse than
+    # no harness. The control forces the failure via a PATH shim and asserts the subject SURVIVES.
+    subj2=$(mktemp); printf 'ORIGINAL-CONTENT
+' > "$subj2"
+    o2=$(md5sum "$subj2" | awk '{print $1}'); sz2=$(wc -c < "$subj2")
+    shim=$(mktemp -d); printf '#!/bin/sh
+exit 1
+' > "$shim/cp"; chmod +x "$shim/cp"
+    r17=$(PATH="$shim:$PATH" bash "$SELF" mutate --file "$subj2" --find 'ORIGINAL' --replace 'X'             --test 'true' --label T17 2>&1); rc17=$?
+    [ "$rc17" -eq 2 ] && ok "a failed initial backup is VOID (exit 2)" || bad "got exit $rc17, expected 2"
+    echo "$r17" | grep -qi 'refusing to mutate' && ok "and it REFUSES in words" || bad "no refusal text: $r17"
+    [ "$(md5sum "$subj2" | awk '{print $1}')" = "$o2" ]       && ok "subject byte-identical (still $sz2 bytes, NOT zero)"       || bad "⛔ THE HARNESS DAMAGED ITS SUBJECT: now $(wc -c < "$subj2") bytes"
+    rm -rf "$shim"
+
+    echo "T18 ** FAULT CONTROL: a failed RESTORE is VOID(2) even when the mutant SURVIVED"
+    # ⛔ The instrument being broken outranks what it was measuring. This exited 1 ("survived"),
+    # which reads as a normal finding, while the file was still poisoned on disk. Two shims:
+    # the backup `cp` must succeed and the restore `cp` must fail, so the counter distinguishes.
+    shim2=$(mktemp -d); cnt="$shim2/n"; : > "$cnt"
+    { echo '#!/bin/sh'
+      echo 'echo x >> "$0.n"'
+      echo 'if [ "$(wc -c < "$0.n")" -le 2 ]; then exec /bin/cp "$@"; fi'
+      echo 'exit 1'
+    } > "$shim2/cp"; chmod +x "$shim2/cp"; : > "$shim2/cp.n"
+    r18=$(PATH="$shim2:$PATH" bash "$SELF" mutate --file "$subj2" --find 'ORIGINAL' --replace 'X'             --test 'false' --label T18 2>&1); rc18=$?
+    [ "$rc18" -eq 2 ] && ok "restore failure is VOID (exit 2), not the mutant's own 1"                       || bad "got exit $rc18, expected 2 — a VOID is being reported as a result"
+    echo "$r18" | grep -q 'MUTATION-RESTORE-FAILED' && ok "and it names the poisoned file" || bad "no restore-failure text"
+    echo "$r18" | grep -qi 'backup is KEPT' && ok "and the backup is KEPT, not deleted" || bad "backup not announced as kept"
+    /bin/cp "$subj2.bak" "$subj2" 2>/dev/null; rm -f "$subj2" "$subj2.bak"; rm -rf "$shim2"
 
     echo
     echo "PASS=$P FAIL=$F"
