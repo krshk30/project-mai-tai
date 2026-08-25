@@ -63,7 +63,17 @@ link_preflight_fences() {
       if ! cmp -s "$src" "$dst"; then
         echo "preflight: $dst differs from the repo copy — preserving it before linking"
       fi
-      cp -a "$dst" "$dst.pre-symlink-$(date -u +%Y%m%d%H%M%S)"
+      # ⛔⭐⭐ NO BACKUP ⇒ NO REPLACEMENT. This `cp -a` was UNCHECKED, and with errexit disabled
+      # execution fell straight through to `ln -sfn`, which REPLACED the box-only file with a
+      # symlink — destroying the only surviving copy — while rc stayed 0 and the function printed
+      # "preflight fences linked". Data destruction reported as success, in the step whose own
+      # comment says it "must never be the step that destroys the only surviving version of a
+      # gate". ⇒ If the backup fails, leave the original ALONE and skip this file.
+      if ! cp -a "$dst" "$dst.pre-symlink-$(date -u +%Y%m%d%H%M%S)"; then
+        echo "[PREFLIGHT-LINK-FAILED] could not back up $dst — REFUSING to replace it with a symlink" >&2
+        rc=1
+        continue
+      fi
     fi
     ln -sfn "$src" "$dst" || rc=1
   done
