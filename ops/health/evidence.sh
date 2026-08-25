@@ -8,6 +8,8 @@
 #                      [--out <file>]
 #   evidence.sh markers --service <name>            # every bracketed marker present, with counts
 #   evidence.sh verify --marker '<literal>'         # is this string actually in the source?
+#   evidence.sh field-acceptance --check broker-order-event-source \
+#       --since <ISO instant> --until <ISO instant> # evidence stored in DB columns
 #   evidence.sh selftest                            # prove every branch against known tape
 #
 #   <when> is `boot` (that service's ActiveEnterTimestamp), `all`, or an ISO instant with a
@@ -214,13 +216,15 @@ select_lines() {  # select_lines <infile> <marker> <pattern> <outfile>
 
 # ══════════════════════════════════════════════════════════════════════════════════════════
 CMD="${1:-}"; shift || true
-SERVICE=""; MARKER=""; PATTERN=""; SINCE="all"; OUT=""; UNCHECKED=0; DENOM=""; MINHITS=1; MFILE=""; MFIND=""; MREPL=""; MTEST=""; MLABEL=""
+SERVICE=""; MARKER=""; PATTERN=""; SINCE="all"; UNTIL=""; FCHECK=""; OUT=""; UNCHECKED=0; DENOM=""; MINHITS=1; MFILE=""; MFIND=""; MREPL=""; MTEST=""; MLABEL=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --service) SERVICE="${2:-}"; shift 2 ;;
     --marker)  MARKER="${2:-}";  shift 2 ;;
     --pattern) PATTERN="${2:-}"; shift 2 ;;
     --since)   SINCE="${2:-}";   shift 2 ;;
+    --until)   UNTIL="${2:-}";   shift 2 ;;
+    --check)   FCHECK="${2:-}";  shift 2 ;;
     --out)     OUT="${2:-}";     shift 2 ;;
     --denominator) DENOM="${2:-}"; shift 2 ;;
     --min)         MINHITS="${2:-1}"
@@ -245,6 +249,24 @@ done
 mkdir -p "$OUTDIR" 2>/dev/null || true
 
 case "$CMD" in
+  field-acceptance)
+    # B28's marker acceptance cannot grade #758: its evidence is a durable DB field, not a log
+    # line. This helper exposes one immutable read-only query; table, field and predicates are
+    # not arguments, so this is not a generic SQL execution surface.
+    PY="$REPO_DIR/.venv/bin/python"
+    TOOL="$REPO_DIR/ops/health/field_acceptance.py"
+    [ -x "$PY" ] || die_void "field acceptance Python is unavailable at $PY"
+    [ -r "$TOOL" ] || die_void "field acceptance tool is unavailable at $TOOL"
+    [ -n "$FCHECK" ] && [ -n "$SINCE" ] && [ "$SINCE" != "all" ] && [ -n "$UNTIL" ] || \
+      die_void "field-acceptance needs --check, --since and --until (explicit ISO window)"
+    case "$FCHECK" in
+      broker-order-event-source) ;;
+      *) die_void "unknown field acceptance check '$FCHECK'" ;;
+    esac
+    "$PY" "$TOOL" --check "$FCHECK" --since "$SINCE" --until "$UNTIL"
+    exit $?
+    ;;
+
   mutate)
     # ⛔⭐⭐ B29 — A MUTANT THAT DID NOT APPLY IS NOT A SURVIVING MUTANT.
     #
@@ -600,6 +622,6 @@ exit 1
     ;;
 
   *)
-    die_void "unknown command '${CMD:-<none>}' (count|lines|markers|verify|acceptance|mutate|selftest)"
+    die_void "unknown command '${CMD:-<none>}' (count|lines|markers|verify|acceptance|field-acceptance|mutate|selftest)"
     ;;
 esac
