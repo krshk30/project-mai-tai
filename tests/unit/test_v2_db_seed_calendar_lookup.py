@@ -40,6 +40,7 @@ from types import SimpleNamespace
 import pytest
 
 from project_mai_tai.services.schwab_1m_v2_bot import (
+    DB_SEED_MAX_MISSED_SESSIONS,
     EASTERN_TZ,
     INTERVAL_SECS,
     STRATEGY_CODE,
@@ -175,9 +176,10 @@ def test_a_TIMED_OUT_lookup_ROLLS_BACK_so_the_next_one_is_its_own_verdict() -> N
     assert bot._missed_sessions_before_today(sess, datetime(2026, 7, 1, tzinfo=UTC)) == 0
     assert sess.rollbacks == 1, "an aborted transaction must be cleared, or it poisons the session"
 
-    # The SECOND lookup, on the SAME session, must now get its own real answer.
+    # The SECOND lookup, on the SAME session, must now get its own real answer. At the configured
+    # zero threshold the return is deliberately saturated: truthy means at least one session.
     assert bot._missed_sessions_between(sess, datetime(2026, 7, 1, tzinfo=UTC),
-                                        datetime(2026, 8, 1, tzinfo=UTC)) == 2  # 3 dates - 1
+                                        datetime(2026, 8, 1, tzinfo=UTC)) == 1
 
 
 def test_the_sibling_lookup_also_rolls_back() -> None:
@@ -213,6 +215,125 @@ def test_a_rollback_that_itself_fails_does_not_escape() -> None:
 
     assert bot._missed_sessions_before_today(_BadRollback(fail_first=1),
                                              datetime(2026, 6, 1, tzinfo=UTC)) == 0
+
+
+# ------------------------------------------------ 2b. the internal-gap decision is ONE BIT (08-25)
+def test_the_internal_gap_lookup_asks_for_ONE_BIT_not_a_cardinality() -> None:
+    """The plain gap lookup was untouched by #765 and failed open at 16:34 ET on 08-25."""
+    bot = _bot()
+    sess = _CapturingSession(result=True)
+    older = datetime(2026, 8, 17, 19, 59, tzinfo=UTC)  # Mon 15:59 ET
+    newer = datetime(2026, 8, 19, 13, 30, tzinfo=UTC)  # Wed 09:30 ET
+
+    assert bot._missed_sessions_between(sess, older, newer) == 1
+    sql, params = sess.calls[-1]
+    assert "EXISTS (SELECT 1" in sql
+    assert "count(DISTINCT" not in sql
+    assert "bar_time >= :lo" in sql and "bar_time < :hi" in sql
+    assert params["lo"] == datetime(2026, 8, 18, 0, 0, tzinfo=EASTERN_TZ)
+    assert params["hi"] == datetime(2026, 8, 19, 0, 0, tzinfo=EASTERN_TZ)
+
+
+def test_the_internal_EXISTS_matches_the_old_answer_on_a_known_window() -> None:
+    """Known Mon->Wed window: Tuesday is the one intervening session in both formulations.
+
+    This is the control paired with the query-shape assertion above.  The old count's Boolean
+    decision and the new saturated return must agree; the rewrite may remove work, not truth.
+    """
+    bars = [
+        datetime(2026, 8, 18, 13, 30, tzinfo=UTC),
+        datetime(2026, 8, 18, 15, 0, tzinfo=UTC),
+        datetime(2026, 8, 19, 13, 30, tzinfo=UTC),  # endpoint date: outside the open window
+    ]
+
+    class _KnownWindowSession(_CapturingSession):
+        def execute(self, stmt, params=None):
+            params = dict(params or {})
+            self.calls.append((str(stmt), params))
+            matched = [bar for bar in bars if params["lo"] <= bar < params["hi"]]
+            return SimpleNamespace(scalar=lambda: bool(matched))
+
+    sess = _KnownWindowSession()
+    new_answer = _bot()._missed_sessions_between(
+        sess,
+        datetime(2026, 8, 17, 19, 59, tzinfo=UTC),
+        datetime(2026, 8, 19, 13, 30, tzinfo=UTC),
+    )
+    _, params = sess.calls[-1]
+    old_count_for_window = len(
+        {
+            bar.astimezone(EASTERN_TZ).date()
+            for bar in bars
+            if params["lo"] <= bar < params["hi"]
+        }
+    )
+    assert old_count_for_window == 1, "the control must contain exactly Tuesday's session"
+    assert (old_count_for_window > DB_SEED_MAX_MISSED_SESSIONS) == (
+        new_answer > DB_SEED_MAX_MISSED_SESSIONS
+    )
+
+
+def test_internal_EXISTS_is_guarded_by_the_zero_threshold(monkeypatch) -> None:
+    """Above zero, EXISTS cannot answer the caller's question; exact counting must return."""
+    import project_mai_tai.services.schwab_1m_v2_bot as mod
+
+    assert mod.DB_SEED_MAX_MISSED_SESSIONS == 0
+    monkeypatch.setattr(mod, "DB_SEED_MAX_MISSED_SESSIONS", 2)
+    sess = _CapturingSession(result=7)
+    got = _bot()._missed_sessions_between(
+        sess,
+        datetime(2026, 7, 1, tzinfo=UTC),
+        datetime(2026, 8, 1, tzinfo=UTC),
+    )
+    sql = sess.calls[-1][0]
+    assert "count(DISTINCT" in sql and "EXISTS (SELECT 1" not in sql
+    assert got == 7
+
+
+def test_internal_EXISTS_keeps_closures_and_failures_fail_open() -> None:
+    bot = _bot()
+    # Same ET date is an empty interval and must not query.
+    same_day = _CapturingSession(result=True)
+    assert bot._missed_sessions_between(
+        same_day,
+        datetime(2026, 8, 18, 14, 0, tzinfo=UTC),
+        datetime(2026, 8, 18, 20, 0, tzinfo=UTC),
+    ) == 0
+    assert same_day.calls == []
+
+    # Fri->Mon has no intervening trading session; the database's false answer preserves it.
+    weekend = _CapturingSession(result=False)
+    assert bot._missed_sessions_between(
+        weekend,
+        datetime(2026, 8, 14, 19, 59, tzinfo=UTC),
+        datetime(2026, 8, 17, 13, 30, tzinfo=UTC),
+    ) == 0
+
+    failed = _CapturingSession(result=True, fail_first=1)
+    assert bot._missed_sessions_between(
+        failed,
+        datetime(2026, 8, 17, 19, 59, tzinfo=UTC),
+        datetime(2026, 8, 19, 13, 30, tzinfo=UTC),
+    ) == 0
+    assert failed.rollbacks == 1
+
+
+def test_internal_refusal_does_not_claim_a_cardinality_it_no_longer_has(caplog) -> None:
+    bot = _bot()
+    bot._missed_sessions_before_today = lambda *_a: 0
+    bot._missed_sessions_between = lambda *_a: 1
+    newer = _Row(datetime(2026, 8, 19, 13, 30, tzinfo=UTC))
+    older = _Row(datetime(2026, 8, 17, 19, 59, tzinfo=UTC))
+
+    with caplog.at_level(logging.WARNING):
+        kept = bot._truncate_seed_rows_at_gap(_CapturingSession(), "TEST", [newer, older])
+
+    assert kept == [newer]
+    msg = "\n".join(record.getMessage() for record in caplog.records)
+    assert "the series SKIPS at least one trading session" in msg, (
+        "the return saturates at one, so the refusal may not print it as an exact count"
+    )
+    assert "the series SKIPS 1 trading" not in msg
 
 
 # ------------------------------------------------------------------ 3. the census denominator
