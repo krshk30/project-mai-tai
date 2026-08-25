@@ -42,8 +42,15 @@ call, and it does NOT refuse an expired token. It returns its cached token untou
 (or `force_refresh`) does it reload from disk. And if the STORE itself is stale, it logs
 `[SCHWAB-TOKEN-STALE]` and **returns the expired token anyway** — deliberately, so a refresher
 outage surfaces as a named warning instead of a silent 401 storm. ⇒ "the adapter never caches past
-expiry" is FALSE. A live `[SCHWAB-TOKEN-STALE]` count means the refresher is down and needs a human,
-and it is the signal to watch — not the restart.
+expiry" is FALSE.
+
+⛔⭐⭐ `[SCHWAB-TOKEN-STALE]` is the signal to watch — **but it is a SYMPTOM, not a diagnosis.** All
+it proves is that the token ON DISK is past `expires_at`. It does NOT say why. At least four causes
+produce the identical line: the refresher process is down; the refresher is running but its grant is
+failing; the credentials are dead (`invalid_grant`); or the store is missing/unreadable so nothing
+can be refreshed into it. ⇒ A live count means **investigate**, and the investigation starts at the
+control service and the store — never "the refresher is down", which is one hypothesis wearing the
+costume of a finding. It is still not a reason to restart a trading service.
 
 **Evidence, as of 2026-08-25 14:33 UTC (10:33 ET), read-only:**
 
@@ -145,9 +152,13 @@ the reporter's own making** — a branch existence check run against an invented
 service check run against an invented unit name. An empty result for an identifier you guessed is
 not an absence; it is an unasked question.
 
-**This batch is NOT promoted. Do not rotate the journals. Do not promote.** The repair path is a
-small PR from current main carrying this correction plus the generated manifest, then independent
-review of the Codex range, then explicit operator GO.
+**This batch is NOT promoted. Do not rotate the journals. Do not promote.**
+
+The repair path is **PR #776** — a small, **Claude-authored** PR from current main carrying this
+correction plus the generated manifest. ⛔ The review it needs is therefore **`codex-2` reviewing
+#776's current Claude range** — the reviewer is always the agent that did NOT author it. (This
+line previously named the reviewer and the author the wrong way round, carried over from #770's
+plan; #776 has the opposite authorship.) Then explicit operator GO.
 
 ## PRs that changed state on 2026-08-25 (all times ET)
 
