@@ -15,6 +15,51 @@
 
 ---
 
+## 2026-08-24 (Mon) EVENING — the batch shipped, and board 22 was wrong in three places
+
+**Deployed and verified: `a4235a653`.** #769 #766 #758 #755 #774 #761 #771 merged; OMS and
+schwab-1m-v2 deployed; every PR's content confirmed **by content, not by SHA**, including #771's
+NESTED flag check (2 sites) — flattening it would pass every test and silently restore the defect.
+
+### ⛔⭐⭐ FOUR TIMES A SQUASH-MOVED MAIN INVALIDATED SOMETHING ALREADY BLESSED
+`--squash` creates a commit with **no ancestry link** to its branch. #773 died to it (rebuilt as
+#774); #761 and #771 each went `BEHIND` and had to be updated. ⛔ **`board.sh rehearse` used
+`git merge`** — it modelled an operation we do not perform, so it went green on a strategy that is
+not ours. *A rehearsal that does not model the real operation is a false green.*
+⛔ And **`MERGEABLE` + `validate=SUCCESS` is not sufficient** — `mergeStateStatus` is the field that
+decides, and it read `BLOCKED` while the other two said yes.
+
+### ⛔ BOARD 22 REWRITTEN FROM `codex-2`'s CHALLENGE — three of my claims were wrong
+Full detail in open-item 22. The method failure is the useful half: **the reachability test I
+specified was BACKWARDS.** The EH cross fires BEFORE its matching ARM, so searching inside
+ARM→DISARM windows omits the EH event by construction — run as written it could only return "not
+found", and board 22 would have been closed as unreachable on a test that could not detect the
+thing. *A falsification test that can only fail in one direction is not a test.*
+⇒ Also: "zero live evidence" was FALSE (3 same-cross sequences exist); the population was the wrong
+definition (**18 / 1**, not 22 / 2 — `eh_resting`+`reactive`, not +any-source); and **the obvious
+fix is a NO-OP** — the BUY ARM reset clears the claim, proven by mutation, with no existing test
+detecting it in either direction.
+
+### ⭐⭐ THE 224-SELLS REFRAME — it was never a missing-data gap
+We hold **224 filled sells** on `live:orb` in 08-03..08-19, covering all 13 symbols in the 19
+duplicate segments. So §82's "was the first position still open?" is **an ATTRIBUTION gap, not a
+data gap** — and FIFO pairing is precisely what invented a −8.40% trade once already.
+⛔ **18 of the 19 duplicates predate the 08-17 log-retention floor**; only SLE (08-18) is
+log-coverable. ⇒ the partition will be partial and **the boundary goes on the line**.
+
+### RULES EARNED
+1. **⛔⭐⭐ A FALSIFICATION TEST THAT CAN ONLY FAIL IN ONE DIRECTION IS NOT A TEST.** Ask what the
+   test would look like if the thing WERE there — then check the search can see it.
+2. **⛔⭐ QUOTE A POPULATION WITH ITS AS-OF DATE.** "22" did not reproduce a day later; the
+   population grew. A number without its date reads as a discrepancy when it is drift.
+3. **⛔⭐ A MITIGATION ON AN UNMERGED BRANCH IS NOT A MITIGATION.** The five combo IDs are in #770
+   only; `origin/main` has zero copies and the logs expire ~08-29.
+4. **⛔ `collect_deploy_evidence.sh` cries STALE on a correct deploy** — it compares every service
+   against the newest file anywhere in `src`, so a v2-only deploy reports OMS and strategy stale.
+   Mine; a check that cries wolf on a correct deploy costs what a silent one does.
+
+---
+
 ## 2026-08-24 (Mon) MORNING — the conflict was in the other pair, and #739 has never traded
 
 **Pre-close prep only. No merges. Two PRs opened: #769 (§262), #770 (this handoff + the sheet).**

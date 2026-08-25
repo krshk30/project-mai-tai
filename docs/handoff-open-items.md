@@ -834,73 +834,102 @@ different question (Schwab-side DNS/auth), counted separately on purpose.
 
 ---
 
-## 22. 🔴🔴 HIGH — `eh_resting` IS THE ONLY FAN-OUT EMITTER THAT NEVER TOUCHES THE SHARED LATCH (§272)
+## 22. 🟡 `eh_resting` NEVER TOUCHES THE SHARED FAN-OUT LATCH (§272) — REWRITTEN 2026-08-24 after cross-review
 
-**Answered from the code that populates `resting_flip_ms`, not from the comment that cites it.**
-The comment at the `eh_resting` fan-out site reads *"once, guarded by `resting_flip_ms` set
-above."* ⛔ **That claim is TRUE FOR ITS OWN SCOPE AND DOES NOT MEAN WHAT IT IS BEING READ TO
-MEAN.** `resting_flip_ms` is set at `_eh_resting_cross_check` immediately before the append and
-checked on entry, so it does exactly what its own docstring says: *"a burst of quotes can't
-double-emit (emit exactly once per cross)."* It is a **per-cross** guard. It is **not** the
-per-flip latch, and it is not scoped to a segment.
+> ⛔⭐⭐ **THIS ENTRY WAS WRONG IN THREE PLACES AND IS REWRITTEN FROM `codex-2`'s CHALLENGE.**
+> The original was authored by `claude-1` from code-reading alone. What survived, what did not,
+> and *why the method failed*, are all recorded below — the method failure is the more useful half.
 
-### The census that settles it — all four fan-out emit sites
+### ✅ WHAT SURVIVES
 
-| line | enclosing | `source=` | reads `fanout_webull_claimed` | writes it |
-|---|---|---|---|---|
-| 805 | `update_position` | `rth_resting` | ✅ (L790) | ✅ (L798) |
-| 1963 | `_cw_v2_quote` | `reactive` | ✅ (L1943, #739) | ✅ (L1944) |
-| **2473** | **`_eh_resting_cross_check`** | **`eh_resting`** | ⛔ **NO** | ⛔ **NO** |
-| 2616 | `_fanout_rth_resting_cross` | `rth_resting` | ✅ (L2592) | ✅ (L2610) |
+**The missing latch is real.** Of the four fan-out emit sites, three read AND write
+`fanout_webull_claimed`; **`_eh_resting_cross_check` does neither.**
 
-*(line numbers as of the §266 branch)*
+| site | `source=` | reads latch | writes latch |
+|---|---|---|---|
+| `update_position` | `rth_resting` | ✅ | ✅ |
+| `_cw_v2_quote` | `reactive` | ✅ (#739) | ✅ |
+| **`_eh_resting_cross_check`** | **`eh_resting`** | ⛔ **no** | ⛔ **no** |
+| `_fanout_rth_resting_cross` | `rth_resting` | ✅ | ✅ |
 
-### ⇒ TWO CONSEQUENCES, BOTH BY CONSTRUCTION
+**Signal 4 is structurally blind to it.** ⛔ **31 of 31** filled `eh_resting` Webull legs carry
+`cw_arm_bar_ts = 0` (as of 2026-08-24), so signal 4 excludes them by definition: an
+(`eh_resting` + `reactive`) pair inside one segment reads as **ONE leg, not a duplicate.**
 
-1. **#739 HAS A HOLE.** Because `eh_resting` never *writes* the latch, a later `reactive` cross in
-   the same flip reads `fanout_webull_claimed == False` and emits. #739 suppresses
-   reactive-after-`rth_resting` and reactive-after-on-fill; it **cannot** suppress
-   reactive-after-`eh_resting`. This is not a regression in #739 — it is the boundary of what #739
-   fixed, and it was not written down.
-2. **`eh_resting` IS NOT BLOCKED BY ANOTHER PATH'S CLAIM** either, since it never reads the latch.
+### ⛔ WHAT WAS WRONG
 
-### ⛔⭐⭐ AND NO INSTRUMENT WE HAVE COULD EVER SHOW IT
+**1. "Zero live evidence" was FALSE.** Across 9 retained EH crosses there are **3 log-derived
+same-cross EH→reactive sequences**: JUNS 08-21, and PMI twice on 08-24. The original entry asserted
+an absence without having looked anywhere it could be found.
 
-`eh_resting` legs carry **`cw_arm_bar_ts = 0`** — P7 measured 26 fills at **0%** segment-id
-coverage; re-measured 2026-08-24 on `live:orb`, **30 fills, 0 with a segment id.** Signal 4
-requires a non-zero segment id, so an `eh_resting` leg is **excluded from its population
-entirely**. A genuine (`eh_resting` + `reactive`) pair inside one segment therefore appears in
-signal 4 as **ONE leg — not a duplicate.**
+**2. ⭐⭐ THE REACHABILITY TEST I SPECIFIED WAS BACKWARDS — and this is the important one.**
+It said: *search inside `[V2-CW-ARM] → [V2-CW-DISARM]` windows.* **The EH cross normally fires
+BEFORE its matching ARM**, so that search omits the EH event by construction. Reactive also runs in
+extended hours, so **no 09:30 crossing is required** either. Run as specified, the test could only
+ever return "not found" — and board 22 would have been closed as unreachable on a test that could
+not detect the thing it was looking for. *A falsification test that can only fail in one direction
+is not a test.*
 
-⇒ *If this is a fourth duplicate path, the only instrument for §82 is structurally blind to it.*
+**3. The population was the wrong definition.** Published as *22 symbol-days / 2 on 08-21*; that
+counted `eh_resting` + **any other source**. The claim is about the `#739` pair, so it must be
+`eh_resting` + **`reactive`**: **18 symbol-days since 08-01, 1 on 08-21 (JUNS)** — as of 2026-08-24.
+Reconciled exactly: 08-21's SUGP is `eh_resting` + `rth_resting`, and `rth_resting` **does** claim
+the latch, so it never belonged. ⛔ Quote the number WITH its as-of date; the original "22" did not
+reproduce a day later because the population grows.
 
-### The population is non-empty and current
+**4. The alternate guard is `resting_active`, not `resting_flip_ms`.** `resting_flip_ms` is a ~30s
+settle / anti-burst guard. The real interlock is **`resting_active`, which refuses reactive while a
+rest is live**; the seam opens only after fill/grace handling releases it.
 
-Symbol-days on `live:orb` (filled buys, `rth_resting_mirror` excluded) carrying an `eh_resting`
-fan-out leg **alongside at least one other source**, 08-01 → 08-24: **22**, including **two on
-08-21** (JUNS, SUGP). Earlier: UPC 08-03 · AMIX 08-04 · BJDX 08-05 · CLRO/PAVS 08-06 · DSY 08-07 ·
-AUUD/HUDI/JWEL 08-10 · WXM 08-11 · BAOS/BOXL/OFAL 08-12 · FGI/GXAI 08-13 · CGTL/STKH/WETO 08-14 ·
-IVF 08-17 · XOS 08-18.
+### ⛔⭐⭐ AND THE OBVIOUS FIX IS A NO-OP — PROVEN BY MUTATION, NOT BY READING
 
-⛔⛔ **THESE 22 ARE NOT 22 DUPLICATES AND MUST NOT BE QUOTED AS ONE.** A symbol-DAY is not a
-segment — §263 measured exactly how badly that grouping collapses distinct arms. This is the size
-of the population **where the defect could bite**, nothing more. **The DB cannot tighten it to
-segments, by construction:** the `eh_resting` leg has no segment id to join on. That is the
-blindness itself, not a gap in the query.
+Even if `eh_resting` DID claim the latch, the subsequent **BUY ARM reset clears it**:
 
-### ⇒ NEXT STEP — SPLIT OBSERVABILITY FROM BEHAVIOUR, AND DO OBSERVABILITY FIRST
+```
+after_eh        True
+after_buy_arm   False
+```
 
-1. **Additive, zero behaviour change:** log at the `eh_resting` emit site whether the latch was
-   *already* claimed at that moment — the site keeps emitting either way. That measures the real
-   rate without deciding anything, the same shape as the seed-gap census.
-2. **Behaviour, only after (1) has data:** decide whether `eh_resting` should claim and consult
-   the latch. ⛔ **This is not a safe "just add the check".** It would suppress legs that fire
-   today, and a pre-market entry followed by an RTH re-entry in the same flip may well be
-   legitimate. #739's author hit the same tension with the expiry counter, **built a fix and
-   discarded it** because it traded a duplicate-fill defect for a silent-no-order defect. Do not
-   re-derive that trade — read #739's commit message first.
+⇒ "make `eh_resting` claim the latch" would ship as a fix that fixes nothing. ⛔ And **no existing
+test detects the latch mutation** — 73 targeted tests stayed green; a full run reached 2,307 passes
+plus one unrelated scanner-history failure that passed individually on both control and mutant.
+**The behaviour is unpinned in BOTH directions.**
+
+### ⚠ JUNS IS A RECLAIM, NOT OVERLAPPING EXPOSURE
+
+```
+12:36:35Z  EH Webull fill
+12:39:02Z  matching ARM (near-identical flip level)
+12:46:37Z  first Webull position CLOSED
+13:00:07Z  reactive Webull fill        ⇒ flat ~13m30s in between
+```
+
+The close path deliberately permits a later reclaim. Both legs carrying `cw_entry_n=1` proves an
+**instrumentation** defect; it does **not** prove the second trade was behaviourally unintended.
+**Harmful overlapping exposure remains UNPROVEN.**
+
+### ⛔ WHAT IS GENUINELY `COULD_NOT_TELL`
+
+- No recorded EH order was still working when reactive later fired: 31 filled immediately, and one
+  stale intent was cancelled before broker placement.
+- Venue-side Webull reconciliation is incomplete, so **the DB cannot prove an unrecorded working
+  order never existed.**
+- Retained logs begin **08-17** while the population starts **08-01** ⇒ log-derived segment
+  matching cannot cover the whole window, and never will for the erased part.
+
+### ⇒ DISPOSITION — do NOT close as unreachable, do NOT make the behaviour change
+
+**Observability first:** assign a durable identity **before the ARM exists**, and record the Webull
+outcome — *queued · dropped · submitted · filled · rejected · still working*. Only then can a
+legitimate reclaim be told apart from overlapping duplicate exposure.
+⛔ The behaviour change is the exact trade #739's author built and **discarded** — read that commit
+before re-deriving it.
+
+**Source:** `strategy_core/schwab_1m_v2.py` — reactive interlock ~L1766 · grace lifecycle ~L2202 ·
+EH fan-out site ~L2413 · BUY ARM reset ~L1684.
 
 ---
+
 
 ## B32. ⛔⭐⭐ NO LOG MARKER MAY CONTAIN ANOTHER AS A SUBSTRING — make it a lint
 
