@@ -3,8 +3,8 @@
 > **OVERWRITE this file.** It answers: *what is true right now?* Historical narrative belongs in
 > [`handoff-log.md`](handoff-log.md). Numbers without an as-of time are not current-state evidence.
 
-**Refreshed by `codex-2`: 2026-08-25 06:25 ET, read-only against production.** No account-position
-or open-order claim was made in this refresh.
+**Refreshed by `codex-2`: 2026-08-25 10:13 ET, read-only against production and GitHub.** No
+account-position or open-order claim was made in this refresh.
 
 ---
 
@@ -28,15 +28,20 @@ production restart requires explicit operator GO and the narrow service choreogr
 
 # PRODUCTION — THE 2026-08-24 BATCH IS MERGED AND DEPLOYED
 
-**VPS HEAD `a4235a653aa82907e4e124f97a49fc07c374203a`, clean at 06:24 ET.** The intended batch is
+**VPS HEAD `a4235a653aa82907e4e124f97a49fc07c374203a`, clean at 10:13 ET.** The intended batch is
 `#769 → #766 → #758 → #755 → #774 → #761 → #771`; #760 and #773 were closed as superseded by
 #774. Final tree `6b12b7a79…` matched the independently squash-assembled tree.
 
+GitHub main is now `dd6c0d6cb…`, four code/ops commits ahead: **#775, #756, #759, #763**. They
+were squash-merged under a direct operator instruction and are **not deployed**. The three trading
+units below still have their 08-24 PIDs and zero restarts, so “merged” has not been mistaken for
+“running.”
+
 | unit | PID | NRestarts | active since UTC | current read |
 |---|---:|---:|---:|---|
-| OMS | 1290662 | 0 | 08-24 21:28:24 | `/health` healthy at 06:25 ET |
-| strategy | 1290668 | 0 | 08-24 21:28:24 | `/health` healthy at 06:25 ET |
-| schwab-1m-v2 | 1307928 | 0 | 08-25 00:28:51 | **degraded** at 06:25 ET |
+| OMS | 1290662 | 0 | 08-24 21:28:24 | active/running 10:13 ET; last `/health` healthy 06:25 ET |
+| strategy | 1290668 | 0 | 08-24 21:28:24 | active/running 10:13 ET; last `/health` healthy 06:25 ET |
+| schwab-1m-v2 | 1307928 | 0 | 08-25 00:28:51 | active/running 10:13 ET; last `/health` **degraded** 06:25 ET |
 | market-data | 1528374 | 0 | 07-27 17:35:52 | active/running |
 | control | 44840 | 0 | 07-14 12:18:04 | active/running |
 | reconciler | 141918 | 0 | 08-14 20:36:41 | `/health` healthy at 06:25 ET |
@@ -56,6 +61,19 @@ The v2 degradation was **not** a loop crash: `quotes_live=true`, streamer connec
   00:28:43Z → PID start 00:28:51Z → fresh healthy heartbeat 00:29:22Z. OMS/strategy did not restart.
 - `Deploy Main` remains prohibited. Use `Deploy Service`; the v2 dispatch value is
   **`schwab-1m-v2`** with hyphens.
+
+## ⛔ Next deploy: first production activation of #756
+
+The next `Deploy Service` run will pull #756 for the first time and execute its new
+`link_preflight_fences` step from `08_install_runtime.sh` after `pip install -e` and before the
+restart. Treat `[PREFLIGHT-LINK-FAILED]` and the linked fence target as named first-run candidates,
+not retrospective guesses. A link failure is intentionally loud but does **not** abort the deploy.
+
+⚠ Precise boundary: `Deploy Service` does **not** invoke `preflight_v2_restart.sh`; it only links the
+repo copy into `/home/trader/ops_preflight`. A separate/manual use of that fence will be its first
+execution. During an explicitly allowed live-hours deploy, `deploy_service.sh` instead invokes the
+Python `deploy_preflight.py` gate. Do not report the shell restart fence as exercised merely because
+the link step ran.
 
 ---
 
@@ -80,31 +98,27 @@ same 7 blind legs. This is not worse than baseline and is still not enough popul
 
 Claude corrected the superseded board-22 population at head `07bfe170b…`. Ownership is now with
 `codex-2` for this current-state rewrite, exact deploy evidence, and the machine-generated
-`docs/handoff-manifest/2026-08-24.md`. The manifest must wait for a real freeze: #772 still needs
-Claude work, so the journals are not quiescent. After the final manifest commit, Claude reviews the
-Codex range with `--since 07bfe170b…`; only complete independent coverage can authorize merging.
+`docs/handoff-manifest/2026-08-24.md`. The post-deploy commit already exists at `3ba2d7a9…`; the
+manifest and update onto current main are the remaining branch work. After the final manifest
+commit, Claude reviews the complete Codex range with `--since 07bfe170b…`; only independent range
+coverage can authorize merging.
 
-## #772 — Webull probe read-only guard, **BLOCKED**
+## #772 — closed; the production probe remains **BLOCKED**
 
-Head `06211071a…` is CLEAN/green but not safe to merge. Its new escape rule catches attribute
-receivers such as `self.operation`, but ignores bare `adapter`, `client`, `api_client`, and
-`operation` names. Eight mutations survived, including `adapter.some_new_write_method()`, an alias
-from that parameter, and recovery through `getattr(self, "operation")`, `self.__dict__`, or
-`vars(self)`. The real probe already receives a bare `adapter`. Claude owns the next fix; Codex must
-re-review the new immutable head. The stacked base probe remains unmerged and has never run live.
+The fourth static rule still allowed real SDK-object laundering. #772 was closed without merge:
+an AST check is not a runtime capability boundary, and a fifth syntax rule would repeat the same
+design error. Official Webull material documents no retail Trading-API key restricted to reads.
+Sandbox credentials are isolated from production, so they cannot enumerate the production account.
+The probe has **no enforced read-only guard and must not run against production credentials** unless
+Webull confirms or provisions a credential-level read-only scope. “Do not run it” is the current
+safe answer; the orphan-order question is already settled and only the capability question remains.
 
-## #775 — retention + deploy-evidence freshness
+## #775, #756, #759, #763 — merged, not deployed
 
-Codex head `112e32f95…` is CLEAN with both validations green. It proposes automatic 30-day full-log
-retention, fixes the cross-service freshness false positive, follows reachable dynamic imports,
-and refuses a non-editable/different-checkout runtime as `COULD_NOT_TELL`. Claude must independently
-re-review the new range. **Production still has `daily, rotate 7`; evidence is not protected yet.**
-
-## Deferred open PRs
-
-`#756` restart/preflight fences · `#759` broker-blind-while-holding pager · `#763` feature-acceptance
-markers are all **BEHIND** protected main. Green historical CI is not authorization; each needs an
-author update to current main, a new immutable head, and independent review before a merge decision.
+Main now carries 30-day log retention/freshness (#775), repo-owned restart fences (#756), the
+broker-blind-while-holding pager (#759), and feature-acceptance markers (#763). The box remains at
+`a4235a653…`, so none is runtime evidence yet. #775's first scheduled retention reconcile is the
+first execution of its scp-to-`/tmp` production path; watch the run rather than assuming activation.
 
 ---
 
@@ -136,6 +150,14 @@ log rotation is expected to disappear around 08-29 under the current 7-day polic
 
 `get_order_history` is not a reconciliation source until coverage back to 08-03, combo exit-child
 visibility, partial-fill semantics, freshness versus detail, and cursor integrity are measured.
+
+Credential finding, searched 2026-08-25: Webull's retail Trading API documents one App Key/App
+Secret with no read-only selector; the official Python SDK uses that same client for query and
+write operations. Connect/OAuth is a separately registered partner product and its documented
+scope is `user:trade:wr`, not read-only. The official MCP's `account,market-data` tool filtering is
+process-level filtering over the same key, not credential enforcement. Institutional documentation
+even says alignment of key permissions with user permissions is “coming soon.” Therefore the
+production inventory sweep is **blocked**, not merely awaiting a better script.
 
 ---
 

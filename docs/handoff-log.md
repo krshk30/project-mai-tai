@@ -15,6 +15,48 @@
 
 ---
 
+## 2026-08-25 (Tue) 10:13 ET — four ops PRs merged but not deployed; Webull sweep blocked
+
+GitHub main moved from `a4235a653…` to `dd6c0d6cb…` through #775, #756, #759 and #763. The merges
+were performed under a direct operator instruction and recorded as a one-time override of the
+normal Codex-merge role. Read-only production verification still found a clean VPS at
+`a4235a653…`; OMS, strategy and v2 retained their 08-24 PIDs with zero restarts. Therefore all four
+are **merged and not deployed**.
+
+### ⛔ The next deploy has a named first-run step
+
+#756 adds `link_preflight_fences` to `08_install_runtime.sh`, after the editable install and before
+the service restart. The next narrow deploy is its first production invocation; a
+`[PREFLIGHT-LINK-FAILED]` line or an unexpected target under `/home/trader/ops_preflight` is a named
+candidate before the window begins. Failure intentionally continues rather than leaving new source
+under an old process. Precise correction: the deploy links `preflight_v2_restart.sh` but does not
+execute it. The shell gate's first execution remains a separate event and must not be inferred from
+the link step.
+
+### #772 closed at the right stopping point; no live sweep
+
+Four iterations could not make a module-level AST rule prove that an SDK object never reaches a
+write. #772 was closed without merge. That leaves the base probe **less protected than a merged
+runtime capability would have made it**: it has no enforced read-only credential and has never run
+against production.
+
+Official Webull Trading-API authentication and application documentation exposes App Key/App
+Secret generation/reset but no retail read-only permission. The same SDK client can query orders
+and place, replace, or cancel them. Webull's MCP can hide trading tools, but that is process/tool
+filtering with the same credential, not a venue-enforced capability. Connect/OAuth is a separately
+registered partner flow and documents `user:trade:wr`; sandbox is fully isolated from production.
+The bounded verdict is therefore **no documented credential-level read-only production key in the
+searched population**. Until Webull explicitly provisions one, use sandbox only for shape testing
+or do not run the production sweep. For this question, **do not run it** is the current decision.
+
+### Authorship evidence
+
+GitHub's commit author field is the operator for both agents. Independent review attributes Claude
+work only from `Co-Authored-By: ...noreply@anthropic.com` trailers (and Codex work from its OpenAI
+trailer), never from the PR's displayed author.
+
+---
+
 ## 2026-08-25 (Tue) PREMARKET — Codex post-deploy proof, and re-auth is not active yet
 
 ### The 08-24 batch is merged, deployed and proven at `a4235a653`
