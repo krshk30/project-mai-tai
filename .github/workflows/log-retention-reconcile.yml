@@ -98,3 +98,18 @@ jobs:
             "$remote:$remote_dir/ops/logrotate/"
           ssh -i "$key" "$remote" \
             "bash '$remote_dir/ops/logrotate/install.sh' '$remote_dir'"
+
+      - name: Alert when reconciliation fails
+        if: ${{ failure() }}
+        env:
+          NTFY_URL: https://ntfy.sh/mai-tai-preopen-28806a5a97b7
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          body="Log retention reconciliation failed. No application service was restarted. Run: ${RUN_URL}"
+          curl --fail --silent --show-error --retry 3 --max-time 20 \
+            -H "Title: RED mai-tai log retention reconcile failed" \
+            -H "Priority: urgent" \
+            -H "Tags: rotating_light" \
+            --data "$body" \
+            "$NTFY_URL"

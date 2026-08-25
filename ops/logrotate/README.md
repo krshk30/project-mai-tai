@@ -44,8 +44,15 @@ The installer:
 4. verifies the timer is enabled and active and the installed bytes match.
 
 Any failed step makes the dedicated workflow red and the next daily run retries.
-It does not prevent an emergency application deployment. No application service
-is restarted merely to rotate a log.
+An `if: failure()` step also sends an urgent ntfy notification containing the
+exact Actions run URL; the title is deliberately ASCII because non-ASCII ntfy
+headers have previously dropped alerts. It does not prevent an emergency
+application deployment. No application service is restarted merely to rotate a
+log.
+
+The alert covers a workflow run that starts and fails. It cannot detect GitHub
+failing to create the scheduled run at all; that requires an independent
+dead-man check and remains a stated follow-up rather than a guarantee here.
 
 `copytruncate` remains necessary because systemd holds each append target open.
 Its small copy/truncate race can lose lines written during a rotation; this

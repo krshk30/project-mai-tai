@@ -46,6 +46,11 @@ def test_retention_reconciles_automatically_without_touching_application_runtime
     assert "git checkout" not in workflow
     assert "git pull" not in workflow
     assert "git merge" not in workflow
+    assert "if: ${{ failure() }}" in workflow
+    assert "https://ntfy.sh/mai-tai-preopen-28806a5a97b7" in workflow
+    assert "RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/" in workflow
+    assert "curl --fail --silent --show-error --retry 3 --max-time 20" in workflow
+    assert "Title: RED mai-tai log retention reconcile failed" in workflow
 
 
 def test_installer_enables_and_verifies_daily_timer() -> None:
