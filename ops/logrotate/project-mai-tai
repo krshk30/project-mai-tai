@@ -1,0 +1,33 @@
+# Log rotation for project-mai-tai.
+#
+# Retention is 30 daily rotations, derived from the longest evidence-discovery
+# delay observed by 2026-08-24: the question reached back to 2026-08-03 (21
+# days).  Thirty days preserves that population with nine days of margin.
+#
+# This is deliberately the COMPLETE application log population, not a marker
+# allowlist.  The questions are discovered after the event; an allowlist would
+# silently discard any marker, traceback, or surrounding context omitted from
+# the second schema.
+#
+# Storage measurement on 2026-08-25: 53 MB total application logs, including
+# only 6.3 MB of compressed rotations, with 88 GB free on the VPS.  Thirty days
+# is therefore bounded and inexpensive under the observed workload.  The
+# 200 MB early-rotation threshold remains (it is evaluated when logrotate runs;
+# it is not an intraday hard cap).
+#
+# copytruncate is required because systemd StandardOutput=append holds the open
+# inode.  Rename/create would leave the service writing to the rotated file.
+
+/var/log/project-mai-tai/*.log {
+    daily
+    rotate 30
+    maxsize 200M
+    copytruncate
+    compress
+    delaycompress
+    missingok
+    notifempty
+    dateext
+    su root root
+    create 0640 root root
+}
