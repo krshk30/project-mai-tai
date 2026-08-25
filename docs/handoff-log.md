@@ -2686,3 +2686,99 @@ coverage, not code.
 3. **⛔⭐ A MUTATION HARNESS MUST RESTORE IN A `finally`.** One crashed mid-run and left a mutant in
    the source. Fixed structurally, and the restore is now re-verified **by content**.
 4. **⛔ TEST THE SEAM, NOT JUST BOTH SIDES.** Two green files, seven days, one broken joint.
+
+---
+
+# 2026-08-25 (Tue) — five merges, and every defect that reached the operator was a wrong claim, not wrong code
+
+**Merged:** `#775` `0be129b0` 07:35 · `#756` `6ca816ec` 09:25 · `#759` `d270a1eb` 09:30 ·
+`#763` `dd6c0d6c` 09:32 · `#776` `946ef139` 12:16.
+**Deployed:** box `a4235a653` → `946ef13` at 14:05 ET via the `reconciler` target — `HIGH_RISK=0`,
+so it ran during market hours without an override, did the full `git pull`, and restarted exactly
+one PID. OMS `1290662`, strategy `1290668`, v2 `1307928` all unchanged.
+**Closed unmerged:** `#772` (probe read-only guard) after four failed AST rounds.
+
+## The pattern of the day
+
+Nothing that reached the operator was broken code. Every one was a **wrong claim about a verified
+thing**, and each passed a check its author ran:
+
+1. **A branch existence check against an invented branch name.** `codex/handoff-2026-08-24` does
+   not exist; the real ref is `claude/handoff-0824-window`. The 404 was then cited as proof of an
+   auto-delete-on-merge.
+2. **A service check against an invented unit name.** `project-mai-tai-strategy-engine` does not
+   exist; the unit is `project-mai-tai-strategy`. `pid=0` was read as "the service is down".
+3. **A glob that double-counted.** `oms.log oms.log*` matches `oms.log` twice — census 377 vs the
+   true 204, and ~7,401 reads/account vs the true 4,061–4,156.
+4. **A `tail` on a concatenated log stream.** Those concatenate in FILENAME order, not time order,
+   so 386 `[SCHWAB-TOKEN-STALE]` warnings from 08-23 read as current.
+5. **A commit message asserting a change its own blob did not contain** (`344c80a2`) — the edit's
+   anchor string did not match, the edit failed, and the commit proceeded anyway.
+6. **A hypothesis promoted to a finding** — "`[SCHWAB-TOKEN-STALE]` means the refresher is down".
+   It proves only that the on-disk token is past `expires_at`; at least four causes emit that line.
+
+⛔⭐⭐ **An empty result for an identifier you guessed is not an absence — it is an unasked question.**
+Two of the six were exactly that, in one afternoon, from the same author.
+
+## #770 — the content landed, the lifecycle did not
+
+Merged content reached main as `06c17018` (tree `f32a9d21ba12`, byte-identical to branch head
+`dc58b9d2`) but the PR was **never recorded as merged**: a 502 hit mid-call, the record stayed
+`OPEN`/`mergedAt=null`, and it was then closed by hand — which is not a merge. Its manifest was
+absent, it had no recorded review, and `dc58b9d2` carries **zero** `Co-Authored-By` trailers, so its
+authorship is **permanently `COULD_NOT_TELL`**. `#776` is a NEW REPAIR PR, never evidence that
+#770's lifecycle completed.
+
+⛔⭐⭐ **`--squash` leaves no ancestry link**, so `compare/main...dc58b9d2` reads `diverged
+ahead=10 behind=1`. That is the squash signature, not a failed merge — the same mechanism that
+orphaned `#773` and `#760`. Verify content on main and the resulting commit, never the PR record or
+the error alone.
+
+## Feature acceptance (B28), week-wide
+
+**3 exercised, 2 unmeasured, 2 not instrumented** — not a blanket green.
+`#765` PASS · `#766` PASS (4 attachments / 4 placements) · `#771` PASS (1 suppression / 1 latch) ·
+`#755` UNMEASURED · `#774`+`#759` recovery UNMEASURED · `#761` COULD_NOT_TELL (no success marker) ·
+`#758` COULD_NOT_TELL (evidence lives in DB fields, not a readable marker).
+
+⛔ `#759`'s recovery-splitting has **never had a production opportunity**: `[BROKER-SYNC-OK]` fires
+only on a transition, and there have been **zero broker-read failures since the emitter deployed**
+08-24 17:28 ET. All 242 `[BROKER-SYNC-UNREADABLE]` predate it — 242/242 carry no `consecutive=`.
+Until 14:05 today the scripts were not even **on the box**. The B28 re-grade trigger is the first
+`[BROKER-SYNC-OK]`; no `failed_total` threshold is needed, because that marker already proves both
+a failure run and a recovery.
+
+## Schwab: no restart is owed
+
+`_load_token_store()` has three call sites, not one. Production runs refresher-owned mode
+(`MAI_TAI_SCHWAB_ADAPTER_TOKEN_REFRESH_ENABLED=false`), so the running adapter **reloads from
+disk**. ⛔ But it does NOT refuse an expired token: when the store is stale it logs
+`[SCHWAB-TOKEN-STALE]` and returns it anyway, deliberately, so a refresher outage surfaces as a
+named warning rather than a silent 401 storm.
+
+The dedicated path is `control_plane → SchwabTokenRefresher → schwab_token_manager` — **not**
+`SchwabBrokerAdapter`. Refresh runs at `expires_at − 60s`, measured at **~29-minute intervals**,
+48–50/day across seven retained days. Refresh-token expiry **Mon 2026-08-31 16:02 ET**.
+
+⛔ **Control has run since 2026-07-14 with `NRestarts=0`** and 10 newer startup-required files. Its
+staleness is real but does **not** touch the token path. Its restart has never been proven, and it
+owns fleet-wide token refresh ⇒ restart narrow, after hours, straight after an observed refresh
+(maximum recovery slack), then prove: new PID after installed source · refresher enabled/healthy ·
+token-store metadata intact · **a new `[SCHWAB-TOKEN-REFRESHED]` within +35 min**. Before +35 it is
+UNMEASURED — not a pass. The operational alert should be a rolling 35-minute no-refresh gap, not a
+daily count.
+
+## Deploy-evidence control (two-sided, passed)
+
+`FRESH`: oms, schwab-1m-v2, strategy. `STALE`: market-data, control, reconciler, market-capture.
+⛔ "FRESH" means matching the **VPS checkout**, not GitHub main.
+
+## Promotion
+
+`promote.sh` refused this batch: it required `session-handoff.md`, `handoff-log.md` and the manifest
+in **one** PR, and this batch split across #770 and #776. ⛔ No follow-up PR could satisfy it —
+regenerating the manifest yields an identical file, which is therefore not a *changed* file and
+never appears in a PR's file list. **The requirement was unsatisfiable, not merely unmet.** Fixed by
+accepting N PRs and verifying the union, with a refusal if two PRs both carry a manifest. The
+`OPEN|MERGED` requirement was deliberately **not** relaxed — #770 is `CLOSED`, and letting a closed
+PR count as delivery would be a real weakening.
