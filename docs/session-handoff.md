@@ -3,26 +3,68 @@
 > **OVERWRITE this file.** It answers: *what is true right now?* Historical narrative belongs in
 > [`handoff-log.md`](handoff-log.md). Numbers without an as-of time are not current-state evidence.
 
-**Refreshed by `codex-2`: 2026-08-25 06:25 ET, read-only against production.** No account-position
-or open-order claim was made in this refresh.
+**Two authors, two scopes — both recorded:**
+- **`codex-2`, 2026-08-25 06:25 ET**, read-only against production: the original refresh. No
+  account-position or open-order claim was made in it.
+- **`claude-1`, 2026-08-25 10:29–10:33 ET**, read-only against production: the Schwab token/restart
+  section (rewritten — the previous version's conclusion was a production restart that is not owed),
+  the PR state table, and the #770 lifecycle correction. No account-position or open-order claim was
+  made either.
+
+⛔ Provenance matters here because the two authors DISAGREED on the restart question and the later
+evidence won. A single-author header would have hidden that.
 
 ---
 
-# 🚨 BEFORE 07:00 ET — SCHWAB RE-AUTH IS ON DISK, NOT IN THE TRADING PROCESSES
+# ✅ SCHWAB RE-AUTH IS ACTIVE — NO RESTART IS REQUIRED
 
-The token store was rewritten by re-auth at **2026-08-25 06:03:35 ET**. Its new refresh token
-expires **2026-08-31 16:02:05 ET**. But every trading process predates that file:
+> ⛔⭐⭐ **This section previously said the opposite** ("re-auth is persisted but not active in OMS,
+> strategy, or v2 — a restart must happen after the token-store mtime"). That was WRONG for the
+> production configuration, and acting on it would have meant an unnecessary restart of OMS —
+> which owns the exits, and is one of the two changes this system treats as how it loses money.
 
-| process | start UTC | relation to token-store write |
-|---|---:|---|
-| OMS | 2026-08-24 21:28:24 | older |
-| strategy | 2026-08-24 21:28:24 | older |
-| schwab-1m-v2 | 2026-08-25 00:28:51 | older |
+`SchwabBrokerAdapter.__init__` is **not** the only caller of `_load_token_store()`. There are three:
 
-`SchwabBrokerAdapter.__init__` calls `_load_token_store()` once; the running adapter does not
-reload a later re-auth file. **Therefore re-auth is persisted but not active in OMS, strategy, or
-v2.** A restart must happen *after* the token-store mtime. ⛔ No restart was inferred or performed;
-production restart requires explicit operator GO and the narrow service choreography.
+| site | when it runs |
+|---|---|
+| `schwab.py:146` | `__init__` |
+| **`schwab.py:958`** | **every `_get_access_token()` that needs a refresh, in refresher-owned mode** |
+| `schwab.py:999` | dead-token grant recovery |
+
+Production runs refresher-owned mode — `MAI_TAI_SCHWAB_ADAPTER_TOKEN_REFRESH_ENABLED=false` — so
+`_get_access_token()` takes the pure-reader branch and **reloads the store from disk**. The
+dedicated refresher (control service) owns freshness and the adapter never writes. A later re-auth
+file is therefore picked up by the RUNNING process — no restart needed to see it.
+
+⛔ **Precisely, because the imprecise version is dangerous:** the adapter does not reload on every
+call, and it does NOT refuse an expired token. It returns its cached token untouched while
+`_access_token_needs_refresh()` is false; only once the cached token reaches the refresh window
+(or `force_refresh`) does it reload from disk. And if the STORE itself is stale, it logs
+`[SCHWAB-TOKEN-STALE]` and **returns the expired token anyway** — deliberately, so a refresher
+outage surfaces as a named warning instead of a silent 401 storm. ⇒ "the adapter never caches past
+expiry" is FALSE.
+
+⛔⭐⭐ `[SCHWAB-TOKEN-STALE]` is the signal to watch — **but it is a SYMPTOM, not a diagnosis.** All
+it proves is that the token ON DISK is past `expires_at`. It does NOT say why. At least four causes
+produce the identical line: the refresher process is down; the refresher is running but its grant is
+failing; the credentials are dead (`invalid_grant`); or the store is missing/unreadable so nothing
+can be refreshed into it. ⇒ A live count means **investigate**, and the investigation starts at the
+control service and the store — never "the refresher is down", which is one hypothesis wearing the
+costume of a finding. It is still not a reason to restart a trading service.
+
+**Evidence, as of 2026-08-25 14:33 UTC (10:33 ET), read-only:**
+
+- `refresh_token_expires_at` = `2026-08-31T20:02:05Z` → **Mon 2026-08-31 16:02 ET** (weekday derived, not labelled)
+- `expires_at` = `2026-08-25T14:55:32Z` — in the FUTURE, so the refresher is actively rotating the access token
+- `[SCHWAB-TOKEN-STALE]` in the **current** log: **0**. ⛔ All 386 occurrences are in
+  `oms.log-20260823.gz` — a past 08-23 incident, not today. (A concatenated `oms.log*` stream is in
+  FILENAME order, not time order; `tail` on it returns the rotated file's end and reads as current.)
+- `[BROKER-SYNC-CENSUS]` newest line `2026-08-25 14:30:15` with `failed=0` — broker reads are landing
+
+⇒ **No restart is owed for the token.** If a restart happens for another reason, that is fine, but
+the token is not the reason. ⛔ The next real deadline is the REFRESH token: **Mon 2026-08-31 16:02
+ET**, and only that one needs a human — `expires_at` is the short-lived access token the refresher
+rotates itself, and is a ready-made false alarm.
 
 ---
 
@@ -76,35 +118,79 @@ same 7 blind legs. This is not worse than baseline and is still not enough popul
 
 # ACTIVE REVIEW / MERGE WORK
 
-## #770 — this handoff PR
+**Corrected by `claude-1`: 2026-08-25 10:29 ET.** Everything in this section below the #770 entry was written
+before six PRs changed state on 08-25. It is rewritten to current truth, not amended.
 
-Claude corrected the superseded board-22 population at head `07bfe170b…`. Ownership is now with
-`codex-2` for this current-state rewrite, exact deploy evidence, and the machine-generated
-`docs/handoff-manifest/2026-08-24.md`. The manifest must wait for a real freeze: #772 still needs
-Claude work, so the journals are not quiescent. After the final manifest commit, Claude reviews the
-Codex range with `--since 07bfe170b…`; only complete independent coverage can authorize merging.
+## ⛔⭐⭐ #770 — CONTENT ON MAIN, LIFECYCLE NOT COMPLETED
 
-## #772 — Webull probe read-only guard, **BLOCKED**
+The four handoff documents ARE on main as `06c17018`. Nothing else about #770 went to plan:
 
-Head `06211071a…` is CLEAN/green but not safe to merge. Its new escape rule catches attribute
-receivers such as `self.operation`, but ignores bare `adapter`, `client`, `api_client`, and
-`operation` names. Eight mutations survived, including `adapter.some_new_write_method()`, an alias
-from that parameter, and recovery through `getattr(self, "operation")`, `self.__dict__`, or
-`vars(self)`. The real probe already receives a bare `adapter`. Claude owns the next fix; Codex must
-re-review the new immutable head. The stacked base probe remains unmerged and has never run live.
+| claim | truth |
+|---|---|
+| PR recorded as merged | ⛔ **No** — `state=CLOSED`, `mergedAt=null`, `mergeCommit=null` |
+| head branch auto-deleted | ⛔ **No** — `claude/handoff-0824-window` still exists at `dc58b9d2` |
+| manifest committed | ⛔ **No** — `docs/handoff-manifest/2026-08-24.md` was absent from BOTH main and `dc58b9d2` |
+| independently reviewed | ⛔ **No** — no recorded review of #770 |
+| authorship attributable | ⛔ **COULD_NOT_TELL** — `dc58b9d2` carries **zero** `Co-Authored-By` trailers |
 
-## #775 — retention + deploy-evidence freshness
+The content is genuine: `06c17018`'s tree and `dc58b9d2`'s tree are byte-identical (`f32a9d21ba12`).
+⛔ But identical trees prove the DOCUMENTS landed, not that the BATCH was promoted.
 
-Codex head `112e32f95…` is CLEAN with both validations green. It proposes automatic 30-day full-log
-retention, fixes the cross-service freshness false positive, follows reachable dynamic imports,
-and refuses a non-editable/different-checkout runtime as `COULD_NOT_TELL`. Claude must independently
-re-review the new range. **Production still has `daily, rotate 7`; evidence is not protected yet.**
+⛔⭐⭐ **#770's authorship cannot be proven retroactively and never will be.** `dc58b9d2`
+carries no `Co-Authored-By` trailer and nothing added later can supply one — under the agreed
+rule it is permanently `COULD_NOT_TELL`. **PR #776 is a NEW REPAIR PR.** It supplies the
+missing manifest and corrects the record. It is NOT evidence that #770's lifecycle completed,
+and must never be cited as such.
 
-## Deferred open PRs
+⛔⭐⭐ **A `--squash` merge leaves no ancestry link to its branch**, so `compare/main...dc58b9d2`
+reads `diverged ahead=10 behind=1`. That is the squash signature, NOT evidence of a failed merge —
+the same mechanism that orphaned #773 and #760. It will recur on anything stacked.
 
-`#756` restart/preflight fences · `#759` broker-blind-while-holding pager · `#763` feature-acceptance
-markers are all **BEHIND** protected main. Green historical CI is not authorization; each needs an
-author update to current main, a new immutable head, and independent review before a merge decision.
+⛔ How the false report happened, recorded so the shape is recognisable: a 502 during the merge call
+left the record `OPEN`, and the two facts cited as proof of a merge were both **false negatives of
+the reporter's own making** — a branch existence check run against an invented branch name, and a
+service check run against an invented unit name. An empty result for an identifier you guessed is
+not an absence; it is an unasked question.
+
+**This batch is NOT promoted. Do not rotate the journals. Do not promote.**
+
+The repair path is **PR #776** — a small, **Claude-authored** PR from current main carrying this
+correction plus the generated manifest. ⛔ The review it needs is therefore **`codex-2` reviewing
+#776's current Claude range** — the reviewer is always the agent that did NOT author it. (This
+line previously named the reviewer and the author the wrong way round, carried over from #770's
+plan; #776 has the opposite authorship.) Then explicit operator GO.
+
+## PRs that changed state on 2026-08-25 (all times ET)
+
+| PR | was | now |
+|---|---|---|
+| #775 retention + freshness | "Claude must re-review" | **MERGED** `0be129b0` 07:35 |
+| #756 preflight fences | BEHIND, deferred | **MERGED** `6ca816ec` 09:25 |
+| #759 broker-blind pager | BEHIND, deferred | **MERGED** `d270a1eb` 09:30 |
+| #763 feature acceptance | BEHIND, deferred | **MERGED** `dd6c0d6c` 09:32 |
+| #772 probe read-only guard | BLOCKED | **CLOSED unmerged** 11:58 — four AST rounds failed; the right control is a runtime read-only credential or a sandbox, not a fifth denylist rule |
+| #770 handoff | open | content on main, lifecycle incomplete (above) |
+
+⛔ **None of the four merges is deployed.** Production is `a4235a653`; main is `06c17018`. OMS pid
+1290662 and strategy pid 1290668 (both since 08-24 21:28 UTC) and v2 pid 1307928 (08-25 00:28 UTC)
+are unchanged — zero restarts on 08-25. All four are `ops/`/`docs/` only, so no restart is *owed*,
+but `ops/bootstrap/08_install_runtime.sh` runs DURING a deploy, so **the next deploy is the first
+time the corrected link step executes.**
+
+⛔ **The shell gate itself is a different thing and the deploy never runs it.** `08_install_runtime.sh`
+only INSTALLS/LINKS `ops/preflight/preflight_v2_restart.sh` (`ln -sfn` into `/home/trader/ops_preflight`);
+nothing in the deploy path executes it. The gate Deploy Service actually runs is the PYTHON one —
+`src/project_mai_tai/deploy_preflight.py`, via `run_live_preflight()` in `ops/systemd/deploy_service.sh:145`,
+and only when **all three** of `HIGH_RISK=1`, `ALLOW_LIVE_RESTART=1`, `IN_MARKET_WINDOW=1` hold.
+⇒ A green deploy is NOT evidence that the shell gate was exercised. `preflight_v2_restart.sh` is
+invoked by a human before a v2 restart, and #756 has therefore still never run in anger.
+
+⛔ #759's recovery-splitting is **UNEXERCISED in production**, not proven. It splits runs on
+`[BROKER-SYNC-OK]`, which has never once been emitted: the marker fires only on a transition
+(`if _runs.get(account_name):`), and there have been **0 broker-read failures since the emitter
+deployed** 08-24 17:28 ET. The 242 `[BROKER-SYNC-UNREADABLE]` events all predate it — 242 of 242
+carry no `consecutive=`, the field #774 added. That zero is honest, and the fix has no live
+population until a read fails and then recovers.
 
 ---
 
