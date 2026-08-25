@@ -2415,12 +2415,50 @@ class SchwabV2Strategy:
         # ⛔ The general warning on `_cw_v2_resting_track` ("re-entry / reactive / fan-out gates
         # keep the union on purpose") is about gates that admit a NEW order type. This gate admits
         # nothing: it only decides whether the reclaim slot's OWN order stays alive.
+        # #761 ACCEPTANCE INSTRUMENT.  CHECKED is the denominator: every active reclaim rest
+        # that reaches this consumption gate, including a genuine fill.  PASSED is the success:
+        # the exact state the old union-based gate misclassified (the order's intent raised the
+        # union, but no fill is held and the reclaim slot is still available) made it through.
+        # If somebody restores `position_qty != 0`, CHECKED still fires and PASSED cannot.  A
+        # zero can therefore be separated from a site that never handled an active reclaim rest.
+        reclaim_slot_checked = bool(
+            state.resting_active and state.resting_slot == "reclaim"
+        )
+        union_only_reclaim = bool(
+            reclaim_slot_checked
+            and state.position_qty != 0
+            and state.position_qty_held == 0
+            and not state.cw_reclaim_taken
+        )
+        # Keep both markers inside the feature boundary.  Fan-out-off produced false
+        # suppression counts before #771 nested its observable; the equivalent mistake here
+        # would count a disabled reactive/CW-v2 path as an exercised #761 opportunity.
+        if self._reactive_entry_enabled and self._cw_v2_enabled:
+            if reclaim_slot_checked:
+                logger.info(
+                    "[V2-RECLAIM-SLOT-CHECKED] %s active reclaim rest reached the slot "
+                    "gate union_qty=%s held_qty=%s reclaim_taken=%s",
+                    state.symbol,
+                    state.position_qty,
+                    state.position_qty_held,
+                    state.cw_reclaim_taken,
+                )
+
         if state.position_qty_held != 0 or state.cw_reclaim_taken:
             # Genuinely holding, or this cross has already used its reclaim. ⛔ Cancel through the
             # one path rather than clearing state, or the order becomes unmanaged.
             if state.resting_active and state.resting_slot == "reclaim":
                 self._queue_resting_cancel(state, reason="slot_consumed")
             return
+        if self._reactive_entry_enabled and self._cw_v2_enabled:
+            if union_only_reclaim:
+                logger.info(
+                    "[V2-RECLAIM-UNION-ONLY-PASSED] %s active reclaim rest passed the slot "
+                    "gate union_qty=%s held_qty=%s",
+                    state.symbol,
+                    state.position_qty,
+                    state.position_qty_held,
+                )
         armed = bool(state.cw_armed and state.cw_bars_waited >= 2 and state.cw_segment_high > 0.0)
         if not armed:
             # The segment ended (flip-down / disarm) -> a level from a DEAD segment must never keep

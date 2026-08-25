@@ -12,6 +12,36 @@
 # ⇒ Counts now print as  `scoped / all-retained`. Both are kept on purpose: the scoped half
 #   grades THIS process, the all-retained half is the baseline it must be compared against.
 #   Neither one alone is the answer, so neither one is printed alone.
+render_seed_gap_census() {  # render_seed_gap_census <chronological timestamped-log file>
+  local source="$1" lines line stamp payload latest=""
+  lines=$(grep -F '[V2-DB-SEED-GAP-CENSUS]' "$source" 2>/dev/null | tail -3 || true)
+  if [ -z "$lines" ]; then
+    echo "       ⛔ NO CENSUS SNAPSHOT — the 04:00 boundary is UNMEASURED."
+    return 0
+  fi
+
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    stamp=${line:0:19}
+    payload=$(printf '%s\n' "$line" \
+      | sed -E 's/^.{19}.*(truncations=[0-9]+ of [0-9]+[^—]*).*/\1/')
+    printf '       %s  %s\n' "$stamp" "$payload"
+    printf '          counter_window=that process boot (start not encoded)..%s UTC\n' "$stamp"
+    latest="$stamp"
+  done <<< "$lines"
+
+  echo "       COVERAGE END: ${latest} UTC. Events after that snapshot are NOT covered by 6c."
+  echo "       This is cumulative since that process boot, not a current-day or per-day census."
+  echo "       Calendar lookup failures are never the truncation numerator; read 6b for fail-opens."
+}
+
+# Test the production renderer itself without touching logs, systemd, sudo, or the VPS.
+if [ "${1:-}" = "--render-seed-gap-census" ]; then
+  [ -n "${2:-}" ] || { echo "usage: $0 --render-seed-gap-census <timestamped-log-file>" >&2; exit 2; }
+  render_seed_gap_census "$2"
+  exit 0
+fi
+
 PHASE="${1:-POST}"
 SCOPE_ARG="boot"
 if [ "${2:-}" = "--since" ]; then SCOPE_ARG="${3:-boot}"; fi
@@ -135,7 +165,7 @@ echo "   alembic head             : $(sudo -u postgres psql -d project_mai_tai -
 
 echo
 echo "### 4. §183 — was a broker_order_events write swallowed?"
-echo "   [OMS-V2-MIRROR] failures      : $(cnt 'OMS-V2-MIRROR.*fail' oms)"
+echo "   [OMS-V2-MIRROR] failures      : $(cnt 'OMS-V2-MIRROR\].*fail' oms)"
 echo "   failed syncing broker state   : $(cnt 'failed syncing broker state' oms)"
 echo "   managed-exit emit failed      : $(cnt 'managed-exit emit failed' oms)"
 echo "   UndefinedColumn / no column   : $(cnt 'UndefinedColumn\|has no column' oms)"
@@ -222,10 +252,12 @@ echo "          actually judged. This is the OPPOSITE polarity to 6a. A NON-zero
 echo "          guard going INERT: it reverts to the pre-fix behaviour that armed CAST at 7.99"
 echo "          while it traded 1.21. ⛔ This zero is only load-bearing if section 0 says"
 echo "          READABLE and 6c's evaluations > 0 — no seeding attempted, no lookup to fail."
-echo "   6c. CENSUS — the denominator that makes 6a's zero readable (last 3, all rotations):"
+echo "   6c. CENSUS — point-in-time denominator snapshots (last 3, all rotations):"
 # Reads the SORTED stream, so 'last 3' is genuinely the last 3. See the note on prep().
-grep 'V2-DB-SEED-GAP-CENSUS' "$TMP/schwab-1m-v2.tl" | tail -3 \
-  | sed -E 's/^(.{19}).*(truncations=[0-9]+ of [0-9]+[^—]*).*/       \1  \2/'
+# ⛔ A 04:00 snapshot cannot describe an event later that day. On 08-25 the 04:00 line still
+# showed 2 of 7 when the lookup failed open at 16:34. Printing the coverage end prevents the old
+# snapshot from being read as a clean current day; 6b is the live population for lookup failures.
+render_seed_gap_census "$TMP/schwab-1m-v2.tl"
 echo "       ⛔ 'truncations=0 of 0' is NOT a clean day — it is a census with no population."
 echo "          Emitted once per 04:00 session-roll boundary; NO census line at all = the roll"
 echo "          never crossed, i.e. UNMEASURED."
