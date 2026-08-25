@@ -38,6 +38,7 @@ MAI_TAI_SYSTEMCTL_BIN="$TMP/systemctl" \
   bash "$ROOT/ops/logrotate/install.sh" "$ROOT"
 
 cmp "$ROOT/ops/logrotate/project-mai-tai" "$TMP/logrotate.d/installed"
+[[ "$(stat -c '%a' "$TMP/logrotate.d/installed")" == "644" ]]
 if grep -Fq "$TMP/logrotate.d/.project-mai-tai.logrotate." "$MKTEMP_CALLS"; then
   echo "installer staged a candidate inside the scanned logrotate.d directory"
   exit 1
@@ -55,6 +56,10 @@ mkdir -p "$TMP/unsafe-source/ops/logrotate"
 cp "$ROOT/ops/logrotate/project-mai-tai" \
   "$TMP/unsafe-source/ops/logrotate/project-mai-tai"
 chmod 0664 "$TMP/unsafe-source/ops/logrotate/project-mai-tai"
+if [[ "$(stat -c '%a' "$TMP/unsafe-source/ops/logrotate/project-mai-tai")" != "664" ]]; then
+  echo "COULD_NOT_TELL: this filesystem cannot represent the unsafe 0664 source control"
+  exit 3
+fi
 MAI_TAI_LOGROTATE_TARGET="$TMP/logrotate.d/from-unsafe-source" \
 MAI_TAI_LOGROTATE_BIN="$TMP/logrotate" \
 MAI_TAI_SYSTEMCTL_BIN="$TMP/systemctl" \
@@ -74,6 +79,19 @@ MAI_TAI_SYSTEMCTL_BIN="$TMP/systemctl" \
 grep -Fqx "$TMP/.project-mai-tai.logrotate.XXXXXX" "$MKTEMP_CALLS"
 [[ "$(wc -l < "$MKTEMP_CALLS")" -eq 1 ]]
 [[ "$(stat -c '%i' "$TMP/logrotate.d/installed")" == "$installed_inode" ]]
+cmp "$ROOT/ops/logrotate/project-mai-tai" "$TMP/logrotate.d/installed"
+
+# Correct bytes with unsafe metadata are not current: logrotate can ignore that
+# target just as it ignored the transported source in the first live run.
+drifted_inode=$(stat -c '%i' "$TMP/logrotate.d/installed")
+chmod 0664 "$TMP/logrotate.d/installed"
+[[ "$(stat -c '%a' "$TMP/logrotate.d/installed")" == "664" ]]
+MAI_TAI_LOGROTATE_TARGET="$TMP/logrotate.d/installed" \
+MAI_TAI_LOGROTATE_BIN="$TMP/logrotate" \
+MAI_TAI_SYSTEMCTL_BIN="$TMP/systemctl" \
+  bash "$ROOT/ops/logrotate/install.sh" "$ROOT"
+[[ "$(stat -c '%a' "$TMP/logrotate.d/installed")" == "644" ]]
+[[ "$(stat -c '%i' "$TMP/logrotate.d/installed")" != "$drifted_inode" ]]
 cmp "$ROOT/ops/logrotate/project-mai-tai" "$TMP/logrotate.d/installed"
 
 cat > "$TMP/logrotate-fail" <<'EOF'

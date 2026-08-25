@@ -28,6 +28,18 @@ tmp=$("${PRIV[@]}" mktemp "$target_parent/.project-mai-tai.logrotate.XXXXXX")
 cleanup() { "${PRIV[@]}" rm -f "$tmp"; }
 trap cleanup EXIT
 
+target_metadata_matches() {
+  local metadata
+  if ! metadata=$("${PRIV[@]}" stat -c '%a:%u:%g' "$1"); then
+    return 1
+  fi
+  if [[ -n "${MAI_TAI_LOGROTATE_TARGET:-}" ]]; then
+    [[ "${metadata%%:*}" == "644" ]]
+  else
+    [[ "$metadata" == "644:0:0" ]]
+  fi
+}
+
 if [[ -n "${MAI_TAI_LOGROTATE_TARGET:-}" ]]; then
   # Test/non-production seam: never requires root ownership or sudo.
   install -m 0644 "$SOURCE" "$tmp"
@@ -48,7 +60,9 @@ if ! grep -Fq 'rotating pattern: /var/log/project-mai-tai/*.log' <<<"$debug_outp
   exit 1
 fi
 
-if "${PRIV[@]}" test -f "$TARGET" && "${PRIV[@]}" cmp -s "$tmp" "$TARGET"; then
+if "${PRIV[@]}" test -f "$TARGET" \
+  && "${PRIV[@]}" cmp -s "$tmp" "$TARGET" \
+  && target_metadata_matches "$TARGET"; then
   echo "Logrotate policy already matches the normalized source; no replacement needed."
 else
   "${PRIV[@]}" mv -f "$tmp" "$TARGET"
@@ -60,8 +74,8 @@ fi
 "${PRIV[@]}" "$SYSTEMCTL_BIN" is-enabled --quiet logrotate.timer
 "${PRIV[@]}" "$SYSTEMCTL_BIN" is-active --quiet logrotate.timer
 
-if ! "${PRIV[@]}" cmp -s "$SOURCE" "$TARGET"; then
-  echo "installed logrotate policy does not match $SOURCE"
+if ! "${PRIV[@]}" cmp -s "$SOURCE" "$TARGET" || ! target_metadata_matches "$TARGET"; then
+  echo "installed logrotate policy content or ownership/mode does not match the normalized source"
   exit 1
 fi
 
