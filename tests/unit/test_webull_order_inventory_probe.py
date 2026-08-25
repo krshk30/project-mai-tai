@@ -297,68 +297,88 @@ def test_live_code_contains_no_mutating_sdk_calls():
 
     ALLOWED = {"get_order_history", "get_order_detail"}
     SDK_RECEIVERS = {"operation", "client", "api_client", "adapter"}
+    LOCAL_PARSERS = {"_body", "_response_status", "_get_client"}
     HTTP_VERBS = {"post", "put", "patch", "delete"}
-
     MUTATING = {
         "place_order", "replace_order", "cancel_order", "preview_order",
         "batch_place_order", "place_option", "cancel_option", "replace_option",
         "preview_option", "submit_order",
     }
 
-    called_on_sdk: set[str] = set()
-    http_calls: set[str] = set()
-    dynamic: set[str] = set()
-
-    # ⛔⭐⭐ DYNAMIC DISPATCH DEFEATS BOTH OTHER CHECKS, AND IT SURVIVED THE FIRST HARDENING.
-    # `getattr(self.operation, "cancel_order")(...)` is invisible to the AST attribute walk (the
-    # call's func is a Name, not an Attribute) AND to the literal scan (the source contains
-    # `"cancel_order")(`, never `.cancel_order(`). Mutant MX4. A method name that only ever exists
-    # as a STRING is exactly the shape a static guard is blind to, so the string itself is banned.
+    # ⛔⭐⭐ AN SDK OBJECT MAY ONLY APPEAR AS THE RECEIVER OF AN ALLOWED CALL. NOTHING ELSE.
+    # The previous rule checked the receiver NAME at each call site, so it saw
+    # `self.operation.write()` and missed:
+    #       op = self.operation
+    #       op.write()
+    # — the object escaped into a local and the guard never followed it. That contradicted the
+    # "complete by construction" claim this test makes, on the guard standing between a diagnostic
+    # and a LIVE REAL-MONEY ACCOUNT. Found by codex-2, round 12.
+    #
+    # ⇒ Chasing aliases through assignments would be endless (containers, returns, closures,
+    #   defaults). Instead invert it: forbid the SDK object from being ANYWHERE except immediately
+    #   under an allowed call. An escape has no syntax left. `self.operation = ...` in __init__ is
+    #   a Store and is fine; every Load must be `<sdk>.<method>(...)`.
+    parents = {}
     for node in ast.walk(tree):
-        if isinstance(node, ast.Constant) and isinstance(node.value, str):
-            if node.value in MUTATING:
-                dynamic.add(node.value)
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "getattr":
-            recv = node.args[0] if node.args else None
-            recv_name = (
-                recv.attr if isinstance(recv, ast.Attribute)
-                else recv.id if isinstance(recv, ast.Name)
-                else None
-            )
-            if recv_name in {"operation", "client", "api_client", "adapter"}:
-                dynamic.add(f"getattr({recv_name}, ...)")
+        for child in ast.iter_child_nodes(node):
+            parents[child] = node
 
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
-            continue
-        attr = node.func.attr
-        recv = node.func.value
-        # `self.operation.X(...)` / `self.client.X(...)` / `adapter.X(...)`
-        recv_name = (
-            recv.attr if isinstance(recv, ast.Attribute)
-            else recv.id if isinstance(recv, ast.Name)
-            else None
+    def _is_sdk_ref(node):
+        return (
+            isinstance(node, ast.Attribute)
+            and node.attr in SDK_RECEIVERS
+            and isinstance(node.ctx, ast.Load)
         )
-        if recv_name in SDK_RECEIVERS:
-            called_on_sdk.add(attr)
-        if attr in HTTP_VERBS:
-            http_calls.add(f"{recv_name}.{attr}")
 
-    # ⛔ These are PURE RESPONSE PARSERS on our own adapter, verified by reading them: both are
-    # `@staticmethod`s that only `getattr` off an already-returned object. Neither touches the
-    # network. They are named ONE BY ONE on purpose — a wildcard like "anything starting with _"
-    # would readmit `_submit_blocking`, which is a live write.
-    LOCAL_PARSERS = {"_body", "_response_status", "_get_client"}
+    escapes = []
+    called_on_sdk = set()
+    for node in ast.walk(tree):
+        if not _is_sdk_ref(node):
+            continue
+        parent = parents.get(node)
+        # legal shape: Attribute(value=<sdk>, attr=method) whose parent is Call(func=that Attribute)
+        if isinstance(parent, ast.Attribute) and parent.value is node:
+            grand = parents.get(parent)
+            if isinstance(grand, ast.Call) and grand.func is parent:
+                called_on_sdk.add(parent.attr)
+                continue
+            escapes.append(f"{ast.unparse(parent)} (attribute access, not a call)")
+            continue
+        escapes.append(ast.unparse(parent) if parent is not None else ast.unparse(node))
+
+    assert not escapes, (
+        "an SDK object escaped its call site — it may only be the receiver of an allowed "
+        f"method call, never aliased, passed or stored: {sorted(set(escapes))[:5]}"
+    )
+
     forbidden = called_on_sdk - ALLOWED - LOCAL_PARSERS
     assert not forbidden, (
         f"the probe calls SDK methods outside the two-method contract: {sorted(forbidden)}"
     )
-    assert not dynamic, (
-        "the probe names a mutating SDK method as a STRING or dispatches onto the SDK dynamically, "
-        f"which no static guard can follow: {sorted(dynamic)}"
-    )
+
+    http_calls = {
+        f"{node.func.value.attr}.{node.func.attr}"
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+        and node.func.attr in HTTP_VERBS and isinstance(node.func.value, ast.Attribute)
+        and node.func.value.attr in SDK_RECEIVERS
+    }
     assert not http_calls, (
         f"the probe issues a raw mutating HTTP call, bypassing the SDK contract: {sorted(http_calls)}"
+    )
+
+    dynamic = {
+        node.value for node in ast.walk(tree)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value in MUTATING
+    }
+    # ⛔ NO getattr CLAUSE HERE ANY MORE, AND THAT IS NOT A WEAKENING. `getattr(self.operation,
+    # "cancel_order")(...)` puts the SDK object in an ARGUMENT position, so the escape rule above
+    # already refuses it. A blanket getattr ban flagged the probe's legitimate defensive field
+    # reads (`getattr(response, "body", None)`) — a guard that fires on correct code gets muted,
+    # which costs exactly what a silent one does.
+    assert not dynamic, (
+        "the probe names a mutating SDK method as a STRING or dispatches dynamically, "
+        f"which no static guard can follow: {sorted(dynamic)}"
     )
 
     # ⛔ Keep the literal denylist too. The AST walk covers calls; this covers a mutating name
