@@ -102,31 +102,47 @@ have_consecutive() {  # -> 0 if the tape carries the stamped field
   printf '%s\n' "$1" | grep -q 'consecutive=[0-9]'
 }
 
-build_tape() {  # -> stdout: "<epoch> <acct> <iso>"
+build_tape() {  # -> stdout: "<epoch> <acct> <iso> <consecutive|->"
+  # ⛔⭐⭐ THE TAPE USED TO DROP `consecutive=`, SO find_runs COULD NOT POSSIBLY USE IT.
+  # The header printed "run length: READ from consecutive= (fact)" whenever the field existed on
+  # the raw lines, while the calculation ALWAYS grouped by time gaps. Four failures, a recovery,
+  # then four more became ONE run of eight: the label said fact, the number was an inference.
+  # ⇒ Carry the field. `-` means genuinely absent on that line; the gap fallback then applies.
   local src
   if [ -n "${Q5_TAPE:-}" ]; then src="cat ${Q5_TAPE}"; else
     src="sudo -n zcat -f -- ${LOGDIR}/oms.log ${LOGDIR}/oms.log-*"; fi
   eval "$src" 2>/dev/null \
     | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2},' \
     | grep -F -- "$MARKER" \
-    | sed -E 's/^([0-9-]{10}) ([0-9:]{8}),[0-9]+ .*acct=([^ ]+).*/\1T\2 \3/' \
-    | sort \
-    | while read -r iso acct; do
+    | while IFS= read -r line; do
+        iso=$(printf '%s' "$line" | sed -E 's/^([0-9-]{10}) ([0-9:]{8}),.*/\1T\2/')
+        acct=$(printf '%s' "$line" | sed -nE 's/.*acct=([^ ]+).*/\1/p')
+        cons=$(printf '%s' "$line" | sed -nE 's/.*consecutive=([0-9]+).*/\1/p')
         [ -z "${acct:-}" ] && continue
         e=$(date -u -d "${iso/T/ }" +%s 2>/dev/null) || continue
-        echo "$e $acct $iso"
-      done
+        echo "$e $acct $iso ${cons:--}"
+      done | sort -n
 }
 
 # ── run detection ─────────────────────────────────────────────────────────────────────────
 # A run is failures for ONE account separated by <= GAP_MAX. Emits: acct start_iso end_iso n span
-find_runs() {  # find_runs <gap_max>
+find_runs() {  # find_runs <gap_max>   fields: epoch acct iso consecutive|-
+  # ⛔ A RESET IN `consecutive=` IS A RUN BOUNDARY AND IT IS A FACT. A time gap is an inference:
+  # at a 15s cadence a 30s gap is a success OR a slow cycle and cannot be told apart - which is
+  # exactly what #760 shipped the counter for. When the field is present it decides; the gap only
+  # decides when the field is absent.
   awk -v gap="$1" '
-    { e=$1; a=$2; iso=$3
-      if (a in laste && e-laste[a] <= gap) { n[a]++; lastiso[a]=iso; laste[a]=e }
+    { e=$1; a=$2; iso=$3; c=$4
+      reset = 0
+      if (c != "-" && (a in lastc)) {
+        if (lastc[a] == "-") reset = 1
+        else if (c+0 <= lastc[a]+0) reset = 1
+      }
+      gapped = !(a in laste) || (e - laste[a] > gap)
+      if ((a in laste) && !reset && !gapped) { n[a]++; lastiso[a]=iso; laste[a]=e; lastc[a]=c }
       else {
         if (a in laste) print a, startiso[a], lastiso[a], n[a], laste[a]-starte[a]
-        startiso[a]=iso; starte[a]=e; lastiso[a]=iso; laste[a]=e; n[a]=1
+        startiso[a]=iso; starte[a]=e; lastiso[a]=iso; laste[a]=e; n[a]=1; lastc[a]=c
       }
     }
     END { for (a in laste) print a, startiso[a], lastiso[a], n[a], laste[a]-starte[a] }'
