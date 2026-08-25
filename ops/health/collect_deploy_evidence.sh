@@ -97,18 +97,30 @@ echo "   src diff      : $(git diff --stat origin/main HEAD -- src | tail -1 || 
 echo "   local changes : $(git status --porcelain | wc -l) file(s)"
 
 echo
-echo "### 2. FILE-WRITE vs PROCESS-START   ⛔ src diff=0 is NOT evidence"
-PULL=$(find src -type f -name '*.py' -printf '%T@\n' | sort -rn | head -1)
-PULL_H=$(date -u -d "@${PULL%.*}" '+%Y-%m-%d %H:%M:%S')
-echo "   files written (newest .py in src, i.e. the pull): ${PULL_H} UTC"
-printf "   %-18s %-22s %-10s %s\n" SERVICE PROC_START_UTC SUBSTATE "RUNNING PULLED CODE?"
+echo "### 2. SERVICE-SCOPED SOURCE vs PROCESS-START   ⛔ src diff=0 is NOT evidence"
+echo "   Scope: static project import graph from each console entry point."
+echo "   Runtime mapping: the venv must resolve project_mai_tai from this checkout's src/."
+echo "   Newer startup-required source = STALE; newer conditional/lazy source = COULD_NOT_TELL."
+echo "   Unrelated source is ignored. Resolution failure is COULD_NOT_TELL, never FRESH."
+printf "   %-18s %-22s %-10s %s\n" SERVICE PROC_START_UTC SUBSTATE "RELEVANT SOURCE"
 for u in oms schwab-1m-v2 strategy market-data control reconciler market-capture; do
   unit="project-mai-tai-${u}.service"
   raw=$(systemctl show "$unit" -p ActiveEnterTimestamp --value 2>/dev/null)
   ep=$(date -u -d "$raw" '+%s' 2>/dev/null || echo 0)
   ph=$(date -u -d "@$ep" '+%Y-%m-%d %H:%M:%S' 2>/dev/null)
   sub=$(systemctl show "$unit" -p SubState --value 2>/dev/null)
-  if [ "$ep" -gt "${PULL%.*}" ]; then v="YES"; else v="⛔ NO — on disk, not running"; fi
+  if [ "$sub" != "running" ]; then
+    v="⛔ NOT_RUNNING — source freshness is not health"
+  else
+    v=$(.venv/bin/python ops/health/service_source_freshness.py \
+      --repo "$PWD" --service "$u" --process-start-epoch "$ep" 2>&1)
+    rc=$?
+    case "$rc" in
+      0) ;;
+      1) v="⛔ $v" ;;
+      *) v="⚠ $v" ;;
+    esac
+  fi
   printf "   %-18s %-22s %-10s %s\n" "$u" "$ph" "$sub" "$v"
 done
 
