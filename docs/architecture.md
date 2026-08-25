@@ -144,6 +144,31 @@ Rules:
 - reconciliation identifies and records problems
 - repair should happen through OMS-safe flows, not ad hoc tracker mutation
 
+⛔⭐⭐ **WHAT RECONCILIATION STRUCTURALLY CANNOT SEE — read this before treating it as coverage.**
+
+Every check above compares the venue against **our own tables**. An order or position that we
+never recorded is therefore invisible to it *by construction* — not missed, not a gap to be
+tightened, but outside the shape of the comparison. "The reconciler detects drift" is a claim
+about drift between two records we hold; it is not a claim about the broker's book.
+
+Concretely (found live 2026-08-21): **five** Webull protective OCO pairs were created at the venue
+and returned `combo_order_id`s, while the code that would have recorded them crashed after
+placement. ⛔ Four was the first count and it was wrong — USDE appears **twice** on 08-21
+(12:42:47Z and 15:40:45Z) and the second was collapsed into the first. The durable list is in
+`docs/deploy-2026-08-24-window.md`: SUGP, JUNS, USDE, EXYN, USDE. The result is orders that exist at the broker, protect real shares, and appear in no
+table we own. Reconciliation reported nothing — correctly, by its own contract.
+
+⇒ Two consequences worth stating where safety is reasoned about:
+
+- **We can neither see nor cancel a venue-side order we failed to record.** There is no
+  `cancel_all`, no venue-side `list_open_orders`, and no adapter method that enumerates orders at
+  the broker. Every cancel path selects from `broker_orders`. That protected us on 2026-08-21 —
+  nothing removed the unrecorded protection — but it is luck, not design, and it cuts both ways.
+- **A local ledger cannot corroborate itself.** `account_positions`, `virtual_positions` and
+  `oms_managed_positions` are not three sources: the first is the broker read, the second is
+  cleared by a sweep keyed on the first, and the third is our bookkeeping. When they agree, that
+  is one source repeated. The broker's own screen is the only independent answer.
+
 ## Persistence Model
 
 ### Postgres
