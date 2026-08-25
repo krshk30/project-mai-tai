@@ -3,8 +3,16 @@
 > **OVERWRITE this file.** It answers: *what is true right now?* Historical narrative belongs in
 > [`handoff-log.md`](handoff-log.md). Numbers without an as-of time are not current-state evidence.
 
-**Refreshed by `codex-2`: 2026-08-25 06:25 ET, read-only against production.** No account-position
-or open-order claim was made in this refresh.
+**Two authors, two scopes — both recorded:**
+- **`codex-2`, 2026-08-25 06:25 ET**, read-only against production: the original refresh. No
+  account-position or open-order claim was made in it.
+- **`claude-1`, 2026-08-25 10:29–10:33 ET**, read-only against production: the Schwab token/restart
+  section (rewritten — the previous version's conclusion was a production restart that is not owed),
+  the PR state table, and the #770 lifecycle correction. No account-position or open-order claim was
+  made either.
+
+⛔ Provenance matters here because the two authors DISAGREED on the restart question and the later
+evidence won. A single-author header would have hidden that.
 
 ---
 
@@ -25,8 +33,17 @@ or open-order claim was made in this refresh.
 
 Production runs refresher-owned mode — `MAI_TAI_SCHWAB_ADAPTER_TOKEN_REFRESH_ENABLED=false` — so
 `_get_access_token()` takes the pure-reader branch and **reloads the store from disk**. The
-dedicated refresher (control service) owns freshness; the adapter never writes and never caches
-past expiry. A later re-auth file is therefore picked up by the RUNNING process.
+dedicated refresher (control service) owns freshness and the adapter never writes. A later re-auth
+file is therefore picked up by the RUNNING process — no restart needed to see it.
+
+⛔ **Precisely, because the imprecise version is dangerous:** the adapter does not reload on every
+call, and it does NOT refuse an expired token. It returns its cached token untouched while
+`_access_token_needs_refresh()` is false; only once the cached token reaches the refresh window
+(or `force_refresh`) does it reload from disk. And if the STORE itself is stale, it logs
+`[SCHWAB-TOKEN-STALE]` and **returns the expired token anyway** — deliberately, so a refresher
+outage surfaces as a named warning instead of a silent 401 storm. ⇒ "the adapter never caches past
+expiry" is FALSE. A live `[SCHWAB-TOKEN-STALE]` count means the refresher is down and needs a human,
+and it is the signal to watch — not the restart.
 
 **Evidence, as of 2026-08-25 14:33 UTC (10:33 ET), read-only:**
 
@@ -112,6 +129,12 @@ The four handoff documents ARE on main as `06c17018`. Nothing else about #770 we
 The content is genuine: `06c17018`'s tree and `dc58b9d2`'s tree are byte-identical (`f32a9d21ba12`).
 ⛔ But identical trees prove the DOCUMENTS landed, not that the BATCH was promoted.
 
+⛔⭐⭐ **#770's authorship cannot be proven retroactively and never will be.** `dc58b9d2`
+carries no `Co-Authored-By` trailer and nothing added later can supply one — under the agreed
+rule it is permanently `COULD_NOT_TELL`. **PR #776 is a NEW REPAIR PR.** It supplies the
+missing manifest and corrects the record. It is NOT evidence that #770's lifecycle completed,
+and must never be cited as such.
+
 ⛔⭐⭐ **A `--squash` merge leaves no ancestry link to its branch**, so `compare/main...dc58b9d2`
 reads `diverged ahead=10 behind=1`. That is the squash signature, NOT evidence of a failed merge —
 the same mechanism that orphaned #773 and #760. It will recur on anything stacked.
@@ -140,8 +163,16 @@ review of the Codex range, then explicit operator GO.
 ⛔ **None of the four merges is deployed.** Production is `a4235a653`; main is `06c17018`. OMS pid
 1290662 and strategy pid 1290668 (both since 08-24 21:28 UTC) and v2 pid 1307928 (08-25 00:28 UTC)
 are unchanged — zero restarts on 08-25. All four are `ops/`/`docs/` only, so no restart is *owed*,
-but `ops/preflight/preflight_v2_restart.sh` is a restart GATE and `ops/bootstrap/08_install_runtime.sh`
-runs DURING a deploy: **the next deploy is the first time either executes.**
+but `ops/bootstrap/08_install_runtime.sh` runs DURING a deploy, so **the next deploy is the first
+time the corrected link step executes.**
+
+⛔ **The shell gate itself is a different thing and the deploy never runs it.** `08_install_runtime.sh`
+only INSTALLS/LINKS `ops/preflight/preflight_v2_restart.sh` (`ln -sfn` into `/home/trader/ops_preflight`);
+nothing in the deploy path executes it. The gate Deploy Service actually runs is the PYTHON one —
+`src/project_mai_tai/deploy_preflight.py`, via `run_live_preflight()` in `ops/systemd/deploy_service.sh:145`,
+and only when **all three** of `HIGH_RISK=1`, `ALLOW_LIVE_RESTART=1`, `IN_MARKET_WINDOW=1` hold.
+⇒ A green deploy is NOT evidence that the shell gate was exercised. `preflight_v2_restart.sh` is
+invoked by a human before a v2 restart, and #756 has therefore still never run in anger.
 
 ⛔ #759's recovery-splitting is **UNEXERCISED in production**, not proven. It splits runs on
 `[BROKER-SYNC-OK]`, which has never once been emitted: the marker fires only on a transition
