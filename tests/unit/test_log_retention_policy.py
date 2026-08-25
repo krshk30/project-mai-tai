@@ -1,7 +1,16 @@
+import os
 from pathlib import Path
+import subprocess
+
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows filesystems cannot model Unix ownership/mode")
+def test_installer_shell_fault_controls() -> None:
+    subprocess.run(["bash", "ops/logrotate/test_install.sh"], cwd=ROOT, check=True)
 
 
 def test_policy_keeps_complete_application_logs_for_30_days() -> None:
@@ -60,7 +69,12 @@ def test_installer_enables_and_verifies_daily_timer() -> None:
     assert "is-enabled --quiet logrotate.timer" in installer
     assert "is-active --quiet logrotate.timer" in installer
     assert 'cmp -s "$SOURCE" "$TARGET"' in installer
-    assert installer.index('--debug "$SOURCE"') < installer.index('mv -f "$tmp" "$TARGET"')
+    normalize = 'install -o root -g root -m 0644 "$SOURCE" "$tmp"'
+    validate = '"$LOGROTATE_BIN" --debug "$tmp"'
+    replace = 'mv -f "$tmp" "$TARGET"'
+    assert installer.index(normalize) < installer.index(validate) < installer.index(replace)
+    assert "stat -c '%a:%u:%g'" in installer
+    assert '[[ "$metadata" == "644:0:0" ]]' in installer
     assert 'target_parent=$(dirname "$target_dir")' in installer
     assert 'mktemp "$target_parent/' in installer
     assert 'mktemp "$target_dir/' not in installer
