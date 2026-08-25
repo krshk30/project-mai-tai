@@ -36,6 +36,9 @@ LAUNCHED_NOT_IMPORTED: dict[str, str] = {
     "project_mai_tai.backtest.proximity_sweep": "study CLI; referenced from scripts/ and docs/",
     "project_mai_tai.backtest.study_report": "study CLI; referenced from docs/",
     "project_mai_tai.deploy_preflight": "standalone blocking deploy tooling; has __main__",
+    "project_mai_tai.post_restart_health_gate": (
+        "Deploy Service invokes it with python -m after each systemd restart"
+    ),
     "project_mai_tai.maintenance.reset_active_state": "maintenance CLI; has __main__",
 }
 
