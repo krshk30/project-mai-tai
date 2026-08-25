@@ -15,8 +15,13 @@ def test_deploy_main_is_a_visible_hard_refusal() -> None:
     assert "workflow_dispatch:" in text, "an attempted use must leave a visible Actions run"
     assert "name: DISABLED - Deploy Main" in text
     assert text.count("run: |") == 1, "there must be only one executable step: the refusal"
-    assert 'echo "::error::Deploy Main is prohibited' in text
-    assert "          exit 1" in text
+    run_block = text.split("run: |", maxsplit=1)[1]
+    commands = [line.strip() for line in run_block.splitlines() if line.strip()]
+    assert commands == [
+        'echo "::error::Deploy Main is prohibited because it can mutate production before '
+        'reporting failure. Use Deploy Service with the narrowest service target."',
+        "exit 1",
+    ], "the refusal step gained executable work before or after its failure"
 
 
 def test_deploy_main_has_no_route_to_mutate_production() -> None:
