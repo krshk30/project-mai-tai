@@ -109,16 +109,24 @@ armed off them. `EXISTS` answers the same question in **0.182 ms**. Live since 0
 ⛔ `SELECT DISTINCT … LIMIT 1` was **measured and rejected** — HashAggregate cannot emit early.
 **Monday is the first real exercise: signal 6 must read 0, and it CANNOT be graded intraday.**
 
-## 3b. 🔴 §272 — `eh_resting` NEVER TOUCHES THE SHARED FAN-OUT LATCH, AND SIGNAL 4 IS BLIND TO IT
+## 3b. 🟡 §272 — `eh_resting` NEVER TOUCHES THE SHARED FAN-OUT LATCH (cross-reviewed, CORRECTED)
 Three of four fan-out emit sites read AND write `fanout_webull_claimed`; `_eh_resting_cross_check`
 does **neither**. ⇒ **#739 cannot suppress reactive-after-`eh_resting`** — a boundary nobody wrote
-down. ⛔ The comment citing `resting_flip_ms` is TRUE for its own scope: it is a **per-cross**
-anti-burst guard, not the per-flip latch.
-⛔⭐⭐ `eh_resting` legs carry `cw_arm_bar_ts=0` (30 fills, **0** with a segment id) ⇒ signal 4
-excludes them, so an (`eh_resting` + `reactive`) pair reads as **ONE leg, not a duplicate**. If it
-is a fourth duplicate path, nothing we have would ever show it. Population: **22 symbol-days**
-since 08-01, 2 on 08-21 — ⛔ **not 22 duplicates**, and the DB cannot tighten it because the leg
-has no segment id to join on. Board item **22**; observability first, behaviour second.
+down. ⛔ Signal 4 is blind to it: **31 of 31** filled `eh_resting` legs carry `cw_arm_bar_ts=0`
+(as of 08-24), so an (`eh_resting` + `reactive`) pair reads as **ONE leg, not a duplicate**.
+
+⛔⭐⭐ **THE FIRST VERSION OF THIS ENTRY WAS WRONG IN THREE PLACES.** Corrected by `codex-2`'s
+challenge, full detail in open-item **22**:
+* population is **18 symbol-days since 08-01, 1 on 08-21** (`eh_resting`+**`reactive`**) — NOT the
+  22 / 2 first published, which counted `eh_resting`+any-source. ⛔ Quote it WITH its as-of date.
+* "zero live evidence" was **FALSE** — 3 same-cross sequences exist (JUNS 08-21, PMI ×2 08-24).
+* the alternate guard is **`resting_active`**, not `resting_flip_ms` (a ~30s settle/anti-burst).
+
+⛔ **AND THE OBVIOUS FIX IS A NO-OP** — the BUY ARM reset clears the claim, proven by mutation, and
+**no existing test detects the latch mutation in either direction**. JUNS is a **reclaim** (flat
+~13m30s), not overlapping exposure; harmful overlap remains **UNPROVEN**.
+⇒ Observability first: durable identity **before** the ARM exists, and record the Webull outcome.
+
 
 ## 3. ⛔ THE RECONCILER CANNOT SEE THIS CLASS AT ALL
 Every check compares the venue against **our own tables**, so an order we never recorded is

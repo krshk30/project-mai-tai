@@ -170,6 +170,9 @@ suppress reactive-after-`eh_resting`, because `eh_resting` never sets the latch 
 (30 fills, 0 with a segment id, re-measured today), so signal 4 excludes them entirely — an
 (`eh_resting` + `reactive`) pair in one segment reads as ONE leg, not a duplicate.
 
+⛔ **SUPERSEDED THE SAME DAY — see the EVENING entry above: the population is 18 / 1, not 22 / 2.**
+> *Left in place because this log is APPEND-ONLY and records what was believed at the time,
+> wrong turns included. Annotated, not rewritten.*
 Population where it could bite: **22 symbol-days** since 08-01 carrying an `eh_resting` leg
 alongside another source, **2 of them on 08-21**. ⛔ **NOT 22 duplicates** — a symbol-day is not a
 segment (§263 measured how badly that collapses), and the DB **cannot** tighten it, because the
