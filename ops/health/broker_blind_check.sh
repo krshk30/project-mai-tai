@@ -48,6 +48,12 @@ STATE=${Q5_STATE:-/var/tmp/q5_broker_blind.seen}
 TOPIC=${Q5_NTFY_TOPIC:-${MAI_TAI_NTFY_TOPIC:-project-mai-tai-alerts}}
 CURL=${Q5_CURL:-curl}          # seam: the selftest stubs this so it cannot page a real phone
 MARKER='[BROKER-SYNC-UNREADABLE]'
+# ⛔⭐⭐ THE RECOVERY MARKER IS PART OF THE TAPE. Filtering the tape down to failures alone means
+# a SUCCESS between two failures is invisible by construction, so the only thing left to split a
+# run is a time gap — an inference — and 4 failures / recovery / 4 failures merged into ONE run of
+# eight. An absence is evidence only against a known denominator: here the denominator (the OK
+# lines) had been grepped away before the question was asked.
+OK_MARKER='[BROKER-SYNC-OK]'
 
 DRY=0; AT=""; MODE=check
 while [ $# -gt 0 ]; do
@@ -102,37 +108,54 @@ have_consecutive() {  # -> 0 if the tape carries the stamped field
   printf '%s\n' "$1" | grep -q 'consecutive=[0-9]'
 }
 
-build_tape() {  # -> stdout: "<epoch> <acct> <iso> <consecutive|->"
+build_tape() {  # -> stdout: "<epoch> <acct> <iso> <consecutive|-> <FAIL|OK>"
   # ⛔⭐⭐ THE TAPE USED TO DROP `consecutive=`, SO find_runs COULD NOT POSSIBLY USE IT.
   # The header printed "run length: READ from consecutive= (fact)" whenever the field existed on
   # the raw lines, while the calculation ALWAYS grouped by time gaps. Four failures, a recovery,
   # then four more became ONE run of eight: the label said fact, the number was an inference.
   # ⇒ Carry the field. `-` means genuinely absent on that line; the gap fallback then applies.
+  # ⛔⭐⭐ AND CARRY THE RECOVERY LINES. A tape grepped down to failures cannot see a success, so
+  # the strongest possible boundary — the broker demonstrably readable again — was thrown away
+  # before the run was computed. Field 5 marks which kind each row is.
   local src
   if [ -n "${Q5_TAPE:-}" ]; then src="cat ${Q5_TAPE}"; else
     src="sudo -n zcat -f -- ${LOGDIR}/oms.log ${LOGDIR}/oms.log-*"; fi
-  eval "$src" 2>/dev/null \
-    | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2},' \
-    | grep -F -- "$MARKER" \
-    | while IFS= read -r line; do
+  eval "$src" 2>/dev/null     | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2},'     | grep -F -e "$MARKER" -e "$OK_MARKER"     | while IFS= read -r line; do
+        case "$line" in *"$MARKER"*) kind=FAIL ;; *) kind=OK ;; esac
         iso=$(printf '%s' "$line" | sed -E 's/^([0-9-]{10}) ([0-9:]{8}),.*/\1T\2/')
         acct=$(printf '%s' "$line" | sed -nE 's/.*acct=([^ ]+).*/\1/p')
-        cons=$(printf '%s' "$line" | sed -nE 's/.*consecutive=([0-9]+).*/\1/p')
+        # ⛔ `[0-9]+` did not match the DOCUMENTED counter-failure sentinel `consecutive=-1`, so
+        # every sentinel row fell back to `-` and the counter-aware split silently switched itself
+        # off in exactly the population it was written for. Match the sign.
+        cons=$(printf '%s' "$line" | sed -nE 's/.*consecutive=(-?[0-9]+).*/\1/p')
         [ -z "${acct:-}" ] && continue
         e=$(date -u -d "${iso/T/ }" +%s 2>/dev/null) || continue
-        echo "$e $acct $iso ${cons:--}"
+        echo "$e $acct $iso ${cons:--} $kind"
       done | sort -n
 }
 
-# ── run detection ─────────────────────────────────────────────────────────────────────────
-# A run is failures for ONE account separated by <= GAP_MAX. Emits: acct start_iso end_iso n span
-find_runs() {  # find_runs <gap_max>   fields: epoch acct iso consecutive|-
+find_runs() {  # find_runs <gap_max>   fields: epoch acct iso consecutive|- FAIL|OK
   # ⛔ A RESET IN `consecutive=` IS A RUN BOUNDARY AND IT IS A FACT. A time gap is an inference:
   # at a 15s cadence a 30s gap is a success OR a slow cycle and cannot be told apart - which is
   # exactly what #760 shipped the counter for. When the field is present it decides; the gap only
   # decides when the field is absent.
   awk -v gap="$1" '
-    { e=$1; a=$2; iso=$3; c=$4
+    { e=$1; a=$2; iso=$3; c=$4; k=$5
+      # ⛔⭐⭐ AN EXPLICIT RECOVERY ENDS THE RUN, FULL STOP. It is the only boundary here that is
+      # observed rather than inferred: the broker was readable at that instant. It closes the open
+      # run and is NOT itself an element of one, so it must never be counted as a failure.
+      if (k == "OK") {
+        if (a in laste) { print a, startiso[a], lastiso[a], n[a], laste[a]-starte[a]
+                          delete laste[a]; delete lastc[a] }
+        next
+      }
+      # ⛔⭐⭐ A CONSTANT SENTINEL IS NOT A RESET. `consecutive=-1` means THE COUNTER ITSELF
+      # FAILED, so it carries no ordering at all - yet `c <= lastc` is true for every repeat of it,
+      # which shattered a genuine run of 4 into FOUR runs of 1. (And the older `[0-9]+` pattern was
+      # no safer: it read `-1` as a POSITIVE 1 and did the same thing silently.) A value that cannot
+      # order events must be treated as ABSENT so the gap rule decides - the recovery marker above
+      # still splits the run, and that boundary is observed rather than inferred.
+      if (c != "-" && c+0 <= 0) c = "-"
       reset = 0
       if (c != "-" && (a in lastc)) {
         if (lastc[a] == "-") reset = 1
@@ -324,6 +347,51 @@ selftest() {
   raw=$(grep -n 'curl' "$0" | grep -v 'SEAM_GUARD' | grep -v '"\$CURL"' \
         | grep -v '^[0-9]*: *#' | grep -v 'CURL=' || true)                     # SEAM_GUARD
   [ -z "$raw" ] && ok "no unseamed outbound call" || bad "unseamed call: $raw" # SEAM_GUARD
+
+  echo "T10 ** RECOVERY SPLITS A RUN -- the population the 16/16 suite never covered"
+  # These are the two shapes codex forced. Neither existed in the tape T1 reads, so the suite
+  # passed 16/16 while both were broken. An absence is evidence only against a known denominator;
+  # a selftest that covers only the tape it was written against has a denominator of one.
+  local tp rr
+  _mk() { printf '%s,000 INFO %s acct=A1 consecutive=%s
+' "$1" "$2" "$3"; }
+
+  tp=$(mktemp)
+  { _mk '2026-08-21 10:00:00' "$MARKER" -1; _mk '2026-08-21 10:00:15' "$MARKER" -1
+    _mk '2026-08-21 10:00:30' "$MARKER" -1; _mk '2026-08-21 10:00:45' "$MARKER" -1
+    _mk '2026-08-21 10:01:00' "$OK_MARKER" 0
+    _mk '2026-08-21 10:01:15' "$MARKER" -1; _mk '2026-08-21 10:01:30' "$MARKER" -1
+    _mk '2026-08-21 10:01:45' "$MARKER" -1; _mk '2026-08-21 10:02:00' "$MARKER" -1; } > "$tp"
+  rr=$(Q5_TAPE="$tp" build_tape | find_runs 60)
+  # ⛔ the DOCUMENTED counter-failure sentinel. `-1` is constant, so `c <= lastc` was true on every
+  # repeat and shattered a real run of 4 into four runs of 1; the older `[0-9]+` read it as +1 and
+  # did the same thing. Both directions of that bug are caught by asserting the exact shape.
+  [ "$(printf '%s
+' "$rr" | wc -l)" -eq 2 ]     && ok "sentinel -1 x4 / OK / -1 x4 -> TWO runs"     || bad "expected 2 runs, got: $rr"
+  [ "$(printf '%s
+' "$rr" | awk '$4!=4' | wc -l)" -eq 0 ]     && ok "and each is length 4 (not one run of 8, not eight of 1)"     || bad "wrong lengths: $rr"
+
+  # ⛔ CONTROL FOR THE SPLIT ITSELF: strip the recovery line and the SAME tape must read as ONE
+  # run of 8. Without this, a splitter that fired on everything would pass the assertion above.
+  rr=$(grep -v 'SYNC-OK' "$tp" > "$tp.nook"; Q5_TAPE="$tp.nook" build_tape | find_runs 60)
+  [ "$(printf '%s
+' "$rr" | wc -l)" -eq 1 ] && [ "$(printf '%s
+' "$rr" | awk '{print $4}')" = 8 ]     && ok "CONTROL: same tape with no recovery -> ONE run of 8"     || bad "CONTROL failed - the splitter fires with nothing to split on: $rr"
+
+  { _mk '2026-08-21 11:00:00' "$MARKER" 1; _mk '2026-08-21 11:00:15' "$MARKER" 2
+    _mk '2026-08-21 11:00:30' "$OK_MARKER" 0
+    _mk '2026-08-21 11:00:45' "$MARKER" 1; _mk '2026-08-21 11:01:00' "$MARKER" 2; } > "$tp"
+  rr=$(Q5_TAPE="$tp" build_tape | find_runs 60)
+  [ "$(printf '%s
+' "$rr" | wc -l)" -eq 2 ]     && ok "positive 1,2 / OK / 1,2 -> TWO runs of 2" || bad "expected 2 runs, got: $rr"
+  rm -f "$tp" "$tp.nook"
+
+  echo "T11 * the recovery marker is actually CARRIED into the tape"
+  # ⛔ the root cause was upstream of find_runs: the tape was grepped down to failures, so no
+  # boundary could reach the splitter at all. Assert the OK row is present and typed.
+  tp=$(mktemp); _mk '2026-08-21 12:00:00' "$OK_MARKER" 0 > "$tp"
+  Q5_TAPE="$tp" build_tape | grep -q ' OK$' && ok "an OK line reaches the tape, typed OK"     || bad "the recovery marker is still filtered out of the tape"
+  rm -f "$tp"
 
   echo
   echo "PASS=$P FAIL=$F"
