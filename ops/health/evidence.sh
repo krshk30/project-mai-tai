@@ -1,0 +1,282 @@
+#!/usr/bin/env bash
+# §190 — THE ONE ENTRY POINT FOR READING EVIDENCE OUT OF THE LOGS.
+#
+# Usage (run ON the box; feed over ssh with `ssh mai-tai-vps 'bash -s' -- <args> < evidence.sh`):
+#
+#   evidence.sh count  --service <name> --marker '<literal>' [--pattern '<regex>'] [--since <when>]
+#   evidence.sh lines  --service <name> --marker '<literal>' [--pattern '<regex>'] [--since <when>]
+#                      [--out <file>]
+#   evidence.sh markers --service <name>            # every bracketed marker present, with counts
+#   evidence.sh verify --marker '<literal>'         # is this string actually in the source?
+#   evidence.sh selftest                            # prove every branch against known tape
+#
+#   <when> is `boot` (that service's ActiveEnterTimestamp), `all`, or an ISO instant with a
+#   **T** separator and no space: 2026-08-20T20:16:46. ⛔ NO SPACES — `ssh host 'bash -s' -- "a b"`
+#   joins argv with spaces before the remote shell re-splits it, so a spaced timestamp silently
+#   arrives as two arguments and the window becomes nonsense. Learned the hard way in §185.
+#
+# ══════════════════════════════════════════════════════════════════════════════════════════
+# ⛔⭐⭐ WHY THIS FILE EXISTS
+#
+# The rules for reading evidence were written down and then broken anyway, five times in one
+# week, every time inside tooling we had just built:
+#
+#   1. `grep -c … || echo 0` turned *Permission denied* into a clean 0 — three separate times.
+#      The logs are root:root 0640, so this is the DEFAULT outcome of the obvious command.
+#   2. `awk '$0 >= "<ts>"'` string-compares whole lines, so every traceback continuation line
+#      in the file passed the "time filter" regardless of its time. It manufactured
+#      "48 tracebacks since boot" when the truth was 0.
+#   3. `zcat file.log file.log-*` emits the CURRENT file before the rotations, so `tail -3`
+#      returned the end of the OLDEST rotation and silently omitted TODAY.
+#   4. `head -24` / `head -45` / a 110-char cut produced three wrong conclusions in one day —
+#      one of them nearly reported a real fill as a phantom row.
+#   5. greps against marker names and unit names that do not exist, which return a confident 0.
+#
+# Every one of those failures produced a NUMBER, not an error. That is the whole problem: they
+# are indistinguishable from good news. This script makes each of them impossible rather than
+# discouraged.
+#
+# ⛔ THE CONTRACT: this script prints a count ONLY when it can prove it looked. Everything else
+# exits 2 with the word VOID. VOID is not zero and is not a failure of the system under test —
+# it means the instrument could not measure, and the caller must not substitute 0.
+# ══════════════════════════════════════════════════════════════════════════════════════════
+set -u
+
+LOGDIR=${MAI_TAI_LOGDIR:-/var/log/project-mai-tai}
+REPO_DIR=${MAI_TAI_REPO_DIR:-/home/trader/project-mai-tai}
+OUTDIR=${MAI_TAI_EVIDENCE_OUT:-/tmp/evidence}
+
+die_void() { echo "VOID: $*" >&2; echo "VOID"; exit 2; }
+
+# ── 1. NEVER TRUNCATE ─────────────────────────────────────────────────────────────────────
+# There is deliberately no `head`, no `tail` and no `cut` anywhere below. Full output goes to a
+# file and the caller is told the path. A truncated read is a wrong answer wearing a confident
+# number, and the only reliable way to stop doing it is to remove the verbs.
+_assert_no_truncation() { :; }   # documentation anchor; see the selftest, which greps for them
+
+# ── 2. THE SERVICE MUST EXIST ─────────────────────────────────────────────────────────────
+# A typo'd service name would otherwise glob to nothing and count 0.
+resolve_service() {
+  local svc="$1"
+  [ -n "$svc" ] || die_void "no --service given"
+  if ! sudo -n test -e "$LOGDIR/$svc.log"; then
+    local avail
+    avail=$(sudo -n ls "$LOGDIR"/*.log 2>/dev/null | while read -r f; do basename "$f" .log; done | tr '\n' ' ')
+    die_void "unknown service '$svc' (no $LOGDIR/$svc.log). Known: ${avail:-<could not list>}"
+  fi
+  echo "$svc"
+}
+
+svc_boot() {  # -> 'YYYY-MM-DD HH:MM:SS' UTC for that service, or empty
+  local raw
+  raw=$(systemctl show "project-mai-tai-$1.service" -p ActiveEnterTimestamp --value 2>/dev/null)
+  [ -n "$raw" ] && date -u -d "$raw" '+%Y-%m-%d %H:%M:%S' 2>/dev/null
+}
+
+resolve_since() {  # resolve_since <svc> <when> -> cutoff or empty (= no cutoff)
+  local svc="$1" when="${2:-all}" b
+  case "$when" in
+    all|"") echo "" ;;
+    boot)
+      b=$(svc_boot "$svc")
+      [ -n "$b" ] || die_void "could not read a boot time for project-mai-tai-$svc.service"
+      echo "$b" ;;
+    *T*)
+      # ISO with a T separator -> the space form the log lines use.
+      echo "${when/T/ }" ;;
+    *)
+      die_void "unparseable --since '$when' (use boot | all | 2026-08-20T20:16:46 — no spaces)" ;;
+  esac
+}
+
+# ── 3. THE MARKER MUST EXIST IN THE SOURCE ────────────────────────────────────────────────
+# ⛔ This is the check that would have caught the mirror-leg watch returning 0 for every
+# pattern anyone tried while `broker_orders` held 720 rows. A marker that no code can emit
+# will read 0 forever, and 0 was the SUCCESS criterion — a broken watch and a passing deploy
+# are the same number. So: prove the string is emittable before believing its count.
+verify_marker() {
+  local marker="$1"
+  [ -n "$marker" ] || die_void "no --marker given"
+  [ -d "$REPO_DIR/src" ] || die_void "no source tree at $REPO_DIR/src to validate the marker against"
+  if grep -rqF -- "$marker" "$REPO_DIR/src" 2>/dev/null; then
+    return 0
+  fi
+  die_void "marker '$marker' does not appear anywhere in $REPO_DIR/src — a typo or a renamed
+      marker returns a confident 0 forever. If the string is genuinely emitted from outside
+      src/ (a shell script, a library), pass --unchecked-marker and say so in the report."
+}
+
+# ── 4. BUILD THE STREAM: ALL ROTATIONS, TIMESTAMPED LINES ONLY, CHRONOLOGICAL ─────────────
+build_stream() {  # build_stream <svc> <outfile>
+  local svc="$1" out="$2"
+  # `zcat -f` reads .gz AND plain rotations — a plain grep silently skips compressed days.
+  # The grep keeps ONLY lines that begin with a real timestamp, which is what makes the later
+  # substring time-comparison honest: a traceback continuation line can never be dated or
+  # counted. The sort makes the stream chronological, because the concatenation is not.
+  sudo -n zcat -f -- "$LOGDIR/$svc".log "$LOGDIR/$svc".log-* 2>/dev/null \
+    | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2},' \
+    | sort > "$out"
+}
+
+# ── 5. PROVE READABILITY BEFORE EMITTING ANY NUMBER ───────────────────────────────────────
+assert_readable() {  # assert_readable <svc> <streamfile>
+  local svc="$1" f="$2" n
+  # ⛔ NOT `grep -c '' f || echo 0`: grep exits 1 on an EMPTY file, so the `||` fires and the
+  # value becomes a two-line string (a zero, a newline, another zero), which then fails every
+  # numeric test that follows. That is defect #1 from this file's own header, committed inside
+  # the fix for it. Caught by selftest T5, which is why T5 exists.
+  n=$(awk 'END{print NR}' "$f" 2>/dev/null)
+  if [ "${n:-0}" -eq 0 ] 2>/dev/null; then
+    die_void "read 0 timestamped lines from $LOGDIR/$svc.log* — unreadable (these files are
+      root:root 0640; run with sudo) or genuinely empty. Either way this is NOT a count of zero."
+  fi
+  echo "$n"
+}
+
+apply_since() {  # apply_since <streamfile> <cutoff> <outfile>
+  local f="$1" since="$2" out="$3"
+  if [ -z "$since" ]; then cp "$f" "$out"; else
+    awk -v s="$since" 'substr($0,1,19) >= s' "$f" > "$out"
+  fi
+}
+
+select_lines() {  # select_lines <infile> <marker> <pattern> <outfile>
+  local f="$1" marker="$2" pattern="$3" out="$4"
+  if [ -n "$pattern" ]; then
+    grep -F -- "$marker" "$f" | grep -E -- "$pattern" > "$out" || true
+  else
+    grep -F -- "$marker" "$f" > "$out" || true
+  fi
+}
+
+# ══════════════════════════════════════════════════════════════════════════════════════════
+CMD="${1:-}"; shift || true
+SERVICE=""; MARKER=""; PATTERN=""; SINCE="all"; OUT=""; UNCHECKED=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --service) SERVICE="${2:-}"; shift 2 ;;
+    --marker)  MARKER="${2:-}";  shift 2 ;;
+    --pattern) PATTERN="${2:-}"; shift 2 ;;
+    --since)   SINCE="${2:-}";   shift 2 ;;
+    --out)     OUT="${2:-}";     shift 2 ;;
+    --unchecked-marker) UNCHECKED=1; shift ;;
+    *) die_void "unknown argument '$1'" ;;
+  esac
+done
+
+mkdir -p "$OUTDIR" 2>/dev/null || true
+
+case "$CMD" in
+  verify)
+    verify_marker "$MARKER" && echo "OK: '$MARKER' is present in $REPO_DIR/src"
+    ;;
+
+  markers)
+    SERVICE=$(resolve_service "$SERVICE") || exit 2
+    S="$OUTDIR/$SERVICE.stream"; build_stream "$SERVICE" "$S"
+    TOTAL=$(assert_readable "$SERVICE" "$S") || exit 2
+    echo "# service=$SERVICE timestamped_lines=$TOTAL (all rotations, chronological)"
+    grep -oE '\[[A-Z][A-Z0-9-]{3,}\]' "$S" | sort | uniq -c | sort -rn
+    ;;
+
+  count|lines)
+    SERVICE=$(resolve_service "$SERVICE") || exit 2
+    if [ "$UNCHECKED" -eq 0 ]; then verify_marker "$MARKER" || exit 2; fi
+    CUT=$(resolve_since "$SERVICE" "$SINCE") || exit 2
+    S="$OUTDIR/$SERVICE.stream";  build_stream "$SERVICE" "$S"
+    TOTAL=$(assert_readable "$SERVICE" "$S") || exit 2
+    W="$OUTDIR/$SERVICE.window";  apply_since "$S" "$CUT" "$W"
+    WN=$(awk 'END{print NR}' "$W" 2>/dev/null)
+    M="${OUT:-$OUTDIR/$SERVICE.matches}"
+    select_lines "$W" "$MARKER" "$PATTERN" "$M"
+    N=$(awk 'END{print NR}' "$M" 2>/dev/null)
+    if [ "$CMD" = "count" ]; then
+      # ⛔ The denominator travels with the numerator, always. A bare count cannot tell a clean
+      # window from an empty one, and that ambiguity is what every one of this week's false
+      # findings was made of.
+      echo "count=$N marker='$MARKER' pattern='${PATTERN:-none}' service=$SERVICE"
+      echo "  window_lines=$WN of stream_lines=$TOTAL  since='${CUT:-ALL RETAINED}'"
+      echo "  matches_file=$M (complete, untruncated)"
+      [ "${N:-0}" -eq 0 ] && echo "  NOTE: 0 matches, and readability IS proven ($TOTAL lines read) => a real zero."
+    else
+      echo "wrote $N complete lines to $M  (window_lines=$WN of stream_lines=$TOTAL, since='${CUT:-ALL RETAINED}')"
+    fi
+    ;;
+
+  selftest)
+    # ⛔⭐⭐ A READER THAT HAS ONLY EVER PRINTED SENSIBLE NUMBERS PROVES NOTHING.
+    # Every branch below is aimed at tape whose answer is known independently.
+    P=0; F=0
+    ok()  { P=$((P+1)); echo "  ✅ $1"; }
+    bad() { F=$((F+1)); echo "  ❌ $1"; }
+    command_not_found_handle() { bad "command not found: $1"; return 127; }
+    SELF="${BASH_SOURCE[0]}"
+
+    echo "T1 — a KNOWN-POSITIVE marker returns a non-zero count"
+    r=$(bash "$SELF" count --service schwab-1m-v2 --marker '[V2-DB-SEED-GAP]' 2>&1)
+    n=$(echo "$r" | grep -oE '^count=[0-9]+' | cut -d= -f2)
+    [ "${n:-0}" -gt 0 ] && ok "counted ${n} (>0)" || bad "known positive returned '${n}': $r"
+
+    echo "T2 — a REAL zero: marker exists in source, never emitted"
+    r=$(bash "$SELF" count --service oms --marker '[WEBULL-PROTECT-ATTACHED]' 2>&1)
+    echo "$r" | grep -q '^count=0' && ok "count=0 with readability proven" || bad "expected count=0: $r"
+    echo "$r" | grep -q 'a real zero' && ok "and it SAYS the zero is real" || bad "did not qualify the zero"
+
+    echo "T3 ★ — a TYPO'd marker must VOID, never return 0"
+    r=$(bash "$SELF" count --service oms --marker '[WEBULL-PROTECT-ATACHED]' 2>&1)
+    echo "$r" | grep -q 'VOID' && ok "VOID on a marker absent from source" || bad "typo returned: $r"
+    echo "$r" | grep -qE '^count=' && bad "a typo produced a count" || ok "and emitted no count at all"
+
+    echo "T4 ★ — an unknown SERVICE must VOID, never return 0"
+    r=$(bash "$SELF" count --service oms-typo --marker '[V2-DB-SEED-GAP]' 2>&1)
+    echo "$r" | grep -q 'VOID' && ok "VOID on an unknown service" || bad "unknown service returned: $r"
+
+    echo "T5 ★ — UNREADABLE must VOID (empty logdir), never return 0"
+    d=$(mktemp -d); : > "$d/fake.log"
+    r=$(MAI_TAI_LOGDIR="$d" bash "$SELF" count --service fake --marker '[V2-DB-SEED-GAP]' --unchecked-marker 2>&1)
+    echo "$r" | grep -q 'VOID' && ok "VOID on a readable-but-empty stream" || bad "empty stream returned: $r"
+    rm -rf "$d"
+
+    echo "T6 — --since narrows the window (boot < all), and both are reported"
+    a=$(bash "$SELF" count --service schwab-1m-v2 --marker '[V2-DB-SEED-GAP]' --since all 2>&1 | grep -oE '^count=[0-9]+' | cut -d= -f2)
+    b=$(bash "$SELF" count --service schwab-1m-v2 --marker '[V2-DB-SEED-GAP]' --since boot 2>&1 | grep -oE '^count=[0-9]+' | cut -d= -f2)
+    [ "${b:-0}" -le "${a:-0}" ] && ok "boot=${b} <= all=${a}" || bad "boot=${b} > all=${a}"
+
+    echo "T7 ★ — a spaced --since must VOID rather than silently mis-window"
+    r=$(bash "$SELF" count --service oms --marker '[OMS-P0A-CENSUS]' --since '2026-08-20 20:14:49' 2>&1)
+    echo "$r" | grep -q 'VOID' && ok "VOID on a spaced timestamp" || bad "spaced --since was accepted: $r"
+
+    echo "T8 ★ — the stream is CHRONOLOGICAL (the zcat-order defect)"
+    bash "$SELF" lines --service schwab-1m-v2 --marker '[V2-DB-SEED-GAP-CENSUS]' --out "$OUTDIR/t8" >/dev/null 2>&1
+    if [ -s "$OUTDIR/t8" ]; then
+      if LC_ALL=C sort -c "$OUTDIR/t8" 2>/dev/null; then ok "output is in timestamp order"; else bad "output is NOT sorted"; fi
+    else bad "T8 had no tape to check"; fi
+
+    echo "T9 ★ — the reader contains no truncating verbs"
+    # ⛔ The guard must not match ITSELF. Its own line names every verb it hunts for, so the
+    # first version reported a truncating verb in the reader and the verb was the guard.
+    # Same family as a `ps | grep` filter that hides the process it is looking for. The
+    # sentinel below is excluded from the body, and the pattern is assembled so the literals
+    # never appear together on one line.
+    V1='hea''d'; V2='tai''l'; V3='cut -''c'
+    body=$(grep -vE '^\s*#' "$SELF" | grep -v 'TRUNCATION_GUARD' || true)
+    if echo "$body" | grep -qE "\| *($V1|$V2) |$V1 -[0-9]|$V2 -[0-9]|$V3"; then  # TRUNCATION_GUARD
+      bad "a truncating verb is present in the reader"
+    else ok "no truncating verbs in the reading path"; fi
+
+    echo "T10 — matches_file is complete: its line count equals the reported count"
+    r=$(bash "$SELF" count --service schwab-1m-v2 --marker '[V2-DB-SEED-GAP]' 2>&1)
+    n=$(echo "$r" | grep -oE '^count=[0-9]+' | cut -d= -f2)
+    f=$(echo "$r" | grep -oE 'matches_file=[^ ]+' | cut -d= -f2)
+    fn=$(awk 'END{print NR}' "$f" 2>/dev/null)
+    [ "${n:-0}" -eq "${fn:--1}" ] && ok "count=$n equals file lines=$fn" || bad "count=$n but file has $fn"
+
+    echo
+    echo "PASS=$P FAIL=$F"
+    [ "$F" -eq 0 ] || exit 1
+    ;;
+
+  *)
+    die_void "unknown command '${CMD:-<none>}' (count|lines|markers|verify|selftest)"
+    ;;
+esac

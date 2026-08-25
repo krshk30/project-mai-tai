@@ -1922,19 +1922,76 @@ class SchwabV2Strategy:
         #
         # Claiming here also stamps `fanout_claim_ms`, so this leg is subject to the SAME expiry as
         # the resting ones rather than being invisible to it.
-        if self._dual_broker_fanout_enabled and not state.fanout_webull_claimed:
-            state.fanout_webull_claimed = True
-            state.fanout_claim_ms = self._now_ms()
-            self._pending_webull_fanout_intents.append(
-                self._build_webull_fanout_draft(
-                    state,
-                    entry_px=px,
-                    session_is_eh=self._cw_is_extended_hours(now_ms),
-                    source="reactive",
-                    # ALREADY incremented just above -- the counter reflects THIS entry.
-                    entry_n=state.cw_entries_this_flip,
+        # ⛔⭐⭐ §266 — #739 SHIPPED WITH NO `else`, SO A PREVENTED DUPLICATE WAS SILENT.
+        # The latch check above is the whole of #739, and it produced NO evidence of working: a
+        # suppression logged nothing, so "the fix is preventing duplicates" and "the reactive path
+        # never runs" read identically from outside. That is B28's own thesis — a feature that
+        # never produced its success marker did not ship — violated two days after we built the
+        # tool for it. ⭐ A RULE THAT LIVES IN ONE PLACE IS NOT A RULE.
+        #
+        # ⛔ THIS WAS NOT A COSMETIC GAP. Without a marker the only instrument for grading #739 is
+        # signal 4, a RATE over segments carrying `cw_arm_bar_ts` — median 4 segments/day against a
+        # 119-segment baseline, i.e. ~30 sessions to a verdict. The suppression is an EVENT, so it
+        # is readable on the first session the path runs.
+        #
+        # ⛔ THE `else` IS NESTED INSIDE THE FLAG CHECK ON PURPOSE. `fanout_enabled == False` is
+        # NOT a suppression — it is the fan-out being off, an entirely different population. A flat
+        # `else` on the combined condition would count every quote of every symbol on a fan-out-off
+        # deployment as a prevented duplicate: a confident wrong number, which is worse than the
+        # missing one it replaces.
+        if self._dual_broker_fanout_enabled:
+            if not state.fanout_webull_claimed:
+                state.fanout_webull_claimed = True
+                state.fanout_claim_ms = self._now_ms()
+                # ⛔⭐ THE DENOMINATOR, and it must be emitted even though nothing is wrong.
+                # SUPPRESSED=0 is ambiguous alone: either no duplicate was attempted (a clean day)
+                # or this site never executed (UNMEASURED). Only LATCHED separates those two, the
+                # same way the seed-gap census rescues 6a's zero. Never read one without the other.
+                # ⛔⭐⭐ DO NOT NAME THE SIBLING MARKER IN THIS STRING. The first draft ended
+                # "DENOMINATOR for [V2-FANOUT-REACTIVE-SUPPRESSED]" and the behavioural test
+                # caught it immediately: `grep -c "[V2-FANOUT-REACTIVE-SUPPRESSED]"` would then
+                # match EVERY LATCHED line too, and the suppression count would come back inflated
+                # by exactly its own denominator — two metrics that must differ, reading the same
+                # number, for a reason invisible in either line. Same family as the greedy-regex
+                # sibling collision of 2026-08-21. Refer to the sibling in PROSE, never by token.
+                logger.info(
+                    "[V2-FANOUT-REACTIVE-LATCHED] %s reactive claimed the fan-out latch "
+                    "n=%d px=%.4f — this line is the DENOMINATOR for the reactive suppression "
+                    "count (its own marker is deliberately not repeated here)",
+                    state.symbol, state.cw_entries_this_flip, px,
                 )
-            )
+                self._pending_webull_fanout_intents.append(
+                    self._build_webull_fanout_draft(
+                        state,
+                        entry_px=px,
+                        session_is_eh=self._cw_is_extended_hours(now_ms),
+                        source="reactive",
+                        # ALREADY incremented just above -- the counter reflects THIS entry.
+                        entry_n=state.cw_entries_this_flip,
+                    )
+                )
+            else:
+                # ⛔⭐⭐ EVERY LINE HERE IS ONE §82 DUPLICATE THAT DID NOT HAPPEN.
+                # NON-ZERO IS GOOD NEWS — the same polarity as the seed-gap REFUSAL count, and the
+                # opposite of almost every other counter on this tape. Read it that way or the fix
+                # working will be filed as the fix failing.
+                #
+                # `claim_age_ms` is the §82 signature: the measured shape was `reactive` following
+                # `rth_resting` in the SAME segment, 14 of the 19 duplicates, seconds-to-minutes
+                # apart. The age separates that from a same-instant double-evaluation.
+                # ⛔ It is an AGE, not a source. `fanout_webull_claimed` is a bool and no claim site
+                # records WHO set it, so this line cannot say whether the resting or the reactive
+                # path got there first. Naming the claimant needs a `fanout_claim_source` field at
+                # all three claim sites — a separate change, and NOT quietly assumed here.
+                claim_ms = int(getattr(state, "fanout_claim_ms", 0) or 0)
+                age_ms = (self._now_ms() - claim_ms) if claim_ms > 0 else -1
+                logger.info(
+                    "[V2-FANOUT-REACTIVE-SUPPRESSED] %s reactive fan-out leg SUPPRESSED — the "
+                    "latch was already claimed claim_age_ms=%d n=%d px=%.4f "
+                    "(⭐ NON-ZERO IS GOOD NEWS: this is one §82 duplicate prevented, not a fault; "
+                    "age=-1 means the claim carried no timestamp)",
+                    state.symbol, age_ms, state.cw_entries_this_flip, px,
+                )
         return TradeIntentDraft(
             symbol=state.symbol,
             side="buy",
@@ -2328,9 +2385,39 @@ class SchwabV2Strategy:
             if state.resting_active and state.resting_slot == "reclaim":
                 self._queue_resting_cancel(state, reason="session_eh")
             return
-        if state.position_qty != 0 or state.cw_reclaim_taken:
-            # In a position, or this cross has already used its reclaim. ⛔ Cancel through the one
-            # path rather than clearing state, or the order becomes unmanaged.
+        # ⛔⭐⭐ HELD, NOT THE UNION — AND THE UNION MADE THIS GATE CANCEL ITS OWN ORDER.
+        # `position_qty` is the UNION: it counts in-flight open intents, and a resting buy-stop's
+        # intent stays `submitted` for its ENTIRE life because it only resolves when price
+        # triggers it. So placing the reclaim leg set the gate true, the gate cancelled the leg,
+        # the intent went away, the gate went false, and the next bar placed it again.
+        # A self-sustaining oscillation ON THE BAR CADENCE, AT A CONSTANT PRICE.
+        #
+        # Measured across the retained window (08-14..08-21): `slot_consumed` is **253 of 773**
+        # mirror cancels, second only to `reprice`. The worst segments re-send an UNCHANGED level
+        # for the better part of an hour --
+        #     IPST 2026-08-17: 31 legs over 3648s, level range 0.6%
+        #     TNON / SLE / IPST x2:  8-17 legs each, level range **0.0%**
+        # and the tape shows the cycle outright:
+        #     16:31:02 PLACE  slot=reclaim stop=8.4400
+        #     16:32:02 CANCEL slot=reclaim reason=slot_consumed level=8.4400
+        #     16:33:00 PLACE  slot=reclaim stop=8.4400      <- identical level, 58s later
+        #
+        # `position_qty_held` is FILLS-ONLY, so it cannot be raised by our own resting intent.
+        # This is the SAME correction `_cw_v2_resting_track` received on 2026-07-28 for the EGG /
+        # POLA orphan; the reclaim path never got it.
+        #
+        # ⛔⭐⭐ AND IT STRENGTHENS THE DOUBLE-POSITION GUARD RATHER THAN WEAKENING IT.
+        # The guard against a market buy landing on top of a resting order is `resting_active` in
+        # `_cw_v2_quote` ("Reactive entry off, OR a resting buy-stop-limit is already live"), NOT
+        # this gate. Every spurious `slot_consumed` cancel set `resting_active = False`, which
+        # RE-OPENED the reactive MARKET path while the segment was still armed. The union was not
+        # the conservative choice here — it was punching a hole in the real guard 253 times.
+        # ⛔ The general warning on `_cw_v2_resting_track` ("re-entry / reactive / fan-out gates
+        # keep the union on purpose") is about gates that admit a NEW order type. This gate admits
+        # nothing: it only decides whether the reclaim slot's OWN order stays alive.
+        if state.position_qty_held != 0 or state.cw_reclaim_taken:
+            # Genuinely holding, or this cross has already used its reclaim. ⛔ Cancel through the
+            # one path rather than clearing state, or the order becomes unmanaged.
             if state.resting_active and state.resting_slot == "reclaim":
                 self._queue_resting_cancel(state, reason="slot_consumed")
             return
@@ -2347,6 +2434,31 @@ class SchwabV2Strategy:
         if not state.resting_active:
             if not self._liquidity_floor_ok(state):
                 return      # arm-time floor only, exactly as the first-entry path
+            # ⛔⭐⭐ LIVE-BAR GUARD (#528 mirror) — THE ONE RESTING PATH THAT DID NOT HAVE IT.
+            # The other three all gate on bar freshness (`_cw_v2_resting_track` at arm,
+            # `_eh_resting_cross_check` at the cross, `_fanout_rth_resting_cross` at the cross).
+            # This one did not, so a WARMUP / SEED BAR REPLAY drove it: each replayed bar armed a
+            # fresh segment, placed a resting order, and cancelled it on the next replayed bar.
+            #
+            # Measured live 2026-08-21, USDE — ELEVEN place/cancel pairs inside NINETEEN
+            # MILLISECONDS (13:44:54.636 -> .655), off bars stamped 37 and 32 minutes apart:
+            #     [V2-CW-ARM] bar_ts=1787260560000  -> PLACE 4.4600 -> CANCEL new_segment
+            #     [V2-CW-ARM] bar_ts=1787262780000  -> PLACE 4.4400 -> CANCEL reprice
+            #     [V2-CW-ARM] bar_ts=1787264700000  -> PLACE 4.9600 -> CANCEL reprice ...
+            # No tape moves 4.46 -> 5.51 in 19ms. That was history being replayed, and every
+            # cycle sent a REAL order to Schwab and a REAL mirrored leg to Webull.
+            #
+            # Cost measured the same morning: of 43 Webull mirror legs, 34 were cancelled before
+            # the broker ever created an order. The mirror fills fine when a leg survives long
+            # enough to be placed -- 79% of them did not.
+            #
+            # ⛔ ARM-TIME ONLY, exactly like the first-entry path. The reprice branch below can
+            # only run once `resting_active` is True, and a replay can no longer set it, so the
+            # whole chain is cut at its source. Widening this to the reprice would also gate an
+            # order that armed legitimately and must keep being managed -- the #580 orphan.
+            bar_ms = int(state.bars[-1].timestamp_ms) if state.bars else 0
+            if not bar_ms or (self._now_ms() - bar_ms) > self._resting_max_bar_age_ms:
+                return
             # STOP<=ASK guard (#527), reused verbatim, fail-open unchanged. ⛔ The residual risk is
             # HIGHER here than where it was measured: `cw_segment_high` sits AT the recent high by
             # definition, while the first-entry trail sits below the market by construction.
