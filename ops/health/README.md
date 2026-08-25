@@ -49,6 +49,17 @@ never hand-edit the deployed copy.
    ⇒ correctly silent. **The count is noisy; only `dangerous`, the boot-hold, and staleness are
    faults.**
 
+6. **Schwab refresh-count watch** (`schwab_refresh_count_check.py` plus the scheduled
+   `schwab-refresh-count-watch.yml` workflow) — daily at 06:15 UTC, grades the previous complete
+   Eastern calendar day across `control.log` and all rotations. The seven-day baseline is 48-50
+   `[SCHWAB-TOKEN-REFRESHED]` lines/day; `HEALTHY` is 46-52 (the measured range extended by its
+   complete two-count spread in each direction), outside that range is `NOT_HEALTHY`, and
+   missing/unreadable/unbracketed evidence—or any hour with no timestamped control-log coverage—is
+   `COULD_NOT_TELL`. Both non-healthy outcomes fail the workflow and page the existing ntfy topic.
+   The workflow copies the read-only checker to a remote temp directory; it does not pull the app
+   checkout, install anything, or restart a service. This is a lagging complete-day outage watch,
+   not the separate +35-minute post-control-restart proof.
+
 ## fleet_health_check.py — the F3 framework
 A check registry: each check verdicts GREEN/AMBER/RED against ground truth; `main()` prints one
 `VERDICT:` line per check + an aggregate and exits worst (0/1/2) → the cron routes to ntfy.
