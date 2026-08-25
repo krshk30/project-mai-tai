@@ -14,10 +14,30 @@
 # pinned here the same day.
 #
 # ── THE DEFINITION (states what it EXCLUDES as well as what it counts) ───────────────
-# COUNTS  : orders on `live:orb` that are FILLED, carry `fanout_source`, and carry a
+# COUNTS  : orders on `live:orb` that are FILLED **BUYS**, carry `fanout_source`, and carry a
 #           NON-ZERO `cw_arm_bar_ts`. Segment = (symbol, cw_arm_bar_ts).
 #           A segment is a DUPLICATE when any one `cw_entry_n` inside it holds >1 leg.
 #           extra legs = (legs in a duplicate segment) - 1.
+# EXCLUDES: ⛔⭐⭐ SELLS — added §262, 2026-08-24, BEFORE #766 could reach this population.
+#           §186 already settled that an entry is a filled BUY, so this filter was always the
+#           definition; it was merely unstated, and unstated held only because the exit-pair
+#           success path was DEAD. #766 revives it: that path builds its report from
+#           `{**request.metadata, webull_exit_only_pair}`, so a recorded exit leg can inherit
+#           `fanout_source` and a non-zero `cw_arm_bar_ts` and walk straight into this
+#           population as a SELL — inflating the denominator and, where an exit pairs with its
+#           own entry under one `cw_entry_n`, the numerator too.
+#           ⭐ Pinned the day before it could happen, not after: measured 08-01..08-24 the
+#           population is 150 rows, 100% side='buy', and ZERO `live:orb` rows have ever carried
+#           `webull_exit_only_pair` — so this filter is a NO-OP TODAY and the control below
+#           still reproduces 119|19|22 unchanged. That is the point: a filter added while it
+#           changes nothing is provable; the same filter added after the fact is a number that
+#           moved for two reasons at once.
+#           ⭐ AND IT IS NOT A NO-OP FOREVER — proven, not asserted. Injecting ONE synthetic
+#           exit leg into a read-only CTE (same symbol/segment/`cw_entry_n` as a real buy,
+#           `side='sell'`, `webull_exit_only_pair` stamped — exactly the row #766 starts
+#           recording) scores the control window at **119|20|23 WITHOUT this filter** and
+#           **119|19|22 WITH it**. One exit row manufactures one duplicate segment and one
+#           extra leg. The mutant is killed by the filter and by nothing else.
 # EXCLUDES: `rth_resting_mirror` legs — the born-broken mirror (720 orders / 0 fills in
 #           the baseline window). They are not a second execution and counting them as
 #           duplicates would inflate the numerator ~3x (measured: 64 dup groups, not 19).
@@ -57,6 +77,7 @@ measure() {  # measure <from> <to> -> "segments|dup_segments|extra_legs"
          FROM broker_orders bo JOIN broker_accounts ba ON ba.id = bo.broker_account_id
         WHERE ba.name = 'live:orb'
           AND bo.status = 'filled'
+          AND bo.side = 'buy'
           AND bo.payload::jsonb ? 'fanout_source'
           AND bo.payload::jsonb->>'fanout_source' <> 'rth_resting_mirror'
           AND coalesce(bo.payload::jsonb->>'cw_arm_bar_ts','0') <> '0'
@@ -122,7 +143,8 @@ fi
 echo
 echo "### ⛔ BLIND SPOT, restated with today's numbers"
 Z=$(Q "SELECT count(*) FROM broker_orders bo JOIN broker_accounts ba ON ba.id=bo.broker_account_id
-        WHERE ba.name='live:orb' AND bo.status='filled' AND bo.payload::jsonb ? 'fanout_source'
+        WHERE ba.name='live:orb' AND bo.status='filled' AND bo.side='buy'
+          AND bo.payload::jsonb ? 'fanout_source'
           AND coalesce(bo.payload::jsonb->>'cw_arm_bar_ts','0') = '0'
           AND bo.submitted_at >= timestamptz '$FROM' AND bo.submitted_at < timestamptz '$TO';")
 echo "    filled fan-out legs with NO segment id in this window: ${Z:-?}"

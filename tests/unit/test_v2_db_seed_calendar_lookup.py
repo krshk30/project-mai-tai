@@ -372,3 +372,123 @@ def test_the_CENSUS_LINE_prints_the_monotonic_counter_not_the_pruned_set(caplog)
     assert census, "the census must be emitted on the boundary crossing"
     assert "truncations=7 of 12" in census[0]
     assert "7 of 0" not in census[0], "the census read the watchlist-pruned dedup set again"
+
+
+# ---------------------------------------------------- 4. §256: the decision is ONE BIT (08-23)
+#
+# ⛔⭐⭐ THE GUARD TIMED OUT PRECISELY IN THE CASE IT EXISTS TO CATCH. `lo` is the day AFTER the
+# newest stored bar, so the window width IS the staleness being measured. #743 made the predicate
+# sargable and that held — the Index Cond is still there — but a sargable scan over an 83-day
+# window is still 214,470 rows plus an external merge sort. Measured on the box 2026-08-23 on the
+# exact window of both 08-21 failures (LSTA, 2026-05-30..2026-08-21):
+#
+#     count(DISTINCT ((bar_time AT TIME ZONE ...)::date))  →  3580 ms   (72% of the 5 s timeout,
+#                                                                        on an IDLE Sunday box)
+#     EXISTS (SELECT 1 ...)                                →  0.182 ms  (same Index Cond, 1 row)
+#     SELECT DISTINCT ... LIMIT 1                          →   523 ms   (NOT a fix: HashAggregate
+#                                                                        consumed all 214,470 rows)
+#
+# Same answer on that window: counted=56, exists=true. The 3.6 s bought one bit.
+
+def test_the_boundary_lookup_asks_for_ONE_BIT_not_a_cardinality() -> None:
+    """⛔⭐⭐ THE §256 FIX, PINNED AT ITS SHAPE — this is the test the mutant must turn red.
+
+    The performance property IS the query shape, so the shape is what a test can hold. Restoring
+    `count(DISTINCT ...)` here re-creates a 3580 ms statement that fail-opens under a 5 s timeout,
+    and no fixture-sized dataset would ever reveal that. Assert the shape, name the cost.
+    """
+    bot = _bot()
+    sess = _CapturingSession(result=True)
+    bot._missed_sessions_before_today(sess, datetime(2026, 5, 29, 21, 1, tzinfo=UTC))
+
+    sql = sess.calls[-1][0]
+    assert "EXISTS (SELECT 1" in sql, (
+        "the caller compares against DB_SEED_MAX_MISSED_SESSIONS == 0, so the question is "
+        "existence; counting 214,470 rows to answer it is what timed out live on 08-21"
+    )
+    assert "count(DISTINCT" not in sql, (
+        "a cardinality this caller never reads costs an external merge sort — 3580 ms measured, "
+        "against a 5 s statement_timeout"
+    )
+
+
+def test_the_EXISTS_equivalence_is_CONDITIONAL_and_the_CODE_KNOWS_IT() -> None:
+    """⛔⭐⭐ PIN THE ASSUMPTION, NOT A COMMENT ABOUT IT.
+
+    `count(DISTINCT date) > 0` is `EXISTS` **only while the threshold is 0**. Raise the constant
+    and "at least one" stops answering the question the caller asks. That is a live trap for a
+    future edit, so it is a branch in the code and an assertion here — not a note someone reads.
+    """
+    import project_mai_tai.services.schwab_1m_v2_bot as mod
+
+    assert mod.DB_SEED_MAX_MISSED_SESSIONS == 0, (
+        "the EXISTS rewrite in _missed_sessions_before_today is EXACT only at 0 — if this "
+        "constant moved, that branch must fall back to the counting form (it does; see below)"
+    )
+
+
+def test_raising_the_threshold_FALLS_BACK_to_the_exact_count(monkeypatch) -> None:
+    """The fallback is what makes the fast path safe to have written at all."""
+    import project_mai_tai.services.schwab_1m_v2_bot as mod
+
+    monkeypatch.setattr(mod, "DB_SEED_MAX_MISSED_SESSIONS", 2)
+    bot = _bot()
+    sess = _CapturingSession(result=7)
+    got = bot._missed_sessions_before_today(sess, datetime(2026, 5, 29, tzinfo=UTC))
+
+    sql = sess.calls[-1][0]
+    assert "count(DISTINCT" in sql, "above 0 the verdict needs the real cardinality"
+    assert "EXISTS (SELECT 1" not in sql
+    assert got == 7, "the counting branch must return the count, unsaturated"
+
+
+def test_the_one_bit_answer_still_TRIPS_the_caller_threshold() -> None:
+    """Saturating at 1 must not soften the verdict — 1 > 0 is still a refusal."""
+    bot = _bot()
+    assert bot._missed_sessions_before_today(
+        _CapturingSession(result=True), datetime(2026, 5, 29, tzinfo=UTC)
+    ) == 1
+    assert bot._missed_sessions_before_today(
+        _CapturingSession(result=False), datetime(2026, 5, 29, tzinfo=UTC)
+    ) == 0
+
+
+def test_the_EXISTS_branch_still_FAILS_OPEN_and_rolls_back() -> None:
+    """⛔ The bias argument is unchanged by the rewrite, so re-pin it ON the new branch.
+
+    A faster query that fails CLOSED would be a worse defect than the slow one it replaced.
+    """
+    bot = _bot()
+    sess = _CapturingSession(result=True, fail_first=1)
+    assert bot._missed_sessions_before_today(sess, datetime(2026, 5, 29, tzinfo=UTC)) == 0
+    assert sess.rollbacks == 1
+
+
+def test_the_refusal_message_reports_ET_DATES_not_a_session_count(caplog) -> None:
+    """⛔⭐ THE NUMBER IS GONE, SO THE MESSAGE MUST NOT PRETEND TO HAVE IT.
+
+    The old line printed `%d trading session(s)`. Fed a saturating 1 it would have said "1
+    trading session" about a 56-session hole — a WRONG REASON, which is worse than a missing one.
+    Two ET dates cost no extra query and say more than the count ever did.
+    """
+    bot = _bot()
+    bot._missed_sessions_before_today = lambda *_a: 1
+    bot._missed_sessions_between = lambda *_a: 0
+
+    stale = datetime(2026, 5, 29, 21, 1, tzinfo=UTC)
+    rows = [_Row(stale), _Row(stale - timedelta(minutes=1))]
+
+    with caplog.at_level(logging.WARNING):
+        kept = bot._truncate_seed_rows_at_gap(_CapturingSession(), "LSTA", rows)
+
+    assert kept == [], "a wholly stale series has no contiguous tail to keep"
+    msg = "\n".join(r.getMessage() for r in caplog.records)
+    assert "dropped ALL" in msg, (
+        r"ops/health/collect_deploy_evidence.sh greps 'V2-DB-SEED-GAP\].*dropped ALL' — "
+        "changing this substring silently zeroes signal 6a"
+    )
+    assert "2026-05-29" in msg, "the newest stored bar's ET date is the fact that matters"
+    assert "trading session(s) before today" not in msg, (
+        "the saturating return cannot support a session COUNT"
+    )
+    assert bot._db_seed_gap_truncations == 1
