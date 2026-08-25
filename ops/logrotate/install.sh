@@ -17,10 +17,28 @@ if [[ -z "${MAI_TAI_LOGROTATE_TARGET:-}" && "$EUID" -ne 0 ]]; then
   PRIV=(sudo)
 fi
 
-# Validate the candidate before it can replace the working policy.  Exit zero
-# alone is insufficient: logrotate can ignore a non-regular or unsafe config
-# and still exit zero, so require proof that it parsed our exact log pattern.
-if ! debug_output=$("${PRIV[@]}" "$LOGROTATE_BIN" --debug "$SOURCE" 2>&1); then
+target_dir=$(dirname "$TARGET")
+target_parent=$(dirname "$target_dir")
+
+# Normalize ownership and mode before validation.  Root logrotate deliberately
+# ignores configs owned by non-root users or writable by group/others, while
+# still exiting zero.  Validate the exact staged artifact that can be installed,
+# never the scp/repository copy whose metadata depends on transport and umask.
+tmp=$("${PRIV[@]}" mktemp "$target_parent/.project-mai-tai.logrotate.XXXXXX")
+cleanup() { "${PRIV[@]}" rm -f "$tmp"; }
+trap cleanup EXIT
+
+if [[ -n "${MAI_TAI_LOGROTATE_TARGET:-}" ]]; then
+  # Test/non-production seam: never requires root ownership or sudo.
+  install -m 0644 "$SOURCE" "$tmp"
+else
+  "${PRIV[@]}" install -o root -g root -m 0644 "$SOURCE" "$tmp"
+fi
+"${PRIV[@]}" cmp -s "$SOURCE" "$tmp"
+
+# Exit zero alone is insufficient: logrotate can ignore an unsafe config and
+# still exit zero, so require proof that it parsed our exact log pattern.
+if ! debug_output=$("${PRIV[@]}" "$LOGROTATE_BIN" --debug "$tmp" 2>&1); then
   printf '%s\n' "$debug_output" >&2
   exit 1
 fi
@@ -30,25 +48,9 @@ if ! grep -Fq 'rotating pattern: /var/log/project-mai-tai/*.log' <<<"$debug_outp
   exit 1
 fi
 
-target_dir=$(dirname "$TARGET")
-if "${PRIV[@]}" test -f "$TARGET" && "${PRIV[@]}" cmp -s "$SOURCE" "$TARGET"; then
-  echo "Logrotate policy already matches the versioned source; no replacement needed."
+if "${PRIV[@]}" test -f "$TARGET" && "${PRIV[@]}" cmp -s "$tmp" "$TARGET"; then
+  echo "Logrotate policy already matches the normalized source; no replacement needed."
 else
-  # Keep the candidate on the target filesystem for an atomic rename, but outside
-  # logrotate.d itself.  logrotate reads dotfiles in that directory, so staging
-  # there briefly creates two configs for the same log pattern.
-  target_parent=$(dirname "$target_dir")
-  tmp=$("${PRIV[@]}" mktemp "$target_parent/.project-mai-tai.logrotate.XXXXXX")
-  cleanup() { "${PRIV[@]}" rm -f "$tmp"; }
-  trap cleanup EXIT
-
-  if [[ -n "${MAI_TAI_LOGROTATE_TARGET:-}" ]]; then
-    # Test/non-production seam: never requires root ownership or sudo.
-    install -m 0644 "$SOURCE" "$tmp"
-  else
-    "${PRIV[@]}" install -o root -g root -m 0644 "$SOURCE" "$tmp"
-  fi
-  "${PRIV[@]}" cmp -s "$SOURCE" "$tmp"
   "${PRIV[@]}" mv -f "$tmp" "$TARGET"
   trap - EXIT
   echo "Installed updated project-mai-tai logrotate policy."

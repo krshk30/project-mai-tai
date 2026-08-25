@@ -60,7 +60,10 @@ def test_installer_enables_and_verifies_daily_timer() -> None:
     assert "is-enabled --quiet logrotate.timer" in installer
     assert "is-active --quiet logrotate.timer" in installer
     assert 'cmp -s "$SOURCE" "$TARGET"' in installer
-    assert installer.index('--debug "$SOURCE"') < installer.index('mv -f "$tmp" "$TARGET"')
+    normalize = 'install -o root -g root -m 0644 "$SOURCE" "$tmp"'
+    validate = '"$LOGROTATE_BIN" --debug "$tmp"'
+    replace = 'mv -f "$tmp" "$TARGET"'
+    assert installer.index(normalize) < installer.index(validate) < installer.index(replace)
     assert 'target_parent=$(dirname "$target_dir")' in installer
     assert 'mktemp "$target_parent/' in installer
     assert 'mktemp "$target_dir/' not in installer

@@ -10,6 +10,7 @@ cat > "$TMP/logrotate" <<'EOF'
 set -euo pipefail
 printf '%s\n' "$*" >> "$CALLS"
 [[ "$1" == "--debug" ]]
+[[ "$(stat -c '%a' "$2")" == "644" ]]
 grep -q 'rotate 30' "$2"
 grep -q '/var/log/project-mai-tai/\*.log' "$2"
 echo 'rotating pattern: /var/log/project-mai-tai/*.log  after 1 days'
@@ -47,15 +48,31 @@ grep -qx 'enable --now logrotate.timer' "$CALLS"
 grep -qx 'is-enabled --quiet logrotate.timer' "$CALLS"
 grep -qx 'is-active --quiet logrotate.timer' "$CALLS"
 
+# Reproduce the first live reconciliation failure: transport may leave the
+# source group-writable.  The installer must validate the normalized 0644
+# staged artifact, not the unsafe source metadata.
+mkdir -p "$TMP/unsafe-source/ops/logrotate"
+cp "$ROOT/ops/logrotate/project-mai-tai" \
+  "$TMP/unsafe-source/ops/logrotate/project-mai-tai"
+chmod 0664 "$TMP/unsafe-source/ops/logrotate/project-mai-tai"
+MAI_TAI_LOGROTATE_TARGET="$TMP/logrotate.d/from-unsafe-source" \
+MAI_TAI_LOGROTATE_BIN="$TMP/logrotate" \
+MAI_TAI_SYSTEMCTL_BIN="$TMP/systemctl" \
+  bash "$ROOT/ops/logrotate/install.sh" "$TMP/unsafe-source"
+cmp "$ROOT/ops/logrotate/project-mai-tai" "$TMP/logrotate.d/from-unsafe-source"
+[[ "$(stat -c '%a' "$TMP/logrotate.d/from-unsafe-source")" == "644" ]]
+
 # A scheduled reconciliation runs daily. An already-current policy must still
-# validate and verify the timer, but it must not replace the target again.
+# stage and validate normalized bytes and verify the timer, but it must not
+# replace the target again.
 installed_inode=$(stat -c '%i' "$TMP/logrotate.d/installed")
 : > "$MKTEMP_CALLS"
 MAI_TAI_LOGROTATE_TARGET="$TMP/logrotate.d/installed" \
 MAI_TAI_LOGROTATE_BIN="$TMP/logrotate" \
 MAI_TAI_SYSTEMCTL_BIN="$TMP/systemctl" \
   bash "$ROOT/ops/logrotate/install.sh" "$ROOT"
-[[ ! -s "$MKTEMP_CALLS" ]]
+grep -Fqx "$TMP/.project-mai-tai.logrotate.XXXXXX" "$MKTEMP_CALLS"
+[[ "$(wc -l < "$MKTEMP_CALLS")" -eq 1 ]]
 [[ "$(stat -c '%i' "$TMP/logrotate.d/installed")" == "$installed_inode" ]]
 cmp "$ROOT/ops/logrotate/project-mai-tai" "$TMP/logrotate.d/installed"
 
