@@ -15,6 +15,262 @@
 
 ---
 
+## 2026-08-25 (Tue) PREMARKET — Codex post-deploy proof, and re-auth is not active yet
+
+### The 08-24 batch is merged, deployed and proven at `a4235a653`
+
+Final order: **#769 → #766 → #758 → #755 → #774 → #761 → #771**. #760 and #773 were closed as
+superseded by #774. The final tree `6b12b7a79…` matched the independently squash-assembled tree.
+
+- **OMS run 32779632680**, migrations false, installed `bb696138…`; restarted OMS + strategy.
+  OMS fresh healthy in ~33s. Strategy missed the generic 60s SLA, first fresh heartbeat ~113s and
+  healthy ~181s. The operator explicitly accepted that one late recovery; it remains a measured
+  SLA miss, not a retrospective pass.
+- **v2 run 32793781395**, migrations false, installed `a4235a653…`; source write 00:28:43Z → PID
+  00:28:51Z → fresh healthy heartbeat 00:29:22Z. OMS/strategy PIDs stayed unchanged.
+- Close grade: signal-4 control **119 / 19 / 22**; data point 1 was **0 duplicate of 2 measurable**,
+  0 extra, with **7 filled legs outside the instrument** for missing segment identity. Signal 6's
+  latest census was **0 of 0**, therefore `COULD_NOT_TELL`, not PASS.
+
+### ⛔ Schwab re-auth wrote the file after every trading process started
+
+Read-only refresh at 06:24 ET: VPS clean at `a4235a653`; OMS/strategy/v2 all active with zero
+restarts. Token-store mtime is **06:03:35 ET today**, with new refresh expiry **08-31 16:02 ET**;
+OMS/strategy started 08-24 17:28 ET and v2 08-24 20:28 ET. `SchwabBrokerAdapter` loads the store in
+`__init__` only. ⇒ the new credentials are persisted but **not loaded by any trading process**.
+No restart was performed without operator GO.
+
+At 06:25 ET `/health` was overall degraded solely on v2's reported status. The v2 details were
+quotes live, streamer connected, loop healthy, zero loop exceptions, watchlist 3, but
+`data_flow=stalled_offhours_rest_dry`. Supporting fields do not turn a degraded status into a
+healthy one; recheck at the 07:00 ET entry boundary.
+
+### Independent review stopped #772 again
+
+Claude's second head `06211071a…` killed `self.operation` aliases but the implementation only
+recognised `ast.Attribute`, not bare `ast.Name` receivers. Eight independent mutants survived:
+bare `adapter` / `client` / `api_client` / `operation`, aliasing from bare `adapter`, and recovery
+through `getattr(self, "operation")`, `self.__dict__`, or `vars(self)`. The real probe already
+receives a bare adapter parameter. #772 was not merged; Claude owns the next fix.
+
+---
+
+## 2026-08-24 (Mon) EVENING — the batch shipped, and board 22 was wrong in three places
+
+**Deployed and verified: `a4235a653`.** #769 #766 #758 #755 #774 #761 #771 merged; OMS and
+schwab-1m-v2 deployed; every PR's content confirmed **by content, not by SHA**, including #771's
+NESTED flag check (2 sites) — flattening it would pass every test and silently restore the defect.
+
+### ⛔⭐⭐ FOUR TIMES A SQUASH-MOVED MAIN INVALIDATED SOMETHING ALREADY BLESSED
+`--squash` creates a commit with **no ancestry link** to its branch. #773 died to it (rebuilt as
+#774); #761 and #771 each went `BEHIND` and had to be updated. ⛔ **`board.sh rehearse` used
+`git merge`** — it modelled an operation we do not perform, so it went green on a strategy that is
+not ours. *A rehearsal that does not model the real operation is a false green.*
+⛔ And **`MERGEABLE` + `validate=SUCCESS` is not sufficient** — `mergeStateStatus` is the field that
+decides, and it read `BLOCKED` while the other two said yes.
+
+### ⛔ BOARD 22 REWRITTEN FROM `codex-2`'s CHALLENGE — three of my claims were wrong
+Full detail in open-item 22. The method failure is the useful half: **the reachability test I
+specified was BACKWARDS.** The EH cross fires BEFORE its matching ARM, so searching inside
+ARM→DISARM windows omits the EH event by construction — run as written it could only return "not
+found", and board 22 would have been closed as unreachable on a test that could not detect the
+thing. *A falsification test that can only fail in one direction is not a test.*
+⇒ Also: "zero live evidence" was FALSE (3 same-cross sequences exist); the population was the wrong
+definition (**18 / 1**, not 22 / 2 — `eh_resting`+`reactive`, not +any-source); and **the obvious
+fix is a NO-OP** — the BUY ARM reset clears the claim, proven by mutation, with no existing test
+detecting it in either direction.
+
+### ⭐⭐ THE 224-SELLS REFRAME — it was never a missing-data gap
+We hold **224 filled sells** on `live:orb` in 08-03..08-19, covering all 13 symbols in the 19
+duplicate segments. So §82's "was the first position still open?" is **an ATTRIBUTION gap, not a
+data gap** — and FIFO pairing is precisely what invented a −8.40% trade once already.
+⛔ **18 of the 19 duplicates predate the 08-17 log-retention floor**; only SLE (08-18) is
+log-coverable. ⇒ the partition will be partial and **the boundary goes on the line**.
+
+### RULES EARNED
+1. **⛔⭐⭐ A FALSIFICATION TEST THAT CAN ONLY FAIL IN ONE DIRECTION IS NOT A TEST.** Ask what the
+   test would look like if the thing WERE there — then check the search can see it.
+2. **⛔⭐ QUOTE A POPULATION WITH ITS AS-OF DATE.** "22" did not reproduce a day later; the
+   population grew. A number without its date reads as a discrepancy when it is drift.
+3. **⛔⭐ A MITIGATION ON AN UNMERGED BRANCH IS NOT A MITIGATION.** The five combo IDs are in #770
+   only; `origin/main` has zero copies and the logs expire ~08-29.
+4. **⛔ `collect_deploy_evidence.sh` cries STALE on a correct deploy** — it compares every service
+   against the newest file anywhere in `src`, so a v2-only deploy reports OMS and strategy stale.
+   Mine; a check that cries wolf on a correct deploy costs what a silent one does.
+
+---
+
+## 2026-08-24 (Mon) MORNING — the conflict was in the other pair, and #739 has never traded
+
+**Pre-close prep only. No merges. Two PRs opened: #769 (§262), #770 (this handoff + the sheet).**
+
+### §262 — signal 4 had no side filter, and #766 was about to walk into it
+`measure()` never filtered `bo.side`. §186 had already settled that an entry is a filled BUY, so
+the filter was always the definition — it merely held **by accident**, because the exit-pair
+success path raised `TypeError` on every call and recorded nothing.
+
+#766 revives that path, and its report is built from `{**request.metadata,
+webull_exit_only_pair}` — so a recorded exit leg can inherit `fanout_source` and a non-zero
+`cw_arm_bar_ts` and enter signal 4's population as a SELL.
+
+Landed while it is provably a no-op: population 150 rows, **100% `side='buy'`**, and **zero**
+`live:orb` rows have ever carried `webull_exit_only_pair`. Control after the edit:
+`expected 119|19|22  got 119|19|22`. **Mutation:** one synthetic exit row scores `119|20|23`
+without the filter and `119|19|22` with it. *A filter added while it changes nothing is provable;
+the same filter added afterwards is a number that moved for two reasons at once.*
+
+### ⛔⭐⭐ #739 HAS NEVER TRADED A SESSION — today is its first
+`844be295` was committed to `main` **08-21 08:03 ET**, after the box's last pull before Friday.
+The v2 service ran Friday on `2a43b29`; `merge-base --is-ancestor 844be295 2a43b29` is **false**.
+First box HEAD containing it is `253752a`, deployed **Sun 08-23 09:35 ET**.
+⇒ Friday is #739's **baseline**, not a grade of it. Tonight is **data point 1, not a verdict.**
+
+### §263 — the grouping key CANNOT move to `cw_entry_n`, and the counterfactual says why
+P7 and #570 never disagreed: P7's rule is about a per-fill **LABEL** (first vs reclaim), signal 4
+asks a **GROUPING** question. `cw_entry_n` is the ordinal *inside* a segment, not the boundary
+*of* one. Measured on the §82 control window:
+
+| key | groups | dup | extra legs |
+|---|---|---|---|
+| current `(symbol, cw_arm_bar_ts)` | 119 | 19 | **22** ← ground truth |
+| `(symbol, cw_entry_n)` | **65** | 45 | **158** |
+| `(symbol, ET day, cw_entry_n)` | 69 | 47 | 154 |
+
+**The denominator HALVES, it does not double** — field coverage is not grouping coverage, and an
+ordinal collapses many arms onto `n=1`. **136 manufactured false duplicates.** On the resting
+path — the very leg the rekey was meant to rescue — **148 of 152 fills all claim `cw_entry_n=1`**
+(P7: "stamped but never incremented"). It would replace a *declared blind spot* with a *silent
+wrong answer that looks plausible*: the `cw_flip_level` failure mode, re-derived.
+
+⇒ **The different question:** #739 shipped with **no marker at all** — the new latch check has no
+`else`, so a suppression is completely silent (#763's thesis, and the reason signal 4 is the only
+instrument). Adding `[V2-FANOUT-REACTIVE-SUPPRESSED]` makes every prevented duplicate a **counted
+event** with no 119-segment denominator, readable the first time the path runs instead of in ~30
+sessions. Queue item — it touches the live v2 entry path.
+
+### §264 — the SDK door is open, AND the "lost" handles were never lost
+`OrderOperationV3` — the class `webull.py` **already imports** — exposes `get_order_open`,
+`get_order_history`, `get_order_detail`. We have never called any of them: all five
+`list_open_orders` in our tree are `self.store.list_open_orders`, reading **our own Postgres
+table**. ⇒ the reconciler's blindness is an **uncalled method**, not a missing capability.
+
+⛔ **Correction to the state file:** *"no query of ours can confirm they are gone"* is true of
+`broker_orders` and **false of the log**. The adapter logs the raw response body *before* the
+constructor raises, so **all five `combo_order_id`s were on disk** and are now transcribed into
+`docs/deploy-2026-08-24-window.md`. The 15:40:45 ET USDE pair carries `stop=7.5905` — exactly
+−5.0% of the operator's screen-confirmed 7.99 entry — so symbol, timestamp and stop price agree
+**independently of our order tables**. That is a real known-positive.
+⛔ Retention is a clock: `daily, rotate 7` ⇒ `oms.log-20260822.gz` drops on or about **08-29**.
+
+### The conflict check found the conflict in the OTHER pair
+**#766 ↔ #758 do not conflict** — they auto-merge either way, both fixes verified present by
+content, 98 tests green. **#760 ↔ #755 DO** — 4 hunks, symmetric, all both-added-at-a-shared-
+anchor. ⛔ A naive marker-strip does **not** work: the shared trailing context closes only the
+second side and orphans the first side's `try:` / `assert(`. Resolved both directions to green;
+**full unit suite on all five PRs merged: 2336 passed.**
+
+⛔ **#755 was mis-classified as observability.** It reorders `record_fill_if_needed` +
+`apply_fill_to_positions` **ahead of** the audit write and isolates that write in a SAVEPOINT —
+it changes **whether a fill and a position get written**. Protection, not telemetry. Revised drop
+order: **#760 first, then #758; #766 and #755 stay.**
+
+### ⛔⭐⭐ THE META-PATTERN, SECOND INSTANCE — **A RULE THAT LIVES IN ONE PLACE IS NOT A RULE**
+We already had *"a fix that lives in one script is not a fix."* #739 shipped a latch check with
+**no `else`**, so a prevented duplicate was completely silent — **B28's own thesis, violated two
+days after we built the tool for it.** The rule existed, in B28, and did not reach the next PR.
+
+⇒ It generalises: **a rule that lives in one place is not a rule.** A rule is only real where it
+is *applied at the point of authorship* — a checklist item, a test, or a reviewer prompt — not
+where it is *written down*. Both instances are the same failure: the artefact existed and the
+next author did not meet it.
+
+⇒ §266 builds the marker (`[V2-FANOUT-REACTIVE-SUPPRESSED]` + its `[V2-FANOUT-REACTIVE-LATCHED]`
+denominator). But the durable half is the generalised rule, recorded here.
+
+### ⛔⭐ AND §266 ALMOST SHIPPED ITS OWN VERSION OF A 2026-08-21 DEFECT
+The first draft of the LATCHED line ended `DENOMINATOR for [V2-FANOUT-REACTIVE-SUPPRESSED]` — so
+a production `grep -c "[V2-FANOUT-REACTIVE-SUPPRESSED]"` would have matched **every LATCHED line
+too**, returning the suppression count inflated by exactly its own denominator. Two metrics that
+must differ, reading the same number. Same family as the greedy-regex sibling collision of 08-21.
+**The behavioural test caught it on the first run**; a source-inspection test never would have.
+⇒ Refer to a sibling marker in PROSE, never by token. Pinned by
+`test_the_two_MARKERS_ARE_NOT_SUBSTRINGS_OF_EACH_OTHER`.
+
+### ⛔⭐⭐ §272 — `eh_resting` IS THE ONLY FAN-OUT EMITTER THAT NEVER TOUCHES THE SHARED LATCH
+Answered from the code that populates `resting_flip_ms`, **not** from the comment citing it — the
+comment ("once, guarded by `resting_flip_ms` set above") is TRUE for its own scope and is being
+read to mean something larger. `resting_flip_ms` is a **per-cross** anti-burst guard, exactly as
+its own docstring says. It is not the per-flip latch and it is not segment-scoped.
+
+Of the four fan-out emit sites, three read AND write `fanout_webull_claimed`; **`eh_resting`
+(`_eh_resting_cross_check`) does neither.** ⇒ **#739 has a boundary nobody wrote down**: it cannot
+suppress reactive-after-`eh_resting`, because `eh_resting` never sets the latch reactive reads.
+
+⛔⭐⭐ And **no instrument we have could show it**: `eh_resting` legs carry `cw_arm_bar_ts=0`
+(30 fills, 0 with a segment id, re-measured today), so signal 4 excludes them entirely — an
+(`eh_resting` + `reactive`) pair in one segment reads as ONE leg, not a duplicate.
+
+⛔ **SUPERSEDED THE SAME DAY — see the EVENING entry above: the population is 18 / 1, not 22 / 2.**
+> *Left in place because this log is APPEND-ONLY and records what was believed at the time,
+> wrong turns included. Annotated, not rewritten.*
+Population where it could bite: **22 symbol-days** since 08-01 carrying an `eh_resting` leg
+alongside another source, **2 of them on 08-21**. ⛔ **NOT 22 duplicates** — a symbol-day is not a
+segment (§263 measured how badly that collapses), and the DB **cannot** tighten it, because the
+`eh_resting` leg has no segment id to join on. That is the blindness itself. Board item **22**,
+with observability split from behaviour and observability FIRST — the behaviour change is exactly
+the trade #739's author built and discarded.
+
+### ⛔⭐⭐ B32 — THE SIBLING-TOKEN COLLISION IS NOW THREE. MAKE IT MECHANICAL.
+`order_created`/`refused_no_order_created` · guards matching their own lines · §266's LATCHED line
+carrying the SUPPRESSED token. **Rule: no marker may be a substring of another marker, or of any
+other marker's emitted line.** Mechanically checkable — collect the bracket tokens and assert
+pairwise non-containment, same shape as the orphan-import lint. Third instance is where a habit
+becomes a tool. ⭐ **What caught instance 3 was a BEHAVIOURAL test reading the emitted log**; a
+source-inspection test asserts the marker is *written* and can never see a sibling's *line*
+containing it. Board item **B32**.
+
+### ⛔ #739's OWN TESTS WENT RED ON A COMMENT, AND THAT IS A FINDING
+`_reactive_src()` sliced the function by a **magic character count** (`idx : idx + 2200`). §266's
+comment block pushed the fan-out gate past it and **both latch tests failed while the behaviour
+was completely unchanged.** A false red costs the same attention as a real one, and on a day with
+five PRs queued it is the kind that gets waved through. Re-bounded **structurally** (entry log
+line → the closing `TradeIntentDraft`) and re-mutated: the two original mutants (reactive stops
+honouring the latch; the claim is no longer stamped) are still **KILLED**.
+
+⇒ **THE GENERAL RULE: a test bounded by a CHARACTER COUNT is a test of FORMATTING, not of
+behaviour.** It fails on comments and passes on real relocations that happen to land inside the
+window — wrong in both directions. Any `getsource` slice must be bounded by a structural anchor at
+BOTH ends. The next person to add a comment near a `_reactive_src()`-style helper will hit this,
+so it is written here and not only in the diff.
+
+### ⛔⭐⭐ A CORRECTION TO MY OWN §264 READ, MADE THE SAME DAY
+I wrote *"we have never called any of them"* from a grep of **`src/`** and stated it at **repo
+scope**. False, twice over — a second agent found both from the other direction:
+* **per-ID detail is ALREADY WIRED** — `webull.py:336/338`, `:600/602` use `OrderDetailRequest`
+  in the status-poll path. The grep missed it because the adapter calls the low-level request
+  class, not the `OrderOperationV3.get_order_detail` wrapper.
+* **enumeration was already DEMONSTRATED** — `scripts/webull_oco_step1.py:114` calls
+  `OrderOperationV3(client).get_order_open(account_id)` raw, as a shape capture.
+
+⇒ *Name the population on the line.* The grep's scope was `src/`; the sentence's scope was "we".
+The corrected finding is **narrower and stronger**: the seam was known, exercised, and left in a
+one-off script. What is missing is **only enumeration**, and the per-ID half a probe needs is
+already in production code. Two caveats now on the design: **listings may LAG, so a missing order
+is not proof of absence** (⇒ enumerate to discover, detail-call to conclude), and the venue allows
+**2 requests / 2 seconds** ⇒ pace the sweep and print the request count beside the page count.
+
+⭐ **THE SAFETY PROPERTY IN ONE LINE, to carry into the probe design verbatim: ENUMERATE TO
+DISCOVER, DETAIL-CALL TO CONCLUDE — NEVER CONCLUDE FROM A LISTING.** It is cheap precisely
+because the detail half already exists in production code.
+
+### ⛔ A false clean, caught by its own emptiness
+`/opt/project-mai-tai` **exists and is not a git repo** (a stub holding only `src/`). A
+`cd /opt/... || cd /home/...` fallback landed there — the `||` never fired because the `cd`
+**succeeded** — and the readiness check printed an **empty** HEAD and an **empty** commits-behind.
+Now recorded in the state file. *An empty `git rev-parse` is VOID, never 0.*
+
+---
+
 ## 2026-08-17 (Mon) EVENING — the root cause was the session tag, and a proven-harm ledger defect
 
 *(Supersedes nothing in the entry below — that covers the morning. This is the afternoon.)*

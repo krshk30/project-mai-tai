@@ -831,3 +831,159 @@ different question (Schwab-side DNS/auth), counted separately on purpose.
 
 **Not yet investigated:** whether the reconnect is *supposed* to be suppressed at
 `symbols_desired=0`, or whether the socket should simply be held open. Cheap to answer; nobody has.
+
+---
+
+## 22. 🟡 `eh_resting` NEVER TOUCHES THE SHARED FAN-OUT LATCH (§272) — REWRITTEN 2026-08-24 after cross-review
+
+> ⛔⭐⭐ **THIS ENTRY WAS WRONG IN THREE PLACES AND IS REWRITTEN FROM `codex-2`'s CHALLENGE.**
+> The original was authored by `claude-1` from code-reading alone. What survived, what did not,
+> and *why the method failed*, are all recorded below — the method failure is the more useful half.
+
+### ✅ WHAT SURVIVES
+
+**The missing latch is real.** Of the four fan-out emit sites, three read AND write
+`fanout_webull_claimed`; **`_eh_resting_cross_check` does neither.**
+
+| site | `source=` | reads latch | writes latch |
+|---|---|---|---|
+| `update_position` | `rth_resting` | ✅ | ✅ |
+| `_cw_v2_quote` | `reactive` | ✅ (#739) | ✅ |
+| **`_eh_resting_cross_check`** | **`eh_resting`** | ⛔ **no** | ⛔ **no** |
+| `_fanout_rth_resting_cross` | `rth_resting` | ✅ | ✅ |
+
+**Signal 4 is structurally blind to it.** ⛔ **31 of 31** filled `eh_resting` Webull legs carry
+`cw_arm_bar_ts = 0` (as of 2026-08-24), so signal 4 excludes them by definition: an
+(`eh_resting` + `reactive`) pair inside one segment reads as **ONE leg, not a duplicate.**
+
+### ⛔ WHAT WAS WRONG
+
+**1. "Zero live evidence" was FALSE.** Across 9 retained EH crosses there are **3 log-derived
+same-cross EH→reactive sequences**: JUNS 08-21, and PMI twice on 08-24. The original entry asserted
+an absence without having looked anywhere it could be found.
+
+**2. ⭐⭐ THE REACHABILITY TEST I SPECIFIED WAS BACKWARDS — and this is the important one.**
+It said: *search inside `[V2-CW-ARM] → [V2-CW-DISARM]` windows.* **The EH cross normally fires
+BEFORE its matching ARM**, so that search omits the EH event by construction. Reactive also runs in
+extended hours, so **no 09:30 crossing is required** either. Run as specified, the test could only
+ever return "not found" — and board 22 would have been closed as unreachable on a test that could
+not detect the thing it was looking for. *A falsification test that can only fail in one direction
+is not a test.*
+
+**3. The population was the wrong definition.** Published as *22 symbol-days / 2 on 08-21*; that
+counted `eh_resting` + **any other source**. The claim is about the `#739` pair, so it must be
+`eh_resting` + **`reactive`**: **18 symbol-days since 08-01, 1 on 08-21 (JUNS)** — as of 2026-08-24.
+Reconciled exactly: 08-21's SUGP is `eh_resting` + `rth_resting`, and `rth_resting` **does** claim
+the latch, so it never belonged. ⛔ Quote the number WITH its as-of date; the original "22" did not
+reproduce a day later because the population grows.
+
+**4. The alternate guard is `resting_active`, not `resting_flip_ms`.** `resting_flip_ms` is a ~30s
+settle / anti-burst guard. The real interlock is **`resting_active`, which refuses reactive while a
+rest is live**; the seam opens only after fill/grace handling releases it.
+
+### ⛔⭐⭐ AND THE OBVIOUS FIX IS A NO-OP — PROVEN BY MUTATION, NOT BY READING
+
+Even if `eh_resting` DID claim the latch, the subsequent **BUY ARM reset clears it**:
+
+```
+after_eh        True
+after_buy_arm   False
+```
+
+⇒ "make `eh_resting` claim the latch" would ship as a fix that fixes nothing. ⛔ And **no existing
+test detects the latch mutation** — 73 targeted tests stayed green; a full run reached 2,307 passes
+plus one unrelated scanner-history failure that passed individually on both control and mutant.
+**The behaviour is unpinned in BOTH directions.**
+
+### ⚠ JUNS IS A RECLAIM, NOT OVERLAPPING EXPOSURE
+
+```
+12:36:35Z  EH Webull fill
+12:39:02Z  matching ARM (near-identical flip level)
+12:46:37Z  first Webull position CLOSED
+13:00:07Z  reactive Webull fill        ⇒ flat ~13m30s in between
+```
+
+The close path deliberately permits a later reclaim. Both legs carrying `cw_entry_n=1` proves an
+**instrumentation** defect; it does **not** prove the second trade was behaviourally unintended.
+**Harmful overlapping exposure remains UNPROVEN.**
+
+### ⛔ WHAT IS GENUINELY `COULD_NOT_TELL`
+
+- No recorded EH order was still working when reactive later fired: 31 filled immediately, and one
+  stale intent was cancelled before broker placement.
+- Venue-side Webull reconciliation is incomplete, so **the DB cannot prove an unrecorded working
+  order never existed.**
+- Retained logs begin **08-17** while the population starts **08-01** ⇒ log-derived segment
+  matching cannot cover the whole window, and never will for the erased part.
+
+### ⇒ DISPOSITION — do NOT close as unreachable, do NOT make the behaviour change
+
+**Observability first:** assign a durable identity **before the ARM exists**, and record the Webull
+outcome — *queued · dropped · submitted · filled · rejected · still working*. Only then can a
+legitimate reclaim be told apart from overlapping duplicate exposure.
+⛔ The behaviour change is the exact trade #739's author built and **discarded** — read that commit
+before re-deriving it.
+
+**Source:** `strategy_core/schwab_1m_v2.py` — reactive interlock ~L1766 · grace lifecycle ~L2202 ·
+EH fan-out site ~L2413 · BUY ARM reset ~L1684.
+
+---
+
+
+## B32. ⛔⭐⭐ NO LOG MARKER MAY CONTAIN ANOTHER AS A SUBSTRING — make it a lint
+
+**Third instance, which is where a habit becomes a tool.**
+
+| # | collision | cost |
+|---|---|---|
+| 1 | the `order_created` / `refused_no_order_created` regex | a greedy match returned two metrics as one number for 4 h |
+| 2 | guards matching their own log lines | a watch counted itself |
+| 3 | `[V2-FANOUT-REACTIVE-LATCHED]` carrying `[V2-FANOUT-REACTIVE-SUPPRESSED]` in its text (§266) | `grep -c` of the suppression count would have returned it **inflated by exactly its own denominator** |
+
+### ⛔⭐⭐ MEASURED BEFORE PROPOSING THE LINT — AND THE RULE AS FIRST STATED IS TOO STRONG
+
+Scanned `src/` on 2026-08-24: **155 distinct bracket markers, 29 substring pairs, 14 of them
+"bare-prefix families"** — `[V2-CW]` with `[V2-CW-ARM]`/`[V2-CW-DISARM]`/…, `[V2-FANOUT]` with its
+five members, `[OMS-EXIT-REPROTECT]` with `-FAILED`/`-SKIPPED`, `[SCHWAB-TOKEN-REFRESHER]` with
+three, and so on.
+
+⇒ **A lint that simply bans "marker contains marker" fails 29 times on day one** and demands 29
+renames across live log-consuming watches and cron scripts. The family-prefix convention is
+deliberate and load-bearing; it is not the defect.
+
+**The defect is on the CONSUMER side, and it is what all three instances actually share:**
+
+> **Two markers counted as SEPARATE metrics must not be substrings of one another —
+> equivalently, never count a bare-prefix marker without anchoring the token.**
+
+`[V2-FANOUT]` sitting above `[V2-FANOUT-ON-FILL]` is harmless until somebody counts the bare
+prefix. That is exactly what happened to `[V2-DB-SEED-GAP]` (three populations, opposite zero
+polarity, summed by one `grep -c`) and to §266's LATCHED/SUPPRESSED pair.
+
+**⇒ Lint the counts, not the emitters.** Rule: a count whose marker token is a bare prefix of
+another marker must anchor on `]` (or name the longer sibling). **Current true violations: ONE.**
+
+| file | line | count | why it is ambiguous |
+|---|---|---|---|
+| `ops/health/collect_deploy_evidence.sh` | 126 | `cnt 'OMS-V2-MIRROR.*fail'` | also matches `[OMS-V2-MIRROR-EH]` lines — two populations, one number. Low severity (both are "mirror failures") but it is the exact shape. |
+
+⇒ **The tool is cheap: one fix, then a lint that holds at zero.** That is a far better trade than
+29 renames, and it lands the rule where the harm is.
+
+### ⭐⭐ AND THE DETECTOR REPRODUCED THE BUG IT WAS BUILT TO FIND
+My first version flagged **3** consumers. **All three were false positives** — it matched a bare
+prefix *inside a longer, correctly-specific sibling* (`V2-DB-SEED-GAP-CENSUS` counted as an
+unanchored `V2-DB-SEED-GAP`; `SCHWAB-TOKEN-REFRESHER-DEGRADED-PERSISTENT` likewise), and one
+"hit" was a **comment warning about this very trap**. The substring bug appeared *inside the tool
+written to detect the substring bug*, on the first run.
+
+⇒ Two requirements for whoever builds B32: **the token must be matched to its boundary (the next
+character must not be `-`), and comment lines are not counts.** ⛔ And the lint needs its own
+known-positive, or it will pass by finding nothing — the `OMS-V2-MIRROR` row above is that
+fixture.
+
+⭐ **NOTE WHAT CAUGHT INSTANCE 3: a BEHAVIOURAL test that read the emitted log.** A
+source-inspection test asserts the marker is *written* and can never see that a sibling's *line*
+contains it. The lint generalises that catch to every marker, including the ones no test drives.
+
