@@ -62,6 +62,22 @@ die_void() { echo "VOID: $*" >&2; echo "VOID"; exit 2; }
 # means `| tail -N` still shows it, because tail keeps the END.
 # ⛔ Do not "tidy" this into an echo at the bottom of main(): an EXIT trap is what makes it
 # cover the early-exit paths, and those are exactly the ones that were being misread.
+_mut_cleanup() {
+  local rc=$?
+  if cp "$_MUT_BACKUP" "$MFILE"; then
+    rm -f "$_MUT_BACKUP"
+  else
+    printf 'MUTATION-RESTORE-FAILED: could not restore %s
+' "$MFILE" >&2
+    printf 'MUTATION-RESTORE-FAILED: THE SUBJECT IS STILL MUTATED. The backup is KEPT at %s
+' "$_MUT_BACKUP" >&2
+    printf 'MUTATION-RESTORE-FAILED: restore it by hand before trusting anything in this file.
+' >&2
+    [ "$rc" -eq 0 ] && rc=2
+  fi
+  _emit_status "$rc"
+}
+
 _emit_status() {
   # ⛔ Takes the status EXPLICITLY. Reading `$?` here is only correct when this is the FIRST
   # command in the trap; in a compound trap it reports whatever ran just before it.
@@ -257,7 +273,14 @@ case "$CMD" in
     # the cleanup's success as the mutation's verdict: a surviving mutant read as a pass, which is
     # the only failure this harness exists to make impossible.
     # shellcheck disable=SC2064
-    trap '_MUT_RC=$?; cp "$_MUT_BACKUP" "$MFILE"; rm -f "$_MUT_BACKUP"; _emit_status "$_MUT_RC"' EXIT
+    # ⛔⭐⭐ NEVER DELETE THE BACKUP UNLESS THE RESTORE SUCCEEDED. This ran
+    #   cp "$_MUT_BACKUP" "$MFILE"; rm -f "$_MUT_BACKUP"
+    # unconditionally. In an isolated control the restore failed with Permission denied, the
+    # backup was deleted anyway, and the SUBJECT WAS LEFT MUTATED — the harness destroyed the only
+    # copy of the original while the file it was testing stayed poisoned. A mutation harness that
+    # cannot restore must SHOUT and KEEP the backup, not tidy it away.
+    # shellcheck disable=SC2064
+    trap '_mut_cleanup' EXIT
     BEFORE=$(md5sum "$MFILE" | awk '{print $1}')
     MFILE="$MFILE" MFIND="$MFIND" MREPL="$MREPL" python3 - <<'PYEOF'
 import io, os
