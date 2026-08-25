@@ -220,7 +220,7 @@ def test_an_empty_series_is_not_an_error() -> None:
 # endpoints (a WEEKEND would truncate) and a fail-CLOSED calendar error. These exercise the SHIPPED
 # helper with only the DB stubbed, which is what actually pins the arithmetic.
 class _CalSession:
-    """Returns the raw DISTINCT-date count the real SQL would return."""
+    """Returns the EXISTS verdict the real zero-threshold SQL would return."""
 
     def __init__(self, distinct_dates: int | None, raises: bool = False):
         self._n, self._raises = distinct_dates, raises
@@ -243,9 +243,8 @@ def _real_missed(distinct_dates: int | None, raises: bool = False) -> int:
 def test_REAL_HELPER_a_weekend_counts_ZERO_missed_sessions() -> None:
     """⛔⭐⭐ THE OFF-BY-ONE THAT WOULD TRUNCATE EVERY MONDAY.
 
-    The SQL counts DISTINCT session dates in the OPEN interval (bar_time > lo AND < hi). Fri->Mon
-    contains no trading date at all, so the raw count is 0 and the answer must be 0 — not -1, and
-    certainly not 1. A mutant that forgets `- 1` reports 1 here and truncates every weekend.
+    The SQL asks whether a session date exists strictly between the endpoint dates. Fri->Mon
+    contains no trading date at all, so the answer must be 0, never 1.
     """
     assert _real_missed(0) == 0
 
@@ -256,13 +255,13 @@ def test_REAL_HELPER_consecutive_sessions_count_ZERO() -> None:
 
 
 def test_REAL_HELPER_one_skipped_session_counts_ONE() -> None:
-    """⛔ The endpoints' own sessions must not inflate the count. Two dates present in the interval
-    means ONE session was genuinely skipped once the boundary is discounted."""
-    assert _real_missed(2) == 1
+    """One intervening session returns the saturated refusal value."""
+    assert _real_missed(1) == 1
 
 
 def test_REAL_HELPER_a_long_absence_counts_many() -> None:
-    assert _real_missed(44) == 43
+    """At threshold zero the answer saturates: one or forty-four both mean REFUSE."""
+    assert _real_missed(44) == 1
 
 
 def test_REAL_HELPER_a_failed_calendar_read_FAILS_OPEN() -> None:

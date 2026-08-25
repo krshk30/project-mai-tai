@@ -1,9 +1,9 @@
 # ops/health — fleet health & readiness (version-controlled ops scripts)
 
 These are the **independent** health/readiness scripts for the fleet. They are deliberately
-NOT services: stdlib + `psql`/`redis-cli` subprocess only, no app import — so a frozen
-service or a hung DB can't take a monitor down the same way. They run from cron and alert
-via ntfy (topic `mai-tai-preopen-28806a5a97b7`).
+NOT services: stdlib + `psql`/`redis-cli` or a read-only DB client, with no broker SDK access.
+They run from cron or a scheduled read-only workflow and alert via ntfy (topic
+`mai-tai-preopen-28806a5a97b7`).
 
 **These files are the SOURCE OF TRUTH.** They historically lived un-versioned in
 `/home/trader/`; committed here (PR-E follow-on / F3) so they are reviewable + CI-visible +
@@ -49,6 +49,17 @@ never hand-edit the deployed copy.
    ⇒ correctly silent. **The count is noisy; only `dangerous`, the boot-hold, and staleness are
    faults.**
 
+6. **Schwab refresh-count watch** (`schwab_refresh_count_check.py` plus the scheduled
+   `schwab-refresh-count-watch.yml` workflow) — daily at 06:15 UTC, grades the previous complete
+   Eastern calendar day across `control.log` and all rotations. The seven-day baseline is 48-50
+   `[SCHWAB-TOKEN-REFRESHED]` lines/day; `HEALTHY` is 46-52 (the measured range extended by its
+   complete two-count spread in each direction), outside that range is `NOT_HEALTHY`, and
+   missing/unreadable/unbracketed evidence—or any hour with no timestamped control-log coverage—is
+   `COULD_NOT_TELL`. Both non-healthy outcomes fail the workflow and page the existing ntfy topic.
+   The workflow copies the read-only checker to a remote temp directory; it does not pull the app
+   checkout, install anything, or restart a service. This is a lagging complete-day outage watch,
+   not the separate +35-minute post-control-restart proof.
+
 ## fleet_health_check.py — the F3 framework
 A check registry: each check verdicts GREEN/AMBER/RED against ground truth; `main()` prints one
 `VERDICT:` line per check + an aggregate and exits worst (0/1/2) → the cron routes to ntfy.
@@ -72,3 +83,16 @@ Crontab (trader), dual-UTC for DST (the ET guard inside runs the body only in-wi
 ```
 `fleet_health_cron.sh --selftest` sends a RED push to verify phone delivery (no DB/Redis).
 Rollback: remove the crontab line. No live-service impact.
+
+## Phantom managed-row counter
+
+`phantom_managed_rows.py` plus `.github/workflows/phantom-managed-row-watch.yml` runs every
+5 minutes, 07:00–20:15 ET. It does **not** rebuild venue reconciliation: the reconciler's
+`position_quantity_mismatch` remains the primary detector and pager. This is a narrow field-level
+count of open positive `oms_managed_positions` rows against persisted `account_positions`. A
+managed quantity above zero versus a fresh (<=300s) persisted broker quantity of zero is
+confirmed; a missing/stale truth row or changing population is `COULD_NOT_TELL`, never flat.
+Output carries row identity, quantities, entry evidence, and
+`account_positions.source_updated_at`. The workflow scps only this checker to a validated `/tmp`
+directory and executes it with `env -i` plus the DB DSN: no broker adapter, SDK, venue credential,
+venue call, checkout mutation, install, or restart.

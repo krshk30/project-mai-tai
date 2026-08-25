@@ -1,0 +1,162 @@
+name: Watch Phantom Managed Rows
+
+on:
+  schedule:
+    - cron: "*/5 * * * 1-5"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: project-mai-tai-phantom-managed-row-watch
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: production
+    steps:
+      - name: Require main and the evidence window
+        id: window
+        env:
+          GITHUB_REF_VALUE: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REF_VALUE" != "refs/heads/main" ]; then
+            echo "Phantom-row watch must run from main."
+            exit 1
+          fi
+          et_min=$((10#$(TZ=America/New_York date +%H) * 60 + 10#$(TZ=America/New_York date +%M)))
+          et_day=$((10#$(TZ=America/New_York date +%u)))
+          if [ "$et_day" -gt 5 ] || [ "$et_min" -lt 420 ] || [ "$et_min" -ge 1215 ]; then
+            echo "run_monitor=false" >> "$GITHUB_OUTPUT"
+            echo "Outside weekday 07:00-20:15 ET evidence window."
+          else
+            echo "run_monitor=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: ${{ steps.window.outputs.run_monitor == 'true' }}
+
+      - name: Check production SSH secrets
+        if: ${{ steps.window.outputs.run_monitor == 'true' }}
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_SSH_KEY_BASE64: ${{ secrets.VPS_SSH_KEY_BASE64 }}
+        run: |
+          set -euo pipefail
+          if [ -z "$VPS_HOST" ] || [ -z "$VPS_USER" ]; then
+            echo "Missing VPS_HOST or VPS_USER."
+            exit 1
+          fi
+          if [ -z "$VPS_SSH_KEY" ] && [ -z "$VPS_SSH_KEY_BASE64" ]; then
+            echo "Missing VPS_SSH_KEY or VPS_SSH_KEY_BASE64."
+            exit 1
+          fi
+
+      - name: Prepare SSH key
+        if: ${{ steps.window.outputs.run_monitor == 'true' }}
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_SSH_KEY_BASE64: ${{ secrets.VPS_SSH_KEY_BASE64 }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          if [ -n "$VPS_SSH_KEY_BASE64" ]; then
+            printf '%s' "$VPS_SSH_KEY_BASE64" | base64 --decode > ~/.ssh/project_mai_tai_vps
+          else
+            printf '%b' "$VPS_SSH_KEY" | tr -d '\r' > ~/.ssh/project_mai_tai_vps
+          fi
+          chmod 600 ~/.ssh/project_mai_tai_vps
+          ssh-keygen -y -f ~/.ssh/project_mai_tai_vps >/dev/null
+          ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts
+
+      - name: Run the DB-only counter
+        if: ${{ steps.window.outputs.run_monitor == 'true' }}
+        id: monitor
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          set -euo pipefail
+          remote="${VPS_USER}@${VPS_HOST}"
+          key=~/.ssh/project_mai_tai_vps
+          remote_dir=$(ssh -i "$key" "$remote" 'mktemp -d /tmp/project-mai-tai-phantom-watch.XXXXXX')
+          case "$remote_dir" in
+            /tmp/project-mai-tai-phantom-watch.*) ;;
+            *) echo "Unexpected remote temporary directory: $remote_dir"; exit 1 ;;
+          esac
+          cleanup() {
+            ssh -i "$key" "$remote" "rm -rf -- '$remote_dir'"
+          }
+          trap cleanup EXIT
+          scp -i "$key" ops/health/phantom_managed_rows.py "$remote:$remote_dir/check.py"
+
+          set +e
+          output=$(ssh -i "$key" "$remote" "
+            dsn=\$(sudo -n grep -m1 '^MAI_TAI_DATABASE_URL=' /etc/project-mai-tai/project-mai-tai.env \
+                  | cut -d= -f2- | sed 's/^\"//; s/\"$//')
+            if [ -z \"\$dsn\" ]; then
+              echo 'VERDICT: COULD_NOT_TELL database DSN is missing'
+              exit 3
+            fi
+            env -i PATH=/usr/bin:/bin MAI_TAI_DATABASE_URL=\"\$dsn\" \
+              /home/trader/project-mai-tai/.venv/bin/python '$remote_dir/check.py'
+          " 2>&1)
+          code=$?
+          set -e
+          printf '%s\n' "$output"
+          verdict=$(printf '%s\n' "$output" | grep '^VERDICT:' | tail -1 | tr '\n\r' '  ' || true)
+          detail=$(printf '%s\n' "$output" | grep '^ROW ' | head -5 | tr '\n\r' '; ' || true)
+          if [ -z "$verdict" ]; then
+            verdict="VERDICT: COULD_NOT_TELL checker exited $code without a verdict"
+            code=3
+          fi
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "verdict=$verdict" >> "$GITHUB_OUTPUT"
+          echo "detail=$detail" >> "$GITHUB_OUTPUT"
+
+      - name: Alert on a non-clean measurement
+        if: ${{ always() && steps.monitor.outputs.code != '' && steps.monitor.outputs.code != '0' }}
+        env:
+          CODE: ${{ steps.monitor.outputs.code }}
+          VERDICT: ${{ steps.monitor.outputs.verdict }}
+          DETAIL: ${{ steps.monitor.outputs.detail }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          NTFY_URL: https://ntfy.sh/mai-tai-preopen-28806a5a97b7
+        run: |
+          set -euo pipefail
+          if [ "$CODE" = "2" ]; then
+            title="RED confirmed phantom managed row"
+          else
+            title="RED phantom managed-row counter blind"
+          fi
+          body="$VERDICT
+          $DETAIL
+          DB-only measurement; no broker call or application restart. Run: $RUN_URL"
+          curl --fail --silent --show-error --retry 3 --max-time 20 \
+            -H "Title: $title" -H "Priority: urgent" -H "Tags: rotating_light" \
+            --data "$body" "$NTFY_URL"
+
+      - name: Alert on workflow infrastructure failure
+        if: ${{ failure() && steps.monitor.outputs.code == '' }}
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          NTFY_URL: https://ntfy.sh/mai-tai-preopen-28806a5a97b7
+        run: |
+          curl --fail --silent --show-error --retry 3 --max-time 20 \
+            -H "Title: RED phantom managed-row workflow failed" \
+            -H "Priority: urgent" -H "Tags: rotating_light" \
+            --data "Counter did not produce a verdict. No broker call or restart. Run: $RUN_URL" \
+            "$NTFY_URL"
+
+      - name: Fail the run on phantom or could-not-tell
+        if: ${{ always() && steps.monitor.outputs.code != '' && steps.monitor.outputs.code != '0' }}
+        env:
+          CODE: ${{ steps.monitor.outputs.code }}
+        run: exit "$CODE"

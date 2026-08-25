@@ -1836,7 +1836,11 @@ class SchwabV2BotService:
             )
 
     def _missed_sessions_between(self, session, older, newer) -> int:
-        """How many TRADING SESSIONS fall strictly between two bar timestamps.
+        """Whether any TRADING SESSION falls strictly between two bar dates.
+
+        While ``DB_SEED_MAX_MISSED_SESSIONS`` is zero the return saturates at 1: the caller asks
+        only whether the gap crosses at least one intervening session.  If the threshold is ever
+        raised, the exact-count branch below is selected instead.
 
         ⛔⭐ The calendar is derived from the DATA (any symbol, this strategy code), so market
         holidays need no separate table and cannot drift out of date. A weekend contributes ZERO
@@ -1847,17 +1851,40 @@ class SchwabV2BotService:
         it did before. A failed calendar read must never silently truncate real history — the same
         direction of bias as "no quote => no opinion".
         """
+        older_date = older.astimezone(EASTERN_TZ).date()
+        newer_date = newer.astimezone(EASTERN_TZ).date()
+        # Session dates strictly between the two bars => [next ET midnight, newer ET midnight).
+        # Keeping the indexed column bare is the same sargability invariant as the boundary lookup.
+        lo_ts = datetime.combine(older_date + timedelta(days=1), time_cls.min, tzinfo=EASTERN_TZ)
+        hi_ts = datetime.combine(newer_date, time_cls.min, tzinfo=EASTERN_TZ)
+        if lo_ts >= hi_ts:
+            return 0
+        params = {"sc": STRATEGY_CODE, "iv": INTERVAL_SECS, "lo": lo_ts, "hi": hi_ts}
         try:
+            if DB_SEED_MAX_MISSED_SESSIONS == 0:
+                # The 2026-08-25 16:34 ET fail-open was this sibling, not #765's boundary lookup.
+                # Counting and sorting distinct dates bought a cardinality the caller discarded.
+                # EXISTS preserves the decision and stops at the first intervening-session row.
+                found = session.execute(
+                    text(
+                        "SELECT EXISTS (SELECT 1 "
+                        "FROM strategy_bar_history "
+                        "WHERE strategy_code = :sc AND interval_secs = :iv "
+                        "AND bar_time >= :lo AND bar_time < :hi)"
+                    ),
+                    params,
+                ).scalar()
+                return 1 if found else 0
             rows = session.execute(
                 text(
                     "SELECT count(DISTINCT ((bar_time AT TIME ZONE 'America/New_York')::date)) "
                     "FROM strategy_bar_history "
                     "WHERE strategy_code = :sc AND interval_secs = :iv "
-                    "AND bar_time > :lo AND bar_time < :hi"
+                    "AND bar_time >= :lo AND bar_time < :hi"
                 ),
-                {"sc": STRATEGY_CODE, "iv": INTERVAL_SECS, "lo": older, "hi": newer},
+                params,
             ).scalar()
-            return max(0, int(rows or 0) - 1)   # the two endpoints' own sessions do not count
+            return max(0, int(rows or 0))
         except Exception:  # noqa: BLE001 - a calendar read must never cost us real history
             logger.warning(
                 "[V2-DB-SEED-GAP] session-calendar lookup failed; treating the gap as CONTIGUOUS "
@@ -2037,13 +2064,11 @@ class SchwabV2BotService:
 
         kept: list = []
         prev_bt = None
-        missed_at_break = 0
         for row in rows:  # newest -> oldest
             bt = row.bar_time if row.bar_time.tzinfo else row.bar_time.replace(tzinfo=UTC)
             if prev_bt is not None and (prev_bt - bt) >= _DB_SEED_GAP_PROBE_MIN:
                 missed = self._missed_sessions_between(session, bt, prev_bt)
                 if missed > DB_SEED_MAX_MISSED_SESSIONS:
-                    missed_at_break = missed
                     break
             kept.append(row)
             prev_bt = bt
@@ -2054,11 +2079,11 @@ class SchwabV2BotService:
             oldest_kept = kept[-1].bar_time
             first_dropped = rows[len(kept)].bar_time
             logger.warning(
-                "[V2-DB-SEED-GAP] %s dropped %d of %d seed bars — the series SKIPS %d trading "
-                "session(s) (%s -> %s, %.1f days). Seeded the contiguous tail only (%d bars). "
+                "[V2-DB-SEED-GAP] %s dropped %d of %d seed bars — the series SKIPS at least one "
+                "trading session (%s -> %s, %.1f days). Seeded the contiguous tail only (%d bars). "
                 "A market CLOSURE is seeded across; an ABSENCE is not — median price "
                 "discontinuity is 10.2%% across a closure and 26.2%% across one missed session.",
-                symbol, dropped, len(rows), missed_at_break,
+                symbol, dropped, len(rows),
                 first_dropped, oldest_kept,
                 (oldest_kept - first_dropped).total_seconds() / 86400.0, len(kept),
             )
