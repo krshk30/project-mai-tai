@@ -27,6 +27,9 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev]"
 
+      - name: Check log marker isolation
+        run: python ops/health/check_log_marker_collisions.py
+
       - name: Run unit tests
         run: python -m pytest -p no:cacheprovider tests/unit
 
