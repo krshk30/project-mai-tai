@@ -15,6 +15,46 @@
 
 ---
 
+## 2026-08-25 (Tue) PREMARKET — Codex post-deploy proof, and re-auth is not active yet
+
+### The 08-24 batch is merged, deployed and proven at `a4235a653`
+
+Final order: **#769 → #766 → #758 → #755 → #774 → #761 → #771**. #760 and #773 were closed as
+superseded by #774. The final tree `6b12b7a79…` matched the independently squash-assembled tree.
+
+- **OMS run 32779632680**, migrations false, installed `bb696138…`; restarted OMS + strategy.
+  OMS fresh healthy in ~33s. Strategy missed the generic 60s SLA, first fresh heartbeat ~113s and
+  healthy ~181s. The operator explicitly accepted that one late recovery; it remains a measured
+  SLA miss, not a retrospective pass.
+- **v2 run 32793781395**, migrations false, installed `a4235a653…`; source write 00:28:43Z → PID
+  00:28:51Z → fresh healthy heartbeat 00:29:22Z. OMS/strategy PIDs stayed unchanged.
+- Close grade: signal-4 control **119 / 19 / 22**; data point 1 was **0 duplicate of 2 measurable**,
+  0 extra, with **7 filled legs outside the instrument** for missing segment identity. Signal 6's
+  latest census was **0 of 0**, therefore `COULD_NOT_TELL`, not PASS.
+
+### ⛔ Schwab re-auth wrote the file after every trading process started
+
+Read-only refresh at 06:24 ET: VPS clean at `a4235a653`; OMS/strategy/v2 all active with zero
+restarts. Token-store mtime is **06:03:35 ET today**, with new refresh expiry **08-31 16:02 ET**;
+OMS/strategy started 08-24 17:28 ET and v2 08-24 20:28 ET. `SchwabBrokerAdapter` loads the store in
+`__init__` only. ⇒ the new credentials are persisted but **not loaded by any trading process**.
+No restart was performed without operator GO.
+
+At 06:25 ET `/health` was overall degraded solely on v2's reported status. The v2 details were
+quotes live, streamer connected, loop healthy, zero loop exceptions, watchlist 3, but
+`data_flow=stalled_offhours_rest_dry`. Supporting fields do not turn a degraded status into a
+healthy one; recheck at the 07:00 ET entry boundary.
+
+### Independent review stopped #772 again
+
+Claude's second head `06211071a…` killed `self.operation` aliases but the implementation only
+recognised `ast.Attribute`, not bare `ast.Name` receivers. Eight independent mutants survived:
+bare `adapter` / `client` / `api_client` / `operation`, aliasing from bare `adapter`, and recovery
+through `getattr(self, "operation")`, `self.__dict__`, or `vars(self)`. The real probe already
+receives a bare adapter parameter. #772 was not merged; Claude owns the next fix.
+
+---
+
 ## 2026-08-24 (Mon) EVENING — the batch shipped, and board 22 was wrong in three places
 
 **Deployed and verified: `a4235a653`.** #769 #766 #758 #755 #774 #761 #771 merged; OMS and
