@@ -8,21 +8,39 @@ or open-order claim was made in this refresh.
 
 ---
 
-# 🚨 BEFORE 07:00 ET — SCHWAB RE-AUTH IS ON DISK, NOT IN THE TRADING PROCESSES
+# ✅ SCHWAB RE-AUTH IS ACTIVE — NO RESTART IS REQUIRED
 
-The token store was rewritten by re-auth at **2026-08-25 06:03:35 ET**. Its new refresh token
-expires **2026-08-31 16:02:05 ET**. But every trading process predates that file:
+> ⛔⭐⭐ **This section previously said the opposite** ("re-auth is persisted but not active in OMS,
+> strategy, or v2 — a restart must happen after the token-store mtime"). That was WRONG for the
+> production configuration, and acting on it would have meant an unnecessary restart of OMS —
+> which owns the exits, and is one of the two changes this system treats as how it loses money.
 
-| process | start UTC | relation to token-store write |
-|---|---:|---|
-| OMS | 2026-08-24 21:28:24 | older |
-| strategy | 2026-08-24 21:28:24 | older |
-| schwab-1m-v2 | 2026-08-25 00:28:51 | older |
+`SchwabBrokerAdapter.__init__` is **not** the only caller of `_load_token_store()`. There are three:
 
-`SchwabBrokerAdapter.__init__` calls `_load_token_store()` once; the running adapter does not
-reload a later re-auth file. **Therefore re-auth is persisted but not active in OMS, strategy, or
-v2.** A restart must happen *after* the token-store mtime. ⛔ No restart was inferred or performed;
-production restart requires explicit operator GO and the narrow service choreography.
+| site | when it runs |
+|---|---|
+| `schwab.py:146` | `__init__` |
+| **`schwab.py:958`** | **every `_get_access_token()` that needs a refresh, in refresher-owned mode** |
+| `schwab.py:999` | dead-token grant recovery |
+
+Production runs refresher-owned mode — `MAI_TAI_SCHWAB_ADAPTER_TOKEN_REFRESH_ENABLED=false` — so
+`_get_access_token()` takes the pure-reader branch and **reloads the store from disk**. The
+dedicated refresher (control service) owns freshness; the adapter never writes and never caches
+past expiry. A later re-auth file is therefore picked up by the RUNNING process.
+
+**Evidence, as of 2026-08-25 14:33 UTC (10:33 ET), read-only:**
+
+- `refresh_token_expires_at` = `2026-08-31T20:02:05Z` → **Mon 2026-08-31 16:02 ET** (weekday derived, not labelled)
+- `expires_at` = `2026-08-25T14:55:32Z` — in the FUTURE, so the refresher is actively rotating the access token
+- `[SCHWAB-TOKEN-STALE]` in the **current** log: **0**. ⛔ All 386 occurrences are in
+  `oms.log-20260823.gz` — a past 08-23 incident, not today. (A concatenated `oms.log*` stream is in
+  FILENAME order, not time order; `tail` on it returns the rotated file's end and reads as current.)
+- `[BROKER-SYNC-CENSUS]` newest line `2026-08-25 14:30:15` with `failed=0` — broker reads are landing
+
+⇒ **No restart is owed for the token.** If a restart happens for another reason, that is fine, but
+the token is not the reason. ⛔ The next real deadline is the REFRESH token: **Mon 2026-08-31 16:02
+ET**, and only that one needs a human — `expires_at` is the short-lived access token the refresher
+rotates itself, and is a ready-made false alarm.
 
 ---
 
