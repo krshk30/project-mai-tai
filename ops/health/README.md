@@ -49,17 +49,6 @@ never hand-edit the deployed copy.
    ⇒ correctly silent. **The count is noisy; only `dangerous`, the boot-hold, and staleness are
    faults.**
 
-6. **Phantom managed-row counter** (`phantom_managed_rows.py` +
-   `.github/workflows/phantom-managed-row-watch.yml`) — every 5 min, 07:00–20:15 ET. This does
-   **not** rebuild venue reconciliation: the reconciler's `position_quantity_mismatch` remains the
-   primary detector and pager. This is a narrow field-level count of open positive
-   `oms_managed_positions` rows against persisted `account_positions`. A managed quantity above
-   zero versus a fresh (<=300s) persisted broker quantity of zero is confirmed; a missing/stale
-   truth row or changing population is `COULD_NOT_TELL`, never flat. Output carries row identity,
-   quantities, entry evidence, and `account_positions.source_updated_at`. The workflow scps only
-   this checker to a validated `/tmp` directory and executes it with `env -i` plus the DB DSN: no
-   broker adapter, SDK, venue credential, venue call, checkout mutation, install, or restart.
-
 ## fleet_health_check.py — the F3 framework
 A check registry: each check verdicts GREEN/AMBER/RED against ground truth; `main()` prints one
 `VERDICT:` line per check + an aggregate and exits worst (0/1/2) → the cron routes to ntfy.
@@ -83,3 +72,16 @@ Crontab (trader), dual-UTC for DST (the ET guard inside runs the body only in-wi
 ```
 `fleet_health_cron.sh --selftest` sends a RED push to verify phone delivery (no DB/Redis).
 Rollback: remove the crontab line. No live-service impact.
+
+## Phantom managed-row counter
+
+`phantom_managed_rows.py` plus `.github/workflows/phantom-managed-row-watch.yml` runs every
+5 minutes, 07:00–20:15 ET. It does **not** rebuild venue reconciliation: the reconciler's
+`position_quantity_mismatch` remains the primary detector and pager. This is a narrow field-level
+count of open positive `oms_managed_positions` rows against persisted `account_positions`. A
+managed quantity above zero versus a fresh (<=300s) persisted broker quantity of zero is
+confirmed; a missing/stale truth row or changing population is `COULD_NOT_TELL`, never flat.
+Output carries row identity, quantities, entry evidence, and
+`account_positions.source_updated_at`. The workflow scps only this checker to a validated `/tmp`
+directory and executes it with `env -i` plus the DB DSN: no broker adapter, SDK, venue credential,
+venue call, checkout mutation, install, or restart.
