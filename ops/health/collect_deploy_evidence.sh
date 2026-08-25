@@ -99,6 +99,7 @@ echo "   local changes : $(git status --porcelain | wc -l) file(s)"
 echo
 echo "### 2. SERVICE-SCOPED SOURCE vs PROCESS-START   ⛔ src diff=0 is NOT evidence"
 echo "   Scope: static project import graph from each console entry point."
+echo "   Runtime mapping: the venv must resolve project_mai_tai from this checkout's src/."
 echo "   Newer startup-required source = STALE; newer conditional/lazy source = COULD_NOT_TELL."
 echo "   Unrelated source is ignored. Resolution failure is COULD_NOT_TELL, never FRESH."
 printf "   %-18s %-22s %-10s %s\n" SERVICE PROC_START_UTC SUBSTATE "RELEVANT SOURCE"

@@ -30,4 +30,7 @@ def test_installer_enables_and_verifies_daily_timer() -> None:
     assert "is-active --quiet logrotate.timer" in installer
     assert 'cmp -s "$SOURCE" "$TARGET"' in installer
     assert installer.index('--debug "$SOURCE"') < installer.index('mv -f "$tmp" "$TARGET"')
+    assert 'target_parent=$(dirname "$target_dir")' in installer
+    assert 'mktemp "$target_parent/' in installer
+    assert 'mktemp "$target_dir/' not in installer
     assert "logrotate did not parse the project-mai-tai log pattern" in installer

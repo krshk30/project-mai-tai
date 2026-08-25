@@ -31,7 +31,11 @@ if ! grep -Fq 'rotating pattern: /var/log/project-mai-tai/*.log' <<<"$debug_outp
 fi
 
 target_dir=$(dirname "$TARGET")
-tmp=$("${PRIV[@]}" mktemp "$target_dir/.project-mai-tai.logrotate.XXXXXX")
+# Keep the candidate on the target filesystem for an atomic rename, but outside
+# logrotate.d itself.  logrotate reads dotfiles in that directory, so staging
+# there briefly creates two configs for the same log pattern.
+target_parent=$(dirname "$target_dir")
+tmp=$("${PRIV[@]}" mktemp "$target_parent/.project-mai-tai.logrotate.XXXXXX")
 cleanup() { "${PRIV[@]}" rm -f "$tmp"; }
 trap cleanup EXIT
 

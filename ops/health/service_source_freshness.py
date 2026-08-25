@@ -22,6 +22,7 @@ import sys
 import tomllib
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from importlib.util import find_spec
 from pathlib import Path
 
 PROJECT_PACKAGE = "project_mai_tai"
@@ -118,10 +119,88 @@ def _project_imports(src_root: Path, module: str, path: Path) -> tuple[set[str],
     possible: set[str] = set()
     is_package = path.name == "__init__.py"
 
+    # Record the ordinary spellings (and simple aliases) of Python's dynamic
+    # import functions. Only files already reached from a service entry point
+    # are parsed, so an unrelated backtest helper cannot make a live service
+    # indeterminate. Unknown dynamic targets do: they might name project code
+    # that a static graph would otherwise omit and falsely report FRESH.
+    importlib_names: set[str] = set()
+    dynamic_loader_names: set[str] = {"__import__"}
+    for candidate in ast.walk(tree):
+        if isinstance(candidate, ast.Import):
+            for alias in candidate.names:
+                if alias.name == "importlib":
+                    importlib_names.add(alias.asname or alias.name)
+        elif isinstance(candidate, ast.ImportFrom):
+            if candidate.module == "importlib":
+                for alias in candidate.names:
+                    if alias.name == "import_module":
+                        dynamic_loader_names.add(alias.asname or alias.name)
+            elif candidate.module == "builtins":
+                for alias in candidate.names:
+                    if alias.name == "__import__":
+                        dynamic_loader_names.add(alias.asname or alias.name)
+
+    # Follow simple loader aliases such as ``loader = importlib.import_module``.
+    changed = True
+    while changed:
+        changed = False
+        for candidate in ast.walk(tree):
+            if not isinstance(candidate, (ast.Assign, ast.AnnAssign)):
+                continue
+            value = candidate.value
+            if value is None:
+                continue
+            is_loader = (
+                isinstance(value, ast.Name) and value.id in dynamic_loader_names
+            ) or (
+                isinstance(value, ast.Attribute)
+                and value.attr == "import_module"
+                and isinstance(value.value, ast.Name)
+                and value.value.id in importlib_names
+            )
+            if not is_loader:
+                continue
+            targets = candidate.targets if isinstance(candidate, ast.Assign) else [candidate.target]
+            for target in targets:
+                if isinstance(target, ast.Name) and target.id not in dynamic_loader_names:
+                    dynamic_loader_names.add(target.id)
+                    changed = True
+
     def add_import(imported: str, is_required: bool) -> None:
         (required if is_required else possible).add(imported)
 
+    def dynamic_import_target(node: ast.Call) -> tuple[bool, str | None]:
+        func = node.func
+        is_dynamic = (
+            isinstance(func, ast.Name) and func.id in dynamic_loader_names
+        ) or (
+            isinstance(func, ast.Attribute)
+            and func.attr == "import_module"
+            and isinstance(func.value, ast.Name)
+            and func.value.id in importlib_names
+        )
+        if not is_dynamic:
+            return False, None
+        if not node.args or not isinstance(node.args[0], ast.Constant):
+            return True, None
+        target = node.args[0].value
+        return True, target if isinstance(target, str) else None
+
     def visit(node: ast.AST, is_required: bool) -> None:
+        if isinstance(node, ast.Call):
+            is_dynamic, imported = dynamic_import_target(node)
+            if is_dynamic:
+                if imported is None or imported.startswith("."):
+                    raise ImportGraphError(
+                        f"dynamic import target in {path} cannot be resolved statically"
+                    )
+                if imported == PROJECT_PACKAGE or imported.startswith(f"{PROJECT_PACKAGE}."):
+                    if _module_path(src_root, imported) is None:
+                        raise ImportGraphError(
+                            f"dynamic project import {imported!r} from {path} does not resolve"
+                        )
+                    add_import(imported, is_required)
         if isinstance(node, ast.Import):
             for alias in node.names:
                 if alias.name == PROJECT_PACKAGE or alias.name.startswith(f"{PROJECT_PACKAGE}."):
@@ -218,6 +297,25 @@ def service_source_files(repo: Path, service: str) -> tuple[Path, ...]:
     return _service_source_scope(repo, service).all_files
 
 
+def verify_runtime_mapping(repo: Path, package_file: Path | None = None) -> None:
+    """Prove this interpreter resolves project code from the inspected checkout."""
+    if package_file is None:
+        spec = find_spec(PROJECT_PACKAGE)
+        if spec is None or spec.origin is None:
+            raise ImportGraphError(
+                f"this interpreter cannot resolve the installed {PROJECT_PACKAGE!r} package"
+            )
+        package_file = Path(spec.origin)
+
+    expected_root = (repo / "src" / PROJECT_PACKAGE).resolve()
+    resolved = package_file.resolve()
+    if not resolved.is_relative_to(expected_root):
+        raise ImportGraphError(
+            f"installed {PROJECT_PACKAGE!r} resolves to {resolved}, not inspected source "
+            f"under {expected_root}; source freshness is indeterminate"
+        )
+
+
 def _source_label(repo: Path, path: Path) -> str:
     written = datetime.fromtimestamp(path.stat().st_mtime, tz=UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
     return f"{path.relative_to(repo)} @ {written}"
@@ -272,7 +370,13 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(sys.argv[1:] if argv is None else argv)
-    result = evaluate(args.repo.resolve(), args.service, args.process_start_epoch)
+    repo = args.repo.resolve()
+    try:
+        verify_runtime_mapping(repo)
+    except (ImportGraphError, OSError) as exc:
+        result = FreshnessResult("COULD_NOT_TELL", str(exc))
+    else:
+        result = evaluate(repo, args.service, args.process_start_epoch)
     print(f"{result.verdict} — {result.detail}")
     return result.exit_code
 

@@ -24,12 +24,24 @@ EOF
 chmod +x "$TMP/logrotate" "$TMP/systemctl"
 
 export CALLS="$TMP/calls"
-MAI_TAI_LOGROTATE_TARGET="$TMP/installed" \
+export MKTEMP_CALLS="$TMP/mktemp-calls"
+mktemp() {
+  printf '%s\n' "$1" >> "$MKTEMP_CALLS"
+  command mktemp "$@"
+}
+export -f mktemp
+mkdir -p "$TMP/logrotate.d"
+MAI_TAI_LOGROTATE_TARGET="$TMP/logrotate.d/installed" \
 MAI_TAI_LOGROTATE_BIN="$TMP/logrotate" \
 MAI_TAI_SYSTEMCTL_BIN="$TMP/systemctl" \
   bash "$ROOT/ops/logrotate/install.sh" "$ROOT"
 
-cmp "$ROOT/ops/logrotate/project-mai-tai" "$TMP/installed"
+cmp "$ROOT/ops/logrotate/project-mai-tai" "$TMP/logrotate.d/installed"
+if grep -Fq "$TMP/logrotate.d/.project-mai-tai.logrotate." "$MKTEMP_CALLS"; then
+  echo "installer staged a candidate inside the scanned logrotate.d directory"
+  exit 1
+fi
+grep -Fqx "$TMP/.project-mai-tai.logrotate.XXXXXX" "$MKTEMP_CALLS"
 grep -q '^--debug ' "$CALLS"
 grep -qx 'enable --now logrotate.timer' "$CALLS"
 grep -qx 'is-enabled --quiet logrotate.timer' "$CALLS"
