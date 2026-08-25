@@ -136,7 +136,12 @@ page() {  # page <title-ascii> <body>
   if [ "$DRY" -eq 1 ]; then echo "   [dry-run] would page: $1 | $2"; return 0; fi
   # ⛔ ASCII TITLE ONLY. ntfy headers are latin-1; a single em-dash silently loses the page.
   local title; title=$(printf '%s' "$1" | tr -cd '\11\12\40-\176')
-  "$CURL" -s -H "Title: ${title}" -H "Priority: high" -H "Tags: rotating_light" \
+  # ⛔⭐⭐ RETURN THE DELIVERY STATUS. This swallowed curl's exit code, so the caller recorded
+  # the key as SEEN and printed "PAGED." even when ntfy was unreachable - the alert was lost AND
+  # suppressed for ever, because the state file said it had already gone out. A pager that
+  # silently drops a page is worse than no pager: it reports success.
+  "$CURL" -sS --fail --retry 3 --max-time 20 \
+          -H "Title: ${title}" -H "Priority: high" -H "Tags: rotating_light" \
           -d "$2" "https://ntfy.sh/${TOPIC}" >/dev/null
 }
 
@@ -188,16 +193,24 @@ run_check() {
     if [ "$held" = "?" ]; then
       echo "      ⛔ holding is UNREADABLE — reporting, not suppressing. An unknown must never"
       echo "         decay into 'flat' on the one check that decides whether to wake someone."
+      # ⛔ ONLY RECORD A PAGE THAT ACTUALLY WENT OUT. Recording it regardless made a failed
+      # delivery permanent: the state file said "already paged", so it was never retried.
       grep -Fqx -- "$key" "$STATE" 2>/dev/null || {
-        page "MAI-TAI Q5 broker blind ${acct} holding UNKNOWN" \
-             "acct=${acct} blind ${span}s (${n} failed reads) ${s} -> ${e}. Holding could not be read."
-        printf '%s\n' "$key" >> "$STATE"; }
+        if page "MAI-TAI Q5 broker blind ${acct} holding UNKNOWN" \
+             "acct=${acct} blind ${span}s (${n} failed reads) ${s} -> ${e}. Holding could not be read."; then
+          printf '%s\n' "$key" >> "$STATE"
+        else
+          echo "      [PAGE-FAILED] delivery failed; NOT recorded as seen, so the next run retries." >&2
+        fi; }
     elif [ "${held:-0}" -gt 0 ] 2>/dev/null; then
       grep -Fqx -- "$key" "$STATE" 2>/dev/null && { echo "      (already paged)"; continue; }
-      page "MAI-TAI Q5 broker blind ${acct} while holding ${held}" \
-           "acct=${acct} blind ${span}s (${n} failed positions reads) ${s} -> ${e}, holding ${held} position(s). We do not know what we own."
-      printf '%s\n' "$key" >> "$STATE"
-      echo "      PAGED."
+      if page "MAI-TAI Q5 broker blind ${acct} while holding ${held}" \
+           "acct=${acct} blind ${span}s (${n} failed positions reads) ${s} -> ${e}, holding ${held} position(s). We do not know what we own."; then
+        printf '%s\n' "$key" >> "$STATE"
+        echo "      PAGED."
+      else
+        echo "      [PAGE-FAILED] delivery failed; NOT recorded as seen, so the next run retries." >&2
+      fi
     else
       echo "      flat at the time — NOT paged (an outage while flat is noise, by design)."
     fi
