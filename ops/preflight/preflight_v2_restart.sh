@@ -232,12 +232,28 @@ fi
 #   redundant there. [[feedback_authoritative_for_a_is_not_for_b]]
 #   ⛔ NOT a hurried edit. 2026-08-06 nearly saw a threshold changed under time pressure on this
 #   same file; the correct value was not what it looked like.
+# ⛔⭐⭐ A FAILED QUERY IS NOT A FLAT ACCOUNT. This was `psql ... 2>/dev/null` with a bare
+# emptiness test: a dead DSN, a stopped Postgres, or any SQL error printed nothing on stdout and
+# the gate said "[ok] broker flat". ⇒ THE ONE FAILURE MODE A LIVE-MONEY PREFLIGHT MUST NOT HAVE,
+# in the exact check that authorises restarting a service while we might be holding.
+# ⇒ A SENTINEL makes "no rows" distinguishable from "the query died". `COALESCE` cannot help here
+#   — it returns '' for both — so the shape is carried in the payload itself, and the exit status
+#   is captured separately rather than swallowed.
 POS=$(psql "$DSN" -tAc "
-  SELECT COALESCE(string_agg(ap.symbol||'='||ap.quantity,' '),'')
+  SELECT 'POSOK|'||COALESCE(string_agg(ap.symbol||'='||ap.quantity,' '),'')
   FROM account_positions ap JOIN broker_accounts ba ON ba.id=ap.broker_account_id
   WHERE ba.name IN ('live:schwab_1m_v2','live:orb')
-    AND ap.quantity <> 0 AND ap.symbol NOT IN ('CYN','TE');" 2>/dev/null)
-if [ -n "${POS// /}" ]; then
+    AND ap.quantity <> 0 AND ap.symbol NOT IN ('CYN','TE');" 2>&1)
+POS_RC=$?
+case "$POS" in
+  POSOK\|*) POS="${POS#POSOK|}" ;;
+  *)         POS_RC=1 ;;
+esac
+if [ "$POS_RC" -ne 0 ]; then
+  echo "  [BLOCK] COULD_NOT_TELL — the broker-position query FAILED; this is NOT 'flat'."
+  echo "          $(printf '%s' "$POS" | head -1 | cut -c1-120)"
+  FAIL=1
+elif [ -n "${POS// /}" ]; then
   echo "  [BLOCK] broker not flat (excluding operator manuals): $POS"
   FAIL=1
 else

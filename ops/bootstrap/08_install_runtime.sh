@@ -45,8 +45,17 @@ fi
 # destroys the only surviving version of a gate.
 PREFLIGHT_SRC="$REPO_DIR/ops/preflight"
 PREFLIGHT_DST="/home/trader/ops_preflight"
-if [[ -d "$PREFLIGHT_SRC" ]]; then
-  mkdir -p "$PREFLIGHT_DST"
+# ⛔⭐⭐ LINKING MUST NOT ABORT THE DEPLOY. This block sits AFTER `pip install -e` and BEFORE
+# the restart, under `set -euo pipefail` — so a failed mkdir/cp/ln left NEW SOURCE ON DISK UNDER
+# AN OLD RUNNING PROCESS and no restart. That is the exact state #775 removed for logrotate, and
+# it would have been reintroduced here by a different file. Same rule, applied consistently:
+# an auxiliary install FAILS LOUDLY, it does not block the application deploy.
+# ⚠ The cost of continuing is real — an unlinked fence means the box runs a STALE preflight — so
+# the failure is announced with a marker that greps, not a quiet skip.
+link_preflight_fences() {
+  set +e
+  local rc=0
+  mkdir -p "$PREFLIGHT_DST" || rc=1
   for src in "$PREFLIGHT_SRC"/*.sh; do
     [[ -e "$src" ]] || continue
     dst="$PREFLIGHT_DST/$(basename "$src")"
@@ -56,7 +65,18 @@ if [[ -d "$PREFLIGHT_SRC" ]]; then
       fi
       cp -a "$dst" "$dst.pre-symlink-$(date -u +%Y%m%d%H%M%S)"
     fi
-    ln -sfn "$src" "$dst"
+    ln -sfn "$src" "$dst" || rc=1
   done
+  if [[ $rc -ne 0 ]]; then
+    echo "[PREFLIGHT-LINK-FAILED] could not link fences from $PREFLIGHT_SRC to $PREFLIGHT_DST" >&2
+    echo "[PREFLIGHT-LINK-FAILED] the box may be running a STALE preflight gate. The deploy is NOT" >&2
+    echo "[PREFLIGHT-LINK-FAILED] blocked by this, on purpose — fix the link before the next restart." >&2
+    return 0
+  fi
   echo "preflight fences linked from $PREFLIGHT_SRC"
+  return 0
+}
+if [[ -d "$PREFLIGHT_SRC" ]]; then
+  link_preflight_fences
+  set -e
 fi
