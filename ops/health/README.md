@@ -1,9 +1,9 @@
 # ops/health — fleet health & readiness (version-controlled ops scripts)
 
 These are the **independent** health/readiness scripts for the fleet. They are deliberately
-NOT services: stdlib + `psql`/`redis-cli` subprocess only, no app import — so a frozen
-service or a hung DB can't take a monitor down the same way. They run from cron and alert
-via ntfy (topic `mai-tai-preopen-28806a5a97b7`).
+NOT services: stdlib + `psql`/`redis-cli` or a read-only DB client, with no broker SDK access.
+They run from cron or a scheduled read-only workflow and alert via ntfy (topic
+`mai-tai-preopen-28806a5a97b7`).
 
 **These files are the SOURCE OF TRUTH.** They historically lived un-versioned in
 `/home/trader/`; committed here (PR-E follow-on / F3) so they are reviewable + CI-visible +
@@ -48,6 +48,17 @@ never hand-edit the deployed copy.
    ET the PREVIOUS evening, against a watchlist of 1. They are `reconstructed:false, dangerous:false`
    ⇒ correctly silent. **The count is noisy; only `dangerous`, the boot-hold, and staleness are
    faults.**
+
+6. **Phantom managed-row counter** (`phantom_managed_rows.py` +
+   `.github/workflows/phantom-managed-row-watch.yml`) — every 5 min, 07:00–20:15 ET. This does
+   **not** rebuild venue reconciliation: the reconciler's `position_quantity_mismatch` remains the
+   primary detector and pager. This is a narrow field-level count of open positive
+   `oms_managed_positions` rows against persisted `account_positions`. A managed quantity above
+   zero versus a fresh (<=300s) persisted broker quantity of zero is confirmed; a missing/stale
+   truth row or changing population is `COULD_NOT_TELL`, never flat. Output carries row identity,
+   quantities, entry evidence, and `account_positions.source_updated_at`. The workflow scps only
+   this checker to a validated `/tmp` directory and executes it with `env -i` plus the DB DSN: no
+   broker adapter, SDK, venue credential, venue call, checkout mutation, install, or restart.
 
 ## fleet_health_check.py — the F3 framework
 A check registry: each check verdicts GREEN/AMBER/RED against ground truth; `main()` prints one
