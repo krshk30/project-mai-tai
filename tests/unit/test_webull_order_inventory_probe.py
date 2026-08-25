@@ -318,68 +318,101 @@ def test_live_code_contains_no_mutating_sdk_calls():
     #   defaults). Instead invert it: forbid the SDK object from being ANYWHERE except immediately
     #   under an allowed call. An escape has no syntax left. `self.operation = ...` in __init__ is
     #   a Store and is fine; every Load must be `<sdk>.<method>(...)`.
-    parents = {}
-    for node in ast.walk(tree):
-        for child in ast.iter_child_nodes(node):
-            parents[child] = node
+    # ⛔⭐⭐ TWO WRONG RULES BEFORE THIS ONE, BOTH FROM ME.
+    # v1 checked the receiver NAME only at each call site: `op = self.operation; op.write()`
+    #    walked through (codex-2, round 12).
+    # v2 forbade an SDK object from appearing anywhere except under an allowed call. That caught
+    #    the alias — and ALSO the probe's real plumbing: `self.adapter = adapter`, passing the
+    #    adapter to `WebullSdkReader(...)`, reading `adapter.host`. A rule that refuses correct
+    #    code is not stricter, it is broken, and it would have been "fixed" by weakening it.
+    # ⇒ THE DANGER IS A CALL, NOT THE OBJECT MOVING. Storing or passing an SDK object is
+    #   unavoidable; calling an unlisted METHOD on it is the thing that reaches the venue. So:
+    #   check every call whose receiver is an SDK object, and follow name bindings so an alias
+    #   cannot launder the receiver.
 
-    def _is_sdk_ref(node):
-        return (
-            isinstance(node, ast.Attribute)
-            and node.attr in SDK_RECEIVERS
-            and isinstance(node.ctx, ast.Load)
-        )
+    # 1) Seed receiver names, then follow bindings to a fixpoint.
+    sdk_names = set(SDK_RECEIVERS)
 
-    escapes = []
+    def _is_sdk_expr(node):
+        if isinstance(node, ast.Attribute):
+            return node.attr in sdk_names or _is_sdk_expr(node.value)
+        if isinstance(node, ast.Name):
+            return node.id in sdk_names
+        return False
+
+    for _ in range(20):  # bounded; the graph is tiny and this must terminate
+        grew = False
+        for node in ast.walk(tree):
+            targets = []
+            value = None
+            if isinstance(node, (ast.Assign, ast.AnnAssign)):
+                value = node.value
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            elif isinstance(node, ast.NamedExpr):
+                value, targets = node.value, [node.target]
+            elif isinstance(node, (ast.With, ast.AsyncWith)):
+                for item in node.items:
+                    if item.optional_vars is not None and _is_sdk_expr(item.context_expr):
+                        targets, value = [item.optional_vars], item.context_expr
+            if value is None or not _is_sdk_expr(value):
+                continue
+            for target in targets:
+                name = target.id if isinstance(target, ast.Name) else None
+                if name and name not in sdk_names:
+                    sdk_names.add(name)
+                    grew = True
+        # a parameter defaulted to an SDK object is a binding too
+        for node in ast.walk(tree):
+            args = getattr(node, "args", None)
+            if not isinstance(args, ast.arguments):
+                continue
+            positional = args.posonlyargs + args.args
+            for arg, default in zip(positional[len(positional) - len(args.defaults):], args.defaults):
+                if _is_sdk_expr(default) and arg.arg not in sdk_names:
+                    sdk_names.add(arg.arg)
+                    grew = True
+        if not grew:
+            break
+
+    # 2) Every CALL on an SDK receiver must be allowlisted.
     called_on_sdk = set()
     for node in ast.walk(tree):
-        if not _is_sdk_ref(node):
-            continue
-        parent = parents.get(node)
-        # legal shape: Attribute(value=<sdk>, attr=method) whose parent is Call(func=that Attribute)
-        if isinstance(parent, ast.Attribute) and parent.value is node:
-            grand = parents.get(parent)
-            if isinstance(grand, ast.Call) and grand.func is parent:
-                called_on_sdk.add(parent.attr)
-                continue
-            escapes.append(f"{ast.unparse(parent)} (attribute access, not a call)")
-            continue
-        escapes.append(ast.unparse(parent) if parent is not None else ast.unparse(node))
-
-    assert not escapes, (
-        "an SDK object escaped its call site — it may only be the receiver of an allowed "
-        f"method call, never aliased, passed or stored: {sorted(set(escapes))[:5]}"
-    )
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and _is_sdk_expr(node.func.value):
+            called_on_sdk.add(node.func.attr)
 
     forbidden = called_on_sdk - ALLOWED - LOCAL_PARSERS
     assert not forbidden, (
         f"the probe calls SDK methods outside the two-method contract: {sorted(forbidden)}"
     )
 
+    # 3) Raw HTTP verbs on an SDK object bypass method names entirely.
     http_calls = {
-        f"{node.func.value.attr}.{node.func.attr}"
-        for node in ast.walk(tree)
+        node.func.attr for node in ast.walk(tree)
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-        and node.func.attr in HTTP_VERBS and isinstance(node.func.value, ast.Attribute)
-        and node.func.value.attr in SDK_RECEIVERS
+        and node.func.attr in HTTP_VERBS and _is_sdk_expr(node.func.value)
     }
     assert not http_calls, (
         f"the probe issues a raw mutating HTTP call, bypassing the SDK contract: {sorted(http_calls)}"
     )
 
+    # 4) Dynamic dispatch defeats 2 and 3 by construction, so it is banned outright on SDK objects,
+    #    as is naming a mutating method as a bare string anywhere in the module.
     dynamic = {
         node.value for node in ast.walk(tree)
         if isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value in MUTATING
     }
-    # ⛔ NO getattr CLAUSE HERE ANY MORE, AND THAT IS NOT A WEAKENING. `getattr(self.operation,
-    # "cancel_order")(...)` puts the SDK object in an ARGUMENT position, so the escape rule above
-    # already refuses it. A blanket getattr ban flagged the probe's legitimate defensive field
-    # reads (`getattr(response, "body", None)`) — a guard that fires on correct code gets muted,
-    # which costs exactly what a silent one does.
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                and node.func.id == "getattr" and node.args and _is_sdk_expr(node.args[0])):
+            dynamic.add("getattr(...) on an SDK object")
     assert not dynamic, (
-        "the probe names a mutating SDK method as a STRING or dispatches dynamically, "
-        f"which no static guard can follow: {sorted(dynamic)}"
+        "the probe names a mutating SDK method as a STRING or dispatches dynamically on an SDK "
+        f"object, which no static guard can follow: {sorted(dynamic)}"
     )
+
+    # ⛔ THE HONEST LIMIT — stated because I have twice overclaimed here. Name binding is followed;
+    # an SDK object hidden in a LIST/DICT or returned from a helper is NOT. This is a static check
+    # on one module, not a runtime capability restriction.
 
     # ⛔ Keep the literal denylist too. The AST walk covers calls; this covers a mutating name
     # appearing anywhere else (a getattr string, a dispatch table, a comment that becomes code).
