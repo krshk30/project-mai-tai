@@ -32,18 +32,23 @@ and tick-size helpers is safe; sharing the entry decision rule is not.
 | BUY entry | RTH | STOP / STOP_LIMIT | STOP master is broker-limited; bare `STOP_LIMIT` mirror is **LIVE** after #735/#799. | **LIVE** resting `STOP_LIMIT`. | Broker-specific entry shapes are intentional; do not force symmetry. |
 | BUY entry | EH | MARKET | **CODE-ROUTED**, not sent directly. | **CODE-ROUTED**, not sent directly. | OMS produces a fresh-ask, marketable LIMIT; the no-chase entry cap remains entry-only. |
 | BUY entry | EH | LIMIT | **LIVE** single-leg with EH metadata. | **LIVE** AM/PM LIMIT. | Supported entry transport. |
-| BUY entry | EH | STOP / STOP_LIMIT | **CODE-ROUTED** to software cross; adapter documents stop family as RTH-only. | **BROKER-REFUSED** outside `NORMAL`. | Software observes the cross and emits a LIMIT; no native EH trigger is assumed. |
+| BUY entry | EH | STOP / STOP_LIMIT | **CODE-ROUTED** to software cross; adapter documents stop family as RTH-only. | **BROKER-REFUSED (`previewOrder`)** outside `NORMAL`. | Software observes the cross and emits a LIMIT; no native EH trigger is assumed. |
 | SELL exit | RTH | MARKET | **LIVE**, subject to position/reservation truth. | **LIVE**. | Full-close route. A refusal is an outcome, never a confirmed close. |
 | SELL exit | RTH | LIMIT | **LIVE**. | **LIVE**. | Scale/profit route. |
 | SELL protection | RTH | STOP / OCO | Native entry OCO and later Webull exit children have **LIVE** fills; standalone single-leg STOP remains a different capability. | Native bracket path is **LIVE**; exit-only attach shape is separately guarded. | Native broker protection may stand the software ladder down only when armed evidence exists. |
 | SELL exit | EH | MARKET | **CODE-ROUTED**, not sent directly. | **CODE-ROUTED**, not sent directly. | OMS converts the protective decision to a marketable SELL LIMIT from a fresh bid. |
 | SELL exit | EH | LIMIT | **LIVE** software ladder transport. | **LIVE** AM/PM LIMIT transport. | This is the only currently exercised cross-broker EH exit shape. |
-| SELL protection | EH | STOP / OCO | Combo attach with `ALL_DAY` is **BROKER-REFUSED** on a real held position. Standalone single-leg STOP is **UNEXERCISED**, closed by operator decision rather than disproven. | STOP leg outside `NORMAL` is **BROKER-REFUSED** by targeted probes. | No native EH stop is credited on either venue. The in-process software ladder is the protection. |
+| SELL protection | EH | STOP / OCO | Combo attach with `ALL_DAY` is **BROKER-REFUSED** on a real held position. Standalone single-leg STOP is **UNEXERCISED**, closed by operator decision rather than disproven. | STOP leg outside `NORMAL` is **BROKER-REFUSED (`previewOrder`)** by targeted probes. | No native EH stop is credited on either venue. The in-process software ladder is the protection. |
 
 The Webull distinction in the last row is load-bearing. “The combo was refused” does not prove a
 standalone stop is impossible; `webull-premarket-protection-decision.md` records that the single-leg
 probe was never run. It remains `UNEXERCISED` unless the operator explicitly reopens an attended
 probe. This design does not reopen it.
+
+The Schwab evidence uses the broker's `previewOrder` endpoint. A preview 417 is a real broker
+refusal for the submitted shape and therefore supports `BROKER-REFUSED`; a preview 200 would prove
+only that validation passed, not that a live order was accepted or could fill. The instrument is
+named on the matrix cells so that asymmetry cannot be mistaken for live placement evidence.
 
 ## Protective repricing contract
 

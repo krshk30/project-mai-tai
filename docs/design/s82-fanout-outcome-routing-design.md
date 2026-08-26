@@ -378,6 +378,19 @@ already-cancelled reply must stay quiet after one transition; a normal working-o
 permit the next placement. The 95--194 daily per-account cadence is the control population the
 report must print.
 
+The page age is measured rather than selected from the DAIC anecdote. Across **1,092** cancel
+intents on the two live accounts from 2026-08-21 through the 2026-08-26 close, all 1,092 had a
+terminal `updated_at`. Created-to-terminal time was median **0.167 s**, p90 **0.843 s**, p95
+**1.013 s**, p99 **1.432 s**, and maximum **3.256 s**. The six DAIC rejected intents on 08-24
+resolved in **0.006--0.850 s**; they were silent-no-target outcomes, not slow broker replies.
+
+The first consumer increment therefore polls the durable cursor every **5 seconds** and pages a
+still-`cancel_pending` target at **10 seconds**: the observed 3.256-second maximum plus one complete
+5-second observation interval is 8.256 seconds, rounded up to the next whole interval. The report
+prints the observed terminal-time distribution and count beyond 10 seconds. If venue or database
+delay changes, that exceedance turns the bound into a measured re-calibration item; it never frees
+the slot or permits a replacement merely because 10 seconds elapsed.
+
 ### Consumer transport -- explicit, durable, and separate from the position poll
 
 The strategy core has no order-event consumer, and the isolated v2 bot currently subscribes to
