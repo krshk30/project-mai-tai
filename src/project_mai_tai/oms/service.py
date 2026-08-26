@@ -2068,7 +2068,7 @@ class OmsRiskService:
 
     async def _attach_webull_protection(
         self, *, broker_account_name: str, symbol: str, quantity: int,
-        entry_price: float, strategy_code: str,
+        entry_price: float, strategy_code: str, entry_client_order_id: str = "",
     ) -> None:
         """Put a real target+stop pair at Webull for a position that filled BARE.
 
@@ -2189,17 +2189,21 @@ class OmsRiskService:
                 )
                 reports = []
             if any(getattr(r, "event_type", "") not in ("rejected",) for r in reports):
-                # ⛔ REMEMBER THE BASE ID. The legs are broker-created and unqueryable, so this coid
-                # is the ONLY handle we will ever have on them — without it the pair can be placed
-                # but never released, and the software ladder can never sell into it. Mirrors
-                # `_bracket_realigned`: in-memory only, so a restart forgets it (the fallback is the
-                # bracket ENTRY coid, which IS persisted).
+                # ⛔ REMEMBER AND PERSIST THE BASE ID. These legs hang off this exit-only coid,
+                # not the filled entry coid. Without it the pair can be placed but never released,
+                # and its eventual child fill can never be attributed after a restart.
                 self._webull_protect_base[(broker_account_name, symbol.upper())] = coid
+                persisted = await self._persist_webull_protect_base(
+                    broker_account_name, symbol, coid,
+                    entry_client_order_id=entry_client_order_id,
+                )
                 self.logger.info(
                     "[WEBULL-PROTECT-ATTACHED] %s %s qty=%d entry=%.4f -> target=%.4f stop=%.4f "
-                    "session=%s (attempt %d) — a real pair is now resting at the broker",
+                    "session=%s (attempt %d) handle_persisted=%d — a real pair is now resting at "
+                    "the broker; handle_persisted=1 means child/time/price remain addressable "
+                    "after restart",
                     symbol, broker_account_name, quantity, entry_price, target, protect,
-                    session_hint, attempt,
+                    session_hint, attempt, int(persisted),
                 )
                 return
             reason = "; ".join(str(getattr(r, "reason", "")) for r in reports) or "no report"
@@ -2304,15 +2308,26 @@ class OmsRiskService:
             return False
         base = self._webull_protect_base.get(key, "")
         if not base:
-            # Fall back to the bracket ENTRY coid — the native combo's legs hang off it, and unlike
-            # the attach coid it survives a restart because it is a real `broker_orders` row.
+            # Native bracket children hang off the entry coid; bare Webull protection hangs off a
+            # separately persisted attach coid. Never guess one from the other.
             try:
                 entry = self._find_oco_entry_order(session, broker_account_name, symbol)
-                base = str(getattr(entry, "client_order_id", "") or "")
+                base = self._oco_exit_base_for_entry(
+                    entry, broker_account_name=broker_account_name, symbol=symbol
+                )
             except Exception:  # noqa: BLE001 - never break an exit for bookkeeping
                 base = ""
         if not base:
             return False
+        # Trigger + polarity live beside the numbers: requested=2 is the denominator; only
+        # confirmed=2 means the reservation is clear. A request is not a result.
+        requested = 2
+        self.logger.info(
+            "[OMS-CANCEL-PAIR-REQUEST] %s %s base=%s requested=%d confirmed=0 "
+            "release_confirmed=0 — trigger=software_close; polarity: 1 only when every addressed "
+            "exit leg is confirmed cancelled or already absent",
+            symbol, broker_account_name, base, requested,
+        )
         try:
             reports = await self.broker_adapter.cancel_exit_pair(
                 broker_account_name=broker_account_name, symbol=symbol,
@@ -2327,12 +2342,35 @@ class OmsRiskService:
             return False
         if not reports:
             # No capability (Schwab/simulated) or no addressable legs -> behave exactly as before.
+            self.logger.warning(
+                "[OMS-CANCEL-PAIR-UNCERTAIN] %s %s base=%s requested=%d reports=0 confirmed=0 "
+                "release_confirmed=0 — no success marker; the close still proceeds",
+                symbol, broker_account_name, base, requested,
+            )
+            return False
+        confirmed = sum(
+            1 for report in reports if getattr(report, "event_type", "") == "cancelled"
+        )
+        refused = sum(
+            1 for report in reports if getattr(report, "event_type", "") == "rejected"
+        )
+        if len(reports) != requested or confirmed != requested:
+            reasons = "; ".join(
+                str(getattr(report, "reason", "") or "<no reason>") for report in reports
+            )
+            self.logger.warning(
+                "[OMS-CANCEL-PAIR-UNCERTAIN] %s %s base=%s requested=%d reports=%d confirmed=%d "
+                "refused=%d release_confirmed=0 — no success marker; reasons=%s",
+                symbol, broker_account_name, base, requested, len(reports), confirmed, refused,
+                reasons[:1000],
+            )
             return False
         self._exit_reservation_released.add(key)
         self.logger.info(
-            "[OMS-EXIT-RELEASE] %s %s base=%s legs=%d — cancelled the resting exit legs so the "
-            "software close is not refused as a naked short",
-            symbol, broker_account_name, base, len(reports),
+            "[OMS-EXIT-RELEASE] %s %s base=%s requested=%d confirmed=%d release_confirmed=1 — "
+            "success: every addressed exit leg is cancelled or already absent, so the software "
+            "close is not refused as a naked short",
+            symbol, broker_account_name, base, requested, confirmed,
         )
         return True
 
@@ -2755,6 +2793,7 @@ class OmsRiskService:
         quantity: Decimal,
         price: Decimal,
         metadata: dict[str, str],
+        entry_client_order_id: str = "",
     ) -> None:
         """Track-2 Phase-2 Slice-1: maintain the OMS-owned `oms_managed_positions`
         ladder state from v2's own fills. SOLE WRITER — only this OMS path writes
@@ -2833,6 +2872,7 @@ class OmsRiskService:
                     broker_account_name=broker_account_name, symbol=symbol,
                     quantity=int(quantity), entry_price=float(price),
                     strategy_code=strategy_code,
+                    entry_client_order_id=entry_client_order_id,
                 )
         elif s == "sell":
             # #6: when close-on-fill is ON, the managed-exit row is closed HERE, on the
@@ -3345,9 +3385,13 @@ class OmsRiskService:
     # `collect_completed_trade_cycles` then has entries with no exits to pair, and the operator's
     # completed-trades table and P&L render BLANK. Measured: Schwab sell fills 07-21: 5 -> 07-23: 0.
 
-    def _find_oco_entry_order(self, session: Session, acct: str, symbol: str):
-        """The bracket ENTRY order — its client_order_id is the base the exit legs hang off, and it
-        carries the strategy/account ids the synthetic exit row needs. SYNC; caller's session.
+    def _find_oco_entry_order(
+        self, session: Session, acct: str, symbol: str, *, client_order_id: str = ""
+    ):
+        """The filled ENTRY order carrying the strategy/account ids the synthetic exit row needs.
+
+        Native-bracket children hang off its client id. Bare Webull protection uses the separately
+        persisted ``webull_protect_base_client_order_id`` in its payload. SYNC; caller's session.
 
         Tolerates a missing session: some callers of the close path drive it without one, and the
         exit capture is BOOKKEEPING — it must degrade to "no fill recorded", never raise into a
@@ -3355,7 +3399,7 @@ class OmsRiskService:
         """
         if session is None:
             return None
-        return session.scalar(
+        stmt = (
             select(BrokerOrder)
             .join(BrokerAccount, BrokerAccount.id == BrokerOrder.broker_account_id)
             .where(
@@ -3391,6 +3435,80 @@ class OmsRiskService:
             )
             .order_by(desc(BrokerOrder.updated_at))
         )
+        if client_order_id:
+            stmt = stmt.where(BrokerOrder.client_order_id == client_order_id)
+        return session.scalar(stmt)
+
+    def _oco_exit_base_for_entry(
+        self, entry_order, *, broker_account_name: str, symbol: str
+    ) -> str:
+        """Return the exact client id whose T/S children own the exit.
+
+        A native bracket hangs its children off the entry coid. A bare Webull fan-out fill gets a
+        *separate* exit-only pair, so using the entry coid polls two orders that never existed. That
+        was DAIC 2026-08-25: the real pair used ``...-protect-9fea4541aa97`` while every poll asked
+        for ``...-open-a2f8fc2f3f24T/S`` and therefore could never name the child that flattened it.
+        The attach handle is persisted into the filled entry order payload; the in-memory map is a
+        same-process fallback, never the durable source.
+        """
+        if entry_order is None:
+            return ""
+        payload = dict(getattr(entry_order, "payload", None) or {})
+        is_bare_webull = (
+            str(payload.get("fanout_leg", "")).lower() == "webull"
+            and str(payload.get("native_oco_bracket", "")).lower() != "true"
+        )
+        if not is_bare_webull:
+            return str(getattr(entry_order, "client_order_id", "") or "")
+        persisted = str(payload.get("webull_protect_base_client_order_id", "") or "")
+        if persisted:
+            return persisted
+        return str(
+            getattr(self, "_webull_protect_base", {}).get(
+                (broker_account_name, symbol.upper()), ""
+            )
+            or ""
+        )
+
+    async def _persist_webull_protect_base(
+        self, broker_account_name: str, symbol: str, base_client_order_id: str, *,
+        entry_client_order_id: str = "",
+    ) -> bool:
+        """Persist the only handle that can address broker-created Webull exit children."""
+        try:
+            def _write(session: Session) -> bool:
+                # Use the fill event's exact entry id. Selecting merely "newest filled buy" can
+                # write the handle onto yesterday's row if this background task beats the outer
+                # fill transaction's commit.
+                entry = self._find_oco_entry_order(
+                    session, broker_account_name, symbol,
+                    client_order_id=entry_client_order_id,
+                )
+                if entry is None:
+                    return False
+                payload = dict(entry.payload or {})
+                payload["webull_protect_base_client_order_id"] = base_client_order_id
+                entry.payload = payload
+                session.flush()
+                return True
+
+            persisted = bool(await self._run_db(_write, commit=True))
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - protection already exists; surface lost handle loudly
+            self.logger.warning(
+                "[WEBULL-PROTECT-HANDLE-LOST] %s %s base=%s handle_persisted=0 — the pair is "
+                "resting but its child ids will be unaddressable after restart",
+                symbol, broker_account_name, base_client_order_id, exc_info=True,
+            )
+            return False
+        if not persisted:
+            self.logger.warning(
+                "[WEBULL-PROTECT-HANDLE-LOST] %s %s base=%s handle_persisted=0 — no filled entry "
+                "order accepted the handle; child/time/price attribution is not restart-safe",
+                symbol, broker_account_name, base_client_order_id,
+            )
+        return persisted
 
     async def _fetch_oco_exit_detail(
         self, acct: str, symbol: str, base_coid: str, *,
@@ -3467,15 +3585,44 @@ class OmsRiskService:
         the entry row. Idempotent twice over: `get_or_create_order` keys on a deterministic
         client_order_id, and `record_fill_if_needed` refuses a duplicate `broker_fill_id`.
         """
-        if session is None or entry_order is None or not detail:
+        # One terminal attribution line per candidate. `evaluated=1` is the denominator: without
+        # it, zero RECORDED markers cannot distinguish "nothing was evaluated" from "a candidate
+        # reached this function but could not be made durable". The dedicated RECORDED marker below
+        # remains success-only; this outcome line makes every refused branch visible as the other
+        # polarity.
+        def _outcome(*, attributed: int, could_not_tell: int, outcome: str, child_id: str = "") -> None:
+            self.logger.info(
+                "[OMS-CHILD-EXIT-ATTRIBUTION] %s %s trigger=filled_child_candidate evaluated=1 "
+                "attributed=%d could_not_tell=%d outcome=%s child_order=%s — polarity: "
+                "attributed=1 means the child/time/price already has a durable fill; "
+                "could_not_tell=1 means the candidate was not safely attributable",
+                acct, symbol, attributed, could_not_tell, outcome, child_id or "-",
+            )
+
+        if session is None:
+            _outcome(attributed=0, could_not_tell=1, outcome="missing_session")
+            return False
+        if entry_order is None:
+            _outcome(attributed=0, could_not_tell=1, outcome="missing_entry_order")
+            return False
+        if not detail:
+            _outcome(attributed=0, could_not_tell=1, outcome="missing_child_detail")
             return False
         qty = detail.get("quantity")
         price = detail.get("price")
         if not qty or not price or Decimal(str(qty)) <= 0 or Decimal(str(price)) <= 0:
+            _outcome(
+                attributed=0, could_not_tell=1, outcome="invalid_quantity_or_price",
+                child_id=str(detail.get("broker_order_id") or ""),
+            )
             return False   # the $0 cancelled-sibling artefact must never become a -100% trade
         child_id = str(detail.get("broker_order_id") or "")
         intent = session.get(TradeIntent, entry_order.intent_id) if entry_order.intent_id else None
         if intent is None:
+            _outcome(
+                attributed=0, could_not_tell=1, outcome="missing_trade_intent",
+                child_id=child_id,
+            )
             return False
         exit_order = self.store.get_or_create_order(
             session,
@@ -3515,10 +3662,23 @@ class OmsRiskService:
             payload={"source": "native_oco_child_leg", "broker_order_id": child_id},
         )
         if fill is None:
+            # All invalid-report cases were rejected above. Here `record_fill_if_needed` can only
+            # mean the deterministic broker fill is already present / has no incremental quantity,
+            # so attribution is durable even though this invocation created no second row.
+            _outcome(
+                attributed=1, could_not_tell=0, outcome="already_recorded",
+                child_id=child_id,
+            )
             return False
+        _outcome(
+            attributed=1, could_not_tell=0, outcome="recorded", child_id=child_id,
+        )
         self.logger.info(
-            "[OMS-OCO-EXIT-FILL] %s %s recorded broker exit qty=%s @%s (child order %s) -> "
-            "completed trade can now pair", acct, symbol, qty, price, child_id or "?",
+            "[OMS-CHILD-EXIT-RECORDED] %s %s trigger=filled_child_found evaluated=1 "
+            "attributed=1 could_not_tell=0 qty=%s "
+            "price=%s filled_at=%s child_order=%s — polarity: attributed=1 means child, time, "
+            "price and fill are durably recorded; completed trade can now pair",
+            acct, symbol, qty, price, detail.get("filled_at"), child_id or "?",
         )
         return True
 
@@ -3648,7 +3808,9 @@ class OmsRiskService:
             # pair. This path is broker-agnostic (it fires for Schwab and Webull alike), which is
             # why it is the primary hook: Webull has no armed-OCO tracking to drive the fast path.
             entry_order = self._find_oco_entry_order(session, acct, symbol)
-            base_coid = str(getattr(entry_order, "client_order_id", "") or "")
+            base_coid = self._oco_exit_base_for_entry(
+                entry_order, broker_account_name=acct, symbol=symbol
+            )
             detail = await self._fetch_oco_exit_detail(
                 acct, symbol, base_coid,
                 entry_broker_order_id=str(getattr(entry_order, "broker_order_id", "") or ""),
@@ -3805,7 +3967,9 @@ class OmsRiskService:
             self._oco_exit_poll_at[key] = now      # stamp BEFORE the call: a failure must not spin
             def _read_entry(session: Session, _a=acct, _s=symbol) -> tuple:
                 o = self._find_oco_entry_order(session, _a, _s)
-                return (str(getattr(o, "client_order_id", "") or ""),
+                return (self._oco_exit_base_for_entry(
+                            o, broker_account_name=_a, symbol=_s
+                        ),
                         str(getattr(o, "broker_order_id", "") or ""),
                         getattr(o, "quantity", None))
 
@@ -3837,7 +4001,11 @@ class OmsRiskService:
                 # row open for an hour is the defect; a miss seconds after entry is normal (the OCO
                 # simply has not fired yet).
                 await self._log_oco_exit_miss(
-                    acct, symbol, base_coid=base_coid, reason="broker_reported_no_filled_exit_leg",
+                    acct, symbol, base_coid=base_coid,
+                    reason=(
+                        "broker_reported_no_filled_exit_leg"
+                        if base_coid else "missing_exit_pair_base"
+                    ),
                     entry_oid=entry_oid, entry_qty=entry_qty,
                 )
                 continue
@@ -3897,11 +4065,15 @@ class OmsRiskService:
             except Exception:  # noqa: BLE001
                 pass
 
+            could_not_tell = int(reason != "broker_reported_no_filled_exit_leg")
             self.logger.info(
                 "[OMS-OCO-EXIT-MISS] %s %s reason=%s entry_coid=%s entry_order_id=%s entry_qty=%s "
-                "managed_row_age=%s — polled, no filled exit leg returned; managed row stays OPEN "
+                "managed_row_age=%s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 "
+                "could_not_tell=%d — polarity: attributed=0 means no child/time/price was recorded; "
+                "could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN "
                 "(blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect.",
                 acct, symbol, reason, base_coid or "-", entry_oid or "-", entry_qty, row_age,
+                could_not_tell,
             )
         except asyncio.CancelledError:
             raise
@@ -3927,7 +4099,9 @@ class OmsRiskService:
         # before, just without a recorded exit.
         def _read_base(session: Session) -> tuple:
             order = self._find_oco_entry_order(session, acct, symbol)
-            return (str(getattr(order, "client_order_id", "") or ""),
+            return (self._oco_exit_base_for_entry(
+                        order, broker_account_name=acct, symbol=symbol
+                    ),
                     str(getattr(order, "broker_order_id", "") or ""),
                     getattr(order, "quantity", None))
 
@@ -4790,6 +4964,7 @@ class OmsRiskService:
                             quantity=fill.quantity,
                             price=fill.price,
                             metadata={str(k): str(v) for k, v in (order.payload or {}).items()},
+                            entry_client_order_id=str(order.client_order_id or ""),
                         )
                         # Webull mirror-on-fill: queue this fill iff it's a v2-primary buy-open
                         # (flag on + strategy schwab_1m_v2 + primary account + buy + open). Fired
@@ -7415,6 +7590,7 @@ class OmsRiskService:
                     quantity=fill.quantity,
                     price=fill.price,
                     metadata=dict(request.metadata),
+                    entry_client_order_id=str(request.client_order_id or ""),
                 )
 
             intent_status = report.event_type
