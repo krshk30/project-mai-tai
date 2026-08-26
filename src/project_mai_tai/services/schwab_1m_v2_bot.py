@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import signal
 import time
 from datetime import UTC, date, datetime, timedelta
@@ -371,7 +372,7 @@ class SchwabV2BotService:
             level=self.settings.log_level.upper(),
             format="%(asctime)s %(levelname)s %(name)s | %(message)s",
         )
-        logger.info("schwab_1m_v2 bot starting (enabled=%s)", self.enabled)
+        logger.info("schwab_1m_v2 bot starting pid=%d (enabled=%s)", os.getpid(), self.enabled)
 
         if not self.enabled:
             logger.warning(

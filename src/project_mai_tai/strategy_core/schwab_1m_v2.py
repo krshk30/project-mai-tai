@@ -41,6 +41,7 @@ from project_mai_tai.events import (
     TradeIntentPayload,
     stream_name,
 )
+from project_mai_tai.fanout_identity import fanout_slot_for_source, fanout_slot_id
 from project_mai_tai.market_data.schwab_v2_rest_client import ChartBar, Quote
 from project_mai_tai.settings import Settings
 
@@ -2144,6 +2145,9 @@ class SchwabV2Strategy:
                     "cw_entry_n": str(entry_n),
                     "cw_arm_bar_ts": str(int(state.cw_arm_bar_ts or 0)),
                     "fanout_segment_id": str(segment_id),
+                    **self._fanout_slot_metadata(
+                        state, source="rth_resting_mirror", segment_id=segment_id
+                    ),
                     # ⛔ NO bracket_* keys on purpose -- see the note above.
                     "source": "schwab_1m_v2", "strategy_version": STRATEGY_VERSION,
                 },
@@ -2205,12 +2209,17 @@ class SchwabV2Strategy:
         if was_webull_resting:
             logger.info("[V2-WEBULL-RESTING-CANCEL] %s reason=%s level=%.4f — cancelling the mirror",
                         state.symbol, reason, was_level)
+            segment_id = self._ensure_fanout_segment_id(state)
             self._pending_webull_direct_intents.append(TradeIntentDraft(
                 symbol=state.symbol, side="buy", intent_type="cancel",
                 quantity=Decimal(str(self._webull_fanout_qty)),
                 reason="schwab_1m_v2 resting-entry cancel (webull mirror)",
                 metadata={"resting_entry_cancel": "true", "reason": reason,
                           "fanout_leg": "webull", "fanout_source": "rth_resting_mirror",
+                          "fanout_segment_id": str(segment_id),
+                          **self._fanout_slot_metadata(
+                              state, source="rth_resting_mirror", segment_id=segment_id
+                          ),
                           "source": "schwab_1m_v2", "strategy_version": STRATEGY_VERSION},
             ))
 
@@ -2635,6 +2644,34 @@ class SchwabV2Strategy:
         state.fanout_segment_id = segment_id
         return segment_id
 
+    def _fanout_slot_metadata(
+        self,
+        state: SymbolState,
+        *,
+        source: str,
+        segment_id: int | None = None,
+    ) -> dict[str, str]:
+        """Bind one Webull fan-out draft to its deterministic economic slot."""
+
+        segment = segment_id or self._ensure_fanout_segment_id(state)
+        slot = fanout_slot_for_source(source)
+        slot_id = fanout_slot_id(
+            strategy_code=STRATEGY_CODE,
+            symbol=state.symbol,
+            segment_id=segment,
+            slot=slot,
+        )
+        logger.info(
+            "[V2-FANOUT-SLOT-BOUND] %s source=%s slot=%s slot_id=%s segment_id=%d "
+            "bound=1 — polarity: bound=1 means the draft has a durable economic slot",
+            state.symbol,
+            source,
+            slot,
+            slot_id,
+            segment,
+        )
+        return {"fanout_slot": slot, "fanout_slot_id": slot_id}
+
     def _build_webull_fanout_draft(
         self, state: SymbolState, *, entry_px: float, session_is_eh: bool, source: str,
         entry_n: int, band_anchor: float | None = None,
@@ -2645,6 +2682,9 @@ class SchwabV2Strategy:
         a plain LIMIT that the bot's EH-routing + the OMS reactive-EH builder re-price to a marketable,
         band-capped EH-LIMIT off the OMS's own fresh ask (a MARKET/OCO 417s in EH on Webull)."""
         segment_id = self._ensure_fanout_segment_id(state)
+        slot_metadata = self._fanout_slot_metadata(
+            state, source=source, segment_id=segment_id
+        )
         # Success marker and denominator. It fires once per emitted fan-out draft. No draft (for
         # example flag-off) stays quiet. attributed=1 is the GOOD polarity; any filled leg without
         # this key makes signal 4 UNEXERCISED rather than manufacturing a clean zero.
@@ -2673,6 +2713,7 @@ class SchwabV2Strategy:
             "cw_entry_n": str(entry_n),
             "cw_arm_bar_ts": str(int(state.cw_arm_bar_ts or 0)),
             "fanout_segment_id": str(segment_id),
+            **slot_metadata,
             "order_type": "limit" if session_is_eh else "market",
             "source": "schwab_1m_v2",
             "strategy_version": STRATEGY_VERSION,
