@@ -749,10 +749,11 @@ class SchwabV2Strategy:
         # with the reclaim slot still free must be the resting one. That test is robust to the
         # order in which `resting_active` is cleared.
         #
-        # ⭐ BOTH LEGS, for free: `SymbolState` is per SYMBOL, not per account, so the Webull
-        # fan-out leg's fill lands here too. A fan-out-only cross -- Schwab rejected by the
-        # API-open block, as UPC hit on 2026-08-03 -- therefore still consumes its slot and stays
-        # bounded under the per-type cap.
+        # ⛔ SCHWAB LEG ONLY. `SymbolState` is per symbol, but the bot's position poll is scoped
+        # to `strategy_schwab_1m_v2_account_name`; a Webull fan-out fill does NOT land here. That is
+        # intentional under operator reading A: the Webull fill consumes its venue-local fan-out
+        # claim and never consumes v2's resting/reclaim slot. Cross-venue 2x exposure is the paired
+        # broker experiment, not duplicate exposure for this counter.
         if prev_held == 0 and state.position_qty_held > 0 and not state.cw_reclaim_taken:
             # ⛔⭐⭐ CLAIM ON FILL — and the slot decides WHICH claim.
             # The original inference was "the reactive path claims cw_reclaim_taken at EMIT, so a

@@ -268,14 +268,17 @@ polarities of the same relationship rather than merely correlating the reject te
 
 This incident therefore has two fixes with separate acceptance controls:
 
-1. enforce the BUY stop-limit relationship **after venue tick rounding**, before the venue call; a
-   forced collapse-to-one-tick case must be corrected or refused locally, while a known valid
-   two-price control must remain unchanged;
+1. enforce the BUY stop-limit relationship **after venue tick rounding**, before the venue call;
+   #799/#800 now widens a raw-valid pair that collapses on the venue grid by exactly one tick and
+   refuses a genuinely raw-invalid pair locally, while a known valid two-price control remains
+   unchanged;
 2. publish and consume the durable Webull rejection through this outcome loop, so one rejected
    attempt informs the next action for the same slot rather than becoming an unread event.
 
-The outcome loop addresses item 2. It does not make an invalid wire payload valid, and item 1 must not
-be deferred merely because feedback would stop repeated attempts.
+All 15 observed relationship rejects belong to item 1's **raw-valid/wire-collapsed** population. The
+raw-invalid local-refusal path had denominator **0** in the first post-deploy verification and is
+therefore `UNEXERCISED`, not missed and not passed. The outcome loop addresses item 2. #799 removed
+the known rounding cause; it did not add a general strategy reader for broker rejections.
 
 **DAIC / Schwab resting cancel:** on 2026-08-24 the strategy emitted **27** Schwab cancel intents for
 DAIC: 21 ended `cancelled` and 6 `rejected`. The cancel-path event population contains **22 distinct
@@ -308,6 +311,72 @@ A broker refusal must never be represented as a confirmed cancel, but confirmati
 asynchronous so cancel verification cannot block an unrelated protective exit. This document names
 that dependency; it does not silently broaden reading A or make Schwab cancellation part of the
 Webull claim.
+
+### C3 measurement -- post-exit stale-held refusals, not a fixed 2.4-minute rule
+
+A read-only durable-event census after the 2026-08-26 close found **49** Webull
+`NEW_NO_POSITION...CAN_NOT_SELL_SHORT` sell refusals that day. The earlier board count of 48 was a
+correct earlier snapshot; one final XPON refusal arrived at 15:57:44 ET. All 49 followed a confirmed
+Webull sell fill, across **11 exit episodes / 4 symbols**. Measured from that sell fill to the last
+refusal in its episode, the distribution was:
+
+| denominator | median | p90 | maximum |
+|---|---:|---:|---:|
+| 11 post-exit episodes | 8.2 s | 128.9 s | 237.1 s |
+
+The population therefore proves a variable stale-**held** window after the broker has already sold
+the shares. It does not justify sleeping for 2.4 minutes, and the durable rows alone cannot say when
+each stale position view finally became fresh: only the final rejected request and the absence of a
+later retry are recorded.
+
+The retry boundary is evidence-driven rather than a duration copied from this sample:
+
+1. A durable sell fill for the current `(account, symbol, position episode)` is authoritative exit
+   evidence. Once present, no new sell may be emitted merely because an older position snapshot
+   still says held.
+2. While the snapshot's `source_updated_at` has not advanced past that exit fill, the outcome is
+   `waiting_for_fresh_position_evidence`; retries are **zero per stale snapshot generation**, not one
+   per quote.
+3. A later successful snapshot that is newer than the sell fill and still says held begins a new,
+   bounded reconcile attempt. A failed or timestamp-less read is `could_not_tell` and emits no sell.
+4. The episode reports `exit_fill_at`, snapshot time, stale age, emitted retry count, and terminal
+   outcome. If broker visibility slows, the waiting interval grows without increasing sell traffic;
+   if it speeds up, the next fresh snapshot resolves immediately. A configurable maximum observation
+   age pages while preserving the managed row; it never converts age into permission to sell.
+
+Controls require both polarities: a scripted stale-held snapshot after a sell fill must emit no new
+sell, while a newer confirmed-held snapshot must permit exactly one bounded reconcile attempt. A
+fresh flat snapshot must close the row without a sell. The existing default-off A2 backoff is not
+acceptance for C3: it is time-based, and its 90-second escalation predates a live p90 of 128.9 seconds.
+
+### C2 measurement -- cancellation is read below the strategy, but not consumed above it
+
+The normal resting campaign, not DAIC alone, is the sizing input. Closed-session cancel-intent counts
+were symmetric by account: **156/156** on 2026-08-21, **194/194** on 08-24, **95/95** on 08-25, and
+**101/101** on 08-26 for `live:schwab_1m_v2` / `live:orb`. Every row was terminal by the query; the
+mix of cancelled versus rejected differed by broker. A design that assumes 22 cancels is an outlier
+is sized against the wrong denominator.
+
+`OmsService._process_cancel_intent` and each adapter read and persist the reply. The gap is above
+them: `_queue_resting_cancel` clears `resting_active`, `resting_level`, broker-order ownership, and
+the slot before the target outcome can govern a replacement. The replacement loop therefore learns
+nothing from an already-cancelled or filled target even though the durable event exists.
+
+The bounded consumer contract is:
+
+- queueing a cancel changes the slot to `cancel_pending`; it does **not** make the slot free;
+- one target order has at most one in-flight cancel attempt, keyed durably by target id;
+- `cancel_confirmed` or `target_already_cancelled` clears the old target and permits one replacement;
+- `target_filled` transitions to held/filled handling and forbids a replacement;
+- `cancel_rejected`, missing target identity, cursor/read failure, or an unclassified terminal result
+  is `could_not_tell`: retain ownership, emit no replacement, and page at the bounded age;
+- replay is idempotent and the durable cursor advances only after the strategy transition commits.
+
+The success denominator is not “few cancels.” It is **targets**: one request per target, every target
+reaches one named terminal consumer state, and no replacement precedes that state. A forced
+already-cancelled reply must stay quiet after one transition; a normal working-order cancel must
+permit the next placement. The 95--194 daily per-account cadence is the control population the
+report must print.
 
 ### Consumer transport -- explicit, durable, and separate from the position poll
 
@@ -420,6 +489,28 @@ The consumer contract is therefore explicit:
 comparison report, but a duplicate alarm keys at least on `(broker_account, symbol, segment, slot)`.
 One Schwab fill plus one Webull fill for the same cross is the expected 2x pair, not a duplicate. An
 alarm that collapses the venue dimension would fire on the intended experiment and call it a defect.
+
+### C4 measurement -- the old “both legs for free” comment was false
+
+`Schwab1mV2Bot._fetch_position_maps` resolves exactly one account,
+`strategy_schwab_1m_v2_account_name`, before it builds the `held` map that feeds
+`SymbolState.update_position`. A Webull fill therefore cannot reach the fill-transition slot logic.
+The old comment at `schwab_1m_v2.py:update_position` claimed the opposite and has been corrected.
+This is intended reading-A behavior, but it was accidental blindness until the venue-local claim was
+specified.
+
+The retained post-flag durable population contains **53 Webull fan-out BUY fills** through the
+2026-08-26 close. Only **16** carry a nonzero pre-#797 arm id usable for a same-symbol/same-arm join:
+**7** have a matching Schwab fill and **9** prove a Webull fan-out fill with no matching Schwab fill.
+The other **37** have a zero/missing arm id and are `could_not_tell`, not paired and not fan-out-only.
+This is a lower bound of nine, not “9 of 53.”
+
+What slot accounting believed historically cannot be reconstructed: `cw_resting_taken` and
+`cw_reclaim_taken` are in-memory booleans and were never persisted. What source proves is narrower
+and sufficient to kill the comment: none of those Webull fills could change either boolean through
+`update_position`. Other Schwab emits/fills may still have changed the same slot during the segment.
+The #797 identity report is the prospective instrument; it must report venue-local fill outcome next
+to v2 slot state without treating the expected separation as an error.
 
 ### Known cause this addresses
 

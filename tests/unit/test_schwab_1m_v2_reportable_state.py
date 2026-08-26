@@ -137,6 +137,17 @@ def test_trading_logic_read_is_untouched_by_the_reporting_read() -> None:
     bot = _bot(sf)
     # the Webull-only position is INVISIBLE to the trading read ...
     assert bot._fetch_open_positions() == {}
+    # ... while the same symbol held in the PRIMARY account is visible.  Both polarities matter:
+    # a read that returned empty for every account would also satisfy the assertion above.
+    with sf() as session:
+        primary = session.scalar(select(BrokerAccount).where(BrokerAccount.name == PRIMARY))
+        strategy = session.scalar(select(Strategy).where(Strategy.code == "schwab_1m_v2"))
+        session.add(VirtualPosition(
+            strategy_id=strategy.id, broker_account_id=primary.id, symbol="QBTX",
+            quantity=2, average_price=Decimal("8.81"),
+        ))
+        session.commit()
+    assert bot._fetch_open_positions() == {"QBTX": 2}
     # ... while the reporting read is the one that spans accounts
     with sf() as session:
         _managed(session, "QBTX", FANOUT, 1, "8.80")

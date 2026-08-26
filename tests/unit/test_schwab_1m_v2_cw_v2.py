@@ -491,14 +491,17 @@ def test_BOUNDARY_a_genuine_second_cross_starts_clean():
     assert strat._cw_v2_quote(state, _quote(12.5)) is not None     # gets its own entry
 
 
-def test_BOTH_LEGS_a_fanout_only_cross_still_consumes_its_slot():
-    """⛔ The Webull fan-out leg must consume the slot too, or a fan-out-only cross is unbounded.
-    Real shape: UPC 2026-08-03 — Schwab rejected the entry via the API-open block, so ONLY the
-    qty-1 Webull leg filled. `SymbolState` is per SYMBOL, so that fill lands here as well."""
+def test_PRIMARY_fill_consumes_its_slot_regardless_of_quantity():
+    """The primary Schwab fill consumes its venue-local slot even when its quantity is one.
+
+    `update_position` is fed only by the bot's primary-account position map; the Webull fan-out
+    account does not reach this method.  The account-scope boundary is pinned separately in
+    `test_schwab_1m_v2_reportable_state.py`.
+    """
     strat = _strat_reclaim()
     state = strat.watchlist_state("UPC")
     _arm_to_watch(strat, state)
-    _resting_fill(strat, state, qty=1)          # the fan-out leg alone (qty 1, not the qty-2 primary)
+    _resting_fill(strat, state, qty=1)          # primary sizing may be one; quantity is not identity
     assert state.cw_resting_taken is True
     strat.update_position("UPC", 0)
     _feed_bar(strat, state, _bar(15.0, ts=4), _sig())
