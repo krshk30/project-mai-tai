@@ -162,7 +162,10 @@ def test_webull_exception_paths_are_DERIVED_never_guessed() -> None:
     """
     src = (_ADAPTERS / "webull.py").read_text(encoding="utf-8")
     assert 'origin: str = "unknown"' in src, "the helper must still default to unknown"
-    assert src.count('origin="client"') == 2, "only the two pre-flight guards are literal-client"
+    assert src.count('origin="client"') == 3, (
+        "only the three pre-flight guards are literal-client: missing account config, "
+        "invalid raw BUY stop-limit relationship, and missing instrument id"
+    )
     assert '_reject(request, self._exc_reason(exc), origin="' not in src, (
         "an exception-wrapping site was labelled by a LITERAL — that is the guess"
     )
