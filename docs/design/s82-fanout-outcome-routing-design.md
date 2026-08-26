@@ -275,10 +275,13 @@ Reading B failed for three general reasons:
 1. **Alternation by survivorship.** If one venue's fill consumes a shared slot, whichever venue fills
    first suppresses the other. The surviving leg is selected by execution order rather than by the
    strategy's composition.
-2. **Structural walkover, not a latency race.** The Webull resting-path leg is MARKET-at-cross while
-   the Schwab leg remains a resting STOP_LIMIT. Webull is structurally expected to fill first. Under
-   B, the system silently becomes Webull-primary with Schwab trading only leftovers, and no outcome
-   error is required for that distortion.
+2. **Structural walkover, measured rather than inferred from order type.** The two Webull resting-path
+   legs are different: `rth_resting_mirror` really does rest a Webull STOP_LIMIT (1,019 orders / 20
+   fills, 2%, 14 days), while the cross-fired `rth_resting` population is LIMIT plus MARKET and filled
+   54 of 54 (100%). The Schwab primary STOP_LIMIT filled 129 of 1,426 (9%) over the same read. Under
+   B, the cross-fired Webull leg would consume the shared slot almost immediately, almost every time,
+   leaving Schwab to trade only the residual population. No outcome error is required for that
+   distortion.
 3. **It destroys the broker bake-off deliverable.** `dual-broker-v2-design.md` requires both brokers
    to receive the same signal at the same instant, accepts intentional 2x exposure, and compares the
    two fills to decide which broker to retire. `per-broker-eligibility-webull-fallback-design.md`
