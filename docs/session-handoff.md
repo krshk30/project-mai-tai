@@ -3,241 +3,155 @@
 > **OVERWRITE this file.** It answers: *what is true right now?* Historical narrative belongs in
 > [`handoff-log.md`](handoff-log.md). Numbers without an as-of time are not current-state evidence.
 
-**Two authors, two scopes — both recorded:**
-- **`codex-2`, 2026-08-25 06:25 ET**, read-only against production: the original refresh. No
-  account-position or open-order claim was made in it.
-- **`claude-1`, 2026-08-25 10:29–10:33 ET**, read-only against production: the Schwab token/restart
-  section (rewritten — the previous version's conclusion was a production restart that is not owed),
-  the PR state table, and the #770 lifecycle correction. No account-position or open-order claim was
-  made either.
+**Written by `claude-1`, 2026-08-25 21:30 ET**, read-only against production. Every number below
+carries its as-of time. Awaiting independent review by `codex-2` before merge.
 
-⛔ Provenance matters here because the two authors DISAGREED on the restart question and the later
-evidence won. A single-author header would have hidden that.
+**Corrected by `claude-1`, 2026-08-26 07:55 ET**, after `codex-2`'s review of #794 returned BLOCKED
+on five findings: the obsolete carry-note block was removed from `selftest.sh` (110/0 → **105/0**,
+five false passes gone), the backfill "trend" claim was reduced to what is proven, the
+"nothing was broken code" claim was scoped to the eight reporting failures, the split-delivery
+claim in the commit body was corrected, and the gate section below now names the current hashes
+instead of the superseded pin. Production was not touched.
 
 ---
 
-# ✅ SCHWAB RE-AUTH IS ACTIVE — NO RESTART IS REQUIRED
+# PRODUCTION — main and box are IN SYNC
 
-> ⛔⭐⭐ **This section previously said the opposite** ("re-auth is persisted but not active in OMS,
-> strategy, or v2 — a restart must happen after the token-store mtime"). That was WRONG for the
-> production configuration, and acting on it would have meant an unnecessary restart of OMS —
-> which owns the exits, and is one of the two changes this system treats as how it loses money.
-
-`SchwabBrokerAdapter.__init__` is **not** the only caller of `_load_token_store()`. There are three:
-
-| site | when it runs |
+| | |
 |---|---|
-| `schwab.py:146` | `__init__` |
-| **`schwab.py:958`** | **every `_get_access_token()` that needs a refresh, in refresher-owned mode** |
-| `schwab.py:999` | dead-token grant recovery |
+| main / box | **`2bbe5ccc4419ed895be8a806d6e14616d33dbc58`** |
+| open PRs | **0** |
+| flat | ✅ both ledgers, `assert_fleet_flat` exit 0 |
+| account_positions / virtual_positions / open orders | 0 / 0 / 0 |
 
-Production runs refresher-owned mode — `MAI_TAI_SCHWAB_ADAPTER_TOKEN_REFRESH_ENABLED=false` — so
-`_get_access_token()` takes the pure-reader branch and **reloads the store from disk**. The
-dedicated refresher (control service) owns freshness and the adapter never writes. A later re-auth
-file is therefore picked up by the RUNNING process — no restart needed to see it.
+**PIDs as of 21:25 ET (01:25 UTC 08-26):**
 
-⛔ **Precisely, because the imprecise version is dangerous:** the adapter does not reload on every
-call, and it does NOT refuse an expired token. It returns its cached token untouched while
-`_access_token_needs_refresh()` is false; only once the cached token reaches the refresh window
-(or `force_refresh`) does it reload from disk. And if the STORE itself is stale, it logs
-`[SCHWAB-TOKEN-STALE]` and **returns the expired token anyway** — deliberately, so a refresher
-outage surfaces as a named warning instead of a silent 401 storm. ⇒ "the adapter never caches past
-expiry" is FALSE.
-
-⛔⭐⭐ `[SCHWAB-TOKEN-STALE]` is the signal to watch — **but it is a SYMPTOM, not a diagnosis.** All
-it proves is that the token ON DISK is past `expires_at`. It does NOT say why. At least four causes
-produce the identical line: the refresher process is down; the refresher is running but its grant is
-failing; the credentials are dead (`invalid_grant`); or the store is missing/unreadable so nothing
-can be refreshed into it. ⇒ A live count means **investigate**, and the investigation starts at the
-control service and the store — never "the refresher is down", which is one hypothesis wearing the
-costume of a finding. It is still not a reason to restart a trading service.
-
-**Evidence, as of 2026-08-25 14:33 UTC (10:33 ET), read-only:**
-
-- `refresh_token_expires_at` = `2026-08-31T20:02:05Z` → **Mon 2026-08-31 16:02 ET** (weekday derived, not labelled)
-- `expires_at` = `2026-08-25T14:55:32Z` — in the FUTURE, so the refresher is actively rotating the access token
-- `[SCHWAB-TOKEN-STALE]` in the **current** log: **0**. ⛔ All 386 occurrences are in
-  `oms.log-20260823.gz` — a past 08-23 incident, not today. (A concatenated `oms.log*` stream is in
-  FILENAME order, not time order; `tail` on it returns the rotated file's end and reads as current.)
-- `[BROKER-SYNC-CENSUS]` newest line `2026-08-25 14:30:15` with `failed=0` — broker reads are landing
-
-⇒ **No restart is owed for the token.** If a restart happens for another reason, that is fine, but
-the token is not the reason. ⛔ The next real deadline is the REFRESH token: **Mon 2026-08-31 16:02
-ET**, and only that one needs a human — `expires_at` is the short-lived access token the refresher
-rotates itself, and is a ready-made false alarm.
-
----
-
-# PRODUCTION — THE 2026-08-24 BATCH IS MERGED AND DEPLOYED
-
-**VPS HEAD `a4235a653aa82907e4e124f97a49fc07c374203a`, clean at 06:24 ET.** The intended batch is
-`#769 → #766 → #758 → #755 → #774 → #761 → #771`; #760 and #773 were closed as superseded by
-#774. Final tree `6b12b7a79…` matched the independently squash-assembled tree.
-
-| unit | PID | NRestarts | active since UTC | current read |
-|---|---:|---:|---:|---|
-| OMS | 1290662 | 0 | 08-24 21:28:24 | `/health` healthy at 06:25 ET |
-| strategy | 1290668 | 0 | 08-24 21:28:24 | `/health` healthy at 06:25 ET |
-| schwab-1m-v2 | 1307928 | 0 | 08-25 00:28:51 | **degraded** at 06:25 ET |
-| market-data | 1528374 | 0 | 07-27 17:35:52 | active/running |
-| control | 44840 | 0 | 07-14 12:18:04 | active/running |
-| reconciler | 141918 | 0 | 08-14 20:36:41 | `/health` healthy at 06:25 ET |
-| market-capture | 3631762 | 0 | 07-08 06:47:03 | active/running |
-
-The v2 degradation was **not** a loop crash: `quotes_live=true`, streamer connected,
-`loop_health=healthy`, `loop_exceptions_total=0`, watchlist 3. Its reason was
-`data_flow=stalled_offhours_rest_dry` at 06:25 ET with `market_session=premarket`. Recheck at the
-07:00 ET entry boundary; do not rewrite this as healthy from the supporting fields.
-
-## Deploy proof
-
-- OMS run **32779632680**, migrations false, installed `bb696138…`; restarted OMS and strategy.
-  OMS produced a fresh healthy heartbeat in ~33s. Strategy missed the generic 60s SLA, first fresh
-  heartbeat ~113s and healthy ~181s; the operator explicitly accepted that one late recovery.
-- v2 run **32793781395**, migrations false, installed final main `a4235a653…`; source write
-  00:28:43Z → PID start 00:28:51Z → fresh healthy heartbeat 00:29:22Z. OMS/strategy did not restart.
-- `Deploy Main` remains prohibited. Use `Deploy Service`; the v2 dispatch value is
-  **`schwab-1m-v2`** with hyphens.
-
----
-
-# #739 GRADE — DATA POINT 1, NOT A VERDICT
-
-Read-only close grade at 2026-08-24 20:08 UTC:
-
-- signal-4 control reproduced **119 / 19 / 22**;
-- **0 duplicate segments of 2 measurable**, 0 extra legs;
-- **7 filled fan-out legs lacked a segment ID**, so they were outside the measurement;
-- signal 6 recorded five refusal-guard actions and zero calendar fail-open events, but its latest
-  census was **0 of 0** — `COULD_NOT_TELL`, not PASS.
-
-After deploy, the BUY-filtered signal-4 read stayed 2 measurable / 0 duplicate / 0 extra with the
-same 7 blind legs. This is not worse than baseline and is still not enough population to grade #739.
-
----
-
-# ACTIVE REVIEW / MERGE WORK
-
-**Corrected by `claude-1`: 2026-08-25 10:29 ET.** Everything in this section below the #770 entry was written
-before six PRs changed state on 08-25. It is rewritten to current truth, not amended.
-
-## ⛔⭐⭐ #770 — CONTENT ON MAIN, LIFECYCLE NOT COMPLETED
-
-The four handoff documents ARE on main as `06c17018`. Nothing else about #770 went to plan:
-
-| claim | truth |
-|---|---|
-| PR recorded as merged | ⛔ **No** — `state=CLOSED`, `mergedAt=null`, `mergeCommit=null` |
-| head branch auto-deleted | ⛔ **No** — `claude/handoff-0824-window` still exists at `dc58b9d2` |
-| manifest committed | ⛔ **No** — `docs/handoff-manifest/2026-08-24.md` was absent from BOTH main and `dc58b9d2` |
-| independently reviewed | ⛔ **No** — no recorded review of #770 |
-| authorship attributable | ⛔ **COULD_NOT_TELL** — `dc58b9d2` carries **zero** `Co-Authored-By` trailers |
-
-The content is genuine: `06c17018`'s tree and `dc58b9d2`'s tree are byte-identical (`f32a9d21ba12`).
-⛔ But identical trees prove the DOCUMENTS landed, not that the BATCH was promoted.
-
-⛔⭐⭐ **#770's authorship cannot be proven retroactively and never will be.** `dc58b9d2`
-carries no `Co-Authored-By` trailer and nothing added later can supply one — under the agreed
-rule it is permanently `COULD_NOT_TELL`. **PR #776 is a NEW REPAIR PR.** It supplies the
-missing manifest and corrects the record. It is NOT evidence that #770's lifecycle completed,
-and must never be cited as such.
-
-⛔⭐⭐ **A `--squash` merge leaves no ancestry link to its branch**, so `compare/main...dc58b9d2`
-reads `diverged ahead=10 behind=1`. That is the squash signature, NOT evidence of a failed merge —
-the same mechanism that orphaned #773 and #760. It will recur on anything stacked.
-
-⛔ How the false report happened, recorded so the shape is recognisable: a 502 during the merge call
-left the record `OPEN`, and the two facts cited as proof of a merge were both **false negatives of
-the reporter's own making** — a branch existence check run against an invented branch name, and a
-service check run against an invented unit name. An empty result for an identifier you guessed is
-not an absence; it is an unasked question.
-
-**This batch is NOT promoted. Do not rotate the journals. Do not promote.**
-
-The repair path is **PR #776** — a small, **Claude-authored** PR from current main carrying this
-correction plus the generated manifest. ⛔ The review it needs is therefore **`codex-2` reviewing
-#776's current Claude range** — the reviewer is always the agent that did NOT author it. (This
-line previously named the reviewer and the author the wrong way round, carried over from #770's
-plan; #776 has the opposite authorship.) Then explicit operator GO.
-
-## PRs that changed state on 2026-08-25 (all times ET)
-
-| PR | was | now |
+| service | pid | since (UTC) |
 |---|---|---|
-| #775 retention + freshness | "Claude must re-review" | **MERGED** `0be129b0` 07:35 |
-| #756 preflight fences | BEHIND, deferred | **MERGED** `6ca816ec` 09:25 |
-| #759 broker-blind pager | BEHIND, deferred | **MERGED** `d270a1eb` 09:30 |
-| #763 feature acceptance | BEHIND, deferred | **MERGED** `dd6c0d6c` 09:32 |
-| #772 probe read-only guard | BLOCKED | **CLOSED unmerged** 11:58 — four AST rounds failed; the right control is a runtime read-only credential or a sandbox, not a fifth denylist rule |
-| #770 handoff | open | content on main, lifecycle incomplete (above) |
+| oms | 1521794 | 2026-08-26 01:15:00 |
+| strategy | 1521806 | 2026-08-26 01:15:00 |
+| schwab-1m-v2 | 1522331 | 2026-08-26 01:18:51 |
+| reconciler | 1514317 | 2026-08-25 23:51:35 |
+| **control** | **44840** | **2026-07-14 12:18:04** ← never restarted |
+| market-data | 1528374 | 2026-07-27 17:35:52 |
 
-⛔ **None of the four merges is deployed.** Production is `a4235a653`; main is `06c17018`. OMS pid
-1290662 and strategy pid 1290668 (both since 08-24 21:28 UTC) and v2 pid 1307928 (08-25 00:28 UTC)
-are unchanged — zero restarts on 08-25. All four are `ops/`/`docs/` only, so no restart is *owed*,
-but `ops/bootstrap/08_install_runtime.sh` runs DURING a deploy, so **the next deploy is the first
-time the corrected link step executes.**
-
-⛔ **The shell gate itself is a different thing and the deploy never runs it.** `08_install_runtime.sh`
-only INSTALLS/LINKS `ops/preflight/preflight_v2_restart.sh` (`ln -sfn` into `/home/trader/ops_preflight`);
-nothing in the deploy path executes it. The gate Deploy Service actually runs is the PYTHON one —
-`src/project_mai_tai/deploy_preflight.py`, via `run_live_preflight()` in `ops/systemd/deploy_service.sh:145`,
-and only when **all three** of `HIGH_RISK=1`, `ALLOW_LIVE_RESTART=1`, `IN_MARKET_WINDOW=1` hold.
-⇒ A green deploy is NOT evidence that the shell gate was exercised. `preflight_v2_restart.sh` is
-invoked by a human before a v2 restart, and #756 has therefore still never run in anger.
-
-⛔ #759's recovery-splitting is **UNEXERCISED in production**, not proven. It splits runs on
-`[BROKER-SYNC-OK]`, which has never once been emitted: the marker fires only on a transition
-(`if _runs.get(account_name):`), and there have been **0 broker-read failures since the emitter
-deployed** 08-24 17:28 ET. The 242 `[BROKER-SYNC-UNREADABLE]` events all predate it — 242 of 242
-carry no `consecutive=`, the field #774 added. That zero is honest, and the fix has no live
-population until a read fails and then recovers.
+`NRestarts=0` on every unit. Fleet `/health` healthy.
 
 ---
 
-# BOARD 22 — CORRECTED BOUNDARY
+# ⛔⭐⭐ EVERY MARKER SHIPPED TONIGHT READS ZERO — THAT IS THE CORRECT STATE
 
-Three of four fan-out emit sites use `fanout_webull_claimed`; `_eh_resting_cross_check` does not.
-Signal 4 is blind because **31 of 31** filled `eh_resting` legs had `cw_arm_bar_ts=0` as of 08-24.
-The relevant co-occurrence population was **18 symbol-days since 08-01, 1 on 08-21**
-(`eh_resting` + `reactive`), not the superseded 22 / 2 (`eh_resting` + any source).
+Counted on the box at **21:25 ET**, before any session has run against them:
 
-“Zero live evidence” was false: three same-cross sequences exist. `resting_active` is the real
-interlock while the resting order is live. The obvious latch write is a no-op because the next BUY
-arm clears it, and no existing test distinguishes the mutation. JUNS was flat ~13m30s between
-legs—a reclaim, not overlapping exposure. Harmful duplicate exposure remains **unproven**.
-Observability first: durable identity before the ARM and a recorded Webull outcome.
+```
+[OMS-CANCEL-PAIR-REQUEST]       0     [V2-RECLAIM-SLOT-CHECKED]       0
+[OMS-EXIT-RELEASE]              0     [V2-RECLAIM-UNION-ONLY-PASSED]  0
+[OMS-CHILD-EXIT-ATTRIBUTION]    0     [BROKER-SYNC-OK]                0
+```
 
----
-
-# WEBULL VENUE-HISTORY SEAM
-
-Five 2026-08-21 combo IDs are durably transcribed in `docs/deploy-2026-08-24-window.md`; the source
-log rotation is expected to disappear around 08-29 under the current 7-day policy. Any probe must:
-
-- enumerate to discover, then detail-call every listing miss before concluding absence;
-- page to a proved terminal condition and print page/request counts;
-- pace at two requests per two seconds and run after the trading window;
-- return `found`, `confirmed-absent-via-detail`, `COULD_NOT_TELL`, or `VOID`;
-- mark the assay VOID if the five known-positive controls do not reproduce.
-
-`get_order_history` is not a reconciliation source until coverage back to 08-03, combo exit-child
-visibility, partial-fill semantics, freshness versus detail, and cursor integrity are measured.
+**This is UNEXERCISED, not passed.** It is recorded deliberately so tomorrow's reading has a real
+baseline instead of an assumed one. A zero tomorrow means nothing without its denominator.
 
 ---
 
-# OPERATIONAL RULES
+# 🔴 GRADE AFTER THE CLOSE — NEVER MIDDAY
 
-1. `merged`, `deployed`, and `proven healthy` are separate claims.
-2. A health endpoint that cannot answer is `COULD_NOT_TELL`, never healthy.
-3. For squash merges, require current-base rehearsal and merge with
-   `--repo --squash --match-head-commit <full reviewed SHA>`.
-4. `MERGEABLE` + green CI is insufficient when `mergeStateStatus` is `BEHIND`/`BLOCKED`.
-5. Do not edit another agent's owned range; the author fixes findings and the other agent re-reviews.
-6. Production mutation requires explicit operator GO and an after-market-hours window unless the
-   operator explicitly authorizes a narrower emergency action.
+⛔ Today proved it: **signal 6 read 0 at 12:58 ET and 1 by 16:34 ET.** A must-be-zero signal cannot
+be graded mid-window; mid-window is *not yet failed*, never *passed*.
 
-## Memory pointers
+| # | check | how to read it |
+|---|---|---|
+| 1 | **Signal 6** (#781) — `session-calendar lookup failed` must be **0** | state the denominator: `[V2-DB-SEED-GAP]` line count **and** the census `truncations=N of M` |
+| 2 | **#780** reclaim markers | read `[V2-RECLAIM-SLOT-CHECKED]` (denominator) **before** `[V2-RECLAIM-UNION-ONLY-PASSED]` (result) |
+| 3 | **#791 C1** cancel confirmation | a real `[OMS-CANCEL-PAIR-REQUEST] requested=N`, and **no `[OMS-EXIT-RELEASE]` without `release_confirmed=1`** |
+| 4 | **#791 C2** child attribution | read `[OMS-CHILD-EXIT-ATTRIBUTION] evaluated=1` **before** `attributed` |
+| 5 | **#790** signal 4 | tonight 10 total / 2 attributed / **8 unattributed** = UNEXERCISED. Does `attributed` RISE? |
+| 6 | **#783** refresh-count watch | first run **06:15 UTC** |
+| 7 | **#785** phantom-row counter | every 5 min, weekdays — data by morning |
+| 8 | **#787** retention | ⛔ the 22:30 UTC run must print **"already matches the normalized source; no replacement needed"**. A *second successful install* means the drift check is broken. Success looks like a no-op. |
+| 9 | **#788** health gate | proved itself twice tonight; watch on the next restart |
+| 10 | **#759** recovery split | `[BROKER-SYNC-OK]` has **still never been emitted**; `rotate 30` now gives a 30-day window instead of 7 |
 
-`[[project-mai-tai-context]]` · `[[project-mai-tai-fleet-roster]]` ·
-`[[project-mai-tai-architecture]]` · `[[feedback_verify_before_concluding]]` ·
-`[[feedback_an_absence_is_evidence_only_against_a_known_denominator]]`
+---
+
+# PROMOTION GATE — CORRECTED, SUBMITTED, NOT YET PINNED
+
+| file | sha256 | state |
+|---|---|---|
+| `promote.sh` | `421d49f868c89284a699dca898c4ceec74b6038e294d435e98ffd9fdea15993a` | submitted for review |
+| `selftest.sh` | `793f9403b3f8cca40ab0b34c4b36a6f0338bd4dfe12c117d3d99f69f08b67baf` | **105 passed / 0 failed**, `MAI_TAI_REPO` set |
+
+These supersede `promote.sh d52a8a72…` / `selftest.sh c662a72f…` (98/0), which were pinned before
+the carry-note defect was found. Both hashes were re-read unchanged after the full run.
+
+⛔ **`checksums.sh verify` is RED and must stay RED until `codex-2` re-pins it.** I authored these
+files; an author re-pinning their own gate turns the gate into a rubber stamp. RED here is the gate
+failing closed and is the correct reading, not a fault to silence.
+
+⛔ `selftest.sh` ran **105/0, not 110/0.** The difference is not a regression: an obsolete five-case
+carry-note block was removed on 2026-08-26. It rebuilt the production `printf` by hand instead of
+executing it, so it passed even with the claim path deleted — five passes that proved nothing. 105
+is the reconciled expectation.
+
+⛔ `promote.sh` does **not** read the checksum file (0 references), so a RED verify does not
+mechanically block `./promote.sh`. The block is a decision, not a mechanism.
+
+---
+
+# OPEN ITEMS — no owner yet
+
+**(a) HTTP 417 false-success — FIXED but UNPROVEN.** #791 closes it; 0 evaluated tonight. Needs a
+real software-close episode.
+
+**(b) DAIC ledger gap.** Historical child/time/price remains **COULD_NOT_TELL by design** — #791 is
+future-protection only. Evidence preserved at `/home/trader/daic-phantom-2026-08-25.txt`.
+
+**(c) ⚠ v2 restart backfill burst is RECURRING, not one-time.** Tonight 9,707 lines in 33s across 4
+symbols; bars ~7.5 days stale, correctly dropped, zero errors after. Prior days: 8297 / 3235 / 4887
+/ 209 / 3905 / 867. **What is proven is RECURRENCE, and that tonight is the largest instance — not
+a trend.** The sequence is volatile (it falls to 209 and back), and 7 points with no denominator
+(restart count, symbol count, staleness depth) cannot carry a direction. ⛔ The 08-26 01:26Z journal
+entry calls it "TRENDING UP"; that phrasing is superseded by this line. Matters because 9,707 lines can
+mask a one-line signal — today's signal-6 failure *was* one line in this same log — and because it
+sits in the seed path #781 just rewrote.
+
+**(d) Control service — pid 44840 since 2026-07-14.** 1.7 GB RSS after six weeks, 10 newer
+startup-required files. **Verified NOT a token risk.** Tonight's OMS deploy deliberately left it
+alone. When restarted: after hours, straight after an observed refresh, then prove new PID ·
+refresher enabled/healthy · token-store metadata intact · **a new `[SCHWAB-TOKEN-REFRESHED]` within
++35 min** (UNMEASURED before that; refreshes run ~every 29 min, 48–50/day).
+
+**(e) 📌 Capacity — MEMORY-bound, deferred by the operator.** Basic 4 vCPU / 8 GB / 120 GB.
+7.1G of 7.8G used, **zero swap**, disk only 25% used (**do not grow the volume — irreversible**).
+⭐ Two free fixes before buying RAM: control's 1.7 GB after six weeks (a resize would restart it and
+*silently reclaim* the memory, masking the cause), and `shared_buffers=160 MB` with an **80.69%**
+cache hit ratio against a 15 GB DB — very likely the real cause of today's signal-6 timeout
+(`COUNT(DISTINCT)` over a 1001 MB table, 1603 ms warm vs a 5 s `statement_timeout`).
+
+**(f) Signal 4 blind spot** — 8 filled fan-out legs still carry no segment id.
+
+**(g) Stale remote branches** — many refs ahead of main with no PR, one at +50. Cosmetic.
+
+---
+
+# ⛔ DISASTER RECOVERY — GitHub restores the machine, NOT the data
+
+`ops/bootstrap/01…10` plus 11 systemd units rebuild a droplet from empty. **Not in git and with
+no backup:** the **14 GB** database (18,652 fills · 79,169 broker_orders · **1,229,033 bars**),
+`/etc/project-mai-tai/project-mai-tai.env` (12 KB of credentials), the Schwab token store, and 46 MB
+of logs. **Zero `pg_dump` backups exist**, and there is no backup/restore tooling anywhere in the
+repo. Operator is enabling droplet backups. ⚠ Take a manual snapshot *before* any resize — periodic
+backups give no restore point until the first one runs.
+
+---
+
+# WORKING RULES THAT COST US TIME TODAY
+
+- ⛔ **A number that does not reconcile is the tell.** A test total that did not move after adding
+  seven tests meant they were never executing.
+- ⛔ **An empty result for an identifier you guessed is not an absence** — it is an unasked question.
+  Two false negatives today came from an invented branch name and an invented unit name.
+- ⛔ **Verify the artifact, not a copy of it.** A `/tmp` harness passed 7/7 while the suite ran none.
+- ⛔ **`--squash` destroys ancestry.** Verify content on main and the resulting commit, never the PR
+  record or an error alone. A 502 can follow a completed merge.
+- ⛔ **Disjoint files are not independent** — check for interaction explicitly.

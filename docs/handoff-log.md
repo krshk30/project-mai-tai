@@ -2794,3 +2794,107 @@ PR count as delivery would be a real weakening.
 > `c662a72f3ae7e4380bafc4fda76f03f0dd17e95f96b38f6923883ef9abef13fc` (98/0).
 >
 > `[HANDOFF-CORRECTION-777] trigger=post-merge-independent-review original_claim_valid=0 blockers_at_merge=4 correction_recorded=1` — polarity: `original_claim_valid=0` names the false claim; `correction_recorded=1` is the successful durable correction.
+
+## 2026-08-25 (Tue) — EVENING: three batches merged and deployed, and the day's real lesson
+
+**Appended after the day-log above, which was written at midday.** Everything below happened after
+16:00 ET, once the market was closed and the fleet was flat.
+
+### What shipped
+
+**Batch A** (the five items the operator scoped): `#781` seed-gap `EXISTS` · `#780` #761 success
+marker · `#782` marker-substring lint · `#778` Deploy Main fenced · `#779` census window stated.
+
+**Batch B**: `#783` Schwab refresh-count watch · `#784` field-level acceptance · `#785` DB-only
+phantom managed-row counter.
+
+**Batch C** (built from the pending list): `#790` fan-out segment attribution · `#791` C1 cancel
+confirmation + C2 child-exit attribution · `#792` the #777 correction.
+
+Plus two PRs that came directly out of tonight's own failures: **`#787`** logrotate root-mode and
+**`#788`** the post-restart health gate.
+
+Integrations: `#786` (7 PRs), `#789` (2), `#793` (octopus, 4 parents). Final main
+**`2bbe5ccc4419ed895be8a806d6e14616d33dbc58`**, box in sync, **zero open PRs**.
+
+### Two production defects found, fixed, and PROVEN the same evening
+
+**The retention job had never run — and when it did, it failed.** `rotate 30` could not install
+because root logrotate refuses a config that is group-writable: the repo file was `trader:trader
+664`, `scp` preserved the mode, and root answered `Handling 0 logs` while exiting zero. The install
+guard caught it correctly and refused. ⛔ **The bug was the file mode, not the logic** — the mode has
+to be committed, not assumed. `#787` stages a `root:root 0644` copy and validates *that*, requiring
+the literal `rotating pattern:` line as positive parse proof. **Verified installed: `rotate 30`,
+`root:root 644`.**
+
+**The deploy workflow reported success from a pre-start heartbeat.** `#788` gates every restarted
+unit — and because both `restart_unit` and `start_unit` record identity, a strategy started as a
+*side effect* of an OMS deploy is gated too. Its SLA is derived from measurement, not chosen: first
+fresh heartbeat at 113 s, healthy at 181 s, so 240 s for strategy and 60 s elsewhere. **It passed
+its first genuine test tonight** — rejected a fresh `stopping` heartbeat, accepted `healthy` after
+the new PID.
+
+### ⛔⭐⭐ THE DAY'S REAL LESSON
+
+⛔ **Scope this claim, because the unscoped version is false.** Tonight produced REAL broken code —
+the two production defects in the section immediately above (`#787` logrotate file mode, `#788` a
+deploy reporting success off a pre-start heartbeat), the HTTP 417 false-success `#791` closes, and
+the carry-note defect in the promotion gate itself. The claim below is about the **eight
+verification-and-reporting failures**, nothing wider.
+
+Of those eight, **not one was broken code**. Every single one was a **wrong claim about a verified
+thing**, and each had passed a check its author ran:
+
+1. A branch-existence check against a branch name that was **invented** — then the 404 was cited as
+   proof of an auto-delete-on-merge.
+2. A service check against a unit name that was **invented** — `pid=0` read as "the service is down".
+3. A glob that **double-counted** the live log (`oms.log oms.log*`), inflating a census 377 vs 204.
+4. A `tail` on a **filename-ordered** concatenation, reading 386 stale-token warnings from 08-23 as
+   current.
+5. A commit message asserting a change **its own blob did not contain**.
+6. A hypothesis promoted to a finding — `[SCHWAB-TOKEN-STALE]` "means the refresher is down". It
+   proves only that the on-disk token is expired; at least four causes emit that line.
+7. A checksum recorded **while a mutation harness was still running**, pinning a mutant's hash as
+   canonical — after the same race had been explicitly warned about two messages earlier.
+8. Seven tests written, verified 7/7 in a `/tmp` harness, and **never executed by the suite** because
+   they sat after the tally. The tell was a pass total that did not move.
+
+⇒ **An empty result for an identifier you guessed is not an absence; it is an unasked question.**
+⇒ **A number that does not reconcile is the tell.**
+⇒ **Verify the artifact, never a copy of it.**
+
+### The promotion gate
+
+`promote.sh` refused the 08-24 batch because it required all three handoff files in ONE PR, and that
+batch had split across #770 and #776. ⛔ **No follow-up PR could satisfy it** — a regenerated
+manifest is byte-identical, so it is not a *changed* file and never appears in a PR's file list. The
+requirement was **unsatisfiable, not merely unmet**. Fixed to accept N carrier PRs and verify the
+union, with carrier-blob equality against final main, every carrier pinned, and a retry hint that
+names the whole set. `OPEN|MERGED` was deliberately **not** relaxed. ⇒ **split delivery is promotable from that fix
+onward**; the "one PR or nothing" constraint is history, not current behaviour.
+
+⛔ **That approval was SUPERSEDED the same night.** `promote.sh d52a8a72…` / `selftest.sh
+c662a72f…` (98/0) were accepted before the **carry-note defect** was found: the rotation wrote an
+identical, path-less, second-resolution line per carried claim, so 11 carried claims collapsed to 2
+distinct texts and VOIDed the next manifest. The repair and its controls landed after that pin, and
+the first version of the control was itself disproven — it retyped the production `printf` instead
+of running it, and still passed with the path deleted. That obsolete five-case block was removed on
+2026-08-26; it had been contributing five false passes.
+
+**The artifacts submitted for review are:**
+
+| file | sha256 | |
+|---|---|---|
+| `promote.sh` | `421d49f868c89284a699dca898c4ceec74b6038e294d435e98ffd9fdea15993a` | |
+| `selftest.sh` | `793f9403b3f8cca40ab0b34c4b36a6f0338bd4dfe12c117d3d99f69f08b67baf` | **105 passed / 0 failed** |
+
+Both hashes were re-read unchanged after the full run, so no case mutated the artifact it tests.
+⛔ These are the hashes **submitted**, not approved — approval and the checksum re-pin belong to
+`codex-2`, and `checksums.sh verify` stays RED until it re-pins. An author does not pin their own
+gate.
+
+### Still unexercised at end of day
+
+Every marker shipped tonight reads **zero**, which is correct before a session and is recorded as a
+baseline. `[BROKER-SYNC-OK]` has still never been emitted in the system's history. Signal 4 remains
+UNEXERCISED with 8 unattributable legs. **Zero is not a pass; it is a denominator waiting for one.**
