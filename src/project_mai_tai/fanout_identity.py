@@ -27,7 +27,14 @@ _SLOT_BY_SOURCE = {
 
 
 def fanout_slot_for_source(source: str) -> str:
-    """Return the design-approved economic slot for a fan-out source."""
+    """Return the design-approved economic slot for a fan-out source.
+
+    Unknown sources fail closed before a draft can be queued.  Emitting a
+    live-money leg without a defined economic slot would recreate the
+    unattributable population this increment exists to eliminate.  This is a
+    developer invariant, not a trading-policy decision; every production
+    source is enumerated and pinned by tests.
+    """
 
     normalized = str(source).strip().lower()
     try:

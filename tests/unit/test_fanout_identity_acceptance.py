@@ -140,7 +140,7 @@ def test_multiple_unlinked_roots_fail_and_refuse_duplicate_grade() -> None:
         _attempt(attempt_id="attempt-b", fills=1, status="filled"),
     ]
 
-    report = _evaluate([_intent()], attempts)
+    report = _evaluate([_intent(attempt_id="attempt-a")], attempts)
 
     assert report.exit_code == tool.FAIL
     output = "\n".join(report.lines)
@@ -205,7 +205,69 @@ def test_same_symbol_across_restart_is_could_not_tell_not_clean() -> None:
         ),
     ]
 
-    report = _evaluate([_intent()], attempts, starts=(PROCESS, restart))
+    report = _evaluate(
+        [_intent(attempt_id="attempt-a")], attempts, starts=(PROCESS, restart)
+    )
+
+    assert report.exit_code == tool.COULD_NOT_TELL
+    assert "restart-spanning symbols=XPON" in "\n".join(report.lines)
+
+
+def test_known_identity_failure_outranks_unrelated_restart_uncertainty() -> None:
+    restart = tool.ProcessStart(at=SINCE + timedelta(hours=1), pid=5678)
+    broken = _attempt(
+        attempt_id="does-not-match-client-order-id",
+        at=restart.at + timedelta(seconds=1),
+    )
+    broken = tool.AttemptRecord(
+        **{**broken.__dict__, "client_order_id": "actual-client-order-id"}
+    )
+
+    report = _evaluate(
+        [_intent(attempt_id="does-not-match-client-order-id")],
+        [broken],
+        starts=(PROCESS, restart),
+    )
+
+    assert report.exit_code == tool.FAIL
+    output = "\n".join(report.lines)
+    assert "attempt id does not match the existing client order id" in output
+    assert "verdict_precedence=known identity corruption FAIL" in output
+    assert "restart uncertainty cannot downgrade it" in output
+
+
+def test_predecessor_cycle_also_outranks_restart_uncertainty() -> None:
+    restart = tool.ProcessStart(at=SINCE + timedelta(hours=1), pid=5678)
+    attempts = [
+        _attempt(
+            attempt_id="attempt-a",
+            predecessor="attempt-b",
+            fills=0,
+            status="cancelled",
+            last_at=restart.at + timedelta(seconds=1),
+        ),
+        _attempt(
+            attempt_id="attempt-b",
+            predecessor="attempt-a",
+        ),
+    ]
+
+    report = _evaluate(
+        [_intent(attempt_id="attempt-a")], attempts, starts=(PROCESS, restart)
+    )
+
+    assert report.exit_code == tool.FAIL
+    assert "predecessor cycle" in "\n".join(report.lines)
+
+
+def test_restart_still_outranks_chain_continuity_that_it_makes_unknowable() -> None:
+    restart = tool.ProcessStart(at=SINCE + timedelta(hours=1), pid=5678)
+    attempts = [
+        _attempt(attempt_id="root-before", fills=0, status="cancelled"),
+        _attempt(attempt_id="root-after", at=restart.at + timedelta(seconds=1)),
+    ]
+
+    report = _evaluate([_intent(attempt_id="root-before")], attempts, starts=(PROCESS, restart))
 
     assert report.exit_code == tool.COULD_NOT_TELL
     assert "restart-spanning symbols=XPON" in "\n".join(report.lines)

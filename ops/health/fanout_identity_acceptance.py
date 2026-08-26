@@ -352,18 +352,21 @@ def _identity_error(record: IntentRecord | AttemptRecord) -> str | None:
     return None
 
 
-def _chain_metrics(attempts: Sequence[AttemptRecord]) -> tuple[int, int, list[str]]:
+def _chain_metrics(
+    attempts: Sequence[AttemptRecord],
+) -> tuple[int, int, list[str], list[str]]:
     by_slot: dict[tuple[str, str], list[AttemptRecord]] = {}
     for attempt in attempts:
         by_slot.setdefault((attempt.account, attempt.slot_id), []).append(attempt)
     max_depth = 0
     roots = 0
-    errors: list[str] = []
+    hard_errors: list[str] = []
+    continuity_errors: list[str] = []
     for (account, slot_id), members in by_slot.items():
         label = f"{account}/{slot_id}"
         nodes = {item.attempt_id: item for item in members}
         if len(nodes) != len(members):
-            errors.append(f"slot {label} repeats an attempt id")
+            hard_errors.append(f"slot {label} repeats an attempt id")
             continue
         slot_roots = 0
         for member in members:
@@ -371,11 +374,11 @@ def _chain_metrics(attempts: Sequence[AttemptRecord]) -> tuple[int, int, list[st
                 roots += 1
                 slot_roots += 1
             elif member.predecessor_id not in nodes:
-                errors.append(
+                continuity_errors.append(
                     f"attempt {member.attempt_id} names a predecessor outside slot {label}"
                 )
         if len(members) > 1 and slot_roots != 1:
-            errors.append(
+            continuity_errors.append(
                 f"slot {label} has {slot_roots} roots across {len(members)} attempts"
             )
         for member in members:
@@ -384,21 +387,21 @@ def _chain_metrics(attempts: Sequence[AttemptRecord]) -> tuple[int, int, list[st
             depth = 1
             while cursor.predecessor_id:
                 if cursor.attempt_id in seen:
-                    errors.append(f"slot {label} contains a predecessor cycle")
+                    hard_errors.append(f"slot {label} contains a predecessor cycle")
                     break
                 seen.add(cursor.attempt_id)
                 prior = nodes.get(cursor.predecessor_id)
                 if prior is None:
                     break
                 if prior.at > cursor.at:
-                    errors.append(
+                    hard_errors.append(
                         f"attempt {cursor.attempt_id} names a later attempt as predecessor"
                     )
                     break
                 cursor = prior
                 depth += 1
             max_depth = max(max_depth, depth)
-    return roots, max_depth, errors
+    return roots, max_depth, hard_errors, continuity_errors
 
 
 def evaluate(
@@ -416,6 +419,8 @@ def evaluate(
         f"    window=[{since.isoformat()}, {until.isoformat()})",
         "    trigger=queued Webull buy/open intent carrying fanout_source",
         "    polarity=complete identity and zero same-venue duplicate slots are required",
+        "    verdict_precedence=known identity corruption FAIL; otherwise restart ambiguity "
+        "COULD_NOT_TELL before chain/duplicate grading",
     ]
     window_starts = [item for item in starts if since <= item.at < until]
     prior_starts = [item for item in starts if item.at < since]
@@ -443,35 +448,37 @@ def evaluate(
         for record in attempts
         if (error := _identity_error(record)) is not None
     ]
-    identity_errors = [*intent_identity_errors, *order_identity_errors]
+    hard_identity_errors = [*intent_identity_errors, *order_identity_errors]
     event_total = sum(item.event_total for item in attempts)
     event_identity = sum(item.event_identity for item in attempts)
     fill_total = sum(item.fill_total for item in attempts)
     fill_identity = sum(item.fill_identity for item in attempts)
     if event_identity != event_total:
-        identity_errors.append(
+        hard_identity_errors.append(
             f"order-event identity coverage is {event_identity} of {event_total}"
         )
     if fill_identity != fill_total:
-        identity_errors.append(f"fill identity coverage is {fill_identity} of {fill_total}")
+        hard_identity_errors.append(
+            f"fill identity coverage is {fill_identity} of {fill_total}"
+        )
 
     intents_by_id = {item.record_id: item for item in intents}
     attempts_by_intent: dict[str, list[AttemptRecord]] = {}
     for attempt in attempts:
         attempts_by_intent.setdefault(attempt.intent_id, []).append(attempt)
         if attempt.intent_id not in intents_by_id:
-            identity_errors.append(
+            hard_identity_errors.append(
                 f"order {attempt.client_order_id} has no queued intent in the report population"
             )
     for intent in intents:
         members = attempts_by_intent.get(intent.record_id, [])
         if members and intent.attempt_id not in {item.attempt_id for item in members}:
-            identity_errors.append(
+            hard_identity_errors.append(
                 f"intent {intent.record_id} root attempt {intent.attempt_id} is absent from its order chain"
             )
 
-    roots, max_depth, chain_errors = _chain_metrics(attempts)
-    identity_errors.extend(chain_errors)
+    roots, max_depth, hard_chain_errors, continuity_errors = _chain_metrics(attempts)
+    hard_identity_errors.extend(hard_chain_errors)
     terminal = sum(item.status in TERMINAL_STATUSES for item in attempts)
     filled_attempts = [item for item in attempts if item.fill_total > 0]
     duplicate_groups: dict[tuple[str, str, str, str], int] = {}
@@ -490,17 +497,6 @@ def evaluate(
             item.symbol for item in all_records if item.at < start.at <= item.last_at
         )
 
-    if not overlapping_starts:
-        lines.append("    => COULD_NOT_TELL. no PID/process start overlaps the report window")
-        return Report(COULD_NOT_TELL, "COULD_NOT_TELL", tuple(lines))
-    if window_starts and not prior_starts:
-        earliest = min(window_starts, key=lambda item: item.at)
-        if any(item.at < earliest.at for item in all_records):
-            lines.append(
-                "    => COULD_NOT_TELL. records predate the earliest readable PID/process start"
-            )
-            return Report(COULD_NOT_TELL, "COULD_NOT_TELL", tuple(lines))
-
     lines.extend(
         (
             f"    queued={len(intents)} submitted={len(attempts)} terminal={terminal} "
@@ -515,15 +511,44 @@ def evaluate(
             f"duplicates={len(duplicates)}",
         )
     )
+    # A process boundary can make chain continuity and duplicate grouping
+    # unknowable; it cannot make a malformed identity, repeated attempt id,
+    # cycle, or incomplete durable event/fill identity less false.  Known
+    # corruption therefore outranks unrelated restart uncertainty.
+    if hard_identity_errors:
+        lines.extend(
+            f"    identity_error={item}" for item in hard_identity_errors[:12]
+        )
+        if len(hard_identity_errors) > 12:
+            lines.append(
+                f"    identity_error=... {len(hard_identity_errors) - 12} more"
+            )
+        lines.append(
+            "    => FAIL. known identity corruption; duplicate grade refused; "
+            "restart uncertainty cannot downgrade it"
+        )
+        return Report(FAIL, "FAIL", tuple(lines))
+    if not overlapping_starts:
+        lines.append("    => COULD_NOT_TELL. no PID/process start overlaps the report window")
+        return Report(COULD_NOT_TELL, "COULD_NOT_TELL", tuple(lines))
+    if window_starts and not prior_starts:
+        earliest = min(window_starts, key=lambda item: item.at)
+        if any(item.at < earliest.at for item in all_records):
+            lines.append(
+                "    => COULD_NOT_TELL. records predate the earliest readable PID/process start"
+            )
+            return Report(COULD_NOT_TELL, "COULD_NOT_TELL", tuple(lines))
     if spanning:
         lines.append(
             "    => COULD_NOT_TELL. restart-spanning symbols=" + ",".join(sorted(spanning))
         )
         return Report(COULD_NOT_TELL, "COULD_NOT_TELL", tuple(lines))
-    if identity_errors:
-        lines.extend(f"    identity_error={item}" for item in identity_errors[:12])
-        if len(identity_errors) > 12:
-            lines.append(f"    identity_error=... {len(identity_errors) - 12} more")
+    if continuity_errors:
+        lines.extend(f"    identity_error={item}" for item in continuity_errors[:12])
+        if len(continuity_errors) > 12:
+            lines.append(
+                f"    identity_error=... {len(continuity_errors) - 12} more"
+            )
         lines.append("    => FAIL. duplicate grade refused because identity coverage is incomplete")
         return Report(FAIL, "FAIL", tuple(lines))
     if duplicates:

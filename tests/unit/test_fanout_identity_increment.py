@@ -129,6 +129,26 @@ def test_every_open_fanout_source_binds_the_expected_slot(
     assert draft.metadata["fanout_slot_id"] == expected_slot_id
 
 
+def test_unknown_fanout_source_fails_closed_before_a_draft_can_be_queued() -> None:
+    strategy = _strategy()
+    strategy._now_ms = lambda: SEGMENT
+    state = strategy.watchlist_state("XPON")
+    queued = []
+
+    with pytest.raises(ValueError, match="unknown fan-out source"):
+        queued.append(
+            strategy._build_webull_fanout_draft(
+                state,
+                entry_px=3.20,
+                session_is_eh=False,
+                source="future_unmapped_source",
+                entry_n=1,
+            )
+        )
+
+    assert queued == []
+
+
 def test_mirror_cancel_keeps_the_same_segment_and_slot_identity() -> None:
     strategy = _strategy()
     strategy._webull_resting_mirror_enabled = True
